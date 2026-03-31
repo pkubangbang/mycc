@@ -93,6 +93,8 @@ Use tools to finish tasks. Use skills to access specialized knowledge.
 
 Consider using issue_* to divide and conquor complex tasks, using todo_* for simple task tracking.
 
+You must ask for grant BEFORE "git commit" with no exception.
+
 Skills: ${skills}
 
 ${team !== 'No teammates.' ? `You have a team. Team status:\n${team}\n` : ''}

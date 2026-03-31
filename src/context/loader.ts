@@ -247,7 +247,7 @@ export class ToolLoaderImpl {
           description: t.description,
           parameters: t.input_schema,
         },
-      }));
+      })) as Tool[];
   }
 
   /**

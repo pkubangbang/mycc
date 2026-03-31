@@ -21,6 +21,7 @@
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
     "@types/chalk": "^0.4.31",
+    "@types/json-schema": "^7.0.15",
     "@types/node": "^20",
     "prettier": "^3.4.0",
     "tsx": "^4.21.0",

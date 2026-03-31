@@ -3,6 +3,7 @@
  */
 
 import type { ChildProcess } from 'child_process';
+import type { JSONSchema7 } from 'json-schema';
 
 // ============================================================================
 // Tool Definitions
@@ -15,24 +16,32 @@ import type { ChildProcess } from 'child_process';
 export interface ToolDefinition {
   name: string;
   description: string;
-  input_schema: {
-    type: 'object';
-    properties: Record<string, { type: string; description?: string; enum?: string[] }>;
-    required?: string[];
-  };
+  input_schema: JSONSchema7;
   scope: string[]; // e.g., ['main', 'child', 'bg']
   handler: (ctx: AgentContext, args: Record<string, unknown>) => string | Promise<string>;
 }
 
 /**
  * Tool definition for Ollama API
+ * Matches the Ollama library's Tool interface
  */
 export interface Tool {
   type: 'function';
   function: {
     name: string;
     description: string;
-    parameters: ToolDefinition['input_schema'];
+    parameters: {
+      type?: string;
+      $defs?: unknown;
+      items?: unknown;
+      required?: string[];
+      properties?: Record<string, {
+        type?: string | string[];
+        items?: unknown;
+        description?: string;
+        enum?: unknown[];
+      }>;
+    };
   };
 }
 
