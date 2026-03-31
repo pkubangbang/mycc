@@ -11,7 +11,7 @@ import { ToolLoaderImpl } from '../context/loader.js';
 import { createAgentContext } from '../context/index.js';
 import { createLoader, createToolLoader } from '../context/loader.js';
 
-const TOKEN_THRESHOLD = 4000; // Rough token limit before compacting
+const TOKEN_THRESHOLD = 50000; // Rough token limit before compacting
 
 /**
  * Estimate token count (rough approximation)
