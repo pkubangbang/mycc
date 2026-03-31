@@ -290,4 +290,5 @@ export async function main(): Promise<void> {
   // Cleanup
   ctx.team.dismissTeam();
   rl.close();
+  loader.stopWatching();
 }

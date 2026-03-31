@@ -285,6 +285,7 @@ export interface DynamicLoader {
   getSkills(): Skill[];
   getSkill(name: string): Skill | undefined;
   watchDirectories(): void;
+  stopWatching(): void;
 }
 
 /**
