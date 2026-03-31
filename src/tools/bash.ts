@@ -27,7 +27,7 @@ export const bashTool: ToolDefinition = {
     if (dangerous.some((d) => command.includes(d))) {
       return 'Error: Dangerous command blocked';
     }
-    ctx.core.brief('info', 'bash', command.slice(0, 60));
+    ctx.core.brief('info', 'bash', command);
     try {
       const result = execSync(command, {
         cwd: ctx.core.getWorkDir(),

@@ -62,7 +62,10 @@ export const todoWriteTool: ToolDefinition = {
 
     // Log the action
     const action = todoItems.every((item) => item.done) ? 'completed' : 'updated';
-    ctx.core.brief('info', 'todo_write', `${todoItems.length} item(s) ${action}`);
+    const summary = todoItems.map((item) => 
+      `${item.done ? '✓' : '○'} ${item.name}${item.note ? `: ${item.note}` : ''}`
+    ).join(', ');
+    ctx.core.brief('info', 'todo_write', `${todoItems.length} item(s) ${action}: ${summary}`);
 
     // Return current todo list
     return ctx.todo.printTodoList();
