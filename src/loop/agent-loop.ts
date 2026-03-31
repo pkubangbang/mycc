@@ -183,11 +183,7 @@ export async function agentLoop(
       const args = toolCall.function.arguments as Record<string, unknown>;
       const toolName = toolCall.function.name;
 
-      ctx.core.brief('info', toolName, `executing...`);
-
       const output = await toolLoader.execute(toolName, ctx, args);
-
-      ctx.core.brief('info', toolName, output.slice(0, 100) + (output.length > 100 ? '...' : ''));
 
       messages.push({
         role: 'tool',

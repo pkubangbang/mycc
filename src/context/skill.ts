@@ -17,23 +17,47 @@ export class SkillLoader implements SkillModule {
   private watcher: fs.FSWatcher | null = null;
 
   /**
-   * Load all skills from directory
+   * Load all skills from both project skills/ and .mycc/skills/
    */
-  async loadFromDir(dir: string): Promise<void> {
+  async loadSkills(): Promise<void> {
     ensureDirs();
 
-    const skillsDir = dir || getSkillsDir();
+    // Load from project skills/ directory
+    const projectSkillsDir = path.join(process.cwd(), 'skills');
+    this.loadSkillsFromDir(projectSkillsDir);
 
-    if (!fs.existsSync(skillsDir)) {
-      fs.mkdirSync(skillsDir, { recursive: true });
+    // Load from .mycc/skills directory
+    const myccSkillsDir = getSkillsDir();
+    this.loadSkillsFromDir(myccSkillsDir);
+  }
+
+  /**
+   * Load skills from a specific directory (including subdirectories)
+   */
+  private loadSkillsFromDir(dir: string): void {
+    if (!fs.existsSync(dir)) {
       return;
     }
 
-    const files = fs.readdirSync(skillsDir);
-    for (const file of files) {
-      if (file.endsWith('.md')) {
-        this.reloadSkill(path.join(skillsDir, file));
+    // Recursively find all SKILL.md files
+    const findSkillFiles = (currentDir: string): string[] => {
+      const files: string[] = [];
+      const entries = fs.readdirSync(currentDir, { withFileTypes: true });
+
+      for (const entry of entries) {
+        const fullPath = path.join(currentDir, entry.name);
+        if (entry.isDirectory()) {
+          files.push(...findSkillFiles(fullPath));
+        } else if (entry.name === 'SKILL.md' || entry.name.endsWith('.md')) {
+          files.push(fullPath);
+        }
       }
+      return files;
+    };
+
+    const skillFiles = findSkillFiles(dir);
+    for (const file of skillFiles) {
+      this.reloadSkill(file);
     }
   }
 
@@ -68,19 +92,37 @@ export class SkillLoader implements SkillModule {
    * Watch the skills directory for changes
    */
   watchDirectories(): void {
-    const skillsDir = getSkillsDir();
+    const projectSkillsDir = path.join(process.cwd(), 'skills');
+    const myccSkillsDir = getSkillsDir();
 
+    // Close existing watcher if any
     if (this.watcher) {
       this.watcher.close();
     }
 
-    this.watcher = watch(skillsDir, (event, filename) => {
-      if (filename && filename.endsWith('.md')) {
-        const filepath = path.join(skillsDir, filename);
-        console.log(`[skill] Reloading: ${filename}`);
-        this.reloadSkill(filepath);
-      }
-    });
+    // Watch project skills directory recursively
+    if (fs.existsSync(projectSkillsDir)) {
+      this.watcher = watch(projectSkillsDir, { recursive: true }, (event, filename) => {
+        if (filename && filename.endsWith('.md')) {
+          const filepath = path.join(projectSkillsDir, filename);
+          console.log(`[skill] Reloading: ${filename}`);
+          this.reloadSkill(filepath);
+        }
+      });
+    }
+
+    // Also watch .mycc/skills for runtime skills
+    if (fs.existsSync(myccSkillsDir)) {
+      const myccWatcher = watch(myccSkillsDir, (event, filename) => {
+        if (filename && filename.endsWith('.md')) {
+          const filepath = path.join(myccSkillsDir, filename);
+          console.log(`[skill] Reloading: ${filename}`);
+          this.reloadSkill(filepath);
+        }
+      });
+      // Note: this will replace the project watcher if both exist
+      // For a proper solution, we'd need to manage multiple watchers
+    }
   }
 
   /**

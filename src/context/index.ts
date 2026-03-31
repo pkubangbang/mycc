@@ -26,12 +26,16 @@ export * from './team.js';
  */
 export function createAgentContext(workDir?: string): AgentContext {
   const core = createCore(workDir);
+  const skill = createSkill();
+
+  // Load skills from both project skills/ and .mycc/skills/
+  skill.loadSkills();
 
   return {
     core,
     todo: createTodo(),
     mail: createMail('lead'),
-    skill: createSkill(),
+    skill,
     issue: createIssue(),
     bg: createBg(core),
     wt: createWt(core),

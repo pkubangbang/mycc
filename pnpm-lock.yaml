@@ -33,6 +33,9 @@ importers:
       '@types/chalk':
         specifier: ^0.4.31
         version: 0.4.31
+      '@types/json-schema':
+        specifier: ^7.0.15
+        version: 7.0.15
       '@types/node':
         specifier: ^20
         version: 20.19.37
@@ -216,6 +219,9 @@ packages:
 
   '@types/chalk@0.4.31':
     resolution: {integrity: sha512-nF0fisEPYMIyfrFgabFimsz9Lnuu9MwkNrrlATm2E4E46afKDyeelT+8bXfw1VSc7sLBxMxRgT7PxTC2JcqN4Q==}
+
+  '@types/json-schema@7.0.15':
+    resolution: {integrity: sha512-5+fP8P8MFNC+AyZCDxrB2pkZFPGzqQWUzpSeuuVLvm8VMcorNYavBqoFcxK8bQz4Qsbn4oUEEem4wDLfcysGHA==}
 
   '@types/node@20.19.37':
     resolution: {integrity: sha512-8kzdPJ3FsNsVIurqBs7oodNnCEVbni9yUEkaHbgptDACOPW04jimGagZ51E6+lXUwJjgnBw+hyko/lkFWCldqw==}
@@ -610,6 +616,8 @@ snapshots:
       '@types/node': 20.19.37
 
   '@types/chalk@0.4.31': {}
+
+  '@types/json-schema@7.0.15': {}
 
   '@types/node@20.19.37':
     dependencies:

@@ -29,6 +29,9 @@ const TOOL_COLORS: Record<string, (text: string) => string> = {
   // Background tasks
   bg: chalk.gray,
 
+  // Skills
+  skill_load: chalk.cyanBright,
+
   // Default
   _default: chalk.white,
 };

@@ -208,7 +208,7 @@ export interface MailModule {
  * Skill module interface
  */
 export interface SkillModule {
-  loadFromDir(dir: string): Promise<void>;
+  loadSkills(): Promise<void>;
   listSkills(): Skill[];
   printSkills(): string;
   getSkill(name: string): Skill | undefined;

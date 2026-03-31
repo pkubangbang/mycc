@@ -173,6 +173,32 @@ interface ToolDefinition {
 
 ---
 
+## skill_load
+
+**File**: `src/tools/skill_load.ts`
+
+**Scope**: `['main', 'child']`
+
+**Description**: Load a skill by name and return its content. Skills contain specialized knowledge and instructions for specific tasks.
+
+**Parameters**:
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| name | string | yes | The name of the skill to load |
+
+**Behavior**:
+- Looks up skill by name from loaded skills (`.mycc/skills/*.md`)
+- Returns full skill content including description and keywords
+- If skill not found, lists available skills
+- Skills are loaded from markdown files with YAML frontmatter
+
+**Example**:
+```json
+{ "name": "typescript" }
+```
+
+---
+
 ## Scope Reference
 
 | Scope | Description |

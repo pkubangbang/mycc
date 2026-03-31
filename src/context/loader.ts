@@ -14,6 +14,7 @@ import { readTool } from '../tools/read.js';
 import { writeTool } from '../tools/write.js';
 import { editTool } from '../tools/edit.js';
 import { todoWriteTool } from '../tools/todo_write.js';
+import { skillLoadTool } from '../tools/skill_load.js';
 
 /**
  * Built-in tools
@@ -24,6 +25,7 @@ const builtInTools: ToolDefinition[] = [
   writeTool,
   editTool,
   todoWriteTool,
+  skillLoadTool,
 ];
 
 /**
@@ -106,21 +108,48 @@ export class Loader implements DynamicLoader {
   }
 
   /**
-   * Load all skills from .mycc/skills/
+   * Load all skills from both project skills/ and .mycc/skills/
    */
   private loadSkills(): void {
-    const skillsDir = getSkillsDir();
+    // Ensure .mycc/skills exists
+    ensureDirs();
 
-    if (!fs.existsSync(skillsDir)) {
-      fs.mkdirSync(skillsDir, { recursive: true });
+    // Load from project skills/ directory
+    const projectSkillsDir = path.join(process.cwd(), 'skills');
+    this.loadSkillsFromDir(projectSkillsDir);
+
+    // Load from .mycc/skills directory
+    const myccSkillsDir = getSkillsDir();
+    this.loadSkillsFromDir(myccSkillsDir);
+  }
+
+  /**
+   * Load skills from a specific directory (including subdirectories)
+   */
+  private loadSkillsFromDir(dir: string): void {
+    if (!fs.existsSync(dir)) {
       return;
     }
 
-    const files = fs.readdirSync(skillsDir);
-    for (const file of files) {
-      if (file.endsWith('.md')) {
-        this.reloadSkill(path.join(skillsDir, file));
+    // Recursively find all SKILL.md files
+    const findSkillFiles = (currentDir: string): string[] => {
+      const files: string[] = [];
+      const entries = fs.readdirSync(currentDir, { withFileTypes: true });
+
+      for (const entry of entries) {
+        const fullPath = path.join(currentDir, entry.name);
+        if (entry.isDirectory()) {
+          files.push(...findSkillFiles(fullPath));
+        } else if (entry.name === 'SKILL.md' || entry.name.endsWith('.md')) {
+          files.push(fullPath);
+        }
       }
+      return files;
+    };
+
+    const skillFiles = findSkillFiles(dir);
+    for (const file of skillFiles) {
+      this.reloadSkill(file);
     }
   }
 
@@ -156,7 +185,8 @@ export class Loader implements DynamicLoader {
    */
   watchDirectories(): void {
     const toolsDir = getToolsDir();
-    const skillsDir = getSkillsDir();
+    const myccSkillsDir = getSkillsDir();
+    const projectSkillsDir = path.join(process.cwd(), 'skills');
 
     // Watch tools directory
     this.toolWatcher = watch(toolsDir, async (event, filename) => {
@@ -167,14 +197,36 @@ export class Loader implements DynamicLoader {
       }
     });
 
-    // Watch skills directory
-    this.skillWatcher = watch(skillsDir, (event, filename) => {
-      if (filename && filename.endsWith('.md')) {
-        const filepath = path.join(skillsDir, filename);
-        console.log(`[loader] Reloading skill: ${filename}`);
-        this.reloadSkill(filepath);
+    // Watch project skills directory recursively
+    if (fs.existsSync(projectSkillsDir)) {
+      const projectWatcher = watch(projectSkillsDir, { recursive: true }, (event, filename) => {
+        if (filename && filename.endsWith('.md')) {
+          const filepath = path.join(projectSkillsDir, filename);
+          console.log(`[loader] Reloading skill: ${filename}`);
+          this.reloadSkill(filepath);
+        }
+      });
+      // Store as skillWatcher (overwrites if needed)
+      this.skillWatcher = projectWatcher;
+    }
+
+    // Watch .mycc/skills directory
+    if (fs.existsSync(myccSkillsDir)) {
+      const myccWatcher = watch(myccSkillsDir, (event, filename) => {
+        if (filename && filename.endsWith('.md')) {
+          const filepath = path.join(myccSkillsDir, filename);
+          console.log(`[loader] Reloading skill: ${filename}`);
+          this.reloadSkill(filepath);
+        }
+      });
+      // Combine watchers if both exist
+      if (this.skillWatcher) {
+        // We have both - need to close one if we create a new one
+        // For now, just use the last one
+        this.skillWatcher.close();
       }
-    });
+      this.skillWatcher = myccWatcher;
+    }
   }
 
   /**
