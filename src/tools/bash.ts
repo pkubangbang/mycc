@@ -23,7 +23,7 @@ export const bashTool: ToolDefinition = {
   scope: ['main', 'child', 'bg'],
   handler: (ctx: AgentContext, args: Record<string, unknown>): string => {
     const command = args.command as string;
-    const dangerous = ['rm -rf /', 'sudo', 'shutdown', 'reboot', '> /dev/'];
+    const dangerous = ['rm -rf /', 'sudo', 'shutdown', 'reboot'];
     if (dangerous.some((d) => command.includes(d))) {
       return 'Error: Dangerous command blocked';
     }

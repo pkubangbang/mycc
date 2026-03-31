@@ -9,6 +9,20 @@ import { watch } from 'fs';
 import matter from 'gray-matter';
 import type { DynamicLoader, ToolDefinition, Skill, Tool, ToolScope, AgentContext } from '../types.js';
 import { getToolsDir, getSkillsDir, ensureDirs } from './db.js';
+import { bashTool } from '../tools/bash.js';
+import { readTool } from '../tools/read.js';
+import { writeTool } from '../tools/write.js';
+import { editTool } from '../tools/edit.js';
+
+/**
+ * Built-in tools
+ */
+const builtInTools: ToolDefinition[] = [
+  bashTool,
+  readTool,
+  writeTool,
+  editTool,
+];
 
 /**
  * Dynamic loader implementation
@@ -25,14 +39,29 @@ export class Loader implements DynamicLoader {
   async loadAll(): Promise<void> {
     ensureDirs();
 
-    await this.loadTools();
+    // Load built-in tools first
+    this.loadBuiltInTools();
+
+    // Then load dynamic tools (can override built-in)
+    await this.loadDynamicTools();
+
     this.loadSkills();
   }
 
   /**
-   * Load all tools from .mycc/tools/
+   * Load built-in tools from src/tools/
    */
-  private async loadTools(): Promise<void> {
+  private loadBuiltInTools(): void {
+    for (const tool of builtInTools) {
+      this.tools.set(tool.name, tool);
+      console.log(`[loader] Loaded built-in tool: ${tool.name}`);
+    }
+  }
+
+  /**
+   * Load dynamic tools from .mycc/tools/
+   */
+  private async loadDynamicTools(): Promise<void> {
     const toolsDir = getToolsDir();
 
     if (!fs.existsSync(toolsDir)) {
@@ -49,7 +78,7 @@ export class Loader implements DynamicLoader {
   }
 
   /**
-   * Reload a single tool file
+   * Reload a single tool file (dynamic tools only)
    */
   private async reloadTool(filepath: string): Promise<void> {
     try {
