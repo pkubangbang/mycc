@@ -15,6 +15,10 @@ import { writeTool } from '../tools/write.js';
 import { editTool } from '../tools/edit.js';
 import { todoWriteTool } from '../tools/todo_write.js';
 import { skillLoadTool } from '../tools/skill_load.js';
+import { tmCreateTool } from '../tools/tm_create.js';
+import { tmRemoveTool } from '../tools/tm_remove.js';
+import { mailToTool } from '../tools/mail_to.js';
+import { broadcastTool } from '../tools/broadcast.js';
 
 /**
  * Built-in tools
@@ -26,6 +30,10 @@ const builtInTools: ToolDefinition[] = [
   editTool,
   todoWriteTool,
   skillLoadTool,
+  tmCreateTool,
+  tmRemoveTool,
+  mailToTool,
+  broadcastTool,
 ];
 
 /**
