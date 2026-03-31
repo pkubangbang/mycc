@@ -1,7 +1,7 @@
 /**
  * write.ts - Write content to file
  *
- * Scope: ['main', 'child'] - Available to main and child agents
+ * Scope: ['main', 'child', 'bg'] - Available to all agent types
  */
 
 import * as fs from 'fs';
@@ -36,7 +36,7 @@ export const writeTool: ToolDefinition = {
     },
     required: ['path', 'content'],
   },
-  scope: ['main', 'child'],
+  scope: ['main', 'child', 'bg'],
   handler: (ctx: AgentContext, args: Record<string, unknown>): string => {
     const filePath = args.path as string;
     const content = args.content as string;

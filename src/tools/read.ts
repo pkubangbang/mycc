@@ -1,7 +1,7 @@
 /**
  * read.ts - Read file contents
  *
- * Scope: ['main', 'child'] - Available to main and child agents
+ * Scope: ['main', 'child', 'bg'] - Available to all agent types
  */
 
 import * as fs from 'fs';
@@ -36,7 +36,7 @@ export const readTool: ToolDefinition = {
     },
     required: ['path'],
   },
-  scope: ['main', 'child'],
+  scope: ['main', 'child', 'bg'],
   handler: (ctx: AgentContext, args: Record<string, unknown>): string => {
     const filePath = args.path as string;
     const limit = args.limit as number | undefined;

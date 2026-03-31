@@ -1,7 +1,7 @@
 /**
  * edit.ts - Replace exact text in file
  *
- * Scope: ['main', 'child'] - Available to main and child agents
+ * Scope: ['main', 'child', 'bg'] - Available to all agent types
  */
 
 import * as fs from 'fs';
@@ -40,7 +40,7 @@ export const editTool: ToolDefinition = {
     },
     required: ['path', 'old_text', 'new_text'],
   },
-  scope: ['main', 'child'],
+  scope: ['main', 'child', 'bg'],
   handler: (ctx: AgentContext, args: Record<string, unknown>): string => {
     const filePath = args.path as string;
     const oldText = args.old_text as string;
