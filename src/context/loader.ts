@@ -13,6 +13,7 @@ import { bashTool } from '../tools/bash.js';
 import { readTool } from '../tools/read.js';
 import { writeTool } from '../tools/write.js';
 import { editTool } from '../tools/edit.js';
+import { todoWriteTool } from '../tools/todo_write.js';
 
 /**
  * Built-in tools
@@ -22,6 +23,7 @@ const builtInTools: ToolDefinition[] = [
   readTool,
   writeTool,
   editTool,
+  todoWriteTool,
 ];
 
 /**

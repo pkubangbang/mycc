@@ -86,26 +86,18 @@ async function autoCompact(messages: Message[]): Promise<Message[]> {
 function buildSystemPrompt(ctx: AgentContext): string {
   const workDir = ctx.core.getWorkDir();
   const skills = ctx.skill.printSkills();
-  const todos = ctx.todo.printTodoList();
-  const issues = ctx.issue.printIssues();
   const team = ctx.team.printTeam();
 
   return `You are a coding agent at ${workDir}.
+Use tools to finish tasks. Use skills to access specialized knowledge.
 
-Use task_create/task_update/task_list for multi-step work. Use TodoWrite for short checklists.
-Use task for subagent delegation. Use load_skill for specialized knowledge.
+Consider using issue_* to divide and conquor complex tasks, using todo_* for simple task tracking.
 
 Skills: ${skills}
 
-${todos !== 'No todos.' ? `Current todos:\n${todos}\n` : ''}
+${team !== 'No teammates.' ? `You have a team. Team status:\n${team}\n` : ''}
 
-${issues !== 'No issues.' ? `Current issues:\n${issues}\n` : ''}
-
-${team !== 'No teammates.' ? `Team status:\n${team}\n` : ''}
-
-When you need to delegate work to teammates, use spawn_teammate to create them.
-When you need to communicate, use send_message or broadcast.
-When you're done working, enter idle state.`;
+`;
 }
 
 /**

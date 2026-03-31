@@ -133,6 +133,46 @@ interface ToolDefinition {
 
 ---
 
+## todo_write
+
+**File**: `src/tools/todo_write.ts`
+
+**Scope**: `['main', 'child']`
+
+**Description**: Update the todo list with new items or modify existing items. Merges changes into the current todo list.
+
+**Parameters**:
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| items | array | yes | Array of todo items to add or update |
+
+**Item Properties**:
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| id | integer | no | Item ID (0 or undefined for new items, existing ID to update) |
+| name | string | yes | Todo item name/description |
+| done | boolean | no | Whether the item is completed (default: false) |
+| note | string | no | Optional note for the item |
+
+**Behavior**:
+- Merges provided items into the existing todo list
+- If `id` matches existing item, updates it
+- If `id` is 0 or undefined, creates new item with auto-assigned ID
+- Returns the current todo list after merge
+- Logs action to console with colored prefix
+
+**Example**:
+```json
+{
+  "items": [
+    { "name": "Review PR", "done": false },
+    { "id": 1, "name": "Setup project", "done": true, "note": "Completed yesterday" }
+  ]
+}
+```
+
+---
+
 ## Scope Reference
 
 | Scope | Description |

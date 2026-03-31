@@ -19,6 +19,7 @@ const TOOL_COLORS: Record<string, (text: string) => string> = {
   task_create: chalk.yellow,
   task_update: chalk.yellow,
   task_list: chalk.yellow,
+  todo_write: chalk.yellow,
 
   // Team communication
   spawn_teammate: chalk.magentaBright,
