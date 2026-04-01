@@ -145,6 +145,7 @@ export function buildSystemPrompt(
       'Use question tools to ask question to the user,',
       'use brief tools to report your progress,',
       'use mail_to tools to communicate with other teammates.',
+      'Prefer concise and frank communication style. Act, but not explain.',
       'When you feel lost about the context, send mail to "lead".',
       '',
       makeIdentityBlock(identity.name, identity.role, workDir),

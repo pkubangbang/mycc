@@ -136,8 +136,7 @@ async function enterIdleState(messages: Message[]): Promise<'shutdown' | 'resume
     }
 
     // 2. Check mailbox for new mail (file-based)
-    const mails = ctx.mail.collectMails();
-    if (mails.length > 0) {
+    if (ctx.mail.hasNewMails()) {
       sendStatus('working');
       return 'resume';
     }

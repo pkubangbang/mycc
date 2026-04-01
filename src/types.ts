@@ -255,6 +255,7 @@ export interface TodoModule {
  * Mail module interface
  */
 export interface MailModule {
+  hasNewMails(): boolean;
   appendMail(from: string, title: string, content: string, issueId?: number): void;
   collectMails(): Mail[];
   setTranscript(transcript: TranscriptModule): void;

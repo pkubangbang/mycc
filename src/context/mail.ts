@@ -59,6 +59,20 @@ export class MailBox implements MailModule {
   }
 
   /**
+   * Check if there are new mails without consuming them
+   */
+  hasNewMails(): boolean {
+    const mailPath = this.getMailPath();
+
+    if (!fs.existsSync(mailPath)) {
+      return false;
+    }
+
+    const content = fs.readFileSync(mailPath, 'utf-8');
+    return content.trim().length > 0;
+  }
+
+  /**
    * Collect all mails and clear the mailbox
    * Atomic: read file, then truncate
    */

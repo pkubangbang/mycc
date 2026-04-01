@@ -51,7 +51,7 @@ export const mailToTool: ToolDefinition = {
     // Both main and child processes use team.mailTo directly
     // In child process, this writes to mailbox file directly
     // In main process, this also writes to mailbox file
-    ctx.core.brief('info', 'mail_to', `Sending mail to ${name}: ${title}`);
+    ctx.core.brief('info', 'mail_to', `Sending mail to ${name}: ${title}\n${content}`);
     ctx.team!.mailTo(name, title, content);
 
     return `Mail sent to '${name}' with title: ${title}`;
