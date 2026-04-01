@@ -378,12 +378,20 @@ export class TeamManager implements TeamModule {
 
   /**
    * Remove a teammate
+   * @param name - Teammate name
+   * @param force - If true, kill the process immediately; otherwise send soft shutdown
    */
-  removeTeammate(name: string): void {
+  removeTeammate(name: string, force: boolean = false): void {
     const child = this.processes.get(name);
-    if (child && child.connected) {
-      child.send({ type: 'shutdown' } as ParentMessage);
-      child.disconnect();
+    if (child) {
+      if (force) {
+        // Force kill the process
+        child.kill('SIGTERM');
+      } else if (child.connected) {
+        // Soft shutdown: send IPC message and disconnect
+        child.send({ type: 'shutdown' } as ParentMessage);
+        child.disconnect();
+      }
     }
 
     this.processes.delete(name);
@@ -396,10 +404,15 @@ export class TeamManager implements TeamModule {
 
   /**
    * Dismiss all teammates
+   * @param force - If true, kill processes immediately; otherwise send soft shutdown
    */
-  dismissTeam(): void {
+  dismissTeam(force: boolean = false): void {
     for (const [name, child] of this.processes) {
-      if (child.connected) {
+      if (force) {
+        // Force kill the process
+        child.kill('SIGTERM');
+      } else if (child.connected) {
+        // Soft shutdown: send IPC message and disconnect
         child.send({ type: 'shutdown' } as ParentMessage);
         child.disconnect();
       }

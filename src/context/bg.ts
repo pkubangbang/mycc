@@ -21,7 +21,7 @@ export class BackgroundTasks implements BgModule {
   /**
    * Run a command in the background
    */
-  runCommand(cmd: string): number {
+  async runCommand(cmd: string): Promise<number> {
     const child = spawn(cmd, [], {
       cwd: this.core.getWorkDir(),
       shell: true,
@@ -77,7 +77,7 @@ export class BackgroundTasks implements BgModule {
   /**
    * Format background tasks for prompt
    */
-  printBgTasks(): string {
+  async printBgTasks(): Promise<string> {
     if (this.tasks.size === 0) {
       return 'No background tasks.';
     }
@@ -97,14 +97,14 @@ export class BackgroundTasks implements BgModule {
   /**
    * Check if there are running tasks
    */
-  hasRunningBgTasks(): boolean {
+  async hasRunningBgTasks(): Promise<boolean> {
     return Array.from(this.tasks.values()).some((t) => t.status === 'running');
   }
 
   /**
    * Kill a background task
    */
-  killTask(pid: number): void {
+  async killTask(pid: number): Promise<void> {
     const process = this.processes.get(pid);
     if (process) {
       try {
@@ -147,32 +147,32 @@ export function createBgIpcHandlers(): IpcHandlerRegistration[] {
       module: 'bg',
       handler: async (_sender, payload, ctx) => {
         const { cmd } = payload as { cmd: string };
-        const pid = ctx.bg.runCommand(cmd);
+        const pid = await ctx.bg.runCommand(cmd);
         return { success: true, data: { pid } };
       },
     },
     {
       messageType: 'bg_print',
       module: 'bg',
-      handler: (_sender, _payload, ctx) => {
-        const output = ctx.bg.printBgTasks();
+      handler: async (_sender, _payload, ctx) => {
+        const output = await ctx.bg.printBgTasks();
         return { success: true, data: output };
       },
     },
     {
       messageType: 'bg_has_running',
       module: 'bg',
-      handler: (_sender, _payload, ctx) => {
-        const running = ctx.bg.hasRunningBgTasks();
+      handler: async (_sender, _payload, ctx) => {
+        const running = await ctx.bg.hasRunningBgTasks();
         return { success: true, data: { running } };
       },
     },
     {
       messageType: 'bg_kill',
       module: 'bg',
-      handler: (_sender, payload, ctx) => {
+      handler: async (_sender, payload, ctx) => {
         const { pid } = payload as { pid: number };
-        ctx.bg.killTask(pid);
+        await ctx.bg.killTask(pid);
         return { success: true };
       },
     },

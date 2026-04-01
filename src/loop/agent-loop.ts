@@ -155,6 +155,9 @@ export async function main(): Promise<void> {
     process.exit(0);
   });
 
+  // Available slash commands
+  const slashCommands = ['/team', '/issues', '/todos', '/skills', '/exit'];
+
   while (true) {
     try {
       const query = await prompt(chalk.cyan('agent >> '));
@@ -163,24 +166,45 @@ export async function main(): Promise<void> {
         break;
       }
 
-      // Handle commands
-      if (query.trim() === '/team') {
-        console.log(ctx.team?.printTeam() || 'No team.');
-        continue;
-      }
+      const trimmedQuery = query.trim();
 
-      if (query.trim() === '/issues') {
-        console.log(ctx.issue.printIssues());
-        continue;
-      }
+      // Handle slash commands
+      if (trimmedQuery.startsWith('/')) {
+        if (trimmedQuery === '/team') {
+          console.log(ctx.team?.printTeam() || 'No team.');
+          continue;
+        }
 
-      if (query.trim() === '/todos') {
-        console.log(ctx.todo.printTodoList());
-        continue;
-      }
+        if (trimmedQuery.startsWith('/issues')) {
+          const parts = trimmedQuery.split(/\s+/);
+          if (parts.length > 1) {
+            // Show specific issue details
+            const issueId = parseInt(parts[1], 10);
+            if (isNaN(issueId)) {
+              console.log(chalk.yellow(`Invalid issue ID: ${parts[1]}`));
+            } else {
+              console.log(await ctx.issue.printIssue(issueId));
+            }
+          } else {
+            // Show all issues
+            console.log(await ctx.issue.printIssues());
+          }
+          continue;
+        }
 
-      if (query.trim() === '/skills') {
-        console.log(ctx.skill.printSkills());
+        if (trimmedQuery === '/todos') {
+          console.log(ctx.todo.printTodoList());
+          continue;
+        }
+
+        if (trimmedQuery === '/skills') {
+          console.log(ctx.skill.printSkills());
+          continue;
+        }
+
+        // Unknown slash command - show available commands
+        console.log(chalk.yellow(`Unknown command: ${trimmedQuery}`));
+        console.log(chalk.gray(`Available commands: ${slashCommands.join(', ')}`));
         continue;
       }
 

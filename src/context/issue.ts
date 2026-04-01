@@ -12,7 +12,7 @@ export class IssueManager implements IssueModule {
   /**
    * Create a new issue
    */
-  createIssue(title: string, content: string, blockedBy: number[] = []): number {
+  async createIssue(title: string, content: string, blockedBy: number[] = []): Promise<number> {
     const db = getDb();
     const stmt = db.prepare(`
       INSERT INTO issues (title, content, status, owner, comments)
@@ -24,7 +24,7 @@ export class IssueManager implements IssueModule {
 
     // Create blockages
     for (const blockerId of blockedBy) {
-      this.createBlockage(blockerId, issueId);
+      await this.createBlockage(blockerId, issueId);
     }
 
     return issueId;
@@ -33,7 +33,7 @@ export class IssueManager implements IssueModule {
   /**
    * Get an issue by ID
    */
-  getIssue(id: number): Issue | undefined {
+  async getIssue(id: number): Promise<Issue | undefined> {
     const db = getDb();
     const stmt = db.prepare(`
       SELECT id, title, content, status, owner, created_at, comments
@@ -59,7 +59,7 @@ export class IssueManager implements IssueModule {
   /**
    * List all issues
    */
-  listIssues(): Issue[] {
+  async listIssues(): Promise<Issue[]> {
     const db = getDb();
     const stmt = db.prepare(`
       SELECT id, title, content, status, owner, created_at, comments
@@ -83,8 +83,8 @@ export class IssueManager implements IssueModule {
   /**
    * Format issues for prompt
    */
-  printIssues(): string {
-    const issues = this.listIssues();
+  async printIssues(): Promise<string> {
+    const issues = await this.listIssues();
     if (issues.length === 0) {
       return 'No issues.';
     }
@@ -107,9 +107,41 @@ export class IssueManager implements IssueModule {
   }
 
   /**
+   * Format a single issue for display
+   */
+  async printIssue(id: number): Promise<string> {
+    const issue = await this.getIssue(id);
+    if (!issue) {
+      return `Issue #${id} not found.`;
+    }
+
+    const status: Record<string, string> = {
+      pending: '[ ]',
+      in_progress: '[>]',
+      completed: '[x]',
+      failed: '[!]',
+      abandoned: '[-]',
+    };
+
+    const lines: string[] = [];
+    lines.push(`Issue #${issue.id}: ${issue.title}`);
+    lines.push(`Status: ${status[issue.status] || '[?]'}`);
+    if (issue.owner) lines.push(`Owner: @${issue.owner}`);
+    if (issue.content) lines.push('Content:', `${issue.content}`);
+    if (issue.blockedBy.length > 0) lines.push(`Blocked by: ${issue.blockedBy.join(', ')}`);
+    if (issue.blocks.length > 0) lines.push(`Blocks: ${issue.blocks.join(', ')}`);
+    if (issue.comments.length > 0) {
+      lines.push('Comments:');
+      issue.comments.forEach((c) => lines.push(`  ${c}`, `------`));
+    }
+
+    return lines.join('\n');
+  }
+
+  /**
    * Claim an issue (atomic operation)
    */
-  claimIssue(id: number, owner: string): boolean {
+  async claimIssue(id: number, owner: string): Promise<boolean> {
     const db = getDb();
 
     // Use transaction for atomicity
@@ -139,7 +171,7 @@ export class IssueManager implements IssueModule {
   /**
    * Close an issue
    */
-  closeIssue(id: number, status: 'completed' | 'failed' | 'abandoned', comment?: string): void {
+  async closeIssue(id: number, status: 'completed' | 'failed' | 'abandoned', comment?: string): Promise<void> {
     const db = getDb();
 
     const closeTx = db.transaction(() => {
@@ -151,7 +183,7 @@ export class IssueManager implements IssueModule {
 
       // Add comment if provided
       if (comment) {
-        this.addComment(id, comment);
+        this.addCommentSync(id, comment);
       }
 
       // Remove any blockages where this issue is the blocker
@@ -167,7 +199,14 @@ export class IssueManager implements IssueModule {
   /**
    * Add a comment to an issue
    */
-  addComment(id: number, comment: string): void {
+  async addComment(id: number, comment: string): Promise<void> {
+    this.addCommentSync(id, comment);
+  }
+
+  /**
+   * Add a comment to an issue (sync internal helper)
+   */
+  private addCommentSync(id: number, comment: string): void {
     const db = getDb();
 
     const stmt = db.prepare(`
@@ -189,7 +228,7 @@ export class IssueManager implements IssueModule {
   /**
    * Create a blockage relationship
    */
-  createBlockage(blocker: number, blocked: number): void {
+  async createBlockage(blocker: number, blocked: number): Promise<void> {
     const db = getDb();
     const stmt = db.prepare(`
       INSERT OR IGNORE INTO issue_blockages (blocker_id, blocked_id)
@@ -201,7 +240,7 @@ export class IssueManager implements IssueModule {
   /**
    * Remove a blockage relationship
    */
-  removeBlockage(blocker: number, blocked: number): void {
+  async removeBlockage(blocker: number, blocked: number): Promise<void> {
     const db = getDb();
     const stmt = db.prepare(`
       DELETE FROM issue_blockages
@@ -268,17 +307,17 @@ export function createIssueIpcHandlers(): IpcHandlerRegistration[] {
     {
       messageType: 'db_issue_get',
       module: 'issue',
-      handler: (_sender, payload, ctx) => {
+      handler: async (_sender, payload, ctx) => {
         const { id } = payload as { id: number };
-        const issue = ctx.issue.getIssue(id);
+        const issue = await ctx.issue.getIssue(id);
         return { success: true, data: issue };
       },
     },
     {
       messageType: 'db_issue_list',
       module: 'issue',
-      handler: (_sender, _payload, ctx) => {
-        const issues = ctx.issue.listIssues();
+      handler: async (_sender, _payload, ctx) => {
+        const issues = await ctx.issue.listIssues();
         return { success: true, data: issues };
       },
     },
@@ -286,62 +325,62 @@ export function createIssueIpcHandlers(): IpcHandlerRegistration[] {
     {
       messageType: 'db_issue_create',
       module: 'issue',
-      handler: (_sender, payload, ctx) => {
+      handler: async (_sender, payload, ctx) => {
         const { title, content, blockedBy = [] } = payload as {
           title: string;
           content: string;
           blockedBy?: number[];
         };
-        const id = ctx.issue.createIssue(title, content, blockedBy);
+        const id = await ctx.issue.createIssue(title, content, blockedBy);
         return { success: true, data: { id } };
       },
     },
     {
       messageType: 'db_issue_claim',
       module: 'issue',
-      handler: (_sender, payload, ctx) => {
+      handler: async (_sender, payload, ctx) => {
         const { id, owner } = payload as { id: number; owner: string };
-        const claimed = ctx.issue.claimIssue(id, owner);
+        const claimed = await ctx.issue.claimIssue(id, owner);
         return { success: true, data: { claimed } };
       },
     },
     {
       messageType: 'db_issue_close',
       module: 'issue',
-      handler: (_sender, payload, ctx) => {
+      handler: async (_sender, payload, ctx) => {
         const { id, status, comment } = payload as {
           id: number;
           status: 'completed' | 'failed' | 'abandoned';
           comment?: string;
         };
-        ctx.issue.closeIssue(id, status, comment);
+        await ctx.issue.closeIssue(id, status, comment);
         return { success: true };
       },
     },
     {
       messageType: 'db_issue_comment',
       module: 'issue',
-      handler: (_sender, payload, ctx) => {
+      handler: async (_sender, payload, ctx) => {
         const { id, comment } = payload as { id: number; comment: string };
-        ctx.issue.addComment(id, comment);
+        await ctx.issue.addComment(id, comment);
         return { success: true };
       },
     },
     {
       messageType: 'db_block_add',
       module: 'issue',
-      handler: (_sender, payload, ctx) => {
+      handler: async (_sender, payload, ctx) => {
         const { blocker, blocked } = payload as { blocker: number; blocked: number };
-        ctx.issue.createBlockage(blocker, blocked);
+        await ctx.issue.createBlockage(blocker, blocked);
         return { success: true };
       },
     },
     {
       messageType: 'db_block_remove',
       module: 'issue',
-      handler: (_sender, payload, ctx) => {
+      handler: async (_sender, payload, ctx) => {
         const { blocker, blocked } = payload as { blocker: number; blocked: number };
-        ctx.issue.removeBlockage(blocker, blocked);
+        await ctx.issue.removeBlockage(blocker, blocked);
         return { success: true };
       },
     },

@@ -38,6 +38,7 @@ let teammateName = '';
 let teammateRole = '';
 let ctx: AgentContext;
 let toolLoader: ToolLoaderImpl;
+let shutdownRequested = false;
 
 // === Main Teammate Loop ===
 async function teammateLoop(prompt: string): Promise<void> {
@@ -45,7 +46,7 @@ async function teammateLoop(prompt: string): Promise<void> {
   const tools = toolLoader.getToolsForScope('child');
   sendStatus('working');
 
-  while (true) {
+  while (!shutdownRequested) {
     // 1. Micro-compact old tool results
     microCompact(messages);
 
@@ -58,22 +59,16 @@ async function teammateLoop(prompt: string): Promise<void> {
       });
     }
 
-    // 3. Process queued IPC messages
+    // 3. Process queued mail messages
     const pending = [...inboxMessages];
     inboxMessages.length = 0;
     for (const msg of pending) {
-      if (msg.type === 'message') {
-        const message = msg as unknown as { from: string; title: string; content: string };
-        messages.push({
-          role: 'user',
-          content: `Mail from ${message.from}: ${message.title}\n${message.content}`,
-        });
-      } else if (msg.type === 'db_result') {
-        handleDbResult(msg as unknown as { reqId: number; success: boolean; data?: unknown; error?: string });
-      } else if (msg.type === 'shutdown') {
-        sendStatus('shutdown');
-        process.exit(0);
-      }
+      // Only mail messages are queued now; db_result and shutdown handled immediately
+      const message = msg as unknown as { from: string; title: string; content: string };
+      messages.push({
+        role: 'user',
+        content: `Mail from ${message.from}: ${message.title}\n${message.content}`,
+      });
     }
 
     // 4. Todo nudging
@@ -140,6 +135,10 @@ async function teammateLoop(prompt: string): Promise<void> {
       }
     }
   }
+
+  // Graceful exit after shutdown requested
+  sendStatus('shutdown');
+  process.exit(0);
 }
 
 // === Idle State: Poll for new work ===
@@ -147,14 +146,14 @@ async function enterIdleState(messages: Message[]): Promise<'shutdown' | 'resume
   sendStatus('idle');
   const startTime = Date.now();
 
-  while (Date.now() - startTime < IDLE_TIMEOUT) {
+  while (Date.now() - startTime < IDLE_TIMEOUT && !shutdownRequested) {
     // 1. Check for shutdown
-    if (inboxMessages.some((m) => m.type === 'shutdown')) {
+    if (shutdownRequested) {
       sendStatus('shutdown');
       return 'shutdown';
     }
 
-    // 2. Check for new messages
+    // 2. Check for new mail messages
     if (inboxMessages.some((m) => m.type === 'message')) {
       sendStatus('working');
       return 'resume';
@@ -203,8 +202,12 @@ async function enterIdleState(messages: Message[]): Promise<'shutdown' | 'resume
     await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL));
   }
 
-  // Timeout - shutdown
-  sendLog('Idle timeout reached, exiting');
+  // Timeout or shutdown requested
+  if (shutdownRequested) {
+    sendLog('Shutdown requested, exiting');
+  } else {
+    sendLog('Idle timeout reached, exiting');
+  }
   sendStatus('shutdown');
   return 'shutdown';
 }
@@ -240,8 +243,14 @@ process.on('message', (msg: { type: string; [key: string]: unknown }) => {
       sendError(`Spawn failed: ${(err as Error).message}`);
       process.exit(1);
     });
-  } else {
-    // Queue message for teammate loop to process
+  } else if (msg.type === 'db_result') {
+    // Handle IPC responses immediately - they resolve pending requests
+    handleDbResult(msg as unknown as { reqId: number; success: boolean; data?: unknown; error?: string });
+  } else if (msg.type === 'shutdown') {
+    // Soft shutdown - set flag and let current work finish
+    shutdownRequested = true;
+  } else if (msg.type === 'message') {
+    // Queue mail messages for teammate loop to process
     inboxMessages.push(msg);
   }
 });

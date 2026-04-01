@@ -16,12 +16,17 @@ export const tmRemoveTool: ToolDefinition = {
         type: 'string',
         description: 'Name of the teammate to remove',
       },
+      force: {
+        type: 'boolean',
+        description: 'If true, forcefully kill the process; otherwise send soft shutdown (default: false)',
+      },
     },
     required: ['name'],
   },
   scope: ['main'],
   handler: (ctx: AgentContext, args: Record<string, unknown>): string => {
     const name = args.name as string;
+    const force = (args.force as boolean) || false;
 
     // Validate required parameters
     if (!name || typeof name !== 'string') {
@@ -41,11 +46,12 @@ export const tmRemoveTool: ToolDefinition = {
       return `Error: Teammate '${name}' not found`;
     }
 
-    ctx.core.brief('info', 'tm_remove', `Removing teammate '${name}' (role: ${teammate.role})`);
+    const mode = force ? 'forcefully' : 'gracefully';
+    ctx.core.brief('info', 'tm_remove', `Removing teammate '${name}' ${mode} (role: ${teammate.role})`);
 
     try {
-      ctx.team.removeTeammate(name);
-      return `Teammate '${name}' removed successfully`;
+      ctx.team.removeTeammate(name, force);
+      return `Teammate '${name}' removed ${mode}`;
     } catch (error: unknown) {
       const err = error as Error;
       ctx.core.brief('error', 'tm_remove', err.message);

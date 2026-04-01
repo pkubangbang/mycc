@@ -53,6 +53,35 @@ export class ChildIssue implements IssueModule {
     return lines.join('\n');
   }
 
+  async printIssue(id: number): Promise<string> {
+    const issue = await this.getIssue(id);
+    if (!issue) {
+      return `Issue #${id} not found.`;
+    }
+
+    const status: Record<string, string> = {
+      pending: '[ ]',
+      in_progress: '[>]',
+      completed: '[x]',
+      failed: '[!]',
+      abandoned: '[-]',
+    };
+
+    const lines: string[] = [];
+    lines.push(`Issue #${issue.id}: ${issue.title}`);
+    lines.push(`Status: ${status[issue.status] || '[?]'}`);
+    if (issue.owner) lines.push(`Owner: @${issue.owner}`);
+    if (issue.content) lines.push(`Content: ${issue.content}`);
+    if (issue.blockedBy.length > 0) lines.push(`Blocked by: ${issue.blockedBy.join(', ')}`);
+    if (issue.blocks.length > 0) lines.push(`Blocks: ${issue.blocks.join(', ')}`);
+    if (issue.comments.length > 0) {
+      lines.push('Comments:');
+      issue.comments.forEach((c) => lines.push(`  ${c}`, ''));
+    }
+
+    return lines.join('\n');
+  }
+
   async claimIssue(id: number, owner: string): Promise<boolean> {
     const result = await sendRequest<{ claimed: boolean }>('db_issue_claim', {
       id,

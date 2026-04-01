@@ -227,41 +227,42 @@ export interface SkillModule {
 
 /**
  * Issue module interface
- * Note: Methods return Promises to support async IPC in child context
+ * All methods are async for consistency between main and child contexts
  */
 export interface IssueModule {
-  createIssue(title: string, content: string, blockedBy?: number[]): number | Promise<number>;
-  getIssue(id: number): Issue | undefined | Promise<Issue | undefined>;
-  listIssues(): Issue[] | Promise<Issue[]>;
-  printIssues(): string | Promise<string>;
-  claimIssue(id: number, owner: string): boolean | Promise<boolean>;
-  closeIssue(id: number, status: 'completed' | 'failed' | 'abandoned', comment?: string): void | Promise<void>;
-  addComment(id: number, comment: string): void | Promise<void>;
-  createBlockage(blocker: number, blocked: number): void | Promise<void>;
-  removeBlockage(blocker: number, blocked: number): void | Promise<void>;
+  createIssue(title: string, content: string, blockedBy?: number[]): Promise<number>;
+  getIssue(id: number): Promise<Issue | undefined>;
+  listIssues(): Promise<Issue[]>;
+  printIssues(): Promise<string>;
+  printIssue(id: number): Promise<string>;
+  claimIssue(id: number, owner: string): Promise<boolean>;
+  closeIssue(id: number, status: 'completed' | 'failed' | 'abandoned', comment?: string): Promise<void>;
+  addComment(id: number, comment: string): Promise<void>;
+  createBlockage(blocker: number, blocked: number): Promise<void>;
+  removeBlockage(blocker: number, blocked: number): Promise<void>;
 }
 
 /**
  * Background task module interface
- * Note: Methods return Promises to support async IPC in child context
+ * All methods are async for consistency between main and child contexts
  */
 export interface BgModule {
-  runCommand(cmd: string): number | Promise<number>;
-  printBgTasks(): string | Promise<string>;
-  hasRunningBgTasks(): boolean | Promise<boolean>;
-  killTask(pid: number): void | Promise<void>;
+  runCommand(cmd: string): Promise<number>;
+  printBgTasks(): Promise<string>;
+  hasRunningBgTasks(): Promise<boolean>;
+  killTask(pid: number): Promise<void>;
 }
 
 /**
  * Worktree module interface
- * Note: Methods return Promises to support async IPC in child context
+ * All methods are async for consistency between main and child contexts
  */
 export interface WtModule {
-  createWorkTree(name: string, branch: string): string | Promise<string>;
-  printWorkTrees(): string | Promise<string>;
-  enterWorkTree(name: string): void | Promise<void>;
-  leaveWorkTree(): void | Promise<void>;
-  removeWorkTree(name: string): void | Promise<void>;
+  createWorkTree(name: string, branch: string): Promise<string>;
+  printWorkTrees(): Promise<string>;
+  enterWorkTree(name: string): Promise<void>;
+  leaveWorkTree(): Promise<void>;
+  removeWorkTree(name: string): Promise<void>;
 }
 
 // ============================================================================
@@ -309,8 +310,8 @@ export interface TeamModule {
   awaitTeammate(name: string, timeout?: number): Promise<void>;
   awaitTeam(timeout?: number): Promise<{ allSettled: boolean }>;
   printTeam(): string;
-  removeTeammate(name: string): void;
-  dismissTeam(): void;
+  removeTeammate(name: string, force?: boolean): void;
+  dismissTeam(force?: boolean): void;
   mailTo(name: string, title: string, content: string): void;
   broadcast(title: string, content: string): void;
   // IPC Handler registration

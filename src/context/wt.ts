@@ -22,7 +22,7 @@ export class WorktreeManager implements WtModule {
   /**
    * Create a new git worktree
    */
-  createWorkTree(name: string, branch: string): string {
+  async createWorkTree(name: string, branch: string): Promise<string> {
     const workDir = this.core.getWorkDir();
     const wtPath = path.join(workDir, '.worktrees', name);
 
@@ -61,7 +61,7 @@ export class WorktreeManager implements WtModule {
   /**
    * List all worktrees
    */
-  printWorkTrees(): string {
+  async printWorkTrees(): Promise<string> {
     const db = getDb();
     const rows = db.prepare(`SELECT name, path, branch FROM worktrees`).all() as Array<{
       name: string;
@@ -83,7 +83,7 @@ export class WorktreeManager implements WtModule {
   /**
    * Enter a worktree (change working directory)
    */
-  enterWorkTree(name: string): void {
+  async enterWorkTree(name: string): Promise<void> {
     const db = getDb();
     const row = db.prepare(`SELECT path FROM worktrees WHERE name = ?`).get(name) as {
       path: string;
@@ -103,7 +103,7 @@ export class WorktreeManager implements WtModule {
   /**
    * Leave current worktree (restore to project root)
    */
-  leaveWorkTree(): void {
+  async leaveWorkTree(): Promise<void> {
     // Find the project root by looking for .git directory
     let currentDir = this.core.getWorkDir();
     while (currentDir !== path.dirname(currentDir)) {
@@ -120,7 +120,7 @@ export class WorktreeManager implements WtModule {
   /**
    * Remove a worktree
    */
-  removeWorkTree(name: string): void {
+  async removeWorkTree(name: string): Promise<void> {
     const db = getDb();
     const row = db.prepare(`SELECT path FROM worktrees WHERE name = ?`).get(name) as {
       path: string;
