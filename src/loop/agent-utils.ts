@@ -1,0 +1,151 @@
+/**
+ * agent-utils.ts - Shared utilities for agent loop and worker
+ */
+
+import type { Message } from 'ollama';
+import type { AgentContext } from '../types.js';
+
+export const TOKEN_THRESHOLD = 50000;
+
+/**
+ * Estimate token count (rough approximation)
+ */
+export function estimateTokens(messages: Message[]): number {
+  let total = 0;
+  for (const msg of messages) {
+    if (msg.content) {
+      total += msg.content.split(/\s+/).length;
+    }
+    if (msg.tool_calls) {
+      for (const tc of msg.tool_calls) {
+        total += JSON.stringify(tc.function.arguments).split(/\s+/).length;
+      }
+    }
+  }
+  return total;
+}
+
+/**
+ * Micro-compact: collapse consecutive tool results
+ */
+export function microCompact(messages: Message[]): void {
+  // Find consecutive tool messages and combine them
+  const newMessages: Message[] = [];
+  let pendingTools: Message[] = [];
+
+  for (const msg of messages) {
+    if (msg.role === 'tool') {
+      pendingTools.push(msg);
+    } else {
+      if (pendingTools.length > 0) {
+        // Combine pending tools into a single user message
+        const combined = pendingTools.map((m) => m.content).join('\n---\n');
+        newMessages.push({ role: 'user', content: `Previous tool results:\n${combined}` });
+        pendingTools = [];
+      }
+      newMessages.push(msg);
+    }
+  }
+
+  // Handle any remaining pending tools
+  if (pendingTools.length > 0) {
+    const combined = pendingTools.map((m) => m.content).join('\n---\n');
+    newMessages.push({ role: 'user', content: `Previous tool results:\n${combined}` });
+  }
+
+  // Modify in place
+  messages.length = 0;
+  messages.push(...newMessages);
+}
+
+/**
+ * Auto-compact: summarize old messages
+ * For now, just keep the last N messages
+ */
+export async function autoCompact(messages: Message[]): Promise<Message[]> {
+  // Keep system and last 10 messages
+  if (messages.length <= 10) {
+    return messages;
+  }
+
+  // Create a summary message
+  const summary = `[Context compacted. ${messages.length} messages summarized. Continue from current state.]`;
+
+  return [
+    messages[0], // System message
+    { role: 'user', content: summary },
+    ...messages.slice(-10),
+  ];
+}
+
+/**
+ * Create identity block for child process system prompt
+ */
+export function makeIdentityBlock(name: string, role: string, workDir: string): string {
+  return `[IDENTITY]
+Name: ${name}
+Role: ${role}
+Working Directory: ${workDir}
+[/IDENTITY]`;
+}
+
+/**
+ * Build system prompt
+ */
+export function buildSystemPrompt(
+  ctx: AgentContext,
+  identity?: { name: string; role: string }
+): string {
+  const workDir = ctx.core.getWorkDir();
+  const skills = ctx.skill.printSkills();
+
+  // For child process, include identity and collaboration guidance
+  if (identity) {
+    return `You are ${identity.name}, a ${identity.role} teammate working autonomously.
+
+${makeIdentityBlock(identity.name, identity.role, workDir)}
+
+## Your Role
+You are a specialized agent working as part of a team. Focus on your assigned tasks and collaborate with teammates through mail.
+
+## User Communication
+- Use \`ctx.core.brief()\` to log status updates visible to the user
+- Use \`ctx.core.question()\` to ask the user questions when you need clarification
+- These are your ONLY ways to communicate with the user directly
+
+## Team Collaboration
+- You CANNOT spawn additional teammates - escalate to lead via mail if needed
+- Use \`mail_to\` to send messages to teammates
+- Check your mailbox regularly with \`ctx.mail.collectMails()\`
+- Coordinate work through issues: claim issues, update status, mark complete
+
+## Tools
+Use tools to complete your tasks. Skills: ${skills}
+
+## Workflow
+1. Check for mail and new tasks
+2. Work on assigned issues or claim pending issues
+3. Report progress via brief()
+4. Ask questions via question() when blocked
+5. Send mail to coordinate with teammates
+
+Working directory: ${workDir}
+`;
+  }
+
+  // Main process system prompt
+  const team = ctx.team?.printTeam() || 'No teammates.';
+  return `You are a coding agent at ${workDir}.
+Use tools to finish tasks. Use skills to access specialized knowledge.
+
+Consider using issue_* to divide and conquor complex tasks, using todo_* for simple task tracking.
+
+Read README.md or CLAUDE.md first if you feel lost about the context.
+
+You must ask for grant BEFORE "git commit" with no exception.
+
+Skills: ${skills}
+
+${team !== 'No teammates.' ? `You have a team. Team status:\n${team}\n` : ''}
+`;
+}
