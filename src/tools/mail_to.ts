@@ -5,16 +5,18 @@
  */
 
 import type { ToolDefinition, AgentContext } from '../types.js';
+import { sendRequest } from '../context/child-context/ipc-helpers.js';
 
 export const mailToTool: ToolDefinition = {
   name: 'mail_to',
-  description: 'Send an async message to a specific teammate. Use this for inter-agent communication.',
+  description:
+    'Send an async message to a specific teammate or lead. Use this for inter-agent communication. Use "lead" to message the lead agent.',
   input_schema: {
     type: 'object',
     properties: {
       name: {
         type: 'string',
-        description: 'Target teammate name to receive the message',
+        description: 'Target name to receive the message (teammate name or "lead")',
       },
       title: {
         type: 'string',
@@ -28,7 +30,7 @@ export const mailToTool: ToolDefinition = {
     required: ['name', 'title', 'content'],
   },
   scope: ['main', 'child'],
-  handler: (ctx: AgentContext, args: Record<string, unknown>): string => {
+  handler: async (ctx: AgentContext, args: Record<string, unknown>): Promise<string> => {
     const name = args.name as string;
     const title = args.title as string;
     const content = args.content as string;
@@ -47,16 +49,41 @@ export const mailToTool: ToolDefinition = {
       return 'Error: content parameter is required and must be a string';
     }
 
-    // Check if teammate exists
+    // Child process: send via IPC to lead
     if (!ctx.team) {
-      ctx.core.brief('error', 'mail_to', 'Team module not available');
-      return 'Error: Team module not available in this context';
+      ctx.core.brief('info', 'mail_to', `Sending mail to ${name} via lead: ${title}`);
+      try {
+        // sendRequest resolves with msg.data on success, rejects on failure
+        await sendRequest<{ to: string }>('send_mail', {
+          to: name,
+          title,
+          content,
+        });
+        return `Mail sent to '${name}' with title: ${title}`;
+      } catch (error) {
+        const err = error as Error;
+        ctx.core.brief('error', 'mail_to', err.message);
+        return `Error: ${err.message}`;
+      }
     }
 
+    // Main process: direct access to team module
+    // Sending to lead
+    if (name === 'lead') {
+      ctx.core.brief('info', 'mail_to', `Sending mail to lead: ${title}`);
+      ctx.team.mailTo('lead', title, content);
+      return `Mail sent to 'lead' with title: ${title}`;
+    }
+
+    // Check if teammate exists
     const teammate = ctx.team.getTeammate(name);
     if (!teammate) {
+      const available = ctx.team
+        .listTeammates()
+        .map((t) => t.name)
+        .join(', ') || 'none';
       ctx.core.brief('warn', 'mail_to', `Teammate '${name}' not found`);
-      return `Error: Teammate '${name}' not found`;
+      return `Error: Teammate '${name}' not found. Available: ${available}. Use 'lead' to message the lead agent.`;
     }
 
     ctx.core.brief('info', 'mail_to', `Sending mail to ${name}: ${title}`);

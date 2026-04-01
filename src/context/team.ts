@@ -118,6 +118,47 @@ export class TeamManager implements TeamModule {
         }
       },
     });
+
+    // Send mail handler - allows teammates to send mail through lead
+    this.ipcRegistry.register({
+      messageType: 'send_mail',
+      module: 'team',
+      handler: (sender: string, payload: Record<string, unknown>) => {
+        const { to, title, content } = payload as { to: string; title: string; content: string };
+
+        // Sending to lead
+        if (to === 'lead') {
+          // Mail to lead - store in lead's mailbox
+          const mail = createMail('lead');
+          mail.appendMail(sender, title, content);
+          return { success: true, data: { to } };
+        }
+
+        // Check if recipient exists
+        const recipient = this.getTeammate(to);
+        if (!recipient) {
+          const available = this.listTeammates()
+            .map((t) => t.name)
+            .join(', ') || 'none';
+          return {
+            success: false,
+            error: `Recipient '${to}' not found. Available teammates: ${available}. Use 'lead' to message the lead agent.`,
+          };
+        }
+
+        // Check if recipient is still active
+        if (recipient.status === 'shutdown') {
+          return {
+            success: false,
+            error: `Recipient '${to}' has shutdown.`,
+          };
+        }
+
+        // Route mail to recipient
+        this.mailTo(to, title, content, sender);
+        return { success: true, data: { to } };
+      },
+    });
   }
 
   /**
@@ -436,10 +477,14 @@ export class TeamManager implements TeamModule {
 
   /**
    * Send mail to a teammate
+   * @param name - Recipient name
+   * @param title - Message title
+   * @param content - Message content
+   * @param from - Sender name (defaults to 'lead')
    */
-  mailTo(name: string, title: string, content: string): void {
+  mailTo(name: string, title: string, content: string, from: string = 'lead'): void {
     const mail = createMail(name);
-    mail.appendMail('lead', title, content);
+    mail.appendMail(from, title, content);
 
     // Log to transcript
     if (this.transcript) {

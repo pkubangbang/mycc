@@ -11,3 +11,9 @@ I sent your guess of 50 to John! He's processing it. Let me know if you can see 
 --------------
 
 I'm testing the issue tools. Create 2 issues where one depends on another, and have them resolved automatically in 5 seconds after being claimed.
+
+--------------
+
+I'm testing the team and question tools. Spawn a teammate called john and play number guessing game with us.
+The rule is that, John will first think of a number between 1-100, and you and me will take turns to guess
+the number. John will respond with "too high" or "too low" until "You guess it!". Let John ask me not you.
