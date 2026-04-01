@@ -36,10 +36,11 @@ export class ChildCore implements CoreModule {
   }
 
   async question(query: string, asker?: string): Promise<string> {
+    // Use no timeout for user questions - user can take arbitrary time to respond
     const response = await sendRequest<{ response: string }>('question', {
       query,
       asker: asker || this.name,
-    });
+    }, 0);
     return response.response;
   }
 

@@ -29,10 +29,14 @@ export function sendNotification(type: string, payload: Record<string, unknown>)
 
 /**
  * Send a request to parent and wait for response
+ * @param type - Message type
+ * @param args - Request arguments
+ * @param timeoutMs - Timeout in milliseconds (0 = no timeout, default 30000)
  */
 export function sendRequest<T>(
   type: string,
-  args: Record<string, unknown>
+  args: Record<string, unknown>,
+  timeoutMs: number = 30000
 ): Promise<T> {
   return new Promise((resolve, reject) => {
     const reqId = ++reqIdCounter;
@@ -43,13 +47,15 @@ export function sendRequest<T>(
 
     process.send?.({ type, reqId, ...args });
 
-    // Timeout after 30 seconds
-    setTimeout(() => {
-      if (pendingRequests.has(reqId)) {
-        pendingRequests.delete(reqId);
-        reject(new Error(`IPC request timeout: ${type}`));
-      }
-    }, 30000);
+    // Set up timeout (0 = no timeout, useful for user input)
+    if (timeoutMs > 0) {
+      setTimeout(() => {
+        if (pendingRequests.has(reqId)) {
+          pendingRequests.delete(reqId);
+          reject(new Error(`IPC request timeout: ${type}`));
+        }
+      }, timeoutMs);
+    }
   });
 }
 
