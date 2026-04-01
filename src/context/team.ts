@@ -14,7 +14,7 @@ import type {
 } from '../types.js';
 import { getDb } from './db.js';
 import { createMail } from './mail.js';
-import { createIpcRegistry, IpcRegistry } from './ipc-registry.js';
+import { createIpcRegistry, IpcRegistry } from './child-context/ipc-registry.js';
 import type { CoreModule } from '../types.js';
 
 // ES module compatibility for __dirname
@@ -64,10 +64,11 @@ export class TeamManager implements TeamModule {
     this.ipcRegistry.register({
       messageType: 'status',
       module: 'team',
-      handler: (sender, payload) => {
+      handler: (_sender: string, payload: Record<string, unknown>) => {
         const { status } = payload as { status: TeammateStatus };
         // Note: status update is handled specially in handleChildMessage
         // because it needs access to internal state
+        void status; // Suppress unused variable warning
       },
     });
 
@@ -75,7 +76,7 @@ export class TeamManager implements TeamModule {
     this.ipcRegistry.register({
       messageType: 'log',
       module: 'team',
-      handler: (sender, payload) => {
+      handler: (sender: string, payload: Record<string, unknown>) => {
         const { message } = payload as { message: string };
         this.core.brief('info', sender, message);
       },
@@ -85,7 +86,7 @@ export class TeamManager implements TeamModule {
     this.ipcRegistry.register({
       messageType: 'error',
       module: 'team',
-      handler: (sender, payload) => {
+      handler: (sender: string, payload: Record<string, unknown>) => {
         const { error } = payload as { error: string };
         this.core.brief('error', sender, error);
       },
@@ -96,7 +97,7 @@ export class TeamManager implements TeamModule {
     this.ipcRegistry.register({
       messageType: 'question',
       module: 'core',
-      handler: async (sender, payload, ctx) => {
+      handler: async (sender: string, payload: Record<string, unknown>, ctx: AgentContext) => {
         const { query } = payload as { query: string };
         try {
           // Pass sender as asker so user knows who is asking

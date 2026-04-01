@@ -10,7 +10,7 @@ import type {
   IpcMessageHandler,
   IpcHandlerResult,
   AgentContext,
-} from '../types.js';
+} from '../../types.js';
 
 /**
  * Registry for IPC message handlers

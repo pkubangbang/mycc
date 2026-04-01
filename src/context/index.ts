@@ -20,7 +20,7 @@ export * from './issue.js';
 export * from './bg.js';
 export * from './wt.js';
 export * from './team.js';
-export * from './ipc-registry.js';
+export * from './child-context/ipc-registry.js';
 
 /**
  * Create a complete AgentContext with all modules
