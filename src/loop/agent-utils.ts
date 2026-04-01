@@ -2,7 +2,11 @@
  * agent-utils.ts - Shared utilities for agent loop and worker
  */
 
+import * as fs from 'fs';
+import * as path from 'path';
 import type { Message } from 'ollama';
+import { ollama, MODEL } from '../ollama.js';
+import { getMyccDir, ensureDirs } from '../context/db.js';
 import type { AgentContext } from '../types.js';
 
 export const TOKEN_THRESHOLD = 50000;
@@ -59,22 +63,56 @@ export function microCompact(messages: Message[]): void {
 }
 
 /**
- * Auto-compact: summarize old messages
- * For now, just keep the last N messages
+ * Auto-compact: save transcript and summarize old messages using LLM
  */
 export async function autoCompact(messages: Message[]): Promise<Message[]> {
-  // Keep system and last 10 messages
-  if (messages.length <= 10) {
-    return messages;
+  // Ensure transcript directory exists
+  ensureDirs();
+  const transcriptDir = path.join(getMyccDir(), 'transcripts');
+  if (!fs.existsSync(transcriptDir)) {
+    fs.mkdirSync(transcriptDir, { recursive: true });
   }
 
-  // Create a summary message
-  const summary = `[Context compacted. ${messages.length} messages summarized. Continue from current state.]`;
+  // Save full transcript to disk
+  const timestamp = Math.floor(Date.now() / 1000);
+  const transcriptPath = path.join(transcriptDir, `transcript_${timestamp}.jsonl`);
+
+  const writeStream = fs.createWriteStream(transcriptPath);
+  for (const msg of messages) {
+    writeStream.write(JSON.stringify(msg) + '\n');
+  }
+  writeStream.end();
+
+  console.log(`[transcript saved: ${transcriptPath}]`);
+
+  // Ask LLM to summarize
+  const conversationText = JSON.stringify(messages).slice(0, 80000);
+
+  const response = await ollama.chat({
+    model: MODEL,
+    messages: [
+      {
+        role: 'user',
+        content:
+          'Summarize this conversation for continuity. Include: ' +
+          '1) What was accomplished, 2) Current state, 3) Key decisions made. ' +
+          'Be concise but preserve critical details.\n\n' +
+          conversationText,
+      },
+    ],
+  });
+
+  const summary = response.message.content || '(no summary)';
 
   return [
-    messages[0], // System message
-    { role: 'user', content: summary },
-    ...messages.slice(-10),
+    {
+      role: 'user',
+      content: `[Conversation compressed. Transcript: ${transcriptPath}]\n\n${summary}`,
+    },
+    {
+      role: 'assistant',
+      content: 'Understood. I have the context from the summary. Continuing.',
+    },
   ];
 }
 
