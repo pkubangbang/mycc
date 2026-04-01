@@ -4,6 +4,7 @@
 
 import type { ChildProcess } from 'child_process';
 import type { JSONSchema7 } from 'json-schema';
+import { WebFetchResponse, WebSearchResult } from 'ollama';
 
 // ============================================================================
 // Tool Definitions
@@ -208,6 +209,16 @@ export interface CoreModule {
    * Set the transcript module for logging
    */
   setTranscript(transcript: TranscriptModule): void;
+  /**
+   * Search the web for information
+   * @param query - The search query
+   */
+  webSearch(query: string): Promise<WebSearchResult[]>;
+  /**
+   * Fetch and parse content from a specific URL
+   * @param url - The URL to fetch
+   */
+  webFetch(url: string): Promise<WebFetchResponse>;
 }
 
 /**
@@ -346,7 +357,7 @@ export interface TeamModule {
   printTeam(): string;
   removeTeammate(name: string, force?: boolean): void;
   dismissTeam(force?: boolean): void;
-  mailTo(name: string, title: string, content: string): void;
+  mailTo(name: string, title: string, content: string, from?: string): void;
   broadcast(title: string, content: string): void;
   // IPC Handler registration
   registerHandler(registration: IpcHandlerRegistration): void;

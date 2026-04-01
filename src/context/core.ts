@@ -4,6 +4,8 @@
 
 import chalk from 'chalk';
 import type { CoreModule, TranscriptModule } from '../types.js';
+import { ollama } from '../ollama.js';
+import { WebFetchResponse, WebSearchResult } from 'ollama';
 
 /**
  * Color functions for tool prefixes
@@ -127,6 +129,41 @@ export class Core implements CoreModule {
       this.transcript.logAnswer(asker, response);
     }
     return response;
+  }
+
+  /**
+   * Search the web for information
+   * @param query - The search query
+   */
+  async webSearch(query: string): Promise<WebSearchResult[]> {
+    this.brief('info', 'webSearch', `searching: ${query}`);
+    try {
+      const response = await ollama.webSearch({ query });
+      const results = response.results || [];
+      this.brief('info', 'webSearch', `found ${results.length} results`);
+      return results;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.brief('error', 'webSearch', `failed: ${message}`);
+      throw error;
+    }
+  }
+
+  /**
+   * Fetch and parse content from a specific URL
+   * @param url - The URL to fetch
+   */
+  async webFetch(url: string): Promise<WebFetchResponse> {
+    this.brief('info', 'webFetch', `fetching: ${url}`);
+    try {
+      const response = await ollama.webFetch({ url });
+      this.brief('info', 'webFetch', `fetched: ${response.title}`);
+      return response;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.brief('error', 'webFetch', `failed: ${message}`);
+      throw error;
+    }
   }
 }
 

@@ -2,6 +2,8 @@
  * core.ts - ChildCore implementation for IPC-based core operations
  */
 
+import { WebFetchResponse, WebSearchResult } from 'ollama';
+import { ollama } from '../../ollama.js';
 import type { CoreModule, TranscriptModule } from '../../types.js';
 import { sendLog, sendError, sendRequest } from './ipc-helpers.js';
 
@@ -42,6 +44,41 @@ export class ChildCore implements CoreModule {
       asker: asker || this.name,
     }, 0);
     return response.response;
+  }
+
+  /**
+   * Search the web for information
+   * @param query - The search query
+   */
+  async webSearch(query: string): Promise<WebSearchResult[]> {
+    this.brief('info', 'webSearch', `searching: ${query}`);
+    try {
+      const response = await ollama.webSearch({ query });
+      const results = response.results || [];
+      this.brief('info', 'webSearch', `found ${results.length} results`);
+      return results;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.brief('error', 'webSearch', `failed: ${message}`);
+      throw error;
+    }
+  }
+
+  /**
+   * Fetch and parse content from a specific URL
+   * @param url - The URL to fetch
+   */
+  async webFetch(url: string): Promise<WebFetchResponse> {
+    this.brief('info', 'webFetch', `fetching: ${url}`);
+    try {
+      const response = await ollama.webFetch({ url });
+      this.brief('info', 'webFetch', `fetched: ${response.title}`);
+      return response;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.brief('error', 'webFetch', `failed: ${message}`);
+      throw error;
+    }
   }
 
   setQuestionFn(): void {
