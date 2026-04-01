@@ -49,6 +49,11 @@ export const tmCreateTool: ToolDefinition = {
 
     ctx.core.brief('info', 'tm_create', `Creating teammate '${name}' with role: ${role}`);
 
+    if (!ctx.team) {
+      ctx.core.brief('error', 'tm_create', 'Team module not available');
+      return 'Error: Team module not available in this context';
+    }
+
     try {
       const result = await ctx.team.createTeammate(name, role, prompt);
       return result;

@@ -8,8 +8,8 @@ import { createTodo } from './todo.js';
 import { createMail } from './mail.js';
 import { createSkill } from './skill.js';
 import { createIssue, createIssueIpcHandlers } from './issue.js';
-import { createBg } from './bg.js';
-import { createWt } from './wt.js';
+import { createBg, createBgIpcHandlers } from './bg.js';
+import { createWt, createWtIpcHandlers } from './wt.js';
 import { createTeam, TeamManager } from './team.js';
 
 export * from './core.js';
@@ -21,6 +21,7 @@ export * from './bg.js';
 export * from './wt.js';
 export * from './team.js';
 export * from './child-context/ipc-registry.js';
+export * from './child-context/index.js';
 
 /**
  * Create a complete AgentContext with all modules
@@ -59,6 +60,16 @@ export function createAgentContext(workDir?: string): AgentContext {
   // Register IPC handlers for modules that need them
   const issueHandlers = createIssueIpcHandlers();
   for (const handler of issueHandlers) {
+    team.registerHandler(handler);
+  }
+
+  const bgHandlers = createBgIpcHandlers();
+  for (const handler of bgHandlers) {
+    team.registerHandler(handler);
+  }
+
+  const wtHandlers = createWtIpcHandlers();
+  for (const handler of wtHandlers) {
     team.registerHandler(handler);
   }
 

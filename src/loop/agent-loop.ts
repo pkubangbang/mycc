@@ -10,99 +10,13 @@ import type { AgentContext, ToolScope } from '../types.js';
 import { ToolLoaderImpl } from '../context/loader.js';
 import { createAgentContext } from '../context/index.js';
 import { createLoader, createToolLoader } from '../context/loader.js';
-
-const TOKEN_THRESHOLD = 50000; // Rough token limit before compacting
-
-/**
- * Estimate token count (rough approximation)
- */
-function estimateTokens(messages: Message[]): number {
-  let total = 0;
-  for (const msg of messages) {
-    if (msg.content) {
-      total += msg.content.split(/\s+/).length;
-    }
-    if (msg.tool_calls) {
-      for (const tc of msg.tool_calls) {
-        total += JSON.stringify(tc.function.arguments).split(/\s+/).length;
-      }
-    }
-  }
-  return total;
-}
-
-/**
- * Micro-compact: collapse consecutive tool results
- */
-function microCompact(messages: Message[]): void {
-  // Find consecutive tool messages and combine them
-  const newMessages: Message[] = [];
-  let pendingTools: Message[] = [];
-
-  for (const msg of messages) {
-    if (msg.role === 'tool') {
-      pendingTools.push(msg);
-    } else {
-      if (pendingTools.length > 0) {
-        // Combine pending tools into a single user message
-        const combined = pendingTools.map((m) => m.content).join('\n---\n');
-        newMessages.push({ role: 'user', content: `Previous tool results:\n${combined}` });
-        pendingTools = [];
-      }
-      newMessages.push(msg);
-    }
-  }
-
-  // Handle any remaining pending tools
-  if (pendingTools.length > 0) {
-    const combined = pendingTools.map((m) => m.content).join('\n---\n');
-    newMessages.push({ role: 'user', content: `Previous tool results:\n${combined}` });
-  }
-}
-
-/**
- * Auto-compact: summarize old messages
- * For now, just keep the last N messages
- */
-async function autoCompact(messages: Message[]): Promise<Message[]> {
-  // Keep system and last 10 messages
-  if (messages.length <= 10) {
-    return messages;
-  }
-
-  // Create a summary message
-  const summary = `[Context compacted. ${messages.length} messages summarized. Continue from current state.]`;
-
-  return [
-    messages[0], // System message
-    { role: 'user', content: summary },
-    ...messages.slice(-10),
-  ];
-}
-
-/**
- * Build system prompt
- */
-function buildSystemPrompt(ctx: AgentContext): string {
-  const workDir = ctx.core.getWorkDir();
-  const skills = ctx.skill.printSkills();
-  const team = ctx.team.printTeam();
-
-  return `You are a coding agent at ${workDir}.
-Use tools to finish tasks. Use skills to access specialized knowledge.
-
-Consider using issue_* to divide and conquor complex tasks, using todo_* for simple task tracking.
-
-Read README.md or CLAUDE.md first if you feel lost about the context.
-
-You must ask for grant BEFORE "git commit" with no exception.
-
-Skills: ${skills}
-
-${team !== 'No teammates.' ? `You have a team. Team status:\n${team}\n` : ''}
-
-`;
-}
+import {
+  TOKEN_THRESHOLD,
+  estimateTokens,
+  microCompact,
+  autoCompact,
+  buildSystemPrompt,
+} from './agent-utils.js'; // Rough token limit before compacting
 
 /**
  * Agent loop - STAR principle: Situation, Task, Action, Result
@@ -168,16 +82,21 @@ export async function agentLoop(
 
     // 8. No tool calls = check team status
     if (!assistantMessage.tool_calls || assistantMessage.tool_calls.length === 0) {
-      const result = await ctx.team.awaitTeam(30000);
-      if (result.allSettled) {
-        return;
-      }
+      // Only check team if it exists (not in child process)
+      if (ctx.team) {
+        const result = await ctx.team.awaitTeam(30000);
+        if (result.allSettled) {
+          return;
+        }
 
-      messages.push({
-        role: 'user',
-        content: `Timeout waiting for teammates. ${ctx.team.printTeam()}`,
-      });
-      continue;
+        messages.push({
+          role: 'user',
+          content: `Timeout waiting for teammates. ${ctx.team.printTeam()}`,
+        });
+        continue;
+      }
+      // No team means single agent - just return
+      return;
     }
 
     // 9. Execute tools
@@ -231,7 +150,7 @@ export async function main(): Promise<void> {
   // Handle graceful shutdown
   process.on('SIGINT', () => {
     console.log(chalk.yellow('\nShutting down...'));
-    ctx.team.dismissTeam();
+    ctx.team?.dismissTeam();
     rl.close();
     process.exit(0);
   });
@@ -246,7 +165,7 @@ export async function main(): Promise<void> {
 
       // Handle commands
       if (query.trim() === '/team') {
-        console.log(ctx.team.printTeam());
+        console.log(ctx.team?.printTeam() || 'No team.');
         continue;
       }
 
@@ -283,7 +202,7 @@ export async function main(): Promise<void> {
   }
 
   // Cleanup
-  ctx.team.dismissTeam();
+  ctx.team?.dismissTeam();
   rl.close();
   loader.stopWatching();
 }

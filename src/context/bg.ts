@@ -3,7 +3,7 @@
  */
 
 import { spawn, ChildProcess } from 'child_process';
-import type { BgModule, BgTask, BgTaskStatus } from '../types.js';
+import type { BgModule, BgTask, BgTaskStatus, IpcHandlerRegistration } from '../types.js';
 import type { CoreModule } from '../types.js';
 
 /**
@@ -134,4 +134,47 @@ export class BackgroundTasks implements BgModule {
  */
 export function createBg(core: CoreModule): BgModule {
   return new BackgroundTasks(core);
+}
+
+/**
+ * Create IPC handlers for Background Tasks module
+ * These handle bg requests from child processes
+ */
+export function createBgIpcHandlers(): IpcHandlerRegistration[] {
+  return [
+    {
+      messageType: 'bg_run',
+      module: 'bg',
+      handler: async (_sender, payload, ctx) => {
+        const { cmd } = payload as { cmd: string };
+        const pid = ctx.bg.runCommand(cmd);
+        return { success: true, data: { pid } };
+      },
+    },
+    {
+      messageType: 'bg_print',
+      module: 'bg',
+      handler: (_sender, _payload, ctx) => {
+        const output = ctx.bg.printBgTasks();
+        return { success: true, data: output };
+      },
+    },
+    {
+      messageType: 'bg_has_running',
+      module: 'bg',
+      handler: (_sender, _payload, ctx) => {
+        const running = ctx.bg.hasRunningBgTasks();
+        return { success: true, data: { running } };
+      },
+    },
+    {
+      messageType: 'bg_kill',
+      module: 'bg',
+      handler: (_sender, payload, ctx) => {
+        const { pid } = payload as { pid: number };
+        ctx.bg.killTask(pid);
+        return { success: true };
+      },
+    },
+  ];
 }

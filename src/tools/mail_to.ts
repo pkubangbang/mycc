@@ -48,6 +48,11 @@ export const mailToTool: ToolDefinition = {
     }
 
     // Check if teammate exists
+    if (!ctx.team) {
+      ctx.core.brief('error', 'mail_to', 'Team module not available');
+      return 'Error: Team module not available in this context';
+    }
+
     const teammate = ctx.team.getTeammate(name);
     if (!teammate) {
       ctx.core.brief('warn', 'mail_to', `Teammate '${name}' not found`);

@@ -264,6 +264,25 @@ export function createIssue(): IssueModule {
  */
 export function createIssueIpcHandlers(): IpcHandlerRegistration[] {
   return [
+    // Read operations
+    {
+      messageType: 'db_issue_get',
+      module: 'issue',
+      handler: (_sender, payload, ctx) => {
+        const { id } = payload as { id: number };
+        const issue = ctx.issue.getIssue(id);
+        return { success: true, data: issue };
+      },
+    },
+    {
+      messageType: 'db_issue_list',
+      module: 'issue',
+      handler: (_sender, _payload, ctx) => {
+        const issues = ctx.issue.listIssues();
+        return { success: true, data: issues };
+      },
+    },
+    // Write operations
     {
       messageType: 'db_issue_create',
       module: 'issue',

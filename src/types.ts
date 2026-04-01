@@ -227,38 +227,41 @@ export interface SkillModule {
 
 /**
  * Issue module interface
+ * Note: Methods return Promises to support async IPC in child context
  */
 export interface IssueModule {
-  createIssue(title: string, content: string, blockedBy?: number[]): number;
-  getIssue(id: number): Issue | undefined;
-  listIssues(): Issue[];
-  printIssues(): string;
-  claimIssue(id: number, owner: string): boolean;
-  closeIssue(id: number, status: 'completed' | 'failed' | 'abandoned', comment?: string): void;
-  addComment(id: number, comment: string): void;
-  createBlockage(blocker: number, blocked: number): void;
-  removeBlockage(blocker: number, blocked: number): void;
+  createIssue(title: string, content: string, blockedBy?: number[]): number | Promise<number>;
+  getIssue(id: number): Issue | undefined | Promise<Issue | undefined>;
+  listIssues(): Issue[] | Promise<Issue[]>;
+  printIssues(): string | Promise<string>;
+  claimIssue(id: number, owner: string): boolean | Promise<boolean>;
+  closeIssue(id: number, status: 'completed' | 'failed' | 'abandoned', comment?: string): void | Promise<void>;
+  addComment(id: number, comment: string): void | Promise<void>;
+  createBlockage(blocker: number, blocked: number): void | Promise<void>;
+  removeBlockage(blocker: number, blocked: number): void | Promise<void>;
 }
 
 /**
  * Background task module interface
+ * Note: Methods return Promises to support async IPC in child context
  */
 export interface BgModule {
-  runCommand(cmd: string): number;
-  printBgTasks(): string;
-  hasRunningBgTasks(): boolean;
-  killTask(pid: number): void;
+  runCommand(cmd: string): number | Promise<number>;
+  printBgTasks(): string | Promise<string>;
+  hasRunningBgTasks(): boolean | Promise<boolean>;
+  killTask(pid: number): void | Promise<void>;
 }
 
 /**
  * Worktree module interface
+ * Note: Methods return Promises to support async IPC in child context
  */
 export interface WtModule {
-  createWorkTree(name: string, branch: string): string;
-  printWorkTrees(): string;
-  enterWorkTree(name: string): void;
-  leaveWorkTree(): void;
-  removeWorkTree(name: string): void;
+  createWorkTree(name: string, branch: string): string | Promise<string>;
+  printWorkTrees(): string | Promise<string>;
+  enterWorkTree(name: string): void | Promise<void>;
+  leaveWorkTree(): void | Promise<void>;
+  removeWorkTree(name: string): void | Promise<void>;
 }
 
 // ============================================================================
@@ -326,7 +329,7 @@ export interface AgentContext {
   issue: IssueModule;
   bg: BgModule;
   wt: WtModule;
-  team: TeamModule;
+  team: TeamModule | null;
 }
 
 // ============================================================================
