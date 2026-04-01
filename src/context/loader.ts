@@ -60,6 +60,11 @@ export class Loader implements DynamicLoader {
   private skills: Map<string, Skill> = new Map();
   private toolWatcher: fs.FSWatcher | null = null;
   private skillWatcher: fs.FSWatcher | null = null;
+  private silent: boolean;
+
+  constructor(silent: boolean = false) {
+    this.silent = silent;
+  }
 
   /**
    * Load all tools and skills from directories
@@ -82,7 +87,9 @@ export class Loader implements DynamicLoader {
   private loadBuiltInTools(): void {
     for (const tool of builtInTools) {
       this.tools.set(tool.name, tool);
-      console.log(`[loader] Loaded built-in tool: ${tool.name}`);
+      if (!this.silent) {
+        console.log(`[loader] Loaded built-in tool: ${tool.name}`);
+      }
     }
   }
 
@@ -120,14 +127,20 @@ export class Loader implements DynamicLoader {
       const tool = module.default as ToolDefinition;
 
       if (!tool || !tool.name) {
-        console.warn(`[loader] Invalid tool definition: ${filepath}`);
+        if (!this.silent) {
+          console.warn(`[loader] Invalid tool definition: ${filepath}`);
+        }
         return;
       }
 
       this.tools.set(tool.name, tool);
-      console.log(`[loader] Loaded tool: ${tool.name}`);
+      if (!this.silent) {
+        console.log(`[loader] Loaded tool: ${tool.name}`);
+      }
     } catch (err) {
-      console.error(`[loader] Failed to load tool ${filepath}:`, (err as Error).message);
+      if (!this.silent) {
+        console.error(`[loader] Failed to load tool ${filepath}:`, (err as Error).message);
+      }
     }
   }
 
@@ -186,7 +199,9 @@ export class Loader implements DynamicLoader {
       const { data, content: body } = matter(content);
 
       if (!data.name) {
-        console.warn(`[loader] Missing 'name' in frontmatter: ${filepath}`);
+        if (!this.silent) {
+          console.warn(`[loader] Missing 'name' in frontmatter: ${filepath}`);
+        }
         return;
       }
 
@@ -198,9 +213,13 @@ export class Loader implements DynamicLoader {
       };
 
       this.skills.set(skill.name, skill);
-      console.log(`[loader] Loaded skill: ${skill.name}`);
+      if (!this.silent) {
+        console.log(`[loader] Loaded skill: ${skill.name}`);
+      }
     } catch (err) {
-      console.error(`[loader] Failed to load skill ${filepath}:`, (err as Error).message);
+      if (!this.silent) {
+        console.error(`[loader] Failed to load skill ${filepath}:`, (err as Error).message);
+      }
     }
   }
 
@@ -216,7 +235,9 @@ export class Loader implements DynamicLoader {
     this.toolWatcher = watch(toolsDir, async (event, filename) => {
       if (filename && (filename.endsWith('.ts') || filename.endsWith('.js'))) {
         const filepath = path.join(toolsDir, filename);
-        console.log(`[loader] Reloading tool: ${filename}`);
+        if (!this.silent) {
+          console.log(`[loader] Reloading tool: ${filename}`);
+        }
         await this.reloadTool(filepath);
       }
     });
@@ -226,7 +247,9 @@ export class Loader implements DynamicLoader {
       const projectWatcher = watch(projectSkillsDir, { recursive: true }, (event, filename) => {
         if (filename && filename.endsWith('.md')) {
           const filepath = path.join(projectSkillsDir, filename);
-          console.log(`[loader] Reloading skill: ${filename}`);
+          if (!this.silent) {
+            console.log(`[loader] Reloading skill: ${filename}`);
+          }
           this.reloadSkill(filepath);
         }
       });
@@ -239,7 +262,9 @@ export class Loader implements DynamicLoader {
       const myccWatcher = watch(myccSkillsDir, (event, filename) => {
         if (filename && filename.endsWith('.md')) {
           const filepath = path.join(myccSkillsDir, filename);
-          console.log(`[loader] Reloading skill: ${filename}`);
+          if (!this.silent) {
+            console.log(`[loader] Reloading skill: ${filename}`);
+          }
           this.reloadSkill(filepath);
         }
       });
@@ -295,8 +320,8 @@ export class Loader implements DynamicLoader {
 /**
  * Create a dynamic loader instance
  */
-export function createLoader(): DynamicLoader {
-  return new Loader();
+export function createLoader(silent: boolean = false): DynamicLoader {
+  return new Loader(silent);
 }
 
 /**

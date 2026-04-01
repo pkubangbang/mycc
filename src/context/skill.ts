@@ -15,6 +15,11 @@ import { getSkillsDir, ensureDirs } from './db.js';
 export class SkillLoader implements SkillModule {
   private skills: Map<string, Skill> = new Map();
   private watcher: fs.FSWatcher | null = null;
+  private silent: boolean;
+
+  constructor(silent: boolean = false) {
+    this.silent = silent;
+  }
 
   /**
    * Load all skills from both project skills/ and .mycc/skills/
@@ -70,7 +75,9 @@ export class SkillLoader implements SkillModule {
       const { data, content: body } = matter(content);
 
       if (!data.name) {
-        console.warn(`[skill] Missing 'name' in frontmatter: ${filepath}`);
+        if (!this.silent) {
+          console.warn(`[skill] Missing 'name' in frontmatter: ${filepath}`);
+        }
         return;
       }
 
@@ -82,9 +89,13 @@ export class SkillLoader implements SkillModule {
       };
 
       this.skills.set(skill.name, skill);
-      console.log(`[skill] Loaded: ${skill.name}`);
+      if (!this.silent) {
+        console.log(`[skill] Loaded: ${skill.name}`);
+      }
     } catch (err) {
-      console.error(`[skill] Failed to load ${filepath}:`, (err as Error).message);
+      if (!this.silent) {
+        console.error(`[skill] Failed to load ${filepath}:`, (err as Error).message);
+      }
     }
   }
 
@@ -105,7 +116,9 @@ export class SkillLoader implements SkillModule {
       this.watcher = watch(projectSkillsDir, { recursive: true }, (event, filename) => {
         if (filename && filename.endsWith('.md')) {
           const filepath = path.join(projectSkillsDir, filename);
-          console.log(`[skill] Reloading: ${filename}`);
+          if (!this.silent) {
+            console.log(`[skill] Reloading: ${filename}`);
+          }
           this.reloadSkill(filepath);
         }
       });
@@ -116,7 +129,9 @@ export class SkillLoader implements SkillModule {
       const myccWatcher = watch(myccSkillsDir, (event, filename) => {
         if (filename && filename.endsWith('.md')) {
           const filepath = path.join(myccSkillsDir, filename);
-          console.log(`[skill] Reloading: ${filename}`);
+          if (!this.silent) {
+            console.log(`[skill] Reloading: ${filename}`);
+          }
           this.reloadSkill(filepath);
         }
       });
@@ -175,6 +190,6 @@ export class SkillLoader implements SkillModule {
 /**
  * Create a skill module instance
  */
-export function createSkill(): SkillModule {
-  return new SkillLoader();
+export function createSkill(silent: boolean = false): SkillModule {
+  return new SkillLoader(silent);
 }

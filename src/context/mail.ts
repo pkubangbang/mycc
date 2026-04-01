@@ -76,7 +76,7 @@ export class MailBox implements MailModule {
     }
 
     // Truncate file (clear it)
-    fs.writeFileSync(mailPath, '', 'utf-8');
+    fs.truncateSync(mailPath, 0);
 
     // Parse lines
     const lines = content.trim().split('\n');

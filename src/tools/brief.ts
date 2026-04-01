@@ -21,7 +21,7 @@ export const briefTool: ToolDefinition = {
     },
     required: ['message'],
   },
-  scope: ['child'],
+  scope: ['main', 'child'],
   handler: (ctx: AgentContext, args: Record<string, unknown>): string => {
     const message = args.message as string;
 

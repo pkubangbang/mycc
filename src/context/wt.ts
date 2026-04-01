@@ -169,53 +169,53 @@ export function createWtIpcHandlers(): IpcHandlerRegistration[] {
     {
       messageType: 'wt_create',
       module: 'wt',
-      handler: async (_sender, payload, ctx) => {
+      handler: async (_sender, payload, ctx, sendResponse) => {
         const { name, branch } = payload as { name: string; branch: string };
         const result = await ctx.wt.createWorkTree(name, branch);
         // Parse path from result string
         const match = result.match(/at (.+) on branch/);
         const wtPath = match ? match[1] : '';
-        return { success: true, data: { path: wtPath } };
+        sendResponse('wt_result', true, { path: wtPath });
       },
     },
     {
       messageType: 'wt_print',
       module: 'wt',
-      handler: async (_sender, _payload, ctx) => {
+      handler: async (_sender, _payload, ctx, sendResponse) => {
         const output = await ctx.wt.printWorkTrees();
-        return { success: true, data: output };
+        sendResponse('wt_result', true, output);
       },
     },
     {
       messageType: 'wt_enter',
       module: 'wt',
-      handler: async (_sender, payload, ctx) => {
+      handler: async (_sender, payload, ctx, sendResponse) => {
         const { name } = payload as { name: string };
         try {
           await ctx.wt.enterWorkTree(name);
           const workDir = ctx.core.getWorkDir();
-          return { success: true, data: { path: workDir } };
+          sendResponse('wt_result', true, { path: workDir });
         } catch (err) {
-          return { success: false, error: (err as Error).message };
+          sendResponse('wt_result', false, undefined, (err as Error).message);
         }
       },
     },
     {
       messageType: 'wt_leave',
       module: 'wt',
-      handler: async (_sender, _payload, ctx) => {
+      handler: async (_sender, _payload, ctx, sendResponse) => {
         await ctx.wt.leaveWorkTree();
         const workDir = ctx.core.getWorkDir();
-        return { success: true, data: { path: workDir } };
+        sendResponse('wt_result', true, { path: workDir });
       },
     },
     {
       messageType: 'wt_remove',
       module: 'wt',
-      handler: async (_sender, payload, ctx) => {
+      handler: async (_sender, payload, ctx, sendResponse) => {
         const { name } = payload as { name: string };
         await ctx.wt.removeWorkTree(name);
-        return { success: true };
+        sendResponse('wt_result', true);
       },
     },
   ];

@@ -8,7 +8,7 @@ import { createTodo } from './todo.js';
 import { createMail } from './mail.js';
 import { createSkill } from './skill.js';
 import { createIssue, createIssueIpcHandlers } from './issue.js';
-import { createBg, createBgIpcHandlers } from './bg.js';
+import { createBg } from './bg.js';
 import { createWt, createWtIpcHandlers } from './wt.js';
 import { createTeam, TeamManager } from './team.js';
 import { createTranscript } from './transcript.js';
@@ -70,11 +70,6 @@ export function createAgentContext(workDir?: string): AgentContext {
   // Register IPC handlers for modules that need them
   const issueHandlers = createIssueIpcHandlers();
   for (const handler of issueHandlers) {
-    team.registerHandler(handler);
-  }
-
-  const bgHandlers = createBgIpcHandlers();
-  for (const handler of bgHandlers) {
     team.registerHandler(handler);
   }
 

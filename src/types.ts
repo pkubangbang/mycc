@@ -315,26 +315,32 @@ export interface WtModule {
 // ============================================================================
 
 /**
- * IPC message handler result (for request/response pattern)
+ * Send response callback for IPC handlers
+ * @param responseType - The response type (e.g., 'db_result', 'wt_result')
+ * @param success - Whether the operation succeeded
+ * @param data - Response data on success
+ * @param error - Error message on failure
  */
-export interface IpcHandlerResult {
-  success: boolean;
-  data?: unknown;
-  error?: string;
-}
+export type SendResponseCallback = (
+  responseType: string,
+  success: boolean,
+  data?: unknown,
+  error?: string
+) => void;
 
 /**
  * IPC message handler function type
  * @param sender - Name of the child process that sent the message
  * @param payload - The message payload (excluding type discriminator)
  * @param ctx - AgentContext for accessing modules
- * @returns Result to send back to child (for requests), void for notifications
+ * @param sendResponse - Callback to send response back to child
  */
 export type IpcMessageHandler = (
   sender: string,
   payload: Record<string, unknown>,
-  ctx: AgentContext
-) => void | IpcHandlerResult | Promise<void | IpcHandlerResult>;
+  ctx: AgentContext,
+  sendResponse: SendResponseCallback
+) => void | Promise<void>;
 
 /**
  * Handler registration entry

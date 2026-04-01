@@ -1,5 +1,8 @@
 /**
  * ipc-helpers.ts - IPC communication primitives for child process
+ *
+ * IPC is transient and handles request-response concurrency only.
+ * Mail from teammates goes through ctx.mail (file-based), not here.
  */
 
 import type { TeammateStatus } from '../../types.js';
@@ -12,128 +15,109 @@ interface PendingRequest {
   reject: (error: Error) => void;
 }
 
-let reqIdCounter = 0;
-const pendingRequests = new Map<number, PendingRequest>();
-
 /**
- * Inbox for incoming messages from parent
+ * Response message types from parent
+ * All follow the same structure: reqId + success + optional data/error
  */
-export const inboxMessages: Array<{ type: string; [key: string]: unknown }> = [];
-
-/**
- * Send a notification to parent (no response expected)
- */
-export function sendNotification(type: string, payload: Record<string, unknown>): void {
-  process.send?.({ type, ...payload });
-}
-
-/**
- * Send a request to parent and wait for response
- * @param type - Message type
- * @param args - Request arguments
- * @param timeoutMs - Timeout in milliseconds (0 = no timeout, default 30000)
- */
-export function sendRequest<T>(
-  type: string,
-  args: Record<string, unknown>,
-  timeoutMs: number = 30000
-): Promise<T> {
-  return new Promise((resolve, reject) => {
-    const reqId = ++reqIdCounter;
-    pendingRequests.set(reqId, {
-      resolve: (data) => resolve(data as T),
-      reject,
-    });
-
-    process.send?.({ type, reqId, ...args });
-
-    // Set up timeout (0 = no timeout, useful for user input)
-    if (timeoutMs > 0) {
-      setTimeout(() => {
-        if (pendingRequests.has(reqId)) {
-          pendingRequests.delete(reqId);
-          reject(new Error(`IPC request timeout: ${type}`));
-        }
-      }, timeoutMs);
-    }
-  });
-}
-
-/**
- * Handle response from parent
- */
-export function handleDbResult(msg: {
+interface IpcResponse {
+  type: 'db_result' | 'wt_result' | 'team_result' | 'question_result';
   reqId: number;
   success: boolean;
   data?: unknown;
   error?: string;
-}): void {
-  const pending = pendingRequests.get(msg.reqId);
-  if (!pending) return;
+}
 
-  pendingRequests.delete(msg.reqId);
+/**
+ * Response types that resolve pending requests
+ */
+const RESPONSE_TYPES = new Set(['db_result', 'wt_result', 'team_result', 'question_result']);
 
-  if (msg.success) {
-    pending.resolve(msg.data);
-  } else {
-    pending.reject(new Error(msg.error || 'Unknown error'));
+/**
+ * Type guard to check if a message is an IPC response
+ */
+function isResponse(msg: { type: string; reqId?: unknown; success?: unknown; data?: unknown; error?: unknown }): msg is IpcResponse {
+  return RESPONSE_TYPES.has(msg.type) && typeof msg.reqId === 'number';
+}
+
+/**
+ * IPC Client for child process communication with parent
+ * Only handles request-response pattern (sendRequest) and fire-and-forget (sendNotification)
+ */
+export class IpcClient {
+  private reqIdCounter = 0;
+  private pendingRequests = new Map<number, PendingRequest>();
+
+  /**
+   * Send a notification to parent (no response expected)
+   */
+  sendNotification(type: string, payload: Record<string, unknown>): void {
+    process.send?.({ type, ...payload });
   }
-}
 
-/**
- * Send status update to parent
- */
-export function sendStatus(status: TeammateStatus): void {
-  sendNotification('status', { status });
-}
+  /**
+   * Send a request to parent and wait for response
+   * @param type - Message type
+   * @param args - Request arguments
+   * @param timeoutMs - Timeout in milliseconds (0 = no timeout, default 30000)
+   */
+  sendRequest<T>(type: string, args: Record<string, unknown>, timeoutMs = 30000): Promise<T> {
+    return new Promise((resolve, reject) => {
+      const reqId = ++this.reqIdCounter;
+      this.pendingRequests.set(reqId, {
+        resolve: (data) => resolve(data as T),
+        reject,
+      });
 
-/**
- * Send log message to parent
- */
-export function sendLog(message: string): void {
-  sendNotification('log', { message });
-}
+      process.send?.({ type, reqId, ...args });
 
-/**
- * Send error message to parent
- */
-export function sendError(error: string): void {
-  sendNotification('error', { error });
-}
+      if (timeoutMs > 0) {
+        setTimeout(() => {
+          if (this.pendingRequests.has(reqId)) {
+            this.pendingRequests.delete(reqId);
+            reject(new Error(`IPC request timeout: ${type}`));
+          }
+        }, timeoutMs);
+      }
+    });
+  }
 
-/**
- * Process inbox messages
- * Returns messages of a specific type, removing them from inbox
- */
-export function getMessages(type: string): Array<{ type: string; [key: string]: unknown }> {
-  const matches: Array<{ type: string; [key: string]: unknown }> = [];
-  const remaining: Array<{ type: string; [key: string]: unknown }> = [];
+  /**
+   * Handle incoming message from parent
+   * Returns true if handled as a response, false otherwise
+   */
+  handleMessage(msg: { type: string; reqId?: unknown; success?: unknown; data?: unknown; error?: unknown }): boolean {
+    if (isResponse(msg)) {
+      this.handleResponse(msg);
+      return true;
+    }
+    return false;
+  }
 
-  for (const msg of inboxMessages) {
-    if (msg.type === type) {
-      matches.push(msg);
+  /**
+   * Handle response from parent for a pending request
+   */
+  private handleResponse(msg: IpcResponse): void {
+    const pending = this.pendingRequests.get(msg.reqId);
+    if (!pending) return;
+
+    this.pendingRequests.delete(msg.reqId);
+
+    if (msg.success) {
+      pending.resolve(msg.data);
     } else {
-      remaining.push(msg);
+      pending.reject(new Error(msg.error || 'Unknown error'));
     }
   }
-
-  // Clear inbox and add remaining
-  inboxMessages.length = 0;
-  inboxMessages.push(...remaining);
-
-  return matches;
 }
 
 /**
- * Check if there are pending messages of a type
+ * Global IPC client instance
  */
-export function hasMessage(type: string): boolean {
-  return inboxMessages.some((msg) => msg.type === type);
-}
+export const ipc = new IpcClient();
 
 /**
- * Clear all inbox messages
+ * Send status notification to parent
  */
-export function clearInbox(): void {
-  inboxMessages.length = 0;
+export function sendStatus(status: TeammateStatus): void {
+  ipc.sendNotification('status', { status });
 }

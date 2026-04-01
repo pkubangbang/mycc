@@ -4,6 +4,9 @@
  *
  * Runs as a child process spawned by TeamManager.
  * Uses child-context for IPC-based operations.
+ *
+ * IPC is transient (request-response only).
+ * Mail from teammates goes through ctx.mail (file-based).
  */
 
 import { createChildContext } from './child-context/index.js';
@@ -20,18 +23,10 @@ import {
   buildSystemPrompt,
   makeIdentityBlock,
 } from '../loop/agent-utils.js';
-import {
-  sendStatus,
-  sendLog,
-  sendError,
-  handleDbResult,
-  inboxMessages,
-} from './child-context/ipc-helpers.js';
-import type { TeammateStatus } from '../types.js';
+import { ipc, sendStatus } from './child-context/ipc-helpers.js';
 
 const WORKDIR = process.cwd();
 const POLL_INTERVAL = 5000; // 5 seconds
-const IDLE_TIMEOUT = 60000; // 60 seconds
 
 // State
 let teammateName = '';
@@ -50,7 +45,7 @@ async function teammateLoop(prompt: string): Promise<void> {
     // 1. Micro-compact old tool results
     microCompact(messages);
 
-    // 2. Collect mails (mailbox + IPC messages)
+    // 2. Collect mails from file-based mailbox
     const mails = ctx.mail.collectMails();
     for (const mail of mails) {
       messages.push({
@@ -59,19 +54,7 @@ async function teammateLoop(prompt: string): Promise<void> {
       });
     }
 
-    // 3. Process queued mail messages
-    const pending = [...inboxMessages];
-    inboxMessages.length = 0;
-    for (const msg of pending) {
-      // Only mail messages are queued now; db_result and shutdown handled immediately
-      const message = msg as unknown as { from: string; title: string; content: string };
-      messages.push({
-        role: 'user',
-        content: `Mail from ${message.from}: ${message.title}\n${message.content}`,
-      });
-    }
-
-    // 4. Todo nudging
+    // 3. Todo nudging
     if (ctx.todo.hasOpenTodo()) {
       messages.push({
         role: 'user',
@@ -79,16 +62,16 @@ async function teammateLoop(prompt: string): Promise<void> {
       });
     }
 
-    // 5. Auto-compact when tokens exceed threshold
+    // 4. Auto-compact when tokens exceed threshold
     if (estimateTokens(messages) > TOKEN_THRESHOLD) {
-      sendLog('[auto-compact triggered]');
+      ctx.core.brief('info', 'auto-compact', 'triggered');
       const compacted = await autoCompact(messages);
       messages.length = 0;
       messages.push(...compacted);
       messages.unshift({ role: 'user', content: makeIdentityBlock(teammateName, teammateRole, WORKDIR) });
     }
 
-    // 6. Build system prompt and call LLM
+    // 5. Build system prompt and call LLM
     const SYSTEM = buildSystemPrompt(ctx, { name: teammateName, role: teammateRole });
     const response = await ollama.chat({
       model: MODEL,
@@ -103,7 +86,7 @@ async function teammateLoop(prompt: string): Promise<void> {
       tool_calls: assistantMessage.tool_calls,
     });
 
-    // 7. No tool calls = enter idle state
+    // 6. No tool calls = enter idle state
     if (!assistantMessage.tool_calls || assistantMessage.tool_calls.length === 0) {
       const result = await enterIdleState(messages);
       if (result === 'shutdown') {
@@ -113,21 +96,21 @@ async function teammateLoop(prompt: string): Promise<void> {
       continue;
     }
 
-    // 8. Execute tools
+    // 7. Execute tools
     for (const tc of assistantMessage.tool_calls) {
       const toolName = tc.function.name;
       const args = tc.function.arguments as Record<string, unknown>;
 
       try {
         const output = await toolLoader.execute(toolName, ctx, args);
-        sendLog(`${toolName}: ${output.slice(0, 100)}`);
+        ctx.core.brief('info', toolName, output.slice(0, 100));
         messages.push({
           role: 'tool',
           content: `tool call ${toolName} finished.\n${output}`,
         });
       } catch (err) {
         const errorMsg = (err as Error).message;
-        sendError(`${toolName}: ${errorMsg}`);
+        ctx.core.brief('error', toolName, errorMsg);
         messages.push({
           role: 'tool',
           content: `tool call ${toolName} failed: ${errorMsg}`,
@@ -144,29 +127,22 @@ async function teammateLoop(prompt: string): Promise<void> {
 // === Idle State: Poll for new work ===
 async function enterIdleState(messages: Message[]): Promise<'shutdown' | 'resume'> {
   sendStatus('idle');
-  const startTime = Date.now();
 
-  while (Date.now() - startTime < IDLE_TIMEOUT && !shutdownRequested) {
+  while (!shutdownRequested) {
     // 1. Check for shutdown
     if (shutdownRequested) {
       sendStatus('shutdown');
       return 'shutdown';
     }
 
-    // 2. Check for new mail messages
-    if (inboxMessages.some((m) => m.type === 'message')) {
-      sendStatus('working');
-      return 'resume';
-    }
-
-    // 3. Check mailbox for new mail
+    // 2. Check mailbox for new mail (file-based)
     const mails = ctx.mail.collectMails();
     if (mails.length > 0) {
       sendStatus('working');
       return 'resume';
     }
 
-    // 4. Auto-claim unclaimed issues
+    // 3. Auto-claim unclaimed issues
     const issues = await ctx.issue.listIssues();
     const unclaimed = issues.filter(
       (issue) => issue.status === 'pending' && !issue.owner && issue.blockedBy.length === 0
@@ -177,7 +153,7 @@ async function enterIdleState(messages: Message[]): Promise<'shutdown' | 'resume
       try {
         const claimed = await ctx.issue.claimIssue(issue.id, teammateName);
         if (claimed) {
-          sendLog(`Auto-claimed issue #${issue.id}: ${issue.title}`);
+          ctx.core.brief('info', 'auto-claim', `Issue #${issue.id}: ${issue.title}`);
           // Identity re-injection if context is short
           if (messages.length <= 3) {
             messages.unshift({
@@ -194,20 +170,15 @@ async function enterIdleState(messages: Message[]): Promise<'shutdown' | 'resume
         }
       } catch (err) {
         // Claim failed, another worker might have claimed it
-        sendLog(`Failed to claim issue #${issue.id}: ${(err as Error).message}`);
+        ctx.core.brief('info', 'auto-claim', `Failed to claim issue #${issue.id}: ${(err as Error).message}`);
       }
     }
 
-    // 5. Wait before next poll
+    // 4. Wait before next poll
     await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL));
   }
 
-  // Timeout or shutdown requested
-  if (shutdownRequested) {
-    sendLog('Shutdown requested, exiting');
-  } else {
-    sendLog('Idle timeout reached, exiting');
-  }
+  // Shutdown requested
   sendStatus('shutdown');
   return 'shutdown';
 }
@@ -220,17 +191,19 @@ async function handleSpawn(msg: {
 }): Promise<void> {
   teammateName = msg.name;
   teammateRole = msg.role;
-  sendLog(`Worker ${teammateName} initializing...`);
 
   // Create child context
   ctx = createChildContext(teammateName, WORKDIR);
 
-  // Load tools and skills
-  const loader = createLoader();
+  // Log initialization (ctx is now available)
+  ctx.core.brief('info', 'worker', `${teammateName} initializing...`);
+
+  // Load tools and skills (silent mode - suppress loading logs)
+  const loader = createLoader(true);
   await loader.loadAll();
   toolLoader = createToolLoader(loader);
 
-  sendLog(`Worker ${teammateName} started successfully`);
+  ctx.core.brief('info', 'worker', `${teammateName} started successfully`);
 
   // Run the teammate loop with the prompt
   await teammateLoop(msg.prompt);
@@ -240,18 +213,15 @@ async function handleSpawn(msg: {
 process.on('message', (msg: { type: string; [key: string]: unknown }) => {
   if (msg.type === 'spawn') {
     handleSpawn(msg as unknown as { name: string; role: string; prompt: string }).catch((err) => {
-      sendError(`Spawn failed: ${(err as Error).message}`);
+      // ctx may not be available yet, use sendNotification directly
+      ipc.sendNotification('error', { error: `Spawn failed: ${(err as Error).message}` });
       process.exit(1);
     });
-  } else if (msg.type === 'db_result') {
-    // Handle IPC responses immediately - they resolve pending requests
-    handleDbResult(msg as unknown as { reqId: number; success: boolean; data?: unknown; error?: string });
   } else if (msg.type === 'shutdown') {
-    // Soft shutdown - set flag and let current work finish
     shutdownRequested = true;
-  } else if (msg.type === 'message') {
-    // Queue mail messages for teammate loop to process
-    inboxMessages.push(msg);
+  } else {
+    // Handle request-response messages (db_result, etc.)
+    ipc.handleMessage(msg);
   }
 });
 
@@ -271,5 +241,5 @@ process.on('SIGINT', () => {
   process.exit(0);
 });
 
-// Log that worker is ready
-sendLog('Worker process started, waiting for spawn message');
+// Log that worker is ready (before ctx is available, use sendNotification)
+ipc.sendNotification('log', { message: 'Worker process started, waiting for spawn message' });

@@ -3,7 +3,7 @@
  */
 
 import type { WtModule } from '../../types.js';
-import { sendRequest } from './ipc-helpers.js';
+import { ipc } from './ipc-helpers.js';
 
 /**
  * Worktree module reference to update workDir in core
@@ -24,17 +24,17 @@ export function setWorkDirUpdateFn(fn: (dir: string) => void): void {
  */
 export class ChildWt implements WtModule {
   async createWorkTree(name: string, branch: string): Promise<string> {
-    const result = await sendRequest<{ path: string }>('wt_create', { name, branch });
+    const result = await ipc.sendRequest<{ path: string }>('wt_create', { name, branch });
     return result.path;
   }
 
   async printWorkTrees(): Promise<string> {
-    const result = await sendRequest<string>('wt_print', {});
+    const result = await ipc.sendRequest<string>('wt_print', {});
     return result;
   }
 
   async enterWorkTree(name: string): Promise<void> {
-    const result = await sendRequest<{ path: string }>('wt_enter', { name });
+    const result = await ipc.sendRequest<{ path: string }>('wt_enter', { name });
     // Update local workDir
     if (coreSetWorkDir && result.path) {
       coreSetWorkDir(result.path);
@@ -42,7 +42,7 @@ export class ChildWt implements WtModule {
   }
 
   async leaveWorkTree(): Promise<void> {
-    const result = await sendRequest<{ path: string }>('wt_leave', {});
+    const result = await ipc.sendRequest<{ path: string }>('wt_leave', {});
     // Update local workDir
     if (coreSetWorkDir && result.path) {
       coreSetWorkDir(result.path);
@@ -50,7 +50,7 @@ export class ChildWt implements WtModule {
   }
 
   async removeWorkTree(name: string): Promise<void> {
-    await sendRequest<void>('wt_remove', { name });
+    await ipc.sendRequest<void>('wt_remove', { name });
   }
 }
 

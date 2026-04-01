@@ -5,7 +5,7 @@
 import { WebFetchResponse, WebSearchResult } from 'ollama';
 import { ollama } from '../../ollama.js';
 import type { CoreModule, TranscriptModule } from '../../types.js';
-import { sendLog, sendError, sendRequest } from './ipc-helpers.js';
+import { ipc } from './ipc-helpers.js';
 
 /**
  * Core module for child process
@@ -31,15 +31,15 @@ export class ChildCore implements CoreModule {
   brief(level: 'info' | 'warn' | 'error', tool: string, message: string): void {
     const formatted = `[${tool}] ${message}`;
     if (level === 'error') {
-      sendError(formatted);
+      ipc.sendNotification('error', { error: formatted });
     } else {
-      sendLog(formatted);
+      ipc.sendNotification('log', { message: formatted });
     }
   }
 
   async question(query: string, asker?: string): Promise<string> {
     // Use no timeout for user questions - user can take arbitrary time to respond
-    const response = await sendRequest<{ response: string }>('question', {
+    const response = await ipc.sendRequest<{ response: string }>('question', {
       query,
       asker: asker || this.name,
     }, 0);

@@ -12,6 +12,7 @@ import type {
   AgentContext,
   IpcHandlerRegistration,
   TranscriptModule,
+  SendResponseCallback,
 } from '../types.js';
 import { getDb } from './db.js';
 import { createMail } from './mail.js';
@@ -49,13 +50,11 @@ export class TeamManager implements TeamModule {
   private statuses: Map<string, TeammateStatus> = new Map();
   private ipcRegistry: IpcRegistry;
   private transcript: TranscriptModule | null = null;
+  private context: AgentContext | null = null;
 
   constructor(core: CoreModule) {
     this.core = core;
     this.ipcRegistry = createIpcRegistry();
-
-    // Register default handlers for built-in message types
-    this.registerBuiltinHandlers();
   }
 
   /**
@@ -66,106 +65,11 @@ export class TeamManager implements TeamModule {
   }
 
   /**
-   * Register built-in handlers for status, log, error, question
-   */
-  private registerBuiltinHandlers(): void {
-    // Status handler - updates internal state
-    this.ipcRegistry.register({
-      messageType: 'status',
-      module: 'team',
-      handler: (_sender: string, payload: Record<string, unknown>) => {
-        const { status } = payload as { status: TeammateStatus };
-        // Note: status update is handled specially in handleChildMessage
-        // because it needs access to internal state
-        void status; // Suppress unused variable warning
-      },
-    });
-
-    // Log handler
-    this.ipcRegistry.register({
-      messageType: 'log',
-      module: 'team',
-      handler: (sender: string, payload: Record<string, unknown>) => {
-        const { message } = payload as { message: string };
-        this.core.brief('info', sender, message);
-      },
-    });
-
-    // Error handler
-    this.ipcRegistry.register({
-      messageType: 'error',
-      module: 'team',
-      handler: (sender: string, payload: Record<string, unknown>) => {
-        const { error } = payload as { error: string };
-        this.core.brief('error', sender, error);
-      },
-    });
-
-    // Question handler - allows child processes to ask user questions
-    // This enables the "btw" mechanism for teammates
-    this.ipcRegistry.register({
-      messageType: 'question',
-      module: 'core',
-      handler: async (sender: string, payload: Record<string, unknown>, ctx: AgentContext) => {
-        const { query } = payload as { query: string };
-        try {
-          // Pass sender as asker so user knows who is asking
-          const response = await ctx.core.question(query, sender);
-          return { success: true, data: { response } };
-        } catch (error) {
-          const errorMessage = error instanceof Error ? error.message : String(error);
-          return { success: false, error: errorMessage };
-        }
-      },
-    });
-
-    // Send mail handler - allows teammates to send mail through lead
-    this.ipcRegistry.register({
-      messageType: 'send_mail',
-      module: 'team',
-      handler: (sender: string, payload: Record<string, unknown>) => {
-        const { to, title, content } = payload as { to: string; title: string; content: string };
-
-        // Sending to lead
-        if (to === 'lead') {
-          // Mail to lead - store in lead's mailbox
-          const mail = createMail('lead');
-          mail.appendMail(sender, title, content);
-          return { success: true, data: { to } };
-        }
-
-        // Check if recipient exists
-        const recipient = this.getTeammate(to);
-        if (!recipient) {
-          const available = this.listTeammates()
-            .map((t) => t.name)
-            .join(', ') || 'none';
-          return {
-            success: false,
-            error: `Recipient '${to}' not found. Available teammates: ${available}. Use 'lead' to message the lead agent.`,
-          };
-        }
-
-        // Check if recipient is still active
-        if (recipient.status === 'shutdown') {
-          return {
-            success: false,
-            error: `Recipient '${to}' has shutdown.`,
-          };
-        }
-
-        // Route mail to recipient
-        this.mailTo(to, title, content, sender);
-        return { success: true, data: { to } };
-      },
-    });
-  }
-
-  /**
    * Initialize the IPC registry with AgentContext
    * Called after all modules are created
    */
   initializeContext(ctx: AgentContext): void {
+    this.context = ctx;
     this.ipcRegistry.setContext(ctx);
   }
 
@@ -205,24 +109,13 @@ export class TeamManager implements TeamModule {
     const workerPath = path.join(__dirname, 'teammate-worker.js');
     const child = fork(workerPath, [], {
       cwd: this.core.getWorkDir(),
+      // Pipe stdout/stderr but don't log them - child uses IPC for structured logging
       silent: true,
     });
 
     // Track process
     this.processes.set(name, child);
     this.statuses.set(name, 'working');
-
-    // Handle stdout/stderr
-    if (child.stdout) {
-      child.stdout.on('data', (data: Buffer) => {
-        this.core.brief('info', name, data.toString().trim());
-      });
-    }
-    if (child.stderr) {
-      child.stderr.on('data', (data: Buffer) => {
-        this.core.brief('error', name, data.toString().trim());
-      });
-    }
 
     // Handle IPC messages from child
     child.on('message', (msg: IpcMessage) => {
@@ -259,31 +152,58 @@ export class TeamManager implements TeamModule {
   /**
    * Handle IPC message from child process
    */
-  private handleChildMessage(sender: string, msg: IpcMessage): void {
-    // Special case: status needs internal Map update (handled before registry)
-    if (msg.type === 'status' && 'status' in msg) {
+  private async handleChildMessage(sender: string, msg: IpcMessage): Promise<void> {
+    const reqId = typeof msg.reqId === 'number' ? msg.reqId : undefined;
+
+    // === Notifications (no response expected) ===
+    if (msg.type === 'status') {
       const status = msg.status as TeammateStatus;
       this.statuses.set(sender, status);
       this.updateDbStatus(sender, status);
+      return;
     }
 
-    // Check for request/response pattern (has reqId)
-    const hasReqId = typeof msg.reqId === 'number';
+    if (msg.type === 'log') {
+      const message = msg.message as string;
+      this.core.brief('info', sender, message);
+      return;
+    }
 
-    // Dispatch to registered handlers
-    this.ipcRegistry
-      .dispatch(sender, msg)
-      .then((result) => {
-        // For request/response messages, send response back to child
-        if (hasReqId && msg.reqId !== undefined) {
-          this.sendResponse(sender, msg.reqId, result?.success ?? true, result?.data, result?.error);
+    if (msg.type === 'error') {
+      const error = msg.error as string;
+      this.core.brief('error', sender, error);
+      return;
+    }
+
+    // === Request/Response (requires response) ===
+    if (reqId === undefined) {
+      // No reqId means it's a notification we don't recognize
+      return;
+    }
+
+    // Create sendResponse callback that sends to this specific child
+    const sendResponse: SendResponseCallback = (responseType, success, data, error) => {
+      this.sendResponse(sender, reqId, responseType, success, data, error);
+    };
+
+    try {
+      // === Question (direct handling) ===
+      if (msg.type === 'question') {
+        const query = msg.query as string;
+        try {
+          const response = await this.context!.core.question(query, sender);
+          sendResponse('question_result', true, { response });
+        } catch (err) {
+          sendResponse('question_result', false, undefined, (err as Error).message);
         }
-      })
-      .catch((err) => {
-        if (hasReqId && msg.reqId !== undefined) {
-          this.sendResponse(sender, msg.reqId, false, undefined, err.message);
-        }
-      });
+        return;
+      }
+
+      // === Dispatch to registered handlers ===
+      await this.ipcRegistry.dispatch(sender, msg, sendResponse);
+    } catch (err) {
+      sendResponse('error', false, undefined, (err as Error).message);
+    }
   }
 
   /**
@@ -292,6 +212,7 @@ export class TeamManager implements TeamModule {
   private sendResponse(
     sender: string,
     reqId: number,
+    responseType: string,
     success: boolean,
     data?: unknown,
     error?: string
@@ -299,7 +220,7 @@ export class TeamManager implements TeamModule {
     const child = this.processes.get(sender);
     if (child && child.connected) {
       child.send({
-        type: 'db_result',
+        type: responseType,
         reqId,
         success,
         data,

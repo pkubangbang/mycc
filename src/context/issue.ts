@@ -348,47 +348,47 @@ export function createIssueIpcHandlers(): IpcHandlerRegistration[] {
     {
       messageType: 'db_issue_get',
       module: 'issue',
-      handler: async (_sender, payload, ctx) => {
+      handler: async (_sender, payload, ctx, sendResponse) => {
         const { id } = payload as { id: number };
         const issue = await ctx.issue.getIssue(id);
-        return { success: true, data: issue };
+        sendResponse('db_result', true, issue);
       },
     },
     {
       messageType: 'db_issue_list',
       module: 'issue',
-      handler: async (_sender, _payload, ctx) => {
+      handler: async (_sender, _payload, ctx, sendResponse) => {
         const issues = await ctx.issue.listIssues();
-        return { success: true, data: issues };
+        sendResponse('db_result', true, issues);
       },
     },
     // Write operations
     {
       messageType: 'db_issue_create',
       module: 'issue',
-      handler: async (_sender, payload, ctx) => {
+      handler: async (_sender, payload, ctx, sendResponse) => {
         const { title, content, blockedBy = [] } = payload as {
           title: string;
           content: string;
           blockedBy?: number[];
         };
         const id = await ctx.issue.createIssue(title, content, blockedBy);
-        return { success: true, data: { id } };
+        sendResponse('db_result', true, { id });
       },
     },
     {
       messageType: 'db_issue_claim',
       module: 'issue',
-      handler: async (_sender, payload, ctx) => {
+      handler: async (_sender, payload, ctx, sendResponse) => {
         const { id, owner } = payload as { id: number; owner: string };
         const claimed = await ctx.issue.claimIssue(id, owner);
-        return { success: true, data: { claimed } };
+        sendResponse('db_result', true, { claimed });
       },
     },
     {
       messageType: 'db_issue_close',
       module: 'issue',
-      handler: async (_sender, payload, ctx) => {
+      handler: async (_sender, payload, ctx, sendResponse) => {
         const { id, status, comment, poster } = payload as {
           id: number;
           status: 'completed' | 'failed' | 'abandoned';
@@ -396,34 +396,34 @@ export function createIssueIpcHandlers(): IpcHandlerRegistration[] {
           poster?: string;
         };
         await ctx.issue.closeIssue(id, status, comment, poster);
-        return { success: true };
+        sendResponse('db_result', true);
       },
     },
     {
       messageType: 'db_issue_comment',
       module: 'issue',
-      handler: async (_sender, payload, ctx) => {
+      handler: async (_sender, payload, ctx, sendResponse) => {
         const { id, comment, poster } = payload as { id: number; comment: string; poster?: string };
         await ctx.issue.addComment(id, comment, poster);
-        return { success: true };
+        sendResponse('db_result', true);
       },
     },
     {
       messageType: 'db_block_add',
       module: 'issue',
-      handler: async (_sender, payload, ctx) => {
+      handler: async (_sender, payload, ctx, sendResponse) => {
         const { blocker, blocked } = payload as { blocker: number; blocked: number };
         await ctx.issue.createBlockage(blocker, blocked);
-        return { success: true };
+        sendResponse('db_result', true);
       },
     },
     {
       messageType: 'db_block_remove',
       module: 'issue',
-      handler: async (_sender, payload, ctx) => {
+      handler: async (_sender, payload, ctx, sendResponse) => {
         const { blocker, blocked } = payload as { blocker: number; blocked: number };
         await ctx.issue.removeBlockage(blocker, blocked);
-        return { success: true };
+        sendResponse('db_result', true);
       },
     },
   ];

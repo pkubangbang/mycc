@@ -5,12 +5,7 @@
  * and TeamManager dispatches incoming messages to the appropriate handler.
  */
 
-import type {
-  IpcHandlerRegistration,
-  IpcMessageHandler,
-  IpcHandlerResult,
-  AgentContext,
-} from '../../types.js';
+import type { IpcHandlerRegistration, AgentContext, SendResponseCallback } from '../../types.js';
 
 /**
  * Registry for IPC message handlers
@@ -32,7 +27,7 @@ export class IpcRegistry {
    * @throws Error if handler already registered for this message type
    */
   register(registration: IpcHandlerRegistration): void {
-    if (this.handlers.has(registration.messageType)) {
+    if (this.hasHandler(registration.messageType)) {
       const existing = this.handlers.get(registration.messageType);
       throw new Error(
         `IPC handler already registered for "${registration.messageType}" ` +
@@ -60,34 +55,33 @@ export class IpcRegistry {
    * Dispatch a message to the appropriate handler
    * @param sender - Name of the child process that sent the message
    * @param msg - The full message object with type field
-   * @returns Handler result (for request/response) or void (for notifications)
+   * @param sendResponse - Callback to send response back to child
    */
   async dispatch(
     sender: string,
-    msg: { type: string; [key: string]: unknown }
-  ): Promise<void | IpcHandlerResult> {
+    msg: { type: string; [key: string]: unknown },
+    sendResponse: SendResponseCallback
+  ): Promise<void> {
     const registration = this.handlers.get(msg.type);
 
     if (!registration) {
-      // Return undefined for unhandled messages (graceful degradation)
-      return undefined;
+      // No handler registered - ignore gracefully
+      return;
     }
 
     if (!this.context) {
       throw new Error('IPC registry context not initialized');
     }
 
+    // Extract payload without the type field
+    const { type, ...payload } = msg;
+
     try {
-      // Extract payload without the type field
-      const { type, ...payload } = msg;
-      return await registration.handler(sender, payload, this.context);
+      await registration.handler(sender, payload, this.context, sendResponse);
     } catch (error) {
-      // Return error result for request/response messages
       const errorMessage = error instanceof Error ? error.message : String(error);
-      return {
-        success: false,
-        error: errorMessage,
-      };
+      // Default response type for unhandled errors
+      sendResponse('error', false, undefined, errorMessage);
     }
   }
 

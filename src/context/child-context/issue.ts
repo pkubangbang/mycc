@@ -3,7 +3,7 @@
  */
 
 import type { IssueModule, Issue, IssueComment } from '../../types.js';
-import { sendRequest } from './ipc-helpers.js';
+import { ipc } from './ipc-helpers.js';
 
 /**
  * Issue module for child process
@@ -11,7 +11,7 @@ import { sendRequest } from './ipc-helpers.js';
  */
 export class ChildIssue implements IssueModule {
   async createIssue(title: string, content: string, blockedBy: number[] = []): Promise<number> {
-    const result = await sendRequest<{ id: number }>('db_issue_create', {
+    const result = await ipc.sendRequest<{ id: number }>('db_issue_create', {
       title,
       content,
       blockedBy,
@@ -20,12 +20,12 @@ export class ChildIssue implements IssueModule {
   }
 
   async getIssue(id: number): Promise<Issue | undefined> {
-    const result = await sendRequest<Issue | undefined>('db_issue_get', { id });
+    const result = await ipc.sendRequest<Issue | undefined>('db_issue_get', { id });
     return result;
   }
 
   async listIssues(): Promise<Issue[]> {
-    const result = await sendRequest<Issue[]>('db_issue_list', {});
+    const result = await ipc.sendRequest<Issue[]>('db_issue_list', {});
     return result;
   }
 
@@ -90,7 +90,7 @@ export class ChildIssue implements IssueModule {
   }
 
   async claimIssue(id: number, owner: string): Promise<boolean> {
-    const result = await sendRequest<{ claimed: boolean }>('db_issue_claim', {
+    const result = await ipc.sendRequest<{ claimed: boolean }>('db_issue_claim', {
       id,
       owner,
     });
@@ -103,19 +103,19 @@ export class ChildIssue implements IssueModule {
     comment?: string,
     poster?: string
   ): Promise<void> {
-    await sendRequest<void>('db_issue_close', { id, status, comment, poster });
+    await ipc.sendRequest<void>('db_issue_close', { id, status, comment, poster });
   }
 
   async addComment(id: number, comment: string, poster?: string): Promise<void> {
-    await sendRequest<void>('db_issue_comment', { id, comment, poster });
+    await ipc.sendRequest<void>('db_issue_comment', { id, comment, poster });
   }
 
   async createBlockage(blocker: number, blocked: number): Promise<void> {
-    await sendRequest<void>('db_block_add', { blocker, blocked });
+    await ipc.sendRequest<void>('db_block_add', { blocker, blocked });
   }
 
   async removeBlockage(blocker: number, blocked: number): Promise<void> {
-    await sendRequest<void>('db_block_remove', { blocker, blocked });
+    await ipc.sendRequest<void>('db_block_remove', { blocker, blocked });
   }
 }
 

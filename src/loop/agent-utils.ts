@@ -141,14 +141,10 @@ export function buildSystemPrompt(
   if (identity) {
     return [
       'You are a specialized agent working as part of a team.',
-      '',
-      'Claim tasks proactively and collaborate with teammates through mail.',
-      '',
       'Use skills to access specialized knowledge.',
-      '',
       'Use question tools to ask question to the user,',
-      'use brief tools to report your progress.',
-      '',
+      'use brief tools to report your progress,',
+      'use mail_to tools to communicate with other teammates.',
       'When you feel lost about the context, send mail to "lead".',
       '',
       makeIdentityBlock(identity.name, identity.role, workDir),
@@ -166,6 +162,7 @@ export function buildSystemPrompt(
       `You are the lead of a coding agent team at ${workDir}.`,
       `You spawn teammates, create issues and collect results.`,
       `Use tools to finish tasks. Use skills to access specialized knowledge.`,
+      `Report proactively using the brief tool.`,
       `Read README.md or CLAUDE.md first if you feel lost about the context.`,
       `You must ask for grant BEFORE "git commit" with no exception.`,
       `Skills: ${skills}`
