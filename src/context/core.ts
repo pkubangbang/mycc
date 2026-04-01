@@ -42,6 +42,7 @@ const TOOL_COLORS: Record<string, (text: string) => string> = {
  */
 export class Core implements CoreModule {
   private workDir: string;
+  private questionFn: ((query: string) => Promise<string>) | null = null;
 
   constructor(workDir?: string) {
     this.workDir = workDir || process.cwd();
@@ -80,6 +81,29 @@ export class Core implements CoreModule {
       default:
         console.log(`${prefix} ${message}`);
     }
+  }
+
+  /**
+   * Set the question function for interactive prompts
+   * Called by main() after readline interface is created
+   */
+  setQuestionFn(fn: (query: string) => Promise<string>): void {
+    this.questionFn = fn;
+  }
+
+  /**
+   * Ask user a question and wait for response
+   * Used by tools to get user input during execution
+   * @param query - The question to ask
+   * @param asker - Optional name of who is asking (defaults to 'lead')
+   */
+  async question(query: string, asker: string = 'lead'): Promise<string> {
+    if (!this.questionFn) {
+      throw new Error('Question function not initialized. Ensure readline is set up.');
+    }
+    // Log that this asker is asking (the actual question is shown by readline)
+    this.brief('info', `${asker}:question`, 'waiting for user input...');
+    return this.questionFn(query);
   }
 }
 

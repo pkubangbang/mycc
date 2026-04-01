@@ -225,6 +225,9 @@ export async function main(): Promise<void> {
   const prompt = (query: string): Promise<string> =>
     new Promise((resolve) => rl.question(query, resolve));
 
+  // Inject prompt function into Core for question capability
+  ctx.core.setQuestionFn(prompt);
+
   // Handle graceful shutdown
   process.on('SIGINT', () => {
     console.log(chalk.yellow('\nShutting down...'));

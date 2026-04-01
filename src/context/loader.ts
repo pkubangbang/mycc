@@ -19,6 +19,7 @@ import { tmCreateTool } from '../tools/tm_create.js';
 import { tmRemoveTool } from '../tools/tm_remove.js';
 import { mailToTool } from '../tools/mail_to.js';
 import { broadcastTool } from '../tools/broadcast.js';
+import { questionTool } from '../tools/question.js';
 
 /**
  * Built-in tools
@@ -34,6 +35,7 @@ const builtInTools: ToolDefinition[] = [
   tmRemoveTool,
   mailToTool,
   broadcastTool,
+  questionTool,
 ];
 
 /**

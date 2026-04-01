@@ -184,6 +184,17 @@ export interface CoreModule {
   getWorkDir(): string;
   setWorkDir(dir: string): void;
   brief(level: 'info' | 'warn' | 'error', tool: string, message: string): void;
+  /**
+   * Ask user a question and wait for response
+   * Used by tools to get user input during execution
+   * @param query - The question to ask
+   * @param asker - Optional name of who is asking (e.g., 'lead' or teammate name)
+   */
+  question(query: string, asker?: string): Promise<string>;
+  /**
+   * Set the question function (called by main after readline setup)
+   */
+  setQuestionFn(fn: (query: string) => Promise<string>): void;
 }
 
 /**
@@ -250,6 +261,41 @@ export interface WtModule {
   removeWorkTree(name: string): void;
 }
 
+// ============================================================================
+// IPC Handler Registry
+// ============================================================================
+
+/**
+ * IPC message handler result (for request/response pattern)
+ */
+export interface IpcHandlerResult {
+  success: boolean;
+  data?: unknown;
+  error?: string;
+}
+
+/**
+ * IPC message handler function type
+ * @param sender - Name of the child process that sent the message
+ * @param payload - The message payload (excluding type discriminator)
+ * @param ctx - AgentContext for accessing modules
+ * @returns Result to send back to child (for requests), void for notifications
+ */
+export type IpcMessageHandler = (
+  sender: string,
+  payload: Record<string, unknown>,
+  ctx: AgentContext
+) => void | IpcHandlerResult | Promise<void | IpcHandlerResult>;
+
+/**
+ * Handler registration entry
+ */
+export interface IpcHandlerRegistration {
+  messageType: string;
+  handler: IpcMessageHandler;
+  module: string; // For debugging/logging: 'issue', 'mail', 'team', etc.
+}
+
 /**
  * Team module interface
  */
@@ -264,6 +310,9 @@ export interface TeamModule {
   dismissTeam(): void;
   mailTo(name: string, title: string, content: string): void;
   broadcast(title: string, content: string): void;
+  // IPC Handler registration
+  registerHandler(registration: IpcHandlerRegistration): void;
+  unregisterHandler(messageType: string): void;
 }
 
 /**

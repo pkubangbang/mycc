@@ -7,10 +7,10 @@ import { createCore } from './core.js';
 import { createTodo } from './todo.js';
 import { createMail } from './mail.js';
 import { createSkill } from './skill.js';
-import { createIssue } from './issue.js';
+import { createIssue, createIssueIpcHandlers } from './issue.js';
 import { createBg } from './bg.js';
 import { createWt } from './wt.js';
-import { createTeam } from './team.js';
+import { createTeam, TeamManager } from './team.js';
 
 export * from './core.js';
 export * from './todo.js';
@@ -20,25 +20,47 @@ export * from './issue.js';
 export * from './bg.js';
 export * from './wt.js';
 export * from './team.js';
+export * from './ipc-registry.js';
 
 /**
  * Create a complete AgentContext with all modules
+ * Registers IPC handlers for modules that need them
  */
 export function createAgentContext(workDir?: string): AgentContext {
   const core = createCore(workDir);
   const skill = createSkill();
 
+  // Create modules
+  const todo = createTodo();
+  const mail = createMail('lead');
+  const issue = createIssue();
+  const bg = createBg(core);
+  const wt = createWt(core);
+  const team = createTeam(core);
+
   // Load skills from both project skills/ and .mycc/skills/
   skill.loadSkills();
 
-  return {
+  // Assemble context
+  const ctx: AgentContext = {
     core,
-    todo: createTodo(),
-    mail: createMail('lead'),
+    todo,
+    mail,
     skill,
-    issue: createIssue(),
-    bg: createBg(core),
-    wt: createWt(core),
-    team: createTeam(core),
+    issue,
+    bg,
+    wt,
+    team,
   };
+
+  // Initialize TeamManager with context for IPC handling
+  (team as TeamManager).initializeContext(ctx);
+
+  // Register IPC handlers for modules that need them
+  const issueHandlers = createIssueIpcHandlers();
+  for (const handler of issueHandlers) {
+    team.registerHandler(handler);
+  }
+
+  return ctx;
 }

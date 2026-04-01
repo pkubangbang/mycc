@@ -2,7 +2,7 @@
  * issue.ts - Issue module: persisted tasks with blocking relationships
  */
 
-import type { IssueModule, Issue, IssueStatus } from '../types.js';
+import type { IssueModule, Issue, IssueStatus, IpcHandlerRegistration, AgentContext } from '../types.js';
 import { getDb } from './db.js';
 
 /**
@@ -256,4 +256,75 @@ export class IssueManager implements IssueModule {
  */
 export function createIssue(): IssueModule {
   return new IssueManager();
+}
+
+/**
+ * Create IPC handlers for Issue module
+ * These handle DB requests from child processes
+ */
+export function createIssueIpcHandlers(): IpcHandlerRegistration[] {
+  return [
+    {
+      messageType: 'db_issue_create',
+      module: 'issue',
+      handler: (_sender, payload, ctx) => {
+        const { title, content, blockedBy = [] } = payload as {
+          title: string;
+          content: string;
+          blockedBy?: number[];
+        };
+        const id = ctx.issue.createIssue(title, content, blockedBy);
+        return { success: true, data: { id } };
+      },
+    },
+    {
+      messageType: 'db_issue_claim',
+      module: 'issue',
+      handler: (_sender, payload, ctx) => {
+        const { id, owner } = payload as { id: number; owner: string };
+        const claimed = ctx.issue.claimIssue(id, owner);
+        return { success: true, data: { claimed } };
+      },
+    },
+    {
+      messageType: 'db_issue_close',
+      module: 'issue',
+      handler: (_sender, payload, ctx) => {
+        const { id, status, comment } = payload as {
+          id: number;
+          status: 'completed' | 'failed' | 'abandoned';
+          comment?: string;
+        };
+        ctx.issue.closeIssue(id, status, comment);
+        return { success: true };
+      },
+    },
+    {
+      messageType: 'db_issue_comment',
+      module: 'issue',
+      handler: (_sender, payload, ctx) => {
+        const { id, comment } = payload as { id: number; comment: string };
+        ctx.issue.addComment(id, comment);
+        return { success: true };
+      },
+    },
+    {
+      messageType: 'db_block_add',
+      module: 'issue',
+      handler: (_sender, payload, ctx) => {
+        const { blocker, blocked } = payload as { blocker: number; blocked: number };
+        ctx.issue.createBlockage(blocker, blocked);
+        return { success: true };
+      },
+    },
+    {
+      messageType: 'db_block_remove',
+      module: 'issue',
+      handler: (_sender, payload, ctx) => {
+        const { blocker, blocked } = payload as { blocker: number; blocked: number };
+        ctx.issue.removeBlockage(blocker, blocked);
+        return { success: true };
+      },
+    },
+  ];
 }
