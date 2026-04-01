@@ -4,7 +4,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import type { MailModule, Mail as MailType } from '../types.js';
+import type { MailModule, Mail as MailType, TranscriptModule } from '../types.js';
 import { getMailDir, ensureDirs } from './db.js';
 
 /**
@@ -12,9 +12,17 @@ import { getMailDir, ensureDirs } from './db.js';
  */
 export class MailBox implements MailModule {
   private owner: string;
+  private transcript: TranscriptModule | null = null;
 
   constructor(owner: string) {
     this.owner = owner;
+  }
+
+  /**
+   * Set the transcript module for logging
+   */
+  setTranscript(transcript: TranscriptModule): void {
+    this.transcript = transcript;
   }
 
   /**
@@ -43,6 +51,11 @@ export class MailBox implements MailModule {
     // Append to file (atomic append)
     const line = JSON.stringify(mail) + '\n';
     fs.appendFileSync(mailPath, line, 'utf-8');
+
+    // Log to transcript (mail to self)
+    if (this.transcript) {
+      this.transcript.logMailSend(from, this.owner, title, content);
+    }
   }
 
   /**

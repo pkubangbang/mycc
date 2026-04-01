@@ -11,6 +11,7 @@ import type {
   TeammateStatus,
   AgentContext,
   IpcHandlerRegistration,
+  TranscriptModule,
 } from '../types.js';
 import { getDb } from './db.js';
 import { createMail } from './mail.js';
@@ -47,6 +48,7 @@ export class TeamManager implements TeamModule {
   private processes: Map<string, ChildProcess> = new Map();
   private statuses: Map<string, TeammateStatus> = new Map();
   private ipcRegistry: IpcRegistry;
+  private transcript: TranscriptModule | null = null;
 
   constructor(core: CoreModule) {
     this.core = core;
@@ -54,6 +56,13 @@ export class TeamManager implements TeamModule {
 
     // Register default handlers for built-in message types
     this.registerBuiltinHandlers();
+  }
+
+  /**
+   * Set the transcript module for logging
+   */
+  setTranscript(transcript: TranscriptModule): void {
+    this.transcript = transcript;
   }
 
   /**
@@ -431,6 +440,11 @@ export class TeamManager implements TeamModule {
   mailTo(name: string, title: string, content: string): void {
     const mail = createMail(name);
     mail.appendMail('lead', title, content);
+
+    // Log to transcript
+    if (this.transcript) {
+      this.transcript.logMailSend('lead', name, title, content);
+    }
   }
 
   /**

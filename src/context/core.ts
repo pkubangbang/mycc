@@ -3,7 +3,7 @@
  */
 
 import chalk from 'chalk';
-import type { CoreModule } from '../types.js';
+import type { CoreModule, TranscriptModule } from '../types.js';
 
 /**
  * Color functions for tool prefixes
@@ -43,6 +43,7 @@ const TOOL_COLORS: Record<string, (text: string) => string> = {
 export class Core implements CoreModule {
   private workDir: string;
   private questionFn: ((query: string) => Promise<string>) | null = null;
+  private transcript: TranscriptModule | null = null;
 
   constructor(workDir?: string) {
     this.workDir = workDir || process.cwd();
@@ -63,7 +64,14 @@ export class Core implements CoreModule {
   }
 
   /**
-   * Log a message to console
+   * Set the transcript module for logging
+   */
+  setTranscript(transcript: TranscriptModule): void {
+    this.transcript = transcript;
+  }
+
+  /**
+   * Log a message to console and transcript
    * Thread-safe: console.log is atomic in Node.js
    */
   brief(level: 'info' | 'warn' | 'error', tool: string, message: string): void {
@@ -71,6 +79,7 @@ export class Core implements CoreModule {
     const colorFn = TOOL_COLORS[tool] || TOOL_COLORS._default;
     const prefix = `${chalk.gray(`[${timestamp}]`)} ${colorFn(`[${tool}]`)}`;
 
+    // Log to console
     switch (level) {
       case 'error':
         console.error(`${prefix} ${chalk.red(`ERROR: ${message}`)}`);
@@ -80,6 +89,11 @@ export class Core implements CoreModule {
         break;
       default:
         console.log(`${prefix} ${message}`);
+    }
+
+    // Log to transcript
+    if (this.transcript) {
+      this.transcript.logBrief(level, tool, message);
     }
   }
 
@@ -101,9 +115,18 @@ export class Core implements CoreModule {
     if (!this.questionFn) {
       throw new Error('Question function not initialized. Ensure readline is set up.');
     }
+    // Log to transcript
+    if (this.transcript) {
+      this.transcript.logQuestion(asker, query);
+    }
     // Log that this asker is asking (the actual question is shown by readline)
     this.brief('info', `${asker}:question`, 'waiting for user input...');
-    return this.questionFn(query);
+    const response = await this.questionFn(query);
+    // Log response to transcript
+    if (this.transcript) {
+      this.transcript.logAnswer(asker, response);
+    }
+    return response;
   }
 }
 

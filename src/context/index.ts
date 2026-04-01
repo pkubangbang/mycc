@@ -2,7 +2,7 @@
  * context/index.ts - AgentContext class and module exports
  */
 
-import type { AgentContext, CoreModule, TodoModule, MailModule, SkillModule, IssueModule, BgModule, WtModule, TeamModule } from '../types.js';
+import type { AgentContext } from '../types.js';
 import { createCore } from './core.js';
 import { createTodo } from './todo.js';
 import { createMail } from './mail.js';
@@ -11,6 +11,7 @@ import { createIssue, createIssueIpcHandlers } from './issue.js';
 import { createBg, createBgIpcHandlers } from './bg.js';
 import { createWt, createWtIpcHandlers } from './wt.js';
 import { createTeam, TeamManager } from './team.js';
+import { createTranscript } from './transcript.js';
 
 export * from './core.js';
 export * from './todo.js';
@@ -22,6 +23,7 @@ export * from './wt.js';
 export * from './team.js';
 export * from './child-context/ipc-registry.js';
 export * from './child-context/index.js';
+export * from './transcript.js';
 
 /**
  * Create a complete AgentContext with all modules
@@ -31,6 +33,9 @@ export function createAgentContext(workDir?: string): AgentContext {
   const core = createCore(workDir);
   const skill = createSkill();
 
+  // Create transcript for logging
+  const transcript = createTranscript();
+
   // Create modules
   const todo = createTodo();
   const mail = createMail('lead');
@@ -38,6 +43,11 @@ export function createAgentContext(workDir?: string): AgentContext {
   const bg = createBg(core);
   const wt = createWt(core);
   const team = createTeam(core);
+
+  // Set transcript on modules that need it
+  core.setTranscript(transcript);
+  mail.setTranscript(transcript);
+  team.setTranscript(transcript);
 
   // Load skills from both project skills/ and .mycc/skills/
   skill.loadSkills();

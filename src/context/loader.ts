@@ -21,6 +21,12 @@ import { mailToTool } from '../tools/mail_to.js';
 import { broadcastTool } from '../tools/broadcast.js';
 import { questionTool } from '../tools/question.js';
 import { briefTool } from '../tools/brief.js';
+import { issueCreateTool } from '../tools/issue_create.js';
+import { issueCloseTool } from '../tools/issue_close.js';
+import { issueCommentTool } from '../tools/issue_comment.js';
+import { issueClaimTool } from '../tools/issue_claim.js';
+import { blockageCreateTool } from '../tools/blockage_create.js';
+import { blockageRemoveTool } from '../tools/blockage_remove.js';
 
 /**
  * Built-in tools
@@ -38,6 +44,12 @@ const builtInTools: ToolDefinition[] = [
   broadcastTool,
   questionTool,
   briefTool,
+  issueCreateTool,
+  issueCloseTool,
+  issueCommentTool,
+  issueClaimTool,
+  blockageCreateTool,
+  blockageRemoveTool,
 ];
 
 /**

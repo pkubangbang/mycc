@@ -90,6 +90,15 @@ export interface TodoItem {
 export type IssueStatus = 'pending' | 'in_progress' | 'completed' | 'failed' | 'abandoned';
 
 /**
+ * Comment on an issue
+ */
+export interface IssueComment {
+  poster: string; // 'system' for system messages, or agent name
+  content: string;
+  timestamp: Date;
+}
+
+/**
  * Issue - persisted task with blocking relationships
  */
 export interface Issue {
@@ -100,7 +109,7 @@ export interface Issue {
   owner?: string;
   blockedBy: number[]; // IDs of blocking issues
   blocks: number[]; // IDs of blocked issues
-  comments: string[];
+  comments: IssueComment[];
   createdAt: Date;
 }
 
@@ -195,6 +204,30 @@ export interface CoreModule {
    * Set the question function (called by main after readline setup)
    */
   setQuestionFn(fn: (query: string) => Promise<string>): void;
+  /**
+   * Set the transcript module for logging
+   */
+  setTranscript(transcript: TranscriptModule): void;
+}
+
+/**
+ * Transcript entry type
+ */
+export interface TranscriptEntry {
+  timestamp: Date;
+  type: 'brief' | 'question' | 'answer' | 'mail_send';
+  [key: string]: unknown;
+}
+
+/**
+ * Transcript module interface
+ */
+export interface TranscriptModule {
+  log(entry: TranscriptEntry): void;
+  logBrief(level: string, tool: string, message: string): void;
+  logQuestion(asker: string, query: string): void;
+  logAnswer(asker: string, response: string): void;
+  logMailSend(from: string, to: string, title: string, content?: string): void;
 }
 
 /**
@@ -213,6 +246,7 @@ export interface TodoModule {
 export interface MailModule {
   appendMail(from: string, title: string, content: string, issueId?: number): void;
   collectMails(): Mail[];
+  setTranscript(transcript: TranscriptModule): void;
 }
 
 /**
@@ -236,8 +270,8 @@ export interface IssueModule {
   printIssues(): Promise<string>;
   printIssue(id: number): Promise<string>;
   claimIssue(id: number, owner: string): Promise<boolean>;
-  closeIssue(id: number, status: 'completed' | 'failed' | 'abandoned', comment?: string): Promise<void>;
-  addComment(id: number, comment: string): Promise<void>;
+  closeIssue(id: number, status: 'completed' | 'failed' | 'abandoned', comment?: string, poster?: string): Promise<void>;
+  addComment(id: number, comment: string, poster?: string): Promise<void>;
   createBlockage(blocker: number, blocked: number): Promise<void>;
   removeBlockage(blocker: number, blocked: number): Promise<void>;
 }
@@ -317,6 +351,8 @@ export interface TeamModule {
   // IPC Handler registration
   registerHandler(registration: IpcHandlerRegistration): void;
   unregisterHandler(messageType: string): void;
+  // Transcript logging
+  setTranscript(transcript: TranscriptModule): void;
 }
 
 /**

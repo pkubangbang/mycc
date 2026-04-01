@@ -2,7 +2,7 @@
  * issue.ts - Issue module: persisted tasks with blocking relationships
  */
 
-import type { IssueModule, Issue, IssueStatus, IpcHandlerRegistration, AgentContext } from '../types.js';
+import type { IssueModule, Issue, IssueComment, IssueStatus, IpcHandlerRegistration, AgentContext } from '../types.js';
 import { getDb } from './db.js';
 
 /**
@@ -14,12 +14,21 @@ export class IssueManager implements IssueModule {
    */
   async createIssue(title: string, content: string, blockedBy: number[] = []): Promise<number> {
     const db = getDb();
+
+    // Create issue with initial system comment
+    const initialComment: IssueComment = {
+      poster: 'system',
+      content: `Created issue "${title}"`,
+      timestamp: new Date(),
+    };
+    const comments = JSON.stringify([initialComment]);
+
     const stmt = db.prepare(`
       INSERT INTO issues (title, content, status, owner, comments)
-      VALUES (?, ?, 'pending', NULL, '[]')
+      VALUES (?, ?, 'pending', NULL, ?)
     `);
 
-    const result = stmt.run(title, content);
+    const result = stmt.run(title, content, comments);
     const issueId = result.lastInsertRowid as number;
 
     // Create blockages
@@ -130,9 +139,16 @@ export class IssueManager implements IssueModule {
     if (issue.content) lines.push('Content:', `${issue.content}`);
     if (issue.blockedBy.length > 0) lines.push(`Blocked by: ${issue.blockedBy.join(', ')}`);
     if (issue.blocks.length > 0) lines.push(`Blocks: ${issue.blocks.join(', ')}`);
+
     if (issue.comments.length > 0) {
       lines.push('Comments:');
-      issue.comments.forEach((c) => lines.push(`  ${c}`, `------`));
+      for (const comment of issue.comments) {
+        // Owner's comments have "<" prefix (input), others have ">" prefix (output)
+        const isOwner = comment.poster === issue.owner;
+        const prefix = isOwner ? '<' : '>';
+        const posterLabel = comment.poster === 'system' ? 'system' : `@${comment.poster}`;
+        lines.push(`  ${prefix} ${posterLabel}: ${comment.content}`);
+      }
     }
 
     return lines.join('\n');
@@ -162,7 +178,13 @@ export class IssueManager implements IssueModule {
         WHERE id = ? AND status = 'pending'
       `);
       const result = updateStmt.run(owner, id);
-      return result.changes > 0;
+
+      if (result.changes > 0) {
+        // Add system comment for claim
+        this.addCommentSync(id, `Claimed by @${owner}`, 'system');
+        return true;
+      }
+      return false;
     });
 
     return claimTx();
@@ -171,19 +193,26 @@ export class IssueManager implements IssueModule {
   /**
    * Close an issue
    */
-  async closeIssue(id: number, status: 'completed' | 'failed' | 'abandoned', comment?: string): Promise<void> {
+  async closeIssue(id: number, status: 'completed' | 'failed' | 'abandoned', comment?: string, poster?: string): Promise<void> {
     const db = getDb();
 
     const closeTx = db.transaction(() => {
+      // Get current owner for system comment
+      const issueRow = db.prepare(`SELECT owner FROM issues WHERE id = ?`).get(id) as { owner: string | null } | undefined;
+      const owner = issueRow?.owner || 'unknown';
+
       // Update status
       const updateStmt = db.prepare(`
         UPDATE issues SET status = ? WHERE id = ?
       `);
       updateStmt.run(status, id);
 
-      // Add comment if provided
+      // Add system comment for status change
+      this.addCommentSync(id, `Status changed to ${status}`, 'system');
+
+      // Add closing comment if provided
       if (comment) {
-        this.addCommentSync(id, comment);
+        this.addCommentSync(id, comment, poster || owner);
       }
 
       // Remove any blockages where this issue is the blocker
@@ -199,14 +228,14 @@ export class IssueManager implements IssueModule {
   /**
    * Add a comment to an issue
    */
-  async addComment(id: number, comment: string): Promise<void> {
-    this.addCommentSync(id, comment);
+  async addComment(id: number, comment: string, poster?: string): Promise<void> {
+    this.addCommentSync(id, comment, poster || 'anonymous');
   }
 
   /**
    * Add a comment to an issue (sync internal helper)
    */
-  private addCommentSync(id: number, comment: string): void {
+  private addCommentSync(id: number, comment: string, poster: string): void {
     const db = getDb();
 
     const stmt = db.prepare(`
@@ -216,8 +245,12 @@ export class IssueManager implements IssueModule {
 
     if (!row) return;
 
-    const comments: string[] = JSON.parse(row.comments || '[]');
-    comments.push(comment);
+    const comments: IssueComment[] = JSON.parse(row.comments || '[]');
+    comments.push({
+      poster,
+      content: comment,
+      timestamp: new Date(),
+    });
 
     const updateStmt = db.prepare(`
       UPDATE issues SET comments = ? WHERE id = ?
@@ -276,6 +309,14 @@ export class IssueManager implements IssueModule {
     const blocksRows = blocksStmt.all(row.id) as { blocked_id: number }[];
     const blocks = blocksRows.map((r) => r.blocked_id);
 
+    // Parse comments
+    const rawComments = JSON.parse(row.comments || '[]');
+    const comments: IssueComment[] = rawComments.map((c: { poster: string; content: string; timestamp: string }) => ({
+      poster: c.poster,
+      content: c.content,
+      timestamp: new Date(c.timestamp),
+    }));
+
     return {
       id: row.id,
       title: row.title,
@@ -284,7 +325,7 @@ export class IssueManager implements IssueModule {
       owner: row.owner || undefined,
       blockedBy,
       blocks,
-      comments: JSON.parse(row.comments || '[]'),
+      comments,
       createdAt: new Date(row.created_at),
     };
   }
@@ -348,12 +389,13 @@ export function createIssueIpcHandlers(): IpcHandlerRegistration[] {
       messageType: 'db_issue_close',
       module: 'issue',
       handler: async (_sender, payload, ctx) => {
-        const { id, status, comment } = payload as {
+        const { id, status, comment, poster } = payload as {
           id: number;
           status: 'completed' | 'failed' | 'abandoned';
           comment?: string;
+          poster?: string;
         };
-        await ctx.issue.closeIssue(id, status, comment);
+        await ctx.issue.closeIssue(id, status, comment, poster);
         return { success: true };
       },
     },
@@ -361,8 +403,8 @@ export function createIssueIpcHandlers(): IpcHandlerRegistration[] {
       messageType: 'db_issue_comment',
       module: 'issue',
       handler: async (_sender, payload, ctx) => {
-        const { id, comment } = payload as { id: number; comment: string };
-        await ctx.issue.addComment(id, comment);
+        const { id, comment, poster } = payload as { id: number; comment: string; poster?: string };
+        await ctx.issue.addComment(id, comment, poster);
         return { success: true };
       },
     },

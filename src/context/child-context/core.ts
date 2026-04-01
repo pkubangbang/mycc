@@ -2,7 +2,7 @@
  * core.ts - ChildCore implementation for IPC-based core operations
  */
 
-import type { CoreModule } from '../../types.js';
+import type { CoreModule, TranscriptModule } from '../../types.js';
 import { sendLog, sendError, sendRequest } from './ipc-helpers.js';
 
 /**
@@ -45,6 +45,10 @@ export class ChildCore implements CoreModule {
 
   setQuestionFn(): void {
     // No-op in child - questions go via IPC
+  }
+
+  setTranscript(_transcript: TranscriptModule): void {
+    // No-op in child - transcript is handled by parent process
   }
 }
 

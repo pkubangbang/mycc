@@ -2,7 +2,7 @@
  * issue.ts - ChildIssue implementation for IPC-based issue operations
  */
 
-import type { IssueModule, Issue, IssueStatus } from '../../types.js';
+import type { IssueModule, Issue, IssueComment } from '../../types.js';
 import { sendRequest } from './ipc-helpers.js';
 
 /**
@@ -71,12 +71,19 @@ export class ChildIssue implements IssueModule {
     lines.push(`Issue #${issue.id}: ${issue.title}`);
     lines.push(`Status: ${status[issue.status] || '[?]'}`);
     if (issue.owner) lines.push(`Owner: @${issue.owner}`);
-    if (issue.content) lines.push(`Content: ${issue.content}`);
+    if (issue.content) lines.push('Content:', `${issue.content}`);
     if (issue.blockedBy.length > 0) lines.push(`Blocked by: ${issue.blockedBy.join(', ')}`);
     if (issue.blocks.length > 0) lines.push(`Blocks: ${issue.blocks.join(', ')}`);
+
     if (issue.comments.length > 0) {
       lines.push('Comments:');
-      issue.comments.forEach((c) => lines.push(`  ${c}`, ''));
+      for (const comment of issue.comments) {
+        // Owner's comments have "<" prefix (input), others have ">" prefix (output)
+        const isOwner = comment.poster === issue.owner;
+        const prefix = isOwner ? '<' : '>';
+        const posterLabel = comment.poster === 'system' ? 'system' : `@${comment.poster}`;
+        lines.push(`  ${prefix} ${posterLabel}: ${comment.content}`);
+      }
     }
 
     return lines.join('\n');
@@ -93,13 +100,14 @@ export class ChildIssue implements IssueModule {
   async closeIssue(
     id: number,
     status: 'completed' | 'failed' | 'abandoned',
-    comment?: string
+    comment?: string,
+    poster?: string
   ): Promise<void> {
-    await sendRequest<void>('db_issue_close', { id, status, comment });
+    await sendRequest<void>('db_issue_close', { id, status, comment, poster });
   }
 
-  async addComment(id: number, comment: string): Promise<void> {
-    await sendRequest<void>('db_issue_comment', { id, comment });
+  async addComment(id: number, comment: string, poster?: string): Promise<void> {
+    await sendRequest<void>('db_issue_comment', { id, comment, poster });
   }
 
   async createBlockage(blocker: number, blocked: number): Promise<void> {
