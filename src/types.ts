@@ -309,6 +309,7 @@ export interface WtModule {
   enterWorkTree(name: string): Promise<void>;
   leaveWorkTree(): Promise<void>;
   removeWorkTree(name: string): Promise<void>;
+  getWorkTreePath(name: string): Promise<string>;
 }
 
 // ============================================================================

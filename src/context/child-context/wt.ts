@@ -1,28 +1,40 @@
 /**
- * wt.ts - ChildWt implementation for IPC-based worktree operations
+ * wt.ts - ChildWt implementation for worktree operations
+ *
+ * Note: enterWorkTree and leaveWorkTree update the child's local workDir directly,
+ * without IPC. Only read operations (get path, list) need to query parent.
  */
 
-import type { WtModule } from '../../types.js';
+import * as fs from 'fs';
+import * as path from 'path';
+import type { WtModule, CoreModule } from '../../types.js';
 import { ipc } from './ipc-helpers.js';
 
 /**
- * Worktree module reference to update workDir in core
- * This is set during child context creation
+ * Find project root by traversing up looking for .git
  */
-let coreSetWorkDir: ((dir: string) => void) | null = null;
-
-/**
- * Set the workDir update function (called from child context factory)
- */
-export function setWorkDirUpdateFn(fn: (dir: string) => void): void {
-  coreSetWorkDir = fn;
+function findProjectRoot(startDir: string): string {
+  let currentDir = startDir;
+  while (currentDir !== path.dirname(currentDir)) {
+    if (fs.existsSync(path.join(currentDir, '.git'))) {
+      return currentDir;
+    }
+    currentDir = path.dirname(currentDir);
+  }
+  return startDir;
 }
 
 /**
  * Worktree module for child process
- * All operations go through IPC to parent
+ * enter/leave update local workDir directly, other operations use IPC
  */
 export class ChildWt implements WtModule {
+  private core: CoreModule;
+
+  constructor(core: CoreModule) {
+    this.core = core;
+  }
+
   async createWorkTree(name: string, branch: string): Promise<string> {
     const result = await ipc.sendRequest<{ path: string }>('wt_create', { name, branch });
     return result.path;
@@ -33,20 +45,21 @@ export class ChildWt implements WtModule {
     return result;
   }
 
+  async getWorkTreePath(name: string): Promise<string> {
+    const result = await ipc.sendRequest<{ path: string }>('wt_get_path', { name });
+    return result.path;
+  }
+
   async enterWorkTree(name: string): Promise<void> {
-    const result = await ipc.sendRequest<{ path: string }>('wt_enter', { name });
-    // Update local workDir
-    if (coreSetWorkDir && result.path) {
-      coreSetWorkDir(result.path);
-    }
+    // Get path from parent, then update local workDir
+    const wtPath = await this.getWorkTreePath(name);
+    this.core.setWorkDir(wtPath);
   }
 
   async leaveWorkTree(): Promise<void> {
-    const result = await ipc.sendRequest<{ path: string }>('wt_leave', {});
-    // Update local workDir
-    if (coreSetWorkDir && result.path) {
-      coreSetWorkDir(result.path);
-    }
+    // Find project root locally and update workDir
+    const root = findProjectRoot(this.core.getWorkDir());
+    this.core.setWorkDir(root);
   }
 
   async removeWorkTree(name: string): Promise<void> {
@@ -57,6 +70,6 @@ export class ChildWt implements WtModule {
 /**
  * Create a child worktree module
  */
-export function createChildWt(): WtModule {
-  return new ChildWt();
+export function createChildWt(core: CoreModule): WtModule {
+  return new ChildWt(core);
 }

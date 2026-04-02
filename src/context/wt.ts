@@ -81,9 +81,9 @@ export class WorktreeManager implements WtModule {
   }
 
   /**
-   * Enter a worktree (change working directory)
+   * Get the path to a worktree (read-only, no state change)
    */
-  async enterWorkTree(name: string): Promise<void> {
+  async getWorkTreePath(name: string): Promise<string> {
     const db = getDb();
     const row = db.prepare(`SELECT path FROM worktrees WHERE name = ?`).get(name) as {
       path: string;
@@ -97,24 +97,37 @@ export class WorktreeManager implements WtModule {
       throw new Error(`Worktree path does not exist: ${row.path}`);
     }
 
-    this.core.setWorkDir(row.path);
+    return row.path;
+  }
+
+  /**
+   * Get the project root (find .git directory)
+   */
+  async getProjectRoot(): Promise<string> {
+    let currentDir = this.core.getWorkDir();
+    while (currentDir !== path.dirname(currentDir)) {
+      if (fs.existsSync(path.join(currentDir, '.git'))) {
+        return currentDir;
+      }
+      currentDir = path.dirname(currentDir);
+    }
+    return this.core.getWorkDir();
+  }
+
+  /**
+   * Enter a worktree (change working directory)
+   */
+  async enterWorkTree(name: string): Promise<void> {
+    const wtPath = await this.getWorkTreePath(name);
+    this.core.setWorkDir(wtPath);
   }
 
   /**
    * Leave current worktree (restore to project root)
    */
   async leaveWorkTree(): Promise<void> {
-    // Find the project root by looking for .git directory
-    let currentDir = this.core.getWorkDir();
-    while (currentDir !== path.dirname(currentDir)) {
-      if (fs.existsSync(path.join(currentDir, '.git'))) {
-        this.core.setWorkDir(currentDir);
-        return;
-      }
-      currentDir = path.dirname(currentDir);
-    }
-
-    // If no .git found, stay in current directory
+    const root = await this.getProjectRoot();
+    this.core.setWorkDir(root);
   }
 
   /**
@@ -187,26 +200,16 @@ export function createWtIpcHandlers(): IpcHandlerRegistration[] {
       },
     },
     {
-      messageType: 'wt_enter',
+      messageType: 'wt_get_path',
       module: 'wt',
       handler: async (_sender, payload, ctx, sendResponse) => {
         const { name } = payload as { name: string };
         try {
-          await ctx.wt.enterWorkTree(name);
-          const workDir = ctx.core.getWorkDir();
-          sendResponse('wt_result', true, { path: workDir });
+          const path = await ctx.wt.getWorkTreePath(name);
+          sendResponse('wt_result', true, { path });
         } catch (err) {
           sendResponse('wt_result', false, undefined, (err as Error).message);
         }
-      },
-    },
-    {
-      messageType: 'wt_leave',
-      module: 'wt',
-      handler: async (_sender, _payload, ctx, sendResponse) => {
-        await ctx.wt.leaveWorkTree();
-        const workDir = ctx.core.getWorkDir();
-        sendResponse('wt_result', true, { path: workDir });
       },
     },
     {
