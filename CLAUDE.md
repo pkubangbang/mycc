@@ -29,7 +29,7 @@ Different agent contexts have access to different tools:
 
 | Agent Type | Available Tools |
 |------------|-----------------|
-| Lead (main) | All 19 tools |
+| Lead (main) | All tools |
 | Teammate (child) | Cannot use: tm_create, tm_remove, tm_await, broadcast |
 | Background (bg) | Can only use: bash, read_file, write_file, edit_file |
 
@@ -122,52 +122,21 @@ src/
 └── skills/            # Skill definitions
 ```
 
-## Adding a Tool
+## How to add a tool/skill
 
-Built-in tools go in `src/tools/`:
+To add a tool:
+1. refer to existing code in src/tools/ to get coding pattern
+2. create file in `.mycc/tools` folder. This is a hot-reloadable folder
+3. let the user test it manually, and iterate from feedbacks.
+4. once qualified, migrate it back into `src/tools` and update the loader, to make it built-in.
 
-```typescript
-// src/tools/my_tool.ts
-import type { ToolDefinition, AgentContext } from '../types.js';
+The detailed information can be found at `skills/add-tool/SKILL.md`.
 
-export const myTool: ToolDefinition = {
-  name: 'my_tool',
-  description: 'Description for LLM',
-  input_schema: {
-    type: 'object',
-    properties: {
-      arg: { type: 'string', description: '...' },
-    },
-    required: ['arg'],
-  },
-  scope: ['main', 'child'],  // Where tool is available
-  handler: (ctx: AgentContext, args: Record<string, unknown>): string => {
-    const arg = args.arg as string;
-    ctx.core.brief('info', 'my_tool', `executing: ${arg}`);
-    return `Result: ${arg}`;
-  },
-};
-```
-
-Then import and add to the `builtInTools` array in `src/context/loader.ts`.
-
-## Adding a Skill
-
-Create `.mycc/skills/my_skill.md`:
-
-```markdown
----
-name: my_skill
-description: What this skill does
-keywords: [keyword1, keyword2]
----
-
-# My Skill
-
-Detailed instructions for the LLM...
-```
-
-Skills are hot-reloaded when files change.
+To add a skill:
+1. refer to existing files in skills/ to get pattern.
+2. create file in `.mycc/skills` folder. This is a hot-reloadable folder
+3. let the user test it manually, and iterate from feedbacks.
+4. once qualified, migrate it back into `skills/`, to make it built-in.
 
 ## Database Schema
 
