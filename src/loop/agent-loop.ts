@@ -2,7 +2,6 @@
  * agent-loop.ts - STAR-principle agent loop
  */
 
-import * as readline from 'readline';
 import chalk from 'chalk';
 import { ollama, MODEL } from '../ollama.js';
 import type { Message } from 'ollama';
@@ -16,7 +15,8 @@ import {
   microCompact,
   autoCompact,
   buildSystemPrompt,
-} from './agent-utils.js'; // Rough token limit before compacting
+} from './agent-utils.js';
+import { agentIO } from './agent-io.js';
 
 /**
  * Agent loop - STAR principle: Situation, Task, Action, Result
@@ -135,23 +135,22 @@ export async function main(): Promise<void> {
   // History
   const history: Message[] = [];
 
-  // REPL
-  const rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout,
-  });
+  // Initialize AgentIO for main process
+  agentIO.initMain();
 
-  const prompt = (query: string): Promise<string> =>
-    new Promise((resolve) => rl.question(query, resolve));
-
-  // Inject prompt function into Core for question capability
-  ctx.core.setQuestionFn(prompt);
+  // Inject question function into Core for child process IPC
+  ctx.core.setQuestionFn((query: string) => agentIO.question(query));
 
   // Handle graceful shutdown
   process.on('SIGINT', () => {
+    if (agentIO.abort()) {
+      console.log(chalk.yellow('\nInterrupting current operation...'));
+      return;
+    }
+    // No active tool - safe to exit
     console.log(chalk.yellow('\nShutting down...'));
     ctx.team?.dismissTeam();
-    rl.close();
+    agentIO.close();
     process.exit(0);
   });
 
@@ -160,7 +159,7 @@ export async function main(): Promise<void> {
 
   while (true) {
     try {
-      const query = await prompt(chalk.cyan('agent >> '));
+      const query = await agentIO.question(chalk.cyan('agent >> '));
 
       if (['q', 'exit', 'quit', ''].includes(query.trim().toLowerCase())) {
         break;
@@ -227,6 +226,6 @@ export async function main(): Promise<void> {
 
   // Cleanup
   ctx.team?.dismissTeam();
-  rl.close();
+  agentIO.close();
   loader.stopWatching();
 }

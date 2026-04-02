@@ -4,7 +4,8 @@
       "Bash(pnpm typecheck:*)",
       "Bash(pnpm rebuild:*)",
       "Bash(pnpm build:*)",
-      "WebSearch"
+      "WebSearch",
+      "WebFetch(domain:stackoverflow.com)"
     ]
   }
 }

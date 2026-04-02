@@ -21,3 +21,8 @@ the number. John will respond with "too high" or "too low" until "You guess it!"
 --------------
 
 We are now testing the worktree tools. Create a wt to refactor the code to extract constant as config. Spawn a architect to help you.
+
+
+-------------
+
+I'm testing the bash tool, especially the interactive bash. Run read -p "Enter something: " val && echo "You entered: $val"

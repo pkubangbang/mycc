@@ -6,6 +6,7 @@ import chalk from 'chalk';
 import type { CoreModule, TranscriptModule } from '../types.js';
 import { ollama } from '../ollama.js';
 import { WebFetchResponse, WebSearchResult } from 'ollama';
+import { agentIO } from '../loop/agent-io.js';
 
 /**
  * Color functions for tool prefixes
@@ -116,17 +117,28 @@ export class Core implements CoreModule {
    * @param asker - Optional name of who is asking (defaults to 'lead')
    */
   async question(query: string, asker: string = 'lead'): Promise<string> {
-    if (!this.questionFn) {
-      throw new Error('Question function not initialized. Ensure readline is set up.');
+    // Main process: use agentIO directly
+    if (agentIO.isMainProcess()) {
+      if (this.transcript) {
+        this.transcript.logQuestion(asker, query);
+      }
+      this.brief('info', `${asker}:question`, 'waiting for user input...');
+      const response = await agentIO.question(query);
+      if (this.transcript) {
+        this.transcript.logAnswer(asker, response);
+      }
+      return response;
     }
-    // Log to transcript
+
+    // Child process: use IPC via questionFn
+    if (!this.questionFn) {
+      throw new Error('Question function not initialized.');
+    }
     if (this.transcript) {
       this.transcript.logQuestion(asker, query);
     }
-    // Log that this asker is asking (the actual question is shown by readline)
     this.brief('info', `${asker}:question`, 'waiting for user input...');
     const response = await this.questionFn(query);
-    // Log response to transcript
     if (this.transcript) {
       this.transcript.logAnswer(asker, response);
     }

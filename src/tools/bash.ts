@@ -1,5 +1,5 @@
 /**
- * bash.ts - Run shell commands with SIGINT handling and popup terminal support
+ * bash.ts - Run shell commands with stdin inheritance for interactive commands
  *
  * Scope: ['main', 'child', 'bg'] - Available to all agent types
  */
@@ -7,6 +7,7 @@
 import { execa } from 'execa';
 import { execSync } from 'child_process';
 import type { ToolDefinition, AgentContext } from '../types.js';
+import { agentIO } from '../loop/agent-io.js';
 
 /**
  * Find available terminal emulator on the system
@@ -50,7 +51,7 @@ async function runInPopupTerminal(ctx: AgentContext, command: string): Promise<s
     execSync(`${terminal.cmd} ${terminal.args.join(' ')} "${cmdWithPause}"`, {
       cwd: ctx.core.getWorkDir(),
       encoding: 'utf-8',
-      timeout: 300000,
+      timeout: 300000, // 5 min max
     });
     return `✓ Command completed in popup terminal: ${command}`;
   } catch (err) {
@@ -83,58 +84,58 @@ export const bashTool: ToolDefinition = {
 
     ctx.core.brief('info', 'bash', command);
 
-    // Use AbortController for SIGINT handling
-    const abortController = new AbortController();
-    let interrupted = false;
-
-    const onSigint = () => {
-      interrupted = true;
-      abortController.abort();
-    };
-
-    process.on('SIGINT', onSigint);
-
-    try {
-      const result = await execa('bash', ['-c', command], {
+    const { result, interrupted } = await agentIO.exec((signal) =>
+      execa('bash', ['-c', command], {
         cwd: ctx.core.getWorkDir(),
+        stdin: 'inherit',
+        stdout: 'pipe',
+        stderr: 'pipe',
         encoding: 'utf8',
-        cancelSignal: abortController.signal,
+        cancelSignal: signal,
         gracefulCancel: true,
-        reject: false, // Don't throw on non-zero exit
-      });
+        reject: false,
+      })
+    );
 
-      process.off('SIGINT', onSigint);
-
-      if (interrupted) {
-        // Ask user if they want popup terminal
-        const response = await ctx.core.question(
-          `Command was interrupted. Retry in popup terminal? (y/n)`
-        );
-
+    if (interrupted) {
+      // Only ask about popup terminal in main process
+      if (agentIO.isMainProcess()) {
+        const response = await agentIO.question('Command interrupted. Retry in popup terminal? (y/n)');
         if (response.toLowerCase() === 'y') {
           return await runInPopupTerminal(ctx, command);
         }
-        return `Command interrupted by user. Output so far:\n${result.stdout}\n${result.stderr}`.slice(0, 50000);
       }
-
-      // Combine stdout and stderr
-      const output = result.stdout || result.stderr || '(no output)';
-      return output.slice(0, 50000);
-    } catch (err) {
-      process.off('SIGINT', onSigint);
-
-      if (interrupted) {
-        const response = await ctx.core.question(
-          `Command was interrupted. Retry in popup terminal? (y/n)`
-        );
-
-        if (response.toLowerCase() === 'y') {
-          return await runInPopupTerminal(ctx, command);
-        }
-        return `Command interrupted by user.`;
-      }
-
-      return `Error: ${(err as Error).message}`.slice(0, 50000);
+      return 'Command interrupted by user.';
     }
+
+    // Check if command failed
+    if (result instanceof Error) {
+      return `Error: ${result.message}`;
+    }
+
+    // Build LLM-friendly output
+    const stdout = result.stdout || '';
+    const stderr = result.stderr || '';
+    const exitCode = result.exitCode ?? 0;
+
+    const parts: string[] = [];
+
+    // Status line
+    if (exitCode === 0) {
+      parts.push(`Command completed successfully (exit: ${exitCode})`);
+    } else {
+      parts.push(`Command failed (exit: ${exitCode})`);
+    }
+
+    // Output sections with clear labels
+    if (stdout.trim()) {
+      parts.push(`\n[stdout]\n${stdout.trim()}`);
+    }
+
+    if (stderr.trim()) {
+      parts.push(`\n[stderr]\n${stderr.trim()}`);
+    }
+
+    return parts.join('\n');
   },
 };
