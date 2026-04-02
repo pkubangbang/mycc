@@ -65,7 +65,12 @@ export async function agentLoop(
       // 1. Micro-compact old tool results
       microCompact(messages);
 
-      // 2. Collect mails
+      // 2. Handle pending questions from children
+      if (ctx.team) {
+        await ctx.team.handlePendingQuestions();
+      }
+
+      // 3. Collect mails
       const mails = ctx.mail.collectMails();
       for (const mail of mails) {
         messages.push({
@@ -75,7 +80,7 @@ export async function agentLoop(
         messages.push({ role: 'assistant', content: 'Noted.' });
       }
 
-      // 3. Todo nudging
+      // 4. Todo nudging
       if (ctx.todo.hasOpenTodo()) {
         nextTodoNudge--;
         if (nextTodoNudge === 0) {
@@ -87,24 +92,24 @@ export async function agentLoop(
         }
       }
 
-      // 4. Auto-compact when tokens exceed threshold
+      // 5. Auto-compact when tokens exceed threshold
       if (estimateTokens(messages) > TOKEN_THRESHOLD) {
         console.log(chalk.blue('[auto-compact triggered]'));
         const compacted = await autoCompact(messages);
         messages.splice(0, messages.length, ...compacted);
       }
 
-      // 5. Build system prompt
+      // 6. Build system prompt
       const SYSTEM = buildSystemPrompt(ctx);
 
-      // 6. Call LLM
+      // 7. Call LLM
       const response = await ollama.chat({
         model: MODEL,
         messages: [{ role: 'system', content: SYSTEM }, ...messages],
         tools: toolLoader.getToolsForScope(scope),
       });
 
-      // 7. Handle response
+      // 8. Handle response
       const assistantMessage = response.message;
       messages.push({
         role: 'assistant',
@@ -112,7 +117,7 @@ export async function agentLoop(
         tool_calls: assistantMessage.tool_calls,
       });
 
-      // 8. No tool calls = check team status
+      // 9. No tool calls = check team status
       if (!assistantMessage.tool_calls || assistantMessage.tool_calls.length === 0) {
         // Only check team if it exists (not in child process)
         if (ctx.team) {
@@ -131,7 +136,7 @@ export async function agentLoop(
         return;
       }
 
-      // 9. Execute tools
+      // 10. Execute tools
       for (const toolCall of assistantMessage.tool_calls) {
         if (agentIO.isShuttingDown()) {
           throw new ShutdownError();

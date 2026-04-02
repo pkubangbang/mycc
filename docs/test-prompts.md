@@ -230,3 +230,62 @@ Congratulations on winning! 🏆
 Great game everyone! The team and question tools are working well. Would you like to clean up by removing the teammates?
 
 agent >> 
+
+
+-------------------
+
+agent >> I'm testing the team and question tools. Spawn a teammate called john and play number guessing game with us.
+The rule is that, John will first think of a number between 1-100, and you and me will take turns to guess
+the number. John will respond with "too high" or "too low" until "You guess it!". Let John ask me not you.
+[16:54:26] [tm_create] Creating teammate 'john' with role: game player
+[16:54:27] [john] Worker process started, waiting for spawn message
+[16:54:27] [john] [worker] john initializing...
+[16:54:27] [john] [worker] john started successfully
+[16:54:36] [john] [brief] 🎮 Johnny reporting for duty! Ready to play the number guessing game. Waiting for game rules and setup!
+[16:54:36] [john] [brief] Status update sent: 🎮 Johnny reporting for duty! Ready to play the number guessing game. Waiting fo
+[16:54:44] [lead:question] waiting for user input...
+Great! John is ready to play the number guessing game. How would you like to play?
+
+Option 1: You think of a number, and John tries to guess it (I'll help facilitate)
+Option 2: John thinks of a number, and you try to guess it
+Option 3: I think of a number and both you and John compete to guess it
+
+Which option do you prefer, or do you have another idea?3
+[16:55:09] [john:question] waiting for user input...
+Alright, what are the rules? Who's guessing whose number, and what's the range? Let's get this party started! 🎉Ask the lead
+[16:55:45] [john] [question] User response: Ask the lead
+[16:55:52] [john] [mail_to] Sending mail to lead: 🎮 Number Guessing Game - Ready to Play!
+Hey Lead! Johnny here, ready to crush this number guessing game! 🎯
+
+I'm pumped and ready to go, but I need the rules. Can you fill me in on:
+- Who's guessing whose number?
+- What's the number range?
+- Any special rules I should know?
+
+Let's get this game rolling! 🎲
+[16:55:52] [john] [mail_to] Mail sent to 'lead' with title: 🎮 Number Guessing Game - Ready to Play!
+[16:55:55] [broadcast] Broadcasting to 1 teammate(s): 🎲 Number Guessing Game Starting!
+[16:55:58] [mail_to] Sending mail to john: 🎲 Game Rules - Let's Go!
+Hey John! I already sent the rules via broadcast, but let me clarify for you directly:
+
+THE GAME IS ON! 🎯
+
+- I (the lead) have chosen a SECRET NUMBER between 1 and 100
+- You are competing against our human teammate to guess it first
+- After each guess, I'll tell you if the number is HIGHER or LOWER
+- First one to guess correctly WINS!
+
+When you're ready to make a guess, send me a message with your number. The human teammate will also be guessing. 
+
+What's your first guess? Let's see who wins! 🎲
+[16:55:59] [john] [mail_to] Sending mail to lead: My Guess
+My first guess is 50! 🎯
+
+Let's see if I'm hot or cold!
+[16:55:59] [john] [mail_to] Mail sent to 'lead' with title: My Guess
+[16:55:59] [john] [brief] 🎯 First guess sent: 50! Using binary search strategy - should narrow down the range quickly!
+[16:55:59] [john] [brief] Status update sent: 🎯 First guess sent: 50! Using binary search strategy - should narrow down the r
+[16:56:01] [lead:question] waiting for user input...
+🎮 The game is ON! I have chosen a secret number between 1 and 100.
+
+What is your first guess? (John will also be guessing - let's see who wins!)

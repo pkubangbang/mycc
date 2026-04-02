@@ -8,7 +8,9 @@ import type { ToolDefinition, AgentContext } from '../types.js';
 
 export const tmCreateTool: ToolDefinition = {
   name: 'tm_create',
-  description: 'Create a teammate as a child process agent. Use this to spawn a new agent that can work on tasks asynchronously.',
+  description: 'Create a teammate with name, role and initial prompt. ' +
+   // to prevent fraction in team-mode transition.
+   'If you use this tool, you CANNOT use other tool in this round.',
   input_schema: {
     type: 'object',
     properties: {

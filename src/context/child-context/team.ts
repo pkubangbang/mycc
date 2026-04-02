@@ -87,6 +87,14 @@ export class ChildTeam implements TeamModule {
   setTranscript(): void {
     // No-op in child - transcript handled by parent
   }
+
+  /**
+   * Handle pending questions from children
+   * No-op in child process - only the lead handles questions
+   */
+  async handlePendingQuestions(): Promise<void> {
+    // No-op in child process
+  }
 }
 
 /**

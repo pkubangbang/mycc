@@ -372,6 +372,8 @@ export interface TeamModule {
   unregisterHandler(messageType: string): void;
   // Transcript logging
   setTranscript(transcript: TranscriptModule): void;
+  // Pending questions from children
+  handlePendingQuestions(): Promise<void>;
 }
 
 /**

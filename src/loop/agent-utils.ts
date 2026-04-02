@@ -171,8 +171,15 @@ export function buildSystemPrompt(
       `You are the lead of a coding agent team at ${workDir}.`,
       `You spawn teammates, create issues and collect results.`,
       `Use tools to finish tasks. Use skills to access specialized knowledge.`,
+      // about visibility
       `Report proactively using the brief tool.`,
+      // about collaboration order
+      `If you have detected order in the collaboration (like "take turns to do"), create a todo list to lock it down.`,
+      // about coordination
+      `For async collaboration, use mail_to and check mail in next iteration. Avoid tm_await unless waiting for a teammate to fully complete work.`,
+      // about the context
       `Read README.md or CLAUDE.md first if you feel lost about the context.`,
+      // about git commit
       `You must ask for grant BEFORE "git commit" with no exception.`,
       '',
       timeContext,
@@ -184,6 +191,9 @@ export function buildSystemPrompt(
       `You are a coding agent at ${workDir}.`,
       `Use tools to finish tasks. Use skills to access specialized knowledge.`,
       `Consider using issue_* to divide and conquor complex tasks, using todo_* for simple task tracking.`,
+      // how to enter team mode
+      `If you have found the need to create a team, don't hesitate to use tm_* tools.`,
+      // about git commit
       `You must ask for grant BEFORE "git commit" with no exception.`,
       '',
       timeContext,

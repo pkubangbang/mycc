@@ -51,6 +51,11 @@ export class TeamManager implements TeamModule {
   private ipcRegistry: IpcRegistry;
   private transcript: TranscriptModule | null = null;
   private context: AgentContext | null = null;
+  private pendingQuestions: Array<{
+    sender: string;
+    reqId: number;
+    query: string;
+  }> = [];
 
   constructor(core: CoreModule) {
     this.core = core;
@@ -187,15 +192,13 @@ export class TeamManager implements TeamModule {
     };
 
     try {
-      // === Question (direct handling) ===
+      // === Question (queue for later handling) ===
       if (msg.type === 'question') {
-        const query = msg.query as string;
-        try {
-          const response = await this.context!.core.question(query, sender);
-          sendResponse('question_result', true, { response });
-        } catch (err) {
-          sendResponse('question_result', false, undefined, (err as Error).message);
-        }
+        this.pendingQuestions.push({
+          sender,
+          reqId: reqId!,
+          query: msg.query as string,
+        });
         return;
       }
 
@@ -420,6 +423,26 @@ export class TeamManager implements TeamModule {
     const teammates = this.listTeammates();
     for (const t of teammates) {
       this.mailTo(t.name, title, content);
+    }
+  }
+
+  /**
+   * Handle pending questions from children
+   * Called at the start of each agent loop iteration
+   */
+  async handlePendingQuestions(): Promise<void> {
+    while (this.pendingQuestions.length > 0) {
+      const q = this.pendingQuestions.shift()!;
+      try {
+        const response = await this.context!.core.question(q.query, q.sender);
+        this.sendResponse(q.sender, q.reqId, 'question_result', true, { response });
+        // Inform lead of the Q&A via mail
+        this.context!.mail.appendMail('lead', `The user answered ${q.sender}'s question`, `Question: ${q.query}\n\nAnswer: ${response}`);
+      } catch (err) {
+        this.sendResponse(q.sender, q.reqId, 'question_result', false, undefined, (err as Error).message);
+        // Inform lead of the error via mail
+        this.context!.mail.appendMail('lead', `The user rejected ${q.sender}'s question`, `Question: ${q.query}\n\nError: ${(err as Error).message}`);
+      }
     }
   }
 }
