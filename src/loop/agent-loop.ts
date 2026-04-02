@@ -8,6 +8,7 @@ import type { Message, AgentContext, ToolScope, ToolCall } from '../types.js';
 import { ToolLoaderImpl } from '../context/loader.js';
 import { createAgentContext } from '../context/index.js';
 import { createLoader, createToolLoader } from '../context/loader.js';
+import { clearSessionData } from '../context/db.js';
 import {
   TOKEN_THRESHOLD,
   estimateTokens,
@@ -181,6 +182,9 @@ export async function main(): Promise<void> {
 
   // Create context
   const ctx = createAgentContext(process.cwd());
+
+  // Clear session data for clean startup
+  clearSessionData();;
 
   // Load tools and skills
   const loader = createLoader();

@@ -143,14 +143,12 @@ export function buildSystemPrompt(
 
   // Common suffix for all prompts
   const common = [
-    '',
+    '## Calendar',
     `Current date: ${currentDate} (year: ${currentYear})`,
-    '',
-    `Skills: ${skills}`,
+    '## Skills',
+    `${skills}`,
     '',
     '## Output Behavior',
-    'Tool brief outputs are automatically shown to the user.',
-    'Tool return values provide context for your decisions.',
     'Respond concisely - do not repeat what tools have already displayed.',
   ].join('\n');
 
@@ -176,13 +174,17 @@ export function buildSystemPrompt(
   if (hasTeam) {
     return [
       `You are the lead of a coding agent team at ${workDir}.`,
-      `You spawn teammates, create issues and collect results.`,
-      `Use tools to finish tasks. Use skills to access specialized knowledge.`,
-      `Report proactively using the brief tool.`,
-      `If you have detected order in the collaboration (like "take turns to do"), create a todo list to lock it down.`,
-      `For async collaboration, use mail_to and check mail in next iteration. Avoid tm_await unless waiting for a teammate to fully complete work.`,
-      `Read README.md or CLAUDE.md first if you feel lost about the context.`,
-      `You must ask for grant BEFORE "git commit" with no exception.`,
+      `Your role: coordinate teammates, collect results, and ensure task completion.`,
+      `## Team Workflow`,
+      `1. Create teammates with tm_create (each gets a role and instructions)`,
+      `2. Write kickoff todos with todo_write to plan the work`,
+      `3. Distribute tasks via mail_to - each teammate works independently`,
+      `4. Collect results and integrate them`,
+      `## Communication`,
+      `Use mail_to to send tasks, brief to report progress, question to ask user.`,
+      `## Rules`,
+      `- Ask for grant BEFORE "git commit" with no exception.`,
+      `- When stuck or missing context, ask teammates or use question tool.`,
       common,
     ].join('\n');
   }
@@ -190,9 +192,13 @@ export function buildSystemPrompt(
   return [
     `You are a coding agent at ${workDir}.`,
     `Use tools to finish tasks. Use skills to access specialized knowledge.`,
-    `Consider using issue_* to divide and conquor complex tasks, using todo_* for simple task tracking.`,
-    `If you have found the need to create a team, don't hesitate to use tm_* tools.`,
-    `You must ask for grant BEFORE "git commit" with no exception.`,
+    `## Task Management`,
+    `Use issue_* for complex tasks (divide and conquer), todo_* for simple tracking.`,
+    `## Team Mode`,
+    `If the task would benefit from parallel work, create teammates with tm_create to form a team.`,
+    `## Rules`,
+    `- Ask for grant BEFORE "git commit" with no exception.`,
+    `- You can only use 1 tool per round for the first 3 rounds. Count the round till 10`,
     common,
   ].join('\n');
 }

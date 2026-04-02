@@ -1,9 +1,9 @@
 /**
- * question.ts - Ask user for input during tool execution
+ * question.ts - Ask user for input during tool execution (child-only)
  *
- * This tool enables the "btw" (by the way) information supplying mechanism,
- * allowing the agent to pause and ask the user for clarification or
- * additional information during task execution.
+ * This tool is only available in child processes. The lead agent should not
+ * ask questions directly - it receives questions from teammates and presents
+ * them to the user.
  */
 
 import type { ToolDefinition, AgentContext } from '../types.js';
@@ -22,11 +22,12 @@ export const questionTool: ToolDefinition = {
     },
     required: ['query'],
   },
-  scope: ['main', 'child'],
+  scope: ['child'],
   handler: async (ctx: AgentContext, args: Record<string, unknown>): Promise<string> => {
     const query = args.query as string;
+    const asker = ctx.core.getName();
     try {
-      const response = await ctx.core.question(query);
+      const response = await ctx.core.question(query, asker);
       return `User response: ${response}`;
     } catch (error) {
       return `Error: ${(error as Error).message}`;

@@ -72,6 +72,13 @@ export class Core implements CoreModule {
   }
 
   /**
+   * Get agent name (main process is always 'lead')
+   */
+  getName(): string {
+    return 'lead';
+  }
+
+  /**
    * Set the transcript module for logging
    */
   setTranscript(transcript: TranscriptModule): void {
@@ -116,45 +123,26 @@ export class Core implements CoreModule {
 
   /**
    * Ask user a question and wait for response
-   * Used by tools to get user input during execution
+   * In main process: used to handle questions from child teammates
+   * In child process: routes to main via IPC (questionFn is set by child-context)
    * @param query - The question to ask
-   * @param asker - Optional name of who is asking (defaults to 'lead')
+   * @param asker - Name of who is asking (required)
    */
-  async question(query: string, asker: string = 'lead'): Promise<string> {
+  async question(query: string, asker: string): Promise<string> {
     // Check if shutting down
     if (agentIO.isShuttingDown()) {
       throw new Error('Agent is shutting down');
     }
 
-    // Main process: use agentIO directly
-    if (agentIO.isMainProcess()) {
-      if (this.transcript) {
-        this.transcript.logQuestion(asker, query);
-      }
-      this.brief('info', `${asker}:question`, 'waiting for user input...');
-      try {
-        const response = await agentIO.question(query);
-        if (this.transcript) {
-          this.transcript.logAnswer(asker, response);
-        }
-        return response;
-      } catch (err) {
-        // If shutting down during question, return empty to allow graceful exit
-        if (agentIO.isShuttingDown()) {
-          return '';
-        }
-        throw err;
-      }
+    // Must have questionFn set
+    if (!this.questionFn) {
+      throw new Error('Question function not initialized');
     }
 
-    // Child process: use IPC via questionFn
-    if (!this.questionFn) {
-      throw new Error('Question function not initialized.');
-    }
     if (this.transcript) {
       this.transcript.logQuestion(asker, query);
     }
-    this.brief('info', `${asker}:question`, 'waiting for user input...');
+    this.brief('info', `question`, `${asker} has a question:`);
     const response = await this.questionFn(query);
     if (this.transcript) {
       this.transcript.logAnswer(asker, response);

@@ -28,6 +28,10 @@ export class ChildCore implements CoreModule {
     this.workDir = dir;
   }
 
+  getName(): string {
+    return this.name;
+  }
+
   brief(level: 'info' | 'warn' | 'error', tool: string, message: string): void {
     const formatted = `[${tool}] ${message}`;
     if (level === 'error') {
@@ -37,11 +41,11 @@ export class ChildCore implements CoreModule {
     }
   }
 
-  async question(query: string, asker?: string): Promise<string> {
+  async question(query: string, asker: string): Promise<string> {
     // Use no timeout for user questions - user can take arbitrary time to respond
     const response = await ipc.sendRequest<{ response: string }>('question', {
       query,
-      asker: asker || this.name,
+      asker,
     }, 0);
     return response.response;
   }

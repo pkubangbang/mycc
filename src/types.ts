@@ -213,6 +213,7 @@ export interface Teammate {
 export interface CoreModule {
   getWorkDir(): string;
   setWorkDir(dir: string): void;
+  getName(): string;
   brief(level: 'info' | 'warn' | 'error', tool: string, message: string): void;
   /**
    * Ask user a question and wait for response
@@ -220,7 +221,7 @@ export interface CoreModule {
    * @param query - The question to ask
    * @param asker - Optional name of who is asking (e.g., 'lead' or teammate name)
    */
-  question(query: string, asker?: string): Promise<string>;
+  question(query: string, asker: string): Promise<string>;
   /**
    * Set the question function (called by main after readline setup)
    */

@@ -9,8 +9,7 @@ import type { ToolDefinition, AgentContext } from '../types.js';
 export const tmCreateTool: ToolDefinition = {
   name: 'tm_create',
   description: 'Create a teammate with name, role and initial prompt. ' +
-   // to prevent fraction in team-mode transition.
-   'If you use this tool, you CANNOT use other tool in this round.',
+   'You can create multiple teammates in sequence before starting team coordination.',
   input_schema: {
     type: 'object',
     properties: {
@@ -58,6 +57,18 @@ export const tmCreateTool: ToolDefinition = {
 
     try {
       const result = await ctx.team.createTeammate(name, role, prompt);
+
+      // Check if this is the first teammate created
+      const teammates = ctx.team.listTeammates();
+      if (teammates.length === 1) {
+        // First teammate - provide kickoff instructions
+        return result + '\n\n' +
+          'KICKOFF REQUIRED: You just created your first teammate. Your next steps:\n' +
+          '1. Create more teammates if needed (you can continue using tm_create)\n' +
+          '2. Write a kickoff todo list using todo_write to coordinate team work\n' +
+          '3. Distribute tasks to teammates using mail_to';
+      }
+
       return result;
     } catch (error: unknown) {
       const err = error as Error;

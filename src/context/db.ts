@@ -101,6 +101,31 @@ export function closeDb(): void {
 }
 
 /**
+ * Clear all session data (for clean startup)
+ * Clears SQLite tables and mail files
+ */
+export function clearSessionData(): void {
+  const database = getDb();
+
+  // Clear all tables
+  database.exec(`
+    DELETE FROM issue_blockages;
+    DELETE FROM issues;
+    DELETE FROM teammates;
+    DELETE FROM worktrees;
+  `);
+
+  // Clear mail files
+  const mailDir = getMailDir();
+  if (fs.existsSync(mailDir)) {
+    const mailFiles = fs.readdirSync(mailDir).filter(f => f.endsWith('.jsonl'));
+    for (const file of mailFiles) {
+      fs.unlinkSync(path.join(mailDir, file));
+    }
+  }
+}
+
+/**
  * Get the .mycc directory path
  */
 export function getMyccDir(): string {

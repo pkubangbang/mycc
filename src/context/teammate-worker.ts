@@ -103,10 +103,6 @@ async function teammateLoop(prompt: string): Promise<void> {
 
       try {
         const output = await toolLoader.execute(toolName, ctx, args);
-        // Don't log brief tool output - it already logs the message
-        if (toolName !== 'brief') {
-          ctx.core.brief('info', toolName, output.slice(0, 100));
-        }
         messages.push({
           role: 'tool',
           content: `tool call ${toolName} finished.\n${output}`,
