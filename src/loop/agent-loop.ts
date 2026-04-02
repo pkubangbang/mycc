@@ -4,8 +4,7 @@
 
 import chalk from 'chalk';
 import { ollama, MODEL } from '../ollama.js';
-import type { Message } from 'ollama';
-import type { AgentContext, ToolScope } from '../types.js';
+import type { Message, AgentContext, ToolScope, ToolCall } from '../types.js';
 import { ToolLoaderImpl } from '../context/loader.js';
 import { createAgentContext } from '../context/index.js';
 import { createLoader, createToolLoader } from '../context/loader.js';
@@ -137,11 +136,12 @@ export async function agentLoop(
       }
 
       // 10. Execute tools
-      for (const toolCall of assistantMessage.tool_calls) {
+      for (const toolCall of (assistantMessage.tool_calls as ToolCall[])) {
         if (agentIO.isShuttingDown()) {
           throw new ShutdownError();
         }
 
+        const toolCallId = toolCall.id;
         const args = toolCall.function.arguments as Record<string, unknown>;
         const toolName = toolCall.function.name;
 
@@ -149,7 +149,8 @@ export async function agentLoop(
 
         messages.push({
           role: 'tool',
-          content: `tool call ${toolName} finished.\n${output}`,
+          content: output,
+          tool_call_id: toolCallId,
         });
       }
     } catch (err) {

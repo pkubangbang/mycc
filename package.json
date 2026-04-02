@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "description": "Node.js agent implementations using Ollama - harness engineering for AI agents",
   "type": "module",
+  "bin": {
+    "mycc": "./dist/index.js"
+  },
   "scripts": {
     "start": "tsx src/index.ts",
     "build": "tsc",

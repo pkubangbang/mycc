@@ -39,10 +39,12 @@ export const tmAwaitTool: ToolDefinition = {
     try {
       if (name) {
         await ctx.team.awaitTeammate(name, timeout);
-        return `Teammate '${name}' finished`;
+        ctx.core.brief('info', 'tm_await', `Teammate '${name}' finished`);
+        return 'OK';
       } else {
         const result = await ctx.team.awaitTeam(timeout);
-        return result.allSettled ? 'All teammates finished' : 'Timeout reached, some teammates still working';
+        ctx.core.brief('info', 'tm_await', result.allSettled ? 'All teammates finished' : 'Timeout reached');
+        return 'OK';
       }
     } catch (error: unknown) {
       const err = error as Error;

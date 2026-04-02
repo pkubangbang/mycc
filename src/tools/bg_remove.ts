@@ -39,7 +39,7 @@ export const bgRemoveTool: ToolDefinition = {
 
     try {
       await ctx.bg.killTask(pid);
-      return `Background task with PID ${pid} killed successfully`;
+      return 'OK';
     } catch (error: unknown) {
       const err = error as Error;
       ctx.core.brief('error', 'bg_remove', err.message);

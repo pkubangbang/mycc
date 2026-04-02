@@ -63,7 +63,7 @@ export const editTool: ToolDefinition = {
       }
 
       fs.writeFileSync(safe, content.replace(oldText, newText), 'utf-8');
-      return `Edited ${filePath} (replaced 1 occurrence)`;
+      return 'OK';
     } catch (error: unknown) {
       return `Error: ${(error as Error).message}`;
     }

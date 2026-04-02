@@ -31,6 +31,6 @@ export const briefTool: ToolDefinition = {
 
     // Use core.brief to send the message via IPC to parent
     ctx.core.brief('info', 'brief', message);
-    return `Status update sent: ${message}`;
+    return 'OK';
   },
 };

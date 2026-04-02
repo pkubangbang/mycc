@@ -19,6 +19,6 @@ export const wtLeaveTool: ToolDefinition = {
     await ctx.wt.leaveWorkTree();
     const workDir = ctx.core.getWorkDir();
     ctx.core.brief('info', 'wt_leave', `Returned to project root: ${workDir}`);
-    return `Left worktree. Working directory is now: ${workDir}`;
+    return `OK: ${workDir}`;
   },
 };

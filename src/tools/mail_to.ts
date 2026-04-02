@@ -55,6 +55,6 @@ export const mailToTool: ToolDefinition = {
     ctx.core.brief('info', `mail_to ${name}`, `${title}\n--------------------\n${content}`);
     ctx.team!.mailTo(name, title, content);
 
-    return `A mail to '${name}' has been sent.`;
+    return 'OK';
   },
 };

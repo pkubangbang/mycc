@@ -44,10 +44,10 @@ export const bgAwaitTool: ToolDefinition = {
     while (elapsed < timeout) {
       try {
         const hasRunning = await ctx.bg.hasRunningBgTasks();
-        
+
         if (!hasRunning) {
           ctx.core.brief('info', 'bg_await', `${targetDesc} completed`);
-          return `All background tasks completed`;
+          return 'OK';
         }
 
         // If waiting for specific pid, check if it's still running
@@ -56,7 +56,7 @@ export const bgAwaitTool: ToolDefinition = {
           // Check if the specific pid is in the task list
           if (!tasks.includes(`[${pid}]`)) {
             ctx.core.brief('info', 'bg_await', `Task ${pid} completed`);
-            return `Task ${pid} completed`;
+            return 'OK';
           }
         }
 
@@ -71,7 +71,6 @@ export const bgAwaitTool: ToolDefinition = {
     }
 
     ctx.core.brief('warn', 'bg_await', `Timeout reached, ${targetDesc} still running`);
-    const tasks = await ctx.bg.printBgTasks();
-    return `Timeout reached after ${timeout}ms. Tasks still running:\n${tasks}`;
+    return 'Error: Timeout reached';
   },
 };

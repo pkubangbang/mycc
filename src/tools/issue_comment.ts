@@ -51,7 +51,6 @@ export const issueCommentTool: ToolDefinition = {
     await ctx.issue.addComment(id, comment, poster);
     ctx.core.brief('info', 'issue_comment', `Added comment to issue #${id}`);
 
-    const posterLabel = poster ? `@${poster}` : 'anonymous';
-    return `Added comment to issue #${id} "${issue.title}" by ${posterLabel}: "${comment}"`;
+    return 'OK';
   },
 };

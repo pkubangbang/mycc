@@ -46,10 +46,10 @@ export const issueClaimTool: ToolDefinition = {
     const claimed = await ctx.issue.claimIssue(id, owner);
     if (!claimed) {
       ctx.core.brief('warn', 'issue_claim', `Failed to claim issue #${id}`);
-      return `Failed to claim issue #${id}. It may not be in pending status or is already claimed.`;
+      return `Error: Failed to claim issue #${id}. It may not be in pending status or is already claimed.`;
     }
 
     ctx.core.brief('info', 'issue_claim', `Claimed issue #${id} for ${owner}`);
-    return `Claimed issue #${id} "${issue.title}" for ${owner}. Status changed to in_progress.`;
+    return `OK: #${id}`;
   },
 };

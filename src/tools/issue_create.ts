@@ -46,10 +46,6 @@ export const issueCreateTool: ToolDefinition = {
     const id = await ctx.issue.createIssue(title, content, blockedBy);
     ctx.core.brief('info', 'issue_create', `Created issue #${id}: ${title}`);
 
-    let result = `Created issue #${id}: "${title}"`;
-    if (blockedBy.length > 0) {
-      result += ` (blocked by: ${blockedBy.join(', ')})`;
-    }
-    return result;
+    return `OK: #${id}`;
   },
 };

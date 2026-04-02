@@ -32,7 +32,7 @@ export const wtEnterTool: ToolDefinition = {
       await ctx.wt.enterWorkTree(name);
       const workDir = ctx.core.getWorkDir();
       ctx.core.brief('info', 'wt_enter', `Entered worktree '${name}' at ${workDir}`);
-      return `Entered worktree '${name}'. Working directory is now: ${workDir}`;
+      return `OK: ${workDir}`;
     } catch (err) {
       ctx.core.brief('error', 'wt_enter', `Failed to enter worktree: ${(err as Error).message}`);
       return `Error: ${(err as Error).message}`;

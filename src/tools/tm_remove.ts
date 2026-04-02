@@ -51,7 +51,7 @@ export const tmRemoveTool: ToolDefinition = {
 
     try {
       ctx.team.removeTeammate(name, force);
-      return `Teammate '${name}' removed ${mode}`;
+      return 'OK';
     } catch (error: unknown) {
       const err = error as Error;
       ctx.core.brief('error', 'tm_remove', err.message);

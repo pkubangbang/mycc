@@ -30,6 +30,6 @@ export const wtRemoveTool: ToolDefinition = {
 
     await ctx.wt.removeWorkTree(name);
     ctx.core.brief('info', 'wt_remove', `Removed worktree '${name}'`);
-    return `Removed worktree '${name}'`;
+    return 'OK';
   },
 };

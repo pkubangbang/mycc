@@ -48,8 +48,7 @@ export const broadcastTool: ToolDefinition = {
 
     try {
       ctx.team?.broadcast(title, content);
-      const names = teammates.map((t) => t.name).join(', ');
-      return `Broadcast sent to ${teammates.length} teammate(s): ${names}`;
+      return 'OK';
     } catch (error: unknown) {
       const err = error as Error;
       ctx.core.brief('error', 'broadcast', err.message);

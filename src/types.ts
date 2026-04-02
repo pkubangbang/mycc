@@ -4,7 +4,27 @@
 
 import type { ChildProcess } from 'child_process';
 import type { JSONSchema7 } from 'json-schema';
+import type { Message as OllamaMessage, ToolCall as OllamaToolCall } from 'ollama';
 import { WebFetchResponse, WebSearchResult } from 'ollama';
+
+// ============================================================================
+// Ollama Type Extensions
+// ============================================================================
+
+/**
+ * Extended ToolCall with id property
+ * Ollama returns tool calls with unique IDs that need to be echoed back in tool responses
+ */
+export interface ToolCall extends OllamaToolCall {
+  id: string;
+}
+
+/**
+ * Extended Message with tool_call_id for tool role messages
+ */
+export interface Message extends OllamaMessage {
+  tool_call_id?: string;
+}
 
 // ============================================================================
 // Tool Definitions

@@ -51,6 +51,6 @@ export const blockageRemoveTool: ToolDefinition = {
     await ctx.issue.removeBlockage(blocker, blocked);
     ctx.core.brief('info', 'blockage_remove', `Removed blockage: #${blocker} no longer blocks #${blocked}`);
 
-    return `Removed blockage: Issue #${blocker} "${blockerIssue.title}" no longer blocks issue #${blocked} "${blockedIssue.title}"`;
+    return 'OK';
   },
 };

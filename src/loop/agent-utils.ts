@@ -4,10 +4,9 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import type { Message } from 'ollama';
+import type { Message, AgentContext } from '../types.js';
 import { ollama, MODEL } from '../ollama.js';
 import { getMyccDir, ensureDirs } from '../context/db.js';
-import type { AgentContext } from '../types.js';
 
 export const TOKEN_THRESHOLD = 50000;
 
@@ -141,7 +140,19 @@ export function buildSystemPrompt(
   const now = new Date();
   const currentDate = now.toISOString().split('T')[0];
   const currentYear = now.getFullYear();
-  const timeContext = `Current date: ${currentDate} (year: ${currentYear})`;
+
+  // Common suffix for all prompts
+  const common = [
+    '',
+    `Current date: ${currentDate} (year: ${currentYear})`,
+    '',
+    `Skills: ${skills}`,
+    '',
+    '## Output Behavior',
+    'Tool brief outputs are automatically shown to the user.',
+    'Tool return values provide context for your decisions.',
+    'Respond concisely - do not repeat what tools have already displayed.',
+  ].join('\n');
 
   // For child process, include identity and collaboration guidance
   if (identity) {
@@ -154,51 +165,34 @@ export function buildSystemPrompt(
       'Prefer concise and frank communication style. Act, but not explain.',
       'When you feel lost about the context, send mail to "lead".',
       '',
-      timeContext,
-      '',
       makeIdentityBlock(identity.name, identity.role, workDir),
-      '',
-      `Skills: ${skills}`,
+      common,
     ].join('\n');
   }
 
   // Main process (lead agent) system prompt
-  const team = ctx.team?.printTeam() || 'No teammates.';
-  const hasTeam = team !== 'No teammates.';
+  const hasTeam = (ctx.team?.printTeam() || 'No teammates.') !== 'No teammates.';
 
   if (hasTeam) {
     return [
       `You are the lead of a coding agent team at ${workDir}.`,
       `You spawn teammates, create issues and collect results.`,
       `Use tools to finish tasks. Use skills to access specialized knowledge.`,
-      // about visibility
       `Report proactively using the brief tool.`,
-      // about collaboration order
       `If you have detected order in the collaboration (like "take turns to do"), create a todo list to lock it down.`,
-      // about coordination
       `For async collaboration, use mail_to and check mail in next iteration. Avoid tm_await unless waiting for a teammate to fully complete work.`,
-      // about the context
       `Read README.md or CLAUDE.md first if you feel lost about the context.`,
-      // about git commit
       `You must ask for grant BEFORE "git commit" with no exception.`,
-      '',
-      timeContext,
-      '',
-      `Skills: ${skills}`
-    ].join('\n');
-  } else {
-    return [
-      `You are a coding agent at ${workDir}.`,
-      `Use tools to finish tasks. Use skills to access specialized knowledge.`,
-      `Consider using issue_* to divide and conquor complex tasks, using todo_* for simple task tracking.`,
-      // how to enter team mode
-      `If you have found the need to create a team, don't hesitate to use tm_* tools.`,
-      // about git commit
-      `You must ask for grant BEFORE "git commit" with no exception.`,
-      '',
-      timeContext,
-      '',
-      `Skills: ${skills}`
+      common,
     ].join('\n');
   }
+
+  return [
+    `You are a coding agent at ${workDir}.`,
+    `Use tools to finish tasks. Use skills to access specialized knowledge.`,
+    `Consider using issue_* to divide and conquor complex tasks, using todo_* for simple task tracking.`,
+    `If you have found the need to create a team, don't hesitate to use tm_* tools.`,
+    `You must ask for grant BEFORE "git commit" with no exception.`,
+    common,
+  ].join('\n');
 }

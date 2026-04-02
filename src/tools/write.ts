@@ -47,7 +47,7 @@ export const writeTool: ToolDefinition = {
       const safe = safePath(filePath, ctx.core.getWorkDir());
       fs.mkdirSync(path.dirname(safe), { recursive: true });
       fs.writeFileSync(safe, content, 'utf-8');
-      return `Wrote ${content.length} bytes to ${filePath}`;
+      return 'OK';
     } catch (error: unknown) {
       return `Error: ${(error as Error).message}`;
     }

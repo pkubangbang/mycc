@@ -28,12 +28,16 @@ export const webSearchTool: ToolDefinition = {
       return 'Error: query is required';
     }
 
+    ctx.core.brief('info', 'web_search', query);
+
     try {
       const results = await ctx.core.webSearch(query);
 
       if (results.length === 0) {
         return 'No search results found.';
       }
+
+      ctx.core.brief('info', 'web_search', `found ${results.length} results`);
 
       const lines = [`Found ${results.length} results for "${query}":\n`];
 
@@ -47,6 +51,7 @@ export const webSearchTool: ToolDefinition = {
       return lines.join('\n');
     } catch (error: unknown) {
       const err = error as Error;
+      ctx.core.brief('error', 'web_search', err.message);
       return `Error: ${err.message}`;
     }
   },

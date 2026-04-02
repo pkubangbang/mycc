@@ -39,7 +39,7 @@ export const bgCreateTool: ToolDefinition = {
 
     try {
       const pid = await ctx.bg.runCommand(command);
-      return `Background task started with PID: ${pid}`;
+      return `OK: ${pid}`;
     } catch (error: unknown) {
       const err = error as Error;
       ctx.core.brief('error', 'bg_create', err.message);

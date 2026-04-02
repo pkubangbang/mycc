@@ -55,6 +55,6 @@ export const blockageCreateTool: ToolDefinition = {
     await ctx.issue.createBlockage(blocker, blocked);
     ctx.core.brief('info', 'blockage_create', `Created blockage: #${blocker} blocks #${blocked}`);
 
-    return `Created blockage: Issue #${blocker} "${blockerIssue.title}" now blocks issue #${blocked} "${blockedIssue.title}"`;
+    return 'OK';
   },
 };
