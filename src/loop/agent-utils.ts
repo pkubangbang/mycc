@@ -7,9 +7,11 @@ import * as path from 'path';
 import type { Message } from 'ollama';
 import { ollama, MODEL } from '../ollama.js';
 import { getMyccDir, ensureDirs } from '../context/db.js';
+import { getConfig } from '../config/index.js';
 import type { AgentContext } from '../types.js';
 
-export const TOKEN_THRESHOLD = 50000;
+// Token threshold from config
+export const TOKEN_THRESHOLD = getConfig().llm.tokenThreshold;
 
 /**
  * Estimate token count (rough approximation)
@@ -86,7 +88,7 @@ export async function autoCompact(messages: Message[]): Promise<Message[]> {
   console.log(`[transcript saved: ${transcriptPath}]`);
 
   // Ask LLM to summarize
-  const conversationText = JSON.stringify(messages).slice(0, 80000);
+  const conversationText = JSON.stringify(messages).slice(0, getConfig().llm.conversationSlice);
 
   const response = await ollama.chat({
     model: MODEL,

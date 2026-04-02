@@ -6,11 +6,15 @@
 
 import { Ollama } from 'ollama';
 import 'dotenv/config';
+import { getConfig } from './config/index.js';
 
-// Configuration
-export const OLLAMA_HOST = process.env.OLLAMA_HOST || 'http://127.0.0.1:11434';
-export const OLLAMA_API_KEY = process.env.OLLAMA_API_KEY;
-export const MODEL = process.env.OLLAMA_MODEL || 'glm-5:cloud';
+// Get configuration
+const config = getConfig();
+
+// Export configuration values from config
+export const OLLAMA_HOST = config.llm.host;
+export const OLLAMA_API_KEY = config.llm.apiKey;
+export const MODEL = config.llm.model;
 
 // Initialize Ollama client
 export const ollama = new Ollama({

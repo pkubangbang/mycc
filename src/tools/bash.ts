@@ -6,6 +6,7 @@
 
 import { execSync } from 'child_process';
 import type { ToolDefinition, AgentContext } from '../types.js';
+import { getConfig } from '../config/index.js';
 
 export const bashTool: ToolDefinition = {
   name: 'bash',
@@ -23,8 +24,10 @@ export const bashTool: ToolDefinition = {
   scope: ['main', 'child', 'bg'],
   handler: (ctx: AgentContext, args: Record<string, unknown>): string => {
     const command = args.command as string;
-    const dangerous = ['rm -rf /', 'sudo', 'shutdown', 'reboot'];
-    if (dangerous.some((d) => command.includes(d))) {
+    const config = getConfig();
+    
+    // Check against dangerous commands from config
+    if (config.tools.dangerousCommands.some((d) => command.includes(d))) {
       return 'Error: Dangerous command blocked';
     }
     ctx.core.brief('info', 'bash', command);
@@ -32,13 +35,13 @@ export const bashTool: ToolDefinition = {
       const result = execSync(command, {
         cwd: ctx.core.getWorkDir(),
         encoding: 'utf-8',
-        timeout: 120000,
-        maxBuffer: 50 * 1024 * 1024,
+        timeout: config.timeouts.bashCommand,
+        maxBuffer: config.tools.bashMaxBuffer,
       });
-      return (result || '(no output)').slice(0, 50000);
+      return (result || '(no output)').slice(0, config.tools.bashOutputLimit);
     } catch (error: unknown) {
       const err = error as { stderr?: string; message?: string };
-      return (err.stderr || err.message || 'Unknown error').slice(0, 50000);
+      return (err.stderr || err.message || 'Unknown error').slice(0, config.tools.bashOutputLimit);
     }
   },
 };

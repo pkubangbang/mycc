@@ -5,6 +5,7 @@
  */
 
 import type { ToolDefinition, AgentContext } from '../types.js';
+import { getConfig } from '../config/index.js';
 
 export const tmAwaitTool: ToolDefinition = {
   name: 'tm_await',
@@ -26,8 +27,9 @@ export const tmAwaitTool: ToolDefinition = {
   },
   scope: ['main'],
   handler: async (ctx: AgentContext, args: Record<string, unknown>): Promise<string> => {
+    const config = getConfig();
     const name = args.name as string | undefined;
-    const timeout = (args.timeout as number) ?? 60000;
+    const timeout = (args.timeout as number) ?? config.timeouts.teamAwait;
 
     if (!ctx.team) {
       ctx.core.brief('error', 'tm_await', 'Team module not available');

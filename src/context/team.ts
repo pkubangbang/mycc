@@ -17,6 +17,7 @@ import type {
 import { getDb } from './db.js';
 import { createMail } from './mail.js';
 import { createIpcRegistry, IpcRegistry } from './child-context/ipc-registry.js';
+import { getConfig } from '../config/index.js';
 import type { CoreModule } from '../types.js';
 
 // ES module compatibility for __dirname
@@ -296,10 +297,12 @@ export class TeamManager implements TeamModule {
   /**
    * Wait for a specific teammate to finish
    */
-  async awaitTeammate(name: string, timeout: number = 60000): Promise<void> {
+  async awaitTeammate(name: string, timeout?: number): Promise<void> {
+    const config = getConfig();
+    const actualTimeout = timeout ?? config.timeouts.teammateAwait;
     const startTime = Date.now();
 
-    while (Date.now() - startTime < timeout) {
+    while (Date.now() - startTime < actualTimeout) {
       const status = this.statuses.get(name);
       if (status === 'idle' || status === 'shutdown') {
         return;
@@ -313,10 +316,12 @@ export class TeamManager implements TeamModule {
   /**
    * Wait for all teammates to finish
    */
-  async awaitTeam(timeout: number = 60000): Promise<{ allSettled: boolean }> {
+  async awaitTeam(timeout?: number): Promise<{ allSettled: boolean }> {
+    const config = getConfig();
+    const actualTimeout = timeout ?? config.timeouts.teamAwait;
     const startTime = Date.now();
 
-    while (Date.now() - startTime < timeout) {
+    while (Date.now() - startTime < actualTimeout) {
       const allSettled = Array.from(this.statuses.values()).every(
         (s) => s === 'idle' || s === 'shutdown'
       );
