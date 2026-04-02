@@ -65,28 +65,30 @@ private handleChildMessage(sender: string, msg: ChildMessage): void {
 
 ## 核心类型
 
-### IpcHandlerResult
+### SendResponseCallback
 
-处理器返回的结果，用于请求-响应模式：
+响应回调函数，用于请求-响应模式：
 
 ```typescript
-interface IpcHandlerResult {
-  success: boolean;
-  data?: unknown;    // 成功时返回的数据
-  error?: string;    // 失败时的错误信息
-}
+type SendResponseCallback = (
+  responseType: string,    // 响应类型，如 'db_result', 'wt_result'
+  success: boolean,        // 操作是否成功
+  data?: unknown,          // 成功时返回的数据
+  error?: string           // 失败时的错误信息
+) => void;
 ```
 
 ### IpcMessageHandler
 
-处理器函数类型：
+处理器函数类型（使用回调模式）：
 
 ```typescript
 type IpcMessageHandler = (
   sender: string,                    // 发送消息的子进程名称
   payload: Record<string, unknown>,  // 消息内容（不含 type 字段）
-  ctx: AgentContext                  // 上下文，用于访问其他模块
-) => void | IpcHandlerResult | Promise<void | IpcHandlerResult>;
+  ctx: AgentContext,                 // 上下文，用于访问其他模块
+  sendResponse: SendResponseCallback  // 响应回调函数
+) => void | Promise<void>;
 ```
 
 ### IpcHandlerRegistration
@@ -128,14 +130,24 @@ process.send({
   content: '...' 
 });
 
-// 主进程处理并响应
-process.send({ 
-  type: 'db_result', 
-  reqId: 1, 
-  success: true, 
-  data: { id: 42 } 
-});
+// 主进程处理并响应（使用回调）
+sendResponse('db_result', true, { id: 42 });
+
+// 或发送错误响应
+sendResponse('error', false, undefined, '错误信息');
 ```
+
+### 响应类型
+
+不同的模块使用不同的响应类型：
+
+| 响应类型 | 模块 | 说明 |
+|---------|------|------|
+| `db_result` | issue | 数据库操作结果 |
+| `wt_result` | wt | 工作树操作结果 |
+| `team_result` | team | 团队操作结果 |
+| `question_result` | core | 用户问答结果 |
+| `error` | 通用 | 错误响应 |
 
 ## IpcRegistry 类
 
@@ -195,18 +207,19 @@ interface TeamModule {
 ```typescript
 // src/context/my-module.ts
 
-import type { IpcHandlerRegistration, AgentContext } from '../types.js';
+import type { IpcHandlerRegistration, AgentContext, SendResponseCallback } from '../types.js';
 
 export function createMyModuleIpcHandlers(): IpcHandlerRegistration[] {
   return [
     {
       messageType: 'my_action',
       module: 'my-module',
-      handler: (sender, payload, ctx) => {
+      handler: (sender, payload, ctx, sendResponse) => {
         const { param } = payload as { param: string };
         // 通过 ctx 访问其他模块
         ctx.core.brief('info', sender, `执行: ${param}`);
-        return { success: true, data: { result: 'ok' } };
+        // 使用回调发送响应
+        sendResponse('db_result', true, { result: 'ok' });
       },
     },
   ];

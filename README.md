@@ -50,8 +50,33 @@ AgentContext
 ├── issue     - Persisted tasks with blocking
 ├── bg        - Background bash tasks
 ├── wt        - Git worktree management
-└── team      - Child process teammates
+├── team      - Child process teammates
+└── transcript - Chat history logging
 ```
+
+### Tools Reference
+
+| Tool | Scope | Description |
+|------|-------|-------------|
+| bash | main, child, bg | Run shell commands |
+| read_file | main, child | Read file contents |
+| write_file | main, child | Write content to file |
+| edit_file | main, child | Replace text in file |
+| brief | main, child | Display status message |
+| question | main, child | Ask user for input |
+| mail_to | main, child | Send async message to teammate/lead |
+| broadcast | main | Broadcast to all teammates |
+| issue_create | main, child | Create new issue |
+| issue_claim | main, child | Claim an issue |
+| issue_close | main, child | Close an issue |
+| issue_comment | main, child | Add comment to issue |
+| blockage_create | main, child | Create blocking relationship |
+| blockage_remove | main, child | Remove blocking relationship |
+| tm_create | main | Create teammate (child process) |
+| tm_remove | main | Remove teammate |
+| tm_await | main | Wait for teammate(s) |
+| todo_write | main, child | Update todo list |
+| skill_load | main, child | Load skill by name |
 
 ### Key Concepts
 
@@ -78,14 +103,39 @@ src/
 │   ├── index.ts       # AgentContext factory
 │   ├── db.ts          # SQLite setup
 │   ├── loader.ts      # Dynamic tool/skill loader
-│   └── [module].ts    # Individual modules
+│   ├── core.ts        # Work directory, logging, questions
+│   ├── todo.ts        # Temporary checklist
+│   ├── mail.ts        # Async mailbox
+│   ├── skill.ts       # Skill loading
+│   ├── issue.ts       # Persisted tasks with blocking
+│   ├── bg.ts          # Background bash tasks
+│   ├── wt.ts          # Git worktree management
+│   ├── team.ts        # Child process teammates
+│   ├── transcript.ts  # Chat history logging
+│   └── child-context/ # Child process IPC wrappers
 ├── tools/
 │   ├── bash.ts        # Shell commands
 │   ├── read.ts        # File reading
 │   ├── write.ts       # File writing
-│   └── edit.ts        # File editing
+│   ├── edit.ts        # File editing
+│   ├── brief.ts       # Status messages
+│   ├── question.ts    # User questions
+│   ├── mail_to.ts     # Inter-agent messaging
+│   ├── broadcast.ts   # Broadcast to all teammates
+│   ├── issue_create.ts    # Create issue
+│   ├── issue_claim.ts     # Claim issue
+│   ├── issue_close.ts     # Close issue
+│   ├── issue_comment.ts   # Comment on issue
+│   ├── blockage_create.ts # Create blocking
+│   ├── blockage_remove.ts # Remove blocking
+│   ├── tm_create.ts   # Create teammate
+│   ├── tm_remove.ts   # Remove teammate
+│   ├── tm_await.ts    # Wait for teammates
+│   ├── todo_write.ts  # Todo list updates
+│   └── skill_load.ts  # Load skill by name
 └── loop/
-    └── agent-loop.ts  # STAR-principle loop
+    ├── agent-loop.ts  # STAR-principle loop
+    └── agent-utils.ts # System prompt building
 
 .mycc/                 # Runtime data (gitignored)
 ├── state.db           # SQLite database

@@ -23,6 +23,18 @@ Copy `.env.example` to `.env` and configure:
 - `OLLAMA_MODEL` - Model name (default: glm-5:cloud)
 - `OLLAMA_API_KEY` - API key for cloud models (optional)
 
+## Tool Scope Constraints
+
+Different agent contexts have access to different tools:
+
+| Agent Type | Available Tools |
+|------------|-----------------|
+| Lead (main) | All 19 tools |
+| Teammate (child) | Cannot use: tm_create, tm_remove, tm_await, broadcast |
+| Background (bg) | Can only use: bash |
+
+**Main-only tools**: tm_create, tm_remove, tm_await, broadcast
+
 ## Architecture
 
 ### AgentContext Pattern
@@ -38,7 +50,8 @@ AgentContext
 ├── issue     - Persisted tasks with blocking (issue.ts)
 ├── bg        - Background bash tasks (bg.ts)
 ├── wt        - Git worktree management (wt.ts)
-└── team      - Child process teammates (team.ts)
+├── team      - Child process teammates (team.ts)
+└── transcript - Chat history logging (transcript.ts)
 ```
 
 ### Key Concepts
@@ -68,14 +81,39 @@ src/
 │   ├── index.ts       # AgentContext factory
 │   ├── db.ts          # SQLite setup
 │   ├── loader.ts      # Dynamic tool/skill loader
-│   └── [module].ts    # Individual modules
+│   ├── core.ts        # Work directory, logging, questions
+│   ├── todo.ts        # Temporary checklist
+│   ├── mail.ts        # Async mailbox
+│   ├── skill.ts       # Skill loading
+│   ├── issue.ts       # Persisted tasks with blocking
+│   ├── bg.ts          # Background bash tasks
+│   ├── wt.ts          # Git worktree management
+│   ├── team.ts        # Child process teammates
+│   ├── transcript.ts  # Chat history logging
+│   └── child-context/ # Child process IPC wrappers
 ├── tools/
 │   ├── bash.ts        # Shell commands
 │   ├── read.ts        # File reading
 │   ├── write.ts       # File writing
-│   └── edit.ts        # File editing
+│   ├── edit.ts        # File editing
+│   ├── brief.ts       # Status messages
+│   ├── question.ts    # User questions
+│   ├── mail_to.ts     # Inter-agent messaging
+│   ├── broadcast.ts   # Broadcast to all teammates
+│   ├── issue_create.ts    # Create issue
+│   ├── issue_claim.ts     # Claim issue
+│   ├── issue_close.ts     # Close issue
+│   ├── issue_comment.ts   # Comment on issue
+│   ├── blockage_create.ts # Create blocking
+│   ├── blockage_remove.ts # Remove blocking
+│   ├── tm_create.ts   # Create teammate
+│   ├── tm_remove.ts   # Remove teammate
+│   ├── tm_await.ts    # Wait for teammates
+│   ├── todo_write.ts  # Todo list updates
+│   └── skill_load.ts  # Load skill by name
 └── loop/
-    └── agent-loop.ts  # STAR-principle loop
+    ├── agent-loop.ts  # STAR-principle loop
+    └── agent-utils.ts # System prompt building
 
 .mycc/                 # Runtime data (gitignored)
 ├── state.db           # SQLite database

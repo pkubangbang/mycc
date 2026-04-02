@@ -143,6 +143,112 @@ class ChildWt implements WtModule {
 }
 ```
 
+## 工作状态机
+
+子进程队友实现了一个状态机来管理工作生命周期：
+
+```
+        spawn
+          │
+          ▼
+    ┌─────────┐
+    │  WORK   │◄─────────────┐
+    │         │              │
+    │ 执行工具 │              │ 有新任务
+    │ LLM调用 │              │
+    └────┬────┘              │
+         │                   │
+         │ 无工具调用         │
+         ▼                   │
+    ┌─────────┐              │
+    │  IDLE   │──────────────┘
+    │         │
+    │ 轮询等待 │──────────────┐
+    │ 自动认领 │              │
+    └────┬────┘              │
+         │                   │
+         │ 超时/关闭         │ 有新邮件
+         ▼                   │
+    ┌──────────┐            │
+    │ SHUTDOWN │            │
+    │          │            │
+    │ 进程退出  │◄───────────┘
+    └──────────┘
+```
+
+### 状态说明
+
+- **WORK**：活跃工作状态，LLM 持续执行工具调用
+- **IDLE**：空闲状态，轮询检查新任务
+- **SHUTDOWN**：终止状态，进程退出
+
+### 状态转换
+
+1. **spawn → WORK**：收到 spawn 消息后开始工作
+2. **WORK → IDLE**：LLM 返回无工具调用
+3. **IDLE → WORK**：收到新邮件或自动认领了任务
+4. **IDLE → SHUTDOWN**：超时（60秒无任务）或收到关闭消息
+
+## 自动认领功能
+
+在 IDLE 状态时，子进程会自动扫描并认领未分配的任务：
+
+```typescript
+// 进入空闲状态
+async function enterIdleState(messages: Message[]): Promise<'shutdown' | 'resume'> {
+  sendStatus('idle');
+
+  while (!shutdownRequested) {
+    // 1. 检查关闭请求
+    if (shutdownRequested) {
+      sendStatus('shutdown');
+      return 'shutdown';
+    }
+
+    // 2. 检查邮箱（文件邮箱）
+    if (ctx.mail.hasNewMails()) {
+      sendStatus('working');
+      return 'resume';
+    }
+
+    // 3. 自动认领未认领的 Issue
+    const issues = await ctx.issue.listIssues();
+    const unclaimed = issues.filter(
+      (issue) => issue.status === 'pending' && !issue.owner && issue.blockedBy.length === 0
+    );
+
+    if (unclaimed.length > 0) {
+      const issue = unclaimed[0];
+      const claimed = await ctx.issue.claimIssue(issue.id, teammateName);
+      if (claimed) {
+        // 认领成功，恢复工作状态
+        messages.push({
+          role: 'user',
+          content: `<auto-claimed>Issue #${issue.id}: ${issue.title}\n${issue.content || ''}</auto-claimed>`,
+        });
+        sendStatus('working');
+        return 'resume';
+      }
+    }
+
+    // 4. 等待下次轮询
+    await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL));
+  }
+}
+```
+
+### 认领条件
+
+任务必须同时满足以下条件才会被自动认领：
+
+- `status === 'pending'`：处于待处理状态
+- `!owner`：未被分配
+- `blockedBy.length === 0`：没有被其他任务阻塞
+
+### 轮询间隔
+
+默认轮询间隔为 5000ms（5秒）。
+
 ## 消息类型
 
 ### 主进程 → 子进程
