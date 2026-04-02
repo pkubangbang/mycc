@@ -28,6 +28,13 @@ import { issueCommentTool } from '../tools/issue_comment.js';
 import { issueClaimTool } from '../tools/issue_claim.js';
 import { blockageCreateTool } from '../tools/blockage_create.js';
 import { blockageRemoveTool } from '../tools/blockage_remove.js';
+import { webFetchTool } from '../tools/web_fetch.js';
+import { webSearchTool } from '../tools/web_search.js';
+import { wtCreateTool } from '../tools/wt_create.js';
+import { wtRemoveTool } from '../tools/wt_remove.js';
+import { wtEnterTool } from '../tools/wt_enter.js';
+import { wtLeaveTool } from '../tools/wt_leave.js';
+import { wtPrintTool } from '../tools/wt_print.js';
 
 /**
  * Built-in tools
@@ -52,6 +59,13 @@ const builtInTools: ToolDefinition[] = [
   issueClaimTool,
   blockageCreateTool,
   blockageRemoveTool,
+  webFetchTool,
+  webSearchTool,
+  wtCreateTool,
+  wtRemoveTool,
+  wtEnterTool,
+  wtLeaveTool,
+  wtPrintTool,
 ];
 
 /**

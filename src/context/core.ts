@@ -78,7 +78,8 @@ export class Core implements CoreModule {
    * Thread-safe: console.log is atomic in Node.js
    */
   brief(level: 'info' | 'warn' | 'error', tool: string, message: string): void {
-    const timestamp = new Date().toISOString().slice(11, 19);
+    const now = new Date();
+    const timestamp = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
     const colorFn = TOOL_COLORS[tool] || TOOL_COLORS._default;
     const prefix = `${chalk.gray(`[${timestamp}]`)} ${colorFn(`[${tool}]`)}`;
 
@@ -145,6 +146,11 @@ export class Core implements CoreModule {
       return results;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      if (message.includes('401') || message.includes('unauthorized') || message.includes('Unauthorized')) {
+        const hint = 'Set OLLAMA_API_KEY in .env for web search access.';
+        this.brief('error', 'webSearch', `unauthorized: ${hint}`);
+        throw new Error(`Unauthorized: ${hint} Original error: ${message}`);
+      }
       this.brief('error', 'webSearch', `failed: ${message}`);
       throw error;
     }
@@ -162,6 +168,11 @@ export class Core implements CoreModule {
       return response;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      if (message.includes('401') || message.includes('unauthorized') || message.includes('Unauthorized')) {
+        const hint = 'Set OLLAMA_API_KEY in .env for web fetch access.';
+        this.brief('error', 'webFetch', `unauthorized: ${hint}`);
+        throw new Error(`Unauthorized: ${hint} Original error: ${message}`);
+      }
       this.brief('error', 'webFetch', `failed: ${message}`);
       throw error;
     }

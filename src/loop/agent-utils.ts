@@ -137,6 +137,12 @@ export function buildSystemPrompt(
   const workDir = ctx.core.getWorkDir();
   const skills = ctx.skill.printSkills();
 
+  // Current date/time for context (helps with time-sensitive queries like web search)
+  const now = new Date();
+  const currentDate = now.toISOString().split('T')[0];
+  const currentYear = now.getFullYear();
+  const timeContext = `Current date: ${currentDate} (year: ${currentYear})`;
+
   // For child process, include identity and collaboration guidance
   if (identity) {
     return [
@@ -147,6 +153,8 @@ export function buildSystemPrompt(
       'use mail_to tools to communicate with other teammates.',
       'Prefer concise and frank communication style. Act, but not explain.',
       'When you feel lost about the context, send mail to "lead".',
+      '',
+      timeContext,
       '',
       makeIdentityBlock(identity.name, identity.role, workDir),
       '',
@@ -166,6 +174,9 @@ export function buildSystemPrompt(
       `Report proactively using the brief tool.`,
       `Read README.md or CLAUDE.md first if you feel lost about the context.`,
       `You must ask for grant BEFORE "git commit" with no exception.`,
+      '',
+      timeContext,
+      '',
       `Skills: ${skills}`
     ].join('\n');
   } else {
@@ -174,6 +185,9 @@ export function buildSystemPrompt(
       `Use tools to finish tasks. Use skills to access specialized knowledge.`,
       `Consider using issue_* to divide and conquor complex tasks, using todo_* for simple task tracking.`,
       `You must ask for grant BEFORE "git commit" with no exception.`,
+      '',
+      timeContext,
+      '',
       `Skills: ${skills}`
     ].join('\n');
   }
