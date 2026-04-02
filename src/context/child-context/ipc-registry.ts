@@ -65,7 +65,8 @@ export class IpcRegistry {
     const registration = this.handlers.get(msg.type);
 
     if (!registration) {
-      // No handler registered - ignore gracefully
+      // No handler registered - send error response instead of timing out
+      sendResponse('error', false, undefined, `No handler registered for message type: ${msg.type}`);
       return;
     }
 

@@ -121,17 +121,30 @@ export class Core implements CoreModule {
    * @param asker - Optional name of who is asking (defaults to 'lead')
    */
   async question(query: string, asker: string = 'lead'): Promise<string> {
+    // Check if shutting down
+    if (agentIO.isShuttingDown()) {
+      throw new Error('Agent is shutting down');
+    }
+
     // Main process: use agentIO directly
     if (agentIO.isMainProcess()) {
       if (this.transcript) {
         this.transcript.logQuestion(asker, query);
       }
       this.brief('info', `${asker}:question`, 'waiting for user input...');
-      const response = await agentIO.question(query);
-      if (this.transcript) {
-        this.transcript.logAnswer(asker, response);
+      try {
+        const response = await agentIO.question(query);
+        if (this.transcript) {
+          this.transcript.logAnswer(asker, response);
+        }
+        return response;
+      } catch (err) {
+        // If shutting down during question, return empty to allow graceful exit
+        if (agentIO.isShuttingDown()) {
+          return '';
+        }
+        throw err;
       }
-      return response;
     }
 
     // Child process: use IPC via questionFn

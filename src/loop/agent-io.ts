@@ -16,7 +16,7 @@ class AgentIO {
   private _abortController: AbortController | null = null;
   private _readline: readline.Interface | null = null;
   private _isMainProcess = false;
-  private _questionFn: ((query: string) => Promise<string>) | null = null;
+  private _isShuttingDown = false;
 
   // Lifecycle
 
@@ -25,12 +25,11 @@ class AgentIO {
    */
   initMain(): void {
     this._isMainProcess = true;
+    this._isShuttingDown = false;
     this._readline = readline.createInterface({
       input: process.stdin,
       output: process.stdout,
     });
-    this._questionFn = (query: string): Promise<string> =>
-      new Promise((resolve) => this._readline!.question(query, resolve));
   }
 
   /**
@@ -38,12 +37,14 @@ class AgentIO {
    */
   initChild(): void {
     this._isMainProcess = false;
+    this._isShuttingDown = false;
   }
 
   /**
    * Close readline and cleanup
    */
   close(): void {
+    this._isShuttingDown = true;
     if (this._readline) {
       this._readline.close();
       this._readline = null;
@@ -59,6 +60,13 @@ class AgentIO {
     return this._isMainProcess;
   }
 
+  /**
+   * Check if agent is shutting down
+   */
+  isShuttingDown(): boolean {
+    return this._isShuttingDown;
+  }
+
   // Question (main process only)
 
   /**
@@ -66,10 +74,22 @@ class AgentIO {
    * Only available in main process
    */
   async question(query: string): Promise<string> {
-    if (!this._isMainProcess || !this._questionFn) {
+    if (!this._isMainProcess) {
       throw new Error('question() only available in main process');
     }
-    return this._questionFn(query);
+    if (this._isShuttingDown || !this._readline) {
+      throw new Error('Agent is shutting down');
+    }
+    return new Promise((resolve, reject) => {
+      const rl = this._readline;
+      if (!rl) {
+        reject(new Error('readline not available'));
+        return;
+      }
+      rl.question(query, (answer) => {
+        resolve(answer);
+      });
+    });
   }
 
   // Readline management (main process only)
@@ -78,7 +98,7 @@ class AgentIO {
    * Pause readline to release stdin for child process
    */
   pauseReadline(): void {
-    if (!this._isMainProcess || !this._readline) return;
+    if (!this._isMainProcess || this._isShuttingDown || !this._readline) return;
     try {
       this._readline.pause();
     } catch {
@@ -97,7 +117,7 @@ class AgentIO {
    * Resume readline after child process exits
    */
   resumeReadline(): void {
-    if (!this._isMainProcess) return;
+    if (!this._isMainProcess || this._isShuttingDown) return;
     if (process.stdin.isTTY && process.stdin.setRawMode) {
       try {
         process.stdin.setRawMode(true);
