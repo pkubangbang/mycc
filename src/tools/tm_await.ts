@@ -30,21 +30,22 @@ export const tmAwaitTool: ToolDefinition = {
     const timeout = (args.timeout as number) ?? 60000;
 
     if (!ctx.team) {
-      ctx.core.brief('error', 'tm_await', 'Team module not available');
-      return 'Error: Team module not available in this context';
+      return 'Error: Team module not available';
     }
-
-    ctx.core.brief('info', 'tm_await', name ? `Waiting for teammate '${name}'...` : 'Waiting for all teammates...');
 
     try {
       if (name) {
-        await ctx.team.awaitTeammate(name, timeout);
-        ctx.core.brief('info', 'tm_await', `Teammate '${name}' finished`);
-        return 'OK';
+        const result = await ctx.team.awaitTeammate(name, timeout);
+        if (result.waited) {
+          ctx.core.brief('info', 'tm_await', `Teammate '${name}' finished`);
+        }
+        return result.waited ? 'OK' : 'OK (already idle)';
       } else {
         const result = await ctx.team.awaitTeam(timeout);
-        ctx.core.brief('info', 'tm_await', result.allSettled ? 'All teammates finished' : 'Timeout reached');
-        return 'OK';
+        if (result.waited) {
+          ctx.core.brief('info', 'tm_await', 'All teammates finished');
+        }
+        return result.allSettled ? 'OK' : 'OK (timeout)';
       }
     } catch (error: unknown) {
       const err = error as Error;

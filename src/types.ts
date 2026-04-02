@@ -380,8 +380,8 @@ export interface TeamModule {
   createTeammate(name: string, role: string, prompt: string): Promise<string>;
   getTeammate(name: string): Teammate | undefined;
   listTeammates(): { name: string; role: string; status: TeammateStatus }[];
-  awaitTeammate(name: string, timeout?: number): Promise<void>;
-  awaitTeam(timeout?: number): Promise<{ allSettled: boolean }>;
+  awaitTeammate(name: string, timeout?: number): Promise<{ waited: boolean }>;
+  awaitTeam(timeout?: number): Promise<{ allSettled: boolean; waited: boolean }>;
   printTeam(): string;
   removeTeammate(name: string, force?: boolean): void;
   dismissTeam(force?: boolean): void;

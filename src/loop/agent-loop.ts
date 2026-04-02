@@ -120,8 +120,8 @@ export async function agentLoop(
       if (!assistantMessage.tool_calls || assistantMessage.tool_calls.length === 0) {
         // Only check team if it exists (not in child process)
         if (ctx.team) {
-          const result = await ctx.team.awaitTeam(30000);
-          if (result.allSettled) {
+          const { allSettled } = await ctx.team.awaitTeam(30000);
+          if (allSettled) {
             return;
           }
 

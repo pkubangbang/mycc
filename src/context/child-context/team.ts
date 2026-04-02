@@ -36,12 +36,13 @@ export class ChildTeam implements TeamModule {
     return [];
   }
 
-  async awaitTeammate(name: string, timeout?: number): Promise<void> {
-    await ipc.sendRequest<void>('team_await', { name, timeout });
+  async awaitTeammate(name: string, timeout?: number): Promise<{ waited: boolean }> {
+    const result = await ipc.sendRequest<{ waited: boolean }>('team_await', { name, timeout });
+    return result;
   }
 
-  async awaitTeam(timeout?: number): Promise<{ allSettled: boolean }> {
-    const result = await ipc.sendRequest<{ allSettled: boolean }>('team_await_all', { timeout });
+  async awaitTeam(timeout?: number): Promise<{ allSettled: boolean; waited: boolean }> {
+    const result = await ipc.sendRequest<{ allSettled: boolean; waited: boolean }>('team_await_all', { timeout });
     return result;
   }
 

@@ -57,6 +57,10 @@ export class TeamManager implements TeamModule {
     query: string;
   }> = [];
 
+  // Two-phase await subscribers
+  private phase1Subscribers: Map<string, Set<() => void>> = new Map(); // waiting for working
+  private phase2Subscribers: Map<string, Set<() => void>> = new Map(); // waiting for idle/shutdown
+
   constructor(core: CoreModule) {
     this.core = core;
     this.ipcRegistry = createIpcRegistry();
@@ -163,8 +167,32 @@ export class TeamManager implements TeamModule {
     // === Notifications (no response expected) ===
     if (msg.type === 'status') {
       const status = msg.status as TeammateStatus;
+      const prevStatus = this.statuses.get(sender);
       this.statuses.set(sender, status);
       this.updateDbStatus(sender, status);
+
+      // Resolve subscribers based on status change
+      if (status === 'working') {
+        // Phase 1 complete: move subscribers to phase 2
+        const phase1 = this.phase1Subscribers.get(sender);
+        if (phase1 && phase1.size > 0) {
+          const phase2 = this.phase2Subscribers.get(sender) ?? new Set();
+          for (const resolve of phase1) {
+            phase2.add(resolve);
+          }
+          this.phase2Subscribers.set(sender, phase2);
+          phase1.clear();
+        }
+      } else if (status === 'idle' || status === 'shutdown') {
+        // Phase 2 complete: resolve all waiting for finish
+        const phase2 = this.phase2Subscribers.get(sender);
+        if (phase2) {
+          for (const resolve of phase2) {
+            resolve();
+          }
+          phase2.clear();
+        }
+      }
       return;
     }
 
@@ -299,39 +327,55 @@ export class TeamManager implements TeamModule {
   /**
    * Wait for a specific teammate to finish
    */
-  async awaitTeammate(name: string, timeout: number = 60000): Promise<void> {
-    const startTime = Date.now();
+  async awaitTeammate(name: string, timeout: number = 60000): Promise<{ waited: boolean }> {
+    const status = this.statuses.get(name);
 
-    while (Date.now() - startTime < timeout) {
-      const status = this.statuses.get(name);
-      if (status === 'idle' || status === 'shutdown') {
-        return;
-      }
-      await new Promise((resolve) => setTimeout(resolve, 1000));
+    // Already finished
+    if (status === 'idle' || status === 'shutdown') {
+      return { waited: false };
     }
 
-    throw new Error(`Timeout waiting for teammate ${name}`);
+    // Create promise that resolves when teammate finishes
+    const promise = new Promise<void>((resolve) => {
+      if (status === 'working') {
+        // Already working - subscribe to phase 2
+        const phase2 = this.phase2Subscribers.get(name) ?? new Set<() => void>();
+        phase2.add(resolve);
+        this.phase2Subscribers.set(name, phase2);
+      } else {
+        // Not working yet - subscribe to phase 1
+        const phase1 = this.phase1Subscribers.get(name) ?? new Set<() => void>();
+        phase1.add(resolve);
+        this.phase1Subscribers.set(name, phase1);
+      }
+    });
+
+    // Race with timeout
+    const timeoutPromise = new Promise<void>((_, reject) => {
+      setTimeout(() => reject(new Error(`Timeout waiting for teammate ${name}`)), timeout);
+    });
+
+    await Promise.race([promise, timeoutPromise]);
+    return { waited: true };
   }
 
   /**
    * Wait for all teammates to finish
    */
-  async awaitTeam(timeout: number = 60000): Promise<{ allSettled: boolean }> {
-    const startTime = Date.now();
+  async awaitTeam(timeout: number = 60000): Promise<{ allSettled: boolean; waited: boolean }> {
+    const teammates = this.listTeammates();
+    const active = teammates.filter((t) => t.status === 'working');
 
-    while (Date.now() - startTime < timeout) {
-      const allSettled = Array.from(this.statuses.values()).every(
-        (s) => s === 'idle' || s === 'shutdown'
-      );
-
-      if (allSettled) {
-        return { allSettled: true };
-      }
-
-      await new Promise((resolve) => setTimeout(resolve, 1000));
+    if (active.length === 0) {
+      return { allSettled: true, waited: false };
     }
 
-    return { allSettled: false };
+    // Wait for all active teammates
+    const promises = active.map((t) => this.awaitTeammate(t.name, timeout));
+    const results = await Promise.all(promises);
+    const anyWaited = results.some((r) => r.waited);
+
+    return { allSettled: true, waited: anyWaited };
   }
 
   /**
