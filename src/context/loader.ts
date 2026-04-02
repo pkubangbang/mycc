@@ -17,6 +17,7 @@ import { todoWriteTool } from '../tools/todo_write.js';
 import { skillLoadTool } from '../tools/skill_load.js';
 import { tmCreateTool } from '../tools/tm_create.js';
 import { tmRemoveTool } from '../tools/tm_remove.js';
+import { tmAwaitTool } from '../tools/tm_await.js';
 import { mailToTool } from '../tools/mail_to.js';
 import { broadcastTool } from '../tools/broadcast.js';
 import { questionTool } from '../tools/question.js';
@@ -40,6 +41,7 @@ const builtInTools: ToolDefinition[] = [
   skillLoadTool,
   tmCreateTool,
   tmRemoveTool,
+  tmAwaitTool,
   mailToTool,
   broadcastTool,
   questionTool,

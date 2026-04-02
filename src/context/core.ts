@@ -26,6 +26,7 @@ const TOOL_COLORS: Record<string, (text: string) => string> = {
   // Team management
   tm_create: chalk.magentaBright,
   tm_remove: chalk.redBright,
+  tm_await: chalk.blueBright,
   mail_to: chalk.cyanBright,
   broadcast: chalk.cyanBright,
 
