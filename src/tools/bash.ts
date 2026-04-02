@@ -84,8 +84,8 @@ export const bashTool: ToolDefinition = {
 
     ctx.core.brief('info', 'bash', command);
 
-    const { result, interrupted } = await agentIO.exec((signal) =>
-      execa('bash', ['-c', command], {
+    const { result, interrupted } = await agentIO.exec((signal) => {
+      const subprocess = execa('bash', ['-c', command], {
         cwd: ctx.core.getWorkDir(),
         stdin: 'inherit',
         stdout: 'pipe',
@@ -94,8 +94,14 @@ export const bashTool: ToolDefinition = {
         cancelSignal: signal,
         gracefulCancel: true,
         reject: false,
-      })
-    );
+      });
+
+      // Pipe output to console in real-time while capturing
+      subprocess.stdout?.pipe(process.stdout);
+      subprocess.stderr?.pipe(process.stderr);
+
+      return subprocess;
+    });
 
     if (interrupted) {
       // Only ask about popup terminal in main process

@@ -57,6 +57,7 @@ export default {
 ### Test the Prototype
 
 Let user test the tool manually, and iterate on feedback.
+**You MUST NOT skip this step. Ask for grant to start Phase 2**.
 
 ---
 

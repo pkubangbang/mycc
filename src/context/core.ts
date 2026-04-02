@@ -33,6 +33,10 @@ const TOOL_COLORS: Record<string, (text: string) => string> = {
 
   // Background tasks
   bg: chalk.gray,
+  bg_create: chalk.gray,
+  bg_print: chalk.gray,
+  bg_remove: chalk.red,
+  bg_await: chalk.blue,
 
   // Skills
   skill_load: chalk.cyanBright,

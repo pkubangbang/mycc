@@ -36,7 +36,7 @@ interface ToolDefinition {
 - Tools with `['main', 'child', 'bg']` available everywhere
 
 **Summary:**
-- **Lead (main)**: All 19 tools
+- **Lead (main)**: All 23 tools
 - **Teammate (child)**: Cannot use `broadcast`, `tm_create`, `tm_remove`, `tm_await`
 - **Background (bg)**: Can use `bash`, `read_file`, `write_file`, `edit_file`
 
@@ -508,6 +508,110 @@ interface ToolDefinition {
 
 ---
 
+## Background Task Tools
+
+### bg_create
+
+**File**: `src/tools/bg_create.ts`
+
+**Scope**: `['main', 'child']`
+
+**Description**: Run a bash command in the background. Returns the process ID for tracking.
+
+**Parameters**:
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| command | string | yes | The bash command to run in background |
+
+**Behavior**:
+- Spawns a background process using `spawn()` with shell mode
+- Returns immediately with process ID (PID)
+- Process output is logged with `bg:<pid>` prefix
+- Use `bg_print` to check status, `bg_await` to wait for completion
+
+**Example**:
+```json
+{ "command": "npm run build" }
+```
+
+---
+
+### bg_print
+
+**File**: `src/tools/bg_print.ts`
+
+**Scope**: `['main', 'child']`
+
+**Description**: List all background tasks with their status (running/completed/failed).
+
+**Parameters**:
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| (none) | | | |
+
+**Behavior**:
+- Lists all background tasks started by `bg_create`
+- Shows PID, command, and status for each task
+- Status can be: `running`, `completed`, or `failed`
+
+**Example**:
+```json
+{}
+```
+
+---
+
+### bg_remove
+
+**File**: `src/tools/bg_remove.ts`
+
+**Scope**: `['main', 'child']`
+
+**Description**: Kill a background task by its process ID. Use this to terminate running background tasks.
+
+**Parameters**:
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| pid | integer | yes | Process ID of the background task to kill |
+
+**Behavior**:
+- Sends SIGTERM to the process
+- Updates task status to "failed"
+- Returns confirmation message
+
+**Example**:
+```json
+{ "pid": 12345 }
+```
+
+---
+
+### bg_await
+
+**File**: `src/tools/bg_await.ts`
+
+**Scope**: `['main', 'child']`
+
+**Description**: Wait for background tasks to complete. Use this to block until all background tasks finish or timeout.
+
+**Parameters**:
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| pid | integer | no | Optional process ID to wait for specific task. If omitted, waits for all tasks |
+| timeout | integer | no | Timeout in milliseconds (default: 60000) |
+
+**Behavior**:
+- Polls background tasks until all complete or timeout
+- If `pid` specified, waits only for that specific task
+- Returns status message on completion or timeout
+
+**Example**:
+```json
+{ "timeout": 30000 }
+```
+
+---
+
 ## Task Management Tools
 
 ### todo_write
@@ -597,6 +701,10 @@ interface ToolDefinition {
 | tm_create | main | Team Management |
 | tm_remove | main | Team Management |
 | tm_await | main | Team Management |
+| bg_create | main, child | Background Tasks |
+| bg_print | main, child | Background Tasks |
+| bg_remove | main, child | Background Tasks |
+| bg_await | main, child | Background Tasks |
 | todo_write | main, child | Task Management |
 | skill_load | main, child | Task Management |
 
