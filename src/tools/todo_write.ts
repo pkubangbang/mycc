@@ -50,7 +50,7 @@ export const todoWriteTool: ToolDefinition = {
     }
 
     // Transform and validate items
-    const todoItems: TodoItem[] = items.map((item, index) => ({
+    const todoItems: TodoItem[] = items.map((item) => ({
       id: (item.id as number) || 0,
       name: item.name as string,
       done: (item.done as boolean) || false,
@@ -62,10 +62,10 @@ export const todoWriteTool: ToolDefinition = {
 
     // Log the action
     const action = todoItems.every((item) => item.done) ? 'completed' : 'updated';
-    const summary = todoItems.map((item) => 
-      `${item.done ? '✓' : '○'} ${item.name}${item.note ? `: ${item.note}` : ''}`
-    ).join(', ');
-    ctx.core.brief('info', 'todo_write', `${todoItems.length} item(s) ${action}: ${summary}`);
+    const summary = todoItems.map((item) =>
+      `  ${item.done ? '✓' : '○'} ${item.name}${item.note ? `: ${item.note}` : ''}`
+    ).join('\n');
+    ctx.core.brief('info', 'todo_write', `${todoItems.length} item(s) ${action}:\n${summary}`);
 
     // Return current todo list
     return ctx.todo.printTodoList();
