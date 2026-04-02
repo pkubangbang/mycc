@@ -35,6 +35,11 @@ interface ToolDefinition {
 - Tools with `['main', 'child']` available to lead and teammates
 - Tools with `['main', 'child', 'bg']` available everywhere
 
+**Summary:**
+- **Lead (main)**: All 19 tools
+- **Teammate (child)**: Cannot use `broadcast`, `tm_create`, `tm_remove`, `tm_await`
+- **Background (bg)**: Can use `bash`, `read_file`, `write_file`, `edit_file`
+
 ---
 
 ## File Operations
@@ -576,9 +581,9 @@ interface ToolDefinition {
 | Tool | Scope | Category |
 |------|-------|----------|
 | bash | main, child, bg | File Operations |
-| read_file | main, child | File Operations |
-| write_file | main, child | File Operations |
-| edit_file | main, child | File Operations |
+| read_file | main, child, bg | File Operations |
+| write_file | main, child, bg | File Operations |
+| edit_file | main, child, bg | File Operations |
 | brief | main, child | Communication |
 | question | main, child | Communication |
 | mail_to | main, child | Communication |

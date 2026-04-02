@@ -31,7 +31,7 @@ Different agent contexts have access to different tools:
 |------------|-----------------|
 | Lead (main) | All 19 tools |
 | Teammate (child) | Cannot use: tm_create, tm_remove, tm_await, broadcast |
-| Background (bg) | Can only use: bash |
+| Background (bg) | Can only use: bash, read_file, write_file, edit_file |
 
 **Main-only tools**: tm_create, tm_remove, tm_await, broadcast
 

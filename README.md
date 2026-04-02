@@ -59,9 +59,9 @@ AgentContext
 | Tool | Scope | Description |
 |------|-------|-------------|
 | bash | main, child, bg | Run shell commands |
-| read_file | main, child | Read file contents |
-| write_file | main, child | Write content to file |
-| edit_file | main, child | Replace text in file |
+| read_file | main, child, bg | Read file contents |
+| write_file | main, child, bg | Write content to file |
+| edit_file | main, child, bg | Replace text in file |
 | brief | main, child | Display status message |
 | question | main, child | Ask user for input |
 | mail_to | main, child | Send async message to teammate/lead |
