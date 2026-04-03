@@ -480,12 +480,12 @@ export class TeamManager implements TeamModule {
       try {
         const response = await this.context!.core.question(q.query, q.sender);
         this.sendResponse(q.sender, q.reqId, 'question_result', true, { response });
-        // Inform lead of the Q&A via mail
-        this.context!.mail.appendMail('lead', `The user answered ${q.sender}'s question`, `Question: ${q.query}\n\nAnswer: ${response}`);
+        // Brief notification to lead (no mail - answer already sent via IPC)
+        this.core.brief('info', 'question', `${q.sender} asked: ${q.query}`);
+        this.core.brief('info', 'answer', response);
       } catch (err) {
         this.sendResponse(q.sender, q.reqId, 'question_result', false, undefined, (err as Error).message);
-        // Inform lead of the error via mail
-        this.context!.mail.appendMail('lead', `The user rejected ${q.sender}'s question`, `Question: ${q.query}\n\nError: ${(err as Error).message}`);
+        this.core.brief('warn', 'question', `${q.sender}'s question was rejected`);
       }
     }
   }

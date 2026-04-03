@@ -5,7 +5,7 @@
 import { WebFetchResponse, WebSearchResult } from 'ollama';
 import { ollama } from '../../ollama.js';
 import type { CoreModule, TranscriptModule } from '../../types.js';
-import { ipc } from './ipc-helpers.js';
+import { ipc, sendStatus } from './ipc-helpers.js';
 
 /**
  * Core module for child process
@@ -42,12 +42,20 @@ export class ChildCore implements CoreModule {
   }
 
   async question(query: string, asker: string): Promise<string> {
-    // Use no timeout for user questions - user can take arbitrary time to respond
-    const response = await ipc.sendRequest<{ response: string }>('question', {
-      query,
-      asker,
-    }, 0);
-    return response.response;
+    // Transition to idle while waiting for answer
+    sendStatus('idle');
+
+    try {
+      // Use no timeout for user questions - user can take arbitrary time to respond
+      const response = await ipc.sendRequest<{ response: string }>('question', {
+        query,
+        asker,
+      }, 0);
+      return response.response;
+    } finally {
+      // Transition back to working after getting answer
+      sendStatus('working');
+    }
   }
 
   /**
