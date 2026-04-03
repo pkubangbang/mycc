@@ -497,3 +497,28 @@ export class TeamManager implements TeamModule {
 export function createTeam(core: CoreModule): TeamModule {
   return new TeamManager(core);
 }
+
+/**
+ * Create IPC handlers for Team module
+ * These handle team requests from child processes
+ */
+export function createTeamIpcHandlers(): IpcHandlerRegistration[] {
+  return [
+    {
+      messageType: 'team_print',
+      module: 'team',
+      handler: async (_sender, _payload, ctx, sendResponse) => {
+        try {
+          if (!ctx.team) {
+            sendResponse('team_result', false, undefined, 'Team module not available');
+            return;
+          }
+          const result = ctx.team.printTeam();
+          sendResponse('team_result', true, { message: result });
+        } catch (err) {
+          sendResponse('team_result', false, undefined, (err as Error).message);
+        }
+      },
+    },
+  ];
+}

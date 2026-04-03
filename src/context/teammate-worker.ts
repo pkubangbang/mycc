@@ -140,11 +140,24 @@ async function enterIdleState(messages: Message[]): Promise<'shutdown' | 'resume
       return 'resume';
     }
 
-    // 3. Auto-claim unclaimed issues
+    // 3. Auto-claim unclaimed issues that are not blocked
     const issues = await ctx.issue.listIssues();
-    const unclaimed = issues.filter(
-      (issue) => issue.status === 'pending' && !issue.owner && issue.blockedBy.length === 0
-    );
+    const unclaimed = issues.filter((issue) => {
+      // Must be pending and unclaimed
+      if (issue.status !== 'pending' || issue.owner) {
+        return false;
+      }
+      // Must not be blocked by any incomplete issues
+      if (issue.blockedBy.length > 0) {
+        // Check if all blockers are completed
+        const allBlockersComplete = issue.blockedBy.every((blockerId) => {
+          const blocker = issues.find((i) => i.id === blockerId);
+          return blocker && blocker.status === 'completed';
+        });
+        return allBlockersComplete;
+      }
+      return true;
+    });
 
     if (unclaimed.length > 0) {
       const issue = unclaimed[0];

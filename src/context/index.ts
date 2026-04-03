@@ -10,7 +10,7 @@ import { createSkill } from './skill.js';
 import { createIssue, createIssueIpcHandlers } from './issue.js';
 import { createBg } from './bg.js';
 import { createWt, createWtIpcHandlers } from './wt.js';
-import { createTeam, TeamManager } from './team.js';
+import { createTeam, TeamManager, createTeamIpcHandlers } from './team.js';
 import { createTranscript } from './transcript.js';
 
 export * from './core.js';
@@ -75,6 +75,11 @@ export function createAgentContext(workDir?: string): AgentContext {
 
   const wtHandlers = createWtIpcHandlers();
   for (const handler of wtHandlers) {
+    team.registerHandler(handler);
+  }
+
+  const teamHandlers = createTeamIpcHandlers();
+  for (const handler of teamHandlers) {
     team.registerHandler(handler);
   }
 

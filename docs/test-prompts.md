@@ -289,3 +289,7 @@ Let's see if I'm hot or cold!
 🎮 The game is ON! I have chosen a secret number between 1 and 100.
 
 What is your first guess? (John will also be guessing - let's see who wins!)
+
+-----------------------
+
+Create a teammate called hr, and let him play a virtual candidate recommendation to me by asking questions. If I accept, then let him request to create the teammate.

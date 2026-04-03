@@ -1,8 +1,12 @@
 /**
  * team.ts - ChildTeam implementation for child process
  *
- * mailTo writes directly to mailbox files (same as parent process).
- * Other operations (createTeammate, awaitTeammate) use IPC.
+ * Child team module with restricted capabilities:
+ * - mailTo: writes directly to mailbox files
+ * - broadcast: sends mail to lead requesting broadcast
+ * - createTeammate: sends mail to lead requesting creation
+ * - printTeam: IPC request to get team status
+ * - All other operations: FORBIDDEN
  */
 
 import type { TeamModule, Teammate, TeammateStatus, IpcHandlerRegistration } from '../../types.js';
@@ -11,7 +15,7 @@ import { ipc } from './ipc-helpers.js';
 
 /**
  * Team module for child process
- * mailTo writes directly to file, other operations use IPC
+ * Restricted capabilities - most operations delegate to lead via mail
  */
 export class ChildTeam implements TeamModule {
   private owner: string;
@@ -21,46 +25,82 @@ export class ChildTeam implements TeamModule {
     this.owner = owner;
   }
 
+  /**
+   * Request lead to create a teammate (via mail)
+   * Lead decides whether to act on this suggestion
+   */
   async createTeammate(name: string, role: string, prompt: string): Promise<string> {
-    const result = await ipc.sendRequest<string>('team_create', { name, role, prompt });
-    return result;
+    const mail = createMail('lead');
+    mail.appendMail(
+      this.owner,
+      'Teammate Creation Request',
+      [
+        `I suggest creating a teammate:`,
+        `- Name: ${name}`,
+        `- Role: ${role}`,
+        ``,
+        `Reason/Prompt:`,
+        prompt,
+        ``,
+        `Please decide if this is appropriate.`,
+      ].join('\n')
+    );
+    return `Suggestion sent to lead via mail. Lead will evaluate and decide.`;
   }
 
-  getTeammate(name: string): Teammate | undefined {
-    // Synchronous operation not supported via IPC
-    throw new Error('getTeammate not available in child process');
+  /**
+   * FORBIDDEN: Get teammate info not available to child
+   */
+  getTeammate(): never {
+    throw new Error('FORBIDDEN: getTeammate not available to child');
   }
 
-  listTeammates(): { name: string; role: string; status: TeammateStatus }[] {
-    // Synchronous operation not supported via IPC
-    return [];
+  /**
+   * FORBIDDEN: List teammates not available to child
+   */
+  listTeammates(): never {
+    throw new Error('FORBIDDEN: listTeammates not available to child');
   }
 
-  async awaitTeammate(name: string, timeout?: number): Promise<{ waited: boolean }> {
-    const result = await ipc.sendRequest<{ waited: boolean }>('team_await', { name, timeout });
-    return result;
+  /**
+   * FORBIDDEN: Await teammate not available to child
+   */
+  async awaitTeammate(): Promise<never> {
+    throw new Error('FORBIDDEN: awaitTeammate not available to child');
   }
 
-  async awaitTeam(timeout?: number): Promise<{ allSettled: boolean; waited: boolean }> {
-    const result = await ipc.sendRequest<{ allSettled: boolean; waited: boolean }>('team_await_all', { timeout });
-    return result;
+  /**
+   * FORBIDDEN: Await team not available to child
+   */
+  async awaitTeam(): Promise<never> {
+    throw new Error('FORBIDDEN: awaitTeam not available to child');
   }
 
-  printTeam(): string {
-    return 'Use mail_to to ask the lead about the team status.';
+  /**
+   * FORBIDDEN: Remove teammate not available to child
+   */
+  removeTeammate(): never {
+    throw new Error('FORBIDDEN: removeTeammate not available to child');
   }
 
-  removeTeammate(name: string, force?: boolean): void {
-    throw new Error('removeTeammate not available in child process');
+  /**
+   * FORBIDDEN: Dismiss team not available to child
+   */
+  dismissTeam(): never {
+    throw new Error('FORBIDDEN: dismissTeam not available to child');
   }
 
-  dismissTeam(force?: boolean): void {
-    throw new Error('dismissTeam not available in child process');
+  /**
+   * Get team status via IPC
+   */
+  async printTeam(): Promise<string> {
+    const result = await ipc.sendRequest<{ message: string }>('team_print', {});
+    return result.message;
   }
 
   /**
    * Send mail to a teammate or lead
-   * Writes directly to mailbox file - no IPC needed
+   * Writes directly to mailbox file
    */
   mailTo(name: string, title: string, content: string, from?: string): void {
     const mail = createMail(name);
@@ -68,33 +108,53 @@ export class ChildTeam implements TeamModule {
   }
 
   /**
-   * Broadcast to all teammates
-   * Note: In child process, we don't know all teammates, so this just logs
+   * Request lead to broadcast to all teammates
+   * Lead decides whether to broadcast
    */
   broadcast(title: string, content: string): void {
-    // In child process, we don't have access to teammate list
-    // Use mailTo to send to specific teammates instead
-    throw new Error('broadcast not available in child process - use mailTo for specific recipients');
+    const mail = createMail('lead');
+    mail.appendMail(
+      this.owner,
+      'Broadcast Request',
+      [
+        `I suggest broadcasting to the team:`,
+        ``,
+        `Title: ${title}`,
+        ``,
+        `Content:`,
+        content,
+        ``,
+        `Please decide if this should be broadcast.`,
+      ].join('\n')
+    );
   }
 
+  /**
+   * Register IPC handler (no-op for child)
+   */
   registerHandler(registration: IpcHandlerRegistration): void {
     this.handlers.set(registration.messageType, registration);
   }
 
+  /**
+   * Unregister IPC handler (no-op for child)
+   */
   unregisterHandler(messageType: string): void {
     this.handlers.delete(messageType);
   }
 
+  /**
+   * Set transcript (no-op for child)
+   */
   setTranscript(): void {
     // No-op in child - transcript handled by parent
   }
 
   /**
-   * Handle pending questions from children
-   * No-op in child process - only the lead handles questions
+   * Handle pending questions (no-op for child)
    */
   async handlePendingQuestions(): Promise<void> {
-    // No-op in child process
+    // No-op in child - only lead handles questions
   }
 }
 

@@ -1,0 +1,21 @@
+/**
+ * issue_list.ts - List all issues
+ *
+ * Scope: ['main', 'child'] - Available to main and child agents
+ */
+
+import type { ToolDefinition, AgentContext } from '../types.js';
+
+export const issueListTool: ToolDefinition = {
+  name: 'issue_list',
+  description: 'List all issues with their status, owner, and blocking relationships.',
+  input_schema: {
+    type: 'object',
+    properties: {},
+    required: [],
+  },
+  scope: ['main', 'child'],
+  handler: async (ctx: AgentContext, _args: Record<string, unknown>): Promise<string> => {
+    return await ctx.issue.printIssues();
+  },
+};

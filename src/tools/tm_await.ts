@@ -35,12 +35,23 @@ export const tmAwaitTool: ToolDefinition = {
 
     try {
       if (name) {
+        // Check if teammate exists
+        const teammate = ctx.team.getTeammate(name);
+        if (!teammate) {
+          return `Error: Teammate '${name}' not found`;
+        }
+
         const result = await ctx.team.awaitTeammate(name, timeout);
         if (result.waited) {
           ctx.core.brief('info', 'tm_await', `Teammate '${name}' finished`);
         }
         return result.waited ? 'OK' : 'OK (already idle)';
       } else {
+        const teammates = ctx.team.listTeammates();
+        if (teammates.length === 0) {
+          return 'No teammates to wait for. Create teammates with tm_create first.';
+        }
+
         const result = await ctx.team.awaitTeam(timeout);
         if (result.waited) {
           ctx.core.brief('info', 'tm_await', 'All teammates finished');

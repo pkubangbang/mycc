@@ -383,7 +383,7 @@ export interface TeamModule {
   listTeammates(): { name: string; role: string; status: TeammateStatus }[];
   awaitTeammate(name: string, timeout?: number): Promise<{ waited: boolean }>;
   awaitTeam(timeout?: number): Promise<{ allSettled: boolean; waited: boolean }>;
-  printTeam(): string;
+  printTeam(): string | Promise<string>;
   removeTeammate(name: string, force?: boolean): void;
   dismissTeam(force?: boolean): void;
   mailTo(name: string, title: string, content: string, from?: string): void;

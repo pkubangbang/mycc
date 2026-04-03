@@ -155,9 +155,10 @@ export function buildSystemPrompt(
   // For child process, include identity and collaboration guidance
   if (identity) {
     return [
-      'You are a specialized agent working as part of a team.',
+      'You are a specialized agent working as part of a team, created by the team lead.',
+      'I am the user.',
       'Use skills to access specialized knowledge.',
-      'Use question tools to ask question to the user,',
+      'Use question tools to ask question to me,',
       'use brief tools to report your progress,',
       'use mail_to tools to communicate with other teammates.',
       'Prefer concise and frank communication style. Act, but not explain.',

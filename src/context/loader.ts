@@ -18,6 +18,7 @@ import { skillLoadTool } from '../tools/skill_load.js';
 import { tmCreateTool } from '../tools/tm_create.js';
 import { tmRemoveTool } from '../tools/tm_remove.js';
 import { tmAwaitTool } from '../tools/tm_await.js';
+import { tmPrintTool } from '../tools/tm_print.js';
 import { mailToTool } from '../tools/mail_to.js';
 import { broadcastTool } from '../tools/broadcast.js';
 import { questionTool } from '../tools/question.js';
@@ -26,6 +27,7 @@ import { issueCreateTool } from '../tools/issue_create.js';
 import { issueCloseTool } from '../tools/issue_close.js';
 import { issueCommentTool } from '../tools/issue_comment.js';
 import { issueClaimTool } from '../tools/issue_claim.js';
+import { issueListTool } from '../tools/issue_list.js';
 import { blockageCreateTool } from '../tools/blockage_create.js';
 import { blockageRemoveTool } from '../tools/blockage_remove.js';
 import { webFetchTool } from '../tools/web_fetch.js';
@@ -53,6 +55,7 @@ const builtInTools: ToolDefinition[] = [
   tmCreateTool,
   tmRemoveTool,
   tmAwaitTool,
+  tmPrintTool,
   mailToTool,
   broadcastTool,
   questionTool,
@@ -61,6 +64,7 @@ const builtInTools: ToolDefinition[] = [
   issueCloseTool,
   issueCommentTool,
   issueClaimTool,
+  issueListTool,
   blockageCreateTool,
   blockageRemoveTool,
   webFetchTool,
