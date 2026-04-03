@@ -21,7 +21,6 @@ import {
   microCompact,
   autoCompact,
   buildSystemPrompt,
-  makeIdentityBlock,
 } from '../loop/agent-utils.js';
 import { ipc, sendStatus } from './child-context/ipc-helpers.js';
 
@@ -41,6 +40,10 @@ async function teammateLoop(prompt: string): Promise<void> {
   const tools = toolLoader.getToolsForScope('child');
   sendStatus('working');
 
+  // Todo nudging state (counter-based, same as lead agent)
+  let nextTodoNudge = 3;
+  let lastTodoState = '';
+
   while (!shutdownRequested) {
     // 1. Micro-compact old tool results
     microCompact(messages);
@@ -54,12 +57,21 @@ async function teammateLoop(prompt: string): Promise<void> {
       });
     }
 
-    // 3. Todo nudging
+    // 3. Todo nudging with counter and state tracking
     if (ctx.todo.hasOpenTodo()) {
-      messages.push({
-        role: 'user',
-        content: `<reminder>Update your todos. ${ctx.todo.printTodoList()}</reminder>`,
-      });
+      const currentTodoState = ctx.todo.printTodoList();
+      if (currentTodoState !== lastTodoState) {
+        nextTodoNudge = 3; // Reset for new todo state
+        lastTodoState = currentTodoState;
+      }
+      nextTodoNudge--;
+      if (nextTodoNudge === 0) {
+        messages.push({
+          role: 'user',
+          content: `<reminder>Update your todos. ${ctx.todo.printTodoList()}</reminder>`,
+        });
+        nextTodoNudge = 3;
+      }
     }
 
     // 4. Auto-compact when tokens exceed threshold
@@ -68,7 +80,7 @@ async function teammateLoop(prompt: string): Promise<void> {
       const compacted = await autoCompact(messages);
       messages.length = 0;
       messages.push(...compacted);
-      messages.unshift({ role: 'user', content: makeIdentityBlock(teammateName, teammateRole, WORKDIR) });
+      // Identity is preserved in system prompt (buildSystemPrompt), no need to re-inject
     }
 
     // 5. Build system prompt and call LLM
@@ -165,13 +177,7 @@ async function enterIdleState(messages: Message[]): Promise<'shutdown' | 'resume
         const claimed = await ctx.issue.claimIssue(issue.id, teammateName);
         if (claimed) {
           ctx.core.brief('info', 'auto-claim', `Issue #${issue.id}: ${issue.title}`);
-          // Identity re-injection if context is short
-          if (messages.length <= 3) {
-            messages.unshift({
-              role: 'user',
-              content: makeIdentityBlock(teammateName, teammateRole, WORKDIR),
-            });
-          }
+          // Identity is preserved in system prompt, no need to re-inject
           messages.push({
             role: 'user',
             content: `<auto-claimed>Issue #${issue.id}: ${issue.title}\n${issue.content || ''}</auto-claimed>`,

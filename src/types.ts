@@ -189,7 +189,7 @@ export interface WorkTree {
 /**
  * Teammate status
  */
-export type TeammateStatus = 'working' | 'idle' | 'shutdown';
+export type TeammateStatus = 'working' | 'idle' | 'holding' | 'shutdown';
 
 /**
  * Teammate - child process agent

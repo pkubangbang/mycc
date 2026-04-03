@@ -42,8 +42,8 @@ export class ChildCore implements CoreModule {
   }
 
   async question(query: string, asker: string): Promise<string> {
-    // Transition to idle while waiting for answer
-    sendStatus('idle');
+    // Transition to holding while waiting for answer
+    sendStatus('holding');
 
     try {
       // Use no timeout for user questions - user can take arbitrary time to respond

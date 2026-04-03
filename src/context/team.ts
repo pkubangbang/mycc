@@ -183,7 +183,7 @@ export class TeamManager implements TeamModule {
           this.phase2Subscribers.set(sender, phase2);
           phase1.clear();
         }
-      } else if (status === 'idle' || status === 'shutdown') {
+      } else if (status === 'idle' || status === 'shutdown' || status === 'holding') {
         // Phase 2 complete: resolve all waiting for finish
         const phase2 = this.phase2Subscribers.get(sender);
         if (phase2) {
@@ -330,8 +330,8 @@ export class TeamManager implements TeamModule {
   async awaitTeammate(name: string, timeout: number = 60000): Promise<{ waited: boolean }> {
     const status = this.statuses.get(name);
 
-    // Already finished
-    if (status === 'idle' || status === 'shutdown') {
+    // Already finished or holding (waiting for input)
+    if (status === 'idle' || status === 'shutdown' || status === 'holding') {
       return { waited: false };
     }
 
@@ -480,9 +480,16 @@ export class TeamManager implements TeamModule {
       try {
         const response = await this.context!.core.question(q.query, q.sender);
         this.sendResponse(q.sender, q.reqId, 'question_result', true, { response });
-        // Brief notification to lead (no mail - answer already sent via IPC)
-        this.core.brief('info', 'question', `${q.sender} asked: ${q.query}`);
-        this.core.brief('info', 'answer', response);
+        // Add Q&A to lead's mailbox as system reminder (FYI, no action needed)
+        this.context!.mail.appendMail(
+          'lead',
+          `Q&A from ${q.sender}`,
+          `<system-reminder>
+${q.sender} asked: ${q.query}
+Answer: ${response}
+(Answer already sent to ${q.sender} - no forwarding needed)
+</system-reminder>`
+        );
       } catch (err) {
         this.sendResponse(q.sender, q.reqId, 'question_result', false, undefined, (err as Error).message);
         this.core.brief('warn', 'question', `${q.sender}'s question was rejected`);

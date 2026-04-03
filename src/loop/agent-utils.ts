@@ -116,17 +116,6 @@ export async function autoCompact(messages: Message[]): Promise<Message[]> {
 }
 
 /**
- * Create identity block for child process system prompt
- */
-export function makeIdentityBlock(name: string, role: string, workDir: string): string {
-  return `[IDENTITY]
-Name: ${name}
-Role: ${role}
-Working Directory: ${workDir}
-[/IDENTITY]`;
-}
-
-/**
  * Build system prompt
  */
 export function buildSystemPrompt(
@@ -164,7 +153,11 @@ export function buildSystemPrompt(
       'Prefer concise and frank communication style. Act, but not explain.',
       'When you feel lost about the context, send mail to "lead".',
       '',
-      makeIdentityBlock(identity.name, identity.role, workDir),
+      '[IDENTITY]',
+      `Name: ${identity.name}`,
+      `Role: ${identity.role}`,
+      `Working Directory: ${workDir}`,
+      '[/IDENTITY]',
       common,
     ].join('\n');
   }

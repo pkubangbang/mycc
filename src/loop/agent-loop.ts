@@ -52,6 +52,7 @@ export async function agentLoop(
   scope: ToolScope = 'main'
 ): Promise<void> {
   let nextTodoNudge = 3;
+  let lastTodoState = '';
 
   while (!agentIO.isShuttingDown()) {
     try {
@@ -63,18 +64,22 @@ export async function agentLoop(
         await ctx.team.handlePendingQuestions();
       }
 
-      // 3. Collect mails
+      // 3. Collect mails (removed fake "Noted." response - let LLM respond naturally)
       const mails = ctx.mail.collectMails();
       for (const mail of mails) {
         messages.push({
           role: 'user',
           content: `Mail from ${mail.from}: ${mail.title}\n${mail.content}`,
         });
-        messages.push({ role: 'assistant', content: 'Noted.' });
       }
 
-      // 4. Todo nudging
+      // 4. Todo nudging with state tracking to reset counter on todo changes
       if (ctx.todo.hasOpenTodo()) {
+        const currentTodoState = ctx.todo.printTodoList();
+        if (currentTodoState !== lastTodoState) {
+          nextTodoNudge = 3; // Reset counter when todos change
+          lastTodoState = currentTodoState;
+        }
         nextTodoNudge--;
         if (nextTodoNudge === 0) {
           messages.push({
