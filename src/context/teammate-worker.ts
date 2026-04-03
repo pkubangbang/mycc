@@ -11,7 +11,7 @@
 
 import { createChildContext } from './child-context/index.js';
 import { createLoader, createToolLoader } from './loader.js';
-import { ollama, MODEL } from '../ollama.js';
+import { retryChat, MODEL } from '../ollama.js';
 import type { Message } from 'ollama';
 import type { AgentContext } from '../types.js';
 import type { ToolLoaderImpl } from './loader.js';
@@ -73,7 +73,7 @@ async function teammateLoop(prompt: string): Promise<void> {
 
     // 5. Build system prompt and call LLM
     const SYSTEM = buildSystemPrompt(ctx, { name: teammateName, role: teammateRole });
-    const response = await ollama.chat({
+    const response = await retryChat({
       model: MODEL,
       messages: [{ role: 'system', content: SYSTEM }, ...messages],
       tools,

@@ -5,7 +5,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import type { Message, AgentContext } from '../types.js';
-import { ollama, MODEL } from '../ollama.js';
+import { retryChat, MODEL } from '../ollama.js';
 import { getMyccDir, ensureDirs } from '../context/db.js';
 
 export const TOKEN_THRESHOLD = 50000;
@@ -87,7 +87,7 @@ export async function autoCompact(messages: Message[]): Promise<Message[]> {
   // Ask LLM to summarize
   const conversationText = JSON.stringify(messages).slice(0, 80000);
 
-  const response = await ollama.chat({
+  const response = await retryChat({
     model: MODEL,
     messages: [
       {

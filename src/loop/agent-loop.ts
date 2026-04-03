@@ -3,7 +3,7 @@
  */
 
 import chalk from 'chalk';
-import { ollama, MODEL } from '../ollama.js';
+import { retryChat, MODEL, isTransientError } from '../ollama.js';
 import type { Message, AgentContext, ToolScope, ToolCall } from '../types.js';
 import { ToolLoaderImpl } from '../context/loader.js';
 import { createAgentContext } from '../context/index.js';
@@ -35,15 +35,8 @@ function isRecoverableError(err: unknown): boolean {
   if (err instanceof ShutdownError) return false;
   if (agentIO.isShuttingDown()) return false;
 
-  // Network/LLM errors are recoverable
-  if (err instanceof Error) {
-    const msg = err.message.toLowerCase();
-    if (msg.includes('econnrefused')) return true;
-    if (msg.includes('etimedout')) return true;
-    if (msg.includes('enotfound')) return true;
-    if (msg.includes('rate limit')) return true;
-    if (msg.includes('timeout')) return true;
-  }
+  // Use shared transient error detection
+  if (isTransientError(err)) return true;
 
   return false;
 }
@@ -103,7 +96,7 @@ export async function agentLoop(
       const SYSTEM = buildSystemPrompt(ctx);
 
       // 7. Call LLM
-      const response = await ollama.chat({
+      const response = await retryChat({
         model: MODEL,
         messages: [{ role: 'system', content: SYSTEM }, ...messages],
         tools: toolLoader.getToolsForScope(scope),
