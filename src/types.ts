@@ -382,7 +382,7 @@ export interface TeamModule {
   getTeammate(name: string): Teammate | undefined;
   listTeammates(): { name: string; role: string; status: TeammateStatus }[];
   awaitTeammate(name: string, timeout?: number): Promise<{ waited: boolean }>;
-  awaitTeam(timeout?: number): Promise<{ allSettled: boolean; waited: boolean }>;
+  awaitTeam(timeout?: number): Promise<{ allSettled: boolean; waited: boolean; hasQuestion: boolean }>;
   printTeam(): string | Promise<string>;
   removeTeammate(name: string, force?: boolean): void;
   dismissTeam(force?: boolean): void;

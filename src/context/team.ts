@@ -360,22 +360,39 @@ export class TeamManager implements TeamModule {
   }
 
   /**
-   * Wait for all teammates to finish
+   * Wait for all teammates to finish.
+   *
+   * Return values:
+   * - hasQuestion: true if any teammate is in 'holding' state (waiting for question response)
+   *   → Lead should continue to next loop iteration to process pending questions
+   * - allSettled: true if all teammates are idle/shutdown (no one is working)
+   *   → Lead can safely return, no more work in flight
+   * - waited: true if the function actually waited for any teammates
    */
-  async awaitTeam(timeout: number = 60000): Promise<{ allSettled: boolean; waited: boolean }> {
+  async awaitTeam(timeout: number = 60000): Promise<{ allSettled: boolean; waited: boolean; hasQuestion: boolean }> {
     const teammates = this.listTeammates();
-    const active = teammates.filter((t) => t.status === 'working');
 
-    if (active.length === 0) {
-      return { allSettled: true, waited: false };
+    // Priority 1: Check if any teammate is holding (waiting for question response)
+    // If so, return immediately so lead can process the question in next iteration
+    const hasQuestion = teammates.some((t) => t.status === 'holding');
+    if (hasQuestion) {
+      return { allSettled: false, waited: false, hasQuestion: true };
     }
 
-    // Wait for all active teammates
+    // Priority 2: Check if any teammate is still working
+    const active = teammates.filter((t) => t.status === 'working');
+
+    // No active teammates = all settled, safe to return
+    if (active.length === 0) {
+      return { allSettled: true, waited: false, hasQuestion: false };
+    }
+
+    // Wait for all active teammates to finish
     const promises = active.map((t) => this.awaitTeammate(t.name, timeout));
     const results = await Promise.all(promises);
     const anyWaited = results.some((r) => r.waited);
 
-    return { allSettled: true, waited: anyWaited };
+    return { allSettled: true, waited: anyWaited, hasQuestion: false };
   }
 
   /**

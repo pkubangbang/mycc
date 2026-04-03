@@ -25,6 +25,12 @@ export const questionTool: ToolDefinition = {
   scope: ['child'],
   handler: async (ctx: AgentContext, args: Record<string, unknown>): Promise<string> => {
     const query = args.query as string;
+
+    // Validate query parameter
+    if (!query || typeof query !== 'string') {
+      return 'Error: The "query" parameter is required and must be a non-empty string';
+    }
+
     const asker = ctx.core.getName();
     try {
       const response = await ctx.core.question(query, asker);

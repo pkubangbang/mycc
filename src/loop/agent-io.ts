@@ -86,6 +86,8 @@ class AgentIO {
         reject(new Error('readline not available'));
         return;
       }
+      // Clear from cursor to end of screen, then show prompt
+      process.stdout.write('\x1b[J');
       rl.question(query, (answer) => {
         resolve(answer);
       });

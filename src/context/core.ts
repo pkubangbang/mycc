@@ -129,6 +129,11 @@ export class Core implements CoreModule {
    * @param asker - Name of who is asking (required)
    */
   async question(query: string, asker: string): Promise<string> {
+    // Validate query
+    if (!query || typeof query !== 'string') {
+      throw new Error('Question query must be a non-empty string');
+    }
+
     // Check if shutting down
     if (agentIO.isShuttingDown()) {
       throw new Error('Agent is shutting down');

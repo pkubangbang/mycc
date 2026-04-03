@@ -83,9 +83,38 @@ function calculateDelay(attempt: number, config: RetryConfig): number {
 }
 
 /**
+ * Simple spinner for indicating API activity
+ */
+const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+let spinnerInterval: ReturnType<typeof setInterval> | null = null;
+let spinnerFrame = 0;
+
+function startSpinner(prefix: string = 'Thinking'): void {
+  if (spinnerInterval) return; // Already running
+
+  process.stderr.write('\x1b[?25l'); // Hide cursor
+  spinnerFrame = 0;
+  spinnerInterval = setInterval(() => {
+    const frame = SPINNER_FRAMES[spinnerFrame % SPINNER_FRAMES.length];
+    process.stderr.write(`\r${frame} ${prefix}...`);
+    spinnerFrame++;
+  }, 80);
+}
+
+function stopSpinner(): void {
+  if (!spinnerInterval) return;
+
+  clearInterval(spinnerInterval);
+  spinnerInterval = null;
+  process.stderr.write('\r\x1b[K'); // Clear line
+  process.stderr.write('\x1b[?25h'); // Show cursor
+}
+
+/**
  * Chat with automatic retry on transient errors
  *
  * Wraps ollama.chat() with:
+ * - Spinner indicator during API call
  * - Exponential backoff retry (1s → 2s → 4s)
  * - Jitter to prevent thundering herd
  * - Transient error detection
@@ -97,29 +126,35 @@ export async function retryChat(
   const cfg = { ...DEFAULT_RETRY_CONFIG, ...config };
   let lastError: Error | null = null;
 
-  for (let attempt = 1; attempt <= cfg.maxRetries + 1; attempt++) {
-    try {
-      const response = await ollama.chat(request as ChatRequest & { stream?: false });
-      return response;
-    } catch (err) {
-      // Check if it's a transient error
-      if (!isTransientError(err)) {
-        // Non-transient error - throw immediately
-        throw err;
-      }
+  startSpinner();
 
-      lastError = err instanceof Error ? err : new Error(String(err));
+  try {
+    for (let attempt = 1; attempt <= cfg.maxRetries + 1; attempt++) {
+      try {
+        const response = await ollama.chat(request as ChatRequest & { stream?: false });
+        return response;
+      } catch (err) {
+        // Check if it's a transient error
+        if (!isTransientError(err)) {
+          // Non-transient error - throw immediately
+          throw err;
+        }
 
-      // Log retry attempt
-      const isLastAttempt = attempt > cfg.maxRetries;
-      if (!isLastAttempt) {
-        const delay = calculateDelay(attempt, cfg);
-        console.log(`[ollama] Attempt ${attempt}/${cfg.maxRetries + 1} failed: ${lastError.message}. Retrying in ${delay}ms...`);
-        await sleep(delay);
+        lastError = err instanceof Error ? err : new Error(String(err));
+
+        // Log retry attempt
+        const isLastAttempt = attempt > cfg.maxRetries;
+        if (!isLastAttempt) {
+          const delay = calculateDelay(attempt, cfg);
+          console.log(`[ollama] Attempt ${attempt}/${cfg.maxRetries + 1} failed: ${lastError.message}. Retrying in ${delay}ms...`);
+          await sleep(delay);
+        }
       }
     }
-  }
 
-  // All retries exhausted
-  throw lastError || new Error('All retry attempts failed');
+    // All retries exhausted
+    throw lastError || new Error('All retry attempts failed');
+  } finally {
+    stopSpinner();
+  }
 }

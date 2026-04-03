@@ -9,7 +9,12 @@ import type { ToolDefinition, AgentContext } from '../types.js';
 export const tmAwaitTool: ToolDefinition = {
   name: 'tm_await',
   description:
-    'Wait for a teammate or all teammates to finish their current task. Use this instead of polling with bash sleep. Returns when the teammate(s) reach idle/shutdown state or timeout.',
+    [
+      'Wait for a teammate or all teammates to finish their current task. ',
+      'Prefer **NOT TO** use this tool or "bash(sleep)".',
+      'Instead, just let it go with no tool calls.',
+      'The caller will handle the rest.'
+    ].join('\n'),
   input_schema: {
     type: 'object',
     properties: {
@@ -42,9 +47,6 @@ export const tmAwaitTool: ToolDefinition = {
         }
 
         const result = await ctx.team.awaitTeammate(name, timeout);
-        if (result.waited) {
-          ctx.core.brief('info', 'tm_await', `Teammate '${name}' finished`);
-        }
         return result.waited ? 'OK' : 'OK (already idle)';
       } else {
         const teammates = ctx.team.listTeammates();
@@ -53,9 +55,6 @@ export const tmAwaitTool: ToolDefinition = {
         }
 
         const result = await ctx.team.awaitTeam(timeout);
-        if (result.waited) {
-          ctx.core.brief('info', 'tm_await', 'All teammates finished');
-        }
         return result.allSettled ? 'OK' : 'OK (timeout)';
       }
     } catch (error: unknown) {

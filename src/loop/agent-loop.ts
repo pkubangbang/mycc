@@ -119,11 +119,20 @@ export async function agentLoop(
       if (!assistantMessage.tool_calls || assistantMessage.tool_calls.length === 0) {
         // Only check team if it exists (not in child process)
         if (ctx.team) {
-          const { allSettled } = await ctx.team.awaitTeam(30000);
+          const { allSettled, hasQuestion } = await ctx.team.awaitTeam(30000);
+
+          // Priority 1: If a teammate has a pending question, continue to next iteration
+          // to process it via handlePendingQuestions() at the start of the loop
+          if (hasQuestion) {
+            continue;
+          }
+
+          // Priority 2: If all teammates are settled (idle/shutdown), we're done
           if (allSettled) {
             return;
           }
 
+          // Priority 3: Timeout waiting for teammates - inject status message and retry
           messages.push({
             role: 'user',
             content: `Timeout waiting for teammates. ${ctx.team.printTeam()}`,

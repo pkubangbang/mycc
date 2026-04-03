@@ -4,6 +4,7 @@
  * Scope: ['main', 'child'] - Both lead and teammates can send mail
  */
 
+import chalk from 'chalk';
 import type { ToolDefinition, AgentContext } from '../types.js';
 
 export const mailToTool: ToolDefinition = {
@@ -52,7 +53,7 @@ export const mailToTool: ToolDefinition = {
     // Both main and child processes use team.mailTo directly
     // In child process, this writes to mailbox file directly
     // In main process, this also writes to mailbox file
-    ctx.core.brief('info', `mail_to`, `(...to ${name}) ${title}\n${content}\n`);
+    ctx.core.brief('info', `mail_to`, `(...to ${name}) ${title}\n${chalk.gray(content)}\n`);
     ctx.team!.mailTo(name, title, content);
 
     return 'OK';

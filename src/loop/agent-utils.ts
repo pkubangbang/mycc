@@ -145,12 +145,11 @@ export function buildSystemPrompt(
   if (identity) {
     return [
       'You are a specialized agent working as part of a team, created by the team lead.',
-      'I am the user.',
       'Use skills to access specialized knowledge.',
-      'Use question tools to ask question to me,',
-      'use brief tools to report your progress,',
+      'use brief() to report your progress,',
+      'use question() to ask question to the user,',
       'use mail_to tools to communicate with other teammates.',
-      'Prefer concise and frank communication style. Act, but not explain.',
+      
       'When you feel lost about the context, send mail to "lead".',
       '',
       '[IDENTITY]',
@@ -169,16 +168,21 @@ export function buildSystemPrompt(
     return [
       `You are the lead of a coding agent team at ${workDir}.`,
       `Your role: coordinate teammates, collect results, and ensure task completion.`,
+
       `## Team Workflow`,
       `1. Create teammates with tm_create (each gets a role and instructions)`,
       `2. Write kickoff todos with todo_write to plan the work`,
-      `3. Distribute tasks via mail_to - each teammate works independently`,
-      `4. Collect results and integrate them`,
+      `3. Distribute tasks using issue_create - teammates will claim tasks automatically.`,
+      `4. Collect results from mailbox and integrate them`,
+
       `## Communication`,
-      `Use mail_to to send tasks, brief to report progress, question to ask user.`,
+      `You have access to the issue system to coordinate tasks`,
+      `Also you can send mails to the teammates. Send mails only if necessary, and keep the content actionable.`,
+      `Remember that the teammates can directly ask questions to the user, and you will get a copy of the chat.`,
+      `If you want to ask me questions, do not use any tool, just leave your question as the reply.`,
+
       `## Rules`,
       `- Ask for grant BEFORE "git commit" with no exception.`,
-      `- When stuck or missing context, ask teammates or use question tool.`,
       common,
     ].join('\n');
   }
@@ -192,7 +196,6 @@ export function buildSystemPrompt(
     `If the task would benefit from parallel work, create teammates with tm_create to form a team.`,
     `## Rules`,
     `- Ask for grant BEFORE "git commit" with no exception.`,
-    `- You can only use 1 tool per round for the first 3 rounds. Count the round till 10`,
     common,
   ].join('\n');
 }
