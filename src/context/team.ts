@@ -167,7 +167,6 @@ export class TeamManager implements TeamModule {
     // === Notifications (no response expected) ===
     if (msg.type === 'status') {
       const status = msg.status as TeammateStatus;
-      const prevStatus = this.statuses.get(sender);
       this.statuses.set(sender, status);
       this.updateDbStatus(sender, status);
 
@@ -325,25 +324,31 @@ export class TeamManager implements TeamModule {
   }
 
   /**
-   * Wait for a specific teammate to finish
+   * Wait for a specific teammate to finish.
+   *
+   * Resolves on the TRANSITION from 'working' to another status, not just the being of a status.
+   * - If 'holding': resolve immediately (lead should process pending questions)
+   * - If 'working': wait for transition to non-working (phase 2)
+   * - If 'idle'/'shutdown' or undefined: subscribe to phase 1 (will move to phase 2 when they start)
    */
   async awaitTeammate(name: string, timeout: number = 60000): Promise<{ waited: boolean }> {
     const status = this.statuses.get(name);
 
-    // Already finished or holding (waiting for input)
-    if (status === 'idle' || status === 'shutdown' || status === 'holding') {
-      return { waited: false };
-    }
-
-    // Create promise that resolves when teammate finishes
+    // Create promise that resolves when teammate finishes their current work cycle
     const promise = new Promise<void>((resolve) => {
-      if (status === 'working') {
-        // Already working - subscribe to phase 2
+      if (status === 'holding') {
+        // Holding means they have a question - resolve immediately
+        // Lead should process pending questions
+        resolve();
+      } else if (status === 'working') {
+        // Currently working - subscribe to phase 2 (working → non-working transition)
         const phase2 = this.phase2Subscribers.get(name) ?? new Set<() => void>();
         phase2.add(resolve);
         this.phase2Subscribers.set(name, phase2);
       } else {
-        // Not working yet - subscribe to phase 1
+        // Not working (idle/shutdown/undefined) - subscribe to phase 1
+        // Will be moved to phase 2 when they start working
+        // This ensures we wait for: start working → finish working transition
         const phase1 = this.phase1Subscribers.get(name) ?? new Set<() => void>();
         phase1.add(resolve);
         this.phase1Subscribers.set(name, phase1);
@@ -362,6 +367,9 @@ export class TeamManager implements TeamModule {
   /**
    * Wait for all teammates to finish.
    *
+   * Resolves on TRANSITIONS from 'working' to another status, with a minimum 5-second wait
+   * to give teammates time to process mail and potentially ask questions.
+   *
    * Return values:
    * - hasQuestion: true if any teammate is in 'holding' state (waiting for question response)
    *   → Lead should continue to next loop iteration to process pending questions
@@ -370,6 +378,8 @@ export class TeamManager implements TeamModule {
    * - waited: true if the function actually waited for any teammates
    */
   async awaitTeam(timeout: number = 60000): Promise<{ allSettled: boolean; waited: boolean; hasQuestion: boolean }> {
+    const MIN_WAIT_MS = 5000;
+
     const teammates = this.listTeammates();
 
     // Priority 1: Check if any teammate is holding (waiting for question response)
@@ -379,20 +389,25 @@ export class TeamManager implements TeamModule {
       return { allSettled: false, waited: false, hasQuestion: true };
     }
 
-    // Priority 2: Check if any teammate is still working
-    const active = teammates.filter((t) => t.status === 'working');
+    // Start minimum wait timer immediately
+    const minWaitPromise = new Promise<void>((resolve) => setTimeout(resolve, MIN_WAIT_MS));
 
-    // No active teammates = all settled, safe to return
-    if (active.length === 0) {
-      return { allSettled: true, waited: false, hasQuestion: false };
-    }
+    // Wait for ALL teammates AND minimum time
+    // Each awaitTeammate subscribes to transitions, not just current status
+    const promises: Promise<unknown>[] = [
+      minWaitPromise,
+      ...teammates.map((t) => this.awaitTeammate(t.name, timeout)),
+    ];
 
-    // Wait for all active teammates to finish
-    const promises = active.map((t) => this.awaitTeammate(t.name, timeout));
-    const results = await Promise.all(promises);
-    const anyWaited = results.some((r) => r.waited);
+    await Promise.all(promises);
 
-    return { allSettled: true, waited: anyWaited, hasQuestion: false };
+    // Re-check status after waiting
+    const finalTeammates = this.listTeammates();
+    const finalHasQuestion = finalTeammates.some((t) => t.status === 'holding');
+    const finalActive = finalTeammates.filter((t) => t.status === 'working');
+    const allSettled = finalActive.length === 0;
+
+    return { allSettled, waited: true, hasQuestion: finalHasQuestion };
   }
 
   /**

@@ -146,9 +146,9 @@ export function buildSystemPrompt(
     return [
       'You are a specialized agent working as part of a team, created by the team lead.',
       'Use skills to access specialized knowledge.',
-      'use brief() to report your progress,',
-      'use question() to ask question to the user,',
-      'use mail_to tools to communicate with other teammates.',
+      'use brief tool to output debugging info to the user,',
+      'use question tool to send query and get input from the user,',
+      'use mail_to tools to communicate with other teammates. DO NOT MIX THEM UP.',
       
       'When you feel lost about the context, send mail to "lead".',
       '',
