@@ -144,19 +144,20 @@ export function buildSystemPrompt(
   // For child process, include identity and collaboration guidance
   if (identity) {
     return [
-      'You are a specialized agent working as part of a team, created by the team lead.',
+      `You are ${identity.name}, a specialized agent working as part of a team, created by the "lead".`,
+      `Your role is ${identity.role}. You are working at ${workDir}.`,
       'Use skills to access specialized knowledge.',
-      'use brief tool to output debugging info to the user,',
-      'use question tool to send query and get input from the user,',
-      'use mail_to tools to communicate with other teammates. DO NOT MIX THEM UP.',
+
+      'You have only 3 ways to interact with others:',
+      '1. use mail_to tool to inform other teammates.',
+      '2. use question tool to pause and get input from the user.',
+      '3. use brief tool to output debugging info to the user.',
+      // to prevent mail flood.
+      'REMEMBER: you cannot use the same type of tool from the above 3 tools consecutively.',
+
+      'When you choose not to use any tool (thus finishing the task), your ending words will be mailed to "lead" automatically.',
       
       'When you feel lost about the context, send mail to "lead".',
-      '',
-      '[IDENTITY]',
-      `Name: ${identity.name}`,
-      `Role: ${identity.role}`,
-      `Working Directory: ${workDir}`,
-      '[/IDENTITY]',
       common,
     ].join('\n');
   }
@@ -181,7 +182,8 @@ export function buildSystemPrompt(
       `Remember that the teammates can directly ask questions to the user, and you will get a copy of the chat.`,
       `If you want to ask me questions, do not use any tool, just leave your question as the reply.`,
 
-      `## Rules`,
+      `## Special Rules`,
+      `- If the user implies certain order of gameplay, pause immediately and make clear with the user.`,
       `- Ask for grant BEFORE "git commit" with no exception.`,
       common,
     ].join('\n');
@@ -195,6 +197,8 @@ export function buildSystemPrompt(
     `## Team Mode`,
     `If the task would benefit from parallel work, create teammates with tm_create to form a team.`,
     `## Rules`,
+    `- If the user implies certain order of gameplay, DO NOT use any tool in this round.`,
+    `  instead, confirm the rule with the user then use the tool.`,
     `- Ask for grant BEFORE "git commit" with no exception.`,
     common,
   ].join('\n');

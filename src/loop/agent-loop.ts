@@ -73,6 +73,13 @@ export async function agentLoop(
         });
       }
 
+      if (mails.length) {
+        messages.push({
+          role: 'assistant',
+          content: `I have read all the mails.`
+        })
+      }
+
       // 4. Todo nudging with state tracking to reset counter on todo changes
       if (ctx.todo.hasOpenTodo()) {
         const currentTodoState = ctx.todo.printTodoList();
@@ -121,9 +128,8 @@ export async function agentLoop(
         if (ctx.team) {
           const { allSettled, hasQuestion } = await ctx.team.awaitTeam(30000);
 
-          // Priority 1: If a teammate has a pending question, continue to next iteration
-          // to process it via handlePendingQuestions() at the start of the loop
-          if (hasQuestion) {
+          // Priority 1: If there's pending question / mail, continue to next iteration
+          if (hasQuestion || ctx.mail.hasNewMails()) {
             continue;
           }
 
@@ -135,7 +141,7 @@ export async function agentLoop(
           // Priority 3: Timeout waiting for teammates - inject status message and retry
           messages.push({
             role: 'user',
-            content: `Timeout waiting for teammates. ${ctx.team.printTeam()}`,
+            content: `Timeout waiting for teammates. What will you do? ${ctx.team.printTeam()}`,
           });
           continue;
         }
