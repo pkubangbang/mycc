@@ -35,8 +35,13 @@ export const webFetchTool: ToolDefinition = {
       return 'Error: Invalid URL format. Please provide a valid URL starting with http:// or https://';
     }
 
+    ctx.core.brief('info', 'web_fetch', `Fetching: ${url}`);
+
     try {
       const response = await ctx.core.webFetch(url);
+
+      const linkCount = response.links?.length || 0;
+      ctx.core.brief('info', 'web_fetch', `Fetched "${response.title}" (${linkCount} links)`);
 
       const lines = [
         `## Fetched: ${response.title}`,
@@ -60,6 +65,7 @@ export const webFetchTool: ToolDefinition = {
       return lines.join('\n');
     } catch (error: unknown) {
       const err = error as Error;
+      ctx.core.brief('error', 'web_fetch', `Failed: ${err.message}`);
       return `Error: ${err.message}`;
     }
   },

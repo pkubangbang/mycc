@@ -160,20 +160,14 @@ export class Core implements CoreModule {
    * @param query - The search query
    */
   async webSearch(query: string): Promise<WebSearchResult[]> {
-    this.brief('info', 'webSearch', `searching: ${query}`);
     try {
       const response = await ollama.webSearch({ query });
-      const results = response.results || [];
-      this.brief('info', 'webSearch', `found ${results.length} results`);
-      return results;
+      return response.results || [];
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       if (message.includes('401') || message.includes('unauthorized') || message.includes('Unauthorized')) {
-        const hint = 'Set OLLAMA_API_KEY in .env for web search access.';
-        this.brief('error', 'webSearch', `unauthorized: ${hint}`);
-        throw new Error(`Unauthorized: ${hint} Original error: ${message}`);
+        throw new Error(`Unauthorized: Set OLLAMA_API_KEY in .env for web search access. Original error: ${message}`);
       }
-      this.brief('error', 'webSearch', `failed: ${message}`);
       throw error;
     }
   }
@@ -183,19 +177,13 @@ export class Core implements CoreModule {
    * @param url - The URL to fetch
    */
   async webFetch(url: string): Promise<WebFetchResponse> {
-    this.brief('info', 'webFetch', `fetching: ${url}`);
     try {
-      const response = await ollama.webFetch({ url });
-      this.brief('info', 'webFetch', `fetched: ${response.title}`);
-      return response;
+      return await ollama.webFetch({ url });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       if (message.includes('401') || message.includes('unauthorized') || message.includes('Unauthorized')) {
-        const hint = 'Set OLLAMA_API_KEY in .env for web fetch access.';
-        this.brief('error', 'webFetch', `unauthorized: ${hint}`);
-        throw new Error(`Unauthorized: ${hint} Original error: ${message}`);
+        throw new Error(`Unauthorized: Set OLLAMA_API_KEY in .env for web fetch access. Original error: ${message}`);
       }
-      this.brief('error', 'webFetch', `failed: ${message}`);
       throw error;
     }
   }

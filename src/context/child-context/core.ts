@@ -63,15 +63,11 @@ export class ChildCore implements CoreModule {
    * @param query - The search query
    */
   async webSearch(query: string): Promise<WebSearchResult[]> {
-    this.brief('info', 'webSearch', `searching: ${query}`);
     try {
       const response = await ollama.webSearch({ query });
-      const results = response.results || [];
-      this.brief('info', 'webSearch', `found ${results.length} results`);
-      return results;
+      return response.results || [];
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      this.brief('error', 'webSearch', `failed: ${message}`);
       throw error;
     }
   }
@@ -81,14 +77,10 @@ export class ChildCore implements CoreModule {
    * @param url - The URL to fetch
    */
   async webFetch(url: string): Promise<WebFetchResponse> {
-    this.brief('info', 'webFetch', `fetching: ${url}`);
     try {
-      const response = await ollama.webFetch({ url });
-      this.brief('info', 'webFetch', `fetched: ${response.title}`);
-      return response;
+      return await ollama.webFetch({ url });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      this.brief('error', 'webFetch', `failed: ${message}`);
       throw error;
     }
   }
