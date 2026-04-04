@@ -49,7 +49,7 @@ export const issueCommentTool: ToolDefinition = {
     }
 
     await ctx.issue.addComment(id, comment, poster);
-    ctx.core.brief('info', 'issue_comment', `Added comment to issue #${id}`);
+    ctx.core.brief('info', 'issue_comment', `Added comment to #${id}: "${comment}"`);
 
     return 'OK';
   },

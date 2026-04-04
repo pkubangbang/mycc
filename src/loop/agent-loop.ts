@@ -29,19 +29,6 @@ export class ShutdownError extends Error {
 }
 
 /**
- * Check if error is recoverable (should continue loop) or fatal (should propagate)
- */
-function isRecoverableError(err: unknown): boolean {
-  if (err instanceof ShutdownError) return false;
-  if (agentIO.isShuttingDown()) return false;
-
-  // Use shared transient error detection
-  if (isTransientError(err)) return true;
-
-  return false;
-}
-
-/**
  * Agent loop - STAR principle: Situation, Task, Action, Result
  * @throws ShutdownError when agent is shutting down
  */
@@ -168,16 +155,35 @@ export async function agentLoop(
         });
       }
     } catch (err) {
-      // Check if we should exit
-      if (err instanceof ShutdownError || !isRecoverableError(err)) {
+      // Check if we should exit (shutdown or non-recoverable)
+      if (err instanceof ShutdownError || agentIO.isShuttingDown()) {
         throw err;
       }
-      // Recoverable error - log and continue
-      console.error(chalk.yellow(`[agent-loop] Recoverable error: ${(err as Error).message}`));
-      messages.push({
-        role: 'user',
-        content: `An error occurred: ${(err as Error).message}. Please try again.`,
-      });
+
+      const errorMessage = err instanceof Error ? err.message : String(err);
+
+      // Teammate timeout - give LLM context and options to decide
+      if (err instanceof Error && errorMessage.includes('Timeout waiting for teammate') && ctx.team) {
+        console.error(chalk.yellow(`[agent-loop] Recoverable error: ${errorMessage}`));
+        messages.push({
+          role: 'user',
+          content: `Timeout waiting for teammates. What will you do? ${ctx.team.printTeam()}\n\nOptions:\n- Wait longer (use tm_await with higher timeout)\n- Remove teammate (use tm_remove)\n- Continue without waiting (just proceed with other tasks)`,
+        });
+        continue;
+      }
+
+      // Check if transient error (network/LLM issues) - should auto-retry
+      if (isTransientError(err)) {
+        console.error(chalk.yellow(`[agent-loop] Recoverable error: ${errorMessage}`));
+        messages.push({
+          role: 'user',
+          content: `An error occurred: ${errorMessage}. Please try again.`,
+        });
+        continue;
+      }
+
+      // Non-transient, non-shutdown error - propagate
+      throw err;
     }
   }
 

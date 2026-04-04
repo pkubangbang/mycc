@@ -57,7 +57,10 @@ export const issueCloseTool: ToolDefinition = {
     }
 
     await ctx.issue.closeIssue(id, status, comment, poster);
-    ctx.core.brief('info', 'issue_close', `Closed issue #${id} as ${status}`);
+    const logMsg = comment
+      ? `Closed #${id} as ${status}: "${comment}"`
+      : `Closed #${id} as ${status}`;
+    ctx.core.brief('info', 'issue_close', logMsg);
 
     return `OK: #${id}`;
   },
