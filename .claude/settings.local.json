@@ -5,7 +5,8 @@
       "Bash(pnpm rebuild:*)",
       "Bash(pnpm build:*)",
       "WebSearch",
-      "WebFetch(domain:stackoverflow.com)"
+      "WebFetch(domain:stackoverflow.com)",
+      "WebFetch(domain:docs.ollama.com)"
     ]
   }
 }

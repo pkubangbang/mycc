@@ -20,9 +20,12 @@ export interface ToolCall extends OllamaToolCall {
 }
 
 /**
- * Extended Message with tool_call_id for tool role messages
+ * Extended Message with tool response fields
+ * - tool_name: the function name (Ollama API field)
+ * - tool_call_id: hidden ID from agent's chat response (for alignment tracking)
  */
 export interface Message extends OllamaMessage {
+  tool_name?: string;
   tool_call_id?: string;
 }
 

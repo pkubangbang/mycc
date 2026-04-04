@@ -1,122 +1,13 @@
 /**
- * agent-utils.ts - Shared utilities for agent loop and worker
+ * agent-prompts.ts - System prompt building utilities
  */
 
-import * as fs from 'fs';
-import * as path from 'path';
-import type { Message, AgentContext } from '../types.js';
-import { retryChat, MODEL } from '../ollama.js';
-import { getMyccDir, ensureDirs } from '../context/db.js';
+import type { AgentContext } from '../types.js';
 
 export const TOKEN_THRESHOLD = 50000;
 
 /**
- * Estimate token count (rough approximation)
- */
-export function estimateTokens(messages: Message[]): number {
-  let total = 0;
-  for (const msg of messages) {
-    if (msg.content) {
-      total += msg.content.split(/\s+/).length;
-    }
-    if (msg.tool_calls) {
-      for (const tc of msg.tool_calls) {
-        total += JSON.stringify(tc.function.arguments).split(/\s+/).length;
-      }
-    }
-  }
-  return total;
-}
-
-/**
- * Micro-compact: collapse consecutive tool results
- */
-export function microCompact(messages: Message[]): void {
-  // Find consecutive tool messages and combine them
-  const newMessages: Message[] = [];
-  let pendingTools: Message[] = [];
-
-  for (const msg of messages) {
-    if (msg.role === 'tool') {
-      pendingTools.push(msg);
-    } else {
-      if (pendingTools.length > 0) {
-        // Combine pending tools into a single user message
-        const combined = pendingTools.map((m) => m.content).join('\n---\n');
-        newMessages.push({ role: 'user', content: `Previous tool results:\n${combined}` });
-        pendingTools = [];
-      }
-      newMessages.push(msg);
-    }
-  }
-
-  // Handle any remaining pending tools
-  if (pendingTools.length > 0) {
-    const combined = pendingTools.map((m) => m.content).join('\n---\n');
-    newMessages.push({ role: 'user', content: `Previous tool results:\n${combined}` });
-  }
-
-  // Modify in place
-  messages.length = 0;
-  messages.push(...newMessages);
-}
-
-/**
- * Auto-compact: save transcript and summarize old messages using LLM
- */
-export async function autoCompact(messages: Message[]): Promise<Message[]> {
-  // Ensure transcript directory exists
-  ensureDirs();
-  const transcriptDir = path.join(getMyccDir(), 'transcripts');
-  if (!fs.existsSync(transcriptDir)) {
-    fs.mkdirSync(transcriptDir, { recursive: true });
-  }
-
-  // Save full transcript to disk
-  const timestamp = Math.floor(Date.now() / 1000);
-  const transcriptPath = path.join(transcriptDir, `transcript_${timestamp}.jsonl`);
-
-  const writeStream = fs.createWriteStream(transcriptPath);
-  for (const msg of messages) {
-    writeStream.write(JSON.stringify(msg) + '\n');
-  }
-  writeStream.end();
-
-  console.log(`[transcript saved: ${transcriptPath}]`);
-
-  // Ask LLM to summarize
-  const conversationText = JSON.stringify(messages).slice(0, 80000);
-
-  const response = await retryChat({
-    model: MODEL,
-    messages: [
-      {
-        role: 'user',
-        content:
-          'Summarize this conversation for continuity. Include: ' +
-          '1) What was accomplished, 2) Current state, 3) Key decisions made. ' +
-          'Be concise but preserve critical details.\n\n' +
-          conversationText,
-      },
-    ],
-  });
-
-  const summary = response.message.content || '(no summary)';
-
-  return [
-    {
-      role: 'user',
-      content: `[Conversation compressed. Transcript: ${transcriptPath}]\n\n${summary}`,
-    },
-    {
-      role: 'assistant',
-      content: 'Understood. I have the context from the summary. Continuing.',
-    },
-  ];
-}
-
-/**
- * Build system prompt
+ * Build system prompt based on agent context and identity
  */
 export function buildSystemPrompt(
   ctx: AgentContext,
@@ -156,7 +47,7 @@ export function buildSystemPrompt(
       'REMEMBER: you cannot use the same type of tool from the above 3 tools consecutively.',
 
       'When you choose not to use any tool (thus finishing the task), your ending words will be mailed to "lead" automatically.',
-      
+
       'When you feel lost about the context, send mail to "lead".',
       common,
     ].join('\n');

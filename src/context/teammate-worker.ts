@@ -12,16 +12,11 @@
 import { createChildContext } from './child-context/index.js';
 import { createLoader, createToolLoader } from './loader.js';
 import { retryChat, MODEL } from '../ollama.js';
-import type { Message } from 'ollama';
 import type { AgentContext } from '../types.js';
 import type { ToolLoaderImpl } from './loader.js';
-import {
-  TOKEN_THRESHOLD,
-  estimateTokens,
-  microCompact,
-  autoCompact,
-  buildSystemPrompt,
-} from '../loop/agent-utils.js';
+import type { ToolCall } from '../types.js';
+import { TOKEN_THRESHOLD, buildSystemPrompt } from '../loop/agent-prompts.js';
+import { Trialogue } from '../loop/trialogue.js';
 import { ipc, sendStatus } from './child-context/ipc-helpers.js';
 
 const WORKDIR = process.cwd();
@@ -36,7 +31,9 @@ let shutdownRequested = false;
 
 // === Main Teammate Loop ===
 async function teammateLoop(prompt: string): Promise<void> {
-  const messages: Message[] = [{ role: 'user', content: prompt }];
+  const trialogue = new Trialogue({ tokenThreshold: TOKEN_THRESHOLD });
+  trialogue.user(prompt);
+
   const tools = toolLoader.getToolsForScope('child');
   sendStatus('working');
 
@@ -45,26 +42,16 @@ async function teammateLoop(prompt: string): Promise<void> {
   let lastTodoState = '';
 
   while (!shutdownRequested) {
-    // 1. Micro-compact old tool results
-    microCompact(messages);
-
-    // 2. Collect mails from file-based mailbox
+    // 1. Collect mails from file-based mailbox (collated into single user message)
     const mails = ctx.mail.collectMails();
-    for (const mail of mails) {
-      messages.push({
-        role: 'user',
-        content: `Mail from ${mail.from}: ${mail.title}\n${mail.content}`,
-      });
+    if (mails.length > 0) {
+      const mailContent = mails
+        .map((mail) => `Mail from ${mail.from}: ${mail.title}\n${mail.content}`)
+        .join('\n\n---\n\n');
+      trialogue.user(mailContent);
     }
 
-    if (mails.length) {
-      messages.push({
-        role: 'assistant',
-        content: `I have read all the mails.`
-      })
-    }
-
-    // 3. Todo nudging with counter and state tracking
+    // 2. Todo nudging with counter and state tracking
     if (ctx.todo.hasOpenTodo()) {
       const currentTodoState = ctx.todo.printTodoList();
       if (currentTodoState !== lastTodoState) {
@@ -73,45 +60,38 @@ async function teammateLoop(prompt: string): Promise<void> {
       }
       nextTodoNudge--;
       if (nextTodoNudge === 0) {
-        messages.push({
-          role: 'user',
-          content: `<reminder>Update your todos. ${ctx.todo.printTodoList()}</reminder>`,
-        });
+        trialogue.user(`<reminder>Update your todos. ${ctx.todo.printTodoList()}</reminder>`);
         nextTodoNudge = 3;
       }
     }
 
-    // 4. Auto-compact when tokens exceed threshold
-    if (estimateTokens(messages) > TOKEN_THRESHOLD) {
-      ctx.core.brief('info', 'auto-compact', 'triggered');
-      const compacted = await autoCompact(messages);
-      messages.length = 0;
-      messages.push(...compacted);
-      // Identity is preserved in system prompt (buildSystemPrompt), no need to re-inject
+    // 3. Build system prompt and call LLM
+    // Ensure we have a valid message sequence before calling LLM
+    const lastRole = trialogue.getLastRole();
+    if (lastRole === 'assistant') {
+      // Last message was assistant with no tool calls - need user message before next LLM call
+      // This can happen after resuming from idle without new input
+      trialogue.user('Continue with your task.');
     }
 
-    // 5. Build system prompt and call LLM
-    const SYSTEM = buildSystemPrompt(ctx, { name: teammateName, role: teammateRole });
+    trialogue.setSystemPrompt(buildSystemPrompt(ctx, { name: teammateName, role: teammateRole }));
+
     const response = await retryChat({
       model: MODEL,
-      messages: [{ role: 'system', content: SYSTEM }, ...messages],
+      messages: trialogue.getMessages(),
       tools,
     });
 
     const assistantMessage = response.message;
-    messages.push({
-      role: 'assistant',
-      content: assistantMessage.content || '',
-      tool_calls: assistantMessage.tool_calls,
-    });
+    trialogue.agent(assistantMessage.content || '', assistantMessage.tool_calls as ToolCall[] | undefined);
 
-    // 6. No tool calls = enter idle state
+    // 4. No tool calls = enter idle state
     if (!assistantMessage.tool_calls || assistantMessage.tool_calls.length === 0) {
       // IMPORTANT: send finishing words to lead to coordinate.
-      ctx.team!.mailTo('lead', 'task done', 
+      ctx.team!.mailTo('lead', 'task done',
         assistantMessage.content ?? 'I have done my task, now running idle.', ctx.core.getName());
 
-      const result = await enterIdleState(messages);
+      const result = await enterIdleState(trialogue);
       if (result === 'shutdown') {
         process.exit(0);
       }
@@ -119,24 +99,18 @@ async function teammateLoop(prompt: string): Promise<void> {
       continue;
     }
 
-    // 7. Execute tools
-    for (const tc of assistantMessage.tool_calls) {
+    // 5. Execute tools
+    for (const tc of (assistantMessage.tool_calls as ToolCall[])) {
       const toolName = tc.function.name;
       const args = tc.function.arguments as Record<string, unknown>;
 
       try {
         const output = await toolLoader.execute(toolName, ctx, args);
-        messages.push({
-          role: 'tool',
-          content: `tool call ${toolName} finished.\n${output}`,
-        });
+        trialogue.tool(toolName, output, tc.id);
       } catch (err) {
         const errorMsg = (err as Error).message;
         ctx.core.brief('error', toolName, errorMsg);
-        messages.push({
-          role: 'tool',
-          content: `tool call ${toolName} failed: ${errorMsg}`,
-        });
+        trialogue.tool(toolName, `error: ${errorMsg}`, tc.id);
       }
     }
   }
@@ -147,7 +121,7 @@ async function teammateLoop(prompt: string): Promise<void> {
 }
 
 // === Idle State: Poll for new work ===
-async function enterIdleState(messages: Message[]): Promise<'shutdown' | 'resume'> {
+async function enterIdleState(trialogue: Trialogue): Promise<'shutdown' | 'resume'> {
   sendStatus('idle');
 
   while (!shutdownRequested) {
@@ -189,10 +163,7 @@ async function enterIdleState(messages: Message[]): Promise<'shutdown' | 'resume
         if (claimed) {
           ctx.core.brief('info', 'auto-claim', `Issue #${issue.id}: ${issue.title}`);
           // Identity is preserved in system prompt, no need to re-inject
-          messages.push({
-            role: 'user',
-            content: `<auto-claimed>Issue #${issue.id}: ${issue.title}\n${issue.content || ''}</auto-claimed>`,
-          });
+          trialogue.user(`<auto-claimed>Issue #${issue.id}: ${issue.title}\n${issue.content || ''}</auto-claimed>`);
           sendStatus('working');
           return 'resume';
         }

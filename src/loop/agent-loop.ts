@@ -9,13 +9,8 @@ import { ToolLoaderImpl } from '../context/loader.js';
 import { createAgentContext } from '../context/index.js';
 import { createLoader, createToolLoader } from '../context/loader.js';
 import { clearSessionData } from '../context/db.js';
-import {
-  TOKEN_THRESHOLD,
-  estimateTokens,
-  microCompact,
-  autoCompact,
-  buildSystemPrompt,
-} from './agent-utils.js';
+import { TOKEN_THRESHOLD, buildSystemPrompt } from './agent-prompts.js';
+import { Trialogue } from './trialogue.js';
 import { agentIO } from './agent-io.js';
 
 /**
@@ -33,7 +28,7 @@ export class ShutdownError extends Error {
  * @throws ShutdownError when agent is shutting down
  */
 export async function agentLoop(
-  messages: Message[],
+  trialogue: Trialogue,
   ctx: AgentContext,
   toolLoader: ToolLoaderImpl,
   scope: ToolScope = 'main'
@@ -43,31 +38,21 @@ export async function agentLoop(
 
   while (!agentIO.isShuttingDown()) {
     try {
-      // 1. Micro-compact old tool results
-      microCompact(messages);
-
-      // 2. Handle pending questions from children
+      // 1. Handle pending questions from children
       if (ctx.team) {
         await ctx.team.handlePendingQuestions();
       }
 
-      // 3. Collect mails (removed fake "Noted." response - let LLM respond naturally)
+      // 2. Collect mails (collated into single user message)
       const mails = ctx.mail.collectMails();
-      for (const mail of mails) {
-        messages.push({
-          role: 'user',
-          content: `Mail from ${mail.from}: ${mail.title}\n${mail.content}`,
-        });
+      if (mails.length > 0) {
+        const mailContent = mails
+          .map((mail) => `Mail from ${mail.from}: ${mail.title}\n${mail.content}`)
+          .join('\n\n---\n\n');
+        trialogue.user(mailContent);
       }
 
-      if (mails.length) {
-        messages.push({
-          role: 'assistant',
-          content: `I have read all the mails.`
-        })
-      }
-
-      // 4. Todo nudging with state tracking to reset counter on todo changes
+      // 3. Todo nudging with state tracking to reset counter on todo changes
       if (ctx.todo.hasOpenTodo()) {
         const currentTodoState = ctx.todo.printTodoList();
         if (currentTodoState !== lastTodoState) {
@@ -76,40 +61,33 @@ export async function agentLoop(
         }
         nextTodoNudge--;
         if (nextTodoNudge === 0) {
-          messages.push({
-            role: 'user',
-            content: `<reminder>Update your todos. ${ctx.todo.printTodoList()}</reminder>`,
-          });
+          trialogue.user(`<reminder>Update your todos. ${ctx.todo.printTodoList()}</reminder>`);
           nextTodoNudge = 3;
         }
       }
 
-      // 5. Auto-compact when tokens exceed threshold
-      if (estimateTokens(messages) > TOKEN_THRESHOLD) {
-        console.log(chalk.blue('[auto-compact triggered]'));
-        const compacted = await autoCompact(messages);
-        messages.splice(0, messages.length, ...compacted);
+      // 4. Build system prompt and call LLM
+      // Ensure we have a valid message sequence before calling LLM
+      const lastRole = trialogue.getLastRole();
+      if (lastRole === 'assistant') {
+        // Last message was assistant with no tool calls - need user message before next LLM call
+        // This can happen after awaitTeam() returns without new input
+        trialogue.user('Continue with your task.');
       }
 
-      // 6. Build system prompt
-      const SYSTEM = buildSystemPrompt(ctx);
+      trialogue.setSystemPrompt(buildSystemPrompt(ctx));
 
-      // 7. Call LLM
       const response = await retryChat({
         model: MODEL,
-        messages: [{ role: 'system', content: SYSTEM }, ...messages],
+        messages: trialogue.getMessages(),
         tools: toolLoader.getToolsForScope(scope),
       });
 
-      // 8. Handle response
+      // 5. Handle response
       const assistantMessage = response.message;
-      messages.push({
-        role: 'assistant',
-        content: assistantMessage.content || '',
-        tool_calls: assistantMessage.tool_calls,
-      });
+      trialogue.agent(assistantMessage.content || '', assistantMessage.tool_calls as ToolCall[] | undefined);
 
-      // 9. No tool calls = check team status
+      // 6. No tool calls = check team status
       if (!assistantMessage.tool_calls || assistantMessage.tool_calls.length === 0) {
         // Only check team if it exists (not in child process)
         if (ctx.team) {
@@ -126,17 +104,14 @@ export async function agentLoop(
           }
 
           // Priority 3: Timeout waiting for teammates - inject status message and retry
-          messages.push({
-            role: 'user',
-            content: `Timeout waiting for teammates. What will you do? ${ctx.team.printTeam()}`,
-          });
+          trialogue.user(`Timeout waiting for teammates. What will you do? ${ctx.team.printTeam()}`);
           continue;
         }
         // No team means single agent - just return
         return;
       }
 
-      // 10. Execute tools
+      // 7. Execute tools
       for (const toolCall of (assistantMessage.tool_calls as ToolCall[])) {
         if (agentIO.isShuttingDown()) {
           throw new ShutdownError();
@@ -148,11 +123,7 @@ export async function agentLoop(
 
         const output = await toolLoader.execute(toolName, ctx, args);
 
-        messages.push({
-          role: 'tool',
-          content: output,
-          tool_call_id: toolCallId,
-        });
+        trialogue.tool(toolName, output, toolCallId);
       }
     } catch (err) {
       // Check if we should exit (shutdown or non-recoverable)
@@ -165,20 +136,14 @@ export async function agentLoop(
       // Teammate timeout - give LLM context and options to decide
       if (err instanceof Error && errorMessage.includes('Timeout waiting for teammate') && ctx.team) {
         console.error(chalk.yellow(`[agent-loop] Recoverable error: ${errorMessage}`));
-        messages.push({
-          role: 'user',
-          content: `Timeout waiting for teammates. What will you do? ${ctx.team.printTeam()}\n\nOptions:\n- Wait longer (use tm_await with higher timeout)\n- Remove teammate (use tm_remove)\n- Continue without waiting (just proceed with other tasks)`,
-        });
+        trialogue.user(`Timeout waiting for teammates. What will you do? ${ctx.team.printTeam()}\n\nOptions:\n- Wait longer (use tm_await with higher timeout)\n- Remove teammate (use tm_remove)\n- Continue without waiting (just proceed with other tasks)`);
         continue;
       }
 
       // Check if transient error (network/LLM issues) - should auto-retry
       if (isTransientError(err)) {
         console.error(chalk.yellow(`[agent-loop] Recoverable error: ${errorMessage}`));
-        messages.push({
-          role: 'user',
-          content: `An error occurred: ${errorMessage}. Please try again.`,
-        });
+        trialogue.user(`An error occurred: ${errorMessage}. Please try again.`);
         continue;
       }
 
@@ -212,8 +177,8 @@ export async function main(): Promise<void> {
 
   const toolLoader = createToolLoader(loader);
 
-  // History
-  const history: Message[] = [];
+  // Trialogue for message management
+  const trialogue = new Trialogue({ tokenThreshold: TOKEN_THRESHOLD });
 
   // Initialize AgentIO for main process
   agentIO.initMain();
@@ -289,14 +254,14 @@ export async function main(): Promise<void> {
       }
 
       // Add user message
-      history.push({ role: 'user', content: query });
+      trialogue.user(query);
 
       // Run agent loop
-      await agentLoop(history, ctx, toolLoader);
+      await agentLoop(trialogue, ctx, toolLoader);
 
       // Print final response
-      const lastMsg = history[history.length - 1];
-      if (lastMsg.content) {
+      const lastMsg = trialogue.getMessagesRaw().at(-1);
+      if (lastMsg?.content) {
         console.log(lastMsg.content);
       }
       console.log();
