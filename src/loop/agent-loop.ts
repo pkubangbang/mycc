@@ -12,7 +12,7 @@ import type { Message, AgentContext, ToolScope, ToolCall } from '../types.js';
 import { ToolLoaderImpl } from '../context/loader.js';
 import { createAgentContext } from '../context/index.js';
 import { createLoader, createToolLoader } from '../context/loader.js';
-import { clearSessionData } from '../context/db.js';
+import { clearSessionData, getMyccDir } from '../context/db.js';
 import { TOKEN_THRESHOLD, buildSystemPrompt } from './agent-prompts.js';
 import { Trialogue } from './trialogue.js';
 import { agentIO } from './agent-io.js';
@@ -30,11 +30,11 @@ export class ShutdownError extends Error {
 /**
  * Format trialogue messages as markdown
  */
-function formatTrialogueAsMarkdown(messages: import('../types.js').Message[]): string {
+function formatTrialogueAsMarkdown(messages: import('../types.js').Message[], agentName: string = 'Lead Agent'): string {
   const lines: string[] = [];
   const timestamp = new Date().toISOString();
 
-  lines.push(`# Trialogue Dump - Lead Agent`);
+  lines.push(`# Trialogue Dump - ${agentName}`);
   lines.push(`**Generated:** ${timestamp}`);
   lines.push('');
 
@@ -289,9 +289,36 @@ export async function main(): Promise<void> {
           continue;
         }
 
-        if (trimmedQuery === '/dump') {
-          const messages = trialogue.getMessages();
-          const content = formatTrialogueAsMarkdown(messages);
+        if (trimmedQuery === '/dump' || trimmedQuery.startsWith('/dump ')) {
+          const parts = trimmedQuery.split(/\s+/);
+          const agentName = parts.length > 1 ? parts[1] : null;
+
+          let messages: import('../types.js').Message[];
+          let displayName: string;
+
+          if (agentName) {
+            // Dump teammate's trialogue from file
+            const transcriptPath = path.join(getMyccDir(), 'transcripts', `${agentName}-trialogue.jsonl`);
+            if (!fs.existsSync(transcriptPath)) {
+              console.log(chalk.yellow(`No trialogue found for teammate '${agentName}'`));
+              continue;
+            }
+
+            try {
+              const content = fs.readFileSync(transcriptPath, 'utf-8');
+              messages = content.trim().split('\n').map(line => JSON.parse(line));
+              displayName = agentName;
+            } catch (err) {
+              console.log(chalk.red(`Error reading trialogue: ${(err as Error).message}`));
+              continue;
+            }
+          } else {
+            // Dump lead's trialogue from memory
+            messages = trialogue.getMessages();
+            displayName = 'Lead Agent';
+          }
+
+          const content = formatTrialogueAsMarkdown(messages, displayName);
           const timestamp = Math.floor(Date.now() / 1000);
           const filepath = path.join(os.tmpdir(), `dump-${timestamp}.md`);
 

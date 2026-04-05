@@ -9,15 +9,18 @@
  * Mail from teammates goes through ctx.mail (file-based).
  */
 
+import * as fs from 'fs';
+import * as path from 'path';
 import { createChildContext } from './child-context/index.js';
 import { createLoader, createToolLoader } from './loader.js';
 import { retryChat, MODEL } from '../ollama.js';
-import type { AgentContext } from '../types.js';
+import type { AgentContext, Message } from '../types.js';
 import type { ToolLoaderImpl } from './loader.js';
 import type { ToolCall } from '../types.js';
 import { TOKEN_THRESHOLD, buildSystemPrompt } from '../loop/agent-prompts.js';
 import { Trialogue } from '../loop/trialogue.js';
 import { ipc, sendStatus } from './child-context/ipc-helpers.js';
+import { getMyccDir } from './db.js';
 
 const WORKDIR = process.cwd();
 const POLL_INTERVAL = 5000; // 5 seconds
@@ -29,9 +32,37 @@ let ctx: AgentContext;
 let toolLoader: ToolLoaderImpl;
 let shutdownRequested = false;
 
+/**
+ * Create a trialogue that persists messages to disk
+ */
+function createPersistentTriologue(name: string): Trialogue {
+  const transcriptDir = path.join(getMyccDir(), 'transcripts');
+  if (!fs.existsSync(transcriptDir)) {
+    fs.mkdirSync(transcriptDir, { recursive: true });
+  }
+
+  const trialoguePath = path.join(transcriptDir, `${name}-trialogue.jsonl`);
+
+  // Clear existing file on start
+  fs.writeFileSync(trialoguePath, '', 'utf-8');
+
+  return new Trialogue({
+    tokenThreshold: TOKEN_THRESHOLD,
+    onMessage: (messages: Message[]) => {
+      // Append last message to file
+      const lastMsg = messages[messages.length - 1];
+      try {
+        fs.appendFileSync(trialoguePath, JSON.stringify(lastMsg) + '\n', 'utf-8');
+      } catch {
+        // Ignore write errors
+      }
+    },
+  });
+}
+
 // === Main Teammate Loop ===
 async function teammateLoop(prompt: string): Promise<void> {
-  const trialogue = new Trialogue({ tokenThreshold: TOKEN_THRESHOLD });
+  const trialogue = createPersistentTriologue(teammateName);
   trialogue.user(prompt);
 
   const tools = toolLoader.getToolsForScope('child');

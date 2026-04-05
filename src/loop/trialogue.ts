@@ -51,6 +51,8 @@ export interface TrialogueOptions {
   onToolMisalign?: (warning: ToolAlignmentWarning) => void;
   /** Called when auto-compact is triggered */
   onCompact?: (transcriptPath: string) => void;
+  /** Called after each message is added */
+  onMessage?: (messages: Message[]) => void;
 }
 
 export class Trialogue {
@@ -67,6 +69,7 @@ export class Trialogue {
       onMisorder: options.onMisorder ?? this.defaultOnMisorder,
       onToolMisalign: options.onToolMisalign ?? this.defaultOnToolMisalign,
       onCompact: options.onCompact ?? this.defaultOnCompact,
+      onMessage: options.onMessage ?? (() => {}),
     };
   }
 
@@ -260,6 +263,11 @@ export class Trialogue {
   private async addMessage(message: Message): Promise<void> {
     this.messages.push(message);
     this.updateTokenCount(message);
+
+    // Call onMessage callback if set
+    if (this.options.onMessage) {
+      this.options.onMessage(this.messages);
+    }
 
     // Check for auto-compact
     if (this.tokenCount > this.options.tokenThreshold) {
