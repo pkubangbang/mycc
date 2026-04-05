@@ -4,7 +4,7 @@
 
 import type { AgentContext } from '../types.js';
 
-export const TOKEN_THRESHOLD = 50000;
+export const TOKEN_THRESHOLD = parseInt(process.env.TOKEN_THRESHOLD || '50000', 10);
 
 /**
  * Build system prompt based on agent context and identity

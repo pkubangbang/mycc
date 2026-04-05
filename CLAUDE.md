@@ -23,6 +23,21 @@ Copy `.env.example` to `.env` and configure:
 - `OLLAMA_MODEL` - Model name (default: glm-5:cloud)
 - `OLLAMA_API_KEY` - API key for cloud models (optional)
 
+## Slash Commands
+
+In the REPL loop, users can enter slash commands to inspect agent state without involving the LLM:
+
+| Command | Description |
+|---------|-------------|
+| `/team` | Print current team status (child processes) |
+| `/issues` | List all issues |
+| `/issues <id>` | Show details for specific issue |
+| `/todos` | Print current todo list |
+| `/skills` | List all loaded skills |
+| `/exit` | Exit the agent (also: `q`, `quit`, empty input) |
+
+These are meta-commands handled directly in `agent-loop.ts` before any LLM interaction.
+
 ## Tool Scope Constraints
 
 Different agent contexts have access to different tools:
