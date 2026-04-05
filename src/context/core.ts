@@ -3,7 +3,7 @@
  */
 
 import chalk from 'chalk';
-import type { CoreModule, TranscriptModule } from '../types.js';
+import type { CoreModule } from '../types.js';
 import { ollama } from '../ollama.js';
 import { WebFetchResponse, WebSearchResult } from 'ollama';
 import { agentIO } from '../loop/agent-io.js';
@@ -51,7 +51,6 @@ const TOOL_COLORS: Record<string, (text: string) => string> = {
 export class Core implements CoreModule {
   private workDir: string;
   private questionFn: ((query: string) => Promise<string>) | null = null;
-  private transcript: TranscriptModule | null = null;
 
   constructor(workDir?: string) {
     this.workDir = workDir || process.cwd();
@@ -79,14 +78,7 @@ export class Core implements CoreModule {
   }
 
   /**
-   * Set the transcript module for logging
-   */
-  setTranscript(transcript: TranscriptModule): void {
-    this.transcript = transcript;
-  }
-
-  /**
-   * Log a message to console and transcript
+   * Log a message to console
    * Thread-safe: console.log is atomic in Node.js
    */
   brief(level: 'info' | 'warn' | 'error', tool: string, message: string): void {
@@ -105,11 +97,6 @@ export class Core implements CoreModule {
         break;
       default:
         console.log(`${prefix} ${message}`);
-    }
-
-    // Log to transcript
-    if (this.transcript) {
-      this.transcript.logBrief(level, tool, message);
     }
   }
 
@@ -144,15 +131,8 @@ export class Core implements CoreModule {
       throw new Error('Question function not initialized');
     }
 
-    if (this.transcript) {
-      this.transcript.logQuestion(asker, query);
-    }
     this.brief('info', `question`, `${asker} has a question:`);
-    const response = await this.questionFn(query);
-    if (this.transcript) {
-      this.transcript.logAnswer(asker, response);
-    }
-    return response;
+    return await this.questionFn(query);
   }
 
   /**

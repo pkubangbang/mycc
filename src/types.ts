@@ -230,10 +230,6 @@ export interface CoreModule {
    */
   setQuestionFn(fn: (query: string) => Promise<string>): void;
   /**
-   * Set the transcript module for logging
-   */
-  setTranscript(transcript: TranscriptModule): void;
-  /**
    * Search the web for information
    * @param query - The search query
    */
@@ -243,26 +239,6 @@ export interface CoreModule {
    * @param url - The URL to fetch
    */
   webFetch(url: string): Promise<WebFetchResponse>;
-}
-
-/**
- * Transcript entry type
- */
-export interface TranscriptEntry {
-  timestamp: Date;
-  type: 'brief' | 'question' | 'answer' | 'mail_send';
-  [key: string]: unknown;
-}
-
-/**
- * Transcript module interface
- */
-export interface TranscriptModule {
-  log(entry: TranscriptEntry): void;
-  logBrief(level: string, tool: string, message: string): void;
-  logQuestion(asker: string, query: string): void;
-  logAnswer(asker: string, response: string): void;
-  logMailSend(from: string, to: string, title: string, content?: string): void;
 }
 
 /**
@@ -282,7 +258,6 @@ export interface MailModule {
   hasNewMails(): boolean;
   appendMail(from: string, title: string, content: string, issueId?: number): void;
   collectMails(): Mail[];
-  setTranscript(transcript: TranscriptModule): void;
 }
 
 /**
@@ -394,8 +369,6 @@ export interface TeamModule {
   // IPC Handler registration
   registerHandler(registration: IpcHandlerRegistration): void;
   unregisterHandler(messageType: string): void;
-  // Transcript logging
-  setTranscript(transcript: TranscriptModule): void;
   // Pending questions from children
   handlePendingQuestions(): Promise<void>;
 }

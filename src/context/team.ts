@@ -11,7 +11,6 @@ import type {
   TeammateStatus,
   AgentContext,
   IpcHandlerRegistration,
-  TranscriptModule,
   SendResponseCallback,
 } from '../types.js';
 import { getDb } from './db.js';
@@ -49,7 +48,6 @@ export class TeamManager implements TeamModule {
   private processes: Map<string, ChildProcess> = new Map();
   private statuses: Map<string, TeammateStatus> = new Map();
   private ipcRegistry: IpcRegistry;
-  private transcript: TranscriptModule | null = null;
   private context: AgentContext | null = null;
   private pendingQuestions: Array<{
     sender: string;
@@ -64,13 +62,6 @@ export class TeamManager implements TeamModule {
   constructor(core: CoreModule) {
     this.core = core;
     this.ipcRegistry = createIpcRegistry();
-  }
-
-  /**
-   * Set the transcript module for logging
-   */
-  setTranscript(transcript: TranscriptModule): void {
-    this.transcript = transcript;
   }
 
   /**
@@ -485,11 +476,6 @@ export class TeamManager implements TeamModule {
   mailTo(name: string, title: string, content: string, from: string = 'lead'): void {
     const mail = createMail(name);
     mail.appendMail(from, title, content);
-
-    // Log to transcript
-    if (this.transcript) {
-      this.transcript.logMailSend('lead', name, title, content);
-    }
   }
 
   /**
