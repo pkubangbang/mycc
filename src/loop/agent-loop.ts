@@ -3,6 +3,10 @@
  */
 
 import chalk from 'chalk';
+import * as os from 'os';
+import * as path from 'path';
+import * as fs from 'fs';
+import { spawn } from 'child_process';
 import { retryChat, MODEL, isTransientError } from '../ollama.js';
 import type { Message, AgentContext, ToolScope, ToolCall } from '../types.js';
 import { ToolLoaderImpl } from '../context/loader.js';
@@ -21,6 +25,44 @@ export class ShutdownError extends Error {
     super(message);
     this.name = 'ShutdownError';
   }
+}
+
+/**
+ * Format trialogue messages as markdown
+ */
+function formatTrialogueAsMarkdown(messages: import('../types.js').Message[]): string {
+  const lines: string[] = [];
+  const timestamp = new Date().toISOString();
+
+  lines.push(`# Trialogue Dump - Lead Agent`);
+  lines.push(`**Generated:** ${timestamp}`);
+  lines.push('');
+
+  for (const msg of messages) {
+    lines.push('---');
+    lines.push(`## ${msg.role.toUpperCase()}`);
+
+    if (msg.content) {
+      lines.push(msg.content);
+    }
+
+    if (msg.tool_calls) {
+      lines.push('');
+      lines.push('**Tool Calls:**');
+      for (const tc of msg.tool_calls) {
+        lines.push(`- \`${tc.function.name}\``);
+        lines.push(`  - args: ${JSON.stringify(tc.function.arguments, null, 2)}`);
+      }
+    }
+
+    if (msg.tool_name) {
+      lines.push(`**Tool:** ${msg.tool_name}`);
+    }
+
+    lines.push('');
+  }
+
+  return lines.join('\n');
 }
 
 /**
@@ -200,7 +242,7 @@ export async function main(): Promise<void> {
   });
 
   // Available slash commands
-  const slashCommands = ['/team', '/issues', '/todos', '/skills', '/exit'];
+  const slashCommands = ['/team', '/issues', '/todos', '/skills', '/dump', '/exit'];
 
   // Main REPL loop
   while (!agentIO.isShuttingDown()) {
@@ -244,6 +286,42 @@ export async function main(): Promise<void> {
 
         if (trimmedQuery === '/skills') {
           console.log(ctx.skill.printSkills());
+          continue;
+        }
+
+        if (trimmedQuery === '/dump') {
+          const messages = trialogue.getMessages();
+          const content = formatTrialogueAsMarkdown(messages);
+          const timestamp = Math.floor(Date.now() / 1000);
+          const filepath = path.join(os.tmpdir(), `dump-${timestamp}.md`);
+
+          fs.writeFileSync(filepath, content);
+          console.log(chalk.green(`Opening trialogue dump: ${filepath}`));
+
+          // Open with default editor using agentIO.exec()
+          const editor = process.env.EDITOR || process.env.VISUAL ||
+            (process.platform === 'darwin' ? 'open' :
+              process.platform === 'win32' ? 'start' : 'xdg-open');
+
+          await agentIO.exec(async (signal) => {
+            return new Promise((resolve) => {
+              const child = spawn(editor, [filepath], {
+                stdio: 'inherit',
+                signal
+              });
+              child.on('close', () => resolve(true));
+              child.on('error', () => resolve(false));
+            });
+          });
+
+          // Cleanup temp file after editor closes
+          try {
+            fs.unlinkSync(filepath);
+            console.log(chalk.gray(`Cleaned up: ${filepath}`));
+          } catch {
+            // Ignore cleanup errors
+          }
+
           continue;
         }
 
