@@ -16,7 +16,7 @@ A skill is a markdown file that documents:
 - **Best practices** - Lessons learned from experience
 - **Reference material** - Quick lookup information
 
-Skills live in `skills/` directory as `.md` files.
+Skills start in `.mycc/skills/` directory for testing, then migrate to `skills/` when qualified.
 
 ## When to Create a Skill
 
@@ -275,11 +275,28 @@ Ask yourself:
 ### Step 3: Create the Skill File
 
 ```bash
-# Skills go in skills/ directory
-skills/my-new-skill.md
+# ALWAYS create in .mycc/skills/ first for testing
+.mycc/skills/my-new-skill.md
 ```
 
-### Step 4: Write with Structure
+**IMPORTANT**: Never create skills directly in `skills/` directory. Always start in `.mycc/skills/` for iterative testing and feedback.
+
+### Step 4: Test and Iterate
+
+1. Let the user test the skill manually
+2. Iterate based on feedback
+3. Only migrate to `skills/` when the user explicitly agrees the skill is ready
+
+### Step 5: Migrate When Approved
+
+When the user confirms the skill is qualified:
+
+```bash
+# Move from .mycc/skills/ to skills/
+mv .mycc/skills/my-new-skill.md skills/my-new-skill.md
+```
+
+### Step 6: Write with Structure
 
 ```markdown
 ---
@@ -303,7 +320,7 @@ Brief intro.
 ...
 ```
 
-### Step 5: Include Real Examples
+### Step 7: Include Real Examples
 
 Use actual code from your work:
 
@@ -323,6 +340,7 @@ const response = await ollama.chat({...});
 
 Before finalizing a skill, verify:
 
+- [ ] Created in `.mycc/skills/` (NOT directly in `skills/`)
 - [ ] Clear frontmatter with name, description, tags
 - [ ] Specific, actionable advice
 - [ ] Code examples for key concepts
@@ -333,6 +351,12 @@ Before finalizing a skill, verify:
 - [ ] No typos or grammar errors
 
 ## Anti-Patterns to Avoid
+
+### 0. Creating Directly in skills/
+
+**WRONG**: Creating skill files directly in `skills/` directory.
+
+**RIGHT**: Always start in `.mycc/skills/` for testing, only migrate when user approves.
 
 ### 1. Too Generic
 
@@ -355,6 +379,13 @@ Explain WHY something is important, not just WHAT to do.
 Be concise. If skill is too long, split into multiple skills.
 
 ## Examples from This Project
+
+### Migration Pattern
+
+All skills follow this lifecycle:
+1. **Created in `.mycc/skills/`** - For testing and iteration
+2. **Tested manually** - User provides feedback
+3. **Migrated to `skills/`** - When user agrees the skill is ready
 
 ### tech-doc-writing.md
 

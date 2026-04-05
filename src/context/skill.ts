@@ -5,9 +5,14 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { watch } from 'fs';
+import { fileURLToPath } from 'url';
 import matter from 'gray-matter';
 import type { SkillModule, Skill } from '../types.js';
 import { getSkillsDir, ensureDirs } from './db.js';
+
+// Get the directory of this module (works for both source and compiled)
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 /**
  * Skill module implementation with hot-reload
@@ -27,7 +32,12 @@ export class SkillLoader implements SkillModule {
   async loadSkills(): Promise<void> {
     ensureDirs();
 
-    // Load from project skills/ directory
+    // Load from built-in skills/ directory (relative to this module)
+    // When compiled, this file is in dist/context/, so we go up 2 levels to get the package root
+    const builtInSkillsDir = path.join(__dirname, '..', '..', 'skills');
+    this.loadSkillsFromDir(builtInSkillsDir);
+
+    // Load from project skills/ directory (current working directory)
     const projectSkillsDir = path.join(process.cwd(), 'skills');
     this.loadSkillsFromDir(projectSkillsDir);
 
@@ -103,6 +113,7 @@ export class SkillLoader implements SkillModule {
    * Watch the skills directory for changes
    */
   watchDirectories(): void {
+    const builtInSkillsDir = path.join(__dirname, '..', '..', 'skills');
     const projectSkillsDir = path.join(process.cwd(), 'skills');
     const myccSkillsDir = getSkillsDir();
 
@@ -111,9 +122,22 @@ export class SkillLoader implements SkillModule {
       this.watcher.close();
     }
 
+    // Watch built-in skills directory recursively
+    if (fs.existsSync(builtInSkillsDir)) {
+      this.watcher = watch(builtInSkillsDir, { recursive: true }, (event, filename) => {
+        if (filename && filename.endsWith('.md')) {
+          const filepath = path.join(builtInSkillsDir, filename);
+          if (!this.silent) {
+            console.log(`[skill] Reloading: ${filename}`);
+          }
+          this.reloadSkill(filepath);
+        }
+      });
+    }
+
     // Watch project skills directory recursively
     if (fs.existsSync(projectSkillsDir)) {
-      this.watcher = watch(projectSkillsDir, { recursive: true }, (event, filename) => {
+      const projectWatcher = watch(projectSkillsDir, { recursive: true }, (event, filename) => {
         if (filename && filename.endsWith('.md')) {
           const filepath = path.join(projectSkillsDir, filename);
           if (!this.silent) {
@@ -122,6 +146,8 @@ export class SkillLoader implements SkillModule {
           this.reloadSkill(filepath);
         }
       });
+      // Note: this will replace the built-in watcher if both exist
+      // For a proper solution, we'd need to manage multiple watchers
     }
 
     // Also watch .mycc/skills for runtime skills

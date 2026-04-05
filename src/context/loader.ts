@@ -4,8 +4,12 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { pathToFileURL } from 'url';
+import { pathToFileURL, fileURLToPath } from 'url';
 import { watch } from 'fs';
+
+// Get the directory of this module (works for both source and compiled)
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 import matter from 'gray-matter';
 import type { DynamicLoader, ToolDefinition, Skill, Tool, ToolScope, AgentContext } from '../types.js';
 import { getToolsDir, getSkillsDir, ensureDirs } from './db.js';
@@ -179,7 +183,12 @@ export class Loader implements DynamicLoader {
     // Ensure .mycc/skills exists
     ensureDirs();
 
-    // Load from project skills/ directory
+    // Load from built-in skills/ directory (relative to this module)
+    // When compiled, this file is in dist/context/, so we go up 2 levels to get the package root
+    const builtInSkillsDir = path.join(__dirname, '..', '..', 'skills');
+    this.loadSkillsFromDir(builtInSkillsDir);
+
+    // Load from project skills/ directory (current working directory)
     const projectSkillsDir = path.join(process.cwd(), 'skills');
     this.loadSkillsFromDir(projectSkillsDir);
 
@@ -258,6 +267,7 @@ export class Loader implements DynamicLoader {
     const toolsDir = getToolsDir();
     const myccSkillsDir = getSkillsDir();
     const projectSkillsDir = path.join(process.cwd(), 'skills');
+    const builtInSkillsDir = path.join(__dirname, '..', '..', 'skills');
 
     // Watch tools directory
     this.toolWatcher = watch(toolsDir, async (event, filename) => {
@@ -269,6 +279,20 @@ export class Loader implements DynamicLoader {
         await this.reloadTool(filepath);
       }
     });
+
+    // Watch built-in skills directory recursively
+    if (fs.existsSync(builtInSkillsDir)) {
+      const builtInWatcher = watch(builtInSkillsDir, { recursive: true }, (event, filename) => {
+        if (filename && filename.endsWith('.md')) {
+          const filepath = path.join(builtInSkillsDir, filename);
+          if (!this.silent) {
+            console.log(`[loader] Reloading skill: ${filename}`);
+          }
+          this.reloadSkill(filepath);
+        }
+      });
+      this.skillWatcher = builtInWatcher;
+    }
 
     // Watch project skills directory recursively
     if (fs.existsSync(projectSkillsDir)) {
