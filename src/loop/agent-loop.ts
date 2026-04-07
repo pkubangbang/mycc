@@ -8,7 +8,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { spawn } from 'child_process';
 import { retryChat, MODEL, isTransientError } from '../ollama.js';
-import type { Message, AgentContext, ToolScope, ToolCall } from '../types.js';
+import type { AgentContext, ToolScope, ToolCall } from '../types.js';
 import { createAgentContext } from '../context/index.js';
 import { createLoader, Loader } from '../context/loader.js';
 import { clearSessionData, getMyccDir } from '../context/db.js';
@@ -362,8 +362,8 @@ export async function main(): Promise<void> {
       }
 
       // Add user message (reset hint flag for new query)
-      trialogue.resetHint();
       trialogue.user(query);
+      trialogue.resetHint();
 
       // Run agent loop
       await agentLoop(trialogue, ctx, loader);

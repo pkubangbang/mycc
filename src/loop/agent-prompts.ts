@@ -74,8 +74,7 @@ export function buildSystemPrompt(
       `If you want to ask me questions, do not use any tool, just leave your question as the reply.`,
 
       `## Special Rules`,
-      `- If the user implies certain order of gameplay, pause immediately and make clear with the user.`,
-      `- Ask for grant BEFORE "git commit" with no exception.`,
+      `- You must ask for grant BEFORE "git commit" with no exception.`,
       common,
     ].join('\n');
   }
@@ -88,9 +87,7 @@ export function buildSystemPrompt(
     `## Team Mode`,
     `If the task would benefit from parallel work, create teammates with tm_create to form a team.`,
     `## Rules`,
-    `- If the user implies certain order of gameplay, DO NOT use any tool in this round.`,
-    `  instead, confirm the rule with the user then use the tool.`,
-    `- Ask for grant BEFORE "git commit" with no exception.`,
+    `- You must ask for grant BEFORE "git commit" with no exception.`,
     common,
   ].join('\n');
 }

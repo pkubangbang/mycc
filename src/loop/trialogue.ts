@@ -16,17 +16,6 @@ import { getMyccDir, ensureDirs } from '../context/db.js';
 
 export type Role = 'system' | 'user' | 'assistant' | 'tool';
 
-/**
- * Valid role transitions in LLM chat protocol
- * Key: current role, Value: array of valid next roles
- */
-const VALID_TRANSITIONS: Record<Role, Role[]> = {
-  system: ['user'],
-  user: ['assistant', 'user'],
-  assistant: ['tool', 'user'],
-  tool: ['assistant', 'user'],
-};
-
 export interface MisorderWarning {
   from: Role;
   to: Role;
@@ -65,6 +54,7 @@ export class Trialogue {
   private pendingToolCallOrder: string[] = []; // Track order for sequential resolution
   private tokenCount: number = 0;
   private systemPrompt: string | null = null;
+  private messageLengthCheckpoint: number = 0;
   private hintGenerated: boolean = false;
   private options: Required<TrialogueOptions>;
 
@@ -227,7 +217,7 @@ export class Trialogue {
     this.pendingToolCalls.clear();
     this.pendingToolCallOrder = [];
     // Reset hint flag after compact since conversation is reset
-    this.hintGenerated = false;
+    this.resetHint();
   }
 
   /**
@@ -236,7 +226,7 @@ export class Trialogue {
    */
   needsHintRound(): boolean {
     if (this.hintGenerated) return false;
-    if (this.messages.length < this.options.hintThreshold) return false;
+    if (this.messages.length - this.messageLengthCheckpoint < this.options.hintThreshold) return false;
     // Only generate hint after a valid transition point (assistant or tool message)
     const lastRole = this.getLastRole();
     return lastRole === 'assistant' || lastRole === 'tool';
@@ -247,6 +237,7 @@ export class Trialogue {
    */
   resetHint(): void {
     this.hintGenerated = false;
+    this.messageLengthCheckpoint = this.messages.length;
   }
 
   /**
