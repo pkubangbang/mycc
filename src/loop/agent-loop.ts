@@ -93,6 +93,12 @@ export async function agentLoop(
         trialogue.user(mailContent);
       }
 
+      // 2.5 Generate hint round if threshold reached
+      if (trialogue.needsHintRound()) {
+        console.log(chalk.blue('[hint round] Generating problem analysis...'));
+        await trialogue.generateHintRound();
+      }
+
       // 3. Todo nudging with state tracking to reset counter on todo changes
       if (ctx.todo.hasOpenTodo()) {
         const currentTodoState = ctx.todo.printTodoList();
@@ -355,7 +361,8 @@ export async function main(): Promise<void> {
         continue;
       }
 
-      // Add user message
+      // Add user message (reset hint flag for new query)
+      trialogue.resetHint();
       trialogue.user(query);
 
       // Run agent loop

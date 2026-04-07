@@ -45,6 +45,8 @@ export interface ToolAlignmentWarning {
 export interface TrialogueOptions {
   /** Token threshold for auto-compact (default: 50000) */
   tokenThreshold?: number;
+  /** Message threshold for hint round (default: 10) */
+  hintThreshold?: number;
   /** Called when misordered role transition detected */
   onMisorder?: (warning: MisorderWarning) => void;
   /** Called when tool call/result alignment issue detected */
@@ -53,6 +55,8 @@ export interface TrialogueOptions {
   onCompact?: (transcriptPath: string) => void;
   /** Called after each message is added */
   onMessage?: (messages: Message[]) => void;
+  /** Called when hint round is generated */
+  onHint?: () => void;
 }
 
 export class Trialogue {
@@ -61,15 +65,18 @@ export class Trialogue {
   private pendingToolCallOrder: string[] = []; // Track order for sequential resolution
   private tokenCount: number = 0;
   private systemPrompt: string | null = null;
+  private hintGenerated: boolean = false;
   private options: Required<TrialogueOptions>;
 
   constructor(options: TrialogueOptions = {}) {
     this.options = {
       tokenThreshold: options.tokenThreshold ?? 50000,
+      hintThreshold: options.hintThreshold ?? 10,
       onMisorder: options.onMisorder ?? this.defaultOnMisorder,
       onToolMisalign: options.onToolMisalign ?? this.defaultOnToolMisalign,
       onCompact: options.onCompact ?? this.defaultOnCompact,
       onMessage: options.onMessage ?? (() => {}),
+      onHint: options.onHint ?? (() => {}),
     };
   }
 
@@ -219,6 +226,91 @@ export class Trialogue {
     this.tokenCount = this.estimateTokens(this.messages);
     this.pendingToolCalls.clear();
     this.pendingToolCallOrder = [];
+    // Reset hint flag after compact since conversation is reset
+    this.hintGenerated = false;
+  }
+
+  /**
+   * Check if a hint round is needed
+   * Returns true if message threshold reached and no hint generated yet
+   */
+  needsHintRound(): boolean {
+    if (this.hintGenerated) return false;
+    if (this.messages.length < this.options.hintThreshold) return false;
+    // Only generate hint after a valid transition point (assistant or tool message)
+    const lastRole = this.getLastRole();
+    return lastRole === 'assistant' || lastRole === 'tool';
+  }
+
+  /**
+   * Reset hint flag (call on new user query)
+   */
+  resetHint(): void {
+    this.hintGenerated = false;
+  }
+
+  /**
+   * Generate a hint round with problem analysis
+   * Adds user message with analysis and gets assistant acknowledgment
+   */
+  async generateHintRound(): Promise<void> {
+    if (this.hintGenerated) return;
+
+    // Build analysis prompt from conversation
+    const conversationText = this.messages
+      .map((m) => `[${m.role}]: ${m.content || '(tool call)'}`)
+      .join('\n\n');
+
+    const analysisPrompt = `Analyze this conversation for potential issues and blockers:
+
+${conversationText}
+
+Identify:
+1. Any problems or blockers encountered (errors, failed attempts, stuck patterns)
+2. Patterns that might indicate getting stuck (repeated actions, circular reasoning)
+3. Suggest concrete workarounds or alternative approaches
+
+Be specific and actionable. This analysis will help guide the next steps.`;
+
+    // Get analysis from LLM
+    const response = await retryChat({
+      model: MODEL,
+      messages: [
+        {
+          role: 'user',
+          content: analysisPrompt,
+        },
+      ],
+    });
+
+    const analysis = response.message.content || '(no analysis)';
+
+    // Add user message with hint
+    this.messages.push({
+      role: 'user',
+      content: `[HINT] ${analysis}`,
+    });
+
+    // Get assistant acknowledgment
+    const ackResponse = await retryChat({
+      model: MODEL,
+      messages: this.getMessages(),
+    });
+
+    const acknowledgment = ackResponse.message.content || 'Understood. I will consider this analysis.';
+
+    this.messages.push({
+      role: 'assistant',
+      content: acknowledgment,
+    });
+
+    // Update token count for new messages
+    for (const msg of this.messages.slice(-2)) {
+      this.updateTokenCount(msg);
+    }
+
+    this.hintGenerated = true;
+    this.options.onHint();
   }
 
   // === Accessors ===
