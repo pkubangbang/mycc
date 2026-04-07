@@ -35,6 +35,8 @@ const TRANSIENT_ERROR_PATTERNS = [
   'rate limit',
   'timeout',
   'aborted',
+  'service temporarily unavailable',
+  '503',
 ];
 
 /**
