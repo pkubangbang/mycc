@@ -12,10 +12,9 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { createChildContext } from './child-context/index.js';
-import { createLoader, createToolLoader } from './loader.js';
+import { createLoader, Loader } from './loader.js';
 import { retryChat, MODEL } from '../ollama.js';
 import type { AgentContext, Message } from '../types.js';
-import type { ToolLoaderImpl } from './loader.js';
 import type { ToolCall } from '../types.js';
 import { TOKEN_THRESHOLD, buildSystemPrompt } from '../loop/agent-prompts.js';
 import { Trialogue } from '../loop/trialogue.js';
@@ -29,7 +28,7 @@ const POLL_INTERVAL = 5000; // 5 seconds
 let teammateName = '';
 let teammateRole = '';
 let ctx: AgentContext;
-let toolLoader: ToolLoaderImpl;
+let loader: Loader;
 let shutdownRequested = false;
 
 /**
@@ -65,7 +64,7 @@ async function teammateLoop(prompt: string): Promise<void> {
   const trialogue = createPersistentTriologue(teammateName);
   trialogue.user(prompt);
 
-  const tools = toolLoader.getToolsForScope('child');
+  const tools = loader.getToolsForScope('child');
   sendStatus('working');
 
   // Todo nudging state (counter-based, same as lead agent)
@@ -136,7 +135,7 @@ async function teammateLoop(prompt: string): Promise<void> {
       const args = tc.function.arguments as Record<string, unknown>;
 
       try {
-        const output = await toolLoader.execute(toolName, ctx, args);
+        const output = await loader.execute(toolName, ctx, args);
         trialogue.tool(toolName, output, tc.id);
       } catch (err) {
         const errorMsg = (err as Error).message;
@@ -229,9 +228,8 @@ async function handleSpawn(msg: {
   ctx.core.brief('info', 'worker', `${teammateName} initializing...`);
 
   // Load tools and skills (silent mode - suppress loading logs)
-  const loader = createLoader(true);
+  loader = createLoader(true);
   await loader.loadAll();
-  toolLoader = createToolLoader(loader);
 
   ctx.core.brief('info', 'worker', `${teammateName} started successfully`);
 

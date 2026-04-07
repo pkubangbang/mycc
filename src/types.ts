@@ -393,21 +393,18 @@ export interface AgentContext {
 
 /**
  * Dynamic loader interface
+ * Merged: DynamicLoader + ToolLoader + SkillModule
  */
 export interface DynamicLoader {
   loadAll(): Promise<void>;
-  getTools(): ToolDefinition[];
-  getTool(name: string): ToolDefinition | undefined;
-  getSkills(): Skill[];
   getSkill(name: string): Skill | undefined;
   watchDirectories(): void;
   stopWatching(): void;
-}
-
-/**
- * Tool loader interface for agent loop
- */
-export interface ToolLoader {
+  // ToolLoader methods (merged)
   getToolsForScope(scope: ToolScope): Tool[];
   execute(name: string, ctx: AgentContext, args: Record<string, unknown>): Promise<string>;
+  // SkillModule methods (merged)
+  loadSkills(): Promise<void>;
+  listSkills(): Skill[];
+  printSkills(): string;
 }

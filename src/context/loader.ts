@@ -6,12 +6,11 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { pathToFileURL, fileURLToPath } from 'url';
 import { watch } from 'fs';
-
-// Get the directory of this module (works for both source and compiled)
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 import matter from 'gray-matter';
-import type { DynamicLoader, ToolDefinition, Skill, Tool, ToolScope, AgentContext } from '../types.js';
+
+// Package root: resolve up from this file (src/context/loader.ts or dist/context/loader.js)
+const packageRoot = path.resolve(fileURLToPath(import.meta.url), '..', '..', '..');
+import type { DynamicLoader, ToolDefinition, Skill, Tool, ToolScope, AgentContext, SkillModule } from '../types.js';
 import { getToolsDir, getSkillsDir, ensureDirs } from './db.js';
 import { bashTool } from '../tools/bash.js';
 import { readTool } from '../tools/read.js';
@@ -86,8 +85,9 @@ const builtInTools: ToolDefinition[] = [
 
 /**
  * Dynamic loader implementation
+ * Implements: DynamicLoader + ToolLoader + SkillModule
  */
-export class Loader implements DynamicLoader {
+export class Loader implements DynamicLoader, SkillModule {
   private tools: Map<string, ToolDefinition> = new Map();
   private skills: Map<string, Skill> = new Map();
   private toolWatcher: fs.FSWatcher | null = null;
@@ -179,49 +179,52 @@ export class Loader implements DynamicLoader {
   /**
    * Load all skills from both project skills/ and .mycc/skills/
    */
-  private loadSkills(): void {
+  loadSkills(): Promise<void> {
     // Ensure .mycc/skills exists
     ensureDirs();
 
-    // Load from built-in skills/ directory (relative to this module)
-    // When compiled, this file is in dist/context/, so we go up 2 levels to get the package root
-    const builtInSkillsDir = path.join(__dirname, '..', '..', 'skills');
+    // Load from built-in skills/ directory (package root)
+    const builtInSkillsDir = path.join(packageRoot, 'skills');
     this.loadSkillsFromDir(builtInSkillsDir);
 
-    // Load from project skills/ directory (current working directory)
-    const projectSkillsDir = path.join(process.cwd(), 'skills');
-    this.loadSkillsFromDir(projectSkillsDir);
-
-    // Load from .mycc/skills directory
+    // Load from .mycc/skills directory (relative to where mycc command starts)
     const myccSkillsDir = getSkillsDir();
     this.loadSkillsFromDir(myccSkillsDir);
+
+    return Promise.resolve();
   }
 
   /**
    * Load skills from a specific directory (including subdirectories)
+   * Valid entrypoints:
+   * - ${dir}/*.md - single file skills at root level
+   * - ${dir}/${name}/SKILL.md - skill in folder structure
    */
   private loadSkillsFromDir(dir: string): void {
     if (!fs.existsSync(dir)) {
       return;
     }
 
-    // Recursively find all SKILL.md files
-    const findSkillFiles = (currentDir: string): string[] => {
+    const findSkillFiles = (currentDir: string, isRoot: boolean): string[] => {
       const files: string[] = [];
       const entries = fs.readdirSync(currentDir, { withFileTypes: true });
 
       for (const entry of entries) {
         const fullPath = path.join(currentDir, entry.name);
         if (entry.isDirectory()) {
-          files.push(...findSkillFiles(fullPath));
-        } else if (entry.name === 'SKILL.md' || entry.name.endsWith('.md')) {
+          files.push(...findSkillFiles(fullPath, false));
+        } else if (isRoot && entry.name.endsWith('.md')) {
+          // At root level: any .md file is a valid skill
+          files.push(fullPath);
+        } else if (!isRoot && entry.name === 'SKILL.md') {
+          // In subdirectories: only SKILL.md is a valid entrypoint
           files.push(fullPath);
         }
       }
       return files;
     };
 
-    const skillFiles = findSkillFiles(dir);
+    const skillFiles = findSkillFiles(dir, true);
     for (const file of skillFiles) {
       this.reloadSkill(file);
     }
@@ -261,72 +264,47 @@ export class Loader implements DynamicLoader {
   }
 
   /**
-   * Watch directories for changes
+   * Watch directories for changes (only dynamic directories need watching)
+   * - .mycc/tools/ - dynamic tools (hot-reloadable)
+   * - .mycc/skills/ - dynamic skills (hot-reloadable)
+   * Built-in tools (src/tools/) and skills (skills/) are static and don't need watching.
    */
   watchDirectories(): void {
     const toolsDir = getToolsDir();
-    const myccSkillsDir = getSkillsDir();
-    const projectSkillsDir = path.join(process.cwd(), 'skills');
-    const builtInSkillsDir = path.join(__dirname, '..', '..', 'skills');
+    const skillsDir = getSkillsDir();
 
-    // Watch tools directory
-    this.toolWatcher = watch(toolsDir, async (event, filename) => {
-      if (filename && (filename.endsWith('.ts') || filename.endsWith('.js'))) {
-        const filepath = path.join(toolsDir, filename);
-        if (!this.silent) {
-          console.log(`[loader] Reloading tool: ${filename}`);
-        }
-        await this.reloadTool(filepath);
-      }
-    });
-
-    // Watch built-in skills directory recursively
-    if (fs.existsSync(builtInSkillsDir)) {
-      const builtInWatcher = watch(builtInSkillsDir, { recursive: true }, (event, filename) => {
-        if (filename && filename.endsWith('.md')) {
-          const filepath = path.join(builtInSkillsDir, filename);
+    // Watch .mycc/tools/ for dynamic tool changes
+    if (fs.existsSync(toolsDir)) {
+      this.toolWatcher = watch(toolsDir, async (event, filename) => {
+        if (filename && (filename.endsWith('.ts') || filename.endsWith('.js'))) {
+          const filepath = path.join(toolsDir, filename);
           if (!this.silent) {
-            console.log(`[loader] Reloading skill: ${filename}`);
+            console.log(`[loader] Reloading tool: ${filename}`);
           }
-          this.reloadSkill(filepath);
+          await this.reloadTool(filepath);
         }
       });
-      this.skillWatcher = builtInWatcher;
     }
 
-    // Watch project skills directory recursively
-    if (fs.existsSync(projectSkillsDir)) {
-      const projectWatcher = watch(projectSkillsDir, { recursive: true }, (event, filename) => {
+    // Watch .mycc/skills/ for dynamic skill changes (recursive for subdirectories)
+    if (fs.existsSync(skillsDir)) {
+      this.skillWatcher = watch(skillsDir, { recursive: true }, (event, filename) => {
         if (filename && filename.endsWith('.md')) {
-          const filepath = path.join(projectSkillsDir, filename);
-          if (!this.silent) {
-            console.log(`[loader] Reloading skill: ${filename}`);
-          }
-          this.reloadSkill(filepath);
-        }
-      });
-      // Store as skillWatcher (overwrites if needed)
-      this.skillWatcher = projectWatcher;
-    }
+          // Only load valid entrypoints:
+          // - Root level: any *.md file
+          // - Subdirectories: only SKILL.md
+          const isRootLevel = !filename.includes(path.sep);
+          const isSkillEntrypoint = filename.endsWith(path.join(path.sep, 'SKILL.md'));
 
-    // Watch .mycc/skills directory
-    if (fs.existsSync(myccSkillsDir)) {
-      const myccWatcher = watch(myccSkillsDir, (event, filename) => {
-        if (filename && filename.endsWith('.md')) {
-          const filepath = path.join(myccSkillsDir, filename);
-          if (!this.silent) {
-            console.log(`[loader] Reloading skill: ${filename}`);
+          if (isRootLevel || isSkillEntrypoint) {
+            const filepath = path.join(skillsDir, filename);
+            if (!this.silent) {
+              console.log(`[loader] Reloading skill: ${filename}`);
+            }
+            this.reloadSkill(filepath);
           }
-          this.reloadSkill(filepath);
         }
       });
-      // Combine watchers if both exist
-      if (this.skillWatcher) {
-        // We have both - need to close one if we create a new one
-        // For now, just use the last one
-        this.skillWatcher.close();
-      }
-      this.skillWatcher = myccWatcher;
     }
   }
 
@@ -341,57 +319,49 @@ export class Loader implements DynamicLoader {
   }
 
   /**
-   * Get all loaded tools
-   */
-  getTools(): ToolDefinition[] {
-    return Array.from(this.tools.values());
-  }
-
-  /**
-   * Get a tool by name
-   */
-  getTool(name: string): ToolDefinition | undefined {
-    return this.tools.get(name);
-  }
-
-  /**
-   * Get all loaded skills
-   */
-  getSkills(): Skill[] {
-    return Array.from(this.skills.values());
-  }
-
-  /**
    * Get a skill by name
    */
   getSkill(name: string): Skill | undefined {
     return this.skills.get(name);
   }
-}
 
-/**
- * Create a dynamic loader instance
- */
-export function createLoader(silent: boolean = false): DynamicLoader {
-  return new Loader(silent);
-}
-
-/**
- * Tool loader for agent loop
- */
-export class ToolLoaderImpl {
-  private loader: DynamicLoader;
-
-  constructor(loader: DynamicLoader) {
-    this.loader = loader;
+  /**
+   * List all skills (without content)
+   * From SkillModule interface
+   */
+  listSkills(): Skill[] {
+    return Array.from(this.skills.values()).map((s) => ({
+      name: s.name,
+      description: s.description,
+      keywords: s.keywords,
+      content: '', // Exclude content
+    }));
   }
 
   /**
-   * Get tools formatted for Ollama API
+   * Format skills for prompt
+   * From SkillModule interface
+   */
+  printSkills(): string {
+    const skills = this.listSkills();
+    if (skills.length === 0) {
+      return 'No skills loaded.';
+    }
+
+    const lines = ['Available skills:'];
+    for (const skill of skills) {
+      const keywords = skill.keywords.length > 0 ? ` [${skill.keywords.join(', ')}]` : '';
+      lines.push(`  - ${skill.name}: ${skill.description}${keywords}`);
+    }
+    return lines.join('\n');
+  }
+
+  /**
+   * Get tools formatted for Ollama API, filtered by scope
+   * From merged ToolLoader interface
    */
   getToolsForScope(scope: ToolScope): Tool[] {
-    return this.loader
-      .getTools()
+    return Array.from(this.tools.values())
       .filter((t) => t.scope.includes(scope))
       .map((t) => ({
         type: 'function' as const,
@@ -404,10 +374,11 @@ export class ToolLoaderImpl {
   }
 
   /**
-   * Execute a tool
+   * Execute a tool by name
+   * From merged ToolLoader interface
    */
   async execute(name: string, ctx: AgentContext, args: Record<string, unknown>): Promise<string> {
-    const tool = this.loader.getTool(name);
+    const tool = this.tools.get(name);
     if (!tool) {
       return `Unknown tool: ${name}`;
     }
@@ -422,8 +393,8 @@ export class ToolLoaderImpl {
 }
 
 /**
- * Create a tool loader
+ * Create a dynamic loader instance
  */
-export function createToolLoader(loader: DynamicLoader): ToolLoaderImpl {
-  return new ToolLoaderImpl(loader);
+export function createLoader(silent: boolean = false): Loader {
+  return new Loader(silent);
 }

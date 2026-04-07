@@ -9,9 +9,8 @@ import * as fs from 'fs';
 import { spawn } from 'child_process';
 import { retryChat, MODEL, isTransientError } from '../ollama.js';
 import type { Message, AgentContext, ToolScope, ToolCall } from '../types.js';
-import { ToolLoaderImpl } from '../context/loader.js';
 import { createAgentContext } from '../context/index.js';
-import { createLoader, createToolLoader } from '../context/loader.js';
+import { createLoader, Loader } from '../context/loader.js';
 import { clearSessionData, getMyccDir } from '../context/db.js';
 import { TOKEN_THRESHOLD, buildSystemPrompt } from './agent-prompts.js';
 import { Trialogue } from './trialogue.js';
@@ -72,7 +71,7 @@ function formatTrialogueAsMarkdown(messages: import('../types.js').Message[], ag
 export async function agentLoop(
   trialogue: Trialogue,
   ctx: AgentContext,
-  toolLoader: ToolLoaderImpl,
+  loader: Loader,
   scope: ToolScope = 'main'
 ): Promise<void> {
   let nextTodoNudge = 3;
@@ -122,7 +121,7 @@ export async function agentLoop(
       const response = await retryChat({
         model: MODEL,
         messages: trialogue.getMessages(),
-        tools: toolLoader.getToolsForScope(scope),
+        tools: loader.getToolsForScope(scope),
       });
 
       // 5. Handle response
@@ -163,7 +162,7 @@ export async function agentLoop(
         const args = toolCall.function.arguments as Record<string, unknown>;
         const toolName = toolCall.function.name;
 
-        const output = await toolLoader.execute(toolName, ctx, args);
+        const output = await loader.execute(toolName, ctx, args);
 
         trialogue.tool(toolName, output, toolCallId);
       }
@@ -206,18 +205,16 @@ export async function main(): Promise<void> {
   console.log(`Model: ${MODEL}`);
   console.log('Commands: /team, /issues, /todos, /skills, /exit\n');
 
-  // Create context
-  const ctx = createAgentContext(process.cwd());
-
   // Clear session data for clean startup
   clearSessionData();;
 
-  // Load tools and skills
+  // Create loader first
   const loader = createLoader();
   await loader.loadAll();
   loader.watchDirectories();
 
-  const toolLoader = createToolLoader(loader);
+  // Create context with loader
+  const ctx = createAgentContext(process.cwd(), loader);
 
   // Trialogue for message management
   const trialogue = new Trialogue({ tokenThreshold: TOKEN_THRESHOLD });
@@ -362,7 +359,7 @@ export async function main(): Promise<void> {
       trialogue.user(query);
 
       // Run agent loop
-      await agentLoop(trialogue, ctx, toolLoader);
+      await agentLoop(trialogue, ctx, loader);
 
       // Print final response
       const lastMsg = trialogue.getMessagesRaw().at(-1);
