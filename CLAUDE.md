@@ -34,8 +34,6 @@ In the REPL loop, users can enter slash commands to inspect agent state without 
 | `/issues <id>` | Show details for specific issue |
 | `/todos` | Print current todo list |
 | `/skills` | List all loaded skills |
-| `/dump` | Dump lead's trialogue to temp markdown file (opens in editor, auto-deletes on close) |
-| `/dump <agent>` | Dump teammate's trialogue to temp markdown file |
 | `/exit` | Exit the agent (also: `q`, `quit`, empty input) |
 
 These are meta-commands handled directly in `agent-loop.ts` before any LLM interaction.

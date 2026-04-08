@@ -3,15 +3,11 @@
  */
 
 import chalk from 'chalk';
-import * as os from 'os';
-import * as path from 'path';
-import * as fs from 'fs';
-import { spawn } from 'child_process';
 import { retryChat, MODEL, isTransientError } from '../ollama.js';
 import type { AgentContext, ToolScope, ToolCall } from '../types.js';
 import { createAgentContext } from '../context/index.js';
 import { createLoader, Loader } from '../context/loader.js';
-import { clearSessionData, getMyccDir } from '../context/db.js';
+import { clearSessionData } from '../context/db.js';
 import { TOKEN_THRESHOLD, buildSystemPrompt } from './agent-prompts.js';
 import { Trialogue } from './trialogue.js';
 import { agentIO } from './agent-io.js';
@@ -24,44 +20,6 @@ export class ShutdownError extends Error {
     super(message);
     this.name = 'ShutdownError';
   }
-}
-
-/**
- * Format trialogue messages as markdown
- */
-function formatTrialogueAsMarkdown(messages: import('../types.js').Message[], agentName: string = 'Lead Agent'): string {
-  const lines: string[] = [];
-  const timestamp = new Date().toISOString();
-
-  lines.push(`# Trialogue Dump - ${agentName}`);
-  lines.push(`**Generated:** ${timestamp}`);
-  lines.push('');
-
-  for (const msg of messages) {
-    lines.push('---');
-    lines.push(`## ${msg.role.toUpperCase()}`);
-
-    if (msg.content) {
-      lines.push(msg.content);
-    }
-
-    if (msg.tool_calls) {
-      lines.push('');
-      lines.push('**Tool Calls:**');
-      for (const tc of msg.tool_calls) {
-        lines.push(`- \`${tc.function.name}\``);
-        lines.push(`  - args: ${JSON.stringify(tc.function.arguments, null, 2)}`);
-      }
-    }
-
-    if (msg.tool_name) {
-      lines.push(`**Tool:** ${msg.tool_name}`);
-    }
-
-    lines.push('');
-  }
-
-  return lines.join('\n');
 }
 
 /**
@@ -245,7 +203,7 @@ export async function main(): Promise<void> {
   });
 
   // Available slash commands
-  const slashCommands = ['/team', '/issues', '/todos', '/skills', '/dump', '/exit'];
+  const slashCommands = ['/team', '/issues', '/todos', '/skills', '/exit'];
 
   // Main REPL loop
   while (!agentIO.isShuttingDown()) {
@@ -289,69 +247,6 @@ export async function main(): Promise<void> {
 
         if (trimmedQuery === '/skills') {
           console.log(ctx.skill.printSkills());
-          continue;
-        }
-
-        if (trimmedQuery === '/dump' || trimmedQuery.startsWith('/dump ')) {
-          const parts = trimmedQuery.split(/\s+/);
-          const agentName = parts.length > 1 ? parts[1] : null;
-
-          let messages: import('../types.js').Message[];
-          let displayName: string;
-
-          if (agentName) {
-            // Dump teammate's trialogue from file
-            const transcriptPath = path.join(getMyccDir(), 'transcripts', `${agentName}-trialogue.jsonl`);
-            if (!fs.existsSync(transcriptPath)) {
-              console.log(chalk.yellow(`No trialogue found for teammate '${agentName}'`));
-              continue;
-            }
-
-            try {
-              const content = fs.readFileSync(transcriptPath, 'utf-8');
-              messages = content.trim().split('\n').map(line => JSON.parse(line));
-              displayName = agentName;
-            } catch (err) {
-              console.log(chalk.red(`Error reading trialogue: ${(err as Error).message}`));
-              continue;
-            }
-          } else {
-            // Dump lead's trialogue from memory
-            messages = trialogue.getMessages();
-            displayName = 'Lead Agent';
-          }
-
-          const content = formatTrialogueAsMarkdown(messages, displayName);
-          const timestamp = Math.floor(Date.now() / 1000);
-          const filepath = path.join(os.tmpdir(), `dump-${timestamp}.md`);
-
-          fs.writeFileSync(filepath, content);
-          console.log(chalk.green(`Opening trialogue dump: ${filepath}`));
-
-          // Open with default editor using agentIO.exec()
-          const editor = process.env.EDITOR || process.env.VISUAL ||
-            (process.platform === 'darwin' ? 'open' :
-              process.platform === 'win32' ? 'start' : 'xdg-open');
-
-          await agentIO.exec(async (signal) => {
-            return new Promise((resolve) => {
-              const child = spawn(editor, [filepath], {
-                stdio: 'inherit',
-                signal
-              });
-              child.on('close', () => resolve(true));
-              child.on('error', () => resolve(false));
-            });
-          });
-
-          // Cleanup temp file after editor closes
-          try {
-            fs.unlinkSync(filepath);
-            console.log(chalk.gray(`Cleaned up: ${filepath}`));
-          } catch {
-            // Ignore cleanup errors
-          }
-
           continue;
         }
 

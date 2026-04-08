@@ -69,12 +69,17 @@ export const bashTool: ToolDefinition = {
         type: 'string',
         description: 'The shell command to execute',
       },
+      timeout: {
+        type: 'number',
+        description: 'Seconds before killing the process (default: 3)',
+      },
     },
     required: ['command'],
   },
   scope: ['main', 'child', 'bg'],
   handler: async (ctx: AgentContext, args: Record<string, unknown>): Promise<string> => {
     const command = args.command as string;
+    const timeoutSeconds = (args.timeout as number) ?? 3;
 
     // Block dangerous commands
     const dangerous = ['rm -rf /', 'sudo rm', 'mkfs', 'dd if=', '> /dev/sd'];
@@ -94,6 +99,7 @@ export const bashTool: ToolDefinition = {
         cancelSignal: signal,
         gracefulCancel: true,
         reject: false,
+        timeout: timeoutSeconds * 1000,
       });
 
       // Pipe output to console in real-time while capturing
@@ -116,6 +122,9 @@ export const bashTool: ToolDefinition = {
 
     // Check if command failed
     if (result instanceof Error) {
+      if ((result as any).timedOut) {
+        return `${timeoutSeconds} seconds passed and the command did not finish. Set a longer timeout or use bg tools`;
+      }
       return `Error: ${result.message}`;
     }
 
