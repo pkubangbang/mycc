@@ -100,3 +100,20 @@ All the missing parts such as team setup and todo/issues are expected to let the
 4. Later the user starts the agent again, and use `/load ff3588` to load the session.
 5. The agent will set to new workdir and read the session files + trialogue files and restore the session.
 6. If for some reason the project has moved to a new place, let the user decide the correct place. The agent will then check the identity of session files in the home dir as well as the new project dir to reconciliate.
+
+## Implementation concern
+Session is closely related to trialogue, actually it's a higher level concept than trialogue.
+So a better way is to create a `sessionManager` and get trialogue from it.
+
+```ts
+interface SessionManager {
+    getTrialogue(): Trialogue;
+    saveToHome(): Promise<void>;
+    listSessions(): Promise<Session[]>;
+    loadSessionById(id: string): Promise<void>;
+    // The creation and updating of local ones should be handled internally.
+}
+```
+
+Also, `sessionManager` should **NOT** go into ctx as a module. This is because ctx modules are to be called
+by the tools. SessionManager is too advanced for tools to call.

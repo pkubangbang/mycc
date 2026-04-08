@@ -131,6 +131,7 @@ export async function agentLoop(
         const output = await loader.execute(toolName, ctx, args);
 
         trialogue.tool(toolName, output, toolCallId);
+        trialogue.onToolResult(toolName, args, output);
       }
     } catch (err) {
       // Check if we should exit (shutdown or non-recoverable)

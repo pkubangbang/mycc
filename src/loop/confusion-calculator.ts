@@ -1,0 +1,113 @@
+/**
+ * ConfusionCalculator - Specialist system for measuring LLM confusion
+ *
+ * Calculates a "confusion score" based on tool usage patterns:
+ * - Exploration tools (read, search) contribute 0
+ * - Action tools (write, edit) contribute -1 (progress)
+ * - Errors contribute +2 (stuck)
+ * - Repetition contributes +1 (potential loop)
+ */
+export class ConfusionCalculator {
+  // Tools that are purely exploratory (information gathering)
+  private static readonly EXPLORATION_TOOLS = new Set([
+    'read_file',
+    'web_search',
+    'web_fetch',
+    'brief', // Status messages
+    'issue_list', // Listing issues
+    'wt_print', // Listing worktrees
+    'bg_print', // Listing background tasks
+    'tm_print', // Listing teammates
+    'question', // Asking questions
+  ]);
+
+  // Tools that modify state (progress indicators)
+  private static readonly ACTION_TOOLS = new Set([
+    'write_file',
+    'edit_file',
+    'todo_write',
+    'issue_create',
+    'issue_close',
+    'issue_claim',
+    'issue_comment',
+    'blockage_create',
+    'blockage_remove',
+    'tm_create',
+    'tm_remove',
+    'wt_create',
+    'wt_remove',
+    'bg_create',
+    'bg_remove',
+    'mail_to',
+    'broadcast',
+  ]);
+
+  // Read-only bash commands (exploration)
+  private static readonly READ_ONLY_BASH = /^(ls|cat|pwd|head|tail|wc|find|which|git\s+(status|log|diff|branch|show|ls-files))/;
+
+  private score: number = 0;
+  private recentToolCalls: string[] = [];
+  private threshold: number;
+
+  constructor(threshold: number = 10) {
+    this.threshold = threshold;
+  }
+
+  /** Calculate base contribution for a tool */
+  getBaseContrib(toolName: string, args?: Record<string, unknown>): number {
+    // Exploration tools
+    if (ConfusionCalculator.EXPLORATION_TOOLS.has(toolName)) {
+      return 0;
+    }
+
+    // Action tools
+    if (ConfusionCalculator.ACTION_TOOLS.has(toolName)) {
+      return -1;
+    }
+
+    // Bash: check command type
+    if (toolName === 'bash' && args?.command) {
+      const cmd = String(args.command);
+      if (ConfusionCalculator.READ_ONLY_BASH.test(cmd)) {
+        return 0; // Exploration
+      }
+      return -1; // Action (default for bash)
+    }
+
+    // Default: neutral
+    return 0;
+  }
+
+  /** Called when a tool is invoked */
+  onToolCall(toolName: string, args?: Record<string, unknown>): void {
+    const baseContrib = this.getBaseContrib(toolName, args);
+    this.score += baseContrib;
+
+    // Repetition penalty
+    if (this.recentToolCalls.slice(-5).includes(toolName)) {
+      this.score += 1;
+    }
+    this.recentToolCalls.push(toolName);
+  }
+
+  /** Called when tool result contains error */
+  onError(): void {
+    this.score += 2;
+  }
+
+  /** Check if hint should be generated */
+  needsHint(): boolean {
+    return this.score >= this.threshold;
+  }
+
+  /** Reset on user intervention */
+  reset(): void {
+    this.score = 0;
+    this.recentToolCalls = [];
+  }
+
+  /** Get current score (for testing/debugging) */
+  getScore(): number {
+    return this.score;
+  }
+}

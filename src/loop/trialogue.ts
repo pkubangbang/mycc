@@ -13,6 +13,7 @@ import chalk from 'chalk';
 import { retryChat, MODEL } from '../ollama.js';
 import type { Message, ToolCall } from '../types.js';
 import { getMyccDir, ensureDirs } from '../context/db.js';
+import { ConfusionCalculator } from './confusion-calculator.js';
 
 export type Role = 'system' | 'user' | 'assistant' | 'tool';
 
@@ -54,14 +55,16 @@ export class Trialogue {
   private pendingToolCallOrder: string[] = []; // Track order for sequential resolution
   private tokenCount: number = 0;
   private systemPrompt: string | null = null;
-  private messageLengthCheckpoint: number = 0;
+  private confusion: ConfusionCalculator;
   private hintGenerated: boolean = false;
   private options: Required<TrialogueOptions>;
 
   constructor(options: TrialogueOptions = {}) {
+    const hintThreshold = options.hintThreshold ?? 10;
+    this.confusion = new ConfusionCalculator(hintThreshold);
     this.options = {
       tokenThreshold: options.tokenThreshold ?? 50000,
-      hintThreshold: options.hintThreshold ?? 10,
+      hintThreshold: hintThreshold,
       onMisorder: options.onMisorder ?? this.defaultOnMisorder,
       onToolMisalign: options.onToolMisalign ?? this.defaultOnToolMisalign,
       onCompact: options.onCompact ?? this.defaultOnCompact,
@@ -222,14 +225,24 @@ export class Trialogue {
 
   /**
    * Check if a hint round is needed
-   * Returns true if message threshold reached and no hint generated yet
+   * Returns true if confusion threshold reached and no hint generated yet
    */
   needsHintRound(): boolean {
     if (this.hintGenerated) return false;
-    if (this.messages.length - this.messageLengthCheckpoint < this.options.hintThreshold) return false;
+    if (!this.confusion.needsHint()) return false;
     // Only generate hint after a valid transition point (assistant or tool message)
     const lastRole = this.getLastRole();
     return lastRole === 'assistant' || lastRole === 'tool';
+  }
+
+  /**
+   * Called after tool execution - updates confusion score
+   */
+  onToolResult(toolName: string, args: Record<string, unknown> | undefined, result: string): void {
+    this.confusion.onToolCall(toolName, args);
+    if (result.startsWith('Error:')) {
+      this.confusion.onError();
+    }
   }
 
   /**
@@ -237,7 +250,7 @@ export class Trialogue {
    */
   resetHint(): void {
     this.hintGenerated = false;
-    this.messageLengthCheckpoint = this.messages.length;
+    this.confusion.reset();
   }
 
   /**
