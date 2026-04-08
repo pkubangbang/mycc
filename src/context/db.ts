@@ -144,10 +144,17 @@ export function getSkillsDir(): string {
 }
 
 /**
+ * Get the sessions directory path
+ */
+export function getSessionsDir(): string {
+  return path.join(MYCC_DIR, 'sessions');
+}
+
+/**
  * Ensure all runtime directories exist
  */
 export function ensureDirs(): void {
-  const dirs = [MYCC_DIR, getMailDir(), getToolsDir(), getSkillsDir()];
+  const dirs = [MYCC_DIR, getMailDir(), getToolsDir(), getSkillsDir(), getSessionsDir()];
   for (const dir of dirs) {
     if (!fs.existsSync(dir)) {
       fs.mkdirSync(dir, { recursive: true });

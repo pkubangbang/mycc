@@ -10,6 +10,7 @@ import type { AgentContext, ToolScope, ToolCall } from '../types.js';
 import { createAgentContext } from '../context/index.js';
 import { createLoader, Loader } from '../context/loader.js';
 import { clearSessionData, getMyccDir } from '../context/db.js';
+import { createSessionFile } from '../session/index.js';
 import { TOKEN_THRESHOLD, buildSystemPrompt } from './agent-prompts.js';
 import { Triologue } from './triologue.js';
 import { agentIO } from './agent-io.js';
@@ -174,6 +175,10 @@ export async function main(): Promise<void> {
 
   // Clear session data for clean startup
   clearSessionData();
+
+  // Create a new session file for this run
+  const sessionFile = createSessionFile();
+  console.log(chalk.gray(`Session: ${path.basename(sessionFile)}`));
 
   // Create loader first
   const loader = createLoader();
