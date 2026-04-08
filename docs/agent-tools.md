@@ -36,7 +36,7 @@ interface ToolDefinition {
 - Tools with `['main', 'child', 'bg']` available everywhere
 
 **Summary:**
-- **Lead (main)**: All 23 tools
+- **Lead (main)**: All 24 tools
 - **Teammate (child)**: Cannot use `broadcast`, `tm_create`, `tm_remove`, `tm_await`
 - **Background (bg)**: Can use `bash`, `read_file`, `write_file`, `edit_file`
 
@@ -612,6 +612,48 @@ interface ToolDefinition {
 
 ---
 
+## Screen Reader Tool
+
+### screen
+
+**File**: `src/tools/screen.ts`
+
+**Scope**: `['main', 'child']`
+
+**Description**: Capture a screenshot of the current screen and use a vision model to read and describe the content. Returns a detailed text description of everything visible on screen. Auto-detects OS, display server (Wayland/X11), and available screenshot tools.
+
+**Parameters**:
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| prompt | string | no | Custom prompt for the vision model. Use this to ask specific questions about the screen content (e.g., "What error message is shown?" or "Read the text in the terminal window"). |
+| region | string | no | Crop region as WxH+X+Y (e.g., "800x600+100+200"). If omitted, captures the full screen. |
+
+**Behavior**:
+- Detects the OS, display server (Wayland/X11), and desktop environment (GNOME/KDE/Sway/Hyprland)
+- Selects the best screenshot tool for the environment:
+  - macOS → `screencapture`
+  - Linux + Wayland + GNOME → `gnome-screenshot`
+  - Linux + Wayland + wlroots → `grim`
+  - Linux + X11 → `gnome-screenshot`, `scrot`, or `import` (ImageMagick)
+- Falls back through available tools if the primary method fails
+- Auto-resizes large screenshots (>1280px wide) using ImageMagick if available
+- Sends the base64-encoded image to the configured vision model (`gemma4:31b-cloud`)
+- On failure, returns detailed diagnostics with:
+  - Environment info (OS, display server, desktop, available tools)
+  - Specific failure reasons for each attempted method
+  - Platform-specific installation suggestions
+  - Manual alternatives for the user
+
+**Example**:
+```json
+{ "prompt": "What error message is shown in the terminal?" }
+```
+```json
+{ "region": "800x600+100+200" }
+```
+
+---
+
 ## Task Management Tools
 
 ### todo_write
@@ -705,6 +747,7 @@ interface ToolDefinition {
 | bg_print | main, child | Background Tasks |
 | bg_remove | main, child | Background Tasks |
 | bg_await | main, child | Background Tasks |
+| screen | main, child | Screen Reader |
 | todo_write | main, child | Task Management |
 | skill_load | main, child | Task Management |
 

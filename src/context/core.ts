@@ -41,6 +41,9 @@ const TOOL_COLORS: Record<string, (text: string) => string> = {
   // Skills
   skill_load: chalk.cyanBright,
 
+  // Screen reading
+  screen: chalk.greenBright,
+
   // Default
   _default: chalk.white,
 };
