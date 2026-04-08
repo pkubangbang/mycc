@@ -2,11 +2,29 @@
  * ConfusionCalculator - Specialist system for measuring LLM confusion
  *
  * Calculates a "confusion score" based on tool usage patterns:
+ * - Each assistant response contributes +1 (spinning without progress)
  * - Exploration tools (read, search) contribute 0
  * - Action tools (write, edit) contribute -1 (progress)
  * - Errors contribute +2 (stuck)
  * - Repetition contributes +1 (potential loop)
  */
+/** Check if a tool result string indicates an error */
+function isErrorResult(result: string): boolean {
+  if (!result) return false;
+  const lower = result.toLowerCase();
+  // Common error prefixes
+  if (lower.startsWith('error:') || lower.startsWith('error ') || lower.startsWith('fatal:')) return true;
+  // Shell exit codes
+  if (/command failed with exit code \d+/.test(lower)) return true;
+  // Node.js error patterns
+  if (lower.includes('eacces') || lower.includes('enoent') || lower.includes('eperm')) return true;
+  // Permission denied
+  if (lower.includes('permission denied')) return true;
+  // Not found / does not exist
+  if (lower.includes('not found') || lower.includes('does not exist') || lower.includes('no such file')) return true;
+  return false;
+}
+
 export class ConfusionCalculator {
   // Tools that are purely exploratory (information gathering)
   private static readonly EXPLORATION_TOOLS = new Set([
@@ -90,9 +108,16 @@ export class ConfusionCalculator {
     this.recentToolCalls.push(toolName);
   }
 
+  /** Called on each assistant response (turn) */
+  onAssistantResponse(): void {
+    this.score += 1;
+  }
+
   /** Called when tool result contains error */
-  onError(): void {
-    this.score += 2;
+  onError(result: string): void {
+    if (isErrorResult(result)) {
+      this.score += 2;
+    }
   }
 
   /** Check if hint should be generated */

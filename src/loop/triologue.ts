@@ -201,6 +201,8 @@ export class Triologue {
       tool_calls: toolCalls,
     });
 
+    this.confusion.onAssistantResponse();
+
     // Track pending tool calls in order
     if (toolCalls) {
       for (const tc of toolCalls) {
@@ -240,9 +242,7 @@ export class Triologue {
    */
   onToolResult(toolName: string, args: Record<string, unknown> | undefined, result: string): void {
     this.confusion.onToolCall(toolName, args);
-    if (result.startsWith('Error:')) {
-      this.confusion.onError();
-    }
+    this.confusion.onError(result);
   }
 
   /**
