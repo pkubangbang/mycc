@@ -9,7 +9,7 @@
  * - All other operations: FORBIDDEN
  */
 
-import type { TeamModule, Teammate, TeammateStatus, IpcHandlerRegistration } from '../../types.js';
+import type { TeamModule, IpcHandlerRegistration } from '../../types.js';
 import { createMail } from '../mail.js';
 import { ipc } from './ipc-helpers.js';
 
@@ -19,7 +19,6 @@ import { ipc } from './ipc-helpers.js';
  */
 export class ChildTeam implements TeamModule {
   private owner: string;
-  private handlers: Map<string, IpcHandlerRegistration> = new Map();
 
   constructor(owner: string) {
     this.owner = owner;
@@ -132,15 +131,15 @@ export class ChildTeam implements TeamModule {
   /**
    * Register IPC handler (no-op for child)
    */
-  registerHandler(registration: IpcHandlerRegistration): void {
-    this.handlers.set(registration.messageType, registration);
+  registerHandler(_registration: IpcHandlerRegistration): void {
+    // No-op in child - handlers managed by lead
   }
 
   /**
    * Unregister IPC handler (no-op for child)
    */
-  unregisterHandler(messageType: string): void {
-    this.handlers.delete(messageType);
+  unregisterHandler(_messageType: string): void {
+    // No-op in child - handlers managed by lead
   }
 
   /**

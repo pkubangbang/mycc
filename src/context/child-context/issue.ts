@@ -2,7 +2,7 @@
  * issue.ts - ChildIssue implementation for IPC-based issue operations
  */
 
-import type { IssueModule, Issue, IssueComment } from '../../types.js';
+import type { IssueModule, Issue } from '../../types.js';
 import { ipc } from './ipc-helpers.js';
 
 /**

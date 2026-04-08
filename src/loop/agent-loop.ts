@@ -170,7 +170,7 @@ export async function main(): Promise<void> {
   console.log('Commands: /team, /issues, /todos, /skills, /exit\n');
 
   // Clear session data for clean startup
-  clearSessionData();;
+  clearSessionData();
 
   // Create loader first
   const loader = createLoader();

@@ -67,7 +67,6 @@ export class ChildCore implements CoreModule {
       const response = await ollama.webSearch({ query });
       return response.results || [];
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
       throw error;
     }
   }
@@ -80,7 +79,6 @@ export class ChildCore implements CoreModule {
     try {
       return await ollama.webFetch({ url });
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
       throw error;
     }
   }

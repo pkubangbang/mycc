@@ -2,7 +2,7 @@
  * issue.ts - Issue module: persisted tasks with blocking relationships
  */
 
-import type { IssueModule, Issue, IssueComment, IssueStatus, IpcHandlerRegistration, AgentContext } from '../types.js';
+import type { IssueModule, Issue, IssueComment, IssueStatus, IpcHandlerRegistration } from '../types.js';
 import { getDb } from './db.js';
 
 /**

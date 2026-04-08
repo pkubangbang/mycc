@@ -7,11 +7,10 @@ import { createTodo } from '../todo.js';
 import { createMail } from '../mail.js';
 import { createBg } from '../bg.js';
 import { createLoader } from '../loader.js';
-import { ChildCore, createChildCore } from './core.js';
-import { ChildIssue, createChildIssue } from './issue.js';
-import { ChildWt, createChildWt } from './wt.js';
-import { ChildTeam, createChildTeam } from './team.js';
-import { IpcRegistry } from './ipc-registry.js';
+import { createChildCore } from './core.js';
+import { createChildIssue } from './issue.js';
+import { createChildWt } from './wt.js';
+import { createChildTeam } from './team.js';
 
 // Re-export
 export { IpcRegistry } from './ipc-registry.js';
@@ -25,7 +24,7 @@ export { createChildTeam } from './team.js';
  * All write operations go through IPC to parent
  */
 export function createChildContext(name: string, workDir: string): AgentContext {
-  const core = createChildCore(name, workDir) as ChildCore;
+  const core = createChildCore(name, workDir);
   const todo = createTodo();
   const mail = createMail(name); // Worker-specific mailbox
   const skill: SkillModule = createLoader(true); // Silent mode for child process

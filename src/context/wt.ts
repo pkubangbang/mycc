@@ -5,7 +5,7 @@
 import { execSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
-import type { WtModule, WorkTree, IpcHandlerRegistration } from '../types.js';
+import type { WtModule, IpcHandlerRegistration } from '../types.js';
 import { getDb } from './db.js';
 import type { CoreModule } from '../types.js';
 

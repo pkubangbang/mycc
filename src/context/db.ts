@@ -91,16 +91,6 @@ function initSchema(db: Database.Database): void {
 }
 
 /**
- * Close database connection
- */
-export function closeDb(): void {
-  if (db) {
-    db.close();
-    db = null;
-  }
-}
-
-/**
  * Clear all session data (for clean startup)
  * Clears SQLite tables and mail files
  */
