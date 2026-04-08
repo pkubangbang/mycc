@@ -40,7 +40,8 @@ function createPersistentTriologue(name: string): Trialogue {
     fs.mkdirSync(transcriptDir, { recursive: true });
   }
 
-  const trialoguePath = path.join(transcriptDir, `${name}-trialogue.jsonl`);
+  const timestamp = Math.floor(Date.now() / 1000);
+  const trialoguePath = path.join(transcriptDir, `${name}-${timestamp}-trialogue.jsonl`);
 
   // Clear existing file on start
   fs.writeFileSync(trialoguePath, '', 'utf-8');

@@ -2,12 +2,14 @@
  * agent-loop.ts - STAR-principle agent loop
  */
 
+import * as fs from 'fs';
+import * as path from 'path';
 import chalk from 'chalk';
 import { retryChat, MODEL, isTransientError } from '../ollama.js';
 import type { AgentContext, ToolScope, ToolCall } from '../types.js';
 import { createAgentContext } from '../context/index.js';
 import { createLoader, Loader } from '../context/loader.js';
-import { clearSessionData } from '../context/db.js';
+import { clearSessionData, getMyccDir } from '../context/db.js';
 import { TOKEN_THRESHOLD, buildSystemPrompt } from './agent-prompts.js';
 import { Trialogue } from './trialogue.js';
 import { agentIO } from './agent-io.js';
@@ -180,8 +182,26 @@ export async function main(): Promise<void> {
   // Create context with loader
   const ctx = createAgentContext(process.cwd(), loader);
 
-  // Trialogue for message management
-  const trialogue = new Trialogue({ tokenThreshold: TOKEN_THRESHOLD });
+  // Trialogue for message management (persisted to disk)
+  const transcriptDir = path.join(getMyccDir(), 'transcripts');
+  if (!fs.existsSync(transcriptDir)) {
+    fs.mkdirSync(transcriptDir, { recursive: true });
+  }
+  const timestamp = Math.floor(Date.now() / 1000);
+  const trialoguePath = path.join(transcriptDir, `lead-${timestamp}-trialogue.jsonl`);
+  fs.writeFileSync(trialoguePath, '', 'utf-8');
+
+  const trialogue = new Trialogue({
+    tokenThreshold: TOKEN_THRESHOLD,
+    onMessage: (messages) => {
+      const lastMsg = messages[messages.length - 1];
+      try {
+        fs.appendFileSync(trialoguePath, JSON.stringify(lastMsg) + '\n', 'utf-8');
+      } catch {
+        // Ignore write errors
+      }
+    },
+  });
 
   // Initialize AgentIO for main process
   agentIO.initMain();
