@@ -11,7 +11,7 @@ import { createAgentContext } from '../context/index.js';
 import { createLoader, Loader } from '../context/loader.js';
 import { clearSessionData, getMyccDir } from '../context/db.js';
 import { TOKEN_THRESHOLD, buildSystemPrompt } from './agent-prompts.js';
-import { Trialogue } from './trialogue.js';
+import { Triologue } from './triologue.js';
 import { agentIO } from './agent-io.js';
 
 /**
@@ -29,7 +29,7 @@ export class ShutdownError extends Error {
  * @throws ShutdownError when agent is shutting down
  */
 export async function agentLoop(
-  trialogue: Trialogue,
+  triologue: Triologue,
   ctx: AgentContext,
   loader: Loader,
   scope: ToolScope = 'main'
@@ -50,13 +50,13 @@ export async function agentLoop(
         const mailContent = mails
           .map((mail) => `Mail from ${mail.from}: ${mail.title}\n${mail.content}`)
           .join('\n\n---\n\n');
-        trialogue.user(mailContent);
+        triologue.user(mailContent);
       }
 
       // 2.5 Generate hint round if threshold reached
-      if (trialogue.needsHintRound()) {
+      if (triologue.needsHintRound()) {
         console.log(chalk.blue('[hint round] Generating problem analysis...'));
-        await trialogue.generateHintRound();
+        await triologue.generateHintRound();
       }
 
       // 3. Todo nudging with state tracking to reset counter on todo changes
@@ -68,31 +68,31 @@ export async function agentLoop(
         }
         nextTodoNudge--;
         if (nextTodoNudge === 0) {
-          trialogue.user(`<reminder>Update your todos. ${ctx.todo.printTodoList()}</reminder>`);
+          triologue.user(`<reminder>Update your todos. ${ctx.todo.printTodoList()}</reminder>`);
           nextTodoNudge = 3;
         }
       }
 
       // 4. Build system prompt and call LLM
       // Ensure we have a valid message sequence before calling LLM
-      const lastRole = trialogue.getLastRole();
+      const lastRole = triologue.getLastRole();
       if (lastRole === 'assistant') {
         // Last message was assistant with no tool calls - need user message before next LLM call
         // This can happen after awaitTeam() returns without new input
-        trialogue.user('Continue with your task.');
+        triologue.user('Continue with your task.');
       }
 
-      trialogue.setSystemPrompt(buildSystemPrompt(ctx));
+      triologue.setSystemPrompt(buildSystemPrompt(ctx));
 
       const response = await retryChat({
         model: MODEL,
-        messages: trialogue.getMessages(),
+        messages: triologue.getMessages(),
         tools: loader.getToolsForScope(scope),
       });
 
       // 5. Handle response
       const assistantMessage = response.message;
-      trialogue.agent(assistantMessage.content || '', assistantMessage.tool_calls as ToolCall[] | undefined);
+      triologue.agent(assistantMessage.content || '', assistantMessage.tool_calls as ToolCall[] | undefined);
 
       // 6. No tool calls = check team status
       if (!assistantMessage.tool_calls || assistantMessage.tool_calls.length === 0) {
@@ -111,7 +111,7 @@ export async function agentLoop(
           }
 
           // Priority 3: Timeout waiting for teammates - inject status message and retry
-          trialogue.user(`Timeout waiting for teammates. What will you do? ${ctx.team.printTeam()}`);
+          triologue.user(`Timeout waiting for teammates. What will you do? ${ctx.team.printTeam()}`);
           continue;
         }
         // No team means single agent - just return
@@ -130,8 +130,8 @@ export async function agentLoop(
 
         const output = await loader.execute(toolName, ctx, args);
 
-        trialogue.tool(toolName, output, toolCallId);
-        trialogue.onToolResult(toolName, args, output);
+        triologue.tool(toolName, output, toolCallId);
+        triologue.onToolResult(toolName, args, output);
       }
     } catch (err) {
       // Check if we should exit (shutdown or non-recoverable)
@@ -144,14 +144,14 @@ export async function agentLoop(
       // Teammate timeout - give LLM context and options to decide
       if (err instanceof Error && errorMessage.includes('Timeout waiting for teammate') && ctx.team) {
         console.error(chalk.yellow(`[agent-loop] Recoverable error: ${errorMessage}`));
-        trialogue.user(`Timeout waiting for teammates. What will you do? ${ctx.team.printTeam()}\n\nOptions:\n- Wait longer (use tm_await with higher timeout)\n- Remove teammate (use tm_remove)\n- Continue without waiting (just proceed with other tasks)`);
+        triologue.user(`Timeout waiting for teammates. What will you do? ${ctx.team.printTeam()}\n\nOptions:\n- Wait longer (use tm_await with higher timeout)\n- Remove teammate (use tm_remove)\n- Continue without waiting (just proceed with other tasks)`);
         continue;
       }
 
       // Check if transient error (network/LLM issues) - should auto-retry
       if (isTransientError(err)) {
         console.error(chalk.yellow(`[agent-loop] Recoverable error: ${errorMessage}`));
-        trialogue.user(`An error occurred: ${errorMessage}. Please try again.`);
+        triologue.user(`An error occurred: ${errorMessage}. Please try again.`);
         continue;
       }
 
@@ -183,21 +183,21 @@ export async function main(): Promise<void> {
   // Create context with loader
   const ctx = createAgentContext(process.cwd(), loader);
 
-  // Trialogue for message management (persisted to disk)
+  // Triologue for message management (persisted to disk)
   const transcriptDir = path.join(getMyccDir(), 'transcripts');
   if (!fs.existsSync(transcriptDir)) {
     fs.mkdirSync(transcriptDir, { recursive: true });
   }
   const timestamp = Math.floor(Date.now() / 1000);
-  const trialoguePath = path.join(transcriptDir, `lead-${timestamp}-trialogue.jsonl`);
-  fs.writeFileSync(trialoguePath, '', 'utf-8');
+  const triologuePath = path.join(transcriptDir, `lead-${timestamp}-triologue.jsonl`);
+  fs.writeFileSync(triologuePath, '', 'utf-8');
 
-  const trialogue = new Trialogue({
+  const triologue = new Triologue({
     tokenThreshold: TOKEN_THRESHOLD,
     onMessage: (messages) => {
       const lastMsg = messages[messages.length - 1];
       try {
-        fs.appendFileSync(trialoguePath, JSON.stringify(lastMsg) + '\n', 'utf-8');
+        fs.appendFileSync(triologuePath, JSON.stringify(lastMsg) + '\n', 'utf-8');
       } catch {
         // Ignore write errors
       }
@@ -278,14 +278,14 @@ export async function main(): Promise<void> {
       }
 
       // Add user message (reset hint flag for new query)
-      trialogue.user(query);
-      trialogue.resetHint();
+      triologue.user(query);
+      triologue.resetHint();
 
       // Run agent loop
-      await agentLoop(trialogue, ctx, loader);
+      await agentLoop(triologue, ctx, loader);
 
       // Print final response
-      const lastMsg = trialogue.getMessagesRaw().at(-1);
+      const lastMsg = triologue.getMessagesRaw().at(-1);
       if (lastMsg?.content) {
         console.log(lastMsg.content);
       }

@@ -1,7 +1,7 @@
 /**
- * trialogue.ts - Message management with auto-compact and role validation
+ * triologue.ts - Message management with auto-compact and role validation
  *
- * Trialogue manages the conversation history (messages) with:
+ * Triologue manages the conversation history (messages) with:
  * - Automatic compaction when token threshold exceeded
  * - Role transition validation (detect misordered messages)
  * - Bridge response generation for gaps
@@ -32,7 +32,7 @@ export interface ToolAlignmentWarning {
   expectedName?: string;
 }
 
-export interface TrialogueOptions {
+export interface TriologueOptions {
   /** Token threshold for auto-compact (default: 50000) */
   tokenThreshold?: number;
   /** Message threshold for hint round (default: 10) */
@@ -49,7 +49,7 @@ export interface TrialogueOptions {
   onHint?: () => void;
 }
 
-export class Trialogue {
+export class Triologue {
   private messages: Message[] = [];
   private pendingToolCalls: Map<string, ToolCall> = new Map();
   private pendingToolCallOrder: string[] = []; // Track order for sequential resolution
@@ -57,9 +57,9 @@ export class Trialogue {
   private systemPrompt: string | null = null;
   private confusion: ConfusionCalculator;
   private hintGenerated: boolean = false;
-  private options: Required<TrialogueOptions>;
+  private options: Required<TriologueOptions>;
 
-  constructor(options: TrialogueOptions = {}) {
+  constructor(options: TriologueOptions = {}) {
     const hintThreshold = options.hintThreshold ?? 10;
     this.confusion = new ConfusionCalculator(hintThreshold);
     this.options = {
@@ -417,7 +417,7 @@ Be specific and actionable. This analysis will help guide the next steps.`;
    * Generate a bridge assistant response for missing assistant
    */
   private async generateBridgeResponse(intendedMessage: Partial<Message>): Promise<void> {
-    console.warn(chalk.yellow('[Trialogue] Generating bridge response...'));
+    console.warn(chalk.yellow('[Triologue] Generating bridge response...'));
 
     // Generate a brief acknowledgment
     const response = await retryChat({
@@ -437,7 +437,7 @@ Be specific and actionable. This analysis will help guide the next steps.`;
     });
     this.updateTokenCount(this.messages[this.messages.length - 1]);
 
-    console.warn(chalk.yellow(`[Trialogue] Bridge: "${bridgeContent}"`));
+    console.warn(chalk.yellow(`[Triologue] Bridge: "${bridgeContent}"`));
 
     // Now add the intended message
     if (intendedMessage.role === 'tool') {
@@ -569,18 +569,18 @@ Be specific and actionable. This analysis will help guide the next steps.`;
 
   private defaultOnMisorder(warning: MisorderWarning): void {
     console.warn(
-      chalk.yellow(`[Trialogue] Misordered transition: ${warning.from} → ${warning.to}`)
+      chalk.yellow(`[Triologue] Misordered transition: ${warning.from} → ${warning.to}`)
     );
-    console.warn(chalk.yellow(`[Trialogue] Gap: ${warning.gap}`));
+    console.warn(chalk.yellow(`[Triologue] Gap: ${warning.gap}`));
   }
 
   private defaultOnToolMisalign(warning: ToolAlignmentWarning): void {
     console.warn(
-      chalk.yellow(`[Trialogue] Tool alignment issue: ${warning.functionName}`)
+      chalk.yellow(`[Triologue] Tool alignment issue: ${warning.functionName}`)
     );
-    console.warn(chalk.yellow(`[Trialogue] Issue: ${warning.issue}`));
+    console.warn(chalk.yellow(`[Triologue] Issue: ${warning.issue}`));
     if (warning.expectedName) {
-      console.warn(chalk.yellow(`[Trialogue] Expected: ${warning.expectedName}`));
+      console.warn(chalk.yellow(`[Triologue] Expected: ${warning.expectedName}`));
     }
   }
 

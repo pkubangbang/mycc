@@ -17,7 +17,7 @@ import { retryChat, MODEL } from '../ollama.js';
 import type { AgentContext, Message } from '../types.js';
 import type { ToolCall } from '../types.js';
 import { TOKEN_THRESHOLD, buildSystemPrompt } from '../loop/agent-prompts.js';
-import { Trialogue } from '../loop/trialogue.js';
+import { Triologue } from '../loop/triologue.js';
 import { ipc, sendStatus } from './child-context/ipc-helpers.js';
 import { getMyccDir } from './db.js';
 
@@ -32,27 +32,27 @@ let loader: Loader;
 let shutdownRequested = false;
 
 /**
- * Create a trialogue that persists messages to disk
+ * Create a triologue that persists messages to disk
  */
-function createPersistentTriologue(name: string): Trialogue {
+function createPersistentTriologue(name: string): Triologue {
   const transcriptDir = path.join(getMyccDir(), 'transcripts');
   if (!fs.existsSync(transcriptDir)) {
     fs.mkdirSync(transcriptDir, { recursive: true });
   }
 
   const timestamp = Math.floor(Date.now() / 1000);
-  const trialoguePath = path.join(transcriptDir, `${name}-${timestamp}-trialogue.jsonl`);
+  const triologuePath = path.join(transcriptDir, `${name}-${timestamp}-triologue.jsonl`);
 
   // Clear existing file on start
-  fs.writeFileSync(trialoguePath, '', 'utf-8');
+  fs.writeFileSync(triologuePath, '', 'utf-8');
 
-  return new Trialogue({
+  return new Triologue({
     tokenThreshold: TOKEN_THRESHOLD,
     onMessage: (messages: Message[]) => {
       // Append last message to file
       const lastMsg = messages[messages.length - 1];
       try {
-        fs.appendFileSync(trialoguePath, JSON.stringify(lastMsg) + '\n', 'utf-8');
+        fs.appendFileSync(triologuePath, JSON.stringify(lastMsg) + '\n', 'utf-8');
       } catch {
         // Ignore write errors
       }
@@ -62,8 +62,8 @@ function createPersistentTriologue(name: string): Trialogue {
 
 // === Main Teammate Loop ===
 async function teammateLoop(prompt: string): Promise<void> {
-  const trialogue = createPersistentTriologue(teammateName);
-  trialogue.user(prompt);
+  const triologue = createPersistentTriologue(teammateName);
+  triologue.user(prompt);
 
   const tools = loader.getToolsForScope('child');
   sendStatus('working');
@@ -79,7 +79,7 @@ async function teammateLoop(prompt: string): Promise<void> {
       const mailContent = mails
         .map((mail) => `Mail from ${mail.from}: ${mail.title}\n${mail.content}`)
         .join('\n\n---\n\n');
-      trialogue.user(mailContent);
+      triologue.user(mailContent);
     }
 
     // 2. Todo nudging with counter and state tracking
@@ -91,30 +91,30 @@ async function teammateLoop(prompt: string): Promise<void> {
       }
       nextTodoNudge--;
       if (nextTodoNudge === 0) {
-        trialogue.user(`<reminder>Update your todos. ${ctx.todo.printTodoList()}</reminder>`);
+        triologue.user(`<reminder>Update your todos. ${ctx.todo.printTodoList()}</reminder>`);
         nextTodoNudge = 3;
       }
     }
 
     // 3. Build system prompt and call LLM
     // Ensure we have a valid message sequence before calling LLM
-    const lastRole = trialogue.getLastRole();
+    const lastRole = triologue.getLastRole();
     if (lastRole === 'assistant') {
       // Last message was assistant with no tool calls - need user message before next LLM call
       // This can happen after resuming from idle without new input
-      trialogue.user('Continue with your task.');
+      triologue.user('Continue with your task.');
     }
 
-    trialogue.setSystemPrompt(buildSystemPrompt(ctx, { name: teammateName, role: teammateRole }));
+    triologue.setSystemPrompt(buildSystemPrompt(ctx, { name: teammateName, role: teammateRole }));
 
     const response = await retryChat({
       model: MODEL,
-      messages: trialogue.getMessages(),
+      messages: triologue.getMessages(),
       tools,
     });
 
     const assistantMessage = response.message;
-    trialogue.agent(assistantMessage.content || '', assistantMessage.tool_calls as ToolCall[] | undefined);
+    triologue.agent(assistantMessage.content || '', assistantMessage.tool_calls as ToolCall[] | undefined);
 
     // 4. No tool calls = enter idle state
     if (!assistantMessage.tool_calls || assistantMessage.tool_calls.length === 0) {
@@ -122,7 +122,7 @@ async function teammateLoop(prompt: string): Promise<void> {
       ctx.team!.mailTo('lead', 'task done',
         assistantMessage.content ?? 'I have done my task, now running idle.', ctx.core.getName());
 
-      const result = await enterIdleState(trialogue);
+      const result = await enterIdleState(triologue);
       if (result === 'shutdown') {
         process.exit(0);
       }
@@ -137,11 +137,11 @@ async function teammateLoop(prompt: string): Promise<void> {
 
       try {
         const output = await loader.execute(toolName, ctx, args);
-        trialogue.tool(toolName, output, tc.id);
+        triologue.tool(toolName, output, tc.id);
       } catch (err) {
         const errorMsg = (err as Error).message;
         ctx.core.brief('error', toolName, errorMsg);
-        trialogue.tool(toolName, `error: ${errorMsg}`, tc.id);
+        triologue.tool(toolName, `error: ${errorMsg}`, tc.id);
       }
     }
   }
@@ -152,7 +152,7 @@ async function teammateLoop(prompt: string): Promise<void> {
 }
 
 // === Idle State: Poll for new work ===
-async function enterIdleState(trialogue: Trialogue): Promise<'shutdown' | 'resume'> {
+async function enterIdleState(triologue: Triologue): Promise<'shutdown' | 'resume'> {
   sendStatus('idle');
 
   while (!shutdownRequested) {
@@ -194,7 +194,7 @@ async function enterIdleState(trialogue: Trialogue): Promise<'shutdown' | 'resum
         if (claimed) {
           ctx.core.brief('info', 'auto-claim', `Issue #${issue.id}: ${issue.title}`);
           // Identity is preserved in system prompt, no need to re-inject
-          trialogue.user(`<auto-claimed>Issue #${issue.id}: ${issue.title}\n${issue.content || ''}</auto-claimed>`);
+          triologue.user(`<auto-claimed>Issue #${issue.id}: ${issue.title}\n${issue.content || ''}</auto-claimed>`);
           sendStatus('working');
           return 'resume';
         }
