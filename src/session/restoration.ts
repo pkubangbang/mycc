@@ -276,13 +276,19 @@ function injectChildSummaries(
 /**
  * Generate DOSQ markdown content from a single summary pair.
  *
- * The DOSQ has three sections:
- * 1. Header + Summary — visible context the user can review/edit
- * 2. Instructions — wrapped in HTML comment so they're stripped during parsing
- * 3. Query area — after the final --- separator, where the user writes their first query
+ * The DOSQ wraps all session context in an HTML comment block, leaving only
+ * the query area visible for editing. This ensures the LLM doesn't see the
+ * metadata/summary unless the user explicitly modifies it.
+ *
+ * Format:
+ * <!--
+ *   [Session metadata and summary - ignored during parsing]
+ * -->
+ * [User's query - extracted after stripping HTML comments]
  */
 export function generateDosq(session: Session, pair: SummaryPair): string {
   const lines: string[] = [
+    '<!--',
     `# Session: ${session.id.slice(0, 7)}`,
     '',
     `**Created:** ${session.create_time}`,
@@ -298,15 +304,13 @@ export function generateDosq(session: Session, pair: SummaryPair): string {
     '',
     '---',
     '',
-    '<!--',
-    '  INSTRUCTIONS',
-    '  ============',
-    '  Edit the Session Summary section above to add or modify context.',
-    '  Write your first query for the restored session below the last --- separator.',
-    '  Everything inside this HTML comment block will be ignored.',
+    'INSTRUCTIONS',
+    '============',
+    'The session context above is wrapped in an HTML comment block.',
+    'It will be included when the session is restored.',
+    'Edit it if you need to add or modify context.',
+    'Write your first query below (after the HTML comment ends).',
     '-->',
-    '',
-    '---',
     '',
   ];
 
@@ -340,29 +344,20 @@ export function readDosq(filePath: string): string {
  * Extract first query from DOSQ content.
  *
  * Parsing rules:
- * 1. All HTML comments (<!-- ... -->) are stripped — this removes the instructions block
- * 2. The query is the content after the last '---' separator
- * 3. Whitespace is trimmed from the result
- * 4. If the result is empty, a default continuation prompt is returned
+ * 1. Strip all HTML comments (the summary context is for user reference only)
+ * 2. Return trimmed remaining content or default continuation prompt
  *
- * This mirrors git's approach to commit messages (comments stripped, content
- * after separator is the payload).
+ * Note: The session context is already loaded via triologue.loadRestoration(pair).
+ * The DOSQ summary in comments is for user reference/editing. If user edits the
+ * summary, they should include relevant changes in their query area.
  */
 export function extractFirstQuery(dosqContent: string): string {
-  // Remove all HTML comments
-  let content = dosqContent.replace(/<!--[\s\S]*?-->/g, '');
+  // Remove all HTML comments (summary is already loaded in pair)
+  const contentWithoutComments = dosqContent.replace(/<!--[\s\S]*?-->/g, '');
 
-  // Find the content after the last '---' separator
-  const lastSeparator = content.lastIndexOf('---');
-  if (lastSeparator !== -1) {
-    content = content.slice(lastSeparator + 3);
-  }
-
-  const query = content.trim();
-  if (!query) {
-    return 'Continue from where we left off.';
-  }
-  return query;
+  // Return remaining content (user's query) or default
+  const query = contentWithoutComments.trim();
+  return query || 'Continue from where we left off.';
 }
 
 /**

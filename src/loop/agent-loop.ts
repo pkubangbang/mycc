@@ -6,12 +6,12 @@ import * as fs from 'fs';
 import * as path from 'path';
 import chalk from 'chalk';
 import { retryChat, MODEL, OLLAMA_HOST, isTransientError } from '../ollama.js';
-import type { AgentContext, ToolScope, ToolCall } from '../types.js';
+import type { AgentContext, ToolScope, ToolCall, SlashCommandContext } from '../types.js';
 import { ParentContext } from '../context/index.js';
 import { Loader } from '../context/loader.js';
 import { clearSessionData, getMyccDir } from '../context/db.js';
-import { createSessionFile, readSession, writeSession, saveToUserDir, getSessionId, listSessions, loadSessionById } from '../session/index.js';
-import { prepareRestoration, readDosq, extractFirstQuery } from '../session/restoration.js';
+import { createSessionFile, readSession, writeSession, getSessionId, cleanupEmptySessions } from '../session/index.js';
+import { slashRegistry } from '../slashes/index.js';
 import { TOKEN_THRESHOLD, buildSystemPrompt } from './agent-prompts.js';
 import { Triologue } from './triologue.js';
 import { agentIO } from './agent-io.js';
@@ -184,6 +184,13 @@ export async function main(): Promise<void> {
   const sessionFilePath = createSessionFile(triologuePath);
   console.log(chalk.gray(`Session: ${path.basename(sessionFilePath)}`));
 
+  // Clean up empty session files from previous runs
+  const currentSessionId = getSessionId(sessionFilePath);
+  const removed = cleanupEmptySessions(currentSessionId);
+  if (removed > 0) {
+    console.log(chalk.gray(`Cleaned up ${removed} empty session(s)`));
+  }
+
   // Track first query for bookmark title
   let firstQueryCaptured = false;
 
@@ -224,9 +231,6 @@ export async function main(): Promise<void> {
     process.exit(0);
   });
 
-  // Available slash commands
-  const slashCommands = ['/team', '/issues', '/todos', '/skills', '/save', '/load', '/exit'];
-
   // Main REPL loop
   while (!agentIO.isShuttingDown()) {
     try {
@@ -239,110 +243,24 @@ export async function main(): Promise<void> {
       // Handle slash commands
       const trimmedQuery = query.trim();
       if (trimmedQuery.startsWith('/')) {
-        if (trimmedQuery === '/team') {
-          console.log(ctx.team.printTeam());
-          continue;
-        } else if (trimmedQuery.startsWith('/issues')) {
-          const parts = trimmedQuery.split(/\s+/);
-          if (parts.length > 1) {
-            // Show specific issue details
-            const issueId = parseInt(parts[1], 10);
-            if (isNaN(issueId)) {
-              console.log(chalk.yellow(`Invalid issue ID: ${parts[1]}`));
-            } else {
-              console.log(await ctx.issue.printIssue(issueId));
-            }
-          } else {
-            // Show all issues
-            console.log(await ctx.issue.printIssues());
-          }
-          continue;
-        } else if (trimmedQuery === '/todos') {
-          console.log(ctx.todo.printTodoList());
-          continue;
-        } else if (trimmedQuery === '/skills') {
-          console.log(ctx.skill.printSkills());
-          continue;
-        } else if (trimmedQuery === '/save') {
-          try {
-            const destPath = saveToUserDir(sessionFilePath);
-            const sessionId = getSessionId(destPath);
-            console.log(chalk.green(`Session saved to ~/.mycc/sessions`));
-            console.log(chalk.gray(`Use /load ${sessionId} to restore this session.`));
-          } catch (err) {
-            console.log(chalk.red(`Failed to save session: ${(err as Error).message}`));
-          }
-          continue;
-        } else if (trimmedQuery.startsWith('/load')) {
-          const isEmpty = !triologue.getMessagesRaw().length;
+        const parts = trimmedQuery.split(/\s+/);
+        const cmdName = parts[0].slice(1); // Remove '/'
 
-          if (!isEmpty) {
-            console.log(chalk.yellow('Cannot load session: current session already has content.'));
-            console.log(chalk.gray('Start a new agent session to load a saved session.'));
-            continue;
-          }
+        const slashCtx: SlashCommandContext = {
+          query: trimmedQuery,
+          args: parts,
+          ctx,
+          triologue,
+          sessionFilePath,
+        };
 
-          const parts = trimmedQuery.split(/\s+/);
-          if (parts.length === 1) {
-            // List available sessions
-            const sessions = listSessions();
-            if (sessions.length === 0) {
-              console.log(chalk.yellow('No saved sessions found.'));
-            } else {
-              console.log(chalk.cyan('Available sessions:'));
-              for (const s of sessions) {
-                console.log(`  [${s.id.slice(0, 7)}] ${s.create_time}`);
-                console.log(`    workdir: ${s.project_dir}`);
-                console.log(`    teammates: ${s.teammates.join(', ') || 'none'}`);
-                console.log(`    first words: ${s.first_query || '(none)'}`);
-              }
-            }
-            continue;
-          }
-
-          // Load specific session
-          const sessionId = parts[1];
-          try {
-            const session = loadSessionById(sessionId);
-            if (!session) {
-              console.log(chalk.red(`Session not found: ${sessionId}`));
-              continue;
-            }
-
-            console.log(chalk.cyan(`Loading session ${sessionId}...`));
-
-            // Prepare restoration
-            const { pair, dosqPath } = await prepareRestoration(session);
-
-            console.log(chalk.cyan('Session restored. DOSQ generated at:'));
-            console.log(chalk.gray(`  ${dosqPath}`));
-            console.log(chalk.yellow('Edit the DOSQ file if needed, then press Enter to continue...'));
-
-            // Wait for user to edit DOSQ
-            await agentIO.ask(chalk.cyan('Press Enter when ready to continue > '));
-
-            // Read DOSQ content
-            const dosqContent = readDosq(dosqPath);
-            const firstQuery = extractFirstQuery(dosqContent);
-
-            console.log(chalk.gray('Starting restored session...\n'));
-
-            // Load triologue with summary pairs (does not trigger onMessage)
-            triologue.loadRestoration(pair);
-
-            // Then treat DOSQ content as the first query
-            query = firstQuery;
-          } catch (err) {
-            console.log(chalk.red(`Failed to load session: ${(err as Error).message}`));
-          }
-          continue;
+        const handled = await slashRegistry.execute(cmdName, slashCtx);
+        if (handled && slashCtx.nextQuery) {
+          // /load returned a first query to process
+          query = slashCtx.nextQuery;
         } else {
-          // Unknown slash command - show available commands
-          console.log(chalk.yellow(`Unknown command: ${trimmedQuery}`));
-          console.log(chalk.gray(`Available commands: ${slashCommands.join(', ')}`));
           continue;
         }
-
       }
 
       // Add user message (reset hint flag for new query)

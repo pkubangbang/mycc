@@ -306,3 +306,43 @@ export function validateSession(session: Session): { valid: boolean; missingFile
 export function getSessionId(filePath: string): string {
   return path.basename(filePath, '.json');
 }
+
+/**
+ * Clean up empty session files (sessions with no first_query)
+ *
+ * @param currentSessionId - Session ID to preserve (the current session)
+ * @returns Number of removed empty sessions
+ */
+export function cleanupEmptySessions(currentSessionId: string): number {
+  let removed = 0;
+
+  // Clean up project sessions
+  const projectDir = getSessionsDir();
+  if (fs.existsSync(projectDir)) {
+    const files = fs.readdirSync(projectDir).filter((f) => f.endsWith('.json'));
+    for (const file of files) {
+      const sessionPath = path.join(projectDir, file);
+      const session = readSession(sessionPath);
+      if (session && !session.first_query && session.id !== currentSessionId) {
+        fs.unlinkSync(sessionPath);
+        removed++;
+      }
+    }
+  }
+
+  // Clean up user sessions
+  const userDir = getUserSessionsDir();
+  if (fs.existsSync(userDir)) {
+    const files = fs.readdirSync(userDir).filter((f) => f.endsWith('.json'));
+    for (const file of files) {
+      const sessionPath = path.join(userDir, file);
+      const session = readSession(sessionPath);
+      if (session && !session.first_query && session.id !== currentSessionId) {
+        fs.unlinkSync(sessionPath);
+        removed++;
+      }
+    }
+  }
+
+  return removed;
+}
