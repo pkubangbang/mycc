@@ -30,6 +30,7 @@ let teammateRole = '';
 let ctx: AgentContext;
 let loader: Loader;
 let shutdownRequested = false;
+let triologuePath = '';
 
 /**
  * Create a triologue that persists messages to disk
@@ -41,12 +42,12 @@ function createPersistentTriologue(name: string): Triologue {
   }
 
   const timestamp = Math.floor(Date.now() / 1000);
-  const triologuePath = path.join(transcriptDir, `${name}-${timestamp}-triologue.jsonl`);
+  triologuePath = path.join(transcriptDir, `${name}-${timestamp}-triologue.jsonl`);
 
   // Clear existing file on start
   fs.writeFileSync(triologuePath, '', 'utf-8');
 
-  return new Triologue({
+  const triologue = new Triologue({
     tokenThreshold: TOKEN_THRESHOLD,
     onMessage: (messages: Message[]) => {
       // Append last message to file
@@ -58,6 +59,8 @@ function createPersistentTriologue(name: string): Triologue {
       }
     },
   });
+
+  return triologue;
 }
 
 // === Main Teammate Loop ===
@@ -66,13 +69,14 @@ async function teammateLoop(prompt: string): Promise<void> {
   triologue.user(prompt);
 
   const tools = loader.getToolsForScope('child');
-  sendStatus('working');
-
+  ipc.sendNotification('teammate_ready', { path: triologuePath, name: teammateName });
+  
   // Todo nudging state (counter-based, same as lead agent)
   let nextTodoNudge = 3;
   let lastTodoState = '';
-
+  
   while (!shutdownRequested) {
+    sendStatus('working');
     // 1. Collect mails from file-based mailbox (collated into single user message)
     const mails = ctx.mail.collectMails();
     if (mails.length > 0) {
@@ -164,7 +168,6 @@ async function enterIdleState(triologue: Triologue): Promise<'shutdown' | 'resum
 
     // 2. Check mailbox for new mail (file-based)
     if (ctx.mail.hasNewMails()) {
-      sendStatus('working');
       return 'resume';
     }
 
@@ -195,7 +198,6 @@ async function enterIdleState(triologue: Triologue): Promise<'shutdown' | 'resum
           ctx.core.brief('info', 'auto-claim', `Issue #${issue.id}: ${issue.title}`);
           // Identity is preserved in system prompt, no need to re-inject
           triologue.user(`<auto-claimed>Issue #${issue.id}: ${issue.title}\n${issue.content || ''}</auto-claimed>`);
-          sendStatus('working');
           return 'resume';
         }
       } catch (err) {

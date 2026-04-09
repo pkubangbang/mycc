@@ -17,6 +17,7 @@ import { getDb } from './db.js';
 import { MailBox } from './mail.js';
 import { IpcRegistry } from './child-context/ipc-registry.js';
 import type { CoreModule } from '../types.js';
+import { readSession, writeSession } from '../session/index.js';
 
 // ES module compatibility for __dirname
 const __filename = fileURLToPath(import.meta.url);
@@ -44,11 +45,11 @@ type IpcMessage = {
  * Team module implementation using SQLite + child processes
  */
 export class TeamManager implements TeamModule {
-  private core: CoreModule;
   private context: AgentContext;
   private processes: Map<string, ChildProcess> = new Map();
   private statuses: Map<string, TeammateStatus> = new Map();
   private ipcRegistry: IpcRegistry;
+  private sessionFilePath: string;
   private pendingQuestions: Array<{
     sender: string;
     reqId: number;
@@ -59,9 +60,9 @@ export class TeamManager implements TeamModule {
   private phase1Subscribers: Map<string, Set<() => void>> = new Map(); // waiting for working
   private phase2Subscribers: Map<string, Set<() => void>> = new Map(); // waiting for idle/shutdown
 
-  constructor(core: CoreModule, context: AgentContext) {
-    this.core = core;
+  constructor(context: AgentContext, sessionFilePath: string) {
     this.context = context;
+    this.sessionFilePath = sessionFilePath;
     this.ipcRegistry = new IpcRegistry();
     this.ipcRegistry.setContext(context);
   }
@@ -101,7 +102,7 @@ export class TeamManager implements TeamModule {
     // Spawn child process
     const workerPath = path.join(__dirname, 'teammate-worker.js');
     const child = fork(workerPath, [], {
-      cwd: this.core.getWorkDir(),
+      cwd: this.context.core.getWorkDir(),
       // Pipe stdout/stderr but don't log them - child uses IPC for structured logging
       silent: true,
     });
@@ -120,12 +121,12 @@ export class TeamManager implements TeamModule {
       this.statuses.set(name, 'shutdown');
       this.updateDbStatus(name, 'shutdown');
       this.processes.delete(name);
-      this.core.brief('info', name, `Process exited (code ${code})`);
+      this.context.core.brief('info', name, `Process exited (code ${code})`);
     });
 
     // Handle errors
     child.on('error', (err) => {
-      this.core.brief('error', name, `Process error: ${err.message}`);
+      this.context.core.brief('error', name, `Process error: ${err.message}`);
       this.statuses.set(name, 'shutdown');
       this.updateDbStatus(name, 'shutdown');
       this.processes.delete(name);
@@ -179,15 +180,44 @@ export class TeamManager implements TeamModule {
       return;
     }
 
+    if (msg.type === 'teammate_ready') {
+      const teammateName = msg.name as string;
+      const triologuePath = msg.path as string;
+      if (sender !== teammateName) {
+        this.context.core.brief('error', 'session', `teammate ${teammateName} ready but the actual sender is ${sender}`);
+        return;
+      }
+
+      const session = readSession(this.sessionFilePath);
+      if (!session) {
+        this.context.core.brief('error', 'session', `session file ${triologuePath} cannot be read!`);
+        return;
+      }
+
+      if (!session.teammates.includes(teammateName)) {
+        session.teammates.push(teammateName);
+      }
+      
+      if (!session.child_triologues.includes(triologuePath)) {
+        session.child_triologues.push(triologuePath);
+      }
+      
+      try {
+        writeSession(this.sessionFilePath, session);
+      } catch (e) {
+        this.context.core.brief('error', 'session', `Cannot write session file ${triologuePath}!`);
+      }
+    }
+
     if (msg.type === 'log') {
       const message = msg.message as string;
-      this.core.brief('info', sender, message);
+      this.context.core.brief('info', sender, message);
       return;
     }
 
     if (msg.type === 'error') {
       const error = msg.error as string;
-      this.core.brief('error', sender, error);
+      this.context.core.brief('error', sender, error);
       return;
     }
 
@@ -503,7 +533,7 @@ Answer: ${response}
         );
       } catch (err) {
         this.sendResponse(q.sender, q.reqId, 'question_result', false, undefined, (err as Error).message);
-        this.core.brief('warn', 'question', `${q.sender}'s question was rejected`);
+        this.context.core.brief('warn', 'question', `${q.sender}'s question was rejected`);
       }
     }
   }

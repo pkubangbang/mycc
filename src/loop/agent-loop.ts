@@ -169,27 +169,19 @@ export async function main(): Promise<void> {
   // Clear session data for clean startup
   clearSessionData();
 
-  // Create a new session file for this run
-  const sessionFile = createSessionFile();
-  console.log(chalk.gray(`Session: ${path.basename(sessionFile)}`));
-
-  // Create loader first
-  const loader = new Loader();
-  await loader.loadAll();
-  loader.watchDirectories();
-
-  // Create context with loader
-  const ctx = new ParentContext(loader);
-  ctx.initializeIpcHandlers();
-
   // Triologue for message management (persisted to disk)
   const transcriptDir = path.join(getMyccDir(), 'transcripts');
   if (!fs.existsSync(transcriptDir)) {
     fs.mkdirSync(transcriptDir, { recursive: true });
   }
+
   const timestamp = Math.floor(Date.now() / 1000);
   const triologuePath = path.join(transcriptDir, `lead-${timestamp}-triologue.jsonl`);
   fs.writeFileSync(triologuePath, '', 'utf-8');
+
+  // Create a new session file for this run
+  const sessionFilePath = createSessionFile(triologuePath);
+  console.log(chalk.gray(`Session: ${path.basename(sessionFilePath)}`));
 
   const triologue = new Triologue({
     tokenThreshold: TOKEN_THRESHOLD,
@@ -202,6 +194,15 @@ export async function main(): Promise<void> {
       }
     },
   });
+
+  // Create loader
+  const loader = new Loader();
+  await loader.loadAll();
+  loader.watchDirectories();
+
+  // Create context with loader
+  const ctx = new ParentContext(loader, sessionFilePath);
+  ctx.initializeIpcHandlers();
 
   // Initialize AgentIO for main process
   agentIO.initMain();
