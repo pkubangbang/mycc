@@ -226,10 +226,6 @@ export interface CoreModule {
    */
   question(query: string, asker: string): Promise<string>;
   /**
-   * Set the question function (called by main after readline setup)
-   */
-  setQuestionFn(fn: (query: string) => Promise<string>): void;
-  /**
    * Search the web for information
    * @param query - The search query
    */
@@ -366,9 +362,6 @@ export interface TeamModule {
   dismissTeam(force?: boolean): void;
   mailTo(name: string, title: string, content: string, from?: string): void;
   broadcast(title: string, content: string): void;
-  // IPC Handler registration
-  registerHandler(registration: IpcHandlerRegistration): void;
-  unregisterHandler(messageType: string): void;
   // Pending questions from children
   handlePendingQuestions(): Promise<void>;
 }

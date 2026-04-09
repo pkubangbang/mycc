@@ -2,14 +2,14 @@
  * context/index.ts - AgentContext class and module exports
  */
 
-import type { AgentContext } from '../types.js';
+import type { AgentContext, IpcHandlerRegistration } from '../types.js';
 import { Core } from './core.js';
 import { Todo } from './todo.js';
 import { MailBox } from './mail.js';
-import { IssueManager, createIssueIpcHandlers } from './issue.js';
+import { IssueManager } from './issue.js';
 import { BackgroundTasks } from './bg.js';
-import { WorktreeManager, createWtIpcHandlers } from './wt.js';
-import { TeamManager, createTeamIpcHandlers } from './team.js';
+import { WorktreeManager } from './wt.js';
+import { TeamManager } from './team.js';
 import { Loader } from './loader.js';
 import type { CoreModule, TodoModule, MailModule, SkillModule, IssueModule, BgModule, WtModule, TeamModule } from '../types.js';
 
@@ -46,7 +46,8 @@ export class ParentContext implements AgentContext {
     this.issueModule = new IssueManager();
     this.bgModule = new BackgroundTasks(this.coreModule);
     this.wtModule = new WorktreeManager(this.coreModule);
-    this.teamModule = new TeamManager(this.coreModule);
+    // Pass 'this' to TeamManager - context is used lazily so this is safe
+    this.teamModule = new TeamManager(this.coreModule, this as AgentContext);
   }
 
   // Getters for each module
@@ -64,22 +65,147 @@ export class ParentContext implements AgentContext {
    * Must be called after context is created
    */
   initializeIpcHandlers(): void {
-    // Initialize TeamManager with context for IPC handling
-    this.teamModule.initializeContext(this);
+    // Register all IPC handlers
+    const handlers: IpcHandlerRegistration[] = [
+      // Issue handlers
+      {
+        messageType: 'db_issue_get',
+        module: 'issue',
+        handler: async (_sender, payload, ctx, sendResponse) => {
+          const { id } = payload as { id: number };
+          const issue = await ctx.issue.getIssue(id);
+          sendResponse('db_result', true, issue);
+        },
+      },
+      {
+        messageType: 'db_issue_list',
+        module: 'issue',
+        handler: async (_sender, _payload, ctx, sendResponse) => {
+          const issues = await ctx.issue.listIssues();
+          sendResponse('db_result', true, issues);
+        },
+      },
+      {
+        messageType: 'db_issue_create',
+        module: 'issue',
+        handler: async (_sender, payload, ctx, sendResponse) => {
+          const { title, content, blockedBy = [] } = payload as {
+            title: string;
+            content: string;
+            blockedBy?: number[];
+          };
+          const id = await ctx.issue.createIssue(title, content, blockedBy);
+          sendResponse('db_result', true, { id });
+        },
+      },
+      {
+        messageType: 'db_issue_claim',
+        module: 'issue',
+        handler: async (_sender, payload, ctx, sendResponse) => {
+          const { id, owner } = payload as { id: number; owner: string };
+          const claimed = await ctx.issue.claimIssue(id, owner);
+          sendResponse('db_result', true, { claimed });
+        },
+      },
+      {
+        messageType: 'db_issue_close',
+        module: 'issue',
+        handler: async (_sender, payload, ctx, sendResponse) => {
+          const { id, status, comment, poster } = payload as {
+            id: number;
+            status: 'completed' | 'failed' | 'abandoned';
+            comment?: string;
+            poster?: string;
+          };
+          await ctx.issue.closeIssue(id, status, comment, poster);
+          sendResponse('db_result', true);
+        },
+      },
+      {
+        messageType: 'db_issue_comment',
+        module: 'issue',
+        handler: async (_sender, payload, ctx, sendResponse) => {
+          const { id, comment, poster } = payload as { id: number; comment: string; poster?: string };
+          await ctx.issue.addComment(id, comment, poster);
+          sendResponse('db_result', true);
+        },
+      },
+      {
+        messageType: 'db_block_add',
+        module: 'issue',
+        handler: async (_sender, payload, ctx, sendResponse) => {
+          const { blocker, blocked } = payload as { blocker: number; blocked: number };
+          await ctx.issue.createBlockage(blocker, blocked);
+          sendResponse('db_result', true);
+        },
+      },
+      {
+        messageType: 'db_block_remove',
+        module: 'issue',
+        handler: async (_sender, payload, ctx, sendResponse) => {
+          const { blocker, blocked } = payload as { blocker: number; blocked: number };
+          await ctx.issue.removeBlockage(blocker, blocked);
+          sendResponse('db_result', true);
+        },
+      },
+      // Worktree handlers
+      {
+        messageType: 'wt_create',
+        module: 'wt',
+        handler: async (_sender, payload, ctx, sendResponse) => {
+          const { name, branch } = payload as { name: string; branch: string };
+          const result = await ctx.wt.createWorkTree(name, branch);
+          const match = result.match(/at (.+) on branch/);
+          const wtPath = match ? match[1] : '';
+          sendResponse('wt_result', true, { path: wtPath });
+        },
+      },
+      {
+        messageType: 'wt_print',
+        module: 'wt',
+        handler: async (_sender, _payload, ctx, sendResponse) => {
+          const output = await ctx.wt.printWorkTrees();
+          sendResponse('wt_result', true, output);
+        },
+      },
+      {
+        messageType: 'wt_get_path',
+        module: 'wt',
+        handler: async (_sender, payload, ctx, sendResponse) => {
+          const { name } = payload as { name: string };
+          try {
+            const path = await ctx.wt.getWorkTreePath(name);
+            sendResponse('wt_result', true, { path });
+          } catch (err) {
+            sendResponse('wt_result', false, undefined, (err as Error).message);
+          }
+        },
+      },
+      {
+        messageType: 'wt_remove',
+        module: 'wt',
+        handler: async (_sender, payload, ctx, sendResponse) => {
+          const { name } = payload as { name: string };
+          await ctx.wt.removeWorkTree(name);
+          sendResponse('wt_result', true);
+        },
+      },
+      // Team handlers
+      {
+        messageType: 'team_print',
+        module: 'team',
+        handler: async (_sender, _payload, ctx, sendResponse) => {
+          try {
+            const result = ctx.team.printTeam();
+            sendResponse('team_result', true, { message: result });
+          } catch (err) {
+            sendResponse('team_result', false, undefined, (err as Error).message);
+          }
+        },
+      },
+    ];
 
-    // Register IPC handlers for modules that need them
-    const issueHandlers = createIssueIpcHandlers();
-    for (const handler of issueHandlers) {
-      this.teamModule.registerHandler(handler);
-    }
-
-    const wtHandlers = createWtIpcHandlers();
-    for (const handler of wtHandlers) {
-      this.teamModule.registerHandler(handler);
-    }
-
-    const teamHandlers = createTeamIpcHandlers();
-    for (const handler of teamHandlers) {
+    for (const handler of handlers) {
       this.teamModule.registerHandler(handler);
     }
   }

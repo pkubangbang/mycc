@@ -206,9 +206,6 @@ export async function main(): Promise<void> {
   // Initialize AgentIO for main process
   agentIO.initMain();
 
-  // Inject question function into Core for child process IPC
-  ctx.core.setQuestionFn((query: string) => agentIO.question(query));
-
   // Handle graceful shutdown
   process.on('SIGINT', () => {
     if (agentIO.abort()) {
@@ -228,7 +225,7 @@ export async function main(): Promise<void> {
   // Main REPL loop
   while (!agentIO.isShuttingDown()) {
     try {
-      const query = await agentIO.question(chalk.cyan('agent >> '));
+      const query = await agentIO.ask(chalk.cyan('agent >> '));
 
       if (['q', 'exit', 'quit', ''].includes(query.trim().toLowerCase())) {
         break;

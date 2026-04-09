@@ -99,7 +99,6 @@ class ChildCore implements CoreModule {
   setWorkDir(dir: string): void;     // 本地存储
   brief(level, tool, message): void; // 通过 IPC 发送到主进程
   question(query): Promise<string>;  // 通过 IPC 发送到主进程
-  setQuestionFn(): void;             // 无操作（子进程不直接问用户）
 }
 ```
 

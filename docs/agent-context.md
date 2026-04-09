@@ -4,6 +4,74 @@
 - 所谓**coding agent的tools**，是指某些大模型可以可靠地调用工具：用户提供工具的说明书，包括工具名称、描述、参数格式，大模型在需要时可以返回结构化数据，该数据可以由程序自动解析并遵照执行。
 - 所谓**coding agent的状态数据**，是指它在工作时需要维护工作状态，比如todoList（待办事项），skills（技能列表），mailbox（信箱）等等。它们以结构化的方式存储，有效地缓解了大模型的记忆漂移的缺点。
 
+# 架构设计
+
+AgentContext 采用类继承的方式实现，分为两种上下文：
+
+## ParentContext（主进程）
+
+用于主进程（lead agent），直接访问所有模块：
+
+```typescript
+import { ParentContext } from './context/index.js';
+import { Loader } from './context/loader.js';
+
+// 创建上下文
+const loader = new Loader();
+await loader.loadAll();
+loader.watchDirectories();
+
+const ctx = new ParentContext(loader);
+ctx.initializeIpcHandlers(); // 注册 IPC 处理器
+
+// 使用模块
+ctx.core.brief('info', 'test', 'Hello');
+await ctx.issue.createIssue('Title', 'Content');
+```
+
+## ChildContext（子进程）
+
+用于子进程（teammate），通过 IPC 与主进程通信：
+
+```typescript
+import { ChildContext } from './context/child-context/index.js';
+
+// 创建上下文
+const ctx = new ChildContext(name, workDir);
+
+// 使用模块（IPC 转发）
+await ctx.issue.createIssue('Title', 'Content'); // 通过 IPC 发送到主进程
+```
+
+## 模块实现
+
+每个模块都有独立的类实现：
+
+| 模块 | 主进程类 | 子进程类 |
+|------|----------|----------|
+| core | `Core` | `ChildCore`（IPC转发） |
+| todo | `Todo` | `Todo`（本地） |
+| mail | `MailBox` | `MailBox`（独立邮箱） |
+| skill | `Loader` | `Loader`（静默模式） |
+| issue | `IssueManager` | `ChildIssue`（IPC转发） |
+| bg | `BackgroundTasks` | `BackgroundTasks`（本地） |
+| wt | `WorktreeManager` | `ChildWt`（IPC转发） |
+| team | `TeamManager` | `ChildTeam`（受限操作） |
+
+## IPC 处理器
+
+主进程通过 `ParentContext.initializeIpcHandlers()` 注册所有 IPC 处理器，处理来自子进程的请求：
+
+```typescript
+// 在 ParentContext 中注册 IPC 处理器
+ctx.initializeIpcHandlers();
+
+// 处理器包括：
+// - Issue 操作：db_issue_get, db_issue_list, db_issue_create, ...
+// - Worktree 操作：wt_create, wt_print, wt_get_path, wt_remove
+// - Team 操作：team_print
+```
+
 # AgentContext有哪些组成部分？
 
 core：核心工具
@@ -36,10 +104,7 @@ wt：git worktree，允许大模型在多个分支并行工作
 
 日志输出格式为 `[时间] [提问者:question] 问题内容`，这样用户可以清楚看到是哪个进程或队友在提问。
 
-### setQuestionFn：设置提问函数
-该函数调用时，会设置用于提问的底层函数。通常在main()中创建readline接口后调用，将prompt函数注入到Core模块中。
-
-调用该函数需要提供一个异步函数，该函数接收问题内容并返回用户回复。
+**主进程实现：** 直接调用 `agentIO.ask()` 获取用户输入。
 
 **IPC支持：** 子进程（teammate）可以通过IPC发送`question`消息来调用此功能。TeamManager会接收消息并调用`ctx.core.question(query, sender)`，其中sender是子进程名称，然后将用户回复返回给子进程。这允许多进程协作时，子进程也能向用户提问。
 
@@ -54,40 +119,6 @@ wt：git worktree，允许大模型在多个分支并行工作
 该函数调用时，会获取指定URL的网页内容并解析。
 
 调用该函数需要提供URL，返回网页标题和内容。
-
-### setTranscript：设置日志模块
-该函数调用时，会设置用于记录日志的底层模块。用于将日志持久化到文件。
-
-调用该函数需要提供TranscriptModule实例。
-
-## transcript
-
-日志模块用于持久化记录agent的工作过程，包括brief日志、问答记录、邮件往来等。
-
-### log：记录日志条目
-该函数调用时，会记录一条日志条目。
-
-调用该函数需要提供日志条目对象，包含时间戳、类型等信息。
-
-### logBrief：记录brief日志
-该函数调用时，会记录一条brief日志，包含级别、工具名称、消息内容。
-
-调用该函数需要提供级别、工具名称、消息内容。
-
-### logQuestion：记录提问
-该函数调用时，会记录一次用户提问。
-
-调用该函数需要提供提问者名称和问题内容。
-
-### logAnswer：记录回答
-该函数调用时，会记录一次用户回答。
-
-调用该函数需要提供提问者名称和回答内容。
-
-### logMailSend：记录邮件发送
-该函数调用时，会记录一次邮件发送。
-
-调用该函数需要提供发件人、收件人、标题、内容。
 
 
 

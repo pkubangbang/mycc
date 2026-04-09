@@ -112,7 +112,7 @@ export const bashTool: ToolDefinition = {
     if (interrupted) {
       // Only ask about popup terminal in main process
       if (agentIO.isMainProcess()) {
-        const response = await agentIO.question('Command interrupted. Retry in popup terminal? (y/n)');
+        const response = await agentIO.ask('Command interrupted. Retry in popup terminal? (y/n)');
         if (response.toLowerCase() === 'y') {
           return await runInPopupTerminal(ctx, command);
         }

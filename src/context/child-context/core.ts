@@ -82,8 +82,4 @@ export class ChildCore implements CoreModule {
       throw error;
     }
   }
-
-  setQuestionFn(): void {
-    // No-op in child - questions go via IPC
-  }
 }

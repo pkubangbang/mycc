@@ -53,7 +53,6 @@ const TOOL_COLORS: Record<string, (text: string) => string> = {
  */
 export class Core implements CoreModule {
   private workDir: string;
-  private questionFn: ((query: string) => Promise<string>) | null = null;
 
   constructor(workDir?: string) {
     this.workDir = workDir || process.cwd();
@@ -104,17 +103,9 @@ export class Core implements CoreModule {
   }
 
   /**
-   * Set the question function for interactive prompts
-   * Called by main() after readline interface is created
-   */
-  setQuestionFn(fn: (query: string) => Promise<string>): void {
-    this.questionFn = fn;
-  }
-
-  /**
    * Ask user a question and wait for response
-   * In main process: used to handle questions from child teammates
-   * In child process: routes to main via IPC (questionFn is set by child-context)
+   * In main process: uses agentIO.ask() directly
+   * In child process: routes to main via IPC (overridden in ChildCore)
    * @param query - The question to ask
    * @param asker - Name of who is asking (required)
    */
@@ -129,13 +120,8 @@ export class Core implements CoreModule {
       throw new Error('Agent is shutting down');
     }
 
-    // Must have questionFn set
-    if (!this.questionFn) {
-      throw new Error('Question function not initialized');
-    }
-
     this.brief('info', `question`, `${asker} has a question:`);
-    return await this.questionFn(query);
+    return await agentIO.ask(query);
   }
 
   /**

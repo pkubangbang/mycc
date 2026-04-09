@@ -9,7 +9,7 @@
  * - All other operations: FORBIDDEN
  */
 
-import type { TeamModule, IpcHandlerRegistration } from '../../types.js';
+import type { TeamModule } from '../../types.js';
 import { MailBox } from '../mail.js';
 import { ipc } from './ipc-helpers.js';
 
@@ -126,20 +126,6 @@ export class ChildTeam implements TeamModule {
         `Please decide if this should be broadcast.`,
       ].join('\n')
     );
-  }
-
-  /**
-   * Register IPC handler (no-op for child)
-   */
-  registerHandler(_registration: IpcHandlerRegistration): void {
-    // No-op in child - handlers managed by lead
-  }
-
-  /**
-   * Unregister IPC handler (no-op for child)
-   */
-  unregisterHandler(_messageType: string): void {
-    // No-op in child - handlers managed by lead
   }
 
   /**

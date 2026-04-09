@@ -45,10 +45,10 @@ type IpcMessage = {
  */
 export class TeamManager implements TeamModule {
   private core: CoreModule;
+  private context: AgentContext;
   private processes: Map<string, ChildProcess> = new Map();
   private statuses: Map<string, TeammateStatus> = new Map();
   private ipcRegistry: IpcRegistry;
-  private context: AgentContext | null = null;
   private pendingQuestions: Array<{
     sender: string;
     reqId: number;
@@ -59,18 +59,11 @@ export class TeamManager implements TeamModule {
   private phase1Subscribers: Map<string, Set<() => void>> = new Map(); // waiting for working
   private phase2Subscribers: Map<string, Set<() => void>> = new Map(); // waiting for idle/shutdown
 
-  constructor(core: CoreModule) {
+  constructor(core: CoreModule, context: AgentContext) {
     this.core = core;
+    this.context = context;
     this.ipcRegistry = new IpcRegistry();
-  }
-
-  /**
-   * Initialize the IPC registry with AgentContext
-   * Called after all modules are created
-   */
-  initializeContext(ctx: AgentContext): void {
-    this.context = ctx;
-    this.ipcRegistry.setContext(ctx);
+    this.ipcRegistry.setContext(context);
   }
 
   /**
@@ -496,10 +489,10 @@ export class TeamManager implements TeamModule {
     while (this.pendingQuestions.length > 0) {
       const q = this.pendingQuestions.shift()!;
       try {
-        const response = await this.context!.core.question(q.query, q.sender);
+        const response = await this.context.core.question(q.query, q.sender);
         this.sendResponse(q.sender, q.reqId, 'question_result', true, { response });
         // Add Q&A to lead's mailbox as system reminder (FYI, no action needed)
-        this.context!.mail.appendMail(
+        this.context.mail.appendMail(
           'lead',
           `Q&A from ${q.sender}`,
           `<system-reminder>
@@ -514,25 +507,4 @@ Answer: ${response}
       }
     }
   }
-}
-
-/**
- * Create IPC handlers for Team module
- * These handle team requests from child processes
- */
-export function createTeamIpcHandlers(): IpcHandlerRegistration[] {
-  return [
-    {
-      messageType: 'team_print',
-      module: 'team',
-      handler: async (_sender, _payload, ctx, sendResponse) => {
-        try {
-          const result = ctx.team.printTeam();
-          sendResponse('team_result', true, { message: result });
-        } catch (err) {
-          sendResponse('team_result', false, undefined, (err as Error).message);
-        }
-      },
-    },
-  ];
 }

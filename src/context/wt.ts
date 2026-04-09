@@ -5,7 +5,7 @@
 import { execSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
-import type { WtModule, IpcHandlerRegistration } from '../types.js';
+import type { WtModule } from '../types.js';
 import { getDb } from './db.js';
 import type { CoreModule } from '../types.js';
 
@@ -164,55 +164,4 @@ export class WorktreeManager implements WtModule {
     // Remove from database
     db.prepare(`DELETE FROM worktrees WHERE name = ?`).run(name);
   }
-}
-
-/**
- * Create IPC handlers for Worktree module
- * These handle wt requests from child processes
- */
-export function createWtIpcHandlers(): IpcHandlerRegistration[] {
-  return [
-    {
-      messageType: 'wt_create',
-      module: 'wt',
-      handler: async (_sender, payload, ctx, sendResponse) => {
-        const { name, branch } = payload as { name: string; branch: string };
-        const result = await ctx.wt.createWorkTree(name, branch);
-        // Parse path from result string
-        const match = result.match(/at (.+) on branch/);
-        const wtPath = match ? match[1] : '';
-        sendResponse('wt_result', true, { path: wtPath });
-      },
-    },
-    {
-      messageType: 'wt_print',
-      module: 'wt',
-      handler: async (_sender, _payload, ctx, sendResponse) => {
-        const output = await ctx.wt.printWorkTrees();
-        sendResponse('wt_result', true, output);
-      },
-    },
-    {
-      messageType: 'wt_get_path',
-      module: 'wt',
-      handler: async (_sender, payload, ctx, sendResponse) => {
-        const { name } = payload as { name: string };
-        try {
-          const path = await ctx.wt.getWorkTreePath(name);
-          sendResponse('wt_result', true, { path });
-        } catch (err) {
-          sendResponse('wt_result', false, undefined, (err as Error).message);
-        }
-      },
-    },
-    {
-      messageType: 'wt_remove',
-      module: 'wt',
-      handler: async (_sender, payload, ctx, sendResponse) => {
-        const { name } = payload as { name: string };
-        await ctx.wt.removeWorkTree(name);
-        sendResponse('wt_result', true);
-      },
-    },
-  ];
 }

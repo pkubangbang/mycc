@@ -73,7 +73,7 @@ class AgentIO {
    * Ask user a question via readline
    * Only available in main process
    */
-  async question(query: string): Promise<string> {
+  async ask(query: string): Promise<string> {
     if (!this._isMainProcess) {
       throw new Error('question() only available in main process');
     }
