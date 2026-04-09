@@ -5,12 +5,13 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import chalk from 'chalk';
-import { retryChat, MODEL, isTransientError } from '../ollama.js';
+import { retryChat, MODEL, OLLAMA_HOST, isTransientError } from '../ollama.js';
 import type { AgentContext, ToolScope, ToolCall } from '../types.js';
 import { ParentContext } from '../context/index.js';
 import { Loader } from '../context/loader.js';
 import { clearSessionData, getMyccDir } from '../context/db.js';
-import { createSessionFile } from '../session/index.js';
+import { createSessionFile, readSession, writeSession, saveToUserDir, getSessionId, listSessions, loadSessionById } from '../session/index.js';
+import { prepareRestoration, readDosq, extractFirstQuery } from '../session/restoration.js';
 import { TOKEN_THRESHOLD, buildSystemPrompt } from './agent-prompts.js';
 import { Triologue } from './triologue.js';
 import { agentIO } from './agent-io.js';
@@ -163,7 +164,7 @@ export async function agentLoop(
  */
 export async function main(): Promise<void> {
   console.log(chalk.cyan('Coding Agent v1.0'));
-  console.log(`Model: ${MODEL}`);
+  console.log(chalk.cyan(`Model: ${MODEL} (${OLLAMA_HOST})`));
   console.log('Commands: /team, /issues, /todos, /skills, /exit\n');
 
   // Clear session data for clean startup
@@ -182,6 +183,9 @@ export async function main(): Promise<void> {
   // Create a new session file for this run
   const sessionFilePath = createSessionFile(triologuePath);
   console.log(chalk.gray(`Session: ${path.basename(sessionFilePath)}`));
+
+  // Track first query for bookmark title
+  let firstQueryCaptured = false;
 
   const triologue = new Triologue({
     tokenThreshold: TOKEN_THRESHOLD,
@@ -221,7 +225,7 @@ export async function main(): Promise<void> {
   });
 
   // Available slash commands
-  const slashCommands = ['/team', '/issues', '/todos', '/skills', '/exit'];
+  const slashCommands = ['/team', '/issues', '/todos', '/skills', '/save', '/load', '/exit'];
 
   // Main REPL loop
   while (!agentIO.isShuttingDown()) {
@@ -268,6 +272,103 @@ export async function main(): Promise<void> {
           continue;
         }
 
+        if (trimmedQuery === '/save') {
+          try {
+            const destPath = saveToUserDir(sessionFilePath);
+            const sessionId = getSessionId(destPath);
+            console.log(chalk.green(`Session saved to ~/.mycc/sessions`));
+            console.log(chalk.gray(`Use /load ${sessionId} to restore this session.`));
+          } catch (err) {
+            console.log(chalk.red(`Failed to save session: ${(err as Error).message}`));
+          }
+          continue;
+        }
+
+        if (trimmedQuery.startsWith('/load')) {
+          const isEmpty = !triologue.getMessagesRaw().length;
+
+          if (!isEmpty) {
+            console.log(chalk.yellow('Cannot load session: current session already has content.'));
+            console.log(chalk.gray('Start a new agent session to load a saved session.'));
+            continue;
+          }
+
+          const parts = trimmedQuery.split(/\s+/);
+          if (parts.length === 1) {
+            // List available sessions
+            const sessions = listSessions();
+            if (sessions.length === 0) {
+              console.log(chalk.yellow('No saved sessions found.'));
+            } else {
+              console.log(chalk.cyan('Available sessions:'));
+              for (const s of sessions) {
+                console.log(`  [${s.id.slice(0, 7)}] ${s.create_time}`);
+                console.log(`    workdir: ${s.project_dir}`);
+                console.log(`    teammates: ${s.teammates.join(', ') || 'none'}`);
+                console.log(`    first words: ${s.first_query || '(none)'}`);
+              }
+            }
+            continue;
+          }
+
+          // Load specific session
+          const sessionId = parts[1];
+          try {
+            const session = loadSessionById(sessionId);
+            if (!session) {
+              console.log(chalk.red(`Session not found: ${sessionId}`));
+              continue;
+            }
+
+            console.log(chalk.cyan(`Loading session ${sessionId}...`));
+
+            // Prepare restoration
+            const { pairs, dosqPath } = await prepareRestoration(session);
+
+            console.log(chalk.cyan('Session restored. DOSQ generated at:'));
+            console.log(chalk.gray(`  ${dosqPath}`));
+            console.log(chalk.yellow('Edit the DOSQ file if needed, then press Enter to continue...'));
+
+            // Wait for user to edit DOSQ
+            await agentIO.ask(chalk.cyan('Press Enter when ready to continue > '));
+
+            // Read DOSQ content
+            const dosqContent = readDosq(dosqPath);
+            const firstQuery = extractFirstQuery(dosqContent);
+
+            console.log(chalk.gray('Starting restored session...\n'));
+
+            // Load triologue with summary pairs (does not trigger onMessage)
+            triologue.loadRestoration(pairs);
+
+            // Then add DOSQ content as the next query
+            triologue.user(firstQuery);
+            triologue.resetHint();
+
+            // Update session file with first query and teammates from loaded session
+            const updatedSession = readSession(sessionFilePath);
+            if (updatedSession) {
+              updatedSession.first_query = firstQuery.slice(0, 100);
+              updatedSession.teammates = session.teammates;
+              writeSession(sessionFilePath, updatedSession);
+              firstQueryCaptured = true;
+            }
+
+            // Run agent loop
+            await agentLoop(triologue, ctx, loader);
+
+            // Print final response
+            const lastMsg = triologue.getMessagesRaw().at(-1);
+            if (lastMsg?.content) {
+              console.log(lastMsg.content);
+            }
+            console.log();
+          } catch (err) {
+            console.log(chalk.red(`Failed to load session: ${(err as Error).message}`));
+          }
+          continue;
+        }
+
         // Unknown slash command - show available commands
         console.log(chalk.yellow(`Unknown command: ${trimmedQuery}`));
         console.log(chalk.gray(`Available commands: ${slashCommands.join(', ')}`));
@@ -277,6 +378,16 @@ export async function main(): Promise<void> {
       // Add user message (reset hint flag for new query)
       triologue.user(query);
       triologue.resetHint();
+
+      // Capture first query as bookmark title
+      if (!firstQueryCaptured) {
+        const session = readSession(sessionFilePath);
+        if (session && !session.first_query) {
+          session.first_query = query.slice(0, 100);
+          writeSession(sessionFilePath, session);
+          firstQueryCaptured = true;
+        }
+      }
 
       // Run agent loop
       await agentLoop(triologue, ctx, loader);

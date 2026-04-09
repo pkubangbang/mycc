@@ -105,3 +105,12 @@ shouldn't add logic specific to main process there. Instead, create a sessionUti
 | onTeammateReady  | IPC call  | update teammate's triologue paths |
 | /save            | slash-cmd | copy project session to user session |
 | /load xxx        | slash-cmd | prepare the transcripts, feed into triologue |
+
+
+## Appendix: summarizeTriologue algorithm
+1. Given a list of messages, and a TOKEN_THRESHOLD as the input.
+2. Prepare an empty list called buffer.
+3. Load the buffer with messages until meet the THRESHOLD
+4. Use llm to summarize the buffer into a pair; then empty the buffer.
+5. Push the pair into the buffer, then repeat #3 until all messages are processed.
+6. Summarize the buffer again and take the result as the output.

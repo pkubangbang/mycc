@@ -280,9 +280,9 @@ export function validateSession(session: Session): { valid: boolean; missingFile
   }
 
   // Check child triologues
-  for (const [name, triologuePath] of Object.entries(session.child_triologues)) {
+  for (const triologuePath of session.child_triologues) {
     if (!fs.existsSync(triologuePath)) {
-      missingFiles.push(`${name}: ${triologuePath}`);
+      missingFiles.push(triologuePath);
     }
   }
 

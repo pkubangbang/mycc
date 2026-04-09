@@ -6,8 +6,6 @@
 
 import { Ollama } from 'ollama';
 import type { ChatRequest, ChatResponse } from 'ollama';
-import 'dotenv/config';
-
 // Configuration
 export const OLLAMA_HOST = process.env.OLLAMA_HOST || 'http://127.0.0.1:11434';
 export const OLLAMA_API_KEY = process.env.OLLAMA_API_KEY;

@@ -101,10 +101,13 @@ export class ConfusionCalculator {
     const baseContrib = this.getBaseContrib(toolName, args);
     this.score += baseContrib;
 
-    // Repetition penalty
-    if (this.recentToolCalls.slice(-5).includes(toolName)) {
+    const isExplorationTool = ConfusionCalculator.EXPLORATION_TOOLS.has(toolName);
+
+    // Repetition penalty - exploration does not count
+    if (!isExplorationTool && this.recentToolCalls.slice(-5).includes(toolName)) {
       this.score += 1;
     }
+
     this.recentToolCalls.push(toolName);
   }
 

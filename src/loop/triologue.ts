@@ -351,6 +351,23 @@ Be specific and actionable. This analysis will help guide the next steps.`;
     return this.messages[this.messages.length - 1].role as Role;
   }
 
+  /**
+   * Load restoration pairs into the triologue without triggering onMessage callback.
+   * Used during session restoration to preload summary context.
+   * @param pairs - Array of [user_message, assistant_message] tuples
+   */
+  loadRestoration(pairs: [Message, Message][]): void {
+    for (const [userMsg, assistantMsg] of pairs) {
+      this.messages.push(userMsg);
+      this.updateTokenCount(userMsg);
+      this.messages.push(assistantMsg);
+      this.updateTokenCount(assistantMsg);
+    }
+    // Reset hint flag since we're starting fresh with restored context
+    this.hintGenerated = false;
+    this.confusion.reset();
+  }
+
   // === Internal Methods ===
 
   /**
