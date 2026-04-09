@@ -352,17 +352,15 @@ Be specific and actionable. This analysis will help guide the next steps.`;
   }
 
   /**
-   * Load restoration pairs into the triologue without triggering onMessage callback.
+   * Load a single restoration pair into the triologue without triggering onMessage callback.
    * Used during session restoration to preload summary context.
-   * @param pairs - Array of [user_message, assistant_message] tuples
+   * @param pair - A [user_message, assistant_message] tuple
    */
-  loadRestoration(pairs: [Message, Message][]): void {
-    for (const [userMsg, assistantMsg] of pairs) {
-      this.messages.push(userMsg);
-      this.updateTokenCount(userMsg);
-      this.messages.push(assistantMsg);
-      this.updateTokenCount(assistantMsg);
-    }
+  loadRestoration(pair: [Message, Message]): void {
+    this.messages.push(pair[0]);
+    this.updateTokenCount(pair[0]);
+    this.messages.push(pair[1]);
+    this.updateTokenCount(pair[1]);
     // Reset hint flag since we're starting fresh with restored context
     this.hintGenerated = false;
     this.confusion.reset();

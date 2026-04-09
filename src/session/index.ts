@@ -79,6 +79,11 @@ export function readSession(filePath: string): Session | null {
     }
     const content = fs.readFileSync(filePath, 'utf-8');
     const session = JSON.parse(content) as SessionFile;
+    // Validate required fields
+    if (!session.id || !session.create_time) {
+      console.warn(`Session file missing required fields: ${filePath}`);
+      return null;
+    }
     return session;
   } catch {
     return null;

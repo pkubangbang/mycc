@@ -230,22 +230,19 @@ export async function main(): Promise<void> {
   // Main REPL loop
   while (!agentIO.isShuttingDown()) {
     try {
-      const query = await agentIO.ask(chalk.cyan('agent >> '));
-
+      let query = await agentIO.ask(chalk.bgYellow.black('agent >> '));
+      // handle exit
       if (['q', 'exit', 'quit', ''].includes(query.trim().toLowerCase())) {
         break;
       }
 
-      const trimmedQuery = query.trim();
-
       // Handle slash commands
+      const trimmedQuery = query.trim();
       if (trimmedQuery.startsWith('/')) {
         if (trimmedQuery === '/team') {
           console.log(ctx.team.printTeam());
           continue;
-        }
-
-        if (trimmedQuery.startsWith('/issues')) {
+        } else if (trimmedQuery.startsWith('/issues')) {
           const parts = trimmedQuery.split(/\s+/);
           if (parts.length > 1) {
             // Show specific issue details
@@ -260,19 +257,13 @@ export async function main(): Promise<void> {
             console.log(await ctx.issue.printIssues());
           }
           continue;
-        }
-
-        if (trimmedQuery === '/todos') {
+        } else if (trimmedQuery === '/todos') {
           console.log(ctx.todo.printTodoList());
           continue;
-        }
-
-        if (trimmedQuery === '/skills') {
+        } else if (trimmedQuery === '/skills') {
           console.log(ctx.skill.printSkills());
           continue;
-        }
-
-        if (trimmedQuery === '/save') {
+        } else if (trimmedQuery === '/save') {
           try {
             const destPath = saveToUserDir(sessionFilePath);
             const sessionId = getSessionId(destPath);
@@ -282,9 +273,7 @@ export async function main(): Promise<void> {
             console.log(chalk.red(`Failed to save session: ${(err as Error).message}`));
           }
           continue;
-        }
-
-        if (trimmedQuery.startsWith('/load')) {
+        } else if (trimmedQuery.startsWith('/load')) {
           const isEmpty = !triologue.getMessagesRaw().length;
 
           if (!isEmpty) {
@@ -323,7 +312,7 @@ export async function main(): Promise<void> {
             console.log(chalk.cyan(`Loading session ${sessionId}...`));
 
             // Prepare restoration
-            const { pairs, dosqPath } = await prepareRestoration(session);
+            const { pair, dosqPath } = await prepareRestoration(session);
 
             console.log(chalk.cyan('Session restored. DOSQ generated at:'));
             console.log(chalk.gray(`  ${dosqPath}`));
@@ -339,40 +328,21 @@ export async function main(): Promise<void> {
             console.log(chalk.gray('Starting restored session...\n'));
 
             // Load triologue with summary pairs (does not trigger onMessage)
-            triologue.loadRestoration(pairs);
+            triologue.loadRestoration(pair);
 
-            // Then add DOSQ content as the next query
-            triologue.user(firstQuery);
-            triologue.resetHint();
-
-            // Update session file with first query and teammates from loaded session
-            const updatedSession = readSession(sessionFilePath);
-            if (updatedSession) {
-              updatedSession.first_query = firstQuery.slice(0, 100);
-              updatedSession.teammates = session.teammates;
-              writeSession(sessionFilePath, updatedSession);
-              firstQueryCaptured = true;
-            }
-
-            // Run agent loop
-            await agentLoop(triologue, ctx, loader);
-
-            // Print final response
-            const lastMsg = triologue.getMessagesRaw().at(-1);
-            if (lastMsg?.content) {
-              console.log(lastMsg.content);
-            }
-            console.log();
+            // Then treat DOSQ content as the first query
+            query = firstQuery;
           } catch (err) {
             console.log(chalk.red(`Failed to load session: ${(err as Error).message}`));
           }
           continue;
+        } else {
+          // Unknown slash command - show available commands
+          console.log(chalk.yellow(`Unknown command: ${trimmedQuery}`));
+          console.log(chalk.gray(`Available commands: ${slashCommands.join(', ')}`));
+          continue;
         }
 
-        // Unknown slash command - show available commands
-        console.log(chalk.yellow(`Unknown command: ${trimmedQuery}`));
-        console.log(chalk.gray(`Available commands: ${slashCommands.join(', ')}`));
-        continue;
       }
 
       // Add user message (reset hint flag for new query)

@@ -1,0 +1,5 @@
+- [ ] Make the ollama api call more error-proof.
+- [ ] Refine the log output
+- [ ] Detect missing env and show an instuction to the user to add it.
+- [ ] Add a `-v` flag on start to generate a detailed log for troubleshooting.
+- [ ] Support multi-line editing and pasting
