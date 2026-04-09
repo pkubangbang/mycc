@@ -92,7 +92,9 @@ export const bashTool: ToolDefinition = {
     const { result, interrupted } = await agentIO.exec((signal) => {
       const subprocess = execa('bash', ['-c', command], {
         cwd: ctx.core.getWorkDir(),
-        stdin: 'inherit',
+        // Note: stdin defaults to 'pipe' - do NOT use 'inherit' as it causes
+        // Ctrl+C to be sent to both parent and child, creating a race condition
+        // that prevents reliable interruption
         stdout: 'pipe',
         stderr: 'pipe',
         encoding: 'utf8',

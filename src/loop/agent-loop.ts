@@ -191,6 +191,11 @@ export async function main(): Promise<void> {
     console.log(chalk.gray(`Cleaned up ${removed} empty session(s)`));
   }
 
+  // Set default editor to xdg-open if not configured
+  if (!process.env.EDITOR && !process.env.VISUAL) {
+    process.env.EDITOR = 'xdg-open';
+  }
+
   // Track first query for bookmark title
   let firstQueryCaptured = false;
 

@@ -8,6 +8,7 @@
 
 import type { SlashCommand } from '../types.js';
 import chalk from 'chalk';
+import openEditor from 'open-editor';
 import { listSessions, loadSessionById } from '../session/index.js';
 import { prepareRestoration, readDosq, extractFirstQuery } from '../session/restoration.js';
 import { Triologue } from '../loop/triologue.js';
@@ -63,7 +64,16 @@ export const loadCommand: SlashCommand = {
 
       console.log(chalk.cyan('Session restored. DOSQ generated at:'));
       console.log(chalk.gray(`  ${dosqPath}`));
-      console.log(chalk.yellow('Edit the DOSQ file if needed, then press Enter to continue...'));
+
+      // Try to open DOSQ in editor (will fail if $EDITOR not set, but user was warned at startup)
+      try {
+        openEditor([dosqPath]);
+        console.log(chalk.gray('Opening DOSQ file in editor...'));
+      } catch {
+        console.log(chalk.yellow(`Please edit the DOSQ file manually: ${dosqPath}`));
+      }
+
+      console.log(chalk.yellow('Edit the DOSQ file if needed, then save and close to continue...'));
 
       // Wait for user to edit DOSQ
       await agentIO.ask(chalk.cyan('Press Enter when ready to continue > '));

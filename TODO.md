@@ -2,4 +2,5 @@
 - [ ] Refine the log output
 - [ ] Detect missing env and show an instuction to the user to add it.
 - [ ] Add a `-v` flag on start to generate a detailed log for troubleshooting.
-- [ ] Support multi-line editing and pasting
+- [ ] Support multi-line editing and pasting (using popup temp file)
+- [ ] Make Ctrl + C to reliably break the agent running and exit.

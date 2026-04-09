@@ -19,7 +19,8 @@
     "dotenv": "^16.0.0",
     "execa": "^9.6.1",
     "gray-matter": "^4.0.3",
-    "ollama": "^0.6.3"
+    "ollama": "^0.6.3",
+    "open-editor": "^6.0.0"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",

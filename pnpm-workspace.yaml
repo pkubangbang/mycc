@@ -2,4 +2,5 @@ ignoredBuiltDependencies:
   - esbuild
 
 onlyBuiltDependencies:
+  - '@esbuild/linux-x64'
   - better-sqlite3
