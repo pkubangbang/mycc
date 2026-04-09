@@ -16,6 +16,7 @@ import { retryChat, MODEL } from '../ollama.js';
 import type { Message, ToolCall } from '../types.js';
 import type { Session } from './types.js';
 import { validateSession } from './index.js';
+import { TOKEN_THRESHOLD } from '../loop/agent-prompts.js';
 
 /**
  * A summary pair: [user_message, assistant_message]
@@ -42,22 +43,41 @@ export function readTriologue(filePath: string): Message[] {
   return messages;
 }
 
-/**
- * Estimate token count for messages (simple word-based approximation)
- */
-function estimateTokens(messages: Message[]): number {
+function estimateTokens(message: Message): number {
   let total = 0;
-  for (const msg of messages) {
-    if (msg.content) {
-      total += msg.content.split(/\s+/).length;
-    }
-    if (msg.tool_calls) {
-      for (const tc of msg.tool_calls) {
-        total += JSON.stringify(tc.function.arguments).split(/\s+/).length;
-      }
+  if (message.content) {
+    total += message.content.split(/\s+/).length;
+  }
+  if (message.tool_calls) {
+    for (const tc of message.tool_calls) {
+      total += JSON.stringify(tc.function.arguments).split(/\s+/).length;
     }
   }
+
   return total;
+}
+
+/**
+ * Verify that teammate name matches the expected path
+ */
+function ensureSameTeammate(teammate: string, summaryPath: string): void {
+  // Extract teammate name from summary path (e.g., "teammate-foo-123" from path)
+  const pathMatch = summaryPath.match(/\.mycc\/transcripts\/([^/]+)-triologue\.jsonl/);
+  const pathTeammate = pathMatch ? pathMatch[1] : summaryPath;
+
+  if (!pathTeammate.startsWith(teammate)) {
+    throw new Error(`Teammate mismatch: expected "${teammate}" but summary path contains "${pathTeammate}"`);
+  }
+}
+
+/**
+ * Create a narrative summary message for a child agent's conversation
+ */
+function createNarrativeSummary(teammate: string, summary: Message): Message {
+  return {
+    role: 'user',
+    content: `[${teammate} summary]\n${summary.content}`,
+  };
 }
 
 /**
@@ -105,173 +125,87 @@ async function summarizeMessages(messages: Message[]): Promise<SummaryPair> {
   ];
 }
 
-/**
- * Summarize messages with threshold-based buffer algorithm.
- *
- * Algorithm:
- * 1. Prepare empty buffer (Message[])
- * 2. Load buffer with messages until THRESHOLD
- * 3. Summarize buffer into a pair; extract pair's messages; empty buffer; push pair messages into buffer
- * 4. Repeat #2 until all messages processed
- * 5. Summarize final buffer → ONE pair
- *
- * Note: After summarization, the pair's user+assistant messages are pushed
- * back as individual Messages. This means subsequent iterations count
- * both messages for token estimation, which is more accurate but slightly
- * increases compaction frequency compared to the old mixed BufferItem approach.
- */
-async function summarizeWithBuffer(
-  messages: Message[],
-  tokenThreshold: number = 50000
-): Promise<SummaryPair> {
+async function summarizeChildTriologue(messages: Message[]): Promise<SummaryPair> {
   if (messages.length === 0) {
     return [
       { role: 'user', content: '[Empty conversation]' },
-      { role: 'assistant', content: 'Understood.' },
+      { role: 'assistant', content: 'OK' },
     ];
   }
 
   // Buffer holds only Message[] — never pairs mixed in
-  const buffer: Message[] = [];
-  const remaining = [...messages];
-
-  while (remaining.length > 0) {
-    // Add messages until threshold
-    while (remaining.length > 0 && estimateTokens(buffer) < tokenThreshold) {
-      buffer.push(remaining.shift()!);
+  let buffer: Message[] = [];
+  let tokens = 0;
+  for (const m of messages) {
+    buffer.push(m);
+    tokens += estimateTokens(m);
+    if (tokens > TOKEN_THRESHOLD) {
+      buffer = await summarizeMessages(buffer);
     }
-
-    // Summarize buffer into a pair
-    const pair = await summarizeMessages(buffer);
-
-    // Empty buffer, push pair's messages back as individual Messages
-    buffer.length = 0;
-    buffer.push(pair[0], pair[1]);
   }
 
   // Final: summarize remaining buffer
   return summarizeMessages(buffer);
 }
 
-/**
- * Summarize a triologue file into a single pair.
- */
-export async function summarizeTriologue(
-  triologuePath: string,
-  tokenThreshold: number = 50000
-): Promise<SummaryPair> {
-  const messages = readTriologue(triologuePath);
-  return summarizeWithBuffer(messages, tokenThreshold);
-}
-
-/**
- * Summarize child triologues, returning a map of teammate name to summary pair
- */
-export async function summarizeChildTriologues(
-  childTriologues: string[],
-  teammateNames: string[],
-  tokenThreshold?: number
-): Promise<Map<string, SummaryPair>> {
-  const summaries = new Map<string, SummaryPair>();
-
-  // Match triologue paths with teammate names
-  for (let i = 0; i < childTriologues.length && i < teammateNames.length; i++) {
-    const triologuePath = childTriologues[i];
-    const teammateName = teammateNames[i];
-
-    if (fs.existsSync(triologuePath)) {
-      const pair = await summarizeTriologue(triologuePath, tokenThreshold);
-      summaries.set(teammateName, pair);
-    }
+async function summarizeLeadTriologue(messages: Message[], childSummaries: { path: string, summary: Message }[]) {
+  if (messages.length === 0) {
+    return [
+      { role: 'user', content: '[Empty conversation]' },
+      { role: 'assistant', content: 'OK' },
+    ] as SummaryPair;
   }
 
-  return summaries;
-}
+  // Buffer holds only Message[] — never pairs mixed in
+  let buffer: Message[] = [];
+  let tokens = 0;
+  const summaries = [...childSummaries];
 
-/**
- * Find tm_create tool calls in lead messages and extract teammate names.
- * Returns a map of teammate name → insertion index (after the tool result for that tm_create).
- */
-function findTmCreatePositions(messages: Message[]): Map<string, number> {
-  const positions = new Map<string, number>();
-  const pendingCreates = new Map<string, string>(); // tool_call_id → teammateName
-
-  for (let i = 0; i < messages.length; i++) {
-    const msg = messages[i];
-
-    // Track tm_create calls in assistant messages
-    if (msg.role === 'assistant' && msg.tool_calls) {
-      for (const tc of msg.tool_calls as ToolCall[]) {
-        if (tc.function.name === 'tm_create') {
-          const args = tc.function.arguments as Record<string, unknown>;
-          const name = String(args.name || args.__name || '');
-          if (name) {
-            pendingCreates.set(tc.id, name);
-          }
+  // tool_call_id -> teammate name
+  const pendingTmCreateCall: Record<string, string> = {};
+  for (const m of messages) {
+    if (Array.isArray(m.tool_calls)) {
+      for (const toolCall of m.tool_calls) {
+        if (toolCall.function.name === 'tm_create') {
+          const args = toolCall.function.arguments ?? {};
+          pendingTmCreateCall[(toolCall as ToolCall).id] = args.name || 'unknown';
         }
       }
     }
 
-    // When we see the tool result for a tm_create, mark the insertion point
-    if (msg.role === 'tool' && msg.tool_call_id) {
-      const teammateName = pendingCreates.get(msg.tool_call_id);
-      if (teammateName) {
-        // Insert after this tool result
-        positions.set(teammateName, i + 1);
-        pendingCreates.delete(msg.tool_call_id);
+    if (m.tool_name === 'tm_create') {
+      const teammate = pendingTmCreateCall[m.tool_call_id || 'unknown'];
+      if (!teammate) {
+        throw new Error(`no corresponding teammate found for tool call ${m.tool_call_id}`)
       }
+
+      const s = summaries.shift();
+
+      if (!s) {
+        throw new Error(`missing summary for teammate ${teammate}`);
+      }
+
+      ensureSameTeammate(teammate, s.path);
+
+      // inject the user narration of child's summary
+      const narration = createNarrativeSummary(teammate, s.summary);
+      buffer.push(narration);
+      tokens += estimateTokens(narration);
+    }
+
+
+    buffer.push(m);
+    tokens += estimateTokens(m);
+
+    if (tokens > TOKEN_THRESHOLD) {
+      buffer = await summarizeMessages(buffer);
     }
   }
 
-  return positions;
+  // Final: summarize remaining buffer
+  return summarizeMessages(buffer);
 }
 
-/**
- * Inject child summaries into lead messages at tm_create positions.
- * Each child summary is inserted as a single user message (no noise "Understood" message).
- * Children whose tm_create position is not found are appended at the end.
- *
- * Note: positions are based on original leadMessages indices. The loop iterates
- * over leadMessages (not result), so positions map correctly even though result
- * grows as children are inserted — the i+1 check matches original indices.
- */
-function injectChildSummaries(
-  leadMessages: Message[],
-  childSummaries: Map<string, SummaryPair>
-): Message[] {
-  const positions = findTmCreatePositions(leadMessages);
-  const injected = new Set<string>();
-
-  // Build result by scanning lead messages and inserting child summaries at positions
-  const result: Message[] = [];
-
-  for (let i = 0; i < leadMessages.length; i++) {
-    result.push(leadMessages[i]);
-
-    // Check if any child should be inserted at this position
-    for (const [teammateName, pair] of childSummaries) {
-      if (positions.get(teammateName) === i + 1 && !injected.has(teammateName)) {
-        result.push({
-          role: 'user',
-          content: `[Teammate ${teammateName} summary]\n${pair[0].content}`,
-        });
-        injected.add(teammateName);
-      }
-    }
-  }
-
-  // Append any remaining children whose positions were not found
-  for (const [teammateName, pair] of childSummaries) {
-    if (!injected.has(teammateName)) {
-      result.push({
-        role: 'user',
-        content: `[Teammate ${teammateName} summary]\n${pair[0].content}`,
-      });
-    }
-  }
-
-  return result;
-}
 
 /**
  * Generate DOSQ markdown content from a single summary pair.
@@ -364,10 +298,7 @@ export function extractFirstQuery(dosqContent: string): string {
  * Full session restoration workflow.
  * Returns a single summary pair and DOSQ path.
  */
-export async function prepareRestoration(
-  session: Session,
-  tokenThreshold?: number
-): Promise<{ pair: SummaryPair; dosqPath: string }> {
+export async function prepareRestoration(session: Session): Promise<{ pair: SummaryPair; dosqPath: string }> {
   // Validate session files exist
   const validation = validateSession(session);
   if (!validation.valid) {
@@ -379,30 +310,30 @@ export async function prepareRestoration(
   console.log(chalk.gray(`  Child triologues: ${session.child_triologues.length}`));
 
   // Summarize child triologues
-  const childSummaries = await summarizeChildTriologues(
-    session.child_triologues,
-    session.teammates,
-    tokenThreshold
-  );
+  const childSummaries: { path: string, summary: Message }[] = [];
+  for (const path of session.child_triologues) {
+    const triologue = readTriologue(path);
+    const pair = await summarizeChildTriologue(triologue);
+    childSummaries.push({
+      path: path,
+      summary: pair[0]
+    });
+  }
 
-  console.log(chalk.gray(`  Summarized ${childSummaries.size} child triologues`));
+  console.log(chalk.gray(`  Summarized ${childSummaries.length} child triologues`));
 
   // Read lead triologue and inject child summaries at tm_create positions
   const leadMessages = readTriologue(session.lead_triologue);
-  const combinedMessages = injectChildSummaries(leadMessages, childSummaries);
+  const combined = await summarizeLeadTriologue(leadMessages, childSummaries);
 
-  console.log(chalk.gray(`  Combined ${combinedMessages.length} messages (lead + child summaries)`));
+  console.log(chalk.gray(`  Combined ${leadMessages.length + childSummaries.length} messages (lead + child summaries)`));
 
-  // Summarize combined messages into a single pair
-  const pair = await summarizeWithBuffer(combinedMessages, tokenThreshold ?? 50000);
-
-  console.log(chalk.gray('  Generated summary pair'));
 
   // Generate DOSQ
-  const dosqContent = generateDosq(session, pair);
+  const dosqContent = generateDosq(session, combined);
   const dosqPath = writeDosq(dosqContent);
 
   console.log(chalk.gray(`  DOSQ written to: ${dosqPath}`));
 
-  return { pair, dosqPath };
+  return { pair: combined, dosqPath };
 }
