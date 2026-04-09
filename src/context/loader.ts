@@ -393,10 +393,3 @@ export class Loader implements DynamicLoader, SkillModule {
     }
   }
 }
-
-/**
- * Create a dynamic loader instance
- */
-export function createLoader(silent: boolean = false): Loader {
-  return new Loader(silent);
-}

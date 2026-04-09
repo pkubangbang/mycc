@@ -104,10 +104,3 @@ export class MailBox implements MailModule {
 function generateId(): string {
   return Math.random().toString(36).substring(2, 10);
 }
-
-/**
- * Create a mail module instance
- */
-export function createMail(owner: string): MailModule {
-  return new MailBox(owner);
-}

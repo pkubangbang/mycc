@@ -310,19 +310,31 @@ export function createAgentContext(workDir?: string): AgentContext {
 
 ```typescript
 // src/context/child-context/index.ts
-export function createChildContext(name: string, workDir: string): AgentContext {
-  const core = createChildCore(name, workDir);  // IPC 包装
-  const todo = createTodo();                     // 本地
-  const mail = createMail(name);                  // 本地（独立邮箱）
-  const skill = createSkill();                    // 本地
-  const issue = createChildIssue();               // IPC 包装
-  const bg = createChildBg();                     // IPC 包装
-  const wt = createChildWt();                     // IPC 包装
-  const team = createChildTeam(name);             // ChildTeam (有限功能)
+export class ChildContext implements AgentContext {
+  private coreModule: ChildCore;
+  private todoModule: Todo;
+  private mailModule: MailBox;
+  private skillModule: SkillModule;
+  private issueModule: ChildIssue;
+  private bgModule: BackgroundTasks;
+  private wtModule: ChildWt;
+  private teamModule: ChildTeam;
 
-  skill.loadSkills();
+  constructor(name: string, workDir: string) {
+    this.coreModule = new ChildCore(name, workDir);   // IPC 包装
+    this.todoModule = new Todo();                      // 本地
+    this.mailModule = new MailBox(name);                // 本地（独立邮箱）
+    this.skillModule = new Loader(true);                // 本地（静默模式）
+    this.issueModule = new ChildIssue();                // IPC 包装
+    this.bgModule = new BackgroundTasks(this.coreModule);
+    this.wtModule = new ChildWt(this.coreModule);      // IPC 包装
+    this.teamModule = new ChildTeam(name);              // ChildTeam (有限功能)
+  }
 
-  return { core, todo, mail, skill, issue, bg, wt, team };
+  // Getters for each module
+  get core(): CoreModule { return this.coreModule; }
+  get todo(): TodoModule { return this.todoModule; }
+  // ... other getters
 }
 ```
 

@@ -66,10 +66,3 @@ export class ChildWt implements WtModule {
     await ipc.sendRequest<void>('wt_remove', { name });
   }
 }
-
-/**
- * Create a child worktree module
- */
-export function createChildWt(core: CoreModule): WtModule {
-  return new ChildWt(core);
-}

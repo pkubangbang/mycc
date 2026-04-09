@@ -167,13 +167,6 @@ export class WorktreeManager implements WtModule {
 }
 
 /**
- * Create a worktree module instance
- */
-export function createWt(core: CoreModule): WtModule {
-  return new WorktreeManager(core);
-}
-
-/**
  * Create IPC handlers for Worktree module
  * These handle wt requests from child processes
  */

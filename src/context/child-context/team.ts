@@ -10,7 +10,7 @@
  */
 
 import type { TeamModule, IpcHandlerRegistration } from '../../types.js';
-import { createMail } from '../mail.js';
+import { MailBox } from '../mail.js';
 import { ipc } from './ipc-helpers.js';
 
 /**
@@ -29,7 +29,7 @@ export class ChildTeam implements TeamModule {
    * Lead decides whether to act on this suggestion
    */
   async createTeammate(name: string, role: string, prompt: string): Promise<string> {
-    const mail = createMail('lead');
+    const mail = new MailBox('lead');
     mail.appendMail(
       this.owner,
       'Teammate Creation Request',
@@ -102,7 +102,7 @@ export class ChildTeam implements TeamModule {
    * Writes directly to mailbox file
    */
   mailTo(name: string, title: string, content: string, from?: string): void {
-    const mail = createMail(name);
+    const mail = new MailBox(name);
     mail.appendMail(from ?? this.owner, title, content);
   }
 
@@ -111,7 +111,7 @@ export class ChildTeam implements TeamModule {
    * Lead decides whether to broadcast
    */
   broadcast(title: string, content: string): void {
-    const mail = createMail('lead');
+    const mail = new MailBox('lead');
     mail.appendMail(
       this.owner,
       'Broadcast Request',
@@ -148,11 +148,4 @@ export class ChildTeam implements TeamModule {
   async handlePendingQuestions(): Promise<void> {
     // No-op in child - only lead handles questions
   }
-}
-
-/**
- * Create a child team module
- */
-export function createChildTeam(owner: string): TeamModule {
-  return new ChildTeam(owner);
 }

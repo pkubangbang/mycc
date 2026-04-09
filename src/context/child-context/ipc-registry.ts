@@ -96,10 +96,3 @@ export class IpcRegistry {
     }));
   }
 }
-
-/**
- * Create a new IPC registry
- */
-export function createIpcRegistry(): IpcRegistry {
-  return new IpcRegistry();
-}

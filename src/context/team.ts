@@ -14,8 +14,8 @@ import type {
   SendResponseCallback,
 } from '../types.js';
 import { getDb } from './db.js';
-import { createMail } from './mail.js';
-import { createIpcRegistry, IpcRegistry } from './child-context/ipc-registry.js';
+import { MailBox } from './mail.js';
+import { IpcRegistry } from './child-context/ipc-registry.js';
 import type { CoreModule } from '../types.js';
 
 // ES module compatibility for __dirname
@@ -61,7 +61,7 @@ export class TeamManager implements TeamModule {
 
   constructor(core: CoreModule) {
     this.core = core;
-    this.ipcRegistry = createIpcRegistry();
+    this.ipcRegistry = new IpcRegistry();
   }
 
   /**
@@ -474,7 +474,7 @@ export class TeamManager implements TeamModule {
    * @param from - Sender name (defaults to 'lead')
    */
   mailTo(name: string, title: string, content: string, from: string = 'lead'): void {
-    const mail = createMail(name);
+    const mail = new MailBox(name);
     mail.appendMail(from, title, content);
   }
 
@@ -514,13 +514,6 @@ Answer: ${response}
       }
     }
   }
-}
-
-/**
- * Create a team module instance
- */
-export function createTeam(core: CoreModule): TeamModule {
-  return new TeamManager(core);
 }
 
 /**

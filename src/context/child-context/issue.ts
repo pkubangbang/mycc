@@ -118,10 +118,3 @@ export class ChildIssue implements IssueModule {
     await ipc.sendRequest<void>('db_block_remove', { blocker, blocked });
   }
 }
-
-/**
- * Create a child issue module
- */
-export function createChildIssue(): IssueModule {
-  return new ChildIssue();
-}

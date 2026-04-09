@@ -128,10 +128,3 @@ export class BackgroundTasks implements BgModule {
     return this.tasks.get(pid);
   }
 }
-
-/**
- * Create a background tasks module instance
- */
-export function createBg(core: CoreModule): BgModule {
-  return new BackgroundTasks(core);
-}

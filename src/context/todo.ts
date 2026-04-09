@@ -66,10 +66,3 @@ export class Todo implements TodoModule {
     return [...this.items];
   }
 }
-
-/**
- * Create a todo module instance
- */
-export function createTodo(): TodoModule {
-  return new Todo();
-}

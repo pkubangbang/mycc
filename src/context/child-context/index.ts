@@ -2,45 +2,55 @@
  * child-context/index.ts - Factory for creating child process AgentContext
  */
 
-import type { AgentContext, SkillModule } from '../../types.js';
-import { createTodo } from '../todo.js';
-import { createMail } from '../mail.js';
-import { createBg } from '../bg.js';
-import { createLoader } from '../loader.js';
-import { createChildCore } from './core.js';
-import { createChildIssue } from './issue.js';
-import { createChildWt } from './wt.js';
-import { createChildTeam } from './team.js';
+import type { AgentContext, SkillModule, CoreModule, TodoModule, MailModule, IssueModule, BgModule, WtModule, TeamModule } from '../../types.js';
+import { Todo } from '../todo.js';
+import { MailBox } from '../mail.js';
+import { Loader } from '../loader.js';
+import { ChildCore } from './core.js';
+import { ChildIssue } from './issue.js';
+import { ChildWt } from './wt.js';
+import { ChildTeam } from './team.js';
+import { BackgroundTasks } from '../bg.js';
 
 // Re-export
 export { IpcRegistry } from './ipc-registry.js';
-export { createChildCore } from './core.js';
-export { createChildIssue } from './issue.js';
-export { createChildWt } from './wt.js';
-export { createChildTeam } from './team.js';
+export { ChildCore } from './core.js';
+export { ChildIssue } from './issue.js';
+export { ChildWt } from './wt.js';
+export { ChildTeam } from './team.js';
 
 /**
- * Create an AgentContext for child process
+ * ChildContext - AgentContext for child process (teammate)
  * All write operations go through IPC to parent
  */
-export function createChildContext(name: string, workDir: string): AgentContext {
-  const core = createChildCore(name, workDir);
-  const todo = createTodo();
-  const mail = createMail(name); // Worker-specific mailbox
-  const skill: SkillModule = createLoader(true); // Silent mode for child process
-  const issue = createChildIssue();
-  const bg = createBg(core); // Use main bg directly - child runs its own bg tasks
-  const wt = createChildWt(core);
-  const team = createChildTeam(name); // Pass owner name for mailTo
+export class ChildContext implements AgentContext {
+  private coreModule: ChildCore;
+  private todoModule: Todo;
+  private mailModule: MailBox;
+  private skillModule: SkillModule;
+  private issueModule: ChildIssue;
+  private bgModule: BackgroundTasks;
+  private wtModule: ChildWt;
+  private teamModule: ChildTeam;
 
-  return {
-    core,
-    todo,
-    mail,
-    skill,
-    issue,
-    bg,
-    wt,
-    team,
-  };
+  constructor(name: string, workDir: string) {
+    this.coreModule = new ChildCore(name, workDir);
+    this.todoModule = new Todo();
+    this.mailModule = new MailBox(name); // Worker-specific mailbox
+    this.skillModule = new Loader(true); // Silent mode for child process
+    this.issueModule = new ChildIssue();
+    this.bgModule = new BackgroundTasks(this.coreModule);
+    this.wtModule = new ChildWt(this.coreModule);
+    this.teamModule = new ChildTeam(name); // Pass owner name for mailTo
+  }
+
+  // Getters for each module
+  get core(): CoreModule { return this.coreModule; }
+  get todo(): TodoModule { return this.todoModule; }
+  get mail(): MailModule { return this.mailModule; }
+  get skill(): SkillModule { return this.skillModule; }
+  get issue(): IssueModule { return this.issueModule; }
+  get bg(): BgModule { return this.bgModule; }
+  get wt(): WtModule { return this.wtModule; }
+  get team(): TeamModule { return this.teamModule; }
 }

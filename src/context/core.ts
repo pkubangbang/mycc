@@ -171,10 +171,3 @@ export class Core implements CoreModule {
     }
   }
 }
-
-/**
- * Create a core module instance
- */
-export function createCore(workDir?: string): CoreModule {
-  return new Core(workDir);
-}

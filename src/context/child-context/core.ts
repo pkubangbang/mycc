@@ -87,10 +87,3 @@ export class ChildCore implements CoreModule {
     // No-op in child - questions go via IPC
   }
 }
-
-/**
- * Create a child core module
- */
-export function createChildCore(name: string, workDir: string): CoreModule {
-  return new ChildCore(name, workDir);
-}

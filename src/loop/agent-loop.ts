@@ -7,8 +7,8 @@ import * as path from 'path';
 import chalk from 'chalk';
 import { retryChat, MODEL, isTransientError } from '../ollama.js';
 import type { AgentContext, ToolScope, ToolCall } from '../types.js';
-import { createAgentContext } from '../context/index.js';
-import { createLoader, Loader } from '../context/loader.js';
+import { ParentContext } from '../context/index.js';
+import { Loader } from '../context/loader.js';
 import { clearSessionData, getMyccDir } from '../context/db.js';
 import { createSessionFile } from '../session/index.js';
 import { TOKEN_THRESHOLD, buildSystemPrompt } from './agent-prompts.js';
@@ -174,12 +174,13 @@ export async function main(): Promise<void> {
   console.log(chalk.gray(`Session: ${path.basename(sessionFile)}`));
 
   // Create loader first
-  const loader = createLoader();
+  const loader = new Loader();
   await loader.loadAll();
   loader.watchDirectories();
 
   // Create context with loader
-  const ctx = createAgentContext(process.cwd(), loader);
+  const ctx = new ParentContext(loader);
+  ctx.initializeIpcHandlers();
 
   // Triologue for message management (persisted to disk)
   const transcriptDir = path.join(getMyccDir(), 'transcripts');

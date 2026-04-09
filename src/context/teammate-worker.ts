@@ -11,8 +11,8 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { createChildContext } from './child-context/index.js';
-import { createLoader, Loader } from './loader.js';
+import { ChildContext } from './child-context/index.js';
+import { Loader } from './loader.js';
 import { retryChat, MODEL } from '../ollama.js';
 import type { AgentContext, Message } from '../types.js';
 import type { ToolCall } from '../types.js';
@@ -223,13 +223,13 @@ async function handleSpawn(msg: {
   teammateRole = msg.role;
 
   // Create child context
-  ctx = createChildContext(teammateName, WORKDIR);
+  ctx = new ChildContext(teammateName, WORKDIR);
 
   // Log initialization (ctx is now available)
   ctx.core.brief('info', 'worker', `${teammateName} initializing...`);
 
   // Load tools and skills (silent mode - suppress loading logs)
-  loader = createLoader(true);
+  loader = new Loader(true);
   await loader.loadAll();
 
   ctx.core.brief('info', 'worker', `${teammateName} started successfully`);

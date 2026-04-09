@@ -332,13 +332,6 @@ export class IssueManager implements IssueModule {
 }
 
 /**
- * Create an issue module instance
- */
-export function createIssue(): IssueModule {
-  return new IssueManager();
-}
-
-/**
  * Create IPC handlers for Issue module
  * These handle DB requests from child processes
  */
