@@ -41,9 +41,7 @@ export async function agentLoop(
   while (!agentIO.isShuttingDown()) {
     try {
       // 1. Handle pending questions from children
-      if (ctx.team) {
-        await ctx.team.handlePendingQuestions();
-      }
+      await ctx.team.handlePendingQuestions();
 
       // 2. Collect mails (collated into single user message)
       const mails = ctx.mail.collectMails();
@@ -97,26 +95,21 @@ export async function agentLoop(
 
       // 6. No tool calls = check team status
       if (!assistantMessage.tool_calls || assistantMessage.tool_calls.length === 0) {
-        // Only check team if it exists (not in child process)
-        if (ctx.team) {
-          const { allSettled, hasQuestion } = await ctx.team.awaitTeam(30000);
+        const { allSettled, hasQuestion } = await ctx.team.awaitTeam(30000);
 
-          // Priority 1: If there's pending question / mail, continue to next iteration
-          if (hasQuestion || ctx.mail.hasNewMails()) {
-            continue;
-          }
-
-          // Priority 2: If all teammates are settled (idle/shutdown), we're done
-          if (allSettled) {
-            return;
-          }
-
-          // Priority 3: Timeout waiting for teammates - inject status message and retry
-          triologue.user(`Timeout waiting for teammates. What will you do? ${ctx.team.printTeam()}`);
+        // Priority 1: If there's pending question / mail, continue to next iteration
+        if (hasQuestion || ctx.mail.hasNewMails()) {
           continue;
         }
-        // No team means single agent - just return
-        return;
+
+        // Priority 2: If all teammates are settled (idle/shutdown), we're done
+        if (allSettled) {
+          return;
+        }
+
+        // Priority 3: Timeout waiting for teammates - inject status message and retry
+        triologue.user(`Timeout waiting for teammates. What will you do? ${ctx.team.printTeam()}`);
+        continue;
       }
 
       // 7. Execute tools
@@ -143,7 +136,7 @@ export async function agentLoop(
       const errorMessage = err instanceof Error ? err.message : String(err);
 
       // Teammate timeout - give LLM context and options to decide
-      if (err instanceof Error && errorMessage.includes('Timeout waiting for teammate') && ctx.team) {
+      if (err instanceof Error && errorMessage.includes('Timeout waiting for teammate')) {
         console.error(chalk.yellow(`[agent-loop] Recoverable error: ${errorMessage}`));
         triologue.user(`Timeout waiting for teammates. What will you do? ${ctx.team.printTeam()}\n\nOptions:\n- Wait longer (use tm_await with higher timeout)\n- Remove teammate (use tm_remove)\n- Continue without waiting (just proceed with other tasks)`);
         continue;
@@ -223,7 +216,7 @@ export async function main(): Promise<void> {
     }
     // No active tool - safe to exit
     console.log(chalk.yellow('\nShutting down...'));
-    ctx.team?.dismissTeam();
+    ctx.team.dismissTeam();
     agentIO.close();
     process.exit(0);
   });
@@ -245,7 +238,7 @@ export async function main(): Promise<void> {
       // Handle slash commands
       if (trimmedQuery.startsWith('/')) {
         if (trimmedQuery === '/team') {
-          console.log(ctx.team?.printTeam() || 'No team.');
+          console.log(ctx.team.printTeam());
           continue;
         }
 
@@ -315,7 +308,7 @@ export async function main(): Promise<void> {
   }
 
   // Cleanup
-  ctx.team?.dismissTeam();
+  ctx.team.dismissTeam();
   agentIO.close();
   loader.stopWatching();
 }

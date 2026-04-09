@@ -34,10 +34,6 @@ export const tmAwaitTool: ToolDefinition = {
     const name = args.name as string | undefined;
     const timeout = (args.timeout as number) ?? 60000;
 
-    if (!ctx.team) {
-      return 'Error: Team module not available';
-    }
-
     try {
       if (name) {
         // Check if teammate exists

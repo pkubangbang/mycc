@@ -15,11 +15,6 @@ export const tmPrintTool: ToolDefinition = {
   },
   scope: ['main', 'child'],
   handler: async (ctx: AgentContext, _args: Record<string, unknown>): Promise<string> => {
-    if (!ctx.team) {
-      ctx.core.brief('error', 'tm_print', 'Team module not available');
-      return 'Error: Team module not available in this context';
-    }
-
     return await ctx.team.printTeam();
   },
 };

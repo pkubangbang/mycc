@@ -54,7 +54,7 @@ export function buildSystemPrompt(
   }
 
   // Main process (lead agent) system prompt
-  const hasTeam = (ctx.team?.printTeam() || 'No teammates.') !== 'No teammates.';
+  const hasTeam = ctx.team.printTeam() !== 'No teammates.';
 
   if (hasTeam) {
     return [

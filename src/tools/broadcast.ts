@@ -38,7 +38,7 @@ export const broadcastTool: ToolDefinition = {
       return 'Error: content parameter is required and must be a string';
     }
 
-    const teammates = ctx.team?.listTeammates() || [];
+    const teammates = ctx.team.listTeammates();
     if (teammates.length === 0) {
       ctx.core.brief('warn', 'broadcast', 'No teammates to broadcast to');
       return 'Warning: No teammates available to receive broadcast';
@@ -47,7 +47,7 @@ export const broadcastTool: ToolDefinition = {
     ctx.core.brief('info', 'broadcast', `Broadcasting to ${teammates.length} teammate(s): ${title}`);
 
     try {
-      ctx.team?.broadcast(title, content);
+      ctx.team.broadcast(title, content);
       return 'OK';
     } catch (error: unknown) {
       const err = error as Error;

@@ -34,12 +34,6 @@ export const tmRemoveTool: ToolDefinition = {
       return 'Error: name parameter is required and must be a string';
     }
 
-    // Check if teammate exists
-    if (!ctx.team) {
-      ctx.core.brief('error', 'tm_remove', 'Team module not available');
-      return 'Error: Team module not available in this context';
-    }
-
     const teammate = ctx.team.getTeammate(name);
     if (!teammate) {
       ctx.core.brief('warn', 'tm_remove', `Teammate '${name}' not found`);

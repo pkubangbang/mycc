@@ -119,7 +119,7 @@ async function teammateLoop(prompt: string): Promise<void> {
     // 4. No tool calls = enter idle state
     if (!assistantMessage.tool_calls || assistantMessage.tool_calls.length === 0) {
       // IMPORTANT: send finishing words to lead to coordinate.
-      ctx.team!.mailTo('lead', 'task done',
+      ctx.team.mailTo('lead', 'task done',
         assistantMessage.content ?? 'I have done my task, now running idle.', ctx.core.getName());
 
       const result = await enterIdleState(triologue);

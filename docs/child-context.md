@@ -40,7 +40,7 @@
 │  │sendStatus │         │ issue       │         │ mail         │   │
 │  │sendLog    │         │ bg          │         │ skill        │   │
 │  │sendError  │         │ wt          │         └──────────────┘   │
-│  └───────────┘         │ team = null │                            │
+│  └───────────┘         │ team (ChildTeam)│                        │
 │                        └─────────────┘                            │
 └─────────────────────────────────────────────────────────────────────┘
 ```
@@ -318,10 +318,11 @@ export function createChildContext(name: string, workDir: string): AgentContext 
   const issue = createChildIssue();               // IPC 包装
   const bg = createChildBg();                     // IPC 包装
   const wt = createChildWt();                     // IPC 包装
+  const team = createChildTeam(name);             // ChildTeam (有限功能)
 
   skill.loadSkills();
 
-  return { core, todo, mail, skill, issue, bg, wt, team: null };
+  return { core, todo, mail, skill, issue, bg, wt, team };
 }
 ```
 
@@ -371,7 +372,7 @@ You are a specialized agent working as part of a team.
 | `issue` | 直接 SQLite 访问 | IPC 转发所有操作 |
 | `bg` | 直接管理子进程 | IPC 转发 |
 | `wt` | 直接 Git 操作 | IPC 转发 |
-| `team` | 管理队友 | `null`（无法创建子队友） |
+| `team` | 管理队友 | ChildTeam (受限：仅 mailTo/broadcast/printTeam，其他操作抛 FORBIDDEN) |
 
 ## 相关文件
 

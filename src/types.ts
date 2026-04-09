@@ -384,7 +384,7 @@ export interface AgentContext {
   issue: IssueModule;
   bg: BgModule;
   wt: WtModule;
-  team: TeamModule | null;
+  team: TeamModule;
 }
 
 // ============================================================================

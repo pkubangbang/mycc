@@ -534,10 +534,6 @@ export function createTeamIpcHandlers(): IpcHandlerRegistration[] {
       module: 'team',
       handler: async (_sender, _payload, ctx, sendResponse) => {
         try {
-          if (!ctx.team) {
-            sendResponse('team_result', false, undefined, 'Team module not available');
-            return;
-          }
           const result = ctx.team.printTeam();
           sendResponse('team_result', true, { message: result });
         } catch (err) {
