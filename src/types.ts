@@ -381,6 +381,35 @@ export interface AgentContext {
 }
 
 // ============================================================================
+// Slash Commands
+// ============================================================================
+
+/**
+ * Context passed to slash command handlers
+ */
+export interface SlashCommandContext {
+  query: string; // Full user input (e.g., '/issues 123')
+  args: string[]; // Parsed arguments (e.g., ['/issues', '123'])
+  ctx: AgentContext; // Main agent context
+  triologue: unknown; // Triologue instance (use 'any' to avoid circular import)
+  sessionFilePath: string; // Current session file path
+  /**
+   * Optional output: if set by a command, this becomes the next query to process.
+   * Used by /load to inject the restored session's first query.
+   */
+  nextQuery?: string;
+}
+
+/**
+ * Slash command definition
+ */
+export interface SlashCommand {
+  name: string; // Command name without slash (e.g., 'team')
+  description: string; // Short description for help
+  handler: (context: SlashCommandContext) => Promise<void> | void;
+}
+
+// ============================================================================
 // Dynamic Loader
 // ============================================================================
 

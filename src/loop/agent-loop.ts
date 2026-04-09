@@ -5,12 +5,13 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import chalk from 'chalk';
-import { retryChat, MODEL, isTransientError } from '../ollama.js';
-import type { AgentContext, ToolScope, ToolCall } from '../types.js';
+import { retryChat, MODEL, OLLAMA_HOST, isTransientError } from '../ollama.js';
+import type { AgentContext, ToolScope, ToolCall, SlashCommandContext } from '../types.js';
 import { ParentContext } from '../context/index.js';
 import { Loader } from '../context/loader.js';
 import { clearSessionData, getMyccDir } from '../context/db.js';
-import { createSessionFile } from '../session/index.js';
+import { createSessionFile, readSession, writeSession, getSessionId, cleanupEmptySessions } from '../session/index.js';
+import { slashRegistry } from '../slashes/index.js';
 import { TOKEN_THRESHOLD, buildSystemPrompt } from './agent-prompts.js';
 import { Triologue } from './triologue.js';
 import { agentIO } from './agent-io.js';
@@ -163,33 +164,35 @@ export async function agentLoop(
  */
 export async function main(): Promise<void> {
   console.log(chalk.cyan('Coding Agent v1.0'));
-  console.log(`Model: ${MODEL}`);
+  console.log(chalk.cyan(`Model: ${MODEL} (${OLLAMA_HOST})`));
   console.log('Commands: /team, /issues, /todos, /skills, /exit\n');
 
   // Clear session data for clean startup
   clearSessionData();
-
-  // Create a new session file for this run
-  const sessionFile = createSessionFile();
-  console.log(chalk.gray(`Session: ${path.basename(sessionFile)}`));
-
-  // Create loader first
-  const loader = new Loader();
-  await loader.loadAll();
-  loader.watchDirectories();
-
-  // Create context with loader
-  const ctx = new ParentContext(loader);
-  ctx.initializeIpcHandlers();
 
   // Triologue for message management (persisted to disk)
   const transcriptDir = path.join(getMyccDir(), 'transcripts');
   if (!fs.existsSync(transcriptDir)) {
     fs.mkdirSync(transcriptDir, { recursive: true });
   }
+
   const timestamp = Math.floor(Date.now() / 1000);
   const triologuePath = path.join(transcriptDir, `lead-${timestamp}-triologue.jsonl`);
   fs.writeFileSync(triologuePath, '', 'utf-8');
+
+  // Create a new session file for this run
+  const sessionFilePath = createSessionFile(triologuePath);
+  console.log(chalk.gray(`Session: ${path.basename(sessionFilePath)}`));
+
+  // Clean up empty session files from previous runs
+  const currentSessionId = getSessionId(sessionFilePath);
+  const removed = cleanupEmptySessions(currentSessionId);
+  if (removed > 0) {
+    console.log(chalk.gray(`Cleaned up ${removed} empty session(s)`));
+  }
+
+  // Track first query for bookmark title
+  let firstQueryCaptured = false;
 
   const triologue = new Triologue({
     tokenThreshold: TOKEN_THRESHOLD,
@@ -202,6 +205,15 @@ export async function main(): Promise<void> {
       }
     },
   });
+
+  // Create loader
+  const loader = new Loader();
+  await loader.loadAll();
+  loader.watchDirectories();
+
+  // Create context with loader
+  const ctx = new ParentContext(loader, sessionFilePath);
+  ctx.initializeIpcHandlers();
 
   // Initialize AgentIO for main process
   agentIO.initMain();
@@ -219,63 +231,51 @@ export async function main(): Promise<void> {
     process.exit(0);
   });
 
-  // Available slash commands
-  const slashCommands = ['/team', '/issues', '/todos', '/skills', '/exit'];
-
   // Main REPL loop
   while (!agentIO.isShuttingDown()) {
     try {
-      const query = await agentIO.ask(chalk.cyan('agent >> '));
-
+      let query = await agentIO.ask(chalk.bgYellow.black('agent >> '));
+      // handle exit
       if (['q', 'exit', 'quit', ''].includes(query.trim().toLowerCase())) {
         break;
       }
 
-      const trimmedQuery = query.trim();
-
       // Handle slash commands
+      const trimmedQuery = query.trim();
       if (trimmedQuery.startsWith('/')) {
-        if (trimmedQuery === '/team') {
-          console.log(ctx.team.printTeam());
+        const parts = trimmedQuery.split(/\s+/);
+        const cmdName = parts[0].slice(1); // Remove '/'
+
+        const slashCtx: SlashCommandContext = {
+          query: trimmedQuery,
+          args: parts,
+          ctx,
+          triologue,
+          sessionFilePath,
+        };
+
+        const handled = await slashRegistry.execute(cmdName, slashCtx);
+        if (handled && slashCtx.nextQuery) {
+          // /load returned a first query to process
+          query = slashCtx.nextQuery;
+        } else {
           continue;
         }
-
-        if (trimmedQuery.startsWith('/issues')) {
-          const parts = trimmedQuery.split(/\s+/);
-          if (parts.length > 1) {
-            // Show specific issue details
-            const issueId = parseInt(parts[1], 10);
-            if (isNaN(issueId)) {
-              console.log(chalk.yellow(`Invalid issue ID: ${parts[1]}`));
-            } else {
-              console.log(await ctx.issue.printIssue(issueId));
-            }
-          } else {
-            // Show all issues
-            console.log(await ctx.issue.printIssues());
-          }
-          continue;
-        }
-
-        if (trimmedQuery === '/todos') {
-          console.log(ctx.todo.printTodoList());
-          continue;
-        }
-
-        if (trimmedQuery === '/skills') {
-          console.log(ctx.skill.printSkills());
-          continue;
-        }
-
-        // Unknown slash command - show available commands
-        console.log(chalk.yellow(`Unknown command: ${trimmedQuery}`));
-        console.log(chalk.gray(`Available commands: ${slashCommands.join(', ')}`));
-        continue;
       }
 
       // Add user message (reset hint flag for new query)
       triologue.user(query);
       triologue.resetHint();
+
+      // Capture first query as bookmark title
+      if (!firstQueryCaptured) {
+        const session = readSession(sessionFilePath);
+        if (session && !session.first_query) {
+          session.first_query = query.slice(0, 100);
+          writeSession(sessionFilePath, session);
+          firstQueryCaptured = true;
+        }
+      }
 
       // Run agent loop
       await agentLoop(triologue, ctx, loader);

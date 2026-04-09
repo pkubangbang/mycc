@@ -10,7 +10,11 @@
       "cwd": "${workspaceFolder}",
       "console": "integratedTerminal",
       "internalConsoleOptions": "neverOpen",
-      "skipFiles": ["<node_internals>/**"]
+      "skipFiles": ["<node_internals>/**"],
+      "env": {
+        "OLLAMA_MODEL": "gemma4:31b-cloud",
+        "EDITOR": "open"
+      }
     },
     {
       "name": "Debug Current TS File",

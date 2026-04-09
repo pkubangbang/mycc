@@ -38,16 +38,16 @@ export class ParentContext implements AgentContext {
   private wtModule: WorktreeManager;
   private teamModule: TeamManager;
 
-  constructor(loader?: Loader) {
+  constructor(loader: Loader, sessionFilePath: string) {
     this.coreModule = new Core(); // Uses process.cwd() by default
-    this.skillModule = loader ?? new Loader();
+    this.skillModule = loader;
     this.todoModule = new Todo();
     this.mailModule = new MailBox('lead');
     this.issueModule = new IssueManager();
     this.bgModule = new BackgroundTasks(this.coreModule);
     this.wtModule = new WorktreeManager(this.coreModule);
     // Pass 'this' to TeamManager - context is used lazily so this is safe
-    this.teamModule = new TeamManager(this.coreModule, this as AgentContext);
+    this.teamModule = new TeamManager(this, sessionFilePath);
   }
 
   // Getters for each module

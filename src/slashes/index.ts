@@ -1,0 +1,71 @@
+/**
+ * Slash command registry
+ *
+ * Manages registration and dispatch of slash commands.
+ */
+
+import type { SlashCommand, SlashCommandContext } from '../types.js';
+import chalk from 'chalk';
+
+/**
+ * Registry for slash commands
+ */
+class SlashCommandRegistryImpl {
+  private commands: Map<string, SlashCommand> = new Map();
+
+  /**
+   * Register a slash command
+   */
+  register(command: SlashCommand): void {
+    this.commands.set(command.name, command);
+  }
+
+  /**
+   * Get a slash command by name
+   */
+  get(name: string): SlashCommand | undefined {
+    return this.commands.get(name);
+  }
+
+  /**
+   * List all registered command names
+   */
+  list(): string[] {
+    return Array.from(this.commands.keys());
+  }
+
+  /**
+   * Execute a slash command
+   * @param name - Command name (without slash)
+   * @param context - Command context
+   * @returns true if command was found and executed, false otherwise
+   */
+  async execute(name: string, context: SlashCommandContext): Promise<boolean> {
+    const command = this.commands.get(name);
+    if (!command) {
+      console.log(chalk.yellow(`Unknown command: /${name}`));
+      console.log(chalk.gray(`Available commands: ${this.list().map((c) => `/${c}`).join(', ')}`));
+      return false;
+    }
+
+    await command.handler(context);
+    return true;
+  }
+}
+
+export const slashRegistry = new SlashCommandRegistryImpl();
+
+// Import and register all built-in commands
+import { teamCommand } from './team.js';
+import { todosCommand } from './todos.js';
+import { skillsCommand } from './skills.js';
+import { issuesCommand } from './issues.js';
+import { saveCommand } from './save.js';
+import { loadCommand } from './load.js';
+
+slashRegistry.register(teamCommand);
+slashRegistry.register(todosCommand);
+slashRegistry.register(skillsCommand);
+slashRegistry.register(issuesCommand);
+slashRegistry.register(saveCommand);
+slashRegistry.register(loadCommand);

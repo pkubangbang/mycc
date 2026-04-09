@@ -71,40 +71,44 @@ export class ConfusionCalculator {
     this.threshold = threshold;
   }
 
-  /** Calculate base contribution for a tool */
-  getBaseContrib(toolName: string, args?: Record<string, unknown>): number {
-    // Exploration tools
-    if (ConfusionCalculator.EXPLORATION_TOOLS.has(toolName)) {
-      return 0;
-    }
-
-    // Action tools
+  private isExplorationToolUse(toolName: string, args?: Record<string, unknown>): boolean {
     if (ConfusionCalculator.ACTION_TOOLS.has(toolName)) {
-      return -1;
+      return false;
     }
 
-    // Bash: check command type
+    if (ConfusionCalculator.EXPLORATION_TOOLS.has(toolName)) {
+      return true;
+    }
+
     if (toolName === 'bash' && args?.command) {
       const cmd = String(args.command);
-      if (ConfusionCalculator.READ_ONLY_BASH.test(cmd)) {
-        return 0; // Exploration
-      }
-      return -1; // Action (default for bash)
+      return ConfusionCalculator.READ_ONLY_BASH.test(cmd);
     }
 
-    // Default: neutral
-    return 0;
+    return false;
   }
 
   /** Called when a tool is invoked */
   onToolCall(toolName: string, args?: Record<string, unknown>): void {
-    const baseContrib = this.getBaseContrib(toolName, args);
-    this.score += baseContrib;
-
-    // Repetition penalty
-    if (this.recentToolCalls.slice(-5).includes(toolName)) {
-      this.score += 1;
+    const isExplorationTool = this.isExplorationToolUse(toolName, args);
+    if (isExplorationTool) {
+      if (toolName === 'question') {
+        this.score = Math.max(this.score - 2, 0);
+      }
+    } else {
+      // actions
+      if (this.recentToolCalls.slice(-5).includes(toolName)) {
+        // consecutive actions
+        if (toolName === 'mail_to') {
+          // mail_to is highly confusing
+          this.score += 2;
+        }
+      } else {
+        // burst action - reduces confusion
+        this.score = Math.max(this.score - 1, 0);
+      }
     }
+
     this.recentToolCalls.push(toolName);
   }
 

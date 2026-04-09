@@ -6,7 +6,9 @@
       "Bash(pnpm build:*)",
       "WebSearch",
       "WebFetch(domain:stackoverflow.com)",
-      "WebFetch(domain:docs.ollama.com)"
+      "WebFetch(domain:docs.ollama.com)",
+      "Bash(head -5 /home/student/proj/mycc/.mycc/transcripts/*.jsonl)",
+      "Bash(npm test:*)"
     ]
   }
 }
