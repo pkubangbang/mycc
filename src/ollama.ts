@@ -126,26 +126,21 @@ export async function checkHealth(tokenThreshold: number): Promise<HealthCheckRe
     // 3. Query model for context length via inference
     let contextLength = 4096; // Default fallback
 
-    try {
-      const response = await ollama.chat({
-        model: MODEL,
-        messages: [
-          {
-            role: 'user',
-            content: 'What is your context window size in tokens? Reply with only a JSON object: {"context_length": <number>}',
-          },
-        ],
-        format: 'json',
-      });
+    const response = await ollama.chat({
+      model: MODEL,
+      messages: [
+        {
+          role: 'user',
+          content: 'What is your context window size in tokens? Reply with only a JSON object: {"context_length": <number>}',
+        },
+      ],
+      format: 'json',
+    });
 
-      const content = response.message.content || '';
-      const parsed = JSON.parse(content);
-      if (typeof parsed.context_length === 'number') {
-        contextLength = parsed.context_length;
-      }
-    } catch {
-      // If inference fails, use fallback - model exists but context query failed
-      // This is non-fatal, we'll use the default
+    const content = response.message.content || '';
+    const parsed = JSON.parse(content);
+    if (typeof parsed.context_length === 'number') {
+      contextLength = parsed.context_length;
     }
 
     // 4. Validate TOKEN_THRESHOLD doesn't exceed 80% of context length
@@ -170,7 +165,7 @@ export async function checkHealth(tokenThreshold: number): Promise<HealthCheckRe
     const msg = err instanceof Error ? err.message : String(err);
     return {
       ok: false,
-      error: `Model '${MODEL}' not found or unavailable. ${msg}. Run 'ollama list' to see available models.`,
+      error: `Model '${MODEL}' error: ${msg}. Ensure the model is running and can process requests.`,
     };
   }
 }
