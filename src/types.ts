@@ -366,6 +366,76 @@ export interface TeamModule {
   handlePendingQuestions(): Promise<void>;
 }
 
+// ============================================================================
+// Tmux Session (for remote SSH via tmux)
+// ============================================================================
+
+/**
+ * TmuxSession info - stored in SQLite
+ */
+export interface TmuxSessionInfo {
+  tmuxSessionName: string;  // e.g., "mycc-api-1"
+  projectDir: string;
+  remoteHost: string | null;  // NULL until user confirms
+  description: string | null;
+  createdAt: Date;
+  lastUsedAt: Date | null;
+}
+
+/**
+ * Tmux module interface - manage tmux sessions for remote SSH
+ */
+export interface TmuxModule {
+  /**
+   * Generate a unique tmux session name for the project
+   */
+  generateTmuxSessionName(projectDir: string): Promise<string>;
+  /**
+   * Normalize project directory to session-safe name
+   */
+  normalizeProjectDir(projectDir: string): string;
+  /**
+   * Create a new tmux session record
+   */
+  createTmuxSession(tmuxSessionName: string, projectDir: string, description?: string): Promise<void>;
+  /**
+   * Get tmux session by name
+   */
+  getTmuxSession(tmuxSessionName: string): Promise<TmuxSessionInfo | undefined>;
+  /**
+   * Get all tmux sessions for a project
+   */
+  getTmuxSessionsByProject(projectDir: string): Promise<TmuxSessionInfo[]>;
+  /**
+   * Update remote host for a session
+   */
+  setRemoteHost(tmuxSessionName: string, host: string): Promise<void>;
+  /**
+   * Update last used timestamp
+   */
+  touchTmuxSession(tmuxSessionName: string): Promise<void>;
+  /**
+   * Delete a tmux session record
+   */
+  deleteTmuxSession(tmuxSessionName: string): Promise<void>;
+  /**
+   * Sync tmux sessions with actual tmux list (remove dead sessions)
+   */
+  syncTmuxSessions(projectDir: string): Promise<void>;
+  /**
+   * Verify session belongs to project
+   */
+  verifyTmuxSession(tmuxSessionName: string, projectDir: string): Promise<TmuxSessionInfo | null>;
+  /**
+   * Check if tmux is installed
+   */
+  isTmuxInstalled(): boolean;
+  /**
+   * List actual tmux sessions (from system)
+   */
+  listSystemTmuxSessions(): Promise<string[]>;
+}
+
 /**
  * AgentContext - main context object for tools
  */
@@ -378,6 +448,7 @@ export interface AgentContext {
   bg: BgModule;
   wt: WtModule;
   team: TeamModule;
+  tmux: TmuxModule;
 }
 
 // ============================================================================

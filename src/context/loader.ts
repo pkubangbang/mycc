@@ -45,6 +45,12 @@ import { bgPrintTool } from '../tools/bg_print.js';
 import { bgRemoveTool } from '../tools/bg_remove.js';
 import { bgAwaitTool } from '../tools/bg_await.js';
 import { screenTool } from '../tools/screen.js';
+import { tmuxNewTool } from '../tools/tmux_new.js';
+import { tmuxSetHostTool } from '../tools/tmux_set_host.js';
+import { tmuxSendTool } from '../tools/tmux_send.js';
+import { tmuxCaptureTool } from '../tools/tmux_capture.js';
+import { tmuxListTool } from '../tools/tmux_list.js';
+import { tmuxKillTool } from '../tools/tmux_kill.js';
 
 /**
  * Built-in tools
@@ -83,6 +89,12 @@ const builtInTools: ToolDefinition[] = [
   bgRemoveTool,
   bgAwaitTool,
   screenTool,
+  tmuxNewTool,
+  tmuxSetHostTool,
+  tmuxSendTool,
+  tmuxCaptureTool,
+  tmuxListTool,
+  tmuxKillTool,
 ];
 
 /**

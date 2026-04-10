@@ -10,8 +10,9 @@ import { IssueManager } from './issue.js';
 import { BackgroundTasks } from './bg.js';
 import { WorktreeManager } from './wt.js';
 import { TeamManager } from './team.js';
+import { TmuxManager } from './tmux.js';
 import { Loader } from './loader.js';
-import type { CoreModule, TodoModule, MailModule, SkillModule, IssueModule, BgModule, WtModule, TeamModule } from '../types.js';
+import type { CoreModule, TodoModule, MailModule, SkillModule, IssueModule, BgModule, WtModule, TeamModule, TmuxModule } from '../types.js';
 
 export * from './core.js';
 export * from './todo.js';
@@ -20,6 +21,7 @@ export * from './issue.js';
 export * from './bg.js';
 export * from './wt.js';
 export * from './team.js';
+export * from './tmux.js';
 export * from './child-context/ipc-registry.js';
 export * from './child-context/index.js';
 export { Loader } from './loader.js';
@@ -37,6 +39,7 @@ export class ParentContext implements AgentContext {
   private bgModule: BackgroundTasks;
   private wtModule: WorktreeManager;
   private teamModule: TeamManager;
+  private tmuxModule: TmuxManager;
 
   constructor(loader: Loader, sessionFilePath: string) {
     this.coreModule = new Core(); // Uses process.cwd() by default
@@ -48,6 +51,7 @@ export class ParentContext implements AgentContext {
     this.wtModule = new WorktreeManager(this.coreModule);
     // Pass 'this' to TeamManager - context is used lazily so this is safe
     this.teamModule = new TeamManager(this, sessionFilePath);
+    this.tmuxModule = new TmuxManager(this.coreModule);
   }
 
   // Getters for each module
@@ -59,6 +63,7 @@ export class ParentContext implements AgentContext {
   get bg(): BgModule { return this.bgModule; }
   get wt(): WtModule { return this.wtModule; }
   get team(): TeamModule { return this.teamModule; }
+  get tmux(): TmuxModule { return this.tmuxModule; }
 
   /**
    * Initialize IPC handlers for child process communication

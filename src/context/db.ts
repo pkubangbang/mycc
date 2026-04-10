@@ -81,12 +81,25 @@ function initSchema(db: Database.Database): void {
     )
   `);
 
+  // Tmux sessions table (for remote SSH via tmux)
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS tmux_sessions (
+      tmux_session_name TEXT PRIMARY KEY,
+      project_dir TEXT NOT NULL,
+      remote_host TEXT,
+      description TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      last_used_at DATETIME
+    )
+  `);
+
   // Create indexes
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_issues_status ON issues(status);
     CREATE INDEX IF NOT EXISTS idx_issues_owner ON issues(owner);
     CREATE INDEX IF NOT EXISTS idx_issue_blockages_blocker ON issue_blockages(blocker_id);
     CREATE INDEX IF NOT EXISTS idx_issue_blockages_blocked ON issue_blockages(blocked_id);
+    CREATE INDEX IF NOT EXISTS idx_tmux_sessions_project ON tmux_sessions(project_dir);
   `);
 }
 
@@ -103,6 +116,7 @@ export function clearSessionData(): void {
     DELETE FROM issues;
     DELETE FROM teammates;
     DELETE FROM worktrees;
+    DELETE FROM tmux_sessions;
   `);
 
   // Clear mail files
