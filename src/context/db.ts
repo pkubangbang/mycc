@@ -104,6 +104,17 @@ function initSchema(db: Database.Database): void {
 }
 
 /**
+ * Close the database connection
+ * Must be called on shutdown to prevent hanging
+ */
+export function closeDb(): void {
+  if (db) {
+    db.close();
+    db = null;
+  }
+}
+
+/**
  * Clear all session data (for clean startup)
  * Clears SQLite tables and mail files
  */

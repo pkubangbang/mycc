@@ -51,6 +51,22 @@ To add a skill:
 3. let the user test it manually, and iterate from feedbacks.
 4. once qualified, migrate it back into `skills/`, to make it built-in.
 
+## Resource Cleanup (CRITICAL)
+
+When adding features that acquire resources (database connections, file watchers, timers, 
+child processes, etc.), you MUST ensure proper cleanup on exit:
+
+1. **Database connections** - Must be closed via `closeDb()` in `src/context/db.ts`
+2. **File watchers** - Must be closed via `stopWatching()` (already handled in loader)
+3. **Child processes** - Must be killed/dismissed (handled in team manager)
+4. **Timers/intervals** - Must be cleared
+
+The main exit paths are in `src/loop/agent-loop.ts`:
+- Normal exit: end of `main()` function
+- SIGINT handler: `process.on('SIGINT', ...)` 
+
+**Before adding new resources**, check both exit paths and add cleanup calls.
+
 ## Reference Documents
 
 - `docs/agent-context.md` - AgentContext module documentation (Chinese)

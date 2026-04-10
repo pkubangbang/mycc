@@ -9,7 +9,7 @@ import { retryChat, MODEL, OLLAMA_HOST, isTransientError, checkHealth, classifyE
 import type { AgentContext, ToolScope, ToolCall, SlashCommandContext } from '../types.js';
 import { ParentContext } from '../context/index.js';
 import { Loader } from '../context/loader.js';
-import { clearSessionData, getMyccDir } from '../context/db.js';
+import { clearSessionData, getMyccDir, closeDb } from '../context/db.js';
 import { createSessionFile, readSession, writeSession, getSessionId, cleanupEmptySessions } from '../session/index.js';
 import { slashRegistry } from '../slashes/index.js';
 import { TOKEN_THRESHOLD, buildSystemPrompt } from './agent-prompts.js';
@@ -288,6 +288,7 @@ export async function main(): Promise<void> {
     console.log(chalk.yellow('\nShutting down...'));
     ctx.team.dismissTeam();
     agentIO.close();
+    closeDb();
     process.exit(0);
   });
 
@@ -369,4 +370,5 @@ export async function main(): Promise<void> {
   ctx.team.dismissTeam();
   agentIO.close();
   loader.stopWatching();
+  closeDb();
 }
