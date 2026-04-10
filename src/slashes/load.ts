@@ -8,7 +8,7 @@
 
 import type { SlashCommand } from '../types.js';
 import chalk from 'chalk';
-import openEditor from 'open-editor';
+import { openEditor } from '../utils/open-editor.js';
 import { listSessions, loadSessionById } from '../session/index.js';
 import { prepareRestoration, readDosq, extractFirstQuery } from '../session/restoration.js';
 import { Triologue } from '../loop/triologue.js';

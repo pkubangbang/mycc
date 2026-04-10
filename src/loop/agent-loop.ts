@@ -5,7 +5,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import chalk from 'chalk';
-import { retryChat, MODEL, OLLAMA_HOST, isTransientError } from '../ollama.js';
+import { retryChat, MODEL, OLLAMA_HOST, isTransientError, checkHealth, classifyError } from '../ollama.js';
 import type { AgentContext, ToolScope, ToolCall, SlashCommandContext } from '../types.js';
 import { ParentContext } from '../context/index.js';
 import { Loader } from '../context/loader.js';
@@ -84,49 +84,70 @@ export async function agentLoop(
 
       triologue.setSystemPrompt(buildSystemPrompt(ctx));
 
-      const response = await retryChat({
-        model: MODEL,
-        messages: triologue.getMessages(),
-        tools: loader.getToolsForScope(scope),
-      });
+      // Create abort controller for this LLM call (allows Ctrl+C to interrupt)
+      const abortController = agentIO.createLlmAbortController();
 
-      // 5. Handle response
-      const assistantMessage = response.message;
-      triologue.agent(assistantMessage.content || '', assistantMessage.tool_calls as ToolCall[] | undefined);
+      try {
+        const response = await retryChat(
+          {
+            model: MODEL,
+            messages: triologue.getMessages(),
+            tools: loader.getToolsForScope(scope),
+          },
+          { signal: abortController.signal }
+        );
 
-      // 6. No tool calls = check team status
-      if (!assistantMessage.tool_calls || assistantMessage.tool_calls.length === 0) {
-        const { allSettled, hasQuestion } = await ctx.team.awaitTeam(30000);
+        // Clear abort controller after successful call
+        agentIO.clearLlmAbortController();
 
-        // Priority 1: If there's pending question / mail, continue to next iteration
-        if (hasQuestion || ctx.mail.hasNewMails()) {
+        // 5. Handle response
+        const assistantMessage = response.message;
+        triologue.agent(assistantMessage.content || '', assistantMessage.tool_calls as ToolCall[] | undefined);
+
+        // 6. No tool calls = check team status
+        if (!assistantMessage.tool_calls || assistantMessage.tool_calls.length === 0) {
+          const { allSettled, hasQuestion } = await ctx.team.awaitTeam(30000);
+
+          // Priority 1: If there's pending question / mail, continue to next iteration
+          if (hasQuestion || ctx.mail.hasNewMails()) {
+            continue;
+          }
+
+          // Priority 2: If all teammates are settled (idle/shutdown), we're done
+          if (allSettled) {
+            return;
+          }
+
+          // Priority 3: Timeout waiting for teammates - inject status message and retry
+          triologue.user(`Timeout waiting for teammates. What will you do? ${ctx.team.printTeam()}`);
           continue;
         }
 
-        // Priority 2: If all teammates are settled (idle/shutdown), we're done
-        if (allSettled) {
-          return;
+        // 7. Execute tools
+        for (const toolCall of (assistantMessage.tool_calls as ToolCall[])) {
+          if (agentIO.isShuttingDown()) {
+            throw new ShutdownError();
+          }
+
+          const toolCallId = toolCall.id;
+          const args = toolCall.function.arguments as Record<string, unknown>;
+          const toolName = toolCall.function.name;
+
+          const output = await loader.execute(toolName, ctx, args);
+
+          triologue.tool(toolName, output, toolCallId);
+          triologue.onToolResult(toolName, args, output);
+        }
+      } catch (err) {
+        // Always clear abort controller
+        agentIO.clearLlmAbortController();
+
+        // Check if this was an abort during LLM call
+        if (err instanceof Error && err.message === 'Request aborted') {
+          throw new ShutdownError('Interrupted by user');
         }
 
-        // Priority 3: Timeout waiting for teammates - inject status message and retry
-        triologue.user(`Timeout waiting for teammates. What will you do? ${ctx.team.printTeam()}`);
-        continue;
-      }
-
-      // 7. Execute tools
-      for (const toolCall of (assistantMessage.tool_calls as ToolCall[])) {
-        if (agentIO.isShuttingDown()) {
-          throw new ShutdownError();
-        }
-
-        const toolCallId = toolCall.id;
-        const args = toolCall.function.arguments as Record<string, unknown>;
-        const toolName = toolCall.function.name;
-
-        const output = await loader.execute(toolName, ctx, args);
-
-        triologue.tool(toolName, output, toolCallId);
-        triologue.onToolResult(toolName, args, output);
+        throw err;
       }
     } catch (err) {
       // Check if we should exit (shutdown or non-recoverable)
@@ -143,15 +164,35 @@ export async function agentLoop(
         continue;
       }
 
-      // Check if transient error (network/LLM issues) - should auto-retry
-      if (isTransientError(err)) {
-        console.error(chalk.yellow(`[agent-loop] Recoverable error: ${errorMessage}`));
-        triologue.user(`An error occurred: ${errorMessage}. Please try again.`);
-        continue;
-      }
+      // Classify error for appropriate handling
+      const errorType = classifyError(err);
 
-      // Non-transient, non-shutdown error - propagate
-      throw err;
+      switch (errorType) {
+        case 'auth':
+          console.error(chalk.red(`[agent-loop] Authentication error: ${errorMessage}`));
+          console.error(chalk.red('Check OLLAMA_API_KEY in .env file.'));
+          throw err;
+
+        case 'model':
+          console.error(chalk.red(`[agent-loop] Model error: ${errorMessage}`));
+          console.error(chalk.red(`Check OLLAMA_MODEL in .env file. Current model: ${MODEL}`));
+          throw err;
+
+        case 'config':
+          console.error(chalk.red(`[agent-loop] Configuration error: ${errorMessage}`));
+          console.error(chalk.red('Check TOKEN_THRESHOLD in .env file.'));
+          throw err;
+
+        case 'transient':
+          // Transient error - auto-retry by injecting into conversation
+          console.error(chalk.yellow(`[agent-loop] Recoverable error: ${errorMessage}`));
+          triologue.user(`An error occurred: ${errorMessage}. Please try again.`);
+          continue;
+
+        default:
+          // Unknown/fatal error - propagate
+          throw err;
+      }
     }
   }
 
@@ -165,6 +206,25 @@ export async function agentLoop(
 export async function main(): Promise<void> {
   console.log(chalk.cyan('Coding Agent v1.0'));
   console.log(chalk.cyan(`Model: ${MODEL} (${OLLAMA_HOST})`));
+
+  // Health check: validate Ollama connectivity and model availability
+  const health = await checkHealth(TOKEN_THRESHOLD);
+  if (!health.ok) {
+    console.error(chalk.red(`Health check failed: ${health.error}`));
+    process.exit(1);
+  }
+
+  // Display model info
+  if (health.modelInfo) {
+    const info = health.modelInfo;
+    const parts = [info.name];
+    if (info.family) parts.push(`family: ${info.family}`);
+    if (info.parameterSize) parts.push(`params: ${info.parameterSize}`);
+    parts.push(`ctx: ${info.contextLength}`);
+    console.log(chalk.green(`✓ Model ready: ${parts.join(', ')}`));
+    console.log(chalk.gray(`  Token threshold: ${TOKEN_THRESHOLD}`));
+  }
+
   console.log('Commands: /team, /issues, /todos, /skills, /exit\n');
 
   // Clear session data for clean startup

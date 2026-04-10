@@ -14,6 +14,7 @@ import * as readline from 'readline';
 class AgentIO {
   private _activeTool = false;
   private _abortController: AbortController | null = null;
+  private _llmAbortController: AbortController | null = null;
   private _readline: readline.Interface | null = null;
   private _isMainProcess = false;
   private _isShuttingDown = false;
@@ -139,15 +140,46 @@ class AgentIO {
   // SIGINT handling
 
   /**
-   * Abort the current tool if one is running
+   * Abort the current tool or LLM call if one is running
    * Called by SIGINT handler when Ctrl+C is pressed
+   * @returns true if something was aborted, false otherwise
    */
   abort(): boolean {
+    // First try to abort active tool
     if (this._activeTool && this._abortController) {
       this._abortController.abort();
       return true;
     }
+    // Then try to abort LLM call
+    if (this._llmAbortController) {
+      this._llmAbortController.abort();
+      return true;
+    }
     return false;
+  }
+
+  /**
+   * Create an AbortController for LLM calls
+   * The caller should store the signal and pass it to retryChat
+   */
+  createLlmAbortController(): AbortController {
+    const controller = new AbortController();
+    this._llmAbortController = controller;
+    return controller;
+  }
+
+  /**
+   * Clear the LLM abort controller after call completes
+   */
+  clearLlmAbortController(): void {
+    this._llmAbortController = null;
+  }
+
+  /**
+   * Get the current LLM abort signal (if any)
+   */
+  getLlmAbortSignal(): AbortSignal | undefined {
+    return this._llmAbortController?.signal;
   }
 
   /**

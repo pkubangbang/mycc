@@ -4,7 +4,7 @@
 
 import chalk from 'chalk';
 import type { CoreModule } from '../types.js';
-import { ollama } from '../ollama.js';
+import { ollama, retryWithBackoff } from '../ollama.js';
 import { WebFetchResponse, WebSearchResult } from 'ollama';
 import { agentIO } from '../loop/agent-io.js';
 
@@ -130,8 +130,10 @@ export class Core implements CoreModule {
    */
   async webSearch(query: string): Promise<WebSearchResult[]> {
     try {
-      const response = await ollama.webSearch({ query });
-      return response.results || [];
+      return await retryWithBackoff(async () => {
+        const response = await ollama.webSearch({ query });
+        return response.results || [];
+      }, { maxRetries: 2 });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       if (message.includes('401') || message.includes('unauthorized') || message.includes('Unauthorized')) {
@@ -147,7 +149,9 @@ export class Core implements CoreModule {
    */
   async webFetch(url: string): Promise<WebFetchResponse> {
     try {
-      return await ollama.webFetch({ url });
+      return await retryWithBackoff(async () => {
+        return await ollama.webFetch({ url });
+      }, { maxRetries: 2 });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       if (message.includes('401') || message.includes('unauthorized') || message.includes('Unauthorized')) {
