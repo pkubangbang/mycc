@@ -11,7 +11,7 @@ import matter from 'gray-matter';
 // Package root: resolve up from this file (src/context/loader.ts or dist/context/loader.js)
 const packageRoot = path.resolve(fileURLToPath(import.meta.url), '..', '..', '..');
 import type { DynamicLoader, ToolDefinition, Skill, Tool, ToolScope, AgentContext, SkillModule } from '../types.js';
-import { getToolsDir, getSkillsDir, ensureDirs } from './db.js';
+import { getToolsDir, getSkillsDir, getUserToolsDir, getUserSkillsDir, ensureDirs } from './db.js';
 import { bashTool } from '../tools/bash.js';
 import { readTool } from '../tools/read.js';
 import { writeTool } from '../tools/write.js';
@@ -89,9 +89,22 @@ const builtInTools: ToolDefinition[] = [
  * Dynamic loader implementation
  * Implements: DynamicLoader + ToolLoader + SkillModule
  */
+
+type Layer = 'user' | 'project' | 'built-in';
+
+interface ToolEntry {
+  tool: ToolDefinition;
+  layer: Layer;
+}
+
+interface SkillEntry {
+  skill: Skill;
+  layer: Layer;
+}
+
 export class Loader implements DynamicLoader, SkillModule {
-  private tools: Map<string, ToolDefinition> = new Map();
-  private skills: Map<string, Skill> = new Map();
+  private tools: Map<string, ToolEntry> = new Map();
+  private skills: Map<string, SkillEntry> = new Map();
   private toolWatcher: fs.FSWatcher | null = null;
   private skillWatcher: fs.FSWatcher | null = null;
   private silent: boolean;
@@ -102,25 +115,47 @@ export class Loader implements DynamicLoader, SkillModule {
 
   /**
    * Load all tools and skills from directories
+   * Order: user → project → built-in (later overrides earlier)
    */
   async loadAll(): Promise<void> {
     ensureDirs();
 
-    // Load built-in tools first
+    // Load in order: user → project → built-in
+    // Later loads can shadow earlier ones (built-in has highest priority)
+    this.loadUserTools();
+    await this.loadDynamicTools(); // project tools
     this.loadBuiltInTools();
 
-    // Then load dynamic tools (can override built-in)
-    await this.loadDynamicTools();
-
-    this.loadSkills();
+    this.loadUserSkills();
+    this.loadProjectSkills();
+    this.loadBuiltInSkills();
   }
 
   /**
-   * Load built-in tools from src/tools/
+   * Load user tools from ~/.mycc/tools/
+   */
+  private loadUserTools(): void {
+    const userToolsDir = getUserToolsDir();
+    if (!fs.existsSync(userToolsDir)) {
+      return;
+    }
+
+    const files = fs.readdirSync(userToolsDir);
+    for (const file of files) {
+      if (file.endsWith('.ts') || file.endsWith('.js')) {
+        const filepath = path.join(userToolsDir, file);
+        this.loadToolFromPath(filepath, 'user');
+      }
+    }
+  }
+
+  /**
+   * Load built-in tools (highest priority)
    */
   private loadBuiltInTools(): void {
     for (const tool of builtInTools) {
-      this.tools.set(tool.name, tool);
+      // Built-in always wins
+      this.tools.set(tool.name, { tool, layer: 'built-in' });
       if (!this.silent) {
         console.log(`[loader] Loaded built-in tool: ${tool.name}`);
       }
@@ -128,7 +163,7 @@ export class Loader implements DynamicLoader, SkillModule {
   }
 
   /**
-   * Load dynamic tools from .mycc/tools/
+   * Load dynamic tools from .mycc/tools/ (project level)
    */
   private async loadDynamicTools(): Promise<void> {
     const toolsDir = getToolsDir();
@@ -147,7 +182,45 @@ export class Loader implements DynamicLoader, SkillModule {
   }
 
   /**
-   * Reload a single tool file (dynamic tools only)
+   * Load a tool from a file path (for user tools - synchronous)
+   */
+  private loadToolFromPath(filepath: string, layer: Layer): void {
+    try {
+      // For user tools, we need synchronous loading
+      // Use require for .js files, but this is mainly for reference
+      // User tools should be pre-compiled
+      delete require.cache[require.resolve(filepath)];
+      const module = require(filepath);
+      const tool = module.default as ToolDefinition;
+
+      if (!tool || !tool.name) {
+        if (!this.silent) {
+          console.warn(`[loader] Invalid tool definition: ${filepath}`);
+        }
+        return;
+      }
+
+      const existing = this.tools.get(tool.name);
+      if (existing && existing.layer === 'user' && layer === 'project') {
+        // Project shadows user - show warning
+        if (!this.silent) {
+          console.warn(`[loader] Warning: project tool '${tool.name}' shadows user tool`);
+        }
+      }
+
+      this.tools.set(tool.name, { tool, layer });
+      if (!this.silent) {
+        console.log(`[loader] Loaded ${layer} tool: ${tool.name}`);
+      }
+    } catch (err) {
+      if (!this.silent) {
+        console.error(`[loader] Failed to load tool ${filepath}:`, (err as Error).message);
+      }
+    }
+  }
+
+  /**
+   * Reload a single tool file (dynamic tools only - project level)
    */
   private async reloadTool(filepath: string): Promise<void> {
     try {
@@ -167,7 +240,23 @@ export class Loader implements DynamicLoader, SkillModule {
         return;
       }
 
-      this.tools.set(tool.name, tool);
+      const existing = this.tools.get(tool.name);
+      if (existing && existing.layer === 'user') {
+        // Project shadows user - show warning
+        if (!this.silent) {
+          console.warn(`[loader] Warning: project tool '${tool.name}' shadows user tool`);
+        }
+      }
+
+      // Don't override built-in
+      if (existing && existing.layer === 'built-in') {
+        if (!this.silent) {
+          console.warn(`[loader] Warning: project tool '${tool.name}' cannot shadow built-in tool`);
+        }
+        return;
+      }
+
+      this.tools.set(tool.name, { tool, layer: 'project' });
       if (!this.silent) {
         console.log(`[loader] Loaded tool: ${tool.name}`);
       }
@@ -179,20 +268,41 @@ export class Loader implements DynamicLoader, SkillModule {
   }
 
   /**
+   * Load user skills from ~/.mycc/skills/
+   */
+  private loadUserSkills(): void {
+    const userSkillsDir = getUserSkillsDir();
+    if (!fs.existsSync(userSkillsDir)) {
+      return;
+    }
+    this.loadSkillsFromDir(userSkillsDir, 'user');
+  }
+
+  /**
+   * Load project skills from .mycc/skills/
+   */
+  private loadProjectSkills(): void {
+    ensureDirs();
+    const myccSkillsDir = getSkillsDir();
+    this.loadSkillsFromDir(myccSkillsDir, 'project');
+  }
+
+  /**
+   * Load built-in skills from skills/
+   */
+  private loadBuiltInSkills(): void {
+    const builtInSkillsDir = path.join(packageRoot, 'skills');
+    this.loadSkillsFromDir(builtInSkillsDir, 'built-in');
+  }
+
+  /**
    * Load all skills from both project skills/ and .mycc/skills/
+   * @deprecated Use loadUserSkills(), loadProjectSkills(), loadBuiltInSkills() instead
    */
   loadSkills(): Promise<void> {
-    // Ensure .mycc/skills exists
-    ensureDirs();
-
-    // Load from built-in skills/ directory (package root)
-    const builtInSkillsDir = path.join(packageRoot, 'skills');
-    this.loadSkillsFromDir(builtInSkillsDir);
-
-    // Load from .mycc/skills directory (relative to where mycc command starts)
-    const myccSkillsDir = getSkillsDir();
-    this.loadSkillsFromDir(myccSkillsDir);
-
+    this.loadUserSkills();
+    this.loadProjectSkills();
+    this.loadBuiltInSkills();
     return Promise.resolve();
   }
 
@@ -202,7 +312,7 @@ export class Loader implements DynamicLoader, SkillModule {
    * - ${dir}/*.md - single file skills at root level
    * - ${dir}/${name}/SKILL.md - skill in folder structure
    */
-  private loadSkillsFromDir(dir: string): void {
+  private loadSkillsFromDir(dir: string, layer: Layer): void {
     if (!fs.existsSync(dir)) {
       return;
     }
@@ -228,14 +338,14 @@ export class Loader implements DynamicLoader, SkillModule {
 
     const skillFiles = findSkillFiles(dir, true);
     for (const file of skillFiles) {
-      this.reloadSkill(file);
+      this.reloadSkill(file, layer);
     }
   }
 
   /**
    * Reload a single skill file
    */
-  private reloadSkill(filepath: string): void {
+  private reloadSkill(filepath: string, layer: Layer): void {
     try {
       const content = fs.readFileSync(filepath, 'utf-8');
       const { data, content: body } = matter(content);
@@ -254,9 +364,25 @@ export class Loader implements DynamicLoader, SkillModule {
         content: body.trim(),
       };
 
-      this.skills.set(skill.name, skill);
+      const existing = this.skills.get(skill.name);
+      if (existing && existing.layer === 'user' && layer === 'project') {
+        // Project shadows user - show warning
+        if (!this.silent) {
+          console.warn(`[loader] Warning: project skill '${skill.name}' shadows user skill`);
+        }
+      }
+
+      // Don't override built-in
+      if (existing && existing.layer === 'built-in') {
+        if (!this.silent) {
+          console.warn(`[loader] Warning: ${layer} skill '${skill.name}' cannot shadow built-in skill`);
+        }
+        return;
+      }
+
+      this.skills.set(skill.name, { skill, layer });
       if (!this.silent) {
-        console.log(`[loader] Loaded skill: ${skill.name}`);
+        console.log(`[loader] Loaded ${layer} skill: ${skill.name}`);
       }
     } catch (err) {
       if (!this.silent) {
@@ -266,16 +392,16 @@ export class Loader implements DynamicLoader, SkillModule {
   }
 
   /**
-   * Watch directories for changes (only dynamic directories need watching)
-   * - .mycc/tools/ - dynamic tools (hot-reloadable)
-   * - .mycc/skills/ - dynamic skills (hot-reloadable)
-   * Built-in tools (src/tools/) and skills (skills/) are static and don't need watching.
+   * Watch directories for changes (only project directories need watching)
+   * - .mycc/tools/ - project tools (hot-reloadable)
+   * - .mycc/skills/ - project skills (hot-reloadable)
+   * Built-in tools/skills and user tools/skills are static and don't need watching.
    */
   watchDirectories(): void {
     const toolsDir = getToolsDir();
     const skillsDir = getSkillsDir();
 
-    // Watch .mycc/tools/ for dynamic tool changes
+    // Watch .mycc/tools/ for project tool changes
     if (fs.existsSync(toolsDir)) {
       this.toolWatcher = watch(toolsDir, async (event, filename) => {
         if (filename && (filename.endsWith('.ts') || filename.endsWith('.js'))) {
@@ -288,7 +414,7 @@ export class Loader implements DynamicLoader, SkillModule {
       });
     }
 
-    // Watch .mycc/skills/ for dynamic skill changes (recursive for subdirectories)
+    // Watch .mycc/skills/ for project skill changes (recursive for subdirectories)
     if (fs.existsSync(skillsDir)) {
       this.skillWatcher = watch(skillsDir, { recursive: true }, (event, filename) => {
         if (filename && filename.endsWith('.md')) {
@@ -303,7 +429,7 @@ export class Loader implements DynamicLoader, SkillModule {
             if (!this.silent) {
               console.log(`[loader] Reloading skill: ${filename}`);
             }
-            this.reloadSkill(filepath);
+            this.reloadSkill(filepath, 'project');
           }
         }
       });
@@ -324,7 +450,8 @@ export class Loader implements DynamicLoader, SkillModule {
    * Get a skill by name
    */
   getSkill(name: string): Skill | undefined {
-    return this.skills.get(name);
+    const entry = this.skills.get(name);
+    return entry?.skill;
   }
 
   /**
@@ -332,10 +459,10 @@ export class Loader implements DynamicLoader, SkillModule {
    * From SkillModule interface
    */
   listSkills(): Skill[] {
-    return Array.from(this.skills.values()).map((s) => ({
-      name: s.name,
-      description: s.description,
-      keywords: s.keywords,
+    return Array.from(this.skills.values()).map((entry) => ({
+      name: entry.skill.name,
+      description: entry.skill.description,
+      keywords: entry.skill.keywords,
       content: '', // Exclude content
     }));
   }
@@ -364,13 +491,13 @@ export class Loader implements DynamicLoader, SkillModule {
    */
   getToolsForScope(scope: ToolScope): Tool[] {
     return Array.from(this.tools.values())
-      .filter((t) => t.scope.includes(scope))
-      .map((t) => ({
+      .filter((entry) => entry.tool.scope.includes(scope))
+      .map((entry) => ({
         type: 'function' as const,
         function: {
-          name: t.name,
-          description: t.description,
-          parameters: t.input_schema,
+          name: entry.tool.name,
+          description: entry.tool.description,
+          parameters: entry.tool.input_schema,
         },
       })) as Tool[];
   }
@@ -380,13 +507,13 @@ export class Loader implements DynamicLoader, SkillModule {
    * From merged ToolLoader interface
    */
   async execute(name: string, ctx: AgentContext, args: Record<string, unknown>): Promise<string> {
-    const tool = this.tools.get(name);
-    if (!tool) {
+    const entry = this.tools.get(name);
+    if (!entry) {
       return `Unknown tool: ${name}`;
     }
 
     try {
-      const result = await tool.handler(ctx, args);
+      const result = await entry.tool.handler(ctx, args);
       return result;
     } catch (err) {
       return `Error executing ${name}: ${(err as Error).message}`;

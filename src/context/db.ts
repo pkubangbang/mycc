@@ -5,6 +5,7 @@
 import Database from 'better-sqlite3';
 import * as fs from 'fs';
 import * as path from 'path';
+import * as os from 'os';
 
 const MYCC_DIR = '.mycc';
 const DB_PATH = path.join(MYCC_DIR, 'state.db');
@@ -159,6 +160,20 @@ export function getSkillsDir(): string {
  */
 export function getSessionsDir(): string {
   return path.join(MYCC_DIR, 'sessions');
+}
+
+/**
+ * Get the user-level tools directory path (~/.mycc/tools)
+ */
+export function getUserToolsDir(): string {
+  return path.join(os.homedir(), '.mycc', 'tools');
+}
+
+/**
+ * Get the user-level skills directory path (~/.mycc/skills)
+ */
+export function getUserSkillsDir(): string {
+  return path.join(os.homedir(), '.mycc', 'skills');
 }
 
 /**
