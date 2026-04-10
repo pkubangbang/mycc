@@ -126,21 +126,30 @@ export async function checkHealth(tokenThreshold: number): Promise<HealthCheckRe
     // 3. Query model for context length via inference
     let contextLength = 4096; // Default fallback
 
-    const response = await ollama.chat({
-      model: MODEL,
-      messages: [
-        {
-          role: 'user',
-          content: 'What is your context window size in tokens? Reply with only a JSON object: {"context_length": <number>}',
-        },
-      ],
-      format: 'json',
-    });
+    startSpinner('Powered by Ollama. Initializing');
+    const startTime = Date.now();
 
-    const content = response.message.content || '';
-    const parsed = JSON.parse(content);
-    if (typeof parsed.context_length === 'number') {
-      contextLength = parsed.context_length;
+    try {
+      const response = await ollama.chat({
+        model: MODEL,
+        messages: [
+          {
+            role: 'user',
+            content: 'What is your context window size in tokens? Reply with only a JSON object: {"context_length": <number>}',
+          },
+        ],
+        format: 'json',
+      });
+
+      const content = response.message.content || '';
+      const parsed = JSON.parse(content);
+      if (typeof parsed.context_length === 'number') {
+        contextLength = parsed.context_length;
+      }
+    } finally {
+      stopSpinner();
+      const elapsed = Date.now() - startTime;
+      console.log(`[ollama] Health check passed (${elapsed}ms)`);
     }
 
     // 4. Validate TOKEN_THRESHOLD doesn't exceed 80% of context length
@@ -162,6 +171,7 @@ export async function checkHealth(tokenThreshold: number): Promise<HealthCheckRe
       },
     };
   } catch (err) {
+    stopSpinner();
     const msg = err instanceof Error ? err.message : String(err);
     return {
       ok: false,
