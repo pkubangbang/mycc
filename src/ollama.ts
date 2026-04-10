@@ -126,6 +126,9 @@ export async function checkHealth(tokenThreshold: number): Promise<HealthCheckRe
     // 3. Query model for context length via inference
     let contextLength = 4096; // Default fallback
 
+    startSpinner('Powered by Ollama. Initializing');
+    const startTime = Date.now();
+
     try {
       const response = await ollama.chat({
         model: MODEL,
@@ -143,9 +146,16 @@ export async function checkHealth(tokenThreshold: number): Promise<HealthCheckRe
       if (typeof parsed.context_length === 'number') {
         contextLength = parsed.context_length;
       }
-    } catch {
-      // If inference fails, use fallback - model exists but context query failed
-      // This is non-fatal, we'll use the default
+      stopSpinner();
+      const elapsed = Date.now() - startTime;
+      console.log(`[ollama] Health check passed (${elapsed}ms)`);
+    } catch (err: unknown) {
+      stopSpinner();
+      const msg = err instanceof Error ? err.message : String(err);
+      return {
+        ok: false,
+        error: `Model '${MODEL}' error: ${msg}. Ensure the model is running and can process requests.`,
+      };
     }
 
     // 4. Validate TOKEN_THRESHOLD doesn't exceed 80% of context length
