@@ -294,34 +294,57 @@ function stopSpinner(): void {
  * - Jitter to prevent thundering herd
  * - Transient error detection
  * - Optional request timeout
+ * - Abort signal support for Ctrl+C
  */
 export async function retryChat(
   request: Omit<ChatRequest, 'stream'> & { stream?: false },
-  config?: Partial<RetryConfig>
+  config?: Partial<RetryConfig> & { signal?: AbortSignal }
 ): Promise<ChatResponse> {
   const cfg = { ...DEFAULT_RETRY_CONFIG, ...config };
+  const signal = config?.signal;
   let lastError: Error | null = null;
 
   startSpinner();
 
   try {
     for (let attempt = 1; attempt <= cfg.maxRetries + 1; attempt++) {
+      // Check if aborted before starting
+      if (signal?.aborted) {
+        throw new Error('Request aborted');
+      }
+
       try {
         // Apply timeout if specified
         const chatPromise = ollama.chat(request as ChatRequest & { stream?: false });
 
-        if (cfg.timeoutMs) {
-          const response = await Promise.race([
-            chatPromise,
-            new Promise<never>((_, reject) =>
+        // Create abort promise if signal provided
+        const abortPromise = signal
+          ? new Promise<never>((_, reject) => {
+              const handler = () => reject(new Error('Request aborted'));
+              signal.addEventListener('abort', handler, { once: true });
+            })
+          : null;
+
+        // Create timeout promise if timeout specified
+        const timeoutPromise = cfg.timeoutMs
+          ? new Promise<never>((_, reject) =>
               setTimeout(() => reject(new Error(`Request timed out after ${cfg.timeoutMs}ms`)), cfg.timeoutMs)
-            ),
-          ]);
-          return response;
+            )
+          : null;
+
+        // Race between chat, abort, and timeout
+        const promises: Promise<ChatResponse | never>[] = [chatPromise];
+        if (abortPromise) promises.push(abortPromise);
+        if (timeoutPromise) promises.push(timeoutPromise);
+
+        const response = await Promise.race(promises);
+        return response;
+      } catch (err) {
+        // Check if aborted
+        if (err instanceof Error && err.message === 'Request aborted') {
+          throw err;
         }
 
-        return await chatPromise;
-      } catch (err) {
         // Check if it's a transient error
         if (!isTransientError(err)) {
           // Non-transient error - throw immediately
