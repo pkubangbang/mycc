@@ -23,6 +23,9 @@ importers:
       gray-matter:
         specifier: ^4.0.3
         version: 4.0.3
+      minimist:
+        specifier: ^1.2.8
+        version: 1.2.8
       ollama:
         specifier: ^0.6.3
         version: 0.6.3
@@ -36,6 +39,9 @@ importers:
       '@types/json-schema':
         specifier: ^7.0.15
         version: 7.0.15
+      '@types/minimist':
+        specifier: ^1.2.5
+        version: 1.2.5
       '@types/node':
         specifier: ^20
         version: 20.19.37
@@ -222,6 +228,9 @@ packages:
 
   '@types/json-schema@7.0.15':
     resolution: {integrity: sha512-5+fP8P8MFNC+AyZCDxrB2pkZFPGzqQWUzpSeuuVLvm8VMcorNYavBqoFcxK8bQz4Qsbn4oUEEem4wDLfcysGHA==}
+
+  '@types/minimist@1.2.5':
+    resolution: {integrity: sha512-hov8bUuiLiyFPGyFPE1lwWhmzYbirOXQNNo40+y3zow8aFVTeyn3VWL0VFFfdNddA8S4Vf0Tc062rzyNr7Paag==}
 
   '@types/node@20.19.37':
     resolution: {integrity: sha512-8kzdPJ3FsNsVIurqBs7oodNnCEVbni9yUEkaHbgptDACOPW04jimGagZ51E6+lXUwJjgnBw+hyko/lkFWCldqw==}
@@ -618,6 +627,8 @@ snapshots:
   '@types/chalk@0.4.31': {}
 
   '@types/json-schema@7.0.15': {}
+
+  '@types/minimist@1.2.5': {}
 
   '@types/node@20.19.37':
     dependencies:

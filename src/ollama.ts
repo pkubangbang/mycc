@@ -6,6 +6,8 @@
 
 import { Ollama } from 'ollama';
 import type { ChatRequest, ChatResponse } from 'ollama';
+import chalk from 'chalk';
+import { isVerbose } from './config.js';
 // Configuration
 export const OLLAMA_HOST = process.env.OLLAMA_HOST || 'http://127.0.0.1:11434';
 export const OLLAMA_API_KEY = process.env.OLLAMA_API_KEY;
@@ -316,11 +318,29 @@ export async function retryChat(
 
   startSpinner();
 
+  // Verbose: Log request
+  if (isVerbose()) {
+    console.log(chalk.magenta('[verbose][ollama] Request:'));
+    console.log(chalk.gray(`  Model: ${request.model}`));
+    console.log(chalk.gray(`  Messages: ${request.messages?.length || 0}`));
+    if (request.tools && request.tools.length > 0) {
+      console.log(chalk.gray(`  Tools: ${request.tools.length} (${request.tools.map(t => t.function?.name || 'unknown').join(', ')})`));
+    }
+    if (request.format) {
+      console.log(chalk.gray(`  Format: ${request.format}`));
+    }
+  }
+
   try {
     for (let attempt = 1; attempt <= cfg.maxRetries + 1; attempt++) {
       // Check if aborted before starting
       if (signal?.aborted) {
         throw new Error('Request aborted');
+      }
+
+      // Verbose: Log retry attempt
+      if (attempt > 1 && isVerbose()) {
+        console.log(chalk.magenta(`[verbose][ollama] Retry attempt ${attempt}/${cfg.maxRetries + 1}`));
       }
 
       try {
@@ -348,6 +368,24 @@ export async function retryChat(
         if (timeoutPromise) promises.push(timeoutPromise);
 
         const response = await Promise.race(promises);
+
+        // Verbose: Log response
+        if (isVerbose()) {
+          console.log(chalk.magenta('[verbose][ollama] Response:'));
+          const content = response.message.content || '';
+          console.log(chalk.gray(`  Content (${content.length} chars): ${content.slice(0, 200)}${content.length > 200 ? '...' : ''}`));
+          if (response.message.tool_calls && response.message.tool_calls.length > 0) {
+            console.log(chalk.gray(`  Tool calls: ${response.message.tool_calls.length}`));
+            for (const tc of response.message.tool_calls) {
+              const argsPreview = JSON.stringify(tc.function.arguments).slice(0, 100);
+              console.log(chalk.gray(`    - ${tc.function.name}: ${argsPreview}${argsPreview.length >= 100 ? '...' : ''}`));
+            }
+          }
+          if (response.done_reason) {
+            console.log(chalk.gray(`  Done reason: ${response.done_reason}`));
+          }
+        }
+
         return response;
       } catch (err) {
         // Check if aborted

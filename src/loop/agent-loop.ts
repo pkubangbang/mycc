@@ -16,6 +16,7 @@ import { slashRegistry } from '../slashes/index.js';
 import { TOKEN_THRESHOLD, buildSystemPrompt } from './agent-prompts.js';
 import { Triologue } from './triologue.js';
 import { agentIO } from './agent-io.js';
+import { isVerbose } from '../config.js';
 
 /**
  * Custom error for graceful shutdown
@@ -83,7 +84,14 @@ export async function agentLoop(
         triologue.user('Continue with your task.');
       }
 
-      triologue.setSystemPrompt(buildSystemPrompt(ctx));
+      const systemPrompt = buildSystemPrompt(ctx);
+      triologue.setSystemPrompt(systemPrompt);
+
+      // Verbose: Log system prompt
+      if (isVerbose()) {
+        console.log(chalk.magenta('[verbose][agent-loop] System prompt:'));
+        console.log(chalk.gray(systemPrompt.slice(0, 500) + (systemPrompt.length > 500 ? '...' : '')));
+      }
 
       // Create abort controller for this LLM call (allows Ctrl+C to interrupt)
       const abortController = agentIO.createLlmAbortController();
@@ -134,8 +142,24 @@ export async function agentLoop(
           const args = toolCall.function.arguments as Record<string, unknown>;
           const toolName = toolCall.function.name;
 
+          // Verbose: Log tool execution
+          if (isVerbose()) {
+            console.log(chalk.magenta(`[verbose][agent-loop] Executing tool: ${toolName}`));
+            const argsPreview = JSON.stringify(args).slice(0, 200);
+            console.log(chalk.gray(`  Args: ${argsPreview}${argsPreview.length >= 200 ? '...' : ''}`));
+          }
+
           try {
             const output = await loader.execute(toolName, ctx, args);
+
+            // Verbose: Log tool result
+            if (isVerbose()) {
+              console.log(chalk.magenta(`[verbose][agent-loop] Tool result: ${toolName}`));
+              console.log(chalk.gray(`  Output length: ${output.length} chars`));
+              const outputPreview = output.slice(0, 300);
+              console.log(chalk.gray(`  Preview: ${outputPreview}${output.length > 300 ? '...' : ''}`));
+            }
+
             triologue.tool(toolName, output, toolCallId);
             triologue.onToolResult(toolName, args, output);
           } catch (err) {

@@ -6,6 +6,7 @@ import { WebFetchResponse, WebSearchResult } from 'ollama';
 import { ollama } from '../../ollama.js';
 import type { CoreModule } from '../../types.js';
 import { ipc, sendStatus } from './ipc-helpers.js';
+import { isVerbose } from '../../config.js';
 
 /**
  * Core module for child process
@@ -39,6 +40,15 @@ export class ChildCore implements CoreModule {
     } else {
       ipc.sendNotification('log', { message: formatted });
     }
+  }
+
+  /**
+   * Verbose-only logging - sends to parent via IPC
+   * Only outputs when -v flag is set
+   */
+  verbose(tool: string, message: string, data?: unknown): void {
+    if (!isVerbose()) return;
+    ipc.sendNotification('verbose', { tool, message, data });
   }
 
   async question(query: string, asker: string): Promise<string> {

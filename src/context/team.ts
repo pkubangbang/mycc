@@ -221,6 +221,13 @@ export class TeamManager implements TeamModule {
       return;
     }
 
+    // Verbose logging from child (only shown in verbose mode)
+    if (msg.type === 'verbose') {
+      const { tool, message, data } = msg as unknown as { tool: string; message: string; data?: unknown };
+      this.context.core.verbose(tool, `[${sender}] ${message}`, data);
+      return;
+    }
+
     // === Request/Response (requires response) ===
     if (reqId === undefined) {
       // No reqId means it's a notification we don't recognize

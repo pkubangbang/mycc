@@ -7,6 +7,7 @@ import type { CoreModule } from '../types.js';
 import { ollama, retryWithBackoff } from '../ollama.js';
 import { WebFetchResponse, WebSearchResult } from 'ollama';
 import { agentIO } from '../loop/agent-io.js';
+import { isVerbose } from '../config.js';
 
 /**
  * Color functions for tool prefixes
@@ -92,13 +93,34 @@ export class Core implements CoreModule {
     // Log to console
     switch (level) {
       case 'error':
-        console.error(`${prefix} ${chalk.red(`ERROR: ${message}`)}`);
+        console.error(`${prefix} ${chalk.red(message)}`);
         break;
       case 'warn':
-        console.warn(`${prefix} ${chalk.yellow(`WARN: ${message}`)}`);
+        console.warn(`${prefix} ${chalk.yellow(message)}`);
         break;
       default:
         console.log(`${prefix} ${message}`);
+    }
+  }
+
+  /**
+   * Verbose-only logging
+   * Only outputs when -v flag is set
+   * @param tool - Tool/module name
+   * @param message - Log message
+   * @param data - Optional data to pretty-print as JSON
+   */
+  verbose(tool: string, message: string, data?: unknown): void {
+    if (!isVerbose()) return;
+
+    const timestamp = new Date().toISOString();
+    const prefix = chalk.gray(`[${timestamp}]`) + chalk.magenta(`[verbose][${tool}]`);
+
+    if (data !== undefined) {
+      console.log(`${prefix} ${message}`);
+      console.log(chalk.gray(JSON.stringify(data, null, 2)));
+    } else {
+      console.log(`${prefix} ${message}`);
     }
   }
 

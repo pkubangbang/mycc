@@ -219,6 +219,13 @@ export interface CoreModule {
   getName(): string;
   brief(level: 'info' | 'warn' | 'error', tool: string, message: string): void;
   /**
+   * Verbose logging - only outputs when -v flag is set
+   * @param tool - Tool/module name
+   * @param message - Log message
+   * @param data - Optional data to pretty-print as JSON
+   */
+  verbose(tool: string, message: string, data?: unknown): void;
+  /**
    * Ask user a question and wait for response
    * Used by tools to get user input during execution
    * @param query - The question to ask
