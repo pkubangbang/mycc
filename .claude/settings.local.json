@@ -8,7 +8,8 @@
       "WebFetch(domain:stackoverflow.com)",
       "WebFetch(domain:docs.ollama.com)",
       "Bash(head -5 /home/student/proj/mycc/.mycc/transcripts/*.jsonl)",
-      "Bash(npm test:*)"
+      "Bash(npm test:*)",
+      "Bash(npx tsc:*)"
     ]
   }
 }
