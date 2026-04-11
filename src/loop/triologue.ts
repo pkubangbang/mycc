@@ -123,7 +123,15 @@ export class Triologue {
       const randomSuffix = Math.random().toString(36).slice(2, 8);
       const filename = `${functionName}_${timestamp}_${randomSuffix}.txt`;
       const filepath = path.join(getLongtextDir(), filename);
-      fs.writeFileSync(filepath, result);
+
+      // Add header explaining why this file was created
+      const header = `[DUMPED TOOL RESULT]\n` +
+        `Tool: ${functionName}\n` +
+        `Reason: Result exceeded ${threshold} char threshold (${result.length} chars)\n` +
+        `Time: ${new Date(timestamp).toISOString()}\n` +
+        `Use read_read tool to summarize, or bash with head/tail to read.\n` +
+        `---\n\n`;
+      fs.writeFileSync(filepath, header + result);
 
       // Throw error with file reference
       throw new ResultTooLargeError(
