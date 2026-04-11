@@ -9,14 +9,16 @@ import { homedir } from 'os';
 import { resolve } from 'path';
 import chalk from 'chalk';
 
-// Load .env from: 1) current directory, 2) ~/.mycc/.env
+// Load .env from: 1) global ~/.mycc/.env, 2) current directory (local overrides)
 const localEnv = resolve(process.cwd(), '.env');
 const globalEnv = resolve(homedir(), '.mycc', '.env');
 
+// Load global first (if exists), then local (if exists) - local values override global
+if (existsSync(globalEnv)) {
+  config({ path: globalEnv });
+}
 if (existsSync(localEnv)) {
   config({ path: localEnv });
-} else if (existsSync(globalEnv)) {
-  config({ path: globalEnv });
 }
 
 // Import config AFTER .env is loaded
