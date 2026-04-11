@@ -62,6 +62,7 @@ import { skillsCommand } from './skills.js';
 import { issuesCommand } from './issues.js';
 import { saveCommand } from './save.js';
 import { loadCommand } from './load.js';
+import { clearCommand } from './clear.js';
 
 slashRegistry.register(teamCommand);
 slashRegistry.register(todosCommand);
@@ -69,3 +70,4 @@ slashRegistry.register(skillsCommand);
 slashRegistry.register(issuesCommand);
 slashRegistry.register(saveCommand);
 slashRegistry.register(loadCommand);
+slashRegistry.register(clearCommand);

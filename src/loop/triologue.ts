@@ -68,6 +68,8 @@ export class Triologue {
     this.confusion = new ConfusionCalculator(hintThreshold);
     this.options = {
       tokenThreshold: tokenThreshold,
+      // default value is about half the TOKEN_THRESHOLD, so there won't be
+      // "big blocks" that take more than half of the ctx length.
       resultThreshold: options.resultThreshold ?? Math.floor(tokenThreshold / 2),
       hintThreshold: hintThreshold,
       onMisorder: options.onMisorder ?? this.defaultOnMisorder,
@@ -249,6 +251,19 @@ export class Triologue {
     this.pendingToolCallOrder = [];
     // Reset hint flag after compact since conversation is reset
     this.resetHint();
+  }
+
+  /**
+   * Clear all messages and reset state
+   * Called by /clear command
+   */
+  clear(): void {
+    this.messages = [];
+    this.tokenCount = 0;
+    this.pendingToolCalls.clear();
+    this.pendingToolCallOrder = [];
+    this.hintGenerated = false;
+    this.confusion.reset();
   }
 
   /**

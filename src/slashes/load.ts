@@ -24,7 +24,7 @@ export const loadCommand: SlashCommand = {
     const isEmpty = !triologue.getMessagesRaw().length;
     if (!isEmpty) {
       console.log(chalk.yellow('Cannot load session: current session already has content.'));
-      console.log(chalk.gray('Start a new agent session to load a saved session.'));
+      console.log(chalk.gray('Use /clear to clear the current session, or start a new agent session.'));
       return;
     }
 
