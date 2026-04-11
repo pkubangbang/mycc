@@ -410,6 +410,27 @@ export interface SlashCommand {
 }
 
 // ============================================================================
+// Errors
+// ============================================================================
+
+/**
+ * Error thrown when a tool result exceeds the size threshold
+ * The result is dumped to a file for later retrieval
+ */
+export class ResultTooLargeError extends Error {
+  constructor(
+    public readonly toolName: string,
+    public readonly filePath: string,  // Path in .mycc/longtext/
+    public readonly size: number,
+    public readonly threshold: number,
+    public readonly preview: string    // First N chars for preview
+  ) {
+    super(`Tool result too large: ${toolName} returned ${size} chars (threshold: ${threshold})`);
+    this.name = 'ResultTooLargeError';
+  }
+}
+
+// ============================================================================
 // Dynamic Loader
 // ============================================================================
 

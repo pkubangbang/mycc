@@ -163,6 +163,13 @@ export function getSessionsDir(): string {
 }
 
 /**
+ * Get the longtext directory path (for large tool results)
+ */
+export function getLongtextDir(): string {
+  return path.join(MYCC_DIR, 'longtext');
+}
+
+/**
  * Get the user-level tools directory path (~/.mycc/tools)
  */
 export function getUserToolsDir(): string {
@@ -180,7 +187,7 @@ export function getUserSkillsDir(): string {
  * Ensure all runtime directories exist
  */
 export function ensureDirs(): void {
-  const dirs = [MYCC_DIR, getMailDir(), getToolsDir(), getSkillsDir(), getSessionsDir()];
+  const dirs = [MYCC_DIR, getMailDir(), getToolsDir(), getSkillsDir(), getSessionsDir(), getLongtextDir()];
   for (const dir of dirs) {
     if (!fs.existsSync(dir)) {
       fs.mkdirSync(dir, { recursive: true });

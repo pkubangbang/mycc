@@ -12,7 +12,8 @@ import * as path from 'path';
 import chalk from 'chalk';
 import { retryChat, MODEL } from '../ollama.js';
 import type { Message, ToolCall } from '../types.js';
-import { getMyccDir, ensureDirs } from '../context/db.js';
+import { ResultTooLargeError } from '../types.js';
+import { getMyccDir, getLongtextDir, ensureDirs } from '../context/db.js';
 import { ConfusionCalculator } from './confusion-calculator.js';
 
 export type Role = 'system' | 'user' | 'assistant' | 'tool';
@@ -35,6 +36,8 @@ export interface ToolAlignmentWarning {
 export interface TriologueOptions {
   /** Token threshold for auto-compact (default: 50000) */
   tokenThreshold?: number;
+  /** Result size threshold in chars (default: 20000) */
+  resultThreshold?: number;
   /** Message threshold for hint round (default: 10) */
   hintThreshold?: number;
   /** Called when misordered role transition detected */
@@ -61,9 +64,11 @@ export class Triologue {
 
   constructor(options: TriologueOptions = {}) {
     const hintThreshold = options.hintThreshold ?? 10;
+    const tokenThreshold = options.tokenThreshold ?? 50000;
     this.confusion = new ConfusionCalculator(hintThreshold);
     this.options = {
-      tokenThreshold: options.tokenThreshold ?? 50000,
+      tokenThreshold: tokenThreshold,
+      resultThreshold: options.resultThreshold ?? Math.floor(tokenThreshold / 2),
       hintThreshold: hintThreshold,
       onMisorder: options.onMisorder ?? this.defaultOnMisorder,
       onToolMisalign: options.onToolMisalign ?? this.defaultOnToolMisalign,
@@ -105,6 +110,27 @@ export class Triologue {
     if (lastRole !== 'assistant' && lastRole !== 'tool') {
       this.handleMisorder('tool', { content: result, tool_name: functionName, tool_call_id: toolCallId });
       return;
+    }
+
+    // Check result size threshold
+    const threshold = this.options.resultThreshold;
+    if (result.length > threshold) {
+      // Dump to file
+      ensureDirs();
+      const timestamp = Date.now();
+      const randomSuffix = Math.random().toString(36).slice(2, 8);
+      const filename = `${functionName}_${timestamp}_${randomSuffix}.txt`;
+      const filepath = path.join(getLongtextDir(), filename);
+      fs.writeFileSync(filepath, result);
+
+      // Throw error with file reference
+      throw new ResultTooLargeError(
+        functionName,
+        filepath,
+        result.length,
+        threshold,
+        result.slice(0, 1000)  // First 1000 chars as preview
+      );
     }
 
     // Resolve toolCallId if not provided

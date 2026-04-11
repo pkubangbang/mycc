@@ -45,6 +45,7 @@ import { bgPrintTool } from '../tools/bg_print.js';
 import { bgRemoveTool } from '../tools/bg_remove.js';
 import { bgAwaitTool } from '../tools/bg_await.js';
 import { screenTool } from '../tools/screen.js';
+import { readReadTool } from '../tools/read-read.js';
 
 /**
  * Built-in tools
@@ -83,6 +84,7 @@ const builtInTools: ToolDefinition[] = [
   bgRemoveTool,
   bgAwaitTool,
   screenTool,
+  readReadTool,
 ];
 
 /**

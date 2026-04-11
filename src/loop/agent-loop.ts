@@ -7,6 +7,7 @@ import * as path from 'path';
 import chalk from 'chalk';
 import { retryChat, MODEL, OLLAMA_HOST, isTransientError, checkHealth, classifyError } from '../ollama.js';
 import type { AgentContext, ToolScope, ToolCall, SlashCommandContext } from '../types.js';
+import { ResultTooLargeError } from '../types.js';
 import { ParentContext } from '../context/index.js';
 import { Loader } from '../context/loader.js';
 import { clearSessionData, getMyccDir, closeDb } from '../context/db.js';
@@ -133,10 +134,24 @@ export async function agentLoop(
           const args = toolCall.function.arguments as Record<string, unknown>;
           const toolName = toolCall.function.name;
 
-          const output = await loader.execute(toolName, ctx, args);
+          try {
+            const output = await loader.execute(toolName, ctx, args);
+            triologue.tool(toolName, output, toolCallId);
+            triologue.onToolResult(toolName, args, output);
+          } catch (err) {
+            if (err instanceof ResultTooLargeError) {
+              // Handle large result: use preview + instruction
+              const truncatedOutput = `[Result too large: ${err.size} chars]\n` +
+                `Full content saved to: ${err.filePath}\n` +
+                `Use read_read tool to summarize, or bash with head/tail to read.\n\n` +
+                `--- Preview (first 1000 chars) ---\n${err.preview}`;
 
-          triologue.tool(toolName, output, toolCallId);
-          triologue.onToolResult(toolName, args, output);
+              triologue.tool(toolName, truncatedOutput, toolCallId);
+              triologue.onToolResult(toolName, args, truncatedOutput);
+            } else {
+              throw err;
+            }
+          }
         }
       } catch (err) {
         // Always clear abort controller
