@@ -17,6 +17,7 @@ import { TOKEN_THRESHOLD, buildSystemPrompt } from './agent-prompts.js';
 import { Triologue } from './triologue.js';
 import { agentIO } from './agent-io.js';
 import { isVerbose } from '../config.js';
+import { openMultilineEditor } from '../utils/multiline-input.js';
 
 /**
  * Custom error for graceful shutdown
@@ -335,6 +336,18 @@ export async function main(): Promise<void> {
   while (!agentIO.isShuttingDown()) {
     try {
       let query = await agentIO.ask(chalk.bgYellow.black('agent >> '));
+
+      // Handle multi-line input (trailing backslash)
+      if (query.endsWith('\\') && query.trim() !== '\\') {
+        const initialContent = query.slice(0, -1);
+        const content = await openMultilineEditor(initialContent);
+        if (content === null) {
+          console.log(chalk.gray('Multi-line input cancelled.'));
+          continue;
+        }
+        query = content;
+      }
+
       // handle exit
       if (['q', 'exit', 'quit', ''].includes(query.trim().toLowerCase())) {
         break;
