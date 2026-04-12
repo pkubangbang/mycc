@@ -102,6 +102,32 @@ export interface HealthCheckResult {
 }
 
 /**
+ * Inline startup tool definition for health check
+ * This tool is exclusive to checkHealth and not mixed with built-in tools
+ */
+const STARTUP_TOOL = {
+  type: 'function' as const,
+  function: {
+    name: 'start_up',
+    description: 'Report model capabilities and provide a fun message of the day. Call this tool exactly once with your model information.',
+    parameters: {
+      type: 'object',
+      properties: {
+        context_length: {
+          type: 'number',
+          description: 'The maximum context window size in tokens for this model',
+        },
+        motd: {
+          type: 'string',
+          description: 'A fun, creative, or witty message of the day (a short phrase, wordplay, or greeting)',
+        },
+      },
+      required: ['context_length', 'motd'],
+    },
+  },
+};
+
+/**
  * Check Ollama server connectivity and model availability
  *
  * Validates:
@@ -125,8 +151,18 @@ export async function checkHealth(tokenThreshold: number): Promise<HealthCheckRe
     // 2. Check model exists via show()
     const modelInfo = await ollama.show({ model: MODEL });
 
-    // 3. Query model for context length via inference
+    // 3. Build model info for the startup prompt
+    const modelDetails = [
+      `Model: ${MODEL}`,
+      modelInfo.details?.family ? `Family: ${modelInfo.details.family}` : '',
+      modelInfo.details?.parameter_size ? `Parameters: ${modelInfo.details.parameter_size}` : '',
+    ]
+      .filter(Boolean)
+      .join('\n');
+
+    // 4. Query model for context length via tool call
     let contextLength = 4096; // Default fallback
+    let motd = 'Ready to code!'; // Default MOTD
 
     startSpinner('Powered by Ollama. Initializing');
     const startTime = Date.now();
@@ -137,20 +173,30 @@ export async function checkHealth(tokenThreshold: number): Promise<HealthCheckRe
         messages: [
           {
             role: 'user',
-            content: 'What is your context window size in tokens? Reply with only a JSON object: {"context_length": <number>}',
+            content: `You are starting up. Here is your model information:\n\n${modelDetails}\n\nCall the start_up tool to report your context length and provide a fun message of the day.`,
           },
         ],
-        format: 'json',
+        tools: [STARTUP_TOOL],
       });
 
-      const content = response.message.content || '';
-      const parsed = JSON.parse(content);
-      if (typeof parsed.context_length === 'number') {
-        contextLength = parsed.context_length;
+      // Extract tool call result
+      if (response.message.tool_calls && response.message.tool_calls.length > 0) {
+        const toolCall = response.message.tool_calls[0];
+        if (toolCall.function.name === 'start_up') {
+          const args = toolCall.function.arguments as { context_length?: number; motd?: string };
+          if (typeof args.context_length === 'number') {
+            contextLength = args.context_length;
+          }
+          if (typeof args.motd === 'string' && args.motd.trim()) {
+            motd = args.motd.trim();
+          }
+        }
       }
+
       stopSpinner();
       const elapsed = Date.now() - startTime;
       console.log(`[ollama] Health check passed (${elapsed}ms)`);
+      console.log(chalk.cyan(`✨ ${motd}`));
     } catch (err: unknown) {
       stopSpinner();
       const msg = err instanceof Error ? err.message : String(err);
@@ -160,7 +206,7 @@ export async function checkHealth(tokenThreshold: number): Promise<HealthCheckRe
       };
     }
 
-    // 4. Validate TOKEN_THRESHOLD doesn't exceed 80% of context length
+    // 5. Validate TOKEN_THRESHOLD doesn't exceed 80% of context length
     const maxThreshold = Math.floor(contextLength * 0.8);
     if (tokenThreshold > maxThreshold) {
       return {
