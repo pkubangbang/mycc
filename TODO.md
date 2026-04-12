@@ -5,3 +5,7 @@
 - [x] Support multi-line editing and pasting (using popup temp file)
 - [x] (Important!) Make Ctrl + C to reliably break the agent running and exit.
 - [x] (Important!) Enable mycc to use SSH via tmux.
+# about the /load slash command
+- [x] `/load <sessionid>` should allow partial (but un-ambigious) match.
+- [x] `/load <sessionid>` should be able to load any available session, no matter it being a user session or a project session.
+- [x] `/load <sessionid>` should ensure the working dir is what recorded inside the session file; it's like `cd <proj-dir> && mycc --session <sessionid-full>`.

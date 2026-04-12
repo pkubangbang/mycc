@@ -10,8 +10,9 @@ import minimist from 'minimist';
 // Parse CLI args once at startup
 const args = minimist(process.argv.slice(2), {
   boolean: ['v', 'verbose'],
+  string: ['session'],
   alias: { v: 'verbose' },
-  default: { v: false },
+  default: { v: false, session: null },
 });
 
 /**
@@ -35,6 +36,13 @@ class GlobalConfig {
 }
 
 export const globalConfig = new GlobalConfig();
+
+/**
+ * Get session ID from CLI args (--session flag)
+ */
+export function getSessionArg(): string | null {
+  return args.session || null;
+}
 
 /**
  * Quick check for verbose mode (convenience)

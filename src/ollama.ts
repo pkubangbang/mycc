@@ -151,60 +151,84 @@ export async function checkHealth(tokenThreshold: number): Promise<HealthCheckRe
     // 2. Check model exists via show()
     const modelInfo = await ollama.show({ model: MODEL });
 
-    // 3. Build model info for the startup prompt
-    const modelDetails = [
-      `Model: ${MODEL}`,
-      modelInfo.details?.family ? `Family: ${modelInfo.details.family}` : '',
-      modelInfo.details?.parameter_size ? `Parameters: ${modelInfo.details.parameter_size}` : '',
-    ]
-      .filter(Boolean)
-      .join('\n');
+    // 3. Use model info as the input
+    const modelInfoDisplay = JSON.stringify(modelInfo, null, 2);
 
-    // 4. Query model for context length via tool call
+    // 4. Query model for context length via tool call (with retry)
     let contextLength = 4096; // Default fallback
     let motd = 'Ready to code!'; // Default MOTD
 
     startSpinner('Powered by Ollama. Initializing');
     const startTime = Date.now();
 
-    try {
-      const response = await ollama.chat({
-        model: MODEL,
-        messages: [
-          {
-            role: 'user',
-            content: `You are starting up. Here is your model information:\n\n${modelDetails}\n\nCall the start_up tool to report your context length and provide a fun message of the day.`,
-          },
-        ],
-        tools: [STARTUP_TOOL],
-      });
+    const maxRetries = 3;
+    const baseDelayMs = 1000;
+    let lastError: Error | null = null;
 
-      // Extract tool call result
-      if (response.message.tool_calls && response.message.tool_calls.length > 0) {
-        const toolCall = response.message.tool_calls[0];
-        if (toolCall.function.name === 'start_up') {
-          const args = toolCall.function.arguments as { context_length?: number; motd?: string };
-          if (typeof args.context_length === 'number') {
-            contextLength = args.context_length;
-          }
-          if (typeof args.motd === 'string' && args.motd.trim()) {
-            motd = args.motd.trim();
+    for (let attempt = 1; attempt <= maxRetries + 1; attempt++) {
+      try {
+        const response = await ollama.chat({
+          model: MODEL,
+          messages: [
+            {
+              role: 'user',
+              content: `You are starting up. Here is your model information:\n\n${modelInfoDisplay}\n\nCall the start_up tool to report your context length and provide a fun message of the day.`,
+            },
+          ],
+          tools: [STARTUP_TOOL],
+        });
+
+        // Extract tool call result
+        if (response.message.tool_calls && response.message.tool_calls.length > 0) {
+          const toolCall = response.message.tool_calls[0];
+          if (toolCall.function.name === 'start_up') {
+            const args = toolCall.function.arguments as { context_length?: number; motd?: string };
+            if (typeof args.context_length === 'number') {
+              contextLength = args.context_length;
+            }
+            if (typeof args.motd === 'string' && args.motd.trim()) {
+              motd = args.motd.trim();
+            }
           }
         }
-      }
 
+        // Success - break out of retry loop
+        break;
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        lastError = err instanceof Error ? err : new Error(msg);
+
+        // Only retry on transient errors
+        if (!isTransientError(err)) {
+          stopSpinner();
+          return {
+            ok: false,
+            error: `Model '${MODEL}' error: ${msg}. Ensure the model is running and can process requests.`,
+          };
+        }
+
+        // Check if this was the last attempt
+        if (attempt <= maxRetries) {
+          const delay = calculateDelay(attempt, { ...DEFAULT_RETRY_CONFIG, baseDelayMs, maxDelayMs: 10000 });
+          console.log(`[ollama] Health check attempt ${attempt}/${maxRetries + 1} failed: ${msg}. Retrying in ${delay}ms...`);
+          await sleep(delay);
+        }
+      }
+    }
+
+    // Check if all retries exhausted
+    if (lastError) {
       stopSpinner();
-      const elapsed = Date.now() - startTime;
-      console.log(`[ollama] Health check passed (${elapsed}ms)`);
-      console.log(chalk.cyan(`✨ ${motd}`));
-    } catch (err: unknown) {
-      stopSpinner();
-      const msg = err instanceof Error ? err.message : String(err);
       return {
         ok: false,
-        error: `Model '${MODEL}' error: ${msg}. Ensure the model is running and can process requests.`,
+        error: `Model '${MODEL}' error after ${maxRetries + 1} attempts: ${lastError.message}. Ensure the model is running and can process requests.`,
       };
     }
+
+    stopSpinner();
+    const elapsed = Date.now() - startTime;
+    console.log(`[ollama] Health check passed (${elapsed}ms)`);
+    console.log(chalk.cyan(`✨ ${motd}`));
 
     // 5. Validate TOKEN_THRESHOLD doesn't exceed 80% of context length
     const maxThreshold = Math.floor(contextLength * 0.8);

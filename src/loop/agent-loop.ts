@@ -11,12 +11,14 @@ import { ResultTooLargeError } from '../types.js';
 import { ParentContext } from '../context/index.js';
 import { Loader } from '../context/loader.js';
 import { clearSessionData, getMyccDir, closeDb } from '../context/db.js';
-import { createSessionFile, readSession, writeSession, getSessionId, cleanupEmptySessions } from '../session/index.js';
+import { createSessionFile, readSession, writeSession, getSessionId, cleanupEmptySessions, loadSessionById, getSessionPathById, SessionNotFoundError, AmbiguousSessionError } from '../session/index.js';
+import { prepareRestoration, readDosq, extractFirstQuery, type SummaryPair } from '../session/restoration.js';
 import { slashRegistry } from '../slashes/index.js';
 import { TOKEN_THRESHOLD, buildSystemPrompt } from './agent-prompts.js';
 import { Triologue } from './triologue.js';
 import { agentIO } from './agent-io.js';
-import { isVerbose } from '../config.js';
+import { isVerbose, getSessionArg } from '../config.js';
+import { emitReady } from '../utils/restart.js';
 import { openMultilineEditor } from '../utils/multiline-input.js';
 
 /**
@@ -27,6 +29,137 @@ export class ShutdownError extends Error {
     super(message);
     this.name = 'ShutdownError';
   }
+}
+
+/**
+ * Result of session initialization
+ */
+interface SessionInit {
+  sessionFilePath: string;
+  triologuePath: string;
+  restoredPair: SummaryPair | null;
+  initialQuery: string | null;
+}
+
+/**
+ * Initialize session - either restore from CLI arg or create new session
+ */
+async function initializeSession(): Promise<SessionInit> {
+  const sessionArg = getSessionArg();
+  let sessionFilePath: string;
+  let triologuePath: string;
+  let restoredPair: SummaryPair | null = null;
+  let initialQuery: string | null = null;
+
+  if (sessionArg) {
+    console.log(chalk.cyan(`Loading session: ${sessionArg}`));
+
+    let session: import('../session/types.js').Session;
+    try {
+      session = loadSessionById(sessionArg);
+    } catch (err) {
+      if (err instanceof SessionNotFoundError) {
+        console.error(chalk.red(`Session not found: ${sessionArg}`));
+        process.exit(1);
+      }
+      if (err instanceof AmbiguousSessionError) {
+        console.error(chalk.red(`Ambiguous session ID. Multiple matches found:`));
+        for (const match of err.matches) {
+          console.error(chalk.yellow(`  [${match.id.slice(0, 7)}] ${match.source} session`));
+        }
+        console.error(chalk.gray('Use a longer session ID prefix.'));
+        process.exit(1);
+      }
+      throw err;
+    }
+
+    // Verify working directory matches session's project_dir
+    const currentDir = process.cwd();
+    if (currentDir !== session.project_dir) {
+      console.error(chalk.red(`Working directory mismatch.`));
+      console.error(chalk.yellow(`Current: ${currentDir}`));
+      console.error(chalk.yellow(`Session expects: ${session.project_dir}`));
+      console.error(chalk.gray(`Run: cd "${session.project_dir}" && mycc --session ${session.id}`));
+      process.exit(1);
+    }
+
+    // Validate session files exist
+    const validation = { valid: true, missingFiles: [] as string[] };
+    if (!fs.existsSync(session.lead_triologue)) {
+      validation.valid = false;
+      validation.missingFiles.push(session.lead_triologue);
+    }
+    for (const p of session.child_triologues) {
+      if (!fs.existsSync(p)) {
+        validation.valid = false;
+        validation.missingFiles.push(p);
+      }
+    }
+
+    if (!validation.valid) {
+      console.error(chalk.red(`Session files missing: ${validation.missingFiles.join(', ')}`));
+      process.exit(1);
+    }
+
+    console.log(chalk.cyan('Restoring session...'));
+
+    // Prepare restoration (summarize and generate DOSQ)
+    const { pair, dosqPath } = await prepareRestoration(session);
+    restoredPair = pair;
+
+    console.log(chalk.cyan('Session restored. DOSQ generated at:'));
+    console.log(chalk.gray(`  ${dosqPath}`));
+
+    // Try to open DOSQ in editor
+    try {
+      const { openEditor } = await import('../utils/open-editor.js');
+      openEditor([dosqPath]);
+      console.log(chalk.gray('Opening DOSQ file in editor...'));
+    } catch {
+      console.log(chalk.yellow(`Please edit the DOSQ file manually: ${dosqPath}`));
+    }
+
+    console.log(chalk.yellow('Edit the DOSQ file if needed, then save and close to continue...'));
+
+    // Wait for user to edit DOSQ
+    await agentIO.ask(chalk.cyan('Press Enter when ready to continue > '));
+
+    // Read DOSQ content and extract first query
+    const dosqContent = readDosq(dosqPath);
+    initialQuery = extractFirstQuery(dosqContent);
+
+    // Use the session's existing triologue path
+    triologuePath = session.lead_triologue;
+    sessionFilePath = getSessionPathById(session.id) || path.join(path.dirname(session.lead_triologue), '..', 'sessions', `${session.id}.json`);
+
+    console.log(chalk.gray(`Restored session: ${session.id.slice(0, 7)}`));
+  } else {
+    // Normal startup - create new session
+    clearSessionData();
+
+    // Triologue for message management (persisted to disk)
+    const transcriptDir = path.join(getMyccDir(), 'transcripts');
+    if (!fs.existsSync(transcriptDir)) {
+      fs.mkdirSync(transcriptDir, { recursive: true });
+    }
+
+    const timestamp = Math.floor(Date.now() / 1000);
+    triologuePath = path.join(transcriptDir, `lead-${timestamp}-triologue.jsonl`);
+    fs.writeFileSync(triologuePath, '', 'utf-8');
+
+    // Create a new session file for this run
+    sessionFilePath = createSessionFile(triologuePath);
+    console.log(chalk.gray(`Session: ${path.basename(sessionFilePath)}`));
+
+    // Clean up empty session files from previous runs
+    const currentSessionId = getSessionId(sessionFilePath);
+    const removed = cleanupEmptySessions(currentSessionId);
+    if (removed > 0) {
+      console.log(chalk.gray(`Cleaned up ${removed} empty session(s)`));
+    }
+  }
+
+  return { sessionFilePath, triologuePath, restoredPair, initialQuery };
 }
 
 /**
@@ -267,29 +400,13 @@ export async function main(): Promise<void> {
 
   console.log('Commands: /team, /issues, /todos, /skills, /exit\n');
 
-  // Clear session data for clean startup
-  clearSessionData();
+  // Initialize AgentIO early (needed for ask() during session restoration)
+  agentIO.initMain();
 
-  // Triologue for message management (persisted to disk)
-  const transcriptDir = path.join(getMyccDir(), 'transcripts');
-  if (!fs.existsSync(transcriptDir)) {
-    fs.mkdirSync(transcriptDir, { recursive: true });
-  }
-
-  const timestamp = Math.floor(Date.now() / 1000);
-  const triologuePath = path.join(transcriptDir, `lead-${timestamp}-triologue.jsonl`);
-  fs.writeFileSync(triologuePath, '', 'utf-8');
-
-  // Create a new session file for this run
-  const sessionFilePath = createSessionFile(triologuePath);
-  console.log(chalk.gray(`Session: ${path.basename(sessionFilePath)}`));
-
-  // Clean up empty session files from previous runs
-  const currentSessionId = getSessionId(sessionFilePath);
-  const removed = cleanupEmptySessions(currentSessionId);
-  if (removed > 0) {
-    console.log(chalk.gray(`Cleaned up ${removed} empty session(s)`));
-  }
+  // Initialize session (restore or create new)
+  const sessionInit = await initializeSession();
+  const { sessionFilePath, triologuePath, restoredPair } = sessionInit;
+  let initialQuery = sessionInit.initialQuery; // Mutable for clearing after first use
 
   // Track first query for bookmark title
   let firstQueryCaptured = false;
@@ -306,6 +423,11 @@ export async function main(): Promise<void> {
     },
   });
 
+  // If restored session, load the summary pair
+  if (restoredPair !== null) {
+    triologue.loadRestoration(restoredPair);
+  }
+
   // Create loader
   const loader = new Loader();
   await loader.loadAll();
@@ -314,9 +436,6 @@ export async function main(): Promise<void> {
   // Create context with loader
   const ctx = new ParentContext(loader, sessionFilePath);
   ctx.initializeIpcHandlers();
-
-  // Initialize AgentIO for main process
-  agentIO.initMain();
 
   // Handle graceful shutdown
   process.on('SIGINT', () => {
@@ -332,10 +451,21 @@ export async function main(): Promise<void> {
     process.exit(0);
   });
 
+  // Emit ready signal for parent process (if spawned via restartInDirectory)
+  emitReady();
+
   // Main REPL loop
   while (!agentIO.isShuttingDown()) {
     try {
-      let query = await agentIO.ask(chalk.bgYellow.black('agent >> '));
+      // Use initial query from restored session, or prompt for input
+      let query: string;
+      if (initialQuery !== null) {
+        query = initialQuery;
+        initialQuery = null; // Clear after first use
+        console.log(chalk.gray(`Restored query: ${query.slice(0, 50)}${query.length > 50 ? '...' : ''}`));
+      } else {
+        query = await agentIO.ask(chalk.bgYellow.black('agent >> '));
+      }
 
       // Handle multi-line input (trailing backslash)
       if (query.endsWith('\\') && query.trim() !== '\\') {

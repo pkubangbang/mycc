@@ -107,13 +107,6 @@ class AgentIO {
     } catch {
       // Ignore if already closed
     }
-    if (process.stdin.isTTY && process.stdin.setRawMode) {
-      try {
-        process.stdin.setRawMode(false);
-      } catch {
-        // Ignore if stdin not available
-      }
-    }
   }
 
   /**
@@ -121,13 +114,6 @@ class AgentIO {
    */
   resumeReadline(): void {
     if (!this._isMainProcess || this._isShuttingDown) return;
-    if (process.stdin.isTTY && process.stdin.setRawMode) {
-      try {
-        process.stdin.setRawMode(true);
-      } catch {
-        // Ignore if stdin not available
-      }
-    }
     if (this._readline) {
       try {
         this._readline.resume();

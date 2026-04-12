@@ -13,6 +13,35 @@ import * as os from 'os';
 import type { Session, SessionFile, SessionDisplay } from './types.js';
 
 /**
+ * Result of matching a session ID
+ */
+export interface SessionMatch {
+  id: string;
+  path: string;
+  source: 'user' | 'project';
+}
+
+/**
+ * Error thrown when a session is not found
+ */
+export class SessionNotFoundError extends Error {
+  constructor(public readonly sessionId: string) {
+    super(`Session not found: ${sessionId}`);
+    this.name = 'SessionNotFoundError';
+  }
+}
+
+/**
+ * Error thrown when multiple sessions match a partial ID
+ */
+export class AmbiguousSessionError extends Error {
+  constructor(public readonly sessionId: string, public readonly matches: SessionMatch[]) {
+    super(`Ambiguous session ID: ${sessionId}. Multiple matches found.`);
+    this.name = 'AmbiguousSessionError';
+  }
+}
+
+/**
  * Get the project sessions directory path
  */
 export function getSessionsDir(): string {
@@ -131,30 +160,52 @@ export function getSessionPathById(id: string, preferUser = true): string | null
  * Load a session by ID
  *
  * @param id - Session ID (UUID or partial)
- * @returns Session object or null if not found
+ * @returns Session object
+ * @throws SessionNotFoundError if session not found
+ * @throws AmbiguousSessionError if multiple sessions match the partial ID
  */
-export function loadSessionById(id: string): Session | null {
-  // Support partial ID matching (first 6+ characters)
-  const sessionPath = findSessionPath(id);
-  if (!sessionPath) {
-    return null;
+export function loadSessionById(id: string): Session {
+  const matches = findSessionPaths(id);
+
+  if (matches.length === 0) {
+    throw new SessionNotFoundError(id);
   }
-  return readSession(sessionPath);
+
+  if (matches.length > 1) {
+    throw new AmbiguousSessionError(id, matches);
+  }
+
+  const session = readSession(matches[0].path);
+  if (!session) {
+    throw new SessionNotFoundError(id);
+  }
+
+  return session;
 }
 
 /**
- * Find session path by ID (supports partial IDs)
+ * Find all session paths matching an ID (supports partial IDs)
  *
  * @param id - Session ID (full or partial)
- * @returns Path to session file or null if not found
+ * @returns Array of matching session paths with metadata
  */
-function findSessionPath(id: string): string | null {
+export function findSessionPaths(id: string): SessionMatch[] {
+  const matches: SessionMatch[] = [];
+
   // Try exact match first
   const exactUser = path.join(getUserSessionsDir(), `${id}.json`);
   const exactProject = path.join(getSessionsDir(), `${id}.json`);
 
-  if (fs.existsSync(exactUser)) return exactUser;
-  if (fs.existsSync(exactProject)) return exactProject;
+  const userExists = fs.existsSync(exactUser);
+  const projectExists = fs.existsSync(exactProject);
+
+  // For exact match: user session shadows project session
+  if (userExists) {
+    return [{ id, path: exactUser, source: 'user' }];
+  }
+  if (projectExists) {
+    return [{ id, path: exactProject, source: 'project' }];
+  }
 
   // Try partial match (at least 6 characters)
   if (id.length >= 6) {
@@ -165,7 +216,7 @@ function findSessionPath(id: string): string | null {
       for (const file of files) {
         const fileId = file.replace('.json', '');
         if (fileId.startsWith(id)) {
-          return path.join(userDir, file);
+          matches.push({ id: fileId, path: path.join(userDir, file), source: 'user' });
         }
       }
     }
@@ -177,13 +228,17 @@ function findSessionPath(id: string): string | null {
       for (const file of files) {
         const fileId = file.replace('.json', '');
         if (fileId.startsWith(id)) {
-          return path.join(projectDir, file);
+          // Check if same ID already found in user sessions (user shadows project)
+          const alreadyFound = matches.find((m) => m.id === fileId);
+          if (!alreadyFound) {
+            matches.push({ id: fileId, path: path.join(projectDir, file), source: 'project' });
+          }
         }
       }
     }
   }
 
-  return null;
+  return matches;
 }
 
 /**
@@ -309,12 +364,20 @@ export function getSessionId(filePath: string): string {
 
 /**
  * Clean up empty session files (sessions with no first_query)
+ * Skips files created within 1 minute to prevent concurrency issues.
  *
  * @param currentSessionId - Session ID to preserve (the current session)
  * @returns Number of removed empty sessions
  */
 export function cleanupEmptySessions(currentSessionId: string): number {
   let removed = 0;
+  const now = Date.now();
+  const oneMinuteAgo = now - 60 * 1000;
+
+  const isRecent = (session: Session): boolean => {
+    const createTime = new Date(session.create_time).getTime();
+    return createTime > oneMinuteAgo;
+  };
 
   // Clean up project sessions
   const projectDir = getSessionsDir();
@@ -323,7 +386,7 @@ export function cleanupEmptySessions(currentSessionId: string): number {
     for (const file of files) {
       const sessionPath = path.join(projectDir, file);
       const session = readSession(sessionPath);
-      if (session && !session.first_query && session.id !== currentSessionId) {
+      if (session && !session.first_query && session.id !== currentSessionId && !isRecent(session)) {
         fs.unlinkSync(sessionPath);
         removed++;
       }
@@ -337,7 +400,7 @@ export function cleanupEmptySessions(currentSessionId: string): number {
     for (const file of files) {
       const sessionPath = path.join(userDir, file);
       const session = readSession(sessionPath);
-      if (session && !session.first_query && session.id !== currentSessionId) {
+      if (session && !session.first_query && session.id !== currentSessionId && !isRecent(session)) {
         fs.unlinkSync(sessionPath);
         removed++;
       }

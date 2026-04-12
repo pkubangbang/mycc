@@ -7,6 +7,7 @@ import * as path from 'path';
 import { pathToFileURL, fileURLToPath } from 'url';
 import { watch } from 'fs';
 import matter from 'gray-matter';
+import { isVerbose } from '../config.js';
 
 // Package root: resolve up from this file (src/context/loader.ts or dist/context/loader.js)
 const packageRoot = path.resolve(fileURLToPath(import.meta.url), '..', '..', '..');
@@ -153,12 +154,13 @@ export class Loader implements DynamicLoader, SkillModule {
 
   /**
    * Load built-in tools (highest priority)
+   * Only logs in verbose mode since these are always loaded.
    */
   private loadBuiltInTools(): void {
     for (const tool of builtInTools) {
       // Built-in always wins
       this.tools.set(tool.name, { tool, layer: 'built-in' });
-      if (!this.silent) {
+      if (isVerbose()) {
         console.log(`[loader] Loaded built-in tool: ${tool.name}`);
       }
     }
@@ -178,13 +180,14 @@ export class Loader implements DynamicLoader, SkillModule {
     const files = fs.readdirSync(toolsDir);
     for (const file of files) {
       if (file.endsWith('.ts') || file.endsWith('.js')) {
-        await this.reloadTool(path.join(toolsDir, file));
+        await this.reloadTool(path.join(toolsDir, file), true); // isInitialLoad = true
       }
     }
   }
 
   /**
    * Load a tool from a file path (for user tools - synchronous)
+   * Only logs in verbose mode since this is initial loading.
    */
   private loadToolFromPath(filepath: string, layer: Layer): void {
     try {
@@ -211,7 +214,7 @@ export class Loader implements DynamicLoader, SkillModule {
       }
 
       this.tools.set(tool.name, { tool, layer });
-      if (!this.silent) {
+      if (isVerbose()) {
         console.log(`[loader] Loaded ${layer} tool: ${tool.name}`);
       }
     } catch (err) {
@@ -223,8 +226,11 @@ export class Loader implements DynamicLoader, SkillModule {
 
   /**
    * Reload a single tool file (dynamic tools only - project level)
+   *
+   * @param filepath - Path to the tool file
+   * @param isInitialLoad - If true, only log in verbose mode; if false, always log (hot-reload)
    */
-  private async reloadTool(filepath: string): Promise<void> {
+  private async reloadTool(filepath: string, isInitialLoad: boolean = false): Promise<void> {
     try {
       // Use dynamic import with cache-busting
       const modulePath = path.isAbsolute(filepath)
@@ -259,7 +265,8 @@ export class Loader implements DynamicLoader, SkillModule {
       }
 
       this.tools.set(tool.name, { tool, layer: 'project' });
-      if (!this.silent) {
+      // Only show initial load logs in verbose mode; always show hot-reload logs
+      if (!isInitialLoad || isVerbose()) {
         console.log(`[loader] Loaded tool: ${tool.name}`);
       }
     } catch (err) {

@@ -9,7 +9,8 @@
 import type { SlashCommand } from '../types.js';
 import chalk from 'chalk';
 import { openEditor } from '../utils/open-editor.js';
-import { listSessions, loadSessionById } from '../session/index.js';
+import { restartInDirectory } from '../utils/restart.js';
+import { listSessions, loadSessionById, SessionNotFoundError, AmbiguousSessionError } from '../session/index.js';
 import { prepareRestoration, readDosq, extractFirstQuery } from '../session/restoration.js';
 import { Triologue } from '../loop/triologue.js';
 import { agentIO } from '../loop/agent-io.js';
@@ -52,11 +53,26 @@ export const loadCommand: SlashCommand = {
     const sessionId = args[1];
     try {
       const session = loadSessionById(sessionId);
-      if (!session) {
-        console.log(chalk.red(`Session not found: ${sessionId}`));
-        return;
+
+      // Check working directory
+      const currentDir = process.cwd();
+      if (currentDir !== session.project_dir) {
+        console.log(chalk.yellow(`Session belongs to a different project directory.`));
+        console.log(chalk.gray(`  Current: ${currentDir}`));
+        console.log(chalk.gray(`  Session expects: ${session.project_dir}`));
+        console.log(chalk.cyan(`Spawning new agent in correct directory...`));
+
+        const result = await restartInDirectory(session.id, session.project_dir);
+        if (!result.success) {
+          console.log(chalk.red(`Failed to start new agent: ${result.error}`));
+          console.log(chalk.gray('You can manually run:'));
+          console.log(chalk.gray(`  cd "${session.project_dir}" && mycc --session ${session.id}`));
+          return;
+        }
+        // If successful, this process will have exited
       }
 
+      // Working directory matches - load session normally
       console.log(chalk.cyan(`Loading session ${sessionId}...`));
 
       // Prepare restoration
@@ -90,6 +106,18 @@ export const loadCommand: SlashCommand = {
       // Store the first query for the agent loop to process
       context.nextQuery = firstQuery;
     } catch (err) {
+      if (err instanceof SessionNotFoundError) {
+        console.log(chalk.red(`Session not found: ${sessionId}`));
+        return;
+      }
+      if (err instanceof AmbiguousSessionError) {
+        console.log(chalk.red(`Ambiguous session ID. Multiple matches found:`));
+        for (const match of err.matches) {
+          console.log(chalk.yellow(`  [${match.id.slice(0, 7)}] ${match.source} session`));
+        }
+        console.log(chalk.gray('Use a longer session ID prefix.'));
+        return;
+      }
       console.log(chalk.red(`Failed to load session: ${(err as Error).message}`));
     }
   },

@@ -108,12 +108,19 @@ export async function openEditor(files: string[], options?: { editor?: string })
   const stdio = editor.isTerminalEditor ? 'inherit' : 'ignore';
 
   try {
-    const subprocess = execa(editor.binary, args, {
-      detached: true,
-      stdio,
-    });
-
-    subprocess.unref();
+    if (editor.isTerminalEditor) {
+      // For terminal editors, wait for them to complete
+      await execa(editor.binary, args, {
+        stdio,
+      });
+    } else {
+      // For GUI editors, launch detached (don't wait)
+      const subprocess = execa(editor.binary, args, {
+        detached: true,
+        stdio,
+      });
+      subprocess.unref();
+    }
   } catch (err) {
     throw new Error(`Failed to open editor: ${(err as Error).message}`);
   }
