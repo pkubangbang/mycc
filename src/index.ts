@@ -55,7 +55,8 @@ if (isVerbose()) {
 /** IPC message from Lead to Coordinator */
 type CoordinatorMessage =
   | { type: 'ready' }
-  | { type: 'restart'; sessionId: string; cwd: string };
+  | { type: 'restart'; sessionId: string; cwd: string }
+  | { type: 'exit' };
 
 // ---------------------------------------------------------------------------
 // Spawn Command
@@ -121,6 +122,9 @@ function startLead(args: string[] = [], cwd = process.cwd()): ChildProcess {
   child.on('message', (msg: CoordinatorMessage) => {
     if (msg.type === 'restart') {
       restart(msg.sessionId, msg.cwd);
+    } else if (msg.type === 'exit') {
+      // Lead requested exit - kill it cleanly
+      child.kill('SIGTERM');
     }
   });
 

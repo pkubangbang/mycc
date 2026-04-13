@@ -376,6 +376,16 @@ export async function agentLoop(
  * Main entry point
  */
 export async function main(): Promise<void> {
+  // Guard: Must run under Coordinator
+  if (!process.send) {
+    console.error(chalk.red('Error: Lead process must be started via Coordinator (mycc command)'));
+    console.error(chalk.gray('Run: mycc'));
+    process.exit(1);
+  }
+
+  // Force colors since stdout is piped through Coordinator (not a TTY)
+  chalk.level = 1;
+
   console.log(chalk.cyan('Coding Agent v1.0'));
   console.log(chalk.cyan(`Model: ${MODEL} (${OLLAMA_HOST})`));
 
@@ -449,16 +459,11 @@ export async function main(): Promise<void> {
     }
     // No active tool - safe to exit
     console.log(chalk.yellow('\nShutting down...'));
-    ctx.team.dismissTeam();
-    agentIO.close();
-    closeDb();
-    process.exit(0);
+    process.send!({ type: 'exit' });
   });
 
-  // Emit ready signal for Coordinator (if running under coordinator)
-  if (process.send) {
-    process.send({ type: 'ready' });
-  }
+  // Emit ready signal for Coordinator
+  process.send({ type: 'ready' });
 
   // Main REPL loop
   while (!agentIO.isShuttingDown()) {
@@ -554,12 +559,6 @@ export async function main(): Promise<void> {
     }
   }
 
-  // Cleanup
-  ctx.team.dismissTeam();
-  agentIO.close();
-  loader.stopWatching();
-  closeDb();
-
-  // Close stdin to signal completion to coordinator
-  process.stdin.destroy();
+  // Signal Coordinator to exit (which will kill this process)
+  process.send({ type: 'exit' });
 }

@@ -272,5 +272,11 @@ process.on('SIGINT', () => {
   process.exit(0);
 });
 
+// Handle SIGHUP (sent when parent process exits)
+process.on('SIGHUP', () => {
+  sendStatus('shutdown');
+  process.exit(0);
+});
+
 // Log that worker is ready (before ctx is available, use sendNotification)
 ipc.sendNotification('log', { message: 'Worker process started, waiting for spawn message' });
