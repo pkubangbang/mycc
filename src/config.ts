@@ -9,10 +9,10 @@ import minimist from 'minimist';
 
 // Parse CLI args once at startup
 const args = minimist(process.argv.slice(2), {
-  boolean: ['v', 'verbose'],
+  boolean: ['v', 'verbose', 'skip-healthcheck'],
   string: ['session'],
   alias: { v: 'verbose' },
-  default: { v: false, session: null },
+  default: { v: false, session: null, 'skip-healthcheck': false },
 });
 
 /**
@@ -42,6 +42,13 @@ export const globalConfig = new GlobalConfig();
  */
 export function getSessionArg(): string | null {
   return args.session || null;
+}
+
+/**
+ * Check if health check should be skipped
+ */
+export function shouldSkipHealthCheck(): boolean {
+  return args['skip-healthcheck'] || false;
 }
 
 /**

@@ -9,7 +9,6 @@
 import type { SlashCommand } from '../types.js';
 import chalk from 'chalk';
 import { openEditor } from '../utils/open-editor.js';
-import { restartInDirectory } from '../utils/restart.js';
 import { listSessions, loadSessionById, SessionNotFoundError, AmbiguousSessionError } from '../session/index.js';
 import { prepareRestoration, readDosq, extractFirstQuery } from '../session/restoration.js';
 import { Triologue } from '../loop/triologue.js';
@@ -62,14 +61,16 @@ export const loadCommand: SlashCommand = {
         console.log(chalk.gray(`  Session expects: ${session.project_dir}`));
         console.log(chalk.cyan(`Spawning new agent in correct directory...`));
 
-        const result = await restartInDirectory(session.id, session.project_dir);
-        if (!result.success) {
-          console.log(chalk.red(`Failed to start new agent: ${result.error}`));
-          console.log(chalk.gray('You can manually run:'));
+        // Request Coordinator to restart in target directory
+        if (process.send) {
+          process.send({ type: 'restart', sessionId: session.id, cwd: session.project_dir });
+          // Wait forever - Coordinator will kill this process
+          await new Promise(() => {});
+        } else {
+          console.log(chalk.red(`Not running under Coordinator. Please restart manually:`));
           console.log(chalk.gray(`  cd "${session.project_dir}" && mycc --session ${session.id}`));
           return;
         }
-        // If successful, this process will have exited
       }
 
       // Working directory matches - load session normally

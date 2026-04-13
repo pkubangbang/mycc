@@ -9,7 +9,9 @@
       "WebFetch(domain:docs.ollama.com)",
       "Bash(head -5 /home/student/proj/mycc/.mycc/transcripts/*.jsonl)",
       "Bash(npm test:*)",
-      "Bash(npx tsc:*)"
+      "Bash(npx tsc:*)",
+      "mcp__ide__getDiagnostics",
+      "Bash(bash /home/student/proj/mycc/tests/*)"
     ]
   }
 }

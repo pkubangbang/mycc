@@ -17,8 +17,7 @@ import { slashRegistry } from '../slashes/index.js';
 import { TOKEN_THRESHOLD, buildSystemPrompt } from './agent-prompts.js';
 import { Triologue } from './triologue.js';
 import { agentIO } from './agent-io.js';
-import { isVerbose, getSessionArg } from '../config.js';
-import { emitReady } from '../utils/restart.js';
+import { isVerbose, getSessionArg, shouldSkipHealthCheck } from '../config.js';
 import { openMultilineEditor } from '../utils/multiline-input.js';
 
 /**
@@ -381,21 +380,26 @@ export async function main(): Promise<void> {
   console.log(chalk.cyan(`Model: ${MODEL} (${OLLAMA_HOST})`));
 
   // Health check: validate Ollama connectivity and model availability
-  const health = await checkHealth(TOKEN_THRESHOLD);
-  if (!health.ok) {
-    console.error(chalk.red(`Health check failed: ${health.error}`));
-    process.exit(1);
-  }
+  // Skip if --skip-healthcheck flag is set (useful for testing)
+  if (shouldSkipHealthCheck()) {
+    console.log(chalk.gray('Skipping health check (test mode)'));
+  } else {
+    const health = await checkHealth(TOKEN_THRESHOLD);
+    if (!health.ok) {
+      console.error(chalk.red(`Health check failed: ${health.error}`));
+      process.exit(1);
+    }
 
-  // Display model info
-  if (health.modelInfo) {
-    const info = health.modelInfo;
-    const parts = [info.name];
-    if (info.family) parts.push(`family: ${info.family}`);
-    if (info.parameterSize) parts.push(`params: ${info.parameterSize}`);
-    parts.push(`ctx: ${info.contextLength}`);
-    console.log(chalk.green(`✓ Model ready: ${parts.join(', ')}`));
-    console.log(chalk.gray(`  Token threshold: ${TOKEN_THRESHOLD}`));
+    // Display model info
+    if (health.modelInfo) {
+      const info = health.modelInfo;
+      const parts = [info.name];
+      if (info.family) parts.push(`family: ${info.family}`);
+      if (info.parameterSize) parts.push(`params: ${info.parameterSize}`);
+      parts.push(`ctx: ${info.contextLength}`);
+      console.log(chalk.green(`✓ Model ready: ${parts.join(', ')}`));
+      console.log(chalk.gray(`  Token threshold: ${TOKEN_THRESHOLD}`));
+    }
   }
 
   console.log('Commands: /team, /issues, /todos, /skills, /exit\n');
@@ -451,8 +455,10 @@ export async function main(): Promise<void> {
     process.exit(0);
   });
 
-  // Emit ready signal for parent process (if spawned via restartInDirectory)
-  emitReady();
+  // Emit ready signal for Coordinator (if running under coordinator)
+  if (process.send) {
+    process.send({ type: 'ready' });
+  }
 
   // Main REPL loop
   while (!agentIO.isShuttingDown()) {
@@ -553,4 +559,7 @@ export async function main(): Promise<void> {
   agentIO.close();
   loader.stopWatching();
   closeDb();
+
+  // Close stdin to signal completion to coordinator
+  process.stdin.destroy();
 }
