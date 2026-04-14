@@ -16,7 +16,8 @@ import { Loader } from './loader.js';
 import { retryChat, MODEL } from '../ollama.js';
 import type { AgentContext, Message } from '../types.js';
 import type { ToolCall } from '../types.js';
-import { TOKEN_THRESHOLD, buildSystemPrompt } from '../loop/agent-prompts.js';
+import { buildSystemPrompt } from '../loop/agent-prompts.js';
+import { getTokenThreshold } from '../config.js';
 import { Triologue } from '../loop/triologue.js';
 import { ipc, sendStatus } from './child-context/ipc-helpers.js';
 import { getMyccDir } from './db.js';
@@ -48,7 +49,7 @@ function createPersistentTriologue(name: string): Triologue {
   fs.writeFileSync(triologuePath, '', 'utf-8');
 
   const triologue = new Triologue({
-    tokenThreshold: TOKEN_THRESHOLD,
+    tokenThreshold: getTokenThreshold(),
     onMessage: (messages: Message[]) => {
       // Append last message to file
       const lastMsg = messages[messages.length - 1];

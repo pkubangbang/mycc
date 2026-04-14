@@ -16,7 +16,7 @@ import { retryChat, MODEL } from '../ollama.js';
 import type { Message, ToolCall } from '../types.js';
 import type { Session } from './types.js';
 import { validateSession } from './index.js';
-import { TOKEN_THRESHOLD } from '../loop/agent-prompts.js';
+import { getTokenThreshold } from '../config.js';
 
 /**
  * A summary pair: [user_message, assistant_message]
@@ -139,7 +139,7 @@ async function summarizeChildTriologue(messages: Message[]): Promise<SummaryPair
   for (const m of messages) {
     buffer.push(m);
     tokens += estimateTokens(m);
-    if (tokens > TOKEN_THRESHOLD) {
+    if (tokens > getTokenThreshold()) {
       buffer = await summarizeMessages(buffer);
     }
   }
@@ -197,7 +197,7 @@ async function summarizeLeadTriologue(messages: Message[], childSummaries: { pat
     buffer.push(m);
     tokens += estimateTokens(m);
 
-    if (tokens > TOKEN_THRESHOLD) {
+    if (tokens > getTokenThreshold()) {
       buffer = await summarizeMessages(buffer);
     }
   }

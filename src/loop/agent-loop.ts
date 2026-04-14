@@ -14,9 +14,11 @@ import { clearSessionData, getMyccDir, closeDb } from '../context/db.js';
 import { createSessionFile, readSession, writeSession, getSessionId, cleanupEmptySessions, loadSessionById, getSessionPathById, SessionNotFoundError, AmbiguousSessionError } from '../session/index.js';
 import { prepareRestoration, readDosq, extractFirstQuery, type SummaryPair } from '../session/restoration.js';
 import { slashRegistry } from '../slashes/index.js';
-import { TOKEN_THRESHOLD, buildSystemPrompt } from './agent-prompts.js';
+import { buildSystemPrompt } from './agent-prompts.js';
+import { getTokenThreshold } from '../config.js';
 import { Triologue } from './triologue.js';
 import { agentIO } from './agent-io.js';
+import type { KeyInfo } from '../utils/key-parser.js';
 import { isVerbose, getSessionArg, shouldSkipHealthCheck } from '../config.js';
 import { openMultilineEditor } from '../utils/multiline-input.js';
 
@@ -217,6 +219,12 @@ export async function agentLoop(
         triologue.user('Continue with your task.');
       }
 
+      // Check neglection mode before LLM call - inject strong instruction to hold tool usage
+      if (agentIO.isNeglectionMode()) {
+        triologue.user('IMPORTANT: User pressed ESC to interrupt. Please respond with text only - do NOT use any tools. Just explain the current status or ask the user what they would like to do next.');
+        agentIO.clearNeglectionMode();
+      }
+
       const systemPrompt = buildSystemPrompt(ctx);
       triologue.setSystemPrompt(systemPrompt);
 
@@ -269,6 +277,16 @@ export async function agentLoop(
         for (const toolCall of (assistantMessage.tool_calls as ToolCall[])) {
           if (agentIO.isShuttingDown()) {
             throw new ShutdownError();
+          }
+
+          // Check for neglection mode - bail remaining tools
+          if (agentIO.isNeglectionMode()) {
+            console.log(chalk.yellow('\n[Neglection Mode] ESC pressed - skipping remaining tools'));
+            // Don't clear the flag here - sustain it until before next LLM call
+            // Inject user prompt message and continue to next iteration
+            triologue.user('Tool execution was interrupted by user pressing ESC. The remaining tools were skipped. What would you like to do?');
+            // Continue to next iteration (will prompt user)
+            break;
           }
 
           const toolCallId = toolCall.id;
@@ -386,6 +404,9 @@ export async function main(): Promise<void> {
   // Force colors since stdout is piped through Coordinator (not a TTY)
   chalk.level = 1;
 
+  // Get token threshold once (env value, doesn't change during execution)
+  const tokenThreshold = getTokenThreshold();
+
   console.log(chalk.cyan('Coding Agent v1.0'));
   console.log(chalk.cyan(`Model: ${MODEL} (${OLLAMA_HOST})`));
 
@@ -394,7 +415,7 @@ export async function main(): Promise<void> {
   if (shouldSkipHealthCheck()) {
     console.log(chalk.gray('Skipping health check (test mode)'));
   } else {
-    const health = await checkHealth(TOKEN_THRESHOLD);
+    const health = await checkHealth(tokenThreshold);
     if (!health.ok) {
       console.error(chalk.red(`Health check failed: ${health.error}`));
       process.exit(1);
@@ -408,7 +429,7 @@ export async function main(): Promise<void> {
       if (info.parameterSize) parts.push(`params: ${info.parameterSize}`);
       parts.push(`ctx: ${info.contextLength}`);
       console.log(chalk.green(`✓ Model ready: ${parts.join(', ')}`));
-      console.log(chalk.gray(`  Token threshold: ${TOKEN_THRESHOLD}`));
+      console.log(chalk.gray(`  Token threshold: ${tokenThreshold}`));
     }
   }
 
@@ -426,7 +447,7 @@ export async function main(): Promise<void> {
   let firstQueryCaptured = false;
 
   const triologue = new Triologue({
-    tokenThreshold: TOKEN_THRESHOLD,
+    tokenThreshold,
     onMessage: (messages) => {
       const lastMsg = messages[messages.length - 1];
       try {
@@ -460,6 +481,22 @@ export async function main(): Promise<void> {
     // No active tool - safe to exit
     console.log(chalk.yellow('\nShutting down...'));
     process.send!({ type: 'exit' });
+  });
+
+  // Handle IPC messages from coordinator
+  process.on('message', (msg: { type: string; key?: KeyInfo; columns?: number }) => {
+    if (msg.type === 'neglection') {
+      const isNew = agentIO.setNeglectionMode(true);
+      if (isNew) {
+        console.log(chalk.yellow('\n[ESC] Neglection mode activated - remaining tools will be skipped'));
+      }
+    } else if (msg.type === 'key' && msg.key) {
+      // Forward key event to AgentIO (which forwards to active LineEditor)
+      agentIO.handleKeyEvent(msg.key);
+    } else if (msg.type === 'resize' && msg.columns) {
+      // Forward resize event to AgentIO (which forwards to active LineEditor)
+      agentIO.handleResize(msg.columns);
+    }
   });
 
   // Emit ready signal for Coordinator
@@ -543,6 +580,11 @@ export async function main(): Promise<void> {
     } catch (err) {
       // Shutdown - exit cleanly
       if (err instanceof ShutdownError || agentIO.isShuttingDown()) {
+        break;
+      }
+
+      // Readline closed (race condition on SIGINT/SIGTERM) - exit cleanly
+      if (err instanceof Error && err.message === 'readline was closed') {
         break;
       }
 

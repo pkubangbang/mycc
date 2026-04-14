@@ -7,6 +7,7 @@
 import * as fs from 'fs';
 import type { ToolDefinition, AgentContext } from '../types.js';
 import { retryChat, MODEL } from '../ollama.js';
+import { getTokenThreshold } from '../config.js';
 
 export const readReadTool: ToolDefinition = {
   name: 'read_read',
@@ -34,9 +35,7 @@ export const readReadTool: ToolDefinition = {
 
     try {
       const content = fs.readFileSync(filePath, 'utf-8');
-
-      // Get TOKEN_THRESHOLD from environment (default 50000)
-      const TOKEN_THRESHOLD = parseInt(process.env.TOKEN_THRESHOLD || '50000', 10);
+      const TOKEN_THRESHOLD = getTokenThreshold();
 
       // Two-turn rolling summary implementation
       const summary = await twoTurnSummary(content, focus, TOKEN_THRESHOLD, ctx);

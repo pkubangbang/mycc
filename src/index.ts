@@ -10,6 +10,11 @@
  *
  * Architecture:
  *   Terminal → Coordinator (this file) → Lead → Teammates
+ *
+ * Input flow:
+ * - Coordinator runs in raw mode, forwards all bytes to Lead
+ * - Lead uses LineEditor for proper wrapped line handling
+ * - Coordinator only intercepts coordinator-level commands (Ctrl+C, Ctrl+D, ESC)
  */
 
 import { spawn, ChildProcess } from 'child_process';
@@ -20,6 +25,8 @@ import { dirname, resolve } from 'path';
 import { fileURLToPath } from 'url';
 import chalk from 'chalk';
 import { isVerbose, printEnvStatus, validateEnv } from './config.js';
+import { parseKeys, isCtrlC, isCtrlD, isEscape } from './utils/key-parser.js';
+import type { KeyInfo } from './utils/key-parser.js';
 
 // ---------------------------------------------------------------------------
 // Environment Setup
@@ -58,6 +65,12 @@ type CoordinatorMessage =
   | { type: 'restart'; sessionId: string; cwd: string }
   | { type: 'exit' };
 
+/** IPC message from Coordinator to Lead */
+export type CoordinatorToLeadMessage =
+  | { type: 'neglection' }
+  | { type: 'key'; key: KeyInfo }
+  | { type: 'resize'; columns: number };
+
 // ---------------------------------------------------------------------------
 // Spawn Command
 // ---------------------------------------------------------------------------
@@ -91,7 +104,6 @@ function getSpawnCommand(): SpawnCommand {
 
 let lead: ChildProcess | null = null;
 let isRestarting = false;
-let previousLeadExitHandled = false;
 
 // Flags to forward to lead processes
 const skipHealthCheck = process.argv.includes('--skip-healthcheck');
@@ -108,30 +120,33 @@ function startLead(args: string[] = [], cwd = process.cwd()): ChildProcess {
     ? [...args, '--skip-healthcheck']
     : args;
 
+  // Pass terminal columns to Lead process for proper line wrapping
+  const env = { ...process.env };
+  // Use COLUMNS env var if set, otherwise use process.stdout.columns
+  env.COLUMNS = process.env.COLUMNS || String(process.stdout.columns || 80);
+
   const child = spawn(command, [...baseArgs, ...forwardedArgs], {
     cwd,
     stdio: ['pipe', 'pipe', 'pipe', 'ipc'],
+    env,
   });
 
-  // Forward I/O
+  // Forward output
   child.stdout?.pipe(process.stdout);
   child.stderr?.pipe(process.stderr);
-  process.stdin.pipe(child.stdin!);
+
+  // Note: stdin is NOT piped here. Raw input is forwarded via the
+  // 'data' handler in Terminal Setup section, which intercepts
+  // coordinator-level commands and forwards the rest to Lead.
 
   // Handle IPC
   child.on('message', (msg: CoordinatorMessage) => {
     if (msg.type === 'restart') {
       restart(msg.sessionId, msg.cwd);
     } else if (msg.type === 'exit') {
-      // Lead requested exit - kill it cleanly
-      child.kill('SIGTERM');
+      // Lead requested exit - exit coordinator cleanly with code 0
+      process.exit(0);
     }
-  });
-
-  // When lead closes its stdin, it's done with input
-  child.stdin?.on('close', () => {
-    // Lead no longer needs input, but coordinator should keep running
-    // until lead exits
   });
 
   // Handle exit - cleanup and exit coordinator
@@ -141,7 +156,6 @@ function startLead(args: string[] = [], cwd = process.cwd()): ChildProcess {
       // Cleanup pipes
       child.stdout?.unpipe();
       child.stderr?.unpipe();
-      process.stdin.unpipe();
       child.stdin?.destroy();
       process.exit(code ?? 0);
     }
@@ -157,25 +171,15 @@ function startLead(args: string[] = [], cwd = process.cwd()): ChildProcess {
 
 async function restart(sessionId: string, cwd: string): Promise<void> {
   isRestarting = true;
-  previousLeadExitHandled = false;
   const previousLead = lead;
-
-  // Disconnect stdin from old Lead and pause to prevent data loss
-  process.stdin.unpipe();
-  process.stdin.pause();
 
   // Kill old Lead cleanly
   if (previousLead) {
-    // Mark that we expect this lead to exit (don't propagate its exit code)
-    previousLead.on('exit', () => {
-      previousLeadExitHandled = true;
-    });
     previousLead.kill('SIGTERM');
-    previousLead.unref(); // Allow process to exit if only this remains
+    previousLead.unref();
   }
 
-  // Resume stdin and start new Lead
-  process.stdin.resume();
+  // Start new Lead (stdin forwarding continues automatically via data handler)
   lead = startLead(['--session', sessionId], cwd);
 
   // Wait for ready signal
@@ -193,20 +197,101 @@ async function restart(sessionId: string, cwd: string): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
+// Terminal Setup
+// ---------------------------------------------------------------------------
+
+// Set up raw mode and handle native stdin data events
+// Forward structured key events to Lead via IPC
+if (process.stdin.isTTY) {
+  process.stdin.setRawMode(true);
+  process.stdin.resume();
+
+  process.stdin.on('data', (data: Buffer) => {
+    // Ctrl+C - forward SIGINT to lead
+    if (isCtrlC(data)) {
+      lead?.kill('SIGINT');
+      return;
+    }
+    // Ctrl+D - exit coordinator cleanly
+    if (isCtrlD(data)) {
+      cleanup();
+      process.exit(0);
+      return;
+    }
+    // ESC - send neglection IPC to lead
+    if (isEscape(data)) {
+      lead?.send({ type: 'neglection' });
+      return;
+    }
+
+    // Forward structured key events to Lead via IPC (one per key)
+    const keys = parseKeys(data);
+    for (const key of keys) {
+      lead?.send({ type: 'key', key });
+    }
+  });
+}
+
+function cleanup(): void {
+  if (process.stdin.isTTY && process.stdin.isRaw) {
+    process.stdin.setRawMode(false);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Signal Handling
 // ---------------------------------------------------------------------------
 
 function forwardSignal(signal: 'SIGINT' | 'SIGTERM'): void {
   if (lead) {
     lead.kill(signal);
+  } else {
+    cleanup();
+    process.exit(0);
   }
 }
 
 process.on('SIGINT', () => forwardSignal('SIGINT'));
 process.on('SIGTERM', () => forwardSignal('SIGTERM'));
+process.on('exit', cleanup);
 
 // ---------------------------------------------------------------------------
 // Entry Point
 // ---------------------------------------------------------------------------
 
 lead = startLead(process.argv.slice(2));
+
+// Handle terminal resize - forward to Lead
+// Multiple methods to ensure resize events are captured:
+
+// Method 1: SIGWINCH signal
+process.on('SIGWINCH', () => {
+  const columns = process.stdout.columns || 80;
+  lead?.send({ type: 'resize', columns });
+});
+
+// Method 2: stdout resize event (Node.js TTY)
+if (process.stdout.isTTY) {
+  process.stdout.on('resize', () => {
+    const columns = process.stdout.columns || 80;
+    lead?.send({ type: 'resize', columns });
+  });
+}
+
+// Method 3: stdin resize event (for raw mode)
+if (process.stdin.isTTY) {
+  process.stdin.on('resize', () => {
+    const columns = process.stdout.columns || 80;
+    lead?.send({ type: 'resize', columns });
+  });
+}
+
+// Method 4: Poll as fallback
+let lastColumns = process.stdout.columns || 80;
+setInterval(() => {
+  const currentColumns = process.stdout.columns || 80;
+  if (currentColumns !== lastColumns) {
+    lastColumns = currentColumns;
+    lead?.send({ type: 'resize', columns: currentColumns });
+  }
+}, 300);

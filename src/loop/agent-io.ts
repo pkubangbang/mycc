@@ -1,40 +1,45 @@
 /**
  * agent-io.ts - I/O state management singleton for agent loop
  *
- * Manages readline lifecycle, active tool tracking, and abort controllers
+ * Manages active tool tracking, abort controllers, and LineEditor lifecycle
  * for handling interactive commands and signal propagation.
+ *
+ * Note: stdin is handled by the Coordinator process via IPC, not by this module.
+ * LineEditor receives key events via IPC and manipulates stdout directly.
  */
 
-import * as readline from 'readline';
+import { LineEditor } from '../utils/line-editor.js';
+import type { KeyInfo } from '../utils/key-parser.js';
 
 /**
  * AgentIO - Singleton for managing I/O state
- * Manages readline lifecycle and provides exec() wrapper for commands
+ * Provides exec() wrapper for commands with abort handling
  */
 class AgentIO {
   private _activeTool = false;
   private _abortController: AbortController | null = null;
   private _llmAbortController: AbortController | null = null;
-  private _readline: readline.Interface | null = null;
   private _isMainProcess = false;
   private _isShuttingDown = false;
+  private _neglectionMode = false;
+  private _neglectionWarned = false;
+
+  // LineEditor management
+  private _activeLineEditor: LineEditor | null = null;
+  private _lineHistory: string[] = [];
 
   // Lifecycle
 
   /**
-   * Initialize for main process with readline
+   * Initialize for main process
    */
   initMain(): void {
     this._isMainProcess = true;
     this._isShuttingDown = false;
-    this._readline = readline.createInterface({
-      input: process.stdin,
-      output: process.stdout,
-    });
   }
 
   /**
-   * Initialize for child process (no readline)
+   * Initialize for child process
    */
   initChild(): void {
     this._isMainProcess = false;
@@ -42,20 +47,20 @@ class AgentIO {
   }
 
   /**
-   * Close readline and cleanup
+   * Cleanup on shutdown
    */
   close(): void {
     this._isShuttingDown = true;
-    if (this._readline) {
-      this._readline.close();
-      this._readline = null;
+    if (this._activeLineEditor) {
+      this._activeLineEditor.close();
+      this._activeLineEditor = null;
     }
   }
 
   // Type check
 
   /**
-   * Check if running in main process (has readline)
+   * Check if running in main process
    */
   isMainProcess(): boolean {
     return this._isMainProcess;
@@ -68,59 +73,90 @@ class AgentIO {
     return this._isShuttingDown;
   }
 
+  // Neglection mode (ESC key pressed during tool execution)
+
+  /**
+   * Check if neglection mode is active
+   * When true, remaining tools in the current loop will be bailed
+   */
+  isNeglectionMode(): boolean {
+    return this._neglectionMode;
+  }
+
+  /**
+   * Set neglection mode (called when ESC is detected)
+   * Returns true if this is a new activation (warning should be shown)
+   */
+  setNeglectionMode(value: boolean): boolean {
+    const wasActive = this._neglectionMode;
+    this._neglectionMode = value;
+    if (value && !wasActive) {
+      this._neglectionWarned = true;
+      return true; // New activation - show warning
+    }
+    return false; // Already active - don't repeat warning
+  }
+
+  /**
+   * Clear neglection mode (called when resuming after bail)
+   */
+  clearNeglectionMode(): void {
+    this._neglectionMode = false;
+    this._neglectionWarned = false;
+  }
+
+  // Key event handling (for LineEditor)
+
+  /**
+   * Handle a key event from Coordinator (via IPC)
+   * Forwards to active LineEditor if one exists
+   */
+  handleKeyEvent(key: KeyInfo): void {
+    if (this._activeLineEditor) {
+      this._activeLineEditor.handleKey(key);
+    }
+  }
+
+  /**
+   * Handle terminal resize event from Coordinator
+   * Forwards to active LineEditor if one exists
+   */
+  handleResize(columns: number): void {
+    if (this._activeLineEditor) {
+      this._activeLineEditor.resize(columns);
+    }
+  }
+
   // Question (main process only)
 
   /**
-   * Ask user a question via readline
+   * Ask user a question via line editor
    * Only available in main process
+   *
+   * Creates a LineEditor instance and waits for input via IPC key events
    */
   async ask(query: string): Promise<string> {
     if (!this._isMainProcess) {
       throw new Error('question() only available in main process');
     }
-    if (this._isShuttingDown || !this._readline) {
+    if (this._isShuttingDown) {
       throw new Error('Agent is shutting down');
     }
-    return new Promise((resolve, reject) => {
-      const rl = this._readline;
-      if (!rl) {
-        reject(new Error('readline not available'));
-        return;
-      }
-      // Clear from cursor to end of screen, then show prompt
-      process.stdout.write('\x1b[J');
-      rl.question(query, (answer) => {
-        resolve(answer);
+
+    return new Promise((resolve) => {
+      this._activeLineEditor = new LineEditor({
+        prompt: query,
+        stdout: process.stdout,
+        onDone: (value: string) => {
+          // Save history
+          this._lineHistory = this._activeLineEditor?.getHistory() || [];
+          this._activeLineEditor?.close();
+          this._activeLineEditor = null;
+          resolve(value);
+        },
+        history: this._lineHistory,
       });
     });
-  }
-
-  // Readline management (main process only)
-
-  /**
-   * Pause readline to release stdin for child process
-   */
-  pauseReadline(): void {
-    if (!this._isMainProcess || this._isShuttingDown || !this._readline) return;
-    try {
-      this._readline.pause();
-    } catch {
-      // Ignore if already closed
-    }
-  }
-
-  /**
-   * Resume readline after child process exits
-   */
-  resumeReadline(): void {
-    if (!this._isMainProcess || this._isShuttingDown) return;
-    if (this._readline) {
-      try {
-        this._readline.resume();
-      } catch {
-        // Ignore if already closed
-      }
-    }
   }
 
   // SIGINT handling
@@ -170,7 +206,7 @@ class AgentIO {
 
   /**
    * Execute an execa promise with full lifecycle management.
-   * Handles pause/resume, abort controller, and active flag.
+   * Handles abort controller and active flag for signal propagation.
    * @param execaFactory - A function that takes a signal and returns an execa promise
    */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -179,7 +215,6 @@ class AgentIO {
 
     this._activeTool = true;
     this._abortController = abortController;
-    this.pauseReadline();
 
     try {
       const result = await execaFactory(abortController.signal);
@@ -190,7 +225,6 @@ class AgentIO {
     } finally {
       this._activeTool = false;
       this._abortController = null;
-      this.resumeReadline();
     }
   }
 }

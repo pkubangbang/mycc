@@ -7,11 +7,12 @@
 import { Ollama } from 'ollama';
 import type { ChatRequest, ChatResponse } from 'ollama';
 import chalk from 'chalk';
-import { isVerbose } from './config.js';
-// Configuration
-export const OLLAMA_HOST = process.env.OLLAMA_HOST || 'http://127.0.0.1:11434';
-export const OLLAMA_API_KEY = process.env.OLLAMA_API_KEY;
-export const MODEL = process.env.OLLAMA_MODEL || 'glm-5:cloud';
+import { isVerbose, getOllamaHost, getOllamaApiKey, getOllamaModel } from './config.js';
+
+// Configuration (resolved via config.ts)
+export const OLLAMA_HOST = getOllamaHost();
+export const OLLAMA_API_KEY = getOllamaApiKey();
+export const MODEL = getOllamaModel();
 
 // Initialize Ollama client
 export const ollama = new Ollama({

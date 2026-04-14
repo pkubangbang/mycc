@@ -59,6 +59,34 @@ export function isVerbose(): boolean {
 }
 
 /**
+ * Get token threshold for context management
+ */
+export function getTokenThreshold(): number {
+  return parseInt(process.env.TOKEN_THRESHOLD || '50000', 10);
+}
+
+/**
+ * Get Ollama host URL
+ */
+export function getOllamaHost(): string {
+  return process.env.OLLAMA_HOST || 'http://127.0.0.1:11434';
+}
+
+/**
+ * Get Ollama API key (optional)
+ */
+export function getOllamaApiKey(): string | undefined {
+  return process.env.OLLAMA_API_KEY;
+}
+
+/**
+ * Get Ollama model name
+ */
+export function getOllamaModel(): string {
+  return process.env.OLLAMA_MODEL || 'glm-5:cloud';
+}
+
+/**
  * Environment variable requirements
  */
 interface EnvRequirement {

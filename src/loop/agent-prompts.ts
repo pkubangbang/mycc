@@ -4,8 +4,6 @@
 
 import type { AgentContext } from '../types.js';
 
-export const TOKEN_THRESHOLD = parseInt(process.env.TOKEN_THRESHOLD || '50000', 10);
-
 /**
  * Build system prompt based on agent context and identity
  */
@@ -70,6 +68,7 @@ export function buildSystemPrompt(
       `## Communication`,
       `You have access to the issue system to coordinate tasks`,
       `Also you can send mails to the teammates. Send mails only if necessary, and keep the content actionable.`,
+      `If you find yourself waiting for the reply from the teammates, do not use tools in this round.`,
       `Remember that the teammates can directly ask questions to the user, and you will get a copy of the chat.`,
       `If you want to ask me questions, do not use any tool, just leave your question as the reply.`,
 

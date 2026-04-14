@@ -298,8 +298,8 @@ export function listSessions(): SessionDisplay[] {
     }
   }
 
-  // Sort by creation time (newest first)
-  sessions.sort((a, b) => b.create_time.localeCompare(a.create_time));
+  // Sort by creation time (oldest first, newest at the bottom)
+  sessions.sort((a, b) => a.create_time.localeCompare(b.create_time));
 
   return sessions;
 }
