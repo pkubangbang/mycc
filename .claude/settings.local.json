@@ -11,7 +11,7 @@
       "Bash(npm test:*)",
       "Bash(npx tsc:*)",
       "mcp__ide__getDiagnostics",
-      "Bash(bash /home/student/proj/mycc/tests/*)"
+      "Bash(tmux:*)"
     ]
   }
 }
