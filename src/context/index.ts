@@ -236,6 +236,15 @@ export class ParentContext implements AgentContext {
         },
       },
       {
+        messageType: 'wiki_delete',
+        module: 'wiki',
+        handler: async (_sender, payload, ctx, sendResponse) => {
+          const { hash } = payload as { hash: string };
+          const result = await ctx.wiki.delete(hash);
+          sendResponse('wiki_result', true, result);
+        },
+      },
+      {
         messageType: 'wiki_wal_get',
         module: 'wiki',
         handler: async (_sender, payload, ctx, sendResponse) => {

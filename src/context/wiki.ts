@@ -30,6 +30,9 @@ const DUPLICATE_THRESHOLD = 0.95;
 const MIN_CONTENT_LENGTH = 50;
 const MAX_CONTENT_LENGTH = 1000;
 
+// Hash is first 16 chars of SHA-256 hex digest
+const HASH_PATTERN = /^[a-f0-9]{16}$/;
+
 /**
  * WikiManager - Manages persistent knowledge storage
  */
@@ -315,6 +318,96 @@ export class WikiManager implements WikiModule {
   }
 
   /**
+   * Delete a document by hash
+   */
+  async delete(hash: string): Promise<boolean> {
+    // Validate hash format
+    if (!HASH_PATTERN.test(hash)) {
+      this.core.brief('error', 'wiki', `Invalid hash format: ${hash}. Expected 16 hex characters.`);
+      return false;
+    }
+
+    await this.initDb();
+    if (!this.table) {
+      this.core.brief('error', 'wiki', 'Database not initialized');
+      return false;
+    }
+
+    try {
+      // Find the document and its createdAt date
+      const records = await this.table.query().toArray();
+      let foundRecord: Record<string, unknown> | null = null;
+
+      for (const record of records) {
+        const r = record as Record<string, unknown>;
+        if (r.hash === hash) {
+          foundRecord = r;
+          break;
+        }
+      }
+
+      if (!foundRecord) {
+        this.core.brief('warn', 'wiki', `Document not found: ${hash}`);
+        return false;
+      }
+
+      // Get the date from createdAt to find the WAL file
+      const createdAt = foundRecord.createdAt as string;
+      const walDate = this.formatDate(new Date(createdAt));
+
+      // Mark as deleted in WAL first (before LanceDB deletion for consistency)
+      await this.markWALDeleted(hash, walDate);
+
+      // Delete from LanceDB
+      await this.table.delete(`hash = '${hash}'`);
+
+      this.core.brief('info', 'wiki', `Deleted document: ${hash}`);
+      return true;
+    } catch (err) {
+      const error = err instanceof Error ? err.message : String(err);
+      this.core.brief('error', 'wiki', `Delete failed: ${error}`);
+      return false;
+    }
+  }
+
+  /**
+   * Mark a WAL entry as deleted
+   */
+  private async markWALDeleted(hash: string, date: string): Promise<void> {
+    ensureDirs();
+    const walPath = path.join(getWikiLogsDir(), `${date}.wal`);
+
+    if (!fs.existsSync(walPath)) {
+      // WAL file no longer exists - this is OK, just log it
+      this.core.brief('warn', 'wiki', `WAL file not found for date ${date}`);
+      return;
+    }
+
+    // Read and parse WAL entries
+    const content = fs.readFileSync(walPath, 'utf-8');
+    const entries = this.parseWALFile(content);
+
+    // Find and mark the entry as deleted
+    let found = false;
+    for (const entry of entries) {
+      if (entry.hash === hash) {
+        entry.deleted = true;
+        found = true;
+        break;
+      }
+    }
+
+    if (!found) {
+      this.core.brief('warn', 'wiki', `Entry ${hash} not found in WAL ${date}`);
+      return;
+    }
+
+    // Write back as JSON lines
+    const lines = entries.map(e => JSON.stringify(e)).join('\n');
+    fs.writeFileSync(walPath, lines + '\n', 'utf-8');
+  }
+
+  /**
    * Get WAL entries for a specific date (default: today)
    */
   async getWAL(date?: string): Promise<WALEntry[]> {
@@ -432,6 +525,7 @@ export class WikiManager implements WikiModule {
     for (const entry of entries) {
       const lines: string[] = [];
       lines.push(`# ${entry.hash}`);
+      if (entry.deleted) lines.push('!deleted');
       if (entry.persistent) lines.push('!persistent');
       if (entry.approved) lines.push('!approved');
       lines.push(`[created_at]${entry.timestamp}`);
@@ -500,6 +594,8 @@ export class WikiManager implements WikiModule {
         const entries = this.parseWALFile(content);
 
         for (const entry of entries) {
+          // Skip deleted and unapproved entries
+          if (entry.deleted) continue;
           if (!entry.approved) continue;
 
           try {

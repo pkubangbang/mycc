@@ -2,12 +2,22 @@
  * bash.ts - Run shell commands with stdin inheritance for interactive commands
  *
  * Scope: ['main', 'child', 'bg'] - Available to all agent types
+ *
+ * Parameters:
+ * - command: The shell command to execute
+ * - intent: Explain why you want to use this command (mandatory)
+ * - elor: Expected line of result (default: 50)
+ *   - If output exceeds elor lines, LLM will summarize the result
+ *   - Set higher value to read more actual result
+ *   - Setting very small numbers (like 0) to enforce summary is discouraged
+ * - timeout: Seconds before killing the process (default: 3)
  */
 
 import { execa } from 'execa';
 import { execSync } from 'child_process';
 import type { ToolDefinition, AgentContext } from '../types.js';
 import { agentIO } from '../loop/agent-io.js';
+import { retryChat, MODEL } from '../ollama.js';
 
 /**
  * Find available terminal emulator on the system
@@ -61,7 +71,7 @@ async function runInPopupTerminal(ctx: AgentContext, command: string): Promise<s
 
 export const bashTool: ToolDefinition = {
   name: 'bash',
-  description: 'Run a shell command (blocking). Press Ctrl+C to interrupt if stuck.',
+  description: 'Run a shell command (blocking). Set an expected line-of-result using "elor" before you go.',
   input_schema: {
     type: 'object',
     properties: {
@@ -69,16 +79,26 @@ export const bashTool: ToolDefinition = {
         type: 'string',
         description: 'The shell command to execute',
       },
+      intent: {
+        type: 'string',
+        description: 'Explain why you want to use this command',
+      },
+      elor: {
+        type: 'number',
+        description: 'Expected line of result (default: 50). If output exceeds this, LLM summarizes. Set higher for more detail. Very small values (like 0) to enforce summary are discouraged.',
+      },
       timeout: {
         type: 'number',
         description: 'Seconds before killing the process (default: 3)',
       },
     },
-    required: ['command'],
+    required: ['command', 'intent'],
   },
   scope: ['main', 'child', 'bg'],
   handler: async (ctx: AgentContext, args: Record<string, unknown>): Promise<string> => {
     const command = args.command as string;
+    const intent = args.intent as string;
+    const elor = (args.elor as number) ?? 50;
     const timeoutSeconds = (args.timeout as number) ?? 3;
 
     // Block dangerous commands
@@ -87,7 +107,7 @@ export const bashTool: ToolDefinition = {
       return 'Error: Dangerous command blocked';
     }
 
-    ctx.core.brief('info', 'bash', command);
+    ctx.core.brief('info', 'bash', command, intent);
 
     const { result, interrupted } = await agentIO.exec((signal) => {
       const subprocess = execa('bash', ['-c', command], {
@@ -153,6 +173,48 @@ export const bashTool: ToolDefinition = {
       parts.push(`\n[stderr]\n${stderr.trim()}`);
     }
 
-    return parts.join('\n');
+    const output = parts.join('\n');
+
+    // Check if we need to summarize
+    const lines = output.split('\n');
+    const lineCount = lines.length;
+
+    if (lineCount <= elor) {
+      return output;
+    }
+
+    // Summarize the output
+    const summary = await summarizeOutput(output, intent, elor, lineCount, ctx);
+    return summary;
   },
 };
+
+/**
+ * Summarize command output when it exceeds the expected line count
+ */
+async function summarizeOutput(
+  output: string,
+  intent: string,
+  elor: number,
+  totalLines: number,
+  ctx: AgentContext
+): Promise<string> {
+  ctx.core.brief('info', 'bash', `Summarizing ${totalLines} lines (elor: ${elor})`);
+
+  const response = await retryChat({
+    model: MODEL,
+    messages: [
+      {
+        role: 'system',
+        content: `Summarize this command output concisely.
+User's intent: ${intent}
+Total lines: ${totalLines}
+Keep the summary under ${elor} lines.
+Report the total line count at the start of your response.`
+      },
+      { role: 'user', content: output }
+    ]
+  });
+
+  return `Summary of ${totalLines} lines:\n${response.message.content || 'No summary generated'}`;
+}

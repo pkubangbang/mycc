@@ -217,7 +217,7 @@ export interface CoreModule {
   getWorkDir(): string;
   setWorkDir(dir: string): void;
   getName(): string;
-  brief(level: 'info' | 'warn' | 'error', tool: string, message: string): void;
+  brief(level: 'info' | 'warn' | 'error', tool: string, message: string, detail?: string): void;
   /**
    * Verbose logging - only outputs when -v flag is set
    * @param tool - Tool/module name
@@ -442,6 +442,7 @@ export interface WALEntry {
   document: WikiDocument;
   approved: boolean;
   persistent?: boolean;
+  deleted?: boolean; // Marks entry as deleted from vector store
 }
 
 /**
@@ -460,6 +461,7 @@ export interface WikiModule {
   prepare(document: WikiDocument): Promise<PrepareResult>;
   put(hash: string, document: WikiDocument): Promise<PutResult>;
   get(query: string, options?: GetOptions): Promise<SearchResult[]>;
+  delete(hash: string): Promise<boolean>;
   getWAL(date?: string): Promise<WALEntry[]>;
   parseWAL(asciiContent: string): WALEntry[];
   formatWAL(entries: WALEntry[]): string;

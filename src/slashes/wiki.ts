@@ -2,10 +2,11 @@
  * /wiki command - Manage knowledge base WAL files and domains
  *
  * Usage:
- *   /wiki              - Show today's WAL file
- *   /wiki edit [date]  - Open WAL file for editing (YYYY-MM-DD)
- *   /wiki rebuild      - Rebuild vector store from all WAL files
- *   /wiki domains      - List all domains
+ *   /wiki                      - Show today's WAL file
+ *   /wiki edit [date]          - Open WAL file for editing (YYYY-MM-DD)
+ *   /wiki rebuild              - Rebuild vector store from all WAL files
+ *   /wiki delete <hash>        - Delete document from vector store by hash
+ *   /wiki domains              - List all domains
  *   /wiki domains add <name> <description>  - Add domain
  *   /wiki domains remove <name>             - Remove domain
  */
@@ -35,6 +36,9 @@ export const wikiCommand: SlashCommand = {
     } else if (args[0] === 'rebuild') {
       // Rebuild vector store
       await handleRebuild(context.ctx.wiki);
+    } else if (args[0] === 'delete') {
+      // Delete document by hash
+      await handleDelete(context.ctx.wiki, args[1]);
     } else if (args[0] === 'domains') {
       // Domain management
       await handleDomains(context.ctx.wiki, args.slice(1));
@@ -120,6 +124,30 @@ async function handleRebuild(wiki: WikiModule): Promise<void> {
     for (const error of result.errors) {
       console.log(chalk.red(`  - ${error}`));
     }
+  }
+}
+
+async function handleDelete(wiki: WikiModule, hash: string | undefined): Promise<void> {
+  if (!hash) {
+    console.log(chalk.red('Usage: /wiki delete <hash>'));
+    console.log(chalk.gray('Use /wiki to view WAL entries and find the hash.'));
+    return;
+  }
+
+  // Validate hash format (16 hex characters)
+  if (!/^[a-f0-9]{16}$/.test(hash)) {
+    console.log(chalk.red(`Invalid hash format: ${hash}`));
+    console.log(chalk.gray('Hash must be 16 hexadecimal characters (e.g., a1b2c3d4e5f67890)'));
+    return;
+  }
+
+  const deleted = await wiki.delete(hash);
+
+  if (deleted) {
+    console.log(chalk.green(`\nDocument ${hash} deleted successfully.`));
+    console.log(chalk.gray('The deletion has been marked in the original WAL file.'));
+  } else {
+    console.log(chalk.yellow(`\nDocument ${hash} not found.`));
   }
 }
 

@@ -21,6 +21,7 @@ import { agentIO } from './agent-io.js';
 import type { KeyInfo } from '../utils/key-parser.js';
 import { isVerbose, getSessionArg, shouldSkipHealthCheck } from '../config.js';
 import { openMultilineEditor } from '../utils/multiline-input.js';
+import { displayLetterBox } from '../utils/letter-box.js';
 import { createRequire } from 'module';
 
 const require = createRequire(import.meta.url);
@@ -154,7 +155,6 @@ async function initializeSession(): Promise<SessionInit> {
 
     // Create a new session file for this run
     sessionFilePath = createSessionFile(triologuePath);
-    console.log(chalk.gray(`Session: ${path.basename(sessionFilePath)}`));
 
     // Clean up empty session files from previous runs
     const currentSessionId = getSessionId(sessionFilePath);
@@ -411,11 +411,9 @@ export async function main(): Promise<void> {
   // Get token threshold once (env value, doesn't change during execution)
   const tokenThreshold = getTokenThreshold();
 
-  console.log(chalk.cyan(`Coding Agent v${version}`));
-  console.log(chalk.cyan(`Model: ${MODEL} (${OLLAMA_HOST})`));
-
   // Health check: validate Ollama connectivity and model availability
   // Skip if --skip-healthcheck flag is set (useful for testing)
+  let modelInfo: { family?: string; parameterSize?: string; contextLength: number } | null = null;
   if (shouldSkipHealthCheck()) {
     console.log(chalk.gray('Skipping health check (test mode)'));
   } else {
@@ -424,21 +422,32 @@ export async function main(): Promise<void> {
       console.error(chalk.red(`Health check failed: ${health.error}`));
       process.exit(1);
     }
-
-    // Display model info
     if (health.modelInfo) {
-      const info = health.modelInfo;
-      const parts = [info.name];
-      if (info.family) parts.push(`family: ${info.family}`);
-      if (info.parameterSize) parts.push(`params: ${info.parameterSize}`);
-      parts.push(`ctx: ${info.contextLength}`);
-      console.log(chalk.green(`✓ Model ready: ${parts.join(', ')}`));
-      console.log(chalk.gray(`  Token threshold: ${tokenThreshold}`));
+      modelInfo = health.modelInfo;
     }
   }
 
-  const commands = slashRegistry.list().map(c => `/${c}`).join(', ');
-  console.log(chalk.gray(`Commands: ${commands}, /exit\n`));
+  // Display startup info with aligned labels
+  const labelWidth = 12; // Width for label alignment
+  const alignLabel = (label: string) => label.padEnd(labelWidth);
+
+  console.log();
+  console.log(chalk.cyan.bold(`Coding Agent v${version}`));
+  console.log(chalk.gray('─'.repeat(40)));
+  console.log(chalk.cyan(`${alignLabel('Model:')}${MODEL}`));
+  console.log(chalk.gray(`${alignLabel('Host:')}${OLLAMA_HOST}`));
+
+  if (modelInfo) {
+    if (modelInfo.family) {
+      console.log(chalk.gray(`${alignLabel('Family:')}${modelInfo.family}`));
+    }
+    if (modelInfo.parameterSize) {
+      console.log(chalk.gray(`${alignLabel('Params:')}${modelInfo.parameterSize}`));
+    }
+    console.log(chalk.gray(`${alignLabel('Context:')}${modelInfo.contextLength}`));
+  }
+
+  console.log(chalk.gray(`${alignLabel('Threshold:')}${tokenThreshold} tokens`));
 
   // Initialize AgentIO early (needed for ask() during session restoration)
   agentIO.initMain();
@@ -447,6 +456,14 @@ export async function main(): Promise<void> {
   const sessionInit = await initializeSession();
   const { sessionFilePath, triologuePath, restoredPair } = sessionInit;
   let initialQuery = sessionInit.initialQuery; // Mutable for clearing after first use
+
+  // Display session info (after initialization so we have the session ID)
+  const sessionId = getSessionId(sessionFilePath);
+  console.log(chalk.gray(`${alignLabel('Session:')}${sessionId.slice(0, 7)}`));
+
+  const commands = slashRegistry.list().map(c => `/${c}`).join(', ');
+  console.log(chalk.gray(`${alignLabel('Commands:')}${commands}, /exit`));
+  console.log();
 
   // Track first query for bookmark title
   let firstQueryCaptured = false;
@@ -577,12 +594,11 @@ export async function main(): Promise<void> {
       // Run agent loop
       await agentLoop(triologue, ctx, loader);
 
-      // Print final response
+      // Print final response in letter-style box
       const lastMsg = triologue.getMessagesRaw().at(-1);
       if (lastMsg?.content) {
-        console.log(lastMsg.content);
+        displayLetterBox(lastMsg.content);
       }
-      console.log();
     } catch (err) {
       // Shutdown - exit cleanly
       if (err instanceof ShutdownError || agentIO.isShuttingDown()) {

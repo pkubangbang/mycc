@@ -48,8 +48,17 @@ class SlashCommandRegistryImpl {
       return false;
     }
 
-    await command.handler(context);
-    return true;
+    try {
+      await command.handler(context);
+      return true;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(chalk.red(`Error executing /${name}:`), message);
+      if (err instanceof Error && err.stack && process.env['VERBOSE']) {
+        console.error(chalk.gray(err.stack));
+      }
+      return false;
+    }
   }
 }
 

@@ -67,11 +67,58 @@ To add a skill:
 3. let the user test it manually, and iterate from feedbacks.
 4. once qualified, migrate it back into `skills/`, to make it built-in.
 
+## How to test this app
+
+Use tmux to simulate interactive terminal sessions for testing the agent loop, REPL, and user interactions.
+
+```bash
+# Create session with specific dimensions
+tmux new-session -s mycc-test -d -x 80 -y 24
+
+# Send keys to running app
+tmux send-keys -t mycc-test "/help" Enter
+
+# Capture pane output for assertions
+tmux capture-pane -t mycc-test -p
+
+# Resize pane to test different screen sizes
+tmux resize-pane -t mycc-test -x 80 -y 24   # standard terminal
+tmux resize-pane -t mycc-test -x 40 -y 12   # small/mobile view
+
+# Kill session when done
+tmux kill-session -t mycc-test
+```
+
+See `docs/line-editor-tests.md` for LineEditor-specific test cases.
+
 ## Reference Documents
 
+### Core Architecture
 - `docs/agent-context.md` - AgentContext module documentation (Chinese)
 - `docs/agent-loop.md` - Agent loop implementation details (Chinese)
 - `docs/agent-tools.md` - Built-in tools reference
 - `docs/child-context.md` - Child process context and IPC design (Chinese)
-- `docs/database-schema.md` - SQLite schema documentation (Chinese)
 - `docs/dynamic-loading.md` - Tool/skill loading mechanism
+
+### Persistence & State
+- `docs/database-schema.md` - SQLite schema documentation (Chinese)
+- `docs/how-to-restore-the-session.md` - Session management and restoration
+- `docs/how-to-build-persistent-memory.md` - Vector store and RAG implementation
+
+### Team & IPC
+- `docs/teammate-status.md` - Teammate status state machine
+- `docs/how-to-handle-child-questions.md` - IPC question handling between main and child processes
+- `docs/ipc-ioc.md` - IPC inversion of control pattern (Chinese)
+
+### Agent Behavior
+- `docs/confusion-index.md` - Confusion index for detecting stuck agents (Chinese)
+
+### Tools & Utilities
+- `docs/read-read-tool.md` - Long content summarization tool
+- `docs/ollama-web-search.md` - Ollama web search and fetch API
+
+### Testing
+- `docs/line-editor-tests.md` - LineEditor test cases
+
+### User Documentation
+- `docs/user-manual-20260408.md` - End-user manual

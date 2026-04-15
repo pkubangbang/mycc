@@ -83,23 +83,28 @@ export class Core implements CoreModule {
   /**
    * Log a message to console
    * Thread-safe: console.log is atomic in Node.js
+   * @param detail - Optional greyed text to show after tool name (for showing intent)
    */
-  brief(level: 'info' | 'warn' | 'error', tool: string, message: string): void {
+  brief(level: 'info' | 'warn' | 'error', tool: string, message: string, detail?: string): void {
     const now = new Date();
     const timestamp = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
     const colorFn = TOOL_COLORS[tool] || TOOL_COLORS._default;
     const prefix = `${chalk.gray(`[${timestamp}]`)} ${colorFn(`[${tool}]`)}`;
 
+    // Build output with optional detail (greyed text after tool name)
+    const detailPart = detail ? ` ${chalk.gray(detail)}` : '';
+    const header = `${prefix}${detailPart}`;
+
     // Log to console
     switch (level) {
       case 'error':
-        console.error(`${prefix} ${chalk.red(message)}`);
+        console.error(`${header}\n${chalk.red(message)}`);
         break;
       case 'warn':
-        console.warn(`${prefix} ${chalk.yellow(message)}`);
+        console.warn(`${header}\n${chalk.yellow(message)}`);
         break;
       default:
-        console.log(`${prefix} ${message}`);
+        console.log(`${header}\n${message}`);
     }
   }
 

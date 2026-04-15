@@ -23,7 +23,8 @@ export const domainCommand: SlashCommand = {
         console.log(chalk.red('Usage: /domain add <name>'));
         return;
       }
-      await handleAdd(context.ctx.core.question, name);
+      // Bind question to core context to preserve 'this'
+      await handleAdd(context.ctx.core.question.bind(context.ctx.core), name);
     } else {
       await handleList();
     }

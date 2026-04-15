@@ -25,6 +25,11 @@ export class ChildWiki implements WikiModule {
     return result;
   }
 
+  async delete(hash: string): Promise<boolean> {
+    const result = await ipc.sendRequest<boolean>('wiki_delete', { hash });
+    return result;
+  }
+
   async getWAL(date?: string): Promise<WALEntry[]> {
     const result = await ipc.sendRequest<WALEntry[]>('wiki_wal_get', { date });
     return result;
@@ -55,6 +60,7 @@ export class ChildWiki implements WikiModule {
     let hash = '';
     let persistent = false;
     let approved = false;
+    let deleted = false;
     let timestamp = '';
     let domain = '';
     let title = '';
@@ -65,6 +71,8 @@ export class ChildWiki implements WikiModule {
     for (const line of lines) {
       if (line.startsWith('# ')) {
         hash = line.slice(2);
+      } else if (line === '!deleted') {
+        deleted = true;
       } else if (line === '!persistent') {
         persistent = true;
       } else if (line === '!approved') {
@@ -97,6 +105,7 @@ export class ChildWiki implements WikiModule {
       },
       approved,
       persistent,
+      deleted,
     };
   }
 
@@ -107,6 +116,7 @@ export class ChildWiki implements WikiModule {
     for (const entry of entries) {
       const lines: string[] = [];
       lines.push(`# ${entry.hash}`);
+      if (entry.deleted) lines.push('!deleted');
       if (entry.persistent) lines.push('!persistent');
       if (entry.approved) lines.push('!approved');
       lines.push(`[created_at]${entry.timestamp}`);
