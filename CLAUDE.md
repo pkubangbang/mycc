@@ -28,6 +28,20 @@ See `docs/agent-tools.md` for complete tool reference.
 
 ## Architecture
 
+At the core is the llm inference and tool-using capability provided by ollama api. We call this `the model` or `llm`.
+
+Then an `agent loop` wraps the llm to enable multi-round chat. For each round the llm will receive information from the tool result or the user's input (be it sent in direct or on behalf) and take actions to either use tool or respond with text, the latter will end the loop and come back to the prompt. The agent loop consist of `the routine` and `the repl`: routine is some pre-defined steps to take in each round, while the repl is the prompt.
+
+The agent loop cannot finish tasks on its own; it must use `tools`. Tools are well-structured functions with schema definition that calls `the agent context` behind the scene. Besides tools, there are `skills`, which are instructions written as markdown files, to provide specialist knowledge that the llm can follow.
+
+There are in total of 3 ways to extend (or distract!) the capabilities of the agent: tools, skills, and slash-commands. While the first two are llm-facing, `slash commands` are user-facing: user can type commands to directly talk to the agent context, for example using `/team` to get a peek of the teammates and their states.
+
+To make the chat *roughly* recoverable, we introduced the concept of `session`. There are in total two types of sessions: `project session` and `user session`. Project sessions are persisted as a metadata file inside `current working directory`, while user sessions are inside the user's home dir, to be specific, `~/.mycc/sessions`.
+
+The same hierachical design can also be found at `user skills` vs `project skills` vs `built-in tools`, and `user tools` vs `project tools` vs `built-in tools`. 
+
+## The agent context
+
 All tools receive an `AgentContext` object containing state modules. See `docs/agent-context.md` for module documentation.
 
 Key architectural concepts:

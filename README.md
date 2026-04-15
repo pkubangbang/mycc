@@ -20,6 +20,44 @@ pnpm build          # Compile to dist/
 pnpm format         # Format with Prettier
 ```
 
+### Running with Options
+
+**Verbose mode** (show debug output):
+```bash
+pnpm start -- -v
+pnpm start -- --verbose
+```
+
+**Load a saved session**:
+```bash
+pnpm start -- --session <session-id>
+```
+
+**Skip health check** (faster startup):
+```bash
+pnpm start -- --skip-healthcheck
+```
+
+**Override environment variables**:
+```bash
+# Use a different model
+OLLAMA_MODEL=llama3.2 pnpm start
+
+# Connect to remote Ollama server
+OLLAMA_HOST=https://api.ollama.com pnpm start
+
+# Adjust context threshold
+TOKEN_THRESHOLD=30000 pnpm start
+```
+
+**Install globally** (run `mycc` from anywhere):
+```bash
+pnpm build && npm link
+mycc                    # Run from any directory
+mycc -v                 # Verbose mode
+OLLAMA_MODEL=qwen2.5 mycc  # With env override
+```
+
 ## Environment Setup
 
 Copy `.env.example` to `.env` and configure:
