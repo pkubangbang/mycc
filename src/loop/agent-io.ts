@@ -143,9 +143,12 @@ class AgentIO {
       throw new Error('Agent is shutting down');
     }
 
+    // Display query text separately (handles multi-line queries)
+    console.log(query);
+
     return new Promise((resolve) => {
       this._activeLineEditor = new LineEditor({
-        prompt: query,
+        prompt: '> ', // Simple prompt instead of multi-line query
         stdout: process.stdout,
         onDone: (value: string) => {
           // Save history

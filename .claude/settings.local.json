@@ -11,7 +11,9 @@
       "Bash(npm test:*)",
       "Bash(npx tsc:*)",
       "mcp__ide__getDiagnostics",
-      "Bash(tmux:*)"
+      "Bash(tmux:*)",
+      "Bash(./test-line-editor.sh:*)",
+      "Bash(./test-backspace-middle.sh)"
     ]
   }
 }
