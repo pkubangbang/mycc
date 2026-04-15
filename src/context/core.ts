@@ -142,7 +142,8 @@ export class Core implements CoreModule {
       throw new Error('Agent is shutting down');
     }
 
-    this.brief('info', `question`, `${asker} has a question:`);
+    // Display who is asking, then the query (via agentIO.ask)
+    this.brief('info', 'question', `${asker} asks:`);
     return await agentIO.ask(query);
   }
 

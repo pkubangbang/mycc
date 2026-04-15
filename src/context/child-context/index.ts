@@ -2,7 +2,7 @@
  * child-context/index.ts - Factory for creating child process AgentContext
  */
 
-import type { AgentContext, SkillModule, CoreModule, TodoModule, MailModule, IssueModule, BgModule, WtModule, TeamModule } from '../../types.js';
+import type { AgentContext, SkillModule, CoreModule, TodoModule, MailModule, IssueModule, BgModule, WtModule, TeamModule, WikiModule } from '../../types.js';
 import { Todo } from '../todo.js';
 import { MailBox } from '../mail.js';
 import { Loader } from '../loader.js';
@@ -10,6 +10,7 @@ import { ChildCore } from './core.js';
 import { ChildIssue } from './issue.js';
 import { ChildWt } from './wt.js';
 import { ChildTeam } from './team.js';
+import { ChildWiki } from './wiki.js';
 import { BackgroundTasks } from '../bg.js';
 
 // Re-export
@@ -18,6 +19,7 @@ export { ChildCore } from './core.js';
 export { ChildIssue } from './issue.js';
 export { ChildWt } from './wt.js';
 export { ChildTeam } from './team.js';
+export { ChildWiki } from './wiki.js';
 
 /**
  * ChildContext - AgentContext for child process (teammate)
@@ -32,6 +34,7 @@ export class ChildContext implements AgentContext {
   private bgModule: BackgroundTasks;
   private wtModule: ChildWt;
   private teamModule: ChildTeam;
+  private wikiModule: ChildWiki;
 
   constructor(name: string, workDir: string) {
     this.coreModule = new ChildCore(name, workDir);
@@ -42,6 +45,7 @@ export class ChildContext implements AgentContext {
     this.bgModule = new BackgroundTasks(this.coreModule);
     this.wtModule = new ChildWt(this.coreModule);
     this.teamModule = new ChildTeam(name); // Pass owner name for mailTo
+    this.wikiModule = new ChildWiki();
   }
 
   // Getters for each module
@@ -53,4 +57,5 @@ export class ChildContext implements AgentContext {
   get bg(): BgModule { return this.bgModule; }
   get wt(): WtModule { return this.wtModule; }
   get team(): TeamModule { return this.teamModule; }
+  get wiki(): WikiModule { return this.wikiModule; }
 }

@@ -101,6 +101,7 @@ mycc uses a modular state container called `AgentContext` that manages:
 - **Background**: Background bash tasks
 - **Worktree**: Git worktree management
 - **Team**: Child process teammates
+- **Wiki**: Persistent knowledge base with vector search
 
 ### 2. STAR Principle Loop
 
@@ -189,6 +190,39 @@ Use `wt_create` to isolate work:
 { "name": "feature-x", "branch": "feature-x" }
 ```
 
+### Use Case 6: Wiki Knowledge Base
+
+Store and retrieve knowledge across sessions using the wiki system:
+
+```
+> Store this in the wiki: the project uses PostgreSQL 15 for the database
+```
+
+The agent will use `wiki_prepare` to validate, then `wiki_put` to store:
+```json
+{ "domain": "project", "title": "Database config", "content": "...", "references": [] }
+```
+
+To retrieve knowledge:
+```
+> What do we know about the database configuration?
+```
+
+The agent will use `wiki_get` with the domain filter to find relevant documents.
+
+### Use Case 7: Wiki WAL Management
+
+Manage the Write-Ahead Log (WAL) for knowledge base audit:
+
+```
+/wiki              - Show today's WAL entries
+/wiki edit         - Edit today's WAL in ASCII format
+/wiki edit 2024-01-15  - Edit a specific day's WAL
+/wiki rebuild      - Rebuild vector store from all WAL files
+```
+
+WAL files are stored in `~/.mycc/wiki/logs/YYYY-MM-DD.wal` as JSON lines.
+
 ---
 
 ## Installation & Configuration
@@ -216,6 +250,11 @@ mycc/
 ├── skills/           # Built-in skills
 ├── docs/             # Documentation
 └── dist/             # Compiled output
+
+~/.mycc/wiki/         # Wiki knowledge base (shared across projects)
+├── db/               # LanceDB vector store
+├── logs/             # WAL files (YYYY-MM-DD.wal)
+└── domains.json      # Domain registry
 ```
 
 ---
@@ -237,6 +276,16 @@ mycc/
 mycc supports various slash commands for direct tool access:
 - Type `/help` to see available commands
 - Slash commands bypass the LLM and execute tools directly
+
+| Command | Description |
+|---------|-------------|
+| `/team` | Print team status |
+| `/todos` | Print todo list |
+| `/issues` | List issues |
+| `/skills` | List available skills |
+| `/wiki` | Show today's WAL |
+| `/wiki edit [date]` | Edit WAL file |
+| `/wiki rebuild` | Rebuild vector store from WAL |
 
 ---
 
@@ -298,6 +347,14 @@ mycc supports various slash commands for direct tool access:
 | `wt_enter` | Switch to worktree |
 | `wt_leave` | Leave current worktree |
 | `wt_remove` | Remove worktree |
+
+### Wiki Knowledge Base
+
+| Tool | Description |
+|------|-------------|
+| `wiki_prepare` | Validate document before storing |
+| `wiki_put` | Store document in knowledge base |
+| `wiki_get` | Search knowledge base by similarity |
 
 ### Other Tools
 
@@ -371,9 +428,9 @@ mycc supports various slash commands for direct tool access:
 │                    Lead Agent                        │
 │  ┌─────────────────────────────────────────────┐   │
 │  │              AgentContext                     │   │
-│  │  ┌─────┬──────┬──────┬───────┬────┬────┬───┐ │   │
-│  │  │core │ todo │ mail │ issue │ bg │ wt │tm │ │   │
-│  │  └─────┴──────┴──────┴───────┴────┴────┴───┘ │   │
+│  │  ┌─────┬──────┬──────┬───────┬────┬────┬───┬────┐│
+│  │  │core │ todo │ mail │ issue │ bg │ wt │tm │wiki││
+│  │  └─────┴──────┴──────┴───────┴────┴────┴───┴────┘│
 │  └─────────────────────────────────────────────┘   │
 │                       │                             │
 │              ┌────────┴────────┐                   │
@@ -427,6 +484,9 @@ SQLite tables in `.mycc/state.db`:
 | `skills/*.md` | Built-in skill definitions |
 | `.mycc/skills/*.md` | User-defined skills (hot-reload) |
 | `.mycc/mail/*.jsonl` | Mailbox files for inter-agent communication |
+| `~/.mycc/wiki/db/` | LanceDB vector store for knowledge base |
+| `~/.mycc/wiki/logs/*.wal` | Write-Ahead Log files (daily) |
+| `~/.mycc/wiki/domains.json` | Domain registry with metadata |
 
 ---
 

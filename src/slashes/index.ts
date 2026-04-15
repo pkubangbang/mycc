@@ -63,6 +63,9 @@ import { issuesCommand } from './issues.js';
 import { saveCommand } from './save.js';
 import { loadCommand } from './load.js';
 import { clearCommand } from './clear.js';
+import { wikiCommand } from './wiki.js';
+import { compactCommand } from './compact.js';
+import { domainCommand } from './domain.js';
 
 slashRegistry.register(teamCommand);
 slashRegistry.register(todosCommand);
@@ -71,3 +74,6 @@ slashRegistry.register(issuesCommand);
 slashRegistry.register(saveCommand);
 slashRegistry.register(loadCommand);
 slashRegistry.register(clearCommand);
+slashRegistry.register(wikiCommand);
+slashRegistry.register(compactCommand);
+slashRegistry.register(domainCommand);

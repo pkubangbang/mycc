@@ -11,7 +11,8 @@ import * as fs from 'fs';
 import * as path from 'path';
 import chalk from 'chalk';
 import { retryChat, MODEL } from '../ollama.js';
-import type { Message, ToolCall } from '../types.js';
+import type { Message, ToolCall, WikiModule } from '../types.js';
+import { minifyMessages } from '../utils/llm-chat-minifier.js';
 import { ResultTooLargeError } from '../types.js';
 import { getMyccDir, getLongtextDir, ensureDirs } from '../context/db.js';
 import { ConfusionCalculator } from './confusion-calculator.js';
@@ -50,6 +51,8 @@ export interface TriologueOptions {
   onMessage?: (messages: Message[]) => void;
   /** Called when hint round is generated */
   onHint?: () => void;
+  /** Wiki module for domain list during compact */
+  wiki?: WikiModule;
 }
 
 export class Triologue {
@@ -60,7 +63,7 @@ export class Triologue {
   private systemPrompt: string | null = null;
   private confusion: ConfusionCalculator;
   private hintGenerated: boolean = false;
-  private options: Required<TriologueOptions>;
+  private options: Required<Omit<TriologueOptions, 'wiki'>> & Pick<TriologueOptions, 'wiki'>;
 
   constructor(options: TriologueOptions = {}) {
     const hintThreshold = options.hintThreshold ?? 10;
@@ -77,6 +80,7 @@ export class Triologue {
       onCompact: options.onCompact ?? this.defaultOnCompact,
       onMessage: options.onMessage ?? (() => {}),
       onHint: options.onHint ?? (() => {}),
+      wiki: options.wiki,
     };
   }
 
@@ -310,9 +314,7 @@ export class Triologue {
     if (this.hintGenerated) return;
 
     // Build analysis prompt from conversation
-    const conversationText = this.messages
-      .map((m) => `[${m.role}]: ${m.content || '(tool call)'}`)
-      .join('\n\n');
+    const conversationText = minifyMessages(this.messages);
 
     const analysisPrompt = `Analyze this conversation for potential issues and blockers:
 
@@ -598,8 +600,22 @@ Be specific and actionable. This analysis will help guide the next steps.`;
 
     this.options.onCompact(transcriptPath);
 
+    // Get wiki domains for knowledge persistence instruction
+    const domains = this.options.wiki ? await this.options.wiki.listDomains() : [];
+    const domainList = domains.length > 0
+      ? domains.map(d => `- ${d.domain_name}${d.description ? `: ${d.description}` : ''}`).join('\n')
+      : '';
+
     // Ask LLM to summarize
-    const conversationText = JSON.stringify(this.messages).slice(0, 80000);
+    const conversationText = minifyMessages(this.messages);
+
+    const knowledgeInstruction = domains.length > 0
+      ? '4) Important knowledge to persist (if any)\n\n' +
+        'Available wiki domains:\n' + domainList + '\n\n' +
+        'IMPORTANT: Only persist knowledge that matches one of the available domains above.\n' +
+        'For knowledge worth remembering, note as: "Knowledge: [domain] - [fact/rule]"\n' +
+        'Skip opinions, temporary details, or knowledge that does not fit any domain.\n\n'
+      : '';
 
     const response = await retryChat({
       model: MODEL,
@@ -607,9 +623,11 @@ Be specific and actionable. This analysis will help guide the next steps.`;
         {
           role: 'user',
           content:
-            'Summarize this conversation for continuity. Include: ' +
-            '1) What was accomplished, 2) Current state, 3) Key decisions made. ' +
-            'Be concise but preserve critical details.\n\n' +
+            'Summarize this conversation for continuity. Include:\n' +
+            '1) What was accomplished\n' +
+            '2) Current state\n' +
+            '3) Key decisions made\n' +
+            knowledgeInstruction +
             conversationText,
         },
       ],

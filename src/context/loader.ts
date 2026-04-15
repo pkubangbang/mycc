@@ -47,6 +47,9 @@ import { bgRemoveTool } from '../tools/bg_remove.js';
 import { bgAwaitTool } from '../tools/bg_await.js';
 import { screenTool } from '../tools/screen.js';
 import { readReadTool } from '../tools/read-read.js';
+import { wikiPrepareTool } from '../tools/wiki_prepare.js';
+import { wikiPutTool } from '../tools/wiki_put.js';
+import { wikiGetTool } from '../tools/wiki_get.js';
 
 /**
  * Built-in tools
@@ -86,6 +89,9 @@ const builtInTools: ToolDefinition[] = [
   bgAwaitTool,
   screenTool,
   readReadTool,
+  wikiPrepareTool,
+  wikiPutTool,
+  wikiGetTool,
 ];
 
 /**

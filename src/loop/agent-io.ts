@@ -134,8 +134,11 @@ class AgentIO {
    * Only available in main process
    *
    * Creates a LineEditor instance and waits for input via IPC key events
+   * @param query - The question to display, or the prompt text if useAsPrompt is true
+   * @param useAsPrompt - If true, use query as the LineEditor prompt (single line format)
+   *                      If false, print query above and use '> ' as prompt (split format)
    */
-  async ask(query: string): Promise<string> {
+  async ask(query: string, useAsPrompt: boolean = false): Promise<string> {
     if (!this._isMainProcess) {
       throw new Error('question() only available in main process');
     }
@@ -143,12 +146,15 @@ class AgentIO {
       throw new Error('Agent is shutting down');
     }
 
-    // Display query text separately (handles multi-line queries)
-    console.log(query);
+    const prompt = useAsPrompt ? query : '> ';
+    if (!useAsPrompt) {
+      // Display query text separately (for questions from children)
+      console.log(query);
+    }
 
     return new Promise((resolve) => {
       this._activeLineEditor = new LineEditor({
-        prompt: '> ', // Simple prompt instead of multi-line query
+        prompt,
         stdout: process.stdout,
         onDone: (value: string) => {
           // Save history

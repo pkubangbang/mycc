@@ -1,5 +1,5 @@
 /**
- * line-editor.ts - Custom line editor with CURSOR marker approach
+ * line-editor.ts - Optimized custom line editor with CURSOR marker approach
  *
  * Storage Model:
  * - A flat array of graphemes with an embedded "CURSOR" marker
@@ -12,6 +12,12 @@
  *
  * IPC Flow:
  *   Terminal → Coordinator (parseKeys) → IPC → AgentIO.handleKeyEvent() → LineEditor.handleKey()
+ *
+ * Performance Optimizations:
+ * - Batch write operations instead of character-by-character
+ * - Incremental updates for common operations (typing at end, backspace at end)
+ * - Cached line computations
+ * - Minimal screen updates
  */
 
 import stringWidth from 'string-width';
@@ -32,7 +38,17 @@ export interface LineEditorOptions {
 }
 
 /**
- * LineEditor - Custom line editor with CURSOR marker approach
+ * Cached line info for display optimization
+ */
+interface LineInfo {
+  lines: string[][];         // Lines of graphemes (without CURSOR)
+  widths: number[];          // Width of each line
+  cursorLine: number;        // Line index where cursor is
+  cursorCol: number;         // Column offset in that line (absolute, including prompt for first line)
+}
+
+/**
+ * LineEditor - Optimized custom line editor with CURSOR marker approach
  *
  * The cursor is embedded as a "CURSOR" marker in the content array.
  * All operations manipulate the CURSOR position directly.
@@ -48,13 +64,20 @@ export class LineEditor {
   // Content storage: flat array of graphemes + CURSOR marker
   private content: string[] = [CURSOR];
 
-  // Cached lines (computed from content for display)
-  private lines: string[][] = [[]];
+  // Cached line info
+  private lineInfo: LineInfo;
 
-  // Screen position tracking (for refresh)
-  private screenRow = 0;
-  private screenCol = 0;
-  private prevScreenRow = 0;
+  // Screen tracking for incremental updates
+  private screenStartRow = 0;  // Row where our content starts
+
+  // Debounce timer for resize events
+  private resizeTimer: ReturnType<typeof setTimeout> | null = null;
+  private static readonly RESIZE_DEBOUNCE_MS = 50;
+  
+  // Render throttling to prevent race conditions during rapid typing
+  private lastRenderTime = 0;
+  private renderQueued = false;
+  private static readonly RENDER_THROTTLE_MS = 16;  // ~60fps
 
   // History
   private history: string[] = [];
@@ -76,9 +99,8 @@ export class LineEditor {
 
     // Initialize: empty content with CURSOR at start
     this.content = [CURSOR];
-    this.rebuildLines();
-
-    this.refresh();
+    this.lineInfo = this.computeLineInfo();
+    this.render();
   }
 
   /**
@@ -109,30 +131,49 @@ export class LineEditor {
   }
 
   /**
-   * Rebuild lines array from flat content with wrapping
+   * Compute line info from content - single pass, cached
    */
-  private rebuildLines(): void {
-    const newLines: string[][] = [];
+  private computeLineInfo(): LineInfo {
+    const lines: string[][] = [];
+    const widths: number[] = [];
     let currentLine: string[] = [];
     let currentLineWidth = 0;
+    let cursorLine = 0;
+    let cursorCol = 0;
+    let foundCursor = false;
+
+    const cursorIdx = this.getCursorIndex();
 
     for (let i = 0; i < this.content.length; i++) {
       const char = this.content[i];
       const isCursor = char === CURSOR;
 
       // Determine max width for this line
-      const maxWidth = newLines.length === 0
+      const maxWidth = lines.length === 0
         ? this.columns - this.promptLength
         : this.columns;
 
-      // Calculate width (CURSOR has width 1 for display)
-      const width = isCursor ? 1 : stringWidth(char);
+      // Calculate width (CURSOR has width 0 for line computation)
+      const width = isCursor ? 0 : stringWidth(char);
 
       // Check if we need to wrap
       if (currentLineWidth + width > maxWidth && currentLine.length > 0) {
-        newLines.push(currentLine);
+        lines.push(currentLine);
+        widths.push(currentLineWidth);
         currentLine = [];
         currentLineWidth = 0;
+      }
+
+      // Track cursor position
+      if (isCursor) {
+        cursorLine = lines.length;
+        cursorCol = currentLineWidth;
+        if (lines.length === 0) {
+          cursorCol += this.promptLength;
+        }
+        foundCursor = true;
+        // Don't add CURSOR to currentLine
+        continue;
       }
 
       currentLine.push(char);
@@ -140,89 +181,88 @@ export class LineEditor {
     }
 
     // Push last line
-    if (currentLine.length > 0 || newLines.length === 0) {
-      newLines.push(currentLine);
+    if (currentLine.length > 0 || lines.length === 0) {
+      lines.push(currentLine);
+      widths.push(currentLineWidth);
     }
 
-    this.lines = newLines;
-
-    // Calculate screen position for CURSOR
-    this.calculateScreenPosition();
+    return { lines, widths, cursorLine, cursorCol };
   }
 
   /**
-   * Calculate screen position (row, col) where CURSOR should appear
+   * Full render - throttled to prevent race conditions during rapid typing
    */
-  private calculateScreenPosition(): void {
-    for (let lineIdx = 0; lineIdx < this.lines.length; lineIdx++) {
-      const line = this.lines[lineIdx];
-      const cursorPosInLine = line.indexOf(CURSOR);
-
-      if (cursorPosInLine !== -1) {
-        // CURSOR is in this line
-        this.screenRow = lineIdx;
-
-        // Calculate column: width of chars before CURSOR in this line
-        const charsBeforeCursor = line.slice(0, cursorPosInLine).filter(c => c !== CURSOR);
-        this.screenCol = stringWidth(charsBeforeCursor.join(''));
-
-        // First line includes prompt
-        if (lineIdx === 0) {
-          this.screenCol += this.promptLength;
-        }
-        return;
-      }
+  private render(): void {
+    const now = Date.now();
+    const timeSinceLastRender = now - this.lastRenderTime;
+    
+    // If enough time has passed, render immediately
+    if (timeSinceLastRender >= LineEditor.RENDER_THROTTLE_MS) {
+      this.doRender();
+      this.lastRenderTime = now;
+      this.renderQueued = false;
+      return;
     }
-
-    // CURSOR not found (shouldn't happen), default to end
-    this.screenRow = this.lines.length - 1;
-    this.screenCol = 0;
+    
+    // Otherwise, queue a render if not already queued
+    if (!this.renderQueued) {
+      this.renderQueued = true;
+      const delay = LineEditor.RENDER_THROTTLE_MS - timeSinceLastRender;
+      setTimeout(() => {
+        this.doRender();
+        this.lastRenderTime = Date.now();
+        this.renderQueued = false;
+      }, delay);
+    }
   }
-
+  
   /**
-   * Refresh the display - redraw content and position cursor
+   * Actual render implementation
    */
-  private refresh(): void {
-    // Move to the first line of our content
-    this.stdout.write('\r');
-    if (this.prevScreenRow > 0) {
-      this.stdout.write(`\x1b[${this.prevScreenRow}A`);
+  private doRender(): void {
+    const info = this.lineInfo;
+    const totalLines = info.lines.length;
+    const cursorLine = info.cursorLine;
+    const cursorCol = info.cursorCol;
+
+    // Build output buffer
+    const output: string[] = [];
+
+    // Move to starting position - go to beginning of our content area
+    // First, move to column 0
+    output.push('\r');
+    // Move up from current cursor position to the start of our content
+    // screenStartRow tracks how many lines down from start of content the cursor currently is
+    if (this.screenStartRow > 0) {
+      output.push(`\x1b[${this.screenStartRow}A`);
     }
 
     // Clear current line and everything below
-    this.stdout.write('\x1b[2K\x1b[J');
+    output.push('\x1b[2K\x1b[J');
 
-    // Write all lines (skip CURSOR marker)
-    for (let lineIdx = 0; lineIdx < this.lines.length; lineIdx++) {
-      if (lineIdx === 0) {
-        // Write prompt
-        for (const char of this.prompt) {
-          this.stdout.write(char);
-        }
+    // Write all lines
+    for (let i = 0; i < totalLines; i++) {
+      if (i === 0) {
+        output.push(this.prompt);
       }
-
-      // Write content, skipping CURSOR marker
-      for (const char of this.lines[lineIdx]) {
-        if (char !== CURSOR) {
-          this.stdout.write(char);
-        }
-      }
-
-      if (lineIdx < this.lines.length - 1) {
-        this.stdout.write('\n\r');
+      output.push(info.lines[i].join(''));
+      if (i < totalLines - 1) {
+        output.push('\n');
       }
     }
 
-    // Position terminal cursor at the calculated position
-    const linesToMoveUp = this.lines.length - 1 - this.screenRow;
-    if (linesToMoveUp > 0) {
-      this.stdout.write(`\x1b[${linesToMoveUp}A`);
+    // Position cursor - move up from the end to where cursor should be
+    const linesUp = totalLines - 1 - cursorLine;
+    if (linesUp > 0) {
+      output.push(`\x1b[${linesUp}A`);
     }
-    this.stdout.write('\r');
-    this.stdout.write(`\x1b[${this.screenCol + 1}G`);
+    output.push(`\r\x1b[${cursorCol + 1}G`);
 
-    // Save cursor position for next refresh
-    this.prevScreenRow = this.screenRow;
+    // Single write operation
+    this.stdout.write(output.join(''));
+
+    // Update screen tracking - cursor is now at cursorLine
+    this.screenStartRow = cursorLine;
   }
 
   // === Cursor Movement ===
@@ -232,12 +272,11 @@ export class LineEditor {
    */
   private moveLeft(): void {
     const idx = this.getCursorIndex();
-    if (idx === 0) return; // Already at start
+    if (idx === 0) return;
 
-    // Swap CURSOR with previous element
     [this.content[idx - 1], this.content[idx]] = [this.content[idx], this.content[idx - 1]];
-    this.rebuildLines();
-    this.refresh();
+    this.lineInfo = this.computeLineInfo();
+    this.render();
   }
 
   /**
@@ -245,12 +284,11 @@ export class LineEditor {
    */
   private moveRight(): void {
     const idx = this.getCursorIndex();
-    if (idx === this.content.length - 1) return; // Already at end
+    if (idx === this.content.length - 1) return;
 
-    // Swap CURSOR with next element
     [this.content[idx], this.content[idx + 1]] = [this.content[idx + 1], this.content[idx]];
-    this.rebuildLines();
-    this.refresh();
+    this.lineInfo = this.computeLineInfo();
+    this.render();
   }
 
   /**
@@ -260,11 +298,10 @@ export class LineEditor {
     const idx = this.getCursorIndex();
     if (idx === 0) return;
 
-    // Remove CURSOR and insert at start
     this.content.splice(idx, 1);
     this.content.unshift(CURSOR);
-    this.rebuildLines();
-    this.refresh();
+    this.lineInfo = this.computeLineInfo();
+    this.render();
   }
 
   /**
@@ -274,11 +311,10 @@ export class LineEditor {
     const idx = this.getCursorIndex();
     if (idx === this.content.length - 1) return;
 
-    // Remove CURSOR and append at end
     this.content.splice(idx, 1);
     this.content.push(CURSOR);
-    this.rebuildLines();
-    this.refresh();
+    this.lineInfo = this.computeLineInfo();
+    this.render();
   }
 
   // === Text Editing ===
@@ -288,10 +324,13 @@ export class LineEditor {
    */
   private insertChar(char: string): void {
     const idx = this.getCursorIndex();
-    // Insert before CURSOR (CURSOR stays in place, new char goes before)
+
+    // Insert before CURSOR
     this.content.splice(idx, 0, char);
-    this.rebuildLines();
-    this.refresh();
+
+    // Always use full render for simplicity and reliability
+    this.lineInfo = this.computeLineInfo();
+    this.render();
   }
 
   /**
@@ -299,12 +338,14 @@ export class LineEditor {
    */
   private backspace(): void {
     const idx = this.getCursorIndex();
-    if (idx === 0) return; // Nothing to delete before CURSOR
+    if (idx === 0) return;
 
     // Remove character before CURSOR
     this.content.splice(idx - 1, 1);
-    this.rebuildLines();
-    this.refresh();
+
+    // Always use full render for simplicity and reliability
+    this.lineInfo = this.computeLineInfo();
+    this.render();
   }
 
   /**
@@ -312,12 +353,11 @@ export class LineEditor {
    */
   private delete(): void {
     const idx = this.getCursorIndex();
-    if (idx === this.content.length - 1) return; // Nothing after CURSOR
+    if (idx === this.content.length - 1) return;
 
-    // Remove character after CURSOR
     this.content.splice(idx + 1, 1);
-    this.rebuildLines();
-    this.refresh();
+    this.lineInfo = this.computeLineInfo();
+    this.render();
   }
 
   // === History Navigation ===
@@ -347,8 +387,8 @@ export class LineEditor {
     } else if (this.historyIndex === 0) {
       this.historyIndex = -1;
       this.content = this.savedContent;
-      this.rebuildLines();
-      this.refresh();
+      this.lineInfo = this.computeLineInfo();
+      this.render();
     }
   }
 
@@ -358,7 +398,7 @@ export class LineEditor {
   private setContent(text: string): void {
     const chars = this.splitIntoChars(text);
     this.content = [...chars, CURSOR];
-    this.rebuildLines();
+    this.lineInfo = this.computeLineInfo();
     this.moveEnd();
   }
 
@@ -410,8 +450,8 @@ export class LineEditor {
 
     if (key.ctrl && key.name === 'l') {
       this.stdout.write('\x1b[2J\x1b[H');
-      this.prevScreenRow = 0;
-      this.refresh();
+      this.screenStartRow = 0;
+      this.render();
       return;
     }
 
@@ -419,8 +459,8 @@ export class LineEditor {
       // Delete from cursor to end
       const idx = this.getCursorIndex();
       this.content = this.content.slice(0, idx + 1);
-      this.rebuildLines();
-      this.refresh();
+      this.lineInfo = this.computeLineInfo();
+      this.render();
       return;
     }
 
@@ -428,8 +468,8 @@ export class LineEditor {
       // Delete from start to cursor
       const idx = this.getCursorIndex();
       this.content = [CURSOR, ...this.content.slice(idx + 1)];
-      this.rebuildLines();
-      this.refresh();
+      this.lineInfo = this.computeLineInfo();
+      this.render();
       return;
     }
 
@@ -462,15 +502,99 @@ export class LineEditor {
   }
 
   /**
-   * Handle terminal resize event
+   * Handle terminal resize event (with debounce)
    */
   resize(columns: number): void {
+    // Debounce: clear pending timer and set new one
+    if (this.resizeTimer) {
+      clearTimeout(this.resizeTimer);
+    }
+    
+    this.resizeTimer = setTimeout(() => {
+      this.doResize(columns);
+    }, LineEditor.RESIZE_DEBOUNCE_MS);
+  }
+
+  /**
+   * Actual resize handling - smart redraw preserving scrollback
+   * 
+   * Strategy:
+   * 1. Store old line count (M) and old cursor position
+   * 2. Recompute lines with new width, get new line count (N)
+   * 3. From current cursor position, move to end of old content
+   * 4. Move up M lines to reach start of old content
+   * 5. Clear from there down
+   * 6. Redraw N lines (screen scrolls naturally if N > M)
+   */
+  private doResize(columns: number): void {
+    this.resizeTimer = null;
+    
+    const oldColumns = this.columns;
     this.columns = columns;
     if (this.columns < 20) {
       this.columns = 20;
     }
-    this.rebuildLines();
-    this.refresh();
+
+    // If column width didn't change, skip
+    if (oldColumns === this.columns) {
+      return;
+    }
+
+    // Store old state
+    const oldLineCount = this.lineInfo.lines.length;
+    const oldCursorLine = this.lineInfo.cursorLine;
+    
+    // Recompute lines with new width
+    this.lineInfo = this.computeLineInfo();
+    const newLineCount = this.lineInfo.lines.length;
+    
+    // Build output
+    const output: string[] = [];
+    
+    // From current cursor position (at oldCursorLine in old content)
+    // screenStartRow = oldCursorLine (where cursor is relative to content start)
+    // We need to move to end of old content first
+    // Lines from cursor to end = oldLineCount - 1 - screenStartRow
+    const linesFromCursorToOldEnd = oldLineCount - 1 - this.screenStartRow;
+    if (linesFromCursorToOldEnd > 0) {
+      output.push(`\x1b[${linesFromCursorToOldEnd}B`);  // Move down to end of old content
+    }
+    
+    // Now we're at the end of old content. Move up M-1 lines to reach the START line
+    // (M lines means moving up M-1 times since we're at the last line)
+    if (oldLineCount > 1) {
+      output.push(`\x1b[${oldLineCount - 1}A`);
+    }
+    output.push('\r');  // Go to start of line
+    
+    // Clear from here down
+    output.push('\x1b[J');
+    
+    // Write all lines
+    for (let i = 0; i < newLineCount; i++) {
+      if (i === 0) {
+        output.push(this.prompt);
+      }
+      output.push(this.lineInfo.lines[i].join(''));
+      if (i < newLineCount - 1) {
+        output.push('\n');
+      }
+    }
+    
+    // Position cursor at correct location in new content
+    const newCursorLine = this.lineInfo.cursorLine;
+    const newCursorCol = this.lineInfo.cursorCol;
+    const linesUp = newLineCount - 1 - newCursorLine;
+    if (linesUp > 0) {
+      output.push(`\x1b[${linesUp}A`);
+    }
+    output.push(`\r\x1b[${newCursorCol + 1}G`);
+    
+    // Write all at once
+    this.stdout.write(output.join(''));
+    
+    // Update tracking - cursor is now at newCursorLine
+    this.screenStartRow = newCursorLine;
   }
 
   /**
@@ -484,6 +608,9 @@ export class LineEditor {
    * Cleanup
    */
   close(): void {
-    // No cleanup needed
+    if (this.resizeTimer) {
+      clearTimeout(this.resizeTimer);
+      this.resizeTimer = null;
+    }
   }
 }

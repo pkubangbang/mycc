@@ -184,11 +184,46 @@ export function getUserSkillsDir(): string {
 }
 
 /**
+ * Get the wiki directory path (~/.mycc/wiki)
+ */
+export function getWikiDir(): string {
+  return path.join(os.homedir(), '.mycc', 'wiki');
+}
+
+/**
+ * Get the wiki logs directory path (~/.mycc/wiki/logs)
+ */
+export function getWikiLogsDir(): string {
+  return path.join(getWikiDir(), 'logs');
+}
+
+/**
+ * Get the wiki db directory path (~/.mycc/wiki/db)
+ */
+export function getWikiDbDir(): string {
+  return path.join(getWikiDir(), 'db');
+}
+
+/**
+ * Get the wiki domains file path (~/.mycc/wiki/domains.json)
+ */
+export function getWikiDomainsFile(): string {
+  return path.join(getWikiDir(), 'domains.json');
+}
+
+/**
  * Ensure all runtime directories exist
  */
 export function ensureDirs(): void {
   const dirs = [MYCC_DIR, getMailDir(), getToolsDir(), getSkillsDir(), getSessionsDir(), getLongtextDir()];
   for (const dir of dirs) {
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+  }
+  // Wiki directories are in ~/.mycc, not project .mycc
+  const wikiDirs = [getWikiDir(), getWikiLogsDir(), getWikiDbDir()];
+  for (const dir of wikiDirs) {
     if (!fs.existsSync(dir)) {
       fs.mkdirSync(dir, { recursive: true });
     }

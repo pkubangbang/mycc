@@ -10,8 +10,9 @@ import { IssueManager } from './issue.js';
 import { BackgroundTasks } from './bg.js';
 import { WorktreeManager } from './wt.js';
 import { TeamManager } from './team.js';
+import { WikiManager } from './wiki.js';
 import { Loader } from './loader.js';
-import type { CoreModule, TodoModule, MailModule, SkillModule, IssueModule, BgModule, WtModule, TeamModule } from '../types.js';
+import type { CoreModule, TodoModule, MailModule, SkillModule, IssueModule, BgModule, WtModule, TeamModule, WikiModule } from '../types.js';
 
 export * from './core.js';
 export * from './todo.js';
@@ -37,6 +38,7 @@ export class ParentContext implements AgentContext {
   private bgModule: BackgroundTasks;
   private wtModule: WorktreeManager;
   private teamModule: TeamManager;
+  private wikiModule: WikiManager;
 
   constructor(loader: Loader, sessionFilePath: string) {
     this.coreModule = new Core(); // Uses process.cwd() by default
@@ -48,6 +50,7 @@ export class ParentContext implements AgentContext {
     this.wtModule = new WorktreeManager(this.coreModule);
     // Pass 'this' to TeamManager - context is used lazily so this is safe
     this.teamModule = new TeamManager(this, sessionFilePath);
+    this.wikiModule = new WikiManager(this.coreModule);
   }
 
   // Getters for each module
@@ -59,6 +62,7 @@ export class ParentContext implements AgentContext {
   get bg(): BgModule { return this.bgModule; }
   get wt(): WtModule { return this.wtModule; }
   get team(): TeamModule { return this.teamModule; }
+  get wiki(): WikiModule { return this.wikiModule; }
 
   /**
    * Initialize IPC handlers for child process communication
@@ -201,6 +205,87 @@ export class ParentContext implements AgentContext {
           } catch (err) {
             sendResponse('team_result', false, undefined, (err as Error).message);
           }
+        },
+      },
+      // Wiki handlers
+      {
+        messageType: 'wiki_prepare',
+        module: 'wiki',
+        handler: async (_sender, payload, ctx, sendResponse) => {
+          const { document } = payload as { document: Parameters<WikiModule['prepare']>[0] };
+          const result = await ctx.wiki.prepare(document);
+          sendResponse('wiki_result', true, result);
+        },
+      },
+      {
+        messageType: 'wiki_put',
+        module: 'wiki',
+        handler: async (_sender, payload, ctx, sendResponse) => {
+          const { hash, document } = payload as { hash: string; document: Parameters<WikiModule['put']>[1] };
+          const result = await ctx.wiki.put(hash, document);
+          sendResponse('wiki_result', true, result);
+        },
+      },
+      {
+        messageType: 'wiki_get',
+        module: 'wiki',
+        handler: async (_sender, payload, ctx, sendResponse) => {
+          const { query, options } = payload as { query: string; options?: Parameters<WikiModule['get']>[1] };
+          const results = await ctx.wiki.get(query, options);
+          sendResponse('wiki_result', true, results);
+        },
+      },
+      {
+        messageType: 'wiki_wal_get',
+        module: 'wiki',
+        handler: async (_sender, payload, ctx, sendResponse) => {
+          const { date } = payload as { date?: string };
+          const entries = await ctx.wiki.getWAL(date);
+          sendResponse('wiki_result', true, entries);
+        },
+      },
+      {
+        messageType: 'wiki_wal_append',
+        module: 'wiki',
+        handler: async (_sender, payload, ctx, sendResponse) => {
+          const { entry } = payload as { entry: Parameters<WikiModule['appendWAL']>[0] };
+          await ctx.wiki.appendWAL(entry);
+          sendResponse('wiki_result', true);
+        },
+      },
+      {
+        messageType: 'wiki_rebuild',
+        module: 'wiki',
+        handler: async (_sender, _payload, ctx, sendResponse) => {
+          const result = await ctx.wiki.rebuild();
+          sendResponse('wiki_result', true, result);
+        },
+      },
+      // Domain handlers
+      {
+        messageType: 'wiki_domains_list',
+        module: 'wiki',
+        handler: async (_sender, _payload, ctx, sendResponse) => {
+          const domains = await ctx.wiki.listDomains();
+          sendResponse('wiki_result', true, domains);
+        },
+      },
+      {
+        messageType: 'wiki_domain_get',
+        module: 'wiki',
+        handler: async (_sender, payload, ctx, sendResponse) => {
+          const { name } = payload as { name: string };
+          const domain = await ctx.wiki.getDomain(name);
+          sendResponse('wiki_result', true, domain);
+        },
+      },
+      {
+        messageType: 'wiki_domain_register',
+        module: 'wiki',
+        handler: async (_sender, payload, ctx, sendResponse) => {
+          const { name, description } = payload as { name: string; description?: string };
+          await ctx.wiki.registerDomain(name, description);
+          sendResponse('wiki_result', true);
         },
       },
     ];

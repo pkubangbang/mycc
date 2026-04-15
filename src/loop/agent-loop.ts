@@ -21,6 +21,10 @@ import { agentIO } from './agent-io.js';
 import type { KeyInfo } from '../utils/key-parser.js';
 import { isVerbose, getSessionArg, shouldSkipHealthCheck } from '../config.js';
 import { openMultilineEditor } from '../utils/multiline-input.js';
+import { createRequire } from 'module';
+
+const require = createRequire(import.meta.url);
+const { version } = require('../../package.json');
 
 /**
  * Custom error for graceful shutdown
@@ -407,7 +411,7 @@ export async function main(): Promise<void> {
   // Get token threshold once (env value, doesn't change during execution)
   const tokenThreshold = getTokenThreshold();
 
-  console.log(chalk.cyan('Coding Agent v1.0'));
+  console.log(chalk.cyan(`Coding Agent v${version}`));
   console.log(chalk.cyan(`Model: ${MODEL} (${OLLAMA_HOST})`));
 
   // Health check: validate Ollama connectivity and model availability
@@ -433,7 +437,8 @@ export async function main(): Promise<void> {
     }
   }
 
-  console.log('Commands: /team, /issues, /todos, /skills, /exit\n');
+  const commands = slashRegistry.list().map(c => `/${c}`).join(', ');
+  console.log(chalk.gray(`Commands: ${commands}, /exit\n`));
 
   // Initialize AgentIO early (needed for ask() during session restoration)
   agentIO.initMain();
@@ -446,8 +451,18 @@ export async function main(): Promise<void> {
   // Track first query for bookmark title
   let firstQueryCaptured = false;
 
+  // Create loader
+  const loader = new Loader();
+  await loader.loadAll();
+  loader.watchDirectories();
+
+  // Create context with loader
+  const ctx = new ParentContext(loader, sessionFilePath);
+  ctx.initializeIpcHandlers();
+
   const triologue = new Triologue({
     tokenThreshold,
+    wiki: ctx.wiki,
     onMessage: (messages) => {
       const lastMsg = messages[messages.length - 1];
       try {
@@ -462,15 +477,6 @@ export async function main(): Promise<void> {
   if (restoredPair !== null) {
     triologue.loadRestoration(restoredPair);
   }
-
-  // Create loader
-  const loader = new Loader();
-  await loader.loadAll();
-  loader.watchDirectories();
-
-  // Create context with loader
-  const ctx = new ParentContext(loader, sessionFilePath);
-  ctx.initializeIpcHandlers();
 
   // Handle graceful shutdown
   process.on('SIGINT', () => {
@@ -512,7 +518,7 @@ export async function main(): Promise<void> {
         initialQuery = null; // Clear after first use
         console.log(chalk.gray(`Restored query: ${query.slice(0, 50)}${query.length > 50 ? '...' : ''}`));
       } else {
-        query = await agentIO.ask(chalk.bgYellow.black('agent >> '));
+        query = await agentIO.ask(chalk.bgYellow.black('agent >> '), true);
       }
 
       // Handle multi-line input (trailing backslash)

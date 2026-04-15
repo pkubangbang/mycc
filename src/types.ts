@@ -373,6 +373,104 @@ export interface TeamModule {
   handlePendingQuestions(): Promise<void>;
 }
 
+// ============================================================================
+// Wiki (Persistent Memory)
+// ============================================================================
+
+/**
+ * Document to store in the knowledge base
+ */
+export interface WikiDocument {
+  domain: string;
+  title: string;
+  content: string;
+  references: string[];
+}
+
+/**
+ * Domain metadata stored in domains.json
+ */
+export interface WikiDomain {
+  domain_name: string;
+  description: string;
+  created_at: string;
+  project_folder: string;
+}
+
+/**
+ * Result from wiki_prepare
+ */
+export interface PrepareResult {
+  accepted: boolean;
+  hash?: string;
+  reason?: string;
+}
+
+/**
+ * Result from wiki_put
+ */
+export interface PutResult {
+  success: boolean;
+  hash: string;
+  error?: string;
+}
+
+/**
+ * Options for wiki_get
+ */
+export interface GetOptions {
+  domain?: string;
+  topK?: number;
+  threshold?: number;
+}
+
+/**
+ * Search result from wiki_get
+ */
+export interface SearchResult {
+  document: WikiDocument;
+  similarity: number;
+  hash: string;
+}
+
+/**
+ * WAL entry for audit/replay
+ */
+export interface WALEntry {
+  timestamp: string;
+  hash: string;
+  document: WikiDocument;
+  approved: boolean;
+  persistent?: boolean;
+}
+
+/**
+ * Result from wiki_rebuild
+ */
+export interface RebuildResult {
+  success: boolean;
+  documentsProcessed: number;
+  errors: string[];
+}
+
+/**
+ * Wiki module interface for persistent memory
+ */
+export interface WikiModule {
+  prepare(document: WikiDocument): Promise<PrepareResult>;
+  put(hash: string, document: WikiDocument): Promise<PutResult>;
+  get(query: string, options?: GetOptions): Promise<SearchResult[]>;
+  getWAL(date?: string): Promise<WALEntry[]>;
+  parseWAL(asciiContent: string): WALEntry[];
+  formatWAL(entries: WALEntry[]): string;
+  appendWAL(entry: WALEntry): Promise<void>;
+  rebuild(): Promise<RebuildResult>;
+  // Domain management
+  listDomains(): Promise<WikiDomain[]>;
+  getDomain(name: string): Promise<WikiDomain | undefined>;
+  registerDomain(name: string, description?: string): Promise<void>;
+}
+
 /**
  * AgentContext - main context object for tools
  */
@@ -385,6 +483,7 @@ export interface AgentContext {
   bg: BgModule;
   wt: WtModule;
   team: TeamModule;
+  wiki: WikiModule;
 }
 
 // ============================================================================
