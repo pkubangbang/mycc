@@ -48,123 +48,116 @@ interface SessionInit {
 }
 
 /**
- * Initialize session - either restore from CLI arg or create new session
+ * Restore an existing session by ID
  */
-async function initializeSession(): Promise<SessionInit> {
-  const sessionArg = getSessionArg();
-  let sessionFilePath: string;
-  let triologuePath: string;
-  let restoredPair: SummaryPair | null = null;
-  let initialQuery: string | null = null;
+async function restoreSession(sessionArg: string): Promise<SessionInit> {
+  console.log(chalk.cyan(`Loading session: ${sessionArg}`));
 
-  if (sessionArg) {
-    console.log(chalk.cyan(`Loading session: ${sessionArg}`));
-
-    let session: import('../session/types.js').Session;
-    try {
-      session = loadSessionById(sessionArg);
-    } catch (err) {
-      if (err instanceof SessionNotFoundError) {
-        console.error(chalk.red(`Session not found: ${sessionArg}`));
-        process.exit(1);
-      }
-      if (err instanceof AmbiguousSessionError) {
-        console.error(chalk.red(`Ambiguous session ID. Multiple matches found:`));
-        for (const match of err.matches) {
-          console.error(chalk.yellow(`  [${match.id.slice(0, 7)}] ${match.source} session`));
-        }
-        console.error(chalk.gray('Use a longer session ID prefix.'));
-        process.exit(1);
-      }
-      throw err;
-    }
-
-    // Verify working directory matches session's project_dir
-    const currentDir = process.cwd();
-    if (currentDir !== session.project_dir) {
-      console.error(chalk.red(`Working directory mismatch.`));
-      console.error(chalk.yellow(`Current: ${currentDir}`));
-      console.error(chalk.yellow(`Session expects: ${session.project_dir}`));
-      console.error(chalk.gray(`Run: cd "${session.project_dir}" && mycc --session ${session.id}`));
+  let session: import('../session/types.js').Session;
+  try {
+    session = loadSessionById(sessionArg);
+  } catch (err) {
+    if (err instanceof SessionNotFoundError) {
+      console.error(chalk.red(`Session not found: ${sessionArg}`));
       process.exit(1);
     }
-
-    // Validate session files exist
-    const validation = { valid: true, missingFiles: [] as string[] };
-    if (!fs.existsSync(session.lead_triologue)) {
-      validation.valid = false;
-      validation.missingFiles.push(session.lead_triologue);
-    }
-    for (const p of session.child_triologues) {
-      if (!fs.existsSync(p)) {
-        validation.valid = false;
-        validation.missingFiles.push(p);
+    if (err instanceof AmbiguousSessionError) {
+      console.error(chalk.red('Ambiguous session ID. Multiple matches found:'));
+      for (const match of err.matches) {
+        console.error(chalk.yellow(`  [${match.id.slice(0, 7)}] ${match.source} session`));
       }
-    }
-
-    if (!validation.valid) {
-      console.error(chalk.red(`Session files missing: ${validation.missingFiles.join(', ')}`));
+      console.error(chalk.gray('Use a longer session ID prefix.'));
       process.exit(1);
     }
-
-    console.log(chalk.cyan('Restoring session...'));
-
-    // Prepare restoration (summarize and generate DOSQ)
-    const { pair, dosqPath } = await prepareRestoration(session);
-    restoredPair = pair;
-
-    console.log(chalk.cyan('Session restored. DOSQ generated at:'));
-    console.log(chalk.gray(`  ${dosqPath}`));
-
-    // Try to open DOSQ in editor
-    try {
-      const { openEditor } = await import('../utils/open-editor.js');
-      openEditor([dosqPath]);
-      console.log(chalk.gray('Opening DOSQ file in editor...'));
-    } catch {
-      console.log(chalk.yellow(`Please edit the DOSQ file manually: ${dosqPath}`));
-    }
-
-    console.log(chalk.yellow('Edit the DOSQ file if needed, then save and close to continue...'));
-
-    // Wait for user to edit DOSQ
-    await agentIO.ask(chalk.cyan('Press Enter when ready to continue > '));
-
-    // Read DOSQ content and extract first query
-    const dosqContent = readDosq(dosqPath);
-    initialQuery = extractFirstQuery(dosqContent);
-
-    // Use the session's existing triologue path
-    triologuePath = session.lead_triologue;
-    sessionFilePath = getSessionPathById(session.id) || path.join(path.dirname(session.lead_triologue), '..', 'sessions', `${session.id}.json`);
-
-    console.log(chalk.gray(`Restored session: ${session.id.slice(0, 7)}`));
-  } else {
-    // Normal startup - create new session
-    clearSessionData();
-
-    // Triologue for message management (persisted to disk)
-    const transcriptDir = path.join(getMyccDir(), 'transcripts');
-    if (!fs.existsSync(transcriptDir)) {
-      fs.mkdirSync(transcriptDir, { recursive: true });
-    }
-
-    const timestamp = Math.floor(Date.now() / 1000);
-    triologuePath = path.join(transcriptDir, `lead-${timestamp}-triologue.jsonl`);
-    fs.writeFileSync(triologuePath, '', 'utf-8');
-
-    // Create a new session file for this run
-    sessionFilePath = createSessionFile(triologuePath);
-
-    // Clean up empty session files from previous runs
-    const currentSessionId = getSessionId(sessionFilePath);
-    const removed = cleanupEmptySessions(currentSessionId);
-    if (removed > 0) {
-      console.log(chalk.gray(`Cleaned up ${removed} empty session(s)`));
-    }
+    throw err;
   }
 
-  return { sessionFilePath, triologuePath, restoredPair, initialQuery };
+  // Verify working directory matches session's project_dir
+  const currentDir = process.cwd();
+  if (currentDir !== session.project_dir) {
+    console.error(chalk.red('Working directory mismatch.'));
+    console.error(chalk.yellow(`Current: ${currentDir}`));
+    console.error(chalk.yellow(`Session expects: ${session.project_dir}`));
+    console.error(chalk.gray(`Run: cd "${session.project_dir}" && mycc --session ${session.id}`));
+    process.exit(1);
+  }
+
+  // Validate session files exist
+  const missingFiles = [
+    session.lead_triologue,
+    ...session.child_triologues,
+  ].filter(p => !fs.existsSync(p));
+
+  if (missingFiles.length > 0) {
+    console.error(chalk.red(`Session files missing: ${missingFiles.join(', ')}`));
+    process.exit(1);
+  }
+
+  console.log(chalk.cyan('Restoring session...'));
+
+  const { pair, dosqPath } = await prepareRestoration(session);
+
+  console.log(chalk.cyan('Session restored. DOSQ generated at:'));
+  console.log(chalk.gray(`  ${dosqPath}`));
+
+  // Open DOSQ in editor for user review
+  try {
+    const { openEditor } = await import('../utils/open-editor.js');
+    openEditor([dosqPath]);
+    console.log(chalk.gray('Opening DOSQ file in editor...'));
+  } catch {
+    console.log(chalk.yellow(`Please edit the DOSQ file manually: ${dosqPath}`));
+  }
+
+  console.log(chalk.yellow('Edit the DOSQ file if needed, then save and close to continue...'));
+  await agentIO.ask(chalk.cyan('Press Enter when ready to continue > '));
+
+  const dosqContent = readDosq(dosqPath);
+  const initialQuery = extractFirstQuery(dosqContent);
+  const triologuePath = session.lead_triologue;
+  const sessionFilePath = getSessionPathById(session.id)
+    || path.join(path.dirname(session.lead_triologue), '..', 'sessions', `${session.id}.json`);
+
+  console.log(chalk.gray(`Restored session: ${session.id.slice(0, 7)}`));
+
+  return { sessionFilePath, triologuePath, restoredPair: pair, initialQuery };
+}
+
+/**
+ * Create a new session with fresh triologue and session files
+ */
+function createNewSession(): SessionInit {
+  const transcriptDir = path.join(getMyccDir(), 'transcripts');
+  if (!fs.existsSync(transcriptDir)) {
+    fs.mkdirSync(transcriptDir, { recursive: true });
+  }
+
+  const timestamp = Math.floor(Date.now() / 1000);
+  const triologuePath = path.join(transcriptDir, `lead-${timestamp}-triologue.jsonl`);
+  fs.writeFileSync(triologuePath, '', 'utf-8');
+
+  const sessionFilePath = createSessionFile(triologuePath);
+
+  // Clean up empty sessions from previous runs
+  const currentSessionId = getSessionId(sessionFilePath);
+  const removed = cleanupEmptySessions(currentSessionId);
+  if (removed > 0) {
+    console.log(chalk.gray(`Cleaned up ${removed} empty session(s)`));
+  }
+
+  return { sessionFilePath, triologuePath, restoredPair: null, initialQuery: null };
+}
+
+/**
+ * Initialize session - restore existing or create new
+ */
+async function initializeSession(): Promise<SessionInit> {
+  clearSessionData(); // Fresh start: no orphan teammates, stale issues, etc.
+
+  const sessionArg = getSessionArg();
+  return sessionArg
+    ? restoreSession(sessionArg)
+    : createNewSession();
 }
 
 /**
