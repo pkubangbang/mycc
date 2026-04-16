@@ -8,7 +8,7 @@ import type { ToolDefinition, AgentContext } from '../types.js';
 
 export const tmPrintTool: ToolDefinition = {
   name: 'tm_print',
-  description: 'Print current team status showing all teammates, their roles, and status (working/idle/shutdown).',
+  description: 'List all teammates with roles and status (working/idle/shutdown). Use to check availability before assigning work via mail_to.',
   input_schema: {
     type: 'object',
     properties: {},

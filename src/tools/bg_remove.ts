@@ -8,13 +8,13 @@ import type { ToolDefinition, AgentContext } from '../types.js';
 
 export const bgRemoveTool: ToolDefinition = {
   name: 'bg_remove',
-  description: 'Kill a background task by its process ID. Use this to terminate running background tasks.',
+  description: 'Terminate a background task by pid. Use when a background task is stuck or no longer needed. Get pid from bg_create result or bg_print output.',
   input_schema: {
     type: 'object',
     properties: {
       pid: {
         type: 'number',
-        description: 'Process ID of the background task to kill',
+        description: 'Process ID of the background task to kill. Obtain from bg_create result or bg_print output.',
       },
     },
     required: ['pid'],

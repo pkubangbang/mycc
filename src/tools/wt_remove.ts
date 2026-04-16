@@ -8,7 +8,7 @@ import type { ToolDefinition, AgentContext } from '../types.js';
 
 export const wtRemoveTool: ToolDefinition = {
   name: 'wt_remove',
-  description: 'Remove a git worktree by name.',
+  description: 'Remove a git worktree by name. Use after finishing work in a worktree. Does not delete the branch.',
   input_schema: {
     type: 'object',
     properties: {

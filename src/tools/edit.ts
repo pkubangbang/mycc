@@ -21,21 +21,21 @@ function safePath(p: string, workdir: string): string {
 
 export const editTool: ToolDefinition = {
   name: 'edit_file',
-  description: 'Replace exact text in a file. Use this for making targeted edits.',
+  description: 'Replace exact text in an existing file. The old_text must exist exactly once in the file. Use this for targeted edits instead of rewriting entire files.',
   input_schema: {
     type: 'object',
     properties: {
       path: {
         type: 'string',
-        description: 'File path relative to workspace',
+        description: 'File path relative to workspace root.',
       },
       old_text: {
         type: 'string',
-        description: 'The exact text to replace (must exist in the file)',
+        description: 'Exact text to find and replace. Must match exactly including whitespace and be unique in the file.',
       },
       new_text: {
         type: 'string',
-        description: 'The replacement text',
+        description: 'Text to replace old_text with. Can be empty string to delete the old_text.',
       },
     },
     required: ['path', 'old_text', 'new_text'],

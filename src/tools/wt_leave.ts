@@ -8,7 +8,7 @@ import type { ToolDefinition, AgentContext } from '../types.js';
 
 export const wtLeaveTool: ToolDefinition = {
   name: 'wt_leave',
-  description: 'Leave the current worktree and return to the project root directory.',
+  description: 'Exit current worktree and return to project root directory. Use when done with worktree operations.',
   input_schema: {
     type: 'object',
     properties: {},

@@ -8,13 +8,7 @@ import type { ToolDefinition, AgentContext } from '../types.js';
 
 export const tmAwaitTool: ToolDefinition = {
   name: 'tm_await',
-  description:
-    [
-      'Wait for a teammate or all teammates to finish their current task. ',
-      'Prefer **NOT TO** use this tool or "bash(sleep)".',
-      'Instead, just let it go with no tool calls.',
-      'The caller will handle the rest.'
-    ].join('\n'),
+  description: 'Block until teammate(s) finish their task. Prefer NOT to use - let teammates work asynchronously. Only needed when results are required before proceeding.',
   input_schema: {
     type: 'object',
     properties: {

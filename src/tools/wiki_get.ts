@@ -6,9 +6,7 @@ import type { ToolDefinition, GetOptions } from '../types.js';
 
 export const wikiGetTool: ToolDefinition = {
   name: 'wiki_get',
-  description: `Retrieve relevant documents from the knowledge base using semantic search.
-Use this tool to search for knowledge that seems to have been collected from previous runs.
-The domain parameter is required - all knowledge is organized by domain.`,
+  description: 'Search knowledge base for relevant documents. Domain parameter is required. Returns documents sorted by similarity to query.',
   input_schema: {
     type: 'object',
     properties: {

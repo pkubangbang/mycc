@@ -8,8 +8,7 @@ import type { ToolDefinition, AgentContext } from '../types.js';
 
 export const webFetchTool: ToolDefinition = {
   name: 'web_fetch',
-  description:
-    'Fetch and parse content from a specific URL. Returns the page title, main content, and links found on the page. Use this to read full content from a URL found via web_search.',
+  description: 'Fetch and parse content from a URL. Returns page title, main content, and links. Use to read full content from URLs found via web_search.',
   input_schema: {
     type: 'object',
     properties: {

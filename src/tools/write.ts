@@ -21,17 +21,17 @@ function safePath(p: string, workdir: string): string {
 
 export const writeTool: ToolDefinition = {
   name: 'write_file',
-  description: 'Write content to a file in the workspace.',
+  description: 'Create or completely replace a file. Parent directories are created automatically. Use edit_file for targeted changes to existing files instead of rewriting entire files.',
   input_schema: {
     type: 'object',
     properties: {
       path: {
         type: 'string',
-        description: 'File path relative to workspace',
+        description: 'File path relative to workspace root. Parent directories are created automatically if needed.',
       },
       content: {
         type: 'string',
-        description: 'Content to write to the file',
+        description: 'Complete content to write to the file. This will replace any existing content entirely.',
       },
     },
     required: ['path', 'content'],

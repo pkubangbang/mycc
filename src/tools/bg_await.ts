@@ -8,18 +8,17 @@ import type { ToolDefinition, AgentContext } from '../types.js';
 
 export const bgAwaitTool: ToolDefinition = {
   name: 'bg_await',
-  description:
-    'Wait for background tasks to complete. Use this to block until all background tasks finish or timeout.',
+  description: 'Block until background tasks complete. Use after bg_create when you need results before proceeding. Default timeout 60 seconds.',
   input_schema: {
     type: 'object',
     properties: {
       pid: {
         type: 'number',
-        description: 'Optional process ID to wait for specific task. If omitted, waits for all tasks.',
+        description: 'Process ID to wait for specific task. Omit to wait for ALL background tasks to complete.',
       },
       timeout: {
         type: 'number',
-        description: 'Timeout in milliseconds (default: 60000)',
+        description: 'Maximum time to wait in milliseconds (default: 60000). Increase for long-running commands.',
       },
     },
     required: [],

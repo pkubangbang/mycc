@@ -8,7 +8,7 @@ import type { ToolDefinition, AgentContext } from '../types.js';
 
 export const wtEnterTool: ToolDefinition = {
   name: 'wt_enter',
-  description: 'Enter a git worktree by name. Changes the working directory to the worktree path.',
+  description: 'Switch to a git worktree. Changes working directory to the worktree path. All subsequent file operations will be relative to that worktree.',
   input_schema: {
     type: 'object',
     properties: {

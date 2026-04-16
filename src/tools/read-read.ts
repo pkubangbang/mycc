@@ -11,7 +11,7 @@ import { getTokenThreshold } from '../config.js';
 
 export const readReadTool: ToolDefinition = {
   name: 'read_read',
-  description: 'Summarize long content using two-turn rolling summary. Use when tool results are too large.',
+  description: 'Summarize long content from .mycc/longtext/ files. Use when tool results are too large for context. Requires file path and focus topic.',
   input_schema: {
     type: 'object',
     properties: {

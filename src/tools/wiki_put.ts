@@ -6,8 +6,7 @@ import type { ToolDefinition, WikiDocument } from '../types.js';
 
 export const wikiPutTool: ToolDefinition = {
   name: 'wiki_put',
-  description: `Store a document in the knowledge base. Use this after wiki_prepare returns an accepted hash.
-Pass the exact same document and the hash returned by wiki_prepare. The domain will be automatically registered if it's new.`,
+  description: 'Store a validated document in knowledge base. Requires hash from wiki_prepare. Pass the exact same document that was validated.',
   input_schema: {
     type: 'object',
     properties: {

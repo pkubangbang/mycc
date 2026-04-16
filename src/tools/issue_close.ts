@@ -8,26 +8,26 @@ import type { ToolDefinition, AgentContext } from '../types.js';
 
 export const issueCloseTool: ToolDefinition = {
   name: 'issue_close',
-  description: 'Close an issue with a final status (completed, failed, or abandoned). Optionally add a closing comment.',
+  description: 'Close an issue with final status: completed, failed, or abandoned. Use after issue_claim when work is done. Closing a blocker unblocks dependent issues.',
   input_schema: {
     type: 'object',
     properties: {
       id: {
         type: 'integer',
-        description: 'ID of the issue to close',
+        description: 'Issue ID number to close.',
       },
       status: {
         type: 'string',
         enum: ['completed', 'failed', 'abandoned'],
-        description: 'Final status for the issue',
+        description: 'completed: Successfully resolved. failed: Could not complete due to errors. abandoned: No longer needed.',
       },
       comment: {
         type: 'string',
-        description: 'Optional closing comment',
+        description: 'Final comment explaining the resolution or reason for closure.',
       },
       poster: {
         type: 'string',
-        description: 'Name of the person closing the issue (optional)',
+        description: 'Name of the person or agent closing the issue. Defaults to anonymous if omitted.',
       },
     },
     required: ['id', 'status'],

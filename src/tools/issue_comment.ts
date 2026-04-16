@@ -8,21 +8,21 @@ import type { ToolDefinition, AgentContext } from '../types.js';
 
 export const issueCommentTool: ToolDefinition = {
   name: 'issue_comment',
-  description: 'Add a comment to an existing issue. The poster is automatically recorded.',
+  description: 'Add a comment to an issue for progress updates or discussion. Use during work to document findings or ask questions.',
   input_schema: {
     type: 'object',
     properties: {
       id: {
         type: 'integer',
-        description: 'ID of the issue to comment on',
+        description: 'Issue ID number to add a comment to.',
       },
       comment: {
         type: 'string',
-        description: 'Comment text to add',
+        description: 'Comment text. Include relevant details, findings, or questions.',
       },
       poster: {
         type: 'string',
-        description: 'Name of the commenter (optional, defaults to anonymous)',
+        description: 'Name of the commenter. Defaults to anonymous if omitted.',
       },
     },
     required: ['id', 'comment'],

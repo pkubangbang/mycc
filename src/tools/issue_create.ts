@@ -8,22 +8,22 @@ import type { ToolDefinition, AgentContext } from '../types.js';
 
 export const issueCreateTool: ToolDefinition = {
   name: 'issue_create',
-  description: 'Create a new issue with an optional list of blocking issues. Returns the issue ID.',
+  description: 'Create a new issue to track work. Returns issue ID. Use blockedBy to set dependencies. Follow with issue_claim to assign work.',
   input_schema: {
     type: 'object',
     properties: {
       title: {
         type: 'string',
-        description: 'Short title for the issue',
+        description: 'Concise summary of the issue (1-10 words recommended). Used for quick reference in lists.',
       },
       content: {
         type: 'string',
-        description: 'Detailed description of the issue',
+        description: 'Detailed description of the issue including context, requirements, acceptance criteria, or steps to reproduce.',
       },
       blockedBy: {
         type: 'array',
         items: { type: 'integer' },
-        description: 'Optional array of issue IDs that block this issue',
+        description: 'List of issue IDs that must be completed before this issue can be worked on. Creates blocking relationships automatically.',
       },
     },
     required: ['title', 'content'],

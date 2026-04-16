@@ -9,9 +9,7 @@ import type { ToolDefinition, AgentContext } from '../types.js';
 
 export const mailToTool: ToolDefinition = {
   name: 'mail_to',
-  description:
-    'Send an async message to a specific teammate or lead. Use this for inter-agent communication. Use "lead" to message the lead agent. ' +
-    'IMPORTANT: Always include meaningful content that clearly explains the purpose of your message - avoid sending empty or placeholder content like just "lead" or "check".',
+  description: 'Send an async message to a teammate or "lead". Non-blocking - does not wait for response. Use for task assignment and inter-agent communication. Include meaningful content.',
   input_schema: {
     type: 'object',
     properties: {

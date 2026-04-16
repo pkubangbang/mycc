@@ -8,7 +8,7 @@ import type { ToolDefinition, AgentContext } from '../types.js';
 
 export const wtCreateTool: ToolDefinition = {
   name: 'wt_create',
-  description: 'Create a new git worktree with a new branch. Returns the path to the worktree.',
+  description: 'Create a new git worktree with a new branch. Returns path to worktree. Use for parallel work on different branches without switching.',
   input_schema: {
     type: 'object',
     properties: {

@@ -8,13 +8,13 @@ import type { ToolDefinition, AgentContext } from '../types.js';
 
 export const bgCreateTool: ToolDefinition = {
   name: 'bg_create',
-  description: 'Run a bash command in the background. Returns the process ID for tracking.',
+  description: 'Run a bash command asynchronously (non-blocking). Returns pid for use with bg_await/bg_print/bg_remove. Use for long-running commands like servers or builds.',
   input_schema: {
     type: 'object',
     properties: {
       command: {
         type: 'string',
-        description: 'The bash command to run in background',
+        description: 'Bash command to run asynchronously. Runs in workspace directory. Cannot be interactive.',
       },
     },
     required: ['command'],

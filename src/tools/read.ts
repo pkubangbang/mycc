@@ -21,17 +21,17 @@ function safePath(p: string, workdir: string): string {
 
 export const readTool: ToolDefinition = {
   name: 'read_file',
-  description: 'Read file contents from the workspace.',
+  description: 'Read file contents from the workspace. Use limit parameter for large files to avoid context overflow. Paths use forward slashes and must be relative to workspace root.',
   input_schema: {
     type: 'object',
     properties: {
       path: {
         type: 'string',
-        description: 'File path relative to workspace',
+        description: 'File path relative to workspace root. Use forward slashes (e.g., "src/tools/bash.ts").',
       },
       limit: {
         type: 'integer',
-        description: 'Maximum number of lines to read (optional)',
+        description: 'Maximum number of lines to read. Use for large files to avoid context overflow. Omit to read entire file.',
       },
     },
     required: ['path'],

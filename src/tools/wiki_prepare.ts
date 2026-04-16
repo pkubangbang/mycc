@@ -6,8 +6,7 @@ import type { ToolDefinition, WikiDocument } from '../types.js';
 
 export const wikiPrepareTool: ToolDefinition = {
   name: 'wiki_prepare',
-  description: `Check if a document is suitable for the knowledge base. Returns a hash if accepted, or a rejection reason if not.
-Use this before wiki_put. The document should contain facts or rules, not opinions. Content must be 50-1000 characters.`,
+  description: 'Validate a document before storing in knowledge base. Returns hash if accepted. Content must be 50-1000 characters of facts/rules (not opinions). Use before wiki_put.',
   input_schema: {
     type: 'object',
     properties: {

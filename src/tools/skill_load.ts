@@ -11,7 +11,7 @@ import type { ToolDefinition, AgentContext } from '../types.js';
 
 export const skillLoadTool: ToolDefinition = {
   name: 'skill_load',
-  description: 'Load a skill by name and return its content. Skills contain specialized knowledge and instructions for specific tasks.',
+  description: 'Load a skill by name. Returns specialized knowledge and instructions. Use when you need guidance for specific tasks like code-review or coordination.',
   input_schema: {
     type: 'object',
     properties: {

@@ -8,7 +8,7 @@ import type { ToolDefinition, AgentContext } from '../types.js';
 
 export const wtPrintTool: ToolDefinition = {
   name: 'wt_print',
-  description: 'List all git worktrees with their names, branches, and paths.',
+  description: 'List all git worktrees with names, branches, and paths. Use to see available worktrees before wt_enter.',
   input_schema: {
     type: 'object',
     properties: {},

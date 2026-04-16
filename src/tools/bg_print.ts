@@ -8,7 +8,7 @@ import type { ToolDefinition, AgentContext } from '../types.js';
 
 export const bgPrintTool: ToolDefinition = {
   name: 'bg_print',
-  description: 'List all background tasks with their status (running/completed/failed).',
+  description: 'List all background tasks with status (running/completed/failed). Use to check if tasks finished before calling bg_await or to find pids for bg_remove.',
   input_schema: {
     type: 'object',
     properties: {},

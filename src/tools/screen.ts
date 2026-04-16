@@ -323,8 +323,7 @@ function preprocessImage(
 
 export const screenTool: ToolDefinition = {
   name: 'screen',
-  description:
-    'Capture a screenshot of the current screen and use a vision model to read and describe the content. Returns a detailed text description of everything visible on screen. Auto-detects OS, display server (Wayland/X11), and available screenshot tools.',
+  description: 'Capture a screenshot and use vision model to read/describe screen content. Use prompt parameter to ask specific questions about what is visible.',
   input_schema: {
     type: 'object',
     properties: {

@@ -8,7 +8,7 @@ import type { ToolDefinition, AgentContext } from '../types.js';
 
 export const tmRemoveTool: ToolDefinition = {
   name: 'tm_remove',
-  description: 'Remove a teammate by terminating their child process. Use this when a teammate is no longer needed.',
+  description: 'Terminate a teammate process. Use tm_await first to let them finish. Set force=true only for stuck teammates. Only available to lead agent.',
   input_schema: {
     type: 'object',
     properties: {

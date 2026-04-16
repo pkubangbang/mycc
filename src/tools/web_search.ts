@@ -8,8 +8,7 @@ import type { ToolDefinition, AgentContext } from '../types.js';
 
 export const webSearchTool: ToolDefinition = {
   name: 'web_search',
-  description:
-    'Search the web for information. Returns search results with titles, URLs, and content snippets. Use this to find current information, documentation, or research topics.',
+  description: 'Search the web for information. Returns titles, URLs, and snippets. Use for current information, documentation, or research.',
   input_schema: {
     type: 'object',
     properties: {

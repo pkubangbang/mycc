@@ -8,8 +8,7 @@ import type { ToolDefinition, AgentContext } from '../types.js';
 
 export const tmCreateTool: ToolDefinition = {
   name: 'tm_create',
-  description: 'Create a teammate with name, role and initial prompt. ' +
-   'You can create multiple teammates in sequence before starting team coordination.',
+  description: 'Spawn a new teammate agent with a specific role. Assign work via mail_to after creation. Only available to lead agent (scope: main).',
   input_schema: {
     type: 'object',
     properties: {

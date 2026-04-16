@@ -71,25 +71,25 @@ async function runInPopupTerminal(ctx: AgentContext, command: string): Promise<s
 
 export const bashTool: ToolDefinition = {
   name: 'bash',
-  description: 'Run a shell command (blocking). Set an expected line-of-result using "elor" before you go.',
+  description: `Run a shell command (blocking). Set an expected line-of-result using "elor" before you go.`,
   input_schema: {
     type: 'object',
     properties: {
       command: {
         type: 'string',
-        description: 'The shell command to execute',
+        description: 'The shell command to execute. Must be valid bash syntax. Paths are relative to workspace directory.',
       },
       intent: {
         type: 'string',
-        description: 'Explain why you want to use this command',
+        description: 'REQUIRED: Explain why this command is needed. This helps the system understand context and enables smarter output summarization when needed.',
       },
       elor: {
         type: 'number',
-        description: 'Expected line of result (default: 50). If output exceeds this, LLM summarizes. Set higher for more detail. Very small values (like 0) to enforce summary are discouraged.',
+        description: 'Expected Lines Of Result (default: 50). Output exceeding this limit is summarized. Set higher (100-500) for detailed output like logs or large file listings. Values below 10 are discouraged as they force excessive summarization.',
       },
       timeout: {
         type: 'number',
-        description: 'Seconds before killing the process (default: 3)',
+        description: 'Seconds before terminating the process (default: 3, max recommended: 300). For commands expected to run longer, use bg_create instead.',
       },
     },
     required: ['command', 'intent'],
