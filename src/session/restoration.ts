@@ -179,6 +179,17 @@ async function summarizeLeadTriologue(messages: Message[], childSummaries: { pat
         throw new Error(`no corresponding teammate found for tool call ${m.tool_call_id}`)
       }
 
+      // Check if tm_create was successful (response should not contain "Error:")
+      const responseContent = m.content || '';
+      const isFailed = responseContent.startsWith('Error:') || responseContent.includes('already exists');
+
+      if (isFailed) {
+        // tm_create failed - no triologue to inject, just skip
+        // The teammate was not spawned, so there's no summary to inject
+        delete pendingTmCreateCall[m.tool_call_id || 'unknown'];
+        continue;
+      }
+
       const s = summaries.shift();
 
       if (!s) {
