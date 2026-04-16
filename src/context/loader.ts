@@ -51,6 +51,7 @@ import { readReadTool } from '../tools/read-read.js';
 import { wikiPrepareTool } from '../tools/wiki_prepare.js';
 import { wikiPutTool } from '../tools/wiki_put.js';
 import { wikiGetTool } from '../tools/wiki_get.js';
+import { orderTool } from '../tools/order.js';
 
 /**
  * Built-in tools
@@ -93,6 +94,7 @@ const builtInTools: ToolDefinition[] = [
   wikiPrepareTool,
   wikiPutTool,
   wikiGetTool,
+  orderTool,
 ];
 
 /**
