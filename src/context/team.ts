@@ -388,47 +388,107 @@ export class TeamManager implements TeamModule {
   /**
    * Wait for all teammates to finish.
    *
-   * Resolves on TRANSITIONS from 'working' to another status, with a minimum 5-second wait
-   * to give teammates time to process mail and potentially ask questions.
+   * Implements a phased waiting strategy:
+   * 1. If no teammates or all shutdown → return "no teammates" immediately
+   * 2. Watch for 'holding' status every 1s → return "got question" immediately
+   * 3. Wait 5 seconds for teammates to enter working state
+   * 4. After 5s, if all idle/shutdown → return "no workload"
+   * 5. Else watch for all to finish (idle/shutdown/holding) with timeout
+   * 6. If all finish in time → return "all done", else → return "timeout"
    *
-   * Return values:
-   * - hasQuestion: true if any teammate is in 'holding' state (waiting for question response)
-   *   → Lead should continue to next loop iteration to process pending questions
-   * - allSettled: true if all teammates are idle/shutdown (no one is working)
-   *   → Lead can safely return, no more work in flight
-   * - waited: true if the function actually waited for any teammates
+   * @returns result: "no teammates" | "got question" | "no workload" | "all done" | "timeout"
    */
-  async awaitTeam(timeout: number = 60000): Promise<{ allSettled: boolean; waited: boolean; hasQuestion: boolean }> {
-    const MIN_WAIT_MS = 5000;
+  async awaitTeam(timeout: number = 60000): Promise<{ result: string }> {
+    const POLL_INTERVAL_MS = 1000;
+    const INITIAL_WAIT_MS = 5000;
 
     const teammates = this.listTeammates();
 
-    // Priority 1: Check if any teammate is holding (waiting for question response)
-    // If so, return immediately so lead can process the question in next iteration
-    const hasQuestion = teammates.some((t) => t.status === 'holding');
-    if (hasQuestion) {
-      return { allSettled: false, waited: false, hasQuestion: true };
+    // Step 1: Check if no teammates or all shutdown
+    if (teammates.length === 0 || teammates.every((t) => t.status === 'shutdown')) {
+      return { result: 'no teammates' };
     }
 
-    // Start minimum wait timer immediately
-    const minWaitPromise = new Promise<void>((resolve) => setTimeout(resolve, MIN_WAIT_MS));
+    // Short-circuit: holding is highest priority - return immediately
+    if (teammates.some((t) => t.status === 'holding')) {
+      return { result: 'got question' };
+    }
 
-    // Wait for ALL teammates AND minimum time
-    // Each awaitTeammate subscribes to transitions, not just current status
-    const promises: Promise<unknown>[] = [
-      minWaitPromise,
-      ...teammates.map((t) => this.awaitTeammate(t.name, timeout)),
-    ];
+    // Helper to get current statuses
+    const getStatuses = () => {
+      const current = this.listTeammates();
+      return {
+        holding: current.some((t) => t.status === 'holding'),
+        working: current.some((t) => t.status === 'working'),
+        allSettled: current.every((t) => t.status === 'idle' || t.status === 'shutdown'),
+      };
+    };
 
-    await Promise.all(promises);
+    // Step 2: Set up periodic watcher for holding status during initial wait
+    const startTime = Date.now();
+    let holdingDetected = false;
 
-    // Re-check status after waiting
-    const finalTeammates = this.listTeammates();
-    const finalHasQuestion = finalTeammates.some((t) => t.status === 'holding');
-    const finalActive = finalTeammates.filter((t) => t.status === 'working');
-    const allSettled = finalActive.length === 0;
+    // Watch for holding during the initial 5-second period
+    const initialWatchPromise = new Promise<void>((resolve) => {
+      const intervalId = setInterval(() => {
+        const statuses = getStatuses();
+        if (statuses.holding) {
+          holdingDetected = true;
+          clearInterval(intervalId);
+          resolve();
+        }
+      }, POLL_INTERVAL_MS);
 
-    return { allSettled, waited: true, hasQuestion: finalHasQuestion };
+      // Clean up after initial wait
+      setTimeout(() => {
+        clearInterval(intervalId);
+        resolve();
+      }, INITIAL_WAIT_MS);
+    });
+
+    await initialWatchPromise;
+
+    // If holding detected during initial watch, return immediately
+    if (holdingDetected) {
+      return { result: 'got question' };
+    }
+
+    // Step 3: Check status after initial wait
+    const afterInitial = getStatuses();
+
+    // Step 4: If all idle/shutdown after 5 seconds, return "no workload"
+    if (afterInitial.allSettled) {
+      return { result: 'no workload' };
+    }
+
+    // Step 5: At least one working - watch for completion with timeout
+    const remainingTimeout = Math.max(0, timeout - (Date.now() - startTime));
+
+    if (remainingTimeout <= 0) {
+      return { result: 'timeout' };
+    }
+
+    const completionPromise = new Promise<string>((resolve) => {
+      const intervalId = setInterval(() => {
+        const statuses = getStatuses();
+        if (statuses.holding) {
+          clearInterval(intervalId);
+          resolve('got question');
+        } else if (statuses.allSettled) {
+          clearInterval(intervalId);
+          resolve('all done');
+        }
+      }, POLL_INTERVAL_MS);
+
+      // Timeout
+      setTimeout(() => {
+        clearInterval(intervalId);
+        resolve('timeout');
+      }, remainingTimeout);
+    });
+
+    const result = await completionPromise;
+    return { result };
   }
 
   /**

@@ -128,9 +128,21 @@ async question(query: string, asker: string): Promise<string> {
 
 ### awaitTeam Logic (`src/context/team.ts`)
 ```typescript
+async awaitTeam(timeout: number): Promise<{ result: string }> {
+  // 1. If no teammates or all shutdown → "no teammates"
+  // 2. Watch for 'holding' every 1s → "got question"
+  // 3. Wait 5s for teammates to enter working
+  // 4. After 5s, if all idle/shutdown → "no workload"
+  // 5. Watch for completion (idle/shutdown/holding) with timeout
+  // 6. If all finish in time → "all done", else → "timeout"
+}
+```
+
+### awaitTeammate Logic (`src/context/team.ts`)
+```typescript
 async awaitTeammate(name: string, timeout: number): Promise<{ waited: boolean }> {
   const status = this.statuses.get(name);
-  
+
   // Already settled (not actively working)
   if (status === 'idle' || status === 'shutdown' || status === 'holding') {
     return { waited: false };

@@ -253,21 +253,24 @@ export async function agentLoop(
 
         // 6. No tool calls = check team status
         if (!assistantMessage.tool_calls || assistantMessage.tool_calls.length === 0) {
-          const { allSettled, hasQuestion } = await ctx.team.awaitTeam(30000);
+          const { result } = await ctx.team.awaitTeam(30000);
 
-          // Priority 1: If there's pending question / mail, continue to next iteration
-          if (hasQuestion || ctx.mail.hasNewMails()) {
+          // Handle awaitTeam result
+          if (result === 'got question' || ctx.mail.hasNewMails()) {
+            // Teammate has question or new mail - continue to next iteration
+            continue;
+          } else if (result === 'all done' || result === 'no workload' || result === 'no teammates') {
+            // All finished or no work - we're done
+            return;
+          } else if (result === 'timeout') {
+            // Timeout - inject status message and retry
+            triologue.user(`Timeout waiting for teammates. Use tm_await to wait longer, or check team status with /team. ${ctx.team.printTeam()}`);
+            continue;
+          } else {
+            // Unsupported result type - warn and continue
+            ctx.core.brief('warn', 'awaitTeam', `Unexpected result: ${result}`);
             continue;
           }
-
-          // Priority 2: If all teammates are settled (idle/shutdown), we're done
-          if (allSettled) {
-            return;
-          }
-
-          // Priority 3: Timeout waiting for teammates - inject status message and retry
-          triologue.user(`Timeout waiting for teammates. What will you do? ${ctx.team.printTeam()}`);
-          continue;
         }
 
         // 7. Execute tools

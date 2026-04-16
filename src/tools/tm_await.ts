@@ -45,7 +45,21 @@ export const tmAwaitTool: ToolDefinition = {
         }
 
         const result = await ctx.team.awaitTeam(timeout);
-        return result.allSettled ? 'OK' : 'OK (timeout)';
+        // Map result to user-friendly message
+        switch (result.result) {
+          case 'no teammates':
+            return 'No teammates to wait for. Create teammates with tm_create first.';
+          case 'got question':
+            return 'Teammate has a question waiting for response.';
+          case 'no workload':
+            return 'All teammates are idle - no work in progress.';
+          case 'all done':
+            return 'All teammates finished their work.';
+          case 'timeout':
+            return 'Timeout waiting for teammates to finish.';
+          default:
+            return `Unknown result: ${result.result}`;
+        }
       }
     } catch (error: unknown) {
       const err = error as Error;
