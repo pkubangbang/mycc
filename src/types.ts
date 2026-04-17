@@ -306,6 +306,7 @@ export interface BgModule {
  * All methods are async for consistency between main and child contexts
  */
 export interface WtModule {
+  syncWorkTrees(): Promise<void>;
   createWorkTree(name: string, branch: string): Promise<string>;
   printWorkTrees(): Promise<string>;
   enterWorkTree(name: string): Promise<void>;

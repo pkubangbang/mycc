@@ -13,6 +13,7 @@ import { listSessions, loadSessionById, SessionNotFoundError, AmbiguousSessionEr
 import { prepareRestoration, readDosq, extractFirstQuery } from '../session/restoration.js';
 import { Triologue } from '../loop/triologue.js';
 import { agentIO } from '../loop/agent-io.js';
+import { getSessionContext } from '../context/db.js';
 
 export const loadCommand: SlashCommand = {
   name: 'load',

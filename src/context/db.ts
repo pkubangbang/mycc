@@ -94,14 +94,14 @@ function initSchema(db: Database.Database): void {
     )
   `);
 
-  // Worktrees table
+  // Worktrees table (project-level, NOT session-scoped)
+  // Worktrees persist across sessions like git branches
   db.exec(`
     CREATE TABLE IF NOT EXISTS worktrees (
       name TEXT PRIMARY KEY,
       path TEXT NOT NULL,
       branch TEXT NOT NULL,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      session_id TEXT NOT NULL DEFAULT ''
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )
   `);
 
@@ -114,12 +114,14 @@ function initSchema(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_issues_session ON issues(session_id);
     CREATE INDEX IF NOT EXISTS idx_issues_session_status ON issues(session_id, status);
     CREATE INDEX IF NOT EXISTS idx_teammates_session ON teammates(session_id);
-    CREATE INDEX IF NOT EXISTS idx_worktrees_session ON worktrees(session_id);
     CREATE INDEX IF NOT EXISTS idx_blockages_session ON issue_blockages(session_id);
   `);
 
   // Migrate legacy databases (only if session_id missing)
   migrateLegacySchema(db);
+
+  // Migrate worktrees table (remove session_id if present)
+  migrateWorktreesTable(db);
 }
 
 /**
@@ -140,14 +142,48 @@ function migrateLegacySchema(db: Database.Database): void {
   db.exec(`ALTER TABLE issues ADD COLUMN session_id TEXT NOT NULL DEFAULT ''`);
   db.exec(`ALTER TABLE issue_blockages ADD COLUMN session_id TEXT NOT NULL DEFAULT ''`);
   db.exec(`ALTER TABLE teammates ADD COLUMN session_id TEXT NOT NULL DEFAULT ''`);
-  db.exec(`ALTER TABLE worktrees ADD COLUMN session_id TEXT NOT NULL DEFAULT ''`);
+  // Note: worktrees do NOT get session_id - they are project-level resources
 
   // Create indexes for session-scoped queries
   db.exec(`CREATE INDEX IF NOT EXISTS idx_issues_session ON issues(session_id)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_issues_session_status ON issues(session_id, status)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_teammates_session ON teammates(session_id)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_worktrees_session ON worktrees(session_id)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_blockages_session ON issue_blockages(session_id)`);
+}
+
+/**
+ * Migrate worktrees table to remove session_id column
+ * Worktrees are project-level resources and should not be session-scoped
+ */
+function migrateWorktreesTable(db: Database.Database): void {
+  // Check if worktrees table has session_id column
+  const columns = db.prepare(`PRAGMA table_info(worktrees)`).all() as { name: string }[];
+  const hasSessionId = columns.some(col => col.name === 'session_id');
+
+  if (!hasSessionId) {
+    // Already migrated, no action needed
+    return;
+  }
+
+  // Create new table without session_id
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS worktrees_new (
+      name TEXT PRIMARY KEY,
+      path TEXT NOT NULL,
+      branch TEXT NOT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
+  // Copy data (ignoring session_id)
+  db.exec(`
+    INSERT OR IGNORE INTO worktrees_new (name, path, branch, created_at)
+    SELECT name, path, branch, created_at FROM worktrees
+  `);
+
+  // Drop old table and rename new one
+  db.exec(`DROP TABLE worktrees`);
+  db.exec(`ALTER TABLE worktrees_new RENAME TO worktrees`);
 }
 
 /**
@@ -164,6 +200,7 @@ export function closeDb(): void {
 /**
  * Clear session data for the current session only
  * Clears SQLite tables and mail files for current session
+ * Note: worktrees are NOT cleared - they are project-level resources
  */
 export function clearSessionData(): void {
   const database = getDb();
@@ -174,15 +211,14 @@ export function clearSessionData(): void {
     database.prepare('DELETE FROM issue_blockages WHERE session_id = ?').run(sessionId);
     database.prepare('DELETE FROM issues WHERE session_id = ?').run(sessionId);
     database.prepare('DELETE FROM teammates WHERE session_id = ?').run(sessionId);
-    database.prepare('DELETE FROM worktrees WHERE session_id = ?').run(sessionId);
+    // Note: worktrees are NOT session-scoped, so they persist
   } else {
     // No session context (legacy behavior during migration)
-    // Clear all tables
+    // Clear all tables except worktrees
     database.exec(`
       DELETE FROM issue_blockages;
       DELETE FROM issues;
       DELETE FROM teammates;
-      DELETE FROM worktrees;
     `);
   }
 

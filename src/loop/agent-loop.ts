@@ -5,12 +5,12 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import chalk from 'chalk';
-import { retryChat, MODEL, OLLAMA_HOST, isTransientError, checkHealth, classifyError } from '../ollama.js';
+import { retryChat, MODEL, OLLAMA_HOST, checkHealth, classifyError } from '../ollama.js';
 import type { AgentContext, ToolScope, ToolCall, SlashCommandContext } from '../types.js';
 import { ResultTooLargeError } from '../types.js';
 import { ParentContext } from '../context/index.js';
 import { Loader } from '../context/loader.js';
-import { clearSessionData, getMyccDir, closeDb, setSessionContext } from '../context/db.js';
+import { clearSessionData, getMyccDir, setSessionContext } from '../context/db.js';
 import { createSessionFile, readSession, writeSession, getSessionId, cleanupEmptySessions, loadSessionById, getSessionPathById, SessionNotFoundError, AmbiguousSessionError } from '../session/index.js';
 import { prepareRestoration, readDosq, extractFirstQuery, type SummaryPair } from '../session/restoration.js';
 import { slashRegistry } from '../slashes/index.js';
@@ -488,6 +488,9 @@ export async function main(): Promise<void> {
   // Create context with loader
   const ctx = new ParentContext(loader, sessionFilePath);
   ctx.initializeIpcHandlers();
+
+  // Sync worktrees with git (reconcile any orphaned worktrees from previous sessions)
+  await ctx.wt.syncWorkTrees();
 
   const triologue = new Triologue({
     tokenThreshold,

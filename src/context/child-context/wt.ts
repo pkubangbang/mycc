@@ -35,6 +35,10 @@ export class ChildWt implements WtModule {
     this.core = core;
   }
 
+  async syncWorkTrees(): Promise<void> {
+    // Sync is done by parent at startup, no-op in child
+  }
+
   async createWorkTree(name: string, branch: string): Promise<string> {
     const result = await ipc.sendRequest<{ path: string }>('wt_create', { name, branch });
     return result.path;
@@ -63,6 +67,19 @@ export class ChildWt implements WtModule {
   }
 
   async removeWorkTree(name: string): Promise<void> {
+    // Check if we're inside the worktree being removed (local check first)
+    const db = await this.getWorkTreePath(name).catch(() => null);
+    if (db) {
+      const targetPath = path.resolve(db);
+      const normalizedCurrent = path.resolve(this.core.getWorkDir());
+
+      if (normalizedCurrent === targetPath || normalizedCurrent.startsWith(targetPath + path.sep)) {
+        throw new Error(
+          `Cannot remove worktree '${name}' while inside it. Use wt_leave first to exit the worktree.`
+        );
+      }
+    }
+
     await ipc.sendRequest<void>('wt_remove', { name });
   }
 }
