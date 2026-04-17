@@ -67,6 +67,7 @@ export class WorktreeManager implements WtModule {
       const output = execSync('git worktree list --porcelain', {
         cwd: workDir,
         encoding: 'utf-8',
+        stdio: ['pipe', 'pipe', 'pipe'], // Capture stderr to suppress fatal messages
       });
       const gitWorktrees = parseGitWorktreeList(output);
 
