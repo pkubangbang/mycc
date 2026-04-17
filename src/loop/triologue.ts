@@ -64,6 +64,8 @@ export class Triologue {
   private confusion: ConfusionCalculator;
   private hintGenerated: boolean = false;
   private options: Required<Omit<TriologueOptions, 'wiki'>> & Pick<TriologueOptions, 'wiki'>;
+  // Project context files (in-memory only, not persisted)
+  private projectContext: Message[] = [];
 
   constructor(options: TriologueOptions = {}) {
     const hintThreshold = options.hintThreshold ?? 10;
@@ -91,6 +93,28 @@ export class Triologue {
    */
   setSystemPrompt(prompt: string): void {
     this.systemPrompt = prompt;
+  }
+
+  /**
+   * Set CLAUDE.md content (project instructions)
+   * Appends context pair to project context (appears before README.md if both set)
+   */
+  setClaudeMd(content: string): void {
+    this.projectContext.push(
+      { role: 'user', content: `[Project Instructions - CLAUDE.md from project root, FYI]\n\n${content}` },
+      { role: 'assistant', content: 'Understood. I have read the project instructions from CLAUDE.md.' }
+    );
+  }
+
+  /**
+   * Set README.md content (project context)
+   * Appends context pair to project context (appears after CLAUDE.md if both set)
+   */
+  setReadmeMd(content: string): void {
+    this.projectContext.push(
+      { role: 'user', content: `[Project Context - README.md from project root, FYI]\n\n${content}` },
+      { role: 'assistant', content: 'Understood. I have read the project context from README.md.' }
+    );
   }
 
   /**
@@ -371,13 +395,21 @@ Be specific and actionable. This analysis will help guide the next steps.`;
   // === Accessors ===
 
   /**
-   * Get messages with system prompt prepended if set
+   * Get messages with system prompt and project context prepended
    */
   getMessages(): Message[] {
+    const result: Message[] = [];
+
     if (this.systemPrompt) {
-      return [{ role: 'system', content: this.systemPrompt }, ...this.messages];
+      result.push({ role: 'system', content: this.systemPrompt });
     }
-    return [...this.messages];
+
+    // Inject project context (before conversation history)
+    result.push(...this.projectContext);
+
+    result.push(...this.messages);
+
+    return result;
   }
 
   /**
