@@ -507,6 +507,17 @@ export async function main(): Promise<void> {
     triologue.loadRestoration(restoredPair);
   }
 
+  // Inject project context files (best-effort: skip if not found)
+  const claudePath = path.join(process.cwd(), 'CLAUDE.md');
+  const readmePath = path.join(process.cwd(), 'README.md');
+
+  if (fs.existsSync(claudePath)) {
+    triologue.setClaudeMd(fs.readFileSync(claudePath, 'utf-8'));
+  }
+  if (fs.existsSync(readmePath)) {
+    triologue.setReadmeMd(fs.readFileSync(readmePath, 'utf-8'));
+  }
+
   // Handle graceful shutdown
   process.on('SIGINT', () => {
     if (agentIO.abort()) {
