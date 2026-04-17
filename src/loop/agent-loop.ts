@@ -10,7 +10,7 @@ import type { AgentContext, ToolScope, ToolCall, SlashCommandContext } from '../
 import { ResultTooLargeError } from '../types.js';
 import { ParentContext } from '../context/index.js';
 import { Loader } from '../context/loader.js';
-import { clearSessionData, getMyccDir, closeDb } from '../context/db.js';
+import { clearSessionData, getMyccDir, closeDb, setSessionContext } from '../context/db.js';
 import { createSessionFile, readSession, writeSession, getSessionId, cleanupEmptySessions, loadSessionById, getSessionPathById, SessionNotFoundError, AmbiguousSessionError } from '../session/index.js';
 import { prepareRestoration, readDosq, extractFirstQuery, type SummaryPair } from '../session/restoration.js';
 import { slashRegistry } from '../slashes/index.js';
@@ -150,14 +150,30 @@ function createNewSession(): SessionInit {
 
 /**
  * Initialize session - restore existing or create new
+ * Sets session context before any database operations.
  */
 async function initializeSession(): Promise<SessionInit> {
-  clearSessionData(); // Fresh start: no orphan teammates, stale issues, etc.
-
   const sessionArg = getSessionArg();
-  return sessionArg
-    ? restoreSession(sessionArg)
-    : createNewSession();
+
+  // Step 1: Get or create session to obtain session ID
+  let result: SessionInit;
+  if (sessionArg) {
+    result = await restoreSession(sessionArg);
+  } else {
+    result = createNewSession();
+  }
+
+  // Step 2: Set session context for all database operations
+  const sessionId = getSessionId(result.sessionFilePath);
+  setSessionContext(sessionId);
+
+  // Step 3: For NEW sessions, clear any orphan data from this session ID
+  // (Restored sessions should keep their existing data)
+  if (!sessionArg) {
+    clearSessionData();
+  }
+
+  return result;
 }
 
 /**

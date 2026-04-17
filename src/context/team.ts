@@ -13,7 +13,7 @@ import type {
   IpcHandlerRegistration,
   SendResponseCallback,
 } from '../types.js';
-import { getDb } from './db.js';
+import { getDb, getSessionContext } from './db.js';
 import { MailBox } from './mail.js';
 import { IpcRegistry } from './child-context/ipc-registry.js';
 import type { CoreModule } from '../types.js';
@@ -93,11 +93,12 @@ export class TeamManager implements TeamModule {
 
     // Insert into database
     const db = getDb();
+    const sessionId = getSessionContext();
     const stmt = db.prepare(`
-      INSERT OR REPLACE INTO teammates (name, role, status, prompt)
-      VALUES (?, ?, 'working', ?)
+      INSERT OR REPLACE INTO teammates (name, role, status, prompt, session_id)
+      VALUES (?, ?, 'working', ?, ?)
     `);
-    stmt.run(name, role, prompt);
+    stmt.run(name, role, prompt, sessionId);
 
     // Spawn child process
     const workerPath = path.join(__dirname, 'teammate-worker.js');
@@ -285,10 +286,11 @@ export class TeamManager implements TeamModule {
    */
   private updateDbStatus(name: string, status: TeammateStatus): void {
     const db = getDb();
+    const sessionId = getSessionContext();
     const stmt = db.prepare(`
-      UPDATE teammates SET status = ? WHERE name = ?
+      UPDATE teammates SET status = ? WHERE name = ? AND session_id = ?
     `);
-    stmt.run(status, name);
+    stmt.run(status, name, sessionId);
   }
 
   /**
@@ -296,13 +298,14 @@ export class TeamManager implements TeamModule {
    */
   getTeammate(name: string): Teammate | undefined {
     const db = getDb();
+    const sessionId = getSessionContext();
     const stmt = db.prepare(`
       SELECT name, role, status, prompt, created_at
       FROM teammates
-      WHERE name = ?
+      WHERE name = ? AND session_id = ?
     `);
 
-    const row = stmt.get(name) as {
+    const row = stmt.get(name, sessionId) as {
       name: string;
       role: string;
       status: string;
@@ -327,11 +330,12 @@ export class TeamManager implements TeamModule {
    */
   listTeammates(): { name: string; role: string; status: TeammateStatus }[] {
     const db = getDb();
+    const sessionId = getSessionContext();
     const stmt = db.prepare(`
-      SELECT name, role, status FROM teammates
+      SELECT name, role, status FROM teammates WHERE session_id = ?
     `);
 
-    const rows = stmt.all() as Array<{
+    const rows = stmt.all(sessionId) as Array<{
       name: string;
       role: string;
       status: string;
@@ -529,8 +533,9 @@ export class TeamManager implements TeamModule {
     this.statuses.delete(name);
 
     const db = getDb();
-    const stmt = db.prepare(`DELETE FROM teammates WHERE name = ?`);
-    stmt.run(name);
+    const sessionId = getSessionContext();
+    const stmt = db.prepare(`DELETE FROM teammates WHERE name = ? AND session_id = ?`);
+    stmt.run(name, sessionId);
   }
 
   /**
@@ -553,7 +558,9 @@ export class TeamManager implements TeamModule {
     this.statuses.clear();
 
     const db = getDb();
-    db.exec(`DELETE FROM teammates`);
+    const sessionId = getSessionContext();
+    const stmt = db.prepare(`DELETE FROM teammates WHERE session_id = ?`);
+    stmt.run(sessionId);
   }
 
   /**

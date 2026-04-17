@@ -6,7 +6,7 @@ import { execSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import type { WtModule } from '../types.js';
-import { getDb } from './db.js';
+import { getDb, getSessionContext } from './db.js';
 import type { CoreModule } from '../types.js';
 
 /**
@@ -25,10 +25,11 @@ export class WorktreeManager implements WtModule {
   async createWorkTree(name: string, branch: string): Promise<string> {
     const workDir = this.core.getWorkDir();
     const wtPath = path.join(workDir, '.worktrees', name);
+    const sessionId = getSessionContext();
 
     // Check if worktree already exists
     const db = getDb();
-    const existing = db.prepare(`SELECT * FROM worktrees WHERE name = ?`).get(name);
+    const existing = db.prepare(`SELECT * FROM worktrees WHERE name = ? AND session_id = ?`).get(name, sessionId);
     if (existing) {
       return `Error: Worktree '${name}' already exists`;
     }
@@ -48,9 +49,9 @@ export class WorktreeManager implements WtModule {
 
       // Record in database
       db.prepare(`
-        INSERT INTO worktrees (name, path, branch)
-        VALUES (?, ?, ?)
-      `).run(name, wtPath, branch);
+        INSERT INTO worktrees (name, path, branch, session_id)
+        VALUES (?, ?, ?, ?)
+      `).run(name, wtPath, branch, sessionId);
 
       return `Created worktree '${name}' at ${wtPath} on branch ${branch}`;
     } catch (err) {
@@ -63,7 +64,8 @@ export class WorktreeManager implements WtModule {
    */
   async printWorkTrees(): Promise<string> {
     const db = getDb();
-    const rows = db.prepare(`SELECT name, path, branch FROM worktrees`).all() as Array<{
+    const sessionId = getSessionContext();
+    const rows = db.prepare(`SELECT name, path, branch FROM worktrees WHERE session_id = ?`).all(sessionId) as Array<{
       name: string;
       path: string;
       branch: string;
@@ -85,7 +87,8 @@ export class WorktreeManager implements WtModule {
    */
   async getWorkTreePath(name: string): Promise<string> {
     const db = getDb();
-    const row = db.prepare(`SELECT path FROM worktrees WHERE name = ?`).get(name) as {
+    const sessionId = getSessionContext();
+    const row = db.prepare(`SELECT path FROM worktrees WHERE name = ? AND session_id = ?`).get(name, sessionId) as {
       path: string;
     } | undefined;
 
@@ -135,7 +138,8 @@ export class WorktreeManager implements WtModule {
    */
   async removeWorkTree(name: string): Promise<void> {
     const db = getDb();
-    const row = db.prepare(`SELECT path FROM worktrees WHERE name = ?`).get(name) as {
+    const sessionId = getSessionContext();
+    const row = db.prepare(`SELECT path FROM worktrees WHERE name = ? AND session_id = ?`).get(name, sessionId) as {
       path: string;
     } | undefined;
 
@@ -162,6 +166,6 @@ export class WorktreeManager implements WtModule {
     }
 
     // Remove from database
-    db.prepare(`DELETE FROM worktrees WHERE name = ?`).run(name);
+    db.prepare(`DELETE FROM worktrees WHERE name = ? AND session_id = ?`).run(name, sessionId);
   }
 }

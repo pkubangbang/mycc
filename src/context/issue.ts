@@ -3,7 +3,7 @@
  */
 
 import type { IssueModule, Issue, IssueComment, IssueStatus } from '../types.js';
-import { getDb } from './db.js';
+import { getDb, getSessionContext } from './db.js';
 
 /**
  * Issue module implementation using SQLite
@@ -14,6 +14,7 @@ export class IssueManager implements IssueModule {
    */
   async createIssue(title: string, content: string, blockedBy: number[] = []): Promise<number> {
     const db = getDb();
+    const sessionId = getSessionContext();
 
     // Create issue with initial system comment
     const initialComment: IssueComment = {
@@ -24,11 +25,11 @@ export class IssueManager implements IssueModule {
     const comments = JSON.stringify([initialComment]);
 
     const stmt = db.prepare(`
-      INSERT INTO issues (title, content, status, owner, comments)
-      VALUES (?, ?, 'pending', NULL, ?)
+      INSERT INTO issues (title, content, status, owner, comments, session_id)
+      VALUES (?, ?, 'pending', NULL, ?, ?)
     `);
 
-    const result = stmt.run(title, content, comments);
+    const result = stmt.run(title, content, comments, sessionId);
     const issueId = result.lastInsertRowid as number;
 
     // Create blockages
@@ -44,13 +45,14 @@ export class IssueManager implements IssueModule {
    */
   async getIssue(id: number): Promise<Issue | undefined> {
     const db = getDb();
+    const sessionId = getSessionContext();
     const stmt = db.prepare(`
       SELECT id, title, content, status, owner, created_at, comments
       FROM issues
-      WHERE id = ?
+      WHERE id = ? AND session_id = ?
     `);
 
-    const row = stmt.get(id) as {
+    const row = stmt.get(id, sessionId) as {
       id: number;
       title: string;
       content: string;
@@ -70,13 +72,15 @@ export class IssueManager implements IssueModule {
    */
   async listIssues(): Promise<Issue[]> {
     const db = getDb();
+    const sessionId = getSessionContext();
     const stmt = db.prepare(`
       SELECT id, title, content, status, owner, created_at, comments
       FROM issues
+      WHERE session_id = ?
       ORDER BY id
     `);
 
-    const rows = stmt.all() as Array<{
+    const rows = stmt.all(sessionId) as Array<{
       id: number;
       title: string;
       content: string;
@@ -159,14 +163,15 @@ export class IssueManager implements IssueModule {
    */
   async claimIssue(id: number, owner: string): Promise<boolean> {
     const db = getDb();
+    const sessionId = getSessionContext();
 
     // Use transaction for atomicity
     const claimTx = db.transaction(() => {
       // Check if issue exists and is pending
       const stmt = db.prepare(`
-        SELECT status FROM issues WHERE id = ?
+        SELECT status FROM issues WHERE id = ? AND session_id = ?
       `);
-      const row = stmt.get(id) as { status: string } | undefined;
+      const row = stmt.get(id, sessionId) as { status: string } | undefined;
 
       if (!row || row.status !== 'pending') {
         return false;
@@ -175,9 +180,9 @@ export class IssueManager implements IssueModule {
       // Claim the issue
       const updateStmt = db.prepare(`
         UPDATE issues SET status = 'in_progress', owner = ?
-        WHERE id = ? AND status = 'pending'
+        WHERE id = ? AND status = 'pending' AND session_id = ?
       `);
-      const result = updateStmt.run(owner, id);
+      const result = updateStmt.run(owner, id, sessionId);
 
       if (result.changes > 0) {
         // Add system comment for claim
@@ -195,17 +200,18 @@ export class IssueManager implements IssueModule {
    */
   async closeIssue(id: number, status: 'completed' | 'failed' | 'abandoned', comment?: string, poster?: string): Promise<void> {
     const db = getDb();
+    const sessionId = getSessionContext();
 
     const closeTx = db.transaction(() => {
       // Get current owner for system comment
-      const issueRow = db.prepare(`SELECT owner FROM issues WHERE id = ?`).get(id) as { owner: string | null } | undefined;
+      const issueRow = db.prepare(`SELECT owner FROM issues WHERE id = ? AND session_id = ?`).get(id, sessionId) as { owner: string | null } | undefined;
       const owner = issueRow?.owner || 'unknown';
 
       // Update status
       const updateStmt = db.prepare(`
-        UPDATE issues SET status = ? WHERE id = ?
+        UPDATE issues SET status = ? WHERE id = ? AND session_id = ?
       `);
-      updateStmt.run(status, id);
+      updateStmt.run(status, id, sessionId);
 
       // Add system comment for status change
       this.addCommentSync(id, `Status changed to ${status}`, 'system');
@@ -217,9 +223,9 @@ export class IssueManager implements IssueModule {
 
       // Remove any blockages where this issue is the blocker
       const clearBlockagesStmt = db.prepare(`
-        DELETE FROM issue_blockages WHERE blocker_id = ?
+        DELETE FROM issue_blockages WHERE blocker_id = ? AND session_id = ?
       `);
-      clearBlockagesStmt.run(id);
+      clearBlockagesStmt.run(id, sessionId);
     });
 
     closeTx();
@@ -237,11 +243,12 @@ export class IssueManager implements IssueModule {
    */
   private addCommentSync(id: number, comment: string, poster: string): void {
     const db = getDb();
+    const sessionId = getSessionContext();
 
     const stmt = db.prepare(`
-      SELECT comments FROM issues WHERE id = ?
+      SELECT comments FROM issues WHERE id = ? AND session_id = ?
     `);
-    const row = stmt.get(id) as { comments: string } | undefined;
+    const row = stmt.get(id, sessionId) as { comments: string } | undefined;
 
     if (!row) return;
 
@@ -253,9 +260,9 @@ export class IssueManager implements IssueModule {
     });
 
     const updateStmt = db.prepare(`
-      UPDATE issues SET comments = ? WHERE id = ?
+      UPDATE issues SET comments = ? WHERE id = ? AND session_id = ?
     `);
-    updateStmt.run(JSON.stringify(comments), id);
+    updateStmt.run(JSON.stringify(comments), id, sessionId);
   }
 
   /**
@@ -263,11 +270,12 @@ export class IssueManager implements IssueModule {
    */
   async createBlockage(blocker: number, blocked: number): Promise<void> {
     const db = getDb();
+    const sessionId = getSessionContext();
     const stmt = db.prepare(`
-      INSERT OR IGNORE INTO issue_blockages (blocker_id, blocked_id)
-      VALUES (?, ?)
+      INSERT OR IGNORE INTO issue_blockages (blocker_id, blocked_id, session_id)
+      VALUES (?, ?, ?)
     `);
-    stmt.run(blocker, blocked);
+    stmt.run(blocker, blocked, sessionId);
   }
 
   /**
@@ -275,11 +283,12 @@ export class IssueManager implements IssueModule {
    */
   async removeBlockage(blocker: number, blocked: number): Promise<void> {
     const db = getDb();
+    const sessionId = getSessionContext();
     const stmt = db.prepare(`
       DELETE FROM issue_blockages
-      WHERE blocker_id = ? AND blocked_id = ?
+      WHERE blocker_id = ? AND blocked_id = ? AND session_id = ?
     `);
-    stmt.run(blocker, blocked);
+    stmt.run(blocker, blocked, sessionId);
   }
 
   /**
@@ -295,18 +304,19 @@ export class IssueManager implements IssueModule {
     comments: string;
   }): Issue {
     const db = getDb();
+    const sessionId = getSessionContext();
 
-    // Get blockages
+    // Get blockages (session-scoped)
     const blockedByStmt = db.prepare(`
-      SELECT blocker_id FROM issue_blockages WHERE blocked_id = ?
+      SELECT blocker_id FROM issue_blockages WHERE blocked_id = ? AND session_id = ?
     `);
-    const blockedByRows = blockedByStmt.all(row.id) as { blocker_id: number }[];
+    const blockedByRows = blockedByStmt.all(row.id, sessionId) as { blocker_id: number }[];
     const blockedBy = blockedByRows.map((r) => r.blocker_id);
 
     const blocksStmt = db.prepare(`
-      SELECT blocked_id FROM issue_blockages WHERE blocker_id = ?
+      SELECT blocked_id FROM issue_blockages WHERE blocker_id = ? AND session_id = ?
     `);
-    const blocksRows = blocksStmt.all(row.id) as { blocked_id: number }[];
+    const blocksRows = blocksStmt.all(row.id, sessionId) as { blocked_id: number }[];
     const blocks = blocksRows.map((r) => r.blocked_id);
 
     // Parse comments
