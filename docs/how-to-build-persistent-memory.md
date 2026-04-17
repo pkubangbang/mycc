@@ -94,7 +94,7 @@ The key parameters are:
 ## maintanance
 
 The vector store is maintained via write-ahead logs (WAL). Each day has its own WAL file,
-stored in `~/.mycc/wiki/logs/` with the naming convention `YYYY-MM-DD.wal`.
+stored in `~/.mycc-store/wiki/logs/` with the naming convention `YYYY-MM-DD.wal`.
 
 ### WAL Format
 
@@ -151,7 +151,7 @@ The rebuild reads all WAL files in chronological order and replays the operation
 
 ```
 /wiki rebuild
--> read all *.wal files from ~/.mycc/wiki/logs/
+-> read all *.wal files from ~/.mycc-store/wiki/logs/
    -> sort by filename (date order)
       -> for each entry, re-calculate embedding and upsert
 ```

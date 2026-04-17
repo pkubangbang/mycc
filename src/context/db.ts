@@ -276,24 +276,24 @@ export function getLongtextDir(): string {
 }
 
 /**
- * Get the user-level tools directory path (~/.mycc/tools)
+ * Get the user-level tools directory path (~/.mycc-store/tools)
  */
 export function getUserToolsDir(): string {
-  return path.join(os.homedir(), '.mycc', 'tools');
+  return path.join(os.homedir(), '.mycc-store', 'tools');
 }
 
 /**
- * Get the user-level skills directory path (~/.mycc/skills)
+ * Get the user-level skills directory path (~/.mycc-store/skills)
  */
 export function getUserSkillsDir(): string {
-  return path.join(os.homedir(), '.mycc', 'skills');
+  return path.join(os.homedir(), '.mycc-store', 'skills');
 }
 
 /**
- * Get the wiki directory path (~/.mycc/wiki)
+ * Get the wiki directory path (~/.mycc-store/wiki)
  */
 export function getWikiDir(): string {
-  return path.join(os.homedir(), '.mycc', 'wiki');
+  return path.join(os.homedir(), '.mycc-store', 'wiki');
 }
 
 /**

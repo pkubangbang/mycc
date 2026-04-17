@@ -33,7 +33,7 @@ import type { KeyInfo } from './utils/key-parser.js';
 // ---------------------------------------------------------------------------
 
 const PROJECT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const GLOBAL_ENV = resolve(homedir(), '.mycc', '.env');
+const GLOBAL_ENV = resolve(homedir(), '.mycc-store', '.env');
 const LOCAL_ENV = resolve(process.cwd(), '.env');
 
 // Load .env: global first, then local (local overrides global)

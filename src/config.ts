@@ -150,7 +150,7 @@ export function validateEnv(): EnvValidationResult {
     warnings.push({
       var: 'EDITOR',
       instruction:
-        'Neither EDITOR nor VISUAL is set. The open-editor tool will fail. Add to ~/.mycc/.env:\n  export EDITOR=code   # VS Code\n  export EDITOR=vim    # Vim',
+        'Neither EDITOR nor VISUAL is set. The open-editor tool will fail. Add to ~/.mycc-store/.env:\n  export EDITOR=code   # VS Code\n  export EDITOR=vim    # Vim',
     });
   }
 

@@ -49,10 +49,10 @@ export function getSessionsDir(): string {
 }
 
 /**
- * Get the user sessions directory path (~/.mycc/sessions)
+ * Get the user sessions directory path (~/.mycc-store/sessions)
  */
 export function getUserSessionsDir(): string {
-  return path.join(os.homedir(), '.mycc', 'sessions');
+  return path.join(os.homedir(), '.mycc-store', 'sessions');
 }
 
 /**

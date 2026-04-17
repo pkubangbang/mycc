@@ -59,7 +59,7 @@ function defaultEditor(): EditorInfo {
   if (!editor) {
     throw new Error(
       '$EDITOR environment variable is not set.\n' +
-      'Please set it to your preferred editor. Add to ~/.mycc/.env:\n' +
+      'Please set it to your preferred editor. Add to ~/.mycc-store/.env:\n' +
       '  export EDITOR=code     # for VS Code\n' +
       '  export EDITOR=vim     # for Vim\n' +
       '  export EDITOR=nano    # for Nano'

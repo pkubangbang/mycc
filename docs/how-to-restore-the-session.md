@@ -22,7 +22,7 @@ will update its content, for example:
    - the first user query will update the bookmark title
    - `tm_create` tool call will add a teammate to the list
    - the ready state of teammate will add a child triologue path
-2. When `/save` the slash-command is used, the same session file will be copied into the user's home (`~/.mycc/sessions`).
+2. When `/save` the slash-command is used, the same session file will be copied into the user's home (`~/.mycc-store/sessions`).
 
 We call the first case "project session" and the second case "user session".
 
@@ -88,7 +88,7 @@ All the missing parts such as team setup and todo/issues are expected to have th
 
 ### saving a session
 1. The user has reached a milestone of the work, and wanted to save the session for later use.
-2. The user uses `/save` slash-command, and the agent will copy the session file from the project folder to the user's home, like `cp /var/proj/proj-kcoin/.mycc/sessions/session-ff3588.json /home/pkubangbang/.mycc/sessions`. After that a log is shown in the terminal "session saved at ~/.mycc/sessions. You can use `/load ff3588` to restore the session."
+2. The user uses `/save` slash-command, and the agent will copy the session file from the project folder to the user's home, like `cp /var/proj/proj-kcoin/.mycc/sessions/session-ff3588.json /home/pkubangbang/.mycc-store/sessions`. After that a log is shown in the terminal "session saved at ~/.mycc-store/sessions. You can use `/load ff3588` to restore the session."
 3. The user exits the agent.
 4. Later the user starts the agent again in a random folder, and use `/load ff3588` to load the session.
 5. The agent will set to new workdir and read the project session files + triologue files and restore the session.

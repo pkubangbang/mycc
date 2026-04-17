@@ -36,7 +36,7 @@ The agent loop cannot finish tasks on its own; it must use `tools`. Tools are we
 
 There are in total of 3 ways to extend (or distract!) the capabilities of the agent: tools, skills, and slash-commands. While the first two are llm-facing, `slash commands` are user-facing: user can type commands to directly talk to the agent context, for example using `/team` to get a peek of the teammates and their states.
 
-To make the chat *roughly* recoverable, we introduced the concept of `session`. There are in total two types of sessions: `project session` and `user session`. Project sessions are persisted as a metadata file inside `current working directory`, while user sessions are inside the user's home dir, to be specific, `~/.mycc/sessions`.
+To make the chat *roughly* recoverable, we introduced the concept of `session`. There are in total two types of sessions: `project session` and `user session`. Project sessions are persisted as a metadata file inside `current working directory`, while user sessions are inside the user's home dir, to be specific, `~/.mycc-store/sessions`.
 
 The same hierachical design can also be found at `user skills` vs `project skills` vs `built-in tools`, and `user tools` vs `project tools` vs `built-in tools`. 
 

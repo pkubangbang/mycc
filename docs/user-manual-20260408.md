@@ -221,7 +221,7 @@ Manage the Write-Ahead Log (WAL) for knowledge base audit:
 /wiki rebuild      - Rebuild vector store from all WAL files
 ```
 
-WAL files are stored in `~/.mycc/wiki/logs/YYYY-MM-DD.wal` as JSON lines.
+WAL files are stored in `~/.mycc-store/wiki/logs/YYYY-MM-DD.wal` as JSON lines.
 
 ---
 
@@ -251,7 +251,7 @@ mycc/
 ├── docs/             # Documentation
 └── dist/             # Compiled output
 
-~/.mycc/wiki/         # Wiki knowledge base (shared across projects)
+~/.mycc-store/wiki/   # Wiki knowledge base (shared across projects)
 ├── db/               # LanceDB vector store
 ├── logs/             # WAL files (YYYY-MM-DD.wal)
 └── domains.json      # Domain registry
@@ -484,9 +484,9 @@ SQLite tables in `.mycc/state.db`:
 | `skills/*.md` | Built-in skill definitions |
 | `.mycc/skills/*.md` | User-defined skills (hot-reload) |
 | `.mycc/mail/*.jsonl` | Mailbox files for inter-agent communication |
-| `~/.mycc/wiki/db/` | LanceDB vector store for knowledge base |
-| `~/.mycc/wiki/logs/*.wal` | Write-Ahead Log files (daily) |
-| `~/.mycc/wiki/domains.json` | Domain registry with metadata |
+| `~/.mycc-store/wiki/db/` | LanceDB vector store for knowledge base |
+| `~/.mycc-store/wiki/logs/*.wal` | Write-Ahead Log files (daily) |
+| `~/.mycc-store/wiki/domains.json` | Domain registry with metadata |
 
 ---
 

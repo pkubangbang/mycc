@@ -22,7 +22,7 @@ import { main } from './loop/agent-loop.js';
 // Environment Setup
 // ---------------------------------------------------------------------------
 
-const GLOBAL_ENV = resolve(homedir(), '.mycc', '.env');
+const GLOBAL_ENV = resolve(homedir(), '.mycc-store', '.env');
 const LOCAL_ENV = resolve(process.cwd(), '.env');
 
 // Load .env: global first, then local (local overrides global)
