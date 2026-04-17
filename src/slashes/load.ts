@@ -32,8 +32,9 @@ export const loadCommand: SlashCommand = {
     const args = context.args;
 
     if (args.length === 1) {
-      // List available sessions
-      const sessions = listSessions();
+      // List available sessions (excluding current session)
+      const currentSessionId = getSessionContext();
+      const sessions = listSessions().filter(s => s.id !== currentSessionId);
       if (sessions.length === 0) {
         console.log(chalk.yellow('No saved sessions found.'));
       } else {
