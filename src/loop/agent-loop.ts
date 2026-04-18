@@ -537,7 +537,7 @@ export async function main(): Promise<void> {
   });
 
   // Handle IPC messages from coordinator
-  process.on('message', (msg: { type: string; key?: KeyInfo; columns?: number }) => {
+  process.on('message', (msg: { type: string; key?: KeyInfo; columns?: number; data?: string }) => {
     if (msg.type === 'neglection') {
       // ESC pressed - set flag and abort current operation
       agentIO.setEscPressed();
@@ -553,6 +553,24 @@ export async function main(): Promise<void> {
     } else if (msg.type === 'resize' && msg.columns) {
       // Forward resize event to AgentIO (which forwards to active LineEditor)
       agentIO.handleResize(msg.columns);
+    } else if (msg.type === 'passthrough_enable') {
+      // Ctrl+Enter - enter passthrough mode for interactive subprocess
+      if (agentIO.getSubprocessStdin()) {
+        // If buffer not full, clear terminal and replay buffers
+        if (!agentIO.isStdoutBufferFull()) {
+          agentIO.replayBuffers();
+        }
+        agentIO.setPassthroughMode(true);
+        // Send SIGWINCH to trigger redraw
+        const subprocess = agentIO.getSubprocess();
+        if (subprocess) {
+          subprocess.kill('SIGWINCH');
+        }
+        process.send!({ type: 'passthrough_started' });
+      }
+    } else if (msg.type === 'passthrough_stdin' && msg.data) {
+      // Forward raw stdin to subprocess
+      agentIO.handlePassthroughStdin(msg.data);
     }
   });
 

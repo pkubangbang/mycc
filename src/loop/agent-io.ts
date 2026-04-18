@@ -10,6 +10,7 @@
 
 import { LineEditor } from '../utils/line-editor.js';
 import type { KeyInfo } from '../utils/key-parser.js';
+import type { Subprocess } from 'execa';
 
 /**
  * AgentIO - Singleton for managing I/O state
@@ -23,6 +24,15 @@ class AgentIO {
   private _isShuttingDown = false;
   private _neglectionMode = false;
   private _escPressed = false;
+
+  // Passthrough mode
+  private _passthroughMode = false;
+  private _subprocessStdin: NodeJS.WritableStream | null = null;
+  private _subprocess: Subprocess | null = null;
+  private _stdoutBuffer: Buffer[] = [];
+  private _stderrBuffer: Buffer[] = [];
+  private _stdoutBufferFull = false;
+  private _stderrBufferFull = false;
 
   // LineEditor management
   private _activeLineEditor: LineEditor | null = null;
@@ -123,6 +133,170 @@ class AgentIO {
   clearEsc(): void {
     this._escPressed = false;
   }
+
+  // Passthrough mode (for interactive subprocess interaction)
+
+  /**
+   * Check if passthrough mode is active
+   */
+  isPassthroughMode(): boolean {
+    return this._passthroughMode;
+  }
+
+  /**
+   * Set passthrough mode
+   */
+  setPassthroughMode(value: boolean): void {
+    this._passthroughMode = value;
+  }
+
+  /**
+   * Get subprocess stdin for passthrough input
+   */
+  getSubprocessStdin(): NodeJS.WritableStream | null {
+    return this._subprocessStdin;
+  }
+
+  /**
+   * Set subprocess stdin reference
+   */
+  setSubprocessStdin(stdin: NodeJS.WritableStream | null): void {
+    this._subprocessStdin = stdin;
+  }
+
+  /**
+   * Get subprocess reference
+   */
+  getSubprocess(): Subprocess | null {
+    return this._subprocess;
+  }
+
+  /**
+   * Set subprocess reference
+   */
+  setSubprocess(subprocess: Subprocess | null): void {
+    this._subprocess = subprocess;
+  }
+
+  /**
+   * Handle passthrough stdin data from Coordinator
+   * Writes raw bytes to subprocess stdin
+   */
+  handlePassthroughStdin(base64Data: string): void {
+    if (this._subprocessStdin && this._passthroughMode) {
+      this._subprocessStdin.write(Buffer.from(base64Data, 'base64'));
+    }
+  }
+
+  // Output buffer management (for smart buffering + passthrough replay)
+
+  /**
+   * Add a chunk to stdout buffer
+   * Returns true if buffer is now full (caller should flush to stdout)
+   */
+  addStdoutChunk(chunk: Buffer): boolean {
+    if (this._stdoutBufferFull) {
+      return true;
+    }
+    this._stdoutBuffer.push(chunk);
+    const total = this._stdoutBuffer.reduce((sum, b) => sum + b.length, 0);
+    if (total >= this.BUFFER_LIMIT) {
+      this._stdoutBufferFull = true;
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * Add a chunk to stderr buffer
+   * Returns true if buffer is now full
+   */
+  addStderrChunk(chunk: Buffer): boolean {
+    if (this._stderrBufferFull) {
+      return true;
+    }
+    this._stderrBuffer.push(chunk);
+    const total = this._stderrBuffer.reduce((sum, b) => sum + b.length, 0);
+    if (total >= this.BUFFER_LIMIT) {
+      this._stderrBufferFull = true;
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * Check if stdout buffer is full
+   */
+  isStdoutBufferFull(): boolean {
+    return this._stdoutBufferFull;
+  }
+
+  /**
+   * Check if stderr buffer is full
+   */
+  isStderrBufferFull(): boolean {
+    return this._stderrBufferFull;
+  }
+
+  /**
+   * Get stdout buffer (for replay)
+   */
+  getStdoutBuffer(): Buffer[] {
+    return this._stdoutBuffer;
+  }
+
+  /**
+   * Get stderr buffer (for replay)
+   */
+  getStderrBuffer(): Buffer[] {
+    return this._stderrBuffer;
+  }
+
+  /**
+   * Flush stdout buffer to process.stdout
+   */
+  flushStdoutBuffer(): void {
+    for (const chunk of this._stdoutBuffer) {
+      process.stdout.write(chunk);
+    }
+  }
+
+  /**
+   * Flush stderr buffer to process.stderr
+   */
+  flushStderrBuffer(): void {
+    for (const chunk of this._stderrBuffer) {
+      process.stderr.write(chunk);
+    }
+  }
+
+  /**
+   * Clear terminal and replay buffers (for passthrough mode)
+   */
+  replayBuffers(): void {
+    // Clear terminal
+    process.stdout.write('\x1b[2J\x1b[H');
+    // Replay buffered output
+    for (const chunk of this._stdoutBuffer) {
+      process.stdout.write(chunk);
+    }
+    for (const chunk of this._stderrBuffer) {
+      process.stderr.write(chunk);
+    }
+  }
+
+  /**
+   * Clear all buffers
+   */
+  clearBuffers(): void {
+    this._stdoutBuffer = [];
+    this._stderrBuffer = [];
+    this._stdoutBufferFull = false;
+    this._stderrBufferFull = false;
+  }
+
+  // Buffer limit constant
+  private readonly BUFFER_LIMIT = 16 * 1024; // 16KB
 
   // Key event handling (for LineEditor)
 
@@ -235,17 +409,22 @@ class AgentIO {
   /**
    * Execute an execa promise with full lifecycle management.
    * Handles abort controller and active flag for signal propagation.
-   * @param execaFactory - A function that takes a signal and returns an execa promise
+   * Stores subprocess reference for passthrough mode.
+   * @param execaFactory - A function that takes a signal and returns an execa subprocess
    */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  async exec(execaFactory: (signal: AbortSignal) => Promise<any>): Promise<{ result: any; interrupted: boolean }> {
+  async exec(execaFactory: (signal: AbortSignal) => Promise<any> & { stdin?: NodeJS.WritableStream | null }): Promise<{ result: any; interrupted: boolean }> {
     const abortController = new AbortController();
 
     this._activeTool = true;
     this._abortController = abortController;
 
     try {
-      const result = await execaFactory(abortController.signal);
+      const subprocess = execaFactory(abortController.signal);
+      // Store subprocess reference for passthrough mode
+      this._subprocess = subprocess as any;
+      this._subprocessStdin = subprocess.stdin ?? null;
+      const result = await subprocess;
       return { result, interrupted: false };
     } catch (err) {
       const interrupted = abortController.signal.aborted;
@@ -253,6 +432,8 @@ class AgentIO {
     } finally {
       this._activeTool = false;
       this._abortController = null;
+      this._subprocess = null;
+      this._subprocessStdin = null;
     }
   }
 }

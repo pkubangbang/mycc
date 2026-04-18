@@ -226,3 +226,11 @@ export function isCtrlD(data: Buffer): boolean {
 export function isEscape(data: Buffer): boolean {
   return data.length === 1 && data[0] === 0x1b;
 }
+
+/**
+ * Check if data represents Ctrl+Enter (Ctrl+J = 0x0a)
+ * In terminals, Ctrl+Enter typically sends the same as Ctrl+J (line feed)
+ */
+export function isCtrlEnter(data: Buffer): boolean {
+  return data.length === 1 && data[0] === 0x0a;
+}

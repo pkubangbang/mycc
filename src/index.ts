@@ -25,7 +25,7 @@ import { dirname, resolve } from 'path';
 import { fileURLToPath } from 'url';
 import chalk from 'chalk';
 import { isVerbose, printEnvStatus, validateEnv } from './config.js';
-import { parseKeys, isCtrlC, isEscape } from './utils/key-parser.js';
+import { parseKeys, isCtrlC, isEscape, isCtrlEnter } from './utils/key-parser.js';
 import type { KeyInfo } from './utils/key-parser.js';
 
 // ---------------------------------------------------------------------------
@@ -63,13 +63,17 @@ if (isVerbose()) {
 type CoordinatorMessage =
   | { type: 'ready' }
   | { type: 'restart'; sessionId: string; cwd: string }
-  | { type: 'exit' };
+  | { type: 'exit' }
+  | { type: 'passthrough_started' }
+  | { type: 'passthrough_ended' };
 
 /** IPC message from Coordinator to Lead */
 export type CoordinatorToLeadMessage =
   | { type: 'neglection' }
   | { type: 'key'; key: KeyInfo }
-  | { type: 'resize'; columns: number };
+  | { type: 'resize'; columns: number }
+  | { type: 'passthrough_enable' }
+  | { type: 'passthrough_stdin'; data: string };
 
 // ---------------------------------------------------------------------------
 // Spawn Command
@@ -104,6 +108,7 @@ function getSpawnCommand(): SpawnCommand {
 
 let lead: ChildProcess | null = null;
 let isRestarting = false;
+let passthroughMode = false;
 
 // Flags to forward to lead processes
 const skipHealthCheck = process.argv.includes('--skip-healthcheck');
@@ -146,6 +151,10 @@ function startLead(args: string[] = [], cwd = process.cwd()): ChildProcess {
     } else if (msg.type === 'exit') {
       // Lead requested exit - exit coordinator cleanly with code 0
       process.exit(0);
+    } else if (msg.type === 'passthrough_started') {
+      passthroughMode = true;
+    } else if (msg.type === 'passthrough_ended') {
+      passthroughMode = false;
     }
   });
 
@@ -216,13 +225,33 @@ if (process.stdin.isTTY) {
       cleanup();
       process.exit(130);
     }
-    // ESC - send neglection IPC to lead
+
+    // Ctrl+Enter - request passthrough mode
+    if (isCtrlEnter(data)) {
+      if (!passthroughMode) {
+        lead?.send({ type: 'passthrough_enable' });
+      }
+      return;
+    }
+
+    // ESC - send neglection IPC or forward in passthrough mode
     if (isEscape(data)) {
+      if (passthroughMode) {
+        // Forward ESC to subprocess
+        lead?.send({ type: 'passthrough_stdin', data: data.toString('base64') });
+        return;
+      }
       lead?.send({ type: 'neglection' });
       return;
     }
 
-    // Forward structured key events to Lead via IPC (one per key)
+    // Passthrough mode - forward raw bytes
+    if (passthroughMode) {
+      lead?.send({ type: 'passthrough_stdin', data: data.toString('base64') });
+      return;
+    }
+
+    // Normal mode - parse and forward structured key events
     const keys = parseKeys(data);
     for (const key of keys) {
       lead?.send({ type: 'key', key });
