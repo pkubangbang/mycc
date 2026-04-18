@@ -43,6 +43,78 @@ export function readTriologue(filePath: string): Message[] {
   return messages;
 }
 
+/**
+ * Detect and fix orphaned tool calls in a triologue.
+ *
+ * Orphaned tool calls happen when a session is interrupted mid-execution:
+ * - Last message is assistant with tool_calls
+ * - No corresponding tool results follow
+ *
+ * This function:
+ * 1. Tracks pending tool calls through the message sequence
+ * 2. Detects remaining pending calls at the end
+ * 3. Injects synthetic "interrupted" tool results for them
+ *
+ * @param messages - Messages from triologue
+ * @returns Messages with orphaned tool calls fixed
+ */
+export function fixOrphanedToolCalls(messages: Message[]): Message[] {
+  if (messages.length === 0) return messages;
+
+  // Track pending tool calls: id -> {id, function: {name, arguments}}
+  // Note: ollama's ToolCall type doesn't have 'id', but runtime data does
+  type ToolCallWithId = { id: string; function: { name: string; arguments: Record<string, unknown> } };
+  const pendingCalls = new Map<string, ToolCallWithId>();
+
+  for (const msg of messages) {
+    if (msg.role === 'assistant' && msg.tool_calls) {
+      // Add new tool calls to pending (cast to include id)
+      for (const tc of msg.tool_calls as ToolCallWithId[]) {
+        if (tc.id) {
+          pendingCalls.set(tc.id, tc);
+        }
+      }
+    } else if (msg.role === 'tool') {
+      // Remove from pending when we see a result
+      if (msg.tool_call_id) {
+        pendingCalls.delete(msg.tool_call_id);
+      }
+    }
+  }
+
+  // If no pending calls remain, no fix needed
+  if (pendingCalls.size === 0) {
+    return messages;
+  }
+
+  // Found orphaned tool calls - inject synthetic results
+  const fixed = [...messages];
+  console.log(chalk.yellow(`[restoration] Found ${pendingCalls.size} orphaned tool call(s) - adding interrupt markers`));
+
+  for (const [id, tc] of pendingCalls) {
+    const toolName = tc.function.name;
+    const args = tc.function.arguments ?? {};
+    const command = args.command ?? args.path ?? args.name ?? '';
+
+    console.log(chalk.gray(`  - ${toolName}${command ? `: ${String(command).slice(0, 50)}` : ''}`));
+
+    fixed.push({
+      role: 'tool',
+      tool_name: toolName,
+      tool_call_id: id,
+      content: `[INTERRUPTED] This tool call was interrupted before completion. The session was likely terminated during execution. Consider retrying if needed.`,
+    });
+  }
+
+  // Add assistant acknowledgment
+  fixed.push({
+    role: 'assistant',
+    content: 'I was interrupted during tool execution. The interrupted tool call(s) have been marked. How would you like to proceed?',
+  });
+
+  return fixed;
+}
+
 function estimateTokens(message: Message): number {
   let total = 0;
   if (message.content) {
@@ -324,7 +396,8 @@ export async function prepareRestoration(session: Session): Promise<{ pair: Summ
   const childSummaries: { path: string, summary: Message }[] = [];
   for (const path of session.child_triologues) {
     const triologue = readTriologue(path);
-    const pair = await summarizeChildTriologue(triologue);
+    const fixedTriologue = fixOrphanedToolCalls(triologue);
+    const pair = await summarizeChildTriologue(fixedTriologue);
     childSummaries.push({
       path: path,
       summary: pair[0]
@@ -333,8 +406,9 @@ export async function prepareRestoration(session: Session): Promise<{ pair: Summ
 
   console.log(chalk.gray(`  Summarized ${childSummaries.length} child triologues`));
 
-  // Read lead triologue and inject child summaries at tm_create positions
-  const leadMessages = readTriologue(session.lead_triologue);
+  // Read lead triologue, fix orphaned tool calls, and inject child summaries at tm_create positions
+  const rawLeadMessages = readTriologue(session.lead_triologue);
+  const leadMessages = fixOrphanedToolCalls(rawLeadMessages);
   const combined = await summarizeLeadTriologue(leadMessages, childSummaries);
 
   console.log(chalk.gray(`  Combined ${leadMessages.length + childSummaries.length} messages (lead + child summaries)`));

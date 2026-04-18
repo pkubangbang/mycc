@@ -232,12 +232,6 @@ export async function agentLoop(
         triologue.user('Continue with your task.');
       }
 
-      // Check neglection mode before LLM call - inject strong instruction to hold tool usage
-      if (agentIO.isNeglectionMode()) {
-        triologue.user('IMPORTANT: User pressed ESC to interrupt. Please respond with text only - do NOT use any tools. Just explain the current status or ask the user what they would like to do next.');
-        agentIO.clearNeglectionMode();
-      }
-
       const systemPrompt = buildSystemPrompt(ctx);
       triologue.setSystemPrompt(systemPrompt);
 
@@ -262,6 +256,15 @@ export async function agentLoop(
 
         // Clear abort controller after successful call
         agentIO.clearLlmAbortController();
+
+        // Check if ESC was pressed during LLM call - discard response if so
+        if (agentIO.isEscPressed()) {
+          console.log(chalk.yellow('[ESC] LLM response discarded due to interruption'));
+          agentIO.clearEsc();
+          // Inject user message about interruption and let LLM wrap up
+          triologue.user('The user pressed ESC to interrupt. Please wrap up and wait for next instruction.');
+          continue;
+        }
 
         // 5. Handle response
         const assistantMessage = response.message;
@@ -295,14 +298,15 @@ export async function agentLoop(
             throw new ShutdownError();
           }
 
-          // Check for neglection mode - bail remaining tools
-          if (agentIO.isNeglectionMode()) {
-            console.log(chalk.yellow('\n[Neglection Mode] ESC pressed - skipping remaining tools'));
-            // Don't clear the flag here - sustain it until before next LLM call
-            // Inject user prompt message and continue to next iteration
-            triologue.user('Tool execution was interrupted by user pressing ESC. The remaining tools were skipped. What would you like to do?');
-            // Continue to next iteration (will prompt user)
-            break;
+          // Check for ESC - abort current tool and skip remaining
+          if (agentIO.isEscPressed()) {
+            console.log(chalk.yellow('\n[ESC] Tool execution interrupted - skipping remaining tools'));
+            // Skip all remaining tools (including current) with placeholder results
+            triologue.skipPendingTools('Tool skipped due to ESC interruption.');
+            agentIO.clearEsc();
+            // Inject user message and let LLM wrap up
+            triologue.user('The user pressed ESC to interrupt. Please wrap up and wait for next instruction.');
+            break;  // Exit tool loop, continue to next LLM call for wrap-up
           }
 
           const toolCallId = toolCall.id;
@@ -535,9 +539,13 @@ export async function main(): Promise<void> {
   // Handle IPC messages from coordinator
   process.on('message', (msg: { type: string; key?: KeyInfo; columns?: number }) => {
     if (msg.type === 'neglection') {
-      const isNew = agentIO.setNeglectionMode(true);
-      if (isNew) {
-        console.log(chalk.yellow('\n[ESC] Neglection mode activated - remaining tools will be skipped'));
+      // ESC pressed - set flag and abort current operation
+      agentIO.setEscPressed();
+      const aborted = agentIO.abort();
+      if (aborted) {
+        console.log(chalk.yellow('\n[ESC] Interrupting current operation...'));
+      } else {
+        console.log(chalk.yellow('\n[ESC] Interrupt requested - will skip remaining work'));
       }
     } else if (msg.type === 'key' && msg.key) {
       // Forward key event to AgentIO (which forwards to active LineEditor)

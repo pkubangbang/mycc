@@ -197,6 +197,27 @@ export class Triologue {
   }
 
   /**
+   * Skip all pending tool calls with placeholder results.
+   * Called when ESC interrupts tool execution.
+   * @param interruptMessage - Message to use for skipped tools
+   */
+  skipPendingTools(interruptMessage: string): void {
+    for (const id of this.pendingToolCallOrder) {
+      const tc = this.pendingToolCalls.get(id);
+      if (tc) {
+        this.addMessage({
+          role: 'tool',
+          tool_name: tc.function.name,
+          content: interruptMessage,
+          tool_call_id: id,
+        });
+      }
+    }
+    this.pendingToolCalls.clear();
+    this.pendingToolCallOrder = [];
+  }
+
+  /**
    * Find pending tool call by function name (returns first match in order)
    */
   private findPendingToolCall(functionName: string): string | undefined {

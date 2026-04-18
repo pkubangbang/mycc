@@ -25,7 +25,7 @@ import { dirname, resolve } from 'path';
 import { fileURLToPath } from 'url';
 import chalk from 'chalk';
 import { isVerbose, printEnvStatus, validateEnv } from './config.js';
-import { parseKeys, isCtrlC, isCtrlD, isEscape } from './utils/key-parser.js';
+import { parseKeys, isCtrlC, isEscape } from './utils/key-parser.js';
 import type { KeyInfo } from './utils/key-parser.js';
 
 // ---------------------------------------------------------------------------
@@ -207,16 +207,14 @@ if (process.stdin.isTTY) {
   process.stdin.resume();
 
   process.stdin.on('data', (data: Buffer) => {
-    // Ctrl+C - forward SIGINT to lead
+    // Ctrl+C - forcibly kill Lead and exit immediately
     if (isCtrlC(data)) {
-      lead?.kill('SIGINT');
-      return;
-    }
-    // Ctrl+D - exit coordinator cleanly
-    if (isCtrlD(data)) {
+      console.log(chalk.yellow('\nCtrl+C - Exiting...'));
+      if (lead) {
+        lead.kill('SIGKILL');
+      }
       cleanup();
-      process.exit(0);
-      return;
+      process.exit(130);
     }
     // ESC - send neglection IPC to lead
     if (isEscape(data)) {
@@ -242,17 +240,19 @@ function cleanup(): void {
 // Signal Handling
 // ---------------------------------------------------------------------------
 
-function forwardSignal(signal: 'SIGINT' | 'SIGTERM'): void {
+// SIGTERM - sent by external processes (e.g., `kill <pid>`), NOT triggered by Ctrl+C
+// (Ctrl+C is handled by stdin data handler in raw mode, see line ~210)
+process.on('SIGTERM', () => {
   if (lead) {
-    lead.kill(signal);
+    lead.kill('SIGTERM');
   } else {
     cleanup();
     process.exit(0);
   }
-}
+});
 
-process.on('SIGINT', () => forwardSignal('SIGINT'));
-process.on('SIGTERM', () => forwardSignal('SIGTERM'));
+// Safety net: ensures cleanup runs on any process exit, even if explicit cleanup()
+// call is missed. Safe to call multiple times (setRawMode(false) is idempotent).
 process.on('exit', cleanup);
 
 // ---------------------------------------------------------------------------

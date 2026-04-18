@@ -22,7 +22,7 @@ class AgentIO {
   private _isMainProcess = false;
   private _isShuttingDown = false;
   private _neglectionMode = false;
-  private _neglectionWarned = false;
+  private _escPressed = false;
 
   // LineEditor management
   private _activeLineEditor: LineEditor | null = null;
@@ -90,11 +90,7 @@ class AgentIO {
   setNeglectionMode(value: boolean): boolean {
     const wasActive = this._neglectionMode;
     this._neglectionMode = value;
-    if (value && !wasActive) {
-      this._neglectionWarned = true;
-      return true; // New activation - show warning
-    }
-    return false; // Already active - don't repeat warning
+    return value && !wasActive; // New activation - show warning
   }
 
   /**
@@ -102,7 +98,30 @@ class AgentIO {
    */
   clearNeglectionMode(): void {
     this._neglectionMode = false;
-    this._neglectionWarned = false;
+  }
+
+  // ESC handling (soft reconsider - interrupt and wrap up)
+
+  /**
+   * Check if ESC was pressed
+   * When true, current operation should be abandoned and LLM should wrap up
+   */
+  isEscPressed(): boolean {
+    return this._escPressed;
+  }
+
+  /**
+   * Set ESC pressed flag (called when ESC IPC received)
+   */
+  setEscPressed(): void {
+    this._escPressed = true;
+  }
+
+  /**
+   * Clear ESC flag (called after handling)
+   */
+  clearEsc(): void {
+    this._escPressed = false;
   }
 
   // Key event handling (for LineEditor)
@@ -168,11 +187,11 @@ class AgentIO {
     });
   }
 
-  // SIGINT handling
+  // Abort handling (used by SIGINT handler in agent-loop.ts and ESC/neglection IPC)
 
   /**
    * Abort the current tool or LLM call if one is running
-   * Called by SIGINT handler when Ctrl+C is pressed
+   * Called by SIGINT handler (external signal) or ESC/neglection IPC
    * @returns true if something was aborted, false otherwise
    */
   abort(): boolean {
