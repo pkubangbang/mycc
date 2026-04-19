@@ -18,7 +18,6 @@ import { buildSystemPrompt } from './agent-prompts.js';
 import { getTokenThreshold } from '../config.js';
 import { Triologue } from './triologue.js';
 import { agentIO } from './agent-io.js';
-import type { KeyInfo } from '../utils/key-parser.js';
 import { isVerbose, getSessionArg, shouldSkipHealthCheck } from '../config.js';
 import { openMultilineEditor } from '../utils/multiline-input.js';
 import { displayLetterBox } from '../utils/letter-box.js';
@@ -189,18 +188,27 @@ export async function agentLoop(
   let nextTodoNudge = 3;
   let lastTodoState = '';
 
-  while (!agentIO.isShuttingDown()) {
+  while (true) {
     try {
+      // Clear interrupted mode at start of new iteration
+      agentIO.clearInterruptedMode();
+
       // 1. Handle pending questions from children
       await ctx.team.handlePendingQuestions();
 
       // 2. Collect mails (collated into single user message)
+      // When in interrupted mode, add urgency to wrap up quickly
       const mails = ctx.mail.collectMails();
       if (mails.length > 0) {
         const mailContent = mails
           .map((mail) => `Mail from ${mail.from}: ${mail.title}\n${mail.content}`)
           .join('\n\n---\n\n');
-        triologue.user(mailContent);
+
+        if (agentIO.isInterruptedMode()) {
+          triologue.user(`[URGENT: user interrupted - wrap up quickly]\n${mailContent}`);
+        } else {
+          triologue.user(mailContent);
+        }
       }
 
       // 2.5 Generate hint round if threshold reached
@@ -261,8 +269,8 @@ export async function agentLoop(
         if (agentIO.isEscPressed()) {
           console.log(chalk.yellow('[ESC] LLM response discarded due to interruption'));
           agentIO.clearEsc();
-          // Inject user message about interruption and let LLM wrap up
-          triologue.user('The user pressed ESC to interrupt. Please wrap up and wait for next instruction.');
+          // Inject message about LLM interruption for wrap-up
+          triologue.user('LLM call interrupted. Please wrap up and ask user for next steps.');
           continue;
         }
 
@@ -294,15 +302,14 @@ export async function agentLoop(
 
         // 7. Execute tools
         for (const toolCall of (assistantMessage.tool_calls as ToolCall[])) {
-          if (agentIO.isShuttingDown()) {
-            throw new ShutdownError();
-          }
-
           // Check for ESC - abort current tool and skip remaining
           if (agentIO.isEscPressed()) {
             console.log(chalk.yellow('\n[ESC] Tool execution interrupted - skipping remaining tools'));
-            // Skip all remaining tools (including current) with placeholder results
-            triologue.skipPendingTools('Tool skipped due to ESC interruption.');
+            // First tool gets "interrupted", remaining get "skipped"
+            triologue.skipPendingTools(
+              'Tool use interrupted - user pressed ESC.',
+              'Tool use skipped due to ESC interruption.'
+            );
             agentIO.clearEsc();
             // Inject user message and let LLM wrap up
             triologue.user('The user pressed ESC to interrupt. Please wrap up and wait for next instruction.');
@@ -354,14 +361,17 @@ export async function agentLoop(
 
         // Check if this was an abort during LLM call
         if (err instanceof Error && err.message === 'Request aborted') {
-          throw new ShutdownError('Interrupted by user');
+          console.log(chalk.yellow('[ESC] LLM call interrupted'));
+          // Inject message for wrap-up instead of throwing ShutdownError
+          triologue.user('LLM call interrupted. Please wrap up and ask user for next steps.');
+          continue;
         }
 
         throw err;
       }
     } catch (err) {
-      // Check if we should exit (shutdown or non-recoverable)
-      if (err instanceof ShutdownError || agentIO.isShuttingDown()) {
+      // Check if we should exit (shutdown)
+      if (err instanceof ShutdownError) {
         throw err;
       }
 
@@ -531,54 +541,16 @@ export async function main(): Promise<void> {
       console.log(chalk.yellow('\nInterrupting current operation...'));
       return;
     }
-    // No active tool - safe to exit
+    // No active LLM call - safe to exit
     console.log(chalk.yellow('\nShutting down...'));
     process.send!({ type: 'exit' });
-  });
-
-  // Handle IPC messages from coordinator
-  process.on('message', (msg: { type: string; key?: KeyInfo; columns?: number; data?: string }) => {
-    if (msg.type === 'neglection') {
-      // ESC pressed - set flag and abort current operation
-      agentIO.setEscPressed();
-      const aborted = agentIO.abort();
-      if (aborted) {
-        console.log(chalk.yellow('\n[ESC] Interrupting current operation...'));
-      } else {
-        console.log(chalk.yellow('\n[ESC] Interrupt requested - will skip remaining work'));
-      }
-    } else if (msg.type === 'key' && msg.key) {
-      // Forward key event to AgentIO (which forwards to active LineEditor)
-      agentIO.handleKeyEvent(msg.key);
-    } else if (msg.type === 'resize' && msg.columns) {
-      // Forward resize event to AgentIO (which forwards to active LineEditor)
-      agentIO.handleResize(msg.columns);
-    } else if (msg.type === 'passthrough_enable') {
-      // Ctrl+Enter - enter passthrough mode for interactive subprocess
-      if (agentIO.getSubprocessStdin()) {
-        // If buffer not full, clear terminal and replay buffers
-        if (!agentIO.isStdoutBufferFull()) {
-          agentIO.replayBuffers();
-        }
-        agentIO.setPassthroughMode(true);
-        // Send SIGWINCH to trigger redraw
-        const subprocess = agentIO.getSubprocess();
-        if (subprocess) {
-          subprocess.kill('SIGWINCH');
-        }
-        process.send!({ type: 'passthrough_started' });
-      }
-    } else if (msg.type === 'passthrough_stdin' && msg.data) {
-      // Forward raw stdin to subprocess
-      agentIO.handlePassthroughStdin(msg.data);
-    }
   });
 
   // Emit ready signal for Coordinator
   process.send({ type: 'ready' });
 
   // Main REPL loop
-  while (!agentIO.isShuttingDown()) {
+  while (true) {
     try {
       // Use initial query from restored session, or prompt for input
       let query: string;
@@ -653,7 +625,7 @@ export async function main(): Promise<void> {
       }
     } catch (err) {
       // Shutdown - exit cleanly
-      if (err instanceof ShutdownError || agentIO.isShuttingDown()) {
+      if (err instanceof ShutdownError) {
         break;
       }
 

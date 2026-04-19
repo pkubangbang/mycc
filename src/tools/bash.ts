@@ -9,21 +9,15 @@
  * - elor: Expected line of result (default: 50)
  * - timeout: Seconds before killing the process (mandatory)
  *   - Process is killed immediately with SIGKILL on timeout
- *
- * Passthrough mode:
- * - User presses Ctrl+Enter to enter passthrough mode for interactive commands
- * - Output is buffered up to 16KB; when full, shows in real-time
- * - In passthrough mode, raw stdin is forwarded to subprocess
  */
 
-import { execa } from 'execa';
 import type { ToolDefinition, AgentContext } from '../types.js';
 import { agentIO } from '../loop/agent-io.js';
 import { retryChat, MODEL } from '../ollama.js';
 
 export const bashTool: ToolDefinition = {
   name: 'bash',
-  description: `Run a shell command (blocking). Must specify timeout - process is killed on timeout. Press Ctrl+Enter during execution for interactive mode.`,
+  description: `Run a shell command (blocking). Must specify timeout - process is killed on timeout.`,
   input_schema: {
     type: 'object',
     properties: {
@@ -61,83 +55,21 @@ export const bashTool: ToolDefinition = {
 
     ctx.core.brief('info', 'bash', command, intent);
 
-    // Clear any previous buffer state
-    agentIO.clearBuffers();
-
-    const { result, interrupted } = await agentIO.exec((signal) => {
-      const subprocess = execa('bash', ['-c', command], {
-        cwd: ctx.core.getWorkDir(),
-        stdin: 'pipe',  // Enable stdin for passthrough mode
-        stdout: 'pipe',
-        stderr: 'pipe',
-        encoding: 'utf8',
-        cancelSignal: signal,
-        gracefulCancel: true,
-        reject: false,
-        timeout: timeoutSeconds * 1000,
-        killSignal: 'SIGKILL',
-      });
-
-      // Smart buffering: buffer up to 16KB, then show real-time
-      subprocess.stdout?.on('data', (chunk: string | Buffer) => {
-        const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-        if (agentIO.isStdoutBufferFull()) {
-          // Buffer full, show real-time
-          process.stdout.write(buf);
-        } else {
-          const full = agentIO.addStdoutChunk(buf);
-          if (full) {
-            // Just became full, flush and continue real-time
-            agentIO.flushStdoutBuffer();
-          }
-        }
-      });
-
-      subprocess.stderr?.on('data', (chunk: string | Buffer) => {
-        const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-        if (agentIO.isStderrBufferFull()) {
-          process.stderr.write(buf);
-        } else {
-          const full = agentIO.addStderrChunk(buf);
-          if (full) {
-            agentIO.flushStderrBuffer();
-          }
-        }
-      });
-
-      return subprocess;
+    const { stdout, stderr, interrupted, exitCode, timedOut } = await agentIO.exec({
+      cwd: ctx.core.getWorkDir(),
+      command,
+      timeout: timeoutSeconds,
     });
 
-    // Handle passthrough mode exit
-    if (agentIO.isPassthroughMode()) {
-      agentIO.setPassthroughMode(false);
-      process.send?.({ type: 'passthrough_ended' });
-      agentIO.clearBuffers();
-      return 'Interactive session ended.';
+    if (timedOut) {
+      return `Error: timeout after ${timeoutSeconds} seconds. Use bg_create to run as a service, or set a longer timeout.`;
     }
-
-    // Flush any remaining buffered output (normal execution)
-    agentIO.flushStdoutBuffer();
-    agentIO.flushStderrBuffer();
-    agentIO.clearBuffers();
 
     if (interrupted) {
       return 'Command interrupted by user.';
     }
 
-    // Check if command failed
-    if (result instanceof Error) {
-      if ((result as any).timedOut) {
-        return `Error: timeout after ${timeoutSeconds} seconds. Use bg_create to run as a service, or set a longer timeout.`;
-      }
-      return `Error: ${result.message}`;
-    }
-
     // Build LLM-friendly output
-    const stdout = result.stdout || '';
-    const stderr = result.stderr || '';
-    const exitCode = result.exitCode ?? 0;
-
     const parts: string[] = [];
 
     // Status line

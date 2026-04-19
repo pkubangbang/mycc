@@ -143,11 +143,6 @@ export class Core implements CoreModule {
       throw new Error('Question query must be a non-empty string');
     }
 
-    // Check if shutting down
-    if (agentIO.isShuttingDown()) {
-      throw new Error('Agent is shutting down');
-    }
-
     // Display who is asking, then the query (via agentIO.ask)
     this.brief('info', 'question', `${asker} asks:`);
     return await agentIO.ask(query);

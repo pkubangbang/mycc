@@ -1,8 +1,7 @@
 /**
  * agent-io.ts - I/O state management singleton for agent loop
  *
- * Manages active tool tracking, abort controllers, and LineEditor lifecycle
- * for handling interactive commands and signal propagation.
+ * Manages LineEditor lifecycle and signal propagation.
  *
  * Note: stdin is handled by the Coordinator process via IPC, not by this module.
  * LineEditor receives key events via IPC and manipulates stdout directly.
@@ -10,61 +9,78 @@
 
 import { LineEditor } from '../utils/line-editor.js';
 import type { KeyInfo } from '../utils/key-parser.js';
-import type { Subprocess } from 'execa';
+import { execa } from 'execa';
+
+/**
+ * Options for exec command
+ */
+export interface ExecOptions {
+  cwd: string;
+  command: string;
+  timeout: number;
+}
+
+/**
+ * Result of exec command
+ */
+export interface ExecResult {
+  stdout: string;
+  stderr: string;
+  interrupted: boolean;
+  exitCode: number;
+  timedOut: boolean;
+}
 
 /**
  * AgentIO - Singleton for managing I/O state
- * Provides exec() wrapper for commands with abort handling
  */
 class AgentIO {
-  private _activeTool = false;
-  private _abortController: AbortController | null = null;
-  private _llmAbortController: AbortController | null = null;
-  private _isMainProcess = false;
-  private _isShuttingDown = false;
-  private _neglectionMode = false;
-  private _escPressed = false;
+  private isMainProcessFlag = false;
+  private escPressedFlag = false;
+  private llmAbortController: AbortController | null = null;
 
-  // Passthrough mode
-  private _passthroughMode = false;
-  private _subprocessStdin: NodeJS.WritableStream | null = null;
-  private _subprocess: Subprocess | null = null;
-  private _stdoutBuffer: Buffer[] = [];
-  private _stderrBuffer: Buffer[] = [];
-  private _stdoutBufferFull = false;
-  private _stderrBufferFull = false;
+  // Interrupted mode tracking (ESC was pressed this round)
+  private interruptedModeFlag = false;
 
   // LineEditor management
-  private _activeLineEditor: LineEditor | null = null;
-  private _lineHistory: string[] = [];
+  private activeLineEditor: LineEditor | null = null;
+  private lineHistory: string[] = [];
 
   // Lifecycle
 
   /**
    * Initialize for main process
+   * Sets up IPC message handlers for key events and resize
    */
   initMain(): void {
-    this._isMainProcess = true;
-    this._isShuttingDown = false;
+    this.isMainProcessFlag = true;
+
+    // Handle IPC messages from coordinator
+    process.on('message', (msg: { type: string; key?: KeyInfo; columns?: number }) => {
+      if (msg.type === 'neglection') {
+        // ESC pressed - set flag and abort LLM call if running
+        this.setEscPressed();
+        const aborted = this.abort();
+        if (aborted) {
+          console.log('\n[ESC] Interrupting LLM call...');
+        } else {
+          console.log('\n[ESC] Interrupt requested - will skip remaining work');
+        }
+      } else if (msg.type === 'key' && msg.key) {
+        // Forward key event to active LineEditor
+        this.handleKeyEvent(msg.key);
+      } else if (msg.type === 'resize' && msg.columns) {
+        // Forward resize event to active LineEditor
+        this.handleResize(msg.columns);
+      }
+    });
   }
 
   /**
    * Initialize for child process
    */
   initChild(): void {
-    this._isMainProcess = false;
-    this._isShuttingDown = false;
-  }
-
-  /**
-   * Cleanup on shutdown
-   */
-  close(): void {
-    this._isShuttingDown = true;
-    if (this._activeLineEditor) {
-      this._activeLineEditor.close();
-      this._activeLineEditor = null;
-    }
+    this.isMainProcessFlag = false;
   }
 
   // Type check
@@ -73,41 +89,7 @@ class AgentIO {
    * Check if running in main process
    */
   isMainProcess(): boolean {
-    return this._isMainProcess;
-  }
-
-  /**
-   * Check if agent is shutting down
-   */
-  isShuttingDown(): boolean {
-    return this._isShuttingDown;
-  }
-
-  // Neglection mode (ESC key pressed during tool execution)
-
-  /**
-   * Check if neglection mode is active
-   * When true, remaining tools in the current loop will be bailed
-   */
-  isNeglectionMode(): boolean {
-    return this._neglectionMode;
-  }
-
-  /**
-   * Set neglection mode (called when ESC is detected)
-   * Returns true if this is a new activation (warning should be shown)
-   */
-  setNeglectionMode(value: boolean): boolean {
-    const wasActive = this._neglectionMode;
-    this._neglectionMode = value;
-    return value && !wasActive; // New activation - show warning
-  }
-
-  /**
-   * Clear neglection mode (called when resuming after bail)
-   */
-  clearNeglectionMode(): void {
-    this._neglectionMode = false;
+    return this.isMainProcessFlag;
   }
 
   // ESC handling (soft reconsider - interrupt and wrap up)
@@ -117,186 +99,40 @@ class AgentIO {
    * When true, current operation should be abandoned and LLM should wrap up
    */
   isEscPressed(): boolean {
-    return this._escPressed;
+    return this.escPressedFlag;
   }
 
   /**
    * Set ESC pressed flag (called when ESC IPC received)
+   * Also enters interrupted mode for the current round
    */
   setEscPressed(): void {
-    this._escPressed = true;
+    this.escPressedFlag = true;
+    this.interruptedModeFlag = true;
   }
 
   /**
    * Clear ESC flag (called after handling)
    */
   clearEsc(): void {
-    this._escPressed = false;
+    this.escPressedFlag = false;
   }
 
-  // Passthrough mode (for interactive subprocess interaction)
+  // Interrupted mode tracking (for quick wrap-up)
 
   /**
-   * Check if passthrough mode is active
+   * Check if in interrupted mode (ESC was pressed this round)
    */
-  isPassthroughMode(): boolean {
-    return this._passthroughMode;
-  }
-
-  /**
-   * Set passthrough mode
-   */
-  setPassthroughMode(value: boolean): void {
-    this._passthroughMode = value;
+  isInterruptedMode(): boolean {
+    return this.interruptedModeFlag;
   }
 
   /**
-   * Get subprocess stdin for passthrough input
+   * Clear interrupted mode (called at start of new agent loop iteration)
    */
-  getSubprocessStdin(): NodeJS.WritableStream | null {
-    return this._subprocessStdin;
+  clearInterruptedMode(): void {
+    this.interruptedModeFlag = false;
   }
-
-  /**
-   * Set subprocess stdin reference
-   */
-  setSubprocessStdin(stdin: NodeJS.WritableStream | null): void {
-    this._subprocessStdin = stdin;
-  }
-
-  /**
-   * Get subprocess reference
-   */
-  getSubprocess(): Subprocess | null {
-    return this._subprocess;
-  }
-
-  /**
-   * Set subprocess reference
-   */
-  setSubprocess(subprocess: Subprocess | null): void {
-    this._subprocess = subprocess;
-  }
-
-  /**
-   * Handle passthrough stdin data from Coordinator
-   * Writes raw bytes to subprocess stdin
-   */
-  handlePassthroughStdin(base64Data: string): void {
-    if (this._subprocessStdin && this._passthroughMode) {
-      this._subprocessStdin.write(Buffer.from(base64Data, 'base64'));
-    }
-  }
-
-  // Output buffer management (for smart buffering + passthrough replay)
-
-  /**
-   * Add a chunk to stdout buffer
-   * Returns true if buffer is now full (caller should flush to stdout)
-   */
-  addStdoutChunk(chunk: Buffer): boolean {
-    if (this._stdoutBufferFull) {
-      return true;
-    }
-    this._stdoutBuffer.push(chunk);
-    const total = this._stdoutBuffer.reduce((sum, b) => sum + b.length, 0);
-    if (total >= this.BUFFER_LIMIT) {
-      this._stdoutBufferFull = true;
-      return true;
-    }
-    return false;
-  }
-
-  /**
-   * Add a chunk to stderr buffer
-   * Returns true if buffer is now full
-   */
-  addStderrChunk(chunk: Buffer): boolean {
-    if (this._stderrBufferFull) {
-      return true;
-    }
-    this._stderrBuffer.push(chunk);
-    const total = this._stderrBuffer.reduce((sum, b) => sum + b.length, 0);
-    if (total >= this.BUFFER_LIMIT) {
-      this._stderrBufferFull = true;
-      return true;
-    }
-    return false;
-  }
-
-  /**
-   * Check if stdout buffer is full
-   */
-  isStdoutBufferFull(): boolean {
-    return this._stdoutBufferFull;
-  }
-
-  /**
-   * Check if stderr buffer is full
-   */
-  isStderrBufferFull(): boolean {
-    return this._stderrBufferFull;
-  }
-
-  /**
-   * Get stdout buffer (for replay)
-   */
-  getStdoutBuffer(): Buffer[] {
-    return this._stdoutBuffer;
-  }
-
-  /**
-   * Get stderr buffer (for replay)
-   */
-  getStderrBuffer(): Buffer[] {
-    return this._stderrBuffer;
-  }
-
-  /**
-   * Flush stdout buffer to process.stdout
-   */
-  flushStdoutBuffer(): void {
-    for (const chunk of this._stdoutBuffer) {
-      process.stdout.write(chunk);
-    }
-  }
-
-  /**
-   * Flush stderr buffer to process.stderr
-   */
-  flushStderrBuffer(): void {
-    for (const chunk of this._stderrBuffer) {
-      process.stderr.write(chunk);
-    }
-  }
-
-  /**
-   * Clear terminal and replay buffers (for passthrough mode)
-   */
-  replayBuffers(): void {
-    // Clear terminal
-    process.stdout.write('\x1b[2J\x1b[H');
-    // Replay buffered output
-    for (const chunk of this._stdoutBuffer) {
-      process.stdout.write(chunk);
-    }
-    for (const chunk of this._stderrBuffer) {
-      process.stderr.write(chunk);
-    }
-  }
-
-  /**
-   * Clear all buffers
-   */
-  clearBuffers(): void {
-    this._stdoutBuffer = [];
-    this._stderrBuffer = [];
-    this._stdoutBufferFull = false;
-    this._stderrBufferFull = false;
-  }
-
-  // Buffer limit constant
-  private readonly BUFFER_LIMIT = 16 * 1024; // 16KB
 
   // Key event handling (for LineEditor)
 
@@ -305,8 +141,8 @@ class AgentIO {
    * Forwards to active LineEditor if one exists
    */
   handleKeyEvent(key: KeyInfo): void {
-    if (this._activeLineEditor) {
-      this._activeLineEditor.handleKey(key);
+    if (this.activeLineEditor) {
+      this.activeLineEditor.handleKey(key);
     }
   }
 
@@ -315,8 +151,8 @@ class AgentIO {
    * Forwards to active LineEditor if one exists
    */
   handleResize(columns: number): void {
-    if (this._activeLineEditor) {
-      this._activeLineEditor.resize(columns);
+    if (this.activeLineEditor) {
+      this.activeLineEditor.resize(columns);
     }
   }
 
@@ -332,11 +168,8 @@ class AgentIO {
    *                      If false, print query above and use '> ' as prompt (split format)
    */
   async ask(query: string, useAsPrompt: boolean = false): Promise<string> {
-    if (!this._isMainProcess) {
+    if (!this.isMainProcessFlag) {
       throw new Error('question() only available in main process');
-    }
-    if (this._isShuttingDown) {
-      throw new Error('Agent is shutting down');
     }
 
     const prompt = useAsPrompt ? query : '> ';
@@ -346,37 +179,31 @@ class AgentIO {
     }
 
     return new Promise((resolve) => {
-      this._activeLineEditor = new LineEditor({
+      this.activeLineEditor = new LineEditor({
         prompt,
         stdout: process.stdout,
         onDone: (value: string) => {
           // Save history
-          this._lineHistory = this._activeLineEditor?.getHistory() || [];
-          this._activeLineEditor?.close();
-          this._activeLineEditor = null;
+          this.lineHistory = this.activeLineEditor?.getHistory() || [];
+          this.activeLineEditor?.close();
+          this.activeLineEditor = null;
           resolve(value);
         },
-        history: this._lineHistory,
+        history: this.lineHistory,
       });
     });
   }
 
-  // Abort handling (used by SIGINT handler in agent-loop.ts and ESC/neglection IPC)
+  // LLM Abort handling
 
   /**
-   * Abort the current tool or LLM call if one is running
-   * Called by SIGINT handler (external signal) or ESC/neglection IPC
+   * Abort the current LLM call if one is running
+   * Called by SIGINT handler or ESC IPC
    * @returns true if something was aborted, false otherwise
    */
   abort(): boolean {
-    // First try to abort active tool
-    if (this._activeTool && this._abortController) {
-      this._abortController.abort();
-      return true;
-    }
-    // Then try to abort LLM call
-    if (this._llmAbortController) {
-      this._llmAbortController.abort();
+    if (this.llmAbortController) {
+      this.llmAbortController.abort();
       return true;
     }
     return false;
@@ -388,7 +215,7 @@ class AgentIO {
    */
   createLlmAbortController(): AbortController {
     const controller = new AbortController();
-    this._llmAbortController = controller;
+    this.llmAbortController = controller;
     return controller;
   }
 
@@ -396,44 +223,57 @@ class AgentIO {
    * Clear the LLM abort controller after call completes
    */
   clearLlmAbortController(): void {
-    this._llmAbortController = null;
+    this.llmAbortController = null;
   }
 
   /**
    * Get the current LLM abort signal (if any)
    */
   getLlmAbortSignal(): AbortSignal | undefined {
-    return this._llmAbortController?.signal;
+    return this.llmAbortController?.signal;
   }
 
   /**
-   * Execute an execa promise with full lifecycle management.
-   * Handles abort controller and active flag for signal propagation.
-   * Stores subprocess reference for passthrough mode.
-   * @param execaFactory - A function that takes a signal and returns an execa subprocess
+   * Execute a shell command with timeout.
+   * @param options - Command options (cwd, command, timeout in seconds)
+   * @returns Result with stdout, stderr, interrupted flag, exit code, and timedOut flag
    */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  async exec(execaFactory: (signal: AbortSignal) => Promise<any> & { stdin?: NodeJS.WritableStream | null }): Promise<{ result: any; interrupted: boolean }> {
-    const abortController = new AbortController();
-
-    this._activeTool = true;
-    this._abortController = abortController;
+  async exec(options: ExecOptions): Promise<ExecResult> {
+    const { cwd, command, timeout } = options;
 
     try {
-      const subprocess = execaFactory(abortController.signal);
-      // Store subprocess reference for passthrough mode
-      this._subprocess = subprocess as any;
-      this._subprocessStdin = subprocess.stdin ?? null;
-      const result = await subprocess;
-      return { result, interrupted: false };
+      const result = await execa('bash', ['-c', command], {
+        cwd,
+        reject: false,
+        timeout: timeout * 1000,
+        killSignal: 'SIGKILL',
+      });
+
+      return {
+        stdout: result.stdout || '',
+        stderr: result.stderr || '',
+        interrupted: false,
+        exitCode: result.exitCode ?? 0,
+        timedOut: false,
+      };
     } catch (err) {
-      const interrupted = abortController.signal.aborted;
-      return { result: err as Error, interrupted };
-    } finally {
-      this._activeTool = false;
-      this._abortController = null;
-      this._subprocess = null;
-      this._subprocessStdin = null;
+      const error = err as any;
+      if (error.timedOut) {
+        return {
+          stdout: '',
+          stderr: '',
+          interrupted: false,
+          exitCode: 137, // SIGKILL exit code
+          timedOut: true,
+        };
+      }
+      return {
+        stdout: '',
+        stderr: error.message || 'Unknown error',
+        interrupted: false,
+        exitCode: 1,
+        timedOut: false,
+      };
     }
   }
 }
