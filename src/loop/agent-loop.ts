@@ -266,9 +266,8 @@ export async function agentLoop(
         agentIO.clearLlmAbortController();
 
         // Check if ESC was pressed during LLM call - discard response if so
-        if (agentIO.isEscPressed()) {
+        if (agentIO.isInterruptedMode()) {
           console.log(chalk.yellow('[ESC] LLM response discarded due to interruption'));
-          agentIO.clearEsc();
           // Inject message about LLM interruption for wrap-up
           triologue.user('LLM call interrupted. Please wrap up and ask user for next steps.');
           continue;
@@ -303,14 +302,13 @@ export async function agentLoop(
         // 7. Execute tools
         for (const toolCall of (assistantMessage.tool_calls as ToolCall[])) {
           // Check for ESC - abort current tool and skip remaining
-          if (agentIO.isEscPressed()) {
+          if (agentIO.isInterruptedMode()) {
             console.log(chalk.yellow('\n[ESC] Tool execution interrupted - skipping remaining tools'));
             // First tool gets "interrupted", remaining get "skipped"
             triologue.skipPendingTools(
               'Tool use interrupted - user pressed ESC.',
               'Tool use skipped due to ESC interruption.'
             );
-            agentIO.clearEsc();
             // Inject user message and let LLM wrap up
             triologue.user('The user pressed ESC to interrupt. Please wrap up and wait for next instruction.');
             break;  // Exit tool loop, continue to next LLM call for wrap-up
@@ -537,7 +535,9 @@ export async function main(): Promise<void> {
 
   // Handle graceful shutdown
   process.on('SIGINT', () => {
-    if (agentIO.abort()) {
+    const controller = agentIO.getLlmAbortController();
+    if (controller) {
+      controller.abort();
       console.log(chalk.yellow('\nInterrupting current operation...'));
       return;
     }

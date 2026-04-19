@@ -131,9 +131,15 @@ function startLead(args: string[] = [], cwd = process.cwd()): ChildProcess {
     env,
   });
 
-  // Forward output
-  child.stdout?.pipe(process.stdout);
-  child.stderr?.pipe(process.stderr);
+  // Handle stdout - forward directly
+  child.stdout?.on('data', (chunk: Buffer) => {
+    process.stdout.write(chunk);
+  });
+
+  // Handle stderr - forward directly
+  child.stderr?.on('data', (chunk: Buffer) => {
+    process.stderr.write(chunk);
+  });
 
   // Note: stdin is NOT piped here. Raw input is forwarded via the
   // 'data' handler in Terminal Setup section, which intercepts
@@ -153,9 +159,7 @@ function startLead(args: string[] = [], cwd = process.cwd()): ChildProcess {
   child.on('exit', (code) => {
     // Only exit coordinator if this is the current lead and we're not restarting
     if (child === lead && !isRestarting) {
-      // Cleanup pipes
-      child.stdout?.unpipe();
-      child.stderr?.unpipe();
+      // Cleanup
       child.stdin?.destroy();
       process.exit(code ?? 0);
     }
@@ -223,7 +227,7 @@ if (process.stdin.isTTY) {
       return;
     }
 
-    // Normal mode - parse and forward structured key events
+    // Parse and forward structured key events
     const keys = parseKeys(data);
     for (const key of keys) {
       lead?.send({ type: 'key', key });

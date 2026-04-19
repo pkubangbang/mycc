@@ -15,6 +15,7 @@ import type { Message, ToolCall, WikiModule } from '../types.js';
 import { minifyMessages } from '../utils/llm-chat-minifier.js';
 import { ResultTooLargeError } from '../types.js';
 import { getMyccDir, getLongtextDir, ensureDirs } from '../context/db.js';
+import { getTokenThreshold } from '../config.js';
 import { ConfusionCalculator } from './confusion-calculator.js';
 
 export type Role = 'system' | 'user' | 'assistant' | 'tool';
@@ -98,8 +99,15 @@ export class Triologue {
   /**
    * Set CLAUDE.md content (project instructions)
    * Appends context pair to project context (appears before README.md if both set)
+   * If content is too large, skips it entirely.
    */
   setClaudeMd(content: string): void {
+    // Use 10% of TOKEN_THRESHOLD (converted to chars) as max size
+    const maxChars = Math.floor(getTokenThreshold() * 4 * 0.1);
+    if (content.length > maxChars) {
+      console.log('[triologue] CLAUDE.md is too large to load, skipping');
+      return;
+    }
     this.projectContext.push(
       { role: 'user', content: `[Project Instructions - CLAUDE.md from project root, FYI]\n\n${content}` },
       { role: 'assistant', content: 'Understood. I have read the project instructions from CLAUDE.md.' }
@@ -109,8 +117,15 @@ export class Triologue {
   /**
    * Set README.md content (project context)
    * Appends context pair to project context (appears after CLAUDE.md if both set)
+   * If content is too large, skips it entirely.
    */
   setReadmeMd(content: string): void {
+    // Use 10% of TOKEN_THRESHOLD (converted to chars) as max size
+    const maxChars = Math.floor(getTokenThreshold() * 4 * 0.1);
+    if (content.length > maxChars) {
+      console.log('[triologue] README.md is too large to load, skipping');
+      return;
+    }
     this.projectContext.push(
       { role: 'user', content: `[Project Context - README.md from project root, FYI]\n\n${content}` },
       { role: 'assistant', content: 'Understood. I have read the project context from README.md.' }

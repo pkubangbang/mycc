@@ -9,7 +9,40 @@
 
 import { LineEditor } from '../utils/line-editor.js';
 import type { KeyInfo } from '../utils/key-parser.js';
-import { execa } from 'execa';
+import { spawn } from 'child_process';
+
+/**
+ * ReplayBuffer - Buffer for collecting stdout/stderr bytes
+ * Supports both string and base64 output formats.
+ */
+class ReplayBuffer {
+  private chunks: Buffer[] = [];
+
+  /**
+   * Write bytes into buffer
+   */
+  write(data: Buffer | string): void {
+    if (typeof data === 'string') {
+      this.chunks.push(Buffer.from(data));
+    } else {
+      this.chunks.push(data);
+    }
+  }
+
+  /**
+   * Get content as string (for ctx.core.brief())
+   */
+  getString(): string {
+    return Buffer.concat(this.chunks).toString('utf-8');
+  }
+
+  /**
+   * Get content as base64 (for IPC transmission)
+   */
+  getBase64(): string {
+    return Buffer.concat(this.chunks).toString('base64');
+  }
+}
 
 /**
  * Options for exec command
@@ -36,7 +69,6 @@ export interface ExecResult {
  */
 class AgentIO {
   private isMainProcessFlag = false;
-  private escPressedFlag = false;
   private llmAbortController: AbortController | null = null;
 
   // Interrupted mode tracking (ESC was pressed this round)
@@ -58,10 +90,11 @@ class AgentIO {
     // Handle IPC messages from coordinator
     process.on('message', (msg: { type: string; key?: KeyInfo; columns?: number }) => {
       if (msg.type === 'neglection') {
-        // ESC pressed - set flag and abort LLM call if running
-        this.setEscPressed();
-        const aborted = this.abort();
-        if (aborted) {
+        // ESC pressed - set interrupted mode and abort LLM call if running
+        this.setInterruptedMode();
+        const controller = this.getLlmAbortController();
+        if (controller) {
+          controller.abort();
           console.log('\n[ESC] Interrupting LLM call...');
         } else {
           console.log('\n[ESC] Interrupt requested - will skip remaining work');
@@ -92,39 +125,21 @@ class AgentIO {
     return this.isMainProcessFlag;
   }
 
-  // ESC handling (soft reconsider - interrupt and wrap up)
-
-  /**
-   * Check if ESC was pressed
-   * When true, current operation should be abandoned and LLM should wrap up
-   */
-  isEscPressed(): boolean {
-    return this.escPressedFlag;
-  }
-
-  /**
-   * Set ESC pressed flag (called when ESC IPC received)
-   * Also enters interrupted mode for the current round
-   */
-  setEscPressed(): void {
-    this.escPressedFlag = true;
-    this.interruptedModeFlag = true;
-  }
-
-  /**
-   * Clear ESC flag (called after handling)
-   */
-  clearEsc(): void {
-    this.escPressedFlag = false;
-  }
-
-  // Interrupted mode tracking (for quick wrap-up)
+  // Interrupted mode (ESC pressed - quick wrap-up)
 
   /**
    * Check if in interrupted mode (ESC was pressed this round)
+   * When true, current operation should be abandoned and LLM should wrap up
    */
   isInterruptedMode(): boolean {
     return this.interruptedModeFlag;
+  }
+
+  /**
+   * Set interrupted mode (called when ESC IPC received)
+   */
+  setInterruptedMode(): void {
+    this.interruptedModeFlag = true;
   }
 
   /**
@@ -197,19 +212,6 @@ class AgentIO {
   // LLM Abort handling
 
   /**
-   * Abort the current LLM call if one is running
-   * Called by SIGINT handler or ESC IPC
-   * @returns true if something was aborted, false otherwise
-   */
-  abort(): boolean {
-    if (this.llmAbortController) {
-      this.llmAbortController.abort();
-      return true;
-    }
-    return false;
-  }
-
-  /**
    * Create an AbortController for LLM calls
    * The caller should store the signal and pass it to retryChat
    */
@@ -227,6 +229,14 @@ class AgentIO {
   }
 
   /**
+   * Get the current LLM abort controller (if any)
+   * Used for inlining abort logic
+   */
+  getLlmAbortController(): AbortController | null {
+    return this.llmAbortController;
+  }
+
+  /**
    * Get the current LLM abort signal (if any)
    */
   getLlmAbortSignal(): AbortSignal | undefined {
@@ -234,47 +244,85 @@ class AgentIO {
   }
 
   /**
-   * Execute a shell command with timeout.
+   * Execute a shell command with strict timeout enforcement.
+   * Uses spawn with bash -c for full control over subprocess lifecycle.
    * @param options - Command options (cwd, command, timeout in seconds)
    * @returns Result with stdout, stderr, interrupted flag, exit code, and timedOut flag
+   * @throws Error if timeout is invalid (not integer between 1-30)
    */
   async exec(options: ExecOptions): Promise<ExecResult> {
     const { cwd, command, timeout } = options;
 
-    try {
-      const result = await execa('bash', ['-c', command], {
-        cwd,
-        reject: false,
-        timeout: timeout * 1000,
-        killSignal: 'SIGKILL',
+    // 1. Validate timeout: must be positive integer between 1 and 30
+    if (!Number.isInteger(timeout) || timeout < 1 || timeout > 30) {
+      throw new Error(`timeout must be an integer between 1 and 30, got: ${timeout}`);
+    }
+
+    const timeoutMs = timeout * 1000;
+
+    // 2. Create stdout/stderr buffers using ReplayBuffer
+    const stdoutBuffer = new ReplayBuffer();
+    const stderrBuffer = new ReplayBuffer();
+
+    // 3. Create subprocess with bash -c
+    const proc = spawn('bash', ['-c', command], { cwd });
+
+    // Collect stdout and stderr
+    proc.stdout?.on('data', (chunk: Buffer) => {
+      stdoutBuffer.write(chunk);
+    });
+    proc.stderr?.on('data', (chunk: Buffer) => {
+      stderrBuffer.write(chunk);
+    });
+
+    // 4. Set up timer and race with subprocess
+    return new Promise((resolve) => {
+      let completed = false;
+
+      const timer = setTimeout(() => {
+        if (!completed) {
+          completed = true;
+          proc.kill('SIGKILL');
+          resolve({
+            stdout: '',
+            stderr: '',
+            interrupted: false,
+            exitCode: 137,
+            timedOut: true,
+          });
+        }
+      }, timeoutMs);
+
+      // Handle subprocess completion
+      proc.on('close', (code) => {
+        if (!completed) {
+          completed = true;
+          clearTimeout(timer);
+          resolve({
+            stdout: stdoutBuffer.getString(),
+            stderr: stderrBuffer.getString(),
+            interrupted: false,
+            exitCode: code ?? 1,
+            timedOut: false,
+          });
+        }
       });
 
-      return {
-        stdout: result.stdout || '',
-        stderr: result.stderr || '',
-        interrupted: false,
-        exitCode: result.exitCode ?? 0,
-        timedOut: false,
-      };
-    } catch (err) {
-      const error = err as any;
-      if (error.timedOut) {
-        return {
-          stdout: '',
-          stderr: '',
-          interrupted: false,
-          exitCode: 137, // SIGKILL exit code
-          timedOut: true,
-        };
-      }
-      return {
-        stdout: '',
-        stderr: error.message || 'Unknown error',
-        interrupted: false,
-        exitCode: 1,
-        timedOut: false,
-      };
-    }
+      // Handle spawn errors
+      proc.on('error', (err) => {
+        if (!completed) {
+          completed = true;
+          clearTimeout(timer);
+          resolve({
+            stdout: '',
+            stderr: err.message,
+            interrupted: false,
+            exitCode: 1,
+            timedOut: false,
+          });
+        }
+      });
+    });
   }
 }
 

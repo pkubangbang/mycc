@@ -13,7 +13,8 @@
       "skipFiles": ["<node_internals>/**"],
       "env": {
         "OLLAMA_MODEL": "gemma4:31b-cloud",
-        "EDITOR": "open"
+        "EDITOR": "open",
+        "TOKEN_THRESHOLD": "20000"
       }
     },
     {
