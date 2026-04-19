@@ -259,7 +259,7 @@ export async function agentLoop(
             messages: triologue.getMessages(),
             tools,
           },
-          { signal: abortController.signal }
+          { signal: abortController.signal, neglected: agentIO.isNeglectedMode() }
         );
 
         // Clear abort controller after successful call

@@ -359,6 +359,11 @@ function startSpinner(prefix: string = 'Thinking'): void {
   }, 80);
 }
 
+/**
+ * Spinner text for neglected mode
+ */
+const NEGLECTED_SPINNER_TEXT = 'Hold on';
+
 function stopSpinner(): void {
   if (!spinnerInterval) return;
 
@@ -381,13 +386,14 @@ function stopSpinner(): void {
  */
 export async function retryChat(
   request: Omit<ChatRequest, 'stream'> & { stream?: false },
-  config?: Partial<RetryConfig> & { signal?: AbortSignal }
+  config?: Partial<RetryConfig> & { signal?: AbortSignal; neglected?: boolean }
 ): Promise<ChatResponse> {
   const cfg = { ...DEFAULT_RETRY_CONFIG, ...config };
   const signal = config?.signal;
+  const neglected = config?.neglected ?? false;
   let lastError: Error | null = null;
 
-  startSpinner();
+  startSpinner(neglected ? NEGLECTED_SPINNER_TEXT : 'Thinking');
 
   // Verbose: Log request
   if (isVerbose()) {
