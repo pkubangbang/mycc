@@ -93,6 +93,11 @@ class AgentIO {
     // Handle IPC messages from coordinator
     process.on('message', (msg: { type: string; key?: KeyInfo; columns?: number }) => {
       if (msg.type === 'neglection') {
+        // Don't set neglected mode if user is in a LineEditor prompt (ask())
+        if (this.activeLineEditor) {
+          return; // ESC during ask() - just ignore
+        }
+
         // ESC pressed - set neglected mode and abort LLM call if running
         // Only process if not already in neglected mode (avoid duplicate messages)
         if (!this.isNeglectedMode()) {
