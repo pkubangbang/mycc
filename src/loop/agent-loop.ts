@@ -190,21 +190,18 @@ export async function agentLoop(
 
   while (true) {
     try {
-      // Clear interrupted mode at start of new iteration
-      agentIO.clearInterruptedMode();
-
       // 1. Handle pending questions from children
       await ctx.team.handlePendingQuestions();
 
       // 2. Collect mails (collated into single user message)
-      // When in interrupted mode, add urgency to wrap up quickly
+      // When in neglected mode, add urgency to wrap up quickly
       const mails = ctx.mail.collectMails();
       if (mails.length > 0) {
         const mailContent = mails
           .map((mail) => `Mail from ${mail.from}: ${mail.title}\n${mail.content}`)
           .join('\n\n---\n\n');
 
-        if (agentIO.isInterruptedMode()) {
+        if (agentIO.isNeglectedMode()) {
           triologue.user(`[URGENT: user interrupted - wrap up quickly]\n${mailContent}`);
         } else {
           triologue.user(mailContent);
@@ -252,12 +249,15 @@ export async function agentLoop(
       // Create abort controller for this LLM call (allows Ctrl+C to interrupt)
       const abortController = agentIO.createLlmAbortController();
 
+      // In interrupted mode, provide no tools so LLM can only respond with text
+      const tools = agentIO.isNeglectedMode() ? [] : loader.getToolsForScope(scope);
+
       try {
         const response = await retryChat(
           {
             model: MODEL,
             messages: triologue.getMessages(),
-            tools: loader.getToolsForScope(scope),
+            tools,
           },
           { signal: abortController.signal }
         );
@@ -265,8 +265,9 @@ export async function agentLoop(
         // Clear abort controller after successful call
         agentIO.clearLlmAbortController();
 
-        // Check if ESC was pressed during LLM call - discard response if so
-        if (agentIO.isInterruptedMode()) {
+        // Check if ESC was pressed DURING this LLM call - discard response if so
+        // Only discard if the abort signal was triggered for THIS call
+        if (abortController.signal.aborted) {
           console.log(chalk.yellow('[ESC] LLM response discarded due to interruption'));
           // Inject message about LLM interruption for wrap-up
           triologue.user('LLM call interrupted. Please wrap up and ask user for next steps.');
@@ -277,8 +278,13 @@ export async function agentLoop(
         const assistantMessage = response.message;
         triologue.agent(assistantMessage.content || '', assistantMessage.tool_calls as ToolCall[] | undefined);
 
-        // 6. No tool calls = check team status
+        // 6. No tool calls = wrap-up complete or check team status
         if (!assistantMessage.tool_calls || assistantMessage.tool_calls.length === 0) {
+          // Clear interrupted mode after wrap-up response (no tools = wrap-up complete)
+          if (agentIO.isNeglectedMode()) {
+            agentIO.setNeglectedMode(false);
+          }
+
           const { result } = await ctx.team.awaitTeam(30000);
 
           // Handle awaitTeam result
@@ -302,7 +308,7 @@ export async function agentLoop(
         // 7. Execute tools
         for (const toolCall of (assistantMessage.tool_calls as ToolCall[])) {
           // Check for ESC - abort current tool and skip remaining
-          if (agentIO.isInterruptedMode()) {
+          if (agentIO.isNeglectedMode()) {
             console.log(chalk.yellow('\n[ESC] Tool execution interrupted - skipping remaining tools'));
             // First tool gets "interrupted", remaining get "skipped"
             triologue.skipPendingTools(

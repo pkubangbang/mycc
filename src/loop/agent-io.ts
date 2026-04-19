@@ -71,8 +71,11 @@ class AgentIO {
   private isMainProcessFlag = false;
   private llmAbortController: AbortController | null = null;
 
-  // Interrupted mode tracking (ESC was pressed this round)
-  private interruptedModeFlag = false;
+  // Neglected mode tracking (ESC was pressed this round)
+  private neglectedModeFlag = false;
+
+  // Neglected callbacks - called when ESC is pressed
+  private onNeglectedCallbacks: Array<() => void> = [];
 
   // LineEditor management
   private activeLineEditor: LineEditor | null = null;
@@ -90,14 +93,22 @@ class AgentIO {
     // Handle IPC messages from coordinator
     process.on('message', (msg: { type: string; key?: KeyInfo; columns?: number }) => {
       if (msg.type === 'neglection') {
-        // ESC pressed - set interrupted mode and abort LLM call if running
-        this.setInterruptedMode();
-        const controller = this.getLlmAbortController();
-        if (controller) {
-          controller.abort();
-          console.log('\n[ESC] Interrupting LLM call...');
-        } else {
-          console.log('\n[ESC] Interrupt requested - will skip remaining work');
+        // ESC pressed - set neglected mode and abort LLM call if running
+        // Only process if not already in neglected mode (avoid duplicate messages)
+        if (!this.isNeglectedMode()) {
+          this.setNeglectedMode(true);
+          const controller = this.getLlmAbortController();
+          if (controller) {
+            controller.abort();
+            console.log('\n[ESC] Interrupting LLM call...');
+          } else {
+            console.log('\n[ESC] Interrupt requested - will skip remaining work');
+          }
+          // Notify all neglected listeners (e.g., exec to skip subprocess wait)
+          for (const cb of this.onNeglectedCallbacks) {
+            cb();
+          }
+          this.onNeglectedCallbacks = [];
         }
       } else if (msg.type === 'key' && msg.key) {
         // Forward key event to active LineEditor
@@ -125,28 +136,28 @@ class AgentIO {
     return this.isMainProcessFlag;
   }
 
-  // Interrupted mode (ESC pressed - quick wrap-up)
+  // Neglected mode (ESC pressed - quick wrap-up)
 
   /**
-   * Check if in interrupted mode (ESC was pressed this round)
-   * When true, current operation should be abandoned and LLM should wrap up
+   * Check if in neglected mode (ESC was pressed this round)
    */
-  isInterruptedMode(): boolean {
-    return this.interruptedModeFlag;
+  isNeglectedMode(): boolean {
+    return this.neglectedModeFlag;
   }
 
   /**
-   * Set interrupted mode (called when ESC IPC received)
+   * Set neglected mode (true = neglected, false = clear)
    */
-  setInterruptedMode(): void {
-    this.interruptedModeFlag = true;
+  setNeglectedMode(value: boolean): void {
+    this.neglectedModeFlag = value;
   }
 
   /**
-   * Clear interrupted mode (called at start of new agent loop iteration)
+   * Register a callback to be called when ESC is pressed (neglected)
+   * Used by exec() to skip subprocess wait and return premature output
    */
-  clearInterruptedMode(): void {
-    this.interruptedModeFlag = false;
+  onNeglected(callback: () => void): void {
+    this.onNeglectedCallbacks.push(callback);
   }
 
   // Key event handling (for LineEditor)
@@ -292,6 +303,22 @@ class AgentIO {
           });
         }
       }, timeoutMs);
+
+      // Register callback for ESC (neglected) - skip subprocess wait
+      this.onNeglected(() => {
+        if (!completed) {
+          completed = true;
+          clearTimeout(timer);
+          // Return premature output, let subprocess continue in background
+          resolve({
+            stdout: stdoutBuffer.getString(),
+            stderr: stderrBuffer.getString(),
+            interrupted: true,
+            exitCode: -1, // Unknown - subprocess still running
+            timedOut: false,
+          });
+        }
+      });
 
       // Handle subprocess completion
       proc.on('close', (code) => {
