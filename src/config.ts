@@ -87,6 +87,18 @@ export function getOllamaModel(): string {
 }
 
 /**
+ * Get Ollama vision model name for multimodal tasks
+ * @throws Error if OLLAMA_VISION_MODEL is not set
+ */
+export function getVisionModel(): string {
+  const model = process.env.OLLAMA_VISION_MODEL;
+  if (!model) {
+    throw new Error('OLLAMA_VISION_MODEL is not set. Set it in your environment to enable image capabilities (e.g., OLLAMA_VISION_MODEL=gemma4:31b-cloud)');
+  }
+  return model;
+}
+
+/**
  * Environment variable requirements
  */
 interface EnvRequirement {
@@ -108,6 +120,11 @@ const ENV_REQUIREMENTS: EnvRequirement[] = [
     required: false,
     default: 'glm-5:cloud',
     instruction: 'Set OLLAMA_MODEL to specify which model to use (default: glm-5:cloud)',
+  },
+  {
+    name: 'OLLAMA_VISION_MODEL',
+    required: false,
+    instruction: 'Set OLLAMA_VISION_MODEL for vision/multimodal tasks (required for screen and read_picture tools)',
   },
   {
     name: 'OLLAMA_API_KEY',

@@ -1,129 +1,120 @@
 # mycc
 
-Node.js coding agent implementation using Ollama for LLM inference.
+A CLI coding agent using Ollama-cloud for LLM inference, written in nodejs.
+
 
 ## Features
 
-- **Agent Context Pattern**: Modular state container with core, todo, mail, issue, bg, wt, and team modules
-- **STAR Principle Loop**: Situation → Task → Action → Result cycle for agent execution
-- **Child Process Teammates**: Teammates run as child processes via `fork()` with IPC message routing
-- **Dynamic Loading**: Tools loaded from `src/tools/` (built-in) and `.mycc/tools/` (user-defined with hot-reload)
-- **SQLite Persistence**: Issues, teammates, and worktrees stored in `.mycc/state.db`
+- **tool use**: over 30 tools available for LLM, from basic `bash/read/write/edit`, to advance tools like `web_search`, `read_image`, and `wiki_put`(RAG).
+
+- **team collaboration**: mycc starts with a single `lead`; teammates can be spawned by you or the `lead` to enable collaboration.
+
+- **skill use**: describe the specialist knowledge using markdown, and LLM will learn it when needed.
+
+- **extensibility**: you can bring your own tools/skills into mycc, at project-level, or at the user-level that shared across projects.
+
+- **session storage**: a new session is created at each start. You can `/load` a previous session to continue your work, or to expect variant responses thanks to LLM randomness.
+
+
+## Installation
+
+### Prerequisites
+
+This package includes native dependencies that require build tools:
+
+- **Node.js** >= 18
+- **Python** (for node-gyp)
+- **C++ compiler** (GCC/Clang on Unix, Visual Studio Build Tools on Windows)
+
+On Ubuntu/Debian:
+```bash
+sudo apt install build-essential python3
+```
+
+On macOS:
+```bash
+xcode-select --install
+```
+
+On Windows, install [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/).
+
+### Install from npm
+
+```bash
+npm install -g @pkubangbang/mycc
+```
+
+### Install from source
+
+```bash
+# Clone the repository
+git clone https://github.com/pkubangbang/mycc.git
+cd mycc
+
+# Install dependencies
+pnpm install
+
+# Build and link
+pnpm build
+npm link
+```
 
 ## Quick Start
 
+### 1. Install Ollama and enable Ollama Cloud
+
+`mycc` relies on `ollama cloud` to work normally. So **ollama** must be installed beforehand. 
+
+[download page of ollama](https://ollama.com/download)
+
+Ollama cloud provides the max capability, however if you do not need the online tools (web_search/web_fetch/screen/read_image),
+and you are fine with the local LLM, the `ollama ` alone without the cloud is also acceptable.
+
+As the choice of LLM model, `glm-5:cloud` and `gemma4:31b-cloud` are recommended.
+
+### 2. Config the environment variables
+Create a file at `~/.mycc-store/.env` with variables like below.
+
+You can also view the content from the `.env.example` file.
+
+```ini
+# Ollama configuration
+# For local Ollama: http://127.0.0.1:11434
+# For Ollama cloud: https://api.ollama.com
+OLLAMA_HOST=http://127.0.0.1:11434
+OLLAMA_MODEL=glm-5:cloud
+
+# API key for cloud models and web search/fetch (required for web_search and web_fetch tools)
+OLLAMA_API_KEY=your_api_key_here
+
+# Token threshold for context compaction (default: 50000)
+TOKEN_THRESHOLD=50000
+
+# Editor for opening files (falls back to VISUAL or EDITOR env vars)
+EDITOR=xdg-open
+```
+
+Note: the `OLLAMA_API_KEY` is only required if you use the online tools; otherwise leave it blank.
+You can generate an api key [at here (need login)](https://ollama.com/settings/keys)
+
+### 3. Start the app
+
+Starting the app is as easy as a simple cmd:
 ```bash
-pnpm install        # Install dependencies
-pnpm start          # Run the agent
-pnpm typecheck      # TypeScript type checking
-pnpm build          # Compile to dist/
-pnpm format         # Format with Prettier
+mycc
 ```
 
-### Running with Options
-
-**Verbose mode** (show debug output):
+Or if you need a faster startup, add a `--skip-healthcheck` flag:
 ```bash
-pnpm start -- -v
-pnpm start -- --verbose
+mycc --skip-healthcheck
 ```
 
-**Load a saved session**:
+Or if you need more debug output, add a `-v` flag, or `--verbose`:
 ```bash
-pnpm start -- --session <session-id>
+mycc -v
 ```
 
-**Skip health check** (faster startup):
-```bash
-pnpm start -- --skip-healthcheck
-```
-
-**Override environment variables**:
-```bash
-# Use a different model
-OLLAMA_MODEL=llama3.2 pnpm start
-
-# Connect to remote Ollama server
-OLLAMA_HOST=https://api.ollama.com pnpm start
-
-# Adjust context threshold
-TOKEN_THRESHOLD=30000 pnpm start
-```
-
-**Install globally** (run `mycc` from anywhere):
-```bash
-pnpm build && npm link
-mycc                    # Run from any directory
-mycc -v                 # Verbose mode
-OLLAMA_MODEL=qwen2.5 mycc  # With env override
-```
-
-## Environment Setup
-
-Copy `.env.example` to `.env` and configure:
-
-- `OLLAMA_HOST` - Ollama server URL (default: http://127.0.0.1:11434)
-- `OLLAMA_MODEL` - Model name (default: glm-5:cloud)
-- `OLLAMA_API_KEY` - API key for cloud models (optional)
-
-## Architecture
-
-### AgentContext Pattern
-
-All tools receive an `AgentContext` object containing state modules. See `docs/agent-context.md` for detailed module documentation.
-
-```
-AgentContext
-├── core      - Work directory, logging, questions
-├── todo      - Temporary checklist
-├── mail      - Async mailbox
-├── issue     - Persisted tasks with blocking
-├── bg        - Background bash tasks
-├── wt        - Git worktree management
-└── team      - Child process teammates
-```
-
-### Tools Reference
-
-See `docs/agent-tools.md` for complete tool documentation.
-
-| Tool | Scope | Description |
-|------|-------|-------------|
-| bash | main, child, bg | Run shell commands |
-| read_file | main, child | Read file contents |
-| write_file | main, child | Write content to file |
-| edit_file | main, child | Replace text in file |
-| brief | main, child | Display status message |
-| question | main, child | Ask user for input |
-| mail_to | main, child | Send async message to teammate/lead |
-| broadcast | main | Broadcast to all teammates |
-| issue_create | main, child | Create new issue |
-| issue_list | main, child | List all issues |
-| issue_claim | main, child | Claim an issue |
-| issue_close | main, child | Close an issue |
-| issue_comment | main, child | Add comment to issue |
-| blockage_create | main, child | Create blocking relationship |
-| blockage_remove | main, child | Remove blocking relationship |
-| tm_create | main | Create teammate (child process) |
-| tm_remove | main | Remove teammate |
-| tm_await | main | Wait for teammate(s) |
-| tm_print | main, child | Print team status |
-| bg_create | main, child | Run background command |
-| bg_print | main, child | List background tasks |
-| bg_remove | main, child | Kill background task |
-| bg_await | main, child | Wait for background tasks |
-| wt_create | main, child | Create git worktree |
-| wt_print | main, child | List worktrees |
-| wt_enter | main, child | Switch to worktree |
-| wt_leave | main, child | Leave worktree |
-| wt_remove | main, child | Remove worktree |
-| todo_write | main, child | Update todo list |
-| skill_load | main, child | Load skill by name |
-| screen | main, child | Capture and describe screen |
-| web_search | main, child | Web search |
-| web_fetch | main, child | Fetch web content |
-
-### Key Concepts
+## Key Concepts
 
 See the following documentation for detailed explanations:
 
@@ -132,112 +123,23 @@ See the following documentation for detailed explanations:
 - **Dynamic Loading**: `docs/dynamic-loading.md` - Hot-reload, tool scopes, skill format
 - **SQLite Persistence**: `docs/database-schema.md` - Tables, WAL mode, transactions
 
-## File Structure
+## Day-to-day Workflow as a user
 
-```
-src/
-├── index.ts              # Entry point
-├── types.ts              # All type definitions
-├── ollama.ts             # Ollama client config
-├── context/
-│   ├── index.ts          # AgentContext factory
-│   ├── db.ts             # SQLite setup
-│   ├── loader.ts         # Dynamic tool/skill loader
-│   ├── core.ts           # Work directory, logging, questions
-│   ├── todo.ts           # Temporary checklist
-│   ├── mail.ts           # Async mailbox
-│   ├── issue.ts          # Persisted tasks with blocking
-│   ├── bg.ts             # Background bash tasks
-│   ├── wt.ts             # Git worktree management
-│   ├── team.ts           # Child process teammates
-│   ├── teammate-worker.ts # Child process entry point
-│   └── child-context/    # Child process IPC wrappers
-├── tools/                # Built-in tools (33 tools)
-│   ├── bash.ts           # Shell commands
-│   ├── read.ts, write.ts, edit.ts  # File operations
-│   ├── brief.ts, question.ts  # User interaction
-│   ├── mail_to.ts, broadcast.ts  # Inter-agent messaging
-│   ├── issue_*.ts        # Issue management
-│   ├── tm_*.ts           # Team management
-│   ├── bg_*.ts           # Background tasks
-│   ├── wt_*.ts           # Worktree management
-│   ├── todo_write.ts     # Todo list updates
-│   ├── skill_load.ts     # Load skill by name
-│   ├── screen.ts         # Screen capture
-│   └── web_*.ts          # Web search/fetch
-└── loop/
-    ├── agent-loop.ts     # STAR-principle loop
-    ├── agent-prompts.ts  # System prompt building
-    ├── agent-io.ts       # Terminal I/O handling
-    ├── triologue.ts      # Conversation management
-    └── slashes/          # Slash command handlers
+1. open up the terminal and `cd` to the target folder
+2. run `mycc` and wait for the `agent >> ` prompt to show
+3. type something to instruct LLM to work for you
+4. check the output and iterate
+5. **If you find LLM go astray, hit ESC to interrupt (enter neglected mode), then wait for the prompt to show again to chat.**
+6. Once finished work, hit ENTER at the prompt to exit, or use Ctrl + C anytime to quit the app.
 
-.mycc/                    # Runtime data (gitignored)
-├── state.db              # SQLite database
-├── mail/                 # Mailboxes
-├── tools/                # User tools (optional)
-└── skills/               # Skill definitions
-```
+## Day-to-day Workflow as mycc developer
 
-## Adding a Tool
-
-See `docs/dynamic-loading.md` for the complete tool loading mechanism and `skills/add-tool/SKILL.md` for step-by-step instructions.
-
-Built-in tools go in `src/tools/`:
-
-```typescript
-// src/tools/my_tool.ts
-import type { ToolDefinition, AgentContext } from '../types.js';
-
-export const myTool: ToolDefinition = {
-  name: 'my_tool',
-  description: 'Description for LLM',
-  input_schema: {
-    type: 'object',
-    properties: {
-      arg: { type: 'string', description: '...' },
-    },
-    required: ['arg'],
-  },
-  scope: ['main', 'child'],  // Where tool is available
-  handler: (ctx: AgentContext, args: Record<string, unknown>): string => {
-    const arg = args.arg as string;
-    ctx.core.brief('info', 'my_tool', `executing: ${arg}`);
-    return `Result: ${arg}`;
-  },
-};
-```
-
-Then import and add to the `builtInTools` array in `src/context/loader.ts`.
-
-## Adding a Skill
-
-Create `.mycc/skills/my_skill.md`:
-
-```markdown
----
-name: my_skill
-description: What this skill does
-keywords: [keyword1, keyword2]
----
-
-# My Skill
-
-Detailed instructions for the LLM...
-```
-
-Skills are hot-reloaded when files change. See `docs/dynamic-loading.md` for details.
-
-## Database Schema
-
-SQLite tables in `.mycc/state.db`:
-
-- `issues` - Persisted tasks with blocking relationships
-- `issue_blockages` - Blocking relationships between issues
-- `teammates` - Team member state
-- `worktrees` - Git worktree records
-
-See `docs/database-schema.md` for complete schema documentation.
+1. open project files in vscode
+2. start up the mycc using `pnpm start --skip-healthcheck`
+3. instruct LLM to make code changes (*to itself!*)
+4. instruct LLM to test the code using tmux
+5. Debug by hit F5 (vscode debug mode)
+6. Once the code is ready, run `pnpm build && npm link` to update the global `mycc` executive.
 
 ## License
 

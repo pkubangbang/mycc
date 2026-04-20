@@ -297,6 +297,20 @@ export class ParentContext implements AgentContext {
           sendResponse('wiki_result', true);
         },
       },
+      // Core handlers
+      {
+        messageType: 'core_img_describe',
+        module: 'core',
+        handler: async (_sender, payload, ctx, sendResponse) => {
+          const { image, prompt } = payload as { image: string; prompt?: string };
+          try {
+            const result = await ctx.core.imgDescribe(image, prompt);
+            sendResponse('core_result', true, { description: result });
+          } catch (err) {
+            sendResponse('core_result', false, undefined, (err as Error).message);
+          }
+        },
+      },
     ];
 
     for (const handler of handlers) {

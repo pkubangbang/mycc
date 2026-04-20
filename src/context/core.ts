@@ -3,11 +3,15 @@
  */
 
 import chalk from 'chalk';
+import { execSync } from 'child_process';
+import * as fs from 'fs';
+import * as path from 'path';
+import * as os from 'os';
 import type { CoreModule } from '../types.js';
 import { ollama, retryWithBackoff } from '../ollama.js';
 import { WebFetchResponse, WebSearchResult } from 'ollama';
 import { agentIO } from '../loop/agent-io.js';
-import { isVerbose } from '../config.js';
+import { isVerbose, getVisionModel } from '../config.js';
 
 /**
  * Color functions for tool prefixes
@@ -183,5 +187,173 @@ export class Core implements CoreModule {
       }
       throw error;
     }
+  }
+
+  /**
+   * Describe an image using the vision model
+   * @param image - Base64-encoded image string or file path
+   * @param prompt - Optional custom prompt for the vision model
+   * @returns Description of the image
+   */
+  async imgDescribe(image: string, prompt?: string): Promise<string> {
+    const VISION_MODEL = getVisionModel();
+    const DEFAULT_PROMPT =
+      'You are an image analyzer. Carefully examine this image and describe all visible content in detail. Include: text content, UI elements, objects, people, colors, layout, and any other relevant details. Be thorough and precise.';
+
+    const customPrompt = prompt || DEFAULT_PROMPT;
+    let base64Image: string;
+    let imagePath: string | undefined;
+
+    // Check if input is a file path or base64 data
+    if (fs.existsSync(image)) {
+      // It's a file path
+      imagePath = image;
+      const imageBuffer = fs.readFileSync(image);
+      base64Image = imageBuffer.toString('base64');
+      this.brief('info', 'img_describe', `Reading image file: ${image} (${imageBuffer.length} bytes)`);
+    } else {
+      // Assume it's already base64 encoded
+      base64Image = image;
+      this.brief('info', 'img_describe', `Processing base64 image (${base64Image.length} chars)`);
+    }
+
+    // Resize image if too large (width > 1280px) to keep payload manageable
+    const { base64: resizedBase64, tempPath } = this.resizeImageIfNeeded(base64Image, imagePath);
+    base64Image = resizedBase64;
+
+    try {
+      const response = await ollama.chat({
+        model: VISION_MODEL,
+        messages: [
+          {
+            role: 'user',
+            content: customPrompt,
+            images: [base64Image],
+          },
+        ],
+      });
+
+      const description = response.message?.content || 'No description returned from vision model.';
+      this.brief('info', 'img_describe', `Image description complete (${description.length} chars)`);
+      return description;
+    } catch (err) {
+      const errMsg = (err as Error).message;
+      this.brief('error', 'img_describe', `Vision model error: ${errMsg}`);
+
+      // Provide actionable guidance based on common failure modes
+      let guidance = '';
+      if (errMsg.toLowerCase().includes('not found') || errMsg.toLowerCase().includes('does not exist')) {
+        guidance = `The model "${VISION_MODEL}" is not available. Pull it first:\n  ollama pull ${VISION_MODEL}`;
+      } else if (errMsg.toLowerCase().includes('connection') || errMsg.toLowerCase().includes('econnrefused')) {
+        guidance = `Ollama server is not reachable. Make sure it's running:\n  ollama serve`;
+      } else if (errMsg.toLowerCase().includes('timeout') || errMsg.toLowerCase().includes('timed out')) {
+        guidance = `The vision model timed out. Try using a smaller image or a faster vision model.`;
+      } else {
+        guidance = `Unexpected error from vision model. Verify:\n  1. Ollama is running: ollama serve\n  2. Model is pulled: ollama pull ${VISION_MODEL}\n  3. Model supports vision/multimodal input`;
+      }
+
+      throw new Error(`Vision model failed: ${errMsg}\n\nGuidance: ${guidance}`);
+    } finally {
+      // Cleanup temp file if created
+      if (tempPath) {
+        try {
+          fs.unlinkSync(tempPath);
+        } catch {
+          // ignore cleanup errors
+        }
+      }
+    }
+  }
+
+  /**
+   * Resize image if width > 1280px using ImageMagick
+   * Returns the base64-encoded image and optional temp file path for cleanup
+   * @throws Error if resize is needed but fails
+   */
+  private resizeImageIfNeeded(base64Image: string, originalPath?: string): { base64: string; tempPath?: string } {
+    // Decode base64 to check dimensions
+    const imageBuffer = Buffer.from(base64Image, 'base64');
+    const tmpDir = os.tmpdir();
+    const tempInputPath = path.join(tmpDir, `mycc_img_input_${Date.now()}.png`);
+    const tempOutputPath = path.join(tmpDir, `mycc_img_output_${Date.now()}.png`);
+
+    // Write temp file to check dimensions
+    fs.writeFileSync(tempInputPath, imageBuffer);
+
+    // Check image dimensions using ImageMagick identify
+    let width: number;
+    try {
+      const sizeInfo = execSync(`identify -format "%w %h" "${tempInputPath}"`, {
+        encoding: 'utf-8',
+        timeout: 5000,
+        stdio: ['pipe', 'pipe', 'pipe'],
+      }).trim();
+      width = parseInt(sizeInfo.split(' ')[0], 10);
+    } catch (err) {
+      // Cleanup temp input
+      try {
+        fs.unlinkSync(tempInputPath);
+      } catch {
+        // ignore
+      }
+      throw new Error(`ImageMagick not available. Install with: sudo apt install imagemagick. Original error: ${(err as Error).message}`);
+    }
+
+    // Cleanup temp input
+    try {
+      fs.unlinkSync(tempInputPath);
+    } catch {
+      // ignore
+    }
+
+    // If width > 1280px, resize
+    if (width > 1280) {
+      this.brief('info', 'img_describe', `Resizing image from ${width}px to 1280px wide`);
+
+      // Use original file if available (more efficient than re-encoding)
+      const sourcePath = originalPath && fs.existsSync(originalPath) ? originalPath : tempInputPath;
+
+      // Re-write temp input if we're using originalPath (since we deleted it)
+      if (sourcePath === tempInputPath) {
+        fs.writeFileSync(tempInputPath, imageBuffer);
+      }
+
+      try {
+        execSync(`convert "${sourcePath}" -resize 1280x "${tempOutputPath}"`, {
+          encoding: 'utf-8',
+          timeout: 10000,
+          stdio: ['pipe', 'pipe', 'pipe'],
+        });
+
+        const resizedBuffer = fs.readFileSync(tempOutputPath);
+        const resizedBase64 = resizedBuffer.toString('base64');
+
+        // Cleanup temp input if we created it
+        if (sourcePath === tempInputPath) {
+          try {
+            fs.unlinkSync(tempInputPath);
+          } catch {
+            // ignore
+          }
+        }
+
+        return { base64: resizedBase64, tempPath: tempOutputPath };
+      } catch (err) {
+        // Cleanup on failure
+        try {
+          fs.unlinkSync(tempInputPath);
+        } catch {
+          // ignore
+        }
+        try {
+          fs.unlinkSync(tempOutputPath);
+        } catch {
+          // ignore
+        }
+        throw new Error(`Failed to resize image (width: ${width}px). ImageMagick resize failed: ${(err as Error).message}`);
+      }
+    }
+
+    return { base64: base64Image };
   }
 }

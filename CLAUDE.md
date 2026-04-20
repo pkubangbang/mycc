@@ -61,6 +61,16 @@ To add a tool:
 
 The detailed information can be found at `skills/add-tool/SKILL.md`.
 
+## Tool Development Guidelines
+
+**Fail Early**: Tools should fail early and explicitly rather than silently degrading or continuing with partial functionality. This is a golden rule for agent tool development:
+
+- If a tool requires a dependency (e.g., ImageMagick for image processing), fail immediately if it's not available rather than proceeding with degraded functionality
+- If an operation fails (e.g., resize needed but unsuccessful), throw an error rather than falling back to potentially problematic behavior
+- Explicit errors help the agent understand what went wrong and take corrective action, while silent degradation can lead to confusing or incorrect results
+
+Example: The `imgDescribe` method requires ImageMagick to check image dimensions. If unavailable, it throws an error immediately rather than proceeding with potentially oversized images that could fail downstream.
+
 To add a skill:
 1. refer to existing files in skills/ to get pattern.
 2. create file in `.mycc/skills` folder. This is a hot-reloadable folder
@@ -104,21 +114,23 @@ See `docs/line-editor-tests.md` for LineEditor-specific test cases.
 - `docs/database-schema.md` - SQLite schema documentation (Chinese)
 - `docs/how-to-restore-the-session.md` - Session management and restoration
 - `docs/how-to-build-persistent-memory.md` - Vector store and RAG implementation
+- `docs/session-isolation-plan.md` - Session isolation design and implementation
 
 ### Team & IPC
 - `docs/teammate-status.md` - Teammate status state machine
 - `docs/how-to-handle-child-questions.md` - IPC question handling between main and child processes
+- `docs/how-to-handle-team-coordination.md` - Team coordination patterns
 - `docs/ipc-ioc.md` - IPC inversion of control pattern (Chinese)
 
 ### Agent Behavior
 - `docs/confusion-index.md` - Confusion index for detecting stuck agents (Chinese)
+- `docs/neglected-mode.md` - Neglected mode for handling unresponsive agents
 
 ### Tools & Utilities
 - `docs/read-read-tool.md` - Long content summarization tool
-- `docs/ollama-web-search.md` - Ollama web search and fetch API
-
-### Testing
-- `docs/line-editor-tests.md` - LineEditor test cases
 
 ### User Documentation
 - `docs/user-manual-20260408.md` - End-user manual
+
+### Archived
+See `docs/archived/` for historical documentation (line-editor-tests, migration guides, deprecated features).

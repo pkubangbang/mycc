@@ -92,4 +92,19 @@ export class ChildCore implements CoreModule {
       throw error;
     }
   }
+
+  /**
+   * Describe an image using the vision model
+   * Uses IPC to call parent's core.imgDescribe()
+   * @param image - Base64-encoded image string or file path
+   * @param prompt - Optional custom prompt for the vision model
+   * @returns Description of the image
+   */
+  async imgDescribe(image: string, prompt?: string): Promise<string> {
+    const response = await ipc.sendRequest<{ description: string }>('core_img_describe', {
+      image,
+      prompt,
+    });
+    return response.description;
+  }
 }

@@ -21,16 +21,12 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import type { ToolDefinition, AgentContext } from '../types.js';
-import { ollama } from '../ollama.js';
 
 // ---------------------------------------------------------------------------
 // Configuration
 // ---------------------------------------------------------------------------
 
-/** Vision model to use for screen reading */
-const VISION_MODEL = 'gemma4:31b-cloud';
-
-/** Default prompt sent to the vision model */
+/** Default prompt for screen reading */
 const DEFAULT_PROMPT =
   'You are a screen reader. Carefully examine this screenshot and describe all visible content in detail. Include: text content, UI elements, window titles, buttons, menus, icons, any open applications, and the overall layout. Be thorough and precise.';
 
@@ -366,6 +362,7 @@ export const screenTool: ToolDefinition = {
       }
 
       ctx.core.brief('info', 'screen', `Captured via ${capture.method}`);
+      ctx.core.brief('info', 'screen', `Screenshot saved: ${screenshotPath}`);
 
       // --- Step 2: Preprocess (crop/resize) ---
       const finalPath = preprocessImage(ctx, screenshotPath, region);
@@ -375,43 +372,16 @@ export const screenTool: ToolDefinition = {
       const imageBuffer = fs.readFileSync(finalPath);
       const base64Image = imageBuffer.toString('base64');
 
-      ctx.core.brief('info', 'screen', `Sending to ${VISION_MODEL} (image: ${imageBuffer.length} bytes, base64: ${base64Image.length} chars)`);
+      ctx.core.brief('info', 'screen', `Image: ${imageBuffer.length} bytes, base64: ${base64Image.length} chars`);
 
-      // --- Step 4: Send to vision model ---
+      // --- Step 4: Describe via core.imgDescribe ---
       try {
-        const response = await ollama.chat({
-          model: VISION_MODEL,
-          messages: [
-            {
-              role: 'user',
-              content: customPrompt,
-              images: [base64Image],
-            },
-          ],
-        });
-
-        const description = response.message?.content || 'No description returned from vision model.';
-
-        ctx.core.brief('info', 'screen', `Screen read complete (${description.length} chars)`);
-
+        const description = await ctx.core.imgDescribe(base64Image, customPrompt);
         return `## Screen Content\n\n${description}`;
       } catch (err) {
         const errMsg = (err as Error).message;
         ctx.core.brief('error', 'screen', `Vision model error: ${errMsg}`);
-
-        // Provide actionable guidance based on common failure modes
-        let guidance = '';
-        if (errMsg.toLowerCase().includes('not found') || errMsg.toLowerCase().includes('does not exist')) {
-          guidance = `The model "${VISION_MODEL}" is not available locally. Pull it first:\n  \`ollama pull ${VISION_MODEL}\`\n\nAlternatively, use a different vision model and update the VISION_MODEL constant in the tool source.`;
-        } else if (errMsg.toLowerCase().includes('connection') || errMsg.toLowerCase().includes('econnrefused')) {
-          guidance = `Ollama server is not reachable. Make sure it's running:\n  \`ollama serve\``;
-        } else if (errMsg.toLowerCase().includes('timeout') || errMsg.toLowerCase().includes('timed out')) {
-          guidance = `The vision model timed out — the image may be too large or the model is overloaded. Try:\n  1. Use a smaller region: set the \`region\` parameter\n  2. Install ImageMagick for auto-resize: \`sudo apt install imagemagick\`\n  3. Use a faster/smaller vision model`;
-        } else {
-          guidance = `Unexpected error from vision model. Verify:\n  1. Ollama is running: \`ollama serve\`\n  2. Model is pulled: \`ollama pull ${VISION_MODEL}\`\n  3. Model supports vision/multimodal input`;
-        }
-
-        return `## ❌ Vision Model Failed\n\n**Error:** ${errMsg}\n\n**Guidance:** ${guidance}\n\n**Fallback alternatives:**\n  - Ask the user to describe the screen content manually\n  - If a browser is visible, get the URL and use \`web_fetch\` instead\n  - Copy on-screen text to clipboard and read it with \`bash\` + \`wl-paste\`/ \`xclip\``;
+        return `## ❌ Vision Model Failed\n\n${errMsg}\n\n**Fallback alternatives:**\n  - Ask the user to describe the screen content manually\n  - If a browser is visible, get the URL and use \`web_fetch\` instead\n  - Copy on-screen text to clipboard and read it with \`bash\` + \`wl-paste\`/ \`xclip\``;
       }
     } finally {
       // Cleanup temp files

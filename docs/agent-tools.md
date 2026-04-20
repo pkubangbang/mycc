@@ -654,6 +654,37 @@ interface ToolDefinition {
 
 ---
 
+### read_picture
+
+**File**: `src/tools/read-picture.ts`
+
+**Scope**: `['main', 'child']`
+
+**Description**: Read and describe an image file using the vision model. Returns a detailed description of the image content including text, objects, colors, layout, and other relevant details. Useful for analyzing screenshots, diagrams, UI mockups, or any image file.
+
+**Parameters**:
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| path | string | yes | Path to the image file. Supports common image formats (PNG, JPG, GIF, WebP, BMP). Use forward slashes (e.g., "screenshots/image.png"). |
+| prompt | string | no | Custom prompt for the vision model. Use this to ask specific questions about the image (e.g., "What text is visible?" or "Describe the UI elements"). |
+
+**Behavior**:
+- Validates the file path is within the workspace
+- Checks that the file exists and has a supported image extension
+- Uses the configured vision model (set via `OLLAMA_VISION_MODEL` or falls back to `OLLAMA_MODEL`)
+- Sends the image to the vision model for analysis
+- Returns a detailed description of the image content
+
+**Example**:
+```json
+{ "path": "screenshots/error-dialog.png" }
+```
+```json
+{ "path": "designs/mockup.png", "prompt": "Describe the UI layout and any visible text" }
+```
+
+---
+
 ## Task Management Tools
 
 ### todo_write

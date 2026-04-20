@@ -242,6 +242,13 @@ export interface CoreModule {
    * @param url - The URL to fetch
    */
   webFetch(url: string): Promise<WebFetchResponse>;
+  /**
+   * Describe an image using the vision model
+   * @param image - Base64-encoded image string or file path
+   * @param prompt - Optional custom prompt for the vision model
+   * @returns Description of the image
+   */
+  imgDescribe(image: string, prompt?: string): Promise<string>;
 }
 
 /**
