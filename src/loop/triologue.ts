@@ -14,7 +14,7 @@ import { retryChat, MODEL } from '../ollama.js';
 import type { Message, ToolCall, WikiModule } from '../types.js';
 import { minifyMessages } from '../utils/llm-chat-minifier.js';
 import { ResultTooLargeError } from '../types.js';
-import { getMyccDir, getLongtextDir, ensureDirs } from '../context/db.js';
+import { getMyccDir, getLongtextDir, ensureDirs } from '../config.js';
 import { getTokenThreshold } from '../config.js';
 import { ConfusionCalculator } from './confusion-calculator.js';
 
@@ -400,6 +400,8 @@ Be specific and actionable. This analysis will help guide the next steps.`;
           content: analysisPrompt,
         },
       ],
+      // use thinking mode for hint round analysis
+      think: true,
     });
 
     const analysis = response.message.content || '(no analysis)';

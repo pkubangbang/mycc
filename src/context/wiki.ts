@@ -10,7 +10,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
 import { ollama } from '../ollama.js';
-import { getWikiLogsDir, getWikiDbDir, getWikiDomainsFile, ensureDirs } from './db.js';
+import { getWikiLogsDir, getWikiDbDir, getWikiDomainsFile, ensureDirs } from '../config.js';
 import type {
   WikiModule,
   WikiDocument,

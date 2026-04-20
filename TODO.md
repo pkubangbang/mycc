@@ -9,3 +9,5 @@
 - [x] `/load <sessionid>` should allow partial (but un-ambigious) match.
 - [x] `/load <sessionid>` should be able to load any available session, no matter it being a user session or a project session.
 - [x] `/load <sessionid>` should ensure the working dir is what recorded inside the session file; it's like `cd <proj-dir> && mycc --session <sessionid-full>`.
+
+- [x] remove sqlite dependency (we have session)

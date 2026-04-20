@@ -5,8 +5,8 @@
 import { execSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
-import type { WtModule } from '../types.js';
-import { getDb } from './db.js';
+import type { WtModule, WorkTree } from '../types.js';
+import * as WorktreeStore from './worktree-store.js';
 import type { CoreModule } from '../types.js';
 
 /**
@@ -59,7 +59,6 @@ export class WorktreeManager implements WtModule {
    * Call this at startup to reconcile any orphaned worktrees
    */
   async syncWorkTrees(): Promise<void> {
-    const db = getDb();
     const workDir = this.core.getWorkDir();
 
     try {
@@ -71,26 +70,22 @@ export class WorktreeManager implements WtModule {
       });
       const gitWorktrees = parseGitWorktreeList(output);
 
-      // Get database records
-      const dbRecords = db.prepare(`SELECT name, path, branch FROM worktrees`).all() as Array<{
-        name: string;
-        path: string;
-        branch: string;
-      }>;
+      // Get stored records
+      const storedRecords = WorktreeStore.loadWorktrees();
 
       // Build maps for comparison
-      const dbByPath = new Map(dbRecords.map(r => [r.path, r]));
+      const storedByPath = new Map(storedRecords.map(r => [r.path, r]));
       const gitByPath = new Map(gitWorktrees.map(w => [w.path, w]));
 
-      // Find orphaned DB records (in DB but not in git)
-      for (const record of dbRecords) {
+      // Find orphaned records (in store but not in git)
+      for (const record of storedRecords) {
         if (!gitByPath.has(record.path)) {
           // Remove orphaned record
-          db.prepare(`DELETE FROM worktrees WHERE name = ?`).run(record.name);
+          WorktreeStore.removeWorktree(record.name);
         }
       }
 
-      // Find missing DB records (in git but not in DB)
+      // Find missing records (in git but not in store)
       for (const worktree of gitWorktrees) {
         // Skip the main worktree (project root)
         if (worktree.path === workDir) continue;
@@ -98,16 +93,18 @@ export class WorktreeManager implements WtModule {
         // Skip worktrees outside .worktrees directory (user-created)
         if (!worktree.path.includes('.worktrees')) continue;
 
-        if (!dbByPath.has(worktree.path)) {
+        if (!storedByPath.has(worktree.path)) {
           // Extract name from path
           const name = path.basename(worktree.path);
           const branch = worktree.branch ? path.basename(worktree.branch) : 'detached';
 
           // Add missing record
-          db.prepare(`
-            INSERT OR IGNORE INTO worktrees (name, path, branch)
-            VALUES (?, ?, ?)
-          `).run(name, worktree.path, branch);
+          WorktreeStore.addWorktree({
+            name,
+            path: worktree.path,
+            branch,
+            createdAt: new Date(),
+          });
         }
       }
     } catch {
@@ -123,8 +120,7 @@ export class WorktreeManager implements WtModule {
     const wtPath = path.join(workDir, '.worktrees', name);
 
     // Check if worktree already exists
-    const db = getDb();
-    const existing = db.prepare(`SELECT * FROM worktrees WHERE name = ?`).get(name);
+    const existing = WorktreeStore.getWorktree(name);
     if (existing) {
       return `Error: Worktree '${name}' already exists`;
     }
@@ -142,11 +138,13 @@ export class WorktreeManager implements WtModule {
         encoding: 'utf-8',
       });
 
-      // Record in database (project-level, not session-scoped)
-      db.prepare(`
-        INSERT INTO worktrees (name, path, branch)
-        VALUES (?, ?, ?)
-      `).run(name, wtPath, branch);
+      // Record in store (project-level, persists across sessions)
+      WorktreeStore.addWorktree({
+        name,
+        path: wtPath,
+        branch,
+        createdAt: new Date(),
+      });
 
       return `Created worktree '${name}' at ${wtPath} on branch ${branch}`;
     } catch (err) {
@@ -158,20 +156,15 @@ export class WorktreeManager implements WtModule {
    * List all worktrees
    */
   async printWorkTrees(): Promise<string> {
-    const db = getDb();
-    const rows = db.prepare(`SELECT name, path, branch FROM worktrees`).all() as Array<{
-      name: string;
-      path: string;
-      branch: string;
-    }>;
+    const worktrees = WorktreeStore.loadWorktrees();
 
-    if (rows.length === 0) {
+    if (worktrees.length === 0) {
       return 'No worktrees.';
     }
 
     const lines = ['Worktrees:'];
-    for (const row of rows) {
-      lines.push(`  ${row.name}: ${row.branch} (${row.path})`);
+    for (const wt of worktrees) {
+      lines.push(`  ${wt.name}: ${wt.branch} (${wt.path})`);
     }
     return lines.join('\n');
   }
@@ -180,20 +173,17 @@ export class WorktreeManager implements WtModule {
    * Get the path to a worktree (read-only, no state change)
    */
   async getWorkTreePath(name: string): Promise<string> {
-    const db = getDb();
-    const row = db.prepare(`SELECT path FROM worktrees WHERE name = ?`).get(name) as {
-      path: string;
-    } | undefined;
+    const wt = WorktreeStore.getWorktree(name);
 
-    if (!row) {
+    if (!wt) {
       throw new Error(`Worktree '${name}' not found`);
     }
 
-    if (!fs.existsSync(row.path)) {
-      throw new Error(`Worktree path does not exist: ${row.path}`);
+    if (!fs.existsSync(wt.path)) {
+      throw new Error(`Worktree path does not exist: ${wt.path}`);
     }
 
-    return row.path;
+    return wt.path;
   }
 
   /**
@@ -231,18 +221,15 @@ export class WorktreeManager implements WtModule {
    * @throws Error if currently inside the worktree being removed
    */
   async removeWorkTree(name: string): Promise<void> {
-    const db = getDb();
-    const row = db.prepare(`SELECT path FROM worktrees WHERE name = ?`).get(name) as {
-      path: string;
-    } | undefined;
+    const wt = WorktreeStore.getWorktree(name);
 
-    if (!row) {
+    if (!wt) {
       return;
     }
 
     // Check if we're inside the worktree being removed
     const currentDir = this.core.getWorkDir();
-    const targetPath = path.resolve(row.path);
+    const targetPath = path.resolve(wt.path);
     const normalizedCurrent = path.resolve(currentDir);
 
     // Check if current directory is inside or is the worktree being removed
@@ -254,14 +241,14 @@ export class WorktreeManager implements WtModule {
 
     try {
       // Remove worktree via git
-      execSync(`git worktree remove "${row.path}"`, {
+      execSync(`git worktree remove "${wt.path}"`, {
         cwd: this.core.getWorkDir(),
         encoding: 'utf-8',
       });
     } catch {
       // Force remove if normal remove fails
       try {
-        execSync(`git worktree remove --force "${row.path}"`, {
+        execSync(`git worktree remove --force "${wt.path}"`, {
           cwd: this.core.getWorkDir(),
           encoding: 'utf-8',
         });
@@ -270,7 +257,7 @@ export class WorktreeManager implements WtModule {
       }
     }
 
-    // Remove from database
-    db.prepare(`DELETE FROM worktrees WHERE name = ?`).run(name);
+    // Remove from store
+    WorktreeStore.removeWorktree(name);
   }
 }

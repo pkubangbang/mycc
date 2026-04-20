@@ -16,7 +16,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import chalk from 'chalk';
-import { getWikiLogsDir, getWikiDomainsFile, ensureDirs } from '../context/db.js';
+import { getWikiLogsDir, getWikiDomainsFile, ensureDirs } from '../config.js';
 import { openEditor } from '../utils/open-editor.js';
 
 function formatDate(date: Date): string {

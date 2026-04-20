@@ -9,7 +9,7 @@
 import type { SlashCommand, WikiDomain } from '../types.js';
 import * as fs from 'fs';
 import chalk from 'chalk';
-import { getWikiDomainsFile, ensureDirs } from '../context/db.js';
+import { getWikiDomainsFile, ensureDirs } from '../config.js';
 
 export const domainCommand: SlashCommand = {
   name: 'domain',

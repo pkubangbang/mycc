@@ -5,7 +5,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import type { MailModule, Mail as MailType } from '../types.js';
-import { getMailDir, ensureDirs } from './db.js';
+import { getMailDir, ensureDirs } from '../config.js';
 
 /**
  * Mail module implementation

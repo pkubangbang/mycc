@@ -1,11 +1,15 @@
 /**
- * config.ts - Global runtime configuration
+ * config.ts - Global runtime configuration and directory helpers
  *
  * Stores CLI-derived settings accessible throughout the codebase.
+ * Also contains directory helpers and session context (migrated from db.ts).
  * Uses minimist for argument parsing.
  */
 
 import minimist from 'minimist';
+import * as fs from 'fs';
+import * as path from 'path';
+import * as os from 'os';
 
 // Parse CLI args once at startup
 const args = minimist(process.argv.slice(2), {
@@ -193,6 +197,109 @@ export function printEnvStatus(): void {
       console.log(`  ${req.name}: (using default: ${req.default})`);
     } else {
       console.log(`  ${req.name}: (not set)`);
+    }
+  }
+}
+
+// ============================================================================
+// Constants
+// ============================================================================
+
+export const MYCC_DIR = '.mycc';
+
+// ============================================================================
+// Session Context
+// ============================================================================
+
+let currentSessionId: string | null = null;
+
+export function setSessionContext(sessionId: string): void {
+  currentSessionId = sessionId;
+}
+
+export function getSessionContext(): string {
+  if (!currentSessionId) {
+    throw new Error('Session context not initialized. Call setSessionContext() first.');
+  }
+  return currentSessionId;
+}
+
+// ============================================================================
+// Directory Helpers
+// ============================================================================
+
+export function getMyccDir(): string {
+  return path.resolve(MYCC_DIR);
+}
+
+export function getMailDir(): string {
+  return path.join(MYCC_DIR, 'mail');
+}
+
+export function getToolsDir(): string {
+  return path.join(MYCC_DIR, 'tools');
+}
+
+export function getSkillsDir(): string {
+  return path.join(MYCC_DIR, 'skills');
+}
+
+export function getSessionsDir(): string {
+  return path.join(MYCC_DIR, 'sessions');
+}
+
+export function getLongtextDir(): string {
+  return path.join(MYCC_DIR, 'longtext');
+}
+
+export function getUserToolsDir(): string {
+  return path.join(os.homedir(), '.mycc-store', 'tools');
+}
+
+export function getUserSkillsDir(): string {
+  return path.join(os.homedir(), '.mycc-store', 'skills');
+}
+
+export function getWikiDir(): string {
+  return path.join(os.homedir(), '.mycc-store', 'wiki');
+}
+
+export function getWikiLogsDir(): string {
+  return path.join(getWikiDir(), 'logs');
+}
+
+export function getWikiDbDir(): string {
+  return path.join(getWikiDir(), 'db');
+}
+
+export function getWikiDomainsFile(): string {
+  return path.join(getWikiDir(), 'domains.json');
+}
+
+// ============================================================================
+// Directory Initialization
+// ============================================================================
+
+export function ensureDirs(): void {
+  const dirs = [
+    MYCC_DIR,
+    getMailDir(),
+    getToolsDir(),
+    getSkillsDir(),
+    getSessionsDir(),
+    getLongtextDir(),
+  ];
+  for (const dir of dirs) {
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+  }
+
+  // Wiki directories are in ~/.mycc-store, not project .mycc
+  const wikiDirs = [getWikiDir(), getWikiLogsDir(), getWikiDbDir()];
+  for (const dir of wikiDirs) {
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
     }
   }
 }

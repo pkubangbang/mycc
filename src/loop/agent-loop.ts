@@ -10,7 +10,8 @@ import type { AgentContext, ToolScope, ToolCall, SlashCommandContext } from '../
 import { ResultTooLargeError } from '../types.js';
 import { ParentContext } from '../context/index.js';
 import { Loader } from '../context/loader.js';
-import { clearSessionData, getMyccDir, setSessionContext } from '../context/db.js';
+import { getMyccDir, setSessionContext } from '../config.js';
+import { clearAll } from '../context/memory-store.js';
 import { createSessionFile, readSession, writeSession, getSessionId, cleanupEmptySessions, loadSessionById, getSessionPathById, SessionNotFoundError, AmbiguousSessionError } from '../session/index.js';
 import { prepareRestoration, readDosq, extractFirstQuery, type SummaryPair } from '../session/restoration.js';
 import { slashRegistry } from '../slashes/index.js';
@@ -169,7 +170,7 @@ async function initializeSession(): Promise<SessionInit> {
   // Step 3: For NEW sessions, clear any orphan data from this session ID
   // (Restored sessions should keep their existing data)
   if (!sessionArg) {
-    clearSessionData();
+    clearAll();
   }
 
   return result;
@@ -258,6 +259,8 @@ export async function agentLoop(
             model: MODEL,
             messages: triologue.getMessages(),
             tools,
+            // enable thinking when ESC is hit (wrapping up), to guess the user's intention.
+            think: agentIO.isNeglectedMode(),
           },
           { signal: abortController.signal, neglected: agentIO.isNeglectedMode() }
         );

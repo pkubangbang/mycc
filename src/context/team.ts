@@ -14,10 +14,10 @@ import type {
   IpcHandlerRegistration,
   SendResponseCallback,
 } from '../types.js';
-import { getDb, getSessionContext, getMyccDir } from './db.js';
+import { getMyccDir } from '../config.js';
+import * as MemoryStore from './memory-store.js';
 import { MailBox } from './mail.js';
 import { IpcRegistry } from './child-context/ipc-registry.js';
-import type { CoreModule } from '../types.js';
 import { readSession, writeSession } from '../session/index.js';
 
 // ES module compatibility for __dirname
@@ -43,7 +43,7 @@ type IpcMessage = {
 };
 
 /**
- * Team module implementation using SQLite + child processes
+ * Team module implementation using in-memory storage + child processes
  */
 export class TeamManager implements TeamModule {
   private context: AgentContext;
@@ -112,14 +112,8 @@ export class TeamManager implements TeamModule {
       writeSession(this.sessionFilePath, session);
     }
 
-    // Insert into database
-    const db = getDb();
-    const sessionId = getSessionContext();
-    const stmt = db.prepare(`
-      INSERT OR REPLACE INTO teammates (name, role, status, prompt, session_id)
-      VALUES (?, ?, 'working', ?, ?)
-    `);
-    stmt.run(name, role, prompt, sessionId);
+    // Store in memory
+    MemoryStore.createTeammate(name, role, prompt);
 
     // Spawn child process
     const workerPath = path.join(__dirname, 'teammate-worker.js');
@@ -141,7 +135,7 @@ export class TeamManager implements TeamModule {
     // Handle process exit
     child.on('exit', (code) => {
       this.statuses.set(name, 'shutdown');
-      this.updateDbStatus(name, 'shutdown');
+      MemoryStore.updateTeammateStatus(name, 'shutdown');
       this.processes.delete(name);
       this.context.core.brief('info', name, `Process exited (code ${code})`);
     });
@@ -150,7 +144,7 @@ export class TeamManager implements TeamModule {
     child.on('error', (err) => {
       this.context.core.brief('error', name, `Process error: ${err.message}`);
       this.statuses.set(name, 'shutdown');
-      this.updateDbStatus(name, 'shutdown');
+      MemoryStore.updateTeammateStatus(name, 'shutdown');
       this.processes.delete(name);
     });
 
@@ -176,7 +170,7 @@ export class TeamManager implements TeamModule {
     if (msg.type === 'status') {
       const status = msg.status as TeammateStatus;
       this.statuses.set(sender, status);
-      this.updateDbStatus(sender, status);
+      MemoryStore.updateTeammateStatus(sender, status);
 
       // Resolve subscribers based on status change
       if (status === 'working') {
@@ -286,46 +280,19 @@ export class TeamManager implements TeamModule {
   }
 
   /**
-   * Update status in database
-   */
-  private updateDbStatus(name: string, status: TeammateStatus): void {
-    const db = getDb();
-    const sessionId = getSessionContext();
-    const stmt = db.prepare(`
-      UPDATE teammates SET status = ? WHERE name = ? AND session_id = ?
-    `);
-    stmt.run(status, name, sessionId);
-  }
-
-  /**
    * Get teammate info
    */
   getTeammate(name: string): Teammate | undefined {
-    const db = getDb();
-    const sessionId = getSessionContext();
-    const stmt = db.prepare(`
-      SELECT name, role, status, prompt, created_at
-      FROM teammates
-      WHERE name = ? AND session_id = ?
-    `);
-
-    const row = stmt.get(name, sessionId) as {
-      name: string;
-      role: string;
-      status: string;
-      prompt: string | null;
-      created_at: string;
-    } | undefined;
-
-    if (!row) return undefined;
+    const stored = MemoryStore.getTeammate(name);
+    if (!stored) return undefined;
 
     return {
-      name: row.name,
-      role: row.role,
-      status: row.status as TeammateStatus,
+      name: stored.name,
+      role: stored.role,
+      status: (this.statuses.get(name) || stored.status) as TeammateStatus,
       process: this.processes.get(name),
-      prompt: row.prompt || undefined,
-      createdAt: new Date(row.created_at),
+      prompt: stored.prompt,
+      createdAt: stored.createdAt,
     };
   }
 
@@ -333,22 +300,11 @@ export class TeamManager implements TeamModule {
    * List all teammates
    */
   listTeammates(): { name: string; role: string; status: TeammateStatus }[] {
-    const db = getDb();
-    const sessionId = getSessionContext();
-    const stmt = db.prepare(`
-      SELECT name, role, status FROM teammates WHERE session_id = ?
-    `);
-
-    const rows = stmt.all(sessionId) as Array<{
-      name: string;
-      role: string;
-      status: string;
-    }>;
-
-    return rows.map((row) => ({
-      name: row.name,
-      role: row.role,
-      status: (this.statuses.get(row.name) || row.status) as TeammateStatus,
+    const stored = MemoryStore.listTeammates();
+    return stored.map((t) => ({
+      name: t.name,
+      role: t.role,
+      status: (this.statuses.get(t.name) || t.status) as TeammateStatus,
     }));
   }
 
@@ -535,11 +491,7 @@ export class TeamManager implements TeamModule {
 
     this.processes.delete(name);
     this.statuses.delete(name);
-
-    const db = getDb();
-    const sessionId = getSessionContext();
-    const stmt = db.prepare(`DELETE FROM teammates WHERE name = ? AND session_id = ?`);
-    stmt.run(name, sessionId);
+    MemoryStore.removeTeammate(name);
   }
 
   /**
@@ -547,7 +499,7 @@ export class TeamManager implements TeamModule {
    * @param force - If true, kill processes immediately; otherwise send soft shutdown
    */
   dismissTeam(force: boolean = false): void {
-    for (const [name, child] of this.processes) {
+    for (const [_name, child] of this.processes) {
       if (force) {
         // Force kill the process
         child.kill('SIGTERM');
@@ -561,10 +513,10 @@ export class TeamManager implements TeamModule {
     this.processes.clear();
     this.statuses.clear();
 
-    const db = getDb();
-    const sessionId = getSessionContext();
-    const stmt = db.prepare(`DELETE FROM teammates WHERE session_id = ?`);
-    stmt.run(sessionId);
+    // Remove all from memory store
+    for (const name of MemoryStore.listTeammates().map((t) => t.name)) {
+      MemoryStore.removeTeammate(name);
+    }
   }
 
   /**

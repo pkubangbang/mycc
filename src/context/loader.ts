@@ -13,7 +13,7 @@ import { isVerbose } from '../config.js';
 // Package root: resolve up from this file (src/context/loader.ts or dist/context/loader.js)
 const packageRoot = path.resolve(fileURLToPath(import.meta.url), '..', '..', '..');
 import type { DynamicLoader, ToolDefinition, Skill, Tool, ToolScope, AgentContext, SkillModule } from '../types.js';
-import { getToolsDir, getSkillsDir, getUserToolsDir, getUserSkillsDir, ensureDirs } from './db.js';
+import { getToolsDir, getSkillsDir, getUserToolsDir, getUserSkillsDir, ensureDirs } from '../config.js';
 import { bashTool } from '../tools/bash.js';
 import { readTool } from '../tools/read.js';
 import { writeTool } from '../tools/write.js';
