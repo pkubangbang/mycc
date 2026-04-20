@@ -90,6 +90,9 @@ export const bashTool: ToolDefinition = {
 
     const output = parts.join('\n');
 
+    // Verbose output: show the full result contents
+    ctx.core.verbose('bash', 'Command output', { command, exitCode, stdout: stdout.slice(0, 2000), stderr: stderr.slice(0, 500) });
+
     // Check if we need to summarize
     const lines = output.split('\n');
     const lineCount = lines.length;

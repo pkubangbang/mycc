@@ -48,6 +48,9 @@ export const readTool: ToolDefinition = {
       const content = fs.readFileSync(safe, 'utf-8');
       const lines = content.split('\n');
 
+      // Verbose output: show the file contents
+      ctx.core.verbose('read', `Reading file: ${filePath}`, { path: filePath, totalLines: lines.length, content: content.slice(0, 2000) });
+
       if (limit && limit < lines.length) {
         return lines.slice(0, limit).join('\n') + `\n... (${lines.length - limit} more lines)`;
       }
