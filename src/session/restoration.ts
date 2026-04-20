@@ -15,7 +15,6 @@ import chalk from 'chalk';
 import { retryChat, MODEL } from '../ollama.js';
 import type { Message, ToolCall } from '../types.js';
 import type { Session } from './types.js';
-import { validateSession } from './index.js';
 import { getTokenThreshold } from '../config.js';
 
 /**
@@ -382,19 +381,22 @@ export function extractFirstQuery(dosqContent: string): string {
  * Returns a single summary pair and DOSQ path.
  */
 export async function prepareRestoration(session: Session): Promise<{ pair: SummaryPair; dosqPath: string }> {
-  // Validate session files exist
-  const validation = validateSession(session);
-  if (!validation.valid) {
-    throw new Error(`Session files missing: ${validation.missingFiles.join(', ')}`);
+  // Validate lead triologue exists (required)
+  if (!fs.existsSync(session.lead_triologue)) {
+    throw new Error(`Lead triologue not found: ${session.lead_triologue}`);
   }
 
   console.log(chalk.blue('Restoring session...'));
   console.log(chalk.gray(`  Lead triologue: ${session.lead_triologue}`));
   console.log(chalk.gray(`  Child triologues: ${session.child_triologues.length}`));
 
-  // Summarize child triologues
+  // Summarize child triologues - skip missing files
   const childSummaries: { path: string, summary: Message }[] = [];
   for (const path of session.child_triologues) {
+    if (!fs.existsSync(path)) {
+      console.warn(chalk.yellow(`[restoration] Child triologue not found, skipping: ${path}`));
+      continue;
+    }
     const triologue = readTriologue(path);
     const fixedTriologue = fixOrphanedToolCalls(triologue);
     const pair = await summarizeChildTriologue(fixedTriologue);

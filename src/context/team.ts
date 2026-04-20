@@ -4,6 +4,7 @@
 
 import { fork, ChildProcess } from 'child_process';
 import * as path from 'path';
+import * as fs from 'fs';
 import { fileURLToPath } from 'url';
 import type {
   TeamModule,
@@ -13,7 +14,7 @@ import type {
   IpcHandlerRegistration,
   SendResponseCallback,
 } from '../types.js';
-import { getDb, getSessionContext } from './db.js';
+import { getDb, getSessionContext, getMyccDir } from './db.js';
 import { MailBox } from './mail.js';
 import { IpcRegistry } from './child-context/ipc-registry.js';
 import type { CoreModule } from '../types.js';
@@ -91,6 +92,26 @@ export class TeamManager implements TeamModule {
       return `Error: Teammate '${name}' already exists with status ${existing.status}`;
     }
 
+    // Generate triologue path upfront
+    const transcriptDir = path.join(getMyccDir(), 'transcripts');
+    if (!fs.existsSync(transcriptDir)) {
+      fs.mkdirSync(transcriptDir, { recursive: true });
+    }
+    const timestamp = Math.floor(Date.now() / 1000);
+    const triologuePath = path.join(transcriptDir, `${name}-${timestamp}-triologue.jsonl`);
+
+    // Register in session file BEFORE spawning child
+    const session = readSession(this.sessionFilePath);
+    if (session) {
+      if (!session.teammates.includes(name)) {
+        session.teammates.push(name);
+      }
+      if (!session.child_triologues.includes(triologuePath)) {
+        session.child_triologues.push(triologuePath);
+      }
+      writeSession(this.sessionFilePath, session);
+    }
+
     // Insert into database
     const db = getDb();
     const sessionId = getSessionContext();
@@ -133,12 +154,13 @@ export class TeamManager implements TeamModule {
       this.processes.delete(name);
     });
 
-    // Send spawn config to child via IPC
+    // Send spawn config to child via IPC (with pre-assigned triologue path)
     child.send({
       type: 'spawn',
       name,
       role,
       prompt,
+      triologuePath,
     });
 
     return `Spawned teammate '${name}' (role: ${role}) as child process (pid: ${child.pid})`;
@@ -182,32 +204,14 @@ export class TeamManager implements TeamModule {
     }
 
     if (msg.type === 'teammate_ready') {
+      // Teammate is ready - path already registered in createTeammate()
+      // Just verify sender matches and log
       const teammateName = msg.name as string;
-      const triologuePath = msg.path as string;
       if (sender !== teammateName) {
         this.context.core.brief('error', 'session', `teammate ${teammateName} ready but the actual sender is ${sender}`);
         return;
       }
-
-      const session = readSession(this.sessionFilePath);
-      if (!session) {
-        this.context.core.brief('error', 'session', `session file ${triologuePath} cannot be read!`);
-        return;
-      }
-
-      if (!session.teammates.includes(teammateName)) {
-        session.teammates.push(teammateName);
-      }
-      
-      if (!session.child_triologues.includes(triologuePath)) {
-        session.child_triologues.push(triologuePath);
-      }
-      
-      try {
-        writeSession(this.sessionFilePath, session);
-      } catch (e) {
-        this.context.core.brief('error', 'session', `Cannot write session file ${triologuePath}!`);
-      }
+      this.context.core.brief('info', teammateName, 'Teammate ready');
     }
 
     if (msg.type === 'log') {

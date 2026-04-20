@@ -35,15 +35,22 @@ let triologuePath = '';
 
 /**
  * Create a triologue that persists messages to disk
+ * @param name - Teammate name (for fallback path generation)
+ * @param assignedPath - Pre-assigned path from parent (optional)
  */
-function createPersistentTriologue(name: string): Triologue {
+function createPersistentTriologue(name: string, assignedPath?: string): Triologue {
   const transcriptDir = path.join(getMyccDir(), 'transcripts');
   if (!fs.existsSync(transcriptDir)) {
     fs.mkdirSync(transcriptDir, { recursive: true });
   }
 
-  const timestamp = Math.floor(Date.now() / 1000);
-  triologuePath = path.join(transcriptDir, `${name}-${timestamp}-triologue.jsonl`);
+  // Use assigned path if provided, otherwise generate
+  if (assignedPath) {
+    triologuePath = assignedPath;
+  } else {
+    const timestamp = Math.floor(Date.now() / 1000);
+    triologuePath = path.join(transcriptDir, `${name}-${timestamp}-triologue.jsonl`);
+  }
 
   // Clear existing file on start
   fs.writeFileSync(triologuePath, '', 'utf-8');
@@ -65,12 +72,13 @@ function createPersistentTriologue(name: string): Triologue {
 }
 
 // === Main Teammate Loop ===
-async function teammateLoop(prompt: string): Promise<void> {
-  const triologue = createPersistentTriologue(teammateName);
+async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<void> {
+  const triologue = createPersistentTriologue(teammateName, triologuePathArg);
   triologue.user(prompt);
 
   const tools = loader.getToolsForScope('child');
-  ipc.sendNotification('teammate_ready', { path: triologuePath, name: teammateName });
+  // Send ready notification (path already registered by parent)
+  ipc.sendNotification('teammate_ready', { name: teammateName });
   
   // Todo nudging state (counter-based, same as lead agent)
   let nextTodoNudge = 3;
@@ -221,6 +229,7 @@ async function handleSpawn(msg: {
   name: string;
   role: string;
   prompt: string;
+  triologuePath?: string;
 }): Promise<void> {
   teammateName = msg.name;
   teammateRole = msg.role;
@@ -237,14 +246,14 @@ async function handleSpawn(msg: {
 
   ctx.core.brief('info', 'worker', `${teammateName} started successfully`);
 
-  // Run the teammate loop with the prompt
-  await teammateLoop(msg.prompt);
+  // Run the teammate loop with the prompt (and pre-assigned triologue path)
+  await teammateLoop(msg.prompt, msg.triologuePath);
 }
 
 // === IPC Message Listener ===
 process.on('message', (msg: { type: string;[key: string]: unknown }) => {
   if (msg.type === 'spawn') {
-    handleSpawn(msg as unknown as { name: string; role: string; prompt: string }).catch((err) => {
+    handleSpawn(msg as unknown as { name: string; role: string; prompt: string; triologuePath?: string }).catch((err) => {
       // ctx may not be available yet, use sendNotification directly
       ipc.sendNotification('error', { error: `Spawn failed: ${(err as Error).message}` });
       process.exit(1);
