@@ -210,7 +210,7 @@ export async function agentLoop(
 
       // 2.5 Generate hint round if threshold reached
       if (triologue.needsHintRound()) {
-        console.log(chalk.blue('[hint round] Generating problem analysis...'));
+        agentIO.log(chalk.blue('[hint round] Generating problem analysis...'));
         await triologue.generateHintRound();
       }
 
@@ -242,8 +242,8 @@ export async function agentLoop(
 
       // Verbose: Log system prompt
       if (isVerbose()) {
-        console.log(chalk.magenta('[verbose][agent-loop] System prompt:'));
-        console.log(chalk.gray(systemPrompt.slice(0, 500) + (systemPrompt.length > 500 ? '...' : '')));
+        agentIO.log(chalk.magenta('[verbose][agent-loop] System prompt:'));
+        agentIO.log(chalk.gray(systemPrompt.slice(0, 500) + (systemPrompt.length > 500 ? '...' : '')));
       }
 
       // Create abort controller for this LLM call (allows Ctrl+C to interrupt)
@@ -268,7 +268,7 @@ export async function agentLoop(
         // Check if ESC was pressed DURING this LLM call - discard response if so
         // Only discard if the abort signal was triggered for THIS call
         if (abortController.signal.aborted) {
-          console.log(chalk.yellow('[ESC] LLM response discarded due to interruption'));
+          agentIO.log(chalk.yellow('[ESC] LLM response discarded due to interruption'));
           // Inject message about LLM interruption for wrap-up
           triologue.user('LLM call interrupted. Please wrap up and ask user for next steps.');
           continue;
@@ -282,7 +282,18 @@ export async function agentLoop(
         if (!assistantMessage.tool_calls || assistantMessage.tool_calls.length === 0) {
           // Clear interrupted mode after wrap-up response (no tools = wrap-up complete)
           if (agentIO.isNeglectedMode()) {
-            agentIO.setNeglectedMode(false);
+            agentIO.setNeglectedMode(false);  // Clear FIRST - so isInteractionMode() returns false
+
+            // Notify user if teammates still working
+            const teammates = ctx.team.listTeammates();
+            if (teammates.some(t => t.status === 'working')) {
+              agentIO.log(chalk.yellow('teammates still working (use /team to check status)'));
+            }
+
+            // Flush buffered output (after clearing neglected mode)
+            agentIO.flushOutput();
+
+            return;
           }
 
           const { result } = await ctx.team.awaitTeam(30000);
@@ -309,7 +320,7 @@ export async function agentLoop(
         for (const toolCall of (assistantMessage.tool_calls as ToolCall[])) {
           // Check for ESC - abort current tool and skip remaining
           if (agentIO.isNeglectedMode()) {
-            console.log(chalk.yellow('\n[ESC] Tool execution interrupted - skipping remaining tools'));
+            agentIO.log(chalk.yellow('\n[ESC] Tool execution interrupted - skipping remaining tools'));
             // First tool gets "interrupted", remaining get "skipped"
             triologue.skipPendingTools(
               'Tool use interrupted - user pressed ESC.',
@@ -326,9 +337,9 @@ export async function agentLoop(
 
           // Verbose: Log tool execution
           if (isVerbose()) {
-            console.log(chalk.magenta(`[verbose][agent-loop] Executing tool: ${toolName}`));
+            agentIO.log(chalk.magenta(`[verbose][agent-loop] Executing tool: ${toolName}`));
             const argsPreview = JSON.stringify(args).slice(0, 200);
-            console.log(chalk.gray(`  Args: ${argsPreview}${argsPreview.length >= 200 ? '...' : ''}`));
+            agentIO.log(chalk.gray(`  Args: ${argsPreview}${argsPreview.length >= 200 ? '...' : ''}`));
           }
 
           try {
@@ -336,10 +347,10 @@ export async function agentLoop(
 
             // Verbose: Log tool result
             if (isVerbose()) {
-              console.log(chalk.magenta(`[verbose][agent-loop] Tool result: ${toolName}`));
-              console.log(chalk.gray(`  Output length: ${output.length} chars`));
+              agentIO.log(chalk.magenta(`[verbose][agent-loop] Tool result: ${toolName}`));
+              agentIO.log(chalk.gray(`  Output length: ${output.length} chars`));
               const outputPreview = output.slice(0, 300);
-              console.log(chalk.gray(`  Preview: ${outputPreview}${output.length > 300 ? '...' : ''}`));
+              agentIO.log(chalk.gray(`  Preview: ${outputPreview}${output.length > 300 ? '...' : ''}`));
             }
 
             triologue.tool(toolName, output, toolCallId);
@@ -365,7 +376,7 @@ export async function agentLoop(
 
         // Check if this was an abort during LLM call
         if (err instanceof Error && err.message === 'Request aborted') {
-          console.log(chalk.yellow('[ESC] LLM call interrupted'));
+          agentIO.log(chalk.yellow('[ESC] LLM call interrupted'));
           // Inject message for wrap-up instead of throwing ShutdownError
           triologue.user('LLM call interrupted. Please wrap up and ask user for next steps.');
           continue;
@@ -383,7 +394,7 @@ export async function agentLoop(
 
       // Teammate timeout - give LLM context and options to decide
       if (err instanceof Error && errorMessage.includes('Timeout waiting for teammate')) {
-        console.error(chalk.yellow(`[agent-loop] Recoverable error: ${errorMessage}`));
+        agentIO.warn(chalk.yellow(`[agent-loop] Recoverable error: ${errorMessage}`));
         triologue.user(`Timeout waiting for teammates. What will you do? ${ctx.team.printTeam()}\n\nOptions:\n- Wait longer (use tm_await with higher timeout)\n- Remove teammate (use tm_remove)\n- Continue without waiting (just proceed with other tasks)`);
         continue;
       }
@@ -393,23 +404,23 @@ export async function agentLoop(
 
       switch (errorType) {
         case 'auth':
-          console.error(chalk.red(`[agent-loop] Authentication error: ${errorMessage}`));
-          console.error(chalk.red('Check OLLAMA_API_KEY in .env file.'));
+          agentIO.error(chalk.red(`[agent-loop] Authentication error: ${errorMessage}`));
+          agentIO.error(chalk.red('Check OLLAMA_API_KEY in .env file.'));
           throw err;
 
         case 'model':
-          console.error(chalk.red(`[agent-loop] Model error: ${errorMessage}`));
-          console.error(chalk.red(`Check OLLAMA_MODEL in .env file. Current model: ${MODEL}`));
+          agentIO.error(chalk.red(`[agent-loop] Model error: ${errorMessage}`));
+          agentIO.error(chalk.red(`Check OLLAMA_MODEL in .env file. Current model: ${MODEL}`));
           throw err;
 
         case 'config':
-          console.error(chalk.red(`[agent-loop] Configuration error: ${errorMessage}`));
-          console.error(chalk.red('Check TOKEN_THRESHOLD in .env file.'));
+          agentIO.error(chalk.red(`[agent-loop] Configuration error: ${errorMessage}`));
+          agentIO.error(chalk.red('Check TOKEN_THRESHOLD in .env file.'));
           throw err;
 
         case 'transient':
           // Transient error - auto-retry by injecting into conversation
-          console.error(chalk.yellow(`[agent-loop] Recoverable error: ${errorMessage}`));
+          agentIO.warn(chalk.yellow(`[agent-loop] Recoverable error: ${errorMessage}`));
           triologue.user(`An error occurred: ${errorMessage}. Please try again.`);
           continue;
 
@@ -419,9 +430,6 @@ export async function agentLoop(
       }
     }
   }
-
-  // Exited due to shutdown
-  throw new ShutdownError();
 }
 
 /**

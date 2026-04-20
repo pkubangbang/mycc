@@ -81,6 +81,12 @@ class AgentIO {
   private activeLineEditor: LineEditor | null = null;
   private lineHistory: string[] = [];
 
+  // Buffer for output during user interaction (prompt displayed or wrapping up)
+  private outputBuffer: Array<{
+    method: 'log' | 'warn' | 'error';
+    args: unknown[];
+  }> = [];
+
   // Lifecycle
 
   /**
@@ -101,13 +107,17 @@ class AgentIO {
         // ESC pressed - set neglected mode and abort LLM call if running
         // Only process if not already in neglected mode (avoid duplicate messages)
         if (!this.isNeglectedMode()) {
-          this.setNeglectedMode(true);
           const controller = this.getLlmAbortController();
+          // Log ESC message BEFORE setting neglected mode (so it shows immediately)
           if (controller) {
-            controller.abort();
             console.log('\n[ESC] Interrupting LLM call...');
           } else {
             console.log('\n[ESC] Interrupt requested - will skip remaining work');
+          }
+          // Now set neglected mode (subsequent logs will be buffered)
+          this.setNeglectedMode(true);
+          if (controller) {
+            controller.abort();
           }
           // Notify all neglected listeners (e.g., exec to skip subprocess wait)
           for (const cb of this.onNeglectedCallbacks) {
@@ -165,6 +175,74 @@ class AgentIO {
     this.onNeglectedCallbacks.push(callback);
   }
 
+  // Output buffering during user interaction
+
+  /**
+   * Check if we're in "interaction mode" (should buffer output)
+   * Returns true if:
+   * - Neglected mode is active (ESC pressed, wrapping up)
+   * - LineEditor is active (prompt displayed, waiting for input)
+   */
+  isInteractionMode(): boolean {
+    return this.neglectedModeFlag || this.activeLineEditor !== null;
+  }
+
+  /**
+   * Console replacement: log (buffers if in interaction mode)
+   */
+  log(...args: unknown[]): void {
+    if (this.isInteractionMode()) {
+      this.outputBuffer.push({ method: 'log', args });
+    } else {
+      console.log(...args);
+    }
+  }
+
+  /**
+   * Console replacement: warn (buffers if in interaction mode)
+   */
+  warn(...args: unknown[]): void {
+    if (this.isInteractionMode()) {
+      this.outputBuffer.push({ method: 'warn', args });
+    } else {
+      console.warn(...args);
+    }
+  }
+
+  /**
+   * Console replacement: error (buffers if in interaction mode)
+   */
+  error(...args: unknown[]): void {
+    if (this.isInteractionMode()) {
+      this.outputBuffer.push({ method: 'error', args });
+    } else {
+      console.error(...args);
+    }
+  }
+
+  /**
+   * Flush buffered output to console
+   * Called after user interaction completes (prompt submitted or wrap-up done)
+   */
+  flushOutput(): void {
+    const buffer = [...this.outputBuffer];
+    this.outputBuffer = [];
+
+    for (const { method, args } of buffer) {
+      switch (method) {
+        case 'log':
+          console.log(...args);
+          break;
+        case 'warn':
+          console.warn(...args);
+          break;
+        case 'error':
+          console.error(...args);
+          break;
+      }
+    }
+  }
+
   // Key event handling (for LineEditor)
 
   /**
@@ -217,7 +295,11 @@ class AgentIO {
           // Save history
           this.lineHistory = this.activeLineEditor?.getHistory() || [];
           this.activeLineEditor?.close();
-          this.activeLineEditor = null;
+          this.activeLineEditor = null;  // Clear FIRST - so isInteractionMode() returns false
+
+          // Flush buffered output (after clearing activeLineEditor)
+          this.flushOutput();
+
           resolve(value);
         },
         history: this.lineHistory,

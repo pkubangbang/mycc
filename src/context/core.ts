@@ -100,16 +100,16 @@ export class Core implements CoreModule {
     const detailPart = detail ? ` ${chalk.gray(detail)}` : '';
     const header = `${prefix}${detailPart}`;
 
-    // Log to console
+    // Use agentIO instead of console (buffers during interaction)
     switch (level) {
       case 'error':
-        console.error(`${header}\n${chalk.red(message)}`);
+        agentIO.error(`${header}\n${chalk.red(message)}`);
         break;
       case 'warn':
-        console.warn(`${header}\n${chalk.yellow(message)}`);
+        agentIO.warn(`${header}\n${chalk.yellow(message)}`);
         break;
       default:
-        console.log(`${header}\n${message}`);
+        agentIO.log(`${header}\n${message}`);
     }
   }
 
@@ -126,11 +126,12 @@ export class Core implements CoreModule {
     const timestamp = new Date().toISOString();
     const prefix = chalk.gray(`[${timestamp}]`) + chalk.magenta(`[verbose][${tool}]`);
 
+    // Use agentIO instead of console (buffers during interaction)
     if (data !== undefined) {
-      console.log(`${prefix} ${message}`);
-      console.log(chalk.gray(JSON.stringify(data, null, 2)));
+      agentIO.log(`${prefix} ${message}`);
+      agentIO.log(chalk.gray(JSON.stringify(data, null, 2)));
     } else {
-      console.log(`${prefix} ${message}`);
+      agentIO.log(`${prefix} ${message}`);
     }
   }
 
