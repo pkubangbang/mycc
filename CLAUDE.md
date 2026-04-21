@@ -105,6 +105,60 @@ tmux kill-session -t mycc-test
 
 See `docs/line-editor-tests.md` for LineEditor-specific test cases.
 
+## Unit Tests
+
+The project uses **vitest** for unit testing. Tests are located in `src/tests/` organized by module.
+
+### Running Tests
+
+```bash
+# Run all tests
+pnpm test
+
+# Run specific test file
+pnpm test src/tests/key-parser/
+
+# Run with coverage
+pnpm test -- --coverage
+```
+
+### Test Organization
+
+Tests are split by functionality to keep files under 300 lines:
+
+```
+src/tests/
+├── key-parser/         # Key parsing tests
+├── line-editor/        # Line editor tests
+├── agent-io/           # Agent I/O tests
+├── memory-store/       # Memory store tests
+└── tools/              # Tool implementation tests
+```
+
+### Writing Tests
+
+- Use `vitest` (globals enabled): `describe`, `it`, `expect`, `vi`
+- Mock external dependencies with `vi.fn()`, `vi.spyOn()`, `vi.mock()`
+- Create helper functions for common test patterns
+- Keep test files under 300 lines - split by functionality if needed
+- Use descriptive test names that explain the expected behavior
+
+### Test Methodology
+
+1. **Fail Fast Philosophy**: Tests should fail explicitly when assumptions are violated. Avoid silent degradation.
+
+2. **Isolation**: Each test should be independent. Reset state in `beforeEach` or use local variables.
+
+3. **Coverage Areas**:
+   - Happy path (normal usage)
+   - Edge cases (boundaries, empty inputs)
+   - Error handling (invalid inputs, failures)
+
+4. **Mocking External Dependencies**:
+   - Mock `agentIO.exec()` for bash tool tests
+   - Mock file system operations when possible
+   - Use temporary directories for file tests
+
 ## Reference Documents
 
 ### Core Architecture

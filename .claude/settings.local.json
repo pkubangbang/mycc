@@ -14,7 +14,9 @@
       "Bash(tmux:*)",
       "Bash(./test-line-editor.sh:*)",
       "Bash(./test-backspace-middle.sh)",
-      "Bash(pnpm tsc:*)"
+      "Bash(pnpm tsc:*)",
+      "Bash(pnpm test:*)",
+      "Bash(wc:*)"
     ]
   }
 }
