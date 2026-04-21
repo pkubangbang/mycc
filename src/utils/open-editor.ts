@@ -1,5 +1,5 @@
 import process from 'node:process';
-import { execa } from 'execa';
+import { spawn } from 'child_process';
 
 interface EditorInfo {
   id: string;
@@ -110,16 +110,30 @@ export async function openEditor(files: string[], options?: { editor?: string })
   try {
     if (editor.isTerminalEditor) {
       // For terminal editors, wait for them to complete
-      await execa(editor.binary, args, {
-        stdio,
+      await new Promise<void>((resolve, reject) => {
+        const proc = spawn(editor.binary, args, {
+          stdio,
+          shell: false,
+        });
+        proc.on('close', (code) => {
+          if (code === 0) {
+            resolve();
+          } else {
+            reject(new Error(`Editor exited with code ${code}`));
+          }
+        });
+        proc.on('error', (err) => {
+          reject(err);
+        });
       });
     } else {
       // For GUI editors, launch detached (don't wait)
-      const subprocess = execa(editor.binary, args, {
+      const proc = spawn(editor.binary, args, {
         detached: true,
         stdio,
+        shell: false,
       });
-      subprocess.unref();
+      proc.unref();
     }
   } catch (err) {
     throw new Error(`Failed to open editor: ${(err as Error).message}`);
