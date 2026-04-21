@@ -405,32 +405,9 @@ export async function agentLoop(
       // Classify error for appropriate handling
       const errorType = classifyError(err);
 
-      switch (errorType) {
-        case 'auth':
-          agentIO.error(chalk.red(`[agent-loop] Authentication error: ${errorMessage}`));
-          agentIO.error(chalk.red('Check OLLAMA_API_KEY in .env file.'));
-          throw err;
-
-        case 'model':
-          agentIO.error(chalk.red(`[agent-loop] Model error: ${errorMessage}`));
-          agentIO.error(chalk.red(`Check OLLAMA_MODEL in .env file. Current model: ${MODEL}`));
-          throw err;
-
-        case 'config':
-          agentIO.error(chalk.red(`[agent-loop] Configuration error: ${errorMessage}`));
-          agentIO.error(chalk.red('Check TOKEN_THRESHOLD in .env file.'));
-          throw err;
-
-        case 'transient':
-          // Transient error - auto-retry by injecting into conversation
-          agentIO.warn(chalk.yellow(`[agent-loop] Recoverable error: ${errorMessage}`));
-          triologue.user(`An error occurred: ${errorMessage}. Please try again.`);
-          continue;
-
-        default:
-          // Unknown/fatal error - propagate
-          throw err;
-      }
+      // All errors should bubble up to main() which prompts user for retry
+      // Only teammate timeout is handled locally (LLM decides what to do)
+      throw err;
     }
   }
 }
@@ -452,19 +429,43 @@ export async function main(): Promise<void> {
   // Get token threshold once (env value, doesn't change during execution)
   const tokenThreshold = getTokenThreshold();
 
+  // Initialize AgentIO early (needed for ask() during health check and session restoration)
+  agentIO.initMain();
+
   // Health check: validate Ollama connectivity and model availability
   // Skip if --skip-healthcheck flag is set (useful for testing)
   let modelInfo: { family?: string; parameterSize?: string; contextLength: number } | null = null;
   if (shouldSkipHealthCheck()) {
     console.log(chalk.gray('Skipping health check (test mode)'));
   } else {
-    const health = await checkHealth(tokenThreshold);
-    if (!health.ok) {
+    // Retry loop for health check - only exit on user request or Ctrl+C
+    while (true) {
+      const health = await checkHealth(tokenThreshold);
+      if (health.ok) {
+        if (health.modelInfo) {
+          modelInfo = health.modelInfo;
+        }
+        break; // Success - continue with startup
+      }
+
+      // Health check failed - show error and prompt for retry
       console.error(chalk.red(`Health check failed: ${health.error}`));
-      process.exit(1);
-    }
-    if (health.modelInfo) {
-      modelInfo = health.modelInfo;
+      console.log(chalk.gray('─'.repeat(40)));
+      console.log(chalk.yellow('Common fixes:'));
+      console.log(chalk.gray('  1. Ensure Ollama is running: ollama serve'));
+      console.log(chalk.gray('  2. Check OLLAMA_HOST in ~/.mycc-store/.env'));
+      console.log(chalk.gray('  3. Verify model exists: ollama list'));
+      console.log();
+
+      const answer = await agentIO.ask(chalk.cyan('Retry health check? [Y/n] > '));
+
+      if (answer.toLowerCase() === 'n' || answer.toLowerCase() === 'no') {
+        console.log(chalk.yellow('Exiting at user request.'));
+        process.exit(1);
+      }
+
+      console.log(chalk.cyan('Retrying health check...'));
+      console.log();
     }
   }
 
@@ -489,9 +490,6 @@ export async function main(): Promise<void> {
   }
 
   console.log(chalk.gray(`${alignLabel('Threshold:')}${tokenThreshold} tokens`));
-
-  // Initialize AgentIO early (needed for ask() during session restoration)
-  agentIO.initMain();
 
   // Initialize session (restore or create new)
   const sessionInit = await initializeSession();
@@ -641,7 +639,7 @@ export async function main(): Promise<void> {
         displayLetterBox(lastMsg.content);
       }
     } catch (err) {
-      // Shutdown - exit cleanly
+      // Shutdown - exit cleanly (only Ctrl+C triggers this)
       if (err instanceof ShutdownError) {
         break;
       }
@@ -651,16 +649,36 @@ export async function main(): Promise<void> {
         break;
       }
 
-      // Fatal errors - log and exit
-      if (err instanceof Error) {
-        console.error(chalk.red(`Fatal error: ${err.message}`));
-        if (err.stack) {
-          console.error(chalk.gray(err.stack));
-        }
-      } else {
-        console.error(chalk.red('Fatal error:'), err);
+      // All other errors - prompt user for retry instead of exiting
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      const errorType = classifyError(err);
+
+      console.error();
+      console.error(chalk.red(`Error: ${errorMessage}`));
+
+      // Show helpful instructions based on error type
+      if (errorType === 'auth') {
+        console.error(chalk.yellow('Check OLLAMA_API_KEY in ~/.mycc-store/.env file.'));
+      } else if (errorType === 'model') {
+        console.error(chalk.yellow(`Check OLLAMA_MODEL in ~/.mycc-store/.env file. Current: ${MODEL}`));
+      } else if (errorType === 'config') {
+        console.error(chalk.yellow('Check TOKEN_THRESHOLD in ~/.mycc-store/.env file.'));
+      } else if (errorType === 'transient') {
+        console.error(chalk.yellow('This appears to be a network/transient error.'));
       }
-      break;
+
+      // Prompt user for action
+      console.log(chalk.gray('─'.repeat(40)));
+      const answer = await agentIO.ask(chalk.cyan('Retry? [Y/n] > '));
+
+      if (answer.toLowerCase() === 'n' || answer.toLowerCase() === 'no') {
+        console.log(chalk.yellow('Exiting at user request.'));
+        break;
+      }
+
+      // User wants to retry - continue the loop
+      console.log(chalk.cyan('Retrying...'));
+      continue;
     }
   }
 
