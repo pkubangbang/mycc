@@ -1,5 +1,8 @@
 /**
  * test-utils.ts - Shared test utilities for tool tests
+ *
+ * This file provides tool-specific test utilities.
+ * For comprehensive mocking utilities, use ../test-utils/mock-context.ts
  */
 
 import * as fs from 'fs';
@@ -8,8 +11,12 @@ import * as os from 'os';
 import { vi } from 'vitest';
 import type { AgentContext, CoreModule } from '../../types.js';
 
+// Re-export comprehensive mock utilities
+export { createMockContext as createFullMockContext, createMinimalMockContext } from '../test-utils/mock-context.js';
+
 /**
- * Create a mock AgentContext with a temporary work directory
+ * Create a minimal mock AgentContext with a temporary work directory
+ * For full mock context with all modules, use createFullMockContext from mock-context.ts
  */
 export function createMockContext(workdir: string): AgentContext {
   const core: CoreModule = {
