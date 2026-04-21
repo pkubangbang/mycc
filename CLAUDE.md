@@ -71,6 +71,10 @@ The detailed information can be found at `skills/add-tool/SKILL.md`.
 
 Example: The `imgDescribe` method requires ImageMagick to check image dimensions. If unavailable, it throws an error immediately rather than proceeding with potentially oversized images that could fail downstream.
 
+**Errors as Hints, Not Failures**: In agent tool development, errors should be treated as hints for the agent to try alternative approaches, not as terminal failures. Design tools to fail fast with clear error messages that enable the agent to pivot.
+
+Example: The bash tool uses `setsid` to run subprocesses in a new session without a controlling terminal. This prevents `/dev/tty` access, which means interactive programs (git password prompts, ssh, vim) will fail with clear errors. This is intentional - the agent receives an error like "not a terminal" and can try a different approach (e.g., use SSH keys instead of password auth, use a different tool). This "fail fast" approach prevents subtle terminal corruption issues and gives the agent clear signals to adapt its strategy.
+
 To add a skill:
 1. refer to existing files in skills/ to get pattern.
 2. create file in `.mycc/skills` folder. This is a hot-reloadable folder
