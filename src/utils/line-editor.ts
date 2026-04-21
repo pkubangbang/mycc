@@ -53,13 +53,27 @@ interface LineInfo {
  * The cursor is embedded as a "CURSOR" marker in the content array.
  * All operations manipulate the CURSOR position directly.
  */
+/**
+ * LineEditor - Optimized custom line editor with CURSOR marker approach
+ *
+ * The cursor is embedded as a "CURSOR" marker in the content array.
+ * All operations manipulate the CURSOR position directly.
+ *
+ * Bang command handling:
+ * - When content starts with '!', the prompt changes to bang mode
+ * - The leading '!' is hidden from display but preserved in the returned value
+ */
 export class LineEditor {
+  // Default prompts for bang command mode
+  private static readonly BANG_PROMPT = '\x1b[45m\x1b[30mrun cmd ! \x1b[0m';  // Magenta background, black text
+
   // Configuration
-  private readonly prompt: string;
+  private prompt: string;  // Changed from readonly to allow dynamic updates
   private readonly stdout: NodeJS.WriteStream;
   private readonly onDone: (value: string) => void;
-  private readonly promptLength: number;
+  private promptLength: number;  // Changed from readonly
   private columns: number;
+  private readonly originalPrompt: string;  // Store original prompt for switching back
 
   // Content storage: flat array of graphemes + CURSOR marker
   private content: string[] = [CURSOR];
@@ -86,6 +100,7 @@ export class LineEditor {
 
   constructor(options: LineEditorOptions) {
     this.prompt = options.prompt;
+    this.originalPrompt = options.prompt;
     this.stdout = options.stdout;
     this.onDone = options.onDone;
     this.history = options.history ? [...options.history] : [];
@@ -125,9 +140,19 @@ export class LineEditor {
 
   /**
    * Get content without CURSOR marker (for output/history)
+   * Note: Returns the ORIGINAL content, including '!' prefix if present.
+   * The '!' is hidden from display but preserved in the returned value.
    */
-  private getContent(): string {
-    return this.content.filter(c => c !== CURSOR).join('');
+  /**
+   * Get content without CURSOR marker
+   * @param forOutput - If true and in bang mode, return content with '!' prefix preserved.
+   *                    If false, return the displayed content (for prompt change detection).
+   *                    Default is true (for backward compatibility).
+   */
+  private getContent(forOutput: boolean = true): string {
+    const displayed = this.content.filter(c => c !== CURSOR).join('');
+    // In bang mode, content already has '!' stored, return as-is
+    return displayed;
   }
 
   /**
@@ -144,9 +169,18 @@ export class LineEditor {
 
     const cursorIdx = this.getCursorIndex();
 
+    // In bang mode, skip leading '!' from display
+    const inBangMode = this.prompt === LineEditor.BANG_PROMPT;
+    const skipLeadingBang = inBangMode && this.content[0] === '!';
+
     for (let i = 0; i < this.content.length; i++) {
       const char = this.content[i];
       const isCursor = char === CURSOR;
+
+      // Skip leading '!' in bang mode for display (but never skip CURSOR)
+      if (skipLeadingBang && i === 0 && char === '!') {
+        continue;
+      }
 
       // Determine max width for this line
       const maxWidth = lines.length === 0
@@ -164,7 +198,7 @@ export class LineEditor {
         currentLineWidth = 0;
       }
 
-      // Track cursor position
+      // Track cursor position (adjust for skipped '!')
       if (isCursor) {
         cursorLine = lines.length;
         cursorCol = currentLineWidth;
@@ -317,6 +351,32 @@ export class LineEditor {
     this.render();
   }
 
+  /**
+   * Check if prompt should change based on current content
+   * Called after content modifications (insertChar, backspace, delete, setContent)
+   *
+   * Bang command handling:
+   * - If content starts with '!', switch to bang prompt
+   * - If content is empty and we're in bang mode, switch back to original prompt
+   */
+  private checkPromptChange(): void {
+    const content = this.getContent(false);
+    const inBangMode = this.prompt === LineEditor.BANG_PROMPT;
+
+    // Switch to bang prompt if content starts with '!'
+    if (content.startsWith('!') && !inBangMode) {
+      this.prompt = LineEditor.BANG_PROMPT;
+      this.promptLength = stringWidth(stripAnsi(this.prompt));
+      this.lineInfo = this.computeLineInfo();
+    }
+    // Switch back to original prompt if content is empty while in bang mode
+    else if (content.length === 0 && inBangMode) {
+      this.prompt = this.originalPrompt;
+      this.promptLength = stringWidth(stripAnsi(this.prompt));
+      this.lineInfo = this.computeLineInfo();
+    }
+  }
+
   // === Text Editing ===
 
   /**
@@ -327,6 +387,9 @@ export class LineEditor {
 
     // Insert before CURSOR
     this.content.splice(idx, 0, char);
+
+    // Check for prompt change
+    this.checkPromptChange();
 
     // Always use full render for simplicity and reliability
     this.lineInfo = this.computeLineInfo();
@@ -343,6 +406,9 @@ export class LineEditor {
     // Remove character before CURSOR
     this.content.splice(idx - 1, 1);
 
+    // Check for prompt change
+    this.checkPromptChange();
+
     // Always use full render for simplicity and reliability
     this.lineInfo = this.computeLineInfo();
     this.render();
@@ -356,6 +422,10 @@ export class LineEditor {
     if (idx === this.content.length - 1) return;
 
     this.content.splice(idx + 1, 1);
+
+    // Check for prompt change
+    this.checkPromptChange();
+
     this.lineInfo = this.computeLineInfo();
     this.render();
   }
@@ -398,6 +468,7 @@ export class LineEditor {
   private setContent(text: string): void {
     const chars = this.splitIntoChars(text);
     this.content = [...chars, CURSOR];
+    this.checkPromptChange();
     this.lineInfo = this.computeLineInfo();
     this.moveEnd();
   }
@@ -459,6 +530,7 @@ export class LineEditor {
       // Delete from cursor to end
       const idx = this.getCursorIndex();
       this.content = this.content.slice(0, idx + 1);
+      this.checkPromptChange();
       this.lineInfo = this.computeLineInfo();
       this.render();
       return;
@@ -468,6 +540,7 @@ export class LineEditor {
       // Delete from start to cursor
       const idx = this.getCursorIndex();
       this.content = [CURSOR, ...this.content.slice(idx + 1)];
+      this.checkPromptChange();
       this.lineInfo = this.computeLineInfo();
       this.render();
       return;

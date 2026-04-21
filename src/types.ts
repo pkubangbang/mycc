@@ -98,7 +98,7 @@ export interface Mail {
  * Todo item - temporary checklist
  */
 export interface TodoItem {
-  id: number;
+  id?: number;  // Optional: 0 or undefined for new items, existing ID to update
   name: string;
   done: boolean;
   note?: string;

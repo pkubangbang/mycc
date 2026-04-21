@@ -593,6 +593,18 @@ export async function main(): Promise<void> {
         break;
       }
 
+      // Handle bang commands
+      if (query.trim().startsWith('!')) {
+        const command = query.trim().slice(1).trim();
+        const result = await loader.execute('tmux', ctx, {
+          command: command || undefined,
+          reason: command ? `User runs: ${command}` : 'Open terminal',
+        });
+        triologue.user(`[FYI] ${result}`);
+        triologue.resetHint();
+        continue;
+      }
+
       // Handle slash commands
       const trimmedQuery = query.trim();
       if (trimmedQuery.startsWith('/')) {

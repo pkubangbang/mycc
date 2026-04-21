@@ -37,6 +37,21 @@ export const helpCommand: SlashCommand = {
       console.log(chalk.white(`  /${cmd.name}`) + chalk.gray(` - ${cmd.description}`));
     }
 
+    // Bang command
+    console.log(chalk.cyan('\n=== Bang Command ===\n'));
+    console.log(chalk.magenta('  !<command>') + chalk.gray(' - Run command in interactive terminal popup'));
+    console.log(chalk.gray('                 Press Enter when done to capture result'));
+    console.log(chalk.gray('                 Press Ctrl+B d to detach tmux session'));
+    console.log();
+    console.log(chalk.gray('  Examples:'));
+    console.log(chalk.gray('    !pnpm build        - Run build with possible prompts'));
+    console.log(chalk.gray('    !ssh user@host     - SSH to remote server'));
+    console.log(chalk.gray('    !                  - Open terminal shell'));
+    console.log();
+
+    console.log(chalk.cyan('\n=== Exit ===\n'));
+    console.log(chalk.white('  q, exit, quit') + chalk.gray(' - Exit the agent'));
+    console.log(chalk.gray('  (or just press Enter)'));
     console.log();
   },
 };
