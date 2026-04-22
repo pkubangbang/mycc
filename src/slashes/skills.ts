@@ -15,7 +15,7 @@ export const skillsCommand: SlashCommand = {
   handler: async (context) => {
     const { args, ctx } = context;
 
-    if (args[0] === 'build') {
+    if (args[1] === 'build') {
       // Index all skills to wiki
       await loader.indexAllSkillsToWiki(ctx.wiki);
       console.log('Skills rebuilt and indexed in wiki.');
