@@ -82,7 +82,7 @@ export function minifyMessages(
 
 function truncate(text: string, maxLen: number): string {
   if (text.length <= maxLen) return text;
-  return text.slice(0, maxLen - 20) + '...' + text.slice(-17);
+  return `${text.slice(0, maxLen - 20)  }...${  text.slice(-17)}`;
 }
 
 function truncateArgs(args: Record<string, unknown>, maxLen: number): string {
@@ -97,5 +97,5 @@ function truncateArgs(args: Record<string, unknown>, maxLen: number): string {
     parts.push(`${key}:${valStr}`);
   }
   const compact = `{${parts.join(',')}}`;
-  return compact.length <= maxLen ? compact : compact.slice(0, maxLen - 3) + '...';
+  return compact.length <= maxLen ? compact : `${compact.slice(0, maxLen - 3)  }...`;
 }

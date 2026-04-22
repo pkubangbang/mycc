@@ -605,7 +605,7 @@ export class Loader implements DynamicLoader, SkillModule {
     await wiki.registerDomain('skills', 'Skills indexed for semantic matching');
 
     // Index each skill
-    for (const [name, entry] of this.skills) {
+    for (const [_name, entry] of this.skills) {
       await this.indexSkillToWiki(entry.skill, wiki, entry.layer);
     }
 

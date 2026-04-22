@@ -75,11 +75,11 @@ export class Triologue {
     const tokenThreshold = options.tokenThreshold ?? 50000;
     this.confusion = new ConfusionCalculator(hintThreshold);
     this.options = {
-      tokenThreshold: tokenThreshold,
+      tokenThreshold,
       // default value is about half the TOKEN_THRESHOLD, so there won't be
       // "big blocks" that take more than half of the ctx length.
       resultThreshold: options.resultThreshold ?? Math.floor(tokenThreshold / 2),
-      hintThreshold: hintThreshold,
+      hintThreshold,
       onMisorder: options.onMisorder ?? this.defaultOnMisorder,
       onToolMisalign: options.onToolMisalign ?? this.defaultOnToolMisalign,
       onCompact: options.onCompact ?? this.defaultOnCompact,
@@ -689,7 +689,7 @@ Be specific and actionable. This analysis will help guide the next steps.`;
 
     const writeStream = fs.createWriteStream(transcriptPath);
     for (const msg of this.messages) {
-      writeStream.write(JSON.stringify(msg) + '\n');
+      writeStream.write(`${JSON.stringify(msg)  }\n`);
     }
     writeStream.end();
 
@@ -705,11 +705,11 @@ Be specific and actionable. This analysis will help guide the next steps.`;
     const conversationText = minifyMessages(this.messages);
 
     const knowledgeInstruction = domains.length > 0
-      ? '4) Important knowledge to persist (if any)\n\n' +
-        'Available wiki domains:\n' + domainList + '\n\n' +
-        'IMPORTANT: Only persist knowledge that matches one of the available domains above.\n' +
-        'For knowledge worth remembering, note as: "Knowledge: [domain] - [fact/rule]"\n' +
-        'Skip opinions, temporary details, or knowledge that does not fit any domain.\n\n'
+      ? `4) Important knowledge to persist (if any)\n\n` +
+        `Available wiki domains:\n${  domainList  }\n\n` +
+        `IMPORTANT: Only persist knowledge that matches one of the available domains above.\n` +
+        `For knowledge worth remembering, note as: "Knowledge: [domain] - [fact/rule]"\n` +
+        `Skip opinions, temporary details, or knowledge that does not fit any domain.\n\n`
       : '';
 
     const response = await retryChat({
@@ -718,12 +718,12 @@ Be specific and actionable. This analysis will help guide the next steps.`;
         {
           role: 'user',
           content:
-            'Summarize this conversation for continuity. Include:\n' +
-            '1) What was accomplished\n' +
-            '2) Current state\n' +
-            '3) Key decisions made\n' +
-            knowledgeInstruction +
-            conversationText,
+            `Summarize this conversation for continuity. Include:\n` +
+            `1) What was accomplished\n` +
+            `2) Current state\n` +
+            `3) Key decisions made\n${ 
+            knowledgeInstruction 
+            }${conversationText}`,
         },
       ],
     });

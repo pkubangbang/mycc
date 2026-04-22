@@ -64,8 +64,8 @@ export class ChildWiki implements WikiModule {
     let timestamp = '';
     let domain = '';
     let title = '';
-    let contentLines: string[] = [];
-    let references: string[] = [];
+    const contentLines: string[] = [];
+    const references: string[] = [];
     let section = '';
 
     for (const line of lines) {

@@ -41,7 +41,7 @@ export class MailBox implements MailModule {
     };
 
     // Append to file (atomic append)
-    const line = JSON.stringify(mail) + '\n';
+    const line = `${JSON.stringify(mail)  }\n`;
     fs.appendFileSync(mailPath, line, 'utf-8');
   }
 

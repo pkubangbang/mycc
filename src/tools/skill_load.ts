@@ -50,6 +50,6 @@ export const skillLoadTool: ToolDefinition = {
     const description = skill.description ? `Description: ${skill.description}\n\n` : '';
     const keywords = skill.keywords.length > 0 ? `Keywords: ${skill.keywords.join(', ')}\n\n` : '';
 
-    return header + description + keywords + '---\n\n' + skill.content;
+    return `${header + description + keywords  }---\n\n${  skill.content}`;
   },
 };

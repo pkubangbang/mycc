@@ -166,7 +166,7 @@ export class Core implements CoreModule {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       if (message.includes('401') || message.includes('unauthorized') || message.includes('Unauthorized')) {
-        throw new Error(`Unauthorized: Set OLLAMA_API_KEY in .env for web search access. Original error: ${message}`);
+        throw new Error(`Unauthorized: Set OLLAMA_API_KEY in .env for web search access. Original error: ${message}`, { cause: error });
       }
       throw error;
     }
@@ -184,7 +184,7 @@ export class Core implements CoreModule {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       if (message.includes('401') || message.includes('unauthorized') || message.includes('Unauthorized')) {
-        throw new Error(`Unauthorized: Set OLLAMA_API_KEY in .env for web fetch access. Original error: ${message}`);
+        throw new Error(`Unauthorized: Set OLLAMA_API_KEY in .env for web fetch access. Original error: ${message}`, { cause: error });
       }
       throw error;
     }
@@ -242,7 +242,7 @@ export class Core implements CoreModule {
       this.brief('error', 'img_describe', `Vision model error: ${errMsg}`);
 
       // Provide actionable guidance based on common failure modes
-      let guidance = '';
+      let guidance: string;
       if (errMsg.toLowerCase().includes('not found') || errMsg.toLowerCase().includes('does not exist')) {
         guidance = `The model "${VISION_MODEL}" is not available. Pull it first:\n  ollama pull ${VISION_MODEL}`;
       } else if (errMsg.toLowerCase().includes('connection') || errMsg.toLowerCase().includes('econnrefused')) {
@@ -253,7 +253,7 @@ export class Core implements CoreModule {
         guidance = `Unexpected error from vision model. Verify:\n  1. Ollama is running: ollama serve\n  2. Model is pulled: ollama pull ${VISION_MODEL}\n  3. Model supports vision/multimodal input`;
       }
 
-      throw new Error(`Vision model failed: ${errMsg}\n\nGuidance: ${guidance}`);
+      throw new Error(`Vision model failed: ${errMsg}\n\nGuidance: ${guidance}`, { cause: err });
     } finally {
       // Cleanup temp file if created
       if (tempPath) {
@@ -297,7 +297,7 @@ export class Core implements CoreModule {
       } catch {
         // ignore
       }
-      throw new Error(`ImageMagick not available. Install with: sudo apt install imagemagick. Original error: ${(err as Error).message}`);
+      throw new Error(`ImageMagick not available. Install with: sudo apt install imagemagick. Original error: ${(err as Error).message}`, { cause: err });
     }
 
     // Cleanup temp input
@@ -351,7 +351,7 @@ export class Core implements CoreModule {
         } catch {
           // ignore
         }
-        throw new Error(`Failed to resize image (width: ${width}px). ImageMagick resize failed: ${(err as Error).message}`);
+        throw new Error(`Failed to resize image (width: ${width}px). ImageMagick resize failed: ${(err as Error).message}`, { cause: err });
       }
     }
 

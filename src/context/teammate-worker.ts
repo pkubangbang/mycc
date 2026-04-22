@@ -60,7 +60,7 @@ function createPersistentTriologue(name: string, assignedPath?: string): Triolog
       // Append last message to file
       const lastMsg = messages[messages.length - 1];
       try {
-        fs.appendFileSync(triologuePath, JSON.stringify(lastMsg) + '\n', 'utf-8');
+        fs.appendFileSync(triologuePath, `${JSON.stringify(lastMsg)  }\n`, 'utf-8');
       } catch {
         // Ignore write errors
       }

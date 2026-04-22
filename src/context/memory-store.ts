@@ -5,12 +5,12 @@
  * duration of the session. Data is lost when the process exits.
  */
 
-import type { Issue, Teammate, TeammateStatus, IssueComment } from '../types.js';
+import type { Issue, Teammate, TeammateStatus } from '../types.js';
 
 // In-memory stores (session-scoped)
-let issues: Map<number, Issue> = new Map();
-let blockages: Map<string, { blocker: number; blocked: number }> = new Map();
-let teammates: Map<string, Teammate> = new Map();
+const issues: Map<number, Issue> = new Map();
+const blockages: Map<string, { blocker: number; blocked: number }> = new Map();
+const teammates: Map<string, Teammate> = new Map();
 
 // ID counter for issues
 let nextIssueId = 1;

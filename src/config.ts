@@ -199,7 +199,7 @@ export function printEnvStatus(): void {
     const value = process.env[req.name];
     if (value) {
       // Redact API key
-      const display = req.name === 'OLLAMA_API_KEY' ? '****' + value.slice(-4) : value;
+      const display = req.name === 'OLLAMA_API_KEY' ? `****${  value.slice(-4)}` : value;
       console.log(`  ${req.name}: ${display}`);
     } else if (req.default) {
       console.log(`  ${req.name}: (using default: ${req.default})`);

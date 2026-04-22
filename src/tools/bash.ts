@@ -134,5 +134,5 @@ Report the total line count at the start of your response.`
     ]
   });
 
-  return `Summary of ${totalLines} lines:\n${response.message.content || 'No summary generated'}`;
+  return `Summary of ${totalLines} lines (set a larger "elor" to see full content):\n${response.message.content || 'No summary generated'}`;
 }

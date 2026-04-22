@@ -14,7 +14,7 @@ export const tmPrintTool: ToolDefinition = {
     properties: {},
   },
   scope: ['main', 'child'],
-  handler: async (ctx: AgentContext, _args: Record<string, unknown>): Promise<string> => {
+  handler: async (ctx: AgentContext): Promise<string> => {
     return await ctx.team.printTeam();
   },
 };

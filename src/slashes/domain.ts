@@ -44,7 +44,7 @@ async function handleList(): Promise<void> {
   }
 
   // Load domains
-  let domains: WikiDomain[] = [];
+  let domains: WikiDomain[];
   try {
     domains = JSON.parse(fs.readFileSync(domainsFile, 'utf-8'));
   } catch {

@@ -15,7 +15,7 @@ export const bgPrintTool: ToolDefinition = {
     required: [],
   },
   scope: ['main', 'child'],
-  handler: async (ctx: AgentContext, _args: Record<string, unknown>): Promise<string> => {
+  handler: async (ctx: AgentContext): Promise<string> => {
     if (!ctx.bg) {
       ctx.core.brief('error', 'bg_print', 'Background module not available');
       return 'Error: Background module not available in this context';

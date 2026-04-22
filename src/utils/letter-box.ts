@@ -5,15 +5,6 @@
 import chalk from 'chalk';
 
 /**
- * Calculate display width of a string (excluding ANSI escape codes)
- */
-function displayWidth(str: string): number {
-  // Remove ANSI escape codes
-  const stripped = str.replace(/\x1b\[[0-9;]*m/g, '');
-  return stripped.length;
-}
-
-/**
  * Wrap text to a maximum width, preserving word boundaries
  */
 function wrapText(text: string, maxWidth: number): string[] {
@@ -33,7 +24,7 @@ function wrapText(text: string, maxWidth: number): string[] {
       if (currentLine === '') {
         currentLine = word;
       } else if (currentLine.length + 1 + word.length <= maxWidth) {
-        currentLine += ' ' + word;
+        currentLine += ` ${  word}`;
       } else {
         lines.push(currentLine);
         currentLine = word;
@@ -84,16 +75,16 @@ export function displayLetterBox(content: string, maxWidth = 76): void {
 
   // Top border with pseudo parenthesis style and timestamp
   console.log();
-  console.log(borderColor('.' + '='.repeat(leftEquals) + headerText + '='.repeat(rightEquals) + '.'));
+  console.log(borderColor(`.${  '='.repeat(leftEquals)  }${headerText  }${'='.repeat(rightEquals)  }.`));
   console.log();
 
   // Content lines (no side borders, just text)
   for (const line of lines) {
-    console.log('  ' + textColor(line));
+    console.log(`  ${  textColor(line)}`);
   }
 
   // Bottom border with single quote
   console.log();
-  console.log(borderColor("'" + '='.repeat(boxWidth - 2) + "'"));
+  console.log(borderColor(`'${  '='.repeat(boxWidth - 2)  }'`));
   console.log();
 }

@@ -75,7 +75,7 @@ export class IpcRegistry {
     }
 
     // Extract payload without the type field
-    const { type, ...payload } = msg;
+    const { type: _type, ...payload } = msg;
 
     try {
       await registration.handler(sender, payload, this.context, sendResponse);

@@ -136,6 +136,6 @@ export async function openEditor(files: string[], options?: { editor?: string })
       proc.unref();
     }
   } catch (err) {
-    throw new Error(`Failed to open editor: ${(err as Error).message}`);
+    throw new Error(`Failed to open editor: ${(err as Error).message}`, { cause: err });
   }
 }

@@ -499,7 +499,7 @@ export class TeamManager implements TeamModule {
    * @param force - If true, kill processes immediately; otherwise send soft shutdown
    */
   dismissTeam(force: boolean = false): void {
-    for (const [_name, child] of this.processes) {
+    for (const [, child] of this.processes) {
       if (force) {
         // Force kill the process
         child.kill('SIGTERM');

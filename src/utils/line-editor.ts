@@ -145,11 +145,11 @@ export class LineEditor {
    */
   /**
    * Get content without CURSOR marker
-   * @param forOutput - If true and in bang mode, return content with '!' prefix preserved.
+   * @param _forOutput - If true and in bang mode, return content with '!' prefix preserved.
    *                    If false, return the displayed content (for prompt change detection).
    *                    Default is true (for backward compatibility).
    */
-  private getContent(forOutput: boolean = true): string {
+  private getContent(_forOutput: boolean = true): string {
     const displayed = this.content.filter(c => c !== CURSOR).join('');
     // In bang mode, content already has '!' stored, return as-is
     return displayed;
@@ -165,9 +165,6 @@ export class LineEditor {
     let currentLineWidth = 0;
     let cursorLine = 0;
     let cursorCol = 0;
-    let foundCursor = false;
-
-    const cursorIdx = this.getCursorIndex();
 
     // In bang mode, skip leading '!' from display
     const inBangMode = this.prompt === LineEditor.BANG_PROMPT;
@@ -205,7 +202,6 @@ export class LineEditor {
         if (lines.length === 0) {
           cursorCol += this.promptLength;
         }
-        foundCursor = true;
         // Don't add CURSOR to currentLine
         continue;
       }
@@ -615,7 +611,6 @@ export class LineEditor {
 
     // Store old state
     const oldLineCount = this.lineInfo.lines.length;
-    const oldCursorLine = this.lineInfo.cursorLine;
     
     // Recompute lines with new width
     this.lineInfo = this.computeLineInfo();

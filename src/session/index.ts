@@ -83,7 +83,7 @@ export function createSessionFile(lead_triologue: string): string {
     id,
     create_time: now.toISOString(),
     project_dir: process.cwd(),
-    lead_triologue: lead_triologue,
+    lead_triologue,
     child_triologues: [],
     teammates: [],
     first_query: '',

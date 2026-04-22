@@ -61,7 +61,7 @@ export class WikiManager implements WikiModule {
         return false;
       }
       return true;
-    } catch (err) {
+    } catch (_err) {
       console.warn('Warning: Wiki not available. Skill suggestions disabled.');
       return false;
     }
@@ -425,7 +425,7 @@ export class WikiManager implements WikiModule {
 
     // Write back as JSON lines
     const lines = entries.map(e => JSON.stringify(e)).join('\n');
-    fs.writeFileSync(walPath, lines + '\n', 'utf-8');
+    fs.writeFileSync(walPath, `${lines  }\n`, 'utf-8');
   }
 
   /**
@@ -495,8 +495,8 @@ export class WikiManager implements WikiModule {
     let timestamp = '';
     let domain = '';
     let title = '';
-    let contentLines: string[] = [];
-    let references: string[] = [];
+    const contentLines: string[] = [];
+    const references: string[] = [];
     let section = '';
 
     for (const line of lines) {
@@ -574,7 +574,7 @@ export class WikiManager implements WikiModule {
     const walPath = path.join(walDir, `${today}.wal`);
 
     // Append as JSON line
-    const line = JSON.stringify(entry) + '\n';
+    const line = `${JSON.stringify(entry)  }\n`;
     fs.appendFileSync(walPath, line, 'utf-8');
 
     this.core.brief('info', 'wiki', `Appended to WAL: ${entry.hash}`);

@@ -73,12 +73,8 @@ export class ChildCore implements CoreModule {
    * @param query - The search query
    */
   async webSearch(query: string): Promise<WebSearchResult[]> {
-    try {
-      const response = await ollama.webSearch({ query });
-      return response.results || [];
-    } catch (error) {
-      throw error;
-    }
+    const response = await ollama.webSearch({ query });
+    return response.results || [];
   }
 
   /**
@@ -86,11 +82,7 @@ export class ChildCore implements CoreModule {
    * @param url - The URL to fetch
    */
   async webFetch(url: string): Promise<WebFetchResponse> {
-    try {
-      return await ollama.webFetch({ url });
-    } catch (error) {
-      throw error;
-    }
+    return await ollama.webFetch({ url });
   }
 
   /**

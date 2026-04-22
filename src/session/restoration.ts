@@ -401,7 +401,7 @@ export async function prepareRestoration(session: Session): Promise<{ pair: Summ
     const fixedTriologue = fixOrphanedToolCalls(triologue);
     const pair = await summarizeChildTriologue(fixedTriologue);
     childSummaries.push({
-      path: path,
+      path,
       summary: pair[0]
     });
   }

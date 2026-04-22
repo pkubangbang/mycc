@@ -94,7 +94,7 @@ async function handleEdit(wiki: WikiModule, date: string): Promise<void> {
 
     // Write back to WAL file as JSON lines
     const jsonLines = newEntries.map((e: WALEntry) => JSON.stringify(e)).join('\n');
-    fs.writeFileSync(walPath, jsonLines + '\n', 'utf-8');
+    fs.writeFileSync(walPath, `${jsonLines  }\n`, 'utf-8');
 
     console.log(chalk.green(`WAL updated: ${newEntries.length} entries`));
   } finally {

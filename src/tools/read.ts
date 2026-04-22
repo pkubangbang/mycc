@@ -52,7 +52,7 @@ export const readTool: ToolDefinition = {
       ctx.core.verbose('read', `Reading file: ${filePath}`, { path: filePath, totalLines: lines.length, content: content.slice(0, 2000) });
 
       if (limit && limit < lines.length) {
-        return lines.slice(0, limit).join('\n') + `\n... (${lines.length - limit} more lines)`;
+        return `${lines.slice(0, limit).join('\n')  }\n... (${lines.length - limit} more lines)`;
       }
 
       return content.slice(0, 50000);

@@ -5,7 +5,7 @@
 import { execSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
-import type { WtModule, WorkTree } from '../types.js';
+import type { WtModule } from '../types.js';
 import * as WorktreeStore from './worktree-store.js';
 import type { CoreModule } from '../types.js';
 

@@ -15,7 +15,7 @@ export const wtPrintTool: ToolDefinition = {
     required: [],
   },
   scope: ['main', 'child'],
-  handler: async (ctx: AgentContext, _args: Record<string, unknown>): Promise<string> => {
+  handler: async (ctx: AgentContext): Promise<string> => {
     const result = await ctx.wt.printWorkTrees();
     ctx.core.brief('info', 'wt_print', 'Listed worktrees');
     return result;

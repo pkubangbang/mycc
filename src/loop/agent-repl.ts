@@ -19,8 +19,11 @@ import { displayLetterBox } from '../utils/letter-box.js';
 import { loader } from '../context/loader.js';
 import { buildSkillHint, initializeSession } from './agent-loop-helper.js';
 import { agentLoop, ShutdownError } from './agent-loop.js';
+import pkg from '../../package.json';
 
-const version = require('../../package.json').version;export async function main(): Promise<void> {
+const version = pkg.version;
+
+export async function main(): Promise<void> {
   // Guard: Must run under Coordinator
   if (!process.send) {
     console.error(chalk.red('Error: Lead process must be started via Coordinator (mycc command)'));
@@ -132,7 +135,7 @@ const version = require('../../package.json').version;export async function main
     onMessage: (messages) => {
       const lastMsg = messages[messages.length - 1];
       try {
-        fs.appendFileSync(triologuePath, JSON.stringify(lastMsg) + '\n', 'utf-8');
+        fs.appendFileSync(triologuePath, `${JSON.stringify(lastMsg)  }\n`, 'utf-8');
       } catch {
         // Ignore write errors
       }

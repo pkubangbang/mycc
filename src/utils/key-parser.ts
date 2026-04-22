@@ -183,7 +183,7 @@ function parseNextKey(data: Buffer, offset: number): { keyInfo: KeyInfo; consume
       // Invalid UTF-8, consume single byte
       const hexByte = code.toString(16).padStart(2, '0');
       return {
-        keyInfo: { name: '', ctrl: false, meta: false, shift: false, sequence: '\\x' + hexByte },
+        keyInfo: { name: '', ctrl: false, meta: false, shift: false, sequence: `\\x${  hexByte}` },
         consumed: 1,
       };
     }
@@ -192,7 +192,7 @@ function parseNextKey(data: Buffer, offset: number): { keyInfo: KeyInfo; consume
   // Unknown byte
   const hexByte = code.toString(16).padStart(2, '0');
   return {
-    keyInfo: { name: '', ctrl: false, meta: false, shift: false, sequence: '\\x' + hexByte },
+    keyInfo: { name: '', ctrl: false, meta: false, shift: false, sequence: `\\x${  hexByte}` },
     consumed: 1,
   };
 }
