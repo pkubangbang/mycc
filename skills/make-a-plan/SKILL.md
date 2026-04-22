@@ -4,11 +4,14 @@ description: "Guide for creating structured plans for coding tasks. Use when sta
 tags: [planning, coding, workflow, best-practices]
 ---
 
-# Make a Plan Skill
+# Make-a-Plan Skill
 
 This skill guides the agent in creating structured plans for coding tasks.
 
-## Two-Sided Approach
+
+
+
+## General Workflow
 
 Planning is a two-sided process: user-facing first, then technical details.
 
@@ -24,9 +27,20 @@ This ensures:
 Example prompt:
 > "Before we plan, let me state my assumptions: [list assumptions]. Does this match your understanding? Any corrections?"
 
-### Step 2: Gather User Intent
+### Step 2: Write PEX
 
-After confirmation, ask the user about their intention to flesh out technical details. Wait for their response before proceeding.
+PEX is a technique for explaining situations in an ordered list where later items build upon concepts introduced earlier. This makes it easy for the user to identify the first "stucking point" — the first item they don't understand. (More on that later)
+
+### Step 3: Ask the user's intent
+
+Ask the user's intent: flesh out, split, or start coding.
+
+You must dump the plan as a markdown document inside the cwd before coding.
+
+
+
+
+
 
 ## Key Components of a Plan
 
@@ -54,9 +68,10 @@ Analyze and document:
 ### 5. Bold Guess on Next Steps
 Make educated guesses about implementation approaches or next actions. This serves as inspiration and supplements context for decision-making. Mark these explicitly as guesses, not requirements.
 
-## PEX (Progressive Explanation)
 
-PEX is a technique for explaining situations in an ordered list where later items build upon concepts introduced earlier. This makes it easy for the user to identify the first "stucking point" — the first item they don't understand.
+
+
+## PEX (Progressive Explanation)
 
 ### Format
 - Ordered list (numbered)
@@ -74,6 +89,7 @@ When explaining a technical concept (e.g., eslint, module system, architecture),
 
 ### Example: mycc Process Model
 
+```
 ## PEX on mycc Process Model
 
 1. mycc 的入口点是 `bin/mycc.js`。这是一个 Node.js wrapper，使用 `tsx` 直接运行 TypeScript，无需预编译。
@@ -87,6 +103,10 @@ When explaining a technical concept (e.g., eslint, module system, architecture),
 9. 子进程队友实现状态机：`WORK`（执行工具）、`IDLE`（轮询等待）、`SHUTDOWN`（终止）。状态转换由工具调用结果和新邮件触发。
 10. 在 `IDLE` 状态时，子进程会自动扫描并认领未分配的 Issue。认领条件：`status === 'pending'` 且 `!owner` 且 `blockedBy.length === 0`。
 11. 子进程队友的工具权限受限。`tm_create`、`tm_remove`、`tm_await`、`broadcast` 是主进程专属工具，子进程调用会抛出 `FORBIDDEN` 错误。
+
+```
+
+
 
 ## Critical Transitions
 
@@ -138,17 +158,17 @@ Two key transition moments require careful handling during planning.
 >
 > Agent: "Breaking down:
 >
-> **Phase 1: Core Login Flow** (1-2 days)
+> **Phase 1: Core Login Flow**
 > - Basic username/password auth
 > - JWT token generation
 > - Deliverable: User can log in via API
 >
-> **Phase 2: Session Management** (1 day)
+> **Phase 2: Session Management**
 > - Token refresh
 > - Session expiry
 > - Deliverable: Sessions persist 24h
 >
-> **Phase 3: Security Hardening** (1 day)
+> **Phase 3: Security Hardening**
 > - Rate limiting
 > - Password hashing
 > - Deliverable: Production-ready auth
