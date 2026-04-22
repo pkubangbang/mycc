@@ -12,7 +12,7 @@ import { isVerbose } from '../config.js';
 
 // Package root: resolve up from this file (src/context/loader.ts or dist/context/loader.js)
 const packageRoot = path.resolve(fileURLToPath(import.meta.url), '..', '..', '..');
-import type { DynamicLoader, ToolDefinition, Skill, Tool, ToolScope, AgentContext, SkillModule } from '../types.js';
+import type { DynamicLoader, ToolDefinition, Skill, Tool, ToolScope, AgentContext, SkillModule, WikiModule, WikiDocument } from '../types.js';
 import { getToolsDir, getSkillsDir, getUserToolsDir, getUserSkillsDir, ensureDirs } from '../config.js';
 import { bashTool } from '../tools/bash.js';
 import { readTool } from '../tools/read.js';
@@ -544,4 +544,84 @@ export class Loader implements DynamicLoader, SkillModule {
       return `Error executing ${name}: ${(err as Error).message}`;
     }
   }
+
+  /**
+   * Get scope for a skill based on its layer
+   * - 'user' layer → 'user'
+   * - 'project' layer → project name (from cwd)
+   * - 'built-in' layer → 'built-in'
+   */
+  private getSkillScope(layer: Layer): string {
+    if (layer === 'user') return 'user';
+    if (layer === 'built-in') return 'built-in';
+    // For project skills, use the project name (directory name of cwd)
+    return path.basename(process.cwd());
+  }
+
+  /**
+   * Index a single skill into wiki under "skills" domain
+   * Content = scope + name + description + keywords (for embedding)
+   */
+  async indexSkillToWiki(skill: Skill, wiki: WikiModule, layer: Layer): Promise<void> {
+    const scope = this.getSkillScope(layer);
+
+    // Build content for embedding
+    const keywordsStr = skill.keywords.length > 0
+      ? ` Keywords: ${skill.keywords.join(', ')}`
+      : '';
+    const content = `Scope: ${scope}\nName: ${skill.name}\nDescription: ${skill.description}${keywordsStr}`;
+
+    const document: WikiDocument = {
+      domain: 'skills',
+      title: skill.name,
+      content,
+      references: [],
+    };
+
+    // Check if already indexed with same content
+    const existingResults = await wiki.get(skill.name, { domain: 'skills', topK: 1 });
+    if (existingResults.length > 0 && existingResults[0].document.title === skill.name) {
+      // Check if content matches
+      if (existingResults[0].document.content === content) {
+        // No change needed
+        return;
+      }
+      // Delete old version before re-indexing
+      await wiki.delete(existingResults[0].hash);
+    }
+
+    // Prepare and put
+    const result = await wiki.prepare(document);
+    if (result.accepted && result.hash) {
+      await wiki.put(result.hash, document);
+    }
+  }
+
+  /**
+   * Index all skills into wiki (called by /skills build)
+   */
+  async indexAllSkillsToWiki(wiki: WikiModule): Promise<void> {
+    // Register 'skills' domain
+    await wiki.registerDomain('skills', 'Skills indexed for semantic matching');
+
+    // Index each skill
+    for (const [name, entry] of this.skills) {
+      await this.indexSkillToWiki(entry.skill, wiki, entry.layer);
+    }
+
+    console.log(chalk.dim(`[loader] Indexed ${this.skills.size} skills to wiki`));
+  }
+
+  /**
+   * Get the layer (user/project/built-in) for a skill
+   */
+  getSkillLayer(name: string): 'user' | 'project' | 'built-in' | undefined {
+    const entry = this.skills.get(name);
+    return entry?.layer;
+  }
 }
+
+/**
+ * Singleton loader instance
+ */
+export const loader = new Loader();

@@ -8,6 +8,15 @@ import { skillLoadTool } from '../../tools/skill_load.js';
 import { createMockContext } from './test-utils.js';
 import type { AgentContext, Skill, SkillModule } from '../../types.js';
 
+// Mock the loader singleton
+vi.mock('../../context/loader.js', () => ({
+  loader: {
+    getSkillLayer: vi.fn(() => 'project'),
+    indexSkillToWiki: vi.fn(() => Promise.resolve()),
+    indexAllSkillsToWiki: vi.fn(() => Promise.resolve()),
+  },
+}));
+
 /**
  * Create a mock AgentContext with a mock SkillModule
  */
@@ -49,7 +58,7 @@ describe('skillLoadTool - Content', () => {
   // Reading Skill Content
   // =========================================================================
 
-  it('should return properly formatted skill content', () => {
+  it('should return properly formatted skill content', async () => {
     const skill: Skill = {
       name: 'documentation',
       description: 'Write comprehensive documentation',
@@ -58,7 +67,7 @@ describe('skillLoadTool - Content', () => {
     };
     ctx = createMockContextWithSkills('/tmp/test', [skill]);
 
-    const result = skillLoadTool.handler(ctx, { name: 'documentation' });
+    const result = await skillLoadTool.handler(ctx, { name: 'documentation' });
 
     expect(result).toMatch(/^# Skill: documentation/);
     expect(result).toContain('Description: Write comprehensive documentation');
@@ -68,7 +77,7 @@ describe('skillLoadTool - Content', () => {
     expect(result).toContain('## Tips');
   });
 
-  it('should preserve original content formatting', () => {
+  it('should preserve original content formatting', async () => {
     const originalContent = `# Original Title
 
 Some paragraph.
@@ -82,25 +91,25 @@ Some paragraph.
     const skill = createSampleSkill({ name: 'preserved', content: originalContent });
     ctx = createMockContextWithSkills('/tmp/test', [skill]);
 
-    const result = skillLoadTool.handler(ctx, { name: 'preserved' });
+    const result = await skillLoadTool.handler(ctx, { name: 'preserved' });
 
     const contentStart = result.indexOf('---\n\n') + 5;
     const extractedContent = result.slice(contentStart);
     expect(extractedContent).toBe(originalContent);
   });
 
-  it('should handle case-sensitive skill names', () => {
+  it('should handle case-sensitive skill names', async () => {
     const skill = createSampleSkill({ name: 'Code-Review' });
     ctx = createMockContextWithSkills('/tmp/test', [skill]);
 
-    const exactResult = skillLoadTool.handler(ctx, { name: 'Code-Review' });
+    const exactResult = await skillLoadTool.handler(ctx, { name: 'Code-Review' });
     expect(exactResult).toContain('# Skill: Code-Review');
 
-    const caseResult = skillLoadTool.handler(ctx, { name: 'code-review' });
+    const caseResult = await skillLoadTool.handler(ctx, { name: 'code-review' });
     expect(caseResult).toContain("Skill 'code-review' not found");
   });
 
-  it('should handle skill with unicode content', () => {
+  it('should handle skill with unicode content', async () => {
     const unicodeContent = `# Unicode 技能
 
 This skill supports unicode: 日本語, 中文, Español, Français.
@@ -110,7 +119,7 @@ This skill supports unicode: 日本語, 中文, Español, Français.
     const skill = createSampleSkill({ name: 'unicode', content: unicodeContent });
     ctx = createMockContextWithSkills('/tmp/test', [skill]);
 
-    const result = skillLoadTool.handler(ctx, { name: 'unicode' });
+    const result = await skillLoadTool.handler(ctx, { name: 'unicode' });
 
     expect(result).toContain('# Skill: unicode');
     expect(result).toContain('日本語, 中文, Español, Français');
@@ -118,7 +127,7 @@ This skill supports unicode: 日本語, 中文, Español, Français.
     expect(result).toContain('Math: ∑ ∏ √');
   });
 
-  it('should handle concurrent skill loads', () => {
+  it('should handle concurrent skill loads', async () => {
     const skills = [
       createSampleSkill({ name: 'skill-a' }),
       createSampleSkill({ name: 'skill-b' }),
@@ -126,16 +135,18 @@ This skill supports unicode: 日本語, 中文, Español, Français.
     ];
     ctx = createMockContextWithSkills('/tmp/test', skills);
 
-    const resultA = skillLoadTool.handler(ctx, { name: 'skill-a' });
-    const resultB = skillLoadTool.handler(ctx, { name: 'skill-b' });
-    const resultC = skillLoadTool.handler(ctx, { name: 'skill-c' });
+    const [resultA, resultB, resultC] = await Promise.all([
+      skillLoadTool.handler(ctx, { name: 'skill-a' }),
+      skillLoadTool.handler(ctx, { name: 'skill-b' }),
+      skillLoadTool.handler(ctx, { name: 'skill-c' }),
+    ]);
 
     expect(resultA).toContain('# Skill: skill-a');
     expect(resultB).toContain('# Skill: skill-b');
     expect(resultC).toContain('# Skill: skill-c');
   });
 
-  it('should handle skill with empty content', () => {
+  it('should handle skill with empty content', async () => {
     const skill: Skill = {
       name: 'empty-content',
       description: 'Skill with no content',
@@ -144,7 +155,7 @@ This skill supports unicode: 日本語, 中文, Español, Français.
     };
     ctx = createMockContextWithSkills('/tmp/test', [skill]);
 
-    const result = skillLoadTool.handler(ctx, { name: 'empty-content' });
+    const result = await skillLoadTool.handler(ctx, { name: 'empty-content' });
 
     expect(result).toContain('# Skill: empty-content');
     expect(result).toContain('Description: Skill with no content');
@@ -152,7 +163,7 @@ This skill supports unicode: 日本語, 中文, Español, Français.
     expect(result).toContain('---');
   });
 
-  it('should handle skill with only keywords (no description)', () => {
+  it('should handle skill with only keywords (no description)', async () => {
     const skill: Skill = {
       name: 'keywords-only',
       description: '',
@@ -161,14 +172,14 @@ This skill supports unicode: 日本語, 中文, Español, Français.
     };
     ctx = createMockContextWithSkills('/tmp/test', [skill]);
 
-    const result = skillLoadTool.handler(ctx, { name: 'keywords-only' });
+    const result = await skillLoadTool.handler(ctx, { name: 'keywords-only' });
 
     expect(result).toContain('# Skill: keywords-only');
     expect(result).toContain('Keywords: keyword1, keyword2');
     expect(result).not.toContain('Description:');
   });
 
-  it('should handle skill with only description (no keywords)', () => {
+  it('should handle skill with only description (no keywords)', async () => {
     const skill: Skill = {
       name: 'description-only',
       description: 'Only has description',
@@ -177,7 +188,7 @@ This skill supports unicode: 日本語, 中文, Español, Français.
     };
     ctx = createMockContextWithSkills('/tmp/test', [skill]);
 
-    const result = skillLoadTool.handler(ctx, { name: 'description-only' });
+    const result = await skillLoadTool.handler(ctx, { name: 'description-only' });
 
     expect(result).toContain('# Skill: description-only');
     expect(result).toContain('Description: Only has description');

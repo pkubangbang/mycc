@@ -8,6 +8,7 @@
  */
 
 import type { ToolDefinition, AgentContext } from '../types.js';
+import { loader } from '../context/loader.js';
 
 export const skillLoadTool: ToolDefinition = {
   name: 'skill_load',
@@ -23,7 +24,7 @@ export const skillLoadTool: ToolDefinition = {
     required: ['name'],
   },
   scope: ['main', 'child'],
-  handler: (ctx: AgentContext, args: Record<string, unknown>): string => {
+  handler: async (ctx: AgentContext, args: Record<string, unknown>): Promise<string> => {
     const skillName = args.name as string;
 
     ctx.core.brief('info', 'skill_load', skillName);
@@ -39,6 +40,10 @@ export const skillLoadTool: ToolDefinition = {
       const skillList = availableSkills.map(s => `  - ${s.name}: ${s.description}`).join('\n');
       return `Skill '${skillName}' not found. Available skills:\n${skillList}`;
     }
+
+    // Verify-then-update: re-index skill to wiki if content changed
+    const layer = loader.getSkillLayer(skillName) || 'project';
+    await loader.indexSkillToWiki(skill, ctx.wiki, layer);
 
     // Return the full skill content
     const header = `# Skill: ${skill.name}\n`;
