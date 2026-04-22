@@ -16,7 +16,7 @@ import { homedir } from 'os';
 import { resolve } from 'path';
 import chalk from 'chalk';
 import { isVerbose, printEnvStatus, validateEnv } from './config.js';
-import { main } from './loop/agent-loop.js';
+import { main } from './loop/agent-repl.js';
 
 // ---------------------------------------------------------------------------
 // Environment Setup

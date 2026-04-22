@@ -11,7 +11,7 @@ import { BackgroundTasks } from './bg.js';
 import { WorktreeManager } from './wt.js';
 import { TeamManager } from './team.js';
 import { WikiManager } from './wiki.js';
-import { Loader } from './loader.js';
+import { loader } from './loader.js';
 import type { CoreModule, TodoModule, MailModule, SkillModule, IssueModule, BgModule, WtModule, TeamModule, WikiModule } from '../types.js';
 
 export * from './core.js';
@@ -23,7 +23,6 @@ export * from './wt.js';
 export * from './team.js';
 export * from './child-context/ipc-registry.js';
 export * from './child-context/index.js';
-export { Loader } from './loader.js';
 
 /**
  * ParentContext - AgentContext for main/lead process
@@ -40,7 +39,7 @@ export class ParentContext implements AgentContext {
   private teamModule: TeamManager;
   private wikiModule: WikiManager;
 
-  constructor(loader: Loader, sessionFilePath: string) {
+  constructor(sessionFilePath: string) {
     this.coreModule = new Core(); // Uses process.cwd() by default
     this.skillModule = loader;
     this.todoModule = new Todo();
