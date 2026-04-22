@@ -6,7 +6,7 @@
       "type": "node",
       "request": "launch",
       "runtimeExecutable": "npx",
-      "runtimeArgs": ["tsx", "src/index.ts", "--skip-healthcheck"],
+      "runtimeArgs": ["tsx", "src/index.ts", "--skip-healthcheck", "-v"],
       "cwd": "${workspaceFolder}",
       "console": "integratedTerminal",
       "internalConsoleOptions": "neverOpen",

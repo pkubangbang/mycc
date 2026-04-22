@@ -156,7 +156,8 @@ export class WikiManager implements WikiModule {
         // Skip schema record
         if (r.hash === '__schema__') continue;
 
-        const similarity = this.cosineSimilarity(embedding, r.embedding as number[]);
+        const embeddingArr = Array.isArray(r.embedding) ? r.embedding : Array.from(r.embedding as Iterable<number>);
+        const similarity = this.cosineSimilarity(embedding, embeddingArr);
         if (similarity > threshold) {
           return true;
         }
@@ -311,7 +312,7 @@ export class WikiManager implements WikiModule {
           continue;
         }
 
-        const embedding = r.embedding as number[];
+        const embedding = Array.isArray(r.embedding) ? r.embedding as number[] : Array.from(r.embedding as Iterable<number>);
         const similarity = this.cosineSimilarity(queryEmbedding, embedding);
 
         if (similarity >= threshold) {
