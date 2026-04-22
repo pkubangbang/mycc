@@ -7,11 +7,11 @@ import { execSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import type { CoreModule } from '../types.js';
-import { ollama, retryWithBackoff } from '../ollama.js';
+import type { CoreModule } from '../../types.js';
+import { ollama, retryWithBackoff } from '../../ollama.js';
 import { WebFetchResponse, WebSearchResult } from 'ollama';
-import { agentIO } from '../loop/agent-io.js';
-import { isVerbose, getVisionModel } from '../config.js';
+import { agentIO } from '../../loop/agent-io.js';
+import { isVerbose, getVisionModel } from '../../config.js';
 
 /**
  * Color functions for tool prefixes

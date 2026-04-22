@@ -2,7 +2,7 @@
  * todo.ts - Todo module: temporary checklist
  */
 
-import type { TodoModule, TodoItem } from '../types.js';
+import type { TodoModule, TodoItem } from '../../types.js';
 
 /**
  * Todo module implementation

@@ -10,7 +10,7 @@
  */
 
 import type { TeamModule } from '../../types.js';
-import { MailBox } from '../mail.js';
+import { MailBox } from '../shared/mail.js';
 import { ipc } from './ipc-helpers.js';
 
 /**

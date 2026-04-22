@@ -5,7 +5,7 @@
  * and TeamManager dispatches incoming messages to the appropriate handler.
  */
 
-import type { IpcHandlerRegistration, AgentContext, SendResponseCallback } from '../../types.js';
+import type { IpcHandlerRegistration, AgentContext, SendResponseCallback } from '../types.js';
 
 /**
  * Registry for IPC message handlers

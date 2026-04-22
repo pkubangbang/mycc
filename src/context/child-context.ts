@@ -1,28 +1,28 @@
 /**
- * child-context/index.ts - Factory for creating child process AgentContext
+ * child-context.ts - ChildContext for child process (teammate)
  */
 
-import type { AgentContext, SkillModule, CoreModule, TodoModule, MailModule, IssueModule, BgModule, WtModule, TeamModule, WikiModule } from '../../types.js';
-import { Todo } from '../todo.js';
-import { MailBox } from '../mail.js';
-import { Loader } from '../loader.js';
-import { ChildCore } from './core.js';
-import { ChildIssue } from './issue.js';
-import { ChildWt } from './wt.js';
-import { ChildTeam } from './team.js';
-import { ChildWiki } from './wiki.js';
-import { BackgroundTasks } from '../bg.js';
+import type { AgentContext, SkillModule, CoreModule, TodoModule, MailModule, IssueModule, BgModule, WtModule, TeamModule, WikiModule } from '../types.js';
+import { Todo } from './shared/todo.js';
+import { MailBox } from './shared/mail.js';
+import { Loader } from './shared/loader.js';
+import { ChildCore } from './child/core.js';
+import { ChildIssue } from './child/issue.js';
+import { ChildWt } from './child/wt.js';
+import { ChildTeam } from './child/team.js';
+import { ChildWiki } from './child/wiki.js';
+import { BackgroundTasks } from './shared/bg.js';
 
 /** Child process loader singleton (silent mode) */
 export const silentLoader = new Loader(true);
 
 // Re-export
 export { IpcRegistry } from './ipc-registry.js';
-export { ChildCore } from './core.js';
-export { ChildIssue } from './issue.js';
-export { ChildWt } from './wt.js';
-export { ChildTeam } from './team.js';
-export { ChildWiki } from './wiki.js';
+export { ChildCore } from './child/core.js';
+export { ChildIssue } from './child/issue.js';
+export { ChildWt } from './child/wt.js';
+export { ChildTeam } from './child/team.js';
+export { ChildWiki } from './child/wiki.js';
 
 /**
  * ChildContext - AgentContext for child process (teammate)

@@ -13,12 +13,12 @@ import type {
   AgentContext,
   IpcHandlerRegistration,
   SendResponseCallback,
-} from '../types.js';
-import { getMyccDir } from '../config.js';
-import * as MemoryStore from './memory-store.js';
-import { MailBox } from './mail.js';
-import { IpcRegistry } from './child-context/ipc-registry.js';
-import { readSession, writeSession } from '../session/index.js';
+} from '../../types.js';
+import { getMyccDir } from '../../config.js';
+import * as MemoryStore from '../memory-store.js';
+import { MailBox } from '../shared/mail.js';
+import { IpcRegistry } from '../ipc-registry.js';
+import { readSession, writeSession } from '../../session/index.js';
 
 // ES module compatibility for __dirname
 const __filename = fileURLToPath(import.meta.url);

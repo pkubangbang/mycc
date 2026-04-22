@@ -1,31 +1,21 @@
 /**
- * context/index.ts - AgentContext class and module exports
+ * parent-context.ts - ParentContext for main/lead process
  */
 
-import type { AgentContext, IpcHandlerRegistration } from '../types.js';
-import { Core } from './core.js';
-import { Todo } from './todo.js';
-import { MailBox } from './mail.js';
-import { IssueManager } from './issue.js';
-import { BackgroundTasks } from './bg.js';
-import { WorktreeManager } from './wt.js';
-import { TeamManager } from './team.js';
-import { WikiManager } from './wiki.js';
-import { Loader } from './loader.js';
-import type { CoreModule, TodoModule, MailModule, SkillModule, IssueModule, BgModule, WtModule, TeamModule, WikiModule } from '../types.js';
+import type { AgentContext, IpcHandlerRegistration, WikiModule } from '../types.js';
+import { Core } from './parent/core.js';
+import { Todo } from './shared/todo.js';
+import { MailBox } from './shared/mail.js';
+import { IssueManager } from './parent/issue.js';
+import { BackgroundTasks } from './shared/bg.js';
+import { WorktreeManager } from './parent/wt.js';
+import { TeamManager } from './parent/team.js';
+import { WikiManager } from './parent/wiki.js';
+import { loader } from './shared/loader.js';
+import type { CoreModule, TodoModule, MailModule, SkillModule, IssueModule, BgModule, WtModule, TeamModule } from '../types.js';
 
-/** Main process loader singleton */
-export const loader = new Loader();
-
-export * from './core.js';
-export * from './todo.js';
-export * from './mail.js';
-export * from './issue.js';
-export * from './bg.js';
-export * from './wt.js';
-export * from './team.js';
-export * from './child-context/ipc-registry.js';
-export * from './child-context/index.js';
+// Re-export loader for convenience
+export { loader };
 
 /**
  * ParentContext - AgentContext for main/lead process

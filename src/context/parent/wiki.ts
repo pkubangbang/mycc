@@ -9,8 +9,6 @@ import * as lancedb from '@lancedb/lancedb';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
-import { ollama } from '../ollama.js';
-import { getWikiLogsDir, getWikiDbDir, getWikiDomainsFile, ensureDirs } from '../config.js';
 import type {
   WikiModule,
   WikiDocument,
@@ -21,8 +19,10 @@ import type {
   SearchResult,
   WALEntry,
   RebuildResult,
-} from '../types.js';
-import type { CoreModule } from '../types.js';
+  CoreModule,
+} from '../../types.js';
+import { ollama } from '../../ollama.js';
+import { getWikiLogsDir, getWikiDbDir, getWikiDomainsFile, ensureDirs } from '../../config.js';
 
 // Embedding model configuration
 const EMBEDDING_MODEL = process.env.OLLAMA_EMBEDDING_MODEL || 'nomic-embed-text';

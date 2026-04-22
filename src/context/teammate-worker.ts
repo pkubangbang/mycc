@@ -11,14 +11,14 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { ChildContext, silentLoader } from './child-context/index.js';
+import { ChildContext, silentLoader } from './child-context.js';
 import { retryChat, MODEL } from '../ollama.js';
 import type { AgentContext, Message } from '../types.js';
 import type { ToolCall } from '../types.js';
 import { buildSystemPrompt } from '../loop/agent-prompts.js';
 import { getTokenThreshold, getMyccDir } from '../config.js';
 import { Triologue } from '../loop/triologue.js';
-import { ipc, sendStatus } from './child-context/ipc-helpers.js';
+import { ipc, sendStatus } from './child/ipc-helpers.js';
 
 const WORKDIR = process.cwd();
 const POLL_INTERVAL = 5000; // 5 seconds

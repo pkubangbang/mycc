@@ -3,8 +3,7 @@
  */
 
 import { spawn, ChildProcess } from 'child_process';
-import type { BgModule, BgTask } from '../types.js';
-import type { CoreModule } from '../types.js';
+import type { BgModule, BgTask, CoreModule } from '../../types.js';
 
 /**
  * Background tasks module implementation

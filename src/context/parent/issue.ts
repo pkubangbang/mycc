@@ -2,8 +2,8 @@
  * issue.ts - Issue module: in-memory tasks with blocking relationships
  */
 
-import type { IssueModule, Issue } from '../types.js';
-import * as MemoryStore from './memory-store.js';
+import type { IssueModule, Issue } from '../../types.js';
+import * as MemoryStore from '../memory-store.js';
 
 /**
  * Issue module implementation using in-memory storage
