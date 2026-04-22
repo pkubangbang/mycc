@@ -94,15 +94,17 @@ export const bashTool: ToolDefinition = {
     ctx.core.verbose('bash', 'Command output', { command, exitCode, stdout: stdout.slice(0, 2000), stderr: stderr.slice(0, 500) });
 
     // Check if we need to summarize
-    const lines = output.split('\n');
-    const lineCount = lines.length;
+    // Count only the stdout lines, not the status/metadata lines
+    const stdoutLines = stdout.trim() ? stdout.trim().split('\n').length : 0;
+    const stderrLines = stderr.trim() ? stderr.trim().split('\n').length : 0;
+    const outputLines = stdoutLines + stderrLines;
 
-    if (lineCount <= elor) {
+    if (outputLines <= elor) {
       return output;
     }
 
     // Summarize the output
-    const summary = await summarizeOutput(output, intent, elor, lineCount, ctx);
+    const summary = await summarizeOutput(output, intent, elor, outputLines, ctx);
     return summary;
   },
 };
