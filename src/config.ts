@@ -70,6 +70,14 @@ export function getTokenThreshold(): number {
 }
 
 /**
+ * Get skill matching similarity threshold (0-1)
+ */
+export function getSkillMatchThreshold(): number {
+  const val = process.env.SKILL_MATCH_THRESHOLD;
+  return val ? parseFloat(val) : 0.5;
+}
+
+/**
  * Get Ollama host URL
  */
 export function getOllamaHost(): string {

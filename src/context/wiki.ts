@@ -41,9 +41,30 @@ export class WikiManager implements WikiModule {
   private table: lancedb.Table | null = null;
   private core: CoreModule;
   private tableName = 'wiki';
+  private skillsDomainWarningShown = false;
 
   constructor(core: CoreModule) {
     this.core = core;
+  }
+
+  /**
+   * Check if skills domain exists and show warning if not
+   * Called during startup to prompt user to run /skills build
+   */
+  async checkSkillsDomain(): Promise<boolean> {
+    try {
+      const domains = await this.listDomains();
+      const skillsDomain = domains.find(d => d.domain_name === 'skills');
+      if (!skillsDomain && !this.skillsDomainWarningShown) {
+        console.warn('Warning: Skills not indexed. Run /skills build to enable skill suggestions.');
+        this.skillsDomainWarningShown = true;
+        return false;
+      }
+      return true;
+    } catch (err) {
+      console.warn('Warning: Wiki not available. Skill suggestions disabled.');
+      return false;
+    }
   }
 
   /**

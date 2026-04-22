@@ -12,19 +12,16 @@ export function buildSystemPrompt(
   identity?: { name: string; role: string }
 ): string {
   const workDir = ctx.core.getWorkDir();
-  const skills = ctx.skill.printSkills();
 
   // Current date/time for context (helps with time-sensitive queries like web search)
   const now = new Date();
   const currentDate = now.toISOString().split('T')[0];
   const currentYear = now.getFullYear();
 
-  // Common suffix for all prompts
+  // Common suffix for all prompts (skills list removed - now dynamically injected via hints)
   const common = [
     '## Calendar',
     `Current date: ${currentDate} (year: ${currentYear})`,
-    '## Skills',
-    `${skills}`,
     '',
     '## Output Behavior',
     'Respond concisely - do not repeat what tools have already displayed.',

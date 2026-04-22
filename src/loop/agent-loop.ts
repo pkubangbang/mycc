@@ -16,16 +16,68 @@ import { createSessionFile, readSession, writeSession, getSessionId, cleanupEmpt
 import { prepareRestoration, readDosq, extractFirstQuery, type SummaryPair } from '../session/restoration.js';
 import { slashRegistry } from '../slashes/index.js';
 import { buildSystemPrompt } from './agent-prompts.js';
-import { getTokenThreshold } from '../config.js';
+import { getTokenThreshold, getSkillMatchThreshold } from '../config.js';
 import { Triologue } from './triologue.js';
 import { agentIO } from './agent-io.js';
 import { isVerbose, getSessionArg, shouldSkipHealthCheck } from '../config.js';
 import { openMultilineEditor } from '../utils/multiline-input.js';
 import { displayLetterBox } from '../utils/letter-box.js';
 import { createRequire } from 'module';
+import { loader } from '../context/loader.js';
 
 const require = createRequire(import.meta.url);
 const { version } = require('../../package.json');
+
+/**
+ * Build skill hint from wiki matching.
+ * Only for queries with 5-1000 words (not too short, not too long).
+ */
+async function buildSkillHint(query: string, ctx: AgentContext): Promise<string | null> {
+  const wordCount = query.trim().split(/\s+/).length;
+  
+  // Skip if query is too short (less than 5 words)
+  if (wordCount < 5) {
+    ctx.core.verbose('skill-hint', `Query too short (${wordCount} words), skipping`);
+    return null;
+  }
+  
+  // Skip if query is too long (rough estimate: 4 chars per token)
+  if (query.length > 4000) {
+    ctx.core.verbose('skill-hint', 'Query too long for skill matching, skipping');
+    return null;
+  }
+
+  try {
+    ctx.core.verbose('skill-hint', `Searching skills for: "${query.slice(0, 50)}..."`);
+    
+    const threshold = getSkillMatchThreshold();
+    const results = await ctx.wiki.get(query, {
+      domain: 'skills',
+      topK: 3,
+      threshold,
+    });
+
+    if (results.length === 0) {
+      ctx.core.verbose('skill-hint', 'No matching skills found');
+      return null;
+    }
+
+    ctx.core.verbose('skill-hint', `Found ${results.length} matching skill(s): ${results.map(r => r.document.title).join(', ')}`);
+
+    const hints: string[] = [];
+    for (const result of results) {
+      const skillName = result.document.title;
+      const skillDesc = result.document.content.split('\n').find(line => line.startsWith('Description:'))?.replace('Description: ', '') || '';
+      const similarity = (result.similarity * 100).toFixed(0);
+      hints.push(`- **${skillName}** (${similarity}% match): ${skillDesc}. Use \`skill_load(name="${skillName}")\` to load it.`);
+    }
+
+    return `The following skills may be helpful:\n${hints.join('\n')}`;
+  } catch (err) {
+    ctx.core.verbose('skill-hint', `Skill matching failed: ${err}`);
+    return null;
+  }
+}
 
 /**
  * Custom error for graceful shutdown
@@ -516,6 +568,9 @@ export async function main(): Promise<void> {
   const ctx = new ParentContext(loader, sessionFilePath);
   ctx.initializeIpcHandlers();
 
+  // Check if skills domain exists (warn if not)
+  await ctx.wiki.checkSkillsDomain();
+
   // Sync worktrees with git (reconcile any orphaned worktrees from previous sessions)
   await ctx.wt.syncWorkTrees();
 
@@ -631,6 +686,12 @@ export async function main(): Promise<void> {
       // Add user message (reset hint flag for new query)
       triologue.user(query);
       triologue.resetHint();
+
+      // Build and set skill hint (temporary, not in transcript)
+      const skillHint = await buildSkillHint(query, ctx);
+      if (skillHint) {
+        triologue.setTemporaryHint(skillHint);
+      }
 
       // Capture first query as bookmark title
       if (!firstQueryCaptured) {

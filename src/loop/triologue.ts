@@ -67,6 +67,8 @@ export class Triologue {
   private options: Required<Omit<TriologueOptions, 'wiki'>> & Pick<TriologueOptions, 'wiki'>;
   // Project context files (in-memory only, not persisted)
   private projectContext: Message[] = [];
+  // Temporary hint (not persisted in transcript)
+  private temporaryHint: string | null = null;
 
   constructor(options: TriologueOptions = {}) {
     const hintThreshold = options.hintThreshold ?? 10;
@@ -371,6 +373,13 @@ export class Triologue {
   }
 
   /**
+   * Set temporary hint for current round (not in transcript)
+   */
+  setTemporaryHint(hint: string): void {
+    this.temporaryHint = hint;
+  }
+
+  /**
    * Generate a hint round with problem analysis
    * Adds user message with analysis and gets assistant acknowledgment
    */
@@ -448,6 +457,18 @@ Be specific and actionable. This analysis will help guide the next steps.`;
 
     // Inject project context (before conversation history)
     result.push(...this.projectContext);
+
+    // Inject temporary hint if set (skill suggestions)
+    if (this.temporaryHint) {
+      result.push({
+        role: 'user',
+        content: `[hint]${this.temporaryHint}[/hint]`,
+      });
+      result.push({
+        role: 'assistant',
+        content: 'Understood. I will consider the suggested skills when responding.',
+      });
+    }
 
     result.push(...this.messages);
 

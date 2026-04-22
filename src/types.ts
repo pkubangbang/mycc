@@ -479,6 +479,8 @@ export interface WikiModule {
   listDomains(): Promise<WikiDomain[]>;
   getDomain(name: string): Promise<WikiDomain | undefined>;
   registerDomain(name: string, description?: string): Promise<void>;
+  // Skill domain check
+  checkSkillsDomain(): Promise<boolean>;
 }
 
 /**
