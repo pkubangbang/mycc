@@ -33,6 +33,7 @@ export async function agentLoop(
 ): Promise<void> {
   let nextTodoNudge = 3;
   let lastTodoState = '';
+  let isFirstRound = true;
 
   while (true) {
     try {
@@ -162,7 +163,13 @@ export async function agentLoop(
             ctx.core.brief('warn', 'awaitTeam', `Unexpected result: ${result}`);
             continue;
           }
+        } else if (isFirstRound && assistantMessage.content) {
+          // 6.1 has tool call + is first round + has content = brief this response
+          ctx.core.brief('info', 'assistant', assistantMessage.content);
         }
+
+        // from the second round, mute all LLM's responses.
+        isFirstRound = false;
 
         // 7. Execute tools
         for (const toolCall of (assistantMessage.tool_calls as ToolCall[])) {
