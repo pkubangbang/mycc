@@ -12,6 +12,7 @@ import chalk from 'chalk';
 export const issuesCommand: SlashCommand = {
   name: 'issues',
   description: 'List issues or show specific issue (/issues [id])',
+  aliases: ['issue'],
   handler: async (context) => {
     const args = context.args;
 

@@ -12,23 +12,38 @@ import chalk from 'chalk';
  */
 class SlashCommandRegistryImpl {
   private commands: Map<string, SlashCommand> = new Map();
+  private aliasToCommand: Map<string, string> = new Map(); // alias -> primary name
 
   /**
    * Register a slash command
    */
   register(command: SlashCommand): void {
     this.commands.set(command.name, command);
+    // Register aliases
+    if (command.aliases) {
+      for (const alias of command.aliases) {
+        this.aliasToCommand.set(alias, command.name);
+      }
+    }
   }
 
   /**
-   * Get a slash command by name
+   * Get a slash command by name (or alias)
    */
   get(name: string): SlashCommand | undefined {
-    return this.commands.get(name);
+    // First check if it's a primary name
+    const command = this.commands.get(name);
+    if (command) return command;
+    // Then check if it's an alias
+    const primaryName = this.aliasToCommand.get(name);
+    if (primaryName) {
+      return this.commands.get(primaryName);
+    }
+    return undefined;
   }
 
   /**
-   * List all registered command names
+   * List all registered command names (primary names only)
    */
   list(): string[] {
     return Array.from(this.commands.keys());
@@ -41,7 +56,7 @@ class SlashCommandRegistryImpl {
    * @returns true if command was found and executed, false otherwise
    */
   async execute(name: string, context: SlashCommandContext): Promise<boolean> {
-    const command = this.commands.get(name);
+    const command = this.get(name);
     if (!command) {
       console.log(chalk.yellow(`Unknown command: /${name}`));
       console.log(chalk.gray(`Available commands: ${this.list().map((c) => `/${c}`).join(', ')}`));

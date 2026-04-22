@@ -524,6 +524,7 @@ export interface SlashCommandContext {
 export interface SlashCommand {
   name: string; // Command name without slash (e.g., 'team')
   description: string; // Short description for help
+  aliases?: string[]; // Alternative names (e.g., ['todo'] for 'todos' command)
   handler: (context: SlashCommandContext) => Promise<void> | void;
 }
 

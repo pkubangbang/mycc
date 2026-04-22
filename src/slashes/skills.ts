@@ -12,6 +12,7 @@ import { loader } from '../context/shared/loader.js';
 export const skillsCommand: SlashCommand = {
   name: 'skills',
   description: 'Manage skills - list skills, rebuild wiki index',
+  aliases: ['skill'],
   handler: async (context) => {
     const { args, ctx } = context;
 

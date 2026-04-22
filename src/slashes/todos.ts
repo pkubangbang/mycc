@@ -7,6 +7,7 @@ import type { SlashCommand } from '../types.js';
 export const todosCommand: SlashCommand = {
   name: 'todos',
   description: 'Print todo list',
+  aliases: ['todo'],
   handler: (context) => {
     console.log(context.ctx.todo.printTodoList());
   },
