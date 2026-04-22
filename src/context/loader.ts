@@ -620,8 +620,3 @@ export class Loader implements DynamicLoader, SkillModule {
     return entry?.layer;
   }
 }
-
-/**
- * Singleton loader instance
- */
-export const loader = new Loader();

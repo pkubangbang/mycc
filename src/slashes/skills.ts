@@ -7,7 +7,7 @@
  */
 
 import type { SlashCommand } from '../types.js';
-import { loader } from '../context/loader.js';
+import { loader } from '../context/index.js';
 
 export const skillsCommand: SlashCommand = {
   name: 'skills',

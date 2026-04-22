@@ -13,6 +13,9 @@ import { ChildTeam } from './team.js';
 import { ChildWiki } from './wiki.js';
 import { BackgroundTasks } from '../bg.js';
 
+/** Child process loader singleton (silent mode) */
+export const silentLoader = new Loader(true);
+
 // Re-export
 export { IpcRegistry } from './ipc-registry.js';
 export { ChildCore } from './core.js';
@@ -40,7 +43,7 @@ export class ChildContext implements AgentContext {
     this.coreModule = new ChildCore(name, workDir);
     this.todoModule = new Todo();
     this.mailModule = new MailBox(name); // Worker-specific mailbox
-    this.skillModule = new Loader(true); // Silent mode for child process
+    this.skillModule = silentLoader;
     this.issueModule = new ChildIssue();
     this.bgModule = new BackgroundTasks(this.coreModule);
     this.wtModule = new ChildWt(this.coreModule);

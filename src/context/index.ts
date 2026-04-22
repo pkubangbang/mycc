@@ -11,8 +11,11 @@ import { BackgroundTasks } from './bg.js';
 import { WorktreeManager } from './wt.js';
 import { TeamManager } from './team.js';
 import { WikiManager } from './wiki.js';
-import { loader } from './loader.js';
+import { Loader } from './loader.js';
 import type { CoreModule, TodoModule, MailModule, SkillModule, IssueModule, BgModule, WtModule, TeamModule, WikiModule } from '../types.js';
+
+/** Main process loader singleton */
+export const loader = new Loader();
 
 export * from './core.js';
 export * from './todo.js';

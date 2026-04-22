@@ -11,8 +11,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { ChildContext } from './child-context/index.js';
-import { Loader } from './loader.js';
+import { ChildContext, silentLoader } from './child-context/index.js';
 import { retryChat, MODEL } from '../ollama.js';
 import type { AgentContext, Message } from '../types.js';
 import type { ToolCall } from '../types.js';
@@ -28,7 +27,6 @@ const POLL_INTERVAL = 5000; // 5 seconds
 let teammateName = '';
 let teammateRole = '';
 let ctx: AgentContext;
-let loader: Loader;
 let shutdownRequested = false;
 let triologuePath = '';
 
@@ -75,7 +73,7 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
   const triologue = createPersistentTriologue(teammateName, triologuePathArg);
   triologue.user(prompt);
 
-  const tools = loader.getToolsForScope('child');
+  const tools = silentLoader.getToolsForScope('child');
   // Send ready notification (path already registered by parent)
   ipc.sendNotification('teammate_ready', { name: teammateName });
   
@@ -148,7 +146,7 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
       const args = tc.function.arguments as Record<string, unknown>;
 
       try {
-        const output = await loader.execute(toolName, ctx, args);
+        const output = await silentLoader.execute(toolName, ctx, args);
         triologue.tool(toolName, output, tc.id);
       } catch (err) {
         const errorMsg = (err as Error).message;
@@ -240,8 +238,7 @@ async function handleSpawn(msg: {
   ctx.core.brief('info', 'worker', `${teammateName} initializing...`);
 
   // Load tools and skills (silent mode - suppress loading logs)
-  loader = new Loader(true);
-  await loader.loadAll();
+  await silentLoader.loadAll();
 
   ctx.core.brief('info', 'worker', `${teammateName} started successfully`);
 

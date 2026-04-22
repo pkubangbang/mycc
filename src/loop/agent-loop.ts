@@ -10,7 +10,7 @@ import { buildSystemPrompt } from './agent-prompts.js';
 import { Triologue } from './triologue.js';
 import { agentIO } from './agent-io.js';
 import { isVerbose } from '../config.js';
-import { loader } from '../context/loader.js';
+import { loader } from '../context/index.js';
 
 /**
  * Custom error for graceful shutdown

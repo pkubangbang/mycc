@@ -16,7 +16,7 @@ import { agentIO } from './agent-io.js';
 import { shouldSkipHealthCheck } from '../config.js';
 import { openMultilineEditor } from '../utils/multiline-input.js';
 import { displayLetterBox } from '../utils/letter-box.js';
-import { loader } from '../context/loader.js';
+import { loader } from '../context/index.js';
 import { buildSkillHint, initializeSession } from './agent-loop-helper.js';
 import { agentLoop, ShutdownError } from './agent-loop.js';
 import pkg from '../../package.json';

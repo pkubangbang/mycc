@@ -8,7 +8,7 @@
  */
 
 import type { ToolDefinition, AgentContext } from '../types.js';
-import { loader } from '../context/loader.js';
+import { loader } from '../context/index.js';
 
 export const skillLoadTool: ToolDefinition = {
   name: 'skill_load',

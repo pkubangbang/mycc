@@ -69,6 +69,8 @@ export class Triologue {
   private projectContext: Message[] = [];
   // Temporary hint (not persisted in transcript)
   private temporaryHint: string | null = null;
+  // Index of last real user message (for hint placement)
+  private lastRealUserIndex: number = -1;
 
   constructor(options: TriologueOptions = {}) {
     const hintThreshold = options.hintThreshold ?? 10;
@@ -135,7 +137,7 @@ export class Triologue {
   }
 
   /**
-   * Add a user message
+   * Add a user message (real user input - clears temporary hint)
    */
   user(content: string): void {
     // Run microCompact if transitioning from tool role
@@ -143,6 +145,23 @@ export class Triologue {
       this.runMicroCompact();
     }
     this.addMessage({ role: 'user', content });
+    // Track this as the last real user message index
+    this.lastRealUserIndex = this.messages.length - 1;
+    // Clear temporary hint after adding real user message
+    this.temporaryHint = null;
+  }
+
+  /**
+   * Add a user message on behalf of user (synthetic/generated - does NOT clear temporary hint)
+   * Used for system-generated messages that should appear as user but not reset hint state.
+   */
+  onBehalfOfUser(content: string): void {
+    // Run microCompact if transitioning from tool role
+    if (this.getLastRole() === 'tool') {
+      this.runMicroCompact();
+    }
+    this.addMessage({ role: 'user', content });
+    // Do NOT update lastRealUserIndex or clear temporaryHint
   }
 
   /**
@@ -329,6 +348,9 @@ export class Triologue {
     this.pendingToolCallOrder = [];
     // Reset hint flag after compact since conversation is reset
     this.resetHint();
+    // Reset last real user index since messages are replaced
+    this.lastRealUserIndex = -1;
+    this.temporaryHint = null;
   }
 
   /**
@@ -342,6 +364,8 @@ export class Triologue {
     this.pendingToolCallOrder = [];
     this.hintGenerated = false;
     this.confusion.reset();
+    this.lastRealUserIndex = -1;
+    this.temporaryHint = null;
   }
 
   /**
@@ -458,19 +482,19 @@ Be specific and actionable. This analysis will help guide the next steps.`;
     // Inject project context (before conversation history)
     result.push(...this.projectContext);
 
-    // Inject temporary hint if set (skill suggestions)
-    if (this.temporaryHint) {
-      result.push({
-        role: 'user',
-        content: `[hint]${this.temporaryHint}[/hint]`,
-      });
-      result.push({
-        role: 'assistant',
-        content: 'Understood. I will consider the suggested skills when responding.',
-      });
-    }
+    // Inject temporary hint by appending to the last real user message (skill suggestions)
+    if (this.temporaryHint && this.lastRealUserIndex >= 0) {
+      const before = this.messages.slice(0, this.lastRealUserIndex);
+      const target = this.messages[this.lastRealUserIndex];
+      const after = this.messages.slice(this.lastRealUserIndex + 1);
 
-    result.push(...this.messages);
+      result.push(...before, {
+        ...target,
+        content: `${target.content}\n[hint]${this.temporaryHint}[/hint]`,
+      }, ...after);
+    } else {
+      result.push(...this.messages);
+    }
 
     return result;
   }
