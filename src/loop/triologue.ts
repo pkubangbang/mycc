@@ -572,9 +572,13 @@ Be specific and actionable. This analysis will help guide the next steps.`;
       context: { lastMessage, newMessage },
     });
 
-    // For missing_assistant, we try to auto-fix by generating a bridge
+    // For missing_assistant, insert a static placeholder (no LLM call)
     if (gap === 'missing_assistant') {
-      this.generateBridgeResponse(newMessage);
+      this.messages.push({
+        role: 'assistant',
+        content: '...',
+      });
+      this.updateTokenCount(this.messages[this.messages.length - 1]);
     }
     // For other gaps, we just warn and proceed
   }
@@ -596,39 +600,6 @@ Be specific and actionable. This analysis will help guide the next steps.`;
       return 'missing_assistant';
     }
     return 'invalid_sequence';
-  }
-
-  /**
-   * Generate a bridge assistant response for missing assistant
-   */
-  private async generateBridgeResponse(intendedMessage: Partial<Message>): Promise<void> {
-    console.warn(chalk.yellow('[Triologue] Generating bridge response...'));
-
-    // Generate a brief acknowledgment
-    const response = await retryChat({
-      model: MODEL,
-      messages: [
-        {
-          role: 'user',
-          content: 'Generate a brief acknowledgment (max 10 words) to continue.',
-        },
-      ],
-    });
-
-    const bridgeContent = response.message.content || 'Understood. Continuing.';
-    this.messages.push({
-      role: 'assistant',
-      content: bridgeContent,
-    });
-    this.updateTokenCount(this.messages[this.messages.length - 1]);
-
-    console.warn(chalk.yellow(`[Triologue] Bridge: "${bridgeContent}"`));
-
-    // Now add the intended message
-    if (intendedMessage.role === 'tool') {
-      this.messages.push(intendedMessage as Message);
-      this.updateTokenCount(intendedMessage as Message);
-    }
   }
 
   /**
