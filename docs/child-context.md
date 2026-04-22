@@ -20,7 +20,7 @@
 │                           主进程（Lead）                              │
 │                                                                     │
 │  ┌───────────┐         ┌─────────────┐         ┌──────────────┐   │
-│  │TeamManager│────────►│ IpcRegistry │────────►│AgentContext │   │
+│  │TeamManager│────────►│ IpcRegistry │────────►│ParentContext │   │
 │  │           │         │             │         │              │   │
 │  │ handleMsg │         │ dispatch()  │         │ core         │   │
 │  │           │         │ handlers[]  │         │ issue        │   │
@@ -51,25 +51,51 @@
 2. ChildIssue 通过 `ipc-helpers.sendRequest()` 发送 IPC 消息
 3. 主进程 TeamManager 接收消息，调用 `IpcRegistry.dispatch()`
 4. IpcRegistry 找到对应的 handler（如 `db_issue_create`）
-5. Handler 调用 `AgentContext.issue.createIssue()`
+5. Handler 调用 `ParentContext.issue.createIssue()`
 6. 结果通过 IPC 返回给子进程
+
+## 文件结构
+
+重构后的目录结构：
+
+```
+src/context/
+├── parent-context.ts       # ParentContext 类（主进程）
+├── child-context.ts        # ChildContext 类（子进程）
+├── ipc-registry.ts         # IPC 处理器注册（共享）
+├── parent/                 # 主进程模块实现
+│   ├── core.ts            # Core - 终端访问、web搜索、图片描述
+│   ├── issue.ts           # IssueManager - SQLite 操作
+│   ├── wt.ts              # WorktreeManager - Git worktree
+│   ├── team.ts            # TeamManager - 子进程管理
+│   └── wiki.ts            # WikiManager - 知识库
+├── child/                  # 子进程模块实现（IPC 包装）
+│   ├── core.ts            # ChildCore - IPC 转发
+│   ├── issue.ts           # ChildIssue - IPC 转发
+│   ├── wt.ts              # ChildWt - IPC 转发
+│   ├── team.ts            # ChildTeam - 受限功能
+│   ├── wiki.ts            # ChildWiki - IPC 转发
+│   └── ipc-helpers.ts     # IPC 通信原语
+├── shared/                 # 共享模块（两边都用）
+│   ├── todo.ts           # Todo - 内存状态
+│   ├── mail.ts            # MailBox - 文件邮箱
+│   ├── bg.ts              # BackgroundTasks - 后台任务
+│   └── loader.ts          # Loader - 工具/技能加载器
+├── memory-store.ts        # 内存存储（状态持久化）
+├── worktree-store.ts      # worktree 存储
+└── teammate-worker.ts     # 子进程入口点
+```
+
+### 关键设计
+
+- **ParentContext** 和 **ChildContext** 在目录结构上平行，都在 `src/context/` 根目录
+- 主进程专用的实现在 `parent/` 目录
+- 子进程专用的实现在 `child/` 目录
+- 两边共用的实现在 `shared/` 目录
 
 ## 模块实现
 
-### 文件结构
-
-```
-src/context/child-context/
-├── ipc-helpers.ts    # IPC 通信原语
-├── ipc-registry.ts   # IPC 处理器注册（共享）
-├── core.ts           # ChildCore 实现
-├── issue.ts          # ChildIssue 实现
-├── bg.ts             # ChildBg 实现
-├── wt.ts             # ChildWt 实现
-└── index.ts          # createChildContext 工厂
-```
-
-### IPC Helpers（ipc-helpers.ts）
+### IPC Helpers（child/ipc-helpers.ts）
 
 IPC 通信原语，用于子进程发送消息到主进程：
 
@@ -80,16 +106,11 @@ sendNotification(type: string, payload: Record<string, unknown>): void;
 // 发送请求并等待响应
 sendRequest<T>(type: string, args: Record<string, unknown>): Promise<T>;
 
-// 处理主进程响应
-handleDbResult(msg: { reqId: number; success: boolean; data?: unknown; error?: string }): void;
-
 // 便捷方法
 sendStatus(status: TeammateStatus): void;  // 更新状态
-sendLog(message: string): void;             // 记录日志
-sendError(error: string): void;             // 记录错误
 ```
 
-### ChildCore（core.ts）
+### ChildCore（child/core.ts）
 
 核心模块的子进程实现：
 
@@ -98,11 +119,11 @@ class ChildCore implements CoreModule {
   getWorkDir(): string;              // 本地存储
   setWorkDir(dir: string): void;     // 本地存储
   brief(level, tool, message): void; // 通过 IPC 发送到主进程
-  question(query): Promise<string>;  // 通过 IPC 发送到主进程
+  question(query): Promise<string>;   // 通过 IPC 发送到主进程
 }
 ```
 
-### ChildIssue（issue.ts）
+### ChildIssue（child/issue.ts）
 
 Issue 模块的子进程实现，所有操作通过 IPC：
 
@@ -117,22 +138,22 @@ class ChildIssue implements IssueModule {
 }
 ```
 
-### ChildBg & ChildWt
+### ChildTeam（child/team.ts）
 
-后台任务和工作树模块的子进程实现：
+Team 模块的子进程实现，功能受限：
 
 ```typescript
-class ChildBg implements BgModule {
-  runCommand(cmd): Promise<number>;       // IPC
-  printBgTasks(): Promise<string>;        // IPC
-  hasRunningBgTasks(): Promise<boolean>;  // IPC
-  killTask(pid): Promise<void>;           // IPC
-}
-
-class ChildWt implements WtModule {
-  createWorkTree(name, branch): Promise<string>;  // IPC
-  enterWorkTree(name): Promise<void>;              // IPC（同时更新本地 workDir）
-  // ... 其他操作类似
+class ChildTeam implements TeamModule {
+  // 允许的操作
+  mailTo(name, title, content): void;       // 直接写邮箱文件
+  broadcast(title, content): void;          // 发送邮件给 lead
+  printTeam(): Promise<string>;              // IPC 获取状态
+  
+  // 禁止的操作 - 抛出 FORBIDDEN 错误
+  createTeammate(): never;
+  removeTeammate(): never;
+  awaitTeammate(): never;
+  dismissTeam(): never;
 }
 ```
 
@@ -262,78 +283,76 @@ async function enterIdleState(messages: Message[]): Promise<'shutdown' | 'resume
 | `error` | 错误消息 | `{ type: 'error', error }` |
 | `question` | 用户提问 | `{ type: 'question', reqId, query }` |
 | `db_issue_*` | Issue 操作 | `{ type: 'db_issue_create', reqId, ... }` |
-| `bg_*` | 后台任务操作 | `{ type: 'bg_run', reqId, cmd }` |
 | `wt_*` | 工作树操作 | `{ type: 'wt_create', reqId, name, branch }` |
 
 ## IPC 处理器注册
 
-主进程通过 `IpcRegistry` 注册处理器：
+主进程在 `ParentContext.initializeIpcHandlers()` 中注册处理器：
 
 ```typescript
-// src/context/index.ts
-export function createAgentContext(workDir?: string): AgentContext {
-  // ... 创建模块 ...
+// src/context/parent-context.ts
+export class ParentContext implements AgentContext {
+  // ...
+  
+  initializeIpcHandlers(): void {
+    const handlers: IpcHandlerRegistration[] = [
+      // Issue handlers
+      {
+        messageType: 'db_issue_get',
+        module: 'issue',
+        handler: async (_sender, payload, ctx, sendResponse) => {
+          const { id } = payload as { id: number };
+          const issue = await ctx.issue.getIssue(id);
+          sendResponse('db_result', true, issue);
+        },
+      },
+      // ... more handlers
+    ];
 
-  // 注册 IPC 处理器
-  for (const handler of createIssueIpcHandlers()) {
-    team.registerHandler(handler);
+    for (const handler of handlers) {
+      this.teamModule.registerHandler(handler);
+    }
   }
-  for (const handler of createBgIpcHandlers()) {
-    team.registerHandler(handler);
-  }
-  for (const handler of createWtIpcHandlers()) {
-    team.registerHandler(handler);
-  }
-
-  // question 处理器在 TeamManager 构造函数中注册
-  return ctx;
 }
 ```
 
-### 处理器示例
+## 创建上下文
+
+### 主进程上下文
 
 ```typescript
-// Issue 读取处理器
-{
-  messageType: 'db_issue_get',
-  module: 'issue',
-  handler: (_sender, payload, ctx) => {
-    const { id } = payload as { id: number };
-    const issue = ctx.issue.getIssue(id);
-    return { success: true, data: issue };
-  },
+// src/context/parent-context.ts
+export class ParentContext implements AgentContext {
+  constructor(sessionFilePath: string) {
+    this.coreModule = new Core();
+    this.skillModule = loader;
+    this.todoModule = new Todo();
+    this.mailModule = new MailBox('lead');
+    this.issueModule = new IssueManager();
+    this.bgModule = new BackgroundTasks(this.coreModule);
+    this.wtModule = new WorktreeManager(this.coreModule);
+    this.teamModule = new TeamManager(this, sessionFilePath);
+    this.wikiModule = new WikiManager(this.coreModule);
+  }
 }
 ```
 
-## 创建子进程上下文
+### 子进程上下文
 
 ```typescript
-// src/context/child-context/index.ts
+// src/context/child-context.ts
 export class ChildContext implements AgentContext {
-  private coreModule: ChildCore;
-  private todoModule: Todo;
-  private mailModule: MailBox;
-  private skillModule: SkillModule;
-  private issueModule: ChildIssue;
-  private bgModule: BackgroundTasks;
-  private wtModule: ChildWt;
-  private teamModule: ChildTeam;
-
   constructor(name: string, workDir: string) {
     this.coreModule = new ChildCore(name, workDir);   // IPC 包装
     this.todoModule = new Todo();                      // 本地
-    this.mailModule = new MailBox(name);                // 本地（独立邮箱）
-    this.skillModule = new Loader(true);                // 本地（静默模式）
-    this.issueModule = new ChildIssue();                // IPC 包装
+    this.mailModule = new MailBox(name);               // 本地（独立邮箱）
+    this.skillModule = silentLoader;                   // 本地（静默模式）
+    this.issueModule = new ChildIssue();               // IPC 包装
     this.bgModule = new BackgroundTasks(this.coreModule);
-    this.wtModule = new ChildWt(this.coreModule);      // IPC 包装
-    this.teamModule = new ChildTeam(name);              // ChildTeam (有限功能)
+    this.wtModule = new ChildWt(this.coreModule);       // IPC 包装
+    this.teamModule = new ChildTeam(name);             // ChildTeam (受限功能)
+    this.wikiModule = new ChildWiki();                 // IPC 包装
   }
-
-  // Getters for each module
-  get core(): CoreModule { return this.coreModule; }
-  get todo(): TodoModule { return this.todoModule; }
-  // ... other getters
 }
 ```
 
@@ -342,7 +361,7 @@ export class ChildContext implements AgentContext {
 子进程使用特殊的系统提示，强调团队协作和用户通信：
 
 ```typescript
-// src/loop/agent-utils.ts
+// src/loop/agent-prompts.ts
 function buildSystemPrompt(ctx: AgentContext, identity?: { name: string; role: string }) {
   if (identity) {
     // 子进程系统提示
@@ -383,18 +402,23 @@ You are a specialized agent working as part of a team.
 | `issue` | 直接 SQLite 访问 | IPC 转发所有操作 |
 | `bg` | 直接管理子进程 | IPC 转发 |
 | `wt` | 直接 Git 操作 | IPC 转发 |
-| `team` | 管理队友 | ChildTeam (受限：仅 mailTo/broadcast/printTeam，其他操作抛 FORBIDDEN) |
+| `team` | 管理队友 | ChildTeam (受限：仅 mailTo/broadcast/printTeam) |
+| `wiki` | 直接 SQLite 访问 | IPC 转发所有操作 |
 
 ## 相关文件
 
 | 文件 | 说明 |
 |------|------|
-| `src/context/child-context/ipc-helpers.ts` | IPC 通信原语 |
-| `src/context/child-context/core.ts` | ChildCore 实现 |
-| `src/context/child-context/issue.ts` | ChildIssue 实现 |
-| `src/context/child-context/bg.ts` | ChildBg 实现 |
-| `src/context/child-context/wt.ts` | ChildWt 实现 |
-| `src/context/child-context/index.ts` | createChildContext 工厂 |
+| `src/context/parent-context.ts` | ParentContext 类定义 |
+| `src/context/child-context.ts` | ChildContext 类定义 |
+| `src/context/ipc-registry.ts` | IPC 处理器注册 |
+| `src/context/parent/core.ts` | Core 实现（主进程） |
+| `src/context/parent/issue.ts` | IssueManager 实现 |
+| `src/context/child/core.ts` | ChildCore 实现（IPC 包装） |
+| `src/context/child/issue.ts` | ChildIssue 实现（IPC 包装） |
+| `src/context/child/ipc-helpers.ts` | IPC 通信原语 |
+| `src/context/shared/todo.ts` | Todo 模块（共享） |
+| `src/context/shared/mail.ts` | MailBox 模块（共享） |
+| `src/context/shared/loader.ts` | Loader 模块（共享） |
 | `src/context/teammate-worker.ts` | 子进程入口点 |
-| `src/loop/agent-utils.ts` | 共享工具和系统提示 |
-| `docs/ipc-ioc.md` | IPC IoC 模式文档 |
+| `src/loop/agent-prompts.ts` | 系统提示生成 |
