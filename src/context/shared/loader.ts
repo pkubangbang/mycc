@@ -502,11 +502,15 @@ export class Loader implements DynamicLoader, SkillModule {
       return 'No skills loaded.';
     }
 
-    const lines = ['Available skills:'];
+    const lines = ['Available skills:', ''];
     for (const skill of skills) {
-      const keywords = skill.keywords.length > 0 ? ` [${skill.keywords.join(', ')}]` : '';
-      lines.push(`  - ${skill.name}: ${skill.description}${keywords}`);
+      lines.push(`  ${skill.name}`);
+      lines.push(`    ${skill.description}`);
+      if (Array.isArray(skill.keywords) && skill.keywords.length > 0) {
+        lines.push(`    Keywords: ${skill.keywords.join(', ')}`);
+      }
     }
+    lines.push('', 'Use `skill_load(name)` to load a skill.');
     return lines.join('\n');
   }
 

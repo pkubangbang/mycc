@@ -1,6 +1,22 @@
 ---
 name: coordination
-description: "Guide for coordinating multiple teammates effectively. Use this skill when planning team-based work."
+description: >
+  Use when tasks can benefit from parallel work.
+
+  Helps coordinate:
+  - spawning multiple teammates
+  - distributing independent tasks
+  - collecting and integrating results
+
+  Relevant for:
+  team, parallel, distribute, spawn, teammate, coordinate
+
+  Example requests:
+  - "run these tasks in parallel"
+  - "coordinate a team to do X"
+  - "spawn teammates for these tasks"
+
+  Avoid for sequential tasks or quick one-off work.
 keywords: [team, coordination, workflow, parallel, distribute]
 ---
 

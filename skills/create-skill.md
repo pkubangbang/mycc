@@ -1,7 +1,25 @@
 ---
 name: create-skill
-description: "Guide for creating new skills that capture domain knowledge and best practices. Use this when documenting lessons learned or creating reusable knowledge."
-tags: [skill, knowledge, documentation, workflow, best-practices]
+description: >
+  Use when creating new skills to capture knowledge.
+
+  Required for:
+  - documenting lessons learned
+  - creating reusable knowledge
+  - preserving best practices
+
+  Use this skill AFTER completing a task with valuable learnings.
+
+  Relevant for:
+  skill, create, new, knowledge, document, lesson
+
+  Example requests:
+  - "create a skill for X"
+  - "document what we learned"
+  - "make this knowledge reusable"
+
+  Skills start in .mycc/skills/ then migrate to skills/ when qualified.
+keywords: [skill, knowledge, documentation, workflow, best-practices]
 ---
 
 # How to Create a Skill
@@ -36,14 +54,14 @@ Create a skill when:
 ---
 name: skill-name
 description: "Brief description of what this skill provides. Use this when [situation]."
-tags: [tag1, tag2, tag3]
+keywords: [tag1, tag2, tag3]
 ---
 ```
 
 **Fields:**
 - `name`: Lowercase with hyphens, matches filename
 - `description`: One sentence explaining when to use. Start with action verb.
-- `tags`: Keywords for discovery (optional but recommended)
+- `keywords`: Keywords for discovery (optional but recommended)
 
 ### Content Sections
 
@@ -94,7 +112,7 @@ Write good code. Test it. Deploy it.
 ---
 name: coding
 description: "Best practices for writing maintainable code. Use when starting new features or refactoring."
-tags: [code, quality, maintainability]
+keywords: [code, quality, maintainability]
 ---
 
 # Code Writing Best Practices
@@ -302,7 +320,7 @@ mv .mycc/skills/my-new-skill.md skills/my-new-skill.md
 ---
 name: my-new-skill
 description: "When to use and what it provides."
-tags: [relevant, tags]
+keywords: [relevant, keywords]
 ---
 
 # Skill Title
@@ -341,7 +359,7 @@ const response = await ollama.chat({...});
 Before finalizing a skill, verify:
 
 - [ ] Created in `.mycc/skills/` (NOT directly in `skills/`)
-- [ ] Clear frontmatter with name, description, tags
+- [ ] Clear frontmatter with name, description, keywords
 - [ ] Specific, actionable advice
 - [ ] Code examples for key concepts
 - [ ] Common pitfalls documented

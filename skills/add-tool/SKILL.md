@@ -1,7 +1,25 @@
 ---
 name: add-tool
-description: "REQUIRED when creating new tools. Use this skill BEFORE writing any tool code. Provides the correct tool structure, registration process, and best practices."
-tags: [tool, development, workflow, extension, required]
+description: >
+  Use this BEFORE writing any new tool.
+
+  Required for:
+  - creating new tools
+  - extending agent capabilities
+  - adding custom functionality
+
+  This skill MUST be used before any tool implementation.
+
+  Relevant for:
+  tool, create, add, new, implement, extend
+
+  Example requests:
+  - "add a new tool for X"
+  - "create a tool that does Y"
+  - "implement a custom tool"
+
+  Do NOT start coding without using this skill first.
+keywords: [tool, development, workflow, extension, required]
 ---
 
 # Adding a New Tool

@@ -1,7 +1,24 @@
 ---
 name: tech-doc-writing
-description: "Guide for writing technical documentation for APIs and libraries. Use when creating or updating API documentation, README files, or technical guides."
-tags: [documentation, api, writing, technical, best-practices]
+description: >
+  Use when creating or updating technical documentation.
+
+  Helps with:
+  - API documentation
+  - README files
+  - technical guides
+  - library documentation
+
+  Relevant for:
+  documentation, docs, readme, api, guide, write
+
+  Example requests:
+  - "write API docs for this endpoint"
+  - "create a README for this library"
+  - "document this API"
+
+  Covers wire formats, response structures, and verification checklists.
+keywords: [documentation, api, writing, technical, best-practices]
 ---
 
 # Technical Documentation Writing Skill

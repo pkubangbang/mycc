@@ -1,7 +1,23 @@
 ---
 name: pdf
-description: Process PDF files using npm packages
-tags: pdf, document, extraction
+description: >
+  Use when working with PDF files.
+
+  Supports:
+  - text extraction from PDFs
+  - OCR for scanned documents
+  - multi-language support
+
+  Relevant for:
+  pdf, extract, document, ocr, scan
+
+  Example requests:
+  - "extract text from this PDF"
+  - "read a scanned document"
+  - "process this PDF file"
+
+  Uses unpdf for text-based PDFs, tesseract.js for image-based PDFs.
+keywords: [pdf, document, extraction]
 ---
 
 # PDF Processing Skill

@@ -31,7 +31,7 @@ export const bashTool: ToolDefinition = {
       },
       elor: {
         type: 'number',
-        description: 'Expected Lines Of Result (default: 50). Output exceeding this limit is summarized. Set higher (100-500) for detailed output like logs or large file listings. Values below 10 are discouraged as they force excessive summarization.',
+        description: 'Expected Lines Of Result (default: 100). Output exceeding this limit is summarized. Set higher (200-500) for detailed output like logs or large file listings. Values below 10 are discouraged as they force excessive summarization.',
       },
       timeout: {
         type: 'number',
@@ -44,7 +44,7 @@ export const bashTool: ToolDefinition = {
   handler: async (ctx: AgentContext, args: Record<string, unknown>): Promise<string> => {
     const command = args.command as string;
     const intent = args.intent as string;
-    const elor = (args.elor as number) ?? 50;
+    const elor = (args.elor as number) ?? 100;
     const timeoutSeconds = args.timeout as number;
 
     // Block dangerous commands
