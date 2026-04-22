@@ -9,7 +9,6 @@ import { retryChat, MODEL, OLLAMA_HOST, checkHealth, classifyError } from '../ol
 import type { AgentContext, ToolScope, ToolCall, SlashCommandContext } from '../types.js';
 import { ResultTooLargeError } from '../types.js';
 import { ParentContext } from '../context/index.js';
-import { Loader } from '../context/loader.js';
 import { readSession, writeSession, getSessionId } from '../session/index.js';
 import { slashRegistry } from '../slashes/index.js';
 import { buildSystemPrompt } from './agent-prompts.js';
@@ -43,7 +42,6 @@ export class ShutdownError extends Error {
 export async function agentLoop(
   triologue: Triologue,
   ctx: AgentContext,
-  loader: Loader,
   scope: ToolScope = 'main'
 ): Promise<void> {
   let nextTodoNudge = 3;
@@ -367,8 +365,7 @@ export async function main(): Promise<void> {
   // Track first query for bookmark title
   let firstQueryCaptured = false;
 
-  // Create loader
-  const loader = new Loader();
+  // Load tools/skills using singleton loader
   await loader.loadAll();
   loader.watchDirectories();
 
@@ -512,7 +509,7 @@ export async function main(): Promise<void> {
       }
 
       // Run agent loop
-      await agentLoop(triologue, ctx, loader);
+      await agentLoop(triologue, ctx);
 
       // Print final response in letter-style box
       const lastMsg = triologue.getMessagesRaw().at(-1);
