@@ -24,7 +24,7 @@ import { homedir } from 'os';
 import { dirname, resolve } from 'path';
 import { fileURLToPath } from 'url';
 import chalk from 'chalk';
-import { isVerbose, printEnvStatus, validateEnv } from './config.js';
+import { isVerbose, printEnvStatus, validateEnv, ensureToolTypeImports } from './config.js';
 import { parseKeys, isCtrlC, isEscape } from './utils/key-parser.js';
 import type { KeyInfo } from './utils/key-parser.js';
 
@@ -55,6 +55,9 @@ if (isVerbose()) {
   printEnvStatus();
 }
 
+// Ensure type imports work for custom tools
+ensureToolTypeImports();
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -80,21 +83,11 @@ interface SpawnCommand {
   args: string[];
 }
 
-/** Determine how to spawn Lead based on current execution context */
+/** Determine how to spawn Lead - always use tsx for TypeScript support */
 function getSpawnCommand(): SpawnCommand {
-  const entry = process.argv[1] || '';
-  const isDev = entry.startsWith(PROJECT_ROOT);
-
-  if (isDev) {
-    return {
-      command: resolve(PROJECT_ROOT, 'node_modules', '.bin', 'tsx'),
-      args: [resolve(PROJECT_ROOT, 'src', 'lead.ts')],
-    };
-  }
-
   return {
-    command: process.execPath,
-    args: [resolve(PROJECT_ROOT, 'dist', 'lead.js')],
+    command: resolve(PROJECT_ROOT, 'node_modules', '.bin', 'tsx'),
+    args: [resolve(PROJECT_ROOT, 'src', 'lead.ts')],
   };
 }
 

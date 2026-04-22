@@ -54,8 +54,7 @@ cd mycc
 # Install dependencies
 pnpm install
 
-# Build and link
-pnpm build
+# Link globally (enables type imports for custom tools)
 npm link
 ```
 
@@ -139,7 +138,7 @@ See the following documentation for detailed explanations:
 3. instruct LLM to make code changes (*to itself!*)
 4. instruct LLM to test the code using tmux
 5. Debug by hit F5 (vscode debug mode)
-6. Once the code is ready, run `pnpm build && npm link` to update the global `mycc` executive.
+6. Once the code is ready, run `npm link` to update the global `mycc` executive.
 
 ## License
 

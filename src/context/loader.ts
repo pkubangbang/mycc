@@ -138,7 +138,7 @@ export class Loader implements DynamicLoader, SkillModule {
 
     // Load in order: user → project → built-in
     // Later loads can shadow earlier ones (built-in has highest priority)
-    this.loadUserTools();
+    await this.loadUserTools();
     await this.loadDynamicTools(); // project tools
     this.loadBuiltInTools();
 
@@ -148,9 +148,9 @@ export class Loader implements DynamicLoader, SkillModule {
   }
 
   /**
-   * Load user tools from ~/.mycc/tools/
+   * Load user tools from ~/.mycc-store/tools/
    */
-  private loadUserTools(): void {
+  private async loadUserTools(): Promise<void> {
     const userToolsDir = getUserToolsDir();
     if (!fs.existsSync(userToolsDir)) {
       return;
@@ -160,7 +160,49 @@ export class Loader implements DynamicLoader, SkillModule {
     for (const file of files) {
       if (file.endsWith('.ts') || file.endsWith('.js')) {
         const filepath = path.join(userToolsDir, file);
-        this.loadToolFromPath(filepath, 'user');
+        await this.loadUserTool(filepath, 'user');
+      }
+    }
+  }
+
+  /**
+   * Load a single user tool file using async import
+   */
+  private async loadUserTool(filepath: string, layer: Layer): Promise<void> {
+    try {
+      const modulePath = pathToFileURL(filepath).href;
+      const module = await import(`${modulePath}?t=${Date.now()}`);
+      const tool = module.default as ToolDefinition;
+
+      if (!tool || !tool.name) {
+        if (!this.silent) {
+          console.warn(chalk.yellow(`[loader] Invalid tool definition: ${filepath}`));
+        }
+        return;
+      }
+
+      const existing = this.tools.get(tool.name);
+      if (existing && existing.layer === 'built-in') {
+        if (!this.silent) {
+          console.warn(chalk.yellow(`[loader] Warning: user tool '${tool.name}' cannot shadow built-in tool`));
+        }
+        return;
+      }
+
+      if (existing && existing.layer === 'project') {
+        if (!this.silent) {
+          console.warn(chalk.yellow(`[loader] Warning: user tool '${tool.name}' shadowed by project tool`));
+        }
+        return;
+      }
+
+      this.tools.set(tool.name, { tool, layer });
+      if (isVerbose()) {
+        console.log(chalk.dim(`[loader] Loaded ${layer} tool: ${tool.name}`));
+      }
+    } catch (err) {
+      if (!this.silent) {
+        console.error(chalk.red(`[loader] Failed to load user tool ${filepath}: ${(err as Error).message}`));
       }
     }
   }
@@ -194,45 +236,6 @@ export class Loader implements DynamicLoader, SkillModule {
     for (const file of files) {
       if (file.endsWith('.ts') || file.endsWith('.js')) {
         await this.reloadTool(path.join(toolsDir, file), true); // isInitialLoad = true
-      }
-    }
-  }
-
-  /**
-   * Load a tool from a file path (for user tools - synchronous)
-   * Only logs in verbose mode since this is initial loading.
-   */
-  private loadToolFromPath(filepath: string, layer: Layer): void {
-    try {
-      // For user tools, we need synchronous loading
-      // Use require for .js files, but this is mainly for reference
-      // User tools should be pre-compiled
-      delete require.cache[require.resolve(filepath)];
-      const module = require(filepath);
-      const tool = module.default as ToolDefinition;
-
-      if (!tool || !tool.name) {
-        if (!this.silent) {
-          console.warn(chalk.yellow(`[loader] Invalid tool definition: ${filepath}`));
-        }
-        return;
-      }
-
-      const existing = this.tools.get(tool.name);
-      if (existing && existing.layer === 'user' && layer === 'project') {
-        // Project shadows user - show warning
-        if (!this.silent) {
-          console.warn(chalk.yellow(`[loader] Warning: project tool '${tool.name}' shadows user tool`));
-        }
-      }
-
-      this.tools.set(tool.name, { tool, layer });
-      if (isVerbose()) {
-        console.log(chalk.dim(`[loader] Loaded ${layer} tool: ${tool.name}`));
-      }
-    } catch (err) {
-      if (!this.silent) {
-        console.error(`[loader] Failed to load tool ${filepath}:`, (err as Error).message);
       }
     }
   }

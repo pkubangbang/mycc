@@ -44,7 +44,7 @@ export const helpCommand: SlashCommand = {
     console.log(chalk.gray('                 Press Ctrl+B d to detach tmux session'));
     console.log();
     console.log(chalk.gray('  Examples:'));
-    console.log(chalk.gray('    !pnpm build        - Run build with possible prompts'));
+    console.log(chalk.gray('    !pnpm test         - Run tests with possible prompts'));
     console.log(chalk.gray('    !ssh user@host     - SSH to remote server'));
     console.log(chalk.gray('    !                  - Open terminal shell'));
     console.log();

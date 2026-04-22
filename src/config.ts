@@ -303,3 +303,54 @@ export function ensureDirs(): void {
     }
   }
 }
+
+// ============================================================================
+// Tool Type Imports
+// ============================================================================
+
+import { execSync } from 'child_process';
+import chalk from 'chalk';
+
+/**
+ * Ensure mycc is linked in a directory for type imports
+ * Creates node_modules symlink if needed
+ */
+function ensureMyccLink(dir: string, label: string): void {
+  const nodeModules = path.join(dir, 'node_modules');
+  const myccLink = path.join(nodeModules, 'mycc');
+
+  // Create node_modules if needed
+  if (!fs.existsSync(nodeModules)) {
+    fs.mkdirSync(nodeModules, { recursive: true });
+  }
+
+  // Link mycc globally if not already linked
+  if (!fs.existsSync(myccLink)) {
+    console.log(chalk.dim(`[config] Linking mycc for ${label}...`));
+    try {
+      execSync('npm link mycc', { cwd: dir, stdio: 'ignore' });
+    } catch {
+      console.warn(
+        chalk.yellow(`[config] Could not link mycc in ${dir}. Run 'npm link mycc' manually.`)
+      );
+    }
+  }
+}
+
+/**
+ * Ensure type imports work for both user and project tools
+ * - User tools: ~/.mycc-store/
+ * - Project tools: current working directory (if .mycc exists)
+ */
+export function ensureToolTypeImports(): void {
+  // User tools directory
+  const userStore = path.join(os.homedir(), '.mycc-store');
+  ensureMyccLink(userStore, 'user tools');
+
+  // Project tools directory (if .mycc exists)
+  const projectDir = process.cwd();
+  const projectMycc = path.join(projectDir, MYCC_DIR);
+  if (fs.existsSync(projectMycc)) {
+    ensureMyccLink(projectDir, 'project tools');
+  }
+}

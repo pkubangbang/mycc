@@ -267,7 +267,6 @@ mycc/
 |---------|-------------|
 | `pnpm install` | Install dependencies |
 | `pnpm start` | Run the agent |
-| `pnpm build` | Compile TypeScript to dist/ |
 | `pnpm typecheck` | Run TypeScript type checking |
 | `pnpm format` | Format code with Prettier |
 

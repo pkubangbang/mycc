@@ -10,7 +10,7 @@ Node.js coding agent implementation using Ollama for LLM inference. The architec
 
 Refer to `README.md` for instructions.
 
-Prefer using pnpm instead of npm. The only exception is `pnpm build && npm link` to install the mycc.
+Prefer using pnpm instead of npm. The only exception is `npm link` to install the mycc globally.
 
 ## Tool Scope Constraints
 

@@ -15,6 +15,20 @@ tags: [tool, development, workflow, extension, required]
 
 ---
 
+## Prerequisites
+
+Ensure mycc is linked globally for type imports:
+
+```bash
+cd /path/to/mycc
+pnpm install
+npm link
+```
+
+This enables `import type { ToolDefinition } from 'mycc'` in your tools.
+
+---
+
 ## Phase 1: Prototype in .mycc/tools/
 
 Create a dynamic tool for rapid testing. Hot-reload is automatic.
@@ -22,7 +36,7 @@ Create a dynamic tool for rapid testing. Hot-reload is automatic.
 ### Template (`.mycc/tools/<name>.ts`)
 
 ```typescript
-import type { ToolDefinition, AgentContext } from '../../src/types.js';
+import type { ToolDefinition, AgentContext } from 'mycc';
 
 export default {
   name: '<name>',
@@ -153,5 +167,5 @@ handler: async (ctx: AgentContext, args: Record<string, unknown>): Promise<strin
 - [ ] Import added to `loader.ts`
 - [ ] Added to `builtInTools` array
 - [ ] Color added to `core.ts` (optional)
-- [ ] `pnpm build` succeeds
+- [ ] `pnpm typecheck` passes
 - [ ] Prototype file deleted
