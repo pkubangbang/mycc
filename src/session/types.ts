@@ -40,3 +40,13 @@ export interface SessionDisplay {
   first_query: string;
   source: 'project' | 'user';
 }
+
+/**
+ * Result of session initialization
+ */
+export interface SessionInit {
+  sessionFilePath: string;
+  triologuePath: string;
+  restoredPair: import('./restoration.js').SummaryPair | null;
+  initialQuery: string | null;
+}

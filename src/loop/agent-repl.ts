@@ -10,18 +10,73 @@ import type { SlashCommandContext } from '../types.js';
 import { ParentContext } from '../context/parent-context.js';
 import { readSession, writeSession, getSessionId } from '../session/index.js';
 import { slashRegistry } from '../slashes/index.js';
-import { getTokenThreshold } from '../config.js';
+import { getTokenThreshold, getSkillMatchThreshold } from '../config.js';
 import { Triologue } from './triologue.js';
 import { agentIO } from './agent-io.js';
 import { shouldSkipHealthCheck } from '../config.js';
 import { openMultilineEditor } from '../utils/multiline-input.js';
 import { displayLetterBox } from '../utils/letter-box.js';
 import { loader } from '../context/shared/loader.js';
-import { buildSkillHint, initializeSession } from './agent-loop-helper.js';
+import { initializeSession } from '../session/index.js';
 import { agentLoop, ShutdownError } from './agent-loop.js';
 import pkg from '../../package.json';
 
 const version = pkg.version;
+
+/**
+ * Build skill hint from wiki matching.
+ * Appends a suffix to focus the embedding on intent/skills needed.
+ * Only for queries with 5-1000 words (not too short, not too long).
+ */
+async function buildSkillHint(query: string, ctx: import('../types.js').AgentContext): Promise<string | null> {
+  const wordCount = query.trim().split(/\s+/).length;
+  
+  // Skip if query is too short (less than 5 words)
+  if (wordCount < 5) {
+    ctx.core.verbose('skill-hint', `Query too short (${wordCount} words), skipping`);
+    return null;
+  }
+  
+  // Skip if query is too long (rough estimate: 4 chars per token)
+  if (query.length > 4000) {
+    ctx.core.verbose('skill-hint', 'Query too long for skill matching, skipping');
+    return null;
+  }
+
+  try {
+    // Append suffix to focus embedding on required knowledge/skills
+    const searchQuery = `${query} -- what specialist knowledge is required?`;
+    
+    ctx.core.verbose('skill-hint', `Searching skills for: "${query.slice(0, 50)}..."`);
+    
+    const threshold = getSkillMatchThreshold();
+    const results = await ctx.wiki.get(searchQuery, {
+      domain: 'skills',
+      topK: 3,
+      threshold,
+    });
+
+    if (results.length === 0) {
+      ctx.core.verbose('skill-hint', 'No matching skills found');
+      return null;
+    }
+
+    ctx.core.verbose('skill-hint', `Found ${results.length} matching skill(s): ${results.map(r => r.document.title).join(', ')}`);
+
+    const hints: string[] = [];
+    for (const result of results) {
+      const skillName = result.document.title;
+      const skillDesc = result.document.content.split('\n').find(line => line.startsWith('Description:'))?.replace('Description: ', '') || '';
+      const similarity = (result.similarity * 100).toFixed(0);
+      hints.push(`- **${skillName}** (${similarity}% match): ${skillDesc}. Use \`skill_load(name="${skillName}")\` to load it.`);
+    }
+
+    return `The following skills may be helpful:\n${hints.join('\n')}`;
+  } catch (err) {
+    ctx.core.verbose('skill-hint', `Skill matching failed: ${err}`);
+    return null;
+  }
+}
 
 export async function main(): Promise<void> {
   // Guard: Must run under Coordinator
