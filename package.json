@@ -30,8 +30,10 @@
     "gray-matter": "^4.0.3",
     "minimist": "^1.2.8",
     "ollama": "^0.6.3",
+    "sharp": "^0.34.5",
     "string-width": "^8.2.0",
-    "strip-ansi": "^7.2.0"
+    "strip-ansi": "^7.2.0",
+    "tsx": "^4.21.0"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
@@ -43,7 +45,6 @@
     "@typescript-eslint/parser": "^8.59.0",
     "eslint": "^10.2.1",
     "prettier": "^3.4.0",
-    "tsx": "^4.21.0",
     "typescript": "^5",
     "typescript-eslint": "^8.59.0",
     "vitest": "^4.1.4"

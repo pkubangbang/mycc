@@ -22,7 +22,7 @@ import { config } from 'dotenv';
 import { existsSync } from 'fs';
 import { homedir } from 'os';
 import { dirname, resolve } from 'path';
-import { fileURLToPath } from 'url';
+import { fileURLToPath, pathToFileURL } from 'url';
 import chalk from 'chalk';
 import { isVerbose, printEnvStatus, validateEnv, ensureToolTypeImports } from './config.js';
 import { parseKeys, isCtrlC, isEscape } from './utils/key-parser.js';
@@ -87,11 +87,21 @@ interface SpawnCommand {
 function getSpawnCommand(): SpawnCommand {
   const tsxScript = resolve(PROJECT_ROOT, 'src', 'lead.ts');
 
-  // Use Node.js with tsx/esm loader - works cross-platform
-  // Node.js can spawn TypeScript files when using the tsx loader
+  if (process.platform === 'win32') {
+    // Windows: use node --import with tsx/esm loader (requires file:// URL)
+    const tsxEsmPath = resolve(PROJECT_ROOT, 'node_modules', 'tsx', 'dist', 'esm', 'index.mjs');
+    const tsxEsmUrl = pathToFileURL(tsxEsmPath).href;
+    return {
+      command: process.execPath,
+      args: ['--import', tsxEsmUrl, tsxScript],
+    };
+  }
+
+  // Unix: use tsx binary directly
+  const tsx = resolve(PROJECT_ROOT, 'node_modules', '.bin', 'tsx');
   return {
-    command: process.execPath, // node executable
-    args: ['--import', 'tsx/esm', tsxScript],
+    command: tsx,
+    args: [tsxScript],
   };
 }
 

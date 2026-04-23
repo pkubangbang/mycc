@@ -3,10 +3,8 @@
  */
 
 import chalk from 'chalk';
-import { execSync } from 'child_process';
 import * as fs from 'fs';
-import * as path from 'path';
-import * as os from 'os';
+import sharp from 'sharp';
 import type { CoreModule } from '../../types.js';
 import { ollama, retryWithBackoff } from '../../ollama.js';
 import { WebFetchResponse, WebSearchResult } from 'ollama';
@@ -219,7 +217,7 @@ export class Core implements CoreModule {
     }
 
     // Resize image if too large (width > 1280px) to keep payload manageable
-    const { base64: resizedBase64, tempPath } = this.resizeImageIfNeeded(base64Image, imagePath);
+    const { base64: resizedBase64, tempPath } = await this.resizeImageIfNeeded(base64Image, imagePath);
     base64Image = resizedBase64;
 
     try {
@@ -267,94 +265,37 @@ export class Core implements CoreModule {
   }
 
   /**
-   * Resize image if width > 1280px using ImageMagick
+   * Resize image if width > 1280px using sharp (cross-platform)
    * Returns the base64-encoded image and optional temp file path for cleanup
    * @throws Error if resize is needed but fails
    */
-  private resizeImageIfNeeded(base64Image: string, originalPath?: string): { base64: string; tempPath?: string } {
-    // Decode base64 to check dimensions
-    const imageBuffer = Buffer.from(base64Image, 'base64');
-    const tmpDir = os.tmpdir();
-    const tempInputPath = path.join(tmpDir, `mycc_img_input_${Date.now()}.png`);
-    const tempOutputPath = path.join(tmpDir, `mycc_img_output_${Date.now()}.png`);
+  private async resizeImageIfNeeded(base64Image: string, _originalPath?: string): Promise<{ base64: string; tempPath?: string }> {
+    const maxWidth = 1280;
 
-    // Write temp file to check dimensions
-    fs.writeFileSync(tempInputPath, imageBuffer);
-
-    // Check image dimensions using ImageMagick identify
-    let width: number;
     try {
-      const sizeInfo = execSync(`identify -format "%w %h" "${tempInputPath}"`, {
-        encoding: 'utf-8',
-        timeout: 5000,
-        stdio: ['pipe', 'pipe', 'pipe'],
-      }).trim();
-      width = parseInt(sizeInfo.split(' ')[0], 10);
+      // Decode base64 to buffer
+      const imageBuffer = Buffer.from(base64Image, 'base64');
+      const image = sharp(imageBuffer);
+
+      // Get metadata to check dimensions
+      const metadata = await image.metadata();
+
+      if (!metadata.width || metadata.width <= maxWidth) {
+        // No resize needed
+        return { base64: base64Image };
+      }
+
+      // Resize needed
+      this.brief('info', 'img_describe', `Resizing image from ${metadata.width}px to ${maxWidth}px wide`);
+
+      // Resize and convert to buffer
+      const resizedBuffer = await sharp(imageBuffer)
+        .resize(maxWidth)
+        .toBuffer();
+
+      return { base64: resizedBuffer.toString('base64') };
     } catch (err) {
-      // Cleanup temp input
-      try {
-        fs.unlinkSync(tempInputPath);
-      } catch {
-        // ignore
-      }
-      throw new Error(`ImageMagick not available. Install with: sudo apt install imagemagick. Original error: ${(err as Error).message}`, { cause: err });
+      throw new Error(`Failed to process image: ${(err as Error).message}`, { cause: err });
     }
-
-    // Cleanup temp input
-    try {
-      fs.unlinkSync(tempInputPath);
-    } catch {
-      // ignore
-    }
-
-    // If width > 1280px, resize
-    if (width > 1280) {
-      this.brief('info', 'img_describe', `Resizing image from ${width}px to 1280px wide`);
-
-      // Use original file if available (more efficient than re-encoding)
-      const sourcePath = originalPath && fs.existsSync(originalPath) ? originalPath : tempInputPath;
-
-      // Re-write temp input if we're using originalPath (since we deleted it)
-      if (sourcePath === tempInputPath) {
-        fs.writeFileSync(tempInputPath, imageBuffer);
-      }
-
-      try {
-        execSync(`convert "${sourcePath}" -resize 1280x "${tempOutputPath}"`, {
-          encoding: 'utf-8',
-          timeout: 10000,
-          stdio: ['pipe', 'pipe', 'pipe'],
-        });
-
-        const resizedBuffer = fs.readFileSync(tempOutputPath);
-        const resizedBase64 = resizedBuffer.toString('base64');
-
-        // Cleanup temp input if we created it
-        if (sourcePath === tempInputPath) {
-          try {
-            fs.unlinkSync(tempInputPath);
-          } catch {
-            // ignore
-          }
-        }
-
-        return { base64: resizedBase64, tempPath: tempOutputPath };
-      } catch (err) {
-        // Cleanup on failure
-        try {
-          fs.unlinkSync(tempInputPath);
-        } catch {
-          // ignore
-        }
-        try {
-          fs.unlinkSync(tempOutputPath);
-        } catch {
-          // ignore
-        }
-        throw new Error(`Failed to resize image (width: ${width}px). ImageMagick resize failed: ${(err as Error).message}`, { cause: err });
-      }
-    }
-
-    return { base64: base64Image };
   }
 }

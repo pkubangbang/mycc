@@ -1,6 +1,8 @@
 /**
  * read-picture.ts - Read and describe image files using vision model
  *
+ * Image resizing is handled by imgDescribe.
+ *
  * Scope: ['main', 'child'] - Available to lead and teammate agents
  */
 
@@ -59,11 +61,7 @@ export const readPictureTool: ToolDefinition = {
         return `Warning: File extension "${ext}" may not be a supported image format. Supported formats: ${validExtensions.join(', ')}`;
       }
 
-      // Get file stats
-      const stats = fs.statSync(safe);
-      ctx.core.brief('info', 'read_picture', `File size: ${stats.size} bytes`);
-
-      // Use core.imgDescribe to process the image
+      // Use core.imgDescribe to process the image (handles resizing)
       const description = await ctx.core.imgDescribe(safe, prompt);
 
       return `## Image: ${imagePath}\n\n${description}`;

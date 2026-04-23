@@ -134,10 +134,7 @@ function captureScreenshot(
 
   // --- Windows ---
   if (env.platform === 'win32') {
-    // Convert path to Windows format and escape for PowerShell
     const winPath = screenshotPath.replace(/\//g, '\\');
-    // PowerShell script to capture screen using .NET
-    // Use single quotes for path to avoid escaping issues
     const psScript = `
 Add-Type -AssemblyName System.Windows.Forms;
 Add-Type -AssemblyName System.Drawing;
@@ -156,11 +153,9 @@ $bitmap.Save('${winPath}')
 
   // --- Linux + Wayland ---
   if (env.platform === 'linux' && env.displayServer === 'wayland') {
-    // GNOME on Wayland → gnome-screenshot is the reliable choice
     if (env.desktop === 'gnome' || env.availableTools.includes('gnome-screenshot')) {
       attempts.push({ cmd: `gnome-screenshot -f "${screenshotPath}"`, desc: 'gnome-screenshot (GNOME/Wayland)' });
     }
-    // wlroots compositors (Sway, Hyprland) → grim
     if (env.desktop === 'sway' || env.desktop === 'hyprland' || env.availableTools.includes('grim')) {
       attempts.push({ cmd: `grim "${screenshotPath}"`, desc: 'grim (wlroots/Wayland)' });
     }
@@ -179,7 +174,7 @@ $bitmap.Save('${winPath}')
     }
   }
 
-  // --- Cross-desktop fallbacks (any display server) ---
+  // --- Cross-desktop fallbacks ---
   if (env.availableTools.includes('spectacle') && !attempts.some(a => a.desc.includes('spectacle'))) {
     attempts.push({ cmd: `spectacle -b -n -o "${screenshotPath}"`, desc: 'spectacle (KDE)' });
   }
@@ -187,7 +182,6 @@ $bitmap.Save('${winPath}')
     attempts.push({ cmd: `gnome-screenshot -f "${screenshotPath}"`, desc: 'gnome-screenshot (fallback)' });
   }
 
-  // If no tools matched at all, report detailed diagnostics
   if (attempts.length === 0) {
     const diagnostics = buildDiagnostics(env, []);
     return {
@@ -213,12 +207,11 @@ $bitmap.Save('${winPath}')
       }
       failures.push(`${attempt.desc}: command ran but produced no output file`);
     } catch (err) {
-      const msg = (err as Error).message.split('\n')[0]; // first line only
+      const msg = (err as Error).message.split('\n')[0];
       failures.push(`${attempt.desc}: ${msg}`);
     }
   }
 
-  // All attempts failed
   const diagnostics = buildDiagnostics(env, failures);
   return {
     ok: false,
@@ -231,10 +224,6 @@ $bitmap.Save('${winPath}')
 // Diagnostics & user guidance
 // ---------------------------------------------------------------------------
 
-/**
- * Build a detailed diagnostics string to help the LLM guide the user
- * toward fixing the issue or finding a manual alternative.
- */
 function buildDiagnostics(env: DetectedEnv, failures: string[]): string {
   const lines: string[] = [];
 
@@ -259,96 +248,24 @@ function buildDiagnostics(env: DetectedEnv, failures: string[]): string {
   if (env.platform === 'win32') {
     lines.push('  - Windows uses PowerShell with .NET (System.Drawing) for screenshots');
     lines.push('  - Ensure PowerShell is available in PATH');
-    lines.push('  - The .NET Framework should be installed (included with Windows)');
   } else if (env.platform === 'darwin') {
     lines.push('  - macOS should have `screencapture` built-in');
-    lines.push('  - Check that the tool is in your $PATH');
   } else if (env.displayServer === 'wayland') {
-    if (env.desktop === 'gnome' || env.desktop === 'unknown') {
-      lines.push('  - Install gnome-screenshot: `sudo apt install gnome-screenshot`');
-    }
-    if (env.desktop === 'sway' || env.desktop === 'hyprland') {
-      lines.push('  - Install grim: `sudo apt install grim` (or your distro equivalent)');
-    }
-    if (env.desktop === 'unknown') {
-      lines.push('  - For GNOME on Wayland: `sudo apt install gnome-screenshot`');
-      lines.push('  - For wlroots (Sway/Hyprland): `sudo apt install grim`');
-    }
-    lines.push('  - Note: scrot and ImageMagick `import` do NOT work on Wayland');
+    lines.push('  - Install gnome-screenshot: `sudo apt install gnome-screenshot`');
+    lines.push('  - Or for wlroots (Sway/Hyprland): `sudo apt install grim`');
   } else if (env.displayServer === 'x11') {
     lines.push('  - Install scrot: `sudo apt install scrot`');
     lines.push('  - Or ImageMagick: `sudo apt install imagemagick`');
-    lines.push('  - Or gnome-screenshot: `sudo apt install gnome-screenshot`');
   } else {
     lines.push('  - Could not detect display server. Check that XDG_SESSION_TYPE is set.');
-    lines.push('  - For Wayland: install gnome-screenshot or grim');
-    lines.push('  - For X11: install scrot or imagemagick');
   }
 
   lines.push('');
-  lines.push('**Manual alternatives for the user:**');
-  lines.push('  1. Take a screenshot manually (Print Screen key, or screenshot app) and save it to a file');
-  lines.push('  2. Use the `bash` tool to read specific text content from the screen (e.g., `wl-paste` or `xclip -selection clipboard -o` for clipboard text)');
-  lines.push('  3. If a browser is open, ask the user to share the URL and use `web_fetch` instead');
-  lines.push('  4. Copy visible text to the clipboard and use `bash` with `xclip`/`wl-paste` to retrieve it');
+  lines.push('**Manual alternatives:**');
+  lines.push('  1. Take a screenshot manually and describe it');
+  lines.push('  2. Use `bash` tool to read clipboard content');
 
   return lines.join('\n');
-}
-
-// ---------------------------------------------------------------------------
-// Image preprocessing
-// ---------------------------------------------------------------------------
-
-/**
- * Optionally crop and/or resize the screenshot for efficient API transport.
- * Returns the path to the final image (may differ from input if processing
- * was applied).
- */
-function preprocessImage(
-  ctx: AgentContext,
-  screenshotPath: string,
-  region?: string,
-): string {
-  const tmpDir = os.tmpdir();
-  const processedPath = path.join(tmpDir, `mycc_screen_processed_${Date.now()}.png`);
-
-  // Crop if a region was specified
-  if (region) {
-    try {
-      execSync(`convert "${screenshotPath}" -crop ${region} "${processedPath}"`, {
-        encoding: 'utf-8',
-        timeout: 10000,
-        stdio: 'pipe',
-      });
-      ctx.core.brief('info', 'screen', `Cropped to region: ${region}`);
-      return processedPath;
-    } catch (err) {
-      ctx.core.brief('warn', 'screen', `Crop failed, using full screenshot: ${(err as Error).message}`);
-    }
-  }
-
-  // Resize if wider than 1280px (keeps base64 payload manageable)
-  try {
-    const sizeInfo = execSync(`identify -format "%w %h" "${screenshotPath}"`, {
-      encoding: 'utf-8',
-      timeout: 5000,
-      stdio: 'pipe',
-    }).trim();
-    const [width] = sizeInfo.split(' ').map(Number);
-    if (width > 1280) {
-      execSync(`convert "${screenshotPath}" -resize 1280x "${processedPath}"`, {
-        encoding: 'utf-8',
-        timeout: 10000,
-        stdio: 'pipe',
-      });
-      ctx.core.brief('info', 'screen', `Resized from ${width}px to 1280px wide`);
-      return processedPath;
-    }
-  } catch {
-    ctx.core.brief('warn', 'screen', 'Resize skipped (ImageMagick not available), using original screenshot');
-  }
-
-  return screenshotPath;
 }
 
 // ---------------------------------------------------------------------------
@@ -366,11 +283,6 @@ export const screenTool: ToolDefinition = {
         description:
           'Custom prompt for the vision model. Use this to ask specific questions about the screen content (e.g., "What error message is shown?" or "Read the text in the terminal window").',
       },
-      region: {
-        type: 'string',
-        description:
-          'Crop region as WxH+X+Y (e.g., "800x600+100+200"). If omitted, captures the full screen.',
-      },
     },
     required: [],
   },
@@ -378,19 +290,17 @@ export const screenTool: ToolDefinition = {
 
   handler: async (ctx: AgentContext, args: Record<string, unknown>): Promise<string> => {
     const customPrompt = (args.prompt as string) || DEFAULT_PROMPT;
-    const region = args.region as string | undefined;
 
-    // --- Step 0: Detect environment ---
+    // Detect environment
     const env = detectEnvironment();
-    ctx.core.brief('info', 'screen', `Environment: OS=${env.platform}, display=${env.displayServer}, desktop=${env.desktop}, tools=[${env.availableTools.join(', ')}]`);
+    ctx.core.brief('info', 'screen', `Environment: OS=${env.platform}, display=${env.displayServer}, desktop=${env.desktop}`);
 
     const tmpDir = os.tmpdir();
     const screenshotPath = path.join(tmpDir, `mycc_screen_${Date.now()}.png`);
-    let processedPath: string | undefined;
 
     try {
-      // --- Step 1: Capture screenshot ---
-      ctx.core.brief('info', 'screen', `Capturing screenshot${region ? ` (region: ${region})` : ' (full screen)'}`);
+      // Capture screenshot
+      ctx.core.brief('info', 'screen', 'Capturing screenshot');
 
       const capture = captureScreenshot(env, screenshotPath);
 
@@ -400,33 +310,13 @@ export const screenTool: ToolDefinition = {
       }
 
       ctx.core.brief('info', 'screen', `Captured via ${capture.method}`);
-      ctx.core.brief('info', 'screen', `Screenshot saved: ${screenshotPath}`);
 
-      // --- Step 2: Preprocess (crop/resize) ---
-      const finalPath = preprocessImage(ctx, screenshotPath, region);
-      processedPath = finalPath !== screenshotPath ? finalPath : undefined;
-
-      // --- Step 3: Base64 encode ---
-      const imageBuffer = fs.readFileSync(finalPath);
-      const base64Image = imageBuffer.toString('base64');
-
-      ctx.core.brief('info', 'screen', `Image: ${imageBuffer.length} bytes, base64: ${base64Image.length} chars`);
-
-      // --- Step 4: Describe via core.imgDescribe ---
-      try {
-        const description = await ctx.core.imgDescribe(base64Image, customPrompt);
-        return `## Screen Content\n\n${description}`;
-      } catch (err) {
-        const errMsg = (err as Error).message;
-        ctx.core.brief('error', 'screen', `Vision model error: ${errMsg}`);
-        return `## ❌ Vision Model Failed\n\n${errMsg}\n\n**Fallback alternatives:**\n  - Ask the user to describe the screen content manually\n  - If a browser is visible, get the URL and use \`web_fetch\` instead\n  - Copy on-screen text to clipboard and read it with \`bash\` + \`wl-paste\`/ \`xclip\``;
-      }
+      // Describe via imgDescribe (handles resizing)
+      const description = await ctx.core.imgDescribe(screenshotPath, customPrompt);
+      return `## Screen Content\n\n${description}`;
     } finally {
-      // Cleanup temp files
+      // Cleanup
       try { fs.unlinkSync(screenshotPath); } catch { /* ignore */ }
-      if (processedPath) {
-        try { fs.unlinkSync(processedPath); } catch { /* ignore */ }
-      }
     }
   },
 };
