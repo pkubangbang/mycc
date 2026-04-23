@@ -16,7 +16,8 @@
       "Bash(./test-backspace-middle.sh)",
       "Bash(pnpm tsc:*)",
       "Bash(pnpm test:*)",
-      "Bash(wc:*)"
+      "Bash(wc:*)",
+      "Bash(pnpm lint *)"
     ]
   }
 }
