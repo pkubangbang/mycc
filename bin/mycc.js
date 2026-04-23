@@ -14,12 +14,18 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 const PROJECT_ROOT = resolve(__dirname, '..');
-const tsx = resolve(PROJECT_ROOT, 'node_modules', '.bin', 'tsx');
 const entry = resolve(PROJECT_ROOT, 'src', 'index.ts');
+
+// On Windows, spawn via shell since .cmd files can't be spawned directly
+const isWin = process.platform === 'win32';
+const tsx = isWin
+  ? resolve(PROJECT_ROOT, 'node_modules', '.bin', 'tsx.cmd')
+  : resolve(PROJECT_ROOT, 'node_modules', '.bin', 'tsx');
 
 const child = spawn(tsx, [entry, ...process.argv.slice(2)], {
   stdio: 'inherit',
   env: process.env,
+  ...(isWin ? { shell: true } : {}),
 });
 
 child.on('exit', (code) => process.exit(code ?? 0));

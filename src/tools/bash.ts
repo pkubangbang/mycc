@@ -23,7 +23,7 @@ export const bashTool: ToolDefinition = {
     properties: {
       command: {
         type: 'string',
-        description: 'The shell command to execute. Must be valid bash syntax. Paths are relative to workspace directory.',
+        description: 'The shell command to execute. Uses bash on Unix and cmd on Windows. Paths are relative to workspace directory.',
       },
       intent: {
         type: 'string',

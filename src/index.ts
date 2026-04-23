@@ -85,9 +85,13 @@ interface SpawnCommand {
 
 /** Determine how to spawn Lead - always use tsx for TypeScript support */
 function getSpawnCommand(): SpawnCommand {
+  const tsxScript = resolve(PROJECT_ROOT, 'src', 'lead.ts');
+
+  // Use Node.js with tsx/esm loader - works cross-platform
+  // Node.js can spawn TypeScript files when using the tsx loader
   return {
-    command: resolve(PROJECT_ROOT, 'node_modules', '.bin', 'tsx'),
-    args: [resolve(PROJECT_ROOT, 'src', 'lead.ts')],
+    command: process.execPath, // node executable
+    args: ['--import', 'tsx/esm', tsxScript],
   };
 }
 

@@ -362,9 +362,13 @@ class AgentIO {
     const stdoutBuffer = new ReplayBuffer();
     const stderrBuffer = new ReplayBuffer();
 
-    // 3. Create subprocess with setsid to run in new session without controlling terminal
-    // This prevents /dev/tty access, protecting terminal state from corruption
-    const proc = spawn('setsid', ['bash', '-c', command], { cwd });
+    // 3. Create subprocess with platform-appropriate shell
+    // Unix: setsid + bash -c runs in a new session without controlling terminal
+    // Windows: cmd /c uses windowsHide to avoid console window popup
+    const isWin = process.platform === 'win32';
+    const proc = isWin
+      ? spawn('cmd', ['/c', command], { cwd, windowsHide: true })
+      : spawn('setsid', ['bash', '-c', command], { cwd });
 
     // Collect stdout and stderr
     proc.stdout?.on('data', (chunk: Buffer) => {

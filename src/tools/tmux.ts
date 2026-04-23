@@ -58,16 +58,18 @@ Use when:
 async function handleTmux(ctx: AgentContext, args: Record<string, unknown>): Promise<string> {
   const command = args.command as string | undefined;
   const reason = args.reason as string;
+  const isWin = process.platform === 'win32';
 
   // 1. Prerequisites
   if (!hasTmux()) {
-    ctx.core.brief('error', 'tmux', 'tmux not found',
-      'Installation:\n' +
-      '  Ubuntu/Debian: sudo apt install tmux\n' +
-      '  macOS: brew install tmux\n' +
-      '  Fedora: sudo dnf install tmux\n' +
-      '  Arch Linux: sudo pacman -S tmux'
-    );
+    const installInstructions = isWin
+      ? 'Windows: Install psmux and ensure it is in PATH'
+      : 'Installation:\n' +
+        '  Ubuntu/Debian: sudo apt install tmux\n' +
+        '  macOS: brew install tmux\n' +
+        '  Fedora: sudo dnf install tmux\n' +
+        '  Arch Linux: sudo pacman -S tmux';
+    ctx.core.brief('error', 'tmux', 'tmux not found', installInstructions);
     return `Error: tmux is required but not installed. See brief output for installation instructions.`;
   }
 
@@ -82,14 +84,25 @@ async function handleTmux(ctx: AgentContext, args: Record<string, unknown>): Pro
 
   try {
     if (command) {
-      // Encode command to avoid shell escaping issues
-      const encoded = Buffer.from(command).toString('base64');
-      await execAsync(
-        `tmux new-session -d -s ${sessionName} -c "${cwd}" -x 120 -y 40 ` +
-        `"bash -c 'eval \\$(echo ${encoded} | base64 -d); exec bash'"`
-      );
+      if (isWin) {
+        await execAsync(
+          `tmux new-session -d -s ${sessionName} -c "${cwd}" -x 120 -y 40 ` +
+          `"cmd /k ${command}"`
+        );
+      } else {
+        // Encode command to avoid shell escaping issues
+        const encoded = Buffer.from(command).toString('base64');
+        await execAsync(
+          `tmux new-session -d -s ${sessionName} -c "${cwd}" -x 120 -y 40 ` +
+          `"bash -c 'eval \\$(echo ${encoded} | base64 -d); exec bash'"`
+        );
+      }
     } else {
-      await execAsync(`tmux new-session -d -s ${sessionName} -c "${cwd}" -x 120 -y 40`);
+      if (isWin) {
+        await execAsync(`tmux new-session -d -s ${sessionName} -c "${cwd}" -x 120 -y 40 "cmd"`);
+      } else {
+        await execAsync(`tmux new-session -d -s ${sessionName} -c "${cwd}" -x 120 -y 40`);
+      }
     }
   } catch (e) {
     return `Error: Failed to create session: ${e}`;
@@ -123,7 +136,7 @@ async function handleTmux(ctx: AgentContext, args: Record<string, unknown>): Pro
 
   try {
     const { stdout } = await execAsync(
-      `tmux capture-pane -t ${sessionName} -p -S -3000 -E -1 2>/dev/null`
+      `tmux capture-pane -t ${sessionName} -p -S -3000 -E -1`
     );
     output = stdout;
     sessionExists = true;
@@ -225,11 +238,12 @@ function hasTmux(): boolean {
 }
 
 /**
- * Synchronous which command
+ * Synchronous which/where command
  */
 function whichSync(cmd: string): boolean {
+  const isWin = process.platform === 'win32';
   try {
-    execSync(`which ${cmd}`, { stdio: 'ignore' });
+    execSync(isWin ? `where ${cmd}` : `which ${cmd}`, { stdio: 'ignore' });
     return true;
   } catch {
     return false;
