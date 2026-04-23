@@ -8,6 +8,7 @@
  * toward manual alternatives.
  *
  * Supported environments:
+ *   - Windows: PowerShell with .NET (System.Drawing)
  *   - Linux + Wayland/GNOME: gnome-screenshot
  *   - Linux + Wayland/wlroots (Sway, Hyprland): grim
  *   - Linux + X11: scrot, import (ImageMagick), gnome-screenshot
@@ -47,6 +48,7 @@ interface DetectedEnv {
  */
 function detectEnvironment(): DetectedEnv {
   const platform = os.platform();
+  const isWin = platform === 'win32';
 
   // --- Display server ---
   let displayServer = 'unknown';
@@ -55,6 +57,8 @@ function detectEnvironment(): DetectedEnv {
     displayServer = 'wayland';
   } else if (sessionType === 'x11' || process.env.DISPLAY) {
     displayServer = 'x11';
+  } else if (isWin) {
+    displayServer = 'windows';
   }
 
   // --- Desktop / compositor ---
@@ -72,19 +76,22 @@ function detectEnvironment(): DetectedEnv {
   }
 
   // --- Available screenshot tools ---
-  const candidates = [
-    'gnome-screenshot',   // GNOME / Wayland or X11
-    'grim',               // wlroots compositors (Sway, Hyprland)
-    'spectacle',          // KDE
-    'scrot',              // X11 lightweight
-    'import',             // ImageMagick (X11)
-    'screencapture',      // macOS built-in
-  ];
+  const candidates = isWin
+    ? ['powershell'] // Windows uses PowerShell with .NET
+    : [
+        'gnome-screenshot',   // GNOME / Wayland or X11
+        'grim',               // wlroots compositors (Sway, Hyprland)
+        'spectacle',          // KDE
+        'scrot',              // X11 lightweight
+        'import',             // ImageMagick (X11)
+        'screencapture',      // macOS built-in
+      ];
 
   const availableTools: string[] = [];
   for (const cmd of candidates) {
     try {
-      execSync(`which ${cmd} 2>/dev/null`, { encoding: 'utf-8', timeout: 3000 });
+      const checkCmd = isWin ? `where ${cmd}` : `which ${cmd}`;
+      execSync(`${checkCmd} 2>/dev/null`, { encoding: 'utf-8', timeout: 3000, shell: isWin ? true : false });
       availableTools.push(cmd);
     } catch {
       // not found
@@ -120,6 +127,20 @@ function captureScreenshot(
 ): CaptureResult | CaptureError {
   // Build an ordered list of (command, description) to try
   const attempts: Array<{ cmd: string; desc: string }> = [];
+
+  // --- Windows ---
+  if (env.platform === 'win32') {
+    // PowerShell script to capture screen using .NET
+    const psScript = `
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
+$bitmap = New-Object System.Drawing.Bitmap([System.Windows.Forms.Screen]::PrimaryScreen.Bounds.Width, [System.Windows.Forms.Screen]::PrimaryScreen.Bounds.Height)
+$graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+$graphics.CopyFromScreen([System.Drawing.Point]::Empty, [System.Drawing.Point]::Empty, $bitmap.Size)
+$bitmap.Save("${screenshotPath.replace(/\\/g, '\\\\')}")
+`.trim().replace(/\n/g, ' ');
+    attempts.push({ cmd: `powershell -NoProfile -Command "${psScript}"`, desc: 'PowerShell/.NET (Windows built-in)' });
+  }
 
   // --- macOS ---
   if (env.platform === 'darwin') {
@@ -222,7 +243,11 @@ function buildDiagnostics(env: DetectedEnv, failures: string[]): string {
 
   lines.push('**Suggested fixes:**');
 
-  if (env.platform === 'darwin') {
+  if (env.platform === 'win32') {
+    lines.push('  - Windows uses PowerShell with .NET (System.Drawing) for screenshots');
+    lines.push('  - Ensure PowerShell is available in PATH');
+    lines.push('  - The .NET Framework should be installed (included with Windows)');
+  } else if (env.platform === 'darwin') {
     lines.push('  - macOS should have `screencapture` built-in');
     lines.push('  - Check that the tool is in your $PATH');
   } else if (env.displayServer === 'wayland') {

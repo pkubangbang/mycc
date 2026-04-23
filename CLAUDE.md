@@ -79,10 +79,11 @@ Use TypeScript's strict checks to find unused imports/variables:
 pnpm typecheck --noUnusedLocals --noUnusedParameters
 ```
 
-Use eslint for linting issues (you MUST do it before commit):
+Use pnpm for linting (you MUST do it before commit):
 
 ```bash
-npx eslint src/loop/agent-loop.ts src/loop/agent-repl.ts
+pnpm lint                    # Run lint on all files
+pnpm lint src/tools/screen.ts  # Run lint on specific files
 ```
 
 Use prettier for formatting (run after significant changes):
