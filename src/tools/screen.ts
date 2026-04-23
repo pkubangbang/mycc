@@ -91,7 +91,11 @@ function detectEnvironment(): DetectedEnv {
   for (const cmd of candidates) {
     try {
       const checkCmd = isWin ? `where ${cmd}` : `which ${cmd}`;
-      execSync(`${checkCmd} 2>/dev/null`, { encoding: 'utf-8', timeout: 3000, shell: isWin ? true : false });
+      execSync(checkCmd, {
+        encoding: 'utf-8',
+        timeout: 3000,
+        ...(isWin ? { shell: 'cmd.exe' } : {}),
+      });
       availableTools.push(cmd);
     } catch {
       // not found
@@ -130,14 +134,17 @@ function captureScreenshot(
 
   // --- Windows ---
   if (env.platform === 'win32') {
+    // Convert path to Windows format and escape for PowerShell
+    const winPath = screenshotPath.replace(/\//g, '\\');
     // PowerShell script to capture screen using .NET
+    // Use single quotes for path to avoid escaping issues
     const psScript = `
-Add-Type -AssemblyName System.Windows.Forms
-Add-Type -AssemblyName System.Drawing
-$bitmap = New-Object System.Drawing.Bitmap([System.Windows.Forms.Screen]::PrimaryScreen.Bounds.Width, [System.Windows.Forms.Screen]::PrimaryScreen.Bounds.Height)
-$graphics = [System.Drawing.Graphics]::FromImage($bitmap)
-$graphics.CopyFromScreen([System.Drawing.Point]::Empty, [System.Drawing.Point]::Empty, $bitmap.Size)
-$bitmap.Save("${screenshotPath.replace(/\\/g, '\\\\')}")
+Add-Type -AssemblyName System.Windows.Forms;
+Add-Type -AssemblyName System.Drawing;
+$bitmap = New-Object System.Drawing.Bitmap([System.Windows.Forms.Screen]::PrimaryScreen.Bounds.Width, [System.Windows.Forms.Screen]::PrimaryScreen.Bounds.Height);
+$graphics = [System.Drawing.Graphics]::FromImage($bitmap);
+$graphics.CopyFromScreen([System.Drawing.Point]::Empty, [System.Drawing.Point]::Empty, $bitmap.Size);
+$bitmap.Save('${winPath}')
 `.trim().replace(/\n/g, ' ');
     attempts.push({ cmd: `powershell -NoProfile -Command "${psScript}"`, desc: 'PowerShell/.NET (Windows built-in)' });
   }
@@ -192,9 +199,15 @@ $bitmap.Save("${screenshotPath.replace(/\\/g, '\\\\')}")
 
   // Try each method in priority order
   const failures: string[] = [];
+  const isWin = env.platform === 'win32';
   for (const attempt of attempts) {
     try {
-      execSync(attempt.cmd, { encoding: 'utf-8', timeout: 10000, stdio: 'pipe' });
+      execSync(attempt.cmd, {
+        encoding: 'utf-8',
+        timeout: 10000,
+        stdio: 'pipe',
+        ...(isWin ? { shell: 'cmd.exe' } : {}),
+      });
       if (fs.existsSync(screenshotPath) && fs.statSync(screenshotPath).size > 0) {
         return { ok: true, path: screenshotPath, method: attempt.desc };
       }
