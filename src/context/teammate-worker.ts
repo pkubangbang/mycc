@@ -76,83 +76,96 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
   const tools = silentLoader.getToolsForScope('child');
   // Send ready notification (path already registered by parent)
   ipc.sendNotification('teammate_ready', { name: teammateName });
-  
+
   // Todo nudging state (counter-based, same as lead agent)
   let nextTodoNudge = 3;
   let lastTodoState = '';
-  
+
   while (!shutdownRequested) {
     sendStatus('working');
-    // 1. Collect mails from file-based mailbox (collated into single user message)
-    const mails = ctx.mail.collectMails();
-    if (mails.length > 0) {
-      const mailContent = mails
-        .map((mail) => `Mail from ${mail.from}: ${mail.title}\n${mail.content}`)
-        .join('\n\n---\n\n');
-      triologue.user(mailContent);
-    }
 
-    // 2. Todo nudging with counter and state tracking
-    if (ctx.todo.hasOpenTodo()) {
-      const currentTodoState = ctx.todo.printTodoList();
-      if (currentTodoState !== lastTodoState) {
-        nextTodoNudge = 3; // Reset for new todo state
-        lastTodoState = currentTodoState;
+    try {
+      // 1. Collect mails from file-based mailbox (collated into single user message)
+      const mails = ctx.mail.collectMails();
+      if (mails.length > 0) {
+        const mailContent = mails
+          .map((mail) => `Mail from ${mail.from}: ${mail.title}\n${mail.content}`)
+          .join('\n\n---\n\n');
+        triologue.user(mailContent);
       }
-      nextTodoNudge--;
-      if (nextTodoNudge === 0) {
-        triologue.user(`<reminder>Update your todos. ${ctx.todo.printTodoList()}</reminder>`);
-        nextTodoNudge = 3;
+
+      // 2. Todo nudging with counter and state tracking
+      if (ctx.todo.hasOpenTodo()) {
+        const currentTodoState = ctx.todo.printTodoList();
+        if (currentTodoState !== lastTodoState) {
+          nextTodoNudge = 3; // Reset for new todo state
+          lastTodoState = currentTodoState;
+        }
+        nextTodoNudge--;
+        if (nextTodoNudge === 0) {
+          triologue.user(`<reminder>Update your todos. ${ctx.todo.printTodoList()}</reminder>`);
+          nextTodoNudge = 3;
+        }
       }
-    }
 
-    // 3. Build system prompt and call LLM
-    // Ensure we have a valid message sequence before calling LLM
-    const lastRole = triologue.getLastRole();
-    if (lastRole === 'assistant') {
-      // Last message was assistant with no tool calls - need user message before next LLM call
-      // This can happen after resuming from idle without new input
-      triologue.user('Continue with your task.');
-    }
-
-    triologue.setSystemPrompt(buildSystemPrompt(ctx, { name: teammateName, role: teammateRole }));
-
-    const response = await retryChat({
-      model: MODEL,
-      messages: triologue.getMessages(),
-      tools,
-    });
-
-    const assistantMessage = response.message;
-    triologue.agent(assistantMessage.content || '', assistantMessage.tool_calls as ToolCall[] | undefined);
-
-    // 4. No tool calls = enter idle state
-    if (!assistantMessage.tool_calls || assistantMessage.tool_calls.length === 0) {
-      // IMPORTANT: send finishing words to lead to coordinate.
-      ctx.team.mailTo('lead', 'task done',
-        assistantMessage.content ?? 'I have done my task, now running idle.', ctx.core.getName());
-
-      const result = await enterIdleState(triologue);
-      if (result === 'shutdown') {
-        process.exit(0);
+      // 3. Build system prompt and call LLM
+      // Ensure we have a valid message sequence before calling LLM
+      const lastRole = triologue.getLastRole();
+      if (lastRole === 'assistant') {
+        // Last message was assistant with no tool calls - need user message before next LLM call
+        // This can happen after resuming from idle without new input
+        triologue.user('Continue with your task.');
       }
-      // Resume work phase
-      continue;
-    }
 
-    // 5. Execute tools
-    for (const tc of (assistantMessage.tool_calls as ToolCall[])) {
-      const toolName = tc.function.name;
-      const args = tc.function.arguments as Record<string, unknown>;
+      triologue.setSystemPrompt(buildSystemPrompt(ctx, { name: teammateName, role: teammateRole }));
 
-      try {
-        const output = await silentLoader.execute(toolName, ctx, args);
-        triologue.tool(toolName, output, tc.id);
-      } catch (err) {
-        const errorMsg = (err as Error).message;
-        ctx.core.brief('error', toolName, errorMsg);
-        triologue.tool(toolName, `error: ${errorMsg}`, tc.id);
+      const response = await retryChat({
+        model: MODEL,
+        messages: triologue.getMessages(),
+        tools,
+      });
+
+      const assistantMessage = response.message;
+      triologue.agent(assistantMessage.content || '', assistantMessage.tool_calls as ToolCall[] | undefined);
+
+      // 4. No tool calls = enter idle state
+      if (!assistantMessage.tool_calls || assistantMessage.tool_calls.length === 0) {
+        // IMPORTANT: send finishing words to lead to coordinate.
+        ctx.team.mailTo('lead', 'task done',
+          assistantMessage.content ?? 'I have done my task, now running idle.', ctx.core.getName());
+
+        const result = await enterIdleState(triologue);
+        if (result === 'shutdown') {
+          process.exit(0);
+        }
+        // Resume work phase
+        continue;
       }
+
+      // 5. Execute tools
+      for (const tc of (assistantMessage.tool_calls as ToolCall[])) {
+        const toolName = tc.function.name;
+        const args = tc.function.arguments as Record<string, unknown>;
+
+        try {
+          const output = await silentLoader.execute(toolName, ctx, args);
+          triologue.tool(toolName, output, tc.id);
+        } catch (err) {
+          const errorMsg = (err as Error).message;
+          ctx.core.brief('error', toolName, errorMsg);
+          triologue.tool(toolName, `error: ${errorMsg}`, tc.id);
+        }
+      }
+    } catch (err) {
+      // Log error but continue the loop - don't crash
+      const errorMsg = (err as Error).message;
+      ctx.core.brief('error', 'loop', `Error in main loop: ${errorMsg}. Recovering...`);
+
+      // Add error to triologue so LLM knows what happened
+      triologue.user(`<system-error>An error occurred: ${errorMsg}. Please continue with your task.</system-error>`);
+
+      // Brief pause before retrying
+      await new Promise((resolve) => setTimeout(resolve, 1000));
     }
   }
 
@@ -166,54 +179,61 @@ async function enterIdleState(triologue: Triologue): Promise<'shutdown' | 'resum
   sendStatus('idle');
 
   while (!shutdownRequested) {
-    // 1. Check for shutdown
-    if (shutdownRequested) {
-      sendStatus('shutdown');
-      return 'shutdown';
-    }
-
-    // 2. Check mailbox for new mail (file-based)
-    if (ctx.mail.hasNewMails()) {
-      return 'resume';
-    }
-
-    // 3. Auto-claim unclaimed issues that are not blocked
-    const issues = await ctx.issue.listIssues();
-    const unclaimed = issues.filter((issue) => {
-      // Must be pending and unclaimed
-      if (issue.status !== 'pending' || issue.owner) {
-        return false;
+    try {
+      // 1. Check for shutdown
+      if (shutdownRequested) {
+        sendStatus('shutdown');
+        return 'shutdown';
       }
-      // Must not be blocked by any incomplete issues
-      if (issue.blockedBy.length > 0) {
-        // Check if all blockers are completed
-        const allBlockersComplete = issue.blockedBy.every((blockerId) => {
-          const blocker = issues.find((i) => i.id === blockerId);
-          return blocker && blocker.status === 'completed';
-        });
-        return allBlockersComplete;
-      }
-      return true;
-    });
 
-    if (unclaimed.length > 0) {
-      const issue = unclaimed[0];
-      try {
-        const claimed = await ctx.issue.claimIssue(issue.id, teammateName);
-        if (claimed) {
-          ctx.core.brief('info', 'auto-claim', `Issue #${issue.id}: ${issue.title}`);
-          // Identity is preserved in system prompt, no need to re-inject
-          triologue.user(`<auto-claimed>Issue #${issue.id}: ${issue.title}\n${issue.content || ''}</auto-claimed>`);
-          return 'resume';
+      // 2. Check mailbox for new mail (file-based)
+      if (ctx.mail.hasNewMails()) {
+        return 'resume';
+      }
+
+      // 3. Auto-claim unclaimed issues that are not blocked
+      const issues = await ctx.issue.listIssues();
+      const unclaimed = issues.filter((issue) => {
+        // Must be pending and unclaimed
+        if (issue.status !== 'pending' || issue.owner) {
+          return false;
         }
-      } catch (err) {
-        // Claim failed, another worker might have claimed it
-        ctx.core.brief('info', 'auto-claim', `Failed to claim issue #${issue.id}: ${(err as Error).message}`);
-      }
-    }
+        // Must not be blocked by any incomplete issues
+        if (issue.blockedBy.length > 0) {
+          // Check if all blockers are completed
+          const allBlockersComplete = issue.blockedBy.every((blockerId) => {
+            const blocker = issues.find((i) => i.id === blockerId);
+            return blocker && blocker.status === 'completed';
+          });
+          return allBlockersComplete;
+        }
+        return true;
+      });
 
-    // 4. Wait before next poll
-    await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL));
+      if (unclaimed.length > 0) {
+        const issue = unclaimed[0];
+        try {
+          const claimed = await ctx.issue.claimIssue(issue.id, teammateName);
+          if (claimed) {
+            ctx.core.brief('info', 'auto-claim', `Issue #${issue.id}: ${issue.title}`);
+            // Identity is preserved in system prompt, no need to re-inject
+            triologue.user(`<auto-claimed>Issue #${issue.id}: ${issue.title}\n${issue.content || ''}</auto-claimed>`);
+            return 'resume';
+          }
+        } catch (err) {
+          // Claim failed, another worker might have claimed it
+          ctx.core.brief('info', 'auto-claim', `Failed to claim issue #${issue.id}: ${(err as Error).message}`);
+        }
+      }
+
+      // 4. Wait before next poll
+      await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL));
+    } catch (err) {
+      // Log error but continue polling - don't crash
+      ctx.core.brief('error', 'idle', `Error in idle state: ${(err as Error).message}. Continuing...`);
+      // Brief pause before continuing
+      await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL));
+    }
   }
 
   // Shutdown requested
@@ -286,3 +306,23 @@ process.on('SIGHUP', () => {
 
 // Log that worker is ready (before ctx is available, use sendNotification)
 ipc.sendNotification('log', { message: 'Worker process started, waiting for spawn message' });
+
+// === Global Error Handlers - Keep Worker Alive ===
+process.on('uncaughtException', (err) => {
+  // Log but don't exit - keep worker running
+  ipc.sendNotification('error', { error: `Uncaught exception: ${err.message}` });
+  // If ctx is available, also log via brief
+  if (ctx?.core) {
+    ctx.core.brief('error', 'worker', `Uncaught exception: ${err.message}. Worker continuing...`);
+  }
+});
+
+process.on('unhandledRejection', (reason) => {
+  // Log but don't exit - keep worker running
+  const msg = reason instanceof Error ? reason.message : String(reason);
+  ipc.sendNotification('error', { error: `Unhandled rejection: ${msg}` });
+  // If ctx is available, also log via brief
+  if (ctx?.core) {
+    ctx.core.brief('error', 'worker', `Unhandled rejection: ${msg}. Worker continuing...`);
+  }
+});
