@@ -20,7 +20,7 @@ export const skillsCommand: SlashCommand = {
     if (args[1] === 'build') {
       // Index all skills to wiki
       await loader.indexAllSkillsToWiki(ctx.wiki);
-      console.log(chalk.green('✓') + ' Skills rebuilt and indexed in wiki.');
+      console.log(`${chalk.green('✓')} Skills rebuilt and indexed in wiki.`);
       return;
     }
 

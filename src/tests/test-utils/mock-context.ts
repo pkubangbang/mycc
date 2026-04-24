@@ -60,10 +60,9 @@ export function createMockMail(overrides: Partial<MailModule> = {}): MailModule 
  */
 export function createMockSkill(overrides: Partial<SkillModule> = {}): SkillModule {
   return {
-    loadSkills: vi.fn(() => []),
+    loadSkills: vi.fn(() => Promise.resolve()),
     listSkills: vi.fn(() => []),
-    printSkills: vi.fn(() => ''),
-    getSkill: vi.fn(() => null),
+    getSkill: vi.fn(() => undefined),
     ...overrides,
   };
 }

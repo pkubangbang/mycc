@@ -18,8 +18,28 @@ export function buildSystemPrompt(
   const currentDate = now.toISOString().split('T')[0];
   const currentYear = now.getFullYear();
 
-  // Common suffix for all prompts (skills list removed - now dynamically injected via hints)
+  // Knowledge boundary section - teach LLM to recognize gaps and seek knowledge
+  const knowledgeBoundary = [
+    '## Knowledge Boundary',
+    '',
+    'You have access to these knowledge sources:',
+    '- **Skills**: Specialized knowledge for specific tasks. Use `skill_load(name="list")` to discover, then `skill_load(name="<name>")` to load.',
+    '- **Wiki**: Project knowledge base (RAG). Use `wiki_get(query, domain)` to retrieve relevant documents.',
+    '- **Web**: Current information from the internet. Use `web_search(query)` and `web_fetch(url)`.',
+    '- **Teammates**: Parallel expertise for complex tasks. Use `tm_create(name, role, prompt)` to spawn specialists.',
+    '',
+    'When you encounter something outside your knowledge:',
+    '1. PAUSE and recognize the gap',
+    '2. Use the appropriate tool to fill it',
+    '3. Continue with enhanced knowledge',
+    '',
+    'Do NOT guess. When in doubt, seek knowledge first.',
+  ].join('\n');
+
+  // Common suffix for all prompts
   const common = [
+    knowledgeBoundary,
+    '',
     '## Calendar',
     `Current date: ${currentDate} (year: ${currentYear})`,
     '',
@@ -32,7 +52,6 @@ export function buildSystemPrompt(
     return [
       `You are ${identity.name}, a specialized agent working as part of a team, created by the "lead".`,
       `Your role is ${identity.role}. You are working at ${workDir}.`,
-      'Use skills to access specialized knowledge.',
 
       'You have only 3 ways to interact with others:',
       '1. use mail_to tool to inform other teammates.',

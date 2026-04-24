@@ -276,7 +276,6 @@ export interface MailModule {
 export interface SkillModule {
   loadSkills(): Promise<void>;
   listSkills(): Skill[];
-  printSkills(): string;
   getSkill(name: string): Skill | undefined;
 }
 
@@ -568,5 +567,4 @@ export interface DynamicLoader {
   // SkillModule methods (merged)
   loadSkills(): Promise<void>;
   listSkills(): Skill[];
-  printSkills(): string;
 }

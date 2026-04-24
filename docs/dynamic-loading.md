@@ -6,10 +6,10 @@ The `Loader` class provides unified loading of tools and skills with hot-reload 
 
 ## Loader Class
 
-The `Loader` class (in `src/context/loader.ts`) is the single entry point for loading:
+The `Loader` class (in `src/context/shared/loader.ts`) is the single entry point for loading:
 
 ```typescript
-const loader = createLoader();
+const loader = new Loader();
 await loader.loadAll();      // Load all tools and skills
 loader.watchDirectories();   // Watch for changes (hot-reload)
 loader.stopWatching();       // Cleanup on shutdown
@@ -61,15 +61,22 @@ Tools can be available in different contexts:
 
 ### Skill Sources
 
-Skills are loaded from two sources:
+Skills are loaded from three sources in priority order (later can shadow earlier):
 
-1. **Built-in skills** (`skills/` directory relative to package root)
-   - Loaded once at startup
+1. **User skills** (`~/.mycc/skills/`)
+   - Loaded at startup
    - Not watched for changes
+   - Lowest priority (can be shadowed)
 
-2. **Custom skills** (`.mycc/skills/` relative to cwd)
+2. **Project skills** (`.mycc/skills/` relative to cwd)
    - Loaded at startup
    - Hot-reloaded when files change
+   - Medium priority
+
+3. **Built-in skills** (`skills/` directory relative to package root)
+   - Loaded once at startup
+   - Not watched for changes
+   - Highest priority (cannot be shadowed)
 
 ### Skill Files
 
@@ -106,18 +113,18 @@ interface Skill {
 
 ## Hot-Reload
 
-Only dynamic directories are watched:
-- `.mycc/tools/` - Custom tools
-- `.mycc/skills/` - Custom skills
+Only project directories are watched:
+- `.mycc/tools/` - Project tools
+- `.mycc/skills/` - Project skills
 
-Built-in content (`src/tools/` imports and `skills/` directory) is static and not watched.
+User tools/skills and built-in content are static and not watched.
 
 ## Usage in AgentContext
 
 The loader is passed to `createAgentContext` as the skill module:
 
 ```typescript
-const loader = createLoader();
+const loader = new Loader();
 await loader.loadAll();
 loader.watchDirectories();
 
@@ -130,4 +137,12 @@ The `Loader` instance provides:
 - `loadSkills()` - Load all skills
 - `getSkill(name)` - Get a skill by name
 - `listSkills()` - List skills without content
-- `printSkills()` - Format skills for prompt
+
+## Skill Discovery
+
+Skills are discovered by the LLM through the `skill_load` tool:
+- `skill_load(name="list", intent="...")` - List all available skills
+- `skill_load(name="<name>", intent="...")` - Load a specific skill
+- Partial names trigger semantic search using the `intent` parameter
+
+The system prompt includes a "Knowledge Boundary" section that teaches the LLM to recognize knowledge gaps and actively seek skills when needed.

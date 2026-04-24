@@ -493,28 +493,6 @@ export class Loader implements DynamicLoader, SkillModule {
   }
 
   /**
-   * Format skills for prompt
-   * From SkillModule interface
-   */
-  printSkills(): string {
-    const skills = this.listSkills();
-    if (skills.length === 0) {
-      return 'No skills loaded.';
-    }
-
-    const lines = ['Available skills:', ''];
-    for (const skill of skills) {
-      lines.push(`  ${skill.name}`);
-      lines.push(`    ${skill.description}`);
-      if (Array.isArray(skill.keywords) && skill.keywords.length > 0) {
-        lines.push(`    Keywords: ${skill.keywords.join(', ')}`);
-      }
-    }
-    lines.push('', 'Use `skill_load(name)` to load a skill.');
-    return lines.join('\n');
-  }
-
-  /**
    * Get tools formatted for Ollama API, filtered by scope
    * From merged ToolLoader interface
    */

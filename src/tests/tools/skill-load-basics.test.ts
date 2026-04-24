@@ -24,7 +24,6 @@ function createMockContextWithSkills(workdir: string, skills: Skill[]): AgentCon
   const skillModule: SkillModule = {
     loadSkills: vi.fn().mockResolvedValue(undefined),
     listSkills: vi.fn().mockReturnValue(skills),
-    printSkills: vi.fn().mockReturnValue(skills.map(s => `- ${s.name}: ${s.description}`).join('\n')),
     getSkill: vi.fn().mockImplementation((name: string) => skills.find(s => s.name === name)),
   };
 

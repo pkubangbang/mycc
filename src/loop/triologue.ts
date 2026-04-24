@@ -67,10 +67,6 @@ export class Triologue {
   private options: Required<Omit<TriologueOptions, 'wiki'>> & Pick<TriologueOptions, 'wiki'>;
   // Project context files (in-memory only, not persisted)
   private projectContext: Message[] = [];
-  // Temporary hint (not persisted in transcript)
-  private temporaryHint: string | null = null;
-  // Index of last real user message (for hint placement)
-  private lastRealUserIndex: number = -1;
 
   constructor(options: TriologueOptions = {}) {
     const hintThreshold = options.hintThreshold ?? 10;
@@ -145,15 +141,11 @@ export class Triologue {
       this.runMicroCompact();
     }
     this.addMessage({ role: 'user', content });
-    // Track this as the last real user message index
-    this.lastRealUserIndex = this.messages.length - 1;
-    // Clear temporary hint after adding real user message
-    this.temporaryHint = null;
   }
 
   /**
-   * Add a user message on behalf of user (synthetic/generated - does NOT clear temporary hint)
-   * Used for system-generated messages that should appear as user but not reset hint state.
+   * Add a user message on behalf of user (synthetic/generated)
+   * Used for system-generated messages that should appear as user.
    */
   onBehalfOfUser(content: string): void {
     // Run microCompact if transitioning from tool role
@@ -161,7 +153,6 @@ export class Triologue {
       this.runMicroCompact();
     }
     this.addMessage({ role: 'user', content });
-    // Do NOT update lastRealUserIndex or clear temporaryHint
   }
 
   /**
@@ -348,9 +339,6 @@ export class Triologue {
     this.pendingToolCallOrder = [];
     // Reset hint flag after compact since conversation is reset
     this.resetHint();
-    // Reset last real user index since messages are replaced
-    this.lastRealUserIndex = -1;
-    this.temporaryHint = null;
   }
 
   /**
@@ -364,8 +352,6 @@ export class Triologue {
     this.pendingToolCallOrder = [];
     this.hintGenerated = false;
     this.confusion.reset();
-    this.lastRealUserIndex = -1;
-    this.temporaryHint = null;
   }
 
   /**
@@ -394,13 +380,6 @@ export class Triologue {
   resetHint(): void {
     this.hintGenerated = false;
     this.confusion.reset();
-  }
-
-  /**
-   * Set temporary hint for current round (not in transcript)
-   */
-  setTemporaryHint(hint: string): void {
-    this.temporaryHint = hint;
   }
 
   /**
@@ -480,21 +459,7 @@ Be specific and actionable. This analysis will help guide the next steps.`;
     }
 
     // Inject project context (before conversation history)
-    result.push(...this.projectContext);
-
-    // Inject temporary hint by appending to the last real user message (skill suggestions)
-    if (this.temporaryHint && this.lastRealUserIndex >= 0) {
-      const before = this.messages.slice(0, this.lastRealUserIndex);
-      const target = this.messages[this.lastRealUserIndex];
-      const after = this.messages.slice(this.lastRealUserIndex + 1);
-
-      result.push(...before, {
-        ...target,
-        content: `${target.content}\n[hint]${this.temporaryHint}[/hint]`,
-      }, ...after);
-    } else {
-      result.push(...this.messages);
-    }
+    result.push(...this.messages);
 
     return result;
   }
