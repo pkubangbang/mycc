@@ -1,5 +1,5 @@
 /**
- * tmux.ts - Interactive terminal popup
+ * hand_over.ts - Interactive terminal popup
  *
  * Scope: ['main'] - Lead agent only (requires GUI terminal)
  *
@@ -23,18 +23,30 @@ import { retryChat, MODEL } from '../ollama.js';
 
 const execAsync = promisify(exec);
 
-export const tmuxTool: ToolDefinition = {
-  name: 'tmux',
-  description: `Open an interactive terminal popup for user work.
+export const handOverTool: ToolDefinition = {
+  name: 'hand_over',
+  description: `⚠️ INTERRUPTS USER - Opens a popup terminal and BLOCKS until user interaction.
 
-User can run commands, SSH to servers, use interactive programs (vim, htop).
-When done, user returns to mycc and presses Enter to capture result.
+DO NOT USE THIS TOOL unless the user EXPLICITLY requests an interactive terminal,
+or the command REQUIRES user interaction (passwords, prompts, SSH sessions).
 
-Use when:
-- Commands need user interaction (prompts, passwords)
-- SSH sessions to remote servers
-- Interactive programs (vim, htop, watch)
-- Any task needing direct terminal access`,
+For MOST commands, use 'bash' tool instead - it runs non-interactively without interrupting the user.
+
+Use ONLY when:
+- User explicitly asks for a terminal/shell/SSH session
+- Command requires interactive input (password prompts, y/n confirmations, menu selections)
+- Interactive programs: vim, htop, watch, tmux, screen, mc, ranger
+- SSH sessions with password authentication
+- Interactive git operations (rebase -i, add -p, commit with editor)
+
+NEVER use for:
+- Running tests, builds, npm commands
+- File operations (ls, cat, cp, mv, rm)
+- Git automation (status, log, push, pull, clone)
+- Package management (npm install, pip install)
+- Any command that CAN run non-interactively
+
+When in doubt, use 'bash' tool with appropriate timeout.`,
   input_schema: {
     type: 'object',
     properties: {
@@ -42,22 +54,22 @@ Use when:
         type: 'string',
         description: 'Initial command to run in the terminal.',
       },
-      reason: {
+      justification: {
         type: 'string',
-        description: 'REQUIRED: Why open terminal? Helps user understand expectations.',
+        description: 'REQUIRED: Justify why this command MUST be interactive and cannot use bash tool instead. What user input is expected?',
       },
     },
-    required: ['command', 'reason'],
+    required: ['command', 'justification'],
   },
   scope: ['main'],
   handler: (ctx: AgentContext, args: Record<string, unknown>): Promise<string> => {
-    return handleTmux(ctx, args);
+    return handleHandOver(ctx, args);
   },
 };
 
-async function handleTmux(ctx: AgentContext, args: Record<string, unknown>): Promise<string> {
+async function handleHandOver(ctx: AgentContext, args: Record<string, unknown>): Promise<string> {
   const command = args.command as string;
-  const reason = args.reason as string;
+  const justification = args.justification as string;
   const isWin = process.platform === 'win32';
 
   // 1. Prerequisites
@@ -69,7 +81,7 @@ async function handleTmux(ctx: AgentContext, args: Record<string, unknown>): Pro
         '  macOS: brew install tmux\n' +
         '  Fedora: sudo dnf install tmux\n' +
         '  Arch Linux: sudo pacman -S tmux';
-    ctx.core.brief('error', 'tmux', 'tmux not found', installInstructions);
+    ctx.core.brief('error', 'hand_over', 'tmux not found', installInstructions);
     return `Error: tmux is required but not installed. See brief output for installation instructions.`;
   }
 
@@ -102,7 +114,7 @@ async function handleTmux(ctx: AgentContext, args: Record<string, unknown>): Pro
 
   // 3. Track session in todo
   ctx.todo.patchTodoList([{
-    name: `tmux: ${sessionName}`,
+    name: `hand_over: ${sessionName}`,
     done: false,
     note: command,
   }]);
@@ -114,7 +126,7 @@ async function handleTmux(ctx: AgentContext, args: Record<string, unknown>): Pro
     // Terminal launcher may exit immediately, that's fine
   }
 
-  ctx.core.brief('info', 'tmux', `Opened: ${sessionName}`, reason);
+  ctx.core.brief('info', 'hand_over', `Opened: ${sessionName}`, justification);
 
   // 5. Wait for user confirmation and capture output
   const answer = await agentIO.ask(
@@ -147,7 +159,7 @@ async function handleTmux(ctx: AgentContext, args: Record<string, unknown>): Pro
 
   // 8. Update todo
   ctx.todo.patchTodoList([{
-    name: `tmux: ${sessionName}`,
+    name: `hand_over: ${sessionName}`,
     done: true,
     note: keepSession ? 'kept' : 'killed',
   }]);

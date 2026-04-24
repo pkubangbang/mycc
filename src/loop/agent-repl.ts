@@ -206,9 +206,9 @@ export async function main(): Promise<void> {
       // Handle bang commands
       if (query.trim().startsWith('!')) {
         const command = query.trim().slice(1).trim();
-        const result = await loader.execute('tmux', ctx, {
+        const result = await loader.execute('hand_over', ctx, {
           command: command || undefined,
-          reason: command ? `User runs: ${command}` : 'Open terminal',
+          justification: command ? `User runs: ${command}` : 'Open terminal',
         });
         triologue.user(`[FYI] ${result}`);
         triologue.resetHint();
