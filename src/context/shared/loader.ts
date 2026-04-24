@@ -54,6 +54,7 @@ import { wikiPutTool } from '../../tools/wiki_put.js';
 import { wikiGetTool } from '../../tools/wiki_get.js';
 import { orderTool } from '../../tools/order.js';
 import { handOverTool } from '../../tools/hand_over.js';
+import { gitCommitTool } from '../../tools/git_commit.js';
 
 /**
  * Built-in tools
@@ -99,6 +100,7 @@ const builtInTools: ToolDefinition[] = [
   wikiGetTool,
   orderTool,
   handOverTool,
+  gitCommitTool,
 ];
 
 /**

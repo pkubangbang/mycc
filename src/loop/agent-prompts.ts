@@ -134,7 +134,7 @@ export function buildSystemPrompt(
       `If you want to ask me questions, do not use any tool, just leave your question as the reply.`,
 
       `## Special Rules`,
-      `- You must ask for grant BEFORE "git commit" with no exception. The permission is only valid for one commit, for the next commit you MUST ask for grant again.`,
+      `- Use git_commit tool for ALL git commits. This tool will ask for user permission [y/N] before committing.`,
       common,
     ].join('\n');
   }
@@ -147,7 +147,7 @@ export function buildSystemPrompt(
     `## Team Mode`,
     `If the task would benefit from parallel work, create teammates with tm_create to form a team.`,
     `## Rules`,
-    `- You must ask for grant BEFORE "git commit" with no exception. The permission is only valid for one commit, for the next commit you MUST ask for grant again.`,
+    `- Use git_commit tool for ALL git commits. This tool will ask for user permission [y/N] before committing.`,
     common,
   ].join('\n');
 }

@@ -1,0 +1,117 @@
+/**
+ * git_commit.ts - Execute git commit with mandatory user permission
+ *
+ * Scope: ['main', 'child'] - Available to all agents
+ *
+ * This tool enforces the "ask before commit" rule by:
+ * 1. Asking user for permission via ctx.core.question()
+ * 2. Only executing git commit if user grants permission
+ * 3. Rejecting if user denies
+ *
+ * Parameters:
+ * - message: The commit message (required)
+ * - amend: Whether to amend the previous commit (optional, default false)
+ */
+
+import type { ToolDefinition, AgentContext } from '../types.js';
+import { agentIO } from '../loop/agent-io.js';
+
+export const gitCommitTool: ToolDefinition = {
+  name: 'git_commit',
+  description: `Execute git commit with mandatory user permission check.
+This tool ALWAYS asks for user permission before committing.
+
+Use this tool for ALL git commits. Never use 'bash' with 'git commit' - that is blocked.
+
+Parameters:
+- message: The commit message (required)
+- amend: Set to true to amend the previous commit (optional, default false)
+
+The tool will:
+1. Show the commit message to the user
+2. Ask for permission with [y/N] prompt
+3. Only commit if user types 'y' or 'yes'
+4. Return the commit result or cancellation message`,
+  input_schema: {
+    type: 'object',
+    properties: {
+      message: {
+        type: 'string',
+        description: 'The commit message',
+      },
+      amend: {
+        type: 'boolean',
+        description: 'Set to true to amend the previous commit (optional, default false)',
+      },
+    },
+    required: ['message'],
+  },
+  scope: ['main', 'child'],
+  handler: async (ctx: AgentContext, args: Record<string, unknown>): Promise<string> => {
+    const message = args.message as string;
+    const amend = args.amend === true;
+
+    // Validate message parameter
+    if (!message || typeof message !== 'string' || message.trim() === '') {
+      return 'Error: The "message" parameter is required and must be a non-empty string';
+    }
+
+    // Ask for user permission
+    const prompt = amend
+      ? `Amend commit with message: "${message}"? [y/N]`
+      : `Commit with message: "${message}"? [y/N]`;
+
+    const response = await ctx.core.question(prompt, ctx.core.getName());
+
+    // Parse response - only 'y' or 'yes' (case-insensitive) grants permission
+    const normalized = response.trim().toLowerCase();
+    const granted = normalized === 'y' || normalized === 'yes';
+
+    if (!granted) {
+      return 'Commit cancelled by user';
+    }
+
+    // User granted permission - execute the commit
+    ctx.core.brief('info', 'git_commit', 'Permission granted, executing commit');
+
+    const command = amend
+      ? `git commit --amend -m "${message.replace(/"/g, '\\"')}"`
+      : `git commit -m "${message.replace(/"/g, '\\"')}"`;
+
+    try {
+      const { stdout, stderr, interrupted, exitCode, timedOut } = await agentIO.exec({
+        cwd: ctx.core.getWorkDir(),
+        command,
+        timeout: 30,
+      });
+
+      if (timedOut) {
+        return 'Error: Commit timed out after 30 seconds';
+      }
+
+      if (interrupted) {
+        return 'Commit interrupted by user';
+      }
+
+      // Build result
+      const parts: string[] = [];
+
+      if (exitCode === 0) {
+        parts.push('Commit successful');
+        if (stdout.trim()) {
+          parts.push(`[stdout]\n${stdout.trim()}`);
+        }
+      } else {
+        parts.push(`Commit failed (exit: ${exitCode})`);
+        if (stderr.trim()) {
+          parts.push(`[stderr]\n${stderr.trim()}`);
+        }
+      }
+
+      return parts.join('\n\n');
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      return `Error executing commit: ${errorMessage}`;
+    }
+  },
+};

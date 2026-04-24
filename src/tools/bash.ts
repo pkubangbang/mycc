@@ -18,18 +18,6 @@ import { retryChat, MODEL } from '../ollama.js';
 
 const OUTPUT_CHAR_LIMIT = 20000;
 
-/**
- * Pattern-based system reminders for command results
- * Returns a reminder string to append, or empty string if no match
- */
-function getSystemReminder(command: string, exitCode: number): string {
-  // Git commit succeeded - remind that grant permission is single-use
-  if (exitCode === 0 && /\bgit\s+commit\b/.test(command)) {
-    return '[SYSTEM REMINDER: Grant permission has been used. You must ask for grant again before your next git commit.]';
-  }
-  return '';
-}
-
 export const bashTool: ToolDefinition = {
   name: 'bash',
   description: `Run a shell command (blocking). Must specify timeout - process is killed on timeout.`,
@@ -61,6 +49,11 @@ export const bashTool: ToolDefinition = {
     const dangerous = ['rm -rf /', 'sudo rm', 'mkfs', 'dd if=', '> /dev/sd'];
     if (dangerous.some((d) => command.includes(d))) {
       return 'Error: Dangerous command blocked';
+    }
+
+    // Block direct git commit - must use git_commit tool
+    if (/\bgit\s+commit\b/.test(command)) {
+      return 'Error: Direct git commit is not allowed. Use the git_commit tool instead.';
     }
 
     ctx.core.brief('info', 'bash', command, intent);
@@ -106,16 +99,13 @@ export const bashTool: ToolDefinition = {
     // Check if we need to summarize (by character count, not lines)
     const outputChars = output.length;
 
-    // Get system reminder for this command/exitCode combination
-    const reminder = getSystemReminder(command, exitCode);
-
     if (outputChars <= OUTPUT_CHAR_LIMIT) {
-      return reminder ? `${output}\n\n${reminder}` : output;
+      return output;
     }
 
-    // Summarize the output, but always append reminder
+    // Summarize the output
     const summary = await summarizeOutput(output, intent, outputChars, ctx);
-    return reminder ? `${summary}\n\n${reminder}` : summary;
+    return summary;
   },
 };
 
