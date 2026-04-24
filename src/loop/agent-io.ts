@@ -281,6 +281,16 @@ class AgentIO {
       throw new Error('question() only available in main process');
     }
 
+    // Clear any pending neglected mode before entering ask()
+    // This handles the race condition where ESC is pressed while ask() is waiting:
+    // 1. User presses ESC while ask() is waiting
+    // 2. Coordinator sends neglection IPC message
+    // 3. IPC message is queued but not yet processed
+    // 4. User presses Enter to submit answer
+    // 5. ask() resolves, activeLineEditor becomes null
+    // 6. IPC message is processed - but neglectedModeFlag was already cleared here
+    this.neglectedModeFlag = false;
+
     const prompt = useAsPrompt ? query : '> ';
     if (!useAsPrompt) {
       // Display query text separately (for questions from children)

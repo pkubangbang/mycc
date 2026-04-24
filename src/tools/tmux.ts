@@ -40,14 +40,14 @@ Use when:
     properties: {
       command: {
         type: 'string',
-        description: 'Initial command (optional). Opens shell if not provided.',
+        description: 'Initial command to run in the terminal.',
       },
       reason: {
         type: 'string',
         description: 'REQUIRED: Why open terminal? Helps user understand expectations.',
       },
     },
-    required: ['reason'],
+    required: ['command', 'reason'],
   },
   scope: ['main'],
   handler: (ctx: AgentContext, args: Record<string, unknown>): Promise<string> => {
@@ -56,7 +56,7 @@ Use when:
 };
 
 async function handleTmux(ctx: AgentContext, args: Record<string, unknown>): Promise<string> {
-  const command = args.command as string | undefined;
+  const command = args.command as string;
   const reason = args.reason as string;
   const isWin = process.platform === 'win32';
 
@@ -83,26 +83,18 @@ async function handleTmux(ctx: AgentContext, args: Record<string, unknown>): Pro
   const sessionName = `mycc-${Date.now()}`;
 
   try {
-    if (command) {
-      if (isWin) {
-        await execAsync(
-          `tmux new-session -d -s ${sessionName} -c "${cwd}" -x 120 -y 40 ` +
-          `"cmd /k ${command}"`
-        );
-      } else {
-        // Encode command to avoid shell escaping issues
-        const encoded = Buffer.from(command).toString('base64');
-        await execAsync(
-          `tmux new-session -d -s ${sessionName} -c "${cwd}" -x 120 -y 40 ` +
-          `"bash -c 'eval \\$(echo ${encoded} | base64 -d); exec bash'"`
-        );
-      }
+    if (isWin) {
+      await execAsync(
+        `tmux new-session -d -s ${sessionName} -c "${cwd}" -x 120 -y 40 ` +
+        `"cmd /k ${command}"`
+      );
     } else {
-      if (isWin) {
-        await execAsync(`tmux new-session -d -s ${sessionName} -c "${cwd}" -x 120 -y 40 "cmd"`);
-      } else {
-        await execAsync(`tmux new-session -d -s ${sessionName} -c "${cwd}" -x 120 -y 40`);
-      }
+      // Encode command to avoid shell escaping issues
+      const encoded = Buffer.from(command).toString('base64');
+      await execAsync(
+        `tmux new-session -d -s ${sessionName} -c "${cwd}" -x 120 -y 40 ` +
+        `"bash -c 'eval \\$(echo ${encoded} | base64 -d); exec bash'"`
+      );
     }
   } catch (e) {
     return `Error: Failed to create session: ${e}`;
@@ -112,7 +104,7 @@ async function handleTmux(ctx: AgentContext, args: Record<string, unknown>): Pro
   ctx.todo.patchTodoList([{
     name: `tmux: ${sessionName}`,
     done: false,
-    note: command || '(shell)',
+    note: command,
   }]);
 
   // 4. Open popup terminal
@@ -168,7 +160,7 @@ async function handleTmux(ctx: AgentContext, args: Record<string, unknown>): Pro
     : output || '(empty output)';
 
   // 10. Build and return result
-  const header = command ? `User ran: ${command}` : `User worked in terminal`;
+  const header = `User ran: ${command}`;
   const status = keepSession
     ? `Session: ${sessionName} (kept)\nTo reattach: tmux attach -t ${sessionName}`
     : `Session: ${sessionName} (killed)`;
@@ -181,7 +173,7 @@ async function handleTmux(ctx: AgentContext, args: Record<string, unknown>): Pro
  */
 async function summarizeOutput(
   output: string,
-  command: string | undefined,
+  command: string,
   maxLines: number
 ): Promise<string> {
   const response = await retryChat({
@@ -193,7 +185,7 @@ async function summarizeOutput(
       },
       {
         role: 'user',
-        content: `${command ? `Command: ${command}\n\n` : ''}${output}`
+        content: `Command: ${command}\n\n${output}`
       }
     ]
   });
