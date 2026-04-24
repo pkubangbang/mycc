@@ -35,6 +35,11 @@
     "strip-ansi": "^7.2.0",
     "tsx": "^4.21.0"
   },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "sharp"
+    ]
+  },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@types/chalk": "^0.4.31",
