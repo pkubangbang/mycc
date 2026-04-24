@@ -18,6 +18,8 @@ A CLI coding agent using Ollama-cloud for LLM inference, written in nodejs.
 
 ## Installation
 
+> **Notice:** mycc was initially developed on **Ubuntu 24.04**. You will have the best experience on the same platform. Other Linux distributions, macOS, and Windows may have minor compatibility issues.
+
 ### Prerequisites
 
 This package includes native dependencies that require build tools:
@@ -62,7 +64,7 @@ npm link
 
 ### 1. Install Ollama and enable Ollama Cloud
 
-`mycc` relies on `ollama cloud` to work normally. So **ollama** must be installed beforehand. 
+`mycc` relies on `ollama cloud` to work normally. So **ollama** must be installed beforehand.
 
 [download page of ollama](https://ollama.com/download)
 
@@ -71,7 +73,48 @@ and you are fine with the local LLM, the `ollama ` alone without the cloud is al
 
 As the choice of LLM model, `glm-5:cloud` and `gemma4:31b-cloud` are recommended.
 
-### 2. Config the environment variables
+### 2. Install an embedding model (Required)
+
+**An embedding model is required** for mycc to function properly. The embedding model is used for:
+- Knowledge base (wiki) semantic search
+- Skill matching and retrieval
+- Document similarity operations
+
+After installing Ollama, pull an embedding model:
+```bash
+ollama pull nomic-embed-text
+```
+
+Other embedding models like `mxbai-embed-large` or `all-minilm` also work. Make sure to update the `OLLAMA_EMBED_MODEL` environment variable if you use a different model.
+
+### 3. Install tmux (Required)
+
+**tmux is required** for interactive terminal operations. mycc uses tmux for:
+- Interactive programs (vim, htop, watch, etc.)
+- SSH sessions to remote servers
+- Commands requiring user input (prompts, passwords)
+- Any task needing direct terminal access
+
+Install tmux:
+
+On Ubuntu/Debian:
+```bash
+sudo apt install tmux
+```
+
+On macOS:
+```bash
+brew install tmux
+```
+
+On Windows:
+```bash
+winget install psmux
+```
+
+`psmux` is a PowerShell-compatible alternative to tmux for Windows.
+
+### 4. Config the environment variables
 Create a file at `~/.mycc-store/.env` with variables like below.
 
 You can also view the content from the `.env.example` file.
@@ -96,7 +139,7 @@ EDITOR=xdg-open
 Note: the `OLLAMA_API_KEY` is only required if you use the online tools; otherwise leave it blank.
 You can generate an api key [at here (need login)](https://ollama.com/settings/keys)
 
-### 3. Start the app
+### 5. Start the app
 
 Starting the app is as easy as a simple cmd:
 ```bash
