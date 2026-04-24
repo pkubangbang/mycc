@@ -3,3 +3,8 @@ dist/
 /.env
 *.log
 /.mycc
+
+# force tracking of these useful skills
+!/.mycc/skills/clear-sessions/
+!/.mycc/skills/tool-and-skill-development/
+!/.mycc/skills/session-introspect.md

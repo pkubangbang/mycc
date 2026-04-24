@@ -1,189 +1,258 @@
 ---
 name: add-tool
 description: >
-  Use this BEFORE writing any new tool.
-
-  Required for:
-  - creating new tools
-  - extending agent capabilities
-  - adding custom functionality
-
-  This skill MUST be used before any tool implementation.
-
-  Relevant for:
-  tool, create, add, new, implement, extend
-
-  Example requests:
-  - "add a new tool for X"
-  - "create a tool that does Y"
-  - "implement a custom tool"
-
-  Do NOT start coding without using this skill first.
-keywords: [tool, development, workflow, extension, required]
+  Use this skill when creating new tools for the mycc agent. Provides
+  templates, guidelines, and checklist for tool development.
+  
+  Covers tool structure, parameter validation, error handling, logging,
+  scope selection, and best practices.
+  
+  Keywords: tool, create, add, new, implement, extend, development.
+keywords: [tool, development, create, workflow]
 ---
 
 # Adding a New Tool
 
-## Two-Phase Workflow
+## Purpose
 
-| Phase | Location | Purpose |
-|-------|----------|---------|
-| **1. Prototype** | `.mycc/tools/<name>.ts` | Rapid testing with hot-reload |
-| **2. Migrate** | `src/tools/<name>.ts` | Built-in for production |
+Use this skill when:
+- User requests "add a tool for X"
+- User requests "create a tool that does Y"
+- User requests "implement a custom tool"
 
----
+## Tool Structure
 
-## Prerequisites
-
-Ensure mycc is linked globally for type imports:
-
-```bash
-cd /path/to/mycc
-pnpm install
-npm link
-```
-
-This enables `import type { ToolDefinition } from 'mycc'` in your tools.
-
----
-
-## Phase 1: Prototype in .mycc/tools/
-
-Create a dynamic tool for rapid testing. Hot-reload is automatic.
-
-### Template (`.mycc/tools/<name>.ts`)
+### Required Components
 
 ```typescript
-import type { ToolDefinition, AgentContext } from 'mycc';
-
-export default {
-  name: '<name>',
-  description: 'What this tool does. Be specific for LLM.',
-  input_schema: {
-    type: 'object',
-    properties: {
-      param1: { type: 'string', description: 'Parameter description' },
-    },
-    required: ['param1'],
-  },
-  scope: ['main', 'child'],
-
-  handler: (ctx: AgentContext, args: Record<string, unknown>): string => {
-    const param1 = args.param1 as string;
-    if (!param1) return 'Error: param1 is required';
-
-    ctx.core.brief('info', '<name>', `Processing ${param1}`);
-
-    try {
-      // Implementation
-      return 'Success message';
-    } catch (error: unknown) {
-      const err = error as Error;
-      ctx.core.brief('error', '<name>', err.message);
-      return `Error: ${err.message}`;
-    }
-  },
-} as ToolDefinition;
+{
+  name: string,           // Tool identifier (kebab-case)
+  description: string,    // What the tool does (for LLM understanding)
+  input_schema: object,   // JSON Schema for parameters
+  scope: string[],        // Where tool can be used
+  handler: function,      // Implementation
+}
 ```
 
-### Test the Prototype
+### Export Style
 
-Let user test the tool manually, and iterate on feedback.
-**You MUST NOT skip this step. Ask for grant to start Phase 2**.
-
----
-
-## Phase 2: Migrate to Built-in
-
-After user confirms prototype works, migrate to `src/tools/`.
-
-### Step 1: Create Built-in Tool (`src/tools/<name>.ts`)
-
-Move the file from `.mycc/tools/<name>.ts` to `src/tools`, and update imports accordingly.
-
-### Step 2: Register in loader.ts
+For tools in `.mycc/tools/`:
 
 ```typescript
-// Add import at top
-import { myTool } from '../tools/my_tool.js';
-
-// Add to builtInTools array
-const builtInTools: ToolDefinition[] = [
-  bashTool,
-  readTool,
-  // ... other tools
-  myTool,
-];
+export default { ... } as ToolDefinition;
 ```
 
-### Step 3: Specify Tool Color (Optional)
+## Creating a Tool
 
-In `src/context/core.ts`, add to `TOOL_COLORS`:
+### Step 1: Gather Requirements
+
+Ask the user:
+- **What does the tool do?** - Core functionality
+- **What parameters?** - Input/output format
+- **What scope?** - Where should it be available?
+- **Any constraints?** - Safety, permissions, limitations
+
+### Step 2: Use Template
+
+Read the template file: `tool-template.md`
+
+Key sections to customize:
+- `name`: kebab-case identifier
+- `description`: Clear description for LLM understanding
+- `input_schema`: Define all parameters
+- `scope`: Set appropriate access level
+- `handler`: Implement the logic
+
+### Step 3: Validate Parameters
+
+Always validate required parameters:
 
 ```typescript
-const TOOL_COLORS: Record<string, (text: string) => string> = {
-  // ... existing colors
-  my_tool: chalk.cyan,
-};
+handler: (ctx: AgentContext, args: Record<string, unknown>): string => {
+  const param1 = args.param1 as string;
+  
+  // Validate required parameters
+  if (!param1) {
+    return 'Error: param1 is required';
+  }
+  
+  // Continue with implementation
+}
 ```
 
-### Step 4: Update `docs/agent-tools.md`
+### Step 4: Add Logging
 
-Edit the `docs/agent-tools.md` to reflect the recent change.
-
----
-
-## Key Points
-
-### 1. ctx.core.brief() - ALWAYS Log
+**ALWAYS log meaningful information:**
 
 ```typescript
-// DO: Log meaningful info at start
-ctx.core.brief('info', 'my_tool', `Processing ${param1}, ${param2}`);
+// DO: Log with context
+ctx.core.brief('info', 'tool-name', `Processing ${param1}, ${param2}`);
 
-// DON'T: Truncate or be vague
-ctx.core.brief('info', 'my_tool', 'working');  // BAD
+// DON'T: Be vague
+ctx.core.brief('info', 'tool-name', 'working');  // BAD
 ```
 
-### 2. Scope Selection
+### Step 5: Handle Errors
 
-| Scope | Use Case |
-|-------|----------|
-| `['main', 'child', 'bg']` | Safe read-only (bash, read) |
-| `['main', 'child']` | Most tools (write, edit, mail) |
-| `['main']` | Sensitive (team management) |
+Wrap logic in try-catch:
 
-### 3. Export Difference
+```typescript
+try {
+  const result = await someOperation();
+  return `Success: ${result}`;
+} catch (error: unknown) {
+  const err = error as Error;
+  ctx.core.brief('error', 'tool-name', err.message);
+  return `Error: ${err.message}`;
+}
+```
 
-| Phase | Export Style |
-|-------|--------------|
-| Prototype (`.mycc/tools/`) | `export default { ... } as ToolDefinition` |
-| Built-in (`src/tools/`) | `export const myTool: ToolDefinition = { ... }` |
+### Step 6: Create File
 
-### 4. Async Handlers
+Create the tool in `.mycc/tools/<name>.ts`
+
+### Step 7: Test
+
+Let user test the tool manually. Iterate based on feedback.
+
+## Scope Selection
+
+| Scope | Use Case | Examples |
+|-------|----------|----------|
+| `['main', 'child', 'bg']` | Safe read-only tools | bash, read_file |
+| `['main', 'child']` | Most tools | write_file, edit_file |
+| `['main']` | Sensitive operations | tm_create, tm_remove |
+
+## Input Schema
+
+### String Parameter
+
+```typescript
+name: { 
+  type: 'string', 
+  description: 'The name to process' 
+}
+```
+
+### Number Parameter
+
+```typescript
+count: { 
+  type: 'number', 
+  description: 'Number of items' 
+}
+```
+
+### Enum Parameter
+
+```typescript
+format: { 
+  type: 'string', 
+  enum: ['json', 'yaml', 'text'],
+  description: 'Output format' 
+}
+```
+
+### Array Parameter
+
+```typescript
+items: { 
+  type: 'array',
+  items: { type: 'string' },
+  description: 'List of items' 
+}
+```
+
+### Optional Parameter
+
+```typescript
+// Don't add to required array
+options: { 
+  type: 'string', 
+  description: 'Optional configuration' 
+}
+```
+
+## Best Practices
+
+### 1. Be Specific
+
+**Bad:**
+```typescript
+description: 'Process data'
+```
+
+**Good:**
+```typescript
+description: 'Process CSV files and extract columns by name'
+```
+
+### 2. Return Meaningful Results
+
+**Bad:**
+```typescript
+return 'Done';
+```
+
+**Good:**
+```typescript
+return `Processed ${count} rows, ${success} succeeded, ${failed} failed`;
+```
+
+### 3. Use Async for I/O
 
 ```typescript
 handler: async (ctx: AgentContext, args: Record<string, unknown>): Promise<string> => {
-  const result = await ctx.team.createTeammate(name, role, prompt);
+  const result = await someAsyncOperation();
   return result;
 }
 ```
 
----
+### 4. Type Assertions
+
+```typescript
+const param1 = args.param1 as string;
+const param2 = args.param2 as number | undefined;
+const param3 = args.param3 as string[];
+```
+
+## Common Pitfalls
+
+### Pitfall 1: Missing Parameter Validation
+
+**Problem:** Tool crashes when required parameter is missing.
+
+**Solution:** Always validate at the start of handler.
+
+### Pitfall 2: No Logging
+
+**Problem:** Hard to debug what went wrong.
+
+**Solution:** Use `ctx.core.brief()` for meaningful logs.
+
+### Pitfall 3: Wrong Scope
+
+**Problem:** Tool available where it shouldn't be.
+
+**Solution:** Choose minimal scope needed. Use `['main']` for sensitive operations.
+
+### Pitfall 4: Sync Handler for Async Operations
+
+**Problem:** Tool blocks while waiting for I/O.
+
+**Solution:** Use `async` handler for any async operations.
 
 ## Checklist
 
-### Phase 1: Prototype
+Before considering a tool complete:
+
 - [ ] Created in `.mycc/tools/<name>.ts`
 - [ ] Uses `export default { ... } as ToolDefinition`
-- [ ] User tested manually
+- [ ] Clear description for LLM understanding
+- [ ] All parameters defined in input_schema
+- [ ] Required parameters validated
+- [ ] Meaningful logging with `ctx.core.brief()`
+- [ ] Errors caught and returned with context
+- [ ] Appropriate scope selected
+- [ ] Tested by user
 - [ ] Confirmed working
-
-### Phase 2: Migrate
-- [ ] Created in `src/tools/<name>.ts`
-- [ ] Uses `export const myTool: ToolDefinition = { ... }`
-- [ ] Import added to `loader.ts`
-- [ ] Added to `builtInTools` array
-- [ ] Color added to `core.ts` (optional)
-- [ ] `pnpm typecheck` passes
-- [ ] Prototype file deleted
