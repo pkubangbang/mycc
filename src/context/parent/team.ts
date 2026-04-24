@@ -2,10 +2,10 @@
  * team.ts - Team module: child process teammates with IPC
  */
 
-import { fork, ChildProcess } from 'child_process';
+import { spawn, ChildProcess } from 'child_process';
 import * as path from 'path';
 import * as fs from 'fs';
-import { fileURLToPath } from 'url';
+import { fileURLToPath, pathToFileURL } from 'url';
 import type {
   TeamModule,
   Teammate,
@@ -23,6 +23,7 @@ import { readSession, writeSession } from '../../session/index.js';
 // ES module compatibility for __dirname
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+const PROJECT_ROOT = path.resolve(__dirname, '..', '..', '..');
 
 /**
  * IPC message types (parent to child)
@@ -116,12 +117,30 @@ export class TeamManager implements TeamModule {
     MemoryStore.createTeammate(name, role, prompt);
 
     // Spawn child process
-    const workerPath = path.join(__dirname, 'teammate-worker.js');
-    const child = fork(workerPath, [], {
-      cwd: this.context.core.getWorkDir(),
-      // Pipe stdout/stderr but don't log them - child uses IPC for structured logging
-      silent: true,
-    });
+    // Note: Use spawn() with tsx loader instead of fork() because TypeScript files
+    // are executed directly via tsx, not compiled to JavaScript.
+    // On Windows, fork() cannot run .ts files natively.
+    const workerPath = path.join(__dirname, '..', 'teammate-worker.ts');
+    const isWin = process.platform === 'win32';
+
+    const stdio: ['pipe', 'pipe', 'pipe', 'ipc'] = ['pipe', 'pipe', 'pipe', 'ipc'];
+    let child: ChildProcess;
+    if (isWin) {
+      // Windows: use node --import with tsx/esm loader (requires file:// URL)
+      const tsxEsmPath = path.resolve(PROJECT_ROOT, 'node_modules', 'tsx', 'dist', 'esm', 'index.mjs');
+      const tsxEsmUrl = pathToFileURL(tsxEsmPath).href;
+      child = spawn(process.execPath, ['--import', tsxEsmUrl, workerPath], {
+        cwd: this.context.core.getWorkDir(),
+        stdio,
+      });
+    } else {
+      // Unix: use tsx binary directly
+      const tsx = path.resolve(PROJECT_ROOT, 'node_modules', '.bin', 'tsx');
+      child = spawn(tsx, [workerPath], {
+        cwd: this.context.core.getWorkDir(),
+        stdio,
+      });
+    }
 
     // Track process
     this.processes.set(name, child);
