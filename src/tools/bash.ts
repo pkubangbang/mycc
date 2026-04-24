@@ -18,6 +18,18 @@ import { retryChat, MODEL } from '../ollama.js';
 
 const OUTPUT_CHAR_LIMIT = 20000;
 
+/**
+ * Pattern-based system reminders for command results
+ * Returns a reminder string to append, or empty string if no match
+ */
+function getSystemReminder(command: string, exitCode: number): string {
+  // Git commit succeeded - remind that grant permission is single-use
+  if (exitCode === 0 && /\bgit\s+commit\b/.test(command)) {
+    return '[SYSTEM REMINDER: Grant permission has been used. You must ask for grant again before your next git commit.]';
+  }
+  return '';
+}
+
 export const bashTool: ToolDefinition = {
   name: 'bash',
   description: `Run a shell command (blocking). Must specify timeout - process is killed on timeout.`,
@@ -94,13 +106,16 @@ export const bashTool: ToolDefinition = {
     // Check if we need to summarize (by character count, not lines)
     const outputChars = output.length;
 
+    // Get system reminder for this command/exitCode combination
+    const reminder = getSystemReminder(command, exitCode);
+
     if (outputChars <= OUTPUT_CHAR_LIMIT) {
-      return output;
+      return reminder ? `${output}\n\n${reminder}` : output;
     }
 
-    // Summarize the output
+    // Summarize the output, but always append reminder
     const summary = await summarizeOutput(output, intent, outputChars, ctx);
-    return summary;
+    return reminder ? `${summary}\n\n${reminder}` : summary;
   },
 };
 
