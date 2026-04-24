@@ -99,13 +99,25 @@ export function getOllamaModel(): string {
 }
 
 /**
+ * Check if vision model is enabled
+ * Returns true if OLLAMA_VISION_MODEL is set and not "none"
+ */
+export function isVisionEnabled(): boolean {
+  const model = process.env.OLLAMA_VISION_MODEL;
+  return !!model && model !== 'none';
+}
+
+/**
  * Get Ollama vision model name for multimodal tasks
- * @throws Error if OLLAMA_VISION_MODEL is not set
+ * @throws Error if OLLAMA_VISION_MODEL is not set or set to "none"
  */
 export function getVisionModel(): string {
   const model = process.env.OLLAMA_VISION_MODEL;
   if (!model) {
-    throw new Error('OLLAMA_VISION_MODEL is not set. Set it in your environment to enable image capabilities (e.g., OLLAMA_VISION_MODEL=gemma4:31b-cloud)');
+    throw new Error('OLLAMA_VISION_MODEL is not set. Set it to a vision model (e.g., gemma4:31b-cloud) or "none" to disable vision features.');
+  }
+  if (model === 'none') {
+    throw new Error('Vision features are disabled (OLLAMA_VISION_MODEL=none). Set a vision model to enable screen and read_picture tools.');
   }
   return model;
 }
@@ -136,7 +148,7 @@ const ENV_REQUIREMENTS: EnvRequirement[] = [
   {
     name: 'OLLAMA_VISION_MODEL',
     required: false,
-    instruction: 'Set OLLAMA_VISION_MODEL for vision/multimodal tasks (required for screen and read_picture tools)',
+    instruction: 'Set OLLAMA_VISION_MODEL for vision/multimodal tasks, or "none" to disable (screen/read_picture tools will be unavailable)',
   },
   {
     name: 'OLLAMA_API_KEY',

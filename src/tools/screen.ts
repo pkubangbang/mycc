@@ -314,6 +314,10 @@ export const screenTool: ToolDefinition = {
       // Describe via imgDescribe (handles resizing)
       const description = await ctx.core.imgDescribe(screenshotPath, customPrompt);
       return `## Screen Content\n\n${description}`;
+    } catch (error: unknown) {
+      const err = error as Error;
+      ctx.core.brief('error', 'screen', err.message);
+      return `## ❌ Screen Tool Error\n\n${err.message}`;
     } finally {
       // Cleanup
       try { fs.unlinkSync(screenshotPath); } catch { /* ignore */ }

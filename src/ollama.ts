@@ -7,7 +7,7 @@
 import { Ollama } from 'ollama';
 import type { ChatRequest, ChatResponse } from 'ollama';
 import chalk from 'chalk';
-import { isVerbose, getOllamaHost, getOllamaApiKey, getOllamaModel } from './config.js';
+import { isVerbose, getOllamaHost, getOllamaApiKey, getOllamaModel, isVisionEnabled } from './config.js';
 
 // Configuration (resolved via config.ts)
 export const OLLAMA_HOST = getOllamaHost();
@@ -94,6 +94,7 @@ export function classifyError(err: unknown): ErrorType {
 export interface HealthCheckResult {
   ok: boolean;
   error?: string;
+  warnings?: string[];
   modelInfo?: {
     name: string;
     contextLength: number;
@@ -242,6 +243,10 @@ export async function checkHealth(tokenThreshold: number): Promise<HealthCheckRe
 
     return {
       ok: true,
+      warnings: isVisionEnabled() ? undefined : [
+        'OLLAMA_VISION_MODEL is not set. Vision features (screen/read_picture tools) are disabled.',
+        'Set it to a vision model (e.g., OLLAMA_VISION_MODEL=gemma4:31b-cloud) or "none" to dismiss this warning.',
+      ],
       modelInfo: {
         name: MODEL,
         contextLength,

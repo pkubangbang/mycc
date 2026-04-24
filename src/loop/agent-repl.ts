@@ -53,6 +53,13 @@ export async function main(): Promise<void> {
         if (health.modelInfo) {
           modelInfo = health.modelInfo;
         }
+        // Display warnings if any
+        if (health.warnings && health.warnings.length > 0) {
+          console.log();
+          for (const warning of health.warnings) {
+            console.log(chalk.yellow(`[warning] ${warning}`));
+          }
+        }
         break; // Success - continue with startup
       }
 

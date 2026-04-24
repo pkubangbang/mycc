@@ -9,7 +9,7 @@ import type { CoreModule } from '../../types.js';
 import { ollama, retryWithBackoff } from '../../ollama.js';
 import { WebFetchResponse, WebSearchResult } from 'ollama';
 import { agentIO } from '../../loop/agent-io.js';
-import { isVerbose, getVisionModel } from '../../config.js';
+import { isVerbose, getVisionModel, isVisionEnabled } from '../../config.js';
 
 /**
  * Color functions for tool prefixes
@@ -195,6 +195,11 @@ export class Core implements CoreModule {
    * @returns Description of the image
    */
   async imgDescribe(image: string, prompt?: string): Promise<string> {
+    // Check if vision is enabled first
+    if (!isVisionEnabled()) {
+      throw new Error('Vision features are disabled. Set OLLAMA_VISION_MODEL to a vision model (e.g., gemma4:31b-cloud) to enable screen and read_picture tools.');
+    }
+
     const VISION_MODEL = getVisionModel();
     const DEFAULT_PROMPT =
       'You are an image analyzer. Carefully examine this image and describe all visible content in detail. Include: text content, UI elements, objects, people, colors, layout, and any other relevant details. Be thorough and precise.';
