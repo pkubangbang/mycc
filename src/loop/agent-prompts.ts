@@ -2,7 +2,25 @@
  * agent-prompts.ts - System prompt building utilities
  */
 
+import * as os from 'os';
 import type { AgentContext } from '../types.js';
+
+/**
+ * Detect platform-specific information
+ */
+function getPlatformInfo(): { platform: string; shell: string; pathSep: string; home: string; escapeChar: string } {
+  const platform = os.platform();
+  const isWin = platform === 'win32';
+  const isMac = platform === 'darwin';
+  
+  return {
+    platform: isWin ? 'Windows' : isMac ? 'macOS' : 'Linux',
+    shell: isWin ? 'cmd.exe or PowerShell' : 'bash/zsh',
+    pathSep: isWin ? 'backslash (\\)' : 'forward slash (/)',
+    home: os.homedir(),
+    escapeChar: isWin ? 'caret (^)' : 'backslash (\\)',
+  };
+}
 
 /**
  * Build system prompt based on agent context and identity
@@ -12,6 +30,7 @@ export function buildSystemPrompt(
   identity?: { name: string; role: string }
 ): string {
   const workDir = ctx.core.getWorkDir();
+  const platformInfo = getPlatformInfo();
 
   // Current date/time for context (helps with time-sensitive queries like web search)
   const now = new Date();
@@ -36,9 +55,35 @@ export function buildSystemPrompt(
     'Do NOT guess. When in doubt, seek knowledge first.',
   ].join('\n');
 
+  // Platform-specific guidance
+  const isWin = platformInfo.platform === 'Windows';
+  const platformGuidance = [
+    '## Platform',
+    `Platform: ${platformInfo.platform}`,
+    `Shell: ${platformInfo.shell}`,
+    `Path separator: ${platformInfo.pathSep}`,
+    `Escape character: ${platformInfo.escapeChar}`,
+    '',
+    '### Shell Commands',
+    isWin
+      ? '- Use PowerShell or cmd syntax: `Get-Content file`, `Copy-Item src dest`'
+      : '- Use bash/zsh syntax: `cat file`, `cp src dest`',
+    '- Always use forward slashes (/) in file paths for cross-platform compatibility',
+    '- Avoid platform-specific paths like `C:\\Users\\...` - use relative paths when possible',
+    '',
+    '### Escaping',
+    isWin
+      ? '- In cmd: use ^ to escape special chars (e.g., ^| for |)\n- In PowerShell: use backtick ` to escape (e.g., `$ for $)'
+      : '- In bash/zsh: use backslash \\ to escape (e.g., \\$ for $)',
+    '- For JSON/strings: use double quotes and escape inner quotes with backslash',
+    '- When in doubt: use single quotes for literal strings in bash/zsh, double quotes in PowerShell',
+  ].join('\n');
+
   // Common suffix for all prompts
   const common = [
     knowledgeBoundary,
+    '',
+    platformGuidance,
     '',
     '## Calendar',
     `Current date: ${currentDate} (year: ${currentYear})`,
