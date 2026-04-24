@@ -6,14 +6,17 @@
  * Parameters:
  * - command: The shell command to execute
  * - intent: Explain why you want to use this command (mandatory)
- * - elor: Expected line of result (default: 50)
  * - timeout: Seconds before killing the process (mandatory)
  *   - Process is killed immediately with SIGKILL on timeout
+ *
+ * Output is automatically summarized if it exceeds 20000 characters.
  */
 
 import type { ToolDefinition, AgentContext } from '../types.js';
 import { agentIO } from '../loop/agent-io.js';
 import { retryChat, MODEL } from '../ollama.js';
+
+const OUTPUT_CHAR_LIMIT = 20000;
 
 export const bashTool: ToolDefinition = {
   name: 'bash',
@@ -29,10 +32,6 @@ export const bashTool: ToolDefinition = {
         type: 'string',
         description: 'REQUIRED: Explain why this command is needed. This helps the system understand context and enables smarter output summarization when needed.',
       },
-      elor: {
-        type: 'number',
-        description: 'Expected Lines Of Result (default: 100). Output exceeding this limit is summarized. Set higher (200-500) for detailed output like logs or large file listings. Values below 10 are discouraged as they force excessive summarization.',
-      },
       timeout: {
         type: 'number',
         description: 'REQUIRED: Seconds before killing the process (SIGKILL). Max recommended: 300.',
@@ -44,7 +43,6 @@ export const bashTool: ToolDefinition = {
   handler: async (ctx: AgentContext, args: Record<string, unknown>): Promise<string> => {
     const command = args.command as string;
     const intent = args.intent as string;
-    const elor = (args.elor as number) ?? 100;
     const timeoutSeconds = args.timeout as number;
 
     // Block dangerous commands
@@ -93,33 +91,29 @@ export const bashTool: ToolDefinition = {
     // Verbose output: show the full result contents
     ctx.core.verbose('bash', 'Command output', { command, exitCode, stdout: stdout.slice(0, 2000), stderr: stderr.slice(0, 500) });
 
-    // Check if we need to summarize
-    // Count only the stdout lines, not the status/metadata lines
-    const stdoutLines = stdout.trim() ? stdout.trim().split('\n').length : 0;
-    const stderrLines = stderr.trim() ? stderr.trim().split('\n').length : 0;
-    const outputLines = stdoutLines + stderrLines;
+    // Check if we need to summarize (by character count, not lines)
+    const outputChars = output.length;
 
-    if (outputLines <= elor) {
+    if (outputChars <= OUTPUT_CHAR_LIMIT) {
       return output;
     }
 
     // Summarize the output
-    const summary = await summarizeOutput(output, intent, elor, outputLines, ctx);
+    const summary = await summarizeOutput(output, intent, outputChars, ctx);
     return summary;
   },
 };
 
 /**
- * Summarize command output when it exceeds the expected line count
+ * Summarize command output when it exceeds the character limit
  */
 async function summarizeOutput(
   output: string,
   intent: string,
-  elor: number,
-  totalLines: number,
+  totalChars: number,
   ctx: AgentContext
 ): Promise<string> {
-  ctx.core.brief('info', 'bash', `Summarizing ${totalLines} lines (elor: ${elor})`);
+  ctx.core.brief('info', 'bash', `Summarizing ${(totalChars / 1000).toFixed(1)}k chars (limit: ${OUTPUT_CHAR_LIMIT / 1000}k)`);
 
   const response = await retryChat({
     model: MODEL,
@@ -128,13 +122,13 @@ async function summarizeOutput(
         role: 'system',
         content: `Summarize this command output concisely.
 User's intent: ${intent}
-Total lines: ${totalLines}
-Keep the summary under ${elor} lines.
-Report the total line count at the start of your response.`
+Total characters: ${totalChars}
+Keep the summary concise and focused on what's relevant to the user's intent.
+Report the total character count at the start of your response.`
       },
       { role: 'user', content: output }
     ]
   });
 
-  return `Summary of ${totalLines} lines (set a larger "elor" to see full content):\n${response.message.content || 'No summary generated'}`;
+  return `Summary of ${(totalChars / 1000).toFixed(1)}k chars:\n${response.message.content || 'No summary generated'}`;
 }
