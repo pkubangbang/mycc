@@ -105,16 +105,15 @@ export async function openEditor(files: string[], options?: { editor?: string })
     }
   }
 
-  const stdio = editor.isTerminalEditor ? 'inherit' : 'ignore';
+  const stdio: 'inherit' | 'ignore' = editor.isTerminalEditor ? 'inherit' : 'ignore';
+  const isWin = process.platform === 'win32';
+  const spawnOptions = isWin ? { stdio, shell: true } : { stdio };
 
   try {
     if (editor.isTerminalEditor) {
       // For terminal editors, wait for them to complete
       await new Promise<void>((resolve, reject) => {
-        const proc = spawn(editor.binary, args, {
-          stdio,
-          shell: false,
-        });
+        const proc = spawn(editor.binary, args, spawnOptions);
         proc.on('close', (code) => {
           if (code === 0) {
             resolve();
@@ -128,11 +127,7 @@ export async function openEditor(files: string[], options?: { editor?: string })
       });
     } else {
       // For GUI editors, launch detached (don't wait)
-      const proc = spawn(editor.binary, args, {
-        detached: true,
-        stdio,
-        shell: false,
-      });
+      const proc = spawn(editor.binary, args, { ...spawnOptions, detached: true });
       proc.unref();
     }
   } catch (err) {
