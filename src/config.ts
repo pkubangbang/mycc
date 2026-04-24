@@ -13,10 +13,10 @@ import * as os from 'os';
 
 // Parse CLI args once at startup
 const args = minimist(process.argv.slice(2), {
-  boolean: ['v', 'verbose', 'skip-healthcheck'],
+  boolean: ['v', 'verbose', 'skip-healthcheck', 'setup'],
   string: ['session'],
   alias: { v: 'verbose' },
-  default: { v: false, session: null, 'skip-healthcheck': false },
+  default: { v: false, session: null, 'skip-healthcheck': false, setup: false },
 });
 
 /**
@@ -53,6 +53,20 @@ export function getSessionArg(): string | null {
  */
 export function shouldSkipHealthCheck(): boolean {
   return args['skip-healthcheck'] || false;
+}
+
+/**
+ * Check if setup mode is requested
+ */
+export function shouldRunSetup(): boolean {
+  return args.setup === true;
+}
+
+/**
+ * Get all parsed args (for debugging)
+ */
+export function getArgs(): minimist.ParsedArgs {
+  return args;
 }
 
 /**
@@ -125,14 +139,14 @@ export function getVisionModel(): string {
 /**
  * Environment variable requirements
  */
-interface EnvRequirement {
+export interface EnvRequirement {
   name: string;
   required: boolean;
   default?: string;
   instruction: string;
 }
 
-const ENV_REQUIREMENTS: EnvRequirement[] = [
+export const ENV_REQUIREMENTS: EnvRequirement[] = [
   {
     name: 'OLLAMA_HOST',
     required: false,

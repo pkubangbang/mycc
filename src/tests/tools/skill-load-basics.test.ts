@@ -73,7 +73,7 @@ describe('skillLoadTool - Basics', () => {
     const skill = createSampleSkill({ name: 'code-review' });
     ctx = createMockContextWithSkills('/tmp/test', [skill]);
 
-    const result = await skillLoadTool.handler(ctx, { name: 'code-review' });
+    const result = await skillLoadTool.handler(ctx, { name: 'code-review', intent: 'test purpose' });
 
     expect(result).toContain('# Skill: code-review');
     expect(result).toContain('Description: A test skill for unit testing');
@@ -87,25 +87,25 @@ describe('skillLoadTool - Basics', () => {
     const skill = createSampleSkill({ name: 'coordination' });
     ctx = createMockContextWithSkills('/tmp/test', [skill]);
 
-    await skillLoadTool.handler(ctx, { name: 'coordination' });
+    await skillLoadTool.handler(ctx, { name: 'coordination', intent: 'test purpose' });
 
     expect(ctx.skill.getSkill).toHaveBeenCalledWith('coordination');
   });
 
-  it('should call brief with skill name', async () => {
+  it('should call brief with skill name and intent', async () => {
     const skill = createSampleSkill();
     ctx = createMockContextWithSkills('/tmp/test', [skill]);
 
-    await skillLoadTool.handler(ctx, { name: 'test-skill' });
+    await skillLoadTool.handler(ctx, { name: 'test-skill', intent: 'test purpose' });
 
-    expect(ctx.core.brief).toHaveBeenCalledWith('info', 'skill_load', 'test-skill');
+    expect(ctx.core.brief).toHaveBeenCalledWith('info', 'skill_load', 'test-skill', 'test purpose');
   });
 
   it('should handle skill with empty keywords', async () => {
     const skill = createSampleSkill({ name: 'minimal', keywords: [] });
     ctx = createMockContextWithSkills('/tmp/test', [skill]);
 
-    const result = await skillLoadTool.handler(ctx, { name: 'minimal' });
+    const result = await skillLoadTool.handler(ctx, { name: 'minimal', intent: 'test purpose' });
 
     expect(result).toContain('# Skill: minimal');
     expect(result).not.toContain('Keywords:');
@@ -118,7 +118,7 @@ describe('skillLoadTool - Basics', () => {
     });
     ctx = createMockContextWithSkills('/tmp/test', [skill]);
 
-    const result = await skillLoadTool.handler(ctx, { name: 'multi-keyword' });
+    const result = await skillLoadTool.handler(ctx, { name: 'multi-keyword', intent: 'test purpose' });
 
     expect(result).toContain('Keywords: code, review, quality, best-practices');
   });
@@ -127,7 +127,7 @@ describe('skillLoadTool - Basics', () => {
     const skill = createSampleSkill({ name: 'no-desc', description: '' });
     ctx = createMockContextWithSkills('/tmp/test', [skill]);
 
-    const result = await skillLoadTool.handler(ctx, { name: 'no-desc' });
+    const result = await skillLoadTool.handler(ctx, { name: 'no-desc', intent: 'test purpose' });
 
     expect(result).toContain('# Skill: no-desc');
     expect(result).not.toContain('Description: \n');
@@ -138,7 +138,7 @@ describe('skillLoadTool - Basics', () => {
     const skill = createSampleSkill({ name: 'long-skill', content: longContent });
     ctx = createMockContextWithSkills('/tmp/test', [skill]);
 
-    const result = await skillLoadTool.handler(ctx, { name: 'long-skill' });
+    const result = await skillLoadTool.handler(ctx, { name: 'long-skill', intent: 'test purpose' });
 
     expect(result).toContain('# Skill: long-skill');
     expect(result).toContain('Comprehensive Guide');
@@ -164,7 +164,7 @@ console.log("example");
     const skill = createSampleSkill({ name: 'formatted', content: markdownContent });
     ctx = createMockContextWithSkills('/tmp/test', [skill]);
 
-    const result = await skillLoadTool.handler(ctx, { name: 'formatted' });
+    const result = await skillLoadTool.handler(ctx, { name: 'formatted', intent: 'test purpose' });
 
     expect(result).toContain('## Purpose');
     expect(result).toContain('## Steps');
