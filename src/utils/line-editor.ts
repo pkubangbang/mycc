@@ -248,6 +248,15 @@ export class LineEditor {
   
   /**
    * Actual render implementation
+   *
+   * To prevent visual artifacts (line duplication) when input wraps across multiple lines,
+   * we always render an empty line below the content. This creates a consistent visual buffer
+   * that clears any stale content from previous renders.
+   *
+   * Cursor tracking model:
+   * - screenStartRow stores which content line the cursor was on after the previous render
+   * - After render, cursor is positioned within content (at cursorLine)
+   * - Empty line is rendered below content, but cursor is NOT on it
    */
   private doRender(): void {
     const info = this.lineInfo;
@@ -259,12 +268,12 @@ export class LineEditor {
     const output: string[] = [];
 
     // Move to starting position - go to beginning of our content area
-    // First, move to column 0
+    // Cursor is currently at (cursorLine, cursorCol) within content
+    // We need to move up cursorLine lines to reach line 0 (content start)
+    const linesToMoveUp = this.screenStartRow;
     output.push('\r');
-    // Move up from current cursor position to the start of our content
-    // screenStartRow tracks how many lines down from start of content the cursor currently is
-    if (this.screenStartRow > 0) {
-      output.push(`\x1b[${this.screenStartRow}A`);
+    if (linesToMoveUp > 0) {
+      output.push(`\x1b[${linesToMoveUp}A`);
     }
 
     // Clear current line and everything below
@@ -281,8 +290,14 @@ export class LineEditor {
       }
     }
 
+    // Always add an empty line below content to prevent visual artifacts
+    // This ensures stale content from previous renders is cleared
+    output.push('\n');
+
     // Position cursor - move up from the end to where cursor should be
-    const linesUp = totalLines - 1 - cursorLine;
+    // We're at the empty line (below all content), cursor should be at cursorLine
+    // Move up (totalLines - cursorLine) lines
+    const linesUp = totalLines - cursorLine;
     if (linesUp > 0) {
       output.push(`\x1b[${linesUp}A`);
     }
@@ -291,7 +306,7 @@ export class LineEditor {
     // Single write operation
     this.stdout.write(output.join(''));
 
-    // Update screen tracking - cursor is now at cursorLine
+    // Update screen tracking - cursor is now at cursorLine within content
     this.screenStartRow = cursorLine;
   }
 
@@ -586,18 +601,17 @@ export class LineEditor {
 
   /**
    * Actual resize handling - smart redraw preserving scrollback
-   * 
+   *
    * Strategy:
    * 1. Store old line count (M) and old cursor position
    * 2. Recompute lines with new width, get new line count (N)
-   * 3. From current cursor position, move to end of old content
-   * 4. Move up M lines to reach start of old content
-   * 5. Clear from there down
-   * 6. Redraw N lines (screen scrolls naturally if N > M)
+   * 3. From current cursor position (on empty line below content), move up to content start
+   * 4. Clear and redraw N lines + empty line
+   * 5. Position cursor correctly
    */
   private doResize(columns: number): void {
     this.resizeTimer = null;
-    
+
     const oldColumns = this.columns;
     this.columns = columns;
     if (this.columns < 20) {
@@ -609,35 +623,24 @@ export class LineEditor {
       return;
     }
 
-    // Store old state
-    const oldLineCount = this.lineInfo.lines.length;
-    
     // Recompute lines with new width
     this.lineInfo = this.computeLineInfo();
     const newLineCount = this.lineInfo.lines.length;
-    
+    const newCursorLine = this.lineInfo.cursorLine;
+    const newCursorCol = this.lineInfo.cursorCol;
+
     // Build output
     const output: string[] = [];
-    
-    // From current cursor position (at oldCursorLine in old content)
-    // screenStartRow = oldCursorLine (where cursor is relative to content start)
-    // We need to move to end of old content first
-    // Lines from cursor to end = oldLineCount - 1 - screenStartRow
-    const linesFromCursorToOldEnd = oldLineCount - 1 - this.screenStartRow;
-    if (linesFromCursorToOldEnd > 0) {
-      output.push(`\x1b[${linesFromCursorToOldEnd}B`);  // Move down to end of old content
+
+    // From current cursor position (within old content), move up to content start
+    if (this.screenStartRow > 0) {
+      output.push(`\x1b[${this.screenStartRow}A`);
     }
-    
-    // Now we're at the end of old content. Move up M-1 lines to reach the START line
-    // (M lines means moving up M-1 times since we're at the last line)
-    if (oldLineCount > 1) {
-      output.push(`\x1b[${oldLineCount - 1}A`);
-    }
-    output.push('\r');  // Go to start of line
-    
+    output.push('\r');
+
     // Clear from here down
     output.push('\x1b[J');
-    
+
     // Write all lines
     for (let i = 0; i < newLineCount; i++) {
       if (i === 0) {
@@ -648,20 +651,21 @@ export class LineEditor {
         output.push('\n');
       }
     }
-    
-    // Position cursor at correct location in new content
-    const newCursorLine = this.lineInfo.cursorLine;
-    const newCursorCol = this.lineInfo.cursorCol;
-    const linesUp = newLineCount - 1 - newCursorLine;
+
+    // Add empty line below content (consistent with doRender)
+    output.push('\n');
+
+    // Position cursor - move up from empty line to where cursor should be
+    const linesUp = newLineCount - newCursorLine;
     if (linesUp > 0) {
       output.push(`\x1b[${linesUp}A`);
     }
     output.push(`\r\x1b[${newCursorCol + 1}G`);
-    
+
     // Write all at once
     this.stdout.write(output.join(''));
-    
-    // Update tracking - cursor is now at newCursorLine
+
+    // Update tracking - cursor is now at newCursorLine within content
     this.screenStartRow = newCursorLine;
   }
 
