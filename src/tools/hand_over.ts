@@ -130,9 +130,9 @@ async function handleHandOver(ctx: AgentContext, args: Record<string, unknown>):
 
   // 5. Wait for user confirmation and capture output
   const answer = await agentIO.ask(
-    chalk.cyan(`Press Enter to capture & kill, or 'k' to keep session > `)
+    chalk.cyan(`Save tmux session? [y/N] > `)
   );
-  const keepSession = answer.toLowerCase() === 'k' || answer.toLowerCase() === 'keep';
+  const keepSession = answer.toLowerCase() === 'y' || answer.toLowerCase() === 'yes';
 
   // 6. Capture output
   let output = '';
