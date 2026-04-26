@@ -56,6 +56,27 @@ The tool will:
       return 'Error: The "message" parameter is required and must be a non-empty string';
     }
 
+    // Check if there are staged changes before asking for permission
+    try {
+      const { stdout: statusOutput } = await agentIO.exec({
+        cwd: ctx.core.getWorkDir(),
+        command: 'git status --porcelain',
+        timeout: 5,
+      });
+      
+      // Check if anything is staged (lines starting with letters in first column)
+      const hasStaged = statusOutput.split('\n').some(line => 
+        line.length > 0 && line[0] !== ' ' && line[0] !== '?'
+      );
+      
+      if (!hasStaged && !amend) {
+        ctx.core.brief('warn', 'git_commit', 'No staged changes to commit');
+        return 'Error: No staged changes to commit. Use `git add` to stage changes first.';
+      }
+    } catch {
+      // If git status fails, just proceed - the commit will fail with a clear message
+    }
+
     // Ask for user permission
     const prompt = amend
       ? `Amend commit with message: "${message}"? [y/N]`
@@ -68,6 +89,7 @@ The tool will:
     const granted = normalized === 'y' || normalized === 'yes';
 
     if (!granted) {
+      ctx.core.brief('info', 'git_commit', 'Commit cancelled by user');
       return 'Commit cancelled by user';
     }
 
@@ -86,10 +108,12 @@ The tool will:
       });
 
       if (timedOut) {
+        ctx.core.brief('error', 'git_commit', 'Commit timed out after 30 seconds');
         return 'Error: Commit timed out after 30 seconds';
       }
 
       if (interrupted) {
+        ctx.core.brief('warn', 'git_commit', 'Commit interrupted by user');
         return 'Commit interrupted by user';
       }
 
@@ -97,11 +121,13 @@ The tool will:
       const parts: string[] = [];
 
       if (exitCode === 0) {
+        ctx.core.brief('info', 'git_commit', 'Commit successful');
         parts.push('Commit successful');
         if (stdout.trim()) {
           parts.push(`[stdout]\n${stdout.trim()}`);
         }
       } else {
+        ctx.core.brief('error', 'git_commit', `Commit failed (exit: ${exitCode})`);
         parts.push(`Commit failed (exit: ${exitCode})`);
         if (stderr.trim()) {
           parts.push(`[stderr]\n${stderr.trim()}`);
@@ -111,6 +137,7 @@ The tool will:
       return parts.join('\n\n');
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
+      ctx.core.brief('error', 'git_commit', `Error executing commit: ${errorMessage}`);
       return `Error executing commit: ${errorMessage}`;
     }
   },

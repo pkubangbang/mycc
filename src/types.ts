@@ -149,6 +149,7 @@ export interface Skill {
   description: string;
   keywords: string[];
   content: string;
+  when?: string;  // NEW: Natural language hook condition
 }
 
 // ============================================================================

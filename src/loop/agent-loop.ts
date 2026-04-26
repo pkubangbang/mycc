@@ -11,6 +11,9 @@ import { Triologue } from './triologue.js';
 import { agentIO } from './agent-io.js';
 import { isVerbose } from '../config.js';
 import { loader } from '../context/shared/loader.js';
+import { Sequence } from '../context/shared/sequence.js';
+import { ConditionRegistry } from '../context/shared/conditions.js';
+import { HookExecutor } from '../context/shared/hooks.js';
 
 /**
  * Custom error for graceful shutdown
@@ -34,6 +37,12 @@ export async function agentLoop(
   let nextTodoNudge = 3;
   let lastTodoState = '';
   let isFirstRound = true;
+
+  // Initialize hook system
+  const conditions = new ConditionRegistry();
+  await conditions.load();
+  const sequence = new Sequence(triologue);  // Pass triologue for sequence queries
+  const hookExecutor = new HookExecutor(conditions, sequence);
 
   while (true) {
     try {
@@ -129,6 +138,32 @@ export async function agentLoop(
 
         // 6. No tool calls = wrap-up complete or check team status
         if (!assistantMessage.tool_calls || assistantMessage.tool_calls.length === 0) {
+          // 6.1 Check hooks with trigger="stop" (LLM is about to stop)
+          const stopHooks = hookExecutor.checkHooks('stop');
+          for (const hookName of stopHooks) {
+            const cond = conditions.get(hookName);
+            if (!cond) continue;
+
+            const skill = ctx.skill.getSkill(hookName);
+            if (!skill) continue;
+
+            if (isVerbose()) {
+              agentIO.log(chalk.cyan(`[hook] ${hookName} triggered at stop`));
+            }
+
+            const result = await hookExecutor.execute(hookName, cond.action, ctx, [], skill.content || '');
+
+            if (result.message) {
+              triologue.user(result.message);
+            }
+
+            if (result.action === 'blocked') {
+              // Hook blocked the stop - inject message and continue
+              agentIO.log(chalk.yellow(`[hook] ${hookName} blocked stop: continue working`));
+              continue;  // Continue the while loop, which will call LLM again
+            }
+          }
+
           // Clear interrupted mode after wrap-up response (no tools = wrap-up complete)
           if (agentIO.isNeglectedMode()) {
             agentIO.setNeglectedMode(false);  // Clear FIRST - so isInteractionMode() returns false
@@ -172,7 +207,10 @@ export async function agentLoop(
         isFirstRound = false;
 
         // 7. Execute tools
-        for (const toolCall of (assistantMessage.tool_calls as ToolCall[])) {
+        let toolCalls = [...(assistantMessage.tool_calls as ToolCall[])];
+
+        for (let i = 0; i < toolCalls.length; i++) {
+          const toolCall = toolCalls[i];
           // Check for ESC - abort current tool and skip remaining
           if (agentIO.isNeglectedMode()) {
             agentIO.log(chalk.yellow('\n[ESC] Tool execution interrupted - skipping remaining tools'));
@@ -187,29 +225,75 @@ export async function agentLoop(
           }
 
           const toolCallId = toolCall.id;
-          const args = toolCall.function.arguments as Record<string, unknown>;
           const toolName = toolCall.function.name;
+
+          // 7.1 Check hooks before executing
+          const matchedHooks = hookExecutor.checkHooks(toolName);
+          for (const hookName of matchedHooks) {
+            const cond = conditions.get(hookName);
+            if (!cond) continue;
+
+            const skill = ctx.skill.getSkill(hookName);
+            if (!skill) continue;
+
+            if (isVerbose()) {
+              agentIO.log(chalk.cyan(`[hook] ${hookName} triggered for ${toolName}`));
+            }
+
+            const result = await hookExecutor.execute(hookName, cond.action, ctx, toolCalls.slice(i), skill.content || '');
+
+            if (result.action === 'blocked') {
+              // Block this tool call
+              triologue.tool(toolName, result.message || `Blocked by hook: ${hookName}`, toolCallId);
+              agentIO.log(chalk.yellow(`[hook] ${hookName} blocked ${toolName}: ${result.message}`));
+              continue; // Skip this tool, move to next
+            }
+
+            if (result.action === 'injected' && result.newCalls) {
+              // New calls inserted, re-evaluate from start
+              toolCalls = result.newCalls;
+              i = -1; // Restart loop to process injected calls
+              break;
+            }
+
+            if (result.message) {
+              // Inject message into conversation
+              triologue.user(result.message);
+            }
+          }
+
+          // Re-check after potential injection
+          if (i < 0 || i >= toolCalls.length) continue;
+          const currentCall = toolCalls[i];
 
           // Verbose: Log tool execution
           if (isVerbose()) {
-            agentIO.log(chalk.magenta(`[verbose][agent-loop] Executing tool: ${toolName}`));
-            const argsPreview = JSON.stringify(args).slice(0, 200);
+            agentIO.log(chalk.magenta(`[verbose][agent-loop] Executing tool: ${currentCall.function.name}`));
+            const argsPreview = JSON.stringify(currentCall.function.arguments).slice(0, 200);
             agentIO.log(chalk.gray(`  Args: ${argsPreview}${argsPreview.length >= 200 ? '...' : ''}`));
           }
 
           try {
-            const output = await loader.execute(toolName, ctx, args);
+            const output = await loader.execute(currentCall.function.name, ctx, currentCall.function.arguments as Record<string, unknown>);
 
             // Verbose: Log tool result
             if (isVerbose()) {
-              agentIO.log(chalk.magenta(`[verbose][agent-loop] Tool result: ${toolName}`));
+              agentIO.log(chalk.magenta(`[verbose][agent-loop] Tool result: ${currentCall.function.name}`));
               agentIO.log(chalk.gray(`  Output length: ${output.length} chars`));
               const outputPreview = output.slice(0, 300);
               agentIO.log(chalk.gray(`  Preview: ${outputPreview}${output.length > 300 ? '...' : ''}`));
             }
 
-            triologue.tool(toolName, output, toolCallId);
-            triologue.onToolResult(toolName, args, output);
+            // Add to sequence for hook evaluation
+            sequence.add({
+              tool: currentCall.function.name,
+              args: currentCall.function.arguments as Record<string, unknown>,
+              result: output,
+              timestamp: Date.now(),
+            });
+
+            triologue.tool(currentCall.function.name, output, currentCall.id);
+            triologue.onToolResult(currentCall.function.name, currentCall.function.arguments as Record<string, unknown>, output);
           } catch (err) {
             if (err instanceof ResultTooLargeError) {
               // Handle large result: use preview + instruction
@@ -218,8 +302,8 @@ export async function agentLoop(
                 `Use read_read tool to summarize, or bash with head/tail to read.\n\n` +
                 `--- Preview (first 1000 chars) ---\n${err.preview}`;
 
-              triologue.tool(toolName, truncatedOutput, toolCallId);
-              triologue.onToolResult(toolName, args, truncatedOutput);
+              triologue.tool(currentCall.function.name, truncatedOutput, currentCall.id);
+              triologue.onToolResult(currentCall.function.name, currentCall.function.arguments as Record<string, unknown>, truncatedOutput);
             } else {
               throw err;
             }
