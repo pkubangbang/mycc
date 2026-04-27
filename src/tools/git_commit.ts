@@ -18,6 +18,7 @@ import { agentIO } from '../loop/agent-io.js';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
+import { spawn } from 'child_process';
 
 export const gitCommitTool: ToolDefinition = {
   name: 'git_commit',
@@ -89,9 +90,17 @@ The tool will:
     const response = await ctx.core.question(prompt, ctx.core.getName());
 
     // Parse response - only 'y' or 'yes' (case-insensitive) grants permission
-    const normalized = response.trim().toLowerCase();
+    // Strip surrounding quotes (tmux send-keys may add them)
+    let normalized = response.trim().toLowerCase();
+    if ((normalized.startsWith('"') && normalized.endsWith('"')) ||
+        (normalized.startsWith("'") && normalized.endsWith("'"))) {
+      normalized = normalized.slice(1, -1).trim();
+    }
     const granted = normalized === 'y' || normalized === 'yes';
     const denied = normalized === 'n' || normalized === 'no';
+
+    // Debug: show what we received
+    console.log(`[git_commit] Response: "${response}" -> normalized: "${normalized}" -> granted: ${granted}`);
 
     // If explicitly denied, cancel the commit
     if (denied) {
@@ -113,29 +122,69 @@ The tool will:
     // This works reliably across all platforms (Windows cmd, PowerShell, bash)
     const tempDir = os.tmpdir();
     const tempFile = path.join(tempDir, `git-commit-msg-${Date.now()}.txt`);
-    
+
     try {
       // Write message to temp file
       fs.writeFileSync(tempFile, message, 'utf-8');
-      
-      const command = amend
-        ? `git commit --amend -F "${tempFile}"`
-        : `git commit -F "${tempFile}"`;
 
-      const { stdout, stderr, interrupted, exitCode, timedOut } = await agentIO.exec({
-        cwd: ctx.core.getWorkDir(),
-        command,
-        timeout: 30,
+      // On Windows, cmd.exe needs special handling for paths
+      // Use forward slashes which git understands, avoiding quote issues
+      const gitPath = process.platform === 'win32'
+        ? tempFile.replace(/\\/g, '/')
+        : tempFile;
+
+      // Debug: show the command being executed
+      console.log(`[git_commit] Temp file: ${tempFile}`);
+      console.log(`[git_commit] Git path: ${gitPath}`);
+
+      // Build command - use spawn directly to avoid shell quoting issues
+      const args = amend
+        ? ['commit', '--amend', '-F', gitPath]
+        : ['commit', '-F', gitPath];
+
+      console.log(`[git_commit] Executing: git ${args.join(' ')}`);
+
+      // Use spawn directly to avoid cmd.exe quote issues
+      const proc = spawn('git', args, { cwd: ctx.core.getWorkDir() });
+
+      // Collect output
+      const stdoutBuffer: Buffer[] = [];
+      const stderrBuffer: Buffer[] = [];
+      proc.stdout?.on('data', (chunk: Buffer) => stdoutBuffer.push(chunk));
+      proc.stderr?.on('data', (chunk: Buffer) => stderrBuffer.push(chunk));
+
+      // Wait for completion with timeout
+      const result = await new Promise<{ code: number; stdout: string; stderr: string }>((resolve) => {
+        const timer = setTimeout(() => {
+          proc.kill('SIGKILL');
+          resolve({ code: 137, stdout: '', stderr: 'Timeout' });
+        }, 30000);
+
+        proc.on('close', (code) => {
+          clearTimeout(timer);
+          resolve({
+            code: code ?? 1,
+            stdout: Buffer.concat(stdoutBuffer).toString('utf-8'),
+            stderr: Buffer.concat(stderrBuffer).toString('utf-8'),
+          });
+        });
+
+        proc.on('error', (err) => {
+          clearTimeout(timer);
+          resolve({ code: 1, stdout: '', stderr: err.message });
+        });
       });
+
+      const { stdout, stderr, exitCode, timedOut } = {
+        stdout: result.stdout,
+        stderr: result.stderr,
+        exitCode: result.code,
+        timedOut: result.code === 137,
+      };
 
       if (timedOut) {
         ctx.core.brief('error', 'git_commit', 'Commit timed out after 30 seconds');
         return 'Error: Commit timed out after 30 seconds';
-      }
-
-      if (interrupted) {
-        ctx.core.brief('warn', 'git_commit', 'Commit interrupted by user');
-        return 'Commit interrupted by user';
       }
 
       // Build result
