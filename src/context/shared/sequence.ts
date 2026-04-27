@@ -105,12 +105,16 @@ export class Sequence {
 
   /**
    * Get the last error event (result contains 'error' or 'Error')
+   * Returns the event with an additional 'message' field for convenience
    */
-  lastError(): SequenceEvent | undefined {
+  lastError(): (SequenceEvent & { message: string }) | undefined {
     for (let i = this.events.length - 1; i >= 0; i--) {
       const result = this.events[i].result?.toLowerCase() || '';
       if (result.includes('error') || result.includes('failed')) {
-        return this.events[i];
+        return {
+          ...this.events[i],
+          message: this.events[i].result || '',
+        };
       }
     }
     return undefined;

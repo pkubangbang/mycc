@@ -132,7 +132,16 @@ async function handleHandOver(ctx: AgentContext, args: Record<string, unknown>):
   const answer = await agentIO.ask(
     chalk.cyan(`Save tmux session? [y/N] > `)
   );
-  const keepSession = answer.toLowerCase() === 'y' || answer.toLowerCase() === 'yes';
+
+  // Parse response similar to git_commit tool
+  // Strip surrounding quotes (tmux send-keys may add them)
+  let normalized = answer.trim().toLowerCase();
+  if ((normalized.startsWith('"') && normalized.endsWith('"')) ||
+      (normalized.startsWith("'") && normalized.endsWith("'"))) {
+    normalized = normalized.slice(1, -1).trim();
+  }
+  const keepSession = normalized === 'y' || normalized === 'yes';
+  const killSession = normalized === 'n' || normalized === 'no' || normalized === '';
 
   // 6. Capture output
   let output = '';
@@ -167,6 +176,17 @@ async function handleHandOver(ctx: AgentContext, args: Record<string, unknown>):
   // 9. Summarize if needed
   const maxLines = 100;
   const lines = output.split('\n');
+
+  // If user provided feedback (not y/n/enter), return it for LLM to handle
+  if (!killSession && !keepSession) {
+    // User typed something other than y/n/enter - treat as feedback
+    const result = lines.length > maxLines
+      ? await summarizeOutput(output, command, maxLines)
+      : output || '(empty output)';
+
+    return `User provided feedback: "${answer}"\n\nSession ${sessionName} is still running (reattach: tmux attach -t ${sessionName}).\n\nOutput:\n${result}`;
+  }
+
   const result = lines.length > maxLines
     ? await summarizeOutput(output, command, maxLines)
     : output || '(empty output)';
