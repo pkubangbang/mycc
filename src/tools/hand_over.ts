@@ -130,7 +130,8 @@ async function handleHandOver(ctx: AgentContext, args: Record<string, unknown>):
 
   // 5. Wait for user confirmation and capture output
   const answer = await agentIO.ask(
-    chalk.cyan(`Save tmux session? [y/N] > `)
+    chalk.cyan(`Save tmux session? [y/N] > `),
+    true  // use query as prompt (single line format)
   );
 
   // Parse response similar to git_commit tool
@@ -142,6 +143,42 @@ async function handleHandOver(ctx: AgentContext, args: Record<string, unknown>):
   }
   const keepSession = normalized === 'y' || normalized === 'yes';
   const killSession = normalized === 'n' || normalized === 'no' || normalized === '';
+
+  // If user provided feedback (not y/n/enter), return it for LLM to handle
+  if (!killSession && !keepSession) {
+    agentIO.log(chalk.yellow(`✓ Session ${sessionName} kept for review. Reattach with: tmux attach -t ${sessionName}`));
+    
+    // Capture output
+    let output = '';
+    try {
+      const { stdout } = await execAsync(
+        `tmux capture-pane -t ${sessionName} -p -S -3000 -E -1`
+      );
+      output = stdout;
+    } catch {
+      // Session may have been closed by user
+    }
+
+    const lines = output.split('\n');
+    const result = lines.length > 100
+      ? await summarizeOutput(output, command, 100)
+      : output || '(empty output)';
+
+    ctx.todo.patchTodoList([{
+      name: `hand_over: ${sessionName}`,
+      done: true,
+      note: 'kept - user feedback',
+    }]);
+
+    return `User provided feedback: "${answer}"\n\nSession ${sessionName} is still running. Reattach with: tmux attach -t ${sessionName}\n\nOutput:\n${result}`;
+  }
+
+  // Show closing notice based on user's choice
+  if (keepSession) {
+    agentIO.log(chalk.green(`✓ Session ${sessionName} kept. Reattach with: tmux attach -t ${sessionName}`));
+  } else {
+    agentIO.log(chalk.green(`✓ Session closed. Processing output...`));
+  }
 
   // 6. Capture output
   let output = '';
@@ -176,16 +213,6 @@ async function handleHandOver(ctx: AgentContext, args: Record<string, unknown>):
   // 9. Summarize if needed
   const maxLines = 100;
   const lines = output.split('\n');
-
-  // If user provided feedback (not y/n/enter), return it for LLM to handle
-  if (!killSession && !keepSession) {
-    // User typed something other than y/n/enter - treat as feedback
-    const result = lines.length > maxLines
-      ? await summarizeOutput(output, command, maxLines)
-      : output || '(empty output)';
-
-    return `User provided feedback: "${answer}"\n\nSession ${sessionName} is still running (reattach: tmux attach -t ${sessionName}).\n\nOutput:\n${result}`;
-  }
 
   const result = lines.length > maxLines
     ? await summarizeOutput(output, command, maxLines)
