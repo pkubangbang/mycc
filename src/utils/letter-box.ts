@@ -5,7 +5,7 @@
 import chalk from 'chalk';
 
 /**
- * Wrap text to a maximum width, preserving word boundaries
+ * Wrap text to a maximum width, preserving word boundaries and leading indentation
  */
 function wrapText(text: string, maxWidth: number): string[] {
   const lines: string[] = [];
@@ -17,21 +17,30 @@ function wrapText(text: string, maxWidth: number): string[] {
       continue;
     }
 
-    const words = paragraph.split(/\s+/);
-    let currentLine = '';
+    // Preserve leading indentation
+    const indentMatch = paragraph.match(/^(\s+)/);
+    const indent = indentMatch ? indentMatch[1] : '';
+    const content = indentMatch ? paragraph.slice(indent.length) : paragraph;
+
+    // Split remaining content into words
+    const words = content.split(/\s+/).filter(w => w.length > 0);
+    let currentLine = indent;
 
     for (const word of words) {
-      if (currentLine === '') {
-        currentLine = word;
-      } else if (currentLine.length + 1 + word.length <= maxWidth) {
-        currentLine += ` ${  word}`;
+      const potentialLine = currentLine === indent ? indent + word : `${currentLine} ${word}`;
+
+      if (potentialLine.length <= maxWidth) {
+        currentLine = potentialLine;
       } else {
-        lines.push(currentLine);
-        currentLine = word;
+        // Line is full, push it and start a new line with same indent
+        if (currentLine !== indent) {
+          lines.push(currentLine);
+        }
+        currentLine = indent + word;
       }
     }
 
-    if (currentLine) {
+    if (currentLine && currentLine !== indent) {
       lines.push(currentLine);
     }
   }
@@ -75,16 +84,16 @@ export function displayLetterBox(content: string, maxWidth = 76): void {
 
   // Top border with pseudo parenthesis style and timestamp
   console.log();
-  console.log(borderColor(`.${  '='.repeat(leftEquals)  }${headerText  }${'='.repeat(rightEquals)  }.`));
+  console.log(borderColor(`.${'='.repeat(leftEquals)}${headerText}${'='.repeat(rightEquals)}.`));
   console.log();
 
   // Content lines (no side borders, just text)
   for (const line of lines) {
-    console.log(`  ${  textColor(line)}`);
+    console.log(`  ${textColor(line)}`);
   }
 
   // Bottom border with single quote
   console.log();
-  console.log(borderColor(`'${  '='.repeat(boxWidth - 2)  }'`));
+  console.log(borderColor(`'${'='.repeat(boxWidth - 2)}'`));
   console.log();
 }

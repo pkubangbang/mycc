@@ -69,6 +69,21 @@ Use for capturing lessons learned from experience.
 - Key learnings
 - What to do differently
 
+### Hookish Skill
+Use for skills that trigger automatically based on conditions (hooks).
+
+**Examples:** lint-typecheck-after-edit, auto-format-on-save
+
+**Template:** `skill-template-hookish.md`
+
+**Characteristics:**
+- Clear trigger condition in "when" field
+- Actions documented in content section
+- No duplication between description and "when"
+- Specific, actionable trigger conditions
+
+**Important:** Hookish skills have a `when` field in the frontmatter that defines WHEN the skill triggers. This field should contain ONLY the trigger condition, NOT the actions to take.
+
 ## Skill Creation Process
 
 ### Step 1: Gather Requirements
@@ -103,6 +118,7 @@ Based on skill type, use the appropriate template:
 | Process | skill-template-process.md |
 | Reference | skill-template-reference.md |
 | Lesson | skill-template-lesson.md |
+| Hookish | skill-template-hookish.md |
 
 Read the template file to understand the structure.
 
@@ -119,6 +135,7 @@ description: >
   
   Token limit: < 800 tokens
 keywords: [tag1, tag2, tag3]
+when: trigger condition (only for hookish skills)
 ---
 ```
 
@@ -127,6 +144,12 @@ keywords: [tag1, tag2, tag3]
 - Include related keywords naturally
 - Help semantic search find this skill
 - Stay under 800 tokens
+
+**For Hookish Skills Only:** The `when` field defines WHEN the skill triggers.
+- Must contain ONLY the trigger condition
+- Do NOT include actions in the "when" field
+- Be specific about timing and conditions
+- Example: `before LLM finishes reply (no tool calls pending), if edit_file or write_file was used this session`
 
 #### Content Structure
 
@@ -152,6 +175,14 @@ Follow the template structure for the chosen type:
 3. Solutions Found
 4. Key Learnings
 5. What to Do Differently
+
+**Hookish Skill:**
+1. Overview
+2. Trigger Condition (in "when" field, NOT in content)
+3. Actions
+4. When to Use
+5. Common Pitfalls
+6. Verification Checklist
 
 ### Step 5: Add Quality Content
 

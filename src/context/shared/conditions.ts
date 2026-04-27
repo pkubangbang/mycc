@@ -69,16 +69,67 @@ export class ConditionRegistry {
     if (!fs.existsSync(this.filePath)) {
       return;
     }
-    
+
     try {
       const content = fs.readFileSync(this.filePath, 'utf-8');
-      const data: ConditionsFile = JSON.parse(content);
-      
+
+      // Validate JSON syntax before parsing
+      let data: ConditionsFile;
+      try {
+        data = JSON.parse(content);
+      } catch (parseErr) {
+        console.error(`[Conditions] Invalid JSON in conditions.json: ${(parseErr as Error).message}`);
+        console.error('[Conditions] Please fix or delete the file to continue');
+        return;
+      }
+
+      // Pre-flight validation for all conditions
+      for (const [name, cond] of Object.entries(data)) {
+        this.validateCondition(name, cond);
+      }
+
       for (const [name, cond] of Object.entries(data)) {
         this.conditions.set(name, cond);
       }
     } catch (err) {
       console.error(`[Conditions] Failed to load conditions.json: ${(err as Error).message}`);
+    }
+  }
+
+  /**
+   * Validate and fix a condition
+   */
+  private validateCondition(name: string, cond: Condition): void {
+    // Validate trigger
+    if (!cond.trigger || cond.trigger === '') {
+      console.warn(`[Conditions] Warning: ${name} has empty trigger, defaulting to '*'`);
+      cond.trigger = '*';
+    }
+
+    // Validate timeout in action args (bash tool accepts 1-30 seconds)
+    if (cond.action && 'args' in cond.action && cond.action.args) {
+      const args = cond.action.args as Record<string, unknown>;
+      if (typeof args.timeout === 'number') {
+        if (args.timeout < 1 || args.timeout > 30) {
+          console.warn(`[Conditions] Warning: ${name} has invalid timeout ${args.timeout}, clamping to 30`);
+          args.timeout = Math.min(30, Math.max(1, args.timeout));
+        }
+      }
+    }
+
+    // Validate history entries too
+    if (cond.history) {
+      for (const entry of cond.history) {
+        if (entry.action && 'args' in entry.action && entry.action.args) {
+          const args = entry.action.args as Record<string, unknown>;
+          if (typeof args.timeout === 'number') {
+            if (args.timeout < 1 || args.timeout > 30) {
+              console.warn(`[Conditions] Warning: ${name} history v${entry.version} has invalid timeout ${args.timeout}, clamping to 30`);
+              args.timeout = Math.min(30, Math.max(1, args.timeout));
+            }
+          }
+        }
+      }
     }
   }
 

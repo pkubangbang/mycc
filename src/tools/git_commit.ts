@@ -15,6 +15,9 @@
 
 import type { ToolDefinition, AgentContext } from '../types.js';
 import { agentIO } from '../loop/agent-io.js';
+import fs from 'fs';
+import path from 'path';
+import os from 'os';
 
 export const gitCommitTool: ToolDefinition = {
   name: 'git_commit',
@@ -30,8 +33,9 @@ Parameters:
 The tool will:
 1. Show the commit message to the user
 2. Ask for permission with [y/N] prompt
-3. Only commit if user types 'y' or 'yes'
-4. Return the commit result or cancellation message`,
+3. If user types 'y' or 'yes': execute the commit
+4. If user types 'n' or 'no': cancel the commit
+5. Otherwise: return the user's response for LLM to iterate (e.g., user feedback on message)`,
   input_schema: {
     type: 'object',
     properties: {
@@ -87,20 +91,37 @@ The tool will:
     // Parse response - only 'y' or 'yes' (case-insensitive) grants permission
     const normalized = response.trim().toLowerCase();
     const granted = normalized === 'y' || normalized === 'yes';
+    const denied = normalized === 'n' || normalized === 'no';
 
-    if (!granted) {
+    // If explicitly denied, cancel the commit
+    if (denied) {
       ctx.core.brief('info', 'git_commit', 'Commit cancelled by user');
       return 'Commit cancelled by user';
+    }
+
+    // If neither granted nor denied, return the response for LLM to iterate
+    // This allows user to provide feedback like "add more details" or "change the message"
+    if (!granted) {
+      ctx.core.brief('info', 'git_commit', `User responded: "${response}"`);
+      return `User did not confirm the commit. User's response: "${response}"\n\nPlease consider the user's feedback and try again with a modified commit message if appropriate, or ask for clarification.`;
     }
 
     // User granted permission - execute the commit
     ctx.core.brief('info', 'git_commit', 'Permission granted, executing commit');
 
-    const command = amend
-      ? `git commit --amend -m "${message.replace(/"/g, '\\"')}"`
-      : `git commit -m "${message.replace(/"/g, '\\"')}"`;
-
+    // Use a temp file for the commit message to avoid shell escaping issues
+    // This works reliably across all platforms (Windows cmd, PowerShell, bash)
+    const tempDir = os.tmpdir();
+    const tempFile = path.join(tempDir, `git-commit-msg-${Date.now()}.txt`);
+    
     try {
+      // Write message to temp file
+      fs.writeFileSync(tempFile, message, 'utf-8');
+      
+      const command = amend
+        ? `git commit --amend -F "${tempFile}"`
+        : `git commit -F "${tempFile}"`;
+
       const { stdout, stderr, interrupted, exitCode, timedOut } = await agentIO.exec({
         cwd: ctx.core.getWorkDir(),
         command,
@@ -127,10 +148,16 @@ The tool will:
           parts.push(`[stdout]\n${stdout.trim()}`);
         }
       } else {
-        ctx.core.brief('error', 'git_commit', `Commit failed (exit: ${exitCode})`);
+        // Include error details in brief for visibility
+        const errorDetail = stderr.trim() || stdout.trim() || 'No error message';
+        const briefMsg = `Commit failed (exit: ${exitCode}): ${errorDetail.split('\n')[0]}`;
+        ctx.core.brief('error', 'git_commit', briefMsg);
         parts.push(`Commit failed (exit: ${exitCode})`);
         if (stderr.trim()) {
           parts.push(`[stderr]\n${stderr.trim()}`);
+        }
+        if (stdout.trim()) {
+          parts.push(`[stdout]\n${stdout.trim()}`);
         }
       }
 
@@ -139,6 +166,15 @@ The tool will:
       const errorMessage = error instanceof Error ? error.message : String(error);
       ctx.core.brief('error', 'git_commit', `Error executing commit: ${errorMessage}`);
       return `Error executing commit: ${errorMessage}`;
+    } finally {
+      // Clean up temp file
+      try {
+        if (fs.existsSync(tempFile)) {
+          fs.unlinkSync(tempFile);
+        }
+      } catch {
+        // Ignore cleanup errors
+      }
     }
   },
 };

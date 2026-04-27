@@ -8,3 +8,4 @@ dist/
 !/.mycc/skills/clear-sessions/
 !/.mycc/skills/tool-and-skill-development/
 !/.mycc/skills/session-introspect.md
+!/.mycc/skills/lint-typecheck-after-edit.md

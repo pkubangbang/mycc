@@ -160,7 +160,43 @@ export async function agentLoop(
             if (result.action === 'blocked') {
               // Hook blocked the stop - inject message and continue
               agentIO.log(chalk.yellow(`[hook] ${hookName} blocked stop: continue working`));
-              continue;  // Continue the while loop, which will call LLM again
+              continue;  // Continue the for loop to check other hooks
+            }
+
+            if (result.action === 'injected' && result.newCalls && result.newCalls.length > 0) {
+              // Hook injected tool calls - execute them before stopping
+              agentIO.log(chalk.cyan(`[hook] ${hookName} injected ${result.newCalls.length} tool call(s)`));
+              
+              // Execute the injected tool calls
+              for (const toolCall of result.newCalls) {
+                const toolName = toolCall.function.name;
+                try {
+                  const output = await loader.execute(toolName, ctx, toolCall.function.arguments as Record<string, unknown>);
+                  
+                  // Add to sequence for hook evaluation
+                  sequence.add({
+                    tool: toolName,
+                    args: toolCall.function.arguments as Record<string, unknown>,
+                    result: output,
+                    timestamp: Date.now(),
+                  });
+
+                  triologue.tool(toolName, output, toolCall.id);
+                  triologue.onToolResult(toolName, toolCall.function.arguments as Record<string, unknown>, output);
+                  
+                  if (isVerbose()) {
+                    agentIO.log(chalk.cyan(`[hook] ${hookName} executed ${toolName}: ${output.slice(0, 100)}...`));
+                  }
+                } catch (err) {
+                  const errorMsg = err instanceof Error ? err.message : String(err);
+                  triologue.tool(toolName, `Error: ${errorMsg}`, toolCall.id);
+                  agentIO.log(chalk.red(`[hook] ${hookName} failed to execute ${toolName}: ${errorMsg}`));
+                }
+              }
+              
+              // After executing injected calls, continue the main loop (don't stop)
+              // Break out of the for loop and continue the while loop
+              break;
             }
           }
 
