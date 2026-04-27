@@ -77,7 +77,7 @@ async function twoTurnSummary(content: string, focus: string, TOKEN_THRESHOLD: n
       }
     ];
 
-    const response = await retryChat({ model: MODEL, messages: messages as any });
+    const response = await retryChat({ model: MODEL, messages: messages as Array<{ role: string; content: string }> });
     buffer = response.message.content || '';
   }
 
@@ -88,7 +88,7 @@ async function twoTurnSummary(content: string, focus: string, TOKEN_THRESHOLD: n
       { role: 'user', content: `Previous summary:\n${buffer}\n\nCurrent chunk:\n${chunks[i]}`}
     ];
 
-    const response = await retryChat({ model: MODEL, messages: messages as any });
+    const response = await retryChat({ model: MODEL, messages: messages as Array<{ role: string; content: string }> });
     buffer = response.message.content || '';
   }
 

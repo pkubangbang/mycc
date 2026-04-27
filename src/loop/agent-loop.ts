@@ -140,6 +140,8 @@ export async function agentLoop(
         if (!assistantMessage.tool_calls || assistantMessage.tool_calls.length === 0) {
           // 6.1 Check hooks with trigger="stop" (LLM is about to stop)
           const stopHooks = hookExecutor.checkHooks('stop');
+          let injectedByStopHook = false; // Track if we injected tools during stop hook processing
+
           for (const hookName of stopHooks) {
             const cond = conditions.get(hookName);
             if (!cond) continue;
@@ -166,13 +168,13 @@ export async function agentLoop(
             if (result.action === 'injected' && result.newCalls && result.newCalls.length > 0) {
               // Hook injected tool calls - execute them before stopping
               agentIO.log(chalk.cyan(`[hook] ${hookName} injected ${result.newCalls.length} tool call(s)`));
-              
+
               // Execute the injected tool calls
               for (const toolCall of result.newCalls) {
                 const toolName = toolCall.function.name;
                 try {
                   const output = await loader.execute(toolName, ctx, toolCall.function.arguments as Record<string, unknown>);
-                  
+
                   // Add to sequence for hook evaluation
                   sequence.add({
                     tool: toolName,
@@ -183,7 +185,7 @@ export async function agentLoop(
 
                   triologue.tool(toolName, output, toolCall.id);
                   triologue.onToolResult(toolName, toolCall.function.arguments as Record<string, unknown>, output);
-                  
+
                   if (isVerbose()) {
                     agentIO.log(chalk.cyan(`[hook] ${hookName} executed ${toolName}: ${output.slice(0, 100)}...`));
                   }
@@ -193,11 +195,16 @@ export async function agentLoop(
                   agentIO.log(chalk.red(`[hook] ${hookName} failed to execute ${toolName}: ${errorMsg}`));
                 }
               }
-              
-              // After executing injected calls, continue the main loop (don't stop)
-              // Break out of the for loop and continue the while loop
-              break;
+
+              injectedByStopHook = true;
+              break; // Exit for loop, we'll continue the while loop
             }
+          }
+
+          // If we injected tools during stop hook, continue to next iteration
+          // This lets the LLM see the tool result and produce a summary
+          if (injectedByStopHook) {
+            continue;
           }
 
           // Clear interrupted mode after wrap-up response (no tools = wrap-up complete)
