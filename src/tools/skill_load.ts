@@ -53,7 +53,8 @@ Use this when:
       }
       const skillList = skills.map(s => {
         const keywords = s.keywords.length > 0 ? ` (keywords: ${s.keywords.join(', ')})` : '';
-        return `  - **${s.name}**: ${s.description}${keywords}`;
+        const when = s.when ? ` Triggers on: ${s.when}` : '';
+        return `  - **${s.name}**: ${s.description}${keywords}${when}`;
       }).join('\n');
       return `Available skills:\n\n${skillList}\n\nUse skill_load(name="<skill_name>", intent="...") to load a specific skill.`;
     }
@@ -73,8 +74,9 @@ Use this when:
       const header = `# Skill: ${skill.name}\n`;
       const description = skill.description ? `Description: ${skill.description}\n\n` : '';
       const keywords = skill.keywords.length > 0 ? `Keywords: ${skill.keywords.join(', ')}\n\n` : '';
+      const when = skill.when ? `When: ${skill.when}\n\n` : '';
 
-      return `${header}${description}${keywords}---\n\n${skill.content}`;
+      return `${header}${description}${keywords}${when}---\n\n${skill.content}`;
     }
 
     // No exact match: try semantic search using intent for better matching
@@ -99,7 +101,8 @@ Use this when:
             const header = `# Skill: ${matchedSkill.name}\n`;
             const description = matchedSkill.description ? `Description: ${matchedSkill.description}\n\n` : '';
             const keywords = matchedSkill.keywords.length > 0 ? `Keywords: ${matchedSkill.keywords.join(', ')}\n\n` : '';
-            return `${header}${description}${keywords}---\n\n${matchedSkill.content}`;
+            const when = matchedSkill.when ? `When: ${matchedSkill.when}\n\n` : '';
+            return `${header}${description}${keywords}${when}---\n\n${matchedSkill.content}`;
           }
         }
 

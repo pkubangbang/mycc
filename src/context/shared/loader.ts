@@ -493,6 +493,7 @@ export class Loader implements DynamicLoader, SkillModule {
       name: entry.skill.name,
       description: entry.skill.description,
       keywords: entry.skill.keywords,
+      when: entry.skill.when,
       content: '', // Exclude content
     }));
   }

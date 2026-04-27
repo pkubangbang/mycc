@@ -40,6 +40,10 @@ export const skillsCommand: SlashCommand = {
       console.log(chalk.cyan.bold(`${skill.name}`));
       // Description in dim
       console.log(chalk.dim(`${skill.description}`));
+      // When to use (trigger) in green
+      if (skill.when) {
+        console.log(chalk.green(`When: ${skill.when}`));
+      }
       // Keywords emphasized in yellow
       if (Array.isArray(skill.keywords) && skill.keywords.length > 0) {
         console.log(chalk.yellow(`Keywords: ${skill.keywords.join(', ')}`));
