@@ -84,8 +84,8 @@ The tool will:
 
     // Ask for user permission
     const prompt = amend
-      ? `Amend commit with message: "${message}"? [y/N]`
-      : `Commit with message: "${message}"? [y/N]`;
+      ? `Amend commit with message:\n\n  "${message}"\n\nProceed? [y/N]`
+      : `Commit with message:\n\n  "${message}"\n\nProceed? [y/N]`;
 
     const response = await ctx.core.question(prompt, ctx.core.getName());
 
