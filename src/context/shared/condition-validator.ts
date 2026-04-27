@@ -69,13 +69,37 @@ const SEQ_FUNCTIONS = ['has', 'hasAny', 'hasCommand', 'last', 'lastError', 'coun
 // Allowed literal values in expressions
 const ALLOWED_LITERALS = ['true', 'false', 'null', 'undefined'];
 
+// Allowed root identifiers (besides seq)
+const ALLOWED_ROOTS = ['seq', 'call'];
+
 // Dangerous identifiers that should never be allowed
 const DANGEROUS_IDENTIFIERS = new Set([
-  'eval', 'Function', 'require', 'import', 'process', 'fs', 'global', 
+  'eval', 'Function', 'require', 'import', 'process', 'fs', 'global',
   'window', 'document', 'globalThis', 'module', 'exports', '__proto__',
   'constructor', 'prototype', 'Reflect', 'Proxy', 'Buffer', 'Math',
   'JSON', 'console', 'alert', 'fetch', 'XMLHttpRequest', 'WebSocket',
 ]);
+
+// ============================================================================
+// Helper Functions
+// ============================================================================
+
+/**
+ * Get the root object name from a nested member expression
+ */
+function getRootObject(expr: jsep.MemberExpression | jsep.Expression): string | null {
+  if (expr.type === 'Identifier') {
+    return (expr as jsep.Identifier).name;
+  } else if (expr.type === 'MemberExpression') {
+    const memberExpr = expr as jsep.MemberExpression;
+    if (memberExpr.object.type === 'Identifier') {
+      return (memberExpr.object as jsep.Identifier).name;
+    } else if (memberExpr.object.type === 'MemberExpression') {
+      return getRootObject(memberExpr.object);
+    }
+  }
+  return null;
+}
 
 // ============================================================================
 // Validation Functions
@@ -248,9 +272,9 @@ function visitNode(node: jsep.Expression, errors: string[], warnings: string[]):
       if (DANGEROUS_IDENTIFIERS.has(name)) {
         newErrors.push(`Forbidden identifier: ${name}`);
       }
-      // Check for unknown identifiers (not literals or seq)
-      if (!ALLOWED_LITERALS.includes(name) && name !== 'seq' && name !== 'undefined') {
-        // Could be a variable reference outside seq context
+      // Check for unknown identifiers (not literals or allowed roots)
+      if (!ALLOWED_LITERALS.includes(name) && !ALLOWED_ROOTS.includes(name)) {
+        // Could be a variable reference outside seq/call context
         warnings.push(`Unknown identifier "${name}" - may not be defined`);
       }
       break;
@@ -263,29 +287,60 @@ function visitNode(node: jsep.Expression, errors: string[], warnings: string[]):
 
     case 'CallExpression': {
       const callExpr = node as jsep.CallExpression;
-      
+
       // Check if this is a seq.XXX() call
       if (callExpr.callee.type === 'MemberExpression') {
         const memberExpr = callExpr.callee as jsep.MemberExpression;
-        
+
+        // Check for dangerous property first (e.g., obj.constructor())
+        if (!memberExpr.computed && memberExpr.property.type === 'Identifier') {
+          const propName = (memberExpr.property as jsep.Identifier).name;
+          if (DANGEROUS_IDENTIFIERS.has(propName)) {
+            newErrors.push(`Forbidden property access: ${propName}`);
+          }
+        }
+
         // Check if the object is 'seq'
         if (memberExpr.object.type === 'Identifier') {
           const objName = (memberExpr.object as jsep.Identifier).name;
-          
+
           if (objName === 'seq') {
             // Get the method name
             let methodName: string | undefined;
             if (memberExpr.property.type === 'Identifier') {
               methodName = (memberExpr.property as jsep.Identifier).name;
             }
-            
+
             // Validate it's a known seq method
             if (methodName && !SEQ_FUNCTIONS.includes(methodName)) {
               newErrors.push(`Unknown seq method: seq.${methodName}`);
             }
+          } else if (objName === 'call') {
+            // call.args.X.method() is allowed (e.g., call.args.command.includes())
+            // call.metadata.X is a value, methods on it are allowed
+            // No specific validation needed
+          } else if (DANGEROUS_IDENTIFIERS.has(objName)) {
+            // Reject dangerous objects
+            newErrors.push(`Forbidden object: ${objName}`);
           } else {
-            // Calling method on unknown object
-            newErrors.push(`Method call on unknown object "${objName}" - only seq.XXX() calls allowed`);
+            // Calling method on unknown object - check if it's a string method
+            if (memberExpr.property.type === 'Identifier') {
+              const methodName = (memberExpr.property as jsep.Identifier).name;
+              // Allow common string/array methods
+              const allowedMethods = ['includes', 'indexOf', 'startsWith', 'endsWith', 'slice', 'split', 'length', 'toString', 'trim', 'toLowerCase', 'toUpperCase', 'map', 'filter', 'some', 'every', 'find', 'push', 'join', 'pop', 'shift'];
+              if (!allowedMethods.includes(methodName)) {
+                warnings.push(`Method "${methodName}" on unknown object "${objName}" - may not be defined`);
+              }
+            }
+          }
+        } else if (memberExpr.object.type === 'MemberExpression') {
+          // Chained call like call.args.command.includes()
+          // Check if the root is 'call'
+          const rootObj = getRootObject(memberExpr.object);
+          if (rootObj && rootObj !== 'seq' && rootObj !== 'call') {
+            if (DANGEROUS_IDENTIFIERS.has(rootObj)) {
+              newErrors.push(`Forbidden object: ${rootObj}`);
+            }
           }
         }
       } else {
@@ -299,7 +354,7 @@ function visitNode(node: jsep.Expression, errors: string[], warnings: string[]):
           newErrors.push('Only seq.XXX() function calls are allowed');
         }
       }
-      
+
       // Validate arguments
       for (const arg of callExpr.arguments || []) {
         newErrors.push(...visitNode(arg, errors, warnings));
@@ -309,21 +364,27 @@ function visitNode(node: jsep.Expression, errors: string[], warnings: string[]):
 
     case 'MemberExpression': {
       const memberExpr = node as jsep.MemberExpression;
-      
+
       // Check object being accessed
       newErrors.push(...visitNode(memberExpr.object, errors, warnings));
-      
+
       // Check property (if computed, e.g., obj[expr])
       if (memberExpr.computed && memberExpr.property) {
         newErrors.push(...visitNode(memberExpr.property, errors, warnings));
       }
-      
+
       // Check for dangerous property access
       if (!memberExpr.computed && memberExpr.property.type === 'Identifier') {
         const propName = (memberExpr.property as jsep.Identifier).name;
         if (DANGEROUS_IDENTIFIERS.has(propName)) {
           newErrors.push(`Forbidden property access: ${propName}`);
         }
+      }
+
+      // Check root object for dangerous identifiers
+      const rootObj = getRootObject(memberExpr);
+      if (rootObj && DANGEROUS_IDENTIFIERS.has(rootObj)) {
+        newErrors.push(`Forbidden object: ${rootObj}`);
       }
       break;
     }
@@ -399,11 +460,15 @@ export function validateCondition(condition: unknown): ValidationResult {
 // ============================================================================
 
 /**
- * Test a condition expression against a sequence
+ * Test a condition expression against a sequence and optional call context
  */
-export function testExpression(expression: string, sequence: TestableSequence): TestResult {
+export function testExpression(
+  expression: string,
+  sequence: TestableSequence,
+  callContext?: { metadata?: Record<string, unknown>; args?: Record<string, unknown> }
+): TestResult {
   try {
-    const ctx = {
+    const seqCtx = {
       has: (tool: string) => sequence.has(tool),
       hasAny: (tools: string[]) => sequence.hasAny(tools),
       hasCommand: (pattern: string) => sequence.hasCommand(pattern),
@@ -414,6 +479,22 @@ export function testExpression(expression: string, sequence: TestableSequence): 
       sinceEdit: () => sequence.sinceEdit(),
     };
 
+    // Provide mock call context for call.metadata.X and call.args.X
+    const call = callContext || {
+      metadata: {
+        filePath: '/mock/test.ts',
+        isTestFile: true,
+        newLoc: 100,
+        existingLoc: 50,
+        isDestructive: false,
+      },
+      args: {
+        command: 'mock command',
+        file_path: '/mock/test.ts',
+        content: 'mock content',
+      },
+    };
+
     const jsExpr = expression
       .replace(/seq\.has\(/g, 'has(')
       .replace(/seq\.hasAny\(/g, 'hasAny(')
@@ -422,14 +503,20 @@ export function testExpression(expression: string, sequence: TestableSequence): 
       .replace(/seq\.lastError\(/g, 'lastError(')
       .replace(/seq\.count\(/g, 'count(')
       .replace(/seq\.since\(/g, 'since(')
-      .replace(/seq\.sinceEdit\(/g, 'sinceEdit(');
+      .replace(/seq\.sinceEdit\(/g, 'sinceEdit(')
+      .replace(/call\.metadata\./g, 'call.metadata.')
+      .replace(/call\.args\./g, 'call.args.')
+      .replace(/call\.args\b/g, 'call.args');
 
     const fn = new Function(
-      'has', 'hasAny', 'hasCommand', 'last', 'lastError', 'count', 'since', 'sinceEdit',
+      'has', 'hasAny', 'hasCommand', 'last', 'lastError', 'count', 'since', 'sinceEdit', 'call',
       `"use strict"; return (${jsExpr});`
     );
 
-    const result = fn(ctx.has, ctx.hasAny, ctx.hasCommand, ctx.last, ctx.lastError, ctx.count, ctx.since, ctx.sinceEdit);
+    const result = fn(
+      seqCtx.has, seqCtx.hasAny, seqCtx.hasCommand, seqCtx.last, seqCtx.lastError,
+      seqCtx.count, seqCtx.since, seqCtx.sinceEdit, call
+    );
 
     return { passed: true, evaluatedValue: Boolean(result) };
   } catch (err) {

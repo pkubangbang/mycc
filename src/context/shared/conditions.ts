@@ -390,6 +390,14 @@ Available condition functions (use seq.X syntax):
 - seq.since(toolName): Events after last occurrence
 - seq.sinceEdit(): Events after last file edit
 
+Available call metadata (use call.metadata.X syntax for current call):
+- call.metadata.filePath: Target file path (for file operations)
+- call.metadata.isTestFile: Whether the file is a test file (.test. or .spec. in name)
+- call.metadata.newLoc: Lines of code in the new content
+- call.metadata.existingLoc: Lines of code in existing file
+- call.metadata.isDestructive: Whether bash command is destructive
+- call.args.X: Direct access to tool arguments (e.g., call.args.command)
+
 Available action types:
 - inject_before: Insert tool call BEFORE trigger (requires tool and args)
 - inject_after: Insert tool call AFTER trigger (requires tool and args)
@@ -400,7 +408,9 @@ Available action types:
 Examples:
 - "run lint before commit if files changed": { "trigger": "git_commit", "condition": "seq.hasAny(['edit_file', 'write_file']) && !seq.hasCommand('bash#lint')", "action": { "type": "inject_before", "tool": "bash", "args": { "command": "pnpm lint", "intent": "pre-commit lint", "timeout": 60 } } }
 - "search wiki on errors": { "trigger": "*", "condition": "seq.lastError() && !seq.has('wiki_get')", "action": { "type": "inject_before", "tool": "wiki_get", "args": { "query": "error", "domain": "pitfall" } } }
-- "block force push to main": { "trigger": "bash", "condition": "seq.last().args.command.includes('git push --force') && seq.last().args.command.includes('main')", "action": { "type": "block", "reason": "Force push to main is prohibited" } }
+- "block force push to main": { "trigger": "bash", "condition": "call.args.command.includes('git push --force') && call.args.command.includes('main')", "action": { "type": "block", "reason": "Force push to main is prohibited" } }
+- "block test files over 300 lines": { "trigger": "write_file", "condition": "call.metadata.isTestFile && call.metadata.newLoc > 300", "action": { "type": "block", "reason": "Test files cannot exceed 300 lines" } }
+- "block destructive bash to main": { "trigger": "bash", "condition": "call.metadata.isDestructive && call.args.command.includes('main')", "action": { "type": "block", "reason": "Destructive operations on main branch prohibited" } }
 
 Output a JSON object with trigger, condition, and action.`;
 
