@@ -43,7 +43,7 @@ Use this when:
     const skillName = args.name as string;
     const intent = args.intent as string;
 
-    ctx.core.brief('info', 'skill_load', skillName, intent);
+    ctx.core.brief('info', 'skill_load', intent, skillName);
 
     // Discovery mode: list all skills
     if (skillName === 'list' || skillName === '*') {

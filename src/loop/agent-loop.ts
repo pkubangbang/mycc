@@ -169,6 +169,11 @@ export async function agentLoop(
               // Hook injected tool calls - execute them before stopping
               agentIO.log(chalk.cyan(`[hook] ${hookName} injected ${result.newCalls.length} tool call(s)`));
 
+              // Register injected tool calls in triologue for parity tracking
+              for (const call of result.newCalls) {
+                triologue.registerToolCall(call);
+              }
+
               // Execute the injected tool calls
               for (const toolCall of result.newCalls) {
                 const toolName = toolCall.function.name;
@@ -272,6 +277,7 @@ export async function agentLoop(
 
           // 7.1 Check hooks before executing
           const matchedHooks = hookExecutor.checkHooks(toolName);
+          const deferredHookMessages: string[] = [];
           for (const hookName of matchedHooks) {
             const cond = conditions.get(hookName);
             if (!cond) continue;
@@ -293,15 +299,19 @@ export async function agentLoop(
             }
 
             if (result.action === 'injected' && result.newCalls) {
-              // New calls inserted, re-evaluate from start
+              // New calls inserted, register them in triologue for parity tracking
+              for (const call of result.newCalls) {
+                triologue.registerToolCall(call);
+              }
+              // Re-evaluate from start
               toolCalls = result.newCalls;
               i = -1; // Restart loop to process injected calls
               break;
             }
 
             if (result.message) {
-              // Inject message into conversation
-              triologue.user(result.message);
+              // Defer message injection until AFTER tool result to maintain triologue parity
+              deferredHookMessages.push(result.message);
             }
           }
 
@@ -337,6 +347,11 @@ export async function agentLoop(
 
             triologue.tool(currentCall.function.name, output, currentCall.id);
             triologue.onToolResult(currentCall.function.name, currentCall.function.arguments as Record<string, unknown>, output);
+
+            // Inject deferred hook messages AFTER tool result to maintain triologue parity
+            if (deferredHookMessages.length > 0) {
+              triologue.user(deferredHookMessages.join('\n\n---\n\n'));
+            }
           } catch (err) {
             if (err instanceof ResultTooLargeError) {
               // Handle large result: use preview + instruction
@@ -347,6 +362,11 @@ export async function agentLoop(
 
               triologue.tool(currentCall.function.name, truncatedOutput, currentCall.id);
               triologue.onToolResult(currentCall.function.name, currentCall.function.arguments as Record<string, unknown>, truncatedOutput);
+
+              // Inject deferred hook messages AFTER tool result to maintain triologue parity
+              if (deferredHookMessages.length > 0) {
+                triologue.user(deferredHookMessages.join('\n\n---\n\n'));
+              }
             } else {
               throw err;
             }

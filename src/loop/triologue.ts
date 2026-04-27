@@ -479,6 +479,15 @@ Be specific and actionable. This analysis will help guide the next steps.`;
   }
 
   /**
+   * Register an injected tool call (from hooks)
+   * This allows triologue to track tool calls that weren't in the original assistant message
+   */
+  registerToolCall(toolCall: ToolCall): void {
+    this.pendingToolCalls.set(toolCall.id, toolCall);
+    this.pendingToolCallOrder.push(toolCall.id);
+  }
+
+  /**
    * Get last message role, or null if empty
    */
   getLastRole(): Role | null {
