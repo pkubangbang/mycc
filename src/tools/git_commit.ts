@@ -99,9 +99,6 @@ The tool will:
     const granted = normalized === 'y' || normalized === 'yes';
     const denied = normalized === 'n' || normalized === 'no';
 
-    // Debug: show what we received
-    console.log(`[git_commit] Response: "${response}" -> normalized: "${normalized}" -> granted: ${granted}`);
-
     // If explicitly denied, cancel the commit
     if (denied) {
       ctx.core.brief('info', 'git_commit', 'Commit cancelled by user');
@@ -133,16 +130,10 @@ The tool will:
         ? tempFile.replace(/\\/g, '/')
         : tempFile;
 
-      // Debug: show the command being executed
-      console.log(`[git_commit] Temp file: ${tempFile}`);
-      console.log(`[git_commit] Git path: ${gitPath}`);
-
       // Build command - use spawn directly to avoid shell quoting issues
       const args = amend
         ? ['commit', '--amend', '-F', gitPath]
         : ['commit', '-F', gitPath];
-
-      console.log(`[git_commit] Executing: git ${args.join(' ')}`);
 
       // Use spawn directly to avoid cmd.exe quote issues
       const proc = spawn('git', args, { cwd: ctx.core.getWorkDir() });
