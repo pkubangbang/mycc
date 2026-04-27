@@ -70,47 +70,75 @@ Returns the compiled condition with version history.`,
 
     // Get or create condition registry
     const conditions = new ConditionRegistry();
-    await conditions.load();
+    const loadResult = await conditions.load();
+    
+    // Report load warnings/errors
+    if (loadResult.errors.length > 0) {
+      console.warn(`[skill_compile] Load warnings: ${loadResult.errors.join('; ')}`);
+    }
 
     // Get existing condition if any
     const existing = conditions.get(skillName);
 
     // Compile
-    try {
-      const condition = await conditions.compile(
-        skill.when,
-        skillName,
-        skill.content,
-        existing
-      );
+    const result = await conditions.compile(
+      skill.when,
+      skillName,
+      skill.content,
+      existing
+    );
 
-      // Build response
-      const lines = [
-        `Compiled '${skillName}' (v${condition.version}):`,
-        ``,
-        `When: ${skill.when}`,
-        `Trigger: ${condition.trigger}`,
-        `Condition: ${condition.condition}`,
-        `Action: ${JSON.stringify(condition.action, null, 2)}`,
-      ];
-
-      if (feedback) {
-        lines.push('', `Refinement reason: ${feedback}`);
-      }
-
-      if (condition.history && condition.history.length > 1) {
-        lines.push('', 'History:');
-        for (const h of condition.history) {
-          lines.push(`  v${h.version}: ${h.condition.slice(0, 50)}${h.condition.length > 50 ? '...' : ''}`);
-          if (h.reason) {
-            lines.push(`    Reason: ${h.reason}`);
-          }
+    // Handle compilation result
+    if (result.error) {
+      const lines = [`Error compiling skill: ${result.error}`];
+      
+      if (result.validation) {
+        lines.push('', 'Validation details:');
+        for (const err of result.validation.errors) {
+          lines.push(`  - Error: ${err}`);
+        }
+        for (const warn of result.validation.warnings) {
+          lines.push(`  - Warning: ${warn}`);
         }
       }
-
+      
       return lines.join('\n');
-    } catch (err) {
-      return `Error compiling skill: ${(err as Error).message}`;
     }
+
+    const condition = result.condition!;
+
+    // Build response
+    const lines = [
+      `Compiled '${skillName}' (v${condition.version}):`,
+      ``,
+      `When: ${skill.when}`,
+      `Trigger: ${condition.trigger}`,
+      `Condition: ${condition.condition}`,
+      `Action: ${JSON.stringify(condition.action, null, 2)}`,
+    ];
+
+    // Include validation warnings if any
+    if (result.validation && result.validation.warnings.length > 0) {
+      lines.push('', 'Warnings:');
+      for (const warn of result.validation.warnings) {
+        lines.push(`  - ${warn}`);
+      }
+    }
+
+    if (feedback) {
+      lines.push('', `Refinement reason: ${feedback}`);
+    }
+
+    if (condition.history && condition.history.length > 1) {
+      lines.push('', 'History:');
+      for (const h of condition.history) {
+        lines.push(`  v${h.version}: ${h.condition.slice(0, 50)}${h.condition.length > 50 ? '...' : ''}`);
+        if (h.reason) {
+          lines.push(`    Reason: ${h.reason}`);
+        }
+      }
+    }
+
+    return lines.join('\n');
   },
 };

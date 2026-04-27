@@ -214,10 +214,14 @@ export class Sequence {
         `return ${jsExpr}`
       );
       
-      return fn(
+      const result = fn(
         ctx.has, ctx.hasAny, ctx.hasCommand, ctx.last, ctx.lastError, 
         ctx.count, ctx.since, ctx.sinceEdit
       );
+      
+      // Coerce falsy values to false, truthy to true
+      // This handles undefined, null, 0, '', etc.
+      return Boolean(result);
     } catch (err) {
       // If evaluation fails, return false
       console.error(`[Sequence] Failed to evaluate condition: ${expression}`, err);

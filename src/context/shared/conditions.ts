@@ -3,12 +3,45 @@
  *
  * Manages compiled conditions from natural language "when" fields.
  * Conditions are lazy-compiled via skill_compile tool.
+ *
+ * Safety features:
+ * - Pre-validation before persistence (via ConditionValidator)
+ * - Atomic file writes (temp file + rename)
+ * - Backup of existing conditions.json
  */
 
 import * as fs from 'fs';
 import * as path from 'path';
 import { getMyccDir } from '../../config.js';
 import { Sequence } from './sequence.js';
+import { ollama, MODEL } from '../../ollama.js';
+import { 
+  validateCondition,
+  compileCondition,
+  type ValidationResult 
+} from './condition-validator.js';
+
+/**
+ * JSON schema for condition compilation response
+ */
+const CONDITION_SCHEMA = {
+  type: 'object',
+  properties: {
+    trigger: { type: 'string', description: 'Tool name or * for any tool' },
+    condition: { type: 'string', description: 'Expression using seq.X functions' },
+    action: {
+      type: 'object',
+      properties: {
+        type: { type: 'string', enum: ['inject_before', 'inject_after', 'block', 'replace', 'message'] },
+        tool: { type: 'string' },
+        args: { type: 'object' },
+        reason: { type: 'string' },
+      },
+      required: ['type'],
+    },
+  },
+  required: ['trigger', 'condition', 'action'],
+};
 
 /**
  * Action types for hooks
@@ -64,68 +97,95 @@ export class ConditionRegistry {
 
   /**
    * Load conditions from .mycc/conditions.json
+   * Validates all conditions before loading.
    */
-  async load(): Promise<void> {
+  async load(): Promise<{ errors: string[]; warnings: string[] }> {
+    const errors: string[] = [];
+    const warnings: string[] = [];
+
     if (!fs.existsSync(this.filePath)) {
-      return;
+      return { errors, warnings };
     }
 
+    let content: string;
     try {
-      const content = fs.readFileSync(this.filePath, 'utf-8');
-
-      // Validate JSON syntax before parsing
-      let data: ConditionsFile;
-      try {
-        data = JSON.parse(content);
-      } catch (parseErr) {
-        console.error(`[Conditions] Invalid JSON in conditions.json: ${(parseErr as Error).message}`);
-        console.error('[Conditions] Please fix or delete the file to continue');
-        return;
-      }
-
-      // Pre-flight validation for all conditions
-      for (const [name, cond] of Object.entries(data)) {
-        this.validateCondition(name, cond);
-      }
-
-      for (const [name, cond] of Object.entries(data)) {
-        this.conditions.set(name, cond);
-      }
+      content = fs.readFileSync(this.filePath, 'utf-8');
     } catch (err) {
-      console.error(`[Conditions] Failed to load conditions.json: ${(err as Error).message}`);
+      errors.push(`Failed to read conditions.json: ${(err as Error).message}`);
+      return { errors, warnings };
+    }
+
+    // Validate JSON syntax before parsing
+    let data: ConditionsFile;
+    try {
+      data = JSON.parse(content);
+    } catch (parseErr) {
+      errors.push(`Invalid JSON in conditions.json: ${(parseErr as Error).message}. File backed up.`);
+      // Backup corrupted file
+      this.backupCorruptedFile();
+      return { errors, warnings };
+    }
+
+    // Validate each condition using ConditionValidator
+    for (const [name, cond] of Object.entries(data)) {
+      const result = validateCondition(cond);
+      
+      if (!result.valid) {
+        errors.push(`Condition '${name}' failed validation: ${result.errors.join('; ')}`);
+        // Don't load invalid conditions
+        continue;
+      }
+      
+      // Add warnings
+      for (const warn of result.warnings) {
+        warnings.push(`Condition '${name}': ${warn}`);
+      }
+      
+      // Apply runtime fixes (timeout clamping, etc.)
+      this.applyRuntimeFixes(name, cond);
+      
+      // Load valid condition
+      this.conditions.set(name, cond);
+    }
+
+    return { errors, warnings };
+  }
+
+  /**
+   * Backup a corrupted conditions.json file
+   */
+  private backupCorruptedFile(): void {
+    try {
+      const backupPath = `${this.filePath}.corrupted.${Date.now()}`;
+      fs.renameSync(this.filePath, backupPath);
+      console.error(`[Conditions] Corrupted file backed up to: ${backupPath}`);
+    } catch (err) {
+      console.error(`[Conditions] Failed to backup corrupted file: ${(err as Error).message}`);
     }
   }
 
   /**
-   * Validate and fix a condition
+   * Apply runtime fixes to a condition (timeout clamping, defaults)
    */
-  private validateCondition(name: string, cond: Condition): void {
-    // Validate trigger
-    if (!cond.trigger || cond.trigger === '') {
-      console.warn(`[Conditions] Warning: ${name} has empty trigger, defaulting to '*'`);
-      cond.trigger = '*';
-    }
-
-    // Validate timeout in action args (bash tool accepts 1-30 seconds)
+  private applyRuntimeFixes(_name: string, cond: Condition): void {
+    // Clamp timeout in action args (1-300 seconds)
     if (cond.action && 'args' in cond.action && cond.action.args) {
       const args = cond.action.args as Record<string, unknown>;
       if (typeof args.timeout === 'number') {
-        if (args.timeout < 1 || args.timeout > 30) {
-          console.warn(`[Conditions] Warning: ${name} has invalid timeout ${args.timeout}, clamping to 30`);
-          args.timeout = Math.min(30, Math.max(1, args.timeout));
+        if (args.timeout < 1 || args.timeout > 300) {
+          args.timeout = Math.min(300, Math.max(1, args.timeout));
         }
       }
     }
 
-    // Validate history entries too
+    // Clamp timeout in history entries
     if (cond.history) {
       for (const entry of cond.history) {
         if (entry.action && 'args' in entry.action && entry.action.args) {
           const args = entry.action.args as Record<string, unknown>;
           if (typeof args.timeout === 'number') {
-            if (args.timeout < 1 || args.timeout > 30) {
-              console.warn(`[Conditions] Warning: ${name} history v${entry.version} has invalid timeout ${args.timeout}, clamping to 30`);
-              args.timeout = Math.min(30, Math.max(1, args.timeout));
+            if (args.timeout < 1 || args.timeout > 300) {
+              args.timeout = Math.min(300, Math.max(1, args.timeout));
             }
           }
         }
@@ -133,10 +193,14 @@ export class ConditionRegistry {
     }
   }
 
+
+
   /**
-   * Save conditions to .mycc/conditions.json
+   * Save conditions to .mycc/conditions.json atomically.
+   * Uses temp file + rename to prevent corruption.
+   * Creates backup of existing file before overwriting.
    */
-  async save(): Promise<void> {
+  async save(): Promise<{ success: boolean; error?: string }> {
     const data: ConditionsFile = {};
     
     for (const [name, cond] of this.conditions) {
@@ -148,10 +212,47 @@ export class ConditionRegistry {
       if (!fs.existsSync(dir)) {
         fs.mkdirSync(dir, { recursive: true });
       }
+
+      // Backup existing file if it exists
+      if (fs.existsSync(this.filePath)) {
+        const backupPath = `${this.filePath}.backup`;
+        fs.copyFileSync(this.filePath, backupPath);
+      }
+
+      // Write to temp file in SAME directory (avoids cross-device rename issues)
+      const tempFile = `${this.filePath}.tmp.${Date.now()}`;
       
-      fs.writeFileSync(this.filePath, JSON.stringify(data, null, 2), 'utf-8');
+      const content = JSON.stringify(data, null, 2);
+      fs.writeFileSync(tempFile, content, 'utf-8');
+
+      // Atomic rename (works within same filesystem)
+      fs.renameSync(tempFile, this.filePath);
+
+      return { success: true };
     } catch (err) {
-      console.error(`[Conditions] Failed to save conditions.json: ${(err as Error).message}`);
+      const errorMsg = (err as Error).message;
+      console.error(`[Conditions] Failed to save conditions.json: ${errorMsg}`);
+      return { success: false, error: errorMsg };
+    }
+  }
+
+  /**
+   * Rollback to backup file
+   */
+  rollback(): boolean {
+    const backupPath = `${this.filePath}.backup`;
+    if (!fs.existsSync(backupPath)) {
+      console.error('[Conditions] No backup file to rollback to');
+      return false;
+    }
+
+    try {
+      fs.copyFileSync(backupPath, this.filePath);
+      console.log('[Conditions] Rolled back to backup');
+      return true;
+    } catch (err) {
+      console.error(`[Conditions] Rollback failed: ${(err as Error).message}`);
+      return false;
     }
   }
 
@@ -250,17 +351,20 @@ export class ConditionRegistry {
 
   /**
    * Compile a "when" expression into condition + action
-   * This is called by the skill_compile tool
+   * This is called by the skill_compile tool.
+   * 
+   * Pipeline:
+   * 1. Call Ollama with structured output (JSON schema)
+   * 2. Validate schema and expression
+   * 3. Smoke test the expression
+   * 4. Only persist if all checks pass
    */
   async compile(
     when: string,
     skillName: string,
     skillContent: string,
     existing?: Condition
-  ): Promise<Condition> {
-    // Import ollama dynamically to avoid circular dependency
-    const { retryChat, MODEL } = await import('../../ollama.js');
-    
+  ): Promise<{ condition?: Condition; validation?: ValidationResult; error?: string }> {
     const existingInfo = existing
       ? `Current version ${existing.version}:
 Condition: ${existing.condition}
@@ -287,69 +391,77 @@ Available condition functions (use seq.X syntax):
 - seq.sinceEdit(): Events after last file edit
 
 Available action types:
-- inject_before: Insert tool call BEFORE trigger
-- inject_after: Insert tool call AFTER trigger
-- block: Block the trigger tool
-- replace: Replace trigger with different tool
+- inject_before: Insert tool call BEFORE trigger (requires tool and args)
+- inject_after: Insert tool call AFTER trigger (requires tool and args)
+- block: Block the trigger tool (optional reason)
+- replace: Replace trigger with different tool (requires tool and args)
 - message: Just inject a message (weak, use for reminders)
-
-Respond in JSON format only:
-{
-  "trigger": "tool_name or *",
-  "condition": "expression using seq.X functions",
-  "action": { "type": "...", ... }
-}
 
 Examples:
 - "run lint before commit if files changed": { "trigger": "git_commit", "condition": "seq.hasAny(['edit_file', 'write_file']) && !seq.hasCommand('bash#lint')", "action": { "type": "inject_before", "tool": "bash", "args": { "command": "pnpm lint", "intent": "pre-commit lint", "timeout": 60 } } }
 - "search wiki on errors": { "trigger": "*", "condition": "seq.lastError() && !seq.has('wiki_get')", "action": { "type": "inject_before", "tool": "wiki_get", "args": { "query": "error", "domain": "pitfall" } } }
 - "block force push to main": { "trigger": "bash", "condition": "seq.last().args.command.includes('git push --force') && seq.last().args.command.includes('main')", "action": { "type": "block", "reason": "Force push to main is prohibited" } }
 
-Only output the JSON, no explanation.`;
+Output a JSON object with trigger, condition, and action.`;
 
     try {
-      const response = await retryChat({
+      // Use Ollama with structured output (JSON schema enforcement)
+      const response = await ollama.chat({
         model: MODEL,
-        messages: [{ role: 'user', content: prompt }]
+        messages: [{ role: 'user', content: prompt }],
+        format: CONDITION_SCHEMA,
+        options: { temperature: 0 },
       });
 
       const content = response.message.content || '';
       
-      // Extract JSON from response
-      const jsonMatch = content.match(/\{[\s\S]*\}/);
-      if (!jsonMatch) {
-        throw new Error('No JSON found in response');
+      // Use the validation pipeline
+      const existingVersion = existing?.version || 0;
+      const result = await compileCondition(content, when, skillName, existingVersion);
+      
+      if (!result.success || !result.condition) {
+        return {
+          validation: result.validation,
+          error: result.error || 'Compilation failed',
+        };
+      }
+
+      // Merge history if existing
+      const condition = result.condition;
+      if (existing?.history && existing.history.length > 0) {
+        condition.history = [...existing.history, ...(condition.history || [])];
+      }
+
+      // Apply runtime fixes
+      this.applyRuntimeFixes(skillName, condition);
+      
+      // Store in memory
+      this.set(skillName, condition);
+      
+      // Persist atomically
+      const saveResult = await this.save();
+      if (!saveResult.success) {
+        // Rollback memory state
+        if (existing) {
+          this.conditions.set(skillName, existing);
+        } else {
+          this.conditions.delete(skillName);
+        }
+        return {
+          condition,
+          validation: result.validation,
+          error: `Failed to save: ${saveResult.error}`,
+        };
       }
       
-      const parsed = JSON.parse(jsonMatch[0]);
-      
-      // Build condition with history
-      const newVersion = (existing?.version || 0) + 1;
-      const condition: Condition = {
-        trigger: parsed.trigger || '*',
-        when,
-        condition: parsed.condition || 'true',
-        action: parsed.action || { type: 'message' },
-        version: newVersion,
-        history: [
-          ...(existing?.history || []),
-          {
-            version: newVersion,
-            condition: parsed.condition || 'true',
-            action: parsed.action || { type: 'message' },
-            reason: existing ? 'refined via skill_compile' : 'initial compilation'
-          }
-        ]
+      return { 
+        condition,
+        validation: result.validation,
       };
-      
-      // Store and persist
-      this.set(skillName, condition);
-      await this.save();
-      
-      return condition;
     } catch (err) {
-      console.error(`[Conditions] Failed to compile: ${(err as Error).message}`);
-      throw err;
+      const errorMsg = (err as Error).message;
+      console.error(`[Conditions] Failed to compile: ${errorMsg}`);
+      return { error: errorMsg };
     }
   }
 
@@ -360,10 +472,10 @@ Only output the JSON, no explanation.`;
     skillName: string,
     feedback: string,
     _seq: Sequence
-  ): Promise<Condition> {
+  ): Promise<{ condition?: Condition; validation?: ValidationResult; error?: string }> {
     const existing = this.conditions.get(skillName);
     if (!existing) {
-      throw new Error(`Condition '${skillName}' not found`);
+      return { error: `Condition '${skillName}' not found` };
     }
     
     // Get skill content from loader (will be passed in)
