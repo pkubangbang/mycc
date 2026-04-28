@@ -481,7 +481,7 @@ export class LineEditor {
     this.content = [...chars, CURSOR];
     this.checkPromptChange();
     this.lineInfo = this.computeLineInfo();
-    this.moveEnd();
+    this.render();
   }
 
   // === Key Handler ===

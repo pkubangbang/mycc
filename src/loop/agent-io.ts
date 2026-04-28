@@ -79,7 +79,8 @@ class AgentIO {
 
   // LineEditor management
   private activeLineEditor: LineEditor | null = null;
-  private lineHistory: string[] = [];
+  // Default history with common slash commands for easy access
+  private lineHistory: string[] = ['/help', '/load'];
 
   // Buffer for output during user interaction (prompt displayed or wrapping up)
   private outputBuffer: Array<{
