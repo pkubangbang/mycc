@@ -5,7 +5,7 @@
  * Events are added when tools are executed in the agent loop.
  */
 
-import type { Triologue } from '../../loop/triologue.js';
+import type { Triologue } from '../loop/triologue.js';
 
 /**
  * A single event in the sequence

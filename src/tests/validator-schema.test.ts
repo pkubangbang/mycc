@@ -3,8 +3,8 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { validateSchema, validateAction } from '../context/shared/condition-validator.js';
-import type { Condition } from '../context/shared/conditions.js';
+import { validateSchema, validateAction } from '../hook/condition-validator.js';
+import type { Condition } from '../hook/conditions.js';
 
 describe('validateSchema()', () => {
   describe('valid conditions', () => {

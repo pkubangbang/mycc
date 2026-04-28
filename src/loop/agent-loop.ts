@@ -3,7 +3,6 @@
  */
 
 import chalk from 'chalk';
-import * as fs from 'fs';
 import { retryChat, MODEL } from '../ollama.js';
 import type { AgentContext, ToolScope, ToolCall } from '../types.js';
 import { ResultTooLargeError } from '../types.js';
@@ -12,76 +11,10 @@ import { Triologue } from './triologue.js';
 import { agentIO } from './agent-io.js';
 import { isVerbose } from '../config.js';
 import { loader } from '../context/shared/loader.js';
-import { Sequence } from '../context/shared/sequence.js';
-import { ConditionRegistry } from '../context/shared/conditions.js';
-import { HookExecutor, type AugmentedToolCall } from '../context/shared/hooks.js';
-
-/**
- * Check if a bash command is destructive
- */
-function isDestructiveCommand(command: string): boolean {
-  const destructivePatterns = [
-    /rm\s+-rf/,
-    /rm\s+-r/,
-    /git\s+push\s+--force/,
-    /git\s+push\s+-f\s+/,
-    /git\s+reset\s+--hard/,
-    /drop\s+database/i,
-    /truncate\s+table/i,
-    /delete\s+from/i,
-    /\bsudo\s+rm\b/,
-    />\s*\/dev\/(sda|hda|nvme)/,
-  ];
-  return destructivePatterns.some(p => p.test(command));
-}
-
-/**
- * Augment a single tool call with metadata
- */
-function augmentCall(call: ToolCall, _ctx: AgentContext): AugmentedToolCall {
-  const args = call.function.arguments as Record<string, unknown>;
-  const metadata: AugmentedToolCall['metadata'] = {};
-
-  switch (call.function.name) {
-    case 'write_file':
-    case 'edit_file': {
-      metadata.filePath = args.file_path as string;
-      metadata.isTestFile = metadata.filePath?.includes('.test.') || metadata.filePath?.includes('.spec.');
-      if (args.content && typeof args.content === 'string') {
-        metadata.newLoc = args.content.split('\n').length;
-      }
-      // Check existing file LOC
-      if (metadata.filePath && fs.existsSync(metadata.filePath)) {
-        try {
-          const existing = fs.readFileSync(metadata.filePath, 'utf-8');
-          metadata.existingLoc = existing.split('\n').length;
-        } catch {
-          // Ignore read errors
-        }
-      }
-      break;
-    }
-
-    case 'bash': {
-      if (args.command && typeof args.command === 'string') {
-        metadata.isDestructive = isDestructiveCommand(args.command);
-      }
-      break;
-    }
-  }
-
-  return { ...call, metadata };
-}
-
-/**
- * Augment an array of tool calls with metadata for hook evaluation
- */
-async function augmentToolCalls(
-  calls: ToolCall[],
-  ctx: AgentContext
-): Promise<AugmentedToolCall[]> {
-  return calls.map(call => augmentCall(call, ctx));
-}
+import { Sequence } from '../hook/sequence.js';
+import { ConditionRegistry } from '../hook/conditions.js';
+import { HookExecutor, type AugmentedToolCall } from '../hook/hook-executor.js';
+import { augmentToolCalls } from '../hook/hook-preprocessor.js';
 
 /**
  * Custom error for graceful shutdown
@@ -200,64 +133,39 @@ export async function agentLoop(
           continue;
         }
 
-        // 5. Handle response
+        // 5. Get response and process hooks first (before registering with triologue)
         const assistantMessage = response.message;
-        triologue.agent(assistantMessage.content || '', assistantMessage.tool_calls as ToolCall[] | undefined);
+        const rawToolCalls = assistantMessage.tool_calls ? [...(assistantMessage.tool_calls as ToolCall[])] : [];
+        
+        // Augment tool calls with metadata
+        const augmentedCalls = augmentToolCalls(rawToolCalls);
 
-        // 6. No tool calls = wrap-up complete or check team status
-        if (!assistantMessage.tool_calls || assistantMessage.tool_calls.length === 0) {
-          // 6.1 Check stop hooks (LLM is about to stop)
-          const stopResult = await hookExecutor.processToolCalls(
-            [],  // Empty array - no pending calls
-            ctx,
-            ctx.skill.getSkill.bind(ctx.skill)
-          );
+        // Process hooks (pluggable: empty array = stop trigger, non-empty = tool triggers)
+        const hookResult = await hookExecutor.processToolCalls(
+          augmentedCalls,
+          ctx,
+          ctx.skill.getSkill.bind(ctx.skill)
+        );
 
-          if (stopResult.calls.length > 0) {
-            // Register and execute injected calls
-            for (const call of stopResult.calls) {
-              triologue.registerToolCall(call);
-            }
+        // 6. Register agent response with triologue (using manipulated tool calls)
+        const finalToolCalls = hookResult.calls.length > 0 
+          ? hookResult.calls.map(c => ({
+              id: c.id,
+              function: c.function,
+            }))
+          : undefined;
+        triologue.agent(assistantMessage.content || '', finalToolCalls);
 
-            for (const toolCall of stopResult.calls) {
-              const toolName = toolCall.function.name;
-              try {
-                const output = await loader.execute(toolName, ctx, toolCall.function.arguments as Record<string, unknown>);
-
-                // Add to sequence for hook evaluation
-                sequence.add({
-                  tool: toolName,
-                  args: toolCall.function.arguments as Record<string, unknown>,
-                  result: output,
-                  timestamp: Date.now(),
-                });
-
-                triologue.tool(toolName, output, toolCall.id);
-                triologue.onToolResult(toolName, toolCall.function.arguments as Record<string, unknown>, output);
-
-                if (isVerbose()) {
-                  agentIO.log(chalk.cyan(`[hook] stop hook executed ${toolName}: ${output.slice(0, 100)}...`));
-                }
-              } catch (err) {
-                const errorMsg = err instanceof Error ? err.message : String(err);
-                triologue.tool(toolName, `Error: ${errorMsg}`, toolCall.id);
-                agentIO.log(chalk.red(`[hook] stop hook failed to execute ${toolName}: ${errorMsg}`));
-              }
-            }
-
-            // Inject deferred messages
-            if (stopResult.deferredMessages.length > 0) {
-              triologue.user(stopResult.deferredMessages.join('\n\n---\n\n'));
-            }
-
-            continue;  // Let LLM summarize
+        // Handle blocked calls: register rejection in triologue
+        if (hookResult.blockedCalls.size > 0) {
+          for (const [callId, blockMessage] of hookResult.blockedCalls) {
+            triologue.tool(hookResult.calls.find(c => c.id === callId)?.function.name || 'unknown', blockMessage, callId);
+            agentIO.log(chalk.yellow(`[hook] blocked: ${blockMessage}`));
           }
+        }
 
-          // Inject deferred messages from non-blocking hooks
-          if (stopResult.deferredMessages.length > 0) {
-            triologue.user(stopResult.deferredMessages.join('\n\n---\n\n'));
-          }
-
+        // No tool calls = stop trigger (wrap-up or continue based on context)
+        if (hookResult.calls.length === 0) {
           // Clear interrupted mode after wrap-up response (no tools = wrap-up complete)
           if (agentIO.isNeglectedMode()) {
             agentIO.setNeglectedMode(false);  // Clear FIRST - so isInteractionMode() returns false
@@ -300,26 +208,7 @@ export async function agentLoop(
         // from the second round, mute all LLM's responses.
         isFirstRound = false;
 
-        // 7. Augment tool calls with metadata
-        const rawToolCalls = [...(assistantMessage.tool_calls as ToolCall[])];
-        const augmentedCalls = await augmentToolCalls(rawToolCalls, ctx);
-
-        // 8. Process hooks against augmented tool call array
-        const hookResult = await hookExecutor.processToolCalls(
-          augmentedCalls,
-          ctx,
-          ctx.skill.getSkill.bind(ctx.skill)
-        );
-
-        // Register injected calls for triologue parity
-        for (const call of hookResult.calls) {
-          if (call.id.startsWith('hook-')) {
-            triologue.registerToolCall(call);
-          }
-        }
-
-        // 9. Execute each tool call (blocked calls return rejection message)
-        let deferredMessagesInjected = false;
+        // 7. Execute each tool call (blocked calls return rejection message)
         for (const toolCall of hookResult.calls) {
           // Check for ESC - abort current tool and skip remaining
           if (agentIO.isNeglectedMode()) {
@@ -370,12 +259,6 @@ export async function agentLoop(
 
             triologue.tool(toolName, output, toolCallId);
             triologue.onToolResult(toolName, toolCall.function.arguments as Record<string, unknown>, output);
-
-            // Inject deferred messages after first tool result (only once)
-            if (!deferredMessagesInjected && hookResult.deferredMessages.length > 0) {
-              triologue.user(hookResult.deferredMessages.join('\n\n---\n\n'));
-              deferredMessagesInjected = true;
-            }
           } catch (err) {
             if (err instanceof ResultTooLargeError) {
               const truncatedOutput = `[Result too large: ${err.size} chars]\n` +
@@ -385,15 +268,15 @@ export async function agentLoop(
 
               triologue.tool(toolName, truncatedOutput, toolCallId);
               triologue.onToolResult(toolName, toolCall.function.arguments as Record<string, unknown>, truncatedOutput);
-
-              if (!deferredMessagesInjected && hookResult.deferredMessages.length > 0) {
-                triologue.user(hookResult.deferredMessages.join('\n\n---\n\n'));
-                deferredMessagesInjected = true;
-              }
             } else {
               throw err;
             }
-          }
+          } // end of single tool execution
+        } // end of tool execution for-loop
+
+        // Inject deferred messages after successful tool execution, so LLM sees them next iteration
+        if (hookResult.deferredMessages.length > 0) {
+          triologue.user(hookResult.deferredMessages.join('\n\n---\n\n'));
         }
       } catch (err) {
         // Always clear abort controller

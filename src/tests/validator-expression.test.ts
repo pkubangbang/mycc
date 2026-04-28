@@ -8,8 +8,8 @@ import {
   testCondition,
   smokeTestExpression,
   createMockSequence,
-} from '../context/shared/condition-validator.js';
-import type { TestableSequence } from '../context/shared/condition-validator.js';
+} from '../hook/condition-validator.js';
+import type { TestableSequence } from '../hook/condition-validator.js';
 
 describe('validateExpression()', () => {
   describe('valid expressions', () => {

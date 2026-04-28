@@ -9,8 +9,8 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { ConditionRegistry, type Condition, type HookAction } from '../context/shared/conditions.js';
-import { Sequence } from '../context/shared/sequence.js';
+import { ConditionRegistry, type Condition, type HookAction } from '../hook/conditions.js';
+import { Sequence } from '../hook/sequence.js';
 import * as fs from 'fs';
 import * as path from 'path';
 

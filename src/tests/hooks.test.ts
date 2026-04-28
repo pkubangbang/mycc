@@ -9,9 +9,9 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { HookExecutor, createToolCall } from '../context/shared/hooks.js';
-import { ConditionRegistry, type Condition, type HookAction } from '../context/shared/conditions.js';
-import { Sequence } from '../context/shared/sequence.js';
+import { HookExecutor, createToolCall } from '../hook/hook-executor.js';
+import { ConditionRegistry, type Condition, type HookAction } from '../hook/conditions.js';
+import { Sequence } from '../hook/sequence.js';
 import type { ToolCall, AgentContext, CoreModule } from '../types.js';
 
 // ============================================================================

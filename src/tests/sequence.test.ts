@@ -8,7 +8,7 @@
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
-import { Sequence, type SequenceEvent } from '../context/shared/sequence.js';
+import { Sequence, type SequenceEvent } from '../hook/sequence.js';
 
 // ============================================================================
 // Sequence Basic Operations

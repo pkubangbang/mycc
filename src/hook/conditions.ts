@@ -12,9 +12,9 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { getMyccDir } from '../../config.js';
+import { getMyccDir } from '../config.js';
 import { Sequence } from './sequence.js';
-import { ollama, MODEL } from '../../ollama.js';
+import { ollama, MODEL } from '../ollama.js';
 import { 
   validateCondition,
   compileCondition,
@@ -67,11 +67,12 @@ export interface ConditionHistory {
  * Compiled condition
  */
 export interface Condition {
-  trigger: string;      // Tool name or '*' for any
+  trigger: string;      // Tool name or '*' for any, or 'stop' for no tool calls
   when: string;         // Original natural language
   condition: string;    // Compiled expression
   action: HookAction;
   version: number;
+  sourceFile?: string;  // Source skill file path (relative to skills dir)
   history?: ConditionHistory[];
 }
 
@@ -98,6 +99,7 @@ export class ConditionRegistry {
   /**
    * Load conditions from .mycc/conditions.json
    * Validates all conditions before loading.
+   * Removes orphaned conditions (source file no longer exists).
    */
   async load(): Promise<{ errors: string[]; warnings: string[] }> {
     const errors: string[] = [];
@@ -126,6 +128,9 @@ export class ConditionRegistry {
       return { errors, warnings };
     }
 
+    const orphanedConditions: string[] = [];
+    const myccDir = getMyccDir();
+
     // Validate each condition using ConditionValidator
     for (const [name, cond] of Object.entries(data)) {
       const result = validateCondition(cond);
@@ -134,6 +139,16 @@ export class ConditionRegistry {
         errors.push(`Condition '${name}' failed validation: ${result.errors.join('; ')}`);
         // Don't load invalid conditions
         continue;
+      }
+      
+      // Check for orphaned conditions (source file no longer exists)
+      if (cond.sourceFile) {
+        const sourcePath = path.join(myccDir, cond.sourceFile);
+        if (!fs.existsSync(sourcePath)) {
+          orphanedConditions.push(name);
+          warnings.push(`Condition '${name}' is orphaned (source file not found: ${cond.sourceFile})`);
+          continue; // Don't load orphaned conditions
+        }
       }
       
       // Add warnings
@@ -146,6 +161,16 @@ export class ConditionRegistry {
       
       // Load valid condition
       this.conditions.set(name, cond);
+    }
+
+    // Clean up orphaned conditions if any were found
+    if (orphanedConditions.length > 0) {
+      const saveResult = await this.save();
+      if (!saveResult.success) {
+        warnings.push(`Failed to remove orphaned conditions: ${saveResult.error}`);
+      } else {
+        warnings.push(`Removed ${orphanedConditions.length} orphaned condition(s): ${orphanedConditions.join(', ')}`);
+      }
     }
 
     return { errors, warnings };
@@ -358,12 +383,19 @@ export class ConditionRegistry {
    * 2. Validate schema and expression
    * 3. Smoke test the expression
    * 4. Only persist if all checks pass
+   * 
+   * @param when Natural language "when" expression
+   * @param skillName Name of the skill
+   * @param skillContent Content of the skill file
+   * @param existing Existing condition (for refinement)
+   * @param sourceFile Optional source file path (relative to .mycc dir)
    */
   async compile(
     when: string,
     skillName: string,
     skillContent: string,
-    existing?: Condition
+    existing?: Condition,
+    sourceFile?: string
   ): Promise<{ condition?: Condition; validation?: ValidationResult; error?: string }> {
     const existingInfo = existing
       ? `Current version ${existing.version}:
@@ -440,6 +472,11 @@ Output a JSON object with trigger, condition, and action.`;
       const condition = result.condition;
       if (existing?.history && existing.history.length > 0) {
         condition.history = [...existing.history, ...(condition.history || [])];
+      }
+
+      // Store source file path if provided
+      if (sourceFile) {
+        condition.sourceFile = sourceFile;
       }
 
       // Apply runtime fixes

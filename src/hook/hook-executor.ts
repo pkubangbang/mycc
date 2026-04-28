@@ -5,8 +5,8 @@
  * with timeout support and duplicate prevention.
  */
 
-import type { ToolCall } from '../../types.js';
-import type { AgentContext } from '../../types.js';
+import type { ToolCall } from '../types.js';
+import type { AgentContext } from '../types.js';
 import type { HookAction, ConditionRegistry, Condition } from './conditions.js';
 import type { Sequence } from './sequence.js';
 
@@ -244,6 +244,10 @@ export class HookExecutor {
    * Takes the entire delta (array of tool calls with metadata) and returns a modified delta.
    * Handles all hook actions: block, replace, inject_before, inject_after, message.
    *
+   * This is a pluggable hook system that manipulates tool calls transparently.
+   * - Empty calls array → process 'stop' trigger hooks
+   * - Non-empty calls array → process tool-specific hooks
+   *
    * Conditions can reference:
    * - seq.* methods for history
    * - call.metadata.* for current call's metadata
@@ -256,11 +260,22 @@ export class HookExecutor {
     getSkill: (name: string) => { content?: string } | undefined
   ): Promise<ProcessToolCallsResult> {
     const result: ProcessToolCallsResult = {
-      calls: [],              // All calls including blocked ones
-      blockedCalls: new Map(), // Blocked call IDs → rejection message
+      calls: [],
+      blockedCalls: new Map(),
       deferredMessages: [],
     };
 
+    // Handle stop trigger (empty calls array)
+    if (calls.length === 0) {
+      const stopResult = await this.processStopTrigger(ctx, getSkill);
+      result.calls.push(...stopResult.calls);
+      result.deferredMessages.push(...stopResult.messages);
+      // Note: stop triggers never set blockedCalls - blocking stop doesn't make sense
+      // If a stop hook wants to prevent stopping, it should inject a tool call or message
+      return result;
+    }
+
+    // Process each tool call
     for (const call of calls) {
       const processResult = await this.processSingleCall(call, ctx, getSkill);
 
@@ -276,6 +291,97 @@ export class HookExecutor {
     }
 
     return result;
+  }
+
+  /**
+   * Process hooks for stop trigger (no tool calls).
+   * 
+   * Note: 'block' action on stop trigger is treated as 'message' since blocking
+   * a stop doesn't make semantic sense. To prevent stopping, use inject_before/after
+   * to add tool calls, or use 'message' to provide guidance.
+   */
+  private async processStopTrigger(
+    ctx: AgentContext,
+    getSkill: (name: string) => { content?: string } | undefined
+  ): Promise<{ calls: AugmentedToolCall[]; messages: string[] }> {
+    const matchedHooks = this.checkHooks('stop');
+
+    if (matchedHooks.length === 0) {
+      return { calls: [], messages: [] };
+    }
+
+    // Group hooks by priority
+    const hooksByPriority = this.groupHooksByPriority(matchedHooks);
+    const sortedPriorities = Array.from(hooksByPriority.keys()).sort((a, b) => a - b);
+
+    const calls: AugmentedToolCall[] = [];
+    const messages: string[] = [];
+
+    for (const priority of sortedPriorities) {
+      for (const { name: hookName, cond } of hooksByPriority.get(priority)!) {
+        const skill = getSkill(hookName);
+        if (!skill) continue;
+
+        // Evaluate condition (stop triggers don't have call context, just sequence)
+        if (!this.evaluateConditionForStop(cond.condition)) {
+          continue;  // Condition doesn't match
+        }
+
+        const result = await this.execute(hookName, cond.action, ctx, [], skill.content || '');
+
+        if (result.action === 'blocked') {
+          // Blocking a stop trigger doesn't make sense - treat as message instead
+          // This provides guidance to the agent about what to do instead
+          messages.push(result.message!);
+          continue;
+        }
+
+        if (result.action === 'injected' && result.newCalls) {
+          // Convert to augmented calls
+          for (const call of result.newCalls) {
+            calls.push({
+              ...call,
+              metadata: {},
+            });
+          }
+          // For blockers/replacers, return immediately (first wins)
+          if (priority < 2) {
+            return { calls, messages };
+          }
+        }
+
+        if (result.action === 'proceed' && result.message) {
+          messages.push(result.message);
+        }
+      }
+    }
+
+    return { calls, messages };
+  }
+
+  /**
+   * Evaluate condition for stop trigger (no call context, just sequence)
+   */
+  private evaluateConditionForStop(condition: string): boolean {
+    try {
+      const seq = this.sequence;
+      const expr = condition
+        .replace(/seq\.has\(/g, 'seq.has(')
+        .replace(/seq\.hasAny\(/g, 'seq.hasAny(')
+        .replace(/seq\.hasCommand\(/g, 'seq.hasCommand(')
+        .replace(/seq\.last\(/g, 'seq.last(')
+        .replace(/seq\.lastError\(/g, 'seq.lastError(')
+        .replace(/seq\.count\(/g, 'seq.count(')
+        .replace(/seq\.since\(/g, 'seq.since(')
+        .replace(/seq\.sinceEdit\(/g, 'seq.sinceEdit(');
+
+      // For stop triggers, we only have sequence context (no call)
+      // So we evaluate without call metadata
+      const fn = new Function('seq', `return ${expr}`);
+      return fn(seq);
+    } catch {
+      return false;
+    }
   }
 
   /**

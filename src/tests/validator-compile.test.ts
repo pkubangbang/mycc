@@ -3,8 +3,8 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { compileCondition, ConditionValidator } from '../context/shared/condition-validator.js';
-import type { Condition } from '../context/shared/conditions.js';
+import { compileCondition, ConditionValidator } from '../hook/condition-validator.js';
+import type { Condition } from '../hook/conditions.js';
 
 describe('compileCondition()', () => {
   describe('success cases', () => {

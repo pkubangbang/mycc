@@ -8,7 +8,7 @@
  */
 
 import type { ToolDefinition, AgentContext } from '../types.js';
-import { ConditionRegistry } from '../context/shared/conditions.js';
+import { ConditionRegistry } from '../hook/conditions.js';
 
 export const skillCompileTool: ToolDefinition = {
   name: 'skill_compile',
