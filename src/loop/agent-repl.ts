@@ -259,13 +259,53 @@ export async function main(): Promise<void> {
         }
       }
 
-      // Run agent loop
-      await agentLoop(triologue, ctx);
+      // Run agent loop - retry on transient errors (user message already in triologue)
+      while (true) {
+        try {
+          await agentLoop(triologue, ctx);
 
-      // Print final response in letter-style box
-      const lastMsg = triologue.getMessagesRaw().at(-1);
-      if (lastMsg?.content) {
-        displayLetterBox(lastMsg.content);
+          // Print final response in letter-style box
+          const lastMsg = triologue.getMessagesRaw().at(-1);
+          if (lastMsg?.content) {
+            displayLetterBox(lastMsg.content);
+          }
+
+          break; // Success - exit retry loop
+        } catch (err) {
+          // Shutdown - propagate to outer catch
+          if (err instanceof ShutdownError) {
+            throw err;
+          }
+
+          // Readline closed - propagate to outer catch
+          if (err instanceof Error && err.message === 'readline was closed') {
+            throw err;
+          }
+
+          // Only transient errors prompt for retry
+          const errorType = classifyError(err);
+          const errorMessage = err instanceof Error ? err.message : String(err);
+
+          if (errorType !== 'transient') {
+            // Non-transient error - propagate to outer catch for display and exit
+            throw err;
+          }
+
+          // Transient/network error - prompt for retry
+          console.error();
+          console.error(chalk.red(`Network error: ${errorMessage}`));
+          console.log(chalk.gray('─'.repeat(40)));
+          const answer = await agentIO.ask(chalk.cyan('Retry? [Y/n] > '));
+
+          if (answer.toLowerCase() === 'n' || answer.toLowerCase() === 'no') {
+            console.log(chalk.yellow('Exiting at user request.'));
+            throw err; // Propagate to outer catch for exit
+          }
+
+          // User wants to retry - stay in this inner loop
+          console.log(chalk.cyan('Retrying...'));
+          continue;
+        }
       }
     } catch (err) {
       // Shutdown - exit cleanly (only Ctrl+C triggers this)
@@ -278,36 +318,22 @@ export async function main(): Promise<void> {
         break;
       }
 
-      // All other errors - prompt user for retry instead of exiting
-      const errorMessage = err instanceof Error ? err.message : String(err);
+      // Display error and exit
       const errorType = classifyError(err);
+      const errorMessage = err instanceof Error ? err.message : String(err);
 
       console.error();
       console.error(chalk.red(`Error: ${errorMessage}`));
 
-      // Show helpful instructions based on error type
       if (errorType === 'auth') {
         console.error(chalk.yellow('Check OLLAMA_API_KEY in ~/.mycc-store/.env file.'));
       } else if (errorType === 'model') {
         console.error(chalk.yellow(`Check OLLAMA_MODEL in ~/.mycc-store/.env file. Current: ${MODEL}`));
       } else if (errorType === 'config') {
         console.error(chalk.yellow('Check TOKEN_THRESHOLD in ~/.mycc-store/.env file.'));
-      } else if (errorType === 'transient') {
-        console.error(chalk.yellow('This appears to be a network/transient error.'));
       }
 
-      // Prompt user for action
-      console.log(chalk.gray('─'.repeat(40)));
-      const answer = await agentIO.ask(chalk.cyan('Retry? [Y/n] > '));
-
-      if (answer.toLowerCase() === 'n' || answer.toLowerCase() === 'no') {
-        console.log(chalk.yellow('Exiting at user request.'));
-        break;
-      }
-
-      // User wants to retry - continue the loop
-      console.log(chalk.cyan('Retrying...'));
-      continue;
+      break;
     }
   }
 
