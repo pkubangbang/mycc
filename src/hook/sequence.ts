@@ -6,6 +6,7 @@
  */
 
 import type { Triologue } from '../loop/triologue.js';
+import { evaluateExpression, type EvalContext } from './evaluator.js';
 
 /**
  * A single event in the sequence
@@ -181,10 +182,11 @@ export class Sequence {
   /**
    * Evaluate a condition expression against the sequence
    * Supports simple DSL: seq.has('tool'), seq.hasAny(['a','b']), etc.
+   * Uses jsep AST parsing for safe evaluation (no Function constructor).
    */
   evaluate(expression: string): boolean {
-    // Create a safe evaluation context
-    const ctx = {
+    // Create evaluation context
+    const ctx: EvalContext = {
       has: (tool: string) => this.has(tool),
       hasAny: (tools: string[]) => this.hasAny(tools),
       hasCommand: (pattern: string) => this.hasCommand(pattern),
@@ -195,37 +197,6 @@ export class Sequence {
       sinceEdit: () => this.sinceEdit(),
     };
 
-    try {
-      // Simple expression evaluation
-      // Replace seq.X with ctx.X
-      const jsExpr = expression
-        .replace(/seq\.has\(/g, 'has(')
-        .replace(/seq\.hasAny\(/g, 'hasAny(')
-        .replace(/seq\.hasCommand\(/g, 'hasCommand(')
-        .replace(/seq\.last\(/g, 'last(')
-        .replace(/seq\.lastError\(/g, 'lastError(')
-        .replace(/seq\.count\(/g, 'count(')
-        .replace(/seq\.since\(/g, 'since(')
-        .replace(/seq\.sinceEdit\(/g, 'sinceEdit(');
-
-      // Use Function constructor for safe evaluation
-      const fn = new Function(
-        'has', 'hasAny', 'hasCommand', 'last', 'lastError', 'count', 'since', 'sinceEdit',
-        `return ${jsExpr}`
-      );
-      
-      const result = fn(
-        ctx.has, ctx.hasAny, ctx.hasCommand, ctx.last, ctx.lastError, 
-        ctx.count, ctx.since, ctx.sinceEdit
-      );
-      
-      // Coerce falsy values to false, truthy to true
-      // This handles undefined, null, 0, '', etc.
-      return Boolean(result);
-    } catch (err) {
-      // If evaluation fails, return false
-      console.error(`[Sequence] Failed to evaluate condition: ${expression}`, err);
-      return false;
-    }
+    return evaluateExpression(expression, ctx);
   }
 }
