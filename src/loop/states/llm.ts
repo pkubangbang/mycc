@@ -4,6 +4,11 @@
  * Builds the system prompt, calls retryChat with internal retry loop,
  * handles abort and transient errors, and stores the response data
  * on PassData for downstream states.
+ *
+ * Quick-return ESC behavior:
+ * - When ESC is pressed during LLM call, start background wrap-up
+ * - Return PROMPT immediately so user sees the prompt ASAP
+ * - Wrap-up continues in background and shows as letter-box above prompt
  */
 
 import chalk from 'chalk';
@@ -13,6 +18,7 @@ import type { ToolCall } from '../../types.js';
 import { retryChat, MODEL } from '../../ollama.js';
 import { buildSystemPrompt } from '../agent-prompts.js';
 import { agentIO } from '../agent-io.js';
+import { startWrapUp } from '../esc-wrap-up.js';
 import { isVerbose } from '../../config.js';
 import { loader } from '../../context/shared/loader.js';
 
@@ -57,8 +63,11 @@ export async function handleLlm(
       // Check if ESC was pressed DURING this LLM call
       if (abortController.signal.aborted) {
         agentIO.log(chalk.yellow('[ESC] LLM response discarded due to interruption'));
-        triologue.user('LLM call interrupted. Please wrap up and ask user for next steps.');
-        return AgentState.COLLECT;
+
+        // Quick-return ESC: start background wrap-up and return PROMPT immediately
+        startWrapUp(triologue);
+
+        return AgentState.PROMPT;
       }
 
       // Store response data on pass for downstream states
@@ -77,8 +86,11 @@ export async function handleLlm(
       // Abort during LLM call
       if (err instanceof Error && err.message === 'Request aborted') {
         agentIO.log(chalk.yellow('[ESC] LLM call interrupted'));
-        triologue.user('LLM call interrupted. Please wrap up and ask user for next steps.');
-        return AgentState.COLLECT;
+
+        // Quick-return ESC: start background wrap-up and return PROMPT immediately
+        startWrapUp(triologue);
+
+        return AgentState.PROMPT;
       }
 
       // For transient errors that exhausted retryChat's internal retries

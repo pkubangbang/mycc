@@ -93,6 +93,14 @@ export class LineEditor {
   private renderQueued = false;
   private static readonly RENDER_THROTTLE_MS = 16;  // ~60fps
 
+  /**
+   * Re-render the prompt (public for external use)
+   * Used by AgentIO to restore prompt after displaying wrap-up letter-box
+   */
+  rerender(): void {
+    this.render();
+  }
+
   // History
   private history: string[] = [];
   private historyIndex = -1;

@@ -41,7 +41,13 @@ export const editTool: ToolDefinition = {
     required: ['path', 'old_text', 'new_text'],
   },
   scope: ['main', 'child', 'bg'],
-  handler: (ctx: AgentContext, args: Record<string, unknown>): string => {
+  handler: async (ctx: AgentContext, args: Record<string, unknown>): Promise<string> => {
+    // Check permission (respects plan mode)
+    const grant = await ctx.core.requestGrant('edit_file', args);
+    if (!grant.approved) {
+      return grant.reason || 'Operation not permitted in current mode';
+    }
+
     const filePath = args.path as string;
     const oldText = args.old_text as string;
     const newText = args.new_text as string;

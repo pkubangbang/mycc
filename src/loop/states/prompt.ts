@@ -11,6 +11,11 @@
  * - Slash command routing (→ SLASH)
  * - Adding query to triologue
  * - Bookmark title capture
+ *
+ * Quick-return ESC behavior:
+ * - Check if wrap-up completed and determine append/discard based on timing
+ * - If user submits after 3s grace period, append wrap-up to triologue
+ * - If user submits before or within grace period, discard wrap-up
  */
 
 import chalk from 'chalk';
@@ -20,6 +25,7 @@ import { loader } from '../../context/shared/loader.js';
 import { openMultilineEditor } from '../../utils/multiline-input.js';
 import { readSession, writeSession } from '../../session/index.js';
 import { setSlashQuery } from './slash.js';
+import { injectWrapUp, shouldAppendWrapUp, clearWrapUp } from '../esc-wrap-up.js';
 
 /** Captured once per machine lifetime */
 let bookmarkCaptured = false;
@@ -98,6 +104,15 @@ export async function handlePrompt(
     return AgentState.SLASH;
   }
 
+  // Quick-return ESC: Handle wrap-up timing logic
+  const wrapUpAction = shouldAppendWrapUp();
+  if (wrapUpAction === 'append') {
+    // User submitted after grace period - inject wrap-up (user + agent messages) to triologue
+    injectWrapUp();
+  }
+
+  clearWrapUp();
+  
   // Add user message to triologue
   triologue.user(query);
   triologue.resetHint();

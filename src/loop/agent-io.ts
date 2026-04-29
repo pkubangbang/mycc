@@ -10,6 +10,7 @@
 import { LineEditor } from '../utils/line-editor.js';
 import type { KeyInfo } from '../utils/key-parser.js';
 import { spawn } from 'child_process';
+import { pollAndDisplayWrapUp, getWrapUpState } from './esc-wrap-up.js';
 
 /**
  * ReplayBuffer - Buffer for collecting stdout/stderr bytes
@@ -108,15 +109,10 @@ class AgentIO {
         // ESC pressed - set neglected mode and abort LLM call if running
         // Only process if not already in neglected mode (avoid duplicate messages)
         if (!this.isNeglectedMode()) {
-          const controller = this.getLlmAbortController();
-          // Log ESC message BEFORE setting neglected mode (so it shows immediately)
-          if (controller) {
-            console.log('\n[ESC] Interrupting LLM call...');
-          } else {
-            console.log('\n[ESC] Interrupt requested - will skip remaining work');
-          }
           // Now set neglected mode (subsequent logs will be buffered)
           this.setNeglectedMode(true);
+          
+          const controller = this.getLlmAbortController();
           if (controller) {
             controller.abort();
           }
@@ -273,6 +269,8 @@ class AgentIO {
    * Only available in main process
    *
    * Creates a LineEditor instance and waits for input via IPC key events
+   * While waiting, polls for wrap-up completion and displays it above the prompt
+   *
    * @param query - The question to display, or the prompt text if useAsPrompt is true
    * @param useAsPrompt - If true, use query as the LineEditor prompt (single line format)
    *                      If false, print query above and use '> ' as prompt (split format)
@@ -299,10 +297,45 @@ class AgentIO {
     }
 
     return new Promise((resolve) => {
+      // Wrap-up polling timer
+      let wrapUpPollTimer: ReturnType<typeof setInterval> | null = null;
+
+      // Poll for wrap-up completion and display it above the prompt
+      const pollWrapUp = () => {
+        if (wrapUpPollTimer) return;
+
+        wrapUpPollTimer = setInterval(() => {
+          const content = pollAndDisplayWrapUp();
+          if (content) {
+            // Stop polling
+            if (wrapUpPollTimer) {
+              clearInterval(wrapUpPollTimer);
+              wrapUpPollTimer = null;
+            }
+            // Re-render prompt after letter-box display
+            if (this.activeLineEditor) {
+              this.activeLineEditor.rerender();
+            }
+          }
+        }, 100);
+      };
+
+      // Start polling if there's a pending wrap-up
+      if (getWrapUpState().promise) {
+        console.log('Mycc is wrapping up...');
+        pollWrapUp();
+      }
+
       this.activeLineEditor = new LineEditor({
         prompt,
         stdout: process.stdout,
         onDone: (value: string) => {
+          // Stop wrap-up polling
+          if (wrapUpPollTimer) {
+            clearInterval(wrapUpPollTimer);
+            wrapUpPollTimer = null;
+          }
+
           // Save history
           this.lineHistory = this.activeLineEditor?.getHistory() || [];
           this.activeLineEditor?.close();
@@ -315,6 +348,12 @@ class AgentIO {
         },
         history: this.lineHistory,
       });
+
+      // Check if wrap-up already completed while LineEditor was starting
+      const content = pollAndDisplayWrapUp();
+      if (content) {
+        this.activeLineEditor.rerender();
+      }
     });
   }
 

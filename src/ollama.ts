@@ -391,14 +391,17 @@ function stopSpinner(): void {
  */
 export async function retryChat(
   request: Omit<ChatRequest, 'stream'> & { stream?: false },
-  config?: Partial<RetryConfig> & { signal?: AbortSignal; neglected?: boolean }
+  config?: Partial<RetryConfig> & { signal?: AbortSignal; neglected?: boolean; noSpinner?: boolean }
 ): Promise<ChatResponse> {
   const cfg = { ...DEFAULT_RETRY_CONFIG, ...config };
   const signal = config?.signal;
   const neglected = config?.neglected ?? false;
+  const noSpinner = config?.noSpinner ?? false;
   let lastError: Error | null = null;
 
-  startSpinner(neglected ? NEGLECTED_SPINNER_TEXT : 'Thinking');
+  if (!noSpinner) {
+    startSpinner(neglected ? NEGLECTED_SPINNER_TEXT : 'Thinking');
+  }
 
   // Verbose: Log request
   if (isVerbose()) {

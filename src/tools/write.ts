@@ -37,7 +37,13 @@ export const writeTool: ToolDefinition = {
     required: ['path', 'content'],
   },
   scope: ['main', 'child', 'bg'],
-  handler: (ctx: AgentContext, args: Record<string, unknown>): string => {
+  handler: async (ctx: AgentContext, args: Record<string, unknown>): Promise<string> => {
+    // Check permission (respects plan mode)
+    const grant = await ctx.core.requestGrant('write_file', args);
+    if (!grant.approved) {
+      return grant.reason || 'Operation not permitted in current mode';
+    }
+
     const filePath = args.path as string;
     const content = args.content as string;
 

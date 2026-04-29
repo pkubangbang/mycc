@@ -334,7 +334,7 @@ export class Core implements CoreModule {
     if (this.modeState === 'plan') {
       return {
         approved: false,
-        reason: 'Code changes are prohibited in plan mode. Use /mode normal to enable modifications.',
+        reason: 'Error: Code changes are prohibited in plan mode.',
       };
     }
     return { approved: true };
