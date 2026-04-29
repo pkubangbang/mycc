@@ -56,6 +56,8 @@ import { orderTool } from '../../tools/order.js';
 import { handOverTool } from '../../tools/hand_over.js';
 import { gitCommitTool } from '../../tools/git_commit.js';
 import { skillCompileTool } from '../../tools/skill_compile.js';
+import { planOnTool } from '../../tools/plan_on.js';
+import { planOffTool } from '../../tools/plan_off.js';
 
 /**
  * Built-in tools
@@ -103,6 +105,8 @@ const builtInTools: ToolDefinition[] = [
   handOverTool,
   gitCommitTool,
   skillCompileTool,
+  planOnTool,
+  planOffTool,
 ];
 
 /**

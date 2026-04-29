@@ -58,6 +58,7 @@ const TOOL_COLORS: Record<string, (text: string) => string> = {
 export class Core implements CoreModule {
   private workDir: string;
   private modeState: 'plan' | 'normal' = 'normal';
+  private allowedFile?: string;
 
   constructor(workDir?: string) {
     this.workDir = workDir || process.cwd();
@@ -71,10 +72,20 @@ export class Core implements CoreModule {
   }
 
   /**
-   * Set mode (implementation-only, NOT in CoreModule interface)
+   * Get allowed file for plan mode (implementation-only, NOT in CoreModule interface)
    */
-  setMode(mode: 'plan' | 'normal'): void {
+  getAllowedFile(): string | undefined {
+    return this.allowedFile;
+  }
+
+  /**
+   * Set mode (implementation-only, NOT in CoreModule interface)
+   * @param mode - The mode to set ('plan' or 'normal')
+   * @param allowedFile - Optional file path that can be edited in plan mode
+   */
+  setMode(mode: 'plan' | 'normal', allowedFile?: string): void {
     this.modeState = mode;
+    this.allowedFile = allowedFile;
   }
 
   /**
@@ -326,12 +337,28 @@ export class Core implements CoreModule {
    * @param _args - Tool arguments (unused in parent, for interface consistency)
    * @returns Grant result with approval status and optional reason
    */
-  async requestGrant(_tool: 'write_file' | 'edit_file' | 'bash', _args: {
+  async requestGrant(tool: 'write_file' | 'edit_file' | 'bash', args: {
     path?: string;
     command?: string;
   }): Promise<{ approved: boolean; reason?: string }> {
     // Parent is trusted but still respects mode
     if (this.modeState === 'plan') {
+      // Check if the requested file matches the allowed file
+      if (tool === 'write_file' || tool === 'edit_file') {
+        if (args.path && this.allowedFile) {
+          const path = await import('path');
+          const resolvedRequested = path.isAbsolute(args.path)
+            ? args.path
+            : path.resolve(this.workDir, args.path);
+          const resolvedAllowed = path.isAbsolute(this.allowedFile)
+            ? this.allowedFile
+            : path.resolve(this.workDir, this.allowedFile);
+          
+          if (resolvedRequested === resolvedAllowed) {
+            return { approved: true };
+          }
+        }
+      }
       return {
         approved: false,
         reason: 'Error: Code changes are prohibited in plan mode.',
