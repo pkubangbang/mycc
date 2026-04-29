@@ -13,7 +13,7 @@ import { isVerbose } from '../config.js';
 import { loader } from '../context/shared/loader.js';
 import { Sequence } from '../hook/sequence.js';
 import { ConditionRegistry } from '../hook/conditions.js';
-import { HookExecutor, type AugmentedToolCall } from '../hook/hook-executor.js';
+import { HookExecutor } from '../hook/hook-executor.js';
 import { augmentToolCalls } from '../hook/hook-preprocessor.js';
 
 /**
