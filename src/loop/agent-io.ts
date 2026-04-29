@@ -375,10 +375,10 @@ class AgentIO {
 
     // 3. Create subprocess with platform-appropriate shell
     // Unix: setsid + bash -c runs in a new session without controlling terminal
-    // Windows: cmd /c uses windowsHide to avoid console window popup
+    // Windows: cmd /c with chcp 65001 for UTF-8 output encoding
     const isWin = process.platform === 'win32';
     const proc = isWin
-      ? spawn('cmd', ['/c', command], { cwd, windowsHide: true })
+      ? spawn('cmd', ['/c', `chcp 65001 >nul && ${command}`], { cwd, windowsHide: true })
       : spawn('setsid', ['bash', '-c', command], { cwd });
 
     // Collect stdout and stderr

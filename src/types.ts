@@ -250,6 +250,18 @@ export interface CoreModule {
    * @returns Description of the image
    */
   imgDescribe(image: string, prompt?: string): Promise<string>;
+  /**
+   * Request grant for sensitive operations (write_file, edit_file, bash)
+   * Parent's Core checks mode and worktree ownership internally.
+   * Child's Core sends IPC to parent for evaluation.
+   * @param tool - The tool requesting grant
+   * @param args - Tool arguments (path for file ops, command for bash)
+   * @returns Grant result with approval status and optional reason
+   */
+  requestGrant(tool: 'write_file' | 'edit_file' | 'bash', args: {
+    path?: string;
+    command?: string;
+  }): Promise<{ approved: boolean; reason?: string }>;
 }
 
 /**

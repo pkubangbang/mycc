@@ -57,9 +57,24 @@ const TOOL_COLORS: Record<string, (text: string) => string> = {
  */
 export class Core implements CoreModule {
   private workDir: string;
+  private modeState: 'plan' | 'normal' = 'normal';
 
   constructor(workDir?: string) {
     this.workDir = workDir || process.cwd();
+  }
+
+  /**
+   * Get current mode (implementation-only, NOT in CoreModule interface)
+   */
+  getMode(): 'plan' | 'normal' {
+    return this.modeState;
+  }
+
+  /**
+   * Set mode (implementation-only, NOT in CoreModule interface)
+   */
+  setMode(mode: 'plan' | 'normal'): void {
+    this.modeState = mode;
   }
 
   /**
@@ -302,5 +317,26 @@ export class Core implements CoreModule {
     } catch (err) {
       throw new Error(`Failed to process image: ${(err as Error).message}`, { cause: err });
     }
+  }
+
+  /**
+   * Request grant for sensitive operations
+   * Parent is trusted but still respects mode
+   * @param _tool - The tool requesting grant (unused in parent, for interface consistency)
+   * @param _args - Tool arguments (unused in parent, for interface consistency)
+   * @returns Grant result with approval status and optional reason
+   */
+  async requestGrant(_tool: 'write_file' | 'edit_file' | 'bash', _args: {
+    path?: string;
+    command?: string;
+  }): Promise<{ approved: boolean; reason?: string }> {
+    // Parent is trusted but still respects mode
+    if (this.modeState === 'plan') {
+      return {
+        approved: false,
+        reason: 'Code changes are prohibited in plan mode. Use /mode normal to enable modifications.',
+      };
+    }
+    return { approved: true };
   }
 }

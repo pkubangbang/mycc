@@ -99,4 +99,24 @@ export class ChildCore implements CoreModule {
     });
     return response.description;
   }
+
+  /**
+   * Request grant for sensitive operations
+   * Always sends IPC to parent - parent knows the mode
+   * @param tool - The tool requesting grant
+   * @param args - Tool arguments (path for file ops, command for bash)
+   * @returns Grant result with approval status and optional reason
+   */
+  async requestGrant(tool: 'write_file' | 'edit_file' | 'bash', args: {
+    path?: string;
+    command?: string;
+  }): Promise<{ approved: boolean; reason?: string }> {
+    // Always ask parent via IPC - parent knows the mode
+    const response = await ipc.sendRequest<{ approved: boolean; reason?: string }>(
+      'grant_request',
+      { tool, ...args },
+      5000
+    );
+    return response;
+  }
 }

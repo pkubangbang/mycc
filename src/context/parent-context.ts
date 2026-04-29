@@ -12,6 +12,7 @@ import { WorktreeManager } from './parent/wt.js';
 import { TeamManager } from './parent/team.js';
 import { WikiManager } from './parent/wiki.js';
 import { loader } from './shared/loader.js';
+import { evaluateGrant } from './parent/grant.js';
 import type { CoreModule, TodoModule, MailModule, SkillModule, IssueModule, BgModule, WtModule, TeamModule } from '../types.js';
 
 // Re-export loader for convenience
@@ -301,6 +302,22 @@ export class ParentContext implements AgentContext {
           } catch (err) {
             sendResponse('core_result', false, undefined, (err as Error).message);
           }
+        },
+      },
+      // Grant handler
+      {
+        messageType: 'grant_request',
+        module: 'grant',
+        handler: async (sender, payload, ctx, sendResponse) => {
+          const { tool, path, command } = payload as {
+            tool: 'write_file' | 'edit_file' | 'bash';
+            path?: string;
+            command?: string;
+          };
+          // Cast to Core to access getMode() (implementation-only method)
+          const core = ctx.core as Core;
+          const result = await evaluateGrant(sender, { tool, path, command }, core);
+          sendResponse('grant_result', true, result);
         },
       },
     ];

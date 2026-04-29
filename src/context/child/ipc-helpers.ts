@@ -20,7 +20,7 @@ interface PendingRequest {
  * All follow the same structure: reqId + success + optional data/error
  */
 interface IpcResponse {
-  type: 'db_result' | 'wt_result' | 'team_result' | 'question_result';
+  type: 'db_result' | 'wt_result' | 'team_result' | 'question_result' | 'grant_result' | 'core_result';
   reqId: number;
   success: boolean;
   data?: unknown;
@@ -30,7 +30,7 @@ interface IpcResponse {
 /**
  * Response types that resolve pending requests
  */
-const RESPONSE_TYPES = new Set(['db_result', 'wt_result', 'team_result', 'question_result']);
+const RESPONSE_TYPES = new Set(['db_result', 'wt_result', 'team_result', 'question_result', 'grant_result', 'core_result']);
 
 /**
  * Type guard to check if a message is an IPC response

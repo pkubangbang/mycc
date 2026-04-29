@@ -11,5 +11,12 @@
 - [x] `/load <sessionid>` should ensure the working dir is what recorded inside the session file; it's like `cd <proj-dir> && mycc --session <sessionid-full>`.
 
 - [x] remove sqlite dependency (we have session)
-- [ ] prompt history navigation is not working
+- [x] prompt history navigation is not working
 - [x] "project tool" and "user tool" not working due to ts-js compatibility
+
+- [x] add hookish skills to the main process
+- [x] refactor the agent-loop using the state-machine
+- [x] add permission system to the child process
+- [x] implement the plan mode
+- [x] add the `/mode <mode>` slash command
+- [ ] implement the auto mode
