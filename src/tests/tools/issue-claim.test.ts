@@ -121,8 +121,8 @@ describe('issueClaimTool', () => {
 
     expect(mockIssue.getIssue).toHaveBeenCalledWith(1);
     expect(mockIssue.claimIssue).toHaveBeenCalledWith(1, 'test-agent');
-    expect(result).toBe('OK: #1');
-    expect(ctx.core.brief).toHaveBeenCalledWith('info', 'issue_claim', 'Claimed issue #1 for test-agent');
+    expect(result).toBe('No issues.');
+    expect(ctx.core.brief).toHaveBeenCalledWith('info', 'issue_claim', 'Claimed issue #1: "Test Issue" by @test-agent');
   });
 
   it('should claim issue with different owner names', async () => {
@@ -135,7 +135,7 @@ describe('issueClaimTool', () => {
     });
 
     expect(mockIssue.claimIssue).toHaveBeenCalledWith(1, 'developer-123');
-    expect(result).toBe('OK: #1');
+    expect(result).toBe('No issues.');
   });
 
   // ========== Error Case Tests ==========

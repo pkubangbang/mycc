@@ -77,7 +77,7 @@ describe('issueCreateTool', () => {
       'This is a test issue description',
       []
     );
-    expect(result).toBe('OK: #1');
+    expect(result).toBe('No issues.');
     expect(ctx.core.brief).toHaveBeenCalledWith('info', 'issue_create', 'Created issue #1: Test Issue');
   });
 
@@ -93,18 +93,19 @@ describe('issueCreateTool', () => {
       'This depends on other issues',
       [1, 2, 3]
     );
-    expect(result).toBe('OK: #1');
+    expect(result).toBe('No issues.');
   });
 
-  it('should return the created issue ID', async () => {
+  it('should return the issue list from printIssues', async () => {
     mockIssue.createIssue = vi.fn().mockResolvedValue(42);
+    mockIssue.printIssues = vi.fn().mockResolvedValue('Issue #42: Test');
 
     const result = await issueCreateTool.handler(ctx, {
       title: 'Another Issue',
       content: 'Description',
     });
 
-    expect(result).toBe('OK: #42');
+    expect(result).toBe('Issue #42: Test');
   });
 
   // ========== Error Case Tests ==========
@@ -185,7 +186,7 @@ describe('issueCreateTool', () => {
       'Description',
       []
     );
-    expect(result).toBe('OK: #1');
+    expect(result).toBe('No issues.');
   });
 
   it('should handle undefined blockedBy as empty array', async () => {
@@ -200,7 +201,7 @@ describe('issueCreateTool', () => {
       'Description',
       []
     );
-    expect(result).toBe('OK: #1');
+    expect(result).toBe('No issues.');
   });
 
   // ========== Tool Metadata Tests ==========

@@ -119,7 +119,7 @@ describe('issueCloseTool', () => {
 
     expect(mockIssue.getIssue).toHaveBeenCalledWith(1);
     expect(mockIssue.closeIssue).toHaveBeenCalledWith(1, 'completed', undefined, undefined);
-    expect(result).toBe('OK: #1');
+    expect(result).toBe('No issues.');
     expect(ctx.core.brief).toHaveBeenCalledWith('info', 'issue_close', 'Closed #1 as completed');
   });
 
@@ -132,7 +132,7 @@ describe('issueCloseTool', () => {
     });
 
     expect(mockIssue.closeIssue).toHaveBeenCalledWith(1, 'failed', undefined, undefined);
-    expect(result).toBe('OK: #1');
+    expect(result).toBe('No issues.');
     expect(ctx.core.brief).toHaveBeenCalledWith('info', 'issue_close', 'Closed #1 as failed');
   });
 
@@ -145,7 +145,7 @@ describe('issueCloseTool', () => {
     });
 
     expect(mockIssue.closeIssue).toHaveBeenCalledWith(1, 'abandoned', undefined, undefined);
-    expect(result).toBe('OK: #1');
+    expect(result).toBe('No issues.');
     expect(ctx.core.brief).toHaveBeenCalledWith('info', 'issue_close', 'Closed #1 as abandoned');
   });
 
@@ -159,7 +159,7 @@ describe('issueCloseTool', () => {
     });
 
     expect(mockIssue.closeIssue).toHaveBeenCalledWith(1, 'completed', 'All tests passing', undefined);
-    expect(result).toBe('OK: #1');
+    expect(result).toBe('No issues.');
     expect(ctx.core.brief).toHaveBeenCalledWith('info', 'issue_close', 'Closed #1 as completed: "All tests passing"');
   });
 
@@ -174,7 +174,7 @@ describe('issueCloseTool', () => {
     });
 
     expect(mockIssue.closeIssue).toHaveBeenCalledWith(1, 'completed', 'Done', 'developer');
-    expect(result).toBe('OK: #1');
+    expect(result).toBe('No issues.');
   });
 
   it('should close a pending issue directly', async () => {
@@ -187,7 +187,7 @@ describe('issueCloseTool', () => {
     });
 
     expect(mockIssue.closeIssue).toHaveBeenCalledWith(2, 'abandoned', 'Not needed anymore', undefined);
-    expect(result).toBe('OK: #2');
+    expect(result).toBe('No issues.');
   });
 
   // ========== Error Case Tests ==========
@@ -281,7 +281,7 @@ describe('issueCloseTool', () => {
     });
 
     expect(mockIssue.closeIssue).toHaveBeenCalled();
-    expect(result).toBe('OK: #1');
+    expect(result).toBe('No issues.');
   });
 
   it('should allow closing a pending issue', async () => {
@@ -293,7 +293,7 @@ describe('issueCloseTool', () => {
     });
 
     expect(mockIssue.closeIssue).toHaveBeenCalled();
-    expect(result).toBe('OK: #2');
+    expect(result).toBe('No issues.');
   });
 
   // ========== Blockage Unblocking Tests ==========
@@ -309,7 +309,7 @@ describe('issueCloseTool', () => {
 
     // The handler calls closeIssue which should handle blockage removal
     expect(mockIssue.closeIssue).toHaveBeenCalledWith(3, 'completed', undefined, undefined);
-    expect(result).toBe('OK: #3');
+    expect(result).toBe('No issues.');
   });
 
   // ========== Tool Metadata Tests ==========
