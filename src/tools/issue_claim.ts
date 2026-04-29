@@ -8,7 +8,7 @@ import type { ToolDefinition, AgentContext } from '../types.js';
 
 export const issueClaimTool: ToolDefinition = {
   name: 'issue_claim',
-  description: 'Claim a pending issue to start work. Sets status to in_progress. Only pending issues can be claimed. Use issue_list to find available issues.',
+  description: 'Claim a pending issue to start work. Sets status to in_progress and assigns owner. Returns full issue list.',
   input_schema: {
     type: 'object',
     properties: {
@@ -49,7 +49,9 @@ export const issueClaimTool: ToolDefinition = {
       return `Error: Failed to claim issue #${id}. It may not be in pending status or is already claimed.`;
     }
 
-    ctx.core.brief('info', 'issue_claim', `Claimed issue #${id} for ${owner}`);
-    return `OK: #${id}`;
+    ctx.core.brief('info', 'issue_claim', `Claimed issue #${id}: "${issue.title}" by @${owner}`);
+    
+    // Return full issue list for visibility
+    return await ctx.issue.printIssues();
   },
 };

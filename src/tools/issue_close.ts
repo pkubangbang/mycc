@@ -8,7 +8,7 @@ import type { ToolDefinition, AgentContext } from '../types.js';
 
 export const issueCloseTool: ToolDefinition = {
   name: 'issue_close',
-  description: 'Close an issue with final status: completed, failed, or abandoned. Use after issue_claim when work is done. Closing a blocker unblocks dependent issues.',
+  description: 'Close an issue with final status: completed, failed, or abandoned. Returns full issue list. Closing a blocker unblocks dependent issues.',
   input_schema: {
     type: 'object',
     properties: {
@@ -62,6 +62,7 @@ export const issueCloseTool: ToolDefinition = {
       : `Closed #${id} as ${status}`;
     ctx.core.brief('info', 'issue_close', logMsg);
 
-    return `OK: #${id}`;
+    // Return full issue list for visibility
+    return await ctx.issue.printIssues();
   },
 };
