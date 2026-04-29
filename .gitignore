@@ -2,11 +2,5 @@ node_modules/
 dist/
 /.env
 *.log
-/.mycc
-
-# force tracking of these useful skills
-!/.mycc/skills/clear-sessions/
-!/.mycc/skills/tool-and-skill-development/
-!/.mycc/skills/session-introspect.md
-!/.mycc/skills/lint-typecheck-after-edit.md
-!/.mycc/skills/mycc-online-hotfix/
+/.mycc/*
+!/.mycc/skills/
