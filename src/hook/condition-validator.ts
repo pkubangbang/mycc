@@ -70,7 +70,7 @@ const SEQ_FUNCTIONS = ['has', 'hasAny', 'hasCommand', 'last', 'lastError', 'coun
 const ALLOWED_LITERALS = ['true', 'false', 'null', 'undefined'];
 
 // Allowed root identifiers (besides seq)
-const ALLOWED_ROOTS = ['seq', 'call'];
+const ALLOWED_ROOTS = ['seq', 'call', 'session'];
 
 // Dangerous identifiers that should never be allowed
 const DANGEROUS_IDENTIFIERS = new Set([
@@ -465,7 +465,8 @@ export function validateCondition(condition: unknown): ValidationResult {
 export function testExpression(
   expression: string,
   sequence: TestableSequence,
-  callContext?: { metadata?: Record<string, unknown>; args?: Record<string, unknown> }
+  callContext?: { metadata?: Record<string, unknown>; args?: Record<string, unknown> },
+  sessionContext?: { getMode: () => string }
 ): TestResult {
   try {
     const seqCtx = {
@@ -495,6 +496,11 @@ export function testExpression(
       },
     };
 
+    // Provide mock session context for session.getMode()
+    const session = sessionContext || {
+      getMode: () => 'normal',
+    };
+
     const jsExpr = expression
       .replace(/seq\.has\(/g, 'has(')
       .replace(/seq\.hasAny\(/g, 'hasAny(')
@@ -506,16 +512,17 @@ export function testExpression(
       .replace(/seq\.sinceEdit\(/g, 'sinceEdit(')
       .replace(/call\.metadata\./g, 'call.metadata.')
       .replace(/call\.args\./g, 'call.args.')
-      .replace(/call\.args\b/g, 'call.args');
+      .replace(/call\.args\b/g, 'call.args')
+      .replace(/session\.getMode\(\)/g, 'session.getMode()');
 
     const fn = new Function(
-      'has', 'hasAny', 'hasCommand', 'last', 'lastError', 'count', 'since', 'sinceEdit', 'call',
+      'has', 'hasAny', 'hasCommand', 'last', 'lastError', 'count', 'since', 'sinceEdit', 'call', 'session',
       `"use strict"; return (${jsExpr});`
     );
 
     const result = fn(
       seqCtx.has, seqCtx.hasAny, seqCtx.hasCommand, seqCtx.last, seqCtx.lastError,
-      seqCtx.count, seqCtx.since, seqCtx.sinceEdit, call
+      seqCtx.count, seqCtx.since, seqCtx.sinceEdit, call, session
     );
 
     return { passed: true, evaluatedValue: Boolean(result) };

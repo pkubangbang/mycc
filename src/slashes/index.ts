@@ -91,6 +91,7 @@ import { wikiCommand } from './wiki.js';
 import { compactCommand } from './compact.js';
 import { domainCommand } from './domain.js';
 import { helpCommand } from './help.js';
+import { modeCommand } from './mode.js';
 
 slashRegistry.register(teamCommand);
 slashRegistry.register(todosCommand);
@@ -103,3 +104,4 @@ slashRegistry.register(wikiCommand);
 slashRegistry.register(compactCommand);
 slashRegistry.register(domainCommand);
 slashRegistry.register(helpCommand);
+slashRegistry.register(modeCommand);
