@@ -1,24 +1,33 @@
 /**
- * agent-repl.ts - Main entry point and REPL for the coding agent
+ * agent-repl.ts - Main entry point for the coding agent
  */
 
 import * as fs from 'fs';
 import * as path from 'path';
 import chalk from 'chalk';
 import { MODEL, OLLAMA_HOST, checkHealth, classifyError } from '../ollama.js';
-import type { SlashCommandContext } from '../types.js';
 import { ParentContext } from '../context/parent-context.js';
-import { readSession, writeSession, getSessionId } from '../session/index.js';
+import { getSessionId } from '../session/index.js';
 import { slashRegistry } from '../slashes/index.js';
 import { getTokenThreshold } from '../config.js';
 import { Triologue } from './triologue.js';
 import { agentIO } from './agent-io.js';
 import { shouldSkipHealthCheck } from '../config.js';
-import { openMultilineEditor } from '../utils/multiline-input.js';
-import { displayLetterBox } from '../utils/letter-box.js';
 import { loader } from '../context/shared/loader.js';
 import { initializeSession } from '../session/index.js';
-import { agentLoop, ShutdownError } from './agent-loop.js';
+import { ConditionRegistry } from '../hook/conditions.js';
+import { Sequence } from '../hook/sequence.js';
+import { HookExecutor } from '../hook/hook-executor.js';
+import { AgentStateMachine } from './state-machine.js';
+import type { StateHandler } from './state-machine.js';
+import { UserInputProvider } from './input-provider.js';
+import { handlePrompt, setInitialQuery } from './states/prompt.js';
+import { handleSlash } from './states/slash.js';
+import { handleCollect } from './states/collect.js';
+import { handleLlm } from './states/llm.js';
+import { handleHook } from './states/hook.js';
+import { handleTool } from './states/tool.js';
+import { handleStop } from './states/stop.js';
 import pkg from '../../package.json';
 
 const version = pkg.version;
@@ -41,29 +50,23 @@ export async function main(): Promise<void> {
   agentIO.initMain();
 
   // Health check: validate Ollama connectivity and model availability
-  // Skip if --skip-healthcheck flag is set (useful for testing)
   let modelInfo: { family?: string; parameterSize?: string; contextLength: number } | null = null;
   if (shouldSkipHealthCheck()) {
     console.log(chalk.gray('Skipping health check (test mode)'));
   } else {
-    // Retry loop for health check - only exit on user request or Ctrl+C
     while (true) {
       const health = await checkHealth(tokenThreshold);
       if (health.ok) {
-        if (health.modelInfo) {
-          modelInfo = health.modelInfo;
-        }
-        // Display warnings if any
+        if (health.modelInfo) modelInfo = health.modelInfo;
         if (health.warnings && health.warnings.length > 0) {
           console.log();
           for (const warning of health.warnings) {
             console.log(chalk.yellow(`[warning] ${warning}`));
           }
         }
-        break; // Success - continue with startup
+        break;
       }
 
-      // Health check failed - show error and prompt for retry
       console.error(chalk.red(`Health check failed: ${health.error}`));
       console.log(chalk.gray('─'.repeat(40)));
       console.log(chalk.yellow('Common fixes:'));
@@ -73,7 +76,6 @@ export async function main(): Promise<void> {
       console.log();
 
       const answer = await agentIO.ask(chalk.cyan('Retry health check? [Y/n] > '));
-
       if (answer.toLowerCase() === 'n' || answer.toLowerCase() === 'no') {
         console.log(chalk.yellow('Exiting at user request.'));
         process.exit(1);
@@ -84,8 +86,8 @@ export async function main(): Promise<void> {
     }
   }
 
-  // Display startup info with aligned labels
-  const labelWidth = 12; // Width for label alignment
+  // Display startup info
+  const labelWidth = 12;
   const alignLabel = (label: string) => label.padEnd(labelWidth);
 
   console.log();
@@ -95,12 +97,8 @@ export async function main(): Promise<void> {
   console.log(chalk.gray(`${alignLabel('Host:')}${OLLAMA_HOST}`));
 
   if (modelInfo) {
-    if (modelInfo.family) {
-      console.log(chalk.gray(`${alignLabel('Family:')}${modelInfo.family}`));
-    }
-    if (modelInfo.parameterSize) {
-      console.log(chalk.gray(`${alignLabel('Params:')}${modelInfo.parameterSize}`));
-    }
+    if (modelInfo.family) console.log(chalk.gray(`${alignLabel('Family:')}${modelInfo.family}`));
+    if (modelInfo.parameterSize) console.log(chalk.gray(`${alignLabel('Params:')}${modelInfo.parameterSize}`));
     console.log(chalk.gray(`${alignLabel('Context:')}${modelInfo.contextLength}`));
   }
 
@@ -108,21 +106,20 @@ export async function main(): Promise<void> {
 
   // Initialize session (restore or create new)
   const sessionInit = await initializeSession();
-  const { sessionFilePath, triologuePath, restoredPair } = sessionInit;
-  let initialQuery = sessionInit.initialQuery; // Mutable for clearing after first use
+  const { sessionFilePath, triologuePath, restoredPair, initialQuery } = sessionInit;
 
-  // Display session info (after initialization so we have the session ID)
+  // Pass initial query to prompt handler
+  setInitialQuery(initialQuery);
+
+  // Display session info
   const sessionId = getSessionId(sessionFilePath);
   console.log(chalk.gray(`${alignLabel('Session:')}${sessionId.slice(0, 7)}`));
 
-  const commands = slashRegistry.list().map(c => `/${c}`).join(', ');
+  const commands = slashRegistry.list().map((c) => `/${c}`).join(', ');
   console.log(chalk.gray(`${alignLabel('Commands:')}${commands}, /exit`));
   console.log();
 
-  // Track first query for bookmark title
-  let firstQueryCaptured = false;
-
-  // Load tools/skills using singleton loader
+  // Load tools/skills
   await loader.loadAll();
   loader.watchDirectories();
 
@@ -130,10 +127,7 @@ export async function main(): Promise<void> {
   const ctx = new ParentContext(sessionFilePath);
   ctx.initializeIpcHandlers();
 
-  // Check if skills domain exists (warn if not)
   await ctx.wiki.checkSkillsDomain();
-
-  // Sync worktrees with git (reconcile any orphaned worktrees from previous sessions)
   await ctx.wt.syncWorkTrees();
 
   const triologue = new Triologue({
@@ -142,30 +136,56 @@ export async function main(): Promise<void> {
     onMessage: (messages) => {
       const lastMsg = messages[messages.length - 1];
       try {
-        fs.appendFileSync(triologuePath, `${JSON.stringify(lastMsg)  }\n`, 'utf-8');
+        fs.appendFileSync(triologuePath, `${JSON.stringify(lastMsg)}\n`, 'utf-8');
       } catch {
         // Ignore write errors
       }
     },
   });
 
-  // If restored session, load the summary pair
+  // Restore session if available
   if (restoredPair !== null) {
     triologue.loadRestoration(restoredPair);
   }
 
-  // Inject project context files (best-effort: skip if not found)
+  // Inject project context files
   const claudePath = path.join(process.cwd(), 'CLAUDE.md');
   const readmePath = path.join(process.cwd(), 'README.md');
+  if (fs.existsSync(claudePath)) triologue.setClaudeMd(fs.readFileSync(claudePath, 'utf-8'));
+  if (fs.existsSync(readmePath)) triologue.setReadmeMd(fs.readFileSync(readmePath, 'utf-8'));
 
-  if (fs.existsSync(claudePath)) {
-    triologue.setClaudeMd(fs.readFileSync(claudePath, 'utf-8'));
-  }
-  if (fs.existsSync(readmePath)) {
-    triologue.setReadmeMd(fs.readFileSync(readmePath, 'utf-8'));
-  }
+  // Initialize hook system (machine lifetime)
+  const conditions = new ConditionRegistry();
+  await conditions.load();
+  const sequence = new Sequence(triologue);
+  const hookExecutor = new HookExecutor(conditions, sequence);
 
-  // Handle graceful shutdown
+  // ── Build state handlers ──
+  const handlers: Record<string, StateHandler> = {
+    prompt: handlePrompt as StateHandler,
+    slash: handleSlash as StateHandler,
+    collect: handleCollect as StateHandler,
+    llm: handleLlm as StateHandler,
+    hook: handleHook as StateHandler,
+    tool: handleTool as StateHandler,
+    stop: handleStop as StateHandler,
+  };
+
+  // ── Create state machine ──
+  const inputProvider = new UserInputProvider();
+  const machine = new AgentStateMachine(
+    triologue,
+    ctx,
+    'main',
+    conditions,
+    sequence,
+    hookExecutor,
+    inputProvider,
+    sessionFilePath,
+    handlers,
+  );
+
+  // ── SIGINT handler ──
   process.on('SIGINT', () => {
     const controller = agentIO.getLlmAbortController();
     if (controller) {
@@ -173,155 +193,23 @@ export async function main(): Promise<void> {
       console.log(chalk.yellow('\nInterrupting current operation...'));
       return;
     }
-    // No active LLM call - safe to exit
     console.log(chalk.yellow('\nShutting down...'));
     process.send!({ type: 'exit' });
   });
 
-  // Emit ready signal for Coordinator
+  // Ready
   process.send({ type: 'ready' });
 
-  // Main REPL loop
-  while (true) {
-    try {
-      // Use initial query from restored session, or prompt for input
-      let query: string;
-      if (initialQuery !== null) {
-        query = initialQuery;
-        initialQuery = null; // Clear after first use
-        console.log(chalk.gray(`Restored query: ${query.slice(0, 50)}${query.length > 50 ? '...' : ''}`));
-      } else {
-        query = await agentIO.ask(chalk.bgYellow.black('agent >> '), true);
-      }
-
-      // Handle multi-line input (trailing backslash)
-      if (query.endsWith('\\') && query.trim() !== '\\') {
-        const initialContent = query.slice(0, -1);
-        const content = await openMultilineEditor(initialContent);
-        if (content === null) {
-          console.log(chalk.gray('Multi-line input cancelled.'));
-          continue;
-        }
-        query = content;
-      }
-
-      // handle exit
-      if (['q', 'exit', 'quit', ''].includes(query.trim().toLowerCase())) {
-        break;
-      }
-
-      // Handle bang commands
-      if (query.trim().startsWith('!')) {
-        const command = query.trim().slice(1).trim();
-        const result = await loader.execute('hand_over', ctx, {
-          command: command || undefined,
-          justification: command ? `User runs: ${command}` : 'Open terminal',
-        });
-        triologue.user(`[FYI] ${result}`);
-        triologue.resetHint();
-        continue;
-      }
-
-      // Handle slash commands
-      const trimmedQuery = query.trim();
-      if (trimmedQuery.startsWith('/')) {
-        const parts = trimmedQuery.split(/\s+/);
-        const cmdName = parts[0].slice(1); // Remove '/'
-
-        const slashCtx: SlashCommandContext = {
-          query: trimmedQuery,
-          args: parts,
-          ctx,
-          triologue,
-          sessionFilePath,
-        };
-
-        const handled = await slashRegistry.execute(cmdName, slashCtx);
-        if (handled && slashCtx.nextQuery) {
-          // /load returned a first query to process
-          query = slashCtx.nextQuery;
-        } else {
-          continue;
-        }
-      }
-
-      // Add user message (reset hint flag for new query)
-      triologue.user(query);
-      triologue.resetHint();
-
-      // Capture first query as bookmark title
-      if (!firstQueryCaptured) {
-        const session = readSession(sessionFilePath);
-        if (session && !session.first_query) {
-          session.first_query = query.slice(0, 100);
-          writeSession(sessionFilePath, session);
-          firstQueryCaptured = true;
-        }
-      }
-
-      // Run agent loop - retry on transient errors (user message already in triologue)
-      while (true) {
-        try {
-          await agentLoop(triologue, ctx);
-
-          // Print final response in letter-style box
-          const lastMsg = triologue.getMessagesRaw().at(-1);
-          if (lastMsg?.content) {
-            displayLetterBox(lastMsg.content);
-          }
-
-          break; // Success - exit retry loop
-        } catch (err) {
-          // Shutdown - propagate to outer catch
-          if (err instanceof ShutdownError) {
-            throw err;
-          }
-
-          // Readline closed - propagate to outer catch
-          if (err instanceof Error && err.message === 'readline was closed') {
-            throw err;
-          }
-
-          // Only transient errors prompt for retry
-          const errorType = classifyError(err);
-          const errorMessage = err instanceof Error ? err.message : String(err);
-
-          if (errorType !== 'transient') {
-            // Non-transient error - propagate to outer catch for display and exit
-            throw err;
-          }
-
-          // Transient/network error - prompt for retry
-          console.error();
-          console.error(chalk.red(`Network error: ${errorMessage}`));
-          console.log(chalk.gray('─'.repeat(40)));
-          const answer = await agentIO.ask(chalk.cyan('Retry? [Y/n] > '));
-
-          if (answer.toLowerCase() === 'n' || answer.toLowerCase() === 'no') {
-            console.log(chalk.yellow('Exiting at user request.'));
-            throw err; // Propagate to outer catch for exit
-          }
-
-          // User wants to retry - stay in this inner loop
-          console.log(chalk.cyan('Retrying...'));
-          continue;
-        }
-      }
-    } catch (err) {
-      // Shutdown - exit cleanly (only Ctrl+C triggers this)
-      if (err instanceof ShutdownError) {
-        break;
-      }
-
-      // Readline closed (race condition on SIGINT/SIGTERM) - exit cleanly
-      if (err instanceof Error && err.message === 'readline was closed') {
-        break;
-      }
-
-      // Display error and exit
+  // ── Run state machine (REPL loop) ──
+  try {
+    await machine.run();
+  } catch (err) {
+    // Readline closed (race condition on SIGINT/SIGTERM) — clean exit
+    if (err instanceof Error && err.message === 'readline was closed') {
+      // clean exit
+    } else {
       const errorType = classifyError(err);
       const errorMessage = err instanceof Error ? err.message : String(err);
-
       console.error();
       console.error(chalk.red(`Error: ${errorMessage}`));
 
@@ -332,11 +220,9 @@ export async function main(): Promise<void> {
       } else if (errorType === 'config') {
         console.error(chalk.yellow('Check TOKEN_THRESHOLD in ~/.mycc-store/.env file.'));
       }
-
-      break;
     }
   }
 
-  // Signal Coordinator to exit (which will kill this process)
+  // Signal Coordinator to exit
   process.send({ type: 'exit' });
 }
