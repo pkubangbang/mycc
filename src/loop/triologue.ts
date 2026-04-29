@@ -699,14 +699,13 @@ Be specific and actionable. This analysis will help guide the next steps.`;
 
     const summary = response.message.content || '(no summary)';
 
+    // Return only the user message with summary.
+    // The actual LLM response will come next and provide the assistant message.
+    // This avoids "assistant after assistant" parity errors.
     return [
       {
         role: 'user',
-        content: `[Conversation compressed. Transcript: ${transcriptPath}]\n\n${summary}`,
-      },
-      {
-        role: 'assistant',
-        content: 'Understood. I have the context from the summary. Continuing.',
+        content: `[Conversation compressed. Transcript: ${transcriptPath}]\n\n# Continuity Summary\n\n${summary}`,
       },
     ];
   }
