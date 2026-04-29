@@ -3,4 +3,4 @@ dist/
 /.env
 *.log
 /.mycc/*
-!/.mycc/skills/
+!/.mycc/skills/.worktrees/  

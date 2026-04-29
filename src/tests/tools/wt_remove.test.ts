@@ -2,7 +2,7 @@
  * wt_remove.test.ts - Tests for the worktree removal tool
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { wtRemoveTool } from '../../tools/wt_remove.js';
 import { createMockContext, createTempDir, removeTempDir } from './test-utils.js';
 import type { AgentContext } from '../../types.js';
@@ -15,11 +15,13 @@ describe('wtRemoveTool', () => {
     tempDir = createTempDir();
     ctx = createMockContext(tempDir);
     ctx.wt = {
-      createWorkTree: vi.fn(),
-      enterWorkTree: vi.fn(),
-      leaveWorkTree: vi.fn(),
-      printWorkTrees: vi.fn(),
-      removeWorkTree: vi.fn(),
+      createWorkTree: vi.fn(async () => {}),
+      enterWorkTree: vi.fn(async () => {}),
+      leaveWorkTree: vi.fn(async () => {}),
+      printWorkTrees: vi.fn(async () => {}),
+      removeWorkTree: vi.fn(async () => {}),
+      syncWorkTrees: vi.fn(async () => {}),
+      getWorkTreePath: vi.fn(async () => ''),
     };
     vi.clearAllMocks();
   });

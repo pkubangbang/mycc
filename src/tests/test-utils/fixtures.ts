@@ -45,7 +45,7 @@ export const contextFactories = {
       verbose: () => {},
       question: async () => '',
       webSearch: async () => [],
-      webFetch: async () => ({ title: '', content: '', links: [] }),
+      webFetch: async () => ({ title: '', content: '', links: [], url: 'https://example.com' }),
       imgDescribe: async () => '',
     },
     todo: {} as never,

@@ -2,7 +2,7 @@
  * wt_leave.test.ts - Tests for the worktree leave tool
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { wtLeaveTool } from '../../tools/wt_leave.js';
 import { createMockContext, createTempDir, removeTempDir } from './test-utils.js';
 import type { AgentContext } from '../../types.js';
@@ -17,11 +17,13 @@ describe('wtLeaveTool', () => {
     // Override getWorkDir to be a mock for testing
     ctx.core.getWorkDir = vi.fn().mockReturnValue(tempDir);
     ctx.wt = {
-      createWorkTree: vi.fn(),
-      enterWorkTree: vi.fn(),
-      leaveWorkTree: vi.fn(),
-      printWorkTrees: vi.fn(),
-      removeWorkTree: vi.fn(),
+      createWorkTree: vi.fn(async () => {}),
+      enterWorkTree: vi.fn(async () => {}),
+      leaveWorkTree: vi.fn(async () => {}),
+      printWorkTrees: vi.fn(async () => {}),
+      removeWorkTree: vi.fn(async () => {}),
+      syncWorkTrees: vi.fn(async () => {}),
+      getWorkTreePath: vi.fn(async () => ''),
     };
     vi.clearAllMocks();
   });

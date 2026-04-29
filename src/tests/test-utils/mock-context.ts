@@ -22,10 +22,11 @@ export function createMockCore(overrides: Partial<CoreModule> = {}): CoreModule 
     getName: vi.fn(() => 'test-agent'),
     brief: vi.fn(),
     verbose: vi.fn(),
-    question: vi.fn(),
-    webSearch: vi.fn(),
-    webFetch: vi.fn(),
-    imgDescribe: vi.fn(),
+    question: vi.fn(async () => 'test response'),
+    webSearch: vi.fn(async () => []),
+    webFetch: vi.fn(async () => ({ title: '', content: '', links: [] })),
+    imgDescribe: vi.fn(async () => 'image description'),
+    requestGrant: vi.fn(async () => ({ approved: true })),
     ...overrides,
   };
 }
@@ -60,7 +61,7 @@ export function createMockMail(overrides: Partial<MailModule> = {}): MailModule 
  */
 export function createMockSkill(overrides: Partial<SkillModule> = {}): SkillModule {
   return {
-    loadSkills: vi.fn(() => Promise.resolve()),
+    loadSkills: vi.fn(async () => {}),
     listSkills: vi.fn(() => []),
     getSkill: vi.fn(() => undefined),
     ...overrides,
@@ -72,16 +73,16 @@ export function createMockSkill(overrides: Partial<SkillModule> = {}): SkillModu
  */
 export function createMockIssue(overrides: Partial<IssueModule> = {}): IssueModule {
   return {
-    createIssue: vi.fn(() => 1),
-    getIssue: vi.fn(),
-    listIssues: vi.fn(() => []),
-    printIssues: vi.fn(() => ''),
-    printIssue: vi.fn(() => ''),
-    claimIssue: vi.fn(),
-    closeIssue: vi.fn(),
-    addComment: vi.fn(),
-    createBlockage: vi.fn(),
-    removeBlockage: vi.fn(),
+    createIssue: vi.fn(async () => 1),
+    getIssue: vi.fn(async () => undefined),
+    listIssues: vi.fn(async () => []),
+    printIssues: vi.fn(async () => ''),
+    printIssue: vi.fn(async () => ''),
+    claimIssue: vi.fn(async () => true),
+    closeIssue: vi.fn(async () => {}),
+    addComment: vi.fn(async () => {}),
+    createBlockage: vi.fn(async () => {}),
+    removeBlockage: vi.fn(async () => {}),
     ...overrides,
   };
 }
@@ -91,10 +92,10 @@ export function createMockIssue(overrides: Partial<IssueModule> = {}): IssueModu
  */
 export function createMockBg(overrides: Partial<BgModule> = {}): BgModule {
   return {
-    runCommand: vi.fn(),
-    printBgTasks: vi.fn(() => ''),
-    hasRunningBgTasks: vi.fn(() => false),
-    killTask: vi.fn(),
+    runCommand: vi.fn(async () => 1),
+    printBgTasks: vi.fn(async () => ''),
+    hasRunningBgTasks: vi.fn(async () => false),
+    killTask: vi.fn(async () => {}),
     ...overrides,
   };
 }
@@ -104,13 +105,13 @@ export function createMockBg(overrides: Partial<BgModule> = {}): BgModule {
  */
 export function createMockWt(overrides: Partial<WtModule> = {}): WtModule {
   return {
-    syncWorkTrees: vi.fn(),
-    createWorkTree: vi.fn(),
-    printWorkTrees: vi.fn(() => ''),
-    enterWorkTree: vi.fn(),
-    leaveWorkTree: vi.fn(),
-    removeWorkTree: vi.fn(),
-    getWorkTreePath: vi.fn(),
+    syncWorkTrees: vi.fn(async () => {}),
+    createWorkTree: vi.fn(async () => '/tmp/worktree'),
+    printWorkTrees: vi.fn(async () => ''),
+    enterWorkTree: vi.fn(async () => {}),
+    leaveWorkTree: vi.fn(async () => {}),
+    removeWorkTree: vi.fn(async () => {}),
+    getWorkTreePath: vi.fn(async () => '/tmp/worktree'),
     ...overrides,
   };
 }
@@ -120,8 +121,17 @@ export function createMockWt(overrides: Partial<WtModule> = {}): WtModule {
  */
 export function createMockTeam(overrides: Partial<TeamModule> = {}): TeamModule {
   return {
-    printTeammates: vi.fn(() => ''),
-    getTeammate: vi.fn(),
+    createTeammate: vi.fn(async () => ''),
+    getTeammate: vi.fn(() => undefined),
+    listTeammates: vi.fn(() => []),
+    awaitTeammate: vi.fn(async () => ({ waited: false })),
+    awaitTeam: vi.fn(async () => ({ result: '' })),
+    printTeam: vi.fn(() => ''),
+    removeTeammate: vi.fn(),
+    dismissTeam: vi.fn(),
+    mailTo: vi.fn(),
+    broadcast: vi.fn(),
+    handlePendingQuestions: vi.fn(async () => {}),
     ...overrides,
   };
 }
@@ -131,9 +141,19 @@ export function createMockTeam(overrides: Partial<TeamModule> = {}): TeamModule 
  */
 export function createMockWiki(overrides: Partial<WikiModule> = {}): WikiModule {
   return {
-    prepare: vi.fn(),
-    put: vi.fn(),
-    get: vi.fn(() => []),
+    prepare: vi.fn(async () => ({ accepted: true, hash: 'test-hash' })),
+    put: vi.fn(async () => ({ success: true, hash: 'test-hash' })),
+    get: vi.fn(async () => []),
+    delete: vi.fn(async () => true),
+    getWAL: vi.fn(async () => []),
+    parseWAL: vi.fn(() => []),
+    formatWAL: vi.fn(() => ''),
+    appendWAL: vi.fn(async () => {}),
+    rebuild: vi.fn(async () => ({ success: true, documentsProcessed: 0, errors: [] })),
+    listDomains: vi.fn(async () => []),
+    getDomain: vi.fn(async () => undefined),
+    registerDomain: vi.fn(async () => {}),
+    checkSkillsDomain: vi.fn(async () => false),
     ...overrides,
   };
 }

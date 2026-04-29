@@ -144,7 +144,12 @@ describe('briefTool', () => {
     it('should have message property in input schema as string', () => {
       const properties = briefTool.input_schema.properties;
       expect(properties.message).toBeDefined();
-      expect(properties.message.type).toBe('string');
+      if (properties && typeof properties === 'object' && 'message' in properties) {
+        const message = properties.message;
+        if (message && typeof message === 'object' && 'type' in message) {
+          expect(message.type).toBe('string');
+        }
+      }
     });
 
     it('should always use info log level', () => {

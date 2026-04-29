@@ -32,6 +32,7 @@ function createMockCore(): CoreModule {
     webSearch: vi.fn(),
     webFetch: vi.fn(),
     imgDescribe: vi.fn(),
+    requestGrant: vi.fn(async () => ({ approved: true })),
   };
 }
 
@@ -238,7 +239,7 @@ describe('HookExecutor', () => {
         version: 1,
       });
 
-      const pendingCalls = [createToolCall('bash', { command: 'original' })];
+      const pendingCalls = [createToolCall('bash', { command: 'original' }, 'test-hook')];
       await executor.execute(
         'test-hook',
         registry.get('test-hook')!.action,
@@ -270,7 +271,7 @@ describe('HookExecutor', () => {
         version: 1,
       });
 
-      const pendingCalls = [createToolCall('bash', { command: 'original' })];
+      const pendingCalls = [createToolCall('bash', { command: 'original' }, 'test-hook')];
       const result = await executor.execute(
         'test-hook',
         registry.get('test-hook')!.action,
@@ -299,8 +300,8 @@ describe('HookExecutor', () => {
       });
 
       const pendingCalls = [
-        createToolCall('bash', { command: 'first' }),
-        createToolCall('bash', { command: 'second' }),
+        createToolCall('bash', { command: 'first' }, 'test-hook'),
+        createToolCall('bash', { command: 'second' }, 'test-hook'),
       ];
       const result = await executor.execute(
         'test-hook',
@@ -334,7 +335,7 @@ describe('HookExecutor', () => {
         version: 1,
       });
 
-      const pendingCalls = [createToolCall('bash', { command: 'git push --force' })];
+      const pendingCalls = [createToolCall('bash', { command: 'git push --force' }, 'test-hook')];
       const result = await executor.execute(
         'block-force',
         registry.get('block-force')!.action,
@@ -357,7 +358,7 @@ describe('HookExecutor', () => {
         version: 1,
       });
 
-      const pendingCalls = [createToolCall('bash', { command: 'test' })];
+      const pendingCalls = [createToolCall('bash', { command: 'test' }, 'test-hook')];
       const result = await executor.execute(
         'block-any',
         registry.get('block-any')!.action,
@@ -389,7 +390,7 @@ describe('HookExecutor', () => {
         version: 1,
       });
 
-      const pendingCalls = [createToolCall('bash', { command: 'rm -rf /' })];
+      const pendingCalls = [createToolCall('bash', { command: 'rm -rf /' }, 'test-hook')];
       const result = await executor.execute(
         'replace-hook',
         registry.get('replace-hook')!.action,
@@ -417,7 +418,7 @@ describe('HookExecutor', () => {
         version: 1,
       });
 
-      const pendingCalls = [createToolCall('web_search', { query: 'test' })];
+      const pendingCalls = [createToolCall('web_search', { query: 'test' }, 'test-hook')];
       const result = await executor.execute(
         'replace-hook',
         registry.get('replace-hook')!.action,
@@ -444,7 +445,7 @@ describe('HookExecutor', () => {
         version: 1,
       });
 
-      const pendingCalls = [createToolCall('bash', { command: 'test' })];
+      const pendingCalls = [createToolCall('bash', { command: 'test' }, 'test-hook')];
       const result = await executor.execute(
         'msg-hook',
         registry.get('msg-hook')!.action,
@@ -474,7 +475,7 @@ describe('HookExecutor', () => {
         version: 1,
       });
 
-      const pendingCalls = [createToolCall('bash', { command: 'test' })];
+      const pendingCalls = [createToolCall('bash', { command: 'test' }, 'test-hook')];
 
       // First execution
       const result1 = await executor.execute(
@@ -516,7 +517,7 @@ describe('HookExecutor', () => {
         'inject-hook',
         registry.get('inject-hook')!.action,
         ctx,
-        [createToolCall('bash', {})],
+        [createToolCall('bash', {}, 'test-hook')],
         'Test'
       );
 
@@ -551,7 +552,7 @@ describe('HookExecutor', () => {
       expect(hooks).toContain('pre-commit-lint');
 
       // Execute
-      const pendingCalls = [createToolCall('git_commit', { message: 'feat: add tests' })];
+      const pendingCalls = [createToolCall('git_commit', { message: 'feat: add tests' }, 'test-hook')];
       const result = await executor.execute(
         'pre-commit-lint',
         registry.get('pre-commit-lint')!.action,
@@ -608,7 +609,7 @@ describe('HookExecutor', () => {
       expect(executor.checkHooks('bash')).toContain('block-force-main');
 
       // Execute block
-      const pendingCalls = [createToolCall('bash', { command: 'git push --force origin main' })];
+      const pendingCalls = [createToolCall('bash', { command: 'git push --force origin main' }, 'test-hook')];
       const result = await executor.execute(
         'block-force-main',
         registry.get('block-force-main')!.action,
@@ -642,7 +643,7 @@ describe('HookExecutor', () => {
       expect(executor.checkHooks('bash')).toContain('error-wiki');
 
       // Execute
-      const pendingCalls = [createToolCall('bash', { command: 'next-cmd' })];
+      const pendingCalls = [createToolCall('bash', { command: 'next-cmd' }, 'test-hook')];
       const result = await executor.execute(
         'error-wiki',
         registry.get('error-wiki')!.action,
