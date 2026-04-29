@@ -250,6 +250,16 @@ export interface CoreModule {
    * @returns Description of the image
    */
   imgDescribe(image: string, prompt?: string): Promise<string>;
+  /**
+   * Get current session mode
+   * @returns 'plan' or 'normal'
+   */
+  getMode(): 'plan' | 'normal';
+  /**
+   * Set session mode
+   * @param mode - 'plan' or 'normal'
+   */
+  setMode(mode: 'plan' | 'normal'): void;
 }
 
 /**

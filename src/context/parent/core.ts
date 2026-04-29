@@ -57,6 +57,7 @@ const TOOL_COLORS: Record<string, (text: string) => string> = {
  */
 export class Core implements CoreModule {
   private workDir: string;
+  private mode: 'plan' | 'normal' = 'normal';
 
   constructor(workDir?: string) {
     this.workDir = workDir || process.cwd();
@@ -74,6 +75,22 @@ export class Core implements CoreModule {
    */
   setWorkDir(dir: string): void {
     this.workDir = dir;
+  }
+
+  /**
+   * Get current session mode
+   * @returns 'plan' or 'normal'
+   */
+  getMode(): 'plan' | 'normal' {
+    return this.mode;
+  }
+
+  /**
+   * Set session mode
+   * @param mode - 'plan' or 'normal'
+   */
+  setMode(mode: 'plan' | 'normal'): void {
+    this.mode = mode;
   }
 
   /**

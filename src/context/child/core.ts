@@ -15,6 +15,7 @@ import { isVerbose } from '../../config.js';
 export class ChildCore implements CoreModule {
   private workDir: string;
   private name: string;
+  private mode: 'plan' | 'normal' = 'normal';  // Cached locally to avoid sync IPC
 
   constructor(name: string, workDir: string) {
     this.name = name;
@@ -98,5 +99,27 @@ export class ChildCore implements CoreModule {
       prompt,
     });
     return response.description;
+  }
+
+  /**
+   * Get current session mode
+   * Returns cached value to avoid sync IPC
+   * @returns 'plan' or 'normal'
+   */
+  getMode(): 'plan' | 'normal' {
+    return this.mode;
+  }
+
+  /**
+   * Set session mode
+   * Updates local cache and notifies parent via IPC
+   * @param mode - 'plan' or 'normal'
+   */
+  setMode(mode: 'plan' | 'normal'): void {
+    this.mode = mode;
+    // Notify parent asynchronously (no need to wait)
+    ipc.sendRequest('core_mode_set', { mode }).catch(() => {
+      // Ignore errors - parent will sync mode on next interaction
+    });
   }
 }

@@ -120,7 +120,7 @@ export class HookExecutor {
         return this.injectAfter(skillName, action, ctx, pendingCalls, skillContent);
 
       case 'block':
-        return this.block(skillName, action, skillContent);
+        return this.block(skillName, action, ctx, skillContent);
 
       case 'replace':
         return this.replace(skillName, action, ctx, pendingCalls, skillContent);
@@ -191,9 +191,20 @@ export class HookExecutor {
   private async block(
     skillName: string,
     action: { type: 'block'; reason?: string },
+    ctx: AgentContext,
     skillContent: string
   ): Promise<HookResult> {
     const reason = action.reason || skillContent.slice(0, 200);
+
+    // Explicit log for plan mode blocking
+    if (skillName === 'plan-mode') {
+      ctx.core.brief('warn', 'plan-mode',
+        '🚫 Tool blocked - Plan mode is active',
+        'Use mode_set({ mode: "normal" }) or /mode normal to enable code changes'
+      );
+    } else {
+      ctx.core.brief('warn', 'hook', `[${skillName}] Blocked tool execution`, reason.slice(0, 100));
+    }
 
     return {
       action: 'blocked',
@@ -399,6 +410,9 @@ export class HookExecutor {
       return { calls: [call], blocked: false, messages: [] };
     }
 
+    // Get session mode for condition evaluation
+    const sessionMode = ctx.core.getMode();
+
     // Group hooks by priority
     const hooksByPriority = this.groupHooksByPriority(matchedHooks);
     const sortedPriorities = Array.from(hooksByPriority.keys()).sort((a, b) => a - b);
@@ -411,8 +425,8 @@ export class HookExecutor {
         const skill = getSkill(hookName);
         if (!skill) continue;
 
-        // Evaluate condition with BOTH sequence and call metadata
-        if (!this.evaluateCondition(cond.condition, call)) {
+        // Evaluate condition with BOTH sequence and call metadata AND session mode
+        if (!this.evaluateCondition(cond.condition, call, sessionMode)) {
           continue;  // Condition doesn't match
         }
 
@@ -466,7 +480,7 @@ export class HookExecutor {
   /**
    * Evaluate a condition expression against sequence and call metadata.
    */
-  private evaluateCondition(condition: string, call: AugmentedToolCall): boolean {
+  private evaluateCondition(condition: string, call: AugmentedToolCall, sessionMode: 'plan' | 'normal'): boolean {
     try {
       // Create evaluation context with seq and call
       const seq = this.sequence;
@@ -475,15 +489,21 @@ export class HookExecutor {
         args: call.function.arguments,
       };
 
-      // Transform condition: call.X → callContext.X
+      // Create session context for session.getMode()
+      const sessionContext = {
+        getMode: () => sessionMode,
+      };
+
+      // Transform condition: call.X → callContext.X, session.getMode() → sessionContext.getMode()
       const expr = condition
         .replace(/call\.metadata\./g, 'callContext.metadata.')
         .replace(/call\.args\./g, 'callContext.args.')
-        .replace(/call\.args\b/g, 'callContext.args');
+        .replace(/call\.args\b/g, 'callContext.args')
+        .replace(/session\.getMode\(\)/g, 'sessionContext.getMode()');
 
       // Safely evaluate
-      const fn = new Function('seq', 'callContext', `return ${expr}`);
-      return fn(seq, callContext);
+      const fn = new Function('seq', 'callContext', 'sessionContext', `return ${expr}`);
+      return fn(seq, callContext, sessionContext);
     } catch {
       return false;
     }

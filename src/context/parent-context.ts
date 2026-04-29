@@ -303,6 +303,23 @@ export class ParentContext implements AgentContext {
           }
         },
       },
+      {
+        messageType: 'core_mode_get',
+        module: 'core',
+        handler: async (_sender, _payload, ctx, sendResponse) => {
+          const mode = ctx.core.getMode();
+          sendResponse('core_result', true, { mode });
+        },
+      },
+      {
+        messageType: 'core_mode_set',
+        module: 'core',
+        handler: async (_sender, payload, ctx, sendResponse) => {
+          const { mode } = payload as { mode: 'plan' | 'normal' };
+          ctx.core.setMode(mode);
+          sendResponse('core_result', true);
+        },
+      },
     ];
 
     for (const handler of handlers) {
