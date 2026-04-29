@@ -18,6 +18,7 @@ import { initializeSession } from '../session/index.js';
 import { ConditionRegistry } from '../hook/conditions.js';
 import { Sequence } from '../hook/sequence.js';
 import { HookExecutor } from '../hook/hook-executor.js';
+import { Core } from '../context/parent/core.js';
 import { AgentStateMachine } from './state-machine.js';
 import type { StateHandler } from './state-machine.js';
 import { UserInputProvider } from './input-provider.js';
@@ -172,7 +173,7 @@ export async function main(): Promise<void> {
   };
 
   // ── Create state machine ──
-  const inputProvider = new UserInputProvider();
+  const inputProvider = new UserInputProvider(() => (ctx.core as Core).getMode());
   const machine = new AgentStateMachine(
     triologue,
     ctx,

@@ -33,10 +33,24 @@ export interface InputProvider {
 // UserInputProvider — normal interactive mode
 // ============================================================================
 
+/**
+ * Function type to get current mode
+ */
+export type GetModeFn = () => 'plan' | 'normal';
+
 export class UserInputProvider implements InputProvider {
   readonly name = 'user';
+  private getMode: GetModeFn;
+
+  constructor(getMode: GetModeFn) {
+    this.getMode = getMode;
+  }
 
   async getInput(): Promise<string | null> {
+    const mode = this.getMode();
+    if (mode === 'plan') {
+      return agentIO.ask('plan >> ', true);
+    }
     return agentIO.ask(chalk.bgYellow.black('agent >> '), true);
   }
 
