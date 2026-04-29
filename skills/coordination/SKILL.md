@@ -41,12 +41,21 @@ When tasks can benefit from parallel work, create teammates using `tm_create` to
 
 ## Coordination Workflow
 
-### Step 1: Plan with Issues
+### Step 1: Create Issues for Task Tracking
 
-Before creating teammates:
-1. Use `issue_create` to define tasks clearly
-2. Use `blockage_create` to set dependencies between issues
-3. Verify issues are ready (no blockers, clear content)
+Use issues to track all work. Issues provide:
+- Clear task definitions with acceptance criteria
+- Dependency management via blocking relationships
+- Progress tracking (pending → in_progress → completed)
+- Persistent record of work done
+
+```
+# Create issues for each task
+issue_create(title="Implement feature X", content="Details...")
+issue_create(title="Add tests for X", content="...", blockedBy=[1])
+
+# issue_create returns the full issue list so you can see all tasks
+```
 
 ### Step 2: Create Teammates
 
@@ -57,134 +66,156 @@ tm_create(name="reviewer", role="code reviewer", prompt="Your task: review Y..."
 ```
 
 **Important**: Provide complete context in the prompt including:
-- Clear task description
+- Issue ID(s) to claim and work on
 - Relevant file paths
 - Success criteria
-- Constraints and preferences
+- Instructions to close issue when done
 
-### Step 3: Write Kickoff Todos
+### Step 3: Assign Work via Issues
 
-After creating teammates, use `todo_write` to track:
+Lead agent assigns issues to teammates:
 ```
-todo_write([
-  { name: "Spawn teammate: coder", done: true },
-  { name: "Spawn teammate: reviewer", done: true },
-  { name: "Send task to coder via mail_to", done: false },
-  { name: "Send task to reviewer via mail_to", done: false },
-  { name: "Wait for coder result", done: false },
-  { name: "Wait for reviewer result", done: false },
-  { name: "Integrate results and report to user", done: false }
-])
+# Claim issues for specific teammates
+issue_claim(id=1, owner="coder")
+issue_claim(id=2, owner="reviewer")
+
+# Notify teammates via mail
+mail_to(name="coder", title="Claimed issue #1", content="You now own issue #1: Implement X...")
 ```
 
-### Step 4: Distribute Tasks
+Or teammates can claim issues themselves if instructed in their prompt.
 
-Use `mail_to` to send tasks:
+### Step 4: Monitor Progress
+
+Use `issue_list` to check task status:
 ```
-mail_to(name="coder", title="Implement feature X", content="Details...")
-mail_to(name="reviewer", title="Review PR #123", content="Details...")
+issue_list()  # Shows all issues with status, owner, and blockers
 ```
 
-### Step 5: Monitor Progress
-
-Use `tm_await` to wait for completion:
+Use `tm_await` to wait for teammate completion:
 ```
 tm_await()  # Wait for all teammates
 # or
 tm_await(name="coder", timeout=60000)  # Wait for specific teammate
 ```
 
-Check mail for updates:
-- Teammates send progress updates via `mail_to` to "lead"
+Check mail for updates from teammates.
+
+### Step 5: Close Issues When Done
+
+When a teammate completes their work:
+```
+issue_close(id=1, status="completed", comment="Feature X implemented", poster="coder")
+```
+
+Closing a blocker automatically unblocks dependent issues.
 
 ### Step 6: Collect and Integrate
 
 After teammates complete:
-1. Read mail from teammates
-2. Integrate results
+1. Use `issue_list` to verify all issues are resolved
+2. Read mail from teammates for details
 3. Use `brief` to update user on progress
 4. Use `tm_remove` if teammates are no longer needed
 
 ## Communication Best Practices
 
-### Sending Clear Tasks
+### Assigning Tasks via Issues
 
 ```
-# Good: Complete context
-mail_to(name="coder", title="Fix login bug", content="""
-Bug: Login fails on Chrome
+# Good: Claim + notify
+issue_claim(id=1, owner="coder")
+mail_to(name="coder", title="Assigned issue #1: Fix login bug", content="""
+Issue #1 is now assigned to you.
 
-Location: src/auth/login.ts, line 45-60
+Location: src/auth/login.ts
 Error: "Invalid token" appears after clicking submit
 
 Expected: Should redirect to dashboard
-Please investigate and fix. Report progress via mail.
+Please investigate and fix. Close the issue when done.
 """)
 
-# Bad: Vague task
+# Bad: Mail only (no issue tracking)
 mail_to(name="coder", title="fix login", content="it's broken")
 ```
 
-### Receiving Results
+### Tracking Progress
 
-Teammates will send mail with results. Check mail regularly:
-- Use `brief` to update user on significant progress
-- Use `todo_write` to track overall progress
-- Respond to questions promptly via `mail_to`
+```
+# Good: Use issues for status
+issue_list()  # See all task status at a glance
+issue_close(id=1, status="completed", comment="Fixed")
+
+# Bad: Use todos to track team work
+todo_write([{ name: "Wait for coder" }])  # Doesn't show actual task status
+```
 
 ## Common Patterns
 
-### Pattern 1: Coder + Reviewer
+### Pattern 1: Sequential Tasks (with blocking)
 
 ```
-# Create teammates
-tm_create(name="dev", role="developer", prompt="Implement feature X...")
-tm_create(name="rev", role="reviewer", prompt="Review code for quality...")
+# Create issues with dependencies
+issue_create(title="Implement X", content="...")
+issue_create(title="Review X", content="...", blockedBy=[1])
+issue_create(title="Test X", content="...", blockedBy=[2])
 
-# First: dev works
-mail_to(name="dev", title="Task: ...", content="...")
+# Spawn teammates
+tm_create(name="dev", role="developer", prompt="Claim issue #1 and implement X...")
+tm_create(name="rev", role="reviewer", prompt="Claim issue #2 after #1 is closed...")
+
+# Assign first task
+issue_claim(id=1, owner="dev")
+mail_to(name="dev", title="Start with issue #1", content="...")
 
 # Wait for dev
 tm_await(name="dev")
 
-# Then: reviewer checks
-mail_to(name="rev", title="Review: ...", content="...")
-tm_await(name="rev")
-
-# Collect results and integrate
+# Issue #1 closed automatically unblocks #2
+# Notify reviewer
+issue_claim(id=2, owner="rev")
+mail_to(name="rev", title="Issue #2 is ready", content="...")
 ```
 
-### Pattern 2: Parallel Researchers
+### Pattern 2: Parallel Tasks
 
 ```
-# Create multiple researchers
-tm_create(name="r1", role="researcher", prompt="Search for X...")
-tm_create(name="r2", role="researcher", prompt="Search for Y...")
-tm_create(name="r3", role="researcher", prompt="Search for Z...")
+# Create independent issues
+issue_create(title="Research A", content="...")
+issue_create(title="Research B", content="...")
+issue_create(title="Research C", content="...")
 
-# Send tasks to all
-mail_to(name="r1", title="Research topic A", content="...")
-mail_to(name="r2", title="Research topic B", content="...")
-mail_to(name="r3", title="Research topic C", content="...")
+# Spawn teammates
+tm_create(name="r1", role="researcher", prompt="Claim and complete issue #1...")
+tm_create(name="r2", role="researcher", prompt="Claim and complete issue #2...")
+tm_create(name="r3", role="researcher", prompt="Claim and complete issue #3...")
+
+# Assign all at once
+issue_claim(id=1, owner="r1")
+issue_claim(id=2, owner="r2")
+issue_claim(id=3, owner="r3")
 
 # Wait for all
 tm_await()
 
-# Collect and synthesize results
+# Check status
+issue_list()
 ```
 
-### Pattern 3: Issue-Based Workflow
+### Pattern 3: Issue-Based Handoff
 
 ```
-# Create issues first
-issue_create(title="Implement X", content="...")
-issue_create(title="Test X", content="...", blockedBy=[1])
+# Create a chain of issues
+issue_create(title="Design API", content="...")
+issue_create(title="Implement API", content="...", blockedBy=[1])
+issue_create(title="Write docs", content="...", blockedBy=[2])
 
-# Teammate claims and works on issue 1
-tm_create(name="dev", role="developer", prompt="Claim and complete issues...")
+# Teammate completes design
+# Closing #1 unblocks #2
+issue_close(id=1, status="completed", comment="API spec ready")
 
-# Issue 2 blocked until issue 1 is completed
-# Teammate will auto-claim when blockers clear
+# Next teammate can now claim #2
+issue_claim(id=2, owner="impl")
 ```
 
 ## Troubleshooting
@@ -194,21 +225,21 @@ tm_create(name="dev", role="developer", prompt="Claim and complete issues...")
 - Check if teammate process is alive (use `tm_print` tool)
 - Send mail to check status
 
-### Confusion About Context
-- Send more context via `mail_to`
-- Include file paths and specific instructions
-- Teammates can ask lead for clarification
+### Issue Blocked
+- Check `issue_list` to see which issue is blocking
+- Wait for blocking issue to be closed
+- Blocking issue close automatically removes the blockage
 
 ### Task Too Complex
 - Break into smaller subtasks
 - Create separate issues for each
-- Use multiple teammates with focused roles
+- Use blocking relationships for dependencies
 
 ## Summary
 
-1. Plan with issues before creating teammates
-2. Provide complete context in prompts
-3. Use todo_write to track coordination
-4. Use mail_to for task distribution
-5. Use tm_await to wait for completion
-6. Integrate results and report to user
+1. **Create issues for all tasks** - provides visibility and tracking
+2. **Claim issues before starting work** - establishes ownership
+3. **Close issues when done** - updates status and unblocks dependents
+4. **Use issue_list to check progress** - single source of truth
+5. **Use mail_to for communication** - keep teammates informed
+6. **Use tm_await to wait for completion** - collect and integrate results

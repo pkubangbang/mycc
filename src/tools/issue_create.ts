@@ -8,7 +8,7 @@ import type { ToolDefinition, AgentContext } from '../types.js';
 
 export const issueCreateTool: ToolDefinition = {
   name: 'issue_create',
-  description: 'Create a new issue to track work. Returns issue ID. Use blockedBy to set dependencies. Follow with issue_claim to assign work.',
+  description: 'Create a new issue to track work. Returns full issue list for visibility. Use blockedBy to set dependencies.',
   input_schema: {
     type: 'object',
     properties: {
@@ -46,6 +46,7 @@ export const issueCreateTool: ToolDefinition = {
     const id = await ctx.issue.createIssue(title, content, blockedBy);
     ctx.core.brief('info', 'issue_create', `Created issue #${id}: ${title}`);
 
-    return `OK: #${id}`;
+    // Return full issue list for visibility (like todo_write)
+    return await ctx.issue.printIssues();
   },
 };
