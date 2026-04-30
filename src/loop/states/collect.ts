@@ -37,7 +37,11 @@ export async function handleCollect(
   // 3. Generate hint round if confusion threshold reached
   if (triologue.needsHintRound()) {
     agentIO.log(chalk.blue('[hint round] Generating problem analysis...'));
-    await triologue.generateHintRound();
+    const result = await triologue.generateHintRound();
+    // If aborted (ESC pressed), skip to PROMPT to show prompt immediately
+    if (result === 'aborted') {
+      return AgentState.PROMPT;
+    }
   }
 
   // 4. Todo nudging with state tracking

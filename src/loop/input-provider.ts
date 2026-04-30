@@ -49,7 +49,7 @@ export class UserInputProvider implements InputProvider {
   async getInput(): Promise<string | null> {
     const mode = this.getMode();
     if (mode === 'plan') {
-      return agentIO.ask('plan >> ', true);
+      return agentIO.ask(chalk.bgBlueBright.white('plan >> '), true);
     }
     return agentIO.ask(chalk.bgYellow.black('agent >> '), true);
   }

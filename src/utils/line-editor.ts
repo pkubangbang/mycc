@@ -94,11 +94,30 @@ export class LineEditor {
   private static readonly RENDER_THROTTLE_MS = 16;  // ~60fps
 
   /**
+   * Prepare for external content to be displayed above the editor.
+   * Clears the editor's visual rendering from screen and resets tracking
+   * so that console.log (or other writes) start at the correct position
+   * and a subsequent rerender() draws below the external content.
+   */
+  prepareForExternalContentAbove(): void {
+    const linesUp = this.screenStartRow;
+    let output = '\r';
+    if (linesUp > 0) {
+      output += `\x1b[${linesUp}A`;
+    }
+    output += '\r\x1b[J';
+    this.stdout.write(output);
+    this.screenStartRow = 0;
+  }
+
+  /**
    * Re-render the prompt (public for external use)
    * Used by AgentIO to restore prompt after displaying wrap-up letter-box
    */
   rerender(): void {
-    this.render();
+    this.doRender();
+    this.lastRenderTime = Date.now();
+    this.renderQueued = false;
   }
 
   // History

@@ -17,6 +17,7 @@ import { ResultTooLargeError } from '../types.js';
 import { getMyccDir, getLongtextDir, ensureDirs } from '../config.js';
 import { getTokenThreshold } from '../config.js';
 import { ConfusionCalculator } from './confusion-calculator.js';
+import { agentIO } from './agent-io.js';
 
 export type Role = 'system' | 'user' | 'assistant' | 'tool';
 
@@ -385,9 +386,11 @@ export class Triologue {
   /**
    * Generate a hint round with problem analysis
    * Adds user message with analysis and gets assistant acknowledgment
+   * @returns 'aborted' if ESC was pressed, 'success' if completed
    */
-  async generateHintRound(): Promise<void> {
-    if (this.hintGenerated) return;
+  async generateHintRound(): Promise<'aborted' | 'success'> {
+    if (this.hintGenerated) return 'success';
+    if (agentIO.isNeglectedMode()) return 'aborted';
 
     // Build analysis prompt from conversation
     const conversationText = minifyMessages(this.messages);
@@ -403,47 +406,62 @@ Identify:
 
 Be specific and actionable. This analysis will help guide the next steps.`;
 
-    // Get analysis from LLM
-    const response = await retryChat({
-      model: MODEL,
-      messages: [
+    // Use local abort controller so ESC interrupts hint round LLM calls
+    const abortController = new AbortController();
+    agentIO.onNeglected(() => abortController.abort());
+
+    try {
+      // Get analysis from LLM
+      const response = await retryChat(
         {
-          role: 'user',
-          content: analysisPrompt,
+          model: MODEL,
+          messages: [
+            {
+              role: 'user',
+              content: analysisPrompt,
+            },
+          ],
+          // use thinking mode for hint round analysis
+          think: true,
         },
-      ],
-      // use thinking mode for hint round analysis
-      think: true,
-    });
+        { signal: abortController.signal, neglected: agentIO.isNeglectedMode() },
+      );
 
-    const analysis = response.message.content || '(no analysis)';
+      const analysis = response.message.content || '(no analysis)';
 
-    // Add user message with hint
-    this.messages.push({
-      role: 'user',
-      content: `[HINT] ${analysis}`,
-    });
+      const hintMessage: Message = {
+        role: 'user',
+        content: `[HINT] ${analysis}`,
+      };
 
-    // Get assistant acknowledgment
-    const ackResponse = await retryChat({
-      model: MODEL,
-      messages: this.getMessages(),
-    });
+      const ackResponse = await retryChat(
+        {
+          model: MODEL,
+          messages: [...this.getMessages(), hintMessage],
+        },
+        { signal: abortController.signal },
+      );
 
-    const acknowledgment = ackResponse.message.content || 'Understood. I will consider this analysis.';
+      const acknowledgment = ackResponse.message.content || 'Understood. I will consider this analysis.';
+      const ackMessage: Message = {
+        role: 'assistant',
+        content: acknowledgment,
+      };
 
-    this.messages.push({
-      role: 'assistant',
-      content: acknowledgment,
-    });
+      this.messages.push(hintMessage);
+      this.updateTokenCount(hintMessage);
+      this.messages.push(ackMessage);
+      this.updateTokenCount(ackMessage);
 
-    // Update token count for new messages
-    for (const msg of this.messages.slice(-2)) {
-      this.updateTokenCount(msg);
+      this.hintGenerated = true;
+      this.options.onHint();
+      return 'success';
+    } catch (err) {
+      if (err instanceof Error && err.message === 'Request aborted') {
+        return 'aborted'; // ESC pressed - abort hint round
+      }
+      throw err;
     }
-
-    this.hintGenerated = true;
-    this.options.onHint();
   }
 
   // === Accessors ===

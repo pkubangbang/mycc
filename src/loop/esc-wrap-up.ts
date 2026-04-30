@@ -13,6 +13,7 @@
 
 import { displayLetterBox } from '../utils/letter-box.js';
 import type { Triologue } from './triologue.js';
+import type { LineEditor } from '../utils/line-editor.js';
 import { retryChat, MODEL } from '../ollama.js';
 
 /**
@@ -52,18 +53,22 @@ let wrapUpState: WrapUpState = {
 };
 
 /**
- * Run the wrap-up LLM call
- * Adds user prompt to triologue and calls LLM for wrap-up response
+ * Run the wrap-up LLM call.
+ * Builds a temporary messages array (triologue + wrap-up prompt) without
+ * modifying the triologue. The triologue is only updated in injectWrapUp()
+ * when the wrap-up succeeded and the grace period has passed.
  */
 async function runWrapUpLLM(triologue: Triologue): Promise<string> {
-  // Add user prompt for wrap-up
-  triologue.user(WRAP_UP_USER_MESSAGE);
+  const messages = [
+    ...triologue.getMessages(),
+    { role: 'user' as const, content: WRAP_UP_USER_MESSAGE },
+  ];
 
   try {
     const response = await retryChat(
       {
         model: MODEL,
-        messages: triologue.getMessages(),
+        messages,
         tools: [], // No tools for wrap-up
         think: true,
       },
@@ -72,7 +77,6 @@ async function runWrapUpLLM(triologue: Triologue): Promise<string> {
 
     return response.message?.content || '';
   } catch {
-    // Wrap-up failed - return empty content
     return '';
   }
 }
@@ -91,12 +95,12 @@ export function startWrapUp(triologue: Triologue): void {
     triologue,
   };
 
-  // When wrap-up completes, store the content and timestamp
   promise.then((content) => {
+    if (wrapUpState.promise !== promise) return;
     wrapUpState.content = content;
     wrapUpState.completedAt = Date.now();
   }).catch(() => {
-    // Wrap-up was cancelled or failed - clear state
+    if (wrapUpState.promise !== promise) return;
     wrapUpState.content = '';
     wrapUpState.completedAt = Date.now();
   });
@@ -113,7 +117,7 @@ export function getWrapUpState(): WrapUpState {
  * Check if wrap-up has completed and not yet shown
  */
 export function hasPendingWrapUp(): boolean {
-  return wrapUpState.content !== null && !wrapUpState.shown;
+  return wrapUpState.content !== null && wrapUpState.content !== '' && !wrapUpState.shown;
 }
 
 /**
@@ -143,8 +147,8 @@ export function clearWrapUp(): void {
 export function shouldAppendWrapUp(): 'append' | 'discard' {
   const { completedAt, shown, content } = wrapUpState;
 
-  // No wrap-up content or already shown - discard
-  if (content === null || shown) {
+  // No wrap-up content, empty (failed), or already shown - discard
+  if (!content || shown) {
     return 'discard';
   }
 
@@ -167,12 +171,13 @@ export function shouldAppendWrapUp(): 'append' | 'discard' {
 }
 
 /**
- * Inject wrap-up into triologue (user message + agent response)
- * Called when grace period allows injection
- * Note: The user message was already added during runWrapUpLLM, so we only add the agent response
+ * Inject wrap-up into triologue (user message + agent response).
+ * Only called when wrap-up succeeded with non-empty content
+ * and the grace period has passed.
  */
 export function injectWrapUp(): void {
   if (wrapUpState.triologue && wrapUpState.content) {
+    wrapUpState.triologue.user(WRAP_UP_USER_MESSAGE);
     wrapUpState.triologue.agent(wrapUpState.content);
   }
 }
@@ -188,16 +193,19 @@ export function displayWrapUp(content: string): void {
 }
 
 /**
- * Poll for completed wrap-up and display it if ready.
- * Encapsulates: pending check → get content → mark shown → display letter-box.
- * Returns the content if wrap-up was just displayed, null otherwise.
- * Caller is responsible for re-rendering the prompt after display.
+ * Try to display a pending wrap-up above the given editor.
+ * If wrap-up content is ready, clears the editor from screen,
+ * displays the letter-box, and re-renders the editor below it.
+ * Returns true if the wrap-up was shown, false otherwise.
  */
-export function pollAndDisplayWrapUp(): string | null {
-  if (!hasPendingWrapUp()) return null;
+export function tryDisplayWrapUp(editor: LineEditor | null): boolean {
+  if (!hasPendingWrapUp()) return false;
   const { content } = wrapUpState;
-  if (!content || content === '') return null;
+  if (!content || !content.trim() || !editor) return false;
   markWrapUpShown();
+  editor.prepareForExternalContentAbove();
   displayWrapUp(content);
-  return content;
+  editor.rerender();
+  return true;
 }
+

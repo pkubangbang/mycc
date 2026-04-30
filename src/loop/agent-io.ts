@@ -10,7 +10,7 @@
 import { LineEditor } from '../utils/line-editor.js';
 import type { KeyInfo } from '../utils/key-parser.js';
 import { spawn } from 'child_process';
-import { pollAndDisplayWrapUp, getWrapUpState } from './esc-wrap-up.js';
+import { getWrapUpState, tryDisplayWrapUp } from './esc-wrap-up.js';
 
 /**
  * ReplayBuffer - Buffer for collecting stdout/stderr bytes
@@ -81,7 +81,7 @@ class AgentIO {
   // LineEditor management
   private activeLineEditor: LineEditor | null = null;
   // Default history with common slash commands for easy access
-  private lineHistory: string[] = ['/help', '/load'];
+  private lineHistory: string[] = ['/mode plan', 'show me all the tools and skills that you can use'];
 
   // Buffer for output during user interaction (prompt displayed or wrapping up)
   private outputBuffer: Array<{
@@ -289,6 +289,7 @@ class AgentIO {
     // 5. ask() resolves, activeLineEditor becomes null
     // 6. IPC message is processed - but neglectedModeFlag was already cleared here
     this.neglectedModeFlag = false;
+    this.flushOutput();
 
     const prompt = useAsPrompt ? query : '> ';
     if (!useAsPrompt) {
@@ -300,24 +301,24 @@ class AgentIO {
       // Wrap-up polling timer
       let wrapUpPollTimer: ReturnType<typeof setInterval> | null = null;
 
+      const stopPolling = () => {
+        if (wrapUpPollTimer) {
+          clearInterval(wrapUpPollTimer);
+          wrapUpPollTimer = null;
+        }
+      };
+
       // Poll for wrap-up completion and display it above the prompt
       const pollWrapUp = () => {
         if (wrapUpPollTimer) return;
 
-        wrapUpPollTimer = setInterval(() => {
-          const content = pollAndDisplayWrapUp();
-          if (content) {
-            // Stop polling
-            if (wrapUpPollTimer) {
-              clearInterval(wrapUpPollTimer);
-              wrapUpPollTimer = null;
-            }
-            // Re-render prompt after letter-box display
-            if (this.activeLineEditor) {
-              this.activeLineEditor.rerender();
-            }
+        const timer = setInterval(() => {
+          if (tryDisplayWrapUp(this.activeLineEditor)) {
+            stopPolling();
           }
         }, 100);
+
+        wrapUpPollTimer = timer;
       };
 
       // Start polling if there's a pending wrap-up
@@ -326,33 +327,34 @@ class AgentIO {
         pollWrapUp();
       }
 
-      this.activeLineEditor = new LineEditor({
-        prompt,
-        stdout: process.stdout,
-        onDone: (value: string) => {
-          // Stop wrap-up polling
-          if (wrapUpPollTimer) {
-            clearInterval(wrapUpPollTimer);
-            wrapUpPollTimer = null;
-          }
+      try {
+        this.activeLineEditor = new LineEditor({
+          prompt,
+          stdout: process.stdout,
+          onDone: (value: string) => {
+            // Stop wrap-up polling
+            stopPolling();
 
-          // Save history
-          this.lineHistory = this.activeLineEditor?.getHistory() || [];
-          this.activeLineEditor?.close();
-          this.activeLineEditor = null;  // Clear FIRST - so isInteractionMode() returns false
+            // Save history
+            this.lineHistory = this.activeLineEditor?.getHistory() || [];
+            this.activeLineEditor?.close();
+            this.activeLineEditor = null;  // Clear FIRST - so isInteractionMode() returns false
 
-          // Flush buffered output (after clearing activeLineEditor)
-          this.flushOutput();
+            // Flush buffered output (after clearing activeLineEditor)
+            this.flushOutput();
 
-          resolve(value);
-        },
-        history: this.lineHistory,
-      });
+            resolve(value);
+          },
+          history: this.lineHistory,
+        });
 
-      // Check if wrap-up already completed while LineEditor was starting
-      const content = pollAndDisplayWrapUp();
-      if (content) {
-        this.activeLineEditor.rerender();
+        // Check if wrap-up already completed while LineEditor was starting
+        if (tryDisplayWrapUp(this.activeLineEditor)) {
+          stopPolling();
+        }
+      } catch (e) {
+        stopPolling();
+        throw e;
       }
     });
   }

@@ -5,6 +5,7 @@
 import type { SlashCommand } from '../types.js';
 import chalk from 'chalk';
 import { Triologue } from '../loop/triologue.js';
+import { clearWrapUp } from '../loop/esc-wrap-up.js';
 
 export const clearCommand: SlashCommand = {
   name: 'clear',
@@ -12,6 +13,7 @@ export const clearCommand: SlashCommand = {
   handler: (context) => {
     const triologue = context.triologue as Triologue;
     triologue.clear();
+    clearWrapUp();
     console.log(chalk.green('Conversation cleared. Starting fresh.'));
   },
 };
