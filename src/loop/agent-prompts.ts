@@ -55,6 +55,20 @@ export function buildSystemPrompt(
     'Do NOT guess. When in doubt, seek knowledge first.',
   ].join('\n');
 
+  // Verification guidelines - ensure proper due diligence before making changes
+  const verificationGuidelines = [
+    '## Verification Before Action',
+    '',
+    'Do NOT make assumptions. Always verify by:',
+    '1. Exploring the codebase to understand context',
+    '2. Asking the user for clarification',
+    '3. Searching the web for documentation',
+    '4. Searching the wiki for project knowledge',
+    '5. Using skills for specialized guidance',
+    '',
+    'Understand the project structure first. Only write code when you are clear about the direction. If unsure, discuss with the user before proceeding.',
+  ].join('\n');
+
   // Platform-specific guidance
   const isWin = platformInfo.platform === 'Windows';
   const platformGuidance = [
@@ -83,13 +97,15 @@ export function buildSystemPrompt(
   const common = [
     knowledgeBoundary,
     '',
+    verificationGuidelines,
+    '',
     platformGuidance,
     '',
     '## Calendar',
     `Current date: ${currentDate} (year: ${currentYear})`,
     '',
     '## Output Behavior',
-    'Respond concisely - do not repeat what tools have already displayed.',
+    'Respond concisely when you use tools or write summary. Respond with detail if you need the user\'s input.',
   ].join('\n');
 
   // For child process, include identity and collaboration guidance

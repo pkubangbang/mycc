@@ -47,7 +47,7 @@ export const tmCreateTool: ToolDefinition = {
       return 'Error: prompt parameter is required and must be a string';
     }
 
-    ctx.core.brief('info', 'tm_create', `Creating teammate '${name}' with role: ${role}`);
+    ctx.core.brief('info', 'tm_create', `Creating teammate '${name}' with role: ${role}`, prompt);
 
     try {
       const result = await ctx.team.createTeammate(name, role, prompt);
