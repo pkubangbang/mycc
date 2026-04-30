@@ -9,6 +9,7 @@ import { watch } from 'fs';
 import matter from 'gray-matter';
 import chalk from 'chalk';
 import { isVerbose } from '../../config.js';
+import { resolveToSkillPath, type SkillLayer } from '../../utils/skill-path-resolver.js';
 
 // Package root: resolve up from this file (src/context/shared/loader.ts or dist/context/shared/loader.js)
 const packageRoot = path.resolve(fileURLToPath(import.meta.url), '..', '..', '..', '..');
@@ -390,12 +391,25 @@ export class Loader implements DynamicLoader, SkillModule {
         return;
       }
 
+      // Convert layer to SkillLayer type for resolver
+      const skillLayer: SkillLayer = layer === 'built-in' ? 'built-in' : layer;
+
+      // Resolve to skill path notation using the utility
+      const sourceFile = resolveToSkillPath(filepath, skillLayer);
+      if (!sourceFile) {
+        if (!this.silent) {
+          console.warn(chalk.yellow(`[loader] Invalid skill path format: ${filepath}`));
+        }
+        return;
+      }
+
       const skill: Skill = {
         name: data.name,
         description: data.description || '',
         keywords: data.keywords || [],
         content: body.trim(),
         when: data.when,  // Hook condition (natural language)
+        sourceFile,  // Track source file for orphan detection (format: "layer:path")
       };
 
       const existing = this.skills.get(skill.name);
@@ -535,6 +549,17 @@ export class Loader implements DynamicLoader, SkillModule {
     } catch (err) {
       return `Error executing ${name}: ${(err as Error).message}`;
     }
+  }
+
+  /**
+   * List all available tools with name and description
+   * Used for condition compilation to validate trigger tool names
+   */
+  listAllTools(): Array<{ name: string; description: string }> {
+    return Array.from(this.tools.values()).map((entry) => ({
+      name: entry.tool.name,
+      description: entry.tool.description,
+    }));
   }
 
   /**

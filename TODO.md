@@ -19,4 +19,6 @@
 - [x] add permission system to the child process
 - [x] implement the plan mode
 - [x] add the `/mode <mode>` slash command
-- [ ] implement the auto mode
+~~- [ ] implement the auto mode~~
+
+- [ ] add e2e test using tmux, with meaningful test cases.

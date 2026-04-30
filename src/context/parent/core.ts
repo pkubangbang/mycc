@@ -362,8 +362,7 @@ export class Core implements CoreModule {
 
       return {
         approved: false,
-        reason: 'Error: You are in plan mode. DO NOT make any code change'
-        + (this.allowedFile ? `except editing the file at ${this.allowedFile}` : '')
+        reason: `Error: You are in plan mode. DO NOT make any code change${this.allowedFile ? ` except editing the file at ${this.allowedFile}` : ''}`,
       };
     }
     return { approved: true };

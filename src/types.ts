@@ -149,7 +149,8 @@ export interface Skill {
   description: string;
   keywords: string[];
   content: string;
-  when?: string;  // NEW: Natural language hook condition
+  when?: string;  // Natural language hook condition
+  sourceFile?: string;  // Source file path (relative to skills dir)
 }
 
 // ============================================================================
@@ -290,6 +291,11 @@ export interface SkillModule {
   loadSkills(): Promise<void>;
   listSkills(): Skill[];
   getSkill(name: string): Skill | undefined;
+  /**
+   * List all available tools with name and description
+   * Used for condition compilation to validate trigger tool names
+   */
+  listAllTools(): Array<{ name: string; description: string }>;
 }
 
 /**

@@ -301,11 +301,18 @@ an executable condition and action.`,
     }
     
     const existing = await ctx.conditions.get(skillName);
+    
+    // Get available tools for trigger validation
+    const availableTools = ctx.skill.listAllTools();
+    
+    // Compile with tools list and source file tracking
     const condition = await ctx.conditions.compile(
       skill.when,
       skillName,
+      skill.content,
       existing,
-      feedback
+      skill.sourceFile,  // Track source for orphan detection
+      availableTools      // Validate trigger against known tools
     );
     
     return `Compiled '${skillName}' (v${condition.version}):\n` +
@@ -315,6 +322,38 @@ an executable condition and action.`,
   }
 };
 ```
+
+### Compilation with Retry and Validation
+
+The compilation process includes:
+
+1. **Tool List for Context**: The LLM receives the complete list of available tools with descriptions, allowing it to choose appropriate triggers.
+
+2. **Retry Logic**: Up to 3 retries with error feedback to the LLM for correction.
+
+3. **Trigger Validation**: Validates that the trigger is:
+   - `'stop'` (fires when LLM finishes, no tool calls)
+   - `'*'` (fires on any tool call)
+   - A known tool name from the tools list
+
+4. **Source File Tracking**: Each compiled condition tracks its source skill file using the format `"{layer}:{path}"` (e.g., `"project:lint-check/SKILL.md"`).
+
+### Source File Notation
+
+Skills are stored in three locations with specific path notations:
+
+| Location | Path Format | Example |
+|----------|-------------|---------|
+| User skills | `user:{filename}` | `user:my-skill.md` |
+| Project skills | `project:{path}` | `project:code-review/SKILL.md` |
+| Built-in skills | `built-in:{path}` | `built-in:git-workflow/SKILL.md` |
+
+This notation enables:
+- **Orphan detection**: Identifying conditions whose source skill files no longer exist
+- **Cross-platform paths**: Consistent representation regardless of OS
+- **Layer resolution**: Knowing which skills directory to check
+
+See `src/utils/skill-path-resolver.ts` for implementation details.
 
 ## Agent Loop Integration
 

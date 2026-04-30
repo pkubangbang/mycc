@@ -80,12 +80,20 @@ Returns the compiled condition with version history.`,
     // Get existing condition if any
     const existing = conditions.get(skillName);
 
-    // Compile
+    // Get available tools for trigger validation
+    const availableTools = ctx.skill.listAllTools();
+
+    // Get source file path for orphan detection
+    const sourceFile = skill.sourceFile;
+
+    // Compile with tools list for validation
     const result = await conditions.compile(
       skill.when,
       skillName,
       skill.content,
-      existing
+      existing,
+      sourceFile,
+      availableTools
     );
 
     // Handle compilation result

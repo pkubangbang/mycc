@@ -371,15 +371,17 @@ Created modular components:
 
 | File | Type | Purpose |
 |------|------|---------|
+| `src/utils/skill-path-resolver.ts` | New | Cross-platform skill path resolution |
 | `src/context/shared/sequence.ts` | New | Track tool execution history |
 | `src/context/shared/conditions.ts` | New | Compile and store conditions |
 | `src/context/shared/hooks.ts` | New | Execute hook actions |
 | `src/tools/skill_compile.ts` | New | Compile "when" → condition + action |
-| `src/types.ts` | Modified | Add `when` field to Skill |
-| `src/context/shared/loader.ts` | Modified | Parse `when` field, add tool |
+| `src/types.ts` | Modified | Add `when` and `sourceFile` to Skill, `listAllTools` to SkillModule |
+| `src/context/shared/loader.ts` | Modified | Parse `when` field, track sourceFile, implement listAllTools |
+| `src/hook/condition-validator.ts` | New | Validate compiled conditions |
 | `src/loop/agent-loop.ts` | Modified | Integrate hook evaluation |
 
-**Total**: ~800 lines added/modified across 7 files
+**Total**: ~1200 lines added/modified across 10 files
 
 ---
 

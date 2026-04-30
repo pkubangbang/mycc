@@ -15,11 +15,14 @@ import * as path from 'path';
 import { getMyccDir } from '../config.js';
 import { Sequence } from './sequence.js';
 import { ollama, MODEL } from '../ollama.js';
-import { 
+import {
   validateCondition,
   compileCondition,
-  type ValidationResult 
+  type ValidationResult
 } from './condition-validator.js';
+import {
+  getSkillAbsolutePath,
+} from '../utils/skill-path-resolver.js';
 
 /**
  * JSON schema for condition compilation response
@@ -27,7 +30,7 @@ import {
 const CONDITION_SCHEMA = {
   type: 'object',
   properties: {
-    trigger: { type: 'string', description: 'Tool name or * for any tool' },
+    trigger: { type: 'string', description: "Must be 'stop' (no tool calls), '*' (any tool), or a specific tool name like 'bash', 'edit_file', 'git_commit'" },
     condition: { type: 'string', description: 'Expression using seq.X functions' },
     action: {
       type: 'object',
@@ -42,6 +45,19 @@ const CONDITION_SCHEMA = {
   },
   required: ['trigger', 'condition', 'action'],
 };
+
+/**
+ * Maximum number of compilation retries
+ */
+const MAX_COMPILE_RETRIES = 3;
+
+/**
+ * Tool info for condition compilation
+ */
+export interface ToolInfo {
+  name: string;
+  description: string;
+}
 
 /**
  * Action types for hooks
@@ -129,7 +145,6 @@ export class ConditionRegistry {
     }
 
     const orphanedConditions: string[] = [];
-    const myccDir = getMyccDir();
 
     // Validate each condition using ConditionValidator
     for (const [name, cond] of Object.entries(data)) {
@@ -143,11 +158,19 @@ export class ConditionRegistry {
       
       // Check for orphaned conditions (source file no longer exists)
       if (cond.sourceFile) {
-        const sourcePath = path.join(myccDir, cond.sourceFile);
-        if (!fs.existsSync(sourcePath)) {
+        // Use the skill path resolver to check if file exists
+        const absolutePath = getSkillAbsolutePath(cond.sourceFile);
+        
+        if (absolutePath === null) {
+          // Invalid skill path format
+          warnings.push(`Condition '${name}' has invalid sourceFile format: ${cond.sourceFile}`);
+          continue;
+        }
+        
+        if (!fs.existsSync(absolutePath)) {
           orphanedConditions.push(name);
           warnings.push(`Condition '${name}' is orphaned (source file not found: ${cond.sourceFile})`);
-          continue; // Don't load orphaned conditions
+          continue;
         }
       }
       
@@ -377,33 +400,64 @@ export class ConditionRegistry {
   /**
    * Compile a "when" expression into condition + action
    * This is called by the skill_compile tool.
-   * 
+   *
    * Pipeline:
    * 1. Call Ollama with structured output (JSON schema)
    * 2. Validate schema and expression
    * 3. Smoke test the expression
-   * 4. Only persist if all checks pass
-   * 
+   * 4. Validate trigger against known tool names
+   * 5. Retry on failure (up to MAX_COMPILE_RETRIES)
+   * 6. Only persist if all checks pass
+   *
    * @param when Natural language "when" expression
    * @param skillName Name of the skill
    * @param skillContent Content of the skill file
    * @param existing Existing condition (for refinement)
    * @param sourceFile Optional source file path (relative to .mycc dir)
+   * @param availableTools List of available tools for trigger validation
    */
   async compile(
     when: string,
     skillName: string,
     skillContent: string,
     existing?: Condition,
-    sourceFile?: string
+    sourceFile?: string,
+    availableTools?: ToolInfo[]
   ): Promise<{ condition?: Condition; validation?: ValidationResult; error?: string }> {
+    // Build tools list for prompt
+    const toolsSection = availableTools && availableTools.length > 0
+      ? `Available tools (use these as trigger values):
+${availableTools.map(t => `- ${t.name}: ${t.description.split('\n')[0]}`).join('\n')}
+
+NOTE: The trigger must be one of:
+- "stop" (triggers when LLM finishes reply)
+- "*" (triggers on any tool call)
+- A specific tool name from the list above`
+      : `Trigger values:
+- "stop": Triggers when LLM finishes (no tool calls pending). Use for "before LLM finishes reply" or "before stopping".
+- "*": Triggers on any tool call.
+- Tool name: Triggers on specific tool (e.g., "bash", "edit_file", "git_commit").`;
+
     const existingInfo = existing
       ? `Current version ${existing.version}:
 Condition: ${existing.condition}
 Action: ${JSON.stringify(existing.action)}`
       : 'No existing condition (first compilation)';
 
-    const prompt = `You are compiling a skill hook into a structured condition and action.
+    let lastError: string | undefined;
+    let lastValidation: ValidationResult | undefined;
+
+    // Retry loop
+    for (let attempt = 0; attempt < MAX_COMPILE_RETRIES; attempt++) {
+      // Build prompt with error feedback from previous attempts
+      const errorFeedback = lastError
+        ? `\n\nPREVIOUS ATTEMPT FAILED with this error:
+${lastError}
+
+Please fix the issue and try again.`
+        : '';
+
+      const prompt = `You are compiling a skill hook into a structured condition and action.
 
 Skill name: ${skillName}
 Natural language condition: "${when}"
@@ -411,6 +465,8 @@ Skill content:
 ${skillContent}
 
 ${existingInfo}
+
+${toolsSection}
 
 Available condition functions (use seq.X syntax):
 - seq.has(toolName): Check if tool exists in sequence
@@ -443,73 +499,100 @@ Examples:
 - "block force push to main": { "trigger": "bash", "condition": "call.args.command.includes('git push --force') && call.args.command.includes('main')", "action": { "type": "block", "reason": "Force push to main is prohibited" } }
 - "block test files over 300 lines": { "trigger": "write_file", "condition": "call.metadata.isTestFile && call.metadata.newLoc > 300", "action": { "type": "block", "reason": "Test files cannot exceed 300 lines" } }
 - "block destructive bash to main": { "trigger": "bash", "condition": "call.metadata.isDestructive && call.args.command.includes('main')", "action": { "type": "block", "reason": "Destructive operations on main branch prohibited" } }
+${errorFeedback}
 
 Output a JSON object with trigger, condition, and action.`;
 
-    try {
-      // Use Ollama with structured output (JSON schema enforcement)
-      const response = await ollama.chat({
-        model: MODEL,
-        messages: [{ role: 'user', content: prompt }],
-        format: CONDITION_SCHEMA,
-        options: { temperature: 0 },
-      });
+      try {
+        // Use Ollama with structured output (JSON schema enforcement)
+        const response = await ollama.chat({
+          model: MODEL,
+          messages: [{ role: 'user', content: prompt }],
+          format: CONDITION_SCHEMA,
+          options: { temperature: 0 },
+        });
 
-      const content = response.message.content || '';
-      
-      // Use the validation pipeline
-      const existingVersion = existing?.version || 0;
-      const result = await compileCondition(content, when, skillName, existingVersion);
-      
-      if (!result.success || !result.condition) {
-        return {
-          validation: result.validation,
-          error: result.error || 'Compilation failed',
-        };
-      }
+        const content = response.message.content || '';
+        
+        // Use the validation pipeline
+        const existingVersion = existing?.version || 0;
+        const result = await compileCondition(content, when, skillName, existingVersion);
+        
+        lastValidation = result.validation;
 
-      // Merge history if existing
-      const condition = result.condition;
-      if (existing?.history && existing.history.length > 0) {
-        condition.history = [...existing.history, ...(condition.history || [])];
-      }
-
-      // Store source file path if provided
-      if (sourceFile) {
-        condition.sourceFile = sourceFile;
-      }
-
-      // Apply runtime fixes
-      this.applyRuntimeFixes(skillName, condition);
-      
-      // Store in memory
-      this.set(skillName, condition);
-      
-      // Persist atomically
-      const saveResult = await this.save();
-      if (!saveResult.success) {
-        // Rollback memory state
-        if (existing) {
-          this.conditions.set(skillName, existing);
-        } else {
-          this.conditions.delete(skillName);
+        if (!result.success || !result.condition) {
+          lastError = result.error || 'Compilation failed';
+          continue; // Retry
         }
-        return {
+
+        // Merge history if existing
+        const condition = result.condition;
+        if (existing?.history && existing.history.length > 0) {
+          condition.history = [...existing.history, ...(condition.history || [])];
+        }
+
+        // Validate trigger: must be 'stop', '*', or a valid tool name
+        if (condition.trigger !== 'stop' && condition.trigger !== '*') {
+          // Check if it's a valid tool name
+          if (typeof condition.trigger !== 'string' || condition.trigger.trim() === '') {
+            lastError = `Invalid trigger: '${condition.trigger}'. Trigger must be 'stop', '*', or a valid tool name.`;
+            continue; // Retry
+          }
+
+          // If we have tools list, validate against it
+          if (availableTools && availableTools.length > 0) {
+            const validToolNames = availableTools.map(t => t.name);
+            if (!validToolNames.includes(condition.trigger)) {
+              lastError = `Invalid trigger: '${condition.trigger}' is not a known tool name. ` +
+                `Valid triggers: 'stop', '*', or one of: ${validToolNames.slice(0, 10).join(', ')}...`;
+              continue; // Retry
+            }
+          }
+        }
+
+        // Store source file path if provided
+        if (sourceFile) {
+          condition.sourceFile = sourceFile;
+        }
+
+        // Apply runtime fixes
+        this.applyRuntimeFixes(skillName, condition);
+        
+        // Store in memory
+        this.set(skillName, condition);
+        
+        // Persist atomically
+        const saveResult = await this.save();
+        if (!saveResult.success) {
+          // Rollback memory state
+          if (existing) {
+            this.conditions.set(skillName, existing);
+          } else {
+            this.conditions.delete(skillName);
+          }
+          return {
+            condition,
+            validation: result.validation,
+            error: `Failed to save: ${saveResult.error}`,
+          };
+        }
+        
+        return { 
           condition,
           validation: result.validation,
-          error: `Failed to save: ${saveResult.error}`,
         };
+      } catch (err) {
+        const errorMsg = (err as Error).message;
+        lastError = `LLM request failed: ${errorMsg}`;
+        // Continue to retry
       }
-      
-      return { 
-        condition,
-        validation: result.validation,
-      };
-    } catch (err) {
-      const errorMsg = (err as Error).message;
-      console.error(`[Conditions] Failed to compile: ${errorMsg}`);
-      return { error: errorMsg };
     }
+
+    // All retries exhausted
+    return { 
+      validation: lastValidation,
+      error: `Compilation failed after ${MAX_COMPILE_RETRIES} attempts. Last error: ${lastError}`,
+    };
   }
 
   /**
