@@ -80,7 +80,7 @@ export async function openMultilineEditor(initialContent: string): Promise<strin
   }
 
   // Wait for user to finish editing
-  await agentIO.ask(chalk.cyan('Press Enter when done editing > '));
+  await agentIO.ask(chalk.cyan('Press Enter when done editing > '), true);
 
   // Read and extract content
   const editedContent = fs.readFileSync(filePath, 'utf-8');
