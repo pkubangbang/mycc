@@ -25,15 +25,17 @@ export async function handleTool(
 
   // Execute each tool call sequentially
   for (const toolCall of hookResult.calls) {
-    // ESC: abort current tool and skip remaining
+    // ESC: abort current tool and return to PROMPT immediately
     if (agentIO.isNeglectedMode()) {
-      agentIO.log(chalk.yellow('\n[ESC] Tool execution interrupted - skipping remaining tools'));
+      agentIO.setNeglectedMode(false); // Clear neglected mode before returning to PROMPT
+      agentIO.log(chalk.yellow('\n[ESC] Tool execution interrupted - returning to prompt'));
+      // Skip any remaining pending tool calls to maintain triologue parity
+      // (tool responses must follow assistant tool_calls)
       triologue.skipPendingTools(
         'Tool use interrupted - user pressed ESC.',
         'Tool use skipped due to ESC interruption.',
       );
-      triologue.user('The user pressed ESC to interrupt. Please wrap up and wait for next instruction.');
-      break;
+      return AgentState.PROMPT;
     }
 
     const toolCallId = toolCall.id;
