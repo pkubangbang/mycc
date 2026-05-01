@@ -15,7 +15,7 @@
  */
 
 import type { ToolDefinition, AgentContext } from '../types.js';
-import { exec, execSync } from 'child_process';
+import { spawn, exec, execSync } from 'child_process';
 import { promisify } from 'util';
 import chalk from 'chalk';
 import { agentIO } from '../loop/agent-io.js';
@@ -119,12 +119,12 @@ async function handleHandOver(ctx: AgentContext, args: Record<string, unknown>):
     note: command,
   }]);
 
-  // 4. Open popup terminal
-  try {
-    await execAsync(`${terminalLauncher} -- tmux attach -t ${sessionName}`);
-  } catch {
-    // Terminal launcher may exit immediately, that's fine
-  }
+  // 4. Open popup terminal (detached, returns immediately)
+  const terminalArgs = parseTerminalArgs(terminalLauncher, sessionName);
+  spawn(terminalArgs[0], terminalArgs[1], {
+    detached: true,
+    stdio: 'ignore',
+  }).unref();
 
   ctx.core.brief('info', 'hand_over', `Opened: ${sessionName}`, justification);
 
@@ -299,4 +299,14 @@ function whichSync(cmd: string): boolean {
   } catch {
     return false;
   }
+}
+
+/**
+ * Parse terminal launcher command into executable and arguments
+ * Handles launchers with built-in flags (e.g., "open -a Terminal.app --args")
+ */
+function parseTerminalArgs(launcher: string, sessionName: string): [string, string[]] {
+  const parts = launcher.split(' ');
+  // All terminal launchers use '--' to separate their args from the command
+  return [parts[0], [...parts.slice(1), '--', 'tmux', 'attach', '-t', sessionName]];
 }
