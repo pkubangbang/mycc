@@ -202,38 +202,215 @@ function count_nodes(node: Node): number {
 }
 
 /**
+ * Count nodes that need processing (have empty summary)
+ */
+function count_incomplete_nodes(node: Node): number {
+  let count = 0;
+  if (node.summary === '') {
+    count = 1;
+  }
+  for (const child of node.children) {
+    count += count_incomplete_nodes(child);
+  }
+  return count;
+}
+
+/**
+ * Lock file interface for progressive compilation
+ */
+interface LockFile {
+  started_at: string;
+  source_file: string;
+  source_hash: string;
+  output_file: string;
+}
+
+/** Lock freshness threshold in milliseconds (3 hours) */
+const LOCK_FRESHNESS_MS = 3 * 60 * 60 * 1000;
+
+/**
+ * Get lock file path
+ */
+function get_lock_path(outFile: string): string {
+  return `${outFile}.lock`;
+}
+
+/**
+ * Create a lock file
+ */
+function create_lock(outFile: string, mdPath: string, hash: string): LockFile {
+  const lock: LockFile = {
+    started_at: new Date().toISOString(),
+    source_file: mdPath,
+    source_hash: hash,
+    output_file: outFile,
+  };
+  const lockPath = get_lock_path(outFile);
+  fs.writeFileSync(lockPath, JSON.stringify(lock, null, 2));
+  return lock;
+}
+
+/**
+ * Try to read existing lock file
+ */
+function try_read_lock(outFile: string): LockFile | null {
+  try {
+    const lockPath = get_lock_path(outFile);
+    if (!fs.existsSync(lockPath)) return null;
+    const content = fs.readFileSync(lockPath, 'utf-8');
+    return JSON.parse(content) as LockFile;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Check if lock is fresh (within threshold)
+ */
+function is_lock_fresh(lock: LockFile): boolean {
+  const startedAt = new Date(lock.started_at).getTime();
+  return Date.now() - startedAt < LOCK_FRESHNESS_MS;
+}
+
+/**
+ * Remove lock file
+ */
+function remove_lock(outFile: string): void {
+  const lockPath = get_lock_path(outFile);
+  if (fs.existsSync(lockPath)) {
+    fs.unlinkSync(lockPath);
+  }
+}
+
+/**
+ * Merge existing node data (summary, links) into a new node tree
+ * Preserves already-computed summaries when resuming
+ */
+function merge_existing_data(newNode: Node, existingNode: Node | null): void {
+  if (!existingNode) return;
+
+  // Copy existing summary if present
+  if (existingNode.summary) {
+    newNode.summary = existingNode.summary;
+  }
+
+  // Merge links (deduplicated)
+  for (const link of existingNode.links || []) {
+    const exists = newNode.links.some(
+      (l) =>
+        l.target_type === link.target_type &&
+        l.comment === link.comment &&
+        ((l.target_type === 'url' && l.url === link.url) ||
+          (l.target_type === 'file' && l.file_path === link.file_path) ||
+          (l.target_type === 'node' && l.node_id === link.node_id))
+    );
+    if (!exists) {
+      newNode.links.push(link);
+    }
+  }
+
+  // Recursively merge children by id
+  for (const newChild of newNode.children) {
+    const existingChild = existingNode.children?.find((c) => c.id === newChild.id);
+    if (existingChild) {
+      merge_existing_data(newChild, existingChild);
+    }
+  }
+}
+
+/**
+ * Try to load existing mindmap for continuation
+ */
+function try_load_existing_mindmap(outFile: string): MindmapJSON | null {
+  try {
+    if (!fs.existsSync(outFile)) return null;
+    const content = fs.readFileSync(outFile, 'utf-8');
+    const json = JSON.parse(content) as MindmapJSON;
+    if (!json.root || !json.hash) return null;
+    return json;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Compile a markdown file into a mindmap
+ * Uses lock-based progressive compilation:
+ * - Creates lock file before starting
+ * - If fresh lock exists with matching hash, resumes from existing mindmap
+ * - Saves progress after each node
+ * - Removes lock on successful completion
  * @param mdPath - Path to the markdown file (relative to cwd)
  * @param cwd - Current working directory (for resolving paths)
  * @param outputPath - Optional output JSON path (relative to cwd)
- *                    If not provided, defaults to .mycc/mindmap.json
+ * @param force - If true, ignore lock and compile from scratch
  * @returns Compiled mindmap JSON
  */
 export async function compile_mindmap(
   mdPath: string,
   cwd?: string,
-  outputPath?: string
+  outputPath?: string,
+  force: boolean = false
 ): Promise<MindmapJSON> {
   const workDir = cwd || process.cwd();
   const absolutePath = path.resolve(workDir, mdPath);
   const content = fs.readFileSync(absolutePath, 'utf-8');
   const dir = path.dirname(absolutePath);
 
-  // Parse markdown into sections
-  const sections = parse_markdown(content);
+  const hash = compute_file_hash(absolutePath);
 
-  // Build root node (represents the entire file)
+  const defaultOutput = path.join(workDir, '.mycc', 'mindmap.json');
+  const outFile = outputPath ? path.resolve(workDir, outputPath) : defaultOutput;
+
+  const outDir = path.dirname(outFile);
+  if (!fs.existsSync(outDir)) {
+    fs.mkdirSync(outDir, { recursive: true });
+  }
+
+  // Lock handling
+  let shouldResume = false;
+  let existingMindmap: MindmapJSON | null = null;
+
+  if (!force) {
+    const existingLock = try_read_lock(outFile);
+
+    if (existingLock && is_lock_fresh(existingLock) && existingLock.source_hash === hash) {
+      // Fresh lock with matching hash - try to resume
+      existingMindmap = try_load_existing_mindmap(outFile);
+      if (existingMindmap && existingMindmap.hash === hash) {
+        shouldResume = true;
+        console.log('[mindmap] Fresh lock found, resuming from previous compilation');
+      } else {
+        console.log('[mindmap] Lock exists but mindmap invalid, starting fresh');
+        remove_lock(outFile);
+      }
+    } else if (existingLock && !is_lock_fresh(existingLock)) {
+      console.log('[mindmap] Stale lock (>3h old), starting fresh');
+      remove_lock(outFile);
+    } else if (existingLock && existingLock.source_hash !== hash) {
+      console.log('[mindmap] Lock for different source version, starting fresh');
+      remove_lock(outFile);
+    }
+  } else {
+    remove_lock(outFile);
+  }
+
+  // Create lock file
+  create_lock(outFile, mdPath, hash);
+
+  // Parse markdown
+  const sections = parse_markdown(content);
   const fileName = path.basename(absolutePath, path.extname(absolutePath));
 
-  // Extract preamble (content before first heading)
   const firstHeadingMatch = content.match(/^#{1,6}\s+/m);
   const preamble = firstHeadingMatch
     ? content.slice(0, content.indexOf(firstHeadingMatch[0])).trim()
     : content.trim();
 
+  // Build new tree
   const root: Node = {
     id: '/',
-    text: preamble, // Only preamble text for root, not entire file
+    text: preamble,
     title: fileName,
     summary: '',
     level: 0,
@@ -241,73 +418,68 @@ export async function compile_mindmap(
     links: extract_links(preamble),
   };
 
-  // Compute hash of original markdown
-  const hash = compute_file_hash(absolutePath);
-
-  // Determine output path
-  const defaultOutput = path.join(workDir, '.mycc', 'mindmap.json');
-  const outFile = outputPath
-    ? path.resolve(workDir, outputPath)
-    : defaultOutput;
-
-  // Ensure .mycc directory exists for default output
-  const outDir = path.dirname(outFile);
-  if (!fs.existsSync(outDir)) {
-    fs.mkdirSync(outDir, { recursive: true });
+  // Merge existing data if resuming
+  if (shouldResume && existingMindmap) {
+    merge_existing_data(root, existingMindmap.root);
   }
 
-  // Create mindmap object upfront
+  // Create mindmap
   const now = new Date();
   const mindmap: MindmapJSON = {
     dir,
-    source_file: mdPath, // Store relative path
+    source_file: mdPath,
     hash,
-    compiled_at: now.toISOString(),
+    compiled_at: shouldResume && existingMindmap ? existingMindmap.compiled_at : now.toISOString(),
     updated_at: now.toISOString(),
     root,
   };
 
-  // Count total nodes for progress bar
+  // Count incomplete nodes
+  const incompleteNodes = count_incomplete_nodes(root);
   const totalNodes = count_nodes(root);
-  let currentNode = 0;
+  const skippedNodes = totalNodes - incompleteNodes;
 
-  // Pre-increment callback called BEFORE processing each node
-  const onNodeStart = () => {
-    currentNode++;
-  };
+  if (skippedNodes > 0) {
+    console.log(`[mindmap] ${skippedNodes}/${totalNodes} nodes already complete`);
+  }
 
-  // Progress callback - uses currentNode which was pre-incremented
+  // If all complete, finish early
+  if (incompleteNodes === 0) {
+    console.log(`[mindmap] All ${totalNodes} nodes already summarized`);
+    remove_lock(outFile);
+    return mindmap;
+  }
+
+  let processedNodes = 0;
+  const onNodeStart = () => { processedNodes++; };
   const onProgress = (round: number, tool: string) => {
-    const percent = Math.round((currentNode / totalNodes) * 100);
-    const bar =
-      '█'.repeat(Math.floor(percent / 5)) +
-      '░'.repeat(20 - Math.floor(percent / 5));
+    const percent = Math.round((processedNodes / incompleteNodes) * 100);
+    const bar = '█'.repeat(Math.floor(percent / 5)) + '░'.repeat(20 - Math.floor(percent / 5));
     process.stdout.write(
-      `\r\x1b[2K[mindmap] Exploring [${bar}] ${currentNode}/${totalNodes} (${tool}, round ${round})`
+      `\r\x1b[2K[mindmap] [${bar}] ${processedNodes}/${incompleteNodes} (${tool}, r${round})`
     );
   };
-
-  // Callback to save mindmap after each node is processed
   const onNodeComplete = () => {
     mindmap.updated_at = new Date().toISOString();
     fs.writeFileSync(outFile, JSON.stringify(mindmap, null, 2));
   };
 
-  // Generate summaries using explorer agent
   await summarize_with_explorer(root, workDir, [], onProgress, onNodeStart, onNodeComplete);
 
-  // Clear progress line and show completion
   process.stdout.write('\r\x1b[2K');
 
-  // Final save with completion timestamp
+  // Final save and remove lock
   mindmap.updated_at = new Date().toISOString();
   fs.writeFileSync(outFile, JSON.stringify(mindmap, null, 2));
+  remove_lock(outFile);
 
+  console.log(`[mindmap] Completed ${totalNodes} nodes`);
   return mindmap;
 }
 
 /**
  * Recursively summarize nodes using explorer agent
+ * Skips nodes that already have summaries (for resume capability)
  * @param node - The node to process
  * @param workDir - Working directory for file operations
  * @param ancestorTexts - Texts of ancestors (for context)
@@ -323,15 +495,20 @@ async function summarize_with_explorer(
   onNodeStart?: () => void,
   onNodeComplete?: () => void
 ): Promise<void> {
-  // Call start callback BEFORE processing this node (for accurate progress)
-  if (onNodeStart) {
-    onNodeStart();
-  }
-
   // First, process all children (bottom-up)
   const childTexts = [node.text, ...ancestorTexts];
   for (const child of node.children) {
     await summarize_with_explorer(child, workDir, childTexts, onProgress, onNodeStart, onNodeComplete);
+  }
+
+  // Skip if already summarized (resume capability)
+  if (node.summary !== '') {
+    return;
+  }
+
+  // Call start callback BEFORE processing this node
+  if (onNodeStart) {
+    onNodeStart();
   }
 
   // Build ancestor context
