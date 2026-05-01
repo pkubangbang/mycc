@@ -22,3 +22,6 @@
 ~~- [ ] implement the auto mode~~
 
 - [ ] add e2e test using tmux, with meaningful test cases.
+- [ ] add compact tool for the llm to call
+- [ ] add mindmap as another memory system for mycc
+- [ ] fix "Error: Request timed out after 300000ms" causing mycc to quit

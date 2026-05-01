@@ -17,7 +17,8 @@
       "Bash(pnpm tsc:*)",
       "Bash(pnpm test:*)",
       "Bash(wc:*)",
-      "Bash(pnpm lint *)"
+      "Bash(pnpm lint *)",
+      "Bash(git show *)"
     ]
   }
 }

@@ -45,8 +45,8 @@ describe('path validation', () => {
 
   describe('readTool', () => {
     for (const pattern of blockedPatterns) {
-      it(`should block path traversal pattern: ${pattern}`, () => {
-        const result = readTool.handler(ctx, { path: pattern });
+      it(`should block path traversal pattern: ${pattern}`, async () => {
+        const result = await readTool.handler(ctx, { path: pattern });
         expect(result).toContain('Error:');
       });
     }
@@ -54,8 +54,8 @@ describe('path validation', () => {
 
   describe('writeTool', () => {
     for (const pattern of blockedPatterns) {
-      it(`should block path traversal pattern: ${pattern}`, () => {
-        const result = writeTool.handler(ctx, {
+      it(`should block path traversal pattern: ${pattern}`, async () => {
+        const result = await writeTool.handler(ctx, {
           path: pattern,
           content: 'malicious',
         });
@@ -66,8 +66,8 @@ describe('path validation', () => {
 
   describe('editTool', () => {
     for (const pattern of blockedPatterns) {
-      it(`should block path traversal pattern: ${pattern}`, () => {
-        const result = editTool.handler(ctx, {
+      it(`should block path traversal pattern: ${pattern}`, async () => {
+        const result = await editTool.handler(ctx, {
           path: pattern,
           old_text: 'test',
           new_text: 'test',

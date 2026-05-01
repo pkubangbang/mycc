@@ -22,8 +22,8 @@ describe('writeTool', () => {
     removeTempDir(tempDir);
   });
 
-  it('should write content to file', () => {
-    const result = writeTool.handler(ctx, {
+  it('should write content to file', async () => {
+    const result = await writeTool.handler(ctx, {
       path: 'new.txt',
       content: 'Hello, World!',
     });
@@ -34,8 +34,8 @@ describe('writeTool', () => {
     expect(written).toBe('Hello, World!');
   });
 
-  it('should create parent directories automatically', () => {
-    const result = writeTool.handler(ctx, {
+  it('should create parent directories automatically', async () => {
+    const result = await writeTool.handler(ctx, {
       path: 'deep/nested/dir/file.txt',
       content: 'nested content',
     });
@@ -49,11 +49,11 @@ describe('writeTool', () => {
     expect(written).toBe('nested content');
   });
 
-  it('should overwrite existing file', () => {
+  it('should overwrite existing file', async () => {
     const testFile = path.join(tempDir, 'existing.txt');
     fs.writeFileSync(testFile, 'original content');
 
-    const result = writeTool.handler(ctx, {
+    const result = await writeTool.handler(ctx, {
       path: 'existing.txt',
       content: 'new content',
     });
@@ -64,8 +64,8 @@ describe('writeTool', () => {
     expect(written).toBe('new content');
   });
 
-  it('should write empty content', () => {
-    const result = writeTool.handler(ctx, {
+  it('should write empty content', async () => {
+    const result = await writeTool.handler(ctx, {
       path: 'empty.txt',
       content: '',
     });
@@ -76,8 +76,8 @@ describe('writeTool', () => {
     expect(written).toBe('');
   });
 
-  it('should block path traversal attacks', () => {
-    const result = writeTool.handler(ctx, {
+  it('should block path traversal attacks', async () => {
+    const result = await writeTool.handler(ctx, {
       path: '../../../tmp/malicious.txt',
       content: 'malicious',
     });
@@ -86,8 +86,8 @@ describe('writeTool', () => {
     expect(result).toContain('Path escapes workspace');
   });
 
-  it('should block absolute path outside workspace', () => {
-    const result = writeTool.handler(ctx, {
+  it('should block absolute path outside workspace', async () => {
+    const result = await writeTool.handler(ctx, {
       path: '/tmp/malicious.txt',
       content: 'malicious',
     });
@@ -96,10 +96,10 @@ describe('writeTool', () => {
     expect(result).toContain('Path escapes workspace');
   });
 
-  it('should handle special characters in content', () => {
+  it('should handle special characters in content', async () => {
     const specialContent = 'Line1\nLine2\tTabbed\nUnicode: \u4e2d\u6587';
 
-    const result = writeTool.handler(ctx, {
+    const result = await writeTool.handler(ctx, {
       path: 'special.txt',
       content: specialContent,
     });
@@ -110,10 +110,10 @@ describe('writeTool', () => {
     expect(written).toBe(specialContent);
   });
 
-  it('should handle large content', () => {
+  it('should handle large content', async () => {
     const largeContent = 'x'.repeat(100000);
 
-    const result = writeTool.handler(ctx, {
+    const result = await writeTool.handler(ctx, {
       path: 'large.txt',
       content: largeContent,
     });
@@ -124,12 +124,12 @@ describe('writeTool', () => {
     expect(written.length).toBe(100000);
   });
 
-  it('should handle file with same name as directory', () => {
+  it('should handle file with same name as directory', async () => {
     // Create a directory first
     fs.mkdirSync(path.join(tempDir, 'mydir'));
 
     // Writing to a path that would conflict
-    const result = writeTool.handler(ctx, {
+    const result = await writeTool.handler(ctx, {
       path: 'mydir',
       content: 'content',
     });
@@ -138,8 +138,8 @@ describe('writeTool', () => {
     expect(result).toContain('Error:');
   });
 
-  it('should handle paths with spaces', () => {
-    const result = writeTool.handler(ctx, {
+  it('should handle paths with spaces', async () => {
+    const result = await writeTool.handler(ctx, {
       path: 'folder with spaces/file name.txt',
       content: 'content',
     });
