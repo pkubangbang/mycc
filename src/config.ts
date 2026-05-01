@@ -92,6 +92,13 @@ export function getSkillMatchThreshold(): number {
 }
 
 /**
+ * Get hint threshold for confusion detection
+ */
+export function getHintThreshold(): number {
+  return parseInt(process.env.HINT_THRESHOLD || '10', 10);
+}
+
+/**
  * Get Ollama host URL
  */
 export function getOllamaHost(): string {

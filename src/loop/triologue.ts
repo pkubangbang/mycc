@@ -12,7 +12,7 @@ import * as path from 'path';
 import chalk from 'chalk';
 import { retryChat, MODEL } from '../ollama.js';
 import type { Message, ToolCall, WikiModule } from '../types.js';
-import { minifyMessages } from '../utils/llm-chat-minifier.js';
+import { minifyMessages, minifyForHint } from '../utils/llm-chat-minifier.js';
 import { ResultTooLargeError } from '../types.js';
 import { getMyccDir, getLongtextDir, ensureDirs } from '../config.js';
 import { getTokenThreshold } from '../config.js';
@@ -383,7 +383,7 @@ export class Triologue {
    */
   needsHintRound(): boolean {
     if (this.hintGenerated) return false;
-    if (!this.confusion.needsHint()) return false;
+    if (!this.confusion.needsHint(this.messages.length)) return false;
     // Only generate hint after a valid transition point (assistant or tool message)
     const lastRole = this.getLastRole();
     return lastRole === 'assistant' || lastRole === 'tool';
@@ -407,33 +407,47 @@ export class Triologue {
 
   /**
    * Generate a hint round with problem analysis
-   * Adds user message with analysis and gets assistant acknowledgment
+   * Adds user message with analysis (single LLM call, no acknowledgment)
    * @returns 'aborted' if ESC was pressed, 'success' if completed
    */
   async generateHintRound(): Promise<'aborted' | 'success'> {
     if (this.hintGenerated) return 'success';
     if (agentIO.isNeglectedMode()) return 'aborted';
 
-    // Build analysis prompt from conversation
-    const conversationText = minifyMessages(this.messages);
+    // Extract focused context for hint generation
+    const context = minifyForHint(
+      this.messages,
+      this.confusion.getScore(),
+      this.confusion.getBreakdown()
+    );
 
-    const analysisPrompt = `Analyze this conversation for potential issues and blockers:
+    const analysisPrompt = `## User's Intent
+${context.userIntent}
 
-${conversationText}
+## Current Progress
+${context.recentTools.map(t => `- ${t.name}: ${t.status}`).join('\n')}
 
-Identify:
-1. Any problems or blockers encountered (errors, failed attempts, stuck patterns)
-2. Patterns that might indicate getting stuck (repeated actions, circular reasoning)
-3. Suggest concrete workarounds or alternative approaches
+## Problems Encountered
+${context.errors.length > 0 ? context.errors.map(e => `- ${e.tool}: ${e.error}`).join('\n') : 'None'}
 
-Be specific and actionable. This analysis will help guide the next steps.`;
+## Stuck Patterns
+${context.repetition.length > 0 ? context.repetition.map(r => `- ${r.tool} called ${r.count} times`).join('\n') : 'None'}
+
+## Confusion Score: ${context.confusionScore}
+${context.confusionBreakdown}
+
+---
+
+Based on the gap between the user's intent and current progress, identify the blocker and suggest a concrete next step.
+
+Important: Use \`ctx.core.brief()\` for status updates in your next response.`;
 
     // Use local abort controller so ESC interrupts hint round LLM calls
     const abortController = new AbortController();
     agentIO.onNeglected(() => abortController.abort());
 
     try {
-      // Get analysis from LLM
+      // Get analysis from LLM (single call with think mode)
       const response = await retryChat(
         {
           model: MODEL,
@@ -456,24 +470,8 @@ Be specific and actionable. This analysis will help guide the next steps.`;
         content: `[HINT] ${analysis}`,
       };
 
-      const ackResponse = await retryChat(
-        {
-          model: MODEL,
-          messages: [...this.getMessages(), hintMessage],
-        },
-        { signal: abortController.signal },
-      );
-
-      const acknowledgment = ackResponse.message.content || 'Understood. I will consider this analysis.';
-      const ackMessage: Message = {
-        role: 'assistant',
-        content: acknowledgment,
-      };
-
       this.messages.push(hintMessage);
       this.updateTokenCount(hintMessage);
-      this.messages.push(ackMessage);
-      this.updateTokenCount(ackMessage);
 
       this.hintGenerated = true;
       this.options.onHint();

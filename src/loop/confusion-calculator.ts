@@ -66,6 +66,10 @@ export class ConfusionCalculator {
   private score: number = 0;
   private recentToolCalls: string[] = [];
   private threshold: number;
+  // Track breakdown factors
+  private assistantResponses: number = 0;
+  private errorCount: number = 0;
+  private repetitionCount: number = 0;
 
   constructor(threshold: number = 10) {
     this.threshold = threshold;
@@ -98,11 +102,12 @@ export class ConfusionCalculator {
     } else {
       // actions
       if (this.recentToolCalls.slice(-5).includes(toolName)) {
-        // consecutive actions
+        // consecutive actions - potential repetition
         if (toolName === 'mail_to') {
           // mail_to is highly confusing
           this.score += 2;
         }
+        this.repetitionCount++;
       } else {
         // burst action - reduces confusion
         this.score = Math.max(this.score - 1, 0);
@@ -115,17 +120,21 @@ export class ConfusionCalculator {
   /** Called on each assistant response (turn) */
   onAssistantResponse(): void {
     this.score += 1;
+    this.assistantResponses++;
   }
 
   /** Called when tool result contains error */
   onError(result: string): void {
     if (isErrorResult(result)) {
       this.score += 2;
+      this.errorCount++;
     }
   }
 
   /** Check if hint should be generated */
-  needsHint(): boolean {
+  needsHint(messageCount: number = 0): boolean {
+    // Need minimum context before generating hints
+    if (messageCount < 6) return false;
     return this.score >= this.threshold;
   }
 
@@ -133,10 +142,28 @@ export class ConfusionCalculator {
   reset(): void {
     this.score = 0;
     this.recentToolCalls = [];
+    this.assistantResponses = 0;
+    this.errorCount = 0;
+    this.repetitionCount = 0;
   }
 
   /** Get current score (for testing/debugging) */
   getScore(): number {
     return this.score;
+  }
+
+  /** Get breakdown of confusion factors */
+  getBreakdown(): string {
+    const parts: string[] = [];
+    if (this.assistantResponses > 0) {
+      parts.push(`${this.assistantResponses} assistant turns without progress`);
+    }
+    if (this.errorCount > 0) {
+      parts.push(`${this.errorCount} tool errors`);
+    }
+    if (this.repetitionCount > 0) {
+      parts.push(`${this.repetitionCount} repeated actions`);
+    }
+    return parts.join(', ') || 'No issues detected';
   }
 }
