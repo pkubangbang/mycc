@@ -34,6 +34,9 @@ import type { KeyInfo } from './utils/key-parser.js';
 
 const PROJECT_ROOT = getProjectRoot();
 
+// Set process title so it shows as 'mycc' in terminal
+process.title = 'mycc';
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -193,11 +196,11 @@ function runCoordinator(): void {
     await new Promise<void>((resolve) => {
       const onReady = (msg: CoordinatorMessage) => {
         if (msg.type === 'ready') {
-          lead!.off('message', onReady);
+          lead.off('message', onReady);
           resolve();
         }
       };
-      lead!.on('message', onReady);
+      lead.on('message', onReady);
     });
 
     isRestarting = false;
