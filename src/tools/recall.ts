@@ -1,5 +1,5 @@
 /**
- * get-node.ts - Tool for agent to query mindmap nodes
+ * recall.ts - Tool for agent to query mindmap nodes
  *
  * Scope: ['main', 'child'] - Available to lead and teammates
  *
@@ -14,8 +14,8 @@ import type { Node } from '../mindmap/types.js';
 import { get_node, load_mindmap, get_default_mindmap_path } from '../mindmap/index.js';
 import * as fs from 'fs';
 
-export const getNodeTool: ToolDefinition = {
-  name: 'get_node',
+export const recallTool: ToolDefinition = {
+  name: 'recall',
   description: 'Get node information from mindmap by path. Use this to explore the knowledge tree structure.',
   input_schema: {
     type: 'object',
@@ -45,7 +45,7 @@ export const getNodeTool: ToolDefinition = {
 
     const node = get_node(mindmap, nodePath);
     if (!node) {
-      return `Node not found: ${nodePath}\n\nAvailable paths start from root "/". Use get_node with path "/" to see top-level nodes.`;
+      return `Node not found: ${nodePath}\n\nAvailable paths start from root "/". Use recall with path "/" to see top-level nodes.`;
     }
 
     return formatNode(node);

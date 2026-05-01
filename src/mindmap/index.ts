@@ -14,15 +14,15 @@
  */
 
 // Types
-export type { 
-  Node, 
-  Mindmap, 
-  Link, 
+export type {
+  Node,
+  Mindmap,
+  Link,
   MarkdownSection,
-  ANCEContext, 
-  CompileOptions, 
-  PatchOptions, 
-  GetNodeResult, 
+  ANCEContext,
+  CompileOptions,
+  PatchOptions,
+  GetNodeResult,
   HashResult,
   MindmapJSON
 } from './types.js';

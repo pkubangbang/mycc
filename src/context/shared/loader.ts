@@ -58,7 +58,7 @@ import { handOverTool } from '../../tools/hand_over.js';
 import { gitCommitTool } from '../../tools/git_commit.js';
 import { skillCompileTool } from '../../tools/skill_compile.js';
 import { planOnTool } from '../../tools/plan_on.js';
-import { getNodeTool } from '../../tools/get-node.js';
+import { recallTool } from '../../tools/recall.js';
 import { planOffTool } from '../../tools/plan_off.js';
 
 /**
@@ -109,7 +109,7 @@ const builtInTools: ToolDefinition[] = [
   skillCompileTool,
   planOnTool,
   planOffTool,
-  getNodeTool,
+  recallTool,
 ];
 
 /**
