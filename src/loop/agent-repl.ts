@@ -180,16 +180,18 @@ export async function main(): Promise<void> {
     triologue.loadRestoration(restoredPair);
   }
 
-  // Inject project context files
-  const claudePath = path.join(process.cwd(), 'CLAUDE.md');
-  const readmePath = path.join(process.cwd(), 'README.md');
-  if (fs.existsSync(claudePath)) triologue.setClaudeMd(fs.readFileSync(claudePath, 'utf-8'));
-  if (fs.existsSync(readmePath)) triologue.setReadmeMd(fs.readFileSync(readmePath, 'utf-8'));
-
-  // If no mindmap, inject instruction for LLM to read CLAUDE.md
-  if (!mindmapLoaded) {
+  // Inject project context based on mindmap availability
+  if (mindmapLoaded) {
+    // Mindmap available - instruct LLM to use recall tool
+    triologue.setMindmapInstruction();
+  } else {
+    // No mindmap - instruct LLM to read CLAUDE.md and NOT use recall
     triologue.setNoMindmapInstruction();
   }
+
+  // Always load README.md if available (for general project context)
+  const readmePath = path.join(process.cwd(), 'README.md');
+  if (fs.existsSync(readmePath)) triologue.setReadmeMd(fs.readFileSync(readmePath, 'utf-8'));
 
   // Initialize hook system (machine lifetime)
   const conditions = new ConditionRegistry();

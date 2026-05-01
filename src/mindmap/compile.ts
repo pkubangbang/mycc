@@ -238,7 +238,33 @@ export async function compile_mindmap(
     summary: '',
     level: 0,
     children: sections.map((s) => build_node(s, '/', 1)),
-    links: [],
+    links: extract_links(preamble),
+  };
+
+  // Compute hash of original markdown
+  const hash = compute_file_hash(absolutePath);
+
+  // Determine output path
+  const defaultOutput = path.join(workDir, '.mycc', 'mindmap.json');
+  const outFile = outputPath
+    ? path.resolve(workDir, outputPath)
+    : defaultOutput;
+
+  // Ensure .mycc directory exists for default output
+  const outDir = path.dirname(outFile);
+  if (!fs.existsSync(outDir)) {
+    fs.mkdirSync(outDir, { recursive: true });
+  }
+
+  // Create mindmap object upfront
+  const now = new Date();
+  const mindmap: MindmapJSON = {
+    dir,
+    source_file: mdPath, // Store relative path
+    hash,
+    compiled_at: now.toISOString(),
+    updated_at: now.toISOString(),
+    root,
   };
 
   // Count total nodes for progress bar
@@ -257,43 +283,24 @@ export async function compile_mindmap(
       '█'.repeat(Math.floor(percent / 5)) +
       '░'.repeat(20 - Math.floor(percent / 5));
     process.stdout.write(
-      `\r[mindmap] Exploring [${bar}] ${currentNode}/${totalNodes} (${tool}, round ${round})`
+      `\r\x1b[2K[mindmap] Exploring [${bar}] ${currentNode}/${totalNodes} (${tool}, round ${round})`
     );
   };
 
+  // Callback to save mindmap after each node is processed
+  const onNodeComplete = () => {
+    mindmap.updated_at = new Date().toISOString();
+    fs.writeFileSync(outFile, JSON.stringify(mindmap, null, 2));
+  };
+
   // Generate summaries using explorer agent
-  await summarize_with_explorer(root, workDir, [], onProgress, onNodeStart);
+  await summarize_with_explorer(root, workDir, [], onProgress, onNodeStart, onNodeComplete);
 
   // Clear progress line and show completion
   process.stdout.write('\r\x1b[2K');
 
-  // Compute hash of original markdown
-  const hash = compute_file_hash(absolutePath);
-
-  const now = new Date();
-
-  const mindmap: MindmapJSON = {
-    dir,
-    source_file: mdPath, // Store relative path
-    hash,
-    compiled_at: now.toISOString(),
-    updated_at: now.toISOString(),
-    root,
-  };
-
-  // Determine output path
-  const defaultOutput = path.join(workDir, '.mycc', 'mindmap.json');
-  const outFile = outputPath
-    ? path.resolve(workDir, outputPath)
-    : defaultOutput;
-
-  // Ensure .mycc directory exists for default output
-  const outDir = path.dirname(outFile);
-  if (!fs.existsSync(outDir)) {
-    fs.mkdirSync(outDir, { recursive: true });
-  }
-
-  // Save to file
+  // Final save with completion timestamp
+  mindmap.updated_at = new Date().toISOString();
   fs.writeFileSync(outFile, JSON.stringify(mindmap, null, 2));
 
   return mindmap;
@@ -306,13 +313,15 @@ export async function compile_mindmap(
  * @param ancestorTexts - Texts of ancestors (for context)
  * @param onProgress - Progress callback for tool usage
  * @param onNodeStart - Callback called BEFORE processing each node (for accurate progress)
+ * @param onNodeComplete - Callback called AFTER each node is complete (to save progress)
  */
 async function summarize_with_explorer(
   node: Node,
   workDir: string,
   ancestorTexts: string[] = [],
   onProgress?: (round: number, tool: string) => void,
-  onNodeStart?: () => void
+  onNodeStart?: () => void,
+  onNodeComplete?: () => void
 ): Promise<void> {
   // Call start callback BEFORE processing this node (for accurate progress)
   if (onNodeStart) {
@@ -322,7 +331,7 @@ async function summarize_with_explorer(
   // First, process all children (bottom-up)
   const childTexts = [node.text, ...ancestorTexts];
   for (const child of node.children) {
-    await summarize_with_explorer(child, workDir, childTexts, onProgress, onNodeStart);
+    await summarize_with_explorer(child, workDir, childTexts, onProgress, onNodeStart, onNodeComplete);
   }
 
   // Build ancestor context
@@ -337,6 +346,29 @@ async function summarize_with_explorer(
     onProgress
   );
   node.summary = result.summary;
+
+  // Convert marked files to Link objects and append to node.links
+  for (const filePath of result.markedFiles) {
+    node.links.push({
+      target_type: 'file',
+      file_path: filePath,
+      comment: `Discovered during exploration`,
+    });
+  }
+
+  // Convert marked URLs to Link objects and append to node.links
+  for (const url of result.markedUrls) {
+    node.links.push({
+      target_type: 'url',
+      url,
+      comment: `Discovered during exploration`,
+    });
+  }
+
+  // Call complete callback AFTER this node is fully processed
+  if (onNodeComplete) {
+    onNodeComplete();
+  }
 }
 
 /**
@@ -366,7 +398,19 @@ export async function compile_mindmap_from_content(
     summary: '',
     level: 0,
     children: sections.map((s) => build_node(s, '/', 1)),
-    links: [],
+    links: extract_links(preamble),
+  };
+
+  const hash = crypto.createHash('sha256').update(content).digest('hex');
+  const now = new Date();
+
+  const mindmap: MindmapJSON = {
+    dir: '',
+    source_file: '', // No source file for content-based compilation
+    hash,
+    compiled_at: now.toISOString(),
+    updated_at: now.toISOString(),
+    root,
   };
 
   if (showProgress) {
@@ -388,21 +432,16 @@ export async function compile_mindmap_from_content(
       );
     };
 
+    // Note: For content-based compilation, we don't save to file on each node
+    // since there's no output file specified
     await summarize_with_explorer(root, process.cwd(), [], onProgress, onNodeStart);
     process.stdout.write('\r\x1b[2K');
   } else {
     await summarize_with_explorer(root, process.cwd());
   }
 
-  const hash = crypto.createHash('sha256').update(content).digest('hex');
-  const now = new Date();
+  // Update timestamp after completion
+  mindmap.updated_at = new Date().toISOString();
 
-  return {
-    dir: '',
-    source_file: '', // No source file for content-based compilation
-    hash,
-    compiled_at: now.toISOString(),
-    updated_at: now.toISOString(),
-    root,
-  };
+  return mindmap;
 }

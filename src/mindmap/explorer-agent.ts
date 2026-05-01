@@ -19,12 +19,15 @@ import type { WebFetchResponse } from 'ollama';
 import * as fs from 'fs';
 import * as path from 'path';
 import { execSync } from 'child_process';
+import { minifyMessages } from '../utils/llm-chat-minifier.js';
+import { getTokenThreshold, getMyccDir, ensureDirs } from '../config.js';
 
 /**
  * Configuration constants
  */
-const MAX_ROUNDS_DEFAULT = 20;
+const MAX_ROUNDS_DEFAULT = 50;
 const WEB_TIMEOUT_MS = 30000; // 30 seconds timeout for web operations
+const TOKEN_THRESHOLD = getTokenThreshold();
 
 /**
  * Result of exploration - summary and marked files/URLs
@@ -33,6 +36,84 @@ export interface ExplorationResult {
   summary: string;
   markedFiles: string[];
   markedUrls: string[];
+}
+
+/**
+ * Estimate token count for messages (word-based approximation)
+ */
+function estimateTokens(messages: Message[]): number {
+  let count = 0;
+  for (const msg of messages) {
+    if (msg.content) {
+      count += msg.content.split(/\s+/).length;
+    }
+    if (msg.tool_calls) {
+      for (const tc of msg.tool_calls) {
+        count += JSON.stringify(tc.function.arguments).split(/\s+/).length;
+      }
+    }
+  }
+  return count;
+}
+
+/**
+ * Compact messages by summarizing with LLM
+ * Saves transcript to disk and returns summarized messages
+ */
+async function compactMessages(
+  messages: Message[],
+  nodeTitle: string
+): Promise<Message[]> {
+  // Ensure transcript directory exists
+  ensureDirs();
+  const transcriptDir = path.join(getMyccDir(), 'transcripts');
+  if (!fs.existsSync(transcriptDir)) {
+    fs.mkdirSync(transcriptDir, { recursive: true });
+  }
+
+  // Save full transcript to disk
+  const timestamp = Math.floor(Date.now() / 1000);
+  const transcriptPath = path.join(transcriptDir, `explorer_${timestamp}.jsonl`);
+
+  const writeStream = fs.createWriteStream(transcriptPath);
+  for (const msg of messages) {
+    writeStream.write(`${JSON.stringify(msg)}\n`);
+  }
+  writeStream.end();
+
+  // Build conversation text for summarization
+  const conversationText = minifyMessages(messages);
+
+  const response = await ollama.chat({
+    model: MODEL,
+    messages: [
+      {
+        role: 'user',
+        content:
+          `Summarize this exploration session for continuity. Include:\n` +
+          `1) What was discovered\n` +
+          `2) Current progress\n` +
+          `3) Key findings so far\n` +
+          `4) Files/URLs marked as relevant\n\n` +
+          `Context: Exploring section "${nodeTitle}"\n\n` +
+          `${conversationText}`,
+      },
+    ],
+  });
+
+  const summary = response.message.content || '(no summary)';
+
+  // Return compacted messages: summary + acknowledgment
+  return [
+    {
+      role: 'user',
+      content: `[Conversation compressed. Transcript: ${transcriptPath}]\n\n${summary}`,
+    },
+    {
+      role: 'assistant',
+      content: 'Understood. I have the context from the summary. Continuing exploration.',
+    },
+  ];
 }
 
 /**
@@ -510,6 +591,13 @@ async function runExplorationLoop(
       tool_calls: assistantMsg.tool_calls,
     });
 
+    // Check for compaction after adding assistant message
+    if (estimateTokens(messages) > TOKEN_THRESHOLD) {
+      const compacted = await compactMessages(messages, nodeTitle);
+      messages.length = 0;
+      messages.push(...compacted);
+    }
+
     // No tool calls = done
     if (!assistantMsg.tool_calls || assistantMsg.tool_calls.length === 0) {
       return {
@@ -537,6 +625,13 @@ async function runExplorationLoop(
         content: output,
         tool_call_id: tc.id,
       });
+    }
+
+    // Check for compaction after adding tool results
+    if (estimateTokens(messages) > TOKEN_THRESHOLD) {
+      const compacted = await compactMessages(messages, nodeTitle);
+      messages.length = 0;
+      messages.push(...compacted);
     }
   }
 

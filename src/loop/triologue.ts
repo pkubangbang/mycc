@@ -134,13 +134,24 @@ export class Triologue {
   }
 
   /**
+   * Add instruction when mindmap is loaded
+   * Tells LLM to use the recall tool to explore the mindmap
+   */
+  setMindmapInstruction(): void {
+    this.projectContext.push(
+      { role: 'user', content: '[System] A mindmap (knowledge tree) is available. Use the `recall` tool to explore it. Start with `recall("/")` to see top-level nodes, then drill down into children. The mindmap contains compiled project knowledge and guidance.' },
+      { role: 'assistant', content: 'Understood. I will use the recall tool to explore the mindmap. Starting with recall("/") to see the top-level structure.' }
+    );
+  }
+
+  /**
    * Add instruction when no mindmap exists
-   * Tells LLM to read CLAUDE.md directly for project context
+   * Tells LLM to read CLAUDE.md directly and NOT use the recall tool
    */
   setNoMindmapInstruction(): void {
     this.projectContext.push(
-      { role: 'user', content: '[System] No mindmap found. Please read CLAUDE.md to understand the project context and structure.' },
-      { role: 'assistant', content: 'Understood. I will read CLAUDE.md to understand the project structure and context. I can use the read tool to explore files as needed.' }
+      { role: 'user', content: '[System] No mindmap found. Please read CLAUDE.md to understand the project context and structure. IMPORTANT: The recall tool will not work without a mindmap, so do NOT use it. Use read_file tool to explore CLAUDE.md instead.' },
+      { role: 'assistant', content: 'Understood. I will read CLAUDE.md using read_file to understand the project. I will NOT use the recall tool since no mindmap is available.' }
     );
   }
 
