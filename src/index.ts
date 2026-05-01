@@ -34,8 +34,14 @@ import type { KeyInfo } from './utils/key-parser.js';
 
 const PROJECT_ROOT = getProjectRoot();
 
-// Set process title so it shows as 'mycc' in terminal
+// Set process title so it shows as 'mycc' in process list (ps, top, etc.)
 process.title = 'mycc';
+
+// Set terminal window title to 'mycc' (works in most terminal emulators)
+// ANSI escape sequence: ESC ] 0 ; <title> BEL
+if (process.stdout.isTTY) {
+  process.stdout.write('\x1b]0;mycc\x07');
+}
 
 // ---------------------------------------------------------------------------
 // Types
@@ -190,17 +196,18 @@ function runCoordinator(): void {
     }
 
     // Start new Lead (stdin forwarding continues automatically via data handler)
-    lead = startLead(['--session', sessionId], cwd);
+    const currentLead = startLead(['--session', sessionId], cwd);
+    lead = currentLead;
 
     // Wait for ready signal
     await new Promise<void>((resolve) => {
       const onReady = (msg: CoordinatorMessage) => {
         if (msg.type === 'ready') {
-          lead.off('message', onReady);
+          currentLead.off('message', onReady);
           resolve();
         }
       };
-      lead.on('message', onReady);
+      currentLead.on('message', onReady);
     });
 
     isRestarting = false;
