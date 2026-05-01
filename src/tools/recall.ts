@@ -16,13 +16,23 @@ import * as fs from 'fs';
 
 export const recallTool: ToolDefinition = {
   name: 'recall',
-  description: 'Get node information from mindmap by path. Use this to explore the knowledge tree structure.',
+  description: `**KNOWLEDGE DISCOVERY TOOL** - Explore the mindmap knowledge tree to understand project structure, available skills, and context. 
+
+⭐ START with \`recall(path="/")\` to see all top-level knowledge categories, then navigate deeper into interesting paths.
+
+This tool helps you understand:
+- Project architecture and design decisions
+- Available skills and their purposes  
+- Domain knowledge and best practices
+- Code patterns and conventions
+
+PREFER this over reading files when you need high-level understanding. Use read/bash for specific implementation details.`,
   input_schema: {
     type: 'object',
     properties: {
       path: {
         type: 'string',
-        description: 'Node path (e.g., "/skill/example" or "/" for root)',
+        description: 'Node path (e.g., "/skill/example" or "/" for root). Start with "/" to discover available knowledge.',
       },
     },
     required: ['path'],

@@ -42,6 +42,7 @@ export function buildSystemPrompt(
     '## Knowledge Boundary',
     '',
     'You have access to these knowledge sources:',
+    '- **Recall**: Explore the mindmap knowledge tree structure. Use `recall(path="/")` to discover available knowledge, then navigate deeper. START HERE for project context.',
     '- **Skills**: Specialized knowledge for specific tasks. Use `skill_load(name="list")` to discover, then `skill_load(name="<name>")` to load.',
     '- **Wiki**: Project knowledge base (RAG). Use `wiki_get(query, domain)` to retrieve relevant documents.',
     '- **Web**: Current information from the internet. Use `web_search(query)` and `web_fetch(url)`.',
