@@ -35,6 +35,7 @@ const TRANSIENT_ERROR_PATTERNS = [
   'fetch failed',
   'rate limit',
   'timeout',
+  'timed out',
   'aborted',
   'service temporarily unavailable',
   '503',
@@ -273,7 +274,7 @@ export interface RetryConfig {
   baseDelayMs: number;
   /** Maximum delay in milliseconds (default: 10000) */
   maxDelayMs: number;
-  /** Request timeout in milliseconds (default: 300000 = 5 minutes) */
+  /** Request timeout in milliseconds (default: 60000 = 1 minute) */
   timeoutMs?: number;
 }
 
@@ -281,7 +282,7 @@ const DEFAULT_RETRY_CONFIG: RetryConfig = {
   maxRetries: 3,
   baseDelayMs: 1000,
   maxDelayMs: 10000,
-  timeoutMs: 300000, // 5 minutes default
+  timeoutMs: 60000, // 1 minute - fail fast, rely on retry
 };
 
 /**
