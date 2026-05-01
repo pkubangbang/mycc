@@ -388,3 +388,10 @@ export function ensureToolTypeImports(): void {
     ensureMyccLink(projectDir, 'project tools');
   }
 }
+// ============================================================================
+// Mindmap Helpers
+// ============================================================================
+
+export function getMindmapFile(): string {
+  return path.join(MYCC_DIR, 'mindmap.json');
+}

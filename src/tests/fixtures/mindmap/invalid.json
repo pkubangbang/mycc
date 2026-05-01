@@ -1,0 +1,10 @@
+{
+  "dir": "/path/to/resource",
+  "hash": "invalid_hash",
+  "root": {
+    "id": "/",
+    "title": "Invalid Node",
+    "level": 0,
+    "children": "this should be an array, not a string"
+  }
+}

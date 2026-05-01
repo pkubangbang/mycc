@@ -11,6 +11,8 @@ A CLI coding agent using Ollama-cloud for LLM inference, written in nodejs.
 
 - **skill use**: describe the specialist knowledge using markdown, and LLM will learn it when needed.
 
+- **mindmap**: compile your `CLAUDE.md` into a navigable knowledge tree; agents retrieve context on-demand via `get_node` tool for efficient knowledge navigation.
+
 - **extensibility**: you can bring your own tools/skills into mycc, at project-level, or at the user-level that shared across projects.
 
 - **session storage**: a new session is created at each start. You can `/load` a previous session to continue your work, or to expect variant responses thanks to LLM randomness.
@@ -163,6 +165,7 @@ See the following documentation for detailed explanations:
 - **Agent Loop**: `docs/agent-loop.md` - STAR principle, microCompact, autoCompact, todo nudging
 - **Child Process Teammates**: `docs/child-context.md` - IPC, state machine, auto-claim
 - **Dynamic Loading**: `docs/dynamic-loading.md` - Hot-reload, tool scopes, skill format
+- **Mindmap**: `docs/mindmap-design.md` - Knowledge navigation, A-N-C-E summarization, process isolation
 - **SQLite Persistence**: `docs/database-schema.md` - Tables, WAL mode, transactions
 
 ## Day-to-day Workflow as a user

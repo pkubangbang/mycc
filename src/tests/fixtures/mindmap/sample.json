@@ -1,0 +1,102 @@
+{
+  "dir": "/path/to/resource/folder",
+  "hash": "abc123def456",
+  "compiled_at": "2024-01-15T10:00:00Z",
+  "updated_at": "2024-01-15T10:00:00Z",
+  "root": {
+    "id": "/",
+    "text": "# Project Overview\n\nThis is the root level content for the project.",
+    "title": "Project Overview",
+    "summary": "Root node for project documentation",
+    "level": 0,
+    "children": [
+      {
+        "id": "/architecture",
+        "text": "## Architecture\n\nThe system architecture consists of multiple components.",
+        "title": "Architecture",
+        "summary": "System architecture overview",
+        "level": 1,
+        "children": [
+          {
+            "id": "/architecture/core-module",
+            "text": "### Core Module\n\nThe core module handles basic operations.",
+            "title": "Core Module",
+            "summary": "Core module for basic operations",
+            "level": 2,
+            "children": [],
+            "links": []
+          },
+          {
+            "id": "/architecture/utils-module",
+            "text": "### Utils Module\n\nUtility functions for common tasks.",
+            "title": "Utils Module",
+            "summary": "Utility functions module",
+            "level": 2,
+            "children": [],
+            "links": []
+          }
+        ],
+        "links": []
+      },
+      {
+        "id": "/development",
+        "text": "## Development\n\nDevelopment guidelines and practices.",
+        "title": "Development",
+        "summary": "Development guidelines",
+        "level": 1,
+        "children": [
+          {
+            "id": "/development/testing",
+            "text": "### Testing\n\nTesting strategy and tools.",
+            "title": "Testing",
+            "summary": "Testing strategy",
+            "level": 2,
+            "children": [
+              {
+                "id": "/development/testing/unit-tests",
+                "text": "#### Unit Tests\n\nUnit test conventions.",
+                "title": "Unit Tests",
+                "summary": "Unit test conventions",
+                "level": 3,
+                "children": [],
+                "links": []
+              },
+              {
+                "id": "/development/testing/integration-tests",
+                "text": "#### Integration Tests\n\nIntegration test patterns.",
+                "title": "Integration Tests",
+                "summary": "Integration test patterns",
+                "level": 3,
+                "children": [],
+                "links": []
+              }
+            ],
+            "links": []
+          }
+        ],
+        "links": []
+      },
+      {
+        "id": "/references",
+        "text": "## References\n\n- [External Docs](https://example.com/docs)\n- [API Reference](https://api.example.com)",
+        "title": "References",
+        "summary": "External references and links",
+        "level": 1,
+        "children": [],
+        "links": [
+          {
+            "target_type": "url",
+            "url": "https://example.com/docs",
+            "comment": "External Docs"
+          },
+          {
+            "target_type": "url",
+            "url": "https://api.example.com",
+            "comment": "API Reference"
+          }
+        ]
+      }
+    ],
+    "links": []
+  }
+}
