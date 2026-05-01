@@ -11,6 +11,7 @@
 
 import type { ToolDefinition, AgentContext } from '../types.js';
 import type { Core } from '../context/parent/core.js';
+import type { TeamManager } from '../context/parent/team.js';
 
 export const planOffTool: ToolDefinition = {
   name: 'plan_off',
@@ -68,6 +69,8 @@ Idempotent: If already in normal mode, returns success without prompting.`,
 
     // User granted permission - exit plan mode
     core.setMode('normal');
+    const team = ctx.team as TeamManager;
+    team.broadcastModeChange('normal');
     ctx.core.brief('info', 'plan_off', 'Normal mode activated');
     return `Normal mode activated.\n\nCode changes are now allowed. All tools are fully functional.`;
   },

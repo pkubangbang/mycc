@@ -18,6 +18,7 @@
 
 import type { ToolDefinition, AgentContext } from '../types.js';
 import type { Core } from '../context/parent/core.js';
+import type { TeamManager } from '../context/parent/team.js';
 import path from 'path';
 
 export const planOnTool: ToolDefinition = {
@@ -86,6 +87,8 @@ Allow edits to this file during plan mode?
         ctx.core.brief('info', 'plan_on', 'Strict plan mode activated');
         const core = ctx.core as Core;
         core.setMode('plan');
+        const team = ctx.team as TeamManager;
+        team.broadcastModeChange('plan');
         return `Plan mode activated (strict - no files allowed for editing).\n\nAll code changes are prohibited.`;
       }
 
@@ -93,6 +96,8 @@ Allow edits to this file during plan mode?
         // Outcome 1: y/yes/Enter - allow the suggested file
         const core = ctx.core as Core;
         core.setMode('plan', resolvedPath);
+        const team = ctx.team as TeamManager;
+        team.broadcastModeChange('plan');
         ctx.core.brief('info', 'plan_on', `Plan mode activated with allowed file: ${resolvedPath}`);
         return `Plan mode activated.\n\nAllowed file for editing: ${resolvedPath}\n\nAll other code changes are prohibited.`;
       }
@@ -102,9 +107,11 @@ Allow edits to this file during plan mode?
       const resolvedUserPath = path.isAbsolute(userFile)
         ? userFile
         : path.resolve(ctx.core.getWorkDir(), userFile);
-      
+
       const core = ctx.core as Core;
       core.setMode('plan', resolvedUserPath);
+      const team = ctx.team as TeamManager;
+      team.broadcastModeChange('plan');
       ctx.core.brief('info', 'plan_on', `Plan mode activated with user-specified file: ${resolvedUserPath}`);
       return `Plan mode activated.\n\nAllowed file for editing: ${resolvedUserPath}\n\nAll other code changes are prohibited.`;
     }
@@ -112,6 +119,8 @@ Allow edits to this file during plan mode?
     // No allowed_file specified - enter strict plan mode
     const core = ctx.core as Core;
     core.setMode('plan');
+    const team = ctx.team as TeamManager;
+    team.broadcastModeChange('plan');
     ctx.core.brief('info', 'plan_on', 'Plan mode activated (strict)');
     return `Plan mode activated.\n\nAll code changes are prohibited. You can still:\n- Read files\n- Search the web\n- Use other read-only tools`;
   },

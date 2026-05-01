@@ -30,6 +30,7 @@ type ParentMessage =
   | { type: 'spawn'; name: string; role: string; prompt: string }
   | { type: 'message'; from: string; title: string; content: string }
   | { type: 'shutdown' }
+  | { type: 'mode_change'; mode: 'plan' | 'normal' }
   | { type: 'db_result'; reqId: number; success: boolean; data?: unknown; error?: string };
 
 /**
@@ -537,6 +538,22 @@ export class TeamManager implements TeamModule {
     for (const t of teammates) {
       this.mailTo(t.name, title, content);
     }
+  }
+
+  /**
+   * Broadcast mode change to all teammates via IPC
+   * Sends immediate notification so teammates can reset tool aversion
+   * @param mode - The new mode ('plan' or 'normal')
+   */
+  broadcastModeChange(mode: 'plan' | 'normal'): void {
+    const teammates = this.listTeammates();
+    for (const t of teammates) {
+      const child = this.processes.get(t.name);
+      if (child && child.connected) {
+        child.send({ type: 'mode_change', mode });
+      }
+    }
+    this.context.core.brief('info', 'mode_change', `Broadcasted to ${teammates.length} teammates`);
   }
 
   /**

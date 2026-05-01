@@ -29,6 +29,7 @@ let teammateRole = '';
 let ctx: AgentContext;
 let shutdownRequested = false;
 let triologuePath = '';
+let pendingModeChange: 'plan' | 'normal' | null = null;
 
 /**
  * Create a triologue that persists messages to disk
@@ -94,7 +95,17 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
         triologue.user(mailContent);
       }
 
-      // 2. Todo nudging with counter and state tracking
+      // 2. Check for pending mode change notifications
+      if (pendingModeChange) {
+        if (pendingModeChange === 'normal') {
+          triologue.user('<system-notification>Plan mode has ended. Code changes are now allowed. All tools (write_file, edit_file, bash) are fully functional. Proceed with your tasks.</system-notification>');
+        } else {
+          triologue.user('<system-notification>Plan mode is now active. Code changes are temporarily restricted. Continue with read-only operations while waiting.</system-notification>');
+        }
+        pendingModeChange = null;
+      }
+
+      // 3. Todo nudging with counter and state tracking
       if (ctx.todo.hasOpenTodo()) {
         const currentTodoState = ctx.todo.printTodoList();
         if (currentTodoState !== lastTodoState) {
@@ -276,6 +287,14 @@ process.on('message', (msg: { type: string;[key: string]: unknown }) => {
     });
   } else if (msg.type === 'shutdown') {
     shutdownRequested = true;
+  } else if (msg.type === 'mode_change') {
+    // Handle mode change notification from parent
+    const mode = msg.mode as 'plan' | 'normal';
+    if (ctx?.core) {
+      ctx.core.brief('info', 'mode_change', `Mode changed to: ${mode}`);
+    }
+    // Store for injection into triologue in the main loop
+    pendingModeChange = mode;
   } else {
     // Handle request-response messages (db_result, etc.)
     ipc.handleMessage(msg);
