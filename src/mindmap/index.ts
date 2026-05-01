@@ -45,5 +45,7 @@ export {
   save_mindmap, 
   serialize_mindmap
 } from './load.js';
-export { parse_markdown, get_bottom_up_nodes, generate_summary, compile_mindmap, compile_mindmap_from_content } from './compile.js';
+export { parse_markdown, get_bottom_up_nodes, compile_mindmap, compile_mindmap_from_content } from './compile.js';
+export { exploreAndSummarize, summarizeWithExplorer } from './explorer-agent.js';
+export type { ExplorationResult } from './explorer-agent.js';
 export { patch_mindmap, summarize_node, add_child_node, remove_node, move_node } from './patch.js';

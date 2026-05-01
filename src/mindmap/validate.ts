@@ -32,25 +32,40 @@ export function compute_hash(content: string, algorithm: string = 'sha256'): str
 /**
  * Validate that a JSON mindmap matches the markdown file
  * @param json - The parsed mindmap JSON
- * @param mdPath - Path to the markdown file (absolute or relative to json.dir)
+ * @param mdPath - Path to the markdown file (absolute or relative to cwd)
  * @returns true if hashes match, false otherwise
  */
 export function validate_mindmap(json: MindmapJSON, mdPath: string): boolean {
   try {
-    // Resolve the markdown path if relative
+    // Resolve the markdown path if relative (relative to json.dir which is the project root)
     let resolvedPath = mdPath;
     if (!path.isAbsolute(mdPath) && json.dir) {
       resolvedPath = path.join(json.dir, mdPath);
     }
-    
+
     // Check if file exists
     if (!fs.existsSync(resolvedPath)) {
       return false;
     }
-    
+
+    // Check source file matches (if present)
+    // Resolve both paths to absolute for comparison
+    if (json.source_file) {
+      const resolvedSource = path.isAbsolute(json.source_file)
+        ? json.source_file
+        : path.join(json.dir, json.source_file);
+
+      if (resolvedSource !== resolvedPath) {
+        // Source mismatch - but still check hash for the given file
+        console.warn(
+          `Source mismatch: mindmap.source_file=${json.source_file}, validating against ${mdPath}`
+        );
+      }
+    }
+
     // Compute hash of the markdown file
     const hash = compute_file_hash(resolvedPath);
-    
+
     // Compare with stored hash
     return hash === json.hash;
   } catch {
@@ -67,18 +82,19 @@ export function validate_mindmap_structure(json: unknown): json is MindmapJSON {
   if (typeof json !== 'object' || json === null) {
     return false;
   }
-  
+
   const obj = json as Record<string, unknown>;
-  
+
   // Check required top-level fields
   if (typeof obj.dir !== 'string') return false;
+  if (typeof obj.source_file !== 'string') return false; // Added source_file
   if (typeof obj.hash !== 'string') return false;
   if (typeof obj.compiled_at !== 'string') return false;
   if (typeof obj.updated_at !== 'string') return false;
-  
+
   // Validate root node
   if (!validate_node_structure(obj.root)) return false;
-  
+
   return true;
 }
 

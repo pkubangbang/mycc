@@ -50,6 +50,8 @@ export interface Node {
 export interface Mindmap {
   /** The backed resource folder */
   dir: string;
+  /** Original markdown file path (relative to workDir) */
+  source_file: string;
   /** Hash of the original markdown (for validation) */
   hash: string;
   /** Time of compilation (ISO string) */

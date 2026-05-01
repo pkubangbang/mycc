@@ -37,12 +37,13 @@ export function load_mindmap_from_json(json: unknown): Mindmap {
   if (!validate_mindmap_structure(json)) {
     throw new Error('Invalid mindmap JSON structure');
   }
-  
+
   const mindmapJson = json as MindmapJSON;
-  
-  // Convert date strings to Date objects
+
+  // Return mindmap with all fields
   return {
     dir: mindmapJson.dir,
+    source_file: mindmapJson.source_file,
     hash: mindmapJson.hash,
     compiled_at: mindmapJson.compiled_at,
     updated_at: mindmapJson.updated_at,
@@ -94,20 +95,21 @@ export function try_load_mindmap(jsonPath?: string, projectDir?: string): Mindma
 export function save_mindmap(mindmap: Mindmap, jsonPath?: string, projectDir?: string): void {
   const outputPath = jsonPath || get_default_mindmap_path(projectDir);
   const dir = path.dirname(outputPath);
-  
+
   // Ensure directory exists
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
   }
-  
+
   const json: MindmapJSON = {
     dir: mindmap.dir,
+    source_file: mindmap.source_file,
     hash: mindmap.hash,
     compiled_at: mindmap.compiled_at,
     updated_at: mindmap.updated_at,
     root: mindmap.root,
   };
-  
+
   fs.writeFileSync(outputPath, JSON.stringify(json, null, 2), 'utf-8');
 }
 
@@ -119,11 +121,12 @@ export function save_mindmap(mindmap: Mindmap, jsonPath?: string, projectDir?: s
 export function serialize_mindmap(mindmap: Mindmap): string {
   const json: MindmapJSON = {
     dir: mindmap.dir,
+    source_file: mindmap.source_file,
     hash: mindmap.hash,
     compiled_at: mindmap.compiled_at,
     updated_at: mindmap.updated_at,
     root: mindmap.root,
   };
-  
+
   return JSON.stringify(json, null, 2);
 }

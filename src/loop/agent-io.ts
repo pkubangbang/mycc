@@ -81,7 +81,7 @@ class AgentIO {
   // LineEditor management
   private activeLineEditor: LineEditor | null = null;
   // Default history with common slash commands for easy access
-  private lineHistory: string[] = ['/mode plan', 'show me all the tools and skills that you can use'];
+  private lineHistory: string[] = ['/mindmap compile CLAUDE.md', '/mode plan', 'show me all the tools and skills that you can use'];
 
   // Buffer for output during user interaction (prompt displayed or wrapping up)
   private outputBuffer: Array<{

@@ -134,6 +134,17 @@ export class Triologue {
   }
 
   /**
+   * Add instruction when no mindmap exists
+   * Tells LLM to read CLAUDE.md directly for project context
+   */
+  setNoMindmapInstruction(): void {
+    this.projectContext.push(
+      { role: 'user', content: '[System] No mindmap found. Please read CLAUDE.md to understand the project context and structure.' },
+      { role: 'assistant', content: 'Understood. I will read CLAUDE.md to understand the project structure and context. I can use the read tool to explore files as needed.' }
+    );
+  }
+
+  /**
    * Add a user message (real user input - clears temporary hint)
    */
   user(content: string): void {

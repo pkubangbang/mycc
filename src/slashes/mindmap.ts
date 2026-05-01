@@ -2,10 +2,10 @@
  * /mindmap command - Manage agent memory mindmap
  *
  * Usage:
- *   /mindmap compile <file> - Compile markdown to mindmap JSON
- *   /mindmap get <path>     - Get node info by path
- *   /mindmap patch <path> <text> - Update node text
- *   /mindmap validate       - Check mindmap validity
+ *   /mindmap compile [file] [output] - Compile markdown to mindmap JSON
+ *   /mindmap get <path>              - Get node info by path
+ *   /mindmap patch <path> <text>     - Update node text
+ *   /mindmap validate                - Check mindmap validity
  */
 
 import type { SlashCommand } from '../types.js';
@@ -27,15 +27,34 @@ export const mindmapCommand: SlashCommand = {
   name: 'mindmap',
   description: 'Manage agent memory mindmap (/mindmap compile|get|patch|validate)',
   handler: async (context) => {
-    const args = context.args.slice(1); // First arg is 'mindmap'
-    const subCommand = args[0];
+    const query = context.query;
+
+    // Parse command manually to handle paths with spaces
+    // Format: /mindmap <subcommand> [args...]
+    const match = query.match(/^\/mindmap\s+(\w+)\s*(.*)$/);
+    if (!match) {
+      showHelp();
+      return;
+    }
+
+    const subCommand = match[1];
+    const remaining = match[2].trim();
 
     if (subCommand === 'compile') {
-      await handleCompile(context, args[1]);
+      await handleCompile(context, remaining || undefined);
     } else if (subCommand === 'get') {
-      await handleGet(context, args[1]);
+      await handleGet(context, remaining || undefined);
     } else if (subCommand === 'patch') {
-      await handlePatch(context, args[1], args.slice(2).join(' '));
+      // Format: /mindmap patch <path> <text>
+      // Path ends at first double-space or we need another way to separate
+      // For simplicity, require path and text separated by double space
+      const patchMatch = remaining.match(/^(\S+)\s+(.+)$/);
+      if (patchMatch) {
+        await handlePatch(context, patchMatch[1], patchMatch[2]);
+      } else {
+        console.log(chalk.red('Usage: /mindmap patch <path> <text>'));
+        console.log(chalk.gray('  Note: For paths with spaces, use underscores instead'));
+      }
     } else if (subCommand === 'validate') {
       await handleValidate(context);
     } else {
@@ -44,28 +63,30 @@ export const mindmapCommand: SlashCommand = {
   },
 };
 
-async function handleCompile(context: { ctx: import('../types.js').AgentContext; args: string[] }, filePath: string | undefined): Promise<void> {
-  if (!filePath) {
-    console.log(chalk.red('Usage: /mindmap compile <file>'));
-    console.log(chalk.gray('  Compile a markdown file to mindmap JSON'));
-    return;
-  }
+async function handleCompile(context: { ctx: import('../types.js').AgentContext; args: string[] }, remaining: string | undefined): Promise<void> {
+  // Parse: /mindmap compile [source.md] [output.json]
+  const parts = (remaining || '').trim().split(/\s+/).filter(Boolean);
+
+  const sourceFile = parts[0] || 'CLAUDE.md';
+  const outputFile = parts[1] || undefined;  // undefined = default .mycc/mindmap.json
 
   const workDir = context.ctx.core.getWorkDir();
-  const fullPath = path.resolve(workDir, filePath);
+  const fullPath = path.resolve(workDir, sourceFile);
 
   if (!fs.existsSync(fullPath)) {
-    console.log(chalk.red(`File not found: ${fullPath}`));
+    console.log(chalk.red(`File not found: ${sourceFile}`));
     return;
   }
 
   try {
-    const mindmap = await compile_mindmap(filePath, workDir);
-    save_mindmap(mindmap, undefined, workDir);
-    console.log(chalk.green(`\n✓ Compiled mindmap: ${countNodes(mindmap.root)} nodes`));
-    console.log(chalk.gray(`  Source: ${filePath}`));
+    console.log(chalk.cyan(`Compiling ${sourceFile}...`));
+    const mindmap = await compile_mindmap(sourceFile, workDir, outputFile);
+
+    const outPath = outputFile || '.mycc/mindmap.json';
+    console.log(chalk.green(`\n✓ Compiled: ${countNodes(mindmap.root)} nodes`));
+    console.log(chalk.gray(`  Source: ${sourceFile}`));
+    console.log(chalk.gray(`  Output: ${outPath}`));
     console.log(chalk.gray(`  Hash: ${mindmap.hash}`));
-    console.log(chalk.gray(`  Saved to: .mycc/mindmap.json`));
   } catch (err) {
     console.log(chalk.red(`Error: ${(err as Error).message}`));
   }
@@ -91,9 +112,17 @@ async function handleGet(context: { ctx: import('../types.js').AgentContext; arg
     return;
   }
 
-  const node = get_node(mindmap, nodePath);
+  // Try exact match first, then try replacing underscores with spaces
+  let node = get_node(mindmap, nodePath);
+  if (!node) {
+    // Try replacing underscores with spaces for paths like /CLAUDE_md/Setup/Unit_Test
+    const pathWithSpaces = nodePath.replace(/_/g, ' ');
+    node = get_node(mindmap, pathWithSpaces);
+  }
+
   if (!node) {
     console.log(chalk.red(`Node not found: ${nodePath}`));
+    console.log(chalk.gray('  Tip: Use underscores for spaces in paths (e.g., /path/Unit_Test)'));
     return;
   }
 
@@ -121,7 +150,13 @@ async function handlePatch(context: { ctx: import('../types.js').AgentContext; a
   }
 
   try {
-    const node = patch_mindmap(mindmap, nodePath, text);
+    // Try exact match first, then try replacing underscores with spaces
+    let node = await patch_mindmap(mindmap, nodePath, text);
+    if (!node) {
+      const pathWithSpaces = nodePath.replace(/_/g, ' ');
+      node = await patch_mindmap(mindmap, pathWithSpaces, text);
+    }
+
     if (!node) {
       console.log(chalk.red(`Node not found: ${nodePath}`));
       return;
@@ -169,13 +204,17 @@ async function handleValidate(context: { ctx: import('../types.js').AgentContext
 function showHelp(): void {
   console.log(chalk.cyan('\n/mindmap - Manage agent memory mindmap\n'));
   console.log('Usage:');
-  console.log(chalk.white('  /mindmap compile <file>') + chalk.gray('  - Compile markdown to mindmap JSON'));
-  console.log(chalk.white('  /mindmap get <path>') + chalk.gray('     - Get node info (e.g., /skill/example)'));
-  console.log(chalk.white('  /mindmap patch <path> <text>') + chalk.gray(' - Update node text'));
-  console.log(chalk.white('  /mindmap validate') + chalk.gray('       - Check mindmap validity'));
+  console.log(chalk.white('  /mindmap compile [file] [output]') + chalk.gray(' - Compile markdown to mindmap'));
+  console.log(chalk.white('  /mindmap get <path>') + chalk.gray('           - Get node info'));
+  console.log(chalk.white('  /mindmap patch <path> <text>') + chalk.gray('   - Update node text'));
+  console.log(chalk.white('  /mindmap validate') + chalk.gray('                 - Check mindmap validity'));
   console.log();
-  console.log(chalk.gray('The mindmap is loaded from .mycc/mindmap.json at startup.'));
-  console.log(chalk.gray('Use /mindmap compile CLAUDE.md to create from project context.'));
+  console.log(chalk.gray('Examples:'));
+  console.log(chalk.gray('  /mindmap compile                  # CLAUDE.md → .mycc/mindmap.json'));
+  console.log(chalk.gray('  /mindmap compile README.md        # README.md → .mycc/mindmap.json'));
+  console.log(chalk.gray('  /mindmap compile PLAN.md plan.json # PLAN.md → plan.json'));
+  console.log();
+  console.log(chalk.gray('Note: Use underscores for spaces in paths (e.g., /CLAUDE_md/Setup/Unit_Test)'));
 }
 
 function printNode(node: Node, indent: number): void {

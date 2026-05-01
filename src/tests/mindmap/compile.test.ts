@@ -1,227 +1,222 @@
 /**
  * compile.test.ts - Compilation tests for mindmap
- * 
+ *
  * Level mapping:
  * - Root: level 0 (auto-generated, not from markdown)
  * - H1 (#): level 1
  * - H2 (##): level 2
  * - etc.
+ *
+ * Note: LLM-dependent tests are skipped by default to keep tests fast.
+ * To run them, remove the .skip or run with a longer timeout.
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import * as crypto from 'crypto';
+import {
+  parse_markdown,
+  compile_mindmap,
+  compile_mindmap_from_content,
+  get_bottom_up_nodes,
+} from '../../mindmap/compile.js';
+import type { Node } from '../../mindmap/types.js';
 
-// Types
-interface Link {
-  target_type: 'node' | 'file' | 'url';
-  node_id?: string;
-  file_path?: string;
-  url?: string;
-  comment: string;
-}
+describe('parse_markdown', () => {
+  it('should parse H1 heading as level 1 section', () => {
+    const md = '# Title\n\nContent';
+    const sections = parse_markdown(md);
 
-interface Node {
-  id: string;
-  text: string;
-  title: string;
-  summary: string;
-  level: number;
-  children: Node[];
-  links: Link[];
-}
+    expect(sections).toHaveLength(1);
+    expect(sections[0].level).toBe(1);
+    expect(sections[0].title).toBe('Title');
+  });
 
-interface Mindmap {
-  dir: string;
-  hash: string;
-  compiled_at: Date;
-  updated_at: Date;
-  root: Node;
-}
+  it('should parse nested heading hierarchy', () => {
+    const md = `# Main
+Main content
 
-// Markdown parsing utilities
-interface ParsedSection {
-  level: number;  // Markdown heading level (1-6)
-  title: string;
-  text: string;
-  startIndex: number;
-  endIndex: number;
-}
+## Section A
+Section A content
 
-function parseMarkdownSections(md: string): ParsedSection[] {
-  const lines = md.split('\n');
-  const sections: ParsedSection[] = [];
-  let currentSection: ParsedSection | null = null;
+### Subsection A1
+Subsection A1 content
 
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    const headerMatch = line.match(/^(#{1,6})\s+(.+)$/);
+## Section B
+Section B content`;
 
-    if (headerMatch) {
-      // Save previous section
-      if (currentSection) {
-        currentSection.endIndex = i;
-        currentSection.text = lines.slice(currentSection.startIndex, i).join('\n');
-        sections.push(currentSection);
-      }
+    const sections = parse_markdown(md);
 
-      // Start new section
-      const headingLevel = headerMatch[1].length;  // # = 1, ## = 2, etc.
-      const title = headerMatch[2].trim();
-      currentSection = {
-        level: headingLevel,
-        title,
-        text: '',
-        startIndex: i,
-        endIndex: lines.length
-      };
-    }
-  }
+    // Top level has H1
+    expect(sections).toHaveLength(1);
+    expect(sections[0].title).toBe('Main');
 
-  // Push last section
-  if (currentSection) {
-    currentSection.text = lines.slice(currentSection.startIndex).join('\n');
-    sections.push(currentSection);
-  }
+    // H1 has H2 children
+    expect(sections[0].children).toHaveLength(2);
+    expect(sections[0].children[0].title).toBe('Section A');
+    expect(sections[0].children[1].title).toBe('Section B');
 
-  return sections;
-}
+    // First H2 has H3 child
+    expect(sections[0].children[0].children).toHaveLength(1);
+    expect(sections[0].children[0].children[0].title).toBe('Subsection A1');
+  });
 
-function buildNodeTree(sections: ParsedSection[]): Node {
-  // Create root node (level 0)
-  const root: Node = {
-    id: '/',
-    text: '',
-    title: 'Root',
-    summary: '',
-    level: 0,
-    children: [],
-    links: []
-  };
+  it('should handle empty markdown', () => {
+    const sections = parse_markdown('');
+    expect(sections).toHaveLength(0);
+  });
 
-  // Track parent nodes at each level
-  // Index 0 = root, index 1 = H1 parent, index 2 = H2 parent, etc.
-  const parentStack: (Node | null)[] = [root, null, null, null, null, null, null];
+  it('should handle markdown without headings', () => {
+    const md = 'Just some text\n\nMore text';
+    const sections = parse_markdown(md);
+    expect(sections).toHaveLength(0);
+  });
 
-  for (const section of sections) {
-    const nodeLevel = section.level;  // H1 -> level 1, H2 -> level 2, etc.
+  it('should handle multiple H1 sections', () => {
+    const md = `# First
+Content 1
 
-    // Create node
-    const node: Node = {
-      id: '',
-      text: section.text,
-      title: section.title,
-      summary: '',
-      level: nodeLevel,
-      children: [],
-      links: []
-    };
+# Second
+Content 2
 
-    // Find parent (first non-null entry below our level)
-    let parentLevel = nodeLevel - 1;
-    while (parentLevel >= 0 && !parentStack[parentLevel]) {
-      parentLevel--;
-    }
-    const parent = parentStack[parentLevel] || root;
+# Third
+Content 3`;
 
-    // Set ID based on parent
-    const idSlug = titleToId(section.title);
-    node.id = parent.id === '/' ? `/${idSlug}` : `${parent.id}/${idSlug}`;
-    parent.children.push(node);
+    const sections = parse_markdown(md);
+    expect(sections).toHaveLength(3);
+    expect(sections[0].title).toBe('First');
+    expect(sections[1].title).toBe('Second');
+    expect(sections[2].title).toBe('Third');
+  });
 
-    // Update parent stack
-    parentStack[nodeLevel] = node;
-    // Clear deeper levels
-    for (let i = nodeLevel + 1; i < parentStack.length; i++) {
-      parentStack[i] = null;
-    }
-  }
+  it('should ignore headings inside code blocks', () => {
+    const md = `# Main
 
-  return root;
-}
+\`\`\`
+## Not A Heading
+\`\`\`
 
-function titleToId(title: string): string {
-  return title
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-|-$/g, '');
-}
+## Real Section`;
 
-function extractLinks(text: string): Link[] {
-  const links: Link[] = [];
-  const urlRegex = /\[([^\]]+)\]\(([^)]+)\)/g;
-  let match;
+    const sections = parse_markdown(md);
 
-  while ((match = urlRegex.exec(text)) !== null) {
-    const url = match[2];
-    if (url.startsWith('http://') || url.startsWith('https://')) {
-      links.push({
-        target_type: 'url',
-        url: url,
-        comment: match[1]
-      });
-    }
-  }
+    expect(sections).toHaveLength(1);
+    expect(sections[0].title).toBe('Main');
+    expect(sections[0].children).toHaveLength(1);
+    expect(sections[0].children[0].title).toBe('Real Section');
+  });
 
-  return links;
-}
+  describe('Level jumping', () => {
+    it('should handle H1 to H3 jump (skip H2)', () => {
+      const md = `# Main
+Main content
 
-function computeHash(content: string): string {
-  return crypto.createHash('sha256').update(content).digest('hex');
-}
+### Subsection
+Subsection content`;
 
-function mockSummarizeNode(node: Node, ancestors: Node[], descendants: Node[]): string {
-  return `Summary of "${node.title}" (level ${node.level})`;
-}
+      const sections = parse_markdown(md);
 
-function summarizeTree(node: Node, ancestors: Node[]): void {
-  const collectDescendants = (n: Node): Node[] => {
-    let result: Node[] = [];
-    for (const child of n.children) {
-      result.push(child);
-      result = result.concat(collectDescendants(child));
-    }
-    return result;
-  };
+      // H3 should be child of H1
+      expect(sections).toHaveLength(1);
+      expect(sections[0].title).toBe('Main');
+      expect(sections[0].children).toHaveLength(1);
+      expect(sections[0].children[0].title).toBe('Subsection');
+      expect(sections[0].children[0].level).toBe(3);
+    });
 
-  for (const child of node.children) {
-    summarizeTree(child, [...ancestors, node]);
-  }
+    it('should handle H3 back to H2 (going up)', () => {
+      const md = `# Main
 
-  const descendants = collectDescendants(node);
-  node.summary = mockSummarizeNode(node, ancestors, descendants);
-}
+### Deep section
+Deep content
 
-function compile_mindmap(mdPath: string, cwd?: string): Mindmap {
-  const content = fs.readFileSync(mdPath, 'utf-8');
-  const sections = parseMarkdownSections(content);
-  const root = buildNodeTree(sections);
+## Section
+Section content`;
 
-  const extractLinksFromNode = (node: Node) => {
-    node.links = extractLinks(node.text);
-    for (const child of node.children) {
-      extractLinksFromNode(child);
-    }
-  };
-  extractLinksFromNode(root);
+      const sections = parse_markdown(md);
 
-  summarizeTree(root, []);
+      // H3 and H2 are both children of H1
+      expect(sections).toHaveLength(1);
+      expect(sections[0].children).toHaveLength(2);
+      expect(sections[0].children[0].title).toBe('Deep section');
+      expect(sections[0].children[0].level).toBe(3);
+      expect(sections[0].children[1].title).toBe('Section');
+      expect(sections[0].children[1].level).toBe(2);
+    });
 
-  const dir = cwd || path.dirname(mdPath);
-  const hash = computeHash(content);
+    it('should handle H1 -> H4 -> H2 complex jump', () => {
+      const md = `# Main
 
-  return {
-    dir,
-    hash,
-    compiled_at: new Date(),
-    updated_at: new Date(),
-    root
-  };
-}
+#### Deep
+Deep content
 
-describe('compile_mindmap', () => {
+## Section
+Section content`;
+
+      const sections = parse_markdown(md);
+
+      // H4 and H2 are both children of H1
+      expect(sections).toHaveLength(1);
+      expect(sections[0].children).toHaveLength(2);
+      expect(sections[0].children[0].title).toBe('Deep');
+      expect(sections[0].children[0].level).toBe(4);
+      expect(sections[0].children[1].title).toBe('Section');
+      expect(sections[0].children[1].level).toBe(2);
+    });
+
+    it('should handle multiple level jumps in sequence', () => {
+      const md = `# A
+
+#### A_deep_1
+
+##### A_deeper
+
+#### A_deep_2
+
+## B
+
+### B_sub
+
+# C`;
+
+      const sections = parse_markdown(md);
+
+      // Root has A and C (B is under A because H2 under H1)
+      expect(sections).toHaveLength(2);
+
+      // A has A_deep_1, A_deep_2, B as children
+      const a = sections[0];
+      expect(a.title).toBe('A');
+      expect(a.children).toHaveLength(3);
+
+      // A_deep_1 has A_deeper as child
+      expect(a.children[0].title).toBe('A_deep_1');
+      expect(a.children[0].level).toBe(4);
+      expect(a.children[0].children).toHaveLength(1);
+      expect(a.children[0].children[0].title).toBe('A_deeper');
+      expect(a.children[0].children[0].level).toBe(5);
+
+      // A_deep_2 (H4 under A, after popping A_deep_1)
+      expect(a.children[1].title).toBe('A_deep_2');
+      expect(a.children[1].level).toBe(4);
+
+      // B (H2 under A)
+      expect(a.children[2].title).toBe('B');
+      expect(a.children[2].level).toBe(2);
+      expect(a.children[2].children).toHaveLength(1);
+      expect(a.children[2].children[0].title).toBe('B_sub');
+
+      // C is separate top-level section
+      const c = sections[1];
+      expect(c.title).toBe('C');
+      expect(c.children).toHaveLength(0);
+    });
+  });
+});
+
+// LLM-dependent tests - skipped by default for speed
+describe.skip('compile_mindmap (requires LLM)', () => {
   let tempDir: string;
   let mdPath: string;
 
@@ -234,129 +229,20 @@ describe('compile_mindmap', () => {
     fs.rmSync(tempDir, { recursive: true, force: true });
   });
 
-  describe('Parse Markdown Headings', () => {
-    it('should parse H1 heading as level 1', () => {
-      fs.writeFileSync(mdPath, '# Title\n\nContent');
-      const mindmap = compile_mindmap(mdPath);
-      
-      expect(mindmap.root.level).toBe(0);
-      expect(mindmap.root.children).toHaveLength(1);
-      expect(mindmap.root.children[0].level).toBe(1);
-      expect(mindmap.root.children[0].title).toBe('Title');
-    });
+  it('should compile markdown file to mindmap', async () => {
+    fs.writeFileSync(mdPath, '# Title\n\nContent');
+    const mindmap = await compile_mindmap(mdPath);
 
-    it('should parse multiple heading levels correctly', () => {
-      fs.writeFileSync(mdPath, `# Main
-Main content
-
-## Section A
-Section A content
-
-### Subsection A1
-Subsection A1 content
-
-## Section B
-Section B content`);
-      
-      const mindmap = compile_mindmap(mdPath);
-      
-      // Root has children at level 1 (H1)
-      expect(mindmap.root.children).toHaveLength(1);
-      
-      // H1 "Main" at level 1
-      const main = mindmap.root.children[0];
-      expect(main.title).toBe('Main');
-      expect(main.level).toBe(1);
-      
-      // H2 "Section A" at level 2, child of Main
-      expect(main.children).toHaveLength(2);
-      const sectionA = main.children[0];
-      expect(sectionA.title).toBe('Section A');
-      expect(sectionA.level).toBe(2);
-      
-      // H3 "Subsection A1" at level 3
-      const subsectionA1 = sectionA.children[0];
-      expect(subsectionA1.title).toBe('Subsection A1');
-      expect(subsectionA1.level).toBe(3);
-      
-      // H2 "Section B" at level 2, child of Main
-      const sectionB = main.children[1];
-      expect(sectionB.title).toBe('Section B');
-      expect(sectionB.level).toBe(2);
-    });
-
-    it('should handle empty markdown', () => {
-      fs.writeFileSync(mdPath, '');
-      const mindmap = compile_mindmap(mdPath);
-      
-      expect(mindmap.root.id).toBe('/');
-      expect(mindmap.root.children).toHaveLength(0);
-    });
-
-    it('should handle markdown without headings', () => {
-      fs.writeFileSync(mdPath, 'Just some text\n\nMore text');
-      const mindmap = compile_mindmap(mdPath);
-      
-      expect(mindmap.root.id).toBe('/');
-      expect(mindmap.root.children).toHaveLength(0);
-    });
-
-    it('should parse H1 through H6 with correct levels', () => {
-      fs.writeFileSync(mdPath, `# H1
-Content H1
-
-## H2
-Content H2
-
-### H3
-Content H3
-
-#### H4
-Content H4
-
-##### H5
-Content H5
-
-###### H6
-Content H6`);
-      
-      const mindmap = compile_mindmap(mdPath);
-      
-      // H1 at level 1
-      const h1 = mindmap.root.children[0];
-      expect(h1.title).toBe('H1');
-      expect(h1.level).toBe(1);
-      
-      // H2 at level 2
-      const h2 = h1.children[0];
-      expect(h2.title).toBe('H2');
-      expect(h2.level).toBe(2);
-      
-      // H3 at level 3
-      const h3 = h2.children[0];
-      expect(h3.title).toBe('H3');
-      expect(h3.level).toBe(3);
-      
-      // H4 at level 4
-      const h4 = h3.children[0];
-      expect(h4.title).toBe('H4');
-      expect(h4.level).toBe(4);
-      
-      // H5 at level 5
-      const h5 = h4.children[0];
-      expect(h5.title).toBe('H5');
-      expect(h5.level).toBe(5);
-      
-      // H6 at level 6
-      const h6 = h5.children[0];
-      expect(h6.title).toBe('H6');
-      expect(h6.level).toBe(6);
-    });
+    expect(mindmap.root.id).toBe('/');
+    expect(mindmap.root.children).toHaveLength(1);
+    expect(mindmap.root.children[0].title).toBe('Title');
+    expect(mindmap.root.children[0].level).toBe(1);
+    // Summary should be generated (not empty)
+    expect(mindmap.root.children[0].summary.length).toBeGreaterThan(0);
   });
 
-  describe('Generate Tree Structure', () => {
-    it('should generate correct node IDs', () => {
-      fs.writeFileSync(mdPath, `# Main
+  it('should set correct node IDs', async () => {
+    fs.writeFileSync(mdPath, `# Main
 
 ## Architecture
 Architecture content
@@ -366,316 +252,120 @@ Core content
 
 ## Development
 Development content`);
-      
-      const mindmap = compile_mindmap(mdPath);
-      
-      // Root
-      expect(mindmap.root.id).toBe('/');
-      
-      // H1 Main
-      expect(mindmap.root.children[0].id).toBe('/main');
-      
-      // H2 Architecture under Main
-      expect(mindmap.root.children[0].children[0].id).toBe('/main/architecture');
-      
-      // H3 Core under Architecture
-      expect(mindmap.root.children[0].children[0].children[0].id).toBe('/main/architecture/core');
-      
-      // H2 Development under Main
-      expect(mindmap.root.children[0].children[1].id).toBe('/main/development');
-    });
 
-    it('should handle kebab-case titles', () => {
-      fs.writeFileSync(mdPath, `# API Design
-Content
+    const mindmap = await compile_mindmap(mdPath);
 
-## User Interface
-Content`);
-      
-      const mindmap = compile_mindmap(mdPath);
-      
-      expect(mindmap.root.children[0].id).toBe('/api-design');
-      expect(mindmap.root.children[0].children[0].id).toBe('/api-design/user-interface');
-    });
-
-    it('should preserve full text content', () => {
-      fs.writeFileSync(mdPath, `# Main
-
-## Section
-
-This is the content.
-Multiple lines.
-
-- Bullet 1
-- Bullet 2
-
-More content here.`);
-      
-      const mindmap = compile_mindmap(mdPath);
-      
-      expect(mindmap.root.children[0].children[0].text).toContain('This is the content');
-      expect(mindmap.root.children[0].children[0].text).toContain('Bullet 1');
-    });
-
-    it('should set correct levels for nested structure', () => {
-      fs.writeFileSync(mdPath, `# First
-Content
-
-## Second
-Content
-
-### Third
-Content`);
-      
-      const mindmap = compile_mindmap(mdPath);
-      
-      expect(mindmap.root.level).toBe(0);
-      const first = mindmap.root.children[0];
-      expect(first.level).toBe(1);
-      const second = first.children[0];
-      expect(second.level).toBe(2);
-      const third = second.children[0];
-      expect(third.level).toBe(3);
-    });
+    expect(mindmap.root.id).toBe('/');
+    expect(mindmap.root.children[0].id).toBe('/Main');
+    expect(mindmap.root.children[0].children[0].id).toBe('/Main/Architecture');
+    expect(mindmap.root.children[0].children[0].children[0].id).toBe('/Main/Architecture/Core');
+    expect(mindmap.root.children[0].children[1].id).toBe('/Main/Development');
   });
 
-  describe('Extract Links', () => {
-    it('should extract URL links', () => {
-      fs.writeFileSync(mdPath, `# Main
+  it('should compute hash of source file', async () => {
+    const content = '# Main\n\nContent';
+    fs.writeFileSync(mdPath, content);
+    const mindmap = await compile_mindmap(mdPath);
+
+    expect(mindmap.hash).toHaveLength(64); // SHA-256 hex length
+    expect(typeof mindmap.hash).toBe('string');
+  });
+
+  it('should set timestamps', async () => {
+    fs.writeFileSync(mdPath, '# Main');
+    const mindmap = await compile_mindmap(mdPath);
+
+    expect(mindmap.compiled_at).toBeDefined();
+    expect(mindmap.updated_at).toBeDefined();
+  });
+
+  it('should extract URL links', async () => {
+    fs.writeFileSync(mdPath, `# Main
 
 ## References
 
 - [Docs](https://example.com/docs)
 - [API](https://api.example.com)`);
-      
-      const mindmap = compile_mindmap(mdPath);
-      
-      const refsNode = mindmap.root.children[0].children[0];
-      expect(refsNode.links).toHaveLength(2);
-      expect(refsNode.links[0].target_type).toBe('url');
-      expect(refsNode.links[0].url).toBe('https://example.com/docs');
-      expect(refsNode.links[0].comment).toBe('Docs');
-    });
 
-    it('should handle links in nested nodes', () => {
-      fs.writeFileSync(mdPath, `# Main
+    const mindmap = await compile_mindmap(mdPath);
 
-## Architecture
-
-### Core
-
-See [Documentation](https://docs.example.com) for details.`);
-      
-      const mindmap = compile_mindmap(mdPath);
-      
-      const coreNode = mindmap.root.children[0].children[0].children[0];
-      expect(coreNode.links).toHaveLength(1);
-      expect(coreNode.links[0].url).toBe('https://docs.example.com');
-    });
-
-    it('should handle nodes without links', () => {
-      fs.writeFileSync(mdPath, `# Main
-
-## Section
-
-Just regular text without links.`);
-      
-      const mindmap = compile_mindmap(mdPath);
-      
-      expect(mindmap.root.links).toHaveLength(0);
-      expect(mindmap.root.children[0].children[0].links).toHaveLength(0);
-    });
+    const refsNode = mindmap.root.children[0].children[0];
+    expect(refsNode.links).toHaveLength(2);
+    expect(refsNode.links[0].target_type).toBe('url');
+    expect(refsNode.links[0].url).toBe('https://example.com/docs');
   });
 
-  describe('A-N-C-E Context Generation', () => {
-    it('should generate summaries for all nodes', () => {
-      fs.writeFileSync(mdPath, `# Main
+  it('should set preamble as root text', async () => {
+    fs.writeFileSync(mdPath, `This is the preamble.
+
+It goes before any heading.
+
+# First Section
+
+First content.`);
+
+    const mindmap = await compile_mindmap(mdPath);
+
+    expect(mindmap.root.text).toContain('This is the preamble');
+    expect(mindmap.root.text).toContain('It goes before any heading');
+    expect(mindmap.root.text).not.toContain('First Section');
+  });
+
+  it('should generate summaries for all nodes', async () => {
+    fs.writeFileSync(mdPath, `# Main
 
 ## Section
 
 Content for section.`);
-      
-      const mindmap = compile_mindmap(mdPath);
-      
-      expect(mindmap.root.summary).toBeDefined();
-      expect(mindmap.root.summary.length).toBeGreaterThan(0);
-      expect(mindmap.root.children[0].children[0].summary).toBeDefined();
-    });
 
-    it('should generate summaries bottom-up', () => {
-      fs.writeFileSync(mdPath, `# Main
+    const mindmap = await compile_mindmap(mdPath);
 
-## Parent
+    // All nodes should have summaries
+    expect(mindmap.root.summary.length).toBeGreaterThan(0);
+    expect(mindmap.root.children[0].summary.length).toBeGreaterThan(0);
+    expect(mindmap.root.children[0].children[0].summary.length).toBeGreaterThan(0);
+  });
+});
 
-Parent content.
+describe.skip('compile_mindmap_from_content (requires LLM)', () => {
+  it('should compile from string content', async () => {
+    const content = '# Main\n\nContent';
+    const mindmap = await compile_mindmap_from_content(content, 'test');
 
-### Child
-
-Child content.`);
-      
-      const mindmap = compile_mindmap(mdPath);
-      
-      // Child should have summary (summarized first)
-      const child = mindmap.root.children[0].children[0];
-      expect(child.summary).toBeDefined();
-      
-      // Parent should have summary (summarized after child)
-      const parent = mindmap.root.children[0];
-      expect(parent.summary).toBeDefined();
-      
-      // Root should have summary (summarized last)
-      expect(mindmap.root.summary).toBeDefined();
-    });
-
-    it('should include ancestor context in summary', () => {
-      fs.writeFileSync(mdPath, `# Main
-
-## Architecture
-
-Architecture content.
-
-### Core
-
-Core content.`);
-      
-      const mindmap = compile_mindmap(mdPath);
-      
-      // All summaries should be defined
-      expect(mindmap.root.summary).toBeDefined();
-      expect(mindmap.root.children[0].summary).toBeDefined();
-      expect(mindmap.root.children[0].children[0].summary).toBeDefined();
-    });
+    expect(mindmap.root.title).toBe('test');
+    expect(mindmap.root.children).toHaveLength(1);
+    expect(mindmap.root.children[0].title).toBe('Main');
   });
 
-  describe('Hash and Metadata', () => {
-    it('should compute correct hash', () => {
-      const content = '# Main\n\nContent';
-      fs.writeFileSync(mdPath, content);
-      
-      const mindmap = compile_mindmap(mdPath);
-      const expectedHash = computeHash(content);
-      
-      expect(mindmap.hash).toBe(expectedHash);
-    });
+  it('should compute hash from content', async () => {
+    const content = '# Main\n\nContent';
+    const mindmap = await compile_mindmap_from_content(content);
 
-    it('should set compiled_at timestamp', () => {
-      fs.writeFileSync(mdPath, '# Main');
-      
-      const before = new Date();
-      const mindmap = compile_mindmap(mdPath);
-      const after = new Date();
-      
-      expect(mindmap.compiled_at.getTime()).toBeGreaterThanOrEqual(before.getTime());
-      expect(mindmap.compiled_at.getTime()).toBeLessThanOrEqual(after.getTime());
-    });
-
-    it('should set updated_at timestamp', () => {
-      fs.writeFileSync(mdPath, '# Main');
-      
-      const mindmap = compile_mindmap(mdPath);
-      
-      expect(mindmap.updated_at).toBeInstanceOf(Date);
-    });
-
-    it('should set directory from cwd', () => {
-      fs.writeFileSync(mdPath, '# Main');
-      
-      const mindmap = compile_mindmap(mdPath, '/custom/dir');
-      
-      expect(mindmap.dir).toBe('/custom/dir');
-    });
-
-    it('should set directory from mdPath if no cwd', () => {
-      fs.writeFileSync(mdPath, '# Main');
-      
-      const mindmap = compile_mindmap(mdPath);
-      
-      expect(mindmap.dir).toBe(tempDir);
-    });
+    expect(mindmap.hash).toHaveLength(64);
   });
+});
 
-  describe('Complex Scenarios', () => {
-    it('should handle deeply nested structure', () => {
-      fs.writeFileSync(mdPath, `# A
+describe.skip('get_bottom_up_nodes (requires LLM)', () => {
+  it('should return nodes in bottom-up order', async () => {
+    const mindmap = await compile_mindmap_from_content(`# A
 ## B
 ### C
-#### D
-##### E
-###### F
-Content`);
-      
-      const mindmap = compile_mindmap(mdPath);
-      
-      let current = mindmap.root.children[0]; // A (level 1)
-      expect(current.title).toBe('A');
-      expect(current.level).toBe(1);
-      
-      current = current.children[0]; // B (level 2)
-      expect(current.title).toBe('B');
-      expect(current.level).toBe(2);
-      
-      current = current.children[0]; // C (level 3)
-      expect(current.title).toBe('C');
-      expect(current.level).toBe(3);
-      
-      current = current.children[0]; // D (level 4)
-      expect(current.title).toBe('D');
-      expect(current.level).toBe(4);
-      
-      current = current.children[0]; // E (level 5)
-      expect(current.title).toBe('E');
-      expect(current.level).toBe(5);
-      
-      current = current.children[0]; // F (level 6)
-      expect(current.title).toBe('F');
-      expect(current.level).toBe(6);
-    });
+## D`);
 
-    it('should handle multiple H1 sections at root level', () => {
-      fs.writeFileSync(mdPath, `# First
-Content 1
+    const nodes = get_bottom_up_nodes(mindmap.root);
 
-# Second
-Content 2
+    // Deepest (C) should come before its parent (B)
+    // B should come before A
+    // A and D should come before root
+    const titles = nodes.map(n => n.title);
+    expect(titles).toContain('C');
+    expect(titles).toContain('B');
+    expect(titles).toContain('A');
+    expect(titles).toContain('D');
 
-# Third
-Content 3`);
-      
-      const mindmap = compile_mindmap(mdPath);
-      
-      expect(mindmap.root.children).toHaveLength(3);
-      expect(mindmap.root.children[0].title).toBe('First');
-      expect(mindmap.root.children[0].level).toBe(1);
-      expect(mindmap.root.children[1].title).toBe('Second');
-      expect(mindmap.root.children[1].level).toBe(1);
-      expect(mindmap.root.children[2].title).toBe('Third');
-      expect(mindmap.root.children[2].level).toBe(1);
-    });
-
-    it('should handle mixed heading levels', () => {
-      fs.writeFileSync(mdPath, `# A
-## A1
-
-# B
-
-# C
-## C1
-### C1a
-## C2`);
-      
-      const mindmap = compile_mindmap(mdPath);
-      
-      // A has A1
-      expect(mindmap.root.children[0].children).toHaveLength(1);
-      
-      // B has no children
-      expect(mindmap.root.children[1].children).toHaveLength(0);
-      
-      // C has C1 and C2
-      expect(mindmap.root.children[2].children).toHaveLength(2);
-      
-      // C1 has C1a
-      expect(mindmap.root.children[2].children[0].children).toHaveLength(1);
-    });
+    // C should be before B
+    const cIndex = titles.indexOf('C');
+    const bIndex = titles.indexOf('B');
+    expect(cIndex).toBeLessThan(bIndex);
   });
 });

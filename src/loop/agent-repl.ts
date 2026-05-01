@@ -30,6 +30,8 @@ import { handleHook } from './states/hook.js';
 import { handleTool } from './states/tool.js';
 import { handleStop } from './states/stop.js';
 import pkg from '../../package.json';
+import { get_default_mindmap_path, load_mindmap, validate_mindmap } from '../mindmap/index.js';
+import type { Node } from '../mindmap/types.js';
 
 const version = pkg.version;
 
@@ -131,6 +133,35 @@ export async function main(): Promise<void> {
   await ctx.wiki.checkSkillsDomain();
   await ctx.wt.syncWorkTrees();
 
+  // Load mindmap
+  const workDir = process.cwd();
+  const mindmapPath = get_default_mindmap_path(workDir);
+  let mindmapLoaded = false;
+
+  if (!fs.existsSync(mindmapPath)) {
+    // No mindmap.json - show warning
+    console.log(chalk.yellow('[mindmap] No mindmap found. LLM will read CLAUDE.md directly.'));
+  } else {
+    try {
+      const mindmap = load_mindmap(mindmapPath);
+
+      // Validate against CLAUDE.md
+      const claudeMdPath = path.join(workDir, 'CLAUDE.md');
+      if (fs.existsSync(claudeMdPath) && !validate_mindmap(mindmap, claudeMdPath)) {
+        // Validation failed - show warning but continue loading
+        console.log(chalk.yellow('[mindmap] Validation failed (outdated). Loading anyway.'));
+      } else {
+        // Success
+        console.log(chalk.gray(`[mindmap] Loaded: ${countNodes(mindmap.root)} nodes`));
+      }
+
+      ctx.core.setMindmap(mindmap);
+      mindmapLoaded = true;
+    } catch (err) {
+      console.log(chalk.red(`[mindmap] Failed to load: ${(err as Error).message}`));
+    }
+  }
+
   const triologue = new Triologue({
     tokenThreshold,
     wiki: ctx.wiki,
@@ -154,6 +185,11 @@ export async function main(): Promise<void> {
   const readmePath = path.join(process.cwd(), 'README.md');
   if (fs.existsSync(claudePath)) triologue.setClaudeMd(fs.readFileSync(claudePath, 'utf-8'));
   if (fs.existsSync(readmePath)) triologue.setReadmeMd(fs.readFileSync(readmePath, 'utf-8'));
+
+  // If no mindmap, inject instruction for LLM to read CLAUDE.md
+  if (!mindmapLoaded) {
+    triologue.setNoMindmapInstruction();
+  }
 
   // Initialize hook system (machine lifetime)
   const conditions = new ConditionRegistry();
@@ -226,4 +262,15 @@ export async function main(): Promise<void> {
 
   // Signal Coordinator to exit
   process.send({ type: 'exit' });
+}
+
+/**
+ * Count nodes in mindmap tree
+ */
+function countNodes(node: Node): number {
+  let count = 1;
+  for (const child of node.children) {
+    count += countNodes(child);
+  }
+  return count;
 }
