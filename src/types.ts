@@ -6,6 +6,7 @@ import type { ChildProcess } from 'child_process';
 import type { JSONSchema7 } from 'json-schema';
 import type { Message as OllamaMessage, ToolCall as OllamaToolCall } from 'ollama';
 import { WebFetchResponse, WebSearchResult } from 'ollama';
+import type { Mindmap } from './mindmap/types.js';
 
 // ============================================================================
 // Ollama Type Extensions
@@ -263,6 +264,15 @@ export interface CoreModule {
     path?: string;
     command?: string;
   }): Promise<{ approved: boolean; reason?: string }>;
+  /**
+   * Get the loaded mindmap data
+   * @returns Mindmap data or null if not loaded
+   */
+  getMindmap(): Mindmap | null;
+  /**
+   * Set the mindmap data
+   */
+  setMindmap(mindmap: Mindmap | null): void;
 }
 
 /**

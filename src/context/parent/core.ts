@@ -6,10 +6,10 @@ import chalk from 'chalk';
 import * as fs from 'fs';
 import sharp from 'sharp';
 import type { CoreModule } from '../../types.js';
-import { ollama, retryWithBackoff } from '../../ollama.js';
-import { WebFetchResponse, WebSearchResult } from 'ollama';
+import { ollama } from '../../ollama.js';
 import { agentIO } from '../../loop/agent-io.js';
 import { isVerbose, getVisionModel, isVisionEnabled } from '../../config.js';
+import { BaseCore } from '../shared/base-core.js';
 
 /**
  * Color functions for tool prefixes
@@ -53,15 +53,15 @@ const TOOL_COLORS: Record<string, (text: string) => string> = {
 };
 
 /**
- * Core module implementation
+ * Core module implementation for parent process
+ * Extends BaseCore for workDir and mindmap management
  */
-export class Core implements CoreModule {
-  private workDir: string;
+export class Core extends BaseCore implements CoreModule {
   private modeState: 'plan' | 'normal' = 'normal';
   private allowedFile?: string;
 
   constructor(workDir?: string) {
-    this.workDir = workDir || process.cwd();
+    super(workDir || process.cwd());
   }
 
   /**
@@ -86,20 +86,6 @@ export class Core implements CoreModule {
   setMode(mode: 'plan' | 'normal', allowedFile?: string): void {
     this.modeState = mode;
     this.allowedFile = allowedFile;
-  }
-
-  /**
-   * Get current working directory
-   */
-  getWorkDir(): string {
-    return this.workDir;
-  }
-
-  /**
-   * Set current working directory
-   */
-  setWorkDir(dir: string): void {
-    this.workDir = dir;
   }
 
   /**
@@ -175,43 +161,6 @@ export class Core implements CoreModule {
     // Display who is asking, then the query (via agentIO.ask)
     this.brief('info', 'question', `${asker} asks:`);
     return await agentIO.ask(query);
-  }
-
-  /**
-   * Search the web for information
-   * @param query - The search query
-   */
-  async webSearch(query: string): Promise<WebSearchResult[]> {
-    try {
-      return await retryWithBackoff(async () => {
-        const response = await ollama.webSearch({ query });
-        return response.results || [];
-      }, { maxRetries: 2 });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      if (message.includes('401') || message.includes('unauthorized') || message.includes('Unauthorized')) {
-        throw new Error(`Unauthorized: Set OLLAMA_API_KEY in .env for web search access. Original error: ${message}`, { cause: error });
-      }
-      throw error;
-    }
-  }
-
-  /**
-   * Fetch and parse content from a specific URL
-   * @param url - The URL to fetch
-   */
-  async webFetch(url: string): Promise<WebFetchResponse> {
-    try {
-      return await retryWithBackoff(async () => {
-        return await ollama.webFetch({ url });
-      }, { maxRetries: 2 });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      if (message.includes('401') || message.includes('unauthorized') || message.includes('Unauthorized')) {
-        throw new Error(`Unauthorized: Set OLLAMA_API_KEY in .env for web fetch access. Original error: ${message}`, { cause: error });
-      }
-      throw error;
-    }
   }
 
   /**
@@ -353,7 +302,7 @@ export class Core implements CoreModule {
           const resolvedAllowed = path.isAbsolute(this.allowedFile)
             ? this.allowedFile
             : path.resolve(this.workDir, this.allowedFile);
-          
+
           if (resolvedRequested === resolvedAllowed) {
             return { approved: true };
           }

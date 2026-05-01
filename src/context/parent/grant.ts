@@ -37,7 +37,10 @@ export async function evaluateGrant(
   if (core.getMode() === 'plan') {
     return {
       approved: false,
-      reason: 'Code changes are prohibited in plan mode.',
+      reason: 'Plan mode is ACTIVE - code changes are temporarily restricted. ' +
+        'The lead agent is planning. When planning completes, mode will change to "normal" ' +
+        'and tools will work again. Continue with read-only operations while waiting. ' +
+        'If urgent, contact the lead via mail_to.',
     };
   }
 

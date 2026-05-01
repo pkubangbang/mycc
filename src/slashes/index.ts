@@ -92,6 +92,7 @@ import { compactCommand } from './compact.js';
 import { domainCommand } from './domain.js';
 import { helpCommand } from './help.js';
 import { modeCommand } from './mode.js';
+import { mindmapCommand } from './mindmap.js';
 
 slashRegistry.register(teamCommand);
 slashRegistry.register(todosCommand);
@@ -105,3 +106,4 @@ slashRegistry.register(compactCommand);
 slashRegistry.register(domainCommand);
 slashRegistry.register(helpCommand);
 slashRegistry.register(modeCommand);
+slashRegistry.register(mindmapCommand);
