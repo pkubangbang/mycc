@@ -2,31 +2,22 @@
  * core.ts - ChildCore implementation for IPC-based core operations
  */
 
-import { WebFetchResponse, WebSearchResult } from 'ollama';
-import { ollama } from '../../ollama.js';
 import type { CoreModule } from '../../types.js';
 import { ipc, sendStatus } from './ipc-helpers.js';
 import { isVerbose } from '../../config.js';
+import { BaseCore } from '../shared/base-core.js';
 
 /**
  * Core module for child process
- * All operations go through IPC to parent
+ * Extends BaseCore for workDir and mindmap management
+ * All other operations go through IPC to parent
  */
-export class ChildCore implements CoreModule {
-  private workDir: string;
+export class ChildCore extends BaseCore implements CoreModule {
   private name: string;
 
   constructor(name: string, workDir: string) {
+    super(workDir);
     this.name = name;
-    this.workDir = workDir;
-  }
-
-  getWorkDir(): string {
-    return this.workDir;
-  }
-
-  setWorkDir(dir: string): void {
-    this.workDir = dir;
   }
 
   getName(): string {
@@ -66,23 +57,6 @@ export class ChildCore implements CoreModule {
       // Transition back to working after getting answer
       sendStatus('working');
     }
-  }
-
-  /**
-   * Search the web for information
-   * @param query - The search query
-   */
-  async webSearch(query: string): Promise<WebSearchResult[]> {
-    const response = await ollama.webSearch({ query });
-    return response.results || [];
-  }
-
-  /**
-   * Fetch and parse content from a specific URL
-   * @param url - The URL to fetch
-   */
-  async webFetch(url: string): Promise<WebFetchResponse> {
-    return await ollama.webFetch({ url });
   }
 
   /**

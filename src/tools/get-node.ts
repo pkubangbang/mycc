@@ -11,6 +11,8 @@
 
 import type { ToolDefinition, AgentContext } from '../types.js';
 import type { Node } from '../mindmap/types.js';
+import { get_node, load_mindmap, get_default_mindmap_path } from '../mindmap/index.js';
+import * as fs from 'fs';
 
 export const getNodeTool: ToolDefinition = {
   name: 'get_node',
@@ -29,10 +31,19 @@ export const getNodeTool: ToolDefinition = {
   handler: async (ctx: AgentContext, args: Record<string, unknown>): Promise<string> => {
     const nodePath = args.path as string;
 
-    // Ensure mindmap is loaded
-    await ctx.mindmap.load();
+    // Get mindmap from core, load if not already loaded
+    let mindmap = ctx.core.getMindmap();
+    if (!mindmap) {
+      const workDir = ctx.core.getWorkDir();
+      const mindmapPath = get_default_mindmap_path(workDir);
+      if (!fs.existsSync(mindmapPath)) {
+        return 'No mindmap found. Use /mindmap compile <file> to create one.';
+      }
+      mindmap = load_mindmap(mindmapPath);
+      ctx.core.setMindmap(mindmap);
+    }
 
-    const node = ctx.mindmap.getNode(nodePath);
+    const node = get_node(mindmap, nodePath);
     if (!node) {
       return `Node not found: ${nodePath}\n\nAvailable paths start from root "/". Use get_node with path "/" to see top-level nodes.`;
     }
@@ -46,17 +57,17 @@ export const getNodeTool: ToolDefinition = {
  */
 function formatNode(node: Node): string {
   const lines: string[] = [];
-  
+
   lines.push(`# ${node.title}`);
   lines.push(`Path: ${node.id}`);
   lines.push(`Level: ${node.level}`);
   lines.push('');
-  
+
   // Summary
   lines.push('## Summary');
   lines.push(node.summary || '(no summary)');
   lines.push('');
-  
+
   // Text content (truncated if too long)
   if (node.text) {
     lines.push('## Content');
@@ -69,7 +80,7 @@ function formatNode(node: Node): string {
     }
     lines.push('');
   }
-  
+
   // Children
   if (node.children.length > 0) {
     lines.push('## Children');
@@ -78,7 +89,7 @@ function formatNode(node: Node): string {
     }
     lines.push('');
   }
-  
+
   // Links (if any)
   if (node.links.length > 0) {
     lines.push('## Links');
@@ -91,6 +102,6 @@ function formatNode(node: Node): string {
     }
     lines.push('');
   }
-  
+
   return lines.join('\n');
 }

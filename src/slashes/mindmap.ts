@@ -10,6 +10,15 @@
 
 import type { SlashCommand } from '../types.js';
 import type { Node } from '../mindmap/types.js';
+import {
+  get_node,
+  compile_mindmap,
+  patch_mindmap,
+  validate_mindmap,
+  save_mindmap,
+  load_mindmap,
+  get_default_mindmap_path,
+} from '../mindmap/index.js';
 import chalk from 'chalk';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -44,14 +53,15 @@ async function handleCompile(context: { ctx: import('../types.js').AgentContext;
 
   const workDir = context.ctx.core.getWorkDir();
   const fullPath = path.resolve(workDir, filePath);
-  
+
   if (!fs.existsSync(fullPath)) {
     console.log(chalk.red(`File not found: ${fullPath}`));
     return;
   }
 
   try {
-    const mindmap = await context.ctx.mindmap.compile(filePath);
+    const mindmap = await compile_mindmap(filePath, workDir);
+    save_mindmap(mindmap, undefined, workDir);
     console.log(chalk.green(`\n✓ Compiled mindmap: ${countNodes(mindmap.root)} nodes`));
     console.log(chalk.gray(`  Source: ${filePath}`));
     console.log(chalk.gray(`  Hash: ${mindmap.hash}`));
@@ -62,13 +72,17 @@ async function handleCompile(context: { ctx: import('../types.js').AgentContext;
 }
 
 async function handleGet(context: { ctx: import('../types.js').AgentContext; args: string[] }, nodePath: string | undefined): Promise<void> {
-  // Load mindmap if not loaded
-  await context.ctx.mindmap.load();
-
-  const mindmap = context.ctx.mindmap.getMindmap();
+  // Load mindmap if not already loaded
+  let mindmap = context.ctx.core.getMindmap();
   if (!mindmap) {
-    console.log(chalk.yellow('No mindmap loaded. Use /mindmap compile <file> first.'));
-    return;
+    const workDir = context.ctx.core.getWorkDir();
+    const mindmapPath = get_default_mindmap_path(workDir);
+    if (!fs.existsSync(mindmapPath)) {
+      console.log(chalk.yellow('No mindmap found. Use /mindmap compile <file> first.'));
+      return;
+    }
+    mindmap = load_mindmap(mindmapPath);
+    context.ctx.core.setMindmap(mindmap);
   }
 
   if (!nodePath) {
@@ -77,7 +91,7 @@ async function handleGet(context: { ctx: import('../types.js').AgentContext; arg
     return;
   }
 
-  const node = context.ctx.mindmap.getNode(nodePath);
+  const node = get_node(mindmap, nodePath);
   if (!node) {
     console.log(chalk.red(`Node not found: ${nodePath}`));
     return;
@@ -93,15 +107,26 @@ async function handlePatch(context: { ctx: import('../types.js').AgentContext; a
     return;
   }
 
-  // Load mindmap if not loaded
-  await context.ctx.mindmap.load();
+  // Load mindmap if not already loaded
+  let mindmap = context.ctx.core.getMindmap();
+  if (!mindmap) {
+    const workDir = context.ctx.core.getWorkDir();
+    const mindmapPath = get_default_mindmap_path(workDir);
+    if (!fs.existsSync(mindmapPath)) {
+      console.log(chalk.yellow('No mindmap found. Use /mindmap compile <file> first.'));
+      return;
+    }
+    mindmap = load_mindmap(mindmapPath);
+    context.ctx.core.setMindmap(mindmap);
+  }
 
   try {
-    const node = await context.ctx.mindmap.patch(nodePath, text);
+    const node = patch_mindmap(mindmap, nodePath, text);
     if (!node) {
       console.log(chalk.red(`Node not found: ${nodePath}`));
       return;
     }
+    save_mindmap(mindmap);
     console.log(chalk.green(`\n✓ Updated node: ${nodePath}`));
     console.log(chalk.gray(`  New summary: ${node.summary.slice(0, 100)}...`));
   } catch (err) {
@@ -110,10 +135,29 @@ async function handlePatch(context: { ctx: import('../types.js').AgentContext; a
 }
 
 async function handleValidate(context: { ctx: import('../types.js').AgentContext }): Promise<void> {
-  // Load mindmap if not loaded
-  await context.ctx.mindmap.load();
+  // Load mindmap if not already loaded
+  let mindmap = context.ctx.core.getMindmap();
+  if (!mindmap) {
+    const workDir = context.ctx.core.getWorkDir();
+    const mindmapPath = get_default_mindmap_path(workDir);
+    if (!fs.existsSync(mindmapPath)) {
+      console.log(chalk.yellow('No mindmap found. Use /mindmap compile <file> first.'));
+      return;
+    }
+    mindmap = load_mindmap(mindmapPath);
+    context.ctx.core.setMindmap(mindmap);
+  }
 
-  const valid = await context.ctx.mindmap.validate();
+  // Find the source markdown file
+  const workDir = context.ctx.core.getWorkDir();
+  const claudeMd = path.join(workDir, 'CLAUDE.md');
+
+  if (!fs.existsSync(claudeMd)) {
+    console.log(chalk.yellow('\n⚠ Cannot validate: CLAUDE.md not found'));
+    return;
+  }
+
+  const valid = validate_mindmap(mindmap, claudeMd);
   if (valid) {
     console.log(chalk.green('\n✓ Mindmap is valid'));
   } else {
@@ -137,10 +181,10 @@ function showHelp(): void {
 function printNode(node: Node, indent: number): void {
   const prefix = '  '.repeat(indent);
   const levelIcon = node.level === 0 ? '📦' : node.level === 1 ? '📁' : '📄';
-  
+
   console.log(`${prefix}${levelIcon} ${chalk.cyan(node.title)}`);
   console.log(`${prefix}  ${chalk.gray(node.summary.slice(0, 80))}${node.summary.length > 80 ? '...' : ''}`);
-  
+
   for (const child of node.children) {
     printNode(child, indent + 1);
   }
@@ -151,22 +195,22 @@ function printNodeDetails(node: Node): void {
   console.log(chalk.white('Path:'), chalk.yellow(node.id));
   console.log(chalk.white('Level:'), node.level);
   console.log();
-  
+
   console.log(chalk.white('Summary:'));
   console.log(chalk.gray(node.summary));
   console.log();
-  
+
   console.log(chalk.white('Text:'));
   console.log(chalk.gray(node.text.slice(0, 500)) + (node.text.length > 500 ? '...' : ''));
   console.log();
-  
+
   if (node.children.length > 0) {
     console.log(chalk.white('Children:'));
     for (const child of node.children) {
       console.log(chalk.gray(`  - ${child.title}`));
     }
   }
-  
+
   if (node.links.length > 0) {
     console.log(chalk.white('Links:'));
     for (const link of node.links) {
