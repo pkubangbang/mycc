@@ -12,7 +12,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { filetypeinfo } from 'magic-bytes.js';
+import { filetypeinfo } from '../utils/magic-bytes.js';
 import type { ToolDefinition, AgentContext } from '../types.js';
 import { getTokenThreshold } from '../config.js';
 
@@ -43,7 +43,7 @@ function safePath(p: string, workdir: string): string {
  */
 function detectFileType(filePath: string, buffer: Buffer): { isText: boolean; mime?: string; extension?: string } {
   // Check magic bytes for known binary formats
-  const magicInfo = filetypeinfo(buffer.slice(0, 100));
+  const magicInfo = filetypeinfo(buffer.slice(0, 300));
 
   if (magicInfo.length > 0) {
     const info = magicInfo[0];

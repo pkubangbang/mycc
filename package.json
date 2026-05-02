@@ -29,7 +29,6 @@
     "dotenv": "^16.0.0",
     "gray-matter": "^4.0.3",
     "jsep": "^1.4.0",
-    "magic-bytes.js": "^1.13.0",
     "minimist": "^1.2.8",
     "ollama": "^0.6.3",
     "sharp": "^0.34.5",
