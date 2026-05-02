@@ -352,9 +352,14 @@ export function ensureDirs(): void {
 import { execSync } from 'child_process';
 import chalk from 'chalk';
 
+/** Timeout for npm link operations (ms) */
+const NPM_LINK_TIMEOUT_MS = 5000;
+
 /**
  * Ensure mycc is linked in a directory for type imports
  * Creates node_modules symlink if needed
+ *
+ * Uses timeout to fail fast when network is unavailable or slow.
  */
 function ensureMyccLink(dir: string, label: string): void {
   const nodeModules = path.join(dir, 'node_modules');
@@ -369,11 +374,18 @@ function ensureMyccLink(dir: string, label: string): void {
   if (!fs.existsSync(myccLink)) {
     console.log(chalk.dim(`[config] Linking mycc for ${label}...`));
     try {
-      execSync('npm link mycc', { cwd: dir, stdio: 'ignore' });
-    } catch {
-      console.warn(
-        chalk.yellow(`[config] Could not link mycc in ${dir}. Run 'npm link mycc' manually.`)
-      );
+      execSync('npm link mycc', {
+        cwd: dir,
+        stdio: 'ignore',
+        timeout: NPM_LINK_TIMEOUT_MS,
+      });
+    } catch (err) {
+      // Check if it's a timeout error
+      const isTimeout = err instanceof Error && err.message.includes('ETIMEDOUT');
+      const message = isTimeout
+        ? `[config] npm link timed out after ${NPM_LINK_TIMEOUT_MS / 1000}s. Check network connectivity.`
+        : `[config] Could not link mycc in ${dir}. Run 'npm link mycc' manually.`;
+      console.warn(chalk.yellow(message));
     }
   }
 }

@@ -12,7 +12,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import filetypeinfo from 'magic-bytes.js';
+import { filetypeinfo } from 'magic-bytes.js';
 import type { ToolDefinition, AgentContext } from '../types.js';
 import { getTokenThreshold } from '../config.js';
 
