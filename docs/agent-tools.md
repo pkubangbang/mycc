@@ -1,6 +1,16 @@
+---
+updated_at: 2026-05-03
+changelog:
+  - "2026-05-03: Updated tool count from 24 to 45, added missing tools (recall, plan_on, plan_off, tm_print, hand_over, web_*, wiki_*, skill_compile, wt_*)"
+  - "2026-05-03: Fixed issue_create behavior - now uses in-memory storage, not SQLite"
+  - "2026-05-03: Fixed tm_create behavior - now uses in-memory storage, not SQLite"
+---
+
 # Built-in Tools Reference
 
 This document describes the built-in tools available to the coding agent. Tools are implemented in `src/tools/` and loaded at startup.
+
+**Current tool count**: 45 tools (as of v0.7.0)
 
 ## Tool Interface
 
@@ -36,8 +46,8 @@ interface ToolDefinition {
 - Tools with `['main', 'child', 'bg']` available everywhere
 
 **Summary:**
-- **Lead (main)**: All 24 tools
-- **Teammate (child)**: Cannot use `broadcast`, `tm_create`, `tm_remove`, `tm_await`
+- **Lead (main)**: All 45 tools
+- **Teammate (child)**: Cannot use `broadcast`, `tm_create`, `tm_remove`, `tm_await`, `tm_print`
 - **Background (bg)**: Can use `bash`, `read_file`, `write_file`, `edit_file`
 
 ---
@@ -282,7 +292,7 @@ interface ToolDefinition {
 - Creates issue with status "pending"
 - Returns the new issue ID
 - If `blockedBy` provided, creates blocking relationships
-- Issues are persisted in SQLite database
+- Issues are stored in-memory (session-scoped, lost on exit)
 
 **Example**:
 ```json
@@ -363,7 +373,7 @@ interface ToolDefinition {
 
 **Behavior**:
 - Appends comment to issue's comment history
-- Comments stored as JSON array in SQLite
+- Comments stored in memory (session-scoped)
 
 **Example**:
 ```json
@@ -387,7 +397,7 @@ interface ToolDefinition {
 | blocked | integer | yes | ID of the issue that is being blocked |
 
 **Behavior**:
-- Creates relationship in `issue_blockages` table
+- Creates relationship in memory blockages map
 - Blocked issue cannot be claimed until blocker is resolved
 - Prevents circular dependencies
 
@@ -413,7 +423,7 @@ interface ToolDefinition {
 | blocked | integer | yes | ID of the issue that was blocked |
 
 **Behavior**:
-- Removes relationship from `issue_blockages` table
+- Removes relationship from memory blockages map
 - If all blockers removed, issue becomes claimable
 
 **Example**:
@@ -443,7 +453,7 @@ interface ToolDefinition {
 **Behavior**:
 - Spawns a child process using `fork()`
 - Creates mailbox at `.mycc/mail/<name>.jsonl`
-- Stores teammate info in SQLite database
+- Stores teammate info in memory (session-scoped)
 - Teammate starts in "working" status
 - Returns success message with teammate name
 
@@ -471,7 +481,7 @@ interface ToolDefinition {
 **Behavior**:
 - Sends shutdown message to child process
 - If `force` is true, kills process immediately
-- Updates teammate status to "shutdown" in database
+- Updates teammate status to "shutdown" in memory
 - Returns confirmation message
 
 **Example**:
@@ -753,14 +763,343 @@ interface ToolDefinition {
 
 ---
 
+## Knowledge Discovery Tools
+
+### recall
+
+**File**: `src/tools/recall.ts`
+
+**Scope**: `['main', 'child']`
+
+**Description**: Explore the mindmap knowledge tree to understand project structure, available skills, and context. Use `recall(path="/")` to discover available knowledge.
+
+**Parameters**:
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| path | string | yes | Node path (e.g., "/skill/example" or "/" for root) |
+
+**Example**:
+```json
+{ "path": "/" }
+```
+
+---
+
+## Web Access Tools
+
+### web_search
+
+**File**: `src/tools/web_search.ts`
+
+**Scope**: `['main', 'child']`
+
+**Description**: Search the web for information. Returns titles, URLs, and snippets.
+
+**Parameters**:
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| query | string | yes | The search query to execute |
+
+**Example**:
+```json
+{ "query": "TypeScript best practices" }
+```
+
+---
+
+### web_fetch
+
+**File**: `src/tools/web_fetch.ts`
+
+**Scope**: `['main', 'child']`
+
+**Description**: Fetch and parse content from a URL. Returns page title, main content, and links.
+
+**Parameters**:
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| url | string | yes | The URL to fetch content from |
+
+**Example**:
+```json
+{ "url": "https://example.com/doc" }
+```
+
+---
+
+## Knowledge Base Tools
+
+### wiki_prepare
+
+**File**: `src/tools/wiki_prepare.ts`
+
+**Scope**: `['main', 'child']`
+
+**Description**: Validate a document before storing in knowledge base. Returns hash if accepted.
+
+**Parameters**:
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| domain | string | yes | Category tag for the knowledge |
+| title | string | yes | Document title |
+| content | string | yes | Document content (50-1000 characters) |
+| references | array[string] | no | Optional reference URLs or file paths |
+
+---
+
+### wiki_put
+
+**File**: `src/tools/wiki_put.ts`
+
+**Scope**: `['main', 'child']`
+
+**Description**: Store a validated document in knowledge base. Requires hash from wiki_prepare.
+
+**Parameters**:
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| hash | string | yes | The hash from wiki_prepare |
+| document | object | yes | The document that was validated |
+
+---
+
+### wiki_get
+
+**File**: `src/tools/wiki_get.ts`
+
+**Scope**: `['main', 'child']`
+
+**Description**: Search knowledge base for relevant documents.
+
+**Parameters**:
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| query | string | yes | The search query |
+| domain | string | yes | The domain to search within |
+| topK | number | no | Number of results (default: 5) |
+
+---
+
+## Mode Control Tools
+
+### plan_on
+
+**File**: `src/tools/plan_on.ts`
+
+**Scope**: `['main']`
+
+**Description**: Switch to plan mode where code changes are prohibited. Use for planning without making changes.
+
+**Parameters**:
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| allowed_file | string | no | Optional file that can be edited in plan mode |
+
+---
+
+### plan_off
+
+**File**: `src/tools/plan_off.ts`
+
+**Scope**: `['main']`
+
+**Description**: Switch back to normal mode where code changes are allowed.
+
+**Parameters**: None
+
+---
+
+## Git Worktree Tools
+
+### wt_create
+
+**File**: `src/tools/wt_create.ts`
+
+**Scope**: `['main']`
+
+**Description**: Create a new git worktree with a new branch.
+
+**Parameters**:
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| name | string | yes | Name for the worktree |
+| branch | string | yes | Name of the new branch |
+
+---
+
+### wt_remove
+
+**File**: `src/tools/wt_remove.ts`
+
+**Scope**: `['main']`
+
+**Description**: Remove a git worktree by name.
+
+**Parameters**:
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| name | string | yes | Name of the worktree to remove |
+
+---
+
+### wt_enter
+
+**File**: `src/tools/wt_enter.ts`
+
+**Scope**: `['main']`
+
+**Description**: Switch to a git worktree. Changes working directory.
+
+**Parameters**:
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| name | string | yes | Name of the worktree to enter |
+
+---
+
+### wt_leave
+
+**File**: `src/tools/wt_leave.ts`
+
+**Scope**: `['main']`
+
+**Description**: Exit current worktree and return to project root.
+
+**Parameters**: None
+
+---
+
+### wt_print
+
+**File**: `src/tools/wt_print.ts`
+
+**Scope**: `['main']`
+
+**Description**: List all git worktrees with names, branches, and paths.
+
+**Parameters**: None
+
+---
+
+## Interactive Shell Tool
+
+### hand_over
+
+**File**: `src/tools/hand_over.ts`
+
+**Scope**: `['main']`
+
+**Description**: Opens an interactive terminal popup. Use ONLY when user explicitly requests interactive terminal or command requires user interaction (passwords, prompts, SSH sessions, vim, htop, etc.).
+
+**Parameters**:
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| command | string | yes | Initial command to run |
+| justification | string | yes | Justify why this must be interactive |
+
+---
+
+## Git Operations Tool
+
+### git_commit
+
+**File**: `src/tools/git_commit.ts`
+
+**Scope**: `['main']`
+
+**Description**: Execute git commit with mandatory user permission check. Always asks for permission before committing.
+
+**Parameters**:
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| message | string | yes | The commit message |
+| amend | boolean | no | Set to true to amend previous commit |
+
+---
+
+## Utility Tools
+
+### time
+
+**File**: `src/tools/time.ts`
+
+**Scope**: `['main', 'child']`
+
+**Description**: Get the current date and time.
+
+**Parameters**:
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| format | string | no | Format: "iso", "date", "time", or "full" |
+
+---
+
+### tm_print
+
+**File**: `src/tools/tm_print.ts`
+
+**Scope**: `['main']`
+
+**Description**: List all teammates with roles and status.
+
+**Parameters**: None
+
+---
+
+### skill_compile
+
+**File**: `src/tools/skill_compile.ts`
+
+**Scope**: `['main']`
+
+**Description**: Compile a skill's "when" condition into a structured hook.
+
+**Parameters**:
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| name | string | yes | Skill name to compile |
+| feedback | string | no | Optional feedback for refining condition |
+
+---
+
+### order
+
+**File**: `src/tools/order.ts`
+
+**Scope**: `['main', 'child']`
+
+**Description**: Send an order (task) to a teammate and wait for completion. Combines mail_to + tm_await.
+
+**Parameters**:
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| name | string | yes | Teammate name to send order to |
+| title | string | yes | Order title |
+| content | string | yes | Detailed task description |
+| timeout | number | no | Timeout in milliseconds (default: 60000) |
+
+---
+
+### issue_list
+
+**File**: `src/tools/issue_list.ts`
+
+**Scope**: `['main', 'child']`
+
+**Description**: List all issues with status, owner, and blocking relationships.
+
+**Parameters**: None
+
+---
+
 ## Tools Summary Table
 
 | Tool | Scope | Category |
 |------|-------|----------|
 | bash | main, child, bg | File Operations |
-| read_file | main, child, bg | File Operations |
-| write_file | main, child, bg | File Operations |
-| edit_file | main, child, bg | File Operations |
+| read_file | main, child | File Operations |
+| write_file | main, child | File Operations |
+| edit_file | main, child | File Operations |
 | brief | main, child | Communication |
 | question | main, child | Communication |
 | mail_to | main, child | Communication |
@@ -769,18 +1108,40 @@ interface ToolDefinition {
 | issue_claim | main, child | Issue Management |
 | issue_close | main, child | Issue Management |
 | issue_comment | main, child | Issue Management |
+| issue_list | main, child | Issue Management |
 | blockage_create | main, child | Issue Management |
 | blockage_remove | main, child | Issue Management |
 | tm_create | main | Team Management |
 | tm_remove | main | Team Management |
 | tm_await | main | Team Management |
+| tm_print | main | Team Management |
 | bg_create | main, child | Background Tasks |
 | bg_print | main, child | Background Tasks |
 | bg_remove | main, child | Background Tasks |
 | bg_await | main, child | Background Tasks |
 | screen | main, child | Screen Reader |
+| read_picture | main, child | Screen Reader |
+| read_read | main, child | Content Summarization |
 | todo_write | main, child | Task Management |
 | skill_load | main, child | Task Management |
+| skill_compile | main | Task Management |
+| hand_over | main | Interactive Shell |
+| git_commit | main | Git Operations |
+| plan_on | main | Mode Control |
+| plan_off | main | Mode Control |
+| recall | main, child | Knowledge Discovery |
+| web_search | main, child | Web Access |
+| web_fetch | main, child | Web Access |
+| wiki_prepare | main, child | Knowledge Base |
+| wiki_put | main, child | Knowledge Base |
+| wiki_get | main, child | Knowledge Base |
+| wt_create | main | Git Worktree |
+| wt_remove | main | Git Worktree |
+| wt_enter | main | Git Worktree |
+| wt_leave | main | Git Worktree |
+| wt_print | main | Git Worktree |
+| time | main, child | Utility |
+| order | main, child | Team Coordination |
 
 ---
 

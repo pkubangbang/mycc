@@ -1,6 +1,15 @@
+---
+updated_at: 2026-05-03
+changelog:
+  - "2026-05-03: Added missing commands: /mindmap, /mode, /plan, /index"
+  - "2026-05-03: Updated command count from 11 to 15 commands"
+---
+
 # Slash Commands Reference
 
 Slash commands are special commands that start with `/` and are handled directly by the agent's REPL interface, bypassing the LLM. They provide quick access to system functions like session management, team coordination, issue tracking, and more.
+
+**Current command count**: 15 commands (as of v0.7.0)
 
 ## How Slash Commands Work
 
@@ -194,6 +203,70 @@ agent >> /skills
 
 These commands accept additional arguments.
 
+### /mindmap
+
+**Description**: Manage mindmap knowledge tree (compile, validate, explore).
+
+**Usage**:
+```
+/mindmap              - Show mindmap status
+/mindmap compile      - Compile mindmap from CLAUDE.md
+/mindmap validate     - Validate mindmap structure
+```
+
+**Output**:
+- Shows compilation status and node count
+- Lists any validation errors
+
+---
+
+### /mode
+
+**Description**: Switch between agent modes (normal, plan).
+
+**Usage**:
+```
+/mode                 - Show current mode
+/mode plan            - Switch to plan mode (no code changes)
+/mode normal          - Switch to normal mode
+```
+
+**Output**:
+- Shows current mode and mode changes
+
+---
+
+### /plan
+
+**Description**: Quick switch to plan mode (alias for `/mode plan`).
+
+**Usage**:
+```
+/plan                 - Enter plan mode
+```
+
+**Behavior**:
+- Blocks code changes for planning
+- Shows current mode status
+
+---
+
+### /index
+
+**Description**: Manage wiki domain indices.
+
+**Usage**:
+```
+/index                - Show all domain indices
+/index rebuild        - Rebuild all domain indices
+```
+
+**Output**:
+- Lists domains and document counts
+- Shows rebuild progress
+
+---
+
 ### /issues
 
 **Aliases**: `/issue`
@@ -378,6 +451,10 @@ Slash commands are implemented in `src/slashes/`:
 | `wiki.ts` | `/wiki` |
 | `compact.ts` | `/compact` |
 | `domain.ts` | `/domain` |
+| `mindmap.ts` | `/mindmap` |
+| `mode.ts` | `/mode` |
+| `plan.ts` | `/plan` |
+| `index.ts` | `/index` |
 
 ### Registry
 

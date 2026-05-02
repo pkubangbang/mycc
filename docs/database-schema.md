@@ -1,19 +1,56 @@
-# Database Schema
+---
+updated_at: 2026-05-03
+changelog:
+  - "2026-05-03: Updated to reflect SQLite removal - now uses in-memory storage"
+  - "Original SQLite schema archived for historical reference"
+---
 
-本文档描述 SQLite 数据库的表结构和设计。
+# Database Schema (Historical Reference)
 
-## 概述
+> **⚠️ IMPORTANT**: SQLite has been removed from the project as of v0.7.0. This document is kept for historical reference. The current implementation uses in-memory storage.
 
-系统使用 SQLite 作为持久化存储，支持：
+## Current Implementation (v0.7.0+)
+
+系统现在使用 **内存存储** 而非 SQLite：
+
+### Session-Scoped Data (In-Memory)
+
+**File**: `src/context/memory-store.ts`
+
+数据存储在内存中，进程退出后丢失：
+- **Issue 管理**：`Map<number, Issue>`
+- **阻塞关系**：`Map<string, { blocker, blocked }>`
+- **队友管理**：`Map<string, Teammate>`
+
+### Project-Level Data (JSON Files)
+
+**File**: `src/context/worktree-store.ts`
+
+工作树信息持久化到 JSON：
+- **工作树管理**：`.mycc/worktrees.json`
+
+## Migration Details
+
+See `docs/migrate-remove-sqlite.md` for the complete migration plan that was executed in April 2026.
+
+---
+
+## Historical SQLite Schema (Pre-v0.7.0)
+
+以下为已废弃的 SQLite 表结构，仅作历史参考：
+
+### 原有设计概述
+
+系统曾使用 SQLite 作为持久化存储，支持：
 - **Issue 管理**：持久化的任务和阻塞关系
 - **队友管理**：团队成员状态
 - **工作树管理**：Git worktree 跟踪
 
 数据库文件位于 `.mycc/state.db`。
 
-## WAL 模式
+### WAL 模式
 
-数据库使用 Write-Ahead Logging (WAL) 模式以提高并发性能：
+数据库曾使用 Write-Ahead Logging (WAL) 模式以提高并发性能：
 
 ```typescript
 db.pragma('journal_mode = WAL');
@@ -24,7 +61,7 @@ WAL 模式的优势：
 - **单写入者**：只有一个进程可以写入，适合子进程通过 IPC 访问主进程的设计
 - **性能提升**：写入操作不需要阻塞读取操作
 
-## 表结构
+### 原有表结构
 
 ### issues 表
 
@@ -170,11 +207,11 @@ CREATE TABLE worktrees (
 | `branch` | TEXT | Git 分支名称 |
 | `created_at` | DATETIME | 创建时间 |
 
-## 数据访问模式
+### 原有数据访问模式
 
-### 主进程直接访问
+#### 主进程直接访问（已废弃）
 
-主进程通过 `getDb()` 获取数据库连接：
+主进程曾通过 `getDb()` 获取数据库连接：
 
 ```typescript
 import { getDb } from './db.js';
@@ -184,97 +221,62 @@ const stmt = db.prepare('SELECT * FROM issues WHERE status = ?');
 const issues = stmt.all('pending');
 ```
 
-### 子进程通过 IPC 访问
-
-子进程不能直接访问数据库，必须通过 IPC 发送请求：
+**当前方式**：直接调用 memory-store 函数：
 
 ```typescript
-// 子进程代码
-const issue = await ipc.sendRequest('db_issue_get', { id: 1 });
+import * as MemoryStore from './memory-store.js';
+
+const issues = MemoryStore.listIssues();
 ```
 
-主进程的 IPC 处理器执行数据库操作：
+#### 子进程通过 IPC 访问（已废弃）
+
+子进程曾不能直接访问数据库，必须通过 IPC 发送请求。
+
+**当前方式**：子进程仍通过 IPC，但 IPC 处理器调用 memory-store：
 
 ```typescript
-// 主进程 IPC 处理器
+// 子进程代码（不变）
+const issue = await ipc.sendRequest('db_issue_get', { id: 1 });
+
+// 主进程 IPC 处理器（已更新）
 {
   messageType: 'db_issue_get',
   module: 'issue',
   handler: async (_sender, payload, ctx, sendResponse) => {
     const { id } = payload as { id: number };
-    const issue = await ctx.issue.getIssue(id);
+    const issue = MemoryStore.getIssue(id);  // 改用 memory-store
     sendResponse('db_result', true, issue);
   },
 }
 ```
 
-## 事务支持
+### 原有事务支持（已废弃）
 
-SQLite 支持事务，可用于原子操作：
+SQLite 曾支持事务用于原子操作。**当前实现**：JavaScript 单线程模型天然保证原子性，无需事务。
 
-```typescript
-import { getDb } from './db.js';
+### 原有并发安全（已废弃）
 
-const db = getDb();
+#### 单写入者模式
 
-const claimTx = db.transaction(() => {
-  // 检查状态
-  const stmt = db.prepare('SELECT status FROM issues WHERE id = ?');
-  const row = stmt.get(id);
-  
-  if (!row || row.status !== 'pending') {
-    return false;
-  }
-  
-  // 原子更新
-  const updateStmt = db.prepare('UPDATE issues SET status = ?, owner = ? WHERE id = ?');
-  updateStmt.run('in_progress', owner, id);
-  
-  return true;
-});
+设计曾保证只有主进程写入数据库。**当前实现**：主进程独占内存，无需并发控制。
 
-const success = claimTx();
-```
+#### 读取并发
 
-## 并发安全
+多个子进程曾可同时读取（通过 IPC）。**当前实现**：相同，但数据来自内存而非 WAL。
 
-### 单写入者模式
+---
 
-设计上保证只有主进程写入数据库：
-- 子进程通过 IPC 发送请求
-- 主进程序列化处理 IPC 请求
-- 避免写入冲突
-
-### 读取并发
-
-多个子进程可以同时读取（通过 IPC），WAL 模式优化了读取性能。
-
-## 数据迁移
-
-系统启动时自动创建表和索引：
-
-```typescript
-function initSchema(db: Database.Database): void {
-  // 创建表
-  db.exec(`CREATE TABLE IF NOT EXISTS issues (...)`);
-  db.exec(`CREATE TABLE IF NOT EXISTS issue_blockages (...)`);
-  db.exec(`CREATE TABLE IF NOT EXISTS teammates (...)`);
-  db.exec(`CREATE TABLE IF NOT EXISTS worktrees (...)`);
-
-  // 创建索引
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_issues_status ON issues(status)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_issues_owner ON issues(owner)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_issue_blockages_blocker ON issue_blockages(blocker_id)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_issue_blockages_blocked ON issue_blockages(blocked_id)`);
-}
-```
-
-## 相关文件
+## 当前相关文件
 
 | 文件 | 说明 |
 |------|------|
-| `src/context/db.ts` | 数据库初始化和连接管理 |
-| `src/context/issue.ts` | Issue 模块实现 |
-| `src/context/team.ts` | Teammate 状态管理 |
-| `src/context/wt.ts` | Worktree 管理 |
-| `src/context/child-context/issue.ts` | 子进程 Issue IPC 客户端 |
+| `src/context/memory-store.ts` | 内存存储实现（Issue、Blockage、Teammate） |
+| `src/context/worktree-store.ts` | JSON 文件存储（Worktree） |
+| `src/context/issue.ts` | Issue 模块实现（使用 memory-store） |
+| `src/context/team.ts` | Teammate 状态管理（使用 memory-store） |
+| `src/context/child/` | 子进程 IPC 客户端 |
+
+---
+
+## 历史表结构参考

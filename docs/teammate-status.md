@@ -1,3 +1,10 @@
+---
+updated_at: 2026-05-03
+changelog:
+  - "2026-05-03: Updated database references - now uses in-memory storage (memory-store.ts)"
+  - "2026-05-03: Removed SQLite database references, updated implementation section"
+---
+
 # Teammate Status State Machine
 
 ## Overview
@@ -104,6 +111,8 @@ export type TeammateStatus = 'working' | 'idle' | 'holding' | 'shutdown';
 ```
 
 ### Status Updates (`src/context/team.ts`)
+
+The `handleChildMessage` function handles status updates:
 The `handleChildMessage` function handles status updates:
 ```typescript
 if (status === 'working') {
@@ -113,7 +122,9 @@ if (status === 'working') {
 }
 ```
 
-### Question Handling (`src/context/child-context/core.ts`)
+### Question Handling (`src/context/child/`)
+
+When asking a question:
 When asking a question:
 ```typescript
 async question(query: string, asker: string): Promise<string> {
@@ -151,17 +162,20 @@ async awaitTeammate(name: string, timeout: number): Promise<{ waited: boolean }>
 }
 ```
 
-## Database
+## Storage
 
-The status is stored as a TEXT column in SQLite with no enum constraint:
-```sql
-CREATE TABLE teammates (
-  name TEXT PRIMARY KEY,
-  role TEXT NOT NULL,
-  status TEXT DEFAULT 'idle',
-  prompt TEXT,
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-)
+The status is stored in-memory via `memory-store.ts`:
+
+```typescript
+// src/context/memory-store.ts
+const teammates: Map<string, Teammate> = new Map();
+
+export function updateTeammateStatus(name: string, status: TeammateStatus): boolean {
+  const teammate = teammates.get(name);
+  if (!teammate) return false;
+  teammate.status = status;
+  return true;
+}
 ```
 
-New status values are automatically supported without migration.
+**Note**: Teammate data is session-scoped and lost when the process exits. No database persistence.
