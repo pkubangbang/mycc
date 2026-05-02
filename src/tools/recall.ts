@@ -41,6 +41,8 @@ PREFER this over reading files when you need high-level understanding. Use read/
   handler: async (ctx: AgentContext, args: Record<string, unknown>): Promise<string> => {
     const nodePath = args.path as string;
 
+    ctx.core.brief('info', 'recall', `Exploring: ${nodePath}`);
+
     // Get mindmap from core, load if not already loaded
     let mindmap = ctx.core.getMindmap();
     if (!mindmap) {

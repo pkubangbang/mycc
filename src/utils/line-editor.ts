@@ -585,6 +585,10 @@ export class LineEditor {
     }
 
     if (key.name === 'return' || key.name === 'enter') {
+      // Force immediate render to display content before closing.
+      // This is needed when characters arrive rapidly (e.g., tmux send-keys)
+      // because render() is throttled and may have queued renders pending.
+      this.doRender();
       this.stdout.write('\n');
       const finalContent = this.getContent();
       this.addToHistory(finalContent);
