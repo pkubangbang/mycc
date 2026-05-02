@@ -93,6 +93,7 @@ import { domainCommand } from './domain.js';
 import { helpCommand } from './help.js';
 import { modeCommand } from './mode.js';
 import { mindmapCommand } from './mindmap.js';
+import { planCommand } from './plan.js';
 
 slashRegistry.register(teamCommand);
 slashRegistry.register(todosCommand);
@@ -107,3 +108,4 @@ slashRegistry.register(domainCommand);
 slashRegistry.register(helpCommand);
 slashRegistry.register(modeCommand);
 slashRegistry.register(mindmapCommand);
+slashRegistry.register(planCommand);
