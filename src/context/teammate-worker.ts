@@ -226,14 +226,14 @@ async function enterIdleState(triologue: Triologue): Promise<'shutdown' | 'resum
         try {
           const claimed = await ctx.issue.claimIssue(issue.id, teammateName);
           if (claimed) {
-            ctx.core.brief('info', 'auto-claim', `Issue #${issue.id}: ${issue.title}`);
+            ctx.core.brief('info', 'auto_claim', `Issue #${issue.id}: ${issue.title}`);
             // Identity is preserved in system prompt, no need to re-inject
             triologue.user(`<auto-claimed>Issue #${issue.id}: ${issue.title}\n${issue.content || ''}</auto-claimed>`);
             return 'resume';
           }
         } catch (err) {
           // Claim failed, another worker might have claimed it
-          ctx.core.brief('info', 'auto-claim', `Failed to claim issue #${issue.id}: ${(err as Error).message}`);
+          ctx.core.brief('info', 'auto_claim', `Failed to claim issue #${issue.id}: ${(err as Error).message}`);
         }
       }
 

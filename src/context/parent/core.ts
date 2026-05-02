@@ -10,47 +10,7 @@ import { ollama } from '../../ollama.js';
 import { agentIO } from '../../loop/agent-io.js';
 import { isVerbose, getVisionModel, isVisionEnabled } from '../../config.js';
 import { BaseCore } from '../shared/base-core.js';
-
-/**
- * Color functions for tool prefixes
- */
-const TOOL_COLORS: Record<string, (text: string) => string> = {
-  // File operations
-  bash: chalk.cyan, // shell commands
-  read: chalk.green, // input
-  write: chalk.blue, // output
-  edit: chalk.magenta, // modification
-
-  // Task management
-  task_create: chalk.yellow,
-  task_update: chalk.yellow,
-  task_list: chalk.yellow,
-  todo_write: chalk.yellow,
-
-  // Team management
-  tm_create: chalk.magentaBright,
-  tm_remove: chalk.redBright,
-  tm_await: chalk.blueBright,
-  mail_to: chalk.cyanBright,
-  broadcast: chalk.cyanBright,
-  order: chalk.blueBright,
-
-  // Background tasks
-  bg: chalk.gray,
-  bg_create: chalk.gray,
-  bg_print: chalk.gray,
-  bg_remove: chalk.red,
-  bg_await: chalk.blue,
-
-  // Skills
-  skill_load: chalk.cyanBright,
-
-  // Screen reading
-  screen: chalk.greenBright,
-
-  // Default
-  _default: chalk.white,
-};
+import { getToolColor } from '../../utils/tool-colors.js';
 
 /**
  * Core module implementation for parent process
@@ -103,7 +63,7 @@ export class Core extends BaseCore implements CoreModule {
   brief(level: 'info' | 'warn' | 'error', tool: string, message: string, detail?: string): void {
     const now = new Date();
     const timestamp = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
-    const colorFn = TOOL_COLORS[tool] || TOOL_COLORS._default;
+    const colorFn = getToolColor(tool);
     const prefix = `${chalk.gray(`[${timestamp}]`)} ${colorFn(`[${tool}]`)}`;
 
     // Build output with optional detail (greyed text after tool name)
