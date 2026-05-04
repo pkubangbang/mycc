@@ -334,6 +334,8 @@ export interface BgModule {
   printBgTasks(): Promise<string>;
   hasRunningBgTasks(): Promise<boolean>;
   killTask(pid: number): Promise<void>;
+  /** Get task by pid (for status checking in bg_await) */
+  getTask(pid: number): { pid: number; command: string; status: string; output?: string } | undefined;
 }
 
 /**
