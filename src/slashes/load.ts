@@ -40,7 +40,8 @@ export const loadCommand: SlashCommand = {
       } else {
         console.log(chalk.cyan('Available sessions:'));
         for (const s of sessions) {
-          console.log(chalk.green(`  [${s.id.slice(0, 7)}] ${s.create_time}`));
+          const sourceLabel = s.source === 'user' ? ' (saved)' : '';
+          console.log(chalk.green(`  [${s.id.slice(0, 7)}] ${s.create_time}${sourceLabel}`));
           console.log(`    workdir: ${s.project_dir}`);
           console.log(`    teammates: ${s.teammates.join(', ') || 'none'}`);
           console.log(`    first words: ${s.first_query || '(none)'}`);
