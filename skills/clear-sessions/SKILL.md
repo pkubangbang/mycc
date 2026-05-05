@@ -15,7 +15,7 @@ Sessions consist of multiple components:
 | Component | Location | Purpose |
 |-----------|----------|---------|
 | Project sessions | `.mycc/sessions/*.json` | Session metadata (UUID, timestamps, file references) |
-| User sessions | `~/.mycc/sessions/*.json` | User-level session storage (shadows project) |
+| User sessions | `~/.mycc-store/sessions/*.json` | User-level session storage (shadows project) |
 | Transcripts | `.mycc/transcripts/*.jsonl` | Conversation logs (triologues) |
 | State database | `.mycc/state.db` | SQLite DB (issues, teammates, worktrees) |
 | Mail files | `.mycc/mail/*.jsonl` | Inter-agent messages |
@@ -204,17 +204,17 @@ done
 
 ### User Sessions Cleanup
 
-User-level sessions in `~/.mycc/sessions/` may also need cleanup:
+User-level sessions in `~/.mycc-store/sessions/` may also need cleanup:
 
 ```bash
 # List user sessions
-ls -la ~/.mycc/sessions/
+ls -la ~/.mycc-store/sessions/
 
 # Clear all user sessions
-rm -rf ~/.mycc/sessions/*.json
+rm -rf ~/.mycc-store/sessions/*.json
 
 # Or validate and remove corrupted
-for f in ~/.mycc/sessions/*.json; do
+for f in ~/.mycc-store/sessions/*.json; do
   if ! jq empty "$f" 2>/dev/null; then
     echo "Removing invalid user session: $f"
     rm "$f"
@@ -414,7 +414,7 @@ rm -f .mycc/state.db-wal .mycc/state.db-shm
 **Solution**:
 ```bash
 # Remove user session to use project session
-rm ~/.mycc/sessions/UUID.json
+rm ~/.mycc-store/sessions/UUID.json
 ```
 
 ### Issue: sqlite3 command not found
@@ -493,20 +493,23 @@ Before considering cleanup complete:
 - Session source code: `src/session/index.ts`, `src/session/restoration.ts`
 - Database schema: `src/context/db.ts`
 - Types: `src/session/types.ts`
-- **Cleanup script**: `clear-sessions.sh` (same directory)
+- **Cleanup script**: `scripts/clear-sessions.sh` (bundled with mycc)
 
 ## Quick Reference
 
 ```bash
 # Dry run (see what would be deleted)
-./clear-sessions.sh --dry-run
+node_modules/.bin/mycc-scripts/clear-sessions.sh --dry-run
+
+# Or if installed globally:
+# clear-sessions.sh --dry-run
 
 # Standard cleanup (backup + clean corrupted)
-./clear-sessions.sh
+# clear-sessions.sh
 
 # Full cleanup (everything including database)
-./clear-sessions.sh --full
+# clear-sessions.sh --full
 
 # Skip backup
-./clear-sessions.sh --no-backup
+# clear-sessions.sh --no-backup
 ```

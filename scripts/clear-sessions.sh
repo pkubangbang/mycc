@@ -61,7 +61,7 @@ count_empty_transcripts() {
 
 count_user_sessions() {
   local count=0
-  for f in ~/.mycc/sessions/*.json; do
+  for f in ~/.mycc-store/sessions/*.json; do
     ((count++)) || true
   done
   echo $count
@@ -208,7 +208,7 @@ done
 # Clean user sessions if --full
 if $FULL; then
   echo "=== Cleaning user sessions (full mode) ==="
-  for f in ~/.mycc/sessions/*.json; do
+  for f in ~/.mycc-store/sessions/*.json; do
     [ -f "$f" ] || continue
     do_rm "$f"
   done
