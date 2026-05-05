@@ -507,6 +507,9 @@ export class Loader implements DynamicLoader, SkillModule {
   /**
    * List all skills (without content)
    * From SkillModule interface
+   * 
+   * @deprecated the return values should NOT be used by llm directly
+   * because it may overflow the ctx.
    */
   listSkills(): Skill[] {
     return Array.from(this.skills.values()).map((entry) => ({
