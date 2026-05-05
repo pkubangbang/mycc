@@ -15,6 +15,7 @@ import * as path from 'path';
 import type { MindmapJSON, Node, MarkdownSection, Link } from './types.js';
 import { compute_file_hash } from './validate.js';
 import { summarizeWithExplorer } from './explorer-agent.js';
+import { safeNodeId } from '../utils/sanitize.js';
 
 /**
  * Regular expressions for markdown parsing
@@ -107,8 +108,8 @@ export function parse_markdown(content: string): MarkdownSection[] {
  * @returns The constructed node
  */
 function build_node(section: MarkdownSection, parentId: string, level: number): Node {
-  // Create safe ID from title (sanitize special characters)
-  const safeTitle = section.title.replace(/[^a-zA-Z0-9_-]/g, '_');
+  // Create safe ID from title using utility function
+  const safeTitle = safeNodeId(section.title);
   const id = parentId === '/' ? `/${safeTitle}` : `${parentId}/${safeTitle}`;
   const links = extract_links(section.text);
 

@@ -96,8 +96,10 @@ function formatNode(node: Node): string {
   // Children
   if (node.children.length > 0) {
     lines.push('## Children');
+    lines.push('_Drill down by using recall with any child path (slash-separated)._');
+    lines.push('');
     for (const child of node.children) {
-      lines.push(`- ${child.title} (${child.id})`);
+      lines.push(`- ${child.title} → recall(path="${child.id}")`);
     }
     lines.push('');
   }
