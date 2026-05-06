@@ -222,6 +222,18 @@ export interface CoreModule {
   getName(): string;
   brief(level: 'info' | 'warn' | 'error', tool: string, message: string, detail?: string): void;
   /**
+   * Get current confusion index (0-20 range)
+   */
+  getConfusionIndex(): number;
+  /**
+   * Increase confusion index by delta (can be negative to decrease)
+   */
+  increaseConfusionIndex(delta: number): void;
+  /**
+   * Reset confusion index to 0
+   */
+  resetConfusionIndex(): void;
+  /**
    * Verbose logging - only outputs when -v flag is set
    * @param tool - Tool/module name
    * @param message - Log message

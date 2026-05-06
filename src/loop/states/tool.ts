@@ -3,7 +3,7 @@
  *
  * Executes tool calls from the hook result sequentially.
  * Handles ESC interruption, hook blocking, sequence tracking,
- * ResultTooLargeError, and deferred messages.
+ * ResultTooLargeError, confusion scoring, and deferred messages.
  */
 
 import chalk from 'chalk';
@@ -14,9 +14,67 @@ import { ResultTooLargeError } from '../../types.js';
 import { loader } from '../../context/shared/loader.js';
 import { isVerbose } from '../../config.js';
 
+// Tools that are purely exploratory (information gathering)
+const EXPLORATION_TOOLS = new Set([
+  'read_file',
+  'web_search',
+  'web_fetch',
+  'brief',
+  'issue_list',
+  'wt_print',
+  'bg_print',
+  'tm_print',
+  'question',
+  'recall',
+]);
+
+// Tools that modify state (progress indicators)
+const ACTION_TOOLS = new Set([
+  'write_file',
+  'edit_file',
+  'todo_write',
+  'issue_create',
+  'issue_close',
+  'issue_claim',
+  'issue_comment',
+  'blockage_create',
+  'blockage_remove',
+  'tm_create',
+  'tm_remove',
+  'wt_create',
+  'wt_remove',
+  'bg_create',
+  'bg_remove',
+  'mail_to',
+  'broadcast',
+  'git_commit',
+]);
+
+// Read-only bash commands (exploration)
+const READ_ONLY_BASH = /^(ls|cat|pwd|head|tail|wc|find|which|git\s+(status|log|diff|branch|show|ls-files))/;
+
+/**
+ * Check if a tool result indicates an error
+ */
+function isErrorResult(result: string): boolean {
+  if (!result) return false;
+  const lower = result.toLowerCase();
+  // Common error prefixes
+  if (lower.startsWith('error:') || lower.startsWith('error ') || lower.startsWith('fatal:')) return true;
+  // Shell exit codes
+  if (/command failed with exit code \d+/.test(lower)) return true;
+  // Node.js error patterns
+  if (lower.includes('eacces') || lower.includes('enoent') || lower.includes('eperm')) return true;
+  // Permission denied
+  if (lower.includes('permission denied')) return true;
+  // Not found / does not exist
+  if (lower.includes('not found') || lower.includes('does not exist') || lower.includes('no such file')) return true;
+  return false;
+}
+
 export async function handleTool(
   env: MachineEnv,
-  _turn: TurnVars,
+  turn: TurnVars,
   pass: PassData,
 ): Promise<HandlerResult> {
   const { triologue, ctx, sequence } = env;
@@ -74,11 +132,33 @@ export async function handleTool(
       });
 
       triologue.tool(toolName, output, toolCallId);
-      triologue.onToolResult(
-        toolName,
-        toolCall.function.arguments as Record<string, unknown>,
-        output,
-      );
+
+      // Confusion scoring based on tool classification
+      // Exploration tools: no change to confusion
+      // Action tools: reduce confusion (progress being made)
+      // Error results: increase confusion
+      if (!EXPLORATION_TOOLS.has(toolName)) {
+        if (toolName === 'bash') {
+          const cmd = String(toolCall.function.arguments?.command || '');
+          if (!READ_ONLY_BASH.test(cmd)) {
+            // Action bash command reduces confusion
+            ctx.core.increaseConfusionIndex(-1);
+          }
+          // Read-only bash: no change to confusion
+        } else if (ACTION_TOOLS.has(toolName)) {
+          // Action tool reduces confusion
+          ctx.core.increaseConfusionIndex(-1);
+        }
+      }
+
+      // Check for error results
+      if (isErrorResult(output)) {
+        ctx.core.increaseConfusionIndex(2);
+      }
+
+      // Reset brief nudge on successful tool execution
+      turn.nextBriefNudge = 5;
+
     } catch (err) {
       if (err instanceof ResultTooLargeError) {
         const truncatedOutput =
@@ -87,11 +167,9 @@ export async function handleTool(
           `Use read tool to summarize, or bash with head/tail to read.\n\n` +
           `--- Preview (first 1000 chars) ---\n${err.preview}`;
         triologue.tool(toolName, truncatedOutput, toolCallId);
-        triologue.onToolResult(
-          toolName,
-          toolCall.function.arguments as Record<string, unknown>,
-          truncatedOutput,
-        );
+        
+        // Error increases confusion
+        ctx.core.increaseConfusionIndex(2);
       } else {
         throw err;
       }

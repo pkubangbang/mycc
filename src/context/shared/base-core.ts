@@ -16,10 +16,12 @@ import { WebFetchResponse, WebSearchResult } from 'ollama';
  * - workDir management
  * - mindmap data
  * - web operations (webSearch, webFetch)
+ * - confusion index tracking
  */
 export abstract class BaseCore {
   protected workDir: string;
   protected mindmap: Mindmap | null = null;
+  protected confusionIndex: number = 0;
 
   constructor(workDir: string) {
     this.workDir = workDir;
@@ -51,6 +53,28 @@ export abstract class BaseCore {
    */
   setMindmap(mindmap: Mindmap | null): void {
     this.mindmap = mindmap;
+  }
+
+  /**
+   * Get current confusion index (0-20 range)
+   */
+  getConfusionIndex(): number {
+    return this.confusionIndex;
+  }
+
+  /**
+   * Increase confusion index by delta (can be negative to decrease)
+   * Value is clamped to minimum 0
+   */
+  increaseConfusionIndex(delta: number): void {
+    this.confusionIndex = Math.max(0, this.confusionIndex + delta);
+  }
+
+  /**
+   * Reset confusion index to 0
+   */
+  resetConfusionIndex(): void {
+    this.confusionIndex = 0;
   }
 
   /**

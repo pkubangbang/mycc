@@ -66,7 +66,7 @@ export async function handlePrompt(
   // null = autonomous skip or EOF → proceed without user message
   if (query === null) {
     console.log(chalk.gray('(autonomous iteration)'));
-    triologue.resetHint();
+    env.ctx.core.resetConfusionIndex();
     return AgentState.COLLECT;
   }
 
@@ -94,7 +94,7 @@ export async function handlePrompt(
       justification: command ? `User runs: ${command}` : 'Open terminal',
     });
     triologue.user(`[FYI] ${result}`);
-    triologue.resetHint();
+    env.ctx.core.resetConfusionIndex();
     return AgentState.PROMPT;
   }
 
@@ -115,7 +115,7 @@ export async function handlePrompt(
   
   // Add user message to triologue
   triologue.user(query);
-  triologue.resetHint();
+  env.ctx.core.resetConfusionIndex();
 
   // Capture first query as bookmark title
   if (!bookmarkCaptured) {

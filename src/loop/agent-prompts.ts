@@ -118,7 +118,7 @@ export function buildSystemPrompt(
       'You have only 3 ways to interact with others:',
       '1. use mail_to tool to inform other teammates.',
       '2. use question tool to pause and get input from the user.',
-      '3. use brief tool to output debugging info to the user.',
+      '3. use brief tool to send status updates with confidence (0-10). High confidence (8-10) means you are making progress, low confidence (0-7) indicates being stuck.',
       // to prevent mail flood.
       'REMEMBER: you cannot use the same type of tool from the above 3 tools consecutively.',
 

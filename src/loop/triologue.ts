@@ -16,7 +16,6 @@ import { minifyMessages, minifyForHint } from '../utils/llm-chat-minifier.js';
 import { ResultTooLargeError } from '../types.js';
 import { getMyccDir, getLongtextDir, ensureDirs } from '../config.js';
 import { getTokenThreshold } from '../config.js';
-import { ConfusionCalculator } from './confusion-calculator.js';
 import { agentIO } from './agent-io.js';
 
 export type Role = 'system' | 'user' | 'assistant' | 'tool';
@@ -63,8 +62,6 @@ export class Triologue {
   private pendingToolCallOrder: string[] = []; // Track order for sequential resolution
   private tokenCount: number = 0;
   private systemPrompt: string | null = null;
-  private confusion: ConfusionCalculator;
-  private hintGenerated: boolean = false;
   private options: Required<Omit<TriologueOptions, 'wiki'>> & Pick<TriologueOptions, 'wiki'>;
   // Project context files (in-memory only, not persisted)
   private projectContext: Message[] = [];
@@ -72,7 +69,6 @@ export class Triologue {
   constructor(options: TriologueOptions = {}) {
     const hintThreshold = options.hintThreshold ?? 10;
     const tokenThreshold = options.tokenThreshold ?? 50000;
-    this.confusion = new ConfusionCalculator(hintThreshold);
     this.options = {
       tokenThreshold,
       // default value is about half the TOKEN_THRESHOLD, so there won't be
@@ -340,8 +336,6 @@ export class Triologue {
       tool_calls: toolCalls,
     });
 
-    this.confusion.onAssistantResponse();
-
     // Track pending tool calls in order
     if (toolCalls) {
       for (const tc of toolCalls) {
@@ -360,8 +354,6 @@ export class Triologue {
     this.tokenCount = this.estimateTokens(this.messages);
     this.pendingToolCalls.clear();
     this.pendingToolCallOrder = [];
-    // Reset hint flag after compact since conversation is reset
-    this.resetHint();
   }
 
   /**
@@ -373,52 +365,22 @@ export class Triologue {
     this.tokenCount = 0;
     this.pendingToolCalls.clear();
     this.pendingToolCallOrder = [];
-    this.hintGenerated = false;
-    this.confusion.reset();
-  }
-
-  /**
-   * Check if a hint round is needed
-   * Returns true if confusion threshold reached and no hint generated yet
-   */
-  needsHintRound(): boolean {
-    if (this.hintGenerated) return false;
-    if (!this.confusion.needsHint(this.messages.length)) return false;
-    // Only generate hint after a valid transition point (assistant or tool message)
-    const lastRole = this.getLastRole();
-    return lastRole === 'assistant' || lastRole === 'tool';
-  }
-
-  /**
-   * Called after tool execution - updates confusion score
-   */
-  onToolResult(toolName: string, args: Record<string, unknown> | undefined, result: string): void {
-    this.confusion.onToolCall(toolName, args);
-    this.confusion.onError(result);
-  }
-
-  /**
-   * Reset hint flag (call on new user query)
-   */
-  resetHint(): void {
-    this.hintGenerated = false;
-    this.confusion.reset();
   }
 
   /**
    * Generate a hint round with problem analysis
    * Adds user message with analysis (single LLM call, no acknowledgment)
+   * Note: Confusion tracking is now handled by ctx.core, not by Triologue
    * @returns 'aborted' if ESC was pressed, 'success' if completed
    */
-  async generateHintRound(): Promise<'aborted' | 'success'> {
-    if (this.hintGenerated) return 'success';
+  async generateHintRound(confusionScore: number, confusionBreakdown: string): Promise<'aborted' | 'success'> {
     if (agentIO.isNeglectedMode()) return 'aborted';
 
     // Extract focused context for hint generation
     const context = minifyForHint(
       this.messages,
-      this.confusion.getScore(),
-      this.confusion.getBreakdown()
+      confusionScore,
+      confusionBreakdown
     );
 
     const analysisPrompt = `## User's Intent
@@ -473,7 +435,6 @@ Important: Use \`ctx.core.brief()\` for status updates in your next response.`;
       this.messages.push(hintMessage);
       this.updateTokenCount(hintMessage);
 
-      this.hintGenerated = true;
       this.options.onHint();
       return 'success';
     } catch (err) {
@@ -543,9 +504,6 @@ Important: Use \`ctx.core.brief()\` for status updates in your next response.`;
     this.updateTokenCount(pair[0]);
     this.messages.push(pair[1]);
     this.updateTokenCount(pair[1]);
-    // Reset hint flag since we're starting fresh with restored context
-    this.hintGenerated = false;
-    this.confusion.reset();
   }
 
   // === Internal Methods ===

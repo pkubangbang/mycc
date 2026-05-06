@@ -1,6 +1,6 @@
 {
   "name": "mycc",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "description": "Node.js agent implementations using Ollama - harness engineering for AI agents",
   "type": "module",
   "bin": {

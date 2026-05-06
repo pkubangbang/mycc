@@ -22,6 +22,8 @@ import { ipc, sendStatus } from './child/ipc-helpers.js';
 
 const WORKDIR = process.cwd();
 const POLL_INTERVAL = 5000; // 5 seconds
+const CONFUSION_THRESHOLD = 10; // Same as main process
+const MIN_MESSAGES_FOR_HINT = 6; // Same as main process
 
 // State
 let teammateName = '';
@@ -81,6 +83,38 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
   // Todo nudging state (counter-based, same as lead agent)
   let nextTodoNudge = 3;
   let lastTodoState = '';
+
+  // Confusion tracking
+  let nextBriefNudge = 5;
+
+  // Tools that are purely exploratory (information gathering)
+  const EXPLORATION_TOOLS = new Set([
+    'read_file', 'web_search', 'web_fetch', 'brief', 'issue_list',
+    'wt_print', 'bg_print', 'tm_print', 'question', 'recall',
+  ]);
+
+  // Tools that modify state (progress indicators)
+  const ACTION_TOOLS = new Set([
+    'write_file', 'edit_file', 'todo_write', 'issue_create', 'issue_close',
+    'issue_claim', 'issue_comment', 'blockage_create', 'blockage_remove',
+    'tm_create', 'tm_remove', 'wt_create', 'wt_remove', 'bg_create',
+    'bg_remove', 'mail_to', 'broadcast', 'git_commit',
+  ]);
+
+  // Read-only bash commands (exploration)
+  const READ_ONLY_BASH = /^(ls|cat|pwd|head|tail|wc|find|which|git\s+(status|log|diff|branch|show|ls-files))/;
+
+  // Check if tool result indicates error
+  function isErrorResult(result: string): boolean {
+    if (!result) return false;
+    const lower = result.toLowerCase();
+    if (lower.startsWith('error:') || lower.startsWith('error ') || lower.startsWith('fatal:')) return true;
+    if (/command failed with exit code \d+/.test(lower)) return true;
+    if (lower.includes('eacces') || lower.includes('enoent') || lower.includes('eperm')) return true;
+    if (lower.includes('permission denied')) return true;
+    if (lower.includes('not found') || lower.includes('does not exist') || lower.includes('no such file')) return true;
+    return false;
+  }
 
   while (!shutdownRequested) {
     sendStatus('working');
@@ -161,11 +195,59 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
         try {
           const output = await silentLoader.execute(toolName, ctx, args);
           triologue.tool(toolName, output, tc.id);
+
+          // Confusion scoring based on tool classification
+          if (!EXPLORATION_TOOLS.has(toolName)) {
+            if (toolName === 'bash') {
+              const cmd = String(args?.command || '');
+              if (!READ_ONLY_BASH.test(cmd)) {
+                ctx.core.increaseConfusionIndex(-1);
+              }
+            } else if (ACTION_TOOLS.has(toolName)) {
+              ctx.core.increaseConfusionIndex(-1);
+            }
+          }
+
+          // Error results increase confusion
+          if (isErrorResult(output)) {
+            ctx.core.increaseConfusionIndex(2);
+          }
+
+          // Reset brief nudge on successful tool execution
+          nextBriefNudge = 5;
+
         } catch (err) {
           const errorMsg = (err as Error).message;
           ctx.core.brief('error', toolName, errorMsg);
           triologue.tool(toolName, `error: ${errorMsg}`, tc.id);
+          // Errors increase confusion
+          ctx.core.increaseConfusionIndex(2);
         }
+      }
+
+      // 6. Check confusion threshold - send help request to lead if stuck
+      const confusionIndex = ctx.core.getConfusionIndex();
+      const messageCount = triologue.getMessagesRaw().length;
+      if (confusionIndex >= CONFUSION_THRESHOLD && messageCount >= MIN_MESSAGES_FOR_HINT) {
+        const lastRole = triologue.getLastRole();
+        if (lastRole === 'assistant' || lastRole === 'tool') {
+          // Send help request to lead
+          ctx.team.mailTo('lead', 'Stuck - need guidance',
+            `I'm stuck (confusion index: ${confusionIndex}). ` +
+            `Please provide guidance or clarify the next steps. ` +
+            `Current state: ${ctx.todo.hasOpenTodo() ? ctx.todo.printTodoList() : 'No active todos'}`,
+            ctx.core.getName());
+
+          // Reset confusion after requesting help
+          ctx.core.resetConfusionIndex();
+        }
+      }
+
+      // 7. Brief nudging - remind agent to use brief tool
+      nextBriefNudge--;
+      if (nextBriefNudge <= 0) {
+        triologue.user('<reminder>Provide a brief status update using the brief tool. Example: brief("Working on X", 7)</reminder>');
+        nextBriefNudge = 5;
       }
     } catch (err) {
       // Log error but continue the loop - don't crash
