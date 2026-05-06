@@ -27,13 +27,43 @@ function getPlatformInfo(): { platform: string; shell: string; pathSep: string; 
  * Build system prompt for plan mode
  * Focuses on analysis, clarification, and planning - no implementation.
  */
-export function buildPlanModePrompt(workDir: string): string {
+export function buildPlanModePrompt(workDir: string, hasTeam?: boolean): string {
   const now = new Date();
   const currentDate = now.toISOString().split('T')[0];
   const currentYear = now.getFullYear();
 
+  // Team-specific planning section (only when teammates are spawned)
+  const teamPlanningSection = hasTeam
+    ? [
+      '',
+      '## Team Planning',
+      '',
+      'Your teammates are already spawned. Focus on coordination and critical thinking:',
+      '',
+      '### Your Role',
+      '- Define tasks clearly with `issue_create` (use blockedBy for dependencies)',
+      '- Ask critical questions to surface misconceptions early',
+      '- Use `web_search` and `web_fetch` for research',
+      '- Delegate code exploration to teammates via `order` or `mail_to`',
+      '- Do NOT dig into code yourself - let teammates handle exploration',
+      '',
+      '### Task Delegation',
+      'Use `issue_create` to define all tasks upfront. Teammates will claim them:',
+      '',
+      '### Finding Misconceptions',
+      'Before creating a plan, ask critical questions:',
+      '- What assumptions am I making that might be wrong?',
+      '- What edge cases haven\'t been considered?',
+      '- What could break if I\'m wrong about X?',
+      '',
+      'Use web_search to validate assumptions if necessary.',
+      '',
+      '### Delegating Exploration',
+      'Use `order` to get synchronous results, `mail_to` for parallel work.',
+    ].join('\n')
+    : '';
+
   return `You are a planning agent at ${workDir}.
-Your goal is to ANALYZE, CLARIFY, and PLAN before any code changes.
 
 ## Your Mission
 
@@ -56,27 +86,10 @@ You CANNOT:
 - Run destructive commands (git push, rm -rf, npm publish)
 - Make actual code changes
 
-## About bash Commands
-
-Exploratory bash commands are ALLOWED:
-- cat, ls, grep, find, head, tail, wc
-- git status, git log, git diff (read-only)
-- Package info commands (npm list, pnpm list)
-
-Destructive bash commands are BLOCKED:
-- git commit, git push, git reset
-- rm, mv (file modifications)
-- npm install, pnpm add (changes state)
-
 ## Documenting Your Plan
 
-To request editing a documentation file:
-\`\`\`
-plan_on(allowed_file="docs/plan.md")
-\`\`\`
-
-This asks the user for permission to edit that specific file.
-You can use this to document your plan and findings.
+You can use the "plan_on" tool with "allowed_file" parameter to enable editting on a doc file, like:
+> plan_on(allowed_file="docs/plan.md")
 
 ## Exiting Plan Mode
 
@@ -114,7 +127,9 @@ You have access to these knowledge sources:
 - **Web**: Current information. Use \`web_search(query)\` and \`web_fetch(url)\`.
 
 When you encounter something outside your knowledge: PAUSE, seek knowledge, then continue.
-Do NOT guess.`;
+Do NOT guess.
+
+${teamPlanningSection}`;
 }
 
 /**

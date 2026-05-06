@@ -35,7 +35,7 @@ export async function handleLlm(
   
   let systemPrompt: string;
   if (isInPlanMode(ctx)) {
-    systemPrompt = buildPlanModePrompt(workDir);
+    systemPrompt = buildPlanModePrompt(workDir, hasTeam);
   } else {
     systemPrompt = buildNormalModePrompt(workDir, undefined, hasTeam);
   }

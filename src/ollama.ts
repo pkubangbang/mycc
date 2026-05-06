@@ -274,36 +274,40 @@ export interface RetryConfig {
   baseDelayMs: number;
   /** Maximum delay in milliseconds (default: 10000) */
   maxDelayMs: number;
-  /** Request timeout in milliseconds (default: 60000 = 1 minute) */
-  timeoutMs?: number;
+  /** First token timeout in milliseconds (default: 20000 = 20 seconds) */
+  firstTokenTimeoutMs?: number;
+  /** Full response timeout in milliseconds (default: 120000 = 2 minutes) */
+  responseTimeoutMs?: number;
 }
 
 const DEFAULT_RETRY_CONFIG: RetryConfig = {
   maxRetries: 3,
   baseDelayMs: 1000,
   maxDelayMs: 10000,
-  timeoutMs: 60000, // 1 minute - fail fast, rely on retry
+  firstTokenTimeoutMs: 20000, // 20 seconds - time to first token
+  responseTimeoutMs: 120000, // 2 minutes - full response time
 };
 
 /**
  * Generic retry with exponential backoff
  * Can be used for any async operation that may fail transiently
+ * Note: This uses a simple timeout, not the two-tier timeout system used in retryChat
  */
 export async function retryWithBackoff<T>(
   operation: () => Promise<T>,
-  config?: Partial<RetryConfig>
+  config?: Partial<RetryConfig> & { timeoutMs?: number }
 ): Promise<T> {
   const cfg = { ...DEFAULT_RETRY_CONFIG, ...config };
   let lastError: Error | null = null;
 
   for (let attempt = 1; attempt <= cfg.maxRetries + 1; attempt++) {
     try {
-      // Apply timeout if specified
-      if (cfg.timeoutMs) {
+      // Apply timeout if specified (uses custom timeoutMs for this generic function)
+      if (config?.timeoutMs) {
         return await Promise.race([
           operation(),
           new Promise<never>((_, reject) =>
-            setTimeout(() => reject(new Error(`Request timed out after ${cfg.timeoutMs}ms`)), cfg.timeoutMs)
+            setTimeout(() => reject(new Error(`Request timed out after ${config.timeoutMs}ms`)), config.timeoutMs)
           ),
         ]);
       }
@@ -387,8 +391,8 @@ function stopSpinner(): void {
  * - Exponential backoff retry (1s → 2s → 4s)
  * - Jitter to prevent thundering herd
  * - Transient error detection
- * - Optional request timeout
- * - Abort signal support for Ctrl+C
+ * - First-token timeout (using stream mode)
+ * - Abort signal support for Ctrl+C (immediate via stream abort)
  */
 export async function retryChat(
   request: Omit<ChatRequest, 'stream'> & { stream?: false },
@@ -430,49 +434,151 @@ export async function retryChat(
       }
 
       try {
-        // Apply timeout if specified
-        const chatPromise = ollama.chat(request as ChatRequest & { stream?: false });
+        // Use stream mode for better timeout detection and abort behavior
+        const stream = await ollama.chat({
+          ...request,
+          stream: true,
+        } as ChatRequest & { stream: true });
 
-        // Create abort promise if signal provided
-        const abortPromise = signal
-          ? new Promise<never>((_, reject) => {
-              const handler = () => reject(new Error('Request aborted'));
-              signal.addEventListener('abort', handler, { once: true });
-            })
-          : null;
+        // Create abort handler for immediate abort
+        const abortHandler = () => {
+          stream.abort();
+          if (firstChunkTimeoutId) clearTimeout(firstChunkTimeoutId);
+          if (responseTimeoutId) clearTimeout(responseTimeoutId);
+        };
 
-        // Create timeout promise if timeout specified
-        const timeoutPromise = cfg.timeoutMs
-          ? new Promise<never>((_, reject) =>
-              setTimeout(() => reject(new Error(`Request timed out after ${cfg.timeoutMs}ms`)), cfg.timeoutMs)
-            )
-          : null;
+        if (signal) {
+          signal.addEventListener('abort', abortHandler, { once: true });
+        }
 
-        // Race between chat, abort, and timeout
-        const promises: Promise<ChatResponse | never>[] = [chatPromise];
-        if (abortPromise) promises.push(abortPromise);
-        if (timeoutPromise) promises.push(timeoutPromise);
+        // Set up two-tier timeout system:
+        // 1. First token timeout (FTT) - time to first chunk
+        // 2. Full response timeout - total time for complete response
+        let firstChunkTimeoutId: ReturnType<typeof setTimeout> | null = null;
+        let responseTimeoutId: ReturnType<typeof setTimeout> | null = null;
+        let firstChunkReceived = false;
+        let responseTimeoutFired = false;
 
-        const response = await Promise.race(promises);
+        // First token timeout (default 20s)
+        if (cfg.firstTokenTimeoutMs) {
+          firstChunkTimeoutId = setTimeout(() => {
+            if (!firstChunkReceived) {
+              stream.abort();
+            }
+          }, cfg.firstTokenTimeoutMs);
+        }
 
-        // Verbose: Log response
-        if (isVerbose()) {
-          console.log(chalk.magenta('[verbose][ollama] Response:'));
-          const content = response.message.content || '';
-          console.log(chalk.gray(`  Content (${content.length} chars): ${content.slice(0, 200)}${content.length > 200 ? '...' : ''}`));
-          if (response.message.tool_calls && response.message.tool_calls.length > 0) {
-            console.log(chalk.gray(`  Tool calls: ${response.message.tool_calls.length}`));
-            for (const tc of response.message.tool_calls) {
-              const argsPreview = JSON.stringify(tc.function.arguments).slice(0, 100);
-              console.log(chalk.gray(`    - ${tc.function.name}: ${argsPreview}${argsPreview.length >= 100 ? '...' : ''}`));
+        // Full response timeout (default 120s)
+        if (cfg.responseTimeoutMs) {
+          responseTimeoutId = setTimeout(() => {
+            responseTimeoutFired = true;
+            stream.abort();
+          }, cfg.responseTimeoutMs);
+        }
+
+        try {
+          // Collect all chunks from the stream
+          const chunks: ChatResponse[] = [];
+          
+          for await (const chunk of stream) {
+            // Clear first chunk timeout after first chunk received
+            if (!firstChunkReceived) {
+              firstChunkReceived = true;
+              if (firstChunkTimeoutId) {
+                clearTimeout(firstChunkTimeoutId);
+                firstChunkTimeoutId = null;
+              }
+            }
+
+            chunks.push(chunk);
+
+            // Check if aborted during iteration
+            if (signal?.aborted) {
+              throw new Error('Request aborted');
             }
           }
-          if (response.done_reason) {
-            console.log(chalk.gray(`  Done reason: ${response.done_reason}`));
+
+          // Check if timeout occurred
+          if (responseTimeoutFired) {
+            throw new Error(`Response timed out after ${cfg.responseTimeoutMs}ms`);
+          }
+          if (!firstChunkReceived && cfg.firstTokenTimeoutMs) {
+            throw new Error(`Request timed out after ${cfg.firstTokenTimeoutMs}ms (waiting for first token)`);
+          }
+
+          // Reconstruct final response from chunks
+          const finalResponse = chunks.reduce<ChatResponse>((acc, chunk) => {
+            // Accumulate content
+            if (chunk.message?.content) {
+              acc.message.content = (acc.message.content || '') + chunk.message.content;
+            }
+
+            // Accumulate tool calls
+            if (chunk.message?.tool_calls) {
+              if (!acc.message.tool_calls) {
+                acc.message.tool_calls = [];
+              }
+              // Tool calls come in full, not streamed, so we can just take the first one
+              // or accumulate if they come in pieces (depending on Ollama behavior)
+              if (!acc.message.tool_calls.length && chunk.message.tool_calls.length > 0) {
+                acc.message.tool_calls = chunk.message.tool_calls;
+              }
+            }
+
+            // Copy other fields from the last chunk
+            if (chunk.done_reason) acc.done_reason = chunk.done_reason;
+            if (chunk.total_duration) acc.total_duration = chunk.total_duration;
+            if (chunk.load_duration) acc.load_duration = chunk.load_duration;
+            if (chunk.prompt_eval_count) acc.prompt_eval_count = chunk.prompt_eval_count;
+            if (chunk.eval_count) acc.eval_count = chunk.eval_count;
+
+            return acc;
+          }, {
+            model: request.model,
+            created_at: new Date(),
+            message: { role: 'assistant' as const, content: '' },
+            done: true,
+            done_reason: '',
+            total_duration: 0,
+            load_duration: 0,
+            prompt_eval_count: 0,
+            prompt_eval_duration: 0,
+            eval_count: 0,
+            eval_duration: 0,
+          });
+
+          // Verbose: Log response
+          if (isVerbose()) {
+            console.log(chalk.magenta('[verbose][ollama] Response:'));
+            const content = finalResponse.message.content || '';
+            console.log(chalk.gray(`  Content (${content.length} chars): ${content.slice(0, 200)}${content.length > 200 ? '...' : ''}`));
+            if (finalResponse.message.tool_calls && finalResponse.message.tool_calls.length > 0) {
+              console.log(chalk.gray(`  Tool calls: ${finalResponse.message.tool_calls.length}`));
+              for (const tc of finalResponse.message.tool_calls) {
+                const argsPreview = JSON.stringify(tc.function.arguments).slice(0, 100);
+                console.log(chalk.gray(`    - ${tc.function.name}: ${argsPreview}${argsPreview.length >= 100 ? '...' : ''}`));
+              }
+            }
+            if (finalResponse.done_reason) {
+              console.log(chalk.gray(`  Done reason: ${finalResponse.done_reason}`));
+            }
+          }
+
+          return finalResponse;
+
+        } finally {
+          // Clean up abort handler
+          if (signal) {
+            signal.removeEventListener('abort', abortHandler);
+          }
+          if (firstChunkTimeoutId) {
+            clearTimeout(firstChunkTimeoutId);
+          }
+          if (responseTimeoutId) {
+            clearTimeout(responseTimeoutId);
           }
         }
 
-        return response;
       } catch (err) {
         // Check if aborted
         if (err instanceof Error && err.message === 'Request aborted') {
