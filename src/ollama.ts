@@ -477,94 +477,112 @@ export async function retryChat(
         }
 
         try {
-          // Collect all chunks from the stream
-          const chunks: ChatResponse[] = [];
-          
-          for await (const chunk of stream) {
-            // Clear first chunk timeout after first chunk received
-            if (!firstChunkReceived) {
-              firstChunkReceived = true;
-              if (firstChunkTimeoutId) {
-                clearTimeout(firstChunkTimeoutId);
-                firstChunkTimeoutId = null;
+          // Create abort promise for immediate ESC response
+          // This ensures Promise.race() can reject immediately when abort is triggered,
+          // without waiting for the next stream chunk
+          const abortPromise = signal
+            ? new Promise<never>((_, reject) => {
+                const handler = () => reject(new Error('Request aborted'));
+                signal.addEventListener('abort', handler, { once: true });
+              })
+            : null;
+
+          // Collect all chunks from the stream in a promise
+          const streamPromise = (async () => {
+            const chunks: ChatResponse[] = [];
+            
+            for await (const chunk of stream) {
+              // Clear first chunk timeout after first chunk received
+              if (!firstChunkReceived) {
+                firstChunkReceived = true;
+                if (firstChunkTimeoutId) {
+                  clearTimeout(firstChunkTimeoutId);
+                  firstChunkTimeoutId = null;
+                }
+              }
+
+              chunks.push(chunk);
+
+              // Check if aborted during iteration
+              if (signal?.aborted) {
+                throw new Error('Request aborted');
               }
             }
 
-            chunks.push(chunk);
-
-            // Check if aborted during iteration
-            if (signal?.aborted) {
-              throw new Error('Request aborted');
+            // Check if timeout occurred
+            if (responseTimeoutFired) {
+              throw new Error(`Response timed out after ${cfg.responseTimeoutMs}ms`);
             }
-          }
-
-          // Check if timeout occurred
-          if (responseTimeoutFired) {
-            throw new Error(`Response timed out after ${cfg.responseTimeoutMs}ms`);
-          }
-          if (!firstChunkReceived && cfg.firstTokenTimeoutMs) {
-            throw new Error(`Request timed out after ${cfg.firstTokenTimeoutMs}ms (waiting for first token)`);
-          }
-
-          // Reconstruct final response from chunks
-          const finalResponse = chunks.reduce<ChatResponse>((acc, chunk) => {
-            // Accumulate content
-            if (chunk.message?.content) {
-              acc.message.content = (acc.message.content || '') + chunk.message.content;
+            if (!firstChunkReceived && cfg.firstTokenTimeoutMs) {
+              throw new Error(`Request timed out after ${cfg.firstTokenTimeoutMs}ms (waiting for first token)`);
             }
 
-            // Accumulate tool calls
-            if (chunk.message?.tool_calls) {
-              if (!acc.message.tool_calls) {
-                acc.message.tool_calls = [];
+            // Reconstruct final response from chunks
+            const finalResponse = chunks.reduce<ChatResponse>((acc, chunk) => {
+              // Accumulate content
+              if (chunk.message?.content) {
+                acc.message.content = (acc.message.content || '') + chunk.message.content;
               }
-              // Tool calls come in full, not streamed, so we can just take the first one
-              // or accumulate if they come in pieces (depending on Ollama behavior)
-              if (!acc.message.tool_calls.length && chunk.message.tool_calls.length > 0) {
-                acc.message.tool_calls = chunk.message.tool_calls;
+
+              // Accumulate tool calls
+              if (chunk.message?.tool_calls) {
+                if (!acc.message.tool_calls) {
+                  acc.message.tool_calls = [];
+                }
+                // Tool calls come in full, not streamed, so we can just take the first one
+                // or accumulate if they come in pieces (depending on Ollama behavior)
+                if (!acc.message.tool_calls.length && chunk.message.tool_calls.length > 0) {
+                  acc.message.tool_calls = chunk.message.tool_calls;
+                }
               }
-            }
 
-            // Copy other fields from the last chunk
-            if (chunk.done_reason) acc.done_reason = chunk.done_reason;
-            if (chunk.total_duration) acc.total_duration = chunk.total_duration;
-            if (chunk.load_duration) acc.load_duration = chunk.load_duration;
-            if (chunk.prompt_eval_count) acc.prompt_eval_count = chunk.prompt_eval_count;
-            if (chunk.eval_count) acc.eval_count = chunk.eval_count;
+              // Copy other fields from the last chunk
+              if (chunk.done_reason) acc.done_reason = chunk.done_reason;
+              if (chunk.total_duration) acc.total_duration = chunk.total_duration;
+              if (chunk.load_duration) acc.load_duration = chunk.load_duration;
+              if (chunk.prompt_eval_count) acc.prompt_eval_count = chunk.prompt_eval_count;
+              if (chunk.eval_count) acc.eval_count = chunk.eval_count;
 
-            return acc;
-          }, {
-            model: request.model,
-            created_at: new Date(),
-            message: { role: 'assistant' as const, content: '' },
-            done: true,
-            done_reason: '',
-            total_duration: 0,
-            load_duration: 0,
-            prompt_eval_count: 0,
-            prompt_eval_duration: 0,
-            eval_count: 0,
-            eval_duration: 0,
-          });
+              return acc;
+            }, {
+              model: request.model,
+              created_at: new Date(),
+              message: { role: 'assistant' as const, content: '' },
+              done: true,
+              done_reason: '',
+              total_duration: 0,
+              load_duration: 0,
+              prompt_eval_count: 0,
+              prompt_eval_duration: 0,
+              eval_count: 0,
+              eval_duration: 0,
+            });
 
-          // Verbose: Log response
-          if (isVerbose()) {
-            console.log(chalk.magenta('[verbose][ollama] Response:'));
-            const content = finalResponse.message.content || '';
-            console.log(chalk.gray(`  Content (${content.length} chars): ${content.slice(0, 200)}${content.length > 200 ? '...' : ''}`));
-            if (finalResponse.message.tool_calls && finalResponse.message.tool_calls.length > 0) {
-              console.log(chalk.gray(`  Tool calls: ${finalResponse.message.tool_calls.length}`));
-              for (const tc of finalResponse.message.tool_calls) {
-                const argsPreview = JSON.stringify(tc.function.arguments).slice(0, 100);
-                console.log(chalk.gray(`    - ${tc.function.name}: ${argsPreview}${argsPreview.length >= 100 ? '...' : ''}`));
+            // Verbose: Log response
+            if (isVerbose()) {
+              console.log(chalk.magenta('[verbose][ollama] Response:'));
+              const content = finalResponse.message.content || '';
+              console.log(chalk.gray(`  Content (${content.length} chars): ${content.slice(0, 200)}${content.length > 200 ? '...' : ''}`));
+              if (finalResponse.message.tool_calls && finalResponse.message.tool_calls.length > 0) {
+                console.log(chalk.gray(`  Tool calls: ${finalResponse.message.tool_calls.length}`));
+                for (const tc of finalResponse.message.tool_calls) {
+                  const argsPreview = JSON.stringify(tc.function.arguments).slice(0, 100);
+                  console.log(chalk.gray(`    - ${tc.function.name}: ${argsPreview}${argsPreview.length >= 100 ? '...' : ''}`));
+                }
+              }
+              if (finalResponse.done_reason) {
+                console.log(chalk.gray(`  Done reason: ${finalResponse.done_reason}`));
               }
             }
-            if (finalResponse.done_reason) {
-              console.log(chalk.gray(`  Done reason: ${finalResponse.done_reason}`));
-            }
-          }
 
-          return finalResponse;
+            return finalResponse;
+          })();
+
+          // Race between stream and abort for immediate ESC response
+          const promises: Promise<ChatResponse | never>[] = [streamPromise];
+          if (abortPromise) promises.push(abortPromise);
+
+          return await Promise.race(promises);
 
         } finally {
           // Clean up abort handler
