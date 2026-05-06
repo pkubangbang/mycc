@@ -119,7 +119,7 @@ export class Core extends BaseCore implements CoreModule {
     }
 
     // Display who is asking, then the query (via agentIO.ask)
-    this.brief('info', 'question', `${asker} asks:`);
+    this.brief('info', 'question', '--------------------', `${asker} has a question`);
     return await agentIO.ask(query);
   }
 

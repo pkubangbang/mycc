@@ -371,9 +371,11 @@ process.on('message', (msg: { type: string;[key: string]: unknown }) => {
     shutdownRequested = true;
   } else if (msg.type === 'mode_change') {
     // Handle mode change notification from parent
+    // Note: Child processes (teammates) are always in normal mode
+    // This notification is just for informational purposes
     const mode = msg.mode as 'plan' | 'normal';
     if (ctx?.core) {
-      ctx.core.brief('info', 'mode_change', `Mode changed to: ${mode}`);
+      ctx.core.brief('info', 'mode_change', `Parent mode changed to: ${mode}`);
     }
     // Store for injection into triologue in the main loop
     pendingModeChange = mode;

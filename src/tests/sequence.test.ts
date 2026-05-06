@@ -754,3 +754,45 @@ describe('Sequence Integration Tests', () => {
     expect(seq.evaluate('seq.count("bash") > 5')).toBe(false);
   });
 });
+
+// ============================================================================
+// seq.isPlanMode()
+// ============================================================================
+
+describe('seq.isPlanMode()', () => {
+  it('should return false when mode getter not provided', () => {
+    const seq = new Sequence();
+    expect(seq.isPlanMode()).toBe(false);
+  });
+
+  it('should return true when in plan mode', () => {
+    const seq = new Sequence(undefined, () => 'plan');
+    expect(seq.isPlanMode()).toBe(true);
+  });
+
+  it('should return false when in normal mode', () => {
+    const seq = new Sequence(undefined, () => 'normal');
+    expect(seq.isPlanMode()).toBe(false);
+  });
+});
+
+describe('Sequence.evaluate() with isPlanMode', () => {
+  it('should evaluate seq.isPlanMode() expression', () => {
+    const seq = new Sequence(undefined, () => 'plan');
+    expect(seq.evaluate('seq.isPlanMode()')).toBe(true);
+  });
+
+  it('should prevent hook in plan mode', () => {
+    const seq = new Sequence(undefined, () => 'plan');
+    seq.add({ tool: 'edit_file', args: { path: 'test' }, result: 'ok', timestamp: Date.now() });
+    
+    expect(seq.evaluate('seq.has("edit_file") && !seq.isPlanMode()')).toBe(false);
+  });
+
+  it('should allow hook in normal mode', () => {
+    const seq = new Sequence(undefined, () => 'normal');
+    seq.add({ tool: 'edit_file', args: { path: 'test' }, result: 'ok', timestamp: Date.now() });
+    
+    expect(seq.evaluate('seq.has("edit_file") && !seq.isPlanMode()')).toBe(true);
+  });
+});

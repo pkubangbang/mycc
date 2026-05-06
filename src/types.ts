@@ -277,6 +277,12 @@ export interface CoreModule {
     command?: string;
   }): Promise<{ approved: boolean; reason?: string }>;
   /**
+   * Get current agent mode ('plan' or 'normal')
+   * Used by hooks to prevent false positives during planning
+   * @returns 'plan' if in plan mode, 'normal' otherwise
+   */
+  getMode(): 'plan' | 'normal';
+  /**
    * Get the loaded mindmap data
    * @returns Mindmap data or null if not loaded
    */

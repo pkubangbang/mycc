@@ -78,7 +78,7 @@ export async function main(): Promise<void> {
       console.log(chalk.gray('  3. Verify model exists: ollama list'));
       console.log();
 
-      const answer = await agentIO.ask(chalk.cyan('Retry health check? [Y/n] > '));
+      const answer = await agentIO.ask(chalk.cyan('Retry health check? [Y/n] > '), true);
       if (answer.toLowerCase() === 'n' || answer.toLowerCase() === 'no') {
         console.log(chalk.yellow('Exiting at user request.'));
         process.exit(1);
@@ -196,7 +196,8 @@ export async function main(): Promise<void> {
   // Initialize hook system (machine lifetime)
   const conditions = new ConditionRegistry();
   await conditions.load();
-  const sequence = new Sequence(triologue);
+  const core = ctx.core as Core;
+  const sequence = new Sequence(triologue, () => core.getMode());
   const hookExecutor = new HookExecutor(conditions, sequence);
 
   // ── Build state handlers ──

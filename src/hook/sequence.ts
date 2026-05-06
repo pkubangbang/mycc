@@ -28,9 +28,11 @@ export interface SequenceEvent {
 export class Sequence {
   private events: SequenceEvent[] = [];
   private triologue?: Triologue;
+  private getMode: () => 'plan' | 'normal';
 
-  constructor(triologue?: Triologue) {
+  constructor(triologue?: Triologue, getMode?: () => 'plan' | 'normal') {
     this.triologue = triologue;
+    this.getMode = getMode || (() => 'normal');
   }
 
   /**
@@ -180,6 +182,14 @@ export class Sequence {
   }
 
   /**
+   * Check if agent is in plan mode
+   * Used by hooks to prevent triggering during planning
+   */
+  isPlanMode(): boolean {
+    return this.getMode() === 'plan';
+  }
+
+  /**
    * Evaluate a condition expression against the sequence
    * Supports simple DSL: seq.has('tool'), seq.hasAny(['a','b']), etc.
    * Uses jsep AST parsing for safe evaluation (no Function constructor).
@@ -195,6 +205,7 @@ export class Sequence {
       count: (tool?: string) => this.count(tool),
       since: (tool: string) => this.since(tool),
       sinceEdit: () => this.sinceEdit(),
+      isPlanMode: () => this.isPlanMode(),
     };
 
     return evaluateExpression(expression, ctx);

@@ -90,7 +90,7 @@ Example: skill_load(intent="${intent}")`;
       }).join('\n\n---\n\n');
 
       return `Found ${results.length} skill(s) matching your intent:\n\n---\n\n${suggestions}\n\n---\n\nTo load a specific skill, use: skill_load(name="<skill_name>", intent="...")`;
-    } catch (error) {
+    } catch {
       // Semantic search failed (likely no embedding model)
       return 'ERROR: No skills found.\n\nSkill search is not available (embedding model may not be configured). Try providing a specific skill name if known.';
     }

@@ -58,7 +58,7 @@ export class UserInputProvider implements InputProvider {
     console.error();
     console.error(chalk.red(`Network error: ${errorMessage}`));
     console.log(chalk.gray('─'.repeat(40)));
-    const answer = await agentIO.ask(chalk.cyan('Retry? [Y/n] > '));
+    const answer = await agentIO.ask(chalk.cyan('Retry? [Y/n] > '), true);
     return answer.toLowerCase() !== 'n' && answer.toLowerCase() !== 'no';
   }
 }

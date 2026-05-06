@@ -93,4 +93,14 @@ export class ChildCore extends BaseCore implements CoreModule {
     );
     return response;
   }
+
+  /**
+   * Get current agent mode (plan or normal)
+   * Child processes (teammates) are always in normal mode - they execute tasks, not plan
+   * Plan mode is only for the lead agent
+   * @returns 'normal' always for child processes
+   */
+  getMode(): 'plan' | 'normal' {
+    return 'normal';
+  }
 }

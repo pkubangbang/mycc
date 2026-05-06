@@ -19,6 +19,7 @@ export interface EvalContext {
   count: (tool?: string) => number;
   since: (tool: string) => unknown[];
   sinceEdit: () => unknown[];
+  isPlanMode: () => boolean;
 }
 
 /**
@@ -258,7 +259,8 @@ export function evaluateExpression(expression: string, ctx: EvalContext): boolea
       .replace(/seq\.lastError\(/g, 'lastError(')
       .replace(/seq\.count\(/g, 'count(')
       .replace(/seq\.since\(/g, 'since(')
-      .replace(/seq\.sinceEdit\(/g, 'sinceEdit(');
+      .replace(/seq\.sinceEdit\(/g, 'sinceEdit(')
+      .replace(/seq\.isPlanMode\(/g, 'isPlanMode(');
 
     // Parse to AST
     const ast = jsep(jsExpr);

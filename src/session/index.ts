@@ -478,7 +478,7 @@ export async function restoreSession(sessionArg: string): Promise<SessionInit> {
   }
 
   console.log(chalk.yellow('Edit the DOSQ file if needed, then save and close to continue...'));
-  await agentIO.ask(chalk.cyan('Press Enter when ready to continue > '));
+  await agentIO.ask(chalk.cyan('Press Enter when ready to continue >'), true);
 
   const dosqContent = readDosq(dosqPath);
   const initialQuery = extractFirstQuery(dosqContent);

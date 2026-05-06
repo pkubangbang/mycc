@@ -96,7 +96,7 @@ export const loadCommand: SlashCommand = {
       console.log(chalk.yellow('Edit the DOSQ file if needed, then save and close to continue...'));
 
       // Wait for user to edit DOSQ
-      await agentIO.ask(chalk.cyan('Press Enter when ready to continue > '));
+      await agentIO.ask(chalk.cyan('Press Enter when ready to continue > '), true);
 
       // Read DOSQ content
       const dosqContent = readDosq(dosqPath);
