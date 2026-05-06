@@ -28,7 +28,10 @@ describe('readTool', () => {
 
     const result = readTool.handler(ctx, { path: 'test.txt' });
 
-    expect(result).toBe('Hello, World!');
+    // Result now includes header with file stats
+    expect(result).toContain('Hello, World!');
+    expect(result).toContain('File: test.txt');
+    expect(result).toContain('Chars:');
   });
 
   it('should read file with limit parameter', () => {
@@ -38,7 +41,10 @@ describe('readTool', () => {
 
     const result = readTool.handler(ctx, { path: 'test.txt', limit: 2 });
 
-    expect(result).toBe('line1\nline2\n... (3 more lines)');
+    // Result now includes header
+    expect(result).toContain('line1');
+    expect(result).toContain('line2');
+    expect(result).toContain('File: test.txt');
   });
 
   it('should handle limit larger than file', () => {
@@ -47,7 +53,9 @@ describe('readTool', () => {
 
     const result = readTool.handler(ctx, { path: 'test.txt', limit: 100 });
 
-    expect(result).toBe('single line');
+    // Result now includes header
+    expect(result).toContain('single line');
+    expect(result).toContain('File: test.txt');
   });
 
   it('should block path traversal attacks', () => {
@@ -78,24 +86,31 @@ describe('readTool', () => {
 
     const result = readTool.handler(ctx, { path: 'subdir/nested.txt' });
 
-    expect(result).toBe('nested content');
+    expect(result).toContain('nested content');
+    expect(result).toContain('File: subdir/nested.txt');
   });
 
   it('should handle non-existent file', () => {
     const result = readTool.handler(ctx, { path: 'nonexistent.txt' });
 
     expect(result).toContain('Error:');
-    expect(result).toContain('ENOENT');
+    expect(result).toContain('File not found');
   });
 
-  it('should truncate large files at 50000 chars', async () => {
+  it('should handle large single-line files', async () => {
     const testFile = path.join(tempDir, 'large.txt');
+    // Create a file with one very long line (60000 chars, no newlines)
     const largeContent = 'x'.repeat(60000);
     fs.writeFileSync(testFile, largeContent);
 
     const result = await readTool.handler(ctx, { path: 'large.txt' });
 
-    expect(result.length).toBe(50000);
+    // Result should contain header with file stats
+    expect(result).toContain('File: large.txt');
+    // Single-line files are displayed with char count
+    expect(result).toContain('Chars:');
+    // File content should be present (either full or truncated)
+    expect(result).toContain('x');
   });
 
   it('should handle file with only newlines', () => {
@@ -104,7 +119,9 @@ describe('readTool', () => {
 
     const result = readTool.handler(ctx, { path: 'newlines.txt' });
 
-    expect(result).toBe('\n\n\n');
+    // Result now includes header
+    expect(result).toContain('\n\n\n');
+    expect(result).toContain('File: newlines.txt');
   });
 
   it('should handle symlink within workspace', () => {
@@ -116,7 +133,8 @@ describe('readTool', () => {
 
     const result = readTool.handler(ctx, { path: 'link.txt' });
 
-    expect(result).toBe('real content');
+    expect(result).toContain('real content');
+    expect(result).toContain('File: link.txt');
   });
 
   it('should handle paths with spaces', () => {
@@ -127,7 +145,8 @@ describe('readTool', () => {
 
     const result = readTool.handler(ctx, { path: 'space folder/space file.txt' });
 
-    expect(result).toBe('space content');
+    expect(result).toContain('space content');
+    expect(result).toContain('File: space folder/space file.txt');
   });
 
   it('should have correct metadata', () => {

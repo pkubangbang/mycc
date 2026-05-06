@@ -61,8 +61,9 @@ describe('skillLoadTool - Basics', () => {
     expect(skillLoadTool.name).toBe('skill_load');
     expect(skillLoadTool.description).toContain('Load a skill by name');
     expect(skillLoadTool.scope).toEqual(['main', 'child']);
-    expect(skillLoadTool.input_schema.required).toContain('name');
+    expect(skillLoadTool.input_schema.required).toContain('intent');
     expect(skillLoadTool.input_schema.properties).toHaveProperty('name');
+    expect(skillLoadTool.input_schema.properties).toHaveProperty('intent');
   });
 
   // =========================================================================

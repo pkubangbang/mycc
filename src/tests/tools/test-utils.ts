@@ -30,6 +30,12 @@ export function createMockContext(workdir: string): AgentContext {
     webFetch: vi.fn(),
     imgDescribe: vi.fn(),
     requestGrant: vi.fn(async () => ({ approved: true })),
+    getMode: vi.fn(() => 'normal' as const),
+    getMindmap: vi.fn(() => null),
+    setMindmap: vi.fn(),
+    getConfusionIndex: vi.fn(() => 0),
+    increaseConfusionIndex: vi.fn(),
+    resetConfusionIndex: vi.fn(),
   };
 
   return {
