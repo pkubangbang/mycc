@@ -3,7 +3,7 @@
  */
 
 import type { IssueModule, Issue } from '../../types.js';
-import { ipc } from './ipc-helpers.js';
+import { ipc, deserializeIssue, deserializeIssueList } from './ipc-helpers.js';
 
 /**
  * Issue module for child process
@@ -21,12 +21,14 @@ export class ChildIssue implements IssueModule {
 
   async getIssue(id: number): Promise<Issue | undefined> {
     const result = await ipc.sendRequest<Issue | undefined>('db_issue_get', { id });
-    return result;
+    // Deserialize Date fields from IPC (Dates are serialized to ISO strings)
+    return result ? deserializeIssue(result) : undefined;
   }
 
   async listIssues(): Promise<Issue[]> {
     const result = await ipc.sendRequest<Issue[]>('db_issue_list', {});
-    return result;
+    // Deserialize Date fields from IPC (Dates are serialized to ISO strings)
+    return deserializeIssueList(result);
   }
 
   async printIssues(): Promise<string> {

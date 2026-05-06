@@ -27,6 +27,12 @@ export function createMockCore(overrides: Partial<CoreModule> = {}): CoreModule 
     webFetch: vi.fn(async () => ({ title: '', content: '', links: [] })),
     imgDescribe: vi.fn(async () => 'image description'),
     requestGrant: vi.fn(async () => ({ approved: true })),
+    getMode: vi.fn(() => 'normal' as const),
+    getMindmap: vi.fn(() => null),
+    setMindmap: vi.fn(),
+    getConfusionIndex: vi.fn(() => 0),
+    increaseConfusionIndex: vi.fn(),
+    resetConfusionIndex: vi.fn(),
     ...overrides,
   };
 }
