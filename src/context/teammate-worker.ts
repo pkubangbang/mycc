@@ -15,7 +15,7 @@ import { ChildContext, silentLoader } from './child-context.js';
 import { retryChat, MODEL } from '../ollama.js';
 import type { AgentContext, Message } from '../types.js';
 import type { ToolCall } from '../types.js';
-import { buildSystemPrompt } from '../loop/agent-prompts.js';
+import { buildNormalModePrompt } from '../loop/agent-prompts.js';
 import { getTokenThreshold, getMyccDir } from '../config.js';
 import { Triologue } from '../loop/triologue.js';
 import { ipc, sendStatus } from './child/ipc-helpers.js';
@@ -162,7 +162,7 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
         triologue.user('Continue with your task.');
       }
 
-      triologue.setSystemPrompt(buildSystemPrompt(ctx, { name: teammateName, role: teammateRole }));
+      triologue.setSystemPrompt(buildNormalModePrompt(WORKDIR, { name: teammateName, role: teammateRole }));
 
       const response = await retryChat({
         model: MODEL,

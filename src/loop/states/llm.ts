@@ -16,7 +16,7 @@ import { AgentState } from '../state-machine.js';
 import type { MachineEnv, TurnVars, PassData, HandlerResult } from '../state-machine.js';
 import type { ToolCall } from '../../types.js';
 import { retryChat, MODEL } from '../../ollama.js';
-import { buildSystemPrompt } from '../agent-prompts.js';
+import { buildPlanModePrompt, buildNormalModePrompt, isInPlanMode } from '../agent-prompts.js';
 import { agentIO } from '../agent-io.js';
 import { startWrapUp } from '../esc-wrap-up.js';
 import { isVerbose } from '../../config.js';
@@ -29,8 +29,16 @@ export async function handleLlm(
 ): Promise<HandlerResult> {
   const { triologue, ctx, scope, inputProvider } = env;
 
-  // Build system prompt
-  const systemPrompt = buildSystemPrompt(ctx);
+  // Build system prompt based on mode
+  const workDir = ctx.core.getWorkDir();
+  const hasTeam = ctx.team.printTeam() !== 'No teammates.';
+  
+  let systemPrompt: string;
+  if (isInPlanMode(ctx)) {
+    systemPrompt = buildPlanModePrompt(workDir);
+  } else {
+    systemPrompt = buildNormalModePrompt(workDir, undefined, hasTeam);
+  }
   triologue.setSystemPrompt(systemPrompt);
 
   if (isVerbose()) {
