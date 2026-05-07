@@ -297,6 +297,37 @@ This creates a navigable tree:
 - `/development`
 - `/development/setup`
 
+### Code Block Handling
+
+The compiler properly handles headings inside code blocks - they are NOT parsed as sections:
+
+**Example:**
+```markdown
+# Main Section
+
+Regular content here.
+
+```markdown
+## This is NOT a separate section
+It stays as code block content.
+```
+
+## Real Section
+
+This becomes a child section.
+```
+
+**Compilation result:**
+- Main Section (H1) - contains the code block in its text
+- Real Section (H2) - child of Main Section
+- The `## This is NOT a separate section` inside the code block is **ignored**
+
+**How it works:**
+- Code blocks (\`\`\`...\`\`\`) are detected during parsing
+- Any headings inside code blocks are treated as literal text
+- This prevents unintended sections from code examples
+- Both standard (\`\`\`) and language-specific (\`\`\`markdown, \`\`\`bash, etc.) blocks are supported
+
 ### When to Recompile
 
 Recompile when:
