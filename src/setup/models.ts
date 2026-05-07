@@ -7,7 +7,7 @@
 import { spawn } from 'child_process';
 import chalk from 'chalk';
 import { isWindows } from './paths.js';
-import { isModelInstalled, isOllamaInstalled } from './ollama.js';
+import { isModelInstalled, isOllamaInstalled } from './ollama-setup.js';
 
 /**
  * Model info for pulling

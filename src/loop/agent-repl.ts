@@ -5,7 +5,8 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import chalk from 'chalk';
-import { MODEL, OLLAMA_HOST, checkHealth, classifyError } from '../ollama.js';
+import { MODEL, OLLAMA_HOST, classifyError } from '../ollama.js';
+import { checkHealth } from '../setup/ollama-health-check.js';
 import { ParentContext } from '../context/parent-context.js';
 import { getSessionId } from '../session/index.js';
 import { slashRegistry } from '../slashes/index.js';
