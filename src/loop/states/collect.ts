@@ -44,12 +44,14 @@ export async function handleCollect(
   const confusionIndex = ctx.core.getConfusionIndex();
   const messageCount = triologue.getMessagesRaw().length;
   const lastRole = triologue.getLastRole();
-  
+
   if (confusionIndex >= CONFUSION_THRESHOLD && messageCount >= MIN_MESSAGES_FOR_HINT) {
     // Only generate hint after a valid transition point (assistant or tool message)
     if (lastRole === 'assistant' || lastRole === 'tool') {
       agentIO.log(chalk.blue('[hint round] Generating problem analysis...'));
-      const result = await triologue.generateHintRound(confusionIndex, `Score: ${confusionIndex}`);
+      // Get pending skills (skills with 'when' but no compiled condition)
+      const pendingSkills = env.conditions.getPending();
+      const result = await triologue.generateHintRound(confusionIndex, `Score: ${confusionIndex}`, pendingSkills);
       // If aborted (ESC pressed), skip to PROMPT to show prompt immediately
       if (result === 'aborted') {
         return AgentState.PROMPT;

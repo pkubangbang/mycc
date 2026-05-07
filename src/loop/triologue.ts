@@ -371,9 +371,12 @@ export class Triologue {
    * Generate a hint round with problem analysis
    * Adds user message with analysis (single LLM call, no acknowledgment)
    * Note: Confusion tracking is now handled by ctx.core, not by Triologue
+   * @param confusionScore - Current confusion score
+   * @param confusionBreakdown - Breakdown of confusion factors
+   * @param pendingSkills - Skills with 'when' but no compiled condition (for notification)
    * @returns 'aborted' if ESC was pressed, 'success' if completed
    */
-  async generateHintRound(confusionScore: number, confusionBreakdown: string): Promise<'aborted' | 'success'> {
+  async generateHintRound(confusionScore: number, confusionBreakdown: string, pendingSkills?: string[]): Promise<'aborted' | 'success'> {
     if (agentIO.isNeglectedMode()) return 'aborted';
 
     // Extract focused context for hint generation
@@ -488,7 +491,7 @@ Provide your analysis in the specified JSON format.`;
 
         try {
           hintData = JSON.parse(rawContent);
-        } catch (parseError) {
+        } catch {
           // Parse failed - log and retry
           console.log('[hint round] JSON parse failed, retrying...');
           continue;
@@ -527,6 +530,12 @@ Provide your analysis in the specified JSON format.`;
         } else {
           hintLines.push(`**Wiki Search:** None`);
         }
+        // Add pending skills notification if any
+        if (pendingSkills && pendingSkills.length > 0) {
+          hintLines.push(``);
+          hintLines.push(`**Pending Skill Compilation:** ${pendingSkills.map(s => `'${s}'`).join(', ')}`);
+          hintLines.push(`Use \`skill_compile\` to compile these skills so the hook system can process them.`);
+        }
         hintLines.push(``);
         hintLines.push(`Use \`ctx.core.brief()\` to provide status updates as needed.`);
 
@@ -561,7 +570,10 @@ Provide your analysis in the specified JSON format.`;
       result.push({ role: 'system', content: this.systemPrompt });
     }
 
-    // Inject project context (before conversation history)
+    // Inject project context (README, mindmap instructions, etc.)
+    result.push(...this.projectContext);
+
+    // Conversation history
     result.push(...this.messages);
 
     return result;

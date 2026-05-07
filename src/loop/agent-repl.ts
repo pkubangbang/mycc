@@ -197,6 +197,11 @@ export async function main(): Promise<void> {
   // Initialize hook system (machine lifetime)
   const conditions = new ConditionRegistry();
   await conditions.load();
+
+  // Sync pending skills (skills with 'when' but no compiled condition)
+  // Will be notified during hint round
+  conditions.syncPending(loader);
+
   const core = ctx.core as Core;
   const sequence = new Sequence(triologue, () => core.getMode());
   const hookExecutor = new HookExecutor(conditions, sequence);

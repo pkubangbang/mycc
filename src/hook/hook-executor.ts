@@ -17,7 +17,6 @@ export interface AugmentedToolCall extends ToolCall {
   metadata?: {
     // File metadata (for file operations)
     filePath?: string;
-    isTestFile?: boolean;
     newLoc?: number;       // LOC in the new content
     existingLoc?: number;  // LOC in existing file (if exists)
 

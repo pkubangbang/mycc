@@ -27,6 +27,7 @@ export interface TestableSequence {
   count(toolName?: string): number;
   since(toolName: string): unknown[];
   sinceEdit(): unknown[];
+  isPlanMode(): boolean;
 }
 
 /**
@@ -64,7 +65,7 @@ export interface CompileResult {
 
 const VALID_ACTION_TYPES = ['inject_before', 'inject_after', 'block', 'replace', 'message'];
 
-const SEQ_FUNCTIONS = ['has', 'hasAny', 'hasCommand', 'last', 'lastError', 'count', 'since', 'sinceEdit'];
+const SEQ_FUNCTIONS = ['has', 'hasAny', 'hasCommand', 'last', 'lastError', 'count', 'since', 'sinceEdit', 'isPlanMode'];
 
 // Allowed literal values in expressions
 const ALLOWED_LITERALS = ['true', 'false', 'null', 'undefined'];
@@ -477,13 +478,13 @@ export function testExpression(
       count: (tool?: string) => sequence.count(tool),
       since: (tool: string) => sequence.since(tool),
       sinceEdit: () => sequence.sinceEdit(),
+      isPlanMode: () => sequence.isPlanMode(),
     };
 
     // Provide mock call context for call.metadata.X and call.args.X
     const call = callContext || {
       metadata: {
         filePath: '/mock/test.ts',
-        isTestFile: true,
         newLoc: 100,
         existingLoc: 50,
         isDestructive: false,
@@ -504,18 +505,19 @@ export function testExpression(
       .replace(/seq\.count\(/g, 'count(')
       .replace(/seq\.since\(/g, 'since(')
       .replace(/seq\.sinceEdit\(/g, 'sinceEdit(')
+      .replace(/seq\.isPlanMode\(/g, 'isPlanMode(')
       .replace(/call\.metadata\./g, 'call.metadata.')
       .replace(/call\.args\./g, 'call.args.')
       .replace(/call\.args\b/g, 'call.args');
 
     const fn = new Function(
-      'has', 'hasAny', 'hasCommand', 'last', 'lastError', 'count', 'since', 'sinceEdit', 'call',
+      'has', 'hasAny', 'hasCommand', 'last', 'lastError', 'count', 'since', 'sinceEdit', 'isPlanMode', 'call',
       `"use strict"; return (${jsExpr});`
     );
 
     const result = fn(
       seqCtx.has, seqCtx.hasAny, seqCtx.hasCommand, seqCtx.last, seqCtx.lastError,
-      seqCtx.count, seqCtx.since, seqCtx.sinceEdit, call
+      seqCtx.count, seqCtx.since, seqCtx.sinceEdit, seqCtx.isPlanMode, call
     );
 
     return { passed: true, evaluatedValue: Boolean(result) };
@@ -537,6 +539,7 @@ export function smokeTestExpression(expression: string): TestResult {
     count: () => 0,
     since: () => [],
     sinceEdit: () => [],
+    isPlanMode: () => false,
   };
   return testExpression(expression, emptyMock);
 }
@@ -584,6 +587,7 @@ export class MockSequence {
   count(toolName?: string): number { return toolName ? this.events.filter(e => e.tool === toolName).length : this.events.length; }
   since(): unknown[] { return []; }
   sinceEdit(): unknown[] { return []; }
+  isPlanMode(): boolean { return false; }
   
   addEvent(tool: string, args: Record<string, unknown> = {}, result = ''): void {
     this.events.push({ tool, args, result });

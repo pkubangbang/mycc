@@ -39,7 +39,6 @@ export function augmentCall(call: ToolCall): AugmentedToolCall {
     case 'write_file':
     case 'edit_file': {
       metadata.filePath = args.file_path as string;
-      metadata.isTestFile = metadata.filePath?.includes('.test.') || metadata.filePath?.includes('.spec.');
       if (args.content && typeof args.content === 'string') {
         metadata.newLoc = args.content.split('\n').length;
       }

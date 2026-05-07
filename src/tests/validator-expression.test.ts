@@ -23,6 +23,16 @@ describe('validateExpression()', () => {
       expect(result.valid).toBe(true);
     });
 
+    it('should accept seq.isPlanMode()', () => {
+      const result = validateExpression('seq.isPlanMode()');
+      expect(result.valid).toBe(true);
+    });
+
+    it('should accept complex boolean expressions with isPlanMode', () => {
+      const result = validateExpression('seq.hasAny(["edit_file", "write_file"]) && !seq.hasCommand("bash#lint") && !seq.isPlanMode()');
+      expect(result.valid).toBe(true);
+    });
+
     it('should accept complex boolean expressions', () => {
       const result = validateExpression('seq.has("edit_file") && !seq.hasCommand("bash#lint")');
       expect(result.valid).toBe(true);

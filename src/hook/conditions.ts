@@ -107,6 +107,7 @@ export class ConditionRegistry {
   private pending: Set<string> = new Set();  // Skills with "when" but no condition
   private injected: Set<string> = new Set();  // Skills already injected in conversation
   private filePath: string;
+  private loader: { listSkills: () => Array<{ name: string; when?: string }> } | null = null;
 
   constructor() {
     this.filePath = path.join(getMyccDir(), 'conditions.json');
@@ -336,6 +337,46 @@ export class ConditionRegistry {
   }
 
   /**
+   * Sync pending skills with the loader.
+   * Identifies skills with 'when' field but no compiled condition.
+   * Returns list of pending skill names for notification.
+   * Stores loader reference for future re-syncs (catches dynamically loaded skills).
+   */
+  syncPending(loader: { listSkills: () => Array<{ name: string; when?: string }> }): string[] {
+    // Store loader for future re-syncs
+    this.loader = loader;
+
+    const skills = loader.listSkills();
+    const pending: string[] = [];
+
+    for (const skill of skills) {
+      if (skill.when && !this.conditions.has(skill.name)) {
+        this.pending.add(skill.name);
+        pending.push(skill.name);
+      }
+    }
+
+    return pending;
+  }
+
+  /**
+   * Get list of pending skills (skills with 'when' but no compiled condition)
+   * Re-syncs with loader if available to catch dynamically loaded skills
+   */
+  getPending(): string[] {
+    // Re-sync if loader is available (catches dynamically loaded skills)
+    if (this.loader) {
+      const skills = this.loader.listSkills();
+      for (const skill of skills) {
+        if (skill.when && !this.conditions.has(skill.name)) {
+          this.pending.add(skill.name);
+        }
+      }
+    }
+    return Array.from(this.pending);
+  }
+
+  /**
    * Mark a skill as injected in conversation (for duplicate prevention)
    */
   markInjected(skillName: string): void {
@@ -477,10 +518,10 @@ Available condition functions (use seq.X syntax):
 - seq.count(toolName?): Count tool occurrences
 - seq.since(toolName): Events after last occurrence
 - seq.sinceEdit(): Events after last file edit
+- seq.isPlanMode(): Check if agent is in plan mode (prevents hooks during planning)
 
 Available call metadata (use call.metadata.X syntax for current call):
 - call.metadata.filePath: Target file path (for file operations)
-- call.metadata.isTestFile: Whether the file is a test file (.test. or .spec. in name)
 - call.metadata.newLoc: Lines of code in the new content
 - call.metadata.existingLoc: Lines of code in existing file
 - call.metadata.isDestructive: Whether bash command is destructive
@@ -497,7 +538,7 @@ Examples:
 - "run lint before commit if files changed": { "trigger": "git_commit", "condition": "seq.hasAny(['edit_file', 'write_file']) && !seq.hasCommand('bash#lint')", "action": { "type": "inject_before", "tool": "bash", "args": { "command": "pnpm lint", "intent": "pre-commit lint", "timeout": 60 } } }
 - "search wiki on errors": { "trigger": "*", "condition": "seq.lastError() && !seq.has('wiki_get')", "action": { "type": "inject_before", "tool": "wiki_get", "args": { "query": "error", "domain": "pitfall" } } }
 - "block force push to main": { "trigger": "bash", "condition": "call.args.command.includes('git push --force') && call.args.command.includes('main')", "action": { "type": "block", "reason": "Force push to main is prohibited" } }
-- "block test files over 300 lines": { "trigger": "write_file", "condition": "call.metadata.isTestFile && call.metadata.newLoc > 300", "action": { "type": "block", "reason": "Test files cannot exceed 300 lines" } }
+- "block test files over 300 lines": { "trigger": "write_file", "condition": "call.metadata.filePath.includes('/tests/') && call.metadata.newLoc > 300", "action": { "type": "block", "reason": "Test files cannot exceed 300 lines" } }
 - "block destructive bash to main": { "trigger": "bash", "condition": "call.metadata.isDestructive && call.args.command.includes('main')", "action": { "type": "block", "reason": "Destructive operations on main branch prohibited" } }
 ${errorFeedback}
 

@@ -74,7 +74,7 @@ Returns the compiled condition with version history.`,
     
     // Report load warnings/errors
     if (loadResult.errors.length > 0) {
-      console.warn(`[skill_compile] Load warnings: ${loadResult.errors.join('; ')}`);
+      ctx.core.brief('warn', 'skill_compile', `Load warnings: ${loadResult.errors.join('; ')}`);
     }
 
     // Get existing condition if any
