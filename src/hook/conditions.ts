@@ -417,24 +417,25 @@ export class ConditionRegistry {
    */
   matches(trigger: string, seq: Sequence): string[] {
     const matched: string[] = [];
-    
+
     for (const [name, cond] of this.conditions) {
       // Skip if already injected (duplicate prevention)
-      if (this.hasInjected(name)) {
+      // Check both in-memory set AND conversation markers
+      if (this.hasInjected(name) || seq.hasSkillInConversation(name)) {
         continue;
       }
-      
+
       // Check trigger
       if (cond.trigger !== '*' && cond.trigger !== trigger) {
         continue;
       }
-      
+
       // Evaluate condition
       if (seq.evaluate(cond.condition)) {
         matched.push(name);
       }
     }
-    
+
     return matched;
   }
 
