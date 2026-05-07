@@ -18,7 +18,8 @@
       "Bash(pnpm test:*)",
       "Bash(wc:*)",
       "Bash(pnpm lint *)",
-      "Bash(git show *)"
+      "Bash(git show *)",
+      "Bash(git log *)"
     ]
   }
 }

@@ -383,6 +383,12 @@ export class Triologue {
       confusionBreakdown
     );
 
+    // Get wiki domains for knowledge search suggestion
+    const domains = this.options.wiki ? await this.options.wiki.listDomains() : [];
+    const domainInfo = domains.length > 0
+      ? domains.map(d => `- ${d.domain_name}${d.description ? `: ${d.description}` : ''}`).join('\n')
+      : 'No domains available';
+
     const analysisPrompt = `## User's Intent
 ${context.userIntent}
 
@@ -398,50 +404,148 @@ ${context.repetition.length > 0 ? context.repetition.map(r => `- ${r.tool} calle
 ## Confusion Score: ${context.confusionScore}
 ${context.confusionBreakdown}
 
+## Available Wiki Domains
+${domainInfo}
+
 ---
 
-Based on the gap between the user's intent and current progress, identify the blocker and suggest a concrete next step.
+Analyze the gap between the user's intent and current progress. 
 
-Important: Use \`ctx.core.brief()\` for status updates in your next response.`;
+CRITICAL INSTRUCTIONS:
+1. If there are NO REAL blockers preventing progress, set blocker to exactly: "no blockers"
+2. Do NOT fabricate blockers. "no blockers" means the agent should simply continue with the current task.
+3. Only suggest wiki_search if there's genuine knowledge gap that needs filling.
+
+Provide your analysis in the specified JSON format.`;
+
+    // JSON Schema for structured output
+    const hintSchema = {
+      type: 'object',
+      properties: {
+        blocker: {
+          type: 'string',
+          description: 'What is preventing progress. Use "no blockers" if there are no real blockers. Be specific and concise.',
+        },
+        next_step: {
+          type: 'string',
+          description: 'Concrete, actionable next step. If no blockers, suggest continuing current work.',
+        },
+        focus_on: {
+          type: 'string',
+          description: 'Key area or priority to focus on.',
+        },
+        wiki_search: {
+          oneOf: [
+            {
+              type: 'object',
+              properties: {
+                domain: { type: 'string', description: 'Domain name from available domains' },
+                query: { type: 'string', description: 'Search query for the wiki' },
+              },
+              required: ['domain', 'query'],
+            },
+            { type: 'null' },
+          ],
+          description: 'Wiki search suggestion. Set to null if no wiki search is needed.',
+        },
+      },
+      required: ['blocker', 'next_step', 'focus_on', 'wiki_search'],
+    };
 
     // Use local abort controller so ESC interrupts hint round LLM calls
     const abortController = new AbortController();
     agentIO.onNeglected(() => abortController.abort());
 
-    try {
-      // Get analysis from LLM (single call with think mode)
-      const response = await retryChat(
-        {
-          model: MODEL,
-          messages: [
-            {
-              role: 'user',
-              content: analysisPrompt,
-            },
-          ],
-          // use thinking mode for hint round analysis
-          think: true,
-        },
-        { signal: abortController.signal, neglected: agentIO.isNeglectedMode() },
-      );
+    // Retry loop: parse JSON until success or abort
+    while (true) {
+      try {
+        // Get analysis from LLM with JSON schema enforcement
+        const response = await retryChat(
+          {
+            model: MODEL,
+            messages: [
+              {
+                role: 'user',
+                content: analysisPrompt,
+              },
+            ],
+            format: hintSchema,
+            // use thinking mode for hint round analysis
+            think: true,
+          },
+          { signal: abortController.signal, neglected: agentIO.isNeglectedMode() },
+        );
 
-      const analysis = response.message.content || '(no analysis)';
+        const rawContent = response.message.content || '{}';
 
-      const hintMessage: Message = {
-        role: 'user',
-        content: `[HINT] ${analysis}`,
-      };
+        // Parse JSON response (schema enforcement should guarantee valid JSON)
+        let hintData: {
+          blocker: string;
+          next_step: string;
+          focus_on: string;
+          wiki_search: { domain: string; query: string } | null;
+        };
 
-      this.messages.push(hintMessage);
-      this.updateTokenCount(hintMessage);
+        try {
+          hintData = JSON.parse(rawContent);
+        } catch (parseError) {
+          // Parse failed - log and retry
+          console.log('[hint round] JSON parse failed, retrying...');
+          continue;
+        }
 
-      this.options.onHint();
-      return 'success';
-    } catch (err) {
-      if (err instanceof Error && err.message === 'Request aborted') {
-        return 'aborted'; // ESC pressed - abort hint round
+        // Validate required fields exist
+        if (
+          typeof hintData.blocker !== 'string' ||
+          typeof hintData.next_step !== 'string' ||
+          typeof hintData.focus_on !== 'string'
+        ) {
+          console.log('[hint round] Missing required fields, retrying...');
+          continue;
+        }
+
+        // Validate wiki_search structure if present
+        if (hintData.wiki_search !== null) {
+          if (
+            typeof hintData.wiki_search !== 'object' ||
+            typeof hintData.wiki_search.domain !== 'string' ||
+            typeof hintData.wiki_search.query !== 'string'
+          ) {
+            console.log('[hint round] Invalid wiki_search structure, retrying...');
+            continue;
+          }
+        }
+
+        // Format hint data for better readability
+        const hintLines: string[] = ['[HINT] Problem Analysis:'];
+        hintLines.push(``);
+        hintLines.push(`**Blocker:** ${hintData.blocker}`);
+        hintLines.push(`**Next Step:** ${hintData.next_step}`);
+        hintLines.push(`**Focus On:** ${hintData.focus_on}`);
+        if (hintData.wiki_search) {
+          hintLines.push(`**Wiki Search:** Domain="${hintData.wiki_search.domain}", Query="${hintData.wiki_search.query}"`);
+        } else {
+          hintLines.push(`**Wiki Search:** None`);
+        }
+        hintLines.push(``);
+        hintLines.push(`Use \`ctx.core.brief()\` to provide status updates as needed.`);
+
+        const hintMessage: Message = {
+          role: 'user',
+          content: hintLines.join('\n'),
+        };
+
+        this.messages.push(hintMessage);
+        this.updateTokenCount(hintMessage);
+
+        this.options.onHint();
+        return 'success';
+      } catch (err) {
+        if (err instanceof Error && err.message === 'Request aborted') {
+          return 'aborted'; // ESC pressed - abort hint round
+        }
+        throw err;
       }
-      throw err;
     }
   }
 
