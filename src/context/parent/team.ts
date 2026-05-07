@@ -19,6 +19,7 @@ import * as MemoryStore from '../memory-store.js';
 import { MailBox } from '../shared/mail.js';
 import { IpcRegistry } from '../ipc-registry.js';
 import { readSession, writeSession } from '../../session/index.js';
+import { agentIO } from '../../loop/agent-io.js';
 
 // Project root for resolving paths
 const PROJECT_ROOT = getProjectRoot();
@@ -394,6 +395,12 @@ export class TeamManager implements TeamModule {
     // Watch for holding during the initial 5-second period
     const initialWatchPromise = new Promise<void>((resolve) => {
       const intervalId = setInterval(() => {
+        // Check for ESC interruption
+        if (agentIO.isNeglectedMode()) {
+          clearInterval(intervalId);
+          resolve();
+          return;
+        }
         const statuses = getStatuses();
         if (statuses.holding) {
           holdingDetected = true;
@@ -410,6 +417,11 @@ export class TeamManager implements TeamModule {
     });
 
     await initialWatchPromise;
+
+    // If ESC was pressed during initial watch, return interrupted
+    if (agentIO.isNeglectedMode()) {
+      return { result: 'interrupted' };
+    }
 
     // If holding detected during initial watch, return immediately
     if (holdingDetected) {
@@ -433,6 +445,12 @@ export class TeamManager implements TeamModule {
 
     const completionPromise = new Promise<string>((resolve) => {
       const intervalId = setInterval(() => {
+        // Check for ESC interruption
+        if (agentIO.isNeglectedMode()) {
+          clearInterval(intervalId);
+          resolve('interrupted');
+          return;
+        }
         const statuses = getStatuses();
         if (statuses.holding) {
           clearInterval(intervalId);

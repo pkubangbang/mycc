@@ -39,6 +39,11 @@ export async function handleStop(
     return AgentState.COLLECT;
   }
 
+  if (result === 'interrupted') {
+    // ESC was pressed during awaitTeam - return to prompt
+    return AgentState.PROMPT;
+  }
+
   if (result === 'all done' || result === 'no workload' || result === 'no teammates') {
     presentResult(triologue);
     return AgentState.PROMPT;

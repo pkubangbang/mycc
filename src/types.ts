@@ -43,7 +43,7 @@ export interface ToolDefinition {
   description: string;
   input_schema: JSONSchema7;
   scope: string[]; // e.g., ['main', 'child', 'bg']
-  handler: (ctx: AgentContext, args: Record<string, unknown>) => string | Promise<string>;
+  handler: (ctx: AgentContext, args: Record<string, unknown>, signal?: AbortSignal) => string | Promise<string>;
 }
 
 /**

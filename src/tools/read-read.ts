@@ -4,7 +4,7 @@
  * Scope: ['main', 'child'] - Not available to bg agents
  */
 
-import * as fs from 'fs';
+import * as fs from 'fs/promises';
 import type { ToolDefinition, AgentContext } from '../types.js';
 import { retryChat, MODEL } from '../ollama.js';
 import { getTokenThreshold } from '../config.js';
@@ -27,26 +27,40 @@ export const readReadTool: ToolDefinition = {
     required: ['file', 'focus']
   },
   scope: ['main', 'child'],
-  handler: async (ctx: AgentContext, args: Record<string, unknown>): Promise<string> => {
+  handler: async (ctx: AgentContext, args: Record<string, unknown>, signal?: AbortSignal): Promise<string> => {
     const filePath = args.file as string;
     const focus = args.focus as string;
+
+    // Early abort check
+    if (signal?.aborted) {
+      return 'Error: Interrupted by user.';
+    }
 
     ctx.core.brief('info', 'read_read', filePath);
 
     try {
-      const content = fs.readFileSync(filePath, 'utf-8');
+      const content = await fs.readFile(filePath, 'utf-8');
       const TOKEN_THRESHOLD = getTokenThreshold();
 
       // Two-turn rolling summary implementation
-      const summary = await twoTurnSummary(content, focus, TOKEN_THRESHOLD, ctx);
+      const summary = await twoTurnSummary(content, focus, TOKEN_THRESHOLD, ctx, signal);
       return summary;
     } catch (error: unknown) {
+      if (signal?.aborted) {
+        return 'Error: Interrupted by user.';
+      }
       return `Error: ${(error as Error).message}`;
     }
   }
 };
 
-async function twoTurnSummary(content: string, focus: string, TOKEN_THRESHOLD: number, ctx: AgentContext): Promise<string> {
+async function twoTurnSummary(
+  content: string,
+  focus: string,
+  TOKEN_THRESHOLD: number,
+  ctx: AgentContext,
+  signal?: AbortSignal
+): Promise<string> {
   const contentLength = content.length;
 
   // Find N: smallest positive integer where (contentLength / N) < 60% of TOKEN_THRESHOLD
@@ -63,12 +77,15 @@ async function twoTurnSummary(content: string, focus: string, TOKEN_THRESHOLD: n
   }
 
   const systemPrompt1 = `You are summarizing content. Be concise but preserve critical details. Focus on: ${focus}.`;
-  const systemPrompt2 = `You are refining a summary. A total of ${N} chunks will be given to you, one chunk at a time. Focus on: ${focus}. Catch anything that is missing.`
+  const systemPrompt2 = `You are refining a summary. A total of ${N} chunks will be given to you, one chunk at a time. Focus on: ${focus}. Catch anything that is missing.`;
 
   let buffer: string = '';
 
   // First turn
   for (let i = 0; i < chunks.length; i++) {
+    if (signal?.aborted) {
+      return 'Error: Interrupted by user.';
+    }
     const messages = [
       { role: 'system', content: systemPrompt1 },
       { role: 'user', content: i === 0
@@ -77,18 +94,21 @@ async function twoTurnSummary(content: string, focus: string, TOKEN_THRESHOLD: n
       }
     ];
 
-    const response = await retryChat({ model: MODEL, messages: messages as Array<{ role: string; content: string }> });
+    const response = await retryChat({ model: MODEL, messages: messages as Array<{ role: string; content: string }> }, { signal });
     buffer = response.message.content || '';
   }
 
   // Second turn
   for (let i = 0; i < chunks.length; i++) {
+    if (signal?.aborted) {
+      return 'Error: Interrupted by user.';
+    }
     const messages = [
       { role: 'system', content: systemPrompt2 },
       { role: 'user', content: `Previous summary:\n${buffer}\n\nCurrent chunk:\n${chunks[i]}`}
     ];
 
-    const response = await retryChat({ model: MODEL, messages: messages as Array<{ role: string; content: string }> });
+    const response = await retryChat({ model: MODEL, messages: messages as Array<{ role: string; content: string }> }, { signal });
     buffer = response.message.content || '';
   }
 

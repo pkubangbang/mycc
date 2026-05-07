@@ -542,14 +542,14 @@ export class Loader implements DynamicLoader, SkillModule {
    * Execute a tool by name
    * From merged ToolLoader interface
    */
-  async execute(name: string, ctx: AgentContext, args: Record<string, unknown>): Promise<string> {
+  async execute(name: string, ctx: AgentContext, args: Record<string, unknown>, signal?: AbortSignal): Promise<string> {
     const entry = this.tools.get(name);
     if (!entry) {
       return `Unknown tool: ${name}`;
     }
 
     try {
-      const result = await entry.tool.handler(ctx, args);
+      const result = await entry.tool.handler(ctx, args, signal);
       return result;
     } catch (err) {
       return `Error executing ${name}: ${(err as Error).message}`;

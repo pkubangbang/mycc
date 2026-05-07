@@ -113,11 +113,31 @@ export async function handleTool(
     }
 
     try {
-      const output = await loader.execute(
+      // Create abort controller for this tool execution
+      // On ESC, the controller will be aborted, allowing the tool to stop gracefully
+      const abortController = new AbortController();
+
+      // Register callback to abort on ESC
+      agentIO.onNeglected(() => {
+        abortController.abort();
+      });
+
+      // Race between tool execution and abort signal
+      // On abort, return immediately with interrupted message
+      const abortPromise = new Promise<string>((resolve) => {
+        abortController.signal.addEventListener('abort', () => {
+          resolve('Tool interrupted by user.');
+        });
+      });
+
+      const executePromise = loader.execute(
         toolName,
         ctx,
         toolCall.function.arguments as Record<string, unknown>,
+        abortController.signal,
       );
+
+      const output = await Promise.race([executePromise, abortPromise]);
 
       if (isVerbose()) {
         agentIO.log(chalk.magenta(`[verbose][tool] Result: ${toolName}`));
