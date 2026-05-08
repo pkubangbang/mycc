@@ -47,7 +47,7 @@ export const briefTool: ToolDefinition = {
     ctx.core.increaseConfusionIndex(deltaConfusion);
 
     // Use core.brief to send the message via IPC to parent
-    ctx.core.brief('info', 'brief', message);
+    ctx.core.brief('info', 'brief', message, `confidence: ${confidence * 10}%`);
     return 'OK';
   },
 };

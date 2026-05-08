@@ -3,7 +3,7 @@
  */
 
 import * as fs from 'fs';
-import type { Node, MarkdownSection, Link } from './types.js';
+import type { Node, MarkdownSection, Link, MindmapJSON } from './types.js';
 import { safeNodeId } from '../utils/sanitize.js';
 
 /**
@@ -324,9 +324,6 @@ export function remove_lock(outFile: string): void {
   }
 }
 
-import type { MindmapJSON } from './types.js';
-import { summarizeWithExplorer } from './explorer-agent.js';
-
 /**
  * Try to load existing mindmap for continuation
  */
@@ -343,134 +340,6 @@ export function try_load_existing_mindmap(outFile: string): MindmapJSON | null {
 }
 
 /**
- * Summarize all nodes in parallel using a dependency-aware approach
- * Concurrency is limited to MAX_CONCURRENT_NODES to avoid overwhelming Ollama
- */
-export async function summarize_with_explorer(
-  root: Node,
-  workDir: string,
-  onProgress?: (nodeTitle: string, round: number, tool: string, args: Record<string, unknown>) => void,
-  onNodeStart?: (nodeTitle: string) => void,
-  onNodeComplete?: () => void
-): Promise<void> {
-  const allNodes = collect_nodes_bottom_up(root);
-  const nodePromises = new Map<Node, Promise<void>>();
-  const semaphore = new Semaphore(MAX_CONCURRENT_NODES);
-
-  // Build ancestor texts for each node
-  const ancestorTextsMap = new Map<Node, string[]>();
-  function buildAncestorTexts(node: Node, texts: string[]) {
-    ancestorTextsMap.set(node, texts);
-    const childTexts = [node.text, ...texts];
-    for (const child of node.children) {
-      buildAncestorTexts(child, childTexts);
-    }
-  }
-  buildAncestorTexts(root, []);
-
-  // Process each node
-  for (const node of allNodes) {
-    const promise = (async () => {
-      // Wait for children first (fail-fast on error)
-      await Promise.all(node.children.map((child) => nodePromises.get(child)!));
-
-      // Skip if already summarized
-      if (node.summary !== '') return;
-
-      // Acquire semaphore
-      await semaphore.acquire();
-
-      try {
-        if (onNodeStart) onNodeStart(node.title);
-
-        const ancestorContext = ancestorTextsMap.get(node)!.join('\n\n---\n\n');
-        const wrappedOnProgress = onProgress
-          ? (round: number, tool: string, args: Record<string, unknown>) =>
-              onProgress(node.title, round, tool, args)
-          : undefined;
-
-        let result;
-        try {
-          result = await summarizeWithExplorer(
-            node.title,
-            node.text,
-            ancestorContext,
-            workDir,
-            wrappedOnProgress
-          );
-        } catch (err) {
-          const wrappedError = new Error(
-            `Failed to summarize Node: "${node.title}" (id: ${node.id}): ${(err as Error).message}`
-          );
-          wrappedError.cause = err;
-          throw wrappedError;
-        }
-
-        node.summary = result.summary;
-
-        // Add marked files/URLs as links
-        for (const item of result.markedFiles) {
-          node.links.push({
-            target_type: 'file',
-            file_path: item.path,
-            comment: item.reason || 'Discovered during exploration',
-          });
-        }
-        for (const item of result.markedUrls) {
-          node.links.push({
-            target_type: 'url',
-            url: item.path,
-            comment: item.reason || 'Discovered during exploration',
-          });
-        }
-
-        if (onNodeComplete) onNodeComplete();
-      } finally {
-        semaphore.release();
-      }
-    })();
-
-    nodePromises.set(node, promise);
-  }
-
-  await Promise.all(Array.from(nodePromises.values()));
-}
-
-/**
- * Simple semaphore to limit concurrency
- */
-export class Semaphore {
-  private permits: number;
-  private waitQueue: Array<() => void> = [];
-
-  constructor(permits: number) {
-    this.permits = permits;
-  }
-
-  async acquire(): Promise<void> {
-    if (this.permits > 0) {
-      this.permits--;
-      return;
-    }
-    return new Promise<void>((resolve) => {
-      this.waitQueue.push(resolve);
-    });
-  }
-
-  release(): void {
-    const next = this.waitQueue.shift();
-    if (next) {
-      next();
-    } else {
-      this.permits++;
-    }
-  }
-}
-
-/** Maximum concurrent LLM calls (Ollama has limited concurrency handling) */
-export const MAX_CONCURRENT_NODES = 3;
-
-/**
  * Active operation being processed
  */
 export interface ActiveOp {
@@ -478,6 +347,94 @@ export interface ActiveOp {
   round: number;
   tool: string;
   args: Record<string, unknown>;
+}
+
+/**
+ * Progress tracker that handles concurrent updates correctly
+ * Tracks all active operations and renders a fixed 4-line display
+ */
+export class ProgressTracker {
+  private processed: number = 0;
+  private activeOps: Map<string, ActiveOp> = new Map();
+  private renderQueued: boolean = false;
+  private firstUpdate: boolean = true;
+
+  constructor(
+    private total: number,
+    private readonly maxDisplay: number = 3
+  ) {}
+
+  /**
+   * Called when a node starts processing
+   */
+  onNodeStart(_nodeTitle: string): void {
+    this.processed++;
+    this.queueRender();
+  }
+
+  /**
+   * Called when progress is reported for a node
+   */
+  onProgress(nodeTitle: string, round: number, tool: string, args: Record<string, unknown>): void {
+    this.activeOps.set(nodeTitle, { nodeTitle, round, tool, args });
+    this.queueRender();
+  }
+
+  /**
+   * Called when a node completes
+   */
+  onNodeComplete(nodeTitle: string): void {
+    this.activeOps.delete(nodeTitle);
+    this.queueRender();
+  }
+
+  /**
+   * Queue a render (debounced but ensures first update renders immediately)
+   */
+  private queueRender(): void {
+    if (this.firstUpdate) {
+      this.firstUpdate = false;
+      this.render();
+      return;
+    }
+
+    if (this.renderQueued) return;
+    this.renderQueued = true;
+
+    // Use setImmediate to batch concurrent updates
+    setImmediate(() => {
+      this.renderQueued = false;
+      this.render();
+    });
+  }
+
+  /**
+   * Render the fixed 4-line display
+   */
+  private render(): void {
+    const percent = Math.round((this.processed / this.total) * 100);
+    const bar = '█'.repeat(Math.floor(percent / 5)) + '░'.repeat(20 - Math.floor(percent / 5));
+
+    // Get top N operations for display
+    const ops = Array.from(this.activeOps.values()).slice(0, this.maxDisplay);
+
+    const lines: string[] = [];
+    lines.push(`[mindmap] [${bar}] ${this.processed}/${this.total}`);
+
+    for (let i = 0; i < this.maxDisplay; i++) {
+      if (i < ops.length) {
+        const op = ops[i];
+        const title = op.nodeTitle.slice(0, 20).padEnd(20);
+        const argDisplay = formatToolArg(op.tool, op.args).slice(0, 25);
+        lines.push(`│ ${title} r${op.round.toString().padEnd(2)} ${op.tool.padEnd(10)} ${argDisplay}`);
+      } else {
+        lines.push('│');
+      }
+    }
+
+    // Move cursor up 3 lines, clear, then write all lines
+    process.stdout.write(`\x1b[3A${lines.map((l) => `\x1b[2K${l}`).join('\n')}\n`);
+  }
 }
 
 /**

@@ -26,13 +26,135 @@ import {
   is_lock_fresh,
   remove_lock,
   try_load_existing_mindmap,
-  ActiveOp,
-  renderProgress,
-  summarize_with_explorer,
+  collect_nodes_bottom_up,
+  ProgressTracker,
 } from './compile-utils.js';
+import { summarizeWithExplorer } from './explorer-agent.js';
 
 // Re-export for backward compatibility (tests import directly from compile.js)
 export { parse_markdown, get_bottom_up_nodes } from './compile-utils.js';
+
+/** Maximum concurrent LLM calls (Ollama has limited concurrency handling) */
+const MAX_CONCURRENT_NODES = 3;
+
+/**
+ * Simple semaphore to limit concurrency
+ */
+class Semaphore {
+  private permits: number;
+  private waitQueue: Array<() => void> = [];
+
+  constructor(permits: number) {
+    this.permits = permits;
+  }
+
+  async acquire(): Promise<void> {
+    if (this.permits > 0) {
+      this.permits--;
+      return;
+    }
+    return new Promise<void>((resolve) => {
+      this.waitQueue.push(resolve);
+    });
+  }
+
+  release(): void {
+    const next = this.waitQueue.shift();
+    if (next) {
+      next();
+    } else {
+      this.permits++;
+    }
+  }
+}
+
+/**
+ * Summarize all nodes in parallel using a dependency-aware approach
+ * Concurrency is limited to MAX_CONCURRENT_NODES to avoid overwhelming Ollama
+ */
+async function summarize_with_explorer(
+  root: Node,
+  workDir: string,
+  onProgress?: (nodeTitle: string, round: number, tool: string, args: Record<string, unknown>) => void,
+  onNodeStart?: (nodeTitle: string) => void,
+  onNodeComplete?: (nodeTitle: string) => void
+): Promise<void> {
+  const allNodes = collect_nodes_bottom_up(root);
+  const nodePromises = new Map<Node, Promise<void>>();
+  const semaphore = new Semaphore(MAX_CONCURRENT_NODES);
+
+  // Build ancestor texts for each node
+  const ancestorTextsMap = new Map<Node, string[]>();
+  function buildAncestorTexts(node: Node, texts: string[]) {
+    ancestorTextsMap.set(node, texts);
+    const childTexts = [node.text, ...texts];
+    for (const child of node.children) {
+      buildAncestorTexts(child, childTexts);
+    }
+  }
+  buildAncestorTexts(root, []);
+
+  // Process each node
+  for (const node of allNodes) {
+    const promise = (async () => {
+      // Wait for children first (fail-fast on error)
+      await Promise.all(node.children.map((child) => nodePromises.get(child)!));
+
+      // Skip if already summarized
+      if (node.summary !== '') return;
+
+      // Acquire semaphore
+      await semaphore.acquire();
+
+      try {
+        if (onNodeStart) onNodeStart(node.title);
+
+        const ancestorContext = ancestorTextsMap.get(node)!.join('\n\n---\n\n');
+        const wrappedOnProgress = onProgress
+          ? (round: number, tool: string, args: Record<string, unknown>) =>
+              onProgress(node.title, round, tool, args)
+          : undefined;
+
+        let result;
+        try {
+          result = await summarizeWithExplorer(node.title, node.text, ancestorContext, workDir, wrappedOnProgress);
+        } catch (err) {
+          const wrappedError = new Error(
+            `Failed to summarize Node: "${node.title}" (id: ${node.id}): ${(err as Error).message}`
+          );
+          wrappedError.cause = err;
+          throw wrappedError;
+        }
+
+        node.summary = result.summary;
+
+        // Add marked files/URLs as links
+        for (const item of result.markedFiles) {
+          node.links.push({
+            target_type: 'file',
+            file_path: item.path,
+            comment: item.reason || 'Discovered during exploration',
+          });
+        }
+        for (const item of result.markedUrls) {
+          node.links.push({
+            target_type: 'url',
+            url: item.path,
+            comment: item.reason || 'Discovered during exploration',
+          });
+        }
+
+        if (onNodeComplete) onNodeComplete(node.title);
+      } finally {
+        semaphore.release();
+      }
+    })();
+
+    nodePromises.set(node, promise);
+  }
+
+  await Promise.all(Array.from(nodePromises.values()));
+}
 
 /**
  * Compile a markdown file into a mindmap
@@ -150,28 +272,18 @@ export async function compile_mindmap(
   }
 
   // Progress tracking
-  let processedNodes = 0;
-  const activeOps: ActiveOp[] = [];
+  const tracker = new ProgressTracker(incompleteNodes, 3);
 
-  const onNodeStart = (_nodeTitle: string) => {
-    processedNodes++;
+  const onNodeStart = (nodeTitle: string) => {
+    tracker.onNodeStart(nodeTitle);
   };
 
   const onProgress = (nodeTitle: string, round: number, tool: string, args: Record<string, unknown>) => {
-    // Update or add operation for this node
-    const existingIdx = activeOps.findIndex((op) => op.nodeTitle === nodeTitle);
-    if (existingIdx >= 0) {
-      activeOps[existingIdx] = { nodeTitle, round, tool, args };
-    } else {
-      activeOps.push({ nodeTitle, round, tool, args });
-      if (activeOps.length > 3) {
-        activeOps.shift();
-      }
-    }
-    process.stdout.write(renderProgress(processedNodes, incompleteNodes, activeOps));
+    tracker.onProgress(nodeTitle, round, tool, args);
   };
 
-  const onNodeComplete = () => {
+  const onNodeComplete = (nodeTitle: string) => {
+    tracker.onNodeComplete(nodeTitle);
     mindmap.updated_at = new Date().toISOString();
     fs.writeFileSync(outFile, JSON.stringify(mindmap, null, 2));
   };
@@ -235,25 +347,13 @@ export async function compile_mindmap_from_content(
   };
 
   if (showProgress) {
-    const totalNodes = count_nodes(root);
-    let currentNode = 0;
-    const activeOps: ActiveOp[] = [];
-
-    const onNodeStart = (_nodeTitle: string) => {
-      currentNode++;
+    const tracker = new ProgressTracker(count_nodes(root), 3);
+    const onNodeStart = (nodeTitle: string) => {
+      tracker.onNodeStart(nodeTitle);
     };
-
     const onProgress = (nodeTitle: string, round: number, tool: string, args: Record<string, unknown>) => {
-      const existingIdx = activeOps.findIndex((op) => op.nodeTitle === nodeTitle);
-      if (existingIdx >= 0) {
-        activeOps[existingIdx] = { nodeTitle, round, tool, args };
-      } else {
-        activeOps.push({ nodeTitle, round, tool, args });
-        if (activeOps.length > 3) activeOps.shift();
-      }
-      process.stdout.write(renderProgress(currentNode, totalNodes, activeOps));
+      tracker.onProgress(nodeTitle, round, tool, args);
     };
-
     process.stdout.write('\n\n\n');
     await summarize_with_explorer(root, process.cwd(), onProgress, onNodeStart);
     process.stdout.write('\x1b[3A\x1b[J');
