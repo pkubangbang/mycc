@@ -94,6 +94,7 @@ import { helpCommand } from './help.js';
 import { modeCommand } from './mode.js';
 import { mindmapCommand } from './mindmap.js';
 import { planCommand } from './plan.js';
+import { forkCommand } from './fork.js';
 
 slashRegistry.register(teamCommand);
 slashRegistry.register(todosCommand);
@@ -109,3 +110,4 @@ slashRegistry.register(helpCommand);
 slashRegistry.register(modeCommand);
 slashRegistry.register(mindmapCommand);
 slashRegistry.register(planCommand);
+slashRegistry.register(forkCommand);
