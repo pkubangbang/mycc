@@ -276,4 +276,55 @@ export class Core extends BaseCore implements CoreModule {
     }
     return { approved: true };
   }
+
+  /**
+   * Wrap a slow operation with ESC-aware quick return
+   * 
+   * When ESC is pressed during a slow operation:
+   * - The original promise continues in background
+   * - onCleanUp is called immediately
+   * - The result of onCleanUp is returned to caller
+   * 
+   * If ESC is not pressed, returns the original promise result.
+   * 
+   * @param operation - A function that receives an AbortController and returns the slow operation promise
+   * @param onCleanUp - Called when ESC is pressed, must return the fallback result
+   * @returns Original result if not interrupted, or onCleanUp result if ESC pressed
+   */
+  async escAware<T>(
+    operation: (abortController: AbortController) => Promise<T>,
+    onCleanUp: () => T | Promise<T>
+  ): Promise<T> {
+    // Check if already in neglected mode (ESC already pressed before entering escAware)
+    if (agentIO.isNeglectedMode()) {
+      this.brief('info', 'escAware', 'ESC already pressed - returning cleanup result');
+      return onCleanUp();
+    }
+
+    // Create abort controller for this operation
+    const abortController = new AbortController();
+
+    // Create a deferred promise that can be resolved when ESC is pressed
+    let escResolver: ((value: T) => void) | null = null;
+    const escPromise = new Promise<T>((resolve) => {
+      escResolver = resolve;
+    });
+
+    // Register callback BEFORE starting the operation
+    const onNeglectedHandler = async () => {
+      this.brief('info', 'escAware', 'ESC pressed during slow operation - returning cleanup result');
+      abortController.abort();
+      const result = await onCleanUp();
+      if (escResolver) {
+        escResolver(result);
+      }
+    };
+    agentIO.onNeglected(onNeglectedHandler);
+
+    // Start the operation AFTER callback is registered, passing the abort controller
+    const operationPromise = operation(abortController);
+
+    // Race between the operation and ESC
+    return Promise.race([operationPromise, escPromise]);
+  }
 }

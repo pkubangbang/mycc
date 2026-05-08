@@ -113,31 +113,18 @@ export async function handleTool(
     }
 
     try {
-      // Create abort controller for this tool execution
-      // On ESC, the controller will be aborted, allowing the tool to stop gracefully
-      const abortController = new AbortController();
-
-      // Register callback to abort on ESC
-      agentIO.onNeglected(() => {
-        abortController.abort();
-      });
-
-      // Race between tool execution and abort signal
-      // On abort, return immediately with interrupted message
-      const abortPromise = new Promise<string>((resolve) => {
-        abortController.signal.addEventListener('abort', () => {
-          resolve('Tool interrupted by user.');
-        });
-      });
-
-      const executePromise = loader.execute(
-        toolName,
-        ctx,
-        toolCall.function.arguments as Record<string, unknown>,
-        abortController.signal,
+      // Use escAware for ESC-interruptible tool execution
+      const output = await ctx.core.escAware(
+        async (abortController) => {
+          return await loader.execute(
+            toolName,
+            ctx,
+            toolCall.function.arguments as Record<string, unknown>,
+            abortController.signal,
+          );
+        },
+        () => 'Tool interrupted by user.'
       );
-
-      const output = await Promise.race([executePromise, abortPromise]);
 
       if (isVerbose()) {
         agentIO.log(chalk.magenta(`[verbose][tool] Result: ${toolName}`));

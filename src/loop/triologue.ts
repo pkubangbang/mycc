@@ -342,12 +342,18 @@ export class Triologue {
    * Generate a hint round with problem analysis
    * Adds user message with analysis (single LLM call, no acknowledgment)
    * Note: Confusion tracking is now handled by ctx.core, not by Triologue
+   * @param abortController - Abort controller for ESC handling
    * @param confusionScore - Current confusion score
    * @param confusionBreakdown - Breakdown of confusion factors
    * @param pendingSkills - Skills with 'when' but no compiled condition (for notification)
    * @returns 'aborted' if ESC was pressed, 'success' if completed
    */
-  async generateHintRound(confusionScore: number, confusionBreakdown: string, pendingSkills?: string[]): Promise<'aborted' | 'success'> {
+  async generateHintRound(
+    abortController: AbortController,
+    confusionScore: number,
+    confusionBreakdown: string,
+    pendingSkills?: string[]
+  ): Promise<'aborted' | 'success'> {
     if (agentIO.isNeglectedMode()) return 'aborted';
 
     // Extract focused context for hint generation
@@ -426,12 +432,13 @@ Provide your analysis in the specified JSON format.`;
       required: ['blocker', 'next_step', 'focus_on', 'wiki_search'],
     };
 
-    // Use local abort controller so ESC interrupts hint round LLM calls
-    const abortController = new AbortController();
-    agentIO.onNeglected(() => abortController.abort());
-
     // Retry loop: parse JSON until success or abort
     while (true) {
+      // Check if already aborted
+      if (abortController.signal.aborted) {
+        return 'aborted';
+      }
+
       try {
         // Get analysis from LLM with JSON schema enforcement
         const response = await retryChat(

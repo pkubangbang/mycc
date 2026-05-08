@@ -8,6 +8,20 @@
 import jsep from 'jsep';
 
 /**
+ * Call context for expression evaluation (optional, only available during actual tool call)
+ */
+export interface CallContext {
+  metadata?: {
+    filePath?: string;
+    newLoc?: number;
+    existingLoc?: number;
+    isDestructive?: boolean;
+    [key: string]: unknown;
+  };
+  args?: Record<string, unknown>;
+}
+
+/**
  * Context for expression evaluation
  */
 export interface EvalContext {
@@ -20,6 +34,64 @@ export interface EvalContext {
   since: (tool: string) => unknown[];
   sinceEdit: () => unknown[];
   isPlanMode: () => boolean;
+  call?: CallContext;  // Optional call context
+}
+
+/**
+ * Create a "dumb" proxy for call context that handles any property access gracefully.
+ * This is used when evaluating conditions without actual call context.
+ * 
+ * The proxy returns false for any condition check, which causes the condition to
+ * fail safely (the hook won't match without real call data).
+ */
+function createDumbCallProxy(): Record<string, unknown> {
+  const handler: ProxyHandler<Record<string, unknown>> = {
+    get(_target, prop: string) {
+      // For 'metadata' and 'args', return another proxy
+      if (prop === 'metadata' || prop === 'args') {
+        return createDumbCallProxy();
+      }
+      // For any other property, return a value that makes comparisons fail
+      // - String comparisons: return empty string
+      // - Numeric comparisons: return 0
+      // - Boolean comparisons: return false
+      // Since we can't know the expected type, return a proxy that can handle method calls
+      return createDumbValueProxy();
+    }
+  };
+  return new Proxy({}, handler);
+}
+
+/**
+ * Create a proxy that behaves like a "dumb" value for comparisons.
+ * - As string: empty string
+ * - As number: 0
+ * - As boolean: false
+ * - Has methods like includes() that always return false
+ */
+function createDumbValueProxy(): unknown {
+  const handler: ProxyHandler<object> = {
+    get(_target, prop: string) {
+      // String methods that return false (so conditions fail)
+      if (prop === 'includes' || prop === 'startsWith' || prop === 'endsWith') {
+        return () => false;
+      }
+      // indexOf returns -1 (not found)
+      if (prop === 'indexOf') {
+        return () => -1;
+      }
+      // Other methods return the dumb value proxy
+      return createDumbValueProxy();
+    },
+    // ValueOf for primitive coercion
+    getOwnPropertyDescriptor(_target, prop: string) {
+      if (prop === 'valueOf' || prop === 'toString') {
+        return { value: () => '', enumerable: true, configurable: true };
+      }
+      return undefined;
+    }
+  };
+  return new Proxy({}, handler);
 }
 
 /**
@@ -44,6 +116,17 @@ function evaluateNode(node: jsep.Expression, ctx: EvalContext): unknown {
       }
       if (name === 'false') {
         return false;
+      }
+      // Handle 'call' identifier - return call context or a dumb proxy
+      if (name === 'call') {
+        // If we have actual call context, return it
+        if (ctx.call) {
+          return ctx.call;
+        }
+        // Otherwise return a dumb proxy that handles any property access gracefully
+        // This allows conditions like call.metadata.filePath.includes() to not crash
+        // when evaluated without call context (will return false for conditions needing call)
+        return createDumbCallProxy();
       }
       if (name in ctx) {
         return ctx[name as keyof EvalContext];

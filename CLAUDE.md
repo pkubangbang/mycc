@@ -59,6 +59,60 @@ Key components:
 - `agentIO.onNeglected(callback)` - Register callbacks for ESC events
 - IPC message `{ type: 'neglection' }` - Coordinator sends to Lead on ESC press
 
+### escAware
+
+A utility method in `ctx.core` that wraps slow operations for ESC-aware quick return. When ESC is pressed during a slow operation:
+- The original promise continues in background
+- The `onCleanUp` callback is invoked immediately
+- The cleanup result is returned to caller
+
+Usage:
+```typescript
+const result = await ctx.core.escAware(
+  async (abortController) => {
+    // Slow operation (e.g., tool execution, file read)
+    // abortController.signal can be passed to underlying operations
+    return await performOperation(abortController.signal);
+  },
+  () => 'fallback result'
+);
+```
+
+Key behaviors:
+- **No ESC pressed**: Returns original operation result
+- **ESC already pressed**: Returns cleanup result immediately
+- **ESC during operation**: Returns cleanup result, operation continues in background
+
+Architecture:
+- `Core.escAware()` - Parent process implementation using `agentIO.onNeglected()`
+- `ChildCore.escAware()` - Child process placeholder (TODO: IPC-based handling)
+
+**AbortController Integration**:
+The `operation` function receives an `AbortController` that is automatically aborted when ESC is pressed. This allows the operation to:
+1. Pass the signal to underlying libraries (e.g., fetch, retryChat)
+2. Check `abortController.signal.aborted` for custom abort logic
+3. Listen to abort events with `abortController.signal.addEventListener('abort', ...)`
+
+**When to use escAware vs AbortController:**
+
+1. **Use `escAware` for high-level operations**:
+   - Tool execution (e.g., `src/loop/states/tool.ts`)
+   - File operations
+   - Network requests (web search, web fetch)
+   - Any operation that doesn't need internal stream abort
+
+2. **Use `AbortController` for low-level stream handling**:
+   - LLM calls via `retryChat()` (needs signal for stream abort)
+   - Hint round generation (uses `retryChat()` internally)
+   - Any operation that needs fine-grained abort control
+
+The key difference: `escAware` provides a clean high-level abstraction for ESC handling with automatic abort controller management, while manual `AbortController` is needed when you need more control over the abort lifecycle.
+
+Currently used by:
+- Tool execution (`src/loop/states/tool.ts`)
+- LLM calls use AbortController internally (correct for stream handling)
+- Hint round uses AbortController internally (correct for stream handling)
+
 ### slash commands
 
 User-initiated commands starting with `/` that are handled outside the LLM tool system. They provide meta-operations like viewing help, managing sessions, switching modes, and managing knowledge bases.

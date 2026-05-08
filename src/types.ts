@@ -291,6 +291,21 @@ export interface CoreModule {
    * Set the mindmap data
    */
   setMindmap(mindmap: Mindmap | null): void;
+  /**
+   * Wrap a slow operation with ESC-aware quick return
+   * 
+   * When ESC is pressed during a slow operation:
+   * - The original promise continues in background
+   * - onCleanUp is called immediately
+   * - The result of onCleanUp is returned to caller
+   * 
+   * If ESC is not pressed, returns the original promise result.
+   * 
+   * @param operation - A function that receives an AbortController and returns the slow operation promise
+   * @param onCleanUp - Called when ESC is pressed, must return the fallback result
+   * @returns Original result if not interrupted, or onCleanUp result if ESC pressed
+   */
+  escAware<T>(operation: (abortController: AbortController) => Promise<T>, onCleanUp: () => T | Promise<T>): Promise<T>;
 }
 
 /**

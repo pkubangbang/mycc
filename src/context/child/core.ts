@@ -103,4 +103,25 @@ export class ChildCore extends BaseCore implements CoreModule {
   getMode(): 'plan' | 'normal' {
     return 'normal';
   }
+
+  /**
+   * Wrap a slow operation with ESC-aware quick return
+   * 
+   * In child processes, ESC handling is not yet implemented.
+   * This simply executes the operation with a dummy abort controller.
+   * TODO: Implement IPC-based ESC handling for child processes.
+   * 
+   * @param operation - A function that receives an AbortController and returns the slow operation promise
+   * @param _onCleanUp - Cleanup function (unused in child process, kept for API consistency)
+   * @returns Result of the operation
+   */
+  async escAware<T>(
+    operation: (abortController: AbortController) => Promise<T>,
+    _onCleanUp: () => T | Promise<T>
+  ): Promise<T> {
+    // Child processes don't receive ESC directly - they rely on parent IPC
+    // For now, just execute the operation with a dummy abort controller
+    const abortController = new AbortController();
+    return operation(abortController);
+  }
 }

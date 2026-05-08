@@ -48,33 +48,48 @@ export async function handleLlm(
 
   // Retry loop: internal backoff (via retryChat) + user-prompted retry
   while (true) {
-    // Create abort controller for this LLM call
-    const abortController = agentIO.createLlmAbortController();
-    pass.abortController = abortController;
-
     // Determine tools (empty in neglected mode = text-only response)
     const tools = agentIO.isNeglectedMode() ? [] : loader.getToolsForScope(scope);
 
     try {
-      const response = await retryChat(
-        {
-          model: MODEL,
-          messages: triologue.getMessages(),
-          tools,
-          think: agentIO.isNeglectedMode(),
+      // If ESC was already pressed before entering escAware, start wrap-up and return early
+      if (agentIO.isNeglectedMode()) {
+        agentIO.log(chalk.yellow('[ESC] LLM call interrupted (pre-flight)'));
+        startWrapUp(triologue);
+        return AgentState.PROMPT;
+      }
+
+      const response = await ctx.core.escAware(
+        async (abortController) => {
+          // Store abort controller for potential external abort
+          pass.abortController = abortController;
+
+          return await retryChat(
+            {
+              model: MODEL,
+              messages: triologue.getMessages(),
+              tools,
+              think: agentIO.isNeglectedMode(),
+            },
+            { signal: abortController.signal, neglected: agentIO.isNeglectedMode() },
+          );
         },
-        { signal: abortController.signal, neglected: agentIO.isNeglectedMode() },
+        () => {
+          // This runs when ESC is pressed DURING the LLM call
+          // The onNeglected callback in escAware already aborted the operation
+          // Here we just start wrap-up (only if not already started)
+          if (!agentIO.isNeglectedMode()) {
+            // Edge case: ESC pressed but neglectedMode not yet set by IPC handler
+            // Still show wrap-up to user
+            startWrapUp(triologue);
+          }
+          return null;
+        }
       );
 
-      agentIO.clearLlmAbortController();
-
-      // Check if ESC was pressed DURING this LLM call
-      if (abortController.signal.aborted) {
+      // Check if ESC was pressed (null response from cleanup)
+      if (!response) {
         agentIO.log(chalk.yellow('[ESC] LLM response discarded due to interruption'));
-
-        // Quick-return ESC: start background wrap-up and return PROMPT immediately
-        startWrapUp(triologue);
-
         return AgentState.PROMPT;
       }
 
@@ -88,19 +103,6 @@ export async function handleLlm(
 
       return AgentState.HOOK;
     } catch (err) {
-      // Always clear abort controller
-      agentIO.clearLlmAbortController();
-
-      // Abort during LLM call
-      if (err instanceof Error && err.message === 'Request aborted') {
-        agentIO.log(chalk.yellow('[ESC] LLM call interrupted'));
-
-        // Quick-return ESC: start background wrap-up and return PROMPT immediately
-        startWrapUp(triologue);
-
-        return AgentState.PROMPT;
-      }
-
       // For transient errors that exhausted retryChat's internal retries
       // but might still be recoverable — ask the input provider
       const errorMessage = err instanceof Error ? err.message : String(err);

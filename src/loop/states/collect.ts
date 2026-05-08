@@ -51,7 +51,18 @@ export async function handleCollect(
       agentIO.log(chalk.blue('[hint round] Generating problem analysis...'));
       // Get pending skills (skills with 'when' but no compiled condition)
       const pendingSkills = env.conditions.getPending();
-      const result = await triologue.generateHintRound(confusionIndex, `Score: ${confusionIndex}`, pendingSkills);
+      
+      // Use escAware for ESC-interruptible hint generation
+      const result = await ctx.core.escAware(
+        async (abortController) => {
+          return await triologue.generateHintRound(abortController, confusionIndex, `Score: ${confusionIndex}`, pendingSkills);
+        },
+        () => {
+          agentIO.log(chalk.yellow('[hint round] ESC pressed - aborting'));
+          return 'aborted' as const;
+        }
+      );
+      
       // If aborted (ESC pressed), skip to PROMPT to show prompt immediately
       if (result === 'aborted') {
         return AgentState.PROMPT;
