@@ -36,7 +36,7 @@ export interface InputProvider {
 /**
  * Function type to get current mode
  */
-export type GetModeFn = () => 'plan' | 'normal';
+type GetModeFn = () => 'plan' | 'normal';
 
 export class UserInputProvider implements InputProvider {
   readonly name = 'user';
@@ -60,21 +60,5 @@ export class UserInputProvider implements InputProvider {
     console.log(chalk.gray('─'.repeat(40)));
     const answer = await agentIO.ask(chalk.cyan('Retry? [Y/n] > '), true);
     return answer.toLowerCase() !== 'n' && answer.toLowerCase() !== 'no';
-  }
-}
-
-// ============================================================================
-// AutonomousProvider — skip prompt entirely
-// ============================================================================
-
-export class AutonomousProvider implements InputProvider {
-  readonly name = 'autonomous';
-
-  async getInput(): Promise<string | null> {
-    return null; // Skip prompt → COLLECT continues without user input
-  }
-
-  async promptRetry(_errorMessage: string): Promise<boolean> {
-    return true; // Always retry transient errors
   }
 }

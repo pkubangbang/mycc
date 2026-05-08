@@ -19,7 +19,7 @@ import { retryChat, MODEL } from '../ollama.js';
 /**
  * WrapUpState - Tracks the state of background wrap-up after ESC
  */
-export interface WrapUpState {
+interface WrapUpState {
   /** Promise that resolves when wrap-up LLM call completes */
   promise: Promise<string> | null;
   /** Content from the wrap-up response (set when complete) */
@@ -36,7 +36,7 @@ export interface WrapUpState {
  * Grace period for wrap-up append (ms)
  * If user submits within this time after wrap-up shows, wrap-up is discarded
  */
-export const WRAP_UP_GRACE_PERIOD_MS = 3000;
+const WRAP_UP_GRACE_PERIOD_MS = 3000;
 
 /**
  * User message to add to triologue when wrap-up is injected

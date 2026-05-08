@@ -107,8 +107,9 @@ describe('readTool', () => {
 
     // Result should contain header with file stats
     expect(result).toContain('File: large.txt');
-    // Single-line files are displayed with char count
-    expect(result).toContain('Chars:');
+    // Large files are truncated and show progress info
+    expect(result).toContain('Read:');
+    expect(result).toContain('chars');
     // File content should be present (either full or truncated)
     expect(result).toContain('x');
   });

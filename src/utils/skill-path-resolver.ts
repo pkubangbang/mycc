@@ -16,7 +16,6 @@
  * - "built-in:git-workflow/SKILL.md" -> <package_root>/skills/git-workflow/SKILL.md
  */
 
-import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { fileURLToPath } from 'url';
@@ -34,7 +33,7 @@ export type SkillLayer = 'user' | 'project' | 'built-in';
 /**
  * Parsed skill path
  */
-export interface ParsedSkillPath {
+interface ParsedSkillPath {
   layer: SkillLayer;
   skillName: string;      // The skill name (from frontmatter, not filename)
   filename: string;       // The file name: "skill.md" or "SKILL.md"
@@ -48,7 +47,7 @@ let packageRoot: string | null = null;
 /**
  * Get the package root directory (where package.json and src/ are located)
  */
-export function getPackageRoot(): string {
+function getPackageRoot(): string {
   if (packageRoot) {
     return packageRoot;
   }
@@ -67,7 +66,7 @@ export function getPackageRoot(): string {
 /**
  * Get the base directory for a skill layer
  */
-export function getLayerBaseDir(layer: SkillLayer): string {
+function getLayerBaseDir(layer: SkillLayer): string {
   switch (layer) {
     case 'user':
       return path.join(os.homedir(), '.mycc-store', 'skills');
@@ -88,7 +87,7 @@ export function getLayerBaseDir(layer: SkillLayer): string {
  * parseSkillPath("user:my-skill.md") // { layer: "user", relativePath: "my-skill.md", ... }
  * parseSkillPath("project:code-review/SKILL.md") // { layer: "project", relativePath: "code-review/SKILL.md", ... }
  */
-export function parseSkillPath(skillPath: string): ParsedSkillPath | null {
+function parseSkillPath(skillPath: string): ParsedSkillPath | null {
   // Find the colon separator
   const colonIndex = skillPath.indexOf(':');
   if (colonIndex === -1) {
@@ -147,7 +146,7 @@ export function parseSkillPath(skillPath: string): ParsedSkillPath | null {
  * @param relativePath - Relative path from layer base directory
  * @returns Skill path notation
  */
-export function formatSkillPath(layer: SkillLayer, relativePath: string): string {
+function formatSkillPath(layer: SkillLayer, relativePath: string): string {
   return `${layer}:${relativePath}`;
 }
 
@@ -160,7 +159,7 @@ export function formatSkillPath(layer: SkillLayer, relativePath: string): string
  * @param relativePath - Relative path to validate
  * @returns true if valid
  */
-export function isValidSkillRelativePath(relativePath: string): boolean {
+function isValidSkillRelativePath(relativePath: string): boolean {
   // Normalize path separators
   const normalized = relativePath.replace(/\\/g, '/');
 
@@ -193,25 +192,6 @@ export function isValidSkillRelativePath(relativePath: string): boolean {
 }
 
 /**
- * Check if a skill file exists at the given path
- *
- * @param skillPath - Skill path in notation
- * @returns true if file exists
- */
-export function skillFileExists(skillPath: string): boolean {
-  const parsed = parseSkillPath(skillPath);
-  if (!parsed) {
-    return false;
-  }
-
-  try {
-    return fs.existsSync(parsed.absolutePath);
-  } catch {
-    return false;
-  }
-}
-
-/**
  * Resolve a raw file path to skill path notation
  * Used when loading skills to create the sourceFile property
  *
@@ -221,7 +201,7 @@ export function skillFileExists(skillPath: string): boolean {
  */
 export function resolveToSkillPath(filePath: string, layer: SkillLayer): string | null {
   const baseDir = getLayerBaseDir(layer);
-  
+
   // Compute relative path
   let relativePath: string;
   try {
@@ -250,25 +230,4 @@ export function resolveToSkillPath(filePath: string, layer: SkillLayer): string 
 export function getSkillAbsolutePath(skillPath: string): string | null {
   const parsed = parseSkillPath(skillPath);
   return parsed?.absolutePath ?? null;
-}
-
-/**
- * Check if a string is a valid skill path notation
- *
- * @param skillPath - String to check
- * @returns true if valid skill path notation
- */
-export function isSkillPath(skillPath: string): boolean {
-  return parseSkillPath(skillPath) !== null;
-}
-
-/**
- * Get layer from skill path
- *
- * @param skillPath - Skill path in notation
- * @returns Layer or null if invalid
- */
-export function getSkillLayer(skillPath: string): SkillLayer | null {
-  const parsed = parseSkillPath(skillPath);
-  return parsed?.layer ?? null;
 }

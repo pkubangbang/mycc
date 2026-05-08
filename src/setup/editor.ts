@@ -27,7 +27,7 @@ export function getDefaultEditor(): string {
 /**
  * Get common editor suggestions for the current platform
  */
-export function getEditorSuggestions(): string[] {
+function getEditorSuggestions(): string[] {
   if (isWindows()) {
     return ['notepad', 'code', 'notepad++', 'vim'];
   }

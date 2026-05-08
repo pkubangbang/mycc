@@ -59,24 +59,12 @@ describe('agent-io', () => {
       expect(agentIO.getLlmAbortController()).toBe(controller);
     });
 
-    it('should return the signal from the controller', () => {
-      const controller = agentIO.createLlmAbortController();
-      const signal = agentIO.getLlmAbortSignal();
-
-      expect(signal).toBe(controller.signal);
-    });
-
     it('should clear the abort controller', () => {
       agentIO.createLlmAbortController();
       expect(agentIO.getLlmAbortController()).not.toBeNull();
 
       agentIO.clearLlmAbortController();
       expect(agentIO.getLlmAbortController()).toBeNull();
-    });
-
-    it('should return undefined signal when no controller exists', () => {
-      agentIO.clearLlmAbortController();
-      expect(agentIO.getLlmAbortSignal()).toBeUndefined();
     });
 
     it('should replace controller on subsequent create calls', () => {

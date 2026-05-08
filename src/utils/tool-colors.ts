@@ -11,7 +11,7 @@ import chalk from 'chalk';
  * Color functions for tool prefixes
  * Each function takes a string and returns it colored with chalk
  */
-export const TOOL_COLORS: Record<string, (text: string) => string> = {
+const TOOL_COLORS: Record<string, (text: string) => string> = {
   // File operations
   bash: chalk.cyan,
   read: chalk.green,

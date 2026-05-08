@@ -10,7 +10,7 @@
 
 import type { Message } from '../types.js';
 
-export interface MinifierOptions {
+interface MinifierOptions {
   /** Max length for user/assistant content before truncation (default: 500) */
   maxContentLength?: number;
   /** Max length for tool call arguments (default: 200) */
@@ -105,26 +105,26 @@ function truncateArgs(args: Record<string, unknown>, maxLen: number): string {
 // ============================================================================
 
 /** Summary of a tool call for hint context */
-export interface ToolCallSummary {
+interface ToolCallSummary {
   name: string;
   args?: string;
   status: 'success' | 'error' | 'pending';
 }
 
 /** Summary of an error for hint context */
-export interface ErrorSummary {
+interface ErrorSummary {
   tool: string;
   error: string;
 }
 
 /** Repetition pattern for hint context */
-export interface RepetitionPattern {
+interface RepetitionPattern {
   tool: string;
   count: number;
 }
 
 /** Context extracted for hint generation */
-export interface HintContext {
+interface HintContext {
   userIntent: string;
   recentTools: ToolCallSummary[];
   errors: ErrorSummary[];

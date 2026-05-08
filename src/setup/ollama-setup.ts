@@ -15,7 +15,7 @@ const execAsync = promisify(exec);
 /**
  * Get the default Ollama binary path based on platform
  */
-export function getOllamaBinaryPath(): string {
+function getOllamaBinaryPath(): string {
   if (isWindows()) {
     // Windows: Check common install locations
     const windowsPaths = [
@@ -47,24 +47,9 @@ export async function isOllamaInstalled(): Promise<boolean> {
 }
 
 /**
- * Check if Ollama service is running
- */
-export async function isOllamaRunning(host: string): Promise<boolean> {
-  try {
-    const response = await fetch(`${host}/api/tags`, {
-      method: 'GET',
-      signal: AbortSignal.timeout(5000),
-    });
-    return response.ok;
-  } catch {
-    return false;
-  }
-}
-
-/**
  * Get list of installed models from Ollama
  */
-export async function getInstalledModels(): Promise<string[]> {
+async function getInstalledModels(): Promise<string[]> {
   try {
     const { stdout } = await execAsync('ollama list');
     // Parse output: lines like "NAME\tID\tSIZE\tMODIFIED"

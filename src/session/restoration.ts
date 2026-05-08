@@ -25,7 +25,7 @@ export type SummaryPair = [Message, Message];
 /**
  * Read messages from a JSONL triologue file
  */
-export function readTriologue(filePath: string): Message[] {
+function readTriologue(filePath: string): Message[] {
   const content = fs.readFileSync(filePath, 'utf-8');
   const messages: Message[] = [];
 
@@ -57,7 +57,7 @@ export function readTriologue(filePath: string): Message[] {
  * @param messages - Messages from triologue
  * @returns Messages with orphaned tool calls fixed
  */
-export function fixOrphanedToolCalls(messages: Message[]): Message[] {
+function fixOrphanedToolCalls(messages: Message[]): Message[] {
   if (messages.length === 0) return messages;
 
   // Track pending tool calls: id -> {id, function: {name, arguments}}
@@ -302,7 +302,7 @@ async function summarizeLeadTriologue(messages: Message[], childSummaries: { pat
  * -->
  * [User's query - extracted after stripping HTML comments]
  */
-export function generateDosq(session: Session, pair: SummaryPair): string {
+function generateDosq(session: Session, pair: SummaryPair): string {
   const lines: string[] = [
     '<!--',
     `# Session: ${session.id.slice(0, 7)}`,

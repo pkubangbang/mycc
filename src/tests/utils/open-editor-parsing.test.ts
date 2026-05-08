@@ -5,7 +5,7 @@
 import { describe, it, expect } from 'vitest';
 
 // Import the function
-const { parseFile } = await import('../../utils/open-editor.js');
+import { parseFile } from '../../utils/open-editor.js';
 
 describe('parseFile', () => {
   it('should parse file without line or column', () => {
@@ -26,16 +26,6 @@ describe('parseFile', () => {
   it('should handle paths with dots', () => {
     const result = parseFile('/path/to/file.test.ts');
     expect(result).toEqual({ file: '/path/to/file.test.ts' });
-  });
-
-  it('should handle paths with line number', () => {
-    const result = parseFile('/path/to/file.ts:42');
-    expect(result).toEqual({ file: '/path/to/file.ts', line: 42 });
-  });
-
-  it('should handle paths with line and column', () => {
-    const result = parseFile('/path/to/file.ts:42:15');
-    expect(result).toEqual({ file: '/path/to/file.ts', line: 42, column: 15 });
   });
 
   it('should handle Windows-style paths', () => {

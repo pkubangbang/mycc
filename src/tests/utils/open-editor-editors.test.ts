@@ -3,7 +3,6 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { spawn } from 'child_process';
 
 // Mock child_process.spawn
 vi.mock('child_process', () => ({

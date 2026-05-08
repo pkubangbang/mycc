@@ -30,7 +30,7 @@ const CURSOR = 'CURSOR';
 /**
  * Options for creating a LineEditor
  */
-export interface LineEditorOptions {
+interface LineEditorOptions {
   prompt: string;                  // The prompt string to display
   stdout: NodeJS.WriteStream;      // Usually process.stdout
   onDone: (value: string) => void; // Callback when user presses Enter

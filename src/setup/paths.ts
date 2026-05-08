@@ -6,7 +6,6 @@
 
 import os from 'os';
 import path from 'path';
-import { existsSync } from 'fs';
 
 /**
  * Check if running on Windows
@@ -20,13 +19,6 @@ export function isWindows(): boolean {
  */
 export function isMacOS(): boolean {
   return process.platform === 'darwin';
-}
-
-/**
- * Check if running on Linux
- */
-export function isLinux(): boolean {
-  return process.platform === 'linux';
 }
 
 /**
@@ -58,25 +50,4 @@ export function getProjectConfigDir(): string {
  */
 export function getProjectConfigPath(): string {
   return path.join(getProjectConfigDir(), '.env');
-}
-
-/**
- * Check if user-level config exists
- */
-export function userConfigExists(): boolean {
-  return existsSync(getUserConfigPath());
-}
-
-/**
- * Check if project-level config exists
- */
-export function projectConfigExists(): boolean {
-  return existsSync(getProjectConfigPath());
-}
-
-/**
- * Get config type label for display
- */
-export function getConfigTypeLabel(isProject: boolean): string {
-  return isProject ? 'project' : 'user';
 }
