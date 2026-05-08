@@ -75,7 +75,7 @@ class Semaphore {
 async function summarize_with_explorer(
   root: Node,
   workDir: string,
-  onProgress?: (nodeTitle: string, round: number, tool: string, args: Record<string, unknown>) => void,
+  onProgress?: (nodeTitle: string, level: number, round: number, tool: string, args: Record<string, unknown>) => void,
   onNodeStart?: (nodeTitle: string) => void,
   onNodeComplete?: (nodeTitle: string) => void
 ): Promise<void> {
@@ -112,7 +112,7 @@ async function summarize_with_explorer(
         const ancestorContext = ancestorTextsMap.get(node)!.join('\n\n---\n\n');
         const wrappedOnProgress = onProgress
           ? (round: number, tool: string, args: Record<string, unknown>) =>
-              onProgress(node.title, round, tool, args)
+              onProgress(node.title, node.level, round, tool, args)
           : undefined;
 
         let result;
@@ -278,8 +278,8 @@ export async function compile_mindmap(
     tracker.onNodeStart(nodeTitle);
   };
 
-  const onProgress = (nodeTitle: string, round: number, tool: string, args: Record<string, unknown>) => {
-    tracker.onProgress(nodeTitle, round, tool, args);
+  const onProgress = (nodeTitle: string, level: number, round: number, tool: string, args: Record<string, unknown>) => {
+    tracker.onProgress(nodeTitle, level, round, tool, args);
   };
 
   const onNodeComplete = (nodeTitle: string) => {
@@ -351,8 +351,8 @@ export async function compile_mindmap_from_content(
     const onNodeStart = (nodeTitle: string) => {
       tracker.onNodeStart(nodeTitle);
     };
-    const onProgress = (nodeTitle: string, round: number, tool: string, args: Record<string, unknown>) => {
-      tracker.onProgress(nodeTitle, round, tool, args);
+    const onProgress = (nodeTitle: string, level: number, round: number, tool: string, args: Record<string, unknown>) => {
+      tracker.onProgress(nodeTitle, level, round, tool, args);
     };
     process.stdout.write('\n\n\n');
     await summarize_with_explorer(root, process.cwd(), onProgress, onNodeStart);

@@ -344,6 +344,7 @@ export function try_load_existing_mindmap(outFile: string): MindmapJSON | null {
  */
 export interface ActiveOp {
   nodeTitle: string;
+  level: number;
   round: number;
   tool: string;
   args: Record<string, unknown>;
@@ -375,8 +376,8 @@ export class ProgressTracker {
   /**
    * Called when progress is reported for a node
    */
-  onProgress(nodeTitle: string, round: number, tool: string, args: Record<string, unknown>): void {
-    this.activeOps.set(nodeTitle, { nodeTitle, round, tool, args });
+  onProgress(nodeTitle: string, level: number, round: number, tool: string, args: Record<string, unknown>): void {
+    this.activeOps.set(nodeTitle, { nodeTitle, level, round, tool, args });
     this.queueRender();
   }
 
@@ -424,16 +425,19 @@ export class ProgressTracker {
     for (let i = 0; i < this.maxDisplay; i++) {
       if (i < ops.length) {
         const op = ops[i];
-        const title = op.nodeTitle.slice(0, 20).padEnd(20);
-        const argDisplay = formatToolArg(op.tool, op.args).slice(0, 25);
-        lines.push(`│ ${title} r${op.round.toString().padEnd(2)} ${op.tool.padEnd(10)} ${argDisplay}`);
+        const heading = '#'.repeat(op.level);
+        // Pad title to align round column: total heading+title width = 22
+        const title = op.nodeTitle.slice(0, 22 - op.level).padEnd(22 - op.level);
+        const round = op.round.toString().padEnd(2);
+        const argDisplay = formatToolArg(op.tool, op.args).slice(0, 30);
+        lines.push(`${heading} ${title} r${round}  ${op.tool}(${argDisplay})`);
       } else {
-        lines.push('│');
+        lines.push('');
       }
     }
 
-    // Move cursor up 3 lines, clear, then write all lines
-    process.stdout.write(`\x1b[3A${lines.map((l) => `\x1b[2K${l}`).join('\n')}\n`);
+    // Move cursor up 4 lines, clear, then write all lines
+    process.stdout.write(`\x1b[4A${lines.map((l) => `\x1b[2K${l}`).join('\n')}\n`);
   }
 }
 
@@ -478,11 +482,13 @@ export function renderProgress(
   for (let i = 0; i < 3; i++) {
     if (i < activeOps.length) {
       const op = activeOps[i];
-      const title = op.nodeTitle.slice(0, 20).padEnd(20);
-      const argDisplay = formatToolArg(op.tool, op.args).slice(0, 25);
-      lines.push(`│ ${title} r${op.round.toString().padEnd(2)} ${op.tool.padEnd(10)} ${argDisplay}`);
+      const heading = '#'.repeat(op.level);
+      const title = op.nodeTitle.slice(0, 22 - op.level).padEnd(22 - op.level);
+      const round = op.round.toString().padEnd(2);
+      const argDisplay = formatToolArg(op.tool, op.args).slice(0, 30);
+      lines.push(`${heading} ${title} r${round}  ${op.tool}(${argDisplay})`);
     } else {
-      lines.push('│');
+      lines.push('');
     }
   }
 
