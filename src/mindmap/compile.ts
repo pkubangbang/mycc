@@ -526,20 +526,20 @@ async function summarize_with_explorer(
   node.summary = result.summary;
 
   // Convert marked files to Link objects and append to node.links
-  for (const filePath of result.markedFiles) {
+  for (const item of result.markedFiles) {
     node.links.push({
       target_type: 'file',
-      file_path: filePath,
-      comment: `Discovered during exploration`,
+      file_path: item.path,
+      comment: item.reason || 'Discovered during exploration',
     });
   }
 
   // Convert marked URLs to Link objects and append to node.links
-  for (const url of result.markedUrls) {
+  for (const item of result.markedUrls) {
     node.links.push({
       target_type: 'url',
-      url,
-      comment: `Discovered during exploration`,
+      url: item.path,
+      comment: item.reason || 'Discovered during exploration',
     });
   }
 

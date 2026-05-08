@@ -30,12 +30,20 @@ const WEB_TIMEOUT_MS = 30000; // 30 seconds timeout for web operations
 const TOKEN_THRESHOLD = getTokenThreshold();
 
 /**
+ * Marked item with path/URL and reason
+ */
+export interface MarkedItem {
+  path: string;
+  reason?: string;
+}
+
+/**
  * Result of exploration - summary and marked files/URLs
  */
 export interface ExplorationResult {
   summary: string;
-  markedFiles: string[];
-  markedUrls: string[];
+  markedFiles: MarkedItem[];
+  markedUrls: MarkedItem[];
 }
 
 /**
@@ -267,8 +275,8 @@ async function executeTool(
   name: string,
   args: Record<string, unknown>,
   workDir: string,
-  markedFiles: Set<string>,
-  markedUrls: Set<string>
+  markedFiles: MarkedItem[],
+  markedUrls: MarkedItem[]
 ): Promise<string> {
   switch (name) {
     case 'read_file':
@@ -377,7 +385,7 @@ function markFile(
   p: string,
   reason: string | undefined,
   workDir: string,
-  markedFiles: Set<string>
+  markedFiles: MarkedItem[]
 ): string {
   const fullPath = path.resolve(workDir, p);
   if (!fullPath.startsWith(workDir)) {
@@ -387,8 +395,13 @@ function markFile(
     return 'Error: File not found';
   }
 
-  // Add to marked files
-  markedFiles.add(p);
+  // Check if already marked
+  if (markedFiles.some((item) => item.path === p)) {
+    return `Already marked: ${p}`;
+  }
+
+  // Add to marked files with reason
+  markedFiles.push({ path: p, reason });
 
   return `Marked: ${p}${reason ? ` (${reason})` : ''}`;
 }
@@ -399,7 +412,7 @@ function markFile(
 function markUrl(
   url: string,
   reason: string | undefined,
-  markedUrls: Set<string>
+  markedUrls: MarkedItem[]
 ): string {
   if (!url) {
     return 'Error: url is required';
@@ -412,8 +425,13 @@ function markUrl(
     return 'Error: Invalid URL format';
   }
 
-  // Add to marked URLs
-  markedUrls.add(url);
+  // Check if already marked
+  if (markedUrls.some((item) => item.path === url)) {
+    return `Already marked: ${url}`;
+  }
+
+  // Add to marked URLs with reason
+  markedUrls.push({ path: url, reason });
 
   return `Marked URL: ${url}${reason ? ` (${reason})` : ''}`;
 }
@@ -568,8 +586,8 @@ async function runExplorationLoop(
   onProgress?: (round: number, tool: string) => void
 ): Promise<ExplorationResult> {
   const messages: Message[] = [];
-  const markedFiles = new Set<string>();
-  const markedUrls = new Set<string>();
+  const markedFiles: MarkedItem[] = [];
+  const markedUrls: MarkedItem[] = [];
 
   const prompt = buildExplorationPrompt(nodeTitle, nodeText, ancestorContext);
   messages.push({ role: 'user', content: prompt });
@@ -602,8 +620,8 @@ async function runExplorationLoop(
     if (!assistantMsg.tool_calls || assistantMsg.tool_calls.length === 0) {
       return {
         summary: assistantMsg.content || '(no summary)',
-        markedFiles: Array.from(markedFiles),
-        markedUrls: Array.from(markedUrls),
+        markedFiles,
+        markedUrls,
       };
     }
 
@@ -639,8 +657,8 @@ async function runExplorationLoop(
   const lastAssistant = messages.filter((m) => m.role === 'assistant').pop();
   return {
     summary: lastAssistant?.content || '(exploration timeout)',
-    markedFiles: Array.from(markedFiles),
-    markedUrls: Array.from(markedUrls),
+    markedFiles,
+    markedUrls,
   };
 }
 
