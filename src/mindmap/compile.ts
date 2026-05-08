@@ -465,7 +465,16 @@ export async function compile_mindmap(
     fs.writeFileSync(outFile, JSON.stringify(mindmap, null, 2));
   };
 
-  await summarize_with_explorer(root, workDir, [], onProgress, onNodeStart, onNodeComplete);
+  try {
+    await summarize_with_explorer(root, workDir, [], onProgress, onNodeStart, onNodeComplete);
+  } catch (err) {
+    // Clean up progress line before showing error
+    process.stdout.write('\r\x1b[2K');
+    // Remove lock on failure so user can retry
+    remove_lock(outFile);
+    // Re-throw with context
+    throw err;
+  }
 
   process.stdout.write('\r\x1b[2K');
 
@@ -479,74 +488,129 @@ export async function compile_mindmap(
 }
 
 /**
- * Recursively summarize nodes using explorer agent
- * Skips nodes that already have summaries (for resume capability)
- * @param node - The node to process
+ * Collect all nodes in bottom-up order (leaves first, root last)
+ * This ensures children are processed before parents
+ */
+function collect_nodes_bottom_up(node: Node): Node[] {
+  const result: Node[] = [];
+  function traverse(n: Node) {
+    for (const child of n.children) {
+      traverse(child);
+    }
+    result.push(n);
+  }
+  traverse(node);
+  return result;
+}
+
+/**
+ * Summarize all nodes in parallel using a dependency-aware approach
+ * All leaf nodes start immediately; parents start as soon as all children complete
+ * @param root - The root node
  * @param workDir - Working directory for file operations
- * @param ancestorTexts - Texts of ancestors (for context)
  * @param onProgress - Progress callback for tool usage
- * @param onNodeStart - Callback called BEFORE processing each node (for accurate progress)
- * @param onNodeComplete - Callback called AFTER each node is complete (to save progress)
+ * @param onNodeStart - Callback called BEFORE processing each node
+ * @param onNodeComplete - Callback called AFTER each node is complete
  */
 async function summarize_with_explorer(
-  node: Node,
+  root: Node,
   workDir: string,
-  ancestorTexts: string[] = [],
+  _ancestorTexts: string[] = [],
   onProgress?: (round: number, tool: string) => void,
   onNodeStart?: () => void,
   onNodeComplete?: () => void
 ): Promise<void> {
-  // First, process all children (bottom-up)
-  const childTexts = [node.text, ...ancestorTexts];
-  for (const child of node.children) {
-    await summarize_with_explorer(child, workDir, childTexts, onProgress, onNodeStart, onNodeComplete);
+  // Collect all nodes in bottom-up order (leaves first)
+  const allNodes = collect_nodes_bottom_up(root);
+
+  // Create a map from node reference to its promise
+  // This allows parents to await their children
+  const nodePromises = new Map<Node, Promise<void>>();
+
+  // Build ancestor texts for each node (path from root to node)
+  const ancestorTextsMap = new Map<Node, string[]>();
+  function buildAncestorTexts(node: Node, texts: string[]) {
+    ancestorTextsMap.set(node, texts);
+    const childTexts = [node.text, ...texts];
+    for (const child of node.children) {
+      buildAncestorTexts(child, childTexts);
+    }
+  }
+  buildAncestorTexts(root, []);
+
+  // Process each node - starts immediately for leaves, waits for children for parents
+  for (const node of allNodes) {
+    // Create promise for this node
+    const promise = (async () => {
+      // Wait for all children to complete first (they're already in the map)
+      // If any child fails, this will throw and propagate up (fail-fast)
+      const childPromises = node.children.map((child) => nodePromises.get(child)!);
+      await Promise.all(childPromises);
+
+      // Skip if already summarized (resume capability)
+      if (node.summary !== '') {
+        return;
+      }
+
+      // Call start callback BEFORE processing this node
+      if (onNodeStart) {
+        onNodeStart();
+      }
+
+      // Build ancestor context
+      const ancestorContext = ancestorTextsMap.get(node)!.join('\n\n---\n\n');
+
+      // Generate summary using explorer agent
+      let result;
+      try {
+        result = await summarizeWithExplorer(
+          node.title,
+          node.text,
+          ancestorContext,
+          workDir,
+          onProgress
+        );
+      } catch (err) {
+        // Fail fast: include node context in error for debugging
+        const nodeInfo = `Node: "${node.title}" (id: ${node.id})`;
+        const wrappedError = new Error(
+          `Failed to summarize ${nodeInfo}: ${(err as Error).message}`
+        );
+        wrappedError.cause = err;
+        throw wrappedError;
+      }
+      node.summary = result.summary;
+
+      // Convert marked files to Link objects and append to node.links
+      for (const item of result.markedFiles) {
+        node.links.push({
+          target_type: 'file',
+          file_path: item.path,
+          comment: item.reason || 'Discovered during exploration',
+        });
+      }
+
+      // Convert marked URLs to Link objects and append to node.links
+      for (const item of result.markedUrls) {
+        node.links.push({
+          target_type: 'url',
+          url: item.path,
+          comment: item.reason || 'Discovered during exploration',
+        });
+      }
+
+      // Call complete callback AFTER this node is fully processed
+      if (onNodeComplete) {
+        onNodeComplete();
+      }
+    })();
+
+    nodePromises.set(node, promise);
   }
 
-  // Skip if already summarized (resume capability)
-  if (node.summary !== '') {
-    return;
-  }
-
-  // Call start callback BEFORE processing this node
-  if (onNodeStart) {
-    onNodeStart();
-  }
-
-  // Build ancestor context
-  const ancestorContext = ancestorTexts.join('\n\n---\n\n');
-
-  // Generate summary using explorer agent
-  const result = await summarizeWithExplorer(
-    node.title,
-    node.text,
-    ancestorContext,
-    workDir,
-    onProgress
-  );
-  node.summary = result.summary;
-
-  // Convert marked files to Link objects and append to node.links
-  for (const item of result.markedFiles) {
-    node.links.push({
-      target_type: 'file',
-      file_path: item.path,
-      comment: item.reason || 'Discovered during exploration',
-    });
-  }
-
-  // Convert marked URLs to Link objects and append to node.links
-  for (const item of result.markedUrls) {
-    node.links.push({
-      target_type: 'url',
-      url: item.path,
-      comment: item.reason || 'Discovered during exploration',
-    });
-  }
-
-  // Call complete callback AFTER this node is fully processed
-  if (onNodeComplete) {
-    onNodeComplete();
-  }
+  // Wait for all nodes to complete
+  // If any node fails, Promise.all rejects immediately (fail-fast)
+  await Promise.all(Array.from(nodePromises.values()));
 }
 
 /**
