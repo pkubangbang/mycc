@@ -39,7 +39,7 @@ class GlobalConfig {
   }
 }
 
-export const globalConfig = new GlobalConfig();
+const globalConfig = new GlobalConfig();
 
 /**
  * Get session ID from CLI args (--session flag)
@@ -63,13 +63,6 @@ export function shouldRunSetup(): boolean {
 }
 
 /**
- * Get all parsed args (for debugging)
- */
-export function getArgs(): minimist.ParsedArgs {
-  return args;
-}
-
-/**
  * Quick check for verbose mode (convenience)
  */
 export function isVerbose(): boolean {
@@ -89,13 +82,6 @@ export function getTokenThreshold(): number {
 export function getSkillMatchThreshold(): number {
   const val = process.env.SKILL_MATCH_THRESHOLD;
   return val ? parseFloat(val) : 0.5;
-}
-
-/**
- * Get hint threshold for confusion detection
- */
-export function getHintThreshold(): number {
-  return parseInt(process.env.HINT_THRESHOLD || '10', 10);
 }
 
 /**
@@ -142,47 +128,6 @@ export function getVisionModel(): string {
   }
   return model;
 }
-
-/**
- * Environment variable requirements
- */
-export interface EnvRequirement {
-  name: string;
-  required: boolean;
-  default?: string;
-  instruction: string;
-}
-
-export const ENV_REQUIREMENTS: EnvRequirement[] = [
-  {
-    name: 'OLLAMA_HOST',
-    required: false,
-    default: 'http://127.0.0.1:11434',
-    instruction: 'Set OLLAMA_HOST for your Ollama server (default: http://127.0.0.1:11434)',
-  },
-  {
-    name: 'OLLAMA_MODEL',
-    required: false,
-    default: 'glm-5:cloud',
-    instruction: 'Set OLLAMA_MODEL to specify which model to use (default: glm-5:cloud)',
-  },
-  {
-    name: 'OLLAMA_VISION_MODEL',
-    required: false,
-    instruction: 'Set OLLAMA_VISION_MODEL for vision/multimodal tasks, or "none" to disable (screen/read_picture tools will be unavailable)',
-  },
-  {
-    name: 'OLLAMA_API_KEY',
-    required: false,
-    instruction: 'Set OLLAMA_API_KEY for cloud/web search features (optional)',
-  },
-  {
-    name: 'TOKEN_THRESHOLD',
-    required: false,
-    default: '50000',
-    instruction: 'Set TOKEN_THRESHOLD for context limit (default: 50000)',
-  },
-];
 
 interface EnvValidationResult {
   valid: boolean;
@@ -351,6 +296,7 @@ export function ensureDirs(): void {
 
 import { execSync } from 'child_process';
 import chalk from 'chalk';
+import { ENV_REQUIREMENTS } from './setup/prompts.js';
 
 /** Timeout for npm link operations (ms) */
 const NPM_LINK_TIMEOUT_MS = 5000;
@@ -406,11 +352,4 @@ export function ensureToolTypeImports(): void {
   if (fs.existsSync(projectMycc)) {
     ensureMyccLink(projectDir, 'project tools');
   }
-}
-// ============================================================================
-// Mindmap Helpers
-// ============================================================================
-
-export function getMindmapFile(): string {
-  return path.join(MYCC_DIR, 'mindmap.json');
 }

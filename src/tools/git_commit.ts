@@ -4,9 +4,12 @@
  * Scope: ['main', 'child'] - Available to all agents
  *
  * This tool enforces the "ask before commit" rule by:
- * 1. Asking user for permission via ctx.core.question()
- * 2. Only executing git commit if user grants permission
- * 3. Rejecting if user denies
+ * 1. Checking if teammate is in a worktree (only worktree owners can commit)
+ * 2. Asking user for permission via ctx.core.question()
+ * 3. Only executing git commit if user grants permission
+ * 4. Rejecting if user denies
+ *
+ * For teammates NOT in a worktree, the tool sends mail to lead instead of committing.
  *
  * Parameters:
  * - message: The commit message (required)
@@ -15,6 +18,8 @@
 
 import type { ToolDefinition, AgentContext } from '../types.js';
 import { agentIO } from '../loop/agent-io.js';
+import { MailBox } from '../context/shared/mail.js';
+import { loadWorktrees } from '../context/worktree-store.js';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
@@ -59,6 +64,45 @@ The tool will:
     // Validate message parameter
     if (!message || typeof message !== 'string' || message.trim() === '') {
       return 'Error: The "message" parameter is required and must be a non-empty string';
+    }
+
+    // Check if this is a child process (teammate) without a worktree
+    // Teammates can only commit if they are in a dedicated worktree
+    if (!agentIO.isMainProcess()) {
+      const workDir = ctx.core.getWorkDir();
+      const agentName = ctx.core.getName();
+
+      // Load worktrees and check if this agent owns one
+      const worktrees = loadWorktrees();
+      const ownedWorktree = worktrees.find(wt => wt.name === agentName);
+
+      // Check if we're inside a worktree owned by this agent
+      const isInOwnedWorktree = ownedWorktree &&
+        (workDir === ownedWorktree.path || workDir.startsWith(ownedWorktree.path + path.sep));
+
+      if (!isInOwnedWorktree) {
+        // Not in a worktree - send mail to lead instead of committing
+        const mail = new MailBox('lead');
+        mail.appendMail(
+          agentName,
+          'Git Commit Request',
+          [
+            `I would like to make a git commit:`,
+            ``,
+            `**Message:** ${message}`,
+            amend ? `**Amend:** true` : '',
+            ``,
+            `Since I'm not in a dedicated worktree, I cannot commit directly.`,
+            `Please review and commit on my behalf if appropriate.`,
+            ``,
+            `To commit for me, you can use:`,
+            amend ? `\`git commit --amend -m "${message}"\`` : `\`git commit -m "${message}"\``,
+          ].filter(Boolean).join('\n')
+        );
+
+        ctx.core.brief('info', 'git_commit', `Commit request sent to lead via mail`);
+        return `Not in a dedicated worktree. Commit request has been sent to the lead via mail.\n\nThe lead will review and commit on your behalf. Check your mail for responses.`;
+      }
     }
 
     // Check if there are staged changes before asking for permission

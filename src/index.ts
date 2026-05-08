@@ -26,7 +26,6 @@ import chalk from 'chalk';
 import { isVerbose, printEnvStatus, validateEnv, ensureToolTypeImports, shouldRunSetup } from './config.js';
 import { parseKeys, isCtrlC, isEscape } from './utils/key-parser.js';
 import { getProjectRoot, spawnTsx } from './utils/tsx-run.js';
-import type { KeyInfo } from './utils/key-parser.js';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -52,12 +51,6 @@ type CoordinatorMessage =
   | { type: 'ready' }
   | { type: 'restart'; sessionId: string; cwd: string }
   | { type: 'exit' };
-
-/** IPC message from Coordinator to Lead */
-export type CoordinatorToLeadMessage =
-  | { type: 'neglection' }
-  | { type: 'key'; key: KeyInfo }
-  | { type: 'resize'; columns: number };
 
 // ---------------------------------------------------------------------------
 // Setup Mode

@@ -26,13 +26,13 @@ describe('briefTool', () => {
       const result = briefTool.handler(ctx, { message: 'Task completed', confidence: 10 });
 
       expect(result).toBe('OK');
-      expect(ctx.core.brief).toHaveBeenCalledWith('info', 'brief', 'Task completed');
+      expect(ctx.core.brief).toHaveBeenCalledWith('info', 'brief', 'Task completed', 'confidence: 100%');
     });
 
     it('should send message with details', () => {
       briefTool.handler(ctx, { message: 'Processed 5 files', confidence: 9 });
 
-      expect(ctx.core.brief).toHaveBeenCalledWith('info', 'brief', 'Processed 5 files');
+      expect(ctx.core.brief).toHaveBeenCalledWith('info', 'brief', 'Processed 5 files', 'confidence: 90%');
     });
 
     it('should send multi-line message', () => {
@@ -40,13 +40,13 @@ describe('briefTool', () => {
       const result = briefTool.handler(ctx, { message: multiLineMessage, confidence: 8 });
 
       expect(result).toBe('OK');
-      expect(ctx.core.brief).toHaveBeenCalledWith('info', 'brief', multiLineMessage);
+      expect(ctx.core.brief).toHaveBeenCalledWith('info', 'brief', multiLineMessage, 'confidence: 80%');
     });
 
     it('should send progress update', () => {
       briefTool.handler(ctx, { message: '50% complete', confidence: 7 });
 
-      expect(ctx.core.brief).toHaveBeenCalledWith('info', 'brief', '50% complete');
+      expect(ctx.core.brief).toHaveBeenCalledWith('info', 'brief', '50% complete', 'confidence: 70%');
     });
 
     it('should accept very long message (1000+ chars)', () => {
@@ -54,7 +54,7 @@ describe('briefTool', () => {
       const result = briefTool.handler(ctx, { message: longMessage, confidence: 6 });
 
       expect(result).toBe('OK');
-      expect(ctx.core.brief).toHaveBeenCalledWith('info', 'brief', longMessage);
+      expect(ctx.core.brief).toHaveBeenCalledWith('info', 'brief', longMessage, 'confidence: 60%');
     });
 
     it('should preserve message with special characters', () => {
@@ -62,7 +62,7 @@ describe('briefTool', () => {
       const result = briefTool.handler(ctx, { message: specialMessage, confidence: 5 });
 
       expect(result).toBe('OK');
-      expect(ctx.core.brief).toHaveBeenCalledWith('info', 'brief', specialMessage);
+      expect(ctx.core.brief).toHaveBeenCalledWith('info', 'brief', specialMessage, 'confidence: 50%');
     });
 
     it('should pass through markdown content as-is', () => {
@@ -70,7 +70,7 @@ describe('briefTool', () => {
       const result = briefTool.handler(ctx, { message: markdownMessage, confidence: 4 });
 
       expect(result).toBe('OK');
-      expect(ctx.core.brief).toHaveBeenCalledWith('info', 'brief', markdownMessage);
+      expect(ctx.core.brief).toHaveBeenCalledWith('info', 'brief', markdownMessage, 'confidence: 40%');
     });
 
     it('should handle unicode and emojis', () => {
@@ -78,7 +78,7 @@ describe('briefTool', () => {
       const result = briefTool.handler(ctx, { message: unicodeMessage, confidence: 3 });
 
       expect(result).toBe('OK');
-      expect(ctx.core.brief).toHaveBeenCalledWith('info', 'brief', unicodeMessage);
+      expect(ctx.core.brief).toHaveBeenCalledWith('info', 'brief', unicodeMessage, 'confidence: 30%');
     });
   });
 
@@ -200,14 +200,14 @@ describe('briefTool', () => {
       briefTool.handler(ctx, { message: 'test2', confidence: 9 });
 
       expect(ctx.core.brief).toHaveBeenCalledTimes(2);
-      expect(ctx.core.brief).toHaveBeenNthCalledWith(1, 'info', 'brief', 'test1');
-      expect(ctx.core.brief).toHaveBeenNthCalledWith(2, 'info', 'brief', 'test2');
+      expect(ctx.core.brief).toHaveBeenNthCalledWith(1, 'info', 'brief', 'test1', 'confidence: 100%');
+      expect(ctx.core.brief).toHaveBeenNthCalledWith(2, 'info', 'brief', 'test2', 'confidence: 90%');
     });
 
     it('should always use brief tag', () => {
       briefTool.handler(ctx, { message: 'any message', confidence: 8 });
 
-      expect(ctx.core.brief).toHaveBeenCalledWith('info', 'brief', 'any message');
+      expect(ctx.core.brief).toHaveBeenCalledWith('info', 'brief', 'any message', 'confidence: 80%');
     });
 
     it('should update confusion index based on confidence', () => {

@@ -5,7 +5,7 @@
  * Only includes the most common file types needed for text/binary detection.
  */
 
-export interface FileInfo {
+interface FileInfo {
   typename: string;
   mime?: string;
   extension?: string;

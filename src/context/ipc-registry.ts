@@ -27,7 +27,7 @@ export class IpcRegistry {
    * @throws Error if handler already registered for this message type
    */
   register(registration: IpcHandlerRegistration): void {
-    if (this.hasHandler(registration.messageType)) {
+    if (this.handlers.has(registration.messageType)) {
       const existing = this.handlers.get(registration.messageType);
       throw new Error(
         `IPC handler already registered for "${registration.messageType}" ` +
@@ -42,13 +42,6 @@ export class IpcRegistry {
    */
   unregister(messageType: string): void {
     this.handlers.delete(messageType);
-  }
-
-  /**
-   * Check if a handler exists for a message type
-   */
-  hasHandler(messageType: string): boolean {
-    return this.handlers.has(messageType);
   }
 
   /**
@@ -86,13 +79,4 @@ export class IpcRegistry {
     }
   }
 
-  /**
-   * List all registered handlers (for debugging)
-   */
-  listHandlers(): { messageType: string; module: string }[] {
-    return Array.from(this.handlers.values()).map((h) => ({
-      messageType: h.messageType,
-      module: h.module,
-    }));
-  }
 }

@@ -18,11 +18,6 @@ export const silentLoader = new Loader(true);
 
 // Re-export
 export { IpcRegistry } from './ipc-registry.js';
-export { ChildCore } from './child/core.js';
-export { ChildIssue } from './child/issue.js';
-export { ChildWt } from './child/wt.js';
-export { ChildTeam } from './child/team.js';
-export { ChildWiki } from './child/wiki.js';
 
 /**
  * ChildContext - AgentContext for child process (teammate)

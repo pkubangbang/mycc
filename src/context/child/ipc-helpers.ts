@@ -5,7 +5,7 @@
  * Mail from teammates goes through ctx.mail (file-based), not here.
  */
 
-import type { TeammateStatus, Issue, IssueComment } from '../../types.js';
+import type { TeammateStatus } from '../../types.js';
 
 /**
  * Pending request tracking
@@ -122,36 +122,3 @@ export function sendStatus(status: TeammateStatus): void {
   ipc.sendNotification('status', { status });
 }
 
-// ============================================================================
-// Date Deserialization Helpers
-// ============================================================================
-
-/**
- * Deserialize an Issue from IPC (convert date strings to Date objects)
- * IPC serialization converts Date objects to ISO strings.
- * This function converts them back.
- */
-export function deserializeIssue(issue: Issue): Issue {
-  return {
-    ...issue,
-    createdAt: new Date(issue.createdAt),
-    comments: issue.comments.map(deserializeComment),
-  };
-}
-
-/**
- * Deserialize an IssueComment from IPC
- */
-export function deserializeComment(comment: IssueComment): IssueComment {
-  return {
-    ...comment,
-    timestamp: new Date(comment.timestamp),
-  };
-}
-
-/**
- * Deserialize an array of Issues from IPC
- */
-export function deserializeIssueList(issues: Issue[]): Issue[] {
-  return issues.map(deserializeIssue);
-}

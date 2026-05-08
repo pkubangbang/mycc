@@ -133,11 +133,6 @@ class AgentIO {
   }
 
   /**
-   * Initialize for child process
-   */
-  initChild(): void {
-    this.isMainProcessFlag = false;
-  }
 
   // Type check
 
@@ -387,11 +382,6 @@ class AgentIO {
   }
 
   /**
-   * Get the current LLM abort signal (if any)
-   */
-  getLlmAbortSignal(): AbortSignal | undefined {
-    return this.llmAbortController?.signal;
-  }
 
   /**
    * Execute a shell command with strict timeout enforcement.

@@ -60,6 +60,23 @@ export interface ToolInfo {
 }
 
 /**
+ * History entry for condition changes
+ */
+export interface ConditionHistory {
+  version: number;
+  condition: string;
+  action: HookAction;
+  reason?: string;
+}
+
+/**
+ * Conditions file format
+ */
+export interface ConditionsFile {
+  [skillName: string]: Condition;
+}
+
+/**
  * Action types for hooks
  */
 export type HookAction =
@@ -69,15 +86,6 @@ export type HookAction =
   | { type: 'replace'; tool: string; args: Record<string, unknown>; timeout?: number }
   | { type: 'message' };
 
-/**
- * Condition history entry
- */
-export interface ConditionHistory {
-  version: number;
-  condition: string;
-  action: HookAction;
-  reason?: string;
-}
 
 /**
  * Compiled condition
@@ -92,12 +100,6 @@ export interface Condition {
   history?: ConditionHistory[];
 }
 
-/**
- * Conditions.json structure
- */
-export interface ConditionsFile {
-  [skillName: string]: Condition;
-}
 
 /**
  * Condition registry - manages compiled conditions

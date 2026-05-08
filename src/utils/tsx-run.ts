@@ -105,7 +105,7 @@ function getTsxBinaryPath(): string {
 /**
  * Result of getTsxCommand
  */
-export interface TsxCommand {
+interface TsxCommand {
   /** Command to spawn (node or tsx binary) */
   command: string;
   /** Base arguments (loader + script path) */
@@ -124,7 +124,7 @@ export interface TsxCommand {
  * spawn(command, [...baseArgs, '--my-flag'], { stdio: 'inherit' });
  * ```
  */
-export function getTsxCommand(script: string): TsxCommand {
+function getTsxCommand(script: string): TsxCommand {
   // Validate script path is absolute
   const resolved = resolve(script);
   if (!resolved.startsWith('/') && !resolved.match(/^[A-Z]:\\/i)) {
@@ -152,7 +152,7 @@ export function getTsxCommand(script: string): TsxCommand {
 /**
  * Options for spawnTsx
  */
-export interface TsxSpawnOptions {
+interface TsxSpawnOptions {
   /** Absolute path to the TypeScript file to run */
   script: string;
   /** Additional arguments to pass after the script */
@@ -206,13 +206,4 @@ export function spawnTsx(options: TsxSpawnOptions): ChildProcess {
   };
 
   return spawn(command, args, spawnOptions);
-}
-
-/**
- * Check if we're running inside tsx (i.e., TypeScript is being executed)
- * Useful for detecting if the current process needs tsx to run
- */
-export function isRunningInTsx(): boolean {
-  // Check if tsx loader is already registered
-  return !!process.execArgv.some(arg => arg.includes('tsx'));
 }

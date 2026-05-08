@@ -18,16 +18,16 @@ import { getMyccDir, getLongtextDir, ensureDirs } from '../config.js';
 import { getTokenThreshold } from '../config.js';
 import { agentIO } from './agent-io.js';
 
-export type Role = 'system' | 'user' | 'assistant' | 'tool';
+type Role = 'system' | 'user' | 'assistant' | 'tool';
 
-export interface MisorderWarning {
+interface MisorderWarning {
   from: Role;
   to: Role;
   gap: 'missing_assistant' | 'missing_tool_response' | 'unexpected_duplicate' | 'invalid_sequence';
   context: { lastMessage?: Message; newMessage?: Partial<Message> };
 }
 
-export interface ToolAlignmentWarning {
+interface ToolAlignmentWarning {
   functionName: string;
   toolCallId?: string;
   issue: 'no_pending_calls' | 'id_not_found' | 'name_mismatch' | 'orphan_result';
@@ -35,7 +35,7 @@ export interface ToolAlignmentWarning {
   expectedName?: string;
 }
 
-export interface TriologueOptions {
+interface TriologueOptions {
   /** Token threshold for auto-compact (default: 50000) */
   tokenThreshold?: number;
   /** Result size threshold in chars (default: 20000) */
@@ -94,24 +94,6 @@ export class Triologue {
   }
 
   /**
-   * Set CLAUDE.md content (project instructions)
-   * Appends context pair to project context (appears before README.md if both set)
-   * If content is too large, skips it entirely.
-   */
-  setClaudeMd(content: string): void {
-    // Use 10% of TOKEN_THRESHOLD (converted to chars) as max size
-    const maxChars = Math.floor(getTokenThreshold() * 4 * 0.1);
-    if (content.length > maxChars) {
-      console.log('[triologue] CLAUDE.md is too large to load, skipping');
-      return;
-    }
-    this.projectContext.push(
-      { role: 'user', content: `[Project Instructions - CLAUDE.md from project root, FYI]\n\n${content}` },
-      { role: 'assistant', content: 'Understood. I have read the project instructions from CLAUDE.md.' }
-    );
-  }
-
-  /**
    * Set README.md content (project context)
    * Appends context pair to project context (appears after CLAUDE.md if both set)
    * If content is too large, skips it entirely.
@@ -162,17 +144,6 @@ export class Triologue {
     this.addMessage({ role: 'user', content });
   }
 
-  /**
-   * Add a user message on behalf of user (synthetic/generated)
-   * Used for system-generated messages that should appear as user.
-   */
-  onBehalfOfUser(content: string): void {
-    // Run microCompact if transitioning from tool role
-    if (this.getLastRole() === 'tool') {
-      this.runMicroCompact();
-    }
-    this.addMessage({ role: 'user', content });
-  }
 
   /**
    * Add a tool response message
@@ -586,21 +557,6 @@ Provide your analysis in the specified JSON format.`;
     return [...this.messages];
   }
 
-  /**
-   * Get current token count
-   */
-  getTokenCount(): number {
-    return this.tokenCount;
-  }
-
-  /**
-   * Register an injected tool call (from hooks)
-   * This allows triologue to track tool calls that weren't in the original assistant message
-   */
-  registerToolCall(toolCall: ToolCall): void {
-    this.pendingToolCalls.set(toolCall.id, toolCall);
-    this.pendingToolCallOrder.push(toolCall.id);
-  }
 
   /**
    * Get last message role, or null if empty
