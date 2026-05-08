@@ -115,18 +115,39 @@ But your FINAL plan must be:
 - Specific about the implementation steps
 - Explicit about assumptions and dependencies
 
+### Environment Detection
+
+If your exploration reveals an unusual project layout (e.g., unfamiliar directory structure,
+missing standard project files, unexpected file organization), load the environment_detection
+skill to help you understand the "shape" of the current working directory:
+
+\`\`\`
+skill_load(name="environment_detection")
+\`\`\`
+
+This skill helps you identify:
+- Is cwd a well-known system folder (e.g., user's home)?
+- Does cwd contain a git repo (indicating a project)?
+- If not a git repo: is it a collection of repos, materials, or empty folder?
+- What executables are available (ripgrep, yq, ffmpeg, etc.)?
+
+Use this skill when you feel uncertain about the project context.
+
 ## Calendar
 Current date: ${currentDate} (year: ${currentYear})
 
 ## Knowledge Boundary
 
-You have access to these knowledge sources:
+You have access to these knowledge sources (in priority order):
 - **Recall**: Explore the mindmap. Use \`recall(path="/")\` to start.
-- **Skills**: Specialized knowledge. Use \`skill_load(name="list")\` to discover.
+- **Skills**: Specialized knowledge. Use \`skill_load(intent="...")\` to discover.
 - **Wiki**: Project knowledge. Use \`wiki_get(query, domain)\` to retrieve.
-- **Web**: Current information. Use \`web_search(query)\` and \`web_fetch(url)\`.
+- **Web**: External information. Use \`web_search(query)\` and \`web_fetch(url)\` as LAST RESORT.
 
-When you encounter something outside your knowledge: PAUSE, seek knowledge, then continue.
+**Priority Rule**: Always check local sources (Recall → Skills → Wiki) BEFORE searching the web.
+Use web_search only when no local knowledge matches or you need the latest information.
+
+When you encounter something outside your knowledge: PAUSE, check local sources first, then web if needed.
 Do NOT guess.
 
 ${teamPlanningSection}`;
@@ -151,17 +172,25 @@ export function buildNormalModePrompt(
   const knowledgeBoundary = [
     '## Knowledge Boundary',
     '',
-    'You have access to these knowledge sources:',
-    '- **Recall**: Explore the mindmap knowledge tree structure. Use `recall(path="/")` to discover available knowledge, then navigate deeper. START HERE for project context.',
-    '- **Skills**: Specialized knowledge for specific tasks. Use `skill_load(name="list")` to discover, then `skill_load(name="<name>")` to load.',
-    '- **Wiki**: Project knowledge base (RAG). Use `wiki_get(query, domain)` to retrieve relevant documents.',
-    '- **Web**: Current information from the internet. Use `web_search(query)` and `web_fetch(url)`.',
-    '- **Teammates**: Parallel expertise for complex tasks. Use `tm_create(name, role, prompt)` to spawn specialists.',
+    'You have access to these knowledge sources (in priority order):',
+    '- **Recall**: Explore the mindmap knowledge tree. Use `recall(path="/")` to discover available knowledge. START HERE for project context.',
+    '- **Skills**: Specialized knowledge for specific tasks. Use `skill_load(intent="...")` to discover relevant skills.',
+    '- **Wiki**: Project knowledge base (RAG). Use `wiki_get(query, domain)` to retrieve documents.',
+    '- **Teammates**: Parallel expertise. Use `tm_create(name, role, prompt)` to spawn specialists.',
+    '- **Web**: External information from the internet. Use `web_search(query)` and `web_fetch(url)` as LAST RESORT.',
+    '',
+    '**Priority Rule**: Always check local knowledge sources (Recall → Skills → Wiki) BEFORE searching the web.',
+    'Local sources are faster, more accurate for this project, and always available.',
+    'Use web_search only when:',
+    '- No local knowledge matches your query',
+    '- You need the latest information (e.g., current library versions)',
+    '- You need external documentation not in the project',
     '',
     'When you encounter something outside your knowledge:',
     '1. PAUSE and recognize the gap',
-    '2. Use the appropriate tool to fill it',
-    '3. Continue with enhanced knowledge',
+    '2. Check local sources first (Recall → Skills → Wiki)',
+    '3. Only then search the web if needed',
+    '4. Continue with enhanced knowledge',
     '',
     'Do NOT guess. When in doubt, seek knowledge first.',
   ].join('\n');
@@ -173,11 +202,28 @@ export function buildNormalModePrompt(
     'Do NOT make assumptions. Always verify by:',
     '1. Exploring the codebase to understand context',
     '2. Asking the user for clarification',
-    '3. Searching the web for documentation',
-    '4. Searching the wiki for project knowledge',
-    '5. Using skills for specialized guidance',
+    '3. Searching local knowledge (Recall → Skills → Wiki)',
+    '4. Only then searching the web if needed',
     '',
     'Understand the project structure first. Only write code when you are clear about the direction. If unsure, discuss with the user before proceeding.',
+    '',
+    '### Environment Detection',
+    '',
+    'If your exploration reveals an unusual project layout (e.g., unfamiliar directory structure,',
+    'missing standard project files, unexpected file organization), load the environment_detection',
+    'skill to help you understand the "shape" of the current working directory:',
+    '',
+    '```',
+    'skill_load(name="environment_detection")',
+    '```',
+    '',
+    'This skill helps you identify:',
+    '- Is cwd a well-known system folder (e.g., user\'s home)?',
+    '- Does cwd contain a git repo (indicating a project)?',
+    '- If not a git repo: is it a collection of repos, materials, or empty folder?',
+    '- What executables are available (ripgrep, yq, ffmpeg, etc.)?',
+    '',
+    'Use this skill when you feel uncertain about the project context.',
   ].join('\n');
 
   // Platform-specific guidance
