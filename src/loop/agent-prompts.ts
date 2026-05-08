@@ -330,14 +330,14 @@ export function buildNormalModePrompt(
 
   // For lead agent without team (solo)
   return [
-    `You are a coding agent at ${workDir}.`,
-    `Use tools to finish tasks. Use skills to access specialized knowledge.`,
+    `You are a coding agent at ${workDir}. Use tools to finish tasks.`,
     `## Task Management`,
     `Use issue_* for complex tasks (divide and conquer), todo_* for simple tracking.`,
     `## Team Mode`,
-    `If the task would benefit from parallel work, create teammates with tm_create to form a team.`,
+    `If the task would benefit from parallel work, create teammates using tm_create tool to help you.`,
     `## Rules`,
     `- Use git_commit tool for ALL git commits. This tool will ask for user permission [y/N] before committing.`,
+    `- Use skill_load tool as soon as you have understood the user's intention, to equip yourself with domain knowledge.`,
     common,
   ].join('\n');
 }
