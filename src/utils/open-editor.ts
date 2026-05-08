@@ -31,7 +31,7 @@ const GOTO_EDITORS = ['vscode', 'vscode-insiders', 'vscodium', 'sublime', 'atom'
  * Parse editor string into EditorInfo
  * Unlike env-editor, this preserves the full binary name for unknown editors
  */
-export function getEditor(editorStr: string): EditorInfo {
+function getEditor(editorStr: string): EditorInfo {
   const trimmed = editorStr.trim();
   const needle = trimmed.toLowerCase();
 
@@ -71,7 +71,7 @@ export function defaultEditor(): EditorInfo {
 /**
  * Parse file path with optional line:column (e.g., "file.ts:10:5")
  */
-export function parseFile(file: string): { file: string; line?: number; column?: number } {
+function parseFile(file: string): { file: string; line?: number; column?: number } {
   const match = file.match(/^(.+?)(?::(\d+))?(?::(\d+))?$/);
   if (!match) return { file };
   return {

@@ -198,14 +198,6 @@ function parseNextKey(data: Buffer, offset: number): { keyInfo: KeyInfo; consume
 }
 
 /**
- * Parse a single key from a Buffer (for backward compatibility)
- * @deprecated Use parseKeys instead for multi-byte support
- */
-export function parseKey(data: Buffer): KeyInfo {
-  const keys = parseKeys(data);
-  return keys[0] || { name: '', ctrl: false, meta: false, shift: false, sequence: '' };
-}
-
 /**
  * Check if data represents Ctrl+C
  */
