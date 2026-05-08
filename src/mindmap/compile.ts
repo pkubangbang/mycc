@@ -294,12 +294,14 @@ export async function compile_mindmap(
   try {
     await summarize_with_explorer(root, workDir, onProgress, onNodeStart, onNodeComplete);
   } catch (err) {
+    tracker.finish();
     process.stdout.write('\x1b[4A\x1b[J');
     remove_lock(outFile);
     throw err;
   }
 
   // Clean up and finalize
+  tracker.finish();
   process.stdout.write('\x1b[4A\x1b[J');
   mindmap.updated_at = new Date().toISOString();
   fs.writeFileSync(outFile, JSON.stringify(mindmap, null, 2));
@@ -356,6 +358,7 @@ export async function compile_mindmap_from_content(
     };
     process.stdout.write('\n\n\n\n');
     await summarize_with_explorer(root, process.cwd(), onProgress, onNodeStart);
+    tracker.finish();
     process.stdout.write('\x1b[4A\x1b[J');
   } else {
     await summarize_with_explorer(root, process.cwd());

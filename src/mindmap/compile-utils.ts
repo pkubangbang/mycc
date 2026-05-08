@@ -359,6 +359,7 @@ export class ProgressTracker {
   private activeOps: Map<string, ActiveOp> = new Map();
   private renderQueued: boolean = false;
   private firstUpdate: boolean = true;
+  private finished: boolean = false;
 
   constructor(
     private total: number,
@@ -390,9 +391,19 @@ export class ProgressTracker {
   }
 
   /**
+   * Called when processing is complete - cancels pending renders
+   */
+  finish(): void {
+    this.finished = true;
+    this.activeOps.clear();
+  }
+
+  /**
    * Queue a render (debounced but ensures first update renders immediately)
    */
   private queueRender(): void {
+    if (this.finished) return;
+
     if (this.firstUpdate) {
       this.firstUpdate = false;
       this.render();
@@ -405,6 +416,7 @@ export class ProgressTracker {
     // Use setImmediate to batch concurrent updates
     setImmediate(() => {
       this.renderQueued = false;
+      if (this.finished) return;
       this.render();
     });
   }
