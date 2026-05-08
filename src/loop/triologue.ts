@@ -318,9 +318,10 @@ export class Triologue {
 
   /**
    * Force auto-compact now
+   * @param focus - Optional focus topic to include in summarization
    */
-  async compact(): Promise<void> {
-    const compacted = await this.runAutoCompact();
+  async compact(focus?: string): Promise<void> {
+    const compacted = await this.runAutoCompact(focus);
     this.messages = compacted;
     this.tokenCount = this.estimateTokens(this.messages);
     this.pendingToolCalls.clear();
@@ -718,8 +719,9 @@ Provide your analysis in the specified JSON format.`;
 
   /**
    * Run auto-compact: save transcript and summarize with LLM
+   * @param focus - Optional focus topic to emphasize in summary
    */
-  private async runAutoCompact(): Promise<Message[]> {
+  private async runAutoCompact(focus?: string): Promise<Message[]> {
     // Ensure transcript directory exists
     ensureDirs();
     const transcriptDir = path.join(getMyccDir(), 'transcripts');
@@ -756,6 +758,10 @@ Provide your analysis in the specified JSON format.`;
         `Skip opinions, temporary details, or knowledge that does not fit any domain.\n\n`
       : '';
 
+    const focusInstruction = focus
+      ? `\n**Focus Area:** Pay special attention to information related to "${focus}" and ensure the summary captures all relevant details about this topic.\n`
+      : '';
+
     const response = await retryChat({
       model: MODEL,
       messages: [
@@ -767,17 +773,21 @@ Provide your analysis in the specified JSON format.`;
             `2) Current state\n` +
             `3) Key decisions made\n${ 
             knowledgeInstruction 
-            }${conversationText}`,
+            }${focusInstruction}${conversationText}`,
         },
       ],
     });
 
     const summary = response.message.content || '(no summary)';
 
+    const summaryPrefix = focus
+      ? `[Conversation compressed. Focus: ${focus}. Transcript: ${transcriptPath}]\n\n`
+      : `[Conversation compressed. Transcript: ${transcriptPath}]\n\n`;
+
     return [
       {
         role: 'user',
-        content: `[Conversation compressed. Transcript: ${transcriptPath}]\n\n${summary}`,
+        content: `${summaryPrefix}${summary}`,
       },
       {
         role: 'assistant',
