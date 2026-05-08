@@ -289,18 +289,18 @@ export async function compile_mindmap(
   };
 
   // Print initial empty lines for progress display
-  process.stdout.write('\n\n\n');
+  process.stdout.write('\n\n\n\n');
 
   try {
     await summarize_with_explorer(root, workDir, onProgress, onNodeStart, onNodeComplete);
   } catch (err) {
-    process.stdout.write('\x1b[3A\x1b[J');
+    process.stdout.write('\x1b[4A\x1b[J');
     remove_lock(outFile);
     throw err;
   }
 
   // Clean up and finalize
-  process.stdout.write('\x1b[3A\x1b[J');
+  process.stdout.write('\x1b[4A\x1b[J');
   mindmap.updated_at = new Date().toISOString();
   fs.writeFileSync(outFile, JSON.stringify(mindmap, null, 2));
   remove_lock(outFile);
@@ -354,9 +354,9 @@ export async function compile_mindmap_from_content(
     const onProgress = (nodeTitle: string, level: number, round: number, tool: string, args: Record<string, unknown>) => {
       tracker.onProgress(nodeTitle, level, round, tool, args);
     };
-    process.stdout.write('\n\n\n');
+    process.stdout.write('\n\n\n\n');
     await summarize_with_explorer(root, process.cwd(), onProgress, onNodeStart);
-    process.stdout.write('\x1b[3A\x1b[J');
+    process.stdout.write('\x1b[4A\x1b[J');
   } else {
     await summarize_with_explorer(root, process.cwd());
   }
