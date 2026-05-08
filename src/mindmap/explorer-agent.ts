@@ -574,7 +574,7 @@ Explore now. When done exploring, write your summary.`;
  * @param ancestorContext - Combined text from parent sections
  * @param workDir - The working directory for file operations
  * @param maxRounds - Maximum number of LLM rounds
- * @param onProgress - Optional progress callback (round, tool name)
+ * @param onProgress - Optional progress callback (round, tool name, tool args)
  * @returns Exploration result with summary and marked files
  */
 async function runExplorationLoop(
@@ -583,7 +583,7 @@ async function runExplorationLoop(
   ancestorContext: string,
   workDir: string,
   maxRounds: number,
-  onProgress?: (round: number, tool: string) => void
+  onProgress?: (round: number, tool: string, args: Record<string, unknown>) => void
 ): Promise<ExplorationResult> {
   const messages: Message[] = [];
   const markedFiles: MarkedItem[] = [];
@@ -629,7 +629,7 @@ async function runExplorationLoop(
     for (const tc of assistantMsg.tool_calls as ToolCall[]) {
       const toolName = tc.function.name;
       if (onProgress) {
-        onProgress(rounds, toolName);
+        onProgress(rounds, toolName, tc.function.arguments as Record<string, unknown>);
       }
       const output = await executeTool(
         toolName,
@@ -692,7 +692,7 @@ export async function summarizeWithExplorer(
   nodeText: string,
   ancestorContext: string,
   workDir: string,
-  onProgress?: (round: number, tool: string) => void
+  onProgress?: (round: number, tool: string, args: Record<string, unknown>) => void
 ): Promise<ExplorationResult> {
   return runExplorationLoop(nodeTitle, nodeText, ancestorContext, workDir, MAX_ROUNDS_DEFAULT, onProgress);
 }

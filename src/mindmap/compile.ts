@@ -12,327 +12,27 @@
 import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
-import type { MindmapJSON, Node, MarkdownSection, Link } from './types.js';
+import type { MindmapJSON, Node } from './types.js';
 import { compute_file_hash } from './validate.js';
-import { summarizeWithExplorer } from './explorer-agent.js';
-import { safeNodeId } from '../utils/sanitize.js';
+import {
+  parse_markdown,
+  build_node,
+  extract_links,
+  count_nodes,
+  count_incomplete_nodes,
+  merge_existing_data,
+  create_lock,
+  try_read_lock,
+  is_lock_fresh,
+  remove_lock,
+  try_load_existing_mindmap,
+  ActiveOp,
+  renderProgress,
+  summarize_with_explorer,
+} from './compile-utils.js';
 
-/**
- * Regular expressions for markdown parsing
- */
-const HEADING_REGEX = /^(#{1,6})\s+(.+)$/;
-const LINK_REGEX = /\[([^\]]+)\]\(([^)]+)\)/g;
-
-/**
- * Parse markdown content into sections
- * @param content - The markdown content
- * @returns Array of top-level sections
- */
-export function parse_markdown(content: string): MarkdownSection[] {
-  const lines = content.split('\n');
-  const rootSections: MarkdownSection[] = [];
-  const stack: { level: number; section: MarkdownSection }[] = [];
-
-  let currentText: string[] = [];
-  let inCodeBlock = false;
-
-  // Helper to save current text to the section at top of stack
-  const saveCurrentText = () => {
-    if (stack.length > 0 && currentText.length > 0) {
-      stack[stack.length - 1].section.text += currentText.join('\n');
-      currentText = [];
-    }
-  };
-
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-
-    // Track code blocks to ignore headings inside them
-    if (line.startsWith('```')) {
-      inCodeBlock = !inCodeBlock;
-      currentText.push(line);
-      continue;
-    }
-
-    if (inCodeBlock) {
-      currentText.push(line);
-      continue;
-    }
-
-    const match = line.match(HEADING_REGEX);
-
-    if (match) {
-      const level = match[1].length;
-      const title = match[2].trim();
-
-      // Save text to previous section before starting new one
-      saveCurrentText();
-
-      const section: MarkdownSection = {
-        level,
-        title,
-        text: '', // Will be filled with content below this heading
-        children: [],
-      };
-
-      // Pop stack until we find the parent level
-      while (stack.length > 0 && stack[stack.length - 1].level >= level) {
-        stack.pop();
-      }
-
-      if (stack.length === 0) {
-        // Top-level section
-        rootSections.push(section);
-      } else {
-        // Child of current top of stack
-        stack[stack.length - 1].section.children.push(section);
-      }
-
-      stack.push({ level, section });
-    } else {
-      currentText.push(line);
-    }
-  }
-
-  // Save remaining text to last section
-  saveCurrentText();
-
-  return rootSections;
-}
-
-/**
- * Build a node from a markdown section
- * @param section - The parsed section
- * @param parentId - The parent node's id
- * @param level - The node level
- * @returns The constructed node
- */
-function build_node(section: MarkdownSection, parentId: string, level: number): Node {
-  // Create safe ID from title using utility function
-  const safeTitle = safeNodeId(section.title);
-  const id = parentId === '/' ? `/${safeTitle}` : `${parentId}/${safeTitle}`;
-  const links = extract_links(section.text);
-
-  return {
-    id,
-    text: section.text.trim(),
-    title: section.title,
-    summary: '', // Will be filled during summarization
-    level,
-    children: section.children.map((child) => build_node(child, id, level + 1)),
-    links,
-  };
-}
-
-/**
- * Extract links from markdown text
- * @param text - The markdown text
- * @returns Array of Link objects
- */
-function extract_links(text: string): Link[] {
-  const links: Link[] = [];
-  let match;
-
-  // Reset regex
-  LINK_REGEX.lastIndex = 0;
-
-  while ((match = LINK_REGEX.exec(text)) !== null) {
-    const comment = match[1];
-    const target = match[2];
-
-    // Determine target type
-    if (target.startsWith('http://') || target.startsWith('https://')) {
-      links.push({
-        target_type: 'url',
-        url: target,
-        comment,
-      });
-    } else if (
-      target.startsWith('/') ||
-      target.startsWith('./') ||
-      target.startsWith('../')
-    ) {
-      // Could be a file path or node reference
-      // For now, treat as file path (stubs only)
-      links.push({
-        target_type: 'file',
-        file_path: target,
-        comment,
-      });
-    } else {
-      // Assume it's a node reference
-      links.push({
-        target_type: 'node',
-        node_id: target,
-        comment,
-      });
-    }
-  }
-
-  return links;
-}
-
-/**
- * Get all nodes in bottom-up order (deepest first)
- * @param node - The root node
- * @returns Array of nodes in bottom-up order
- */
-export function get_bottom_up_nodes(node: Node): Node[] {
-  const result: Node[] = [];
-
-  function traverse(n: Node) {
-    for (const child of n.children) {
-      traverse(child);
-    }
-    result.push(n);
-  }
-
-  traverse(node);
-  return result;
-}
-
-/**
- * Count total nodes in tree
- */
-function count_nodes(node: Node): number {
-  let count = 1;
-  for (const child of node.children) {
-    count += count_nodes(child);
-  }
-  return count;
-}
-
-/**
- * Count nodes that need processing (have empty summary)
- */
-function count_incomplete_nodes(node: Node): number {
-  let count = 0;
-  if (node.summary === '') {
-    count = 1;
-  }
-  for (const child of node.children) {
-    count += count_incomplete_nodes(child);
-  }
-  return count;
-}
-
-/**
- * Lock file interface for progressive compilation
- */
-interface LockFile {
-  started_at: string;
-  source_file: string;
-  source_hash: string;
-  output_file: string;
-}
-
-/** Lock freshness threshold in milliseconds (3 hours) */
-const LOCK_FRESHNESS_MS = 3 * 60 * 60 * 1000;
-
-/**
- * Get lock file path
- */
-function get_lock_path(outFile: string): string {
-  return `${outFile}.lock`;
-}
-
-/**
- * Create a lock file
- */
-function create_lock(outFile: string, mdPath: string, hash: string): LockFile {
-  const lock: LockFile = {
-    started_at: new Date().toISOString(),
-    source_file: mdPath,
-    source_hash: hash,
-    output_file: outFile,
-  };
-  const lockPath = get_lock_path(outFile);
-  fs.writeFileSync(lockPath, JSON.stringify(lock, null, 2));
-  return lock;
-}
-
-/**
- * Try to read existing lock file
- */
-function try_read_lock(outFile: string): LockFile | null {
-  try {
-    const lockPath = get_lock_path(outFile);
-    if (!fs.existsSync(lockPath)) return null;
-    const content = fs.readFileSync(lockPath, 'utf-8');
-    return JSON.parse(content) as LockFile;
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Check if lock is fresh (within threshold)
- */
-function is_lock_fresh(lock: LockFile): boolean {
-  const startedAt = new Date(lock.started_at).getTime();
-  return Date.now() - startedAt < LOCK_FRESHNESS_MS;
-}
-
-/**
- * Remove lock file
- */
-function remove_lock(outFile: string): void {
-  const lockPath = get_lock_path(outFile);
-  if (fs.existsSync(lockPath)) {
-    fs.unlinkSync(lockPath);
-  }
-}
-
-/**
- * Merge existing node data (summary, links) into a new node tree
- * Preserves already-computed summaries when resuming
- */
-function merge_existing_data(newNode: Node, existingNode: Node | null): void {
-  if (!existingNode) return;
-
-  // Copy existing summary if present
-  if (existingNode.summary) {
-    newNode.summary = existingNode.summary;
-  }
-
-  // Merge links (deduplicated)
-  for (const link of existingNode.links || []) {
-    const exists = newNode.links.some(
-      (l) =>
-        l.target_type === link.target_type &&
-        l.comment === link.comment &&
-        ((l.target_type === 'url' && l.url === link.url) ||
-          (l.target_type === 'file' && l.file_path === link.file_path) ||
-          (l.target_type === 'node' && l.node_id === link.node_id))
-    );
-    if (!exists) {
-      newNode.links.push(link);
-    }
-  }
-
-  // Recursively merge children by id
-  for (const newChild of newNode.children) {
-    const existingChild = existingNode.children?.find((c) => c.id === newChild.id);
-    if (existingChild) {
-      merge_existing_data(newChild, existingChild);
-    }
-  }
-}
-
-/**
- * Try to load existing mindmap for continuation
- */
-function try_load_existing_mindmap(outFile: string): MindmapJSON | null {
-  try {
-    if (!fs.existsSync(outFile)) return null;
-    const content = fs.readFileSync(outFile, 'utf-8');
-    const json = JSON.parse(content) as MindmapJSON;
-    if (!json.root || !json.hash) return null;
-    return json;
-  } catch {
-    return null;
-  }
-}
+// Re-export for backward compatibility (tests import directly from compile.js)
+export { parse_markdown, get_bottom_up_nodes } from './compile-utils.js';
 
 /**
  * Compile a markdown file into a mindmap
@@ -376,7 +76,6 @@ export async function compile_mindmap(
     const existingLock = try_read_lock(outFile);
 
     if (existingLock && is_lock_fresh(existingLock) && existingLock.source_hash === hash) {
-      // Fresh lock with matching hash - try to resume
       existingMindmap = try_load_existing_mindmap(outFile);
       if (existingMindmap && existingMindmap.hash === hash) {
         shouldResume = true;
@@ -399,7 +98,7 @@ export async function compile_mindmap(
   // Create lock file
   create_lock(outFile, mdPath, hash);
 
-  // Parse markdown
+  // Parse markdown and build tree
   const sections = parse_markdown(content);
   const fileName = path.basename(absolutePath, path.extname(absolutePath));
 
@@ -408,7 +107,6 @@ export async function compile_mindmap(
     ? content.slice(0, content.indexOf(firstHeadingMatch[0])).trim()
     : content.trim();
 
-  // Build new tree
   const root: Node = {
     id: '/',
     text: preamble,
@@ -451,34 +149,46 @@ export async function compile_mindmap(
     return mindmap;
   }
 
+  // Progress tracking
   let processedNodes = 0;
-  const onNodeStart = () => { processedNodes++; };
-  const onProgress = (round: number, tool: string) => {
-    const percent = Math.round((processedNodes / incompleteNodes) * 100);
-    const bar = '█'.repeat(Math.floor(percent / 5)) + '░'.repeat(20 - Math.floor(percent / 5));
-    process.stdout.write(
-      `\r\x1b[2K[mindmap] [${bar}] ${processedNodes}/${incompleteNodes} (${tool}, r${round})`
-    );
+  const activeOps: ActiveOp[] = [];
+
+  const onNodeStart = (_nodeTitle: string) => {
+    processedNodes++;
   };
+
+  const onProgress = (nodeTitle: string, round: number, tool: string, args: Record<string, unknown>) => {
+    // Update or add operation for this node
+    const existingIdx = activeOps.findIndex((op) => op.nodeTitle === nodeTitle);
+    if (existingIdx >= 0) {
+      activeOps[existingIdx] = { nodeTitle, round, tool, args };
+    } else {
+      activeOps.push({ nodeTitle, round, tool, args });
+      if (activeOps.length > 3) {
+        activeOps.shift();
+      }
+    }
+    process.stdout.write(renderProgress(processedNodes, incompleteNodes, activeOps));
+  };
+
   const onNodeComplete = () => {
     mindmap.updated_at = new Date().toISOString();
     fs.writeFileSync(outFile, JSON.stringify(mindmap, null, 2));
   };
 
+  // Print initial empty lines for progress display
+  process.stdout.write('\n\n\n');
+
   try {
-    await summarize_with_explorer(root, workDir, [], onProgress, onNodeStart, onNodeComplete);
+    await summarize_with_explorer(root, workDir, onProgress, onNodeStart, onNodeComplete);
   } catch (err) {
-    // Clean up progress line before showing error
-    process.stdout.write('\r\x1b[2K');
-    // Remove lock on failure so user can retry
+    process.stdout.write('\x1b[3A\x1b[J');
     remove_lock(outFile);
-    // Re-throw with context
     throw err;
   }
 
-  process.stdout.write('\r\x1b[2K');
-
-  // Final save and remove lock
+  // Clean up and finalize
+  process.stdout.write('\x1b[3A\x1b[J');
   mindmap.updated_at = new Date().toISOString();
   fs.writeFileSync(outFile, JSON.stringify(mindmap, null, 2));
   remove_lock(outFile);
@@ -488,137 +198,7 @@ export async function compile_mindmap(
 }
 
 /**
- * Collect all nodes in bottom-up order (leaves first, root last)
- * This ensures children are processed before parents
- */
-function collect_nodes_bottom_up(node: Node): Node[] {
-  const result: Node[] = [];
-  function traverse(n: Node) {
-    for (const child of n.children) {
-      traverse(child);
-    }
-    result.push(n);
-  }
-  traverse(node);
-  return result;
-}
-
-/**
- * Summarize all nodes in parallel using a dependency-aware approach
- * All leaf nodes start immediately; parents start as soon as all children complete
- * @param root - The root node
- * @param workDir - Working directory for file operations
- * @param onProgress - Progress callback for tool usage
- * @param onNodeStart - Callback called BEFORE processing each node
- * @param onNodeComplete - Callback called AFTER each node is complete
- */
-async function summarize_with_explorer(
-  root: Node,
-  workDir: string,
-  _ancestorTexts: string[] = [],
-  onProgress?: (round: number, tool: string) => void,
-  onNodeStart?: () => void,
-  onNodeComplete?: () => void
-): Promise<void> {
-  // Collect all nodes in bottom-up order (leaves first)
-  const allNodes = collect_nodes_bottom_up(root);
-
-  // Create a map from node reference to its promise
-  // This allows parents to await their children
-  const nodePromises = new Map<Node, Promise<void>>();
-
-  // Build ancestor texts for each node (path from root to node)
-  const ancestorTextsMap = new Map<Node, string[]>();
-  function buildAncestorTexts(node: Node, texts: string[]) {
-    ancestorTextsMap.set(node, texts);
-    const childTexts = [node.text, ...texts];
-    for (const child of node.children) {
-      buildAncestorTexts(child, childTexts);
-    }
-  }
-  buildAncestorTexts(root, []);
-
-  // Process each node - starts immediately for leaves, waits for children for parents
-  for (const node of allNodes) {
-    // Create promise for this node
-    const promise = (async () => {
-      // Wait for all children to complete first (they're already in the map)
-      // If any child fails, this will throw and propagate up (fail-fast)
-      const childPromises = node.children.map((child) => nodePromises.get(child)!);
-      await Promise.all(childPromises);
-
-      // Skip if already summarized (resume capability)
-      if (node.summary !== '') {
-        return;
-      }
-
-      // Call start callback BEFORE processing this node
-      if (onNodeStart) {
-        onNodeStart();
-      }
-
-      // Build ancestor context
-      const ancestorContext = ancestorTextsMap.get(node)!.join('\n\n---\n\n');
-
-      // Generate summary using explorer agent
-      let result;
-      try {
-        result = await summarizeWithExplorer(
-          node.title,
-          node.text,
-          ancestorContext,
-          workDir,
-          onProgress
-        );
-      } catch (err) {
-        // Fail fast: include node context in error for debugging
-        const nodeInfo = `Node: "${node.title}" (id: ${node.id})`;
-        const wrappedError = new Error(
-          `Failed to summarize ${nodeInfo}: ${(err as Error).message}`
-        );
-        wrappedError.cause = err;
-        throw wrappedError;
-      }
-      node.summary = result.summary;
-
-      // Convert marked files to Link objects and append to node.links
-      for (const item of result.markedFiles) {
-        node.links.push({
-          target_type: 'file',
-          file_path: item.path,
-          comment: item.reason || 'Discovered during exploration',
-        });
-      }
-
-      // Convert marked URLs to Link objects and append to node.links
-      for (const item of result.markedUrls) {
-        node.links.push({
-          target_type: 'url',
-          url: item.path,
-          comment: item.reason || 'Discovered during exploration',
-        });
-      }
-
-      // Call complete callback AFTER this node is fully processed
-      if (onNodeComplete) {
-        onNodeComplete();
-      }
-    })();
-
-    nodePromises.set(node, promise);
-  }
-
-  // Wait for all nodes to complete
-  // If any node fails, Promise.all rejects immediately (fail-fast)
-  await Promise.all(Array.from(nodePromises.values()));
-}
-
-/**
  * Compile from markdown content string (for testing)
- * @param content - Markdown content
- * @param fileName - Name for the root node
- * @param showProgress - Whether to show progress bar (default: false for tests)
- * @returns Compiled mindmap
  */
 export async function compile_mindmap_from_content(
   content: string,
@@ -627,7 +207,6 @@ export async function compile_mindmap_from_content(
 ): Promise<MindmapJSON> {
   const sections = parse_markdown(content);
 
-  // Extract preamble (content before first heading)
   const firstHeadingMatch = content.match(/^#{1,6}\s+/m);
   const preamble = firstHeadingMatch
     ? content.slice(0, content.indexOf(firstHeadingMatch[0])).trim()
@@ -648,7 +227,7 @@ export async function compile_mindmap_from_content(
 
   const mindmap: MindmapJSON = {
     dir: '',
-    source_file: '', // No source file for content-based compilation
+    source_file: '',
     hash,
     compiled_at: now.toISOString(),
     updated_at: now.toISOString(),
@@ -656,34 +235,32 @@ export async function compile_mindmap_from_content(
   };
 
   if (showProgress) {
-    // Count total nodes for progress bar
     const totalNodes = count_nodes(root);
     let currentNode = 0;
+    const activeOps: ActiveOp[] = [];
 
-    const onNodeStart = () => {
+    const onNodeStart = (_nodeTitle: string) => {
       currentNode++;
     };
 
-    const onProgress = (round: number, tool: string) => {
-      const percent = Math.round((currentNode / totalNodes) * 100);
-      const bar =
-        '█'.repeat(Math.floor(percent / 5)) +
-        '░'.repeat(20 - Math.floor(percent / 5));
-      process.stdout.write(
-        `\r[mindmap] Exploring [${bar}] ${currentNode}/${totalNodes} (${tool}, round ${round})`
-      );
+    const onProgress = (nodeTitle: string, round: number, tool: string, args: Record<string, unknown>) => {
+      const existingIdx = activeOps.findIndex((op) => op.nodeTitle === nodeTitle);
+      if (existingIdx >= 0) {
+        activeOps[existingIdx] = { nodeTitle, round, tool, args };
+      } else {
+        activeOps.push({ nodeTitle, round, tool, args });
+        if (activeOps.length > 3) activeOps.shift();
+      }
+      process.stdout.write(renderProgress(currentNode, totalNodes, activeOps));
     };
 
-    // Note: For content-based compilation, we don't save to file on each node
-    // since there's no output file specified
-    await summarize_with_explorer(root, process.cwd(), [], onProgress, onNodeStart);
-    process.stdout.write('\r\x1b[2K');
+    process.stdout.write('\n\n\n');
+    await summarize_with_explorer(root, process.cwd(), onProgress, onNodeStart);
+    process.stdout.write('\x1b[3A\x1b[J');
   } else {
     await summarize_with_explorer(root, process.cwd());
   }
 
-  // Update timestamp after completion
   mindmap.updated_at = new Date().toISOString();
-
   return mindmap;
 }
