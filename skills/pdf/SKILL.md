@@ -26,7 +26,13 @@ When working with PDF files, use **unpdf** - a modern, zero-dependency PDF libra
 
 ## Step 1: Extract Text (Create a Script)
 
-The `npx unpdf extract` CLI command may not work on all systems. Instead, create a script:
+The `npx unpdf extract` CLI command may not work on all systems. Instead, create a script in an isolated directory:
+
+```bash
+mkdir -p /tmp/pdf-work && cd /tmp/pdf-work && npm install unpdf
+```
+
+Then create the script:
 
 ```javascript
 // extract-pdf.mjs
@@ -46,7 +52,7 @@ console.log(`Extracted text saved to ${outputPath}`);
 
 Run with:
 ```bash
-node extract-pdf.mjs input.pdf output.txt
+cd /tmp/pdf-work && node extract-pdf.mjs /path/to/input.pdf /path/to/output.txt
 ```
 
 ## Step 2: Check Extraction
@@ -60,8 +66,17 @@ head -20 output.txt
 If unpdf extracts empty text, the PDF is likely image-based (scanned document). Use OCR instead:
 
 ### Install Required Packages
+
+**IMPORTANT**: Always use `cd <dir> && <command>` pattern to avoid installing packages in unintended directories. Create an isolated temporary directory:
+
 ```bash
-npm install pdf-to-img tesseract.js
+mkdir -p /tmp/pdf-work && cd /tmp/pdf-work && npm install pdf-to-img tesseract.js
+```
+
+Then create scripts in that directory:
+
+```bash
+cd /tmp/pdf-work && node ocr-pdf.cjs /path/to/input.pdf /path/to/output.txt
 ```
 
 ### Create OCR Script (CommonJS)
@@ -106,7 +121,7 @@ main(pdfPath, outputPath);
 
 Run with:
 ```bash
-node ocr-pdf.cjs input.pdf output.txt
+cd /tmp/pdf-work && node ocr-pdf.cjs /path/to/input.pdf /path/to/output.txt
 ```
 
 ## Language Support for OCR
@@ -121,10 +136,20 @@ Tesseract.js supports multiple languages. Specify them when creating the worker:
 
 ### Text-based PDF
 ```bash
-node skills/playground/one-off-scripts/extract-pdf.mjs "skills/playground/document.pdf" "skills/playground/extracted-content.txt"
+# Create work directory and install dependencies
+mkdir -p /tmp/pdf-work && cd /tmp/pdf-work && npm install unpdf
+
+# Create the extraction script (copy from Step 1 above)
+# Then run:
+cd /tmp/pdf-work && node extract-pdf.mjs /path/to/input.pdf /path/to/output.txt
 ```
 
 ### Image-based PDF (OCR)
 ```bash
-node skills/playground/one-off-scripts/ocr-pdf-simple.cjs "skills/playground/TBS.pdf" "skills/playground/tbs-ocr.txt"
+# Create work directory and install dependencies
+mkdir -p /tmp/pdf-work && cd /tmp/pdf-work && npm install pdf-to-img tesseract.js
+
+# Create the OCR script (copy from Step 3 above)
+# Then run:
+cd /tmp/pdf-work && node ocr-pdf.cjs /path/to/input.pdf /path/to/output.txt
 ```
