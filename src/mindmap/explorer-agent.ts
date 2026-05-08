@@ -556,13 +556,13 @@ ${ancestorContext || '(root level - no parent context)'}
 2. Use mark_file to mark local files that are directly relevant to this topic
 3. Use mark_url to mark web URLs that contain important information
 4. Discover implementation details, file locations, and code patterns
-5. Write a concise summary (50-100 words) that includes:
+5. Write a concise summary that includes:
    - What this section covers
    - Relevant files/modules (use mark_file)
    - Relevant URLs (use mark_url)
    - Key technical details
 
-Explore now. When done exploring, write your summary.`;
+Explore now. When done exploring, write your summary. Produce only the summary, without any additional explanations or commentary.`;
 }
 
 /**
