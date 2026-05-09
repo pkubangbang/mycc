@@ -1,13 +1,13 @@
 /**
- * /fork command - Save session and open in new tmux window
+ * /fork command - Save session and open in new tmux window (or print instructions)
  *
  * Usage:
- *   /fork - Save current session and open a new mycc instance in tmux
+ *   /fork - Save current session and open a new mycc instance (in tmux) or print instructions (outside tmux)
  *
  * Flow:
  *   1. Save current session to user directory
- *   2. Spawn a new tmux window running mycc with the saved session
- *   3. User can work in the new window while original session continues
+ *   2. If in tmux: spawn a new tmux window running mycc with the saved session
+ *   3. If not in tmux: print instructions for starting a new session
  */
 
 import type { SlashCommand } from '../types.js';
@@ -34,9 +34,12 @@ export const forkCommand: SlashCommand = {
       const inTmux = process.env.TMUX !== undefined;
 
       if (!inTmux) {
+        // Not in tmux - provide instructions for manual fork
         console.log(chalk.yellow('\nNot running inside tmux.'));
-        console.log(chalk.gray('To use /fork, start mycc inside a tmux session:'));
-        console.log(chalk.gray('  tmux new-session mycc'));
+        console.log(chalk.cyan('\nTo fork, open a new terminal and run:'));
+        console.log(chalk.white(`  mycc --session ${sessionId}`));
+        console.log(chalk.gray('\nOr start a new tmux session:'));
+        console.log(chalk.white(`  tmux new-session "mycc --session ${sessionId}"`));
         return;
       }
 
@@ -44,6 +47,8 @@ export const forkCommand: SlashCommand = {
       const tmuxSession = process.env.TMUX?.split(',')[1];
       if (!tmuxSession) {
         console.log(chalk.red('Error: Could not detect tmux session.'));
+        console.log(chalk.cyan('\nTo fork, open a new terminal and run:'));
+        console.log(chalk.white(`  mycc --session ${sessionId}`));
         return;
       }
 
@@ -67,8 +72,8 @@ export const forkCommand: SlashCommand = {
 
       child.on('error', (err) => {
         console.error(chalk.red(`Failed to open new window: ${err.message}`));
-        console.log(chalk.gray('You can manually run:'));
-        console.log(chalk.gray(`  mycc --session ${sessionId}`));
+        console.log(chalk.cyan('\nTo fork manually, open a new terminal and run:'));
+        console.log(chalk.white(`  mycc --session ${sessionId}`));
       });
 
       child.unref();
