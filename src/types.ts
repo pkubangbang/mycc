@@ -269,12 +269,13 @@ export interface CoreModule {
    * Parent's Core checks mode and worktree ownership internally.
    * Child's Core sends IPC to parent for evaluation.
    * @param tool - The tool requesting grant
-   * @param args - Tool arguments (path for file ops, command for bash)
+   * @param args - Tool arguments (path for file ops, command and intent for bash)
    * @returns Grant result with approval status and optional reason
    */
   requestGrant(tool: 'write_file' | 'edit_file' | 'bash', args: {
     path?: string;
     command?: string;
+    intent?: string;
   }): Promise<{ approved: boolean; reason?: string }>;
   /**
    * Get current agent mode ('plan' or 'normal')

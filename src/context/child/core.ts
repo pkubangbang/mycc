@@ -78,12 +78,13 @@ export class ChildCore extends BaseCore implements CoreModule {
    * Request grant for sensitive operations
    * Always sends IPC to parent - parent knows the mode
    * @param tool - The tool requesting grant
-   * @param args - Tool arguments (path for file ops, command for bash)
+   * @param args - Tool arguments (path for file ops, command and intent for bash)
    * @returns Grant result with approval status and optional reason
    */
   async requestGrant(tool: 'write_file' | 'edit_file' | 'bash', args: {
     path?: string;
     command?: string;
+    intent?: string;
   }): Promise<{ approved: boolean; reason?: string }> {
     // Always ask parent via IPC - parent knows the mode
     const response = await ipc.sendRequest<{ approved: boolean; reason?: string }>(

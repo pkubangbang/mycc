@@ -45,10 +45,10 @@ export const bashTool: ToolDefinition = {
     const intent = args.intent as string;
     const timeoutSeconds = args.timeout as number;
 
-    // Block dangerous commands
-    const dangerous = ['rm -rf /', 'sudo rm', 'mkfs', 'dd if=', '> /dev/sd'];
-    if (dangerous.some((d) => command.includes(d))) {
-      return 'Error: Dangerous command blocked';
+    // Check permission (respects plan mode and intent validation)
+    const grant = await ctx.core.requestGrant('bash', { command, intent });
+    if (!grant.approved) {
+      return grant.reason || 'Operation not permitted in current mode';
     }
 
     // Block direct git commit - must use git_commit tool

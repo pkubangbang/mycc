@@ -84,43 +84,64 @@ describe('bashTool', () => {
   });
 
   it('should block dangerous commands', async () => {
+    // Mock requestGrant to return blocked for dangerous commands
+    vi.mocked(ctx.core.requestGrant).mockResolvedValueOnce({
+      approved: false,
+      reason: 'Command blocked: Recursive delete from root directory',
+    });
+
     const result = await bashTool.handler(ctx, {
       command: 'rm -rf /',
       intent: 'dangerous test',
       timeout: 5,
     });
 
-    expect(result).toBe('Error: Dangerous command blocked');
+    expect(result).toContain('Command blocked');
   });
 
   it('should block "sudo rm" commands', async () => {
+    vi.mocked(ctx.core.requestGrant).mockResolvedValueOnce({
+      approved: false,
+      reason: 'Command blocked: Privileged deletion',
+    });
+
     const result = await bashTool.handler(ctx, {
       command: 'sudo rm -rf /home',
       intent: 'dangerous test',
       timeout: 5,
     });
 
-    expect(result).toBe('Error: Dangerous command blocked');
+    expect(result).toContain('Command blocked');
   });
 
   it('should block "mkfs" commands', async () => {
+    vi.mocked(ctx.core.requestGrant).mockResolvedValueOnce({
+      approved: false,
+      reason: 'Command blocked: Filesystem formatting',
+    });
+
     const result = await bashTool.handler(ctx, {
       command: 'mkfs.ext4 /dev/sda1',
       intent: 'dangerous test',
       timeout: 5,
     });
 
-    expect(result).toBe('Error: Dangerous command blocked');
+    expect(result).toContain('Command blocked');
   });
 
   it('should block "dd if=" commands', async () => {
+    vi.mocked(ctx.core.requestGrant).mockResolvedValueOnce({
+      approved: false,
+      reason: 'Command blocked: Disk imaging operation',
+    });
+
     const result = await bashTool.handler(ctx, {
       command: 'dd if=/dev/zero of=/dev/sda',
       intent: 'dangerous test',
       timeout: 5,
     });
 
-    expect(result).toBe('Error: Dangerous command blocked');
+    expect(result).toContain('Command blocked');
   });
 
   it('should handle timeout', async () => {

@@ -518,3 +518,64 @@ export async function retryChat(
     stopSpinner();
   }
 }
+
+// ─── retryMultipleChoice ──────────────────────────────────────────────
+
+/**
+ * Chat with automatic retry when response doesn't match expected choices.
+ *
+ * Useful for classification tasks where the LLM must respond with one of
+ * a predefined set of answers (e.g., "READ", "WRITE", "UNCERTAIN").
+ *
+ * @param request - The chat request (without stream)
+ * @param choices - Array of valid response strings (case-insensitive matching)
+ * @param config - Retry configuration
+ * @returns The matched choice (uppercase) or null if all retries exhausted
+ */
+export async function retryMultipleChoice(
+  request: Omit<ChatRequest, 'stream'>,
+  choices: string[],
+  config?: Partial<RetryConfig> & { signal?: AbortSignal },
+): Promise<string | null> {
+  const cfg = { ...DEFAULT_RETRY_CONFIG, ...config };
+  const validChoices = choices.map(c => c.toUpperCase());
+
+  for (let attempt = 1; attempt <= cfg.maxRetries + 1; attempt++) {
+    if (config?.signal?.aborted) {
+      return null;
+    }
+
+    try {
+      const response = await retryChat(request, { ...config, noSpinner: true });
+      const content = response.message?.content?.trim().toUpperCase() || '';
+
+      // Check if response matches one of the valid choices
+      for (const choice of validChoices) {
+        if (content === choice || content.includes(choice)) {
+          return choice;
+        }
+      }
+
+      // Response doesn't match any choice - retry with hint
+      if (attempt <= cfg.maxRetries) {
+        const delay = calculateDelay(attempt, cfg);
+        // Add hint to the prompt for next attempt
+        if (request.messages && request.messages.length > 0) {
+          const lastMessage = request.messages[request.messages.length - 1];
+          if (lastMessage.role === 'user') {
+            lastMessage.content += `\n\nYour previous response was invalid. You must respond with exactly one of: ${validChoices.join(', ')}. No other text.`;
+          }
+        }
+        await sleep(delay);
+      }
+    } catch {
+      // Transient error - will retry
+      if (attempt <= cfg.maxRetries) {
+        const delay = calculateDelay(attempt, cfg);
+        await sleep(delay);
+      }
+    }
+  }
+
+  return null;
+}

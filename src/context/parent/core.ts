@@ -4,6 +4,7 @@
 
 import chalk from 'chalk';
 import * as fs from 'fs';
+import * as path from 'path';
 import sharp from 'sharp';
 import type { CoreModule } from '../../types.js';
 import { ollama } from '../../ollama.js';
@@ -11,6 +12,7 @@ import { agentIO } from '../../loop/agent-io.js';
 import { isVerbose, getVisionModel, isVisionEnabled } from '../../config.js';
 import { BaseCore } from '../shared/base-core.js';
 import { getToolColor } from '../../utils/tool-colors.js';
+import { evaluateGrant } from '../grant/grant-evaluator.js';
 
 /**
  * Core module implementation for parent process
@@ -242,30 +244,35 @@ export class Core extends BaseCore implements CoreModule {
   /**
    * Request grant for sensitive operations
    * Parent is trusted but still respects mode
-   * @param _tool - The tool requesting grant (unused in parent, for interface consistency)
-   * @param _args - Tool arguments (unused in parent, for interface consistency)
+   * For bash: delegates to grant evaluator (5-step judging process)
+   * For files: checks mode and allowed file
+   * @param tool - The tool requesting grant
+   * @param args - Tool arguments (path for file ops, command and intent for bash)
    * @returns Grant result with approval status and optional reason
    */
   async requestGrant(tool: 'write_file' | 'edit_file' | 'bash', args: {
     path?: string;
     command?: string;
+    intent?: string;
   }): Promise<{ approved: boolean; reason?: string }> {
-    // Parent is trusted but still respects mode
+    // For bash: delegate to grant evaluator
+    if (tool === 'bash') {
+      return evaluateGrant('lead', { tool, ...args }, this);
+    }
+
+    // For files: existing logic
     if (this.modeState === 'plan') {
       // Check if the requested file matches the allowed file
-      if (tool === 'write_file' || tool === 'edit_file') {
-        if (args.path && this.allowedFile) {
-          const path = await import('path');
-          const resolvedRequested = path.isAbsolute(args.path)
-            ? args.path
-            : path.resolve(this.workDir, args.path);
-          const resolvedAllowed = path.isAbsolute(this.allowedFile)
-            ? this.allowedFile
-            : path.resolve(this.workDir, this.allowedFile);
+      if (args.path && this.allowedFile) {
+        const resolvedRequested = path.isAbsolute(args.path)
+          ? args.path
+          : path.resolve(this.workDir, args.path);
+        const resolvedAllowed = path.isAbsolute(this.allowedFile)
+          ? this.allowedFile
+          : path.resolve(this.workDir, this.allowedFile);
 
-          if (resolvedRequested === resolvedAllowed) {
-            return { approved: true };
-          }
+        if (resolvedRequested === resolvedAllowed) {
+          return { approved: true };
         }
       }
 
