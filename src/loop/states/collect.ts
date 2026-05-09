@@ -6,10 +6,10 @@
  * role sequence validation.
  */
 
-import chalk from 'chalk';
 import { AgentState } from '../state-machine.js';
 import type { MachineEnv, TurnVars, PassData, HandlerResult } from '../state-machine.js';
 import { agentIO } from '../agent-io.js';
+import { startWrapUp } from '../esc-wrap-up.js';
 
 // Confusion threshold for hint generation
 const CONFUSION_THRESHOLD = 10;
@@ -48,7 +48,8 @@ export async function handleCollect(
   if (confusionIndex >= CONFUSION_THRESHOLD && messageCount >= MIN_MESSAGES_FOR_HINT) {
     // Only generate hint after a valid transition point (assistant or tool message)
     if (lastRole === 'assistant' || lastRole === 'tool') {
-      agentIO.log(chalk.blue('[hint round] Generating problem analysis...'));
+      // Use verbose for hint round notification (not user-facing)
+      ctx.core.verbose('collect', 'Generating problem analysis (hint round)');
       // Get pending skills (skills with 'when' but no compiled condition)
       const pendingSkills = env.conditions.getPending();
       
@@ -58,7 +59,8 @@ export async function handleCollect(
           return await triologue.generateHintRound(abortController, confusionIndex, `Score: ${confusionIndex}`, pendingSkills);
         },
         () => {
-          agentIO.log(chalk.yellow('[hint round] ESC pressed - aborting'));
+          // Start wrap-up when ESC is pressed during hint generation
+          startWrapUp(triologue);
           return 'aborted' as const;
         }
       );

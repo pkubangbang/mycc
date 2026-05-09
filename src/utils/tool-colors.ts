@@ -88,7 +88,7 @@ const TOOL_COLORS: Record<string, (text: string) => string> = {
   idle: chalk.gray,
   worker: chalk.gray,
   session: chalk.gray,
-  assistant: chalk.gray,
+  assistant: chalk.yellow,
   auto_claim: chalk.gray,
   awaitTeam: chalk.red,
 

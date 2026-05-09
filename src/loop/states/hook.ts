@@ -56,8 +56,7 @@ export async function handleHook(
     return AgentState.STOP;
   }
 
-  // First round + has tool calls + has content → brief the response
-  if (turn.isFirstRound && pass.assistantContent) {
+  if (pass.assistantContent) {
     ctx.core.brief('info', 'assistant', pass.assistantContent);
   }
 

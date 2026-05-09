@@ -297,7 +297,8 @@ export class Core extends BaseCore implements CoreModule {
   ): Promise<T> {
     // Check if already in neglected mode (ESC already pressed before entering escAware)
     if (agentIO.isNeglectedMode()) {
-      this.brief('info', 'escAware', 'ESC already pressed - returning cleanup result');
+      // Use verbose logging instead of brief to avoid showing internal messages to user
+      this.verbose('escAware', 'ESC already pressed - returning cleanup result');
       return onCleanUp();
     }
 
@@ -312,7 +313,8 @@ export class Core extends BaseCore implements CoreModule {
 
     // Register callback BEFORE starting the operation
     const onNeglectedHandler = async () => {
-      this.brief('info', 'escAware', 'ESC pressed during slow operation - returning cleanup result');
+      // Use verbose logging instead of brief to avoid showing internal messages to user
+      this.verbose('escAware', 'ESC pressed during slow operation - returning cleanup result');
       abortController.abort();
       const result = await onCleanUp();
       if (escResolver) {

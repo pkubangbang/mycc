@@ -86,7 +86,6 @@ export async function handleTool(
     // ESC: abort current tool and return to PROMPT immediately
     if (agentIO.isNeglectedMode()) {
       agentIO.setNeglectedMode(false); // Clear neglected mode before returning to PROMPT
-      agentIO.log(chalk.yellow('\n[ESC] Tool execution interrupted - returning to prompt'));
       // Skip any remaining pending tool calls to maintain triologue parity
       // (tool responses must follow assistant tool_calls)
       triologue.skipPendingTools(

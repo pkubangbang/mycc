@@ -15,7 +15,7 @@ import chalk from 'chalk';
 import { AgentState } from '../state-machine.js';
 import type { MachineEnv, TurnVars, PassData, HandlerResult } from '../state-machine.js';
 import type { ToolCall } from '../../types.js';
-import { retryChat, MODEL } from '../../ollama.js';
+import { retryChat, MODEL, stopSpinner } from '../../ollama.js';
 import { buildPlanModePrompt, buildNormalModePrompt, isInPlanMode } from '../agent-prompts.js';
 import { agentIO } from '../agent-io.js';
 import { startWrapUp } from '../esc-wrap-up.js';
@@ -54,7 +54,8 @@ export async function handleLlm(
     try {
       // If ESC was already pressed before entering escAware, start wrap-up and return early
       if (agentIO.isNeglectedMode()) {
-        agentIO.log(chalk.yellow('[ESC] LLM call interrupted (pre-flight)'));
+        ctx.core.verbose('llm', 'ESC pressed before LLM call - starting wrap-up');
+        stopSpinner(); // Ensure spinner is stopped before returning to PROMPT
         startWrapUp(triologue);
         return AgentState.PROMPT;
       }
@@ -76,20 +77,16 @@ export async function handleLlm(
         },
         () => {
           // This runs when ESC is pressed DURING the LLM call
-          // The onNeglected callback in escAware already aborted the operation
-          // Here we just start wrap-up (only if not already started)
-          if (!agentIO.isNeglectedMode()) {
-            // Edge case: ESC pressed but neglectedMode not yet set by IPC handler
-            // Still show wrap-up to user
-            startWrapUp(triologue);
-          }
+          // Always start wrap-up to give user a quick response
+          startWrapUp(triologue);
           return null;
         }
       );
 
       // Check if ESC was pressed (null response from cleanup)
       if (!response) {
-        agentIO.log(chalk.yellow('[ESC] LLM response discarded due to interruption'));
+        ctx.core.verbose('llm', 'LLM response discarded due to ESC interruption');
+        stopSpinner(); // Ensure spinner is stopped before returning to PROMPT
         return AgentState.PROMPT;
       }
 

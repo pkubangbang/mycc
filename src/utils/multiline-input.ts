@@ -11,8 +11,9 @@ import { agentIO } from '../loop/agent-io.js';
 
 /**
  * Generate multiline input temp file content with HTML comment instructions
+ * Returns the content and the line number where user content starts
  */
-function generateMultilineFile(initialContent: string): string {
+function generateMultilineFile(initialContent: string): { content: string; userContentLine: number } {
   const lines: string[] = [
     '<!--',
     'MULTI-LINE INPUT',
@@ -29,7 +30,15 @@ function generateMultilineFile(initialContent: string): string {
     initialContent, // Pre-fill user's initial content
   ];
 
-  return lines.join('\n');
+  // Join lines to get final content
+  const content = lines.join('\n');
+
+  // Calculate the actual line number of the last line in the final content
+  // This accounts for any newlines in the initialContent
+  const allLines = content.split('\n');
+  const userContentLine = allLines.length;
+
+  return { content, userContentLine };
 }
 
 /**
@@ -65,12 +74,12 @@ function writeMultilineFile(content: string): string {
  */
 export async function openMultilineEditor(initialContent: string): Promise<string | null> {
   // Generate and write temp file
-  const fileContent = generateMultilineFile(initialContent);
+  const { content: fileContent, userContentLine } = generateMultilineFile(initialContent);
   const filePath = writeMultilineFile(fileContent);
 
   try {
-    // Open in editor
-    openEditor([filePath]);
+    // Open in editor with cursor at the bottom (user content line)
+    openEditor([`${filePath}:${userContentLine}`]);
     console.log(chalk.gray('Opening editor for multi-line input...'));
   } catch (err) {
     console.log(chalk.yellow(`Please edit the file manually: ${filePath}`));

@@ -136,6 +136,11 @@ Use this skill when you feel uncertain about the project context.
 ## Calendar
 Current date: ${currentDate} (year: ${currentYear})
 
+## Output Behavior
+Respond concisely when you use tools. Respond in detail otherwise.
+Do NOT repeat or summarize content that has already been shown via the brief tool.
+The brief tool displays information directly to the user - there is no need to repeat it in your response.
+
 ## Knowledge Boundary
 
 You have access to these knowledge sources (in priority order):
@@ -262,7 +267,9 @@ export function buildNormalModePrompt(
     `Current date: ${currentDate} (year: ${currentYear})`,
     '',
     '## Output Behavior',
-    'Respond concisely when you use tools. Respond in detail otherwise, but do not repeat the contents in the brief tool.',
+    'Respond concisely when you use tools. Respond in detail otherwise.',
+    'Do NOT repeat or summarize content that has already been shown via the brief tool.',
+    'The brief tool displays information directly to the user - there is no need to repeat it in your response.',
   ].join('\n');
 
   // For child process (teammate)
