@@ -262,7 +262,7 @@ export function buildNormalModePrompt(
     `Current date: ${currentDate} (year: ${currentYear})`,
     '',
     '## Output Behavior',
-    'Respond concisely when you use tools or write summary. Respond with detail if you need the user\'s input.',
+    'Respond concisely when you use tools. Respond in detail otherwise, but do not repeat the contents in the brief tool.',
   ].join('\n');
 
   // For child process (teammate)
@@ -337,7 +337,7 @@ export function buildNormalModePrompt(
     `If the task would benefit from parallel work, create teammates using tm_create tool to help you.`,
     `## Rules`,
     `- Use git_commit tool for ALL git commits. This tool will ask for user permission [y/N] before committing.`,
-    `- Use skill_load tool as soon as you have understood the user's intention, to equip yourself with domain knowledge.`,
+    `- Use brief tool to report key progress or findings to the user.`,
     common,
   ].join('\n');
 }
