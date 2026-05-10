@@ -205,7 +205,31 @@ function buildCommonSections(): string {
     buildCalendarSection(),
     '',
     buildOutputBehaviorSection(),
+    '',
+    buildContextManagementSection(),
   ].join('\n');
+}
+
+// ============================================================================
+// Context Management Section
+// ============================================================================
+
+function buildContextManagementSection(): string {
+  return `## Context Management
+
+Use \`checkpoint\` before starting a focused subtask (exploration, investigation, refactoring) to mark a clean boundary. After completing the subtask, use \`recap\` with the checkpoint ID to compress the exploration into a summary. This keeps your context clean and focused.
+
+**Workflow:**
+1. \`checkpoint({ description: "find authentication logic" })\` - Creates checkpoint with ID (e.g., "abc12345")
+2. [Explore files, read code, investigate] - Messages accumulate
+3. \`recap({ checkpoint_id: "abc12345" })\` - Compresses messages into summary
+4. Continue with clean context and summary of findings
+
+**Rules:**
+- Only ONE open checkpoint at a time
+- Checkpoint must be called ALONE (no other tools in same turn)
+- Use the checkpoint ID from step 1 when calling recap
+- The todo list tracks open checkpoints`;
 }
 
 // ============================================================================

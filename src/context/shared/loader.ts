@@ -60,6 +60,8 @@ import { skillCompileTool } from '../../tools/skill_compile.js';
 import { planOnTool } from '../../tools/plan_on.js';
 import { recallTool } from '../../tools/recall.js';
 import { planOffTool } from '../../tools/plan_off.js';
+import { checkpointTool } from '../../tools/checkpoint.js';
+import { recapTool } from '../../tools/recap.js';
 
 /**
  * Built-in tools
@@ -110,6 +112,8 @@ const builtInTools: ToolDefinition[] = [
   planOnTool,
   planOffTool,
   recallTool,
+  checkpointTool,
+  recapTool,
 ];
 
 /**

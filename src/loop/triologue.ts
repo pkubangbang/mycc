@@ -818,4 +818,97 @@ Provide your analysis in the specified JSON format.`;
   private defaultOnCompact(transcriptPath: string): void {
     console.log(chalk.blue(`[auto-compact triggered: ${transcriptPath}]`));
   }
+
+  // === Checkpoint Methods ===
+
+  /**
+   * Find the last open checkpoint in message history
+   * @returns Checkpoint info if found, null otherwise
+   */
+  findOpenCheckpoint(): { id: string; description: string } | null {
+    for (let i = this.messages.length - 1; i >= 0; i--) {
+      const msg = this.messages[i];
+      if (msg.role === 'user') {
+        const match = msg.content.match(/^\[CHECKPOINT ([a-z0-9]{8}): (.+)\]$/);
+        if (match) {
+          return { id: match[1], description: match[2] };
+        }
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Find all checkpoints in message history
+   * @returns Array of checkpoint info
+   */
+  findAllCheckpoints(): Array<{ id: string; description: string }> {
+    const checkpoints: Array<{ id: string; description: string }> = [];
+    for (const msg of this.messages) {
+      if (msg.role === 'user') {
+        const match = msg.content.match(/^\[CHECKPOINT ([a-z0-9]{8}): (.+)\]$/);
+        if (match) {
+          checkpoints.push({ id: match[1], description: match[2] });
+        }
+      }
+    }
+    return checkpoints;
+  }
+
+  /**
+   * Find a checkpoint by ID in message history
+   * @param id - The checkpoint ID to find
+   * @returns Checkpoint info with index if found, null otherwise
+   */
+  findCheckpointById(id: string): { id: string; description: string; index: number } | null {
+    for (let i = 0; i < this.messages.length; i++) {
+      const msg = this.messages[i];
+      if (msg.role === 'user') {
+        const regex = new RegExp('^\\[CHECKPOINT ' + id + ': (.+)\\]$');
+        const match = msg.content.match(regex);
+        if (match) {
+          return { id, description: match[1], index: i };
+        }
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Generate a random checkpoint ID (8 lowercase alphanumeric characters)
+   */
+  static generateCheckpointId(): string {
+    return Math.random().toString(36).slice(2, 10);
+  }
+
+  /**
+   * Get messages from a specific index to the end
+   * @param startIndex - The starting index
+   * @returns Messages from startIndex to end
+   */
+  getMessagesFrom(startIndex: number): Message[] {
+    return this.messages.slice(startIndex);
+  }
+
+  /**
+   * Replace messages from startIndex onwards with recap summary
+   * Used by recap tool to compress checkpoint messages into summary
+   * @param startIndex - Index of checkpoint message (inclusive)
+   * @param userMessage - User recap message to insert
+   * @param assistantMessage - Assistant acknowledgment to insert
+   */
+  recapMessages(startIndex: number, userMessage: Message, assistantMessage: Message): void {
+    // Keep messages before startIndex
+    const keptMessages = this.messages.slice(0, startIndex);
+    
+    // Replace with summary pair
+    this.messages = [...keptMessages, userMessage, assistantMessage];
+    
+    // Recalculate token count
+    this.tokenCount = this.estimateTokens(this.messages);
+    
+    // Clear pending tool calls (any calls from the recapped messages are now invalid)
+    this.pendingToolCalls.clear();
+    this.pendingToolCallOrder = [];
+  }
 }
