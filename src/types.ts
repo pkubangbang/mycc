@@ -73,7 +73,7 @@ export interface Tool {
 /**
  * Tool scope - different tools available in different contexts
  */
-export type ToolScope = 'main' | 'child' | 'bg';
+export type ToolScope = 'main' | 'child';
 
 // ============================================================================
 // Mailbox

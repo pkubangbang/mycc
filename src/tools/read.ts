@@ -1,7 +1,7 @@
 /**
  * read.ts - Read file contents with file type detection
  *
- * Scope: ['main', 'child', 'bg'] - Available to all agent types
+ * Scope: ['main', 'child'] - Available to lead and teammate agents
  *
  * Features:
  * - Detects file type (text vs binary)
@@ -106,7 +106,7 @@ Useful follow-ups for large files:
     },
     required: ['path'],
   },
-  scope: ['main', 'child', 'bg'],
+  scope: ['main', 'child'],
   handler: (ctx: AgentContext, args: Record<string, unknown>): string => {
     const filePath = args.path as string;
 

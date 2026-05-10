@@ -35,7 +35,7 @@ export const bashTool: ToolDefinition = {
     },
     required: ['command'],
   },
-  scope: ['main', 'child', 'bg'],
+  scope: ['main', 'child'],
   handler: (ctx: AgentContext, args: Record<string, unknown>): string => {
     const command = args.command as string;
     // ... implementation
@@ -55,7 +55,6 @@ Custom tools are stored in `.mycc/tools/` (relative to where `mycc` command star
 Tools can be available in different contexts:
 - `main` - Lead agent
 - `child` - Teammate agents
-- `bg` - Background task agents
 
 ## Skill Loading
 

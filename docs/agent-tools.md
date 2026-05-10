@@ -25,7 +25,7 @@ interface ToolDefinition {
     properties: Record<string, { type: string; description?: string }>;
     required?: string[];
   };
-  scope: string[];       // Contexts: ['main', 'child', 'bg']
+  scope: string[];       // Contexts: ['main', 'child']
   handler: (ctx: AgentContext, args: Record<string, unknown>) => string | Promise<string>;
 }
 ```
@@ -38,17 +38,14 @@ interface ToolDefinition {
 |-------|-------------|
 | `main` | Lead agent (primary) - full access |
 | `child` | Teammate agents spawned as child processes |
-| `bg` | Background task agents |
 
 **Tool Scope Constraints:**
 - Tools with `['main']` only available to lead agent
 - Tools with `['main', 'child']` available to lead and teammates
-- Tools with `['main', 'child', 'bg']` available everywhere
 
 **Summary:**
 - **Lead (main)**: All 45 tools
 - **Teammate (child)**: Cannot use `broadcast`, `tm_create`, `tm_remove`, `tm_await`, `tm_print`
-- **Background (bg)**: Can use `bash`, `read_file`, `write_file`, `edit_file`
 
 ---
 
@@ -58,7 +55,7 @@ interface ToolDefinition {
 
 **File**: `src/tools/bash.ts`
 
-**Scope**: `['main', 'child', 'bg']`
+**Scope**: `['main', 'child']`
 
 **Description**: Run a shell command (blocking).
 

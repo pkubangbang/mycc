@@ -1,7 +1,7 @@
 /**
  * bash.ts - Run shell commands with timeout enforcement
  *
- * Scope: ['main', 'child', 'bg'] - Available to all agent types
+ * Scope: ['main', 'child'] - Available to lead and teammate agents
  *
  * Parameters:
  * - command: The shell command to execute
@@ -39,7 +39,7 @@ export const bashTool: ToolDefinition = {
     },
     required: ['command', 'intent', 'timeout'],
   },
-  scope: ['main', 'child', 'bg'],
+  scope: ['main', 'child'],
   handler: async (ctx: AgentContext, args: Record<string, unknown>): Promise<string> => {
     const command = args.command as string;
     const intent = args.intent as string;

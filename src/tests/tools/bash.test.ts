@@ -249,7 +249,7 @@ describe('bashTool', () => {
 
   it('should have correct metadata', () => {
     expect(bashTool.name).toBe('bash');
-    expect(bashTool.scope).toEqual(['main', 'child', 'bg']);
+    expect(bashTool.scope).toEqual(['main', 'child']);
     expect(bashTool.input_schema.required).toContain('command');
     expect(bashTool.input_schema.required).toContain('intent');
     expect(bashTool.input_schema.required).toContain('timeout');

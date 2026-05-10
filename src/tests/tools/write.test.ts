@@ -155,7 +155,7 @@ describe('writeTool', () => {
 
   it('should have correct metadata', () => {
     expect(writeTool.name).toBe('write_file');
-    expect(writeTool.scope).toEqual(['main', 'child', 'bg']);
+    expect(writeTool.scope).toEqual(['main', 'child']);
     expect(writeTool.input_schema.required).toContain('path');
     expect(writeTool.input_schema.required).toContain('content');
   });

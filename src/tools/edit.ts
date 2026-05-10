@@ -1,7 +1,7 @@
 /**
  * edit.ts - Replace exact text in file
  *
- * Scope: ['main', 'child', 'bg'] - Available to all agent types
+ * Scope: ['main', 'child'] - Available to lead and teammate agents
  */
 
 import * as fs from 'fs';
@@ -40,7 +40,7 @@ export const editTool: ToolDefinition = {
     },
     required: ['path', 'old_text', 'new_text'],
   },
-  scope: ['main', 'child', 'bg'],
+  scope: ['main', 'child'],
   handler: async (ctx: AgentContext, args: Record<string, unknown>): Promise<string> => {
     // Check permission (respects plan mode)
     const grant = await ctx.core.requestGrant('edit_file', args);

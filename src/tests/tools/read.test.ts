@@ -152,7 +152,7 @@ describe('readTool', () => {
 
   it('should have correct metadata', () => {
     expect(readTool.name).toBe('read_file');
-    expect(readTool.scope).toEqual(['main', 'child', 'bg']);
+    expect(readTool.scope).toEqual(['main', 'child']);
     expect(readTool.input_schema.required).toContain('path');
   });
 });
