@@ -175,6 +175,9 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
 
       // 4. No tool calls = enter idle state
       if (!assistantMessage.tool_calls || assistantMessage.tool_calls.length === 0) {
+        // Reset brief nudge when entering idle (no more tool calls)
+        nextBriefNudge = 5;
+        
         // IMPORTANT: send finishing words to lead to coordinate.
         ctx.team.mailTo('lead', 'task done',
           assistantMessage.content ?? 'I have done my task, now running idle.', ctx.core.getName());
@@ -213,8 +216,10 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
             ctx.core.increaseConfusionIndex(2);
           }
 
-          // Reset brief nudge on successful tool execution
-          nextBriefNudge = 5;
+          // Reset brief nudge only when brief tool is used
+          if (toolName === 'brief') {
+            nextBriefNudge = 5;
+          }
 
         } catch (err) {
           const errorMsg = (err as Error).message;

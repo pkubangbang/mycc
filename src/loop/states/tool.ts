@@ -162,8 +162,10 @@ export async function handleTool(
         ctx.core.increaseConfusionIndex(2);
       }
 
-      // Reset brief nudge on successful tool execution
-      turn.nextBriefNudge = 5;
+      // Reset brief nudge only when brief tool is used
+      if (toolName === 'brief') {
+        turn.nextBriefNudge = 5;
+      }
 
     } catch (err) {
       if (err instanceof ResultTooLargeError) {

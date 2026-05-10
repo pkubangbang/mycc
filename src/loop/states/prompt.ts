@@ -39,10 +39,13 @@ export function setInitialQuery(query: string | null): void {
 
 export async function handlePrompt(
   env: MachineEnv,
-  _turn: TurnVars,
+  turn: TurnVars,
   _pass: PassData,
 ): Promise<HandlerResult> {
   const { triologue, inputProvider, sessionFilePath } = env;
+
+  // Reset brief nudge when entering PROMPT state (start of new turn)
+  turn.nextBriefNudge = 5;
 
   let query: string | null;
 
