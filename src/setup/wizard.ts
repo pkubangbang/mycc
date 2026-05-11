@@ -7,7 +7,8 @@
 import readline from 'readline';
 import chalk from 'chalk';
 import { getPrompts, PromptConfig } from './prompts.js';
-import { redactSensitive } from './display.js';
+import { redactSensitive, parseEnvFile } from './display.js';
+import { getUserConfigPath, getProjectConfigPath } from './paths.js';
 
 /**
  * Create a readline interface
@@ -126,12 +127,18 @@ export async function runWizard(
     // Step 1: Choose config location
     const location = await promptConfigLocation(rl);
 
-    // Step 2: Prompt for each configuration value
+    // Step 2: Get config for the selected location only (not merged)
+    // This ensures user sees/edits values from the specific config they're modifying
+    const locationConfig = getLocationConfig(location);
+
+    // Step 3: Prompt for each configuration value
     console.log(chalk.cyan('\n⚙️  Configuration\n'));
     console.log(chalk.dim('  Press Enter to accept the default or keep existing value.\n'));
 
     for (const promptConfig of prompts) {
-      const value = await prompt(rl, promptConfig, existingConfig[promptConfig.name]);
+      // Use location-specific config for "current" values
+      const currentValue = locationConfig[promptConfig.name] || existingConfig[promptConfig.name];
+      const value = await prompt(rl, promptConfig, currentValue);
       if (value !== undefined && value !== '') {
         config[promptConfig.name] = value;
       }
@@ -140,6 +147,17 @@ export async function runWizard(
     return { location, config };
   } finally {
     rl.close();
+  }
+}
+
+/**
+ * Get config from the specific location (not merged)
+ */
+function getLocationConfig(location: 'user' | 'project'): Record<string, string> {
+  if (location === 'user') {
+    return parseEnvFile(getUserConfigPath());
+  } else {
+    return parseEnvFile(getProjectConfigPath());
   }
 }
 
