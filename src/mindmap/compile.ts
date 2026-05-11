@@ -29,6 +29,7 @@ import {
   merge_existing_data,
 } from './compile-utils.js';
 import { summarizeWithExplorer } from './explorer-agent.js';
+import { incremental_compile } from './diff-mindmap.js';
 
 // Re-export for backward compatibility (tests import directly from compile.js)
 export { parse_markdown, get_bottom_up_nodes } from './compile-utils.js';
@@ -161,7 +162,22 @@ async function summarize_with_explorer(
 }
 
 /**
+ * Save mindmap atomically (copy-on-write)
+ * Writes to temp file first, then renames to ensure concurrent readers see valid data
+ */
+function save_mindmap_atomic(mindmap: MindmapJSON, outPath: string): void {
+  const tempPath = `${outPath}.tmp`;
+  fs.writeFileSync(tempPath, JSON.stringify(mindmap, null, 2));
+  fs.renameSync(tempPath, outPath);
+}
+
+/**
  * Compile a markdown file into a mindmap
+ *
+ * Uses incremental compilation when possible:
+ * - If existing mindmap exists and hash matches, returns existing (no changes)
+ * - If existing mindmap exists but hash differs, uses incremental compile
+ * - Only full compile when force=true or no existing mindmap
  *
  * Lock-based resumption is supported for interrupted compilations.
  *
@@ -192,11 +208,23 @@ export async function compile_mindmap(
     fs.mkdirSync(outDir, { recursive: true });
   }
 
-  // Check for existing mindmap for resumption
-  let existingMindmap: MindmapJSON | null = null;
-  if (!force) {
-    existingMindmap = try_load_existing_mindmap(outFile);
+  // Check for existing mindmap
+  const existingMindmap = try_load_existing_mindmap(outFile);
+
+  // No changes - return existing (fast path)
+  if (!force && existingMindmap && existingMindmap.hash === hash) {
+    return existingMindmap;
   }
+
+  // Incremental compile when existing mindmap exists (not forced)
+  if (!force && existingMindmap) {
+    console.log('[mindmap] Incremental compilation (source changed)');
+    const result = await incremental_compile(absolutePath, existingMindmap, workDir);
+    save_mindmap_atomic(result, outFile);
+    return result;
+  }
+
+  // Full compile (force=true or no existing mindmap)
 
   // Lock handling for resumption (same hash = interrupted compilation)
   if (!force) {
@@ -268,7 +296,7 @@ export async function compile_mindmap(
   const onNodeComplete = (nodeTitle: string) => {
     tracker.onNodeComplete(nodeTitle);
     mindmap.updated_at = new Date().toISOString();
-    fs.writeFileSync(outFile, JSON.stringify(mindmap, null, 2));
+    save_mindmap_atomic(mindmap, outFile);
   };
 
   // Print initial empty lines for progress display
@@ -288,7 +316,7 @@ export async function compile_mindmap(
   process.stdout.write('\x1b[4A\x1b[J');
 
   mindmap.updated_at = new Date().toISOString();
-  fs.writeFileSync(outFile, JSON.stringify(mindmap, null, 2));
+  save_mindmap_atomic(mindmap, outFile);
   remove_lock(outFile);
 
   console.log(`[mindmap] Completed ${totalNodes} nodes`);

@@ -36,13 +36,13 @@ export {
   validate_mindmap_structure, 
   parse_mindmap_json 
 } from './validate.js';
-export { 
-  load_mindmap, 
+export {
+  load_mindmap,
   load_mindmap_from_json,
-  get_default_mindmap_path, 
-  mindmap_exists, 
+  get_default_mindmap_path,
+  mindmap_exists,
   try_load_mindmap,
-  save_mindmap, 
+  save_mindmap,
   serialize_mindmap
 } from './load.js';
 export { parse_markdown, get_bottom_up_nodes } from './compile-utils.js';
@@ -50,3 +50,5 @@ export { compile_mindmap, compile_mindmap_from_content } from './compile.js';
 export { exploreAndSummarize, summarizeWithExplorer } from './explorer-agent.js';
 export type { ExplorationResult } from './explorer-agent.js';
 export { patch_mindmap, summarize_node, add_child_node, remove_node, move_node } from './patch.js';
+export { diff_nodes, incremental_compile, save_mindmap_atomic } from './diff-mindmap.js';
+export type { DiffResult } from './diff-mindmap.js';
