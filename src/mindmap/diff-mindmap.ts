@@ -9,7 +9,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import type { Node, MindmapJSON } from './types.js';
 import { compute_hash } from './validate.js';
-import { parse_markdown, build_node, extract_links, collect_nodes_bottom_up } from './compile-utils.js';
+import { parse_markdown, build_node, extract_links, collect_nodes_bottom_up, ProgressTracker } from './compile-utils.js';
 import { get_node, get_ancestors } from './get-node.js';
 import { remove_node } from './patch.js';
 import { summarizeWithExplorer } from './explorer-agent.js';
@@ -125,12 +125,14 @@ function build_root_node(sections: ReturnType<typeof parse_markdown>, preamble: 
  * @param mdPath - Path to markdown file
  * @param existingMindmap - Existing compiled mindmap
  * @param workDir - Working directory
+ * @param outPath - Output file path for atomic save
  * @returns Updated mindmap
  */
 export async function incremental_compile(
   mdPath: string,
   existingMindmap: MindmapJSON,
-  workDir: string
+  workDir: string,
+  outPath?: string
 ): Promise<MindmapJSON> {
   const absolutePath = path.resolve(workDir, mdPath);
   const content = fs.readFileSync(absolutePath, 'utf-8');
@@ -190,13 +192,33 @@ export async function incremental_compile(
     }
   }
 
+  // Count nodes needing update for progress
+  const nodesToUpdate = allNodes.filter((n) => needsUpdate.has(n.id));
+  const totalNodes = nodesToUpdate.length;
+
+  console.log(`[mindmap] Incremental: ${totalNodes} nodes need update (${diff.textChanged.size} changed, ${diff.added.size} added, ${diff.removed.size} removed)`);
+
+  // Progress tracking
+  const tracker = new ProgressTracker(totalNodes, 3);
+
+  // Print initial empty lines for progress display
+  process.stdout.write('\n\n\n\n');
+
   // Second pass: re-summarize nodes that need it
+  let processedCount = 0;
   for (const node of allNodes) {
     if (needsUpdate.has(node.id)) {
+      tracker.onNodeStart(node.title);
+
       const ancestors = get_ancestors(existingMindmap, node.id);
       const ancestorTexts = ancestors.map((a) => a.text).join('\n\n---\n\n');
 
-      const result = await summarizeWithExplorer(node.title, node.text, ancestorTexts, workDir);
+      // Create progress callback that wraps tracker with node info
+      const onProgress = (round: number, tool: string, args: Record<string, unknown>) => {
+        tracker.onProgress(node.title, node.level, round, tool, args);
+      };
+
+      const result = await summarizeWithExplorer(node.title, node.text, ancestorTexts, workDir, onProgress);
 
       node.summary = result.summary;
 
@@ -215,13 +237,27 @@ export async function incremental_compile(
           comment: item.reason || 'Discovered during exploration',
         });
       }
+
+      tracker.onNodeComplete(node.title);
+      processedCount++;
+
+      // Save progress
+      if (outPath) {
+        existingMindmap.updated_at = new Date().toISOString();
+        save_mindmap_atomic(existingMindmap, outPath);
+      }
     }
   }
+
+  // Clean up progress display
+  tracker.finish();
+  process.stdout.write('\x1b[4A\x1b[J');
 
   // 7. Update metadata
   existingMindmap.hash = compute_hash(content);
   existingMindmap.updated_at = new Date().toISOString();
 
+  console.log(`[mindmap] Completed ${processedCount} nodes`);
   return existingMindmap;
 }
 

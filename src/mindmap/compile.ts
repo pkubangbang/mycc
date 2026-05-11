@@ -219,8 +219,7 @@ export async function compile_mindmap(
   // Incremental compile when existing mindmap exists (not forced)
   if (!force && existingMindmap) {
     console.log('[mindmap] Incremental compilation (source changed)');
-    const result = await incremental_compile(absolutePath, existingMindmap, workDir);
-    save_mindmap_atomic(result, outFile);
+    const result = await incremental_compile(absolutePath, existingMindmap, workDir, outFile);
     return result;
   }
 
