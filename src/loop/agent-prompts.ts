@@ -217,7 +217,7 @@ function buildCommonSections(): string {
 function buildContextManagementSection(): string {
   return `## Checkpoint and recap
 
-Checkpoint and recap tools work together to save context consumption and keep you focused.
+Checkpoint and recap tools work together to manage subtask boundaries and keep you focused.
 
 **When to use checkpoint:**
 - Before reading multiple files to understand a codebase
@@ -232,14 +232,17 @@ Checkpoint and recap tools work together to save context consumption and keep yo
 **Workflow:**
 1. Use checkpoint tool to creates checkpoint with ID (e.g., "abc12345")
 2. [Explore files, read code, investigate] - Messages accumulate
-3. Use recap with the above checkpoint ID to summarize the messages
-4. Continue with clean context and summary of findings
+3. Close the checkpoint with one of two options:
+   - recap({ checkpoint_id: "abc12345" }) - Summarize findings and close
+   - recap({ checkpoint_id: "abc12345", abandon: true }) - Discard and close (if distracted)
+4. Continue with clean context
 
 **Rules:**
 - Only ONE open checkpoint at a time
 - Checkpoint must be called ALONE (no other tools in same turn)
 - Use the checkpoint ID from step 1 when calling recap
-- The todo list tracks open checkpoints`;
+- The todo list tracks open checkpoints
+- If you get distracted or abandon a subtask, use recap with abandon: true to discard the exploration`;
 }
 
 // ============================================================================

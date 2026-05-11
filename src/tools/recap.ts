@@ -15,17 +15,19 @@ import type { ToolDefinition } from '../types.js';
 
 export const recapTool: ToolDefinition = {
   name: 'recap',
-  description: `Compress messages from a checkpoint into a summary. Call after completing a subtask to clean up context.
+  description: `Close a checkpoint. Use after completing or abandoning a subtask.
 
 Usage:
 1. First create a checkpoint with checkpoint({ description: "..." })
 2. Perform your subtask (read files, explore, investigate)
-3. Call recap({ checkpoint_id: "..." }) with the ID from step 1
-4. Messages from checkpoint onwards are replaced with a summary
+3. Call recap to close the checkpoint:
+   - recap({ checkpoint_id: "..." }) - Summarize and close (subtask completed)
+   - recap({ checkpoint_id: "...", abandon: true }) - Discard and close (subtask abandoned)
 
 Rules:
 - Requires a valid checkpoint ID
-- Summarizes all messages from checkpoint to end
+- Without abandon: Summarizes all messages from checkpoint to end
+- With abandon: Discards all messages from checkpoint to end (no summary)
 - Marks the corresponding todo as done
 - Only one checkpoint can be open at a time`,
   input_schema: {
@@ -34,6 +36,10 @@ Rules:
       checkpoint_id: {
         type: 'string',
         description: 'The checkpoint ID returned by the checkpoint tool (8-character hash).',
+      },
+      abandon: {
+        type: 'boolean',
+        description: 'If true, discard messages without summarizing. Use when abandoning a distracted subtask.',
       },
     },
     required: ['checkpoint_id'],

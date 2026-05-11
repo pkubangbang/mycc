@@ -174,6 +174,7 @@ export async function handleRecap(
 ): Promise<RecapResult> {
   const triologue = ctx.triologue;
   const checkpointId = args.checkpoint_id as string;
+  const abandon = args.abandon === true;
 
   if (!checkpointId || typeof checkpointId !== 'string' || checkpointId.trim() === '') {
     return { success: false, result: 'Error: checkpoint_id is required and must be a non-empty string.' };
@@ -194,12 +195,53 @@ export async function handleRecap(
   // Get messages from checkpoint to end
   const messages = triologue.getMessagesFrom(checkpoint.index);
 
+  // Get token count BEFORE recap
+  const tokensBefore = triologue.getTokenCount();
+
+  // Handle abandon mode: discard messages without summarizing
+  if (abandon) {
+    // Create abandon messages (brief marker, no summary)
+    const userMessage: Message = {
+      role: 'user',
+      content: `[RECAP] Abandoned checkpoint "${checkpoint.description}"`,
+    };
+    const assistantMessage: Message = {
+      role: 'assistant',
+      content: 'Understood. Checkpoint abandoned, messages discarded.',
+    };
+
+    // Replace messages from checkpoint onwards with abandon marker
+    triologue.recapMessages(checkpoint.index, userMessage, assistantMessage);
+
+    // Get token count AFTER recap
+    const tokensAfter = triologue.getTokenCount();
+
+    // Mark todo as done
+    ctx.todo.patchTodoList([{
+      name: `Checkpoint: ${checkpoint.description}`,
+      done: true,
+    }]);
+
+    // Brief the user
+    const coloredBefore = chalk.yellow(tokensBefore.toLocaleString());
+    const coloredAfter = chalk.green(tokensAfter.toLocaleString());
+    ctx.core.brief('info', 'recap',
+      `(${coloredBefore} → ${coloredAfter} tokens)`,
+      `Abandoned: ${checkpoint.description}`
+    );
+
+    return {
+      success: true,
+      result: `[RECAP] Abandoned checkpoint "${checkpoint.description}"
+
+${messages.length} messages discarded. Checkpoint closed.`
+    };
+  }
+
+  // Normal mode: summarize messages
   if (messages.length === 0) {
     return { success: false, result: 'Error: No messages to summarize.' };
   }
-
-  // Get token count BEFORE recap
-  const tokensBefore = triologue.getTokenCount();
 
   // Generate summary using LLM
   const conversationText = minifyMessages(messages);
@@ -236,9 +278,9 @@ ${conversationText}`,
 
     // Check if ESC was pressed (null response from cleanup)
     if (!response) {
-      return { 
-        success: false, 
-        result: `[RECAP] Cancelled: ESC pressed during summarization. Checkpoint "${checkpoint.description}" remains open.` 
+      return {
+        success: false,
+        result: `[RECAP] Cancelled: ESC pressed during summarization. Checkpoint "${checkpoint.description}" remains open.`
       };
     }
   } else {
