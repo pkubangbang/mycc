@@ -35,7 +35,6 @@ interface LineEditorOptions {
   stdout: NodeJS.WriteStream;      // Usually process.stdout
   onDone: (value: string) => void; // Callback when user presses Enter
   history?: string[];              // Optional history array for up/down navigation
-  onDoubleCtrlL?: () => void;      // Callback for double Ctrl+L (clear screen + clear history)
 }
 
 /**
@@ -71,7 +70,6 @@ interface LineInfo {
 export class LineEditor {
   // Default prompts for bang command mode
   private static readonly BANG_PROMPT = '\x1b[45m\x1b[30mrun cmd ! \x1b[0m';  // Magenta background, black text
-  private static readonly CTRL_L_DOUBLE_PRESS_MS = 3000;  // 3 seconds for double press
 
   // Configuration
   private prompt: string;  // Changed from readonly to allow dynamic updates
@@ -80,13 +78,13 @@ export class LineEditor {
   private promptLength: number;  // Changed from readonly
   private columns: number;
   private readonly originalPrompt: string;  // Store original prompt for switching back
-  private readonly onDoubleCtrlL?: () => void;  // Callback for double Ctrl+L
 
   // Content storage: flat array of graphemes + CURSOR marker
   private content: string[] = [CURSOR];
 
-  // Double Ctrl+L detection
-  private lastCtrlLTime: number | null = null;
+  // Whisper line state (controlled by AgentIO)
+  private whisperText: string | null = null;
+  private whisperTimer: ReturnType<typeof setTimeout> | null = null;
 
   // Cached line info
   private lineInfo: LineInfo;
@@ -130,6 +128,52 @@ export class LineEditor {
     this.renderQueued = false;
   }
 
+  /**
+   * Set whisper line text with optional auto-clear duration.
+   * The whisper line appears above the prompt and auto-clears after duration ms.
+   * @param text - The text to display (null to clear immediately)
+   * @param duration - Auto-clear duration in ms (optional, no auto-clear if omitted)
+   */
+  setWhisper(text: string | null, duration?: number): void {
+    // Clear any existing timer
+    if (this.whisperTimer) {
+      clearTimeout(this.whisperTimer);
+      this.whisperTimer = null;
+    }
+
+    // Clear whisper line
+    if (text === null) {
+      if (this.whisperText !== null) {
+        this.whisperText = null;
+        this.render();
+      }
+      return;
+    }
+
+    // Set whisper line
+    this.whisperText = text;
+    this.render();
+
+    // Set auto-clear timer if duration provided
+    if (duration !== undefined) {
+      this.whisperTimer = setTimeout(() => {
+        this.whisperText = null;
+        this.whisperTimer = null;
+        this.render();
+      }, duration);
+    }
+  }
+
+  /**
+   * Clear the screen and re-render.
+   * Called by AgentIO when Ctrl+L is pressed.
+   */
+  clearScreen(): void {
+    this.stdout.write('\x1b[2J\x1b[H');
+    this.screenStartRow = 0;
+    this.render();
+  }
+
   // History
   private history: string[] = [];
   private historyIndex = -1;
@@ -141,7 +185,6 @@ export class LineEditor {
     this.stdout = options.stdout;
     this.onDone = options.onDone;
     this.history = options.history ? [...options.history] : [];
-    this.onDoubleCtrlL = options.onDoubleCtrlL;
     this.promptLength = stringWidth(stripAnsi(this.prompt));
 
     // Get columns from environment (set by Coordinator) or default
@@ -291,6 +334,10 @@ export class LineEditor {
    * we always render an empty line below the content. This creates a consistent visual buffer
    * that clears any stale content from previous renders.
    *
+   * Whisper line:
+   * - If set, displays above the prompt in dim gray
+   * - Auto-clears after duration (if set via setWhisper)
+   *
    * Cursor tracking model:
    * - screenStartRow stores which content line the cursor was on after the previous render
    * - After render, cursor is positioned within content (at cursorLine)
@@ -301,6 +348,7 @@ export class LineEditor {
     const totalLines = info.lines.length;
     const cursorLine = info.cursorLine;
     const cursorCol = info.cursorCol;
+    const hasWhisper = this.whisperText !== null;
 
     // Build output buffer
     const output: string[] = [];
@@ -308,7 +356,8 @@ export class LineEditor {
     // Move to starting position - go to beginning of our content area
     // Cursor is currently at (cursorLine, cursorCol) within content
     // We need to move up cursorLine lines to reach line 0 (content start)
-    const linesToMoveUp = this.screenStartRow;
+    // Add 1 to account for whisper line if present
+    const linesToMoveUp = this.screenStartRow + (hasWhisper ? 1 : 0);
     output.push('\r');
     if (linesToMoveUp > 0) {
       output.push(`\x1b[${linesToMoveUp}A`);
@@ -316,6 +365,11 @@ export class LineEditor {
 
     // Clear current line and everything below
     output.push('\x1b[2K\x1b[J');
+
+    // Write whisper line if present (above prompt)
+    if (hasWhisper) {
+      output.push(`\x1b[90m${this.whisperText}\x1b[0m\n`);  // Dim gray text
+    }
 
     // Write all lines
     for (let i = 0; i < totalLines; i++) {
@@ -345,7 +399,8 @@ export class LineEditor {
     this.stdout.write(output.join(''));
 
     // Update screen tracking - cursor is now at cursorLine within content
-    this.screenStartRow = cursorLine;
+    // Whisper line adds 1 extra row above content
+    this.screenStartRow = cursorLine + (hasWhisper ? 1 : 0);
   }
 
   // === Cursor Movement ===
@@ -568,29 +623,7 @@ export class LineEditor {
       return;
     }
 
-    if (key.ctrl && key.name === 'l') {
-      const now = Date.now();
-      const timeSinceLast = this.lastCtrlLTime ? now - this.lastCtrlLTime : Infinity;
-
-      // Double Ctrl+L within 3s: clear screen AND call callback (for clearing history)
-      if (timeSinceLast < LineEditor.CTRL_L_DOUBLE_PRESS_MS && this.onDoubleCtrlL) {
-        this.lastCtrlLTime = null;
-        try {
-          this.onDoubleCtrlL();
-        } catch {
-          // Ignore callback errors
-        }
-      } else {
-        // Single Ctrl+L: just track the time
-        this.lastCtrlLTime = now;
-      }
-
-      // Always clear screen on Ctrl+L
-      this.stdout.write('\x1b[2J\x1b[H');
-      this.screenStartRow = 0;
-      this.render();
-      return;
-    }
+    // Note: Ctrl+L is handled by AgentIO, not LineEditor
 
     if (key.ctrl && key.name === 'k') {
       // Delete from cursor to end
@@ -742,6 +775,10 @@ export class LineEditor {
     if (this.resizeTimer) {
       clearTimeout(this.resizeTimer);
       this.resizeTimer = null;
+    }
+    if (this.whisperTimer) {
+      clearTimeout(this.whisperTimer);
+      this.whisperTimer = null;
     }
   }
 }

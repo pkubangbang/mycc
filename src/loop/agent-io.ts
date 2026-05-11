@@ -83,8 +83,11 @@ class AgentIO {
   // Default history with common slash commands for easy access
   private lineHistory: string[] = ['/mindmap compile CLAUDE.md', '/mode plan', 'show me all the tools and skills that you can use'];
 
-  // Callback for double Ctrl+L (clear conversation history)
+  // Double Ctrl+L detection (clear conversation history)
+  private static readonly CTRL_L_DOUBLE_PRESS_MS = 3000;  // 3 seconds for double press
+  private lastCtrlLTime: number | null = null;
   private onDoubleCtrlLCallback: (() => void) | null = null;
+  private whisperTimeout: ReturnType<typeof setTimeout> | null = null;
 
   // Buffer for output during user interaction (prompt displayed or wrapping up)
   private outputBuffer: Array<{
@@ -246,16 +249,67 @@ class AgentIO {
     this.onDoubleCtrlLCallback = callback;
   }
 
+  /**
+   * Clear whisper line and reset Ctrl+L timing state
+   */
+  private clearCtrlLState(): void {
+    this.lastCtrlLTime = null;
+    if (this.whisperTimeout) {
+      clearTimeout(this.whisperTimeout);
+      this.whisperTimeout = null;
+    }
+    if (this.activeLineEditor) {
+      this.activeLineEditor.setWhisper(null);
+    }
+  }
+
   // Key event handling (for LineEditor)
 
   /**
    * Handle a key event from Coordinator (via IPC)
-   * Forwards to active LineEditor if one exists
+   * Intercepts Ctrl+L for double-press detection and whisper line management
+   * Forwards other keys to active LineEditor
    */
   handleKeyEvent(key: KeyInfo): void {
-    if (this.activeLineEditor) {
-      this.activeLineEditor.handleKey(key);
+    if (!this.activeLineEditor) {
+      return;
     }
+
+    // Intercept Ctrl+L for double-press detection
+    if (key.ctrl && key.name === 'l') {
+      const now = Date.now();
+      const timeSinceLast = this.lastCtrlLTime ? now - this.lastCtrlLTime : Infinity;
+
+      // Double Ctrl+L within 3s: clear screen, clear whisper, execute callback
+      if (timeSinceLast < AgentIO.CTRL_L_DOUBLE_PRESS_MS && this.onDoubleCtrlLCallback) {
+        this.clearCtrlLState();
+        this.activeLineEditor.clearScreen();
+        try {
+          this.onDoubleCtrlLCallback();
+        } catch {
+          // Ignore callback errors
+        }
+        return;
+      }
+
+      // First Ctrl+L: clear screen, show whisper line, track time
+      this.lastCtrlLTime = now;
+      this.activeLineEditor.clearScreen();
+
+      // Show whisper line with 3s auto-clear
+      this.activeLineEditor.setWhisper('Press Ctrl+L again to clear history', AgentIO.CTRL_L_DOUBLE_PRESS_MS);
+
+      // Clear timing state when whisper auto-clears
+      this.whisperTimeout = setTimeout(() => {
+        this.lastCtrlLTime = null;
+        this.whisperTimeout = null;
+      }, AgentIO.CTRL_L_DOUBLE_PRESS_MS);
+
+      return;
+    }
+
+    // Forward other keys to LineEditor
+    this.activeLineEditor.handleKey(key);
   }
 
   /**
@@ -352,7 +406,6 @@ class AgentIO {
             resolve(value);
           },
           history: this.lineHistory,
-          onDoubleCtrlL: this.onDoubleCtrlLCallback || undefined,
         });
 
         // Check if wrap-up already completed while LineEditor was starting

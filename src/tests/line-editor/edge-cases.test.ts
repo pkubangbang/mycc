@@ -196,12 +196,16 @@ describe('LineEditor - Edge Cases', () => {
     expect(onDone).toHaveBeenCalledWith('Hello!');
   });
 
-  it('should handle Ctrl+L (clear screen)', () => {
+  it('should ignore Ctrl+L (handled by AgentIO, not LineEditor)', () => {
+    // Ctrl+L is now handled by AgentIO for double-press detection and whisper line
+    // LineEditor should NOT handle it
     editor = createEditor();
     editor.handleKey(charKey('a'));
     writeCalls = [];
+    vi.mocked(mockStdout.write).mockClear();
     editor.handleKey(key('l', { ctrl: true }));
-    expect(mockStdout.write).toHaveBeenCalled();
+    // LineEditor should not write anything for Ctrl+L
+    expect(mockStdout.write).not.toHaveBeenCalled();
     // Content should still exist
     editor.handleKey(key('return'));
     expect(onDone).toHaveBeenCalledWith('a');

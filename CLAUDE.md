@@ -291,10 +291,15 @@ Workflow:
 
 Scope: Main agent only (not available to teammates). Implementation is in the state machine (`hook.ts`), not the tool handler, because it requires access to `triologue` which is outside `AgentContext`.
 
-### prompt line and letter box
+### prompt line, whisper line, and letter box
 
 The prompt line is where the user can type and submit the query. When in normal mode, it displays as `agent >> `.
 When in plan mode, it displays as `plan >> `. If the user is typing bang command, it displays as `run cmd ! `.
+
+The whisper line is a subtle visual hint displayed above the prompt line for transient UI feedback. It's used for
+short-lived hints that guide user actions. The first use case is "Mycc is wrapping up..." shown during ESC wrap-up.
+Another use case is after pressing Ctrl+L once, showing "Press Ctrl+L again to clear history" to indicate the
+double-press window is active. The whisper line appears and disappears automatically based on context.
 
 The letter box is what the llm reply to the user formally. It is actually the last message from the llm before 
 leaving the agent loop. It displays as a green block of text with the first line like below:
