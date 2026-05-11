@@ -19,6 +19,15 @@ import { buildNormalModePrompt } from '../loop/agent-prompts.js';
 import { getTokenThreshold, getMyccDir } from '../config.js';
 import { Triologue } from '../loop/triologue.js';
 import { ipc, sendStatus } from './child/ipc-helpers.js';
+import {
+  validateCheckpointIsolation,
+  validateRecapIsolation,
+  handleCheckpoint as handleCheckpointTool,
+  handleRecap as handleRecapTool,
+  addCheckpointMarker,
+  addContinuationPrompt,
+  type CheckpointContext,
+} from '../loop/checkpoint-recap.js';
 
 const WORKDIR = process.cwd();
 const POLL_INTERVAL = 5000; // 5 seconds
@@ -188,6 +197,86 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
         }
         // Resume work phase
         continue;
+      }
+
+      // 4.5. Handle meta-tools (checkpoint and recap) before regular tool execution
+      // These need special handling because they require triologue access
+      const toolCalls = assistantMessage.tool_calls as ToolCall[];
+      const hasCheckpoint = toolCalls.some(tc => tc.function.name === 'checkpoint');
+      const hasRecap = toolCalls.some(tc => tc.function.name === 'recap');
+
+      if (hasCheckpoint || hasRecap) {
+        // Validate isolation (must be called alone)
+        const validation = hasCheckpoint 
+          ? validateCheckpointIsolation(toolCalls)
+          : validateRecapIsolation(toolCalls);
+        
+        if (!validation.valid) {
+          // Block with error message
+          triologue.agent(assistantMessage.content || '', toolCalls);
+          for (const tc of toolCalls) {
+            triologue.tool(tc.function.name, validation.message!, tc.id);
+          }
+          ctx.core.brief('error', hasCheckpoint ? 'checkpoint' : 'recap', validation.message!);
+          continue;
+        }
+
+        // Create checkpoint context for shared handlers
+        const checkpointCtx: CheckpointContext = {
+          core: ctx.core,
+          todo: ctx.todo,
+          triologue,
+        };
+
+        if (hasCheckpoint) {
+          // Handle checkpoint
+          const tc = toolCalls[0]; // We validated it's alone
+          const args = tc.function.arguments as Record<string, unknown>;
+          
+          // Register the tool call
+          triologue.agent(assistantMessage.content || '', toolCalls);
+          
+          // Execute checkpoint
+          const result = handleCheckpointTool(args, checkpointCtx);
+          
+          // Add tool response
+          triologue.tool('checkpoint', result.result, tc.id);
+          
+          // Add checkpoint marker if successful
+          if (result.success && result.id) {
+            addCheckpointMarker(triologue, result.id, result.description);
+          }
+          
+          // Brief the assistant content if any
+          if (assistantMessage.content) {
+            ctx.core.brief('info', 'assistant', assistantMessage.content);
+          }
+          
+          continue; // Skip regular tool execution
+        }
+
+        if (hasRecap) {
+          // Handle recap
+          const tc = toolCalls[0]; // We validated it's alone
+          const args = tc.function.arguments as Record<string, unknown>;
+          
+          // For recap: DON'T register agent message first since recapMessages will replace it
+          // Show assistant text content if any
+          if (assistantMessage.content) {
+            ctx.core.brief('info', 'assistant', assistantMessage.content);
+          }
+          
+          // Execute recap (no escAware for teammates - no ESC handling needed)
+          const result = await handleRecapTool(args, checkpointCtx);
+          
+          // Brief the recap result
+          ctx.core.brief('info', 'recap', result.result.split('\n')[0]);
+          
+          // Add continuation prompt
+          addContinuationPrompt(triologue);
+          
+          continue; // Skip regular tool execution
+        }
       }
 
       // 5. Execute tools

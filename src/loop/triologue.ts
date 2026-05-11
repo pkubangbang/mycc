@@ -560,6 +560,20 @@ Provide your analysis in the specified JSON format.`;
   }
 
   /**
+   * Get current token count
+   */
+  getTokenCount(): number {
+    return this.tokenCount;
+  }
+
+  /**
+   * Get token threshold
+   */
+  getTokenThreshold(): number {
+    return this.options.tokenThreshold;
+  }
+
+  /**
    * Load a single restoration pair into the triologue without triggering onMessage callback.
    * Used during session restoration to preload summary context.
    * @param pair - A [user_message, assistant_message] tuple

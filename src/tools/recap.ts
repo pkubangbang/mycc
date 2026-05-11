@@ -38,7 +38,7 @@ Rules:
     },
     required: ['checkpoint_id'],
   },
-  scope: ['main'],
+  scope: ['main', 'child'],
   handler: () => {
     // This is a meta-tool - execution happens in hook.ts
     // The handler returns empty string because the real logic
