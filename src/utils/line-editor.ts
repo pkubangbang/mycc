@@ -35,6 +35,7 @@ interface LineEditorOptions {
   stdout: NodeJS.WriteStream;      // Usually process.stdout
   onDone: (value: string) => void; // Callback when user presses Enter
   history?: string[];              // Optional history array for up/down navigation
+  onDoubleCtrlL?: () => void;      // Callback for double Ctrl+L (clear screen + clear history)
 }
 
 /**
@@ -62,10 +63,15 @@ interface LineInfo {
  * Bang command handling:
  * - When content starts with '!', the prompt changes to bang mode
  * - The leading '!' is hidden from display but preserved in the returned value
+ *
+ * Double Ctrl+L handling:
+ * - Ctrl+L once: clears terminal screen (standard behavior)
+ * - Ctrl+L twice within 3 seconds: clears screen AND calls onDoubleCtrlL callback
  */
 export class LineEditor {
   // Default prompts for bang command mode
   private static readonly BANG_PROMPT = '\x1b[45m\x1b[30mrun cmd ! \x1b[0m';  // Magenta background, black text
+  private static readonly CTRL_L_DOUBLE_PRESS_MS = 3000;  // 3 seconds for double press
 
   // Configuration
   private prompt: string;  // Changed from readonly to allow dynamic updates
@@ -74,9 +80,13 @@ export class LineEditor {
   private promptLength: number;  // Changed from readonly
   private columns: number;
   private readonly originalPrompt: string;  // Store original prompt for switching back
+  private readonly onDoubleCtrlL?: () => void;  // Callback for double Ctrl+L
 
   // Content storage: flat array of graphemes + CURSOR marker
   private content: string[] = [CURSOR];
+
+  // Double Ctrl+L detection
+  private lastCtrlLTime: number | null = null;
 
   // Cached line info
   private lineInfo: LineInfo;
@@ -131,6 +141,7 @@ export class LineEditor {
     this.stdout = options.stdout;
     this.onDone = options.onDone;
     this.history = options.history ? [...options.history] : [];
+    this.onDoubleCtrlL = options.onDoubleCtrlL;
     this.promptLength = stringWidth(stripAnsi(this.prompt));
 
     // Get columns from environment (set by Coordinator) or default
@@ -558,6 +569,23 @@ export class LineEditor {
     }
 
     if (key.ctrl && key.name === 'l') {
+      const now = Date.now();
+      const timeSinceLast = this.lastCtrlLTime ? now - this.lastCtrlLTime : Infinity;
+
+      // Double Ctrl+L within 3s: clear screen AND call callback (for clearing history)
+      if (timeSinceLast < LineEditor.CTRL_L_DOUBLE_PRESS_MS && this.onDoubleCtrlL) {
+        this.lastCtrlLTime = null;
+        try {
+          this.onDoubleCtrlL();
+        } catch {
+          // Ignore callback errors
+        }
+      } else {
+        // Single Ctrl+L: just track the time
+        this.lastCtrlLTime = now;
+      }
+
+      // Always clear screen on Ctrl+L
       this.stdout.write('\x1b[2J\x1b[H');
       this.screenStartRow = 0;
       this.render();

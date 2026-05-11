@@ -83,6 +83,9 @@ class AgentIO {
   // Default history with common slash commands for easy access
   private lineHistory: string[] = ['/mindmap compile CLAUDE.md', '/mode plan', 'show me all the tools and skills that you can use'];
 
+  // Callback for double Ctrl+L (clear conversation history)
+  private onDoubleCtrlLCallback: (() => void) | null = null;
+
   // Buffer for output during user interaction (prompt displayed or wrapping up)
   private outputBuffer: Array<{
     method: 'log' | 'warn' | 'error';
@@ -235,6 +238,14 @@ class AgentIO {
     }
   }
 
+  /**
+   * Set callback for double Ctrl+L (clear conversation history)
+   * Called from the prompt state handler when Triologue is available
+   */
+  setDoubleCtrlLCallback(callback: (() => void) | null): void {
+    this.onDoubleCtrlLCallback = callback;
+  }
+
   // Key event handling (for LineEditor)
 
   /**
@@ -341,6 +352,7 @@ class AgentIO {
             resolve(value);
           },
           history: this.lineHistory,
+          onDoubleCtrlL: this.onDoubleCtrlLCallback || undefined,
         });
 
         // Check if wrap-up already completed while LineEditor was starting

@@ -30,6 +30,7 @@ import { handleLlm } from './states/llm.js';
 import { handleHook } from './states/hook.js';
 import { handleTool } from './states/tool.js';
 import { handleStop } from './states/stop.js';
+import { clearWrapUp } from './esc-wrap-up.js';
 import pkg from '../../package.json';
 import { get_default_mindmap_path, load_mindmap, validate_mindmap } from '../mindmap/index.js';
 import type { Node } from '../mindmap/types.js';
@@ -180,6 +181,13 @@ export async function main(): Promise<void> {
   if (restoredPair !== null) {
     triologue.loadRestoration(restoredPair);
   }
+
+  // Set up double Ctrl+L callback for clearing conversation history
+  agentIO.setDoubleCtrlLCallback(() => {
+    triologue.clear();
+    clearWrapUp();
+    console.log(chalk.green('Conversation cleared. Starting fresh.'));
+  });
 
   // Inject project context based on mindmap availability
   if (mindmapLoaded) {
