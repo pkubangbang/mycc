@@ -370,35 +370,6 @@ export class Triologue {
       ? domains.map(d => `- ${d.domain_name}${d.description ? `: ${d.description}` : ''}`).join('\n')
       : 'No domains available';
 
-    const analysisPrompt = `## User's Intent
-${context.userIntent}
-
-## Current Progress
-${context.recentTools.map(t => `- ${t.name}: ${t.status}`).join('\n')}
-
-## Problems Encountered
-${context.errors.length > 0 ? context.errors.map(e => `- ${e.tool}: ${e.error}`).join('\n') : 'None'}
-
-## Stuck Patterns
-${context.repetition.length > 0 ? context.repetition.map(r => `- ${r.tool} called ${r.count} times`).join('\n') : 'None'}
-
-## Confusion Score: ${context.confusionScore}
-${context.confusionBreakdown}
-
-## Available Wiki Domains
-${domainInfo}
-
----
-
-Analyze the gap between the user's intent and current progress. 
-
-CRITICAL INSTRUCTIONS:
-1. If there are NO REAL blockers preventing progress, set blocker to exactly: "no blockers"
-2. Do NOT fabricate blockers. "no blockers" means the agent should simply continue with the current task.
-3. Only suggest wiki_domain and wiki_query if there's genuine knowledge gap. Leave empty strings if no wiki search needed.
-
-Provide your analysis in the specified JSON format.`;
-
     // JSON Schema for structured output
     const hintSchema = {
       type: 'object',
@@ -426,6 +397,36 @@ Provide your analysis in the specified JSON format.`;
       },
       required: ['blocker', 'next_step', 'focus_on', 'wiki_domain', 'wiki_query'],
     };
+
+    const analysisPrompt = `## User's Intent
+${context.userIntent}
+
+## Current Progress
+${context.recentTools.map(t => `- ${t.name}: ${t.status}`).join('\n')}
+
+## Problems Encountered
+${context.errors.length > 0 ? context.errors.map(e => `- ${e.tool}: ${e.error}`).join('\n') : 'None'}
+
+## Stuck Patterns
+${context.repetition.length > 0 ? context.repetition.map(r => `- ${r.tool} called ${r.count} times`).join('\n') : 'None'}
+
+## Confusion Score: ${context.confusionScore}
+${context.confusionBreakdown}
+
+## Available Wiki Domains
+${domainInfo}
+
+---
+
+Analyze the gap between the user's intent and current progress. 
+
+CRITICAL INSTRUCTIONS:
+1. If there are NO REAL blockers preventing progress, set blocker to exactly: "no blockers"
+2. Do NOT fabricate blockers. "no blockers" means the agent should simply continue with the current task.
+3. Only suggest wiki_domain and wiki_query if there's genuine knowledge gap. Leave empty strings if no wiki search needed.
+4. The reply should be a JSON string, with no extra commentary. JSON schema must be respected. The schema is:
+${JSON.stringify(hintSchema, null, 2)}
+`;
 
     // Retry loop: parse JSON until success or abort
     while (true) {
@@ -455,6 +456,7 @@ Provide your analysis in the specified JSON format.`;
         const rawContent = response.message.content || '{}';
 
         // Parse JSON response (schema enforcement should guarantee valid JSON)
+        // Note: LLM may still wrap JSON in markdown code blocks despite format constraint
         let hintData: {
           blocker: string;
           next_step: string;
@@ -464,7 +466,13 @@ Provide your analysis in the specified JSON format.`;
         };
 
         try {
-          hintData = JSON.parse(rawContent);
+          // Extract JSON from potentially markdown-wrapped content
+          const jsonMatch = rawContent.match(/\{[\s\S]*\}/);
+          if (!jsonMatch) {
+            console.log('[hint round] No JSON found in response, retrying...');
+            continue;
+          }
+          hintData = JSON.parse(jsonMatch[0]);
         } catch {
           // Parse failed - log and retry
           console.log('[hint round] JSON parse failed, retrying...');
@@ -734,7 +742,7 @@ Provide your analysis in the specified JSON format.`;
 
     const writeStream = fs.createWriteStream(transcriptPath);
     for (const msg of this.messages) {
-      writeStream.write(`${JSON.stringify(msg)  }\n`);
+      writeStream.write(`${JSON.stringify(msg)}\n`);
     }
     writeStream.end();
 
@@ -751,10 +759,10 @@ Provide your analysis in the specified JSON format.`;
 
     const knowledgeInstruction = domains.length > 0
       ? `4) Important knowledge to persist (if any)\n\n` +
-        `Available wiki domains:\n${  domainList  }\n\n` +
-        `IMPORTANT: Only persist knowledge that matches one of the available domains above.\n` +
-        `For knowledge worth remembering, note as: "Knowledge: [domain] - [fact/rule]"\n` +
-        `Skip opinions, temporary details, or knowledge that does not fit any domain.\n\n`
+      `Available wiki domains:\n${domainList}\n\n` +
+      `IMPORTANT: Only persist knowledge that matches one of the available domains above.\n` +
+      `For knowledge worth remembering, note as: "Knowledge: [domain] - [fact/rule]"\n` +
+      `Skip opinions, temporary details, or knowledge that does not fit any domain.\n\n`
       : '';
 
     const focusInstruction = focus
@@ -770,8 +778,7 @@ Provide your analysis in the specified JSON format.`;
             `Summarize this conversation for continuity. Include:\n` +
             `1) What was accomplished\n` +
             `2) Current state\n` +
-            `3) Key decisions made\n${ 
-            knowledgeInstruction 
+            `3) Key decisions made\n${knowledgeInstruction
             }${focusInstruction}${conversationText}`,
         },
       ],
@@ -899,13 +906,13 @@ Provide your analysis in the specified JSON format.`;
   recapMessages(startIndex: number, userMessage: Message, assistantMessage: Message): void {
     // Keep messages before startIndex
     const keptMessages = this.messages.slice(0, startIndex);
-    
+
     // Replace with summary pair
     this.messages = [...keptMessages, userMessage, assistantMessage];
-    
+
     // Recalculate token count
     this.tokenCount = this.estimateTokens(this.messages);
-    
+
     // Clear pending tool calls (any calls from the recapped messages are now invalid)
     this.pendingToolCalls.clear();
     this.pendingToolCallOrder = [];
