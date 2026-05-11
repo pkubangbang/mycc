@@ -14,6 +14,7 @@ import { AgentState } from '../state-machine.js';
 import type { MachineEnv, TurnVars, PassData, HandlerResult } from '../state-machine.js';
 import type { ToolCall } from '../../types.js';
 import { augmentToolCalls } from '../../hook/hook-preprocessor.js';
+import { agentIO } from '../agent-io.js';
 import { 
   validateCheckpointIsolation, 
   handleCheckpoint, 
@@ -136,6 +137,10 @@ export async function handleHook(
     pass.assistantContent,
     finalToolCalls as ToolCall[] | undefined,
   );
+
+  // Confusion scoring: +1 per assistant turn (agent spinning without progress)
+  // This is the primary driver that ensures hints trigger even during pure exploration.
+  ctx.core.increaseConfusionIndex(1);
 
   // Register blocked calls as rejections in triologue
   if (hookResult.blockedCalls.size > 0) {

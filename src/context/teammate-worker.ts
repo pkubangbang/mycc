@@ -113,6 +113,9 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
   // Read-only bash commands (exploration)
   const READ_ONLY_BASH = /^(ls|cat|pwd|head|tail|wc|find|which|git\s+(status|log|diff|branch|show|ls-files))/;
 
+  // Track recent tool calls for repetition detection
+  const recentToolCalls: string[] = [];
+
   // Check if tool result indicates error
   function isErrorResult(result: string): boolean {
     if (!result) return false;
@@ -181,6 +184,9 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
 
       const assistantMessage = response.message;
       triologue.agent(assistantMessage.content || '', assistantMessage.tool_calls as ToolCall[] | undefined);
+
+      // Confusion scoring: +1 per assistant turn (agent spinning without progress)
+      ctx.core.increaseConfusionIndex(1);
 
       // 4. No tool calls = enter idle state
       if (!assistantMessage.tool_calls || assistantMessage.tool_calls.length === 0) {
@@ -289,15 +295,37 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
           triologue.tool(toolName, output, tc.id);
 
           // Confusion scoring based on tool classification
+          // Check for repetition (same tool in last 5 calls)
+          const isRepetition = recentToolCalls.includes(toolName);
+
           if (!EXPLORATION_TOOLS.has(toolName)) {
             if (toolName === 'bash') {
               const cmd = String(args?.command || '');
               if (!READ_ONLY_BASH.test(cmd)) {
-                ctx.core.increaseConfusionIndex(-1);
+                if (isRepetition) {
+                  ctx.core.increaseConfusionIndex(1);
+                } else {
+                  ctx.core.increaseConfusionIndex(-1);
+                }
               }
             } else if (ACTION_TOOLS.has(toolName)) {
-              ctx.core.increaseConfusionIndex(-1);
+              if (isRepetition) {
+                // mail_to is highly confusing when repeated
+                if (toolName === 'mail_to') {
+                  ctx.core.increaseConfusionIndex(2);
+                } else {
+                  ctx.core.increaseConfusionIndex(1);
+                }
+              } else {
+                ctx.core.increaseConfusionIndex(-1);
+              }
             }
+          }
+
+          // Track recent tool calls (keep last 5)
+          recentToolCalls.push(toolName);
+          if (recentToolCalls.length > 5) {
+            recentToolCalls.shift();
           }
 
           // Error results increase confusion

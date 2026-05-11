@@ -10,11 +10,52 @@ import { AgentState } from '../state-machine.js';
 import type { MachineEnv, TurnVars, PassData, HandlerResult } from '../state-machine.js';
 import { agentIO } from '../agent-io.js';
 import { startWrapUp } from '../esc-wrap-up.js';
+import type { SequenceEvent } from '../../hook/sequence.js';
 
 // Confusion threshold for hint generation
 const CONFUSION_THRESHOLD = 10;
 // Minimum message count before hint generation
 const MIN_MESSAGES_FOR_HINT = 6;
+
+/**
+ * Generate a human-readable breakdown of confusion factors
+ */
+function generateBreakdown(
+  confusionIndex: number,
+  events: SequenceEvent[]
+): string {
+  const parts: string[] = [];
+
+  // Count assistant turns (inferred from events - each turn has multiple tools)
+  // Estimate turns by counting unique tool call batches
+  const turnCount = Math.ceil(events.length / 3); // rough estimate
+  if (turnCount > 0) {
+    parts.push(`${turnCount} assistant turns`);
+  }
+
+  // Count errors
+  const errors = events.filter(e => {
+    const result = e.result?.toLowerCase() || '';
+    return result.includes('error') || result.includes('failed') ||
+           result.includes('fatal') || result.includes('enoent') ||
+           result.includes('eacces') || result.includes('eperm');
+  });
+  if (errors.length > 0) {
+    parts.push(`${errors.length} tool errors`);
+  }
+
+  // Count repeated actions (same tool in last 5 calls)
+  const toolCounts = new Map<string, number>();
+  for (const e of events) {
+    toolCounts.set(e.tool, (toolCounts.get(e.tool) || 0) + 1);
+  }
+  const repeatedTools = Array.from(toolCounts.entries()).filter(([, count]) => count > 1);
+  if (repeatedTools.length > 0) {
+    parts.push(`${repeatedTools.length} repeated tools`);
+  }
+
+  return parts.length > 0 ? parts.join(', ') : 'No issues detected';
+}
 
 export async function handleCollect(
   env: MachineEnv,
@@ -52,11 +93,13 @@ export async function handleCollect(
       ctx.core.verbose('collect', 'Generating problem analysis (hint round)');
       // Get pending skills (skills with 'when' but no compiled condition)
       const pendingSkills = env.conditions.getPending();
-      
+      // Generate confusion breakdown from sequence events
+      const breakdown = generateBreakdown(confusionIndex, env.sequence.getEvents());
+
       // Use escAware for ESC-interruptible hint generation
       const result = await ctx.core.escAware(
         async (abortController) => {
-          return await triologue.generateHintRound(abortController, confusionIndex, `Score: ${confusionIndex}`, pendingSkills);
+          return await triologue.generateHintRound(abortController, confusionIndex, breakdown, pendingSkills);
         },
         () => {
           // Start wrap-up when ESC is pressed during hint generation

@@ -141,19 +141,39 @@ export async function handleTool(
 
       // Confusion scoring based on tool classification
       // Exploration tools: no change to confusion
-      // Action tools: reduce confusion (progress being made)
+      // Action tools: reduce confusion (progress being made), unless repetition
+      // Repetition: increases confusion (potential loop)
       // Error results: increase confusion
       if (!EXPLORATION_TOOLS.has(toolName)) {
+        // Check for repetition (same tool in last 5 calls)
+        const recentTools = sequence.getEvents().slice(-5).map(e => e.tool);
+        const isRepetition = recentTools.includes(toolName);
+
         if (toolName === 'bash') {
           const cmd = String(toolCall.function.arguments?.command || '');
           if (!READ_ONLY_BASH.test(cmd)) {
-            // Action bash command reduces confusion
-            ctx.core.increaseConfusionIndex(-1);
+            // Action bash command
+            if (isRepetition) {
+              // Repetition increases confusion
+              ctx.core.increaseConfusionIndex(1);
+            } else {
+              ctx.core.increaseConfusionIndex(-1);
+            }
           }
           // Read-only bash: no change to confusion
         } else if (ACTION_TOOLS.has(toolName)) {
-          // Action tool reduces confusion
-          ctx.core.increaseConfusionIndex(-1);
+          if (isRepetition) {
+            // Repetition increases confusion
+            // mail_to is highly confusing when repeated
+            if (toolName === 'mail_to') {
+              ctx.core.increaseConfusionIndex(2);
+            } else {
+              ctx.core.increaseConfusionIndex(1);
+            }
+          } else {
+            // Non-repeated action tool reduces confusion
+            ctx.core.increaseConfusionIndex(-1);
+          }
         }
       }
 
