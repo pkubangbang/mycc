@@ -5,10 +5,8 @@
  * Compilation process:
  * 1. Parse markdown into sections by heading hierarchy
  * 2. Build tree structure from sections
- * 3. Compute node hashes for incremental detection
- * 4. Compare with existing mindmap to find changed nodes
- * 5. Generate summaries only for changed nodes using explorer agent
- * 6. Save and return mindmap
+ * 3. Generate summaries for all nodes using explorer agent
+ * 4. Save and return mindmap
  */
 
 import * as crypto from 'crypto';
@@ -28,11 +26,7 @@ import {
   try_load_existing_mindmap,
   collect_nodes_bottom_up,
   ProgressTracker,
-  // Incremental compilation functions
-  compute_all_hashes,
-  find_changed_nodes,
-  count_changed_nodes,
-  merge_existing_data_incremental,
+  merge_existing_data,
 } from './compile-utils.js';
 import { summarizeWithExplorer } from './explorer-agent.js';
 
@@ -78,7 +72,6 @@ class Semaphore {
  * Concurrency is limited to MAX_CONCURRENT_NODES to avoid overwhelming Ollama
  * @param root - The root node
  * @param workDir - Working directory for file operations
- * @param changedNodes - Optional set of node IDs that need re-summarization. If provided, only these nodes are processed.
  * @param onProgress - Progress callback
  * @param onNodeStart - Called when a node starts processing
  * @param onNodeComplete - Called when a node completes
@@ -86,7 +79,6 @@ class Semaphore {
 async function summarize_with_explorer(
   root: Node,
   workDir: string,
-  changedNodes?: Set<string>,
   onProgress?: (nodeTitle: string, level: number, round: number, tool: string, args: Record<string, unknown>) => void,
   onNodeStart?: (nodeTitle: string) => void,
   onNodeComplete?: (nodeTitle: string) => void
@@ -112,11 +104,8 @@ async function summarize_with_explorer(
       // Wait for children first (fail-fast on error)
       await Promise.all(node.children.map((child) => nodePromises.get(child)!));
 
-      // Skip if already summarized (not in changedNodes set if filtering)
+      // Skip if already summarized
       if (node.summary !== '') return;
-      
-      // Skip if this node doesn't need re-summarization (incremental mode)
-      if (changedNodes && !changedNodes.has(node.id)) return;
 
       // Acquire semaphore
       await semaphore.acquire();
@@ -173,14 +162,9 @@ async function summarize_with_explorer(
 
 /**
  * Compile a markdown file into a mindmap
- * Uses incremental compilation with hash-based change detection:
- * - Computes hashes for each node based on content (title + text + children hashes)
- * - Compares with existing mindmap to find changed nodes
- * - Only re-summarizes changed nodes and their affected ancestors
- * - Preserves summaries for unchanged nodes
- * 
- * Lock-based resumption is still supported for interrupted compilations.
- * 
+ *
+ * Lock-based resumption is supported for interrupted compilations.
+ *
  * @param mdPath - Path to the markdown file (relative to cwd)
  * @param cwd - Current working directory (for resolving paths)
  * @param outputPath - Optional output JSON path (relative to cwd)
@@ -208,7 +192,7 @@ export async function compile_mindmap(
     fs.mkdirSync(outDir, { recursive: true });
   }
 
-  // Check for existing mindmap for incremental compilation
+  // Check for existing mindmap for resumption
   let existingMindmap: MindmapJSON | null = null;
   if (!force) {
     existingMindmap = try_load_existing_mindmap(outFile);
@@ -249,15 +233,9 @@ export async function compile_mindmap(
     links: extract_links(preamble),
   };
 
-  // Compute hashes for all nodes (bottom-up)
-  compute_all_hashes(root);
-
-  // Find changed nodes using incremental comparison
-  const changedNodes = find_changed_nodes(root, existingMindmap?.root || null);
-  
-  // Merge existing data, preserving summaries for unchanged nodes
+  // Merge existing data for resumption
   if (existingMindmap) {
-    merge_existing_data_incremental(root, existingMindmap.root, changedNodes);
+    merge_existing_data(root, existingMindmap.root);
   }
 
   // Create mindmap
@@ -273,23 +251,11 @@ export async function compile_mindmap(
 
   // Count nodes needing processing
   const totalNodes = count_nodes(root);
-  const nodesToProcess = count_changed_nodes(root, changedNodes);
-  const preservedNodes = totalNodes - nodesToProcess;
 
-  if (preservedNodes > 0) {
-    console.log(`[mindmap] Incremental: ${preservedNodes}/${totalNodes} nodes unchanged, preserving summaries`);
-  }
-
-  if (nodesToProcess === 0) {
-    console.log(`[mindmap] All ${totalNodes} nodes unchanged, no recompilation needed`);
-    remove_lock(outFile);
-    return mindmap;
-  }
-
-  console.log(`[mindmap] Processing ${nodesToProcess}/${totalNodes} nodes`);
+  console.log(`[mindmap] Processing ${totalNodes} nodes`);
 
   // Progress tracking
-  const tracker = new ProgressTracker(nodesToProcess, 3);
+  const tracker = new ProgressTracker(totalNodes, 3);
 
   const onNodeStart = (nodeTitle: string) => {
     tracker.onNodeStart(nodeTitle);
@@ -309,7 +275,7 @@ export async function compile_mindmap(
   process.stdout.write('\n\n\n\n');
 
   try {
-    await summarize_with_explorer(root, workDir, changedNodes, onProgress, onNodeStart, onNodeComplete);
+    await summarize_with_explorer(root, workDir, onProgress, onNodeStart, onNodeComplete);
   } catch (err) {
     tracker.finish();
     process.stdout.write('\x1b[4A\x1b[J');
@@ -320,15 +286,12 @@ export async function compile_mindmap(
   // Clean up and finalize
   tracker.finish();
   process.stdout.write('\x1b[4A\x1b[J');
-  
-  // Final hash computation after all summaries are complete
-  compute_all_hashes(root);
-  
+
   mindmap.updated_at = new Date().toISOString();
   fs.writeFileSync(outFile, JSON.stringify(mindmap, null, 2));
   remove_lock(outFile);
 
-  console.log(`[mindmap] Completed ${totalNodes} nodes (${nodesToProcess} updated, ${preservedNodes} preserved)`);
+  console.log(`[mindmap] Completed ${totalNodes} nodes`);
   return mindmap;
 }
 
@@ -357,9 +320,6 @@ export async function compile_mindmap_from_content(
     links: extract_links(preamble),
   };
 
-  // Compute hashes for all nodes
-  compute_all_hashes(root);
-
   const hash = crypto.createHash('sha256').update(content).digest('hex');
   const now = new Date();
 
@@ -372,7 +332,6 @@ export async function compile_mindmap_from_content(
     root,
   };
 
-  // For testing, all nodes need processing (no existing mindmap)
   const totalNodes = count_nodes(root);
 
   if (showProgress) {
@@ -384,18 +343,13 @@ export async function compile_mindmap_from_content(
       tracker.onProgress(nodeTitle, level, round, tool, args);
     };
     process.stdout.write('\n\n\n\n');
-    // No changedNodes filter - process all nodes
-    await summarize_with_explorer(root, process.cwd(), undefined, onProgress, onNodeStart);
+    await summarize_with_explorer(root, process.cwd(), onProgress, onNodeStart);
     tracker.finish();
     process.stdout.write('\x1b[4A\x1b[J');
   } else {
-    // No changedNodes filter - process all nodes
     await summarize_with_explorer(root, process.cwd());
   }
 
-  // Final hash computation
-  compute_all_hashes(root);
-  
   mindmap.updated_at = new Date().toISOString();
   return mindmap;
 }

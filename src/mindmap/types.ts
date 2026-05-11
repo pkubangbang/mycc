@@ -41,11 +41,6 @@ export interface Node {
   children: Node[];
   /** Outward links to other resources */
   links: Link[];
-  /**
-   * Hash of the node's content (title + text + children hashes)
-   * Used for incremental compilation - if hash matches, no need to re-summarize
-   */
-  hash?: string;
 }
 
 /**
