@@ -215,14 +215,24 @@ function buildCommonSections(): string {
 // ============================================================================
 
 function buildContextManagementSection(): string {
-  return `## Context Management
+  return `## Checkpoint and recap
 
-Use \`checkpoint\` before starting a focused subtask (exploration, investigation, refactoring) to mark a clean boundary. After completing the subtask, use \`recap\` with the checkpoint ID to compress the exploration into a summary. This keeps your context clean and focused.
+Checkpoint and recap tools work together to save context consumption and keep you focused.
+
+**When to use checkpoint:**
+- Before reading multiple files to understand a codebase
+- Before investigating a bug or issue
+- Before doing experiments to proof the concept
+
+**When NOT to use checkpoint:**
+- Quick single-file edits
+- Simple lookups (one file, one command)
+- Tasks where you immediately know the answer
 
 **Workflow:**
-1. \`checkpoint({ description: "find authentication logic" })\` - Creates checkpoint with ID (e.g., "abc12345")
+1. Use checkpoint tool to creates checkpoint with ID (e.g., "abc12345")
 2. [Explore files, read code, investigate] - Messages accumulate
-3. \`recap({ checkpoint_id: "abc12345" })\` - Compresses messages into summary
+3. Use recap with the above checkpoint ID to summarize the messages
 4. Continue with clean context and summary of findings
 
 **Rules:**

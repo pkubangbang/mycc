@@ -261,6 +261,36 @@ Key behavior:
 
 See `docs/bang-command-design.md` for detailed design.
 
+### checkpoint and recap
+
+**Checkpoint** and **recap** are meta-tools for context management. They work together to compress long conversation histories into concise summaries, helping manage the token budget during extended exploration tasks.
+
+**Checkpoint** creates a marker in the conversation history before starting a focused subtask. It:
+- Must be called ALONE (no other tools in same turn)
+- Only ONE open checkpoint allowed at a time
+- Creates a todo item to track the checkpoint
+- Returns an 8-character hash as the checkpoint ID
+
+**Recap** compresses all messages from a checkpoint into a summary. It:
+- Requires a valid checkpoint ID
+- Uses LLM to summarize messages from checkpoint to end
+- Replaces those messages with the summary
+- Marks the corresponding todo as done
+
+Workflow:
+```
+1. checkpoint({ description: "find auth logic" })
+   → Returns checkpoint ID like "abc12345"
+
+2. [explore files, read code, investigate]
+   → Generates many messages
+
+3. recap({ checkpoint_id: "abc12345" })
+   → Compresses messages into summary, cleans context
+```
+
+Scope: Main agent only (not available to teammates). Implementation is in the state machine (`hook.ts`), not the tool handler, because it requires access to `triologue` which is outside `AgentContext`.
+
 ### prompt line and letter box
 
 The prompt line is where the user can type and submit the query. When in normal mode, it displays as `agent >> `.
