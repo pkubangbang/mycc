@@ -395,7 +395,7 @@ Analyze the gap between the user's intent and current progress.
 CRITICAL INSTRUCTIONS:
 1. If there are NO REAL blockers preventing progress, set blocker to exactly: "no blockers"
 2. Do NOT fabricate blockers. "no blockers" means the agent should simply continue with the current task.
-3. Only suggest wiki_search if there's genuine knowledge gap that needs filling.
+3. Only suggest wiki_domain and wiki_query if there's genuine knowledge gap. Leave empty strings if no wiki search needed.
 
 Provide your analysis in the specified JSON format.`;
 
@@ -415,22 +415,16 @@ Provide your analysis in the specified JSON format.`;
           type: 'string',
           description: 'Key area or priority to focus on.',
         },
-        wiki_search: {
-          oneOf: [
-            {
-              type: 'object',
-              properties: {
-                domain: { type: 'string', description: 'Domain name from available domains' },
-                query: { type: 'string', description: 'Search query for the wiki' },
-              },
-              required: ['domain', 'query'],
-            },
-            { type: 'null' },
-          ],
-          description: 'Wiki search suggestion. Set to null if no wiki search is needed.',
+        wiki_domain: {
+          type: 'string',
+          description: 'Domain name from available domains. Leave empty if no wiki search needed.',
+        },
+        wiki_query: {
+          type: 'string',
+          description: 'Search query for the wiki. Leave empty if no wiki search needed.',
         },
       },
-      required: ['blocker', 'next_step', 'focus_on', 'wiki_search'],
+      required: ['blocker', 'next_step', 'focus_on', 'wiki_domain', 'wiki_query'],
     };
 
     // Retry loop: parse JSON until success or abort
@@ -465,7 +459,8 @@ Provide your analysis in the specified JSON format.`;
           blocker: string;
           next_step: string;
           focus_on: string;
-          wiki_search: { domain: string; query: string } | null;
+          wiki_domain: string;
+          wiki_query: string;
         };
 
         try {
@@ -480,22 +475,12 @@ Provide your analysis in the specified JSON format.`;
         if (
           typeof hintData.blocker !== 'string' ||
           typeof hintData.next_step !== 'string' ||
-          typeof hintData.focus_on !== 'string'
+          typeof hintData.focus_on !== 'string' ||
+          typeof hintData.wiki_domain !== 'string' ||
+          typeof hintData.wiki_query !== 'string'
         ) {
           console.log('[hint round] Missing required fields, retrying...');
           continue;
-        }
-
-        // Validate wiki_search structure if present
-        if (hintData.wiki_search !== null) {
-          if (
-            typeof hintData.wiki_search !== 'object' ||
-            typeof hintData.wiki_search.domain !== 'string' ||
-            typeof hintData.wiki_search.query !== 'string'
-          ) {
-            console.log('[hint round] Invalid wiki_search structure, retrying...');
-            continue;
-          }
         }
 
         // Format hint data for better readability
@@ -504,8 +489,8 @@ Provide your analysis in the specified JSON format.`;
         hintLines.push(`**Blocker:** ${hintData.blocker}`);
         hintLines.push(`**Next Step:** ${hintData.next_step}`);
         hintLines.push(`**Focus On:** ${hintData.focus_on}`);
-        if (hintData.wiki_search) {
-          hintLines.push(`**Wiki Search:** Domain="${hintData.wiki_search.domain}", Query="${hintData.wiki_search.query}"`);
+        if (hintData.wiki_domain && hintData.wiki_query) {
+          hintLines.push(`**Wiki Search:** Domain="${hintData.wiki_domain}", Query="${hintData.wiki_query}"`);
         } else {
           hintLines.push(`**Wiki Search:** None`);
         }
@@ -864,7 +849,7 @@ Provide your analysis in the specified JSON format.`;
     for (let i = 0; i < this.messages.length; i++) {
       const msg = this.messages[i];
       if (msg.role === 'user') {
-        const regex = new RegExp('^\\[CHECKPOINT ' + id + ': (.+)\\]$');
+        const regex = new RegExp(`^\\[CHECKPOINT ${id}: (.+)\\]$`);
         const match = msg.content.match(regex);
         if (match) {
           return { id, description: match[1], index: i };

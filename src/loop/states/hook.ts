@@ -42,29 +42,27 @@ function validateCheckpointIsolation(calls: AugmentedToolCall[]): { valid: boole
 /**
  * Handle checkpoint meta-tool
  * Creates a checkpoint marker in the message history
+ * NOTE: Does NOT add the checkpoint marker - that's done by the caller after tool response
  */
 function handleCheckpoint(
   triologue: Triologue,
   args: Record<string, unknown>,
   ctx: MachineEnv['ctx']
-): string {
+): { result: string; id: string; description: string } {
   const description = args.description as string;
 
   if (!description || typeof description !== 'string' || description.trim() === '') {
-    return 'Error: description is required and must be a non-empty string.';
+    return { result: 'Error: description is required and must be a non-empty string.', id: '', description: '' };
   }
 
   // Check for existing open checkpoint
   const existingCheckpoint = triologue.findOpenCheckpoint();
   if (existingCheckpoint) {
-    return `Error: Checkpoint already exists: ${existingCheckpoint.id} "${existingCheckpoint.description}". Call recap first to close it, or remove it if abandoned.`;
+    return { result: `Error: Checkpoint already exists: ${existingCheckpoint.id} "${existingCheckpoint.description}". Call recap first to close it, or remove it if abandoned.`, id: '', description: '' };
   }
 
   // Generate checkpoint ID
   const id = Triologue.generateCheckpointId();
-
-  // Add checkpoint message to triologue
-  triologue.user(`[CHECKPOINT ${id}: ${description}]`);
 
   // Add todo item
   ctx.todo.patchTodoList([{
@@ -76,19 +74,24 @@ function handleCheckpoint(
   // Brief the user
   ctx.core.brief('info', 'checkpoint', `Created checkpoint ${id}: "${description}"`);
 
-  return `Checkpoint created: ${id}
+  return {
+    result: `Checkpoint created: ${id}
 
 Description: ${description}
 
 Next steps:
 1. Perform your subtask (read files, run commands, etc.)
 2. When done, call recap({ checkpoint_id: "${id}" }) to compress messages into a summary
-3. The todo item will be marked as done automatically`;
+3. The todo item will be marked as done automatically`,
+    id,
+    description,
+  };
 }
 
 /**
  * Handle recap meta-tool
  * Summarizes messages from checkpoint to end and replaces them with summary
+ * Uses escAware for ESC-interruptible LLM call
  */
 async function handleRecap(
   triologue: Triologue,
@@ -120,15 +123,18 @@ async function handleRecap(
     return 'Error: No messages to summarize.';
   }
 
-  // Generate summary using LLM
+  // Generate summary using LLM (with ESC awareness)
   const conversationText = minifyMessages(messages);
 
-  const response = await retryChat({
-    model: MODEL,
-    messages: [
-      {
-        role: 'user',
-        content: `Summarize the following conversation segment. Focus on: "${checkpoint.description}"
+  const response = await ctx.core.escAware(
+    async (abortController) => {
+      return await retryChat(
+        {
+          model: MODEL,
+          messages: [
+            {
+              role: 'user',
+              content: `Summarize the following conversation segment. Focus on: "${checkpoint.description}"
 
 Include:
 1. What was discovered/accomplished
@@ -138,9 +144,22 @@ Include:
 
 Conversation:
 ${conversationText}`,
-      },
-    ],
-  });
+            },
+          ],
+        },
+        { signal: abortController.signal },
+      );
+    },
+    () => {
+      // Cleanup when ESC is pressed - return null to indicate interruption
+      return null;
+    }
+  );
+
+  // Check if ESC was pressed (null response from cleanup)
+  if (!response) {
+    return `[RECAP] Cancelled: ESC pressed during summarization. Checkpoint "${checkpoint.description}" remains open.`;
+  }
 
   const summary = response.message.content || '(no summary)';
 
@@ -205,33 +224,46 @@ export async function handleHook(
   if (checkpointCall) {
     // Register the tool call
     triologue.agent(pass.assistantContent, pass.rawToolCalls as ToolCall[] | undefined);
-    
-    // Execute checkpoint
-    const result = handleCheckpoint(triologue, checkpointCall.function.arguments as Record<string, unknown>, ctx);
+
+    // Execute checkpoint (returns id and description for marker)
+    const { result, id, description } = handleCheckpoint(triologue, checkpointCall.function.arguments as Record<string, unknown>, ctx);
+
+    // Add tool response FIRST (maintains proper role sequence: assistant → tool)
     triologue.tool('checkpoint', result, checkpointCall.id);
-    
+
+    // THEN add checkpoint marker as user message for next turn
+    if (id) {
+      triologue.user(`[CHECKPOINT ${id}: ${description}]`);
+    }
+
     if (pass.assistantContent) {
       ctx.core.brief('info', 'assistant', pass.assistantContent);
     }
-    
+
     turn.isFirstRound = false;
-    return AgentState.STOP;
+    return AgentState.COLLECT;
   }
 
   if (recapCall) {
-    // Register the tool call
-    triologue.agent(pass.assistantContent, pass.rawToolCalls as ToolCall[] | undefined);
-    
-    // Execute recap (async)
-    const result = await handleRecap(triologue, recapCall.function.arguments as Record<string, unknown>, ctx);
-    triologue.tool('recap', result, recapCall.id);
-    
+    // For recap: DON'T register agent message first since recapMessages will replace it
+    // Instead, let handleRecap manage the entire message replacement
+
+    // Show assistant text content if any
     if (pass.assistantContent) {
       ctx.core.brief('info', 'assistant', pass.assistantContent);
     }
-    
+
+    // Execute recap (async) - it handles message replacement internally
+    const result = await handleRecap(triologue, recapCall.function.arguments as Record<string, unknown>, ctx);
+
+    // Brief the recap result to user
+    ctx.core.brief('info', 'recap', result.split('\n')[0]); // First line of result
+
+    // Add continuation prompt since last message is assistant acknowledgment
+    triologue.user('Continue with your task.');
+
     turn.isFirstRound = false;
-    return AgentState.STOP;
+    return AgentState.COLLECT;
   }
 
   // Process hooks (block/replace/inject/message)
