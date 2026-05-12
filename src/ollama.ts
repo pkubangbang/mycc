@@ -404,36 +404,6 @@ function reconstructResponse(chunks: ChatResponse[], model: string): ChatRespons
   };
 }
 
-function logVerboseRequest(request: Omit<ChatRequest, 'stream'>): void {
-  if (!isVerbose()) return;
-  console.log(chalk.magenta('[verbose][ollama] Request:'));
-  console.log(chalk.gray(`  Model: ${request.model}`));
-  console.log(chalk.gray(`  Messages: ${request.messages?.length || 0}`));
-  if (request.tools && request.tools.length > 0) {
-    console.log(chalk.gray(`  Tools: ${request.tools.length} (${request.tools.map(t => t.function?.name || 'unknown').join(', ')})`));
-  }
-  if (request.format) {
-    console.log(chalk.gray(`  Format: ${request.format}`));
-  }
-}
-
-function logVerboseResponse(response: ChatResponse): void {
-  if (!isVerbose()) return;
-  console.log(chalk.magenta('[verbose][ollama] Response:'));
-  const content = response.message.content || '';
-  console.log(chalk.gray(`  Content (${content.length} chars): ${content.slice(0, 200)}${content.length > 200 ? '...' : ''}`));
-  if (response.message.tool_calls && response.message.tool_calls.length > 0) {
-    console.log(chalk.gray(`  Tool calls: ${response.message.tool_calls.length}`));
-    for (const tc of response.message.tool_calls) {
-      const argsPreview = JSON.stringify(tc.function.arguments).slice(0, 100);
-      console.log(chalk.gray(`    - ${tc.function.name}: ${argsPreview}${argsPreview.length >= 100 ? '...' : ''}`));
-    }
-  }
-  if (response.done_reason) {
-    console.log(chalk.gray(`  Done reason: ${response.done_reason}`));
-  }
-}
-
 // ─── retryChat ────────────────────────────────────────────────────────
 
 /**
@@ -462,8 +432,6 @@ export async function retryChat(
     startSpinner(neglected ? NEGLECTED_SPINNER_TEXT : 'Thinking');
   }
 
-  logVerboseRequest(request);
-
   try {
     for (let attempt = 1; attempt <= cfg.maxRetries + 1; attempt++) {
       if (signal?.aborted) throw new StreamAbortedError();
@@ -489,7 +457,6 @@ export async function retryChat(
         );
 
         const response = reconstructResponse(chunks, request.model);
-        logVerboseResponse(response);
         return response;
       } catch (err) {
         // User-initiated abort — fatal, propagate immediately

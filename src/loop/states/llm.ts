@@ -19,7 +19,6 @@ import { retryChat, MODEL, stopSpinner } from '../../ollama.js';
 import { buildPlanModePrompt, buildNormalModePrompt, isInPlanMode } from '../agent-prompts.js';
 import { agentIO } from '../agent-io.js';
 import { startWrapUp } from '../esc-wrap-up.js';
-import { isVerbose } from '../../config.js';
 import { loader } from '../../context/shared/loader.js';
 
 export async function handleLlm(
@@ -40,11 +39,6 @@ export async function handleLlm(
     systemPrompt = buildNormalModePrompt(workDir, undefined, hasTeam);
   }
   triologue.setSystemPrompt(systemPrompt);
-
-  if (isVerbose()) {
-    agentIO.log(chalk.magenta('[verbose][llm] System prompt:'));
-    agentIO.log(chalk.gray(systemPrompt.slice(0, 500) + (systemPrompt.length > 500 ? '...' : '')));
-  }
 
   // Retry loop: internal backoff (via retryChat) + user-prompted retry
   while (true) {

@@ -13,6 +13,7 @@ import chalk from 'chalk';
 import { retryChat, MODEL } from '../ollama.js';
 import type { Message, ToolCall, WikiModule } from '../types.js';
 import { minifyMessages, minifyForHint } from '../utils/llm-chat-minifier.js';
+import { estimateTokens, estimateTokensForMessages } from '../utils/token.js';
 import { ResultTooLargeError } from '../types.js';
 import { getMyccDir, getLongtextDir, ensureDirs } from '../config.js';
 import { getTokenThreshold } from '../config.js';
@@ -323,7 +324,7 @@ export class Triologue {
   async compact(focus?: string): Promise<void> {
     const compacted = await this.runAutoCompact(focus);
     this.messages = compacted;
-    this.tokenCount = this.estimateTokens(this.messages);
+    this.tokenCount = estimateTokensForMessages(this.messages);
     this.pendingToolCalls.clear();
     this.pendingToolCallOrder = [];
   }
@@ -663,32 +664,7 @@ ${JSON.stringify(hintSchema, null, 2)}
    * Update token count incrementally
    */
   private updateTokenCount(message: Message): void {
-    if (message.content) {
-      this.tokenCount += message.content.split(/\s+/).length;
-    }
-    if (message.tool_calls) {
-      for (const tc of message.tool_calls) {
-        this.tokenCount += JSON.stringify(tc.function.arguments).split(/\s+/).length;
-      }
-    }
-  }
-
-  /**
-   * Estimate token count for a message array (full scan)
-   */
-  private estimateTokens(messages: Message[]): number {
-    let total = 0;
-    for (const msg of messages) {
-      if (msg.content) {
-        total += msg.content.split(/\s+/).length;
-      }
-      if (msg.tool_calls) {
-        for (const tc of msg.tool_calls) {
-          total += JSON.stringify(tc.function.arguments).split(/\s+/).length;
-        }
-      }
-    }
-    return total;
+    this.tokenCount += estimateTokens(message);
   }
 
   /**
@@ -719,7 +695,7 @@ ${JSON.stringify(hintSchema, null, 2)}
     }
 
     this.messages = newMessages;
-    this.tokenCount = this.estimateTokens(this.messages);
+    this.tokenCount = estimateTokensForMessages(this.messages);
     this.pendingToolCalls.clear();
     this.pendingToolCallOrder = [];
   }
@@ -911,7 +887,7 @@ ${JSON.stringify(hintSchema, null, 2)}
     this.messages = [...keptMessages, userMessage, assistantMessage];
 
     // Recalculate token count
-    this.tokenCount = this.estimateTokens(this.messages);
+    this.tokenCount = estimateTokensForMessages(this.messages);
 
     // Clear pending tool calls (any calls from the recapped messages are now invalid)
     this.pendingToolCalls.clear();

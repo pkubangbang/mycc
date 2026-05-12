@@ -10,6 +10,7 @@ import { AgentState } from '../state-machine.js';
 import type { MachineEnv, TurnVars, PassData, HandlerResult } from '../state-machine.js';
 import { agentIO } from '../agent-io.js';
 import { startWrapUp } from '../esc-wrap-up.js';
+import { isVerbose } from '../../config.js';
 import type { SequenceEvent } from '../../hook/sequence.js';
 
 // Confusion threshold for hint generation
@@ -141,6 +142,14 @@ export async function handleCollect(
   // 6. Validate role sequence before LLM call
   if (lastRole === 'assistant') {
     triologue.user('Continue with your task.');
+  }
+
+  // 7. Log message count and token consumption in verbose mode
+  if (isVerbose()) {
+    const tokenCount = triologue.getTokenCount();
+    const tokenThreshold = triologue.getTokenThreshold();
+    const utilization = ((tokenCount / tokenThreshold) * 100).toFixed(1);
+    ctx.core.verbose('collect', `Entering LLM: ${messageCount} messages, ${tokenCount}/${tokenThreshold} tokens (${utilization}%)`);
   }
 
   return AgentState.LLM;

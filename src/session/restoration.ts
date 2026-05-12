@@ -16,6 +16,7 @@ import { retryChat, MODEL } from '../ollama.js';
 import type { Message, ToolCall } from '../types.js';
 import type { Session } from './types.js';
 import { getTokenThreshold } from '../config.js';
+import { estimateTokens } from '../utils/token.js';
 
 /**
  * A summary pair: [user_message, assistant_message]
@@ -112,20 +113,6 @@ function fixOrphanedToolCalls(messages: Message[]): Message[] {
   });
 
   return fixed;
-}
-
-function estimateTokens(message: Message): number {
-  let total = 0;
-  if (message.content) {
-    total += message.content.split(/\s+/).length;
-  }
-  if (message.tool_calls) {
-    for (const tc of message.tool_calls) {
-      total += JSON.stringify(tc.function.arguments).split(/\s+/).length;
-    }
-  }
-
-  return total;
 }
 
 /**
