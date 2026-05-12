@@ -532,6 +532,50 @@ Use prettier for formatting (run after significant changes):
 pnpm format
 ```
 
+## Pitfalls
+
+### Tool descriptions are for LLM awareness, not user-facing
+
+The `description` field in tool definitions is read by the LLM to understand what a tool does and how to use it. It should NOT be written as user-facing documentation with verbose explanations of parameters or step-by-step workflows.
+
+**Bad example** - Verbose, user-facing style:
+```typescript
+description: `Switch to a git worktree. Changes working directory to the worktree path.
+
+For teammates: If you are not in an owned worktree, this tool will ask for user confirmation before entering.
+
+Parameters:
+- name: Name of the worktree to enter (required)
+
+The tool will:
+1. For teammates not in owned worktree: Ask user for confirmation [y/N]
+2. Enter the worktree if confirmed
+3. Send mail notification to lead about the worktree entry`
+```
+
+**Good example** - Concise, LLM-oriented style:
+```typescript
+description: 'Switch to a git worktree. Changes working directory to the worktree path. All subsequent file operations will be relative to that worktree.'
+```
+
+The LLM only needs to know the tool's purpose and parameters. Implementation details like confirmation prompts and mail notifications should be in code comments or file-level documentation, not in the description field. The description is about **what** the tool does, not **how** it does it internally.
+
+### agentIO singleton works differently in child processes
+
+The `agentIO` singleton from `src/loop/agent-io.ts` is imported by both main and child processes, but `initMain()` is only called in the main process. This means:
+
+- `agentIO.isMainProcess()` returns `true` in main process (lead)
+- `agentIO.isMainProcess()` returns `false` in child processes (teammates)
+
+This works correctly because `isMainProcessFlag` defaults to `false` and only becomes `true` after `initMain()` is called. However, this is implicit behavior that can be confusing.
+
+**Important**: Only use `agentIO.isMainProcess()` for distinguishing lead vs teammate context. Other `agentIO` methods like `ask()` and `exec()` will throw errors in child processes because they require main process I/O capabilities.
+
+For code that needs to work in both contexts:
+- Use `agentIO.isMainProcess()` to check if in main process
+- Use `ctx.core.question()` for user questions (works in both main and child via IPC)
+- Use `ctx.core.brief()` for logging (works in both via IPC for child)
+
 ## Reference Documents
 
 - `docs/agent-context.md` - AgentContext module (Chinese)
