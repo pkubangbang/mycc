@@ -121,7 +121,9 @@ function buildKnowledgeBoundarySection(): string {
     '3. Only then search the web if needed',
     '4. Continue with enhanced knowledge',
     '',
+    '### Special notice',
     'Do NOT guess. When in doubt, seek knowledge first.',
+    'Pay attention to the "pitfall" section in the mindmap if it exists.'
   ].join('\n');
 }
 
