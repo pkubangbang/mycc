@@ -4,12 +4,38 @@
  * Stores CLI-derived settings accessible throughout the codebase.
  * Also contains directory helpers and session context (migrated from db.ts).
  * Uses minimist for argument parsing.
+ *
+ * Environment loading:
+ * - User-level: ~/.mycc-store/.env (global, applies to all projects)
+ * - Project-level: ./.mycc/.env (local, overrides user-level)
  */
 
 import minimist from 'minimist';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+import { config } from 'dotenv';
+import { getUserConfigPath, getProjectConfigPath } from './setup/paths.js';
+
+// ============================================================================
+// Environment File Paths
+// ============================================================================
+
+/**
+ * Load environment variables from config files
+ * Order: user-level first, then project-level (project overrides user)
+ */
+export function loadEnv(): void {
+  const userEnvPath = getUserConfigPath();
+  const projectEnvPath = getProjectConfigPath();
+
+  if (fs.existsSync(userEnvPath)) {
+    config({ path: userEnvPath });
+  }
+  if (fs.existsSync(projectEnvPath)) {
+    config({ path: projectEnvPath });
+  }
+}
 
 // Parse CLI args once at startup
 const args = minimist(process.argv.slice(2), {

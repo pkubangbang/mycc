@@ -18,12 +18,9 @@
  */
 
 import { ChildProcess } from 'child_process';
-import { config } from 'dotenv';
-import { existsSync } from 'fs';
-import { homedir } from 'os';
 import { resolve } from 'path';
 import chalk from 'chalk';
-import { isVerbose, printEnvStatus, validateEnv, ensureToolTypeImports, shouldRunSetup } from './config.js';
+import { isVerbose, printEnvStatus, validateEnv, ensureToolTypeImports, shouldRunSetup, loadEnv } from './config.js';
 import { parseKeys, isCtrlC, isEscape } from './utils/key-parser.js';
 import { getProjectRoot, spawnTsx } from './utils/tsx-run.js';
 
@@ -75,12 +72,7 @@ function runCoordinator(): void {
   // Environment Setup
   // ---------------------------------------------------------------------------
 
-  const GLOBAL_ENV = resolve(homedir(), '.mycc-store', '.env');
-  const LOCAL_ENV = resolve(process.cwd(), '.env');
-
-  // Load .env: global first, then local (local overrides global)
-  if (existsSync(GLOBAL_ENV)) config({ path: GLOBAL_ENV });
-  if (existsSync(LOCAL_ENV)) config({ path: LOCAL_ENV });
+  loadEnv();
 
   // Validate environment before proceeding
   const envResult = validateEnv();

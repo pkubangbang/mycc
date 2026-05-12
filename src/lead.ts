@@ -10,24 +10,15 @@
  *   Terminal → Coordinator → Lead (this file) → Teammates
  */
 
-import { config } from 'dotenv';
-import { existsSync } from 'fs';
-import { homedir } from 'os';
-import { resolve } from 'path';
 import chalk from 'chalk';
-import { isVerbose, printEnvStatus, validateEnv } from './config.js';
+import { isVerbose, printEnvStatus, validateEnv, loadEnv } from './config.js';
 import { main } from './loop/agent-repl.js';
 
 // ---------------------------------------------------------------------------
 // Environment Setup
 // ---------------------------------------------------------------------------
 
-const GLOBAL_ENV = resolve(homedir(), '.mycc-store', '.env');
-const LOCAL_ENV = resolve(process.cwd(), '.env');
-
-// Load .env: global first, then local (local overrides global)
-if (existsSync(GLOBAL_ENV)) config({ path: GLOBAL_ENV });
-if (existsSync(LOCAL_ENV)) config({ path: LOCAL_ENV });
+loadEnv();
 
 // ---------------------------------------------------------------------------
 // Validation

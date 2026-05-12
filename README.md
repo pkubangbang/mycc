@@ -87,7 +87,7 @@ After installing Ollama, pull an embedding model:
 ollama pull nomic-embed-text
 ```
 
-Other embedding models like `mxbai-embed-large` or `all-minilm` also work. Make sure to update the `OLLAMA_EMBED_MODEL` environment variable if you use a different model.
+Other embedding models like `mxbai-embed-large` or `all-minilm` also work. Make sure to update the `OLLAMA_EMBEDDING_MODEL` environment variable if you use a different model.
 
 ### 3. Install tmux (Required)
 
@@ -116,30 +116,28 @@ winget install psmux
 
 `psmux` is a PowerShell-compatible alternative to tmux for Windows.
 
-### 4. Config the environment variables
-Create a file at `~/.mycc-store/.env` with variables like below.
+### 4. Run the setup wizard
 
-You can also view the content from the `.env.example` file.
+Run the interactive setup wizard to configure your environment:
 
-```ini
-# Ollama configuration
-# For local Ollama: http://127.0.0.1:11434
-# For Ollama cloud: https://api.ollama.com
-OLLAMA_HOST=http://127.0.0.1:11434
-OLLAMA_MODEL=glm-5:cloud
-
-# API key for cloud models and web search/fetch (required for web_search and web_fetch tools)
-OLLAMA_API_KEY=your_api_key_here
-
-# Token threshold for context compaction (default: 50000)
-TOKEN_THRESHOLD=50000
-
-# Editor for opening files (falls back to VISUAL or EDITOR env vars)
-EDITOR=xdg-open
+```bash
+mycc --setup
 ```
 
-Note: the `OLLAMA_API_KEY` is only required if you use the online tools; otherwise leave it blank.
-You can generate an api key [at here (need login)](https://ollama.com/settings/keys)
+The wizard will guide you through configuring:
+- **OLLAMA_HOST** - Ollama server URL (default: http://127.0.0.1:11434)
+- **OLLAMA_MODEL** - General/chat model (default: glm-5:cloud)
+- **OLLAMA_VISION_MODEL** - Vision model for screen/image tools
+- **OLLAMA_EMBEDDING_MODEL** - Embedding model for semantic search
+- **OLLAMA_API_KEY** - API key for cloud features (optional)
+- **TOKEN_THRESHOLD** - Context limit threshold (default: 50000)
+- **EDITOR** - Text editor for file editing
+
+You can choose to store configuration at:
+- **User-level**: `~/.mycc-store/.env` (global, applies to all projects)
+- **Project-level**: `./mycc/.env` (local, applies only to current project)
+
+Note: The `OLLAMA_API_KEY` is only required if you use online tools (web_search, web_fetch). You can generate an API key at [ollama.com/settings/keys](https://ollama.com/settings/keys).
 
 ### 5. Start the app
 
