@@ -167,9 +167,12 @@ export class LineEditor {
   /**
    * Clear the screen and re-render.
    * Called by AgentIO when Ctrl+L is pressed.
+   * Uses scrollback-preserving clear to avoid "collapse" effect.
    */
   clearScreen(): void {
-    this.stdout.write('\x1b[2J\x1b[H');
+    // Use \x1b[H\x1b[J instead of \x1b[2J\x1b[H
+    // This clears from cursor to end of screen while preserving scrollback
+    this.stdout.write('\x1b[H\x1b[J');
     this.screenStartRow = 0;
     this.render();
   }
