@@ -143,7 +143,8 @@ export function handleCheckpoint(
   const coloredTokens = chalk.yellow(`${tokenCount.toLocaleString()}`);
   const coloredThreshold = chalk.gray(`${tokenThreshold.toLocaleString()}`);
   ctx.core.brief('info', 'checkpoint',
-    `${coloredId}: ${description} (${coloredTokens}/${coloredThreshold} tokens)`
+    `${description} (${coloredTokens}/${coloredThreshold} tokens)`,
+    `id: ${coloredId}`
   );
 
   return {
