@@ -23,17 +23,25 @@ import { getUserConfigPath, getProjectConfigPath } from './setup/paths.js';
 
 /**
  * Load environment variables from config files
- * Order: user-level first, then project-level (project overrides user)
+ * Priority (highest to lowest): ENV_VAR > Project env > User env
+ *
+ * dotenv.config() doesn't overwrite existing values, so we load in
+ * priority order: highest priority first, lowest priority last.
+ * - System ENV_VAR already exists before this runs (highest priority)
+ * - Load project env next (medium priority) - won't overwrite ENV_VAR
+ * - Load user env last (lowest priority) - won't overwrite project or ENV_VAR
  */
 export function loadEnv(): void {
   const userEnvPath = getUserConfigPath();
   const projectEnvPath = getProjectConfigPath();
 
-  if (fs.existsSync(userEnvPath)) {
-    config({ path: userEnvPath });
-  }
+  // Load higher priority first (project overrides user)
   if (fs.existsSync(projectEnvPath)) {
     config({ path: projectEnvPath });
+  }
+  // Load lower priority last (user is fallback)
+  if (fs.existsSync(userEnvPath)) {
+    config({ path: userEnvPath });
   }
 }
 
