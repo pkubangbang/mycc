@@ -181,13 +181,17 @@ export async function incremental_compile(
   const allNodes = collect_nodes_bottom_up(existingMindmap.root);
 
   for (const node of allNodes) {
-    // Check if text changed or added
+    // Check if text changed or added, or if any child was removed
     const textChanged = diff.textChanged.has(node.id) || diff.added.has(node.id);
+    const childRemoved = Array.from(diff.removed).some(removedId => {
+      return removedId.startsWith(node.id + '/') && 
+             (removedId.split('/').length === node.id.split('/').length + 1);
+    });
 
     // Check if any child needs update
     const childNeedsUpdate = node.children.some((child) => needsUpdate.has(child.id));
 
-    if (textChanged || childNeedsUpdate) {
+    if (textChanged || childRemoved || childNeedsUpdate) {
       needsUpdate.add(node.id);
     }
   }
