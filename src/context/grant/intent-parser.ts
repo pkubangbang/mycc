@@ -33,10 +33,10 @@ export function parseIntent(intent: string): ParsedIntent | null {
     return null;
   }
 
-  // Pattern: [VERB] OBJECT [key=value]* TO [PURPOSE]
+  // Pattern: VERB OBJECT [key=value]* TO PURPOSE
   // Note: OBJECT is NOT in brackets (per spec in docs/bash-judging-plan.md)
   // Allow flexible spacing and case
-  const match = intent.match(/^\[([A-Z]+)\]\s+([A-Z]+)(?:\s+([a-z_]+=[^\s]+))*\s+TO\s+(.+)$/i);
+  const match = intent.match(/^([A-Z]+)\s+([A-Z]+)(?:\s+([a-z_]+=[^\s]+))*\s+TO\s+(.+)$/i);
   
   if (!match) {
     return null;
@@ -72,7 +72,7 @@ export function validateIntent(parsed: ParsedIntent | null): IntentValidation {
     return {
       valid: false,
       error: 'Intent format is invalid or missing',
-      hint: 'Use format: [VERB] [OBJECT] TO [PURPOSE]. Example: [READ] SOURCE TO check dependencies',
+      hint: 'Use format: VERB OBJECT TO PURPOSE. Example: READ SOURCE TO check dependencies',
     };
   }
 
@@ -82,7 +82,7 @@ export function validateIntent(parsed: ParsedIntent | null): IntentValidation {
     return {
       valid: false,
       error: `Unknown verb: "${parsed.verb}"`,
-      hint: `Use one of: ${verbList}. Example: [READ] SOURCE TO check dependencies`,
+      hint: `Use one of: ${verbList}. Example: READ SOURCE TO check dependencies`,
     };
   }
 
@@ -92,7 +92,7 @@ export function validateIntent(parsed: ParsedIntent | null): IntentValidation {
     return {
       valid: false,
       error: `Unknown object: "${parsed.object}"`,
-      hint: `Use one of: ${objectList}. Example: [${parsed.verb}] SOURCE TO ...`,
+      hint: `Use one of: ${objectList}. Example: ${parsed.verb} SOURCE TO ...`,
     };
   }
 
@@ -101,7 +101,7 @@ export function validateIntent(parsed: ParsedIntent | null): IntentValidation {
     return {
       valid: false,
       error: 'Missing purpose clause',
-      hint: 'Add TO [purpose] at the end. Example: [READ] SOURCE TO check dependencies',
+      hint: 'Add TO purpose at the end. Example: READ SOURCE TO check dependencies',
     };
   }
 

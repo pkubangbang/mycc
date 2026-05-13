@@ -7,7 +7,7 @@ Improve the bash tool behavior to ensure no unintended changes are made in plan 
 ## Intent Language Specification
 
 ```
-[VERB] OBJECT TO [PURPOSE]
+VERB OBJECT TO PURPOSE
 ```
 
 **Note:** OBJECT is NOT wrapped in brackets - only VERB is.
@@ -73,7 +73,7 @@ Input: command, intent, mode, isChildProcess
                            ▼ Not dangerous
 ┌─────────────────────────────────────────────────────────────┐
 │ Step 2: INTENT GRAMMAR CHECK                                │
-│ - Parse intent: [VERB] [OBJECT] ... TO [PURPOSE]           │
+│ - Parse intent: VERB OBJECT ... TO PURPOSE           │
 │ - Validate VERB is known                                    │
 │ - Validate OBJECT is known                                  │
 │ - Validate PURPOSE exists                                   │

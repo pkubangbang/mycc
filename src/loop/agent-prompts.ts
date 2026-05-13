@@ -35,7 +35,7 @@ function buildIntentLanguageSection(): string {
     'When using the bash tool, the `intent` parameter MUST follow this format:',
     '',
     '```',
-    '[VERB] OBJECT TO PURPOSE',
+    'VERB OBJECT TO PURPOSE',
     '```',
     '',
     '**Note:** OBJECT is NOT wrapped in brackets - only VERB is.',

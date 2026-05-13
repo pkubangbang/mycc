@@ -34,7 +34,7 @@ export async function evaluateGrant(
     if (!request.intent) {
       return {
         approved: false,
-        reason: 'Missing intent parameter. Use format: [VERB] OBJECT TO PURPOSE. Example: [READ] SOURCE TO check dependencies',
+        reason: 'Missing intent parameter. Use format: VERB OBJECT TO PURPOSE. Example: READ SOURCE TO check dependencies',
       };
     }
 
