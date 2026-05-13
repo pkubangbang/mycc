@@ -45,6 +45,8 @@ const TRANSIENT_ERROR_PATTERNS = [
   'internal server error',
   'bad gateway',
   'gateway timeout',
+  'overloaded',
+  'overload',
 ];
 
 /**
