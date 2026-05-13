@@ -59,9 +59,9 @@ The tool will ask for user permission if allowed_file is specified. User can:
         ? allowedFile
         : path.resolve(ctx.core.getWorkDir(), allowedFile);
 
-      const prompt = `You are entering plan mode (code changes prohibited).
+      const prompt = `Mycc is entering the plan mode (code changes prohibited).
 
-However, you want to allow edits to this file:
+However, you may want to allow edits to this file:
   ${resolvedPath}
 
 Allow edits to this file during plan mode?
