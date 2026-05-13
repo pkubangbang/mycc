@@ -23,6 +23,7 @@ interface CoreModule {
  */
 interface TodoModule {
   patchTodoList(items: Array<{ name: string; note?: string; done: boolean }>): void;
+  printTodoList(): string;
 }
 
 /**
@@ -155,7 +156,10 @@ Context: ${tokenCount} / ${tokenThreshold} tokens (${usagePercent}%)
 Next steps:
 1. Perform your subtask (read files, run commands, etc.)
 2. When done, call recap({ checkpoint_id: "${id}" }) to compress messages into a summary
-3. The todo item will be marked as done automatically`,
+3. The todo item will be marked as done automatically
+
+Current todo list:
+${ctx.todo.printTodoList()}`,
     id,
     description,
   };

@@ -194,20 +194,23 @@ describe('todoWriteTool - Basic Operations', () => {
     expect(brief).toHaveBeenCalledWith('info', 'todo_write', expect.stringContaining('updated'));
   });
 
-  it('should include checkmark for done items in summary', () => {
+  it('should include full todo list in brief message', () => {
     const brief = vi.mocked(ctx.core.brief);
+    vi.mocked(mockTodo.printTodoList).mockReturnValue('Todo list:\n  [x] 1. Done (note)');
     todoWriteTool.handler(ctx, { items: [{ id: 1, name: 'Done', done: true }] });
-    expect(brief.mock.calls[0][2]).toContain('✓');
+    expect(brief.mock.calls[0][2]).toContain('[x]');
   });
 
-  it('should include circle for pending items in summary', () => {
+  it('should include full todo list for pending items in brief message', () => {
     const brief = vi.mocked(ctx.core.brief);
+    vi.mocked(mockTodo.printTodoList).mockReturnValue('Todo list:\n  [ ] 1. Pending');
     todoWriteTool.handler(ctx, { items: [{ id: 1, name: 'Pending', done: false }] });
-    expect(brief.mock.calls[0][2]).toContain('○');
+    expect(brief.mock.calls[0][2]).toContain('[ ]');
   });
 
-  it('should include note in summary when present', () => {
+  it('should include full todo list in brief when note is present', () => {
     const brief = vi.mocked(ctx.core.brief);
+    vi.mocked(mockTodo.printTodoList).mockReturnValue('Todo list:\n  [x] 1. Task (Note)');
     todoWriteTool.handler(ctx, { items: [{ name: 'Task', note: 'Note' }] });
     expect(brief.mock.calls[0][2]).toContain('Note');
   });

@@ -60,12 +60,9 @@ export const todoWriteTool: ToolDefinition = {
     // Update todo list
     ctx.todo.patchTodoList(todoItems);
 
-    // Log the action
+    // Log the action - show full todo list for LLM awareness
     const action = todoItems.every((item) => item.done) ? 'completed' : 'updated';
-    const summary = todoItems.map((item) =>
-      `  ${item.done ? '✓' : '○'} ${item.name}${item.note ? `: ${item.note}` : ''}`
-    ).join('\n');
-    ctx.core.brief('info', 'todo_write', `${todoItems.length} item(s) ${action}:\n${summary}`);
+    ctx.core.brief('info', 'todo_write', `${todoItems.length} item(s) ${action}:\n${ctx.todo.printTodoList()}`);
 
     // Return current todo list
     return ctx.todo.printTodoList();

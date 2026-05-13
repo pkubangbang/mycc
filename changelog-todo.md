@@ -112,3 +112,5 @@ When updating the changelog, use the following procedure:
    - [x] hint round - log request prompt and response with chalk.cyan
    - [x] read tool - show first 50 lines of file content
    - [x] context consumption - log token count increments in triologue.updateTokenCount
+
+- [ ] racing condition: submittion without showing "mycc is wrapping up" will not show the spinner.
