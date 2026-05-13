@@ -15,9 +15,9 @@ import type { Message, ToolCall, WikiModule } from '../types.js';
 import { minifyMessages, minifyForHint } from '../utils/llm-chat-minifier.js';
 import { estimateTokens, estimateTokensForMessages } from '../utils/token.js';
 import { ResultTooLargeError } from '../types.js';
-import { getMyccDir, getLongtextDir, ensureDirs } from '../config.js';
-import { getTokenThreshold } from '../config.js';
+import { getMyccDir, getLongtextDir, ensureDirs, getTokenThreshold } from '../config.js';
 import { agentIO } from './agent-io.js';
+import { isVerbose } from '../config.js';
 
 type Role = 'system' | 'user' | 'assistant' | 'tool';
 
@@ -669,7 +669,11 @@ ${JSON.stringify(hintSchema, null, 2)}
    * Update token count incrementally
    */
   private updateTokenCount(message: Message): void {
-    this.tokenCount += estimateTokens(message);
+    const increment = estimateTokens(message);
+    this.tokenCount += increment;
+    if (isVerbose()) {
+      console.log(`[triologue] Token count: ${this.tokenCount} (+${increment} from ${message.role})`);
+    }
   }
 
   /**

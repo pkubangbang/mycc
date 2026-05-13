@@ -14,7 +14,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { filetypeinfo } from '../utils/magic-bytes.js';
 import type { ToolDefinition, AgentContext } from '../types.js';
-import { getTokenThreshold } from '../config.js';
+import { getTokenThreshold, isVerbose } from '../config.js';
 
 /** Hard-coded line limit to prevent context overflow */
 const LINE_LIMIT = 1000;
@@ -190,6 +190,12 @@ ${'─'.repeat(60)}`;
       const header = `File: ${filePath}
 Chars: ${totalChars.toLocaleString()} | Lines: ${totalLines}
 ${'─'.repeat(60)}`;
+
+      // Verbose logging: show first 50 lines in verbose mode
+      if (isVerbose()) {
+        const previewLines = lines.slice(0, 50);
+        ctx.core.verbose('read', `First 50 lines of ${filePath}:\n${previewLines.join('\n')}`);
+      }
 
       return `${header}\n${content}`;
 
