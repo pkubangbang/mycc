@@ -184,7 +184,7 @@ export async function incremental_compile(
     // Check if text changed or added, or if any child was removed
     const textChanged = diff.textChanged.has(node.id) || diff.added.has(node.id);
     const childRemoved = Array.from(diff.removed).some(removedId => {
-      return removedId.startsWith(node.id + '/') && 
+      return removedId.startsWith(`${node.id}/`) && 
              (removedId.split('/').length === node.id.split('/').length + 1);
     });
 
