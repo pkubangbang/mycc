@@ -257,9 +257,13 @@ export async function incremental_compile(
   tracker.finish();
   process.stdout.write('\x1b[4A\x1b[J');
 
-  // 7. Update metadata
+  // 7. Update metadata and persist to disk
   existingMindmap.hash = compute_hash(content);
   existingMindmap.updated_at = new Date().toISOString();
+
+  if (outPath) {
+    save_mindmap_atomic(existingMindmap, outPath);
+  }
 
   console.log(`[mindmap] Completed ${processedCount} nodes`);
   return existingMindmap;
