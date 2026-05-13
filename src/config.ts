@@ -107,7 +107,7 @@ export function getTokenThreshold(): number {
  */
 export function getSkillMatchThreshold(): number {
   const val = process.env.SKILL_MATCH_THRESHOLD;
-  return val ? parseFloat(val) : 0.5;
+  return val ? parseFloat(val) : 0.8;
 }
 
 /**
