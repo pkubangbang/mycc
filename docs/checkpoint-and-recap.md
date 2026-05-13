@@ -25,14 +25,15 @@ Regular tools receive `AgentContext`, which contains modules like `core`, `todo`
 - Handler returns empty string (placeholder)
 - Document that execution happens at state machine level
 
-**State Machine Handling** (`src/loop/states/hook.ts`):
+**State Machine Handling** (`src/loop/states/hook.ts` for lead, `src/context/teammate-worker.ts` for child):
 - Detect checkpoint/recap tool calls before regular tool execution
 - Execute the real logic using `env.triologue`
 - Return result directly without calling regular tool handler
 
-**Hook Validation**:
-- Checkpoint isolation (must be called alone) validated in `hook.ts`
-- Regular validation continues as before
+**Isolation Validation**:
+- Both checkpoint and recap must be called ALONE (no other tools in same turn)
+- Validated in `hook.ts` via `validateCheckpointIsolation` and `validateRecapIsolation`
+- Enforced before tool execution
 
 ## Motivation
 
@@ -65,11 +66,38 @@ Subagents solve this by giving each subtask a fresh context, but implementing su
 | Track open checkpoint | Scan messages (in-memory) | Simple, cheap O(n) scan |
 | Recap with wrong ID | Error + list available checkpoints | Helpful error message |
 | Recap replacement | Replace checkpoint and everything after | Clean history |
-| Recap summary format | User + assistant pair | Matches autoCompact pattern |
+| Recap summary format | User + assistant pair (NO tool message) | Matches autoCompact pattern, cleaner history |
+| Recap isolation | Must be only tool call in turn | Same as checkpoint, enforced before execution |
 | Todo for checkpoint | Regular todo with checkpoint info in note | Uses existing infrastructure |
 | Recap without checkpoint | Error: "No checkpoint found." | Ruthless, clear contract |
 | Todo nudge for checkpoint | Include in standard todo nudge | Simple integration |
-| Teammate support | Not supported | Teammates won't benefit |
+| Teammate support | Supported | Both lead and child can use checkpoint/recap |
+
+## Message Structure
+
+### Checkpoint Flow
+
+When `checkpoint` is called:
+1. LLM outputs assistant message with `checkpoint` tool call
+2. State machine adds: `triologue.agent(content, toolCalls)`
+3. State machine adds: `triologue.tool('checkpoint', result, id)`
+4. State machine adds: `addCheckpointMarker(triologue, id, description)`
+
+**Result**: `[assistant(tool_calls), tool(result), user(checkpoint_marker)]`
+
+### Recap Flow
+
+When `recap` is called:
+1. LLM outputs assistant message with `recap` tool call
+2. State machine calls `handleRecap()` which:
+   - Finds checkpoint by ID
+   - Summarizes messages from checkpoint to end
+   - Replaces with: `triologue.recapMessages(index, userMessage, assistantMessage)`
+3. State machine adds continuation prompt
+
+**Result**: `[user(summary), assistant(acknowledgment)]`
+
+**Key difference**: Recap does NOT add the tool call/result to history. It directly replaces the checkpoint and all subsequent messages with a clean summary pair.
 
 ## Tools
 

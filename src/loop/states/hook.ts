@@ -91,15 +91,15 @@ export async function handleHook(
   }
 
   if (recapCall) {
-    // For recap: DON'T register agent message first since recapMessages will replace it
-    // Instead, let handleRecap manage the entire message replacement
-
     // Show assistant text content if any
     if (pass.assistantContent) {
       ctx.core.brief('info', 'assistant', pass.assistantContent);
     }
 
     // Execute recap using shared handler (with ESC awareness for lead agent)
+    // Note: Recap is a meta-tool that directly manipulates triologue.
+    // It does NOT add tool call/result messages to history.
+    // Instead, it replaces messages from checkpoint with a summary pair.
     const checkpointCtx = createCheckpointContext(env);
     const escAware = <T>(fn: (ac: AbortController) => Promise<T>, cleanup: () => T): Promise<T> => {
       return ctx.core.escAware(fn, cleanup);
@@ -107,11 +107,11 @@ export async function handleHook(
     const result = await handleRecap(
       recapCall.function.arguments as Record<string, unknown>,
       checkpointCtx,
-      escAware
+      escAware,
     );
 
     // Brief the recap result to user
-    ctx.core.brief('info', 'recap', result.result.split('\n')[0]); // First line of result
+    ctx.core.brief('info', 'recap', result.result.split('\n')[0]);
 
     // Add continuation prompt since last message is assistant acknowledgment
     addContinuationPrompt(triologue);
@@ -147,7 +147,8 @@ export async function handleHook(
     for (const [callId, blockMessage] of hookResult.blockedCalls) {
       const name = hookResult.calls.find((c) => c.id === callId)?.function.name ?? 'unknown';
       triologue.tool(name, blockMessage, callId);
-      agentIO.log(chalk.yellow(`[hook] blocked: ${blockMessage}`));
+      // Blocked messages already contain detailed info from hook-executor
+      agentIO.log(chalk.yellow(`[hook] blocked ${name}:\n${blockMessage}`));
     }
   }
 

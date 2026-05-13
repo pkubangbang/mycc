@@ -280,6 +280,9 @@ When updating the changelog, use the following procedure:
 # Todo
 
 - [ ] add e2e test using tmux, with meaningful test cases, written as a skill
+- [ ] triologue parity issues
+   - [x] recap (2026-05-13)
+   - [x] auto-compaction (2026-05-13)
 - [ ] mindmap not updated when only removal is included.
 - [ ] line-editor structure: 1 hint line + n prompt line + 1 blank line
 - [ ] improve hook log output

@@ -330,6 +330,14 @@ export class Triologue {
   }
 
   /**
+   * Check if auto-compact is needed.
+   * Called by tool.ts after each tool execution to detect context overflow.
+   */
+  needsCompact(): boolean {
+    return this.tokenCount > this.options.tokenThreshold;
+  }
+
+  /**
    * Clear all messages and reset state
    * Called by /clear command
    */
@@ -597,20 +605,17 @@ ${JSON.stringify(hintSchema, null, 2)}
   // === Internal Methods ===
 
   /**
-   * Add a message with validation and auto-compact check
+   * Add a message to the triologue.
+   * Note: Auto-compact is NOT called here to avoid race conditions.
+   * Overflow checking is done in tool.ts after each tool result.
    */
-  private async addMessage(message: Message): Promise<void> {
+  private addMessage(message: Message): void {
     this.messages.push(message);
     this.updateTokenCount(message);
 
     // Call onMessage callback if set
     if (this.options.onMessage) {
       this.options.onMessage(this.messages);
-    }
-
-    // Check for auto-compact
-    if (this.tokenCount > this.options.tokenThreshold) {
-      await this.compact();
     }
   }
 
@@ -874,7 +879,8 @@ ${JSON.stringify(hintSchema, null, 2)}
 
   /**
    * Replace messages from startIndex onwards with recap summary
-   * Used by recap tool to compress checkpoint messages into summary
+   * Used by recap tool to compress checkpoint messages into summary.
+   * Creates a clean user + assistant pair, matching autoCompact pattern.
    * @param startIndex - Index of checkpoint message (inclusive)
    * @param userMessage - User recap message to insert
    * @param assistantMessage - Assistant acknowledgment to insert
@@ -883,7 +889,7 @@ ${JSON.stringify(hintSchema, null, 2)}
     // Keep messages before startIndex
     const keptMessages = this.messages.slice(0, startIndex);
 
-    // Replace with summary pair
+    // Replace with summary pair (user + assistant)
     this.messages = [...keptMessages, userMessage, assistantMessage];
 
     // Recalculate token count

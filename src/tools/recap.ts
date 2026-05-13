@@ -1,14 +1,16 @@
 /**
  * recap.ts - Compress checkpoint messages into a summary
  *
- * Scope: ['main'] - Only available to main agent (not teammates)
+ * Scope: ['main', 'child'] - Available to both lead and teammate agents
  *
  * NOTE: This is a META-TOOL. The tool definition is for LLM visibility,
- * but the actual execution happens in the state machine (hook.ts)
- * because it needs access to triologue which is not in AgentContext.
+ * but the actual execution happens in the state machine (hook.ts for lead,
+ * teammate-worker.ts for child) because it needs access to triologue
+ * which is not in AgentContext.
  *
  * Finds the checkpoint by ID and summarizes all messages from that point
  * into a concise summary, replacing the messages with the summary.
+ * Does NOT add tool call/result messages to history (unlike regular tools).
  */
 
 import type { ToolDefinition } from '../types.js';
@@ -24,12 +26,10 @@ Usage:
    - recap({ checkpoint_id: "..." }) - Summarize and close (subtask completed)
    - recap({ checkpoint_id: "...", abandon: true }) - Discard and close (subtask abandoned)
 
-Rules:
-- Requires a valid checkpoint ID
-- Without abandon: Summarizes all messages from checkpoint to end
-- With abandon: Discards all messages from checkpoint to end (no summary)
-- Marks the corresponding todo as done
-- Only one checkpoint can be open at a time`,
+IMPORTANT: This tool MUST be called alone. No other tools can be used in the same turn.
+
+The tool replaces all messages from checkpoint onwards with a summary pair,
+keeping your context clean and focused.`,
   input_schema: {
     type: 'object',
     properties: {

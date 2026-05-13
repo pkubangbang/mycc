@@ -266,14 +266,15 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
           const tc = toolCalls[0]; // We validated it's alone
           const args = tc.function.arguments as Record<string, unknown>;
 
-          // For recap: the tool result is now included in the recap messages by handleRecapTool
           // Show assistant text content if any
           if (assistantMessage.content) {
             ctx.core.brief('info', 'assistant', assistantMessage.content);
           }
 
           // Execute recap (no escAware for teammates - no ESC handling needed)
-          const result = await handleRecapTool(args, checkpointCtx, undefined, tc.id);
+          // Note: Recap is a meta-tool that directly manipulates triologue.
+          // It does NOT add tool call/result messages to history.
+          const result = await handleRecapTool(args, checkpointCtx);
 
           // Brief the recap result
           ctx.core.brief('info', 'recap', result.result.split('\n')[0]);

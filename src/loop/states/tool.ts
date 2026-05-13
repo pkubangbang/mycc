@@ -139,6 +139,21 @@ export async function handleTool(
 
       triologue.tool(toolName, output, toolCallId);
 
+      // Check for context overflow - if exceeded, abandon remaining tools and compact
+      if (triologue.needsCompact()) {
+        // Skip remaining pending tools with placeholder messages
+        triologue.skipPendingTools(
+          'Tool skipped due to context overflow - auto-compacting.',
+          'Tool skipped due to context overflow.'
+        );
+
+        // Run compact immediately
+        await triologue.compact();
+
+        // Return to COLLECT - agent will continue with fresh context
+        return AgentState.COLLECT;
+      }
+
       // Confusion scoring based on tool classification
       // Exploration tools: no change to confusion
       // Action tools: reduce confusion (progress being made), unless repetition
@@ -195,7 +210,17 @@ export async function handleTool(
           `Use read tool to summarize, or bash with head/tail to read.\n\n` +
           `--- Preview (first 1000 chars) ---\n${err.preview}`;
         triologue.tool(toolName, truncatedOutput, toolCallId);
-        
+
+        // Check for context overflow after truncated result
+        if (triologue.needsCompact()) {
+          triologue.skipPendingTools(
+            'Tool skipped due to context overflow - auto-compacting.',
+            'Tool skipped due to context overflow.'
+          );
+          await triologue.compact();
+          return AgentState.COLLECT;
+        }
+
         // Error increases confusion
         ctx.core.increaseConfusionIndex(2);
       } else {
