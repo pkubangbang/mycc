@@ -68,11 +68,11 @@ function buildIntentLanguageSection(): string {
     '',
     '**Examples:**',
     '```',
-    '[READ] SOURCE TO check dependencies',
-    '[READ] CONFIG path=package.json TO verify scripts',
-    '[WRITE] SOURCE path=src/utils.ts TO create helper functions',
-    '[BUILD] ARTIFACT TO compile TypeScript',
-    '[TEST] SOURCE TO verify implementation',
+    'READ SOURCE TO check dependencies',
+    'READ CONFIG path=package.json TO verify scripts',
+    'WRITE SOURCE path=src/utils.ts TO create helper functions',
+    'BUILD ARTIFACT TO compile TypeScript',
+    'TEST SOURCE TO verify implementation',
     '```',
   ].join('\n');
 }

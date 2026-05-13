@@ -114,3 +114,4 @@ When updating the changelog, use the following procedure:
    - [x] context consumption - log token count increments in triologue.updateTokenCount
 
 - [ ] racing condition: submittion without showing "mycc is wrapping up" will not show the spinner.
+- [ ] the configured "gnome-text-editor" cannot be reliably started when multi-line editing.
