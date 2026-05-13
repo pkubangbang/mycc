@@ -285,4 +285,8 @@ When updating the changelog, use the following procedure:
    - [x] auto-compaction (2026-05-13)
 - [ ] mindmap not updated when only removal is included.
 - [ ] line-editor structure: 1 hint line + n prompt line + 1 blank line
-- [ ] improve hook log output
+- [x] improve hook log output (2026-05-13)
+- [x] improve verbose logs (2026-05-13)
+   - [x] hint round - log request prompt and response with chalk.cyan
+   - [x] read tool - show first 50 lines of file content
+   - [x] context consumption - log token count increments in triologue.updateTokenCount

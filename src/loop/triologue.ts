@@ -445,6 +445,12 @@ ${JSON.stringify(hintSchema, null, 2)}
       }
 
       try {
+        // Verbose logging: show the hint round request
+        if (isVerbose()) {
+          console.log(chalk.cyan('[triologue] Hint round request:'));
+          console.log(chalk.cyan(analysisPrompt));
+        }
+
         // Get analysis from LLM with JSON schema enforcement
         const response = await retryChat(
           {
@@ -524,6 +530,12 @@ ${JSON.stringify(hintSchema, null, 2)}
           role: 'user',
           content: hintLines.join('\n'),
         };
+
+        // Verbose logging: show the hint response
+        if (isVerbose()) {
+          console.log(chalk.cyan('[triologue] Hint round response:'));
+          console.log(chalk.cyan(hintMessage.content));
+        }
 
         this.messages.push(hintMessage);
         this.updateTokenCount(hintMessage);
