@@ -59,10 +59,7 @@ export const todoWriteTool: ToolDefinition = {
 
     // Update todo list
     ctx.todo.patchTodoList(todoItems);
-
-    // Log the action - show full todo list for LLM awareness
-    const action = todoItems.every((item) => item.done) ? 'completed' : 'updated';
-    ctx.core.brief('info', 'todo_write', `${todoItems.length} item(s) ${action}:\n${ctx.todo.printTodoList()}`);
+    ctx.core.brief('info', 'todo_write', ctx.todo.printTodoList(), `${todoItems.length} item(s) updated`);
 
     // Return current todo list
     return ctx.todo.printTodoList();

@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 /**
  * teammate-worker.ts - Worker process for autonomous teammates
  *

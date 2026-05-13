@@ -159,6 +159,7 @@ export class WikiManager implements WikiModule {
         const embeddingArr = Array.isArray(r.embedding) ? r.embedding : Array.from(r.embedding as Iterable<number>);
         const similarity = this.cosineSimilarity(embedding, embeddingArr);
         if (similarity > threshold) {
+          this.core.brief('warn', 'wiki', `Duplicate check hit: similarity=${similarity.toFixed(4)} > ${threshold}, colliding doc: domain=${r.domain}, title=${r.title}, hash=${r.hash}`);
           return true;
         }
       }

@@ -115,3 +115,4 @@ When updating the changelog, use the following procedure:
 
 - [ ] racing condition: submittion without showing "mycc is wrapping up" will not show the spinner.
 - [ ] the configured "gnome-text-editor" cannot be reliably started when multi-line editing.
+- [ ] the todo_write tool does not behaves correctly. Patches mess up the list.

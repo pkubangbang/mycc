@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 /**
  * index.ts - Main entry point (Coordinator)
  *

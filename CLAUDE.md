@@ -583,4 +583,4 @@ For code that needs to work in both contexts:
 - `docs/agent-tools.md` - Built-in tools reference
 - `docs/child-context.md` - Child process and IPC (Chinese)
 - `docs/dynamic-loading.md` - Tool/skill loading mechanism
-- `docs/database-schema.md` - SQLite schema (Chinese)
+- `docs/database-schema.md` - Data storage schema (Chinese, historical reference — SQLite removed in v0.7.0)
