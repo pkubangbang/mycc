@@ -19,7 +19,8 @@ import { bashTool } from '../../tools/bash.js';
 import { readTool } from '../../tools/read.js';
 import { writeTool } from '../../tools/write.js';
 import { editTool } from '../../tools/edit.js';
-import { todoWriteTool } from '../../tools/todo_write.js';
+import { todoCreateTool } from '../../tools/todo_create.js';
+import { todoUpdateTool } from '../../tools/todo_update.js';
 import { skillLoadTool } from '../../tools/skill_load.js';
 import { tmCreateTool } from '../../tools/tm_create.js';
 import { tmRemoveTool } from '../../tools/tm_remove.js';
@@ -71,7 +72,8 @@ const builtInTools: ToolDefinition[] = [
   readTool,
   writeTool,
   editTool,
-  todoWriteTool,
+  todoCreateTool,
+  todoUpdateTool,
   skillLoadTool,
   tmCreateTool,
   tmRemoveTool,

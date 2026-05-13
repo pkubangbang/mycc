@@ -42,10 +42,12 @@ export function createMockCore(overrides: Partial<CoreModule> = {}): CoreModule 
  */
 export function createMockTodo(overrides: Partial<TodoModule> = {}): TodoModule {
   return {
-    patchTodoList: vi.fn(),
-    printTodoList: vi.fn(),
+    createTodo: vi.fn(() => ({ id: 1, name: 'test', done: false, hash: 'abcdef01' })),
+    updateTodo: vi.fn(() => ({ id: 1, name: 'test', done: true, hash: 'abcdef01' })),
+    printTodoList: vi.fn(() => 'No todos.'),
     hasOpenTodo: vi.fn(() => false),
     clear: vi.fn(),
+    getItems: vi.fn(() => []),
     ...overrides,
   };
 }

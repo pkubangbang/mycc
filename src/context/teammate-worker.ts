@@ -103,7 +103,7 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
 
   // Tools that modify state (progress indicators)
   const ACTION_TOOLS = new Set([
-    'write_file', 'edit_file', 'todo_write', 'issue_create', 'issue_close',
+    'write_file', 'edit_file', 'todo_create', 'todo_update', 'issue_create', 'issue_close',
     'issue_claim', 'issue_comment', 'blockage_create', 'blockage_remove',
     'tm_create', 'tm_remove', 'wt_create', 'wt_remove', 'bg_create',
     'bg_remove', 'mail_to', 'broadcast', 'git_commit',

@@ -59,7 +59,7 @@ export const tmCreateTool: ToolDefinition = {
         return `${result  }\n\n` +
           `KICKOFF REQUIRED: You just created your first teammate. Your next steps:\n` +
           `1. Create more teammates if needed (you can continue using tm_create)\n` +
-          `2. Write a kickoff todo list using todo_write to coordinate team work\n` +
+          `2. Write a kickoff todo list using todo_create to coordinate team work\n` +
           `3. Distribute tasks to teammates using mail_to`;
       }
 

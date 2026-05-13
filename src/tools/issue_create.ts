@@ -46,7 +46,7 @@ export const issueCreateTool: ToolDefinition = {
     const id = await ctx.issue.createIssue(title, content, blockedBy);
     ctx.core.brief('info', 'issue_create', `Created issue #${id}: ${title}`);
 
-    // Return full issue list for visibility (like todo_write)
+    // Return full issue list for visibility (like todo_create)
     return await ctx.issue.printIssues();
   },
 };

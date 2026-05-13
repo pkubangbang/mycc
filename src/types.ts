@@ -99,10 +99,11 @@ export interface Mail {
  * Todo item - temporary checklist
  */
 export interface TodoItem {
-  id?: number;  // Optional: 0 or undefined for new items, existing ID to update
+  id: number;   // Unique identifier (auto-assigned on creation)
   name: string;
   done: boolean;
   note?: string;
+  hash: string; // SHA256(name|done|note), first 8 hex chars — integrity signature
 }
 
 // ============================================================================
@@ -313,10 +314,12 @@ export interface CoreModule {
  * Todo module interface
  */
 export interface TodoModule {
-  patchTodoList(items: TodoItem[]): void;
+  createTodo(name: string, note?: string): TodoItem;
+  updateTodo(id: number, hash: string, name: string, done: boolean, note?: string): TodoItem | null;
   printTodoList(): string;
   hasOpenTodo(): boolean;
   clear(): void;
+  getItems(): TodoItem[];
 }
 
 /**

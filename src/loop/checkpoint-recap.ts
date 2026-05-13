@@ -6,7 +6,7 @@
  */
 
 import chalk from 'chalk';
-import type { Message } from '../types.js';
+import type { Message, TodoModule } from '../types.js';
 import { Triologue } from './triologue.js';
 import { retryChat, MODEL } from '../ollama.js';
 import { minifyMessages } from '../utils/llm-chat-minifier.js';
@@ -19,20 +19,12 @@ interface CoreModule {
 }
 
 /**
- * Todo module interface
- */
-interface TodoModule {
-  patchTodoList(items: Array<{ name: string; note?: string; done: boolean }>): void;
-  printTodoList(): string;
-}
-
-/**
  * Context interface for checkpoint/recap handlers
  */
 export interface CheckpointContext {
   core: CoreModule;
-  todo: TodoModule;
   triologue: Triologue;
+  todo: TodoModule;
 }
 
 /**
@@ -126,17 +118,13 @@ export function handleCheckpoint(
   // Generate checkpoint ID
   const id = Triologue.generateCheckpointId();
 
+  // Auto-create a todo item tracking this checkpoint
+  ctx.todo.createTodo(`Checkpoint: ${description}`, id);
+
   // Get context length at checkpoint creation
   const tokenCount = triologue.getTokenCount();
   const tokenThreshold = triologue.getTokenThreshold();
   const usagePercent = Math.round((tokenCount / tokenThreshold) * 100);
-
-  // Add todo item
-  ctx.todo.patchTodoList([{
-    name: `Checkpoint: ${description}`,
-    note: `ID: ${id}`,
-    done: false,
-  }]);
 
   // Brief the user (simple, colorized)
   const coloredId = chalk.cyan.bold(id);
@@ -156,11 +144,7 @@ Context: ${tokenCount} / ${tokenThreshold} tokens (${usagePercent}%)
 
 Next steps:
 1. Perform your subtask (read files, run commands, etc.)
-2. When done, call recap({ checkpoint_id: "${id}" }) to compress messages into a summary
-3. The todo item will be marked as done automatically
-
-Current todo list:
-${ctx.todo.printTodoList()}`,
+2. When done, call recap({ checkpoint_id: "${id}" }) to compress messages into a summary`,
     id,
     description,
   };
@@ -234,12 +218,6 @@ ${messages.length} messages discarded. Checkpoint closed.${comment ? `\n\nCommen
 
     // Get token count AFTER recap
     const tokensAfter = triologue.getTokenCount();
-
-    // Mark todo as done
-    ctx.todo.patchTodoList([{
-      name: `Checkpoint: ${checkpoint.description}`,
-      done: true,
-    }]);
 
     // Brief the user
     const coloredBefore = chalk.yellow(tokensBefore.toLocaleString());
@@ -347,12 +325,6 @@ Checkpoint closed. ${messages.length} messages compressed into summary.`;
 
   // Get token count AFTER recap
   const tokensAfter = triologue.getTokenCount();
-
-  // Mark todo as done
-  ctx.todo.patchTodoList([{
-    name: `Checkpoint: ${checkpoint.description}`,
-    done: true,
-  }]);
 
   // Brief the user (simple, colorized)
   const coloredBefore = chalk.yellow(tokensBefore.toLocaleString());

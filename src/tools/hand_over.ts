@@ -113,11 +113,7 @@ async function handleHandOver(ctx: AgentContext, args: Record<string, unknown>):
   }
 
   // 3. Track session in todo
-  ctx.todo.patchTodoList([{
-    name: `hand_over: ${sessionName}`,
-    done: false,
-    note: command,
-  }]);
+  ctx.todo.createTodo(`hand_over: [sessionName: ${sessionName}]`, command);
 
   // 4. Open popup terminal (detached, returns immediately)
   const terminalArgs = parseTerminalArgs(terminalLauncher, sessionName);
@@ -164,12 +160,6 @@ async function handleHandOver(ctx: AgentContext, args: Record<string, unknown>):
       ? await summarizeOutput(output, command, 100)
       : output || '(empty output)';
 
-    ctx.todo.patchTodoList([{
-      name: `hand_over: ${sessionName}`,
-      done: true,
-      note: 'kept - user feedback',
-    }]);
-
     return `User provided feedback: "${answer}"\n\nSession ${sessionName} is still running. Reattach with: tmux attach -t ${sessionName}\n\nOutput:\n${result}`;
   }
 
@@ -203,14 +193,7 @@ async function handleHandOver(ctx: AgentContext, args: Record<string, unknown>):
     }
   }
 
-  // 8. Update todo
-  ctx.todo.patchTodoList([{
-    name: `hand_over: ${sessionName}`,
-    done: true,
-    note: keepSession ? 'kept' : 'killed',
-  }]);
-
-  // 9. Summarize if needed
+  // 8. Summarize if needed
   const maxLines = 100;
   const lines = output.split('\n');
 
@@ -218,7 +201,7 @@ async function handleHandOver(ctx: AgentContext, args: Record<string, unknown>):
     ? await summarizeOutput(output, command, maxLines)
     : output || '(empty output)';
 
-  // 10. Build and return result
+  // 9. Build and return result
   const header = `User ran: ${command}`;
   const status = keepSession
     ? `Session: ${sessionName} (kept)\nTo reattach: tmux attach -t ${sessionName}`

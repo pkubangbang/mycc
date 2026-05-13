@@ -32,7 +32,8 @@ const EXPLORATION_TOOLS = new Set([
 const ACTION_TOOLS = new Set([
   'write_file',
   'edit_file',
-  'todo_write',
+  'todo_create',
+  'todo_update',
   'issue_create',
   'issue_close',
   'issue_claim',

@@ -41,7 +41,8 @@ const TOOL_COLORS: Record<string, (text: string) => string> = {
   issue_list: chalk.yellow,
   blockage_create: chalk.yellow,
   blockage_remove: chalk.yellow,
-  todo_write: chalk.yellow,
+  todo_create: chalk.yellow,
+  todo_update: chalk.blueBright,
 
   // Team management
   tm_create: chalk.magentaBright,

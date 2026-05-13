@@ -237,7 +237,7 @@ Key types:
 - `Issue` - `{ id, title, status, owner, content, comments, blockedBy, blocks, createdAt }`
 
 Tools:
-- `todo_write` - Create/update todos
+- `todo_create`, `todo_update` - Create/update todos
 - `issue_create` - Create issue with dependencies
 - `issue_claim` - Assign issue to teammate
 - `issue_list` - List all issues

@@ -147,7 +147,7 @@ issue_list()  # See all task status at a glance
 issue_close(id=1, status="completed", comment="Fixed")
 
 # Bad: Use todos to track team work
-todo_write([{ name: "Wait for coder" }])  # Doesn't show actual task status
+todo_create("Wait for coder")  # Doesn't show actual task status
 ```
 
 ## Common Patterns
