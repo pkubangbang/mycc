@@ -187,6 +187,7 @@ export async function handleRecap(
   const triologue = ctx.triologue;
   const checkpointId = args.checkpoint_id as string;
   const abandon = args.abandon === true;
+  const comment = typeof args.comment === 'string' && args.comment.trim() ? args.comment.trim() : undefined;
 
   if (!checkpointId || typeof checkpointId !== 'string' || checkpointId.trim() === '') {
     return { success: false, result: 'Error: checkpoint_id is required and must be a non-empty string.' };
@@ -213,9 +214,10 @@ export async function handleRecap(
   // Handle abandon mode: discard messages without summarizing
   if (abandon) {
     // Create abandon messages (brief marker, no summary)
+    const commentSuffix = comment ? `\n\n**Comment:** ${comment}` : '';
     const userMessage: Message = {
       role: 'user',
-      content: `[RECAP] Abandoned checkpoint "${checkpoint.description}"`,
+      content: `[RECAP] Abandoned checkpoint "${checkpoint.description}"${commentSuffix}`,
     };
     const assistantMessage: Message = {
       role: 'assistant',
@@ -224,7 +226,7 @@ export async function handleRecap(
 
     const abandonResult = `[RECAP] Abandoned checkpoint "${checkpoint.description}"
 
-${messages.length} messages discarded. Checkpoint closed.`;
+${messages.length} messages discarded. Checkpoint closed.${comment ? `\n\nComment: ${comment}` : ''}`;
 
     // Replace messages from checkpoint onwards with abandon marker
     triologue.recapMessages(checkpoint.index, userMessage, assistantMessage);
@@ -243,7 +245,7 @@ ${messages.length} messages discarded. Checkpoint closed.`;
     const coloredAfter = chalk.green(tokensAfter.toLocaleString());
     ctx.core.brief('info', 'recap',
       `(${coloredBefore} → ${coloredAfter} tokens)`,
-      `Abandoned: ${checkpoint.description}`
+      `Abandoned: ${checkpoint.description}${comment ? ` — ${comment}` : ''}`
     );
 
     return {
@@ -322,9 +324,10 @@ ${conversationText}`,
   const summary = response.message.content || '(no summary)';
 
   // Create recap messages (user + assistant pair, matching autoCompact pattern)
+  const commentSuffix = comment ? `\n\n**LLM Comment:** ${comment}` : '';
   const userMessage: Message = {
     role: 'user',
-    content: `[RECAP] Completed checkpoint "${checkpoint.description}":\n${summary}`,
+    content: `[RECAP] Completed checkpoint "${checkpoint.description}":\n${summary}${commentSuffix}`,
   };
   const assistantMessage: Message = {
     role: 'assistant',
@@ -334,7 +337,7 @@ ${conversationText}`,
   const recapResult = `[RECAP] Completed checkpoint "${checkpoint.description}"
 
 Summary:
-${summary}
+${summary}${comment ? `\n\nLLM Comment: ${comment}` : ''}
 
 Checkpoint closed. ${messages.length} messages compressed into summary.`;
 
@@ -355,7 +358,7 @@ Checkpoint closed. ${messages.length} messages compressed into summary.`;
   const coloredAfter = chalk.green(tokensAfter.toLocaleString());
   ctx.core.brief('info', 'recap',
     `(${coloredBefore} → ${coloredAfter} tokens)`,
-    `${checkpoint.description}`
+    `${checkpoint.description}${comment ? ` — ${comment}` : ''}`
   );
 
   return {

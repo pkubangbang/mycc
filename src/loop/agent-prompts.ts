@@ -244,7 +244,13 @@ Checkpoint and recap tools work together to manage subtask boundaries and keep y
 - Checkpoint must be called ALONE (no other tools in same turn)
 - Use the checkpoint ID from step 1 when calling recap
 - The todo list tracks open checkpoints
-- If you get distracted or abandon a subtask, use recap with abandon: true to discard the exploration`;
+- If you get distracted or abandon a subtask, use recap with abandon: true to discard the exploration
+
+**Optional comment:**
+You can add a \`comment\` property to recap to record your findings, like:
+- recap({ checkpoint_id: "abc12345", comment: "Found that the bug is in the parser; next step is to update the tokenizer." })
+
+The comment is shown in the recap log for user visibility.`;
 }
 
 // ============================================================================
