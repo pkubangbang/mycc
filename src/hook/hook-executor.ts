@@ -29,6 +29,31 @@ export interface AugmentedToolCall extends ToolCall {
 }
 
 /**
+ * Format tool arguments for display (truncate long values)
+ */
+function formatArgsPreview(args: Record<string, unknown>, maxLen: number = 50): string {
+  const entries = Object.entries(args);
+  if (entries.length === 0) return '';
+
+  const parts: string[] = [];
+  for (const [key, value] of entries.slice(0, 3)) { // Show max 3 args
+    let str: string;
+    if (typeof value === 'string') {
+      str = value.length > maxLen ? `${value.slice(0, maxLen)}...` : value;
+    } else {
+      str = JSON.stringify(value);
+      if (str.length > maxLen) {
+        str = `${str.slice(0, maxLen)}...`;
+      }
+    }
+    parts.push(`${key}=${str}`);
+  }
+
+  const suffix = entries.length > 3 ? ` (+${entries.length - 3} more)` : '';
+  return `(${parts.join(', ')}${suffix})`;
+}
+
+/**
  * Result of hook execution
  */
 export interface HookResult {
@@ -97,7 +122,8 @@ export class HookExecutor {
     action: HookAction,
     ctx: AgentContext,
     pendingCalls: ToolCall[],
-    skillContent: string
+    skillContent: string,
+    cond?: Condition
   ): Promise<HookResult> {
     // Check if already injected (duplicate prevention)
     if (this.conditions.hasInjected(skillName)) {
@@ -113,19 +139,19 @@ export class HookExecutor {
 
     switch (action.type) {
       case 'inject_before':
-        return this.injectBefore(skillName, action, ctx, pendingCalls, skillContent);
+        return this.injectBefore(skillName, action, ctx, pendingCalls, skillContent, cond);
 
       case 'inject_after':
-        return this.injectAfter(skillName, action, ctx, pendingCalls, skillContent);
+        return this.injectAfter(skillName, action, ctx, pendingCalls, skillContent, cond);
 
       case 'block':
-        return this.block(skillName, action, skillContent);
+        return this.block(skillName, action, skillContent, cond);
 
       case 'replace':
-        return this.replace(skillName, action, ctx, pendingCalls, skillContent);
+        return this.replace(skillName, action, ctx, pendingCalls, skillContent, cond);
 
       case 'message':
-        return this.message(skillName, skillContent);
+        return this.message(skillName, skillContent, cond);
     }
   }
 
@@ -137,7 +163,8 @@ export class HookExecutor {
     action: { type: 'inject_before'; tool: string; args: Record<string, unknown>; timeout?: number },
     ctx: AgentContext,
     pendingCalls: ToolCall[],
-    skillContent: string
+    _skillContent: string,
+    cond?: Condition
   ): Promise<HookResult> {
     const newCall: ToolCall = {
       id: `hook-${skillName}-${Date.now()}`,
@@ -147,8 +174,17 @@ export class HookExecutor {
       },
     };
 
-    // Brief context for LLM
-    ctx.core.brief('info', 'hook', `[${skillName}] Injecting ${action.tool} before trigger`, skillContent.slice(0, 100));
+    const triggerTool = pendingCalls[0]?.function.name ?? 'unknown';
+    const whenText = cond?.when ?? 'unknown condition';
+    const conditionExpr = cond?.condition ?? 'unknown';
+    const argsPreview = formatArgsPreview(action.args);
+
+    // Brief (message): why it triggered (when field)
+    // Verbose (detail): skill name and tool transformation
+    ctx.core.brief('info', 'hook',
+      `"${whenText}"\nCondition: ${conditionExpr}`,
+      `${skillName}: ${triggerTool} → ${action.tool}${argsPreview}`
+    );
 
     return {
       action: 'injected',
@@ -164,7 +200,8 @@ export class HookExecutor {
     action: { type: 'inject_after'; tool: string; args: Record<string, unknown>; timeout?: number },
     ctx: AgentContext,
     pendingCalls: ToolCall[],
-    skillContent: string
+    _skillContent: string,
+    cond?: Condition
   ): Promise<HookResult> {
     const newCall: ToolCall = {
       id: `hook-${skillName}-${Date.now()}`,
@@ -174,7 +211,17 @@ export class HookExecutor {
       },
     };
 
-    ctx.core.brief('info', 'hook', `[${skillName}] Injecting ${action.tool} after trigger`, skillContent.slice(0, 100));
+    const triggerTool = pendingCalls[0]?.function.name ?? 'unknown';
+    const whenText = cond?.when ?? 'unknown condition';
+    const conditionExpr = cond?.condition ?? 'unknown';
+    const argsPreview = formatArgsPreview(action.args);
+
+    // Brief (message): why it triggered (when field)
+    // Verbose (detail): skill name and tool transformation
+    ctx.core.brief('info', 'hook',
+      `"${whenText}"\nCondition: ${conditionExpr}`,
+      `${skillName}: ${triggerTool} → ${triggerTool} + ${action.tool}${argsPreview}`
+    );
 
     // Insert after first call
     const remaining = pendingCalls.slice(1);
@@ -190,13 +237,16 @@ export class HookExecutor {
   private async block(
     skillName: string,
     action: { type: 'block'; reason?: string },
-    skillContent: string
+    _skillContent: string,
+    cond?: Condition
   ): Promise<HookResult> {
-    const reason = action.reason || skillContent.slice(0, 200);
+    const whenText = cond?.when ?? 'unknown condition';
+    const conditionExpr = cond?.condition ?? 'unknown';
+    const reason = action.reason ?? 'no reason provided';
 
     return {
       action: 'blocked',
-      message: `[Hook: ${skillName}] Blocked: ${reason}`,
+      message: `[Hook: ${skillName}]\nWhen: "${whenText}"\nCondition: ${conditionExpr}\nReason: ${reason}`,
     };
   }
 
@@ -208,15 +258,25 @@ export class HookExecutor {
     action: { type: 'replace'; tool: string; args: Record<string, unknown>; timeout?: number },
     ctx: AgentContext,
     pendingCalls: ToolCall[],
-    skillContent: string
+    _skillContent: string,
+    cond?: Condition
   ): Promise<HookResult> {
     const firstCall = pendingCalls[0];
-    
+    const originalTool = firstCall.function.name;
+    const whenText = cond?.when ?? 'unknown condition';
+    const conditionExpr = cond?.condition ?? 'unknown';
+    const argsPreview = formatArgsPreview(action.args);
+
     // Replace the tool call
     firstCall.function.name = action.tool;
     firstCall.function.arguments = action.args;
 
-    ctx.core.brief('info', 'hook', `[${skillName}] Replaced trigger with ${action.tool}`, skillContent.slice(0, 100));
+    // Brief (message): why it triggered (when field)
+    // Verbose (detail): skill name and tool transformation
+    ctx.core.brief('info', 'hook',
+      `"${whenText}"\nCondition: ${conditionExpr}`,
+      `${skillName}: ${originalTool} → ${action.tool}${argsPreview}`
+    );
 
     return {
       action: 'injected',
@@ -229,11 +289,15 @@ export class HookExecutor {
    */
   private async message(
     skillName: string,
-    skillContent: string
+    _skillContent: string,
+    cond?: Condition
   ): Promise<HookResult> {
+    const whenText = cond?.when ?? 'unknown condition';
+    const conditionExpr = cond?.condition ?? 'unknown';
+
     return {
       action: 'proceed',
-      message: `[Hook: ${skillName}]\n\n${skillContent}`,
+      message: `[Hook: ${skillName}]\nWhen: "${whenText}"\nCondition: ${conditionExpr}`,
     };
   }
 
@@ -326,7 +390,7 @@ export class HookExecutor {
           continue;  // Condition doesn't match
         }
 
-        const result = await this.execute(hookName, cond.action, ctx, [], skill.content || '');
+        const result = await this.execute(hookName, cond.action, ctx, [], skill.content || '', cond);
 
         if (result.action === 'blocked') {
           // Blocking a stop trigger doesn't make sense - treat as message instead
@@ -415,7 +479,7 @@ export class HookExecutor {
           continue;  // Condition doesn't match
         }
 
-        const result = await this.execute(hookName, cond.action, ctx, calls, skill.content || '');
+        const result = await this.execute(hookName, cond.action, ctx, calls, skill.content || '', cond);
 
         if (result.action === 'blocked') {
           // Keep the call in array but mark as blocked with rejection message

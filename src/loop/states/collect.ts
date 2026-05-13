@@ -149,7 +149,7 @@ export async function handleCollect(
     const tokenCount = triologue.getTokenCount();
     const tokenThreshold = triologue.getTokenThreshold();
     const utilization = ((tokenCount / tokenThreshold) * 100).toFixed(1);
-    ctx.core.verbose('collect', `Entering LLM: ${messageCount} messages, ${tokenCount}/${tokenThreshold} tokens (${utilization}%)`);
+    ctx.core.verbose('collect', `${messageCount} messages, ${tokenCount}/${tokenThreshold} tokens (${utilization}%)`);
   }
 
   return AgentState.LLM;

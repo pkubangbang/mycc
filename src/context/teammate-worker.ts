@@ -265,22 +265,22 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
           // Handle recap
           const tc = toolCalls[0]; // We validated it's alone
           const args = tc.function.arguments as Record<string, unknown>;
-          
-          // For recap: DON'T register agent message first since recapMessages will replace it
+
+          // For recap: the tool result is now included in the recap messages by handleRecapTool
           // Show assistant text content if any
           if (assistantMessage.content) {
             ctx.core.brief('info', 'assistant', assistantMessage.content);
           }
-          
+
           // Execute recap (no escAware for teammates - no ESC handling needed)
-          const result = await handleRecapTool(args, checkpointCtx);
-          
+          const result = await handleRecapTool(args, checkpointCtx, undefined, tc.id);
+
           // Brief the recap result
           ctx.core.brief('info', 'recap', result.result.split('\n')[0]);
-          
+
           // Add continuation prompt
           addContinuationPrompt(triologue);
-          
+
           continue; // Skip regular tool execution
         }
       }

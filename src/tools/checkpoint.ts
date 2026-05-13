@@ -16,19 +16,11 @@ import type { ToolDefinition } from '../types.js';
 
 export const checkpointTool: ToolDefinition = {
   name: 'checkpoint',
-  description: `Create a checkpoint marker before starting a focused subtask. Use before exploration, investigation, or any task that will generate many messages. Later, call recap with the checkpoint ID to compress those messages into a summary.
+  description: `Create a marker in the chat history for quick summary.
+  Use before exploration, investigation, or any task that will generate many messages.
 
-Rules:
-- Only ONE open checkpoint allowed at a time
-- Must be called ALONE (no other tools in same turn)
-- Creates a todo item to track the checkpoint
-- Use recap to close the checkpoint and compress messages
-
-Example:
-1. checkpoint({ description: "find authentication logic" })
-2. [explore files, read code, investigate]
-3. recap({ checkpoint_id: "abc12345" })
-4. Continue with clean context and summary of findings`,
+  IMPORTANT: this tool MUST be used alone. Do not use other tools in the same chat round.
+  `,
   input_schema: {
     type: 'object',
     properties: {

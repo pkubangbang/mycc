@@ -162,16 +162,29 @@ Next steps:
 }
 
 /**
+ * Result from recap operation with tool call info
+ */
+export interface RecapResultWithTool extends RecapResult {
+  toolCallId?: string;
+}
+
+/**
  * Handle recap meta-tool
  * Summarizes messages from checkpoint to end and replaces them with summary.
  * Uses escAware for ESC-interruptible LLM call (for lead agent only).
  * For teammate, we use a simpler approach without ESC handling.
+ *
+ * @param args - Tool arguments (checkpoint_id, abandon)
+ * @param ctx - Checkpoint context with triologue access
+ * @param escAware - Optional ESC-aware wrapper for lead agent
+ * @param toolCallId - Optional tool call ID to include tool result in messages
  */
 export async function handleRecap(
   args: Record<string, unknown>,
   ctx: CheckpointContext,
-  escAware?: <T>(fn: (ac: AbortController) => Promise<T>, cleanup: () => T) => Promise<T>
-): Promise<RecapResult> {
+  escAware?: <T>(fn: (ac: AbortController) => Promise<T>, cleanup: () => T) => Promise<T>,
+  toolCallId?: string,
+): Promise<RecapResultWithTool> {
   const triologue = ctx.triologue;
   const checkpointId = args.checkpoint_id as string;
   const abandon = args.abandon === true;
@@ -210,8 +223,20 @@ export async function handleRecap(
       content: 'Understood. Checkpoint abandoned, messages discarded.',
     };
 
+    const abandonResult = `[RECAP] Abandoned checkpoint "${checkpoint.description}"
+
+${messages.length} messages discarded. Checkpoint closed.`;
+
+    // Create tool result message if toolCallId is provided
+    const toolMessage: Message | undefined = toolCallId ? {
+      role: 'tool',
+      tool_name: 'recap',
+      tool_call_id: toolCallId,
+      content: abandonResult,
+    } : undefined;
+
     // Replace messages from checkpoint onwards with abandon marker
-    triologue.recapMessages(checkpoint.index, userMessage, assistantMessage);
+    triologue.recapMessages(checkpoint.index, userMessage, assistantMessage, toolMessage);
 
     // Get token count AFTER recap
     const tokensAfter = triologue.getTokenCount();
@@ -232,9 +257,7 @@ export async function handleRecap(
 
     return {
       success: true,
-      result: `[RECAP] Abandoned checkpoint "${checkpoint.description}"
-
-${messages.length} messages discarded. Checkpoint closed.`
+      result: abandonResult,
     };
   }
 
@@ -317,8 +340,23 @@ ${conversationText}`,
     content: 'Understood. I have the checkpoint summary. Continuing.',
   };
 
+  // Create tool result message if toolCallId is provided
+  const recapResult = `[RECAP] Completed checkpoint "${checkpoint.description}"
+
+Summary:
+${summary}
+
+Checkpoint closed. ${messages.length} messages compressed into summary.`;
+
+  const toolMessage: Message | undefined = toolCallId ? {
+    role: 'tool',
+    tool_name: 'recap',
+    tool_call_id: toolCallId,
+    content: recapResult,
+  } : undefined;
+
   // Replace messages from checkpoint onwards with summary
-  triologue.recapMessages(checkpoint.index, userMessage, assistantMessage);
+  triologue.recapMessages(checkpoint.index, userMessage, assistantMessage, toolMessage);
 
   // Get token count AFTER recap
   const tokensAfter = triologue.getTokenCount();

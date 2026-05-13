@@ -14,7 +14,7 @@
       "env": {
         "OLLAMA_MODEL": "gemma4:31b-cloud",
         "EDITOR": "open",
-        "TOKEN_THRESHOLD": "20000"
+        "TOKEN_THRESHOLD": "70000"
       }
     }
   ]
