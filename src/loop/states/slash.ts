@@ -9,6 +9,7 @@
  * env.pendingSlashQuery for the PROMPT handler to consume.
  */
 
+import chalk from 'chalk';
 import { AgentState } from '../state-machine.js';
 import type { MachineEnv, TurnVars, PassData, HandlerResult } from '../state-machine.js';
 import type { SlashCommandContext } from '../../types.js';
@@ -42,12 +43,17 @@ export async function handleSlash(
     sessionFilePath,
   };
 
-  const handled = await slashRegistry.execute(cmdName, slashCtx);
+  try {
+    const handled = await slashRegistry.execute(cmdName, slashCtx);
 
-  // If slash command (e.g. /load) produced a query to process,
-  // store it for prompt to pick up on re-entry.
-  if (handled && slashCtx.nextQuery) {
-    env.pendingSlashQuery = slashCtx.nextQuery;
+    // If slash command (e.g. /load) produced a query to process,
+    // store it for prompt to pick up on re-entry.
+    if (handled && slashCtx.nextQuery) {
+      env.pendingSlashQuery = slashCtx.nextQuery;
+    }
+  } catch (err) {
+    const errorMessage = err instanceof Error ? err.message : String(err);
+    console.error(chalk.red(`Slash command error: ${errorMessage}`));
   }
 
   return AgentState.PROMPT;

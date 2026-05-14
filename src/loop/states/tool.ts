@@ -225,7 +225,13 @@ export async function handleTool(
         // Error increases confusion
         ctx.core.increaseConfusionIndex(2);
       } else {
-        throw err;
+        // Catch any other tool error, log as tool result, and continue
+        // This prevents tool failures from killing the agent
+        const errorMsg = err instanceof Error ? err.message : String(err);
+        triologue.tool(toolName, `Error: ${errorMsg}`, toolCallId);
+        agentIO.log(chalk.red(`[tool] ${toolName} failed: ${errorMsg}`));
+        ctx.core.increaseConfusionIndex(2);
+        // Continue to next tool call in the loop
       }
     }
   }

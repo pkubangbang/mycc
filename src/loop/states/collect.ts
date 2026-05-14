@@ -65,92 +65,98 @@ export async function handleCollect(
 ): Promise<HandlerResult> {
   const { triologue, ctx } = env;
 
-  // 1. Handle pending questions from children
-  await ctx.team.handlePendingQuestions();
+  try {
+    // 1. Handle pending questions from children
+    await ctx.team.handlePendingQuestions();
 
-  // 2. Collect mails
-  const mails = ctx.mail.collectMails();
-  if (mails.length > 0) {
-    const mailContent = mails
-      .map((mail) => `Mail from ${mail.from}: ${mail.title}\n${mail.content}`)
-      .join('\n\n---\n\n');
+    // 2. Collect mails
+    const mails = ctx.mail.collectMails();
+    if (mails.length > 0) {
+      const mailContent = mails
+        .map((mail) => `Mail from ${mail.from}: ${mail.title}\n${mail.content}`)
+        .join('\n\n---\n\n');
 
-    if (agentIO.isNeglectedMode()) {
-      triologue.user(`[URGENT: user interrupted - wrap up quickly]\n${mailContent}`);
-    } else {
-      triologue.user(mailContent);
-    }
-  }
-
-  // 3. Generate hint round if confusion threshold reached
-  const confusionIndex = ctx.core.getConfusionIndex();
-  const messageCount = triologue.getMessagesRaw().length;
-  const lastRole = triologue.getLastRole();
-
-  if (confusionIndex >= CONFUSION_THRESHOLD && messageCount >= MIN_MESSAGES_FOR_HINT) {
-    // Only generate hint after a valid transition point (assistant or tool message)
-    if (lastRole === 'assistant' || lastRole === 'tool') {
-      // Use verbose for hint round notification (not user-facing)
-      ctx.core.verbose('collect', 'Generating problem analysis (hint round)');
-      // Get pending skills (skills with 'when' but no compiled condition)
-      const pendingSkills = env.conditions.getPending();
-      // Generate confusion breakdown from sequence events
-      const breakdown = generateBreakdown(confusionIndex, env.sequence.getEvents());
-
-      // Use escAware for ESC-interruptible hint generation
-      const result = await ctx.core.escAware(
-        async (abortController) => {
-          return await triologue.generateHintRound(abortController, confusionIndex, breakdown, pendingSkills);
-        },
-        () => {
-          // Start wrap-up when ESC is pressed during hint generation
-          startWrapUp(triologue);
-          return 'aborted' as const;
-        }
-      );
-      
-      // If aborted (ESC pressed), skip to PROMPT to show prompt immediately
-      if (result === 'aborted') {
-        return AgentState.PROMPT;
+      if (agentIO.isNeglectedMode()) {
+        triologue.user(`[URGENT: user interrupted - wrap up quickly]\n${mailContent}`);
+      } else {
+        triologue.user(mailContent);
       }
-      // Reset confusion after hint
-      ctx.core.resetConfusionIndex();
     }
-  }
 
-  // 4. Todo nudging with state tracking
-  if (ctx.todo.hasOpenTodo()) {
-    const currentTodoState = ctx.todo.printTodoList();
-    if (currentTodoState !== turn.lastTodoState) {
-      turn.nextTodoNudge = 3;
-      turn.lastTodoState = currentTodoState;
+    // 3. Generate hint round if confusion threshold reached
+    const confusionIndex = ctx.core.getConfusionIndex();
+    const messageCount = triologue.getMessagesRaw().length;
+    const lastRole = triologue.getLastRole();
+
+    if (confusionIndex >= CONFUSION_THRESHOLD && messageCount >= MIN_MESSAGES_FOR_HINT) {
+      // Only generate hint after a valid transition point (assistant or tool message)
+      if (lastRole === 'assistant' || lastRole === 'tool') {
+        // Use verbose for hint round notification (not user-facing)
+        ctx.core.verbose('collect', 'Generating problem analysis (hint round)');
+        // Get pending skills (skills with 'when' but no compiled condition)
+        const pendingSkills = env.conditions.getPending();
+        // Generate confusion breakdown from sequence events
+        const breakdown = generateBreakdown(confusionIndex, env.sequence.getEvents());
+
+        // Use escAware for ESC-interruptible hint generation
+        const result = await ctx.core.escAware(
+          async (abortController) => {
+            return await triologue.generateHintRound(abortController, confusionIndex, breakdown, pendingSkills);
+          },
+          () => {
+            // Start wrap-up when ESC is pressed during hint generation
+            startWrapUp(triologue);
+            return 'aborted' as const;
+          }
+        );
+        
+        // If aborted (ESC pressed), skip to PROMPT to show prompt immediately
+        if (result === 'aborted') {
+          return AgentState.PROMPT;
+        }
+        // Reset confusion after hint
+        ctx.core.resetConfusionIndex();
+      }
     }
-    turn.nextTodoNudge--;
-    if (turn.nextTodoNudge === 0) {
-      triologue.user(`<reminder>Update your todos. ${ctx.todo.printTodoList()}</reminder>`);
-      turn.nextTodoNudge = 3;
+
+    // 4. Todo nudging with state tracking
+    if (ctx.todo.hasOpenTodo()) {
+      const currentTodoState = ctx.todo.printTodoList();
+      if (currentTodoState !== turn.lastTodoState) {
+        turn.nextTodoNudge = 3;
+        turn.lastTodoState = currentTodoState;
+      }
+      turn.nextTodoNudge--;
+      if (turn.nextTodoNudge === 0) {
+        triologue.user(`<reminder>Update your todos. ${ctx.todo.printTodoList()}</reminder>`);
+        turn.nextTodoNudge = 3;
+      }
     }
-  }
 
-  // 5. Brief nudging - remind agent to use brief tool
-  turn.nextBriefNudge--;
-  if (turn.nextBriefNudge <= 0) {
-    triologue.user('<reminder>Provide a brief status update using the brief tool. Example: brief("Working on X", 7)</reminder>');
-    turn.nextBriefNudge = 5;
-  }
+    // 5. Brief nudging - remind agent to use brief tool
+    turn.nextBriefNudge--;
+    if (turn.nextBriefNudge <= 0) {
+      triologue.user('<reminder>Provide a brief status update using the brief tool. Example: brief("Working on X", 7)</reminder>');
+      turn.nextBriefNudge = 5;
+    }
 
-  // 6. Validate role sequence before LLM call
-  if (lastRole === 'assistant') {
-    triologue.user('Continue with your task.');
-  }
+    // 6. Validate role sequence before LLM call
+    if (lastRole === 'assistant') {
+      triologue.user('Continue with your task.');
+    }
 
-  // 7. Log message count and token consumption in verbose mode
-  if (isVerbose()) {
-    const tokenCount = triologue.getTokenCount();
-    const tokenThreshold = triologue.getTokenThreshold();
-    const utilization = ((tokenCount / tokenThreshold) * 100).toFixed(1);
-    ctx.core.verbose('collect', `${messageCount} messages, ${tokenCount}/${tokenThreshold} tokens (${utilization}%)`);
-  }
+    // 7. Log message count and token consumption in verbose mode
+    if (isVerbose()) {
+      const tokenCount = triologue.getTokenCount();
+      const tokenThreshold = triologue.getTokenThreshold();
+      const utilization = ((tokenCount / tokenThreshold) * 100).toFixed(1);
+      ctx.core.verbose('collect', `${messageCount} messages, ${tokenCount}/${tokenThreshold} tokens (${utilization}%)`);
+    }
 
-  return AgentState.LLM;
+    return AgentState.LLM;
+  } catch (err) {
+    const errorMessage = err instanceof Error ? err.message : String(err);
+    ctx.core.brief('error', 'collect', `COLLECT state error: ${errorMessage}`);
+    return AgentState.PROMPT;
+  }
 }

@@ -254,14 +254,22 @@ export async function main(): Promise<void> {
   // Ready
   process.send({ type: 'ready' });
 
-  // ── Run state machine (REPL loop) ──
-  try {
-    await machine.run();
-  } catch (err) {
-    // Readline closed (race condition on SIGINT/SIGTERM) — clean exit
-    if (err instanceof Error && err.message === 'readline was closed') {
-      // clean exit
-    } else {
+  // ── Run state machine (REPL loop) with resilient retry ──
+  // Only Ctrl+C (handled by Coordinator), empty input, 'exit'/'q'/'quit',
+  // or 'n'/'no' at the Retry prompt will shut down the agent.
+  // All other errors (e.g., Internal Server Error, tool failures) trigger
+  // a Retry [Y/n] prompt and the agent continues.
+  while (true) {
+    try {
+      await machine.run();
+      // machine.run() returned normally — user typed exit/empty/q/quit
+      break;
+    } catch (err) {
+      // Readline closed (race condition on SIGINT/SIGTERM) — clean exit
+      if (err instanceof Error && err.message === 'readline was closed') {
+        break;
+      }
+
       const errorType = classifyError(err);
       const errorMessage = err instanceof Error ? err.message : String(err);
       console.error();
@@ -274,6 +282,18 @@ export async function main(): Promise<void> {
       } else if (errorType === 'config') {
         console.error(chalk.yellow('Check TOKEN_THRESHOLD in ~/.mycc-store/.env file.'));
       }
+
+      // Always prompt for retry — only 'n'/'no' exits
+      console.log(chalk.gray('─'.repeat(40)));
+      const answer = await agentIO.ask(chalk.cyan('Retry? [Y/n] > '), true);
+      if (answer.toLowerCase() === 'n' || answer.toLowerCase() === 'no') {
+        console.log(chalk.yellow('Exiting at user request.'));
+        break;
+      }
+
+      console.log(chalk.cyan('Retrying...'));
+      console.log();
+      // Loop back — machine.run() will be called again
     }
   }
 

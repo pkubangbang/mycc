@@ -104,7 +104,10 @@ export async function handleLlm(
         continue;
       }
 
-      throw err;
+      // User declined retry — return to PROMPT instead of throwing
+      // This keeps the agent alive; user can inspect state and continue
+      console.log(chalk.yellow('LLM call failed. Returning to prompt.'));
+      return AgentState.PROMPT;
     }
   }
 }

@@ -56,7 +56,7 @@ export class UserInputProvider implements InputProvider {
 
   async promptRetry(errorMessage: string): Promise<boolean> {
     console.error();
-    console.error(chalk.red(`Network error: ${errorMessage}`));
+    console.error(chalk.red(`Error: ${errorMessage}`));
     console.log(chalk.gray('─'.repeat(40)));
     const answer = await agentIO.ask(chalk.cyan('Retry? [Y/n] > '), true);
     return answer.toLowerCase() !== 'n' && answer.toLowerCase() !== 'no';
