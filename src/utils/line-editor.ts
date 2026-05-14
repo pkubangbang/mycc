@@ -14,7 +14,8 @@ import stripAnsi from 'strip-ansi';
 import type { KeyInfo } from './key-parser.js';
 
 const CURSOR = 'CURSOR';
-const BLANK_LINE = '\x1b[90m[--blank--]\x1b[0m';
+const BLANK_LINE = '';
+// const BLANK_LINE = '\x1b[90m[--blank--]\x1b[0m';
 const BANG_PROMPT = '\x1b[45m\x1b[30mrun cmd ! \x1b[0m';
 
 interface LineEditorOptions {
@@ -121,6 +122,7 @@ export class LineEditor {
 
     this.columns = parseInt(process.env.COLUMNS || '80', 10);
     if (this.columns < 20) this.columns = 80;
+    if (this.columns > 120) this.columns = 120;
 
     this.lineInfo = this.computeLineInfo();
     this.render();
