@@ -143,6 +143,16 @@ Session structure (`src/session/types.ts`):
 
 Use `/save` to copy a project session to user directory and `/load` to restore any session.
 
+### session file vs triologue JSONL
+
+The system uses two distinct file types for persistence:
+
+- **Session file** (`.mycc/sessions/{uuid}.json`): Metadata only — session ID, creation time, lead/teammate triologue paths, teammates list, and first query. Written once at session creation, never updated after that. Used for session discovery and restoration routing.
+
+- **Triologue JSONL** (`.mycc/transcripts/lead-{ts}-triologue.jsonl`): The append-only conversation log. Every message (user, assistant, tool call/result) is appended via the `onMessage` callback registered in `agent-repl.ts` using `fs.appendFileSync`. This is the authoritative record of agent activity. Each line is a JSON-encoded `Message` object.
+
+Key distinction: the session file tells you *what sessions exist and where their logs live*; the triologue JSONL contains *what actually happened* during a session.
+
 ### mindmap
 
 A tree-structured knowledge system that compiles markdown files (like `CLAUDE.md`) into a navigable JSON structure. Each node has an ID (slash-separated path), text, title, summary (LLM-generated), level, children, and links. The agent can query specific nodes via `get_node` tool for efficient context retrieval without loading entire documentation.

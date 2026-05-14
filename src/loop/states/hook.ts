@@ -97,10 +97,12 @@ export async function handleHook(
         ctx.core.brief('info', 'assistant', pass.assistantContent);
       }
 
+      // Register tool call for audit trail
+      triologue.agent(pass.assistantContent, pass.rawToolCalls as ToolCall[] | undefined);
+
       // Execute recap using shared handler (with ESC awareness for lead agent)
-      // Note: Recap is a meta-tool that directly manipulates triologue.
-      // It does NOT add tool call/result messages to history.
-      // Instead, it replaces messages from checkpoint with a summary pair.
+      // Recap directly manipulates triologue: replaces messages from checkpoint
+      // with a summary pair. The summary pair is appended to the JSONL via onMessage.
       const checkpointCtx = createCheckpointContext(env);
       const escAware = <T>(fn: (ac: AbortController) => Promise<T>, cleanup: () => T): Promise<T> => {
         return ctx.core.escAware(fn, cleanup);
@@ -110,6 +112,9 @@ export async function handleHook(
         checkpointCtx,
         escAware,
       );
+
+      // Register tool result for audit trail
+      triologue.tool('recap', result.result, recapCall.id);
 
       // Brief the recap result to user
       ctx.core.brief('info', 'recap', result.result.split('\n')[0]);

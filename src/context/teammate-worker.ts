@@ -270,10 +270,16 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
             ctx.core.brief('info', 'assistant', assistantMessage.content);
           }
 
+          // Register tool call for audit trail
+          triologue.agent(assistantMessage.content || '', toolCalls);
+
           // Execute recap (no escAware for teammates - no ESC handling needed)
-          // Note: Recap is a meta-tool that directly manipulates triologue.
-          // It does NOT add tool call/result messages to history.
+          // Recap directly manipulates triologue: replaces messages from checkpoint
+          // with a summary pair. The summary pair is appended to the JSONL via onMessage.
           const result = await handleRecapTool(args, checkpointCtx);
+
+          // Register tool result for audit trail
+          triologue.tool('recap', result.result, tc.id);
 
           // Brief the recap result
           ctx.core.brief('info', 'recap', result.result.split('\n')[0]);

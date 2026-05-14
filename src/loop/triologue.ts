@@ -902,17 +902,18 @@ ${JSON.stringify(hintSchema, null, 2)}
    * @param assistantMessage - Assistant acknowledgment to insert
    */
   recapMessages(startIndex: number, userMessage: Message, assistantMessage: Message): void {
-    // Keep messages before startIndex
-    const keptMessages = this.messages.slice(0, startIndex);
+    // Keep messages before startIndex, discard the rest
+    this.messages = this.messages.slice(0, startIndex);
 
-    // Replace with summary pair (user + assistant)
-    this.messages = [...keptMessages, userMessage, assistantMessage];
-
-    // Recalculate token count
+    // Recalculate token count from kept messages
     this.tokenCount = estimateTokensForMessages(this.messages);
 
     // Clear pending tool calls (any calls from the recapped messages are now invalid)
     this.pendingToolCalls.clear();
     this.pendingToolCallOrder = [];
+
+    // Use addMessage for the summary pair so onMessage fires for each (append to JSONL)
+    this.addMessage(userMessage);
+    this.addMessage(assistantMessage);
   }
 }
