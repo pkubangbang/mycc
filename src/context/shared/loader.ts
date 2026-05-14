@@ -27,6 +27,7 @@ import { tmRemoveTool } from '../../tools/tm_remove.js';
 import { tmAwaitTool } from '../../tools/tm_await.js';
 import { tmPrintTool } from '../../tools/tm_print.js';
 import { mailToTool } from '../../tools/mail_to.js';
+import { myccTitleTool } from '../../tools/mycc_title.js';
 import { broadcastTool } from '../../tools/broadcast.js';
 import { questionTool } from '../../tools/question.js';
 import { briefTool } from '../../tools/brief.js';
@@ -80,6 +81,7 @@ const builtInTools: ToolDefinition[] = [
   tmAwaitTool,
   tmPrintTool,
   mailToTool,
+  myccTitleTool,
   broadcastTool,
   questionTool,
   briefTool,
