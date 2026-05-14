@@ -87,6 +87,54 @@ agent >> 012345678901234567890123456789
 
 ---
 
+## Test 5: Whisper line transition (slash then backspace)
+
+**Action:** At a fresh mycc startup, type `/`, then press Backspace to remove it.
+
+**Expected:**
+- All startup output lines preserved (no eaten lines)
+- `[mindmap] Loaded: 48 nodes` remains visible
+- After `/`: whisper shows `/help, /skills, /todos, /wiki`
+- After backspace: whisper line empty but still present (no hint text)
+
+| Run | Result | Notes |
+|-----|--------|-------|
+| 1 | ✗ FAIL | `[mindmap]` + `tech-doc-writing` lines eaten by whisper toggle (screenStartRow stale across throttled renders) |
+| 2 | ✓ PASS | Fixed: whisper always rendered, render area size constant |
+
+**Root cause:** `doRender()` moved up an extra line when whisper was shown (`hasWhisper ? 1 : 0` in `linesToMoveUp`), then `\x1b[J` cleared from there — eating 1 line of scrollback. When whisper was later cleared, another render with different `screenStartRow` could eat more.
+
+**Fix:** Whisper line is now always rendered (empty `\x1b[90m\x1b[0m` when no hint), so the render area size never changes. `screenStartRow` tracks `1 + cursorLine` consistently.
+
+---
+
+## Test 6: Exact-width wrapping (60 column window, 51 chars)
+
+**Width:** 60 columns (prompt `agent >> ` = 9 chars, first line max = 51 chars)
+
+**Input:** Type 51 chars (`123456789...01`), then type one more char (`2`)
+
+**Expected (51 chars):**
+- One prompt line: `agent >> ` + 51 chars (uses full 60 columns)
+- Blank line below: `[--blank--]`
+- Cursor on the prompt line at column 60 (line fully consumed)
+
+**Expected (52 chars):**
+- Two prompt lines: line 1 has 51 chars, line 2 has 1 char
+- Blank line below: `[--blank--]`
+- Cursor on prompt line 2
+
+| Run | Result | Notes |
+|-----|--------|-------|
+| 1 | ✗ FAIL | Blank line rendered on same row as prompt (no `\n` separator between content and blank) |
+| 2 | ✓ PASS | Added `\n` separator before blank line, adjusted cursor positioning |
+
+**Root cause:** `doRender()` emitted content lines and then `[--blank--]` without a `\n` between them, so the blank marker appeared on the same row as empty prompt content.
+
+**Fix:** Added `\n` before the blank line and adjusted cursor `linesUp` calculation to account for the extra separator row (`2 + (totalLines - cursorLine)` instead of `totalLines - cursorLine`).
+
+---
+
 ## Key Bug Fixes
 
 ### Bug: Multi-byte buffer handling

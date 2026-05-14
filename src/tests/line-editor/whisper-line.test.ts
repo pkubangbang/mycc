@@ -132,7 +132,7 @@ describe('LineEditor - Whisper Line', () => {
       expect(output).toContain('\x1b[90mPress Ctrl+L again to clear history\x1b[0m');
     });
 
-    it('should clear whisper line when set to null', () => {
+    it('should clear whisper text when set to null (whisper line always renders)', () => {
       editor = createEditor();
       editor.setWhisper('Test whisper');
       editor.rerender();
@@ -146,9 +146,11 @@ describe('LineEditor - Whisper Line', () => {
 
       editor.setWhisper(null);
 
-      // Should render without whisper line
+      // Should render without 'Test whisper' text (empty whisper line still present)
       const output = getAllWrites();
       expect(output).not.toContain('\x1b[90mTest whisper\x1b[0m');
+      // But the empty whisper line escape code should still be present
+      expect(output).toContain('\x1b[90m');
     });
 
     it('should auto-clear whisper after duration', async () => {
@@ -205,7 +207,7 @@ describe('LineEditor - Whisper Line', () => {
       expect(secondTimer).not.toBe(firstTimer);
     });
 
-    it('should not re-render if setting null when whisper is already null', () => {
+    it('should re-render even when setting null with whisper already null (whisper always present)', () => {
       editor = createEditor();
       // Initially no whisper
       expect(editor['whisperText']).toBeNull();
@@ -217,9 +219,9 @@ describe('LineEditor - Whisper Line', () => {
         return true;
       });
 
-      // Set null when already null should not render
+      // Whisper line is always rendered, so setWhisper(null) still renders the empty whisper line
       editor.setWhisper(null);
-      expect(writeCalls.length).toBe(0);
+      expect(writeCalls.length).toBeGreaterThan(0);
     });
 
     it('should set whisperText when whisper is set', () => {
@@ -252,19 +254,19 @@ describe('LineEditor - Whisper Line', () => {
 
       editor.clearScreen();
 
-      // Should send clear screen escape codes
+      // Should send clear screen escape codes (scrollback-preserving)
       const output = getAllWrites();
-      expect(output).toContain('\x1b[2J');  // Clear screen
-      expect(output).toContain('\x1b[H');  // Move to home
+      expect(output).toContain('\x1b[H\x1b[J');  // Home + clear below
     });
 
-    it('should reset screenStartRow', () => {
+    it('should reset screenStartRow (whisper always present adds 1)', () => {
       editor = createEditor();
       editor.handleKey(charKey('a'));
       // Some content to increase screenStartRow
       editor['screenStartRow'] = 5;
       editor.clearScreen();
-      expect(editor['screenStartRow']).toBe(0);
+      // Whisper line is always rendered (1 row) + cursorLine (0) = 1
+      expect(editor['screenStartRow']).toBe(1);
     });
 
     it('should preserve content after clear', () => {
@@ -282,7 +284,7 @@ describe('LineEditor - Whisper Line', () => {
       editor.setWhisper('Test whisper');
       editor.clearScreen();
 
-      // Whisper should still be set
+      // Whisper is always rendered, so whisperText is preserved
       expect(editor['whisperText']).toBe('Test whisper');
     });
   });

@@ -406,6 +406,16 @@ class AgentIO {
             resolve(value);
           },
           history: this.lineHistory,
+          onContentChange: (content: string) => {
+            if (content.startsWith('/')) {
+              this.activeLineEditor?.setWhisper('/help, /skills, /todos, /wiki');
+            } else if (content.startsWith('!')) {
+              this.activeLineEditor?.setWhisper('run command in another terminal');
+            } else {
+              // Clear whisper when leaving / or ! prefix
+              this.activeLineEditor?.setWhisper(null);
+            }
+          },
         });
 
         // Check if wrap-up already completed while LineEditor was starting
