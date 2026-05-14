@@ -20,7 +20,6 @@ import {
   handleCheckpoint, 
   handleRecap,
   addCheckpointMarker,
-  addContinuationPrompt,
   type CheckpointContext 
 } from '../checkpoint-recap.js';
 
@@ -97,30 +96,81 @@ export async function handleHook(
         ctx.core.brief('info', 'assistant', pass.assistantContent);
       }
 
-      // Register tool call for audit trail
-      triologue.agent(pass.assistantContent, pass.rawToolCalls as ToolCall[] | undefined);
+      // Validate and extract checkpoint + messages
+      const recapArgs = recapCall.function.arguments as Record<string, unknown>;
+      const checkpointId = recapArgs.checkpoint_id as string;
+      const abandon = recapArgs.abandon === true;
+      const comment = typeof recapArgs.comment === 'string' && recapArgs.comment.trim()
+        ? recapArgs.comment.trim()
+        : undefined;
 
-      // Execute recap using shared handler (with ESC awareness for lead agent)
-      // Recap directly manipulates triologue: replaces messages from checkpoint
-      // with a summary pair. The summary pair is appended to the JSONL via onMessage.
-      const checkpointCtx = createCheckpointContext(env);
+      if (!checkpointId || typeof checkpointId !== 'string' || checkpointId.trim() === '') {
+        triologue.agent(pass.assistantContent, pass.rawToolCalls as ToolCall[] | undefined);
+        triologue.tool('recap', 'Error: checkpoint_id is required and must be a non-empty string.', recapCall.id);
+        turn.isFirstRound = false;
+        return AgentState.COLLECT;
+      }
+
+      const checkpoint = triologue.findCheckpointById(checkpointId);
+      if (!checkpoint) {
+        triologue.agent(pass.assistantContent, pass.rawToolCalls as ToolCall[] | undefined);
+        const allCheckpoints = triologue.findAllCheckpoints();
+        const msg = allCheckpoints.length === 0
+          ? 'Error: No checkpoint found.'
+          : `Error: Checkpoint "${checkpointId}" not found. Available: ${allCheckpoints.map(cp => `[${cp.id}: ${cp.description}]`).join(', ')}`;
+        triologue.tool('recap', msg, recapCall.id);
+        turn.isFirstRound = false;
+        return AgentState.COLLECT;
+      }
+
+      const messages = triologue.getMessagesFrom(checkpoint.index);
+      const tokensBefore = triologue.getTokenCount();
+
+      if (abandon) {
+        // Abandon: discard messages, append ?recap + !recap (abandon marker)
+        triologue.recapMessages(checkpoint.index);
+        triologue.agent(pass.assistantContent, pass.rawToolCalls as ToolCall[] | undefined);
+        const abandonResult = `[RECAP] Abandoned checkpoint "${checkpoint.description}"\n\n${messages.length} messages discarded. Checkpoint closed.${comment ? `\n\nComment: ${comment}` : ''}`;
+        triologue.tool('recap', abandonResult, recapCall.id);
+
+        const tokensAfter = triologue.getTokenCount();
+        const coloredBefore = chalk.yellow(tokensBefore.toLocaleString());
+        const coloredAfter = chalk.green(tokensAfter.toLocaleString());
+        ctx.core.brief('info', 'recap',
+          `(${coloredBefore} → ${coloredAfter} tokens)`,
+          `Abandoned: ${checkpoint.description}${comment ? ` — ${comment}` : ''}`
+        );
+
+        turn.isFirstRound = false;
+        return AgentState.COLLECT;
+      }
+
+      // Normal: generate summary, then slice + append ?recap + !recap
       const escAware = <T>(fn: (ac: AbortController) => Promise<T>, cleanup: () => T): Promise<T> => {
         return ctx.core.escAware(fn, cleanup);
       };
-      const result = await handleRecap(
-        recapCall.function.arguments as Record<string, unknown>,
-        checkpointCtx,
-        escAware,
+      const summary = await handleRecap(messages, checkpoint.description, escAware, comment);
+
+      // Check for ESC cancellation (summary starts with cancellation marker)
+      if (summary.startsWith('[RECAP] Cancelled:')) {
+        triologue.agent(pass.assistantContent, pass.rawToolCalls as ToolCall[] | undefined);
+        triologue.tool('recap', summary, recapCall.id);
+        ctx.core.brief('warn', 'recap', summary);
+        turn.isFirstRound = false;
+        return AgentState.COLLECT;
+      }
+
+      triologue.recapMessages(checkpoint.index);
+      triologue.agent(pass.assistantContent, pass.rawToolCalls as ToolCall[] | undefined);
+      triologue.tool('recap', summary, recapCall.id);
+
+      const tokensAfter = triologue.getTokenCount();
+      const coloredBefore = chalk.yellow(tokensBefore.toLocaleString());
+      const coloredAfter = chalk.green(tokensAfter.toLocaleString());
+      ctx.core.brief('info', 'recap',
+        `(${coloredBefore} → ${coloredAfter} tokens)`,
+        `${checkpoint.description}${comment ? ` — ${comment}` : ''}`
       );
-
-      // Register tool result for audit trail
-      triologue.tool('recap', result.result, recapCall.id);
-
-      // Brief the recap result to user
-      ctx.core.brief('info', 'recap', result.result.split('\n')[0]);
-
-      // Add continuation prompt since last message is assistant acknowledgment
-      addContinuationPrompt(triologue);
 
       turn.isFirstRound = false;
       return AgentState.COLLECT;

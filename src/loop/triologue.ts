@@ -894,14 +894,11 @@ ${JSON.stringify(hintSchema, null, 2)}
   }
 
   /**
-   * Replace messages from startIndex onwards with recap summary
-   * Used by recap tool to compress checkpoint messages into summary.
-   * Creates a clean user + assistant pair, matching autoCompact pattern.
+   * Slice messages from startIndex onwards (inclusive).
+   * Used by recap tool to remove the checkpoint span before appending ?recap, !recap.
    * @param startIndex - Index of checkpoint message (inclusive)
-   * @param userMessage - User recap message to insert
-   * @param assistantMessage - Assistant acknowledgment to insert
    */
-  recapMessages(startIndex: number, userMessage: Message, assistantMessage: Message): void {
+  recapMessages(startIndex: number): void {
     // Keep messages before startIndex, discard the rest
     this.messages = this.messages.slice(0, startIndex);
 
@@ -911,9 +908,5 @@ ${JSON.stringify(hintSchema, null, 2)}
     // Clear pending tool calls (any calls from the recapped messages are now invalid)
     this.pendingToolCalls.clear();
     this.pendingToolCallOrder = [];
-
-    // Use addMessage for the summary pair so onMessage fires for each (append to JSONL)
-    this.addMessage(userMessage);
-    this.addMessage(assistantMessage);
   }
 }

@@ -24,7 +24,6 @@ import {
   handleCheckpoint as handleCheckpointTool,
   handleRecap as handleRecapTool,
   addCheckpointMarker,
-  addContinuationPrompt,
   type CheckpointContext,
 } from '../loop/checkpoint-recap.js';
 
@@ -270,22 +269,69 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
             ctx.core.brief('info', 'assistant', assistantMessage.content);
           }
 
-          // Register tool call for audit trail
+          // Validate and extract checkpoint + messages
+          const checkpointId = args.checkpoint_id as string;
+          const abandon = args.abandon === true;
+          const comment = typeof args.comment === 'string' && args.comment.trim()
+            ? args.comment.trim()
+            : undefined;
+
+          if (!checkpointId || typeof checkpointId !== 'string' || checkpointId.trim() === '') {
+            triologue.agent(assistantMessage.content || '', toolCalls);
+            triologue.tool('recap', 'Error: checkpoint_id is required and must be a non-empty string.', tc.id);
+            continue;
+          }
+
+          const checkpoint = triologue.findCheckpointById(checkpointId);
+          if (!checkpoint) {
+            triologue.agent(assistantMessage.content || '', toolCalls);
+            const allCheckpoints = triologue.findAllCheckpoints();
+            const msg = allCheckpoints.length === 0
+              ? 'Error: No checkpoint found.'
+              : `Error: Checkpoint "${checkpointId}" not found. Available: ${allCheckpoints.map(cp => `[${cp.id}: ${cp.description}]`).join(', ')}`;
+            triologue.tool('recap', msg, tc.id);
+            continue;
+          }
+
+          const messages = triologue.getMessagesFrom(checkpoint.index);
+          const tokensBefore = triologue.getTokenCount();
+
+          if (abandon) {
+            // Abandon: discard messages, append ?recap + !recap (abandon marker)
+            triologue.recapMessages(checkpoint.index);
+            triologue.agent(assistantMessage.content || '', toolCalls);
+            const abandonResult = `[RECAP] Abandoned checkpoint "${checkpoint.description}"\n\n${messages.length} messages discarded. Checkpoint closed.${comment ? `\n\nComment: ${comment}` : ''}`;
+            triologue.tool('recap', abandonResult, tc.id);
+
+            const tokensAfter = triologue.getTokenCount();
+            ctx.core.brief('info', 'recap',
+              `(${tokensBefore.toLocaleString()} → ${tokensAfter.toLocaleString()} tokens)`,
+              `Abandoned: ${checkpoint.description}${comment ? ` — ${comment}` : ''}`
+            );
+
+            continue;
+          }
+
+          // Normal: generate summary (no escAware for teammates), then slice + append ?recap + !recap
+          const summary = await handleRecapTool(messages, checkpoint.description, undefined, comment);
+
+          // Check for ESC cancellation (summary starts with cancellation marker)
+          if (summary.startsWith('[RECAP] Cancelled:')) {
+            triologue.agent(assistantMessage.content || '', toolCalls);
+            triologue.tool('recap', summary, tc.id);
+            ctx.core.brief('warn', 'recap', summary);
+            continue;
+          }
+
+          triologue.recapMessages(checkpoint.index);
           triologue.agent(assistantMessage.content || '', toolCalls);
+          triologue.tool('recap', summary, tc.id);
 
-          // Execute recap (no escAware for teammates - no ESC handling needed)
-          // Recap directly manipulates triologue: replaces messages from checkpoint
-          // with a summary pair. The summary pair is appended to the JSONL via onMessage.
-          const result = await handleRecapTool(args, checkpointCtx);
-
-          // Register tool result for audit trail
-          triologue.tool('recap', result.result, tc.id);
-
-          // Brief the recap result
-          ctx.core.brief('info', 'recap', result.result.split('\n')[0]);
-
-          // Add continuation prompt
-          addContinuationPrompt(triologue);
+          const tokensAfter = triologue.getTokenCount();
+          ctx.core.brief('info', 'recap',
+            `(${tokensBefore.toLocaleString()} → ${tokensAfter.toLocaleString()} tokens)`,
+            `${checkpoint.description}${comment ? ` — ${comment}` : ''}`
+          );
 
           continue; // Skip regular tool execution
         }
