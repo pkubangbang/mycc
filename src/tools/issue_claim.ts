@@ -49,7 +49,7 @@ export const issueClaimTool: ToolDefinition = {
       return `Error: Failed to claim issue #${id}. It may not be in pending status or is already claimed.`;
     }
 
-    ctx.core.brief('info', 'issue_claim', `Claimed issue #${id}: "${issue.title}" by @${owner}`);
+    ctx.core.brief('info', 'issue_claim', `Claimed issue #${id}: "${issue.title}"`, `@${owner}`);
     
     // Return full issue list for visibility
     return await ctx.issue.printIssues();
