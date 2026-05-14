@@ -281,7 +281,7 @@ export class LineEditor {
       this.prompt = BANG_PROMPT;
       this.promptLength = stringWidth(stripAnsi(this.prompt));
       this.lineInfo = this.computeLineInfo();
-    } else if (content.length === 0 && inBangMode) {
+    } else if (!content.startsWith('!') && inBangMode) {
       this.prompt = this.originalPrompt;
       this.promptLength = stringWidth(stripAnsi(this.prompt));
       this.lineInfo = this.computeLineInfo();

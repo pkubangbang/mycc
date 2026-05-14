@@ -186,7 +186,9 @@ export async function main(): Promise<void> {
   agentIO.setDoubleCtrlLCallback(() => {
     triologue.clear();
     clearWrapUp();
-    console.log(chalk.green('Conversation cleared. Starting fresh.'));
+    // Use setWhisper if we have access to activeLineEditor, but we don't here.
+    // However, the logic in agent-io.ts is where the whisper line is managed.
+    // The callback just performs the clear logic.
   });
 
   // Inject project context based on mindmap availability

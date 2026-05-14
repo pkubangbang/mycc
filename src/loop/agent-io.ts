@@ -11,6 +11,7 @@ import { LineEditor } from '../utils/line-editor.js';
 import type { KeyInfo } from '../utils/key-parser.js';
 import { spawn } from 'child_process';
 import { getWrapUpState, tryDisplayWrapUp } from './esc-wrap-up.js';
+import chalk from 'chalk';
 
 /**
  * ReplayBuffer - Buffer for collecting stdout/stderr bytes
@@ -289,6 +290,7 @@ class AgentIO {
         } catch {
           // Ignore callback errors
         }
+        this.activeLineEditor.setWhisper(chalk.green('Conversation cleared. Starting fresh.'));
         return;
       }
 
