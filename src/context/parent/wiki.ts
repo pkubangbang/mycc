@@ -207,6 +207,16 @@ export class WikiManager implements WikiModule {
       return { accepted: false, reason: `Content too long (maximum ${MAX_CONTENT_LENGTH} characters)` };
     }
 
+    // Validate domain against registered domains
+    const domains = this.loadDomains();
+    if (domains.length === 0) {
+      return { accepted: false, reason: 'No domains registered. Use /wiki domains add <name> to create a domain first.' };
+    }
+    const domainExists = domains.some(d => d.domain_name === document.domain);
+    if (!domainExists) {
+      return { accepted: false, reason: `Unknown domain "${document.domain}". Register it first with /wiki domains add ${document.domain} <description>.` };
+    }
+
     // Generate hash
     const hash = this.generateHash(document);
 
@@ -236,6 +246,16 @@ export class WikiManager implements WikiModule {
     const expectedHash = this.generateHash(document);
     if (hash !== expectedHash) {
       return { success: false, hash, error: 'Hash mismatch - document may have been modified' };
+    }
+
+    // Validate domain against registered domains
+    const domains = this.loadDomains();
+    if (domains.length === 0) {
+      return { success: false, hash, error: 'No domains registered. Use /wiki domains add <name> to create a domain first.' };
+    }
+    const domainExists = domains.some(d => d.domain_name === document.domain);
+    if (!domainExists) {
+      return { success: false, hash, error: `Unknown domain "${document.domain}". Register it first with /wiki domains add ${document.domain} <description>.` };
     }
 
     // Short circuit: check if hash already exists
