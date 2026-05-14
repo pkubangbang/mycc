@@ -15,6 +15,7 @@
 import type { ToolDefinition, AgentContext } from '../types.js';
 import { agentIO } from '../loop/agent-io.js';
 import { retryChat, MODEL } from '../ollama.js';
+import { parseIntent, validateIntent, formatWarning } from '../context/grant/intent-parser.js';
 
 const OUTPUT_CHAR_LIMIT = 20000;
 
@@ -100,12 +101,14 @@ export const bashTool: ToolDefinition = {
     const outputChars = output.length;
 
     if (outputChars <= OUTPUT_CHAR_LIMIT) {
-      return output;
+      const intentWarning = getIntentWarning(intent);
+      return intentWarning ? output + intentWarning : output;
     }
 
     // Summarize the output
     const summary = await summarizeOutput(output, intent, outputChars, ctx);
-    return summary;
+    const intentWarning = getIntentWarning(intent);
+    return intentWarning ? summary + intentWarning : summary;
   },
 };
 
@@ -136,4 +139,15 @@ Report the total character count at the start of your response.`
   });
 
   return `Summary of ${(totalChars / 1000).toFixed(1)}k chars:\n${response.message.content || 'No summary generated'}`;
+}
+
+/**
+ * Get intent grammar warning for the given intent string.
+ * Returns formatted warning string, or empty string if intent is fully valid.
+ */
+function getIntentWarning(intent: string): string {
+  if (!intent) return '';
+  const parsed = parseIntent(intent);
+  const validation = validateIntent(parsed);
+  return formatWarning(validation);
 }

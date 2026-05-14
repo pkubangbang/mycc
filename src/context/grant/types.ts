@@ -20,6 +20,7 @@ export interface IntentValidation {
   valid: boolean;
   error?: string;         // Human-readable error for LLM to fix
   hint?: string;          // Suggested correction
+  warning?: string;       // Soft warning (intent is valid but could be improved)
 }
 
 /**

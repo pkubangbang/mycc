@@ -28,53 +28,49 @@ function getPlatformInfo(): { platform: string; shell: string; pathSep: string; 
 // Intent Language Section (shared across all prompts)
 // ============================================================================
 
+import {
+  VALID_VERBS,
+  VALID_OBJECTS,
+  VERB_MEANINGS,
+  VERB_PLAN_MODE,
+  OBJECT_MEANINGS,
+} from '../context/grant/intent-parser.js';
+
 function buildIntentLanguageSection(): string {
-  return [
-    '## Intent Language for Bash Tool',
-    '',
-    'When using the bash tool, the `intent` parameter MUST follow this format:',
-    '',
-    '```',
-    'VERB OBJECT TO PURPOSE',
-    '```',
-    '',
-    '**Note:** OBJECT is NOT wrapped in brackets - only VERB is.',
-    '',
-    '**VERB** (action category):',
-    '| Verb | Meaning | Plan Mode |',
-    '|------|---------|-----------|',
-    '| READ | Observe without changing | ✅ Allowed |',
-    '| WRITE | Create new content | ❌ Blocked |',
-    '| EDIT | Modify existing content | ❌ Blocked |',
-    '| DELETE | Remove content | ❌ Blocked |',
-    '| BUILD | Compile/build artifacts | ❌ Blocked |',
-    '| TEST | Run tests | ✅ Allowed |',
-    '| INSTALL | Add dependencies | ❌ Blocked |',
-    '| RUN | Unknown/generic | ⚠️ Needs analysis |',
-    '',
-    '**OBJECT** (target domain):',
-    '| Object | Meaning |',
-    '|--------|---------|',
-    '| SOURCE | Source code (.ts, .js, .py) |',
-    '| CONFIG | Configuration files |',
-    '| DEPENDENCY | External packages |',
-    '| ARTIFACT | Build outputs (dist/, build/) |',
-    '| SYSTEM | System operations |',
-    '| DATA | Data files, databases |',
-    '| TEMP | Temporary files |',
-    '',
-    '**PURPOSE** (required):',
-    'Brief explanation of why this action is needed.',
-    '',
-    '**Examples:**',
-    '```',
-    'READ SOURCE TO check dependencies',
-    'READ CONFIG path=package.json TO verify scripts',
-    'WRITE SOURCE path=src/utils.ts TO create helper functions',
-    'BUILD ARTIFACT TO compile TypeScript',
-    'TEST SOURCE TO verify implementation',
-    '```',
-  ].join('\n');
+  const lines: string[] = [];
+
+  lines.push('## Intent Language for Bash Tool');
+  lines.push('');
+  lines.push('When using the bash tool, the `intent` parameter MUST follow this format:');
+  lines.push('');
+  lines.push('```');
+  lines.push('VERB OBJECT [key=value ...] TO PURPOSE');
+  lines.push('```');
+  lines.push('');
+  lines.push('**PARAM** (optional): `key=value` pairs describing attributes of the OBJECT.');
+  lines.push('');
+
+  // --- VERB table ---
+  lines.push('**VERB** (action category):');
+  lines.push('| Verb | Meaning | Plan Mode |');
+  lines.push('|------|---------|-----------|');
+  for (const v of VALID_VERBS) {
+    const meaning = VERB_MEANINGS[v] || '';
+    const plan = VERB_PLAN_MODE[v] || '';
+    lines.push(`| ${v} | ${meaning} | ${plan} |`);
+  }
+  lines.push('');
+
+  // --- OBJECT table ---
+  lines.push('**OBJECT** (target domain):');
+  lines.push('| Object | Meaning |');
+  lines.push('|--------|---------|');
+  for (const o of VALID_OBJECTS) {
+    const meaning = OBJECT_MEANINGS[o] || '';
+    lines.push(`| ${o} | ${meaning} |`);
+  }
+
+  return lines.join('\n');
 }
 
 // ============================================================================

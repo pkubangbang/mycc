@@ -223,8 +223,6 @@ ${conversationText}`,
 
   const summary = response.message.content || '(no summary)';
 
-  const commentSuffix = comment ? `\n\n**LLM Comment:** ${comment}` : '';
-
   return `[RECAP] Completed checkpoint "${description}"
 
 Summary:
