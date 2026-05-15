@@ -103,12 +103,12 @@ export const bashTool: ToolDefinition = {
     const intentWarning = getIntentWarning(intent);
 
     if (outputChars <= OUTPUT_CHAR_LIMIT) {
-      return intentWarning ? intentWarning + '\n' + output : output;
+      return intentWarning ? `${intentWarning}\n${output}` : output;
     }
 
     // Summarize the output
     const summary = await summarizeOutput(output, intent, outputChars, ctx);
-    return intentWarning ? intentWarning + '\n' + summary : summary;
+    return intentWarning ? `${intentWarning}\n${summary}` : summary;
   },
 };
 

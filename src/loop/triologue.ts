@@ -447,7 +447,7 @@ ${JSON.stringify(hintSchema, null, 2)}
       try {
         // Verbose logging: show the hint round request (truncated at the critical instruction)
         agentIO.verbose('triologue', 'Hint round request');
-        const truncatedPrompt = analysisPrompt.split(ANALYSIS_INSTRUCTION)[0] + ANALYSIS_INSTRUCTION + '\n...';
+        const truncatedPrompt = `${analysisPrompt.split(ANALYSIS_INSTRUCTION)[0]}${ANALYSIS_INSTRUCTION}\n...`;
         agentIO.verbose('triologue', truncatedPrompt, '');
 
         // Get analysis from LLM with JSON schema enforcement
