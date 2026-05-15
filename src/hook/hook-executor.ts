@@ -182,7 +182,7 @@ export class HookExecutor {
     // Brief (message): why it triggered (when field)
     // Verbose (detail): skill name and tool transformation
     ctx.core.brief('info', 'hook',
-      `"${whenText}"\nCondition: ${conditionExpr}`,
+      `When: "${whenText}"\nExpr: ${conditionExpr}`,
       `${skillName}: ${triggerTool} → ${action.tool}${argsPreview}`
     );
 
@@ -219,7 +219,7 @@ export class HookExecutor {
     // Brief (message): why it triggered (when field)
     // Verbose (detail): skill name and tool transformation
     ctx.core.brief('info', 'hook',
-      `"${whenText}"\nCondition: ${conditionExpr}`,
+      `When: "${whenText}"\nExpr: ${conditionExpr}`,
       `${skillName}: ${triggerTool} → ${triggerTool} + ${action.tool}${argsPreview}`
     );
 
@@ -246,7 +246,7 @@ export class HookExecutor {
 
     return {
       action: 'blocked',
-      message: `[Hook: ${skillName}]\nWhen: "${whenText}"\nCondition: ${conditionExpr}\nReason: ${reason}`,
+      message: `[Hook: ${skillName}]\nWhen: "${whenText}"\nExpr: ${conditionExpr}\nReason: ${reason}`,
     };
   }
 
@@ -274,7 +274,7 @@ export class HookExecutor {
     // Brief (message): why it triggered (when field)
     // Verbose (detail): skill name and tool transformation
     ctx.core.brief('info', 'hook',
-      `"${whenText}"\nCondition: ${conditionExpr}`,
+      `When: "${whenText}"\nExpr: ${conditionExpr}`,
       `${skillName}: ${originalTool} → ${action.tool}${argsPreview}`
     );
 
@@ -297,7 +297,7 @@ export class HookExecutor {
 
     return {
       action: 'proceed',
-      message: `[Hook: ${skillName}]\nWhen: "${whenText}"\nCondition: ${conditionExpr}`,
+      message: `[Hook: ${skillName}]\nWhen: "${whenText}"\nExpr: ${conditionExpr}`,
     };
   }
 
