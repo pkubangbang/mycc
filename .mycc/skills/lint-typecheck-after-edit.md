@@ -3,7 +3,7 @@ name: lint-typecheck-after-edit
 description: >
   Run lint and typecheck before the agent finishes, if code changes were made without running quality checks.
   This ensures code quality and type safety before task completion.
-when: before LLM finishes reply (no tool calls pending), if edit_file or write_file was used this session and lint/typecheck was not run
+when: before git_commit or LLM finishes reply (no tool calls pending), if edit_file or write_file was used this session and lint/typecheck was not run
 ---
 
 # Code Quality Checks After Edits
