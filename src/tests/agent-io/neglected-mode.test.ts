@@ -22,7 +22,7 @@ describe('agent-io', () => {
     (agentIO as unknown as { activeLineEditor: unknown }).activeLineEditor = null;
     (agentIO as unknown as { outputBuffer: Array<{ method: string; args: unknown[] }> }).outputBuffer =
       [];
-    (agentIO as unknown as { onNeglectedCallbacks: Array<() => void> }).onNeglectedCallbacks = [];
+    (agentIO as unknown as { onNeglectedCallbacks: Set<() => void> }).onNeglectedCallbacks = new Set();
   });
 
   afterEach(() => {
@@ -92,9 +92,9 @@ describe('agent-io', () => {
         agentIO.onNeglected(callback);
 
         // Trigger the callbacks manually through the internal state
-        const callbacks = (agentIO as unknown as { onNeglectedCallbacks: Array<() => void> })
+        const callbacks = (agentIO as unknown as { onNeglectedCallbacks: Set<() => void> })
           .onNeglectedCallbacks;
-        expect(callbacks).toContain(callback);
+        expect(callbacks.has(callback)).toBe(true);
       });
 
       it('should register multiple callbacks', () => {
@@ -106,9 +106,9 @@ describe('agent-io', () => {
         agentIO.onNeglected(callback2);
         agentIO.onNeglected(callback3);
 
-        const callbacks = (agentIO as unknown as { onNeglectedCallbacks: Array<() => void> })
+        const callbacks = (agentIO as unknown as { onNeglectedCallbacks: Set<() => void> })
           .onNeglectedCallbacks;
-        expect(callbacks).toHaveLength(3);
+        expect(callbacks.size).toBe(3);
       });
 
       it('should call registered callbacks when triggered', () => {
@@ -119,12 +119,41 @@ describe('agent-io', () => {
         agentIO.onNeglected(callback2);
 
         // Trigger callbacks
-        const callbacks = (agentIO as unknown as { onNeglectedCallbacks: Array<() => void> })
+        const callbacks = (agentIO as unknown as { onNeglectedCallbacks: Set<() => void> })
           .onNeglectedCallbacks;
         callbacks.forEach((cb) => cb());
 
         expect(callback1).toHaveBeenCalledTimes(1);
         expect(callback2).toHaveBeenCalledTimes(1);
+      });
+
+      it('should return unsubscribe function that removes callback', () => {
+        const callback = vi.fn();
+        const unsubscribe = agentIO.onNeglected(callback);
+
+        const callbacks = (agentIO as unknown as { onNeglectedCallbacks: Set<() => void> })
+          .onNeglectedCallbacks;
+        expect(callbacks.has(callback)).toBe(true);
+
+        unsubscribe();
+        expect(callbacks.has(callback)).toBe(false);
+      });
+
+      it('should not call unsubscribed callbacks', () => {
+        const callback1 = vi.fn();
+        const callback2 = vi.fn();
+
+        agentIO.onNeglected(callback1);
+        const unsubscribe2 = agentIO.onNeglected(callback2);
+        unsubscribe2();
+
+        // Trigger callbacks
+        const callbacks = (agentIO as unknown as { onNeglectedCallbacks: Set<() => void> })
+          .onNeglectedCallbacks;
+        callbacks.forEach((cb) => cb());
+
+        expect(callback1).toHaveBeenCalledTimes(1);
+        expect(callback2).not.toHaveBeenCalled();
       });
     });
   });

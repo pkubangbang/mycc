@@ -54,8 +54,9 @@ export const bgAwaitTool: ToolDefinition = {
     };
 
     // Only register if we're in main process (agentIO has been initialized)
+    let unsubscribe: (() => void) | undefined;
     if (agentIO.isMainProcess()) {
-      agentIO.onNeglected(onEsc);
+      unsubscribe = agentIO.onNeglected(onEsc);
     }
 
     try {
@@ -98,14 +99,9 @@ export const bgAwaitTool: ToolDefinition = {
       ctx.core.brief('warn', 'bg_await', `Timeout reached, ${targetDesc} still running`);
       return 'Error: Timeout reached';
     } finally {
-      // Clean up: remove the ESC handler if still in the list
-      // Note: onNeglected callbacks are cleared after being called, so this is just safety
-      if (agentIO.isMainProcess()) {
-        const callbacks = (agentIO as unknown as { onNeglectedCallbacks: Array<() => void> }).onNeglectedCallbacks;
-        const index = callbacks.indexOf(onEsc);
-        if (index !== -1) {
-          callbacks.splice(index, 1);
-        }
+      // Clean up: remove the ESC handler if still registered
+      if (unsubscribe) {
+        unsubscribe();
       }
     }
   },

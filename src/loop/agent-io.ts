@@ -79,7 +79,7 @@ class AgentIO {
   private neglectedModeFlag = false;
 
   // Neglected callbacks - called when ESC is pressed
-  private onNeglectedCallbacks: Array<() => void> = [];
+  private onNeglectedCallbacks: Set<() => void> = new Set();
 
   // LineEditor management
   private activeLineEditor: LineEditor | null = null;
@@ -129,7 +129,7 @@ class AgentIO {
           for (const cb of this.onNeglectedCallbacks) {
             cb();
           }
-          this.onNeglectedCallbacks = [];
+          this.onNeglectedCallbacks.clear();
         }
       } else if (msg.type === 'key' && msg.key) {
         // Forward key event to active LineEditor
@@ -170,10 +170,13 @@ class AgentIO {
 
   /**
    * Register a callback to be called when ESC is pressed (neglected)
-   * Used by exec() to skip subprocess wait and return premature output
+   * @returns Unsubscribe function to remove the callback
    */
-  onNeglected(callback: () => void): void {
-    this.onNeglectedCallbacks.push(callback);
+  onNeglected(callback: () => void): () => void {
+    this.onNeglectedCallbacks.add(callback);
+    return () => {
+      this.onNeglectedCallbacks.delete(callback);
+    };
   }
 
   // Output buffering during user interaction

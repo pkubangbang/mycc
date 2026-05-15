@@ -296,12 +296,17 @@ export class Core extends BaseCore implements CoreModule {
         escResolver(result);
       }
     };
-    agentIO.onNeglected(onNeglectedHandler);
+    const unsubscribe = agentIO.onNeglected(onNeglectedHandler);
 
-    // Start the operation AFTER callback is registered, passing the abort controller
-    const operationPromise = operation(abortController);
+    try {
+      // Start the operation AFTER callback is registered, passing the abort controller
+      const operationPromise = operation(abortController);
 
-    // Race between the operation and ESC
-    return Promise.race([operationPromise, escPromise]);
+      // Race between the operation and ESC
+      // MUST use await so finally runs after the race completes, not immediately
+      return await Promise.race([operationPromise, escPromise]);
+    } finally {
+      unsubscribe();
+    }
   }
 }

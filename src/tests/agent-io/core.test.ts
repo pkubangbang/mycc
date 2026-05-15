@@ -22,7 +22,7 @@ describe('agent-io', () => {
     (agentIO as unknown as { activeLineEditor: unknown }).activeLineEditor = null;
     (agentIO as unknown as { outputBuffer: Array<{ method: string; args: unknown[] }> }).outputBuffer =
       [];
-    (agentIO as unknown as { onNeglectedCallbacks: Array<() => void> }).onNeglectedCallbacks = [];
+    (agentIO as unknown as { onNeglectedCallbacks: Set<() => void> }).onNeglectedCallbacks = new Set();
   });
 
   afterEach(() => {
