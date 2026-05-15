@@ -7,7 +7,8 @@
 import { Ollama } from 'ollama';
 import type { ChatRequest, ChatResponse } from 'ollama';
 import chalk from 'chalk';
-import { isVerbose, getOllamaHost, getOllamaApiKey, getOllamaModel } from './config.js';
+import { getOllamaHost, getOllamaApiKey, getOllamaModel } from './config.js';
+import { agentIO } from './loop/agent-io.js';
 
 // Configuration (resolved via config.ts)
 export const OLLAMA_HOST = getOllamaHost();
@@ -150,7 +151,7 @@ export async function retryWithBackoff<T>(
       const isLastAttempt = attempt > cfg.maxRetries;
       if (!isLastAttempt) {
         const delay = calculateDelay(attempt, cfg);
-        console.log(`[retry] Attempt ${attempt}/${cfg.maxRetries + 1} failed: ${lastError.message}. Retrying in ${delay}ms...`);
+        agentIO.verbose('retry', `Attempt ${attempt}/${cfg.maxRetries + 1} failed: ${lastError.message}. Retrying in ${delay}ms...`);
         await sleep(delay);
       }
     }
@@ -438,8 +439,8 @@ export async function retryChat(
     for (let attempt = 1; attempt <= cfg.maxRetries + 1; attempt++) {
       if (signal?.aborted) throw new StreamAbortedError();
 
-      if (attempt > 1 && isVerbose()) {
-        console.log(chalk.magenta(`[verbose][ollama] Retry attempt ${attempt}/${cfg.maxRetries + 1}`));
+      if (attempt > 1) {
+        agentIO.verbose('ollama', `Retry attempt ${attempt}/${cfg.maxRetries + 1}`);
       }
 
       try {
@@ -476,7 +477,7 @@ export async function retryChat(
         const isLastAttempt = attempt > cfg.maxRetries;
         if (!isLastAttempt) {
           const delay = calculateDelay(attempt, cfg);
-          console.log(`[ollama] Attempt ${attempt}/${cfg.maxRetries + 1} failed: ${lastError.message}. Retrying in ${delay}ms...`);
+          agentIO.verbose('ollama', `Attempt ${attempt}/${cfg.maxRetries + 1} failed: ${lastError.message}. Retrying in ${delay}ms...`);
           await sleep(delay);
         }
       }

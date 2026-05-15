@@ -103,7 +103,7 @@ export class Triologue {
     // Use 10% of TOKEN_THRESHOLD (converted to chars) as max size
     const maxChars = Math.floor(getTokenThreshold() * 4 * 0.1);
     if (content.length > maxChars) {
-      console.log('[triologue] README.md is too large to load, skipping');
+      agentIO.brief('info', 'triologue', 'README.md is too large to load, skipping');
       return;
     }
     this.projectContext.push(
@@ -446,10 +446,8 @@ ${JSON.stringify(hintSchema, null, 2)}
 
       try {
         // Verbose logging: show the hint round request
-        if (isVerbose()) {
-          console.log(chalk.cyan('[triologue] Hint round request:'));
-          console.log(chalk.cyan(analysisPrompt));
-        }
+        agentIO.verbose('triologue', 'Hint round request');
+        agentIO.verbose('triologue', analysisPrompt, '');
 
         // Get analysis from LLM with JSON schema enforcement
         const response = await retryChat(
@@ -484,13 +482,13 @@ ${JSON.stringify(hintSchema, null, 2)}
           // Extract JSON from potentially markdown-wrapped content
           const jsonMatch = rawContent.match(/\{[\s\S]*\}/);
           if (!jsonMatch) {
-            console.log('[hint round] No JSON found in response, retrying...');
+            agentIO.verbose('triologue', 'No JSON found in hint response, retrying...');
             continue;
           }
           hintData = JSON.parse(jsonMatch[0]);
         } catch {
           // Parse failed - log and retry
-          console.log('[hint round] JSON parse failed, retrying...');
+          agentIO.verbose('triologue', 'JSON parse failed in hint response, retrying...');
           continue;
         }
 
@@ -532,10 +530,7 @@ ${JSON.stringify(hintSchema, null, 2)}
         };
 
         // Verbose logging: show the hint response
-        if (isVerbose()) {
-          console.log(chalk.cyan('[triologue] Hint round response:'));
-          console.log(chalk.cyan(hintMessage.content));
-        }
+        agentIO.verbose('triologue', `Hint round response: ${hintData.blocker.substring(0, 80)}`);
 
         this.messages.push(hintMessage);
         this.updateTokenCount(hintMessage);
@@ -683,9 +678,7 @@ ${JSON.stringify(hintSchema, null, 2)}
   private updateTokenCount(message: Message): void {
     const increment = estimateTokens(message);
     this.tokenCount += increment;
-    if (isVerbose()) {
-      console.log(`[triologue] Token count: ${this.tokenCount} (+${increment} from ${message.role})`);
-    }
+    agentIO.verbose('triologue', `Token count: ${this.tokenCount} (+${increment} from ${message.role})`);
   }
 
   /**
@@ -802,24 +795,15 @@ ${JSON.stringify(hintSchema, null, 2)}
   // === Default Callbacks ===
 
   private defaultOnMisorder(warning: MisorderWarning): void {
-    console.warn(
-      chalk.yellow(`[Triologue] Misordered transition: ${warning.from} → ${warning.to}`)
-    );
-    console.warn(chalk.yellow(`[Triologue] Gap: ${warning.gap}`));
+    agentIO.brief('warn', 'triologue', `Misordered transition: ${warning.from} → ${warning.to}`, `gap: ${warning.gap}`);
   }
 
   private defaultOnToolMisalign(warning: ToolAlignmentWarning): void {
-    console.warn(
-      chalk.yellow(`[Triologue] Tool alignment issue: ${warning.functionName}`)
-    );
-    console.warn(chalk.yellow(`[Triologue] Issue: ${warning.issue}`));
-    if (warning.expectedName) {
-      console.warn(chalk.yellow(`[Triologue] Expected: ${warning.expectedName}`));
-    }
+    agentIO.brief('warn', 'triologue', `Tool alignment issue: ${warning.functionName}`, `issue: ${warning.issue}`);
   }
 
   private defaultOnCompact(transcriptPath: string): void {
-    console.log(chalk.blue(`[auto-compact triggered: ${transcriptPath}]`));
+    agentIO.brief('info', 'autoCompact', `Transcript saved: ${transcriptPath}`);
   }
 
   // === Checkpoint Methods ===

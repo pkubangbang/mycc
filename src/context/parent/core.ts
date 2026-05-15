@@ -9,9 +9,8 @@ import sharp from 'sharp';
 import type { CoreModule } from '../../types.js';
 import { ollama } from '../../ollama.js';
 import { agentIO } from '../../loop/agent-io.js';
-import { isVerbose, getVisionModel, isVisionEnabled } from '../../config.js';
+import { getVisionModel, isVisionEnabled } from '../../config.js';
 import { BaseCore } from '../shared/base-core.js';
-import { getToolColor } from '../../utils/tool-colors.js';
 import { evaluateGrant } from '../grant/grant-evaluator.js';
 
 /**
@@ -63,26 +62,7 @@ export class Core extends BaseCore implements CoreModule {
    * @param detail - Optional greyed text to show after tool name (for showing intent)
    */
   brief(level: 'info' | 'warn' | 'error', tool: string, message: string, detail?: string): void {
-    const now = new Date();
-    const timestamp = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
-    const colorFn = getToolColor(tool);
-    const prefix = `${chalk.gray(`[${timestamp}]`)} ${colorFn(`[${tool}]`)}`;
-
-    // Build output with optional detail (greyed text after tool name)
-    const detailPart = detail ? ` ${chalk.gray(detail)}` : '';
-    const header = `${prefix}${detailPart}`;
-
-    // Use agentIO instead of console (buffers during interaction)
-    switch (level) {
-      case 'error':
-        agentIO.error(`${header}\n${chalk.red(message)}`);
-        break;
-      case 'warn':
-        agentIO.warn(`${header}\n${chalk.yellow(message)}`);
-        break;
-      default:
-        agentIO.log(`${header}\n${message}`);
-    }
+    agentIO.brief(level, tool, message, detail);
   }
 
   /**
@@ -93,18 +73,7 @@ export class Core extends BaseCore implements CoreModule {
    * @param data - Optional data to pretty-print as JSON
    */
   verbose(tool: string, message: string, data?: unknown): void {
-    if (!isVerbose()) return;
-
-    const timestamp = new Date().toISOString();
-    const prefix = chalk.gray(`[${timestamp}]`) + chalk.magenta(`[verbose][${tool}]`);
-
-    // Use agentIO instead of console (buffers during interaction)
-    if (data !== undefined) {
-      agentIO.log(`${prefix} ${message}`);
-      agentIO.log(chalk.gray(JSON.stringify(data, null, 2)));
-    } else {
-      agentIO.log(`${prefix} ${message}`);
-    }
+    agentIO.verbose(tool, message, data);
   }
 
   /**

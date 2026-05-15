@@ -12,6 +12,8 @@ import type { KeyInfo } from '../utils/key-parser.js';
 import { spawn } from 'child_process';
 import { getWrapUpState, tryDisplayWrapUp } from './esc-wrap-up.js';
 import chalk from 'chalk';
+import { isVerbose } from '../config.js';
+import { getToolColor } from '../utils/tool-colors.js';
 
 /**
  * ReplayBuffer - Buffer for collecting stdout/stderr bytes
@@ -216,6 +218,57 @@ class AgentIO {
       this.outputBuffer.push({ method: 'error', args });
     } else {
       console.error(...args);
+    }
+  }
+
+  /**
+   * Brief log — always visible, timestamped, color-coded.
+   * Used for user-facing status updates (tool execution, milestones, errors).
+   * Identical format to Core.brief() but available without ctx.
+   * @param level - 'info' | 'warn' | 'error'
+   * @param tool - Tool/module name (used for color selection)
+   * @param message - Main message text
+   * @param detail - Optional greyed detail shown after the tool tag
+   */
+  brief(level: 'info' | 'warn' | 'error', tool: string, message: string, detail?: string): void {
+    const now = new Date();
+    const timestamp = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
+    const colorFn = getToolColor(tool);
+    const prefix = `${chalk.gray(`[${timestamp}]`)} ${colorFn(`[${tool}]`)}`;
+    const detailPart = detail ? ` ${chalk.gray(detail)}` : '';
+    const header = `${prefix}${detailPart}`;
+
+    switch (level) {
+      case 'error':
+        this.error(`${header}\n${chalk.red(message)}`);
+        break;
+      case 'warn':
+        this.warn(`${header}\n${chalk.yellow(message)}`);
+        break;
+      default:
+        this.log(`${header}\n${message}`);
+    }
+  }
+
+  /**
+   * Verbose log — only outputs when -v flag is set.
+   * Used for operational detail (tool args, results, load events).
+   * Identical format to Core.verbose() but available without ctx.
+   * @param tool - Tool/module name for the verbose tag
+   * @param message - Log message
+   * @param data - Optional data to pretty-print as JSON
+   */
+  verbose(tool: string, message: string, data?: unknown): void {
+    if (!isVerbose()) return;
+
+    const timestamp = new Date().toISOString();
+    const prefix = chalk.gray(`[${timestamp}]`) + chalk.magenta(`[verbose][${tool}]`);
+
+    if (data !== undefined) {
+      this.log(`${prefix} ${message}`);
+      this.log(chalk.gray(JSON.stringify(data, null, 2)));
+    } else {
+      this.log(`${prefix} ${message}`);
     }
   }
 

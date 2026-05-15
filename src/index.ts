@@ -19,7 +19,8 @@
 import { ChildProcess } from 'child_process';
 import { resolve } from 'path';
 import chalk from 'chalk';
-import { isVerbose, printEnvStatus, validateEnv, ensureToolTypeImports, shouldRunSetup, loadEnv } from './config.js';
+import { isVerbose, validateEnv, ensureToolTypeImports, shouldRunSetup, loadEnv } from './config.js';
+import { agentIO } from './loop/agent-io.js';
 import { parseKeys, isCtrlC, isEscape } from './utils/key-parser.js';
 import { getProjectRoot, spawnTsx } from './utils/tsx-run.js';
 
@@ -75,18 +76,16 @@ function runCoordinator(): void {
 
   // Validate environment before proceeding
   const envResult = validateEnv();
-  envResult.warnings.forEach(w => console.log(chalk.yellow(`[config] ${w.var}: ${w.instruction}`)));
+  envResult.warnings.forEach(w => agentIO.brief('warn', 'config', w.instruction));
 
   if (!envResult.valid) {
-    console.error(chalk.red('\nMissing required environment variables:'));
-    envResult.missing.forEach(m => console.error(chalk.red(`  - ${m.var}: ${m.instruction}`)));
-    console.log(chalk.yellow('\nRun \'mycc --setup\' to configure your environment.'));
+    envResult.missing.forEach(m => agentIO.brief('error', 'config', m.instruction));
+    agentIO.log(chalk.yellow('\nRun \'mycc --setup\' to configure your environment.'));
     process.exit(2);  // Exit code 2 = setup required
   }
 
   if (isVerbose()) {
-    console.log(chalk.magenta('[verbose] Debug logging enabled'));
-    printEnvStatus();
+    agentIO.verbose('config', 'Debug logging enabled');
   }
 
   // Ensure type imports work for custom tools

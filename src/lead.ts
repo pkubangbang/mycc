@@ -11,8 +11,9 @@
  */
 
 import chalk from 'chalk';
-import { isVerbose, printEnvStatus, validateEnv, loadEnv } from './config.js';
+import { validateEnv, loadEnv } from './config.js';
 import { main } from './loop/agent-repl.js';
+import { agentIO } from './loop/agent-io.js';
 
 // ---------------------------------------------------------------------------
 // Environment Setup
@@ -25,17 +26,11 @@ loadEnv();
 // ---------------------------------------------------------------------------
 
 const envResult = validateEnv();
-envResult.warnings.forEach(w => console.log(chalk.yellow(`[config] ${w.var}: ${w.instruction}`)));
+envResult.warnings.forEach(w => agentIO.brief('warn', 'config', w.instruction));
 
 if (!envResult.valid) {
-  console.error(chalk.red('Missing required environment variables:'));
-  envResult.missing.forEach(m => console.error(chalk.red(`  - ${m.var}: ${m.instruction}`)));
+  envResult.missing.forEach(m => agentIO.brief('error', 'config', m.instruction));
   process.exit(1);
-}
-
-if (isVerbose()) {
-  console.log(chalk.magenta('[verbose] Debug logging enabled'));
-  printEnvStatus();
 }
 
 // ---------------------------------------------------------------------------

@@ -202,25 +202,6 @@ export function validateEnv(): EnvValidationResult {
   };
 }
 
-/**
- * Print environment status (for verbose mode)
- */
-export function printEnvStatus(): void {
-  console.log('[config] Environment status:');
-  for (const req of ENV_REQUIREMENTS) {
-    const value = process.env[req.name];
-    if (value) {
-      // Redact API key
-      const display = req.name === 'OLLAMA_API_KEY' ? `****${  value.slice(-4)}` : value;
-      console.log(`  ${req.name}: ${display}`);
-    } else if (req.default) {
-      console.log(`  ${req.name}: (using default: ${req.default})`);
-    } else {
-      console.log(`  ${req.name}: (not set)`);
-    }
-  }
-}
-
 // ============================================================================
 // Constants
 // ============================================================================

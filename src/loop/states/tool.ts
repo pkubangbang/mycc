@@ -102,14 +102,13 @@ export async function handleTool(
     // Hook-blocked call: register rejection, continue to next
     if (hookResult.blockedCalls.has(toolCallId)) {
       triologue.tool(toolName, hookResult.blockedCalls.get(toolCallId)!, toolCallId);
-      agentIO.log(chalk.yellow(`[hook] blocked ${toolName}: ${hookResult.blockedCalls.get(toolCallId)}`));
+      agentIO.verbose('hook', `blocked ${toolName}: ${hookResult.blockedCalls.get(toolCallId)}`);
       continue;
     }
 
     if (isVerbose()) {
-      agentIO.log(chalk.magenta(`[verbose][tool] Executing: ${toolName}`));
-      const argsPreview = JSON.stringify(toolCall.function.arguments).slice(0, 200);
-      agentIO.log(chalk.gray(`  Args: ${argsPreview}${argsPreview.length >= 200 ? '...' : ''}`));
+      agentIO.verbose('tool', `Executing: ${toolName}`);
+      agentIO.verbose('tool', `Args: ${JSON.stringify(toolCall.function.arguments).slice(0, 200)}`);
     }
 
     try {
@@ -127,8 +126,7 @@ export async function handleTool(
       );
 
       if (isVerbose()) {
-        agentIO.log(chalk.magenta(`[verbose][tool] Result: ${toolName}`));
-        agentIO.log(chalk.gray(`  Output length: ${output.length} chars`));
+        agentIO.verbose('tool', `Result: ${toolName}`, { outputLength: output.length });
       }
 
       sequence.add({
@@ -229,7 +227,7 @@ export async function handleTool(
         // This prevents tool failures from killing the agent
         const errorMsg = err instanceof Error ? err.message : String(err);
         triologue.tool(toolName, `Error: ${errorMsg}`, toolCallId);
-        agentIO.log(chalk.red(`[tool] ${toolName} failed: ${errorMsg}`));
+        agentIO.brief('error', 'tool', `${toolName} failed: ${errorMsg}`);
         ctx.core.increaseConfusionIndex(2);
         // Continue to next tool call in the loop
       }

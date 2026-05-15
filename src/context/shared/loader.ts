@@ -9,6 +9,7 @@ import { watch } from 'fs';
 import matter from 'gray-matter';
 import chalk from 'chalk';
 import { isVerbose } from '../../config.js';
+import { agentIO } from '../../loop/agent-io.js';
 import { resolveToSkillPath, type SkillLayer } from '../../utils/skill-path-resolver.js';
 
 // Package root: resolve up from this file (src/context/shared/loader.ts or dist/context/shared/loader.js)
@@ -195,7 +196,7 @@ export class Loader implements DynamicLoader, SkillModule {
 
       if (!tool || !tool.name) {
         if (!this.silent) {
-          console.warn(chalk.yellow(`[loader] Invalid tool definition: ${filepath}`));
+          agentIO.brief('warn', 'loader', `Invalid tool definition: ${filepath}`);
         }
         return;
       }
@@ -203,25 +204,23 @@ export class Loader implements DynamicLoader, SkillModule {
       const existing = this.tools.get(tool.name);
       if (existing && existing.layer === 'built-in') {
         if (!this.silent) {
-          console.warn(chalk.yellow(`[loader] Warning: user tool '${tool.name}' cannot shadow built-in tool`));
+          agentIO.brief('warn', 'loader', `Warning: user tool '${tool.name}' cannot shadow built-in tool`);
         }
         return;
       }
 
       if (existing && existing.layer === 'project') {
         if (!this.silent) {
-          console.warn(chalk.yellow(`[loader] Warning: user tool '${tool.name}' shadowed by project tool`));
+          agentIO.brief('warn', 'loader', `Warning: user tool '${tool.name}' shadowed by project tool`);
         }
         return;
       }
 
       this.tools.set(tool.name, { tool, layer });
-      if (isVerbose()) {
-        console.log(chalk.dim(`[loader] Loaded ${layer} tool: ${tool.name}`));
-      }
+      agentIO.verbose('loader', `Loaded ${layer} tool: ${tool.name}`);
     } catch (err) {
       if (!this.silent) {
-        console.error(chalk.red(`[loader] Failed to load user tool ${filepath}: ${(err as Error).message}`));
+        agentIO.brief('error', 'loader', `Failed to load user tool ${filepath}`, (err as Error).message);
       }
     }
   }
@@ -232,11 +231,8 @@ export class Loader implements DynamicLoader, SkillModule {
    */
   private loadBuiltInTools(): void {
     for (const tool of builtInTools) {
-      // Built-in always wins
       this.tools.set(tool.name, { tool, layer: 'built-in' });
-      if (isVerbose()) {
-        console.log(chalk.dim(`[loader] Loaded built-in tool: ${tool.name}`));
-      }
+      agentIO.verbose('loader', `Loaded built-in tool: ${tool.name}`);
     }
   }
 
@@ -278,7 +274,7 @@ export class Loader implements DynamicLoader, SkillModule {
 
       if (!tool || !tool.name) {
         if (!this.silent) {
-          console.warn(chalk.yellow(`[loader] Invalid tool definition: ${filepath}`));
+          agentIO.brief('warn', 'loader', `Invalid tool definition: ${filepath}`);
         }
         return;
       }
@@ -287,26 +283,28 @@ export class Loader implements DynamicLoader, SkillModule {
       if (existing && existing.layer === 'user') {
         // Project shadows user - show warning
         if (!this.silent) {
-          console.warn(chalk.yellow(`[loader] Warning: project tool '${tool.name}' shadows user tool`));
+          agentIO.brief('warn', 'loader', `Warning: project tool '${tool.name}' shadows user tool`);
         }
       }
 
       // Don't override built-in
       if (existing && existing.layer === 'built-in') {
         if (!this.silent) {
-          console.warn(chalk.yellow(`[loader] Warning: project tool '${tool.name}' cannot shadow built-in tool`));
+          agentIO.brief('warn', 'loader', `Warning: project tool '${tool.name}' cannot shadow built-in tool`);
         }
         return;
       }
 
       this.tools.set(tool.name, { tool, layer: 'project' });
       // Only show initial load logs in verbose mode; always show hot-reload logs
-      if (!isInitialLoad || isVerbose()) {
-        console.log(chalk.dim(`[loader] Loaded tool: ${tool.name}`));
+      if (!isInitialLoad) {
+        agentIO.brief('info', 'loader', `Loaded tool: ${tool.name}`);
+      } else {
+        agentIO.verbose('loader', `Loaded tool: ${tool.name}`);
       }
     } catch (err) {
       if (!this.silent) {
-        console.error(chalk.red(`[loader] Failed to load tool ${filepath}: ${(err as Error).message}`));
+        agentIO.brief('error', 'loader', `Failed to load tool ${filepath}`, (err as Error).message);
       }
     }
   }
@@ -396,7 +394,7 @@ export class Loader implements DynamicLoader, SkillModule {
 
       if (!data.name) {
         if (!this.silent) {
-          console.warn(chalk.yellow(`[loader] Missing 'name' in frontmatter: ${filepath}`));
+          agentIO.brief('warn', 'loader', `Missing 'name' in frontmatter: ${filepath}`);
         }
         return;
       }
@@ -408,7 +406,7 @@ export class Loader implements DynamicLoader, SkillModule {
       const sourceFile = resolveToSkillPath(filepath, skillLayer);
       if (!sourceFile) {
         if (!this.silent) {
-          console.warn(chalk.yellow(`[loader] Invalid skill path format: ${filepath}`));
+          agentIO.brief('warn', 'loader', `Invalid skill path format: ${filepath}`);
         }
         return;
       }
@@ -426,25 +424,25 @@ export class Loader implements DynamicLoader, SkillModule {
       if (existing && existing.layer === 'user' && layer === 'project') {
         // Project shadows user - show warning
         if (!this.silent) {
-          console.warn(chalk.yellow(`[loader] Warning: project skill '${skill.name}' shadows user skill`));
+          agentIO.brief('warn', 'loader', `Warning: project skill '${skill.name}' shadows user skill`);
         }
       }
 
       // Don't override built-in
       if (existing && existing.layer === 'built-in') {
         if (!this.silent) {
-          console.warn(chalk.yellow(`[loader] Warning: ${layer} skill '${skill.name}' cannot shadow built-in skill`));
+          agentIO.brief('warn', 'loader', `Warning: ${layer} skill '${skill.name}' cannot shadow built-in skill`);
         }
         return;
       }
 
       this.skills.set(skill.name, { skill, layer });
       if (!this.silent) {
-        console.log(chalk.dim(`[loader] Loaded ${layer} skill: ${skill.name}`));
+        agentIO.verbose('loader', `Loaded ${layer} skill: ${skill.name}`);
       }
     } catch (err) {
       if (!this.silent) {
-        console.error(chalk.red(`[loader] Failed to load skill ${filepath}: ${(err as Error).message}`));
+        agentIO.brief('error', 'loader', `Failed to load skill ${filepath}`, (err as Error).message);
       }
     }
   }
@@ -465,7 +463,7 @@ export class Loader implements DynamicLoader, SkillModule {
         if (filename && (filename.endsWith('.ts') || filename.endsWith('.js'))) {
           const filepath = path.join(toolsDir, filename);
           if (!this.silent) {
-            console.log(chalk.dim(`[loader] Reloading tool: ${filename}`));
+            agentIO.verbose('loader', `Reloading tool: ${filename}`);
           }
           await this.reloadTool(filepath);
         }
@@ -485,8 +483,8 @@ export class Loader implements DynamicLoader, SkillModule {
           if (isRootLevel || isSkillEntrypoint) {
             const filepath = path.join(skillsDir, filename);
             if (!this.silent) {
-              console.log(chalk.dim(`[loader] Reloading skill: ${filename}`));
-            }
+            agentIO.verbose('loader', `Reloading skill: ${filename}`);
+          }
             this.reloadSkill(filepath, 'project');
           }
         }
@@ -639,7 +637,7 @@ export class Loader implements DynamicLoader, SkillModule {
       await this.indexSkillToWiki(entry.skill, wiki, entry.layer);
     }
 
-    console.log(chalk.dim(`[loader] Indexed ${this.skills.size} skills to wiki`));
+    agentIO.brief('info', 'loader', `Indexed ${this.skills.size} skills to wiki`);
   }
 
   /**
