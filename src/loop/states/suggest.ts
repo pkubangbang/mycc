@@ -123,11 +123,6 @@ function tryExtractBrownBag(content: string): BrownBag | null {
       typeof (w as Record<string, unknown>).query === 'string'
     )) return null;
 
-    const wikiNotes: WikiNote[] = parsed.wikiNotes.map((w: Record<string, unknown>) => ({
-      domain: w.domain as string,
-      query: w.query as string,
-    }));
-
     // skills: all elements must be strings
     if (!parsed.skills.every((s: unknown) => typeof s === 'string')) return null;
 
@@ -180,11 +175,30 @@ function formatBrownBag(brownBag: BrownBag): string {
 // ============================================================================
 
 /**
+ * Wrap a Core module to mute brief() calls.
+ * All other methods pass through normally.
+ */
+function muteCore(core: MachineEnv['ctx']['core']): MachineEnv['ctx']['core'] {
+  return new Proxy(core, {
+    get(target, prop, receiver) {
+      if (prop === 'brief') {
+        return () => {}; // no-op — suppress background noise
+      }
+      const value = Reflect.get(target, prop, receiver);
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  }) as MachineEnv['ctx']['core'];
+}
+
+/**
  * Run the background SUGGEST task.
  * Called as fire-and-forget from PROMPT (at tail). Gracefully stopped by next PROMPT.
  */
 export async function runSuggestBackground(env: MachineEnv): Promise<void> {
   const { triologue, ctx } = env;
+
+  // Mute brief() output from tools executed in the background suggest loop
+  const mutedCtx = { ...ctx, core: muteCore(ctx.core) };
 
   // Graceful stop via timestamp-based flag.
   // Each new SUGGEST run creates a fresh closure with its own stopRequestedAt = null.
@@ -294,7 +308,7 @@ ${domainList}
         const result = await executeSuggestTool(
           tc.function.name,
           tc.function.arguments as Record<string, unknown>,
-          ctx,
+          mutedCtx,
         );
         chatMessages.push({
           role: 'tool',
