@@ -223,7 +223,7 @@ export function validateIntent(parsed: ParsedIntent | null): IntentValidation {
  */
 export function formatWarning(validation: IntentValidation): string {
   if (!validation.warning) return '';
-  return `\n[intent hint] ${validation.warning}`;
+  return `[intent hint] ${validation.warning}`;
 }
 
 /**

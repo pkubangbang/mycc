@@ -100,15 +100,15 @@ export const bashTool: ToolDefinition = {
     // Check if we need to summarize (by character count, not lines)
     const outputChars = output.length;
 
+    const intentWarning = getIntentWarning(intent);
+
     if (outputChars <= OUTPUT_CHAR_LIMIT) {
-      const intentWarning = getIntentWarning(intent);
-      return intentWarning ? output + intentWarning : output;
+      return intentWarning ? intentWarning + '\n' + output : output;
     }
 
     // Summarize the output
     const summary = await summarizeOutput(output, intent, outputChars, ctx);
-    const intentWarning = getIntentWarning(intent);
-    return intentWarning ? summary + intentWarning : summary;
+    return intentWarning ? intentWarning + '\n' + summary : summary;
   },
 };
 
