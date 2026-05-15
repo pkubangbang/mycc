@@ -44,6 +44,9 @@ export async function handlePrompt(
 ): Promise<HandlerResult> {
   const { triologue, inputProvider, sessionFilePath } = env;
 
+  // Gracefully stop any running SUGGEST task from previous turn
+  env.runningSuggest?.stop();
+
   // Reset brief nudge when entering PROMPT state (start of new turn)
   turn.nextBriefNudge = 5;
 

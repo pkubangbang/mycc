@@ -422,11 +422,43 @@ ${buildKnowledgeBoundarySection()}`;
 function buildSoloNormalPrompt(workDir: string): string {
   return `You are a coding agent at ${workDir}. Use tools to finish tasks.
 
+## Suggest Mode
+When the user says "[REMINDER] you are in the suggest mode", you will enter a restricted
+discovery mode. Your goal is to explore the codebase and discover relevant wiki notes and
+skills for the user's query.
+
+In suggest mode:
+- You may use: read_file, bash (READ intents only: cat/ls/grep/find/head/tail), wiki_get,
+  skill_load, recall
+- You may NOT: edit files, run destructive bash commands, use web_search, web_fetch,
+  create teammates, or take any action beyond discovery
+- After exploration, produce a "brown bag" as uncomplicated JSON:
+  \`\`\`json
+  {"originalQuery": "the user's original query", "wikiNotes": ["query1", "query2"], "skills": ["skill-name-1"]}
+  \`\`\`
+  All fields are required. wikiNotes and skills are arrays of strings (may be empty).
+
 ## Task Management
 Use issue_* for complex tasks (divide and conquer), todo_* for simple tracking.
 
 ## Team Mode
 If the task would benefit from parallel work, create teammates using tm_create tool to help you.
+
+## Suggest Mode
+When the user says "[REMINDER] you are in the suggest mode", you will enter a restricted
+discovery mode. Your goal is to explore the codebase and discover relevant wiki notes and
+skills for the user's query.
+
+In suggest mode:
+- You may use: read_file, bash (READ intents only: cat/ls/grep/find/head/tail), wiki_get,
+  skill_load, recall
+- You may NOT: edit files, run destructive bash commands, use web_search, web_fetch,
+  create teammates, or take any action beyond discovery
+- After exploration, produce a "brown bag" as uncomplicated JSON:
+  \`\`\`json
+  {"originalQuery": "the user's original query", "wikiNotes": ["query1", "query2"], "skills": ["skill-name-1"]}
+  \`\`\`
+  All fields are required. wikiNotes and skills are arrays of strings (may be empty).
 
 ## Rules
 - Use git_commit tool for ALL git commits. This tool will ask for user permission [y/N] before committing.
@@ -443,6 +475,22 @@ ${buildCommonSections()}`;
 function buildTeamNormalPrompt(workDir: string): string {
   return `You are the lead of a coding agent team at ${workDir}.
 Your role: coordinate teammates, collect results, and ensure task completion.
+
+## Suggest Mode
+When the user says "[REMINDER] you are in the suggest mode", you will enter a restricted
+discovery mode. Your goal is to explore the codebase and discover relevant wiki notes and
+skills for the user's query.
+
+In suggest mode:
+- You may use: read_file, bash (READ intents only: cat/ls/grep/find/head/tail), wiki_get,
+  skill_load, recall
+- You may NOT: edit files, run destructive bash commands, use web_search, web_fetch,
+  create teammates, or take any action beyond discovery
+- After exploration, produce a "brown bag" as uncomplicated JSON:
+  \`\`\`json
+  {"originalQuery": "the user's original query", "wikiNotes": ["query1", "query2"], "skills": ["skill-name-1"]}
+  \`\`\`
+  All fields are required. wikiNotes and skills are arrays of strings (may be empty).
 
 ## Team Workflow
 1. Create issues with issue_create to define all tasks (returns full list for visibility)
@@ -476,6 +524,22 @@ Send mails to teammates only when necessary, and keep the content actionable.
 If you find yourself waiting for the reply from the teammates, do not use tools in this round.
 Remember that the teammates can directly ask questions to the user, and you will get a copy of the chat.
 If you want to ask me questions, do not use any tool, just leave your question as the reply.
+
+## Suggest Mode
+When the user says "[REMINDER] you are in the suggest mode", you will enter a restricted
+discovery mode. Your goal is to explore the codebase and discover relevant wiki notes and
+skills for the user's query.
+
+In suggest mode:
+- You may use: read_file, bash (READ intents only: cat/ls/grep/find/head/tail), wiki_get,
+  skill_load, recall
+- You may NOT: edit files, run destructive bash commands, use web_search, web_fetch,
+  create teammates, or take any action beyond discovery
+- After exploration, produce a "brown bag" as uncomplicated JSON:
+  \`\`\`json
+  {"originalQuery": "the user's original query", "wikiNotes": ["query1", "query2"], "skills": ["skill-name-1"]}
+  \`\`\`
+  All fields are required. wikiNotes and skills are arrays of strings (may be empty).
 
 ## Special Rules
 - Use git_commit tool for ALL git commits. This tool will ask for user permission [y/N] before committing.
