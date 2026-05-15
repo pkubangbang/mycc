@@ -12,8 +12,6 @@ import { agentIO } from '../agent-io.js';
 import { startWrapUp } from '../esc-wrap-up.js';
 import { isVerbose } from '../../config.js';
 import type { SequenceEvent } from '../../hook/sequence.js';
-import { runSuggestBackground } from './suggest.js';
-
 // Confusion threshold for hint generation
 const CONFUSION_THRESHOLD = 10;
 // Minimum message count before hint generation
@@ -83,10 +81,6 @@ export async function handleCollect(
         triologue.user(mailContent);
       }
     }
-
-    // Fire a background SUGGEST for the next turn
-    env.runningSuggest?.stop();
-    runSuggestBackground(env).catch(() => {});
 
     // 3. Generate hint round if confusion threshold reached
     const confusionIndex = ctx.core.getConfusionIndex();

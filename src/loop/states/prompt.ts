@@ -26,6 +26,7 @@ import { openMultilineEditor } from '../../utils/multiline-input.js';
 import { readSession, writeSession } from '../../session/index.js';
 import { setSlashQuery } from './slash.js';
 import { injectWrapUp, shouldAppendWrapUp, clearWrapUp } from '../esc-wrap-up.js';
+import { runSuggestBackground } from './suggest.js';
 
 /** Captured once per machine lifetime */
 let bookmarkCaptured = false;
@@ -118,7 +119,7 @@ export async function handlePrompt(
   }
 
   clearWrapUp();
-  
+
   // Add user message to triologue
   triologue.user(query);
   env.ctx.core.resetConfusionIndex();
@@ -132,6 +133,9 @@ export async function handlePrompt(
       bookmarkCaptured = true;
     }
   }
+
+  // Fire a background SUGGEST task for the next turn
+  runSuggestBackground(env).catch(() => {});
 
   return AgentState.COLLECT;
 }

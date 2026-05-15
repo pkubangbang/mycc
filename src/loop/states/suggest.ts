@@ -1,12 +1,12 @@
 /**
  * suggest.ts - Background SUGGEST task
  *
- * Runs a fire-and-forget exploration loop in parallel with COLLECT.
+ * Runs a fire-and-forget exploration loop in parallel with user's next prompt.
  * Follows the explorer-agent pattern:
  *   if tool_calls → execute (with restricted executor returning errors for disallowed tools)
  *   if no tool_calls → try to extract brown bag → mail on success / loop on failure
  *
- * Gracefully stopped by PROMPT state on next user input via timestamp-based stop flag.
+ * Launched from PROMPT state (at tail). Gracefully stopped by next PROMPT via timestamp-based stop flag.
  */
 
 import { retryChat, MODEL } from '../../ollama.js';
@@ -154,7 +154,7 @@ function formatBrownBag(brownBag: BrownBag): string {
 
 /**
  * Run the background SUGGEST task.
- * Called as fire-and-forget from COLLECT. Gracefully stopped by PROMPT.
+ * Called as fire-and-forget from PROMPT (at tail). Gracefully stopped by next PROMPT.
  */
 export async function runSuggestBackground(env: MachineEnv): Promise<void> {
   const { triologue, ctx } = env;
@@ -278,7 +278,7 @@ export async function runSuggestBackground(env: MachineEnv): Promise<void> {
 /**
  * State handler registration stub — required for the handler map in agent-repl.
  * SUGGEST is never reached via normal state transitions; it runs as a background
- * task launched from COLLECT.
+ * task launched from PROMPT.
  */
 export async function handleSuggest(
   _env: MachineEnv,
