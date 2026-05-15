@@ -300,7 +300,7 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
             // Abandon: discard messages, append ?recap + !recap (abandon marker)
             triologue.recapMessages(checkpoint.index);
             triologue.agent(assistantMessage.content || '', toolCalls);
-            const abandonResult = `[RECAP] Abandoned checkpoint "${checkpoint.description}"\n\n${messages.length} messages discarded. Checkpoint closed.${comment ? `\n\nComment: ${comment}` : ''}`;
+            const abandonResult = `[RECAP] Abandoned checkpoint "${checkpoint.description}"\n\n${messages.length} messages discarded. Checkpoint closed.${comment ? `\n\nComment: ${comment}` : ''}\n\nNote: the checkpoint todo item was auto-created with this checkpoint's ID as its note. Use todo_update to mark it as done.`;
             triologue.tool('recap', abandonResult, tc.id);
 
             const tokensAfter = triologue.getTokenCount();

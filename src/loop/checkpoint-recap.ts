@@ -228,7 +228,9 @@ ${conversationText}`,
 Summary:
 ${summary}${comment ? `\n\nLLM Comment: ${comment}` : ''}
 
-Checkpoint closed. ${messages.length} messages compressed into summary.`;
+Checkpoint closed. ${messages.length} messages compressed into summary.
+
+Note: the checkpoint todo item was auto-created with this checkpoint's ID as its note. Use todo_update to mark it as done.`;
 }
 
 /**
