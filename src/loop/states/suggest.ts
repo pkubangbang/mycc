@@ -33,9 +33,14 @@ const ALLOWED_TOOLS = new Set([
 // Brown Bag
 // ============================================================================
 
+interface WikiNote {
+  domain: string;
+  query: string;
+}
+
 interface BrownBag {
   originalQuery: string;
-  wikiNotes: string[];
+  wikiNotes: WikiNote[];
   skills: string[];
   /** Optional: a suggested terminal title reflecting the user's current intent */
   title?: string;
@@ -111,8 +116,19 @@ function tryExtractBrownBag(content: string): BrownBag | null {
     if (!Array.isArray(parsed.wikiNotes)) return null;
     if (!Array.isArray(parsed.skills)) return null;
 
-    // All elements must be strings
-    if (!parsed.wikiNotes.every((s: unknown) => typeof s === 'string')) return null;
+    // wikiNotes: each entry must be { domain: string, query: string }
+    if (!parsed.wikiNotes.every((w: unknown) =>
+      typeof w === 'object' && w !== null &&
+      typeof (w as Record<string, unknown>).domain === 'string' &&
+      typeof (w as Record<string, unknown>).query === 'string'
+    )) return null;
+
+    const wikiNotes: WikiNote[] = parsed.wikiNotes.map((w: Record<string, unknown>) => ({
+      domain: w.domain as string,
+      query: w.query as string,
+    }));
+
+    // skills: all elements must be strings
     if (!parsed.skills.every((s: unknown) => typeof s === 'string')) return null;
 
     // title is optional but must be a string if present
@@ -141,8 +157,8 @@ function formatBrownBag(brownBag: BrownBag): string {
   if (brownBag.wikiNotes.length > 0) {
     lines.push('');
     lines.push('Wiki notes to search (use wiki_get tool):');
-    for (const q of brownBag.wikiNotes) {
-      lines.push(`- "${q}"`);
+    for (const w of brownBag.wikiNotes) {
+      lines.push(`- domain="${w.domain}" query="${w.query}"`);
     }
   }
 
@@ -183,7 +199,13 @@ export async function runSuggestBackground(env: MachineEnv): Promise<void> {
     const rawMessages = triologue.getMessagesRaw();
     const messages: Message[] = JSON.parse(JSON.stringify(rawMessages));
 
-    // 2. Append "[REMINDER] you are in the suggest mode" with full instructions
+    // 2. Fetch available wiki domains for the suggest prompt
+    const domains = ctx.wiki ? await ctx.wiki.listDomains() : [];
+    const domainList = domains.length > 0
+      ? domains.map(d => `- ${d.domain_name}${d.description ? `: ${d.description}` : ''}`).join('\n')
+      : '(no domains registered)';
+
+    // 3. Append "[REMINDER] you are in the suggest mode" with full instructions
     messages.push({
       role: 'user',
       content: `[REMINDER] you are in the suggest mode
@@ -196,25 +218,30 @@ In suggest mode:
   skill_load, recall
 - You may NOT: edit files, run destructive bash commands, use web_search, web_fetch,
   create teammates, or take any action beyond discovery
+
+Available wiki domains:
+${domainList}
+
 - After exploration, produce a "brown bag" as JSON:
   \`\`\`json
-  {"originalQuery": "the user's original query", "wikiNotes": ["query1", "query2"], "skills": ["skill-name-1"], "title": "optional brief title"}
+  {"originalQuery": "the user's original query", "wikiNotes": [{"domain": "project", "query": "keyword1 keyword2"}], "skills": ["skill-name-1"], "title": "optional brief title"}
   \`\`\`
-  All fields are required except "title". wikiNotes and skills are arrays of strings (may be empty).
+  All fields are required except "title". wikiNotes and skills are arrays (may be empty).
+  Each wikiNote must use a domain from the available list above, paired with a keyword query.
   Include "title" only if the user's query suggests a substantial topic change.`,
     });
 
-    // 3. Get the existing system prompt (suggest-mode rules provided dynamically via the REMINDER above)
+    // 4. Get the existing system prompt
     const fullMessages = triologue.getMessages();
     const systemMsg = fullMessages[0]; // first message is always system prompt
 
-    // 4. Build the message array: system prompt + forked messages
+    // 5. Build the message array: system prompt + forked messages
     const chatMessages: Message[] = [systemMsg, ...messages];
 
-    // 5. Get the FULL tool list (preserves prompt cache — no tool filtering)
+    // 6. Get the FULL tool list
     const allTools: Tool[] = loader.getToolsForScope('main');
 
-    // 6. Explorer-style loop
+    // 7. Explorer-style loop
     for (let turn = 0; turn < MAX_TURNS; turn++) {
       // Check graceful stop BEFORE this iteration
       const stopAtIterStart = stopRequestedAt;
