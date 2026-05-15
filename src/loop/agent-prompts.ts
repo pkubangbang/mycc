@@ -43,9 +43,7 @@ function buildIntentLanguageSection(): string {
   lines.push('');
   lines.push('When using the bash tool, the `intent` parameter MUST follow this format:');
   lines.push('');
-  lines.push('```');
-  lines.push('VERB OBJECT PARAM TO PURPOSE');
-  lines.push('```');
+  lines.push('VERB OBJECT PARAM PARAM ... TO PURPOSE');
   lines.push('');
   lines.push('**PARAM** (optional): `key=value` pairs describing attributes of the OBJECT.');
   lines.push('');
@@ -88,8 +86,7 @@ function buildOutputBehaviorSection(): string {
   return [
     '## Output Behavior',
     'Respond concisely when you use tools. Respond in detail otherwise.',
-    'Do NOT repeat or summarize content that has already been shown via the brief tool.',
-    'The brief tool displays information directly to the user - there is no need to repeat it in your response.',
+    'Do NOT repeat the content that has shown in the brief tool.'
   ].join('\n');
 }
 
@@ -103,13 +100,6 @@ function buildKnowledgeBoundarySection(): string {
     '- **Wiki**: Project knowledge base (RAG). Use `wiki_get(query, domain)` to retrieve documents.',
     '- **Teammates**: Parallel expertise. Use `tm_create(name, role, prompt)` to spawn specialists.',
     '- **Web**: External information from the internet. Use `web_search(query)` and `web_fetch(url)` as LAST RESORT.',
-    '',
-    '**Priority Rule**: Always check local knowledge sources (Recall → Skills → Wiki) BEFORE searching the web.',
-    'Local sources are faster, more accurate for this project, and always available.',
-    'Use web_search only when:',
-    '- No local knowledge matches your query',
-    '- You need the latest information (e.g., current library versions)',
-    '- You need external documentation not in the project',
     '',
     'When you encounter something outside your knowledge:',
     '1. PAUSE and recognize the gap',

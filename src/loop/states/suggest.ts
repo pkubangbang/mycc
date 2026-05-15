@@ -37,6 +37,8 @@ interface BrownBag {
   originalQuery: string;
   wikiNotes: string[];
   skills: string[];
+  /** Optional: a suggested terminal title reflecting the user's current intent */
+  title?: string;
 }
 
 /**
@@ -113,10 +115,15 @@ function tryExtractBrownBag(content: string): BrownBag | null {
     if (!parsed.wikiNotes.every((s: unknown) => typeof s === 'string')) return null;
     if (!parsed.skills.every((s: unknown) => typeof s === 'string')) return null;
 
+    // title is optional but must be a string if present
+    const title = parsed.title;
+    if (title !== undefined && typeof title !== 'string') return null;
+
     return {
       originalQuery: parsed.originalQuery,
       wikiNotes: parsed.wikiNotes,
       skills: parsed.skills,
+      title,
     };
   } catch {
     return null;
@@ -128,13 +135,12 @@ function tryExtractBrownBag(content: string): BrownBag | null {
  */
 function formatBrownBag(brownBag: BrownBag): string {
   const lines: string[] = [];
-  lines.push('[Brown Bag]');
-  lines.push('');
-  lines.push(`Original query: ${brownBag.originalQuery}`);
+  lines.push(`Regarding the user's query: ${brownBag.originalQuery}`);
+  lines.push('Consider the suggestions below:');
 
   if (brownBag.wikiNotes.length > 0) {
     lines.push('');
-    lines.push('Wiki notes to search:');
+    lines.push('Wiki notes to search (use wiki_get tool):');
     for (const q of brownBag.wikiNotes) {
       lines.push(`- "${q}"`);
     }
@@ -142,7 +148,12 @@ function formatBrownBag(brownBag: BrownBag): string {
 
   if (brownBag.skills.length > 0) {
     lines.push('');
-    lines.push(`Skills to load: ${brownBag.skills.join(', ')}`);
+    lines.push(`Skills to load (use skill_load tool): ${brownBag.skills.join(', ')}`);
+  }
+
+  if (brownBag.title) {
+    lines.push('');
+    lines.push(`Title suggestion (use mycc_title tool): ${brownBag.title}`);
   }
 
   return lines.join('\n');
@@ -187,9 +198,10 @@ In suggest mode:
   create teammates, or take any action beyond discovery
 - After exploration, produce a "brown bag" as JSON:
   \`\`\`json
-  {"originalQuery": "the user's original query", "wikiNotes": ["query1", "query2"], "skills": ["skill-name-1"]}
+  {"originalQuery": "the user's original query", "wikiNotes": ["query1", "query2"], "skills": ["skill-name-1"], "title": "optional brief title"}
   \`\`\`
-  All fields are required. wikiNotes and skills are arrays of strings (may be empty).`,
+  All fields are required except "title". wikiNotes and skills are arrays of strings (may be empty).
+  Include "title" only if the user's query suggests a substantial topic change.`,
     });
 
     // 3. Get the existing system prompt (suggest-mode rules provided dynamically via the REMINDER above)
