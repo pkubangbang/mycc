@@ -426,25 +426,7 @@ export class HookExecutor {
    * Evaluate condition for stop trigger (no call context, just sequence)
    */
   private evaluateConditionForStop(condition: string): boolean {
-    try {
-      const seq = this.sequence;
-      const expr = condition
-        .replace(/seq\.has\(/g, 'seq.has(')
-        .replace(/seq\.hasAny\(/g, 'seq.hasAny(')
-        .replace(/seq\.hasCommand\(/g, 'seq.hasCommand(')
-        .replace(/seq\.last\(/g, 'seq.last(')
-        .replace(/seq\.lastError\(/g, 'seq.lastError(')
-        .replace(/seq\.count\(/g, 'seq.count(')
-        .replace(/seq\.since\(/g, 'seq.since(')
-        .replace(/seq\.sinceEdit\(/g, 'seq.sinceEdit(');
-
-      // For stop triggers, we only have sequence context (no call)
-      // So we evaluate without call metadata
-      const fn = new Function('seq', `return ${expr}`);
-      return fn(seq);
-    } catch {
-      return false;
-    }
+    return this.sequence.evaluate(condition);
   }
 
   /**
