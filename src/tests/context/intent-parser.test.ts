@@ -9,21 +9,15 @@
  * - Optional key=value parameters (attributes of OBJECT)
  * - Whitespace tolerance
  * - Valid verb and object enumeration
- * - Verb-object pairing checks (soft warnings)
- * - Object-param pairing checks (soft warnings)
- * - Purpose quality check (min 3 words, soft warning)
- * - formatWarning helper
+ * - Hard errors for invalid verbs, objects, missing purpose
  */
 
 import { describe, it, expect } from 'vitest';
 import {
   parseIntent,
   validateIntent,
-  formatWarning,
   VALID_VERBS,
   VALID_OBJECTS,
-  VERB_OBJECT_PAIRS,
-  OBJECT_PARAMS,
 } from '../../context/grant/intent-parser.js';
 
 describe('parseIntent', () => {
@@ -279,145 +273,5 @@ describe('validateIntent', () => {
     const result = validateIntent(parsed);
     expect(result.valid).toBe(false);
     expect(result.error).toContain('Missing purpose');
-  });
-
-  // ═══════════════════════════════════════════════════════════
-  // Soft warnings: verb-object pairing
-  // ═══════════════════════════════════════════════════════════
-
-  it('should warn when verb-object pair is unusual', () => {
-    // INSTALL does not pair with SOURCE
-    const parsed = parseIntent('INSTALL SOURCE TO add dependency to project');
-    const result = validateIntent(parsed);
-    expect(result.valid).toBe(true);
-    expect(result.warning).toBeDefined();
-    expect(result.warning).toContain('does not typically pair');
-    expect(result.warning).toContain('INSTALL');
-    expect(result.warning).toContain('SOURCE');
-  });
-
-  it('should not warn for valid verb-object pairs', () => {
-    for (const v of VALID_VERBS) {
-      const allowed = VERB_OBJECT_PAIRS[v] || [];
-      for (const o of allowed) {
-        const parsed = parseIntent(`${v} ${o} path=test.txt TO perform operation correctly`);
-        const result = validateIntent(parsed);
-        expect(result.valid).toBe(true);
-        // Should not have a verb-object warning
-        if (result.warning) {
-          expect(result.warning).not.toContain('does not typically pair');
-        }
-      }
-    }
-  });
-
-  // ═══════════════════════════════════════════════════════════
-  // Soft warnings: object-param pairing
-  // ═══════════════════════════════════════════════════════════
-
-  it('should warn when param is not a known attribute of the object', () => {
-    // 'timeout' is not an attribute of SOURCE
-    const parsed = parseIntent('READ SOURCE timeout=30 TO check source file contents');
-    const result = validateIntent(parsed);
-    expect(result.valid).toBe(true);
-    expect(result.warning).toBeDefined();
-    expect(result.warning).toContain('timeout');
-    expect(result.warning).toContain('SOURCE');
-  });
-
-  it('should warn for each unknown param', () => {
-    const parsed = parseIntent('READ SOURCE timeout=5 port=8080 TO check things here');
-    const result = validateIntent(parsed);
-    expect(result.valid).toBe(true);
-    expect(result.warning).toBeDefined();
-    expect(result.warning).toContain('timeout');
-    expect(result.warning).toContain('port');
-  });
-
-  it('should not warn when all params are valid for the object', () => {
-    for (const o of VALID_OBJECTS) {
-      const allowedParams = OBJECT_PARAMS[o] || [];
-      if (allowedParams.length === 0) continue;
-      const paramStr = allowedParams.map(p => `${p}=test`).join(' ');
-      const parsed = parseIntent(`READ ${o} ${paramStr} TO perform operation correctly`);
-      const result = validateIntent(parsed);
-      expect(result.valid).toBe(true);
-      if (result.warning) {
-        expect(result.warning).not.toContain('not a known attribute');
-      }
-    }
-  });
-
-  // ═══════════════════════════════════════════════════════════
-  // Soft warnings: purpose quality
-  // ═══════════════════════════════════════════════════════════
-
-  it('should warn when purpose is too short (less than 3 words)', () => {
-    const parsed = parseIntent('READ SOURCE TO check');
-    const result = validateIntent(parsed);
-    expect(result.valid).toBe(true);
-    expect(result.warning).toBeDefined();
-    expect(result.warning).toContain('too short');
-    expect(result.warning).toContain('1 word');
-  });
-
-  it('should warn when purpose has exactly 2 words', () => {
-    const parsed = parseIntent('READ SOURCE TO check dependencies');
-    const result = validateIntent(parsed);
-    expect(result.valid).toBe(true);
-    expect(result.warning).toBeDefined();
-    expect(result.warning).toContain('too short');
-    expect(result.warning).toContain('2 word');
-  });
-
-  it('should warn when no params are given', () => {
-    const parsed = parseIntent('READ SOURCE TO check all dependencies');
-    const result = validateIntent(parsed);
-    expect(result.valid).toBe(true);
-    expect(result.warning).toBeDefined();
-    expect(result.warning).toContain('no PARAM given');
-    expect(result.warning).toContain('SOURCE');
-  });
-});
-
-describe('formatWarning', () => {
-  it('should return empty string when no warning', () => {
-    const result = formatWarning({ valid: true });
-    expect(result).toBe('');
-  });
-
-  it('should return error when no warning but has error', () => {
-    const result = formatWarning({ valid: false, error: 'bad' });
-    expect(result).toBe('');
-  });
-
-  it('should format a warning with prefix', () => {
-    const result = formatWarning({ valid: true, warning: 'something is off' });
-    expect(result).toContain('[intent hint]');
-    expect(result).toContain('something is off');
-  });
-});
-
-describe('pairing table exports', () => {
-  it('should have entries for all valid verbs in VERB_OBJECT_PAIRS', () => {
-    for (const verb of VALID_VERBS) {
-      expect(VERB_OBJECT_PAIRS[verb]).toBeDefined();
-      expect(VERB_OBJECT_PAIRS[verb].length).toBeGreaterThan(0);
-    }
-  });
-
-  it('should have entries for all valid objects in OBJECT_PARAMS', () => {
-    for (const obj of VALID_OBJECTS) {
-      expect(OBJECT_PARAMS[obj]).toBeDefined();
-      expect(OBJECT_PARAMS[obj].length).toBeGreaterThan(0);
-    }
-  });
-
-  it('should only reference valid objects in VERB_OBJECT_PAIRS', () => {
-    for (const verb of VALID_VERBS) {
-      for (const obj of VERB_OBJECT_PAIRS[verb]) {
-        expect(VALID_OBJECTS).toContain(obj);
-      }
-    }
   });
 });

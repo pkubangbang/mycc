@@ -18,8 +18,6 @@ import {
   parseIntent,
   isReadOnlyVerb,
   isMutationVerb,
-  formatWarning,
-  validateIntent,
 } from '../../context/grant/intent-parser.js';
 
 const MAX_TURNS = 10;
@@ -74,9 +72,8 @@ async function executeSuggestTool(
 
     // No intent or unparseable intent → block
     if (!parsed) {
-      const validation = validateIntent(parsed);
       return 'Error: bash calls in suggest mode require a valid READ intent. ' +
-        `READ SOURCE TO ... or READ CONFIG TO ... etc.${formatWarning(validation)}`;
+        `READ SOURCE TO ... or READ CONFIG TO ... etc.`;
     }
 
     // Mutation verbs → block

@@ -25,53 +25,6 @@ function getPlatformInfo(): { platform: string; shell: string; pathSep: string; 
 }
 
 // ============================================================================
-// Intent Language Section (shared across all prompts)
-// ============================================================================
-
-import {
-  VALID_VERBS,
-  VALID_OBJECTS,
-  VERB_MEANINGS,
-  VERB_PLAN_MODE,
-  OBJECT_MEANINGS,
-} from '../context/grant/intent-parser.js';
-
-function buildIntentLanguageSection(): string {
-  const lines: string[] = [];
-
-  lines.push('## Intent Language for Bash Tool');
-  lines.push('');
-  lines.push('When using the bash tool, the `intent` parameter MUST follow this format:');
-  lines.push('');
-  lines.push('VERB OBJECT PARAM PARAM ... TO PURPOSE');
-  lines.push('');
-  lines.push('**PARAM** (optional): `key=value` pairs describing attributes of the OBJECT.');
-  lines.push('');
-
-  // --- VERB table ---
-  lines.push('**VERB** (action category):');
-  lines.push('| Verb | Meaning | Plan Mode |');
-  lines.push('|------|---------|-----------|');
-  for (const v of VALID_VERBS) {
-    const meaning = VERB_MEANINGS[v] || '';
-    const plan = VERB_PLAN_MODE[v] || '';
-    lines.push(`| ${v} | ${meaning} | ${plan} |`);
-  }
-  lines.push('');
-
-  // --- OBJECT table ---
-  lines.push('**OBJECT** (target domain):');
-  lines.push('| Object | Meaning |');
-  lines.push('|--------|---------|');
-  for (const o of VALID_OBJECTS) {
-    const meaning = OBJECT_MEANINGS[o] || '';
-    lines.push(`| ${o} | ${meaning} |`);
-  }
-
-  return lines.join('\n');
-}
-
-// ============================================================================
 // Common Sections (shared across prompts)
 // ============================================================================
 
@@ -188,8 +141,6 @@ function buildCommonSections(): string {
     '',
     buildPlatformSection(),
     '',
-    buildIntentLanguageSection(),
-    '',
     buildCalendarSection(),
     '',
     buildOutputBehaviorSection(),
@@ -266,8 +217,6 @@ You CANNOT:
 - Edit source code files
 - Run destructive commands (git push, rm -rf, npm publish)
 - Make actual code changes
-
-${buildIntentLanguageSection()}
 
 ## Documenting Your Plan
 
@@ -350,8 +299,6 @@ You CANNOT:
 - Edit source code files
 - Run destructive commands (git push, rm -rf, npm publish)
 - Make actual code changes
-
-${buildIntentLanguageSection()}
 
 ## Documenting Your Plan
 
