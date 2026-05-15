@@ -92,7 +92,9 @@ export async function handlePrompt(
           return AgentState.PROMPT;
         }
         if (result.action === 'reload') {
-          // Reload: loop back to p0 with content pre-filled on the input line
+          // Reload: loop back to p0 with content pre-filled on the input line.
+          // Clear stale wrap-up state so it doesn't bleed into the next p0 prompt.
+          clearWrapUp();
           p0Input = result.content;
           continue;
         }
