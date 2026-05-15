@@ -393,7 +393,7 @@ class AgentIO {
    * @param useAsPrompt - If true, use query as the LineEditor prompt (single line format)
    *                      If false, print query above and use '> ' as prompt (split format)
    */
-  async ask(query: string, useAsPrompt: boolean = false): Promise<string> {
+  async ask(query: string, useAsPrompt: boolean = false, initialContent?: string): Promise<string> {
     if (!this.isMainProcessFlag) {
       throw new Error('question() only available in main process');
     }
@@ -475,6 +475,11 @@ class AgentIO {
             }
           },
         });
+
+        // Pre-fill content if provided
+        if (initialContent) {
+          this.activeLineEditor.setContent(initialContent);
+        }
 
         // Check if wrap-up already completed while LineEditor was starting
         if (tryDisplayWrapUp(this.activeLineEditor)) {

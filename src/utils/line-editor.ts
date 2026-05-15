@@ -340,7 +340,7 @@ export class LineEditor {
     }
   }
 
-  private setContent(text: string): void {
+  setContent(text: string): void {
     this.content = [...this.splitIntoChars(text), CURSOR];
     this.checkPromptChange();
     this.lineInfo = this.computeLineInfo();

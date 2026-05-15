@@ -65,32 +65,46 @@ export async function handlePrompt(
     initialQuery = null;
     console.log(chalk.gray(`Restored query: ${query.slice(0, 50)}${query.length > 50 ? '...' : ''}`));
   }
-  // Priority 3: ask the input provider
+  // Priority 3: ask the input provider (with optional pre-fill from editor reload)
   else {
-    query = await inputProvider.getInput();
-  }
+    let p0Input: string | null = null;
 
-  // null = autonomous skip or EOF → proceed without user message
-  if (query === null) {
-    console.log(chalk.gray('(autonomous iteration)'));
-    env.ctx.core.resetConfusionIndex();
-    return AgentState.COLLECT;
-  }
+    while (true) {
+      p0Input = await inputProvider.getInput(p0Input ?? undefined);
 
-  // Multi-line input: trailing backslash opens editor
-  if (query.endsWith('\\') && query.trim() !== '\\') {
-    const initialContent = query.slice(0, -1);
-    const content = await openMultilineEditor(initialContent);
-    if (content === null) {
-      console.log(chalk.gray('Multi-line input cancelled.'));
-      return AgentState.PROMPT;
+      // null = autonomous skip or EOF → proceed without user message
+      if (p0Input === null) {
+        console.log(chalk.gray('(autonomous iteration)'));
+        env.ctx.core.resetConfusionIndex();
+        return AgentState.COLLECT;
+      }
+
+      // Exit commands (only handled when not pre-filled — i.e., first iteration)
+      if (['q', 'exit', 'quit', ''].includes(p0Input.trim().toLowerCase())) {
+        return null; // signal machine exit
+      }
+
+      // Multi-line input: trailing backslash opens editor
+      if (p0Input.endsWith('\\') && p0Input.trim() !== '\\') {
+        const result = await openMultilineEditor(p0Input.slice(0, -1));
+        if (result.action === 'submit' && !result.content) {
+          console.log(chalk.gray('Multi-line input cancelled.'));
+          return AgentState.PROMPT;
+        }
+        if (result.action === 'reload') {
+          // Reload: loop back to p0 with content pre-filled on the input line.
+          // Clear stale wrap-up state so it doesn't bleed into the next p0 prompt.
+          clearWrapUp();
+          p0Input = result.content;
+          continue;
+        }
+        // Submit: use the editor content
+        p0Input = result.content;
+      }
+
+      query = p0Input;
+      break;
     }
-    query = content;
-  }
-
-  // Exit commands
-  if (['q', 'exit', 'quit', ''].includes(query.trim().toLowerCase())) {
-    return null; // signal machine exit
   }
 
   // Bang commands: execute via hand_over tool

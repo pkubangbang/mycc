@@ -18,9 +18,10 @@ export interface InputProvider {
 
   /**
    * Get the next input for the agent.
+   * @param initialContent - Optional content to pre-fill on the input line
    * @returns The input string, or null to skip prompt (autonomous mode)
    */
-  getInput(): Promise<string | null>;
+  getInput(initialContent?: string): Promise<string | null>;
 
   /**
    * Ask whether to retry after a transient error.
@@ -46,12 +47,12 @@ export class UserInputProvider implements InputProvider {
     this.getMode = getMode;
   }
 
-  async getInput(): Promise<string | null> {
+  async getInput(initialContent?: string): Promise<string | null> {
     const mode = this.getMode();
     if (mode === 'plan') {
-      return agentIO.ask(chalk.bgBlueBright.bold.whiteBright('plan >> '), true);
+      return agentIO.ask(chalk.bgBlueBright.bold.whiteBright('plan >> '), true, initialContent);
     }
-    return agentIO.ask(chalk.bgYellow.black('agent >> '), true);
+    return agentIO.ask(chalk.bgYellow.black('agent >> '), true, initialContent);
   }
 
   async promptRetry(errorMessage: string): Promise<boolean> {
