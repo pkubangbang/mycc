@@ -6,7 +6,6 @@
 
 import { Ollama } from 'ollama';
 import type { ChatRequest, ChatResponse } from 'ollama';
-import chalk from 'chalk';
 import { getOllamaHost, getOllamaApiKey, getOllamaModel } from './config.js';
 import { agentIO } from './loop/agent-io.js';
 

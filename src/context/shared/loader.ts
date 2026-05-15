@@ -7,8 +7,6 @@ import * as path from 'path';
 import { pathToFileURL, fileURLToPath } from 'url';
 import { watch } from 'fs';
 import matter from 'gray-matter';
-import chalk from 'chalk';
-import { isVerbose } from '../../config.js';
 import { agentIO } from '../../loop/agent-io.js';
 import { resolveToSkillPath, type SkillLayer } from '../../utils/skill-path-resolver.js';
 

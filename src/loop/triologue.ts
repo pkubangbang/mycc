@@ -9,7 +9,6 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import chalk from 'chalk';
 import { retryChat, MODEL } from '../ollama.js';
 import type { Message, ToolCall, WikiModule } from '../types.js';
 import { minifyMessages, minifyForHint } from '../utils/llm-chat-minifier.js';
@@ -17,7 +16,6 @@ import { estimateTokens, estimateTokensForMessages } from '../utils/token.js';
 import { ResultTooLargeError } from '../types.js';
 import { getMyccDir, getLongtextDir, ensureDirs, getTokenThreshold } from '../config.js';
 import { agentIO } from './agent-io.js';
-import { isVerbose } from '../config.js';
 
 type Role = 'system' | 'user' | 'assistant' | 'tool';
 

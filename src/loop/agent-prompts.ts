@@ -44,7 +44,7 @@ function buildIntentLanguageSection(): string {
   lines.push('When using the bash tool, the `intent` parameter MUST follow this format:');
   lines.push('');
   lines.push('```');
-  lines.push('VERB OBJECT [key=value ...] TO PURPOSE');
+  lines.push('VERB OBJECT PARAM TO PURPOSE');
   lines.push('```');
   lines.push('');
   lines.push('**PARAM** (optional): `key=value` pairs describing attributes of the OBJECT.');
@@ -422,22 +422,6 @@ ${buildKnowledgeBoundarySection()}`;
 function buildSoloNormalPrompt(workDir: string): string {
   return `You are a coding agent at ${workDir}. Use tools to finish tasks.
 
-## Suggest Mode
-When the user says "[REMINDER] you are in the suggest mode", you will enter a restricted
-discovery mode. Your goal is to explore the codebase and discover relevant wiki notes and
-skills for the user's query.
-
-In suggest mode:
-- You may use: read_file, bash (READ intents only: cat/ls/grep/find/head/tail), wiki_get,
-  skill_load, recall
-- You may NOT: edit files, run destructive bash commands, use web_search, web_fetch,
-  create teammates, or take any action beyond discovery
-- After exploration, produce a "brown bag" as uncomplicated JSON:
-  \`\`\`json
-  {"originalQuery": "the user's original query", "wikiNotes": ["query1", "query2"], "skills": ["skill-name-1"]}
-  \`\`\`
-  All fields are required. wikiNotes and skills are arrays of strings (may be empty).
-
 ## Task Management
 Use issue_* for complex tasks (divide and conquer), todo_* for simple tracking.
 
@@ -454,7 +438,7 @@ In suggest mode:
   skill_load, recall
 - You may NOT: edit files, run destructive bash commands, use web_search, web_fetch,
   create teammates, or take any action beyond discovery
-- After exploration, produce a "brown bag" as uncomplicated JSON:
+- After exploration, produce a "brown bag" as JSON:
   \`\`\`json
   {"originalQuery": "the user's original query", "wikiNotes": ["query1", "query2"], "skills": ["skill-name-1"]}
   \`\`\`
@@ -475,22 +459,6 @@ ${buildCommonSections()}`;
 function buildTeamNormalPrompt(workDir: string): string {
   return `You are the lead of a coding agent team at ${workDir}.
 Your role: coordinate teammates, collect results, and ensure task completion.
-
-## Suggest Mode
-When the user says "[REMINDER] you are in the suggest mode", you will enter a restricted
-discovery mode. Your goal is to explore the codebase and discover relevant wiki notes and
-skills for the user's query.
-
-In suggest mode:
-- You may use: read_file, bash (READ intents only: cat/ls/grep/find/head/tail), wiki_get,
-  skill_load, recall
-- You may NOT: edit files, run destructive bash commands, use web_search, web_fetch,
-  create teammates, or take any action beyond discovery
-- After exploration, produce a "brown bag" as uncomplicated JSON:
-  \`\`\`json
-  {"originalQuery": "the user's original query", "wikiNotes": ["query1", "query2"], "skills": ["skill-name-1"]}
-  \`\`\`
-  All fields are required. wikiNotes and skills are arrays of strings (may be empty).
 
 ## Team Workflow
 1. Create issues with issue_create to define all tasks (returns full list for visibility)
@@ -535,7 +503,7 @@ In suggest mode:
   skill_load, recall
 - You may NOT: edit files, run destructive bash commands, use web_search, web_fetch,
   create teammates, or take any action beyond discovery
-- After exploration, produce a "brown bag" as uncomplicated JSON:
+- After exploration, produce a "brown bag" as JSON:
   \`\`\`json
   {"originalQuery": "the user's original query", "wikiNotes": ["query1", "query2"], "skills": ["skill-name-1"]}
   \`\`\`

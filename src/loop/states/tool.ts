@@ -6,7 +6,6 @@
  * ResultTooLargeError, confusion scoring, and deferred messages.
  */
 
-import chalk from 'chalk';
 import { AgentState } from '../state-machine.js';
 import type { MachineEnv, TurnVars, PassData, HandlerResult } from '../state-machine.js';
 import { agentIO } from '../agent-io.js';

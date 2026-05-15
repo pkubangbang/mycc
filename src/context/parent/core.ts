@@ -2,7 +2,6 @@
  * core.ts - Core module: workdir and logging
  */
 
-import chalk from 'chalk';
 import * as fs from 'fs';
 import * as path from 'path';
 import sharp from 'sharp';

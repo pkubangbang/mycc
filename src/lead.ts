@@ -10,7 +10,6 @@
  *   Terminal → Coordinator → Lead (this file) → Teammates
  */
 
-import chalk from 'chalk';
 import { validateEnv, loadEnv } from './config.js';
 import { main } from './loop/agent-repl.js';
 import { agentIO } from './loop/agent-io.js';
