@@ -243,6 +243,25 @@ export async function main(): Promise<void> {
     handlers,
   );
 
+  // ── Global error handlers — keep lead alive on unexpected errors ──
+  // Only Ctrl+C (SIGINT), empty input, 'exit'/'q'/'quit', or 'n'/'no'
+  // at the Retry prompt will shut down the agent.
+  process.on('uncaughtException', (err) => {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error();
+    console.error(chalk.red(`Uncaught exception: ${msg}`));
+    console.error(chalk.gray('The agent will continue. Press Ctrl+C or type exit to quit.'));
+    // Do NOT exit — keep the agent alive
+  });
+
+  process.on('unhandledRejection', (reason) => {
+    const msg = reason instanceof Error ? reason.message : String(reason);
+    console.error();
+    console.error(chalk.red(`Unhandled rejection: ${msg}`));
+    console.error(chalk.gray('The agent will continue. Press Ctrl+C or type exit to quit.'));
+    // Do NOT exit — keep the agent alive
+  });
+
   // ── SIGINT handler ──
   process.on('SIGINT', () => {
     const controller = agentIO.getLlmAbortController();

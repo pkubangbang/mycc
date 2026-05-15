@@ -47,6 +47,18 @@ const TRANSIENT_ERROR_PATTERNS = [
   'gateway timeout',
   'overloaded',
   'overload',
+  // HTTP/2 GOAWAY errors — recoverable connection teardown
+  'goaway',
+  'http2',
+  'nghttp2',
+  'protocol error',
+  'stream error',
+  'session',
+  'socket is not writable',
+  'premature close',
+  'http2 session',
+  'frame',
+  'destroy',
 ];
 
 /**
