@@ -219,12 +219,12 @@ export class ConditionRegistry {
    * Apply runtime fixes to a condition (timeout clamping, defaults)
    */
   private applyRuntimeFixes(_name: string, cond: Condition): void {
-    // Clamp timeout in action args (1-300 seconds)
+    // Clamp timeout in action args (1-30 seconds, matching agentIO.exec() limit)
     if (cond.action && 'args' in cond.action && cond.action.args) {
       const args = cond.action.args as Record<string, unknown>;
       if (typeof args.timeout === 'number') {
-        if (args.timeout < 1 || args.timeout > 300) {
-          args.timeout = Math.min(300, Math.max(1, args.timeout));
+        if (args.timeout < 1 || args.timeout > 30) {
+          args.timeout = Math.min(30, Math.max(1, args.timeout));
         }
       }
     }
@@ -235,8 +235,8 @@ export class ConditionRegistry {
         if (entry.action && 'args' in entry.action && entry.action.args) {
           const args = entry.action.args as Record<string, unknown>;
           if (typeof args.timeout === 'number') {
-            if (args.timeout < 1 || args.timeout > 300) {
-              args.timeout = Math.min(300, Math.max(1, args.timeout));
+            if (args.timeout < 1 || args.timeout > 30) {
+              args.timeout = Math.min(30, Math.max(1, args.timeout));
             }
           }
         }
