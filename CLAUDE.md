@@ -319,6 +319,18 @@ leaving the agent loop. It displays as a green block of text with the first line
 ```
 
 
+### prompt N (p0, p1)
+
+Shorthand notation for distinct prompt stages in the multiline input flow:
+
+- **p0** — the main `agent >> ` prompt line where the user types and submits queries. Controlled by `agentIO.ask()` in `UserInputProvider.getInput()`.
+- **p1** — the secondary `Press Enter to submit (r to return) > ` prompt that appears after the editor closes in the multiline input flow. Controlled by `agentIO.ask()` in `openMultilineEditor()`.
+
+Flow: `p0` → user types `\` + Enter → editor pops up → `p1` waits. On Enter: content submitted to LLM. On `r` + Enter: content reloaded back to `p0` (pre-filled on the input line) without submitting.
+
+See `docs/archived/multiline-input-case-study.md` for the design rationale.
+
+
 ### tmux
 
 Tmux is a required external dependency for interactive terminal operations. mycc uses tmux to create popup terminals where users can run commands interactively (with prompts, TUIs, etc.). It's also used for e2e testing to simulate interactive terminal sessions.

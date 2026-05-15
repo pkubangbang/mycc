@@ -70,9 +70,12 @@ function writeMultilineFile(content: string): string {
  * Open editor for multi-line input
  *
  * @param initialContent - The content typed before the trailing backslash
- * @returns The edited content, or null if cancelled (empty file)
+ * @returns Object with action ('submit' or 'reload') and the file content.
+ *          'submit' means the user pressed Enter — proceed with the content.
+ *          'reload' means the user typed 'r' + Enter — show content on p0 without submitting.
+ *          Empty content in 'submit' means the user cancelled.
  */
-export async function openMultilineEditor(initialContent: string): Promise<string | null> {
+export async function openMultilineEditor(initialContent: string): Promise<{ action: 'submit' | 'reload', content: string }> {
   // Generate and write temp file
   const { content: fileContent, userContentLine } = generateMultilineFile(initialContent);
   const filePath = writeMultilineFile(fileContent);
@@ -88,8 +91,28 @@ export async function openMultilineEditor(initialContent: string): Promise<strin
     }
   }
 
-  // Wait for user to finish editing
-  await agentIO.ask(chalk.cyan('Press Enter when done editing > '), true);
+  // Wait for user — loop allows 'r' + Enter to reload content without submitting
+  let answer: string;
+  do {
+    answer = await agentIO.ask(chalk.cyan('Press Enter to submit (r to return) > '), true);
+
+    if (answer.trim().toLowerCase() === 'r') {
+      // User wants to reload: read current file content, return as reload action
+      const currentContent = fs.readFileSync(filePath, 'utf-8');
+      const reloaded = extractContent(currentContent);
+
+      // Cleanup temp file
+      try {
+        fs.unlinkSync(filePath);
+      } catch {
+        // Ignore cleanup errors
+      }
+
+      return { action: 'reload', content: reloaded ?? '' };
+    }
+  } while (answer.trim().toLowerCase() !== '');
+
+  // User pressed Enter: read final content and submit
 
   // Read and extract content
   const editedContent = fs.readFileSync(filePath, 'utf-8');
@@ -102,5 +125,5 @@ export async function openMultilineEditor(initialContent: string): Promise<strin
     // Ignore cleanup errors
   }
 
-  return result;
+  return { action: 'submit', content: result ?? '' };
 }
