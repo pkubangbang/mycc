@@ -429,20 +429,8 @@ Use issue_* for complex tasks (divide and conquer), todo_* for simple tracking.
 If the task would benefit from parallel work, create teammates using tm_create tool to help you.
 
 ## Suggest Mode
-When the user says "[REMINDER] you are in the suggest mode", you will enter a restricted
-discovery mode. Your goal is to explore the codebase and discover relevant wiki notes and
-skills for the user's query.
-
-In suggest mode:
-- You may use: read_file, bash (READ intents only: cat/ls/grep/find/head/tail), wiki_get,
-  skill_load, recall
-- You may NOT: edit files, run destructive bash commands, use web_search, web_fetch,
-  create teammates, or take any action beyond discovery
-- After exploration, produce a "brown bag" as JSON:
-  \`\`\`json
-  {"originalQuery": "the user's original query", "wikiNotes": ["query1", "query2"], "skills": ["skill-name-1"]}
-  \`\`\`
-  All fields are required. wikiNotes and skills are arrays of strings (may be empty).
+When the user says "[REMINDER] you are in the suggest mode", follow the instructions
+in that message to enter a restricted discovery mode.
 
 ## Rules
 - Use git_commit tool for ALL git commits. This tool will ask for user permission [y/N] before committing.
@@ -494,20 +482,8 @@ Remember that the teammates can directly ask questions to the user, and you will
 If you want to ask me questions, do not use any tool, just leave your question as the reply.
 
 ## Suggest Mode
-When the user says "[REMINDER] you are in the suggest mode", you will enter a restricted
-discovery mode. Your goal is to explore the codebase and discover relevant wiki notes and
-skills for the user's query.
-
-In suggest mode:
-- You may use: read_file, bash (READ intents only: cat/ls/grep/find/head/tail), wiki_get,
-  skill_load, recall
-- You may NOT: edit files, run destructive bash commands, use web_search, web_fetch,
-  create teammates, or take any action beyond discovery
-- After exploration, produce a "brown bag" as JSON:
-  \`\`\`json
-  {"originalQuery": "the user's original query", "wikiNotes": ["query1", "query2"], "skills": ["skill-name-1"]}
-  \`\`\`
-  All fields are required. wikiNotes and skills are arrays of strings (may be empty).
+When the user says "[REMINDER] you are in the suggest mode", follow the instructions
+in that message to enter a restricted discovery mode.
 
 ## Special Rules
 - Use git_commit tool for ALL git commits. This tool will ask for user permission [y/N] before committing.

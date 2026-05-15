@@ -172,13 +172,27 @@ export async function runSuggestBackground(env: MachineEnv): Promise<void> {
     const rawMessages = triologue.getMessagesRaw();
     const messages: Message[] = JSON.parse(JSON.stringify(rawMessages));
 
-    // 2. Append "[REMINDER] you are in the suggest mode"
+    // 2. Append "[REMINDER] you are in the suggest mode" with full instructions
     messages.push({
       role: 'user',
-      content: '[REMINDER] you are in the suggest mode',
+      content: `[REMINDER] you are in the suggest mode
+
+You are in a restricted discovery mode. Your goal is to explore the codebase and discover
+relevant wiki notes and skills for the user's query.
+
+In suggest mode:
+- You may use: read_file, bash (READ intents only: cat/ls/grep/find/head/tail), wiki_get,
+  skill_load, recall
+- You may NOT: edit files, run destructive bash commands, use web_search, web_fetch,
+  create teammates, or take any action beyond discovery
+- After exploration, produce a "brown bag" as JSON:
+  \`\`\`json
+  {"originalQuery": "the user's original query", "wikiNotes": ["query1", "query2"], "skills": ["skill-name-1"]}
+  \`\`\`
+  All fields are required. wikiNotes and skills are arrays of strings (may be empty).`,
     });
 
-    // 3. Get the existing system prompt (suggest-mode rules baked in statically)
+    // 3. Get the existing system prompt (suggest-mode rules provided dynamically via the REMINDER above)
     const fullMessages = triologue.getMessages();
     const systemMsg = fullMessages[0]; // first message is always system prompt
 
@@ -222,6 +236,7 @@ export async function runSuggestBackground(env: MachineEnv): Promise<void> {
         const content = assistantMsg.content || '';
         const brownBag = tryExtractBrownBag(content);
         if (brownBag) {
+          ctx.core.verbose('suggest', `Brown bag sent: wikiNotes=${brownBag.wikiNotes.length}, skills=${brownBag.skills.length}`);
           env.ctx.mail.appendMail('suggest', 'Brown Bag', formatBrownBag(brownBag));
           return;
         }
@@ -257,6 +272,7 @@ export async function runSuggestBackground(env: MachineEnv): Promise<void> {
         if (chatMessages[i].role === 'assistant' && chatMessages[i].content) {
           const brownBag = tryExtractBrownBag(chatMessages[i].content!);
           if (brownBag) {
+            ctx.core.verbose('suggest', `Brown bag sent (max turns): wikiNotes=${brownBag.wikiNotes.length}, skills=${brownBag.skills.length}`);
             env.ctx.mail.appendMail('suggest', 'Brown Bag', formatBrownBag(brownBag));
           }
           break;
