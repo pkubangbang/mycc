@@ -10,7 +10,7 @@ describe('compileCondition()', () => {
   describe('success cases', () => {
     it('should compile valid JSON response', async () => {
       const jsonResponse = JSON.stringify({
-        trigger: 'git_commit',
+        trigger: ['git_commit'],
         condition: 'seq.has("edit_file")',
         action: { type: 'inject_before', tool: 'bash', args: { command: 'pnpm lint' } },
       });
@@ -19,13 +19,13 @@ describe('compileCondition()', () => {
 
       expect(result.success).toBe(true);
       expect(result.condition).toBeDefined();
-      expect(result.condition?.trigger).toBe('git_commit');
+      expect(result.condition?.trigger).toEqual(['git_commit']);
       expect(result.condition?.version).toBe(1);
     });
 
     it('should increment version for existing conditions', async () => {
       const jsonResponse = JSON.stringify({
-        trigger: 'bash',
+        trigger: ['bash'],
         condition: 'true',
         action: { type: 'block' },
       });
@@ -37,12 +37,12 @@ describe('compileCondition()', () => {
     });
 
     it('should extract JSON from markdown code block', async () => {
-      const markdownResponse = '```json\n{"trigger": "*", "condition": "true", "action": {"type": "message"}}\n```';
+      const markdownResponse = '```json\n{"trigger": ["*"], "condition": "true", "action": {"type": "message"}}\n```';
 
       const result = await compileCondition(markdownResponse, 'test', 'test-skill', 0);
 
       expect(result.success).toBe(true);
-      expect(result.condition?.trigger).toBe('*');
+      expect(result.condition?.trigger).toEqual(['*']);
     });
 
     it('should apply defaults for missing fields', async () => {
@@ -51,7 +51,7 @@ describe('compileCondition()', () => {
       const result = await compileCondition(jsonResponse, 'test', 'test-skill', 0);
 
       expect(result.success).toBe(true);
-      expect(result.condition?.trigger).toBe('*');
+      expect(result.condition?.trigger).toEqual(['*']);
       expect(result.condition?.condition).toBe('true');
       expect(result.condition?.action.type).toBe('message');
     });
@@ -75,7 +75,7 @@ describe('compileCondition()', () => {
     it('should fail on schema validation errors', async () => {
       const jsonResponse = JSON.stringify({
         // Missing required 'when' field - will fail because when must be non-empty string
-        trigger: 'bash',
+        trigger: ['bash'],
         condition: 'true',
         action: { type: 'message' },
       });
@@ -88,7 +88,7 @@ describe('compileCondition()', () => {
 
     it('should fail on dangerous expression', async () => {
       const jsonResponse = JSON.stringify({
-        trigger: 'bash',
+        trigger: ['bash'],
         condition: 'eval("malicious")',
         action: { type: 'message' },
       });
@@ -102,7 +102,7 @@ describe('compileCondition()', () => {
 
     it('should fail on expression syntax error', async () => {
       const jsonResponse = JSON.stringify({
-        trigger: 'bash',
+        trigger: ['bash'],
         condition: 'seq.has(', // Invalid syntax
         action: { type: 'message' },
       });
@@ -118,7 +118,7 @@ describe('compileCondition()', () => {
 describe('ConditionValidator.validate()', () => {
   it('should combine schema and expression validation', () => {
     const condition: Condition = {
-      trigger: 'bash',
+      trigger: ['bash'],
       when: 'test',
       condition: 'seq.has("edit_file")',
       action: { type: 'message' },

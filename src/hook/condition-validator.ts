@@ -175,10 +175,18 @@ export function validateSchema(condition: unknown): ValidationResult {
 
   const cond = condition as Record<string, unknown>;
 
-  if (typeof cond.trigger !== 'string') {
-    errors.push('trigger must be a string');
-  } else if (cond.trigger === '') {
-    warnings.push('trigger is empty, will default to "*"');
+  if (!Array.isArray(cond.trigger) || cond.trigger.length === 0) {
+    errors.push('trigger must be a non-empty array of strings');
+  } else {
+    for (const t of cond.trigger) {
+      if (typeof t !== 'string') {
+        errors.push('trigger array contains non-string value');
+        break;
+      }
+      if (t === '') {
+        warnings.push('trigger array contains empty string, will be ignored');
+      }
+    }
   }
 
   if (typeof cond.when !== 'string' || cond.when === '') {
@@ -648,7 +656,7 @@ export async function compileCondition(
   const newVersion = existingVersion + 1;
 
   const condition: Condition = {
-    trigger: typeof pObj.trigger === 'string' ? pObj.trigger : '*',
+    trigger: Array.isArray(pObj.trigger) && pObj.trigger.length > 0 ? pObj.trigger : ['*'],
     when,
     condition: typeof pObj.condition === 'string' ? pObj.condition : 'true',
     action: (pObj.action as HookAction) || { type: 'message' },

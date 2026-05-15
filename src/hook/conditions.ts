@@ -30,7 +30,7 @@ import {
 const CONDITION_SCHEMA = {
   type: 'object',
   properties: {
-    trigger: { type: 'string', description: "Must be 'stop' (no tool calls), '*' (any tool), or a specific tool name like 'bash', 'edit_file', 'git_commit'" },
+    trigger: { type: 'array', items: { type: 'string' }, description: "Array of trigger names: 'stop' (no tool calls), '*' (any tool), or specific tool names like 'bash', 'edit_file', 'git_commit'" },
     condition: { type: 'string', description: 'Expression using seq.X functions' },
     action: {
       type: 'object',
@@ -91,7 +91,7 @@ export type HookAction =
  * Compiled condition
  */
 export interface Condition {
-  trigger: string;      // Tool name or '*' for any, or 'stop' for no tool calls
+  trigger: string[];    // Array of trigger names. '*' for any, 'stop' for no tool calls, or tool names like 'git_commit'
   when: string;         // Original natural language
   condition: string;    // Compiled expression
   action: HookAction;
@@ -406,7 +406,7 @@ export class ConditionRegistry {
     const matched: Condition[] = [];
     
     for (const cond of this.conditions.values()) {
-      if (cond.trigger === '*' || cond.trigger === trigger) {
+      if (cond.trigger.includes('*') || cond.trigger.includes(trigger)) {
         matched.push(cond);
       }
     }
@@ -428,7 +428,7 @@ export class ConditionRegistry {
       }
 
       // Check trigger
-      if (cond.trigger !== '*' && cond.trigger !== trigger) {
+      if (!cond.trigger.includes('*') && !cond.trigger.includes(trigger)) {
         continue;
       }
 
@@ -473,14 +473,16 @@ export class ConditionRegistry {
       ? `Available tools (use these as trigger values):
 ${availableTools.map(t => `- ${t.name}: ${t.description.split('\n')[0]}`).join('\n')}
 
-NOTE: The trigger must be one of:
-- "stop" (triggers when LLM finishes reply)
-- "*" (triggers on any tool call)
-- A specific tool name from the list above`
-      : `Trigger values:
+NOTE: The trigger must be an array of strings:
+- "stop": Triggers when LLM finishes reply (no tool calls pending)
+- "*": Triggers on any tool call
+- A specific tool name from the list above
+Example: ["git_commit", "stop"] to trigger before commit or when LLM finishes.`
+      : `Trigger values (must be an array of strings):
 - "stop": Triggers when LLM finishes (no tool calls pending). Use for "before LLM finishes reply" or "before stopping".
 - "*": Triggers on any tool call.
-- Tool name: Triggers on specific tool (e.g., "bash", "edit_file", "git_commit").`;
+- Tool name: Triggers on specific tool (e.g., "bash", "edit_file", "git_commit").
+Example: ["git_commit", "stop"].`;
 
     const existingInfo = existing
       ? `Current version ${existing.version}:
@@ -538,11 +540,11 @@ Available action types:
 - message: Just inject a message (weak, use for reminders)
 
 Examples:
-- "run lint before commit if files changed": { "trigger": "git_commit", "condition": "seq.hasAny(['edit_file', 'write_file']) && !seq.hasCommand('bash#lint')", "action": { "type": "inject_before", "tool": "bash", "args": { "command": "pnpm lint", "intent": "pre-commit lint", "timeout": 60 } } }
-- "search wiki on errors": { "trigger": "*", "condition": "seq.lastError() && !seq.has('wiki_get')", "action": { "type": "inject_before", "tool": "wiki_get", "args": { "query": "error", "domain": "pitfall" } } }
-- "block force push to main": { "trigger": "bash", "condition": "call.args.command.includes('git push --force') && call.args.command.includes('main')", "action": { "type": "block", "reason": "Force push to main is prohibited" } }
-- "block test files over 300 lines": { "trigger": "write_file", "condition": "call.metadata.filePath.includes('/tests/') && call.metadata.newLoc > 300", "action": { "type": "block", "reason": "Test files cannot exceed 300 lines" } }
-- "block destructive bash to main": { "trigger": "bash", "condition": "call.metadata.isDestructive && call.args.command.includes('main')", "action": { "type": "block", "reason": "Destructive operations on main branch prohibited" } }
+- "run lint before commit if files changed": { "trigger": ["git_commit"], "condition": "seq.hasAny(['edit_file', 'write_file']) && !seq.hasCommand('bash#lint')", "action": { "type": "inject_before", "tool": "bash", "args": { "command": "pnpm lint", "intent": "pre-commit lint", "timeout": 60 } } }
+- "search wiki on errors": { "trigger": ["*"], "condition": "seq.lastError() && !seq.has('wiki_get')", "action": { "type": "inject_before", "tool": "wiki_get", "args": { "query": "error", "domain": "pitfall" } } }
+- "block force push to main": { "trigger": ["bash"], "condition": "call.args.command.includes('git push --force') && call.args.command.includes('main')", "action": { "type": "block", "reason": "Force push to main is prohibited" } }
+- "block test files over 300 lines": { "trigger": ["write_file"], "condition": "call.metadata.filePath.includes('/tests/') && call.metadata.newLoc > 300", "action": { "type": "block", "reason": "Test files cannot exceed 300 lines" } }
+- "block destructive bash to main": { "trigger": ["bash"], "condition": "call.metadata.isDestructive && call.args.command.includes('main')", "action": { "type": "block", "reason": "Destructive operations on main branch prohibited" } }
 ${errorFeedback}
 
 Output a JSON object with trigger, condition, and action.`;
@@ -575,21 +577,29 @@ Output a JSON object with trigger, condition, and action.`;
           condition.history = [...existing.history, ...(condition.history || [])];
         }
 
-        // Validate trigger: must be 'stop', '*', or a valid tool name
-        if (condition.trigger !== 'stop' && condition.trigger !== '*') {
-          // Check if it's a valid tool name
-          if (typeof condition.trigger !== 'string' || condition.trigger.trim() === '') {
-            lastError = `Invalid trigger: '${condition.trigger}'. Trigger must be 'stop', '*', or a valid tool name.`;
-            continue; // Retry
+        // Validate trigger: must be a non-empty array of 'stop', '*', or valid tool names
+        if (!Array.isArray(condition.trigger) || condition.trigger.length === 0) {
+          lastError = `Invalid trigger: ${JSON.stringify(condition.trigger)}. Trigger must be a non-empty array like ["git_commit", "stop"].`;
+          continue; // Retry
+        }
+
+        // Validate each trigger element
+        for (const t of condition.trigger) {
+          if (typeof t !== 'string' || t.trim() === '') {
+            lastError = `Invalid trigger: ${JSON.stringify(condition.trigger)}. Each trigger must be a non-empty string.`;
+            continue; // will be caught by the retry loop
           }
 
-          // If we have tools list, validate against it
+          // '*' and 'stop' are always valid
+          if (t === '*' || t === 'stop') continue;
+
+          // Otherwise must be a valid tool name (if we have a tools list)
           if (availableTools && availableTools.length > 0) {
-            const validToolNames = availableTools.map(t => t.name);
-            if (!validToolNames.includes(condition.trigger)) {
-              lastError = `Invalid trigger: '${condition.trigger}' is not a known tool name. ` +
+            const validToolNames = availableTools.map(ti => ti.name);
+            if (!validToolNames.includes(t)) {
+              lastError = `Invalid trigger: '${t}' is not a known tool name. ` +
                 `Valid triggers: 'stop', '*', or one of: ${validToolNames.slice(0, 10).join(', ')}...`;
-              continue; // Retry
+              break; // break out of for loop, will be caught by retry
             }
           }
         }

@@ -89,7 +89,7 @@ describe('HookExecutor', () => {
 
     it('should return matching hooks for trigger', () => {
       registry.set('test-hook', {
-        trigger: 'bash',
+        trigger: ['bash'],
         when: 'test',
         condition: 'true',
         action: { type: 'message' },
@@ -102,7 +102,7 @@ describe('HookExecutor', () => {
 
     it('should return wildcard hooks for any trigger', () => {
       registry.set('any-hook', {
-        trigger: '*',
+        trigger: ['*'],
         when: 'any tool',
         condition: 'true',
         action: { type: 'message' },
@@ -118,7 +118,7 @@ describe('HookExecutor', () => {
 
     it('should not return hooks for different trigger', () => {
       registry.set('bash-hook', {
-        trigger: 'bash',
+        trigger: ['bash'],
         when: 'bash only',
         condition: 'true',
         action: { type: 'message' },
@@ -131,7 +131,7 @@ describe('HookExecutor', () => {
 
     it('should only return hooks whose condition evaluates to true', () => {
       registry.set('has-edits', {
-        trigger: 'git_commit',
+        trigger: ['git_commit'],
         when: 'has file edits',
         condition: 'seq.hasAny(["edit_file", "write_file"])',
         action: { type: 'message' },
@@ -150,7 +150,7 @@ describe('HookExecutor', () => {
 
     it('should skip already injected hooks', () => {
       registry.set('test-hook', {
-        trigger: 'bash',
+        trigger: ['bash'],
         when: 'test',
         condition: 'true',
         action: { type: 'message' },
@@ -175,7 +175,7 @@ describe('HookExecutor', () => {
   describe('execute() - inject_before', () => {
     it('should inject tool call before trigger', async () => {
       registry.set('lint-hook', {
-        trigger: 'git_commit',
+        trigger: ['git_commit'],
         when: 'run lint before commit',
         condition: 'true',
         action: {
@@ -203,7 +203,7 @@ describe('HookExecutor', () => {
 
     it('should preserve original tool call arguments', async () => {
       registry.set('test-hook', {
-        trigger: 'bash',
+        trigger: ['bash'],
         when: 'test',
         condition: 'true',
         action: {
@@ -228,7 +228,7 @@ describe('HookExecutor', () => {
 
     it('should include skill content reference', async () => {
       registry.set('test-hook', {
-        trigger: 'bash',
+        trigger: ['bash'],
         when: 'test',
         condition: 'true',
         action: {
@@ -260,7 +260,7 @@ describe('HookExecutor', () => {
   describe('execute() - inject_after', () => {
     it('should inject tool call after trigger', async () => {
       registry.set('test-hook', {
-        trigger: 'bash',
+        trigger: ['bash'],
         when: 'run tests after',
         condition: 'true',
         action: {
@@ -288,7 +288,7 @@ describe('HookExecutor', () => {
 
     it('should handle multiple pending calls', async () => {
       registry.set('test-hook', {
-        trigger: 'bash',
+        trigger: ['bash'],
         when: 'test',
         condition: 'true',
         action: {
@@ -325,7 +325,7 @@ describe('HookExecutor', () => {
   describe('execute() - block', () => {
     it('should return blocked result', async () => {
       registry.set('block-force', {
-        trigger: 'bash',
+        trigger: ['bash'],
         when: 'block force push',
         condition: 'true',
         action: {
@@ -345,13 +345,13 @@ describe('HookExecutor', () => {
       );
 
       expect(result.action).toBe('blocked');
-      expect(result.message).toContain('Blocked');
+      expect(result.message).toContain('[Hook: block-force]');
       expect(result.message).toContain('Force push to main is prohibited');
     });
 
     it('should work without reason', async () => {
       registry.set('block-any', {
-        trigger: 'bash',
+        trigger: ['bash'],
         when: 'block any',
         condition: 'true',
         action: { type: 'block' },
@@ -368,7 +368,8 @@ describe('HookExecutor', () => {
       );
 
       expect(result.action).toBe('blocked');
-      expect(result.message).toContain('Block content');
+      expect(result.message).toContain('[Hook: block-any]');
+      expect(result.message).toContain('no reason provided');
     });
   });
 
@@ -379,7 +380,7 @@ describe('HookExecutor', () => {
   describe('execute() - replace', () => {
     it('should replace tool call with different tool', async () => {
       registry.set('replace-hook', {
-        trigger: 'bash',
+        trigger: ['bash'],
         when: 'replace with safe command',
         condition: 'true',
         action: {
@@ -407,7 +408,7 @@ describe('HookExecutor', () => {
 
     it('should replace with different tool type', async () => {
       registry.set('replace-hook', {
-        trigger: 'web_search',
+        trigger: ['web_search'],
         when: 'use wiki instead',
         condition: 'true',
         action: {
@@ -438,7 +439,7 @@ describe('HookExecutor', () => {
   describe('execute() - message', () => {
     it('should return proceed with message', async () => {
       registry.set('msg-hook', {
-        trigger: 'bash',
+        trigger: ['bash'],
         when: 'reminder',
         condition: 'true',
         action: { type: 'message' },
@@ -455,8 +456,8 @@ describe('HookExecutor', () => {
       );
 
       expect(result.action).toBe('proceed');
-      expect(result.message).toContain('msg-hook');
-      expect(result.message).toContain('Remember to run tests!');
+      expect(result.message).toContain('[Hook: msg-hook]');
+      expect(result.message).toContain('unknown condition');
       expect(result.newCalls).toBeUndefined();
     });
   });
@@ -468,7 +469,7 @@ describe('HookExecutor', () => {
   describe('duplicate prevention', () => {
     it('should skip already injected hooks', async () => {
       registry.set('test-hook', {
-        trigger: 'bash',
+        trigger: ['bash'],
         when: 'test',
         condition: 'true',
         action: { type: 'message' },
@@ -485,7 +486,7 @@ describe('HookExecutor', () => {
         pendingCalls,
         'Test content'
       );
-      expect(result1.message).toContain('Test content');
+      expect(result1.message).toContain('[Hook: test-hook]');
 
       // Second execution - should reference existing
       const result2 = await executor.execute(
@@ -500,7 +501,7 @@ describe('HookExecutor', () => {
 
     it('should mark hook as injected after execution', async () => {
       registry.set('inject-hook', {
-        trigger: 'bash',
+        trigger: ['bash'],
         when: 'test',
         condition: 'true',
         action: {
@@ -533,7 +534,7 @@ describe('HookExecutor', () => {
     it('should handle pre-commit lint hook scenario', async () => {
       // Set up condition: run lint if files edited and no lint yet
       registry.set('pre-commit-lint', {
-        trigger: 'git_commit',
+        trigger: ['git_commit'],
         when: 'run lint before commit if files changed',
         condition: 'seq.hasAny(["edit_file", "write_file"]) && !seq.hasCommand("bash#lint")',
         action: {
@@ -568,7 +569,7 @@ describe('HookExecutor', () => {
 
     it('should not inject lint if already run', async () => {
       registry.set('pre-commit-lint', {
-        trigger: 'git_commit',
+        trigger: ['git_commit'],
         when: 'run lint before commit',
         condition: 'seq.hasAny(["edit_file", "write_file"]) && !seq.hasCommand("bash#lint")',
         action: {
@@ -590,7 +591,7 @@ describe('HookExecutor', () => {
 
     it('should block force push to main', async () => {
       registry.set('block-force-main', {
-        trigger: 'bash',
+        trigger: ['bash'],
         when: 'block force push to main',
         condition: 'seq.last().args.command.includes("force") && seq.last().args.command.includes("main")',
         action: {
@@ -623,7 +624,7 @@ describe('HookExecutor', () => {
 
     it('should search wiki on errors', async () => {
       registry.set('error-wiki', {
-        trigger: '*',
+        trigger: ['*'],
         when: 'search wiki on error',
         condition: 'seq.lastError() !== undefined',
         action: {

@@ -10,7 +10,7 @@ describe('validateSchema()', () => {
   describe('valid conditions', () => {
     it('should validate a minimal valid condition', () => {
       const condition: Condition = {
-        trigger: 'bash',
+        trigger: ['bash'],
         when: 'run lint before commit',
         condition: 'seq.has("edit_file")',
         action: { type: 'inject_before', tool: 'bash', args: { command: 'pnpm lint' } },
@@ -23,7 +23,7 @@ describe('validateSchema()', () => {
 
     it('should validate condition with wildcard trigger', () => {
       const condition: Condition = {
-        trigger: '*',
+        trigger: ['*'],
         when: 'any tool trigger',
         condition: 'true',
         action: { type: 'message' },
@@ -35,7 +35,7 @@ describe('validateSchema()', () => {
 
     it('should validate condition with history array', () => {
       const condition: Condition = {
-        trigger: 'git_commit',
+        trigger: ['git_commit'],
         when: 'block force push',
         condition: 'seq.last().args.command.includes("force")',
         action: { type: 'block', reason: 'Force push blocked' },
@@ -72,38 +72,38 @@ describe('validateSchema()', () => {
     });
 
     it('should reject missing when field', () => {
-      const condition = { trigger: 'bash', condition: 'true', action: { type: 'message' }, version: 1 };
+      const condition = { trigger: ['bash'], condition: 'true', action: { type: 'message' }, version: 1 };
       const result = validateSchema(condition);
       expect(result.valid).toBe(false);
     });
 
     it('should reject empty when field', () => {
-      const condition = { trigger: 'bash', when: '', condition: 'true', action: { type: 'message' }, version: 1 };
+      const condition = { trigger: ['bash'], when: '', condition: 'true', action: { type: 'message' }, version: 1 };
       const result = validateSchema(condition);
       expect(result.valid).toBe(false);
     });
 
     it('should reject missing condition field', () => {
-      const condition = { trigger: 'bash', when: 'test', action: { type: 'message' }, version: 1 };
+      const condition = { trigger: ['bash'], when: 'test', action: { type: 'message' }, version: 1 };
       const result = validateSchema(condition);
       expect(result.valid).toBe(false);
     });
 
     it('should reject invalid version', () => {
-      const condition: Condition = { trigger: 'bash', when: 'test', condition: 'true', action: { type: 'message' }, version: 0 };
+      const condition: Condition = { trigger: ['bash'], when: 'test', condition: 'true', action: { type: 'message' }, version: 0 };
       const result = validateSchema(condition);
       expect(result.valid).toBe(false);
     });
 
     it('should reject missing action', () => {
-      const condition = { trigger: 'bash', when: 'test', condition: 'true', version: 1 };
+      const condition = { trigger: ['bash'], when: 'test', condition: 'true', version: 1 };
       const result = validateSchema(condition);
       expect(result.valid).toBe(false);
     });
 
     it('should reject invalid history entries', () => {
       const condition: Condition = {
-        trigger: 'bash', when: 'test', condition: 'true', action: { type: 'message' }, version: 2,
+        trigger: ['bash'], when: 'test', condition: 'true', action: { type: 'message' }, version: 2,
         history: [{ version: 1, condition: 'x', action: { type: 'message' } }, { version: 'invalid' as unknown as number, condition: 'y', action: { type: 'message' } }],
       };
       const result = validateSchema(condition);
@@ -113,20 +113,20 @@ describe('validateSchema()', () => {
 
   describe('warnings', () => {
     it('should accept any non-empty trigger (LLM decides validity)', () => {
-      const condition: Condition = { trigger: 'unknown_tool_xyz', when: 'test', condition: 'true', action: { type: 'message' }, version: 1 };
+      const condition: Condition = { trigger: ['unknown_tool_xyz'], when: 'test', condition: 'true', action: { type: 'message' }, version: 1 };
       const result = validateSchema(condition);
       expect(result.valid).toBe(true);
       expect(result.errors).toHaveLength(0);
     });
 
     it('should warn about empty trigger', () => {
-      const condition: Condition = { trigger: '', when: 'test', condition: 'true', action: { type: 'message' }, version: 1 };
+      const condition: Condition = { trigger: [''], when: 'test', condition: 'true', action: { type: 'message' }, version: 1 };
       const result = validateSchema(condition);
       expect(result.warnings.some(w => w.includes('trigger'))).toBe(true);
     });
 
     it('should warn about empty condition', () => {
-      const condition: Condition = { trigger: 'bash', when: 'test', condition: '', action: { type: 'message' }, version: 1 };
+      const condition: Condition = { trigger: ['bash'], when: 'test', condition: '', action: { type: 'message' }, version: 1 };
       const result = validateSchema(condition);
       expect(result.warnings.some(w => w.includes('condition'))).toBe(true);
     });

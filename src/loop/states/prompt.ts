@@ -138,6 +138,9 @@ export async function handlePrompt(
   triologue.user(query);
   env.ctx.core.resetConfusionIndex();
 
+  // Reset sequence to current turn (hooks only see events since last user query)
+  env.sequence.markPromptBoundary();
+
   // Capture first query as bookmark title
   if (!bookmarkCaptured) {
     const session = readSession(sessionFilePath);

@@ -64,7 +64,7 @@ describe('ConditionRegistry', () => {
     it('should load valid conditions.json', async () => {
       const conditions: Record<string, Condition> = {
         'pre-commit-lint': {
-          trigger: 'git_commit',
+          trigger: ['git_commit'],
           when: 'run lint before commit',
           condition: 'seq.hasAny(["edit_file", "write_file"]) && !seq.hasCommand("bash#lint")',
           action: {
@@ -75,7 +75,7 @@ describe('ConditionRegistry', () => {
           version: 1,
         },
         'block-force-push': {
-          trigger: 'bash',
+          trigger: ['bash'],
           when: 'block force push to main',
           condition: 'seq.last().args.command.includes("force") && seq.last().args.command.includes("main")',
           action: { type: 'block', reason: 'Force push to main is prohibited' },
@@ -108,7 +108,7 @@ describe('ConditionRegistry', () => {
     it('should validate and fix empty trigger', async () => {
       const conditions: Record<string, Condition> = {
         'test-skill': {
-          trigger: '', // Empty trigger - produces warning but is valid
+          trigger: [''], // Empty trigger - produces warning but is valid
           when: 'test',
           condition: 'true',
           action: { type: 'message' },
@@ -122,14 +122,14 @@ describe('ConditionRegistry', () => {
       // Empty trigger passes validation (warning only), load may reject if validation fails
       // The condition is loaded since validation passes
       const cond = registry.get('test-skill');
-      // Empty trigger is valid but produces warning - it stays as empty
-      expect(cond?.trigger).toBe('');
+      // Empty trigger produces a warning about empty string
+      expect(cond?.trigger).toEqual(['']);
     });
 
     it('should clamp invalid timeout values', async () => {
       const conditions: Record<string, Condition> = {
         'test-skill': {
-          trigger: 'bash',
+          trigger: ['bash'],
           when: 'test',
           condition: 'true',
           action: {
@@ -153,7 +153,7 @@ describe('ConditionRegistry', () => {
     it('should fix timeout in history entries too', async () => {
       const conditions: Record<string, Condition> = {
         'test-skill': {
-          trigger: 'bash',
+          trigger: ['bash'],
           when: 'test',
           condition: 'true',
           action: {
@@ -193,7 +193,7 @@ describe('ConditionRegistry', () => {
   describe('save()', () => {
     it('should save conditions to file', async () => {
       registry.set('test-skill', {
-        trigger: 'bash',
+        trigger: ['bash'],
         when: 'test',
         condition: 'true',
         action: { type: 'message' },
@@ -213,7 +213,7 @@ describe('ConditionRegistry', () => {
       fs.rmSync(testDir, { recursive: true, force: true });
 
       registry.set('test-skill', {
-        trigger: 'bash',
+        trigger: ['bash'],
         when: 'test',
         condition: 'true',
         action: { type: 'message' },
@@ -228,7 +228,7 @@ describe('ConditionRegistry', () => {
 
     it('should preserve all condition fields', async () => {
       const fullCondition: Condition = {
-        trigger: 'git_commit',
+        trigger: ['git_commit'],
         when: 'run lint before commit',
         condition: 'seq.hasAny(["edit_file", "write_file"]) && !seq.hasCommand("bash#lint")',
         action: {
@@ -257,14 +257,14 @@ describe('ConditionRegistry', () => {
 
     it('should handle multiple conditions', async () => {
       registry.set('skill1', {
-        trigger: 'bash',
+        trigger: ['bash'],
         when: 'test1',
         condition: 'true',
         action: { type: 'message' },
         version: 1,
       });
       registry.set('skill2', {
-        trigger: 'git_commit',
+        trigger: ['git_commit'],
         when: 'test2',
         condition: 'false',
         action: { type: 'block' },
@@ -290,7 +290,7 @@ describe('ConditionRegistry', () => {
 
     it('should set and get condition', () => {
       const condition: Condition = {
-        trigger: 'bash',
+        trigger: ['bash'],
         when: 'test',
         condition: 'true',
         action: { type: 'message' },
@@ -303,7 +303,7 @@ describe('ConditionRegistry', () => {
 
     it('should overwrite existing condition', () => {
       registry.set('test-skill', {
-        trigger: 'bash',
+        trigger: ['bash'],
         when: 'test',
         condition: 'true',
         action: { type: 'message' },
@@ -311,7 +311,7 @@ describe('ConditionRegistry', () => {
       });
 
       registry.set('test-skill', {
-        trigger: 'git_commit',
+        trigger: ['git_commit'],
         when: 'updated',
         condition: 'false',
         action: { type: 'block' },
@@ -319,7 +319,7 @@ describe('ConditionRegistry', () => {
       });
 
       const cond = registry.get('test-skill');
-      expect(cond?.trigger).toBe('git_commit');
+      expect(cond?.trigger).toEqual(['git_commit']);
       expect(cond?.version).toBe(2);
     });
   });
@@ -331,21 +331,21 @@ describe('ConditionRegistry', () => {
   describe('findByTrigger()', () => {
     beforeEach(() => {
       registry.set('any-hook', {
-        trigger: '*',
+        trigger: ['*'],
         when: 'any tool',
         condition: 'true',
         action: { type: 'message' },
         version: 1,
       });
       registry.set('bash-hook', {
-        trigger: 'bash',
+        trigger: ['bash'],
         when: 'bash only',
         condition: 'true',
         action: { type: 'message' },
         version: 1,
       });
       registry.set('commit-hook', {
-        trigger: 'git_commit',
+        trigger: ['git_commit'],
         when: 'commit only',
         condition: 'true',
         action: { type: 'message' },
@@ -362,7 +362,7 @@ describe('ConditionRegistry', () => {
     it('should find wildcard conditions for any trigger', () => {
       const editHooks = registry.findByTrigger('edit_file');
       expect(editHooks).toHaveLength(1); // only any-hook
-      expect(editHooks[0].trigger).toBe('*');
+      expect(editHooks[0].trigger).toEqual(['*']);
     });
 
     it('should return empty array for no matches', () => {
@@ -382,7 +382,7 @@ describe('ConditionRegistry', () => {
       seq = new Sequence();
 
       registry.set('edit-reminder', {
-        trigger: 'edit_file',
+        trigger: ['edit_file'],
         when: 'remind about tests after edit',
         condition: 'seq.count("edit_file") >= 2',
         action: { type: 'message' },
@@ -390,7 +390,7 @@ describe('ConditionRegistry', () => {
       });
 
       registry.set('any-error', {
-        trigger: '*',
+        trigger: ['*'],
         when: 'search wiki on error',
         condition: 'seq.lastError() !== undefined',
         action: { type: 'inject_before', tool: 'wiki_get', args: { query: 'error', domain: 'pitfall' } },
@@ -447,7 +447,7 @@ describe('ConditionRegistry', () => {
 
     it('should return multiple matching conditions', () => {
       registry.set('another-bash-hook', {
-        trigger: 'bash',
+        trigger: ['bash'],
         when: 'another hook',
         condition: 'seq.count() > 0',
         action: { type: 'message' },
@@ -474,7 +474,7 @@ describe('ConditionRegistry', () => {
 
     it('should not mark skill with existing condition as pending', () => {
       registry.set('existing-skill', {
-        trigger: 'bash',
+        trigger: ['bash'],
         when: 'test',
         condition: 'true',
         action: { type: 'message' },
@@ -490,7 +490,7 @@ describe('ConditionRegistry', () => {
       expect(registry.needsCompilation('new-skill')).toBe(true);
 
       registry.set('new-skill', {
-        trigger: 'bash',
+        trigger: ['bash'],
         when: 'test',
         condition: 'true',
         action: { type: 'message' },
@@ -532,13 +532,13 @@ describe('ConditionRegistry', () => {
   describe('load/save roundtrip', () => {
     it('should preserve conditions through save/load cycle', async () => {
       const original: Condition = {
-        trigger: 'git_commit',
+        trigger: ['git_commit'],
         when: 'run tests before commit',
         condition: 'seq.hasAny(["edit_file", "write_file"]) && !seq.hasCommand("bash#test")',
         action: {
           type: 'inject_before',
           tool: 'bash',
-          args: { command: 'pnpm test', intent: 'pre-commit tests', timeout: 120 },
+          args: { command: 'pnpm test', intent: 'pre-commit tests', timeout: 30 },
         },
         version: 2,
         history: [
@@ -564,7 +564,7 @@ describe('ConditionRegistry', () => {
 
     it('should handle special characters in condition', async () => {
       const condition: Condition = {
-        trigger: 'bash',
+        trigger: ['bash'],
         when: 'test special chars',
         condition: 'seq.last().args.command.includes("git push --force")',
         action: { type: 'block', reason: 'Force push blocked!' },
@@ -611,7 +611,7 @@ describe('ConditionRegistry', () => {
       fs.writeFileSync(testDir, 'not a directory');
 
       registry.set('test', {
-        trigger: 'bash',
+        trigger: ['bash'],
         when: 'test',
         condition: 'true',
         action: { type: 'message' },

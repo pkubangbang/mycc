@@ -43,6 +43,14 @@ export class Sequence {
   }
 
   /**
+   * Clear all events at turn boundary.
+   * Called from PROMPT state on each new user query, so hooks only see events from the current turn.
+   */
+  markPromptBoundary(): void {
+    this.events = [];
+  }
+
+  /**
    * Clear the sequence (reset on new session)
    */
   clear(): void {
