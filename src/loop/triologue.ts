@@ -55,6 +55,8 @@ interface TriologueOptions {
   wiki?: WikiModule;
 }
 
+const ANALYSIS_INSTRUCTION = `Analyze the gap between the user's intent and current progress.`;
+
 export class Triologue {
   private messages: Message[] = [];
   private pendingToolCalls: Map<string, ToolCall> = new Map();
@@ -425,7 +427,7 @@ ${domainInfo}
 
 ---
 
-Analyze the gap between the user's intent and current progress. 
+${ANALYSIS_INSTRUCTION} 
 
 CRITICAL INSTRUCTIONS:
 1. If there are NO REAL blockers preventing progress, set blocker to exactly: "no blockers"
@@ -443,9 +445,10 @@ ${JSON.stringify(hintSchema, null, 2)}
       }
 
       try {
-        // Verbose logging: show the hint round request
+        // Verbose logging: show the hint round request (truncated at the critical instruction)
         agentIO.verbose('triologue', 'Hint round request');
-        agentIO.verbose('triologue', analysisPrompt, '');
+        const truncatedPrompt = analysisPrompt.split(ANALYSIS_INSTRUCTION)[0] + ANALYSIS_INSTRUCTION + '\n...';
+        agentIO.verbose('triologue', truncatedPrompt, '');
 
         // Get analysis from LLM with JSON schema enforcement
         const response = await retryChat(
