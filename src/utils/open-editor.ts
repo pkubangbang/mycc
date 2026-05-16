@@ -105,15 +105,28 @@ export async function openEditor(files: string[], options?: { editor?: string })
     }
   }
 
-  const stdio: 'inherit' | 'ignore' = editor.isTerminalEditor ? 'inherit' : 'ignore';
   const isWin = process.platform === 'win32';
-  const spawnOptions = isWin ? { stdio, shell: true } : { stdio };
+
+  // For GUI editors: wait for the 'spawn' event to confirm the child process
+  // was created before unref(). This prevents a race where the event loop
+  // drains and exits before the editor finishes exec().
+  // On Linux/macOS: avoid detached: true — it creates a new session via
+  // setsid(), which breaks GApplication/D-Bus singleton activation.
+  // On Windows: NEED detached: true for child to survive parent exit,
+  // plus windowsHide to avoid a flashing console window.
+  const guiSpawnOptions = isWin
+    ? { stdio: 'ignore' as const, detached: true, windowsHide: true }
+    : { stdio: 'ignore' as const };
+
+  const termSpawnOptions = isWin
+    ? { stdio: 'inherit' as const, shell: true }
+    : { stdio: 'inherit' as const };
 
   try {
     if (editor.isTerminalEditor) {
       // For terminal editors, wait for them to complete
       await new Promise<void>((resolve, reject) => {
-        const proc = spawn(editor.binary, args, spawnOptions);
+        const proc = spawn(editor.binary, args, termSpawnOptions);
         proc.on('close', (code) => {
           if (code === 0) {
             resolve();
@@ -126,11 +139,18 @@ export async function openEditor(files: string[], options?: { editor?: string })
         });
       });
     } else {
-      // For GUI editors, launch without waiting (they outlive the parent anyway).
-      // Do NOT use detached: true — it breaks GApplication-based editors (e.g.,
-      // gnome-text-editor) that rely on D-Bus activation during startup.
-      const proc = spawn(editor.binary, args, spawnOptions);
-      proc.unref();
+      // For GUI editors, confirm spawn before releasing
+      await new Promise<void>((resolve, reject) => {
+        const proc = spawn(editor.binary, args, guiSpawnOptions);
+        proc.on('spawn', () => {
+          // Child confirmed alive — safe to unref so parent can exit
+          proc.unref();
+          resolve();
+        });
+        proc.on('error', (err) => {
+          reject(new Error(`Failed to spawn editor: ${err.message}`));
+        });
+      });
     }
   } catch (err) {
     throw new Error(`Failed to open editor: ${(err as Error).message}`, { cause: err });
