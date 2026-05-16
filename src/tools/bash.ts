@@ -20,7 +20,7 @@ const OUTPUT_CHAR_LIMIT = 20000;
 
 export const bashTool: ToolDefinition = {
   name: 'bash',
-  description: `Run a shell command (blocking). Must specify timeout - process is killed on timeout.`,
+  description: `Run a shell command`,
   input_schema: {
     type: 'object',
     properties: {
@@ -35,6 +35,8 @@ export const bashTool: ToolDefinition = {
       timeout: {
         type: 'number',
         description: 'REQUIRED: Seconds before killing the process (SIGKILL). Max: 30.',
+        minimum: 1,
+        maximum: 30
       },
     },
     required: ['command', 'intent', 'timeout'],
@@ -45,26 +47,25 @@ export const bashTool: ToolDefinition = {
     const intent = args.intent as string;
     const timeoutSeconds = args.timeout as number;
 
-    ctx.core.brief('info', 'bash', command, intent);
-
     // Check permission (respects plan mode and intent validation)
     const grant = await ctx.core.requestGrant('bash', { command, intent });
     if (!grant.approved) {
       const reason = grant.reason || 'Operation not permitted in current mode';
-      ctx.core.brief('error', 'bash', reason, 'the last bash call has error');
+      ctx.core.brief('error', 'bash', `Command is rejected with reason: ${reason}\n\n${command}`, intent);
       return reason;
     }
 
     // Block direct git commit - must use git_commit tool
     if (/\bgit\s+commit\b/.test(command)) {
       const msg = 'Direct git commit is not allowed. Use the git_commit tool instead.';
-      ctx.core.brief('error', 'bash', msg, 'the last bash call has error');
+      ctx.core.brief('error', 'bash', `Git commit is not allowed.\n\n${command}`, intent);
       return `Error: ${msg}`;
     }
 
     let stdout: string, stderr: string, interrupted: boolean, exitCode: number, timedOut: boolean;
 
     try {
+      ctx.core.brief('info', 'bash', command, intent);
       const result = await agentIO.exec({
         cwd: ctx.core.getWorkDir(),
         command,
@@ -82,13 +83,12 @@ export const bashTool: ToolDefinition = {
     }
 
     if (timedOut) {
-      const msg = `timeout after ${timeoutSeconds} seconds`;
-      ctx.core.brief('warn', 'bash', msg, 'the last bash call has timed out');
+      const msg = `Command timeout after ${timeoutSeconds} seconds`;
+      ctx.core.brief('warn', 'bash', `${msg}\n\n${command}`);
       return `Error: ${msg}. Use bg_create to run as a service, or set a longer timeout.`;
     }
 
     if (interrupted) {
-      ctx.core.brief('warn', 'bash', 'Command interrupted by user.');
       return 'Command interrupted by user.';
     }
 

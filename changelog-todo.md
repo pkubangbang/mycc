@@ -114,12 +114,12 @@ When updating the changelog, use the following procedure:
    - [x] context consumption - log token count increments in triologue.updateTokenCount
 
 - [ ] racing condition: submittion without showing "mycc is wrapping up" will not show the spinner.
-- [ ] the configured "gnome-text-editor" cannot be reliably started when multi-line editing.
-- [ ] the todo_write tool does not behaves correctly. Patches mess up the list.
+- [x] the configured "gnome-text-editor" cannot be reliably started when multi-line editing. (2026-05-16)
+- [x] the todo_write tool does not behaves correctly. Patches mess up the list. (2026-05-15)
 
 - [ ] In the plan mode, the produced plan will have self-debating.
 - [ ] In the plan mode, the plan may well have many options but mycc does not break them down and discuss with the user.
-- [ ] The read/write/edit tool should ask for grant before access files outside cwd.
+- [x] The read/write/edit tool should ask for grant before access files outside cwd. (2026-05-16)
 - [ ] Enable thinking during plan mode
-- [ ] The intent lang's error is not clear for LLM to self-correct
+- [x] The intent lang's error is not clear for LLM to self-correct (2026-05-16)
 - [ ] tool loader may have memory leak
