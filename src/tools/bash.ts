@@ -46,30 +46,50 @@ export const bashTool: ToolDefinition = {
     const intent = args.intent as string;
     const timeoutSeconds = args.timeout as number;
 
+    ctx.core.brief('info', 'bash', command, intent);
+
     // Check permission (respects plan mode and intent validation)
     const grant = await ctx.core.requestGrant('bash', { command, intent });
     if (!grant.approved) {
-      return grant.reason || 'Operation not permitted in current mode';
+      const reason = grant.reason || 'Operation not permitted in current mode';
+      ctx.core.brief('error', 'bash', reason);
+      return reason;
     }
 
     // Block direct git commit - must use git_commit tool
     if (/\bgit\s+commit\b/.test(command)) {
-      return 'Error: Direct git commit is not allowed. Use the git_commit tool instead.';
+      const msg = 'Direct git commit is not allowed. Use the git_commit tool instead.';
+      ctx.core.brief('error', 'bash', msg);
+      return `Error: ${msg}`;
     }
 
-    ctx.core.brief('info', 'bash', command, intent);
+    let stdout: string, stderr: string, interrupted: boolean, exitCode: number, timedOut: boolean;
 
-    const { stdout, stderr, interrupted, exitCode, timedOut } = await agentIO.exec({
-      cwd: ctx.core.getWorkDir(),
-      command,
-      timeout: timeoutSeconds,
-    });
+    try {
+      const result = await agentIO.exec({
+        cwd: ctx.core.getWorkDir(),
+        command,
+        timeout: timeoutSeconds,
+      });
+      stdout = result.stdout;
+      stderr = result.stderr;
+      interrupted = result.interrupted;
+      exitCode = result.exitCode;
+      timedOut = result.timedOut;
+    } catch (err) {
+      const errorMsg = (err as Error).message;
+      ctx.core.brief('error', 'bash', `Failed to execute command: ${errorMsg}`);
+      return `Error: ${errorMsg}`;
+    }
 
     if (timedOut) {
-      return `Error: timeout after ${timeoutSeconds} seconds. Use bg_create to run as a service, or set a longer timeout.`;
+      const msg = `timeout after ${timeoutSeconds} seconds`;
+      ctx.core.brief('warn', 'bash', msg);
+      return `Error: ${msg}. Use bg_create to run as a service, or set a longer timeout.`;
     }
 
     if (interrupted) {
+      ctx.core.brief('warn', 'bash', 'Command interrupted by user.');
       return 'Command interrupted by user.';
     }
 
@@ -81,6 +101,9 @@ export const bashTool: ToolDefinition = {
       parts.push(`Command completed successfully (exit: ${exitCode})`);
     } else {
       parts.push(`Command failed (exit: ${exitCode})`);
+      // Show error to user when command fails
+      const errorDetail = stderr.trim() ? `: ${stderr.trim().split('\n')[0].slice(0, 200)}` : '';
+      ctx.core.brief('error', 'bash', `Command failed with exit code ${exitCode}${errorDetail}`);
     }
 
     // Output sections with clear labels
@@ -105,8 +128,14 @@ export const bashTool: ToolDefinition = {
     }
 
     // Summarize the output
-    const summary = await summarizeOutput(output, intent, outputChars, ctx);
-    return summary;
+    try {
+      const summary = await summarizeOutput(output, intent, outputChars, ctx);
+      return summary;
+    } catch (err) {
+      ctx.core.brief('error', 'bash', `Failed to summarize output: ${(err as Error).message}`);
+      // Fall back to raw output instead of crashing
+      return `[Summarization failed, showing raw output]\n\n${output}`;
+    }
   },
 };
 

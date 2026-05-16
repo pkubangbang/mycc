@@ -13,7 +13,7 @@
  * - web_fetch: Fetch content from a URL
  */
 
-import { ollama, MODEL } from '../ollama.js';
+import { ollama, MODEL, retryWithBackoff, isTransientError, classifyError } from '../ollama.js';
 import type { Message, Tool, ToolCall } from '../types.js';
 import type { WebFetchResponse } from 'ollama';
 import * as fs from 'fs';
@@ -21,6 +21,7 @@ import * as path from 'path';
 import { execSync } from 'child_process';
 import { minifyMessages } from '../utils/llm-chat-minifier.js';
 import { getTokenThreshold, getMyccDir, ensureDirs } from '../config.js';
+import { agentIO } from '../loop/agent-io.js';
 
 /**
  * Configuration constants
@@ -92,22 +93,27 @@ async function compactMessages(
   // Build conversation text for summarization
   const conversationText = minifyMessages(messages);
 
-  const response = await ollama.chat({
-    model: MODEL,
-    messages: [
-      {
-        role: 'user',
-        content:
-          `Summarize this exploration session for continuity. Include:\n` +
-          `1) What was discovered\n` +
-          `2) Current progress\n` +
-          `3) Key findings so far\n` +
-          `4) Files/URLs marked as relevant\n\n` +
-          `Context: Exploring section "${nodeTitle}"\n\n` +
-          `${conversationText}`,
-      },
-    ],
-  });
+  const response = await retryWithBackoff(
+    () =>
+      ollama.chat({
+        model: MODEL,
+        messages: [
+          {
+            role: 'user',
+            content:
+              `Summarize this exploration session for continuity. Include:\n` +
+              `1) What was discovered\n` +
+              `2) Current progress\n` +
+              `3) Key findings so far\n` +
+              `4) Files/URLs marked as relevant\n\n` +
+              `Context: Exploring section "${nodeTitle}"\n\n` +
+              `${conversationText}`,
+          },
+        ],
+        think: false,
+      }),
+    { maxRetries: 3, baseDelayMs: 1000, maxDelayMs: 10000 }
+  );
 
   const summary = response.message.content || '(no summary)';
 
@@ -596,11 +602,23 @@ async function runExplorationLoop(
   while (rounds < maxRounds) {
     rounds++;
 
-    const response = await ollama.chat({
-      model: MODEL,
-      messages,
-      tools: EXPLORER_TOOLS,
-    });
+    let response;
+    try {
+      response = await retryWithBackoff(
+        () =>
+          ollama.chat({
+            model: MODEL,
+            messages,
+            tools: EXPLORER_TOOLS,
+            think: false,
+          }),
+        { maxRetries: 3, baseDelayMs: 1000, maxDelayMs: 10000 }
+      );
+    } catch (err) {
+      agentIO.brief('warn', 'explorer', `LLM chat failed at round ${rounds} for "${nodeTitle}": ${(err as Error).message}`);
+      // Non-transient error or all retries exhausted - stop the loop with what we have
+      break;
+    }
 
     const assistantMsg = response.message;
     messages.push({
@@ -611,9 +629,14 @@ async function runExplorationLoop(
 
     // Check for compaction after adding assistant message
     if (estimateTokens(messages) > TOKEN_THRESHOLD) {
-      const compacted = await compactMessages(messages, nodeTitle);
-      messages.length = 0;
-      messages.push(...compacted);
+      try {
+        const compacted = await compactMessages(messages, nodeTitle);
+        messages.length = 0;
+        messages.push(...compacted);
+      } catch (err) {
+        agentIO.brief('warn', 'explorer', `Compaction failed for "${nodeTitle}": ${(err as Error).message}. Continuing with full context.`);
+        // Continue with uncompacted messages - better than crashing
+      }
     }
 
     // No tool calls = done
@@ -625,19 +648,25 @@ async function runExplorationLoop(
       };
     }
 
-    // Execute tool calls
+    // Execute tool calls (each individually guarded)
     for (const tc of assistantMsg.tool_calls as ToolCall[]) {
       const toolName = tc.function.name;
       if (onProgress) {
         onProgress(rounds, toolName, tc.function.arguments as Record<string, unknown>);
       }
-      const output = await executeTool(
-        toolName,
-        tc.function.arguments as Record<string, unknown>,
-        workDir,
-        markedFiles,
-        markedUrls
-      );
+      let output: string;
+      try {
+        output = await executeTool(
+          toolName,
+          tc.function.arguments as Record<string, unknown>,
+          workDir,
+          markedFiles,
+          markedUrls
+        );
+      } catch (err) {
+        output = `Tool execution error [${toolName}]: ${(err as Error).message}`;
+        agentIO.brief('warn', 'explorer', `Tool ${toolName} failed for "${nodeTitle}": ${(err as Error).message}`);
+      }
       messages.push({
         role: 'tool',
         content: output,
@@ -647,13 +676,17 @@ async function runExplorationLoop(
 
     // Check for compaction after adding tool results
     if (estimateTokens(messages) > TOKEN_THRESHOLD) {
-      const compacted = await compactMessages(messages, nodeTitle);
-      messages.length = 0;
-      messages.push(...compacted);
+      try {
+        const compacted = await compactMessages(messages, nodeTitle);
+        messages.length = 0;
+        messages.push(...compacted);
+      } catch (err) {
+        agentIO.brief('warn', 'explorer', `Compaction failed for "${nodeTitle}": ${(err as Error).message}. Continuing with full context.`);
+      }
     }
   }
 
-  // Max rounds reached - return last assistant message
+  // Max rounds reached or error broke out - return last assistant message
   const lastAssistant = messages.filter((m) => m.role === 'assistant').pop();
   return {
     summary: lastAssistant?.content || '(exploration timeout)',
