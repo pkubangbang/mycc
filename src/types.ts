@@ -583,6 +583,8 @@ export interface SlashCommandContext {
    * Used by /load to inject the restored session's first query.
    */
   nextQuery?: string;
+  /** Sequence tracker — can be cleared by /clear or double Ctrl+L */
+  sequence?: { clear(): void };
 }
 
 /**

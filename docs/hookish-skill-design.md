@@ -33,10 +33,10 @@ Hookish Skill:  Conversation pattern → Condition matches → Skill activates
 │                                                             │
 │  {                                                           │
 │    "lint-after-edit": {                                      │
-│      "trigger": "git_commit",                                 │
+│      "trigger": ["git_commit"],                              │
 │      "when": "run pnpm lint...",                              │
 │      "condition": "seq.hasAny(['edit_file', 'write_file'])   │
-│                    && !seq.has('bash#lint')",                │
+│                    && !seq.hasCommand('bash#lint')",          │
 │      "action": {                                              │
 │        "type": "inject_before",                               │
 │        "tool": "bash",                                        │
@@ -49,10 +49,11 @@ Hookish Skill:  Conversation pattern → Condition matches → Skill activates
                               ↓
 ┌─────────────────────────────────────────────────────────────┐
 │  Stage 3: Runtime Execution                                  │
-│  In agent-loop, before each tool call:                       │
-│  1. Check conditions.matches(trigger, sequence)              │
-│  2. If match, execute action (inject/block/message)           │
-│  3. Mark skill as injected to prevent duplicates             │
+│  Processed by HookExecutor.processToolCalls():               │
+│  1. Augment tool calls with metadata (hook-preprocessor)     │
+│  2. Check hooks grouped by priority (block > replace >       │
+│     inject > message), evaluate conditions using jsep AST    │
+│  3. Execute matched actions, mark injected for dedup         │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -80,9 +81,9 @@ The `when` field is natural language - the LLM translates it to structured condi
 // .mycc/conditions.json
 {
   "lint-after-edit": {
-    "trigger": "git_commit",
+    "trigger": ["git_commit", "stop"],
     "when": "run pnpm lint after you have done with the code changes",
-    "condition": "seq.hasAny(['edit_file', 'write_file']) && !seq.sinceEdit().has('bash#lint')",
+    "condition": "hasAny(['edit_file', 'write_file']) && !hasCommand('bash#lint')",
     "action": {
       "type": "inject_before",
       "tool": "bash",
@@ -93,17 +94,18 @@ The `when` field is natural language - the LLM translates it to structured condi
       }
     },
     "version": 2,
+    "sourceFile": "project:lint-after-edit/SKILL.md",
     "history": [
       {
         "version": 1,
-        "condition": "seq.has('edit_file')",
+        "condition": "has('edit_file')",
         "action": { "type": "message" },
         "reason": "initial compilation"
       },
       {
         "version": 2,
-        "condition": "seq.hasAny(['edit_file', 'write_file']) && !seq.has('bash#lint')",
-        "action": { "type": "inject_before", ... },
+        "condition": "hasAny(['edit_file', 'write_file']) && !hasCommand('bash#lint')",
+        "action": { "type": "inject_before", "tool": "bash", "args": {"command": "pnpm lint", "intent": "pre-commit lint check (hook)", "timeout": 60} },
         "reason": "user: didn't catch write_file, and should run lint, not just warn"
       }
     ]
@@ -115,10 +117,10 @@ The `when` field is natural language - the LLM translates it to structured condi
 
 ```typescript
 type HookAction =
-  | { type: 'inject_before'; tool: string; args: Record<string, unknown>; reason?: string }
-  | { type: 'inject_after'; tool: string; args: Record<string, unknown>; reason?: string }
+  | { type: 'inject_before'; tool: string; args: Record<string, unknown>; timeout?: number }
+  | { type: 'inject_after'; tool: string; args: Record<string, unknown>; timeout?: number }
   | { type: 'block'; reason?: string }
-  | { type: 'replace'; tool: string; args: Record<string, unknown>; reason?: string }
+  | { type: 'replace'; tool: string; args: Record<string, unknown>; timeout?: number }
   | { type: 'message' }
 ```
 
@@ -132,100 +134,147 @@ type HookAction =
 
 ## Trigger Types
 
+The `trigger` field is an **array of strings**. Each element must be one of:
+
+- `"*"` — fires on any tool call
+- `"stop"` — fires when LLM has no tool calls (about to stop)
+- A specific tool name (e.g., `"git_commit"`, `"bash"`, `"edit_file"`)
+
+Multiple triggers can be combined in the same array: `["git_commit", "stop"]`.
+
 | Trigger | When it Fires | Example Use Case |
 |---------|---------------|-------------------|
-| `git_commit` | Before git_commit tool executes | Run lint before commit |
-| `edit_file` / `write_file` | Before file edit/write | Check patterns |
-| `bash` | Before any bash command | Block dangerous operations |
-| `*` | Before any tool call | Search wiki on errors |
-| `stop` | When LLM has no tool calls (about to stop) | Run tests before stopping |
-| `issue_create` | Before creating issues | Verify facts |
+| `["git_commit"]` | Before git_commit tool executes | Run lint before commit |
+| `["edit_file"]` / `["write_file"]` | Before file edit/write | Check patterns |
+| `["bash"]` | Before any bash command | Block dangerous operations |
+| `["*"]` | Before any tool call | Search wiki on errors |
+| `["stop"]` | When LLM has no tool calls (about to stop) | Run tests before stopping |
+| `["issue_create"]` | Before creating issues | Verify facts |
 
 ## Condition Language
 
-Simple expressions evaluated against the conversation sequence:
+Hook conditions are JavaScript-like boolean expressions evaluated safely via **jsep AST parsing** (no `eval`, no `Function` constructor at runtime). Conditions have access to two namespaces:
 
-```typescript
-// Available in condition expressions:
-seq.has(toolName)                    // Tool exists in sequence
-seq.hasAny([tool1, tool2])           // Any of these tools exist
-seq.hasCommand(pattern)              // Bash command contains pattern
-seq.last()                           // Last tool result
-seq.lastError()                      // Last error result
-seq.count(toolName)                  // Count of tool calls
-seq.since(toolName)                  // Events after last occurrence
-seq.sinceEdit()                      // Events after last file edit
+### `seq` — Sequence history queries
 
-// Examples:
-"seq.hasAny(['edit_file', 'write_file']) && !seq.has('bash#lint')"
-"seq.lastError() && !seq.has('wiki_get')"
-"seq.last().result.length > 5000"
-"seq.count('bash') > 10"  // Too many bash calls, suggest alternative
+| Function | Returns | Description |
+|----------|---------|-------------|
+| `seq.has(toolName)` | `boolean` | Check if a tool exists in the current turn's sequence |
+| `seq.hasAny([t1, t2, ...])` | `boolean` | Check if any of the listed tools exist |
+| `seq.hasCommand(pattern)` | `boolean` | Check if a bash command contains a pattern. Use `"tool#pattern"` syntax, e.g., `"bash#lint"` matches bash calls whose command contains "lint" |
+| `seq.last(toolName?)` | `SequenceEvent\|undefined` | Get the last tool event (optionally filtered by tool name). Has `.tool`, `.args`, `.result` fields |
+| `seq.lastError()` | `(SequenceEvent & {message})\|undefined` | Get the last event whose result contains "error" or "failed". Has an extra `.message` field |
+| `seq.count(toolName?)` | `number` | Count tool occurrences since the last user query (current turn) |
+| `seq.totalCount(toolName?)` | `number` | Count tool occurrences since session start (entire conversation) |
+| `seq.since(toolName)` | `SequenceEvent[]` | Events that occurred after the last occurrence of `toolName` |
+| `seq.sinceEdit()` | `SequenceEvent[]` | Events after the last `edit_file` or `write_file` |
+| `seq.isPlanMode()` | `boolean` | Whether the agent is in plan mode |
+
+### `call` — Current tool call metadata
+
+| Access path | Type | Description |
+|-------------|------|-------------|
+| `call.metadata.filePath` | `string` | Target file path (for `write_file`/`edit_file`) |
+| `call.metadata.newLoc` | `number` | Lines of code in the new content |
+| `call.metadata.existingLoc` | `number` | Lines of code in existing file (0 if new) |
+| `call.metadata.isDestructive` | `boolean` | Whether the bash command is destructive (rm -rf, git push --force, etc.) |
+| `call.args.X` | varies | Direct access to the current tool's arguments (e.g., `call.args.command`) |
+
+### Allowed Operations
+
+- **Comparators**: `==`, `!=`, `>`, `<`, `>=`, `<=`, `===`, `!==`
+- **Logical operators**: `&&`, `||`, `!`
+- **Ternary**: `condition ? a : b`
+- **Parentheses**: for grouping
+- **Literals**: numbers, strings (`'` or `"`), `true`, `false`, `null`, `undefined`
+- **Array literals**: `['a', 'b']`
+- **Method calls on results**: `.includes()`, `.indexOf()`, `.startsWith()`, `.endsWith()`, `.length` (on strings and arrays)
+
+### Safety Restrictions
+
+- Only `seq` and `call` are valid root identifiers
+- Direct function calls are forbidden (only method-call syntax is allowed)
+- Dangerous identifiers (`eval`, `Function`, `require`, `process`, `fs`, `constructor`, `prototype`, etc.) are rejected at compilation time
+
+### Examples
+
+```js
+// File changes exist and lint hasn't been run yet (current turn)
+seq.hasAny(['edit_file', 'write_file']) && !seq.hasCommand('bash#lint')
+
+// Last result was an error, and wiki hasn't been searched yet (current turn)
+seq.lastError() && !seq.has('wiki_get')
+
+// Too many bash calls in this turn (current turn)
+seq.count('bash') > 10
+
+// Too many bash calls across the entire session (session-wide)
+seq.totalCount('bash') > 50
+
+// Block when read_file has been called 20+ times in the session (session-wide)
+seq.totalCount('read_file') > 20
+
+// Block force push to main (uses call context)
+call.args.command.includes('git push --force') && call.args.command.includes('main')
+
+// Block test files over 300 lines (uses call metadata)
+call.metadata.filePath.includes('/tests/') && call.metadata.newLoc > 300
+
+// Block destructive operations on main branch
+call.metadata.isDestructive && call.args.command.includes('main')
+
+// Always fire (triggers on every matching trigger)
+true
+
+// Last result is very long (may need summarization)
+seq.last().result.length > 5000
+```
+
+## Expression Evaluation (Internal)
+
+Expressions are stored with `seq.X` syntax in `conditions.json`, but at evaluation time the `seq.` prefix is stripped and the bare function names are called against the `EvalContext`. The `evaluator.ts` module uses **jsep** to parse expressions into an AST, then walks the tree safely — no `Function` constructor is used at runtime for condition evaluation.
+
+The evaluation context binds:
+```
+has, hasAny, hasCommand, last, lastError, count, since, sinceEdit, isPlanMode, call
 ```
 
 ## Sequence Tracking
 
-The sequence wraps the triologue to query conversation history:
+The `Sequence` class tracks tool executions within the current turn (cleared at each prompt boundary via `markPromptBoundary()`). It maintains an internal events array (`SequenceEvent[]`) with `{ tool, args, result, timestamp }` entries.
 
 ```typescript
+export interface SequenceEvent {
+  tool: string;
+  args: Record<string, unknown>;
+  result: string;
+  timestamp: number;
+}
+
 export class Sequence {
-  constructor(private triologue: Triologue) {}
+  private events: SequenceEvent[] = [];
+  private triologue?: Triologue;
+  private getMode: () => 'plan' | 'normal';
   
-  has(toolName: string): boolean {
-    return this.triologue.getMessagesRaw()
-      .filter(m => m.role === 'tool')
-      .some(m => m.tool_name === toolName);
-  }
+  add(event: SequenceEvent): void
+  markPromptBoundary(): void  // clears events at turn boundary
+  clear(): void                // full reset
   
-  hasAny(tools: string[]): boolean {
-    return tools.some(t => this.has(t));
-  }
-  
-  hasCommand(pattern: string): boolean {
-    return this.triologue.getMessagesRaw()
-      .filter(m => m.role === 'tool' && m.tool_name === 'bash')
-      .some(m => m.content?.includes(pattern));
-  }
-  
-  last(): { tool: string; result: string } | undefined {
-    const messages = this.triologue.getMessagesRaw();
-    for (let i = messages.length - 1; i >= 0; i--) {
-      if (messages[i].role === 'tool') {
-        return {
-          tool: messages[i].tool_name!,
-          result: messages[i].content || ''
-        };
-      }
-    }
-    return undefined;
-  }
-  
-  lastError(): { tool: string; result: string } | undefined {
-    const messages = this.triologue.getMessagesRaw();
-    for (let i = messages.length - 1; i >= 0; i--) {
-      if (messages[i].role === 'tool' && 
-          messages[i].content?.toLowerCase().includes('error')) {
-        return {
-          tool: messages[i].tool_name!,
-          result: messages[i].content || ''
-        };
-      }
-    }
-    return undefined;
-  }
-  
-  count(toolName: string): number {
-    return this.triologue.getMessagesRaw()
-      .filter(m => m.role === 'tool' && m.tool_name === toolName)
-      .length;
-  }
-  
-  since(toolName: string): Sequence {
-    // Return new sequence with events after last occurrence of toolName
-    // ...
-  }
+  has(toolName: string): boolean
+  hasAny(tools: string[]): boolean
+  hasCommand(pattern: string): boolean  // supports "bash#pattern" syntax
+  last(toolName?: string): SequenceEvent | undefined
+  lastError(): (SequenceEvent & { message: string }) | undefined  // checks for "error" or "failed"
+  count(toolName?: string): number
+  since(toolName: string): SequenceEvent[]
+  sinceEdit(): SequenceEvent[]  // after last edit_file or write_file
+  isPlanMode(): boolean
+  hasSkillInConversation(skillName: string): boolean  // checks triologue markers
+  evaluate(expression: string): boolean  // uses jsep AST evaluator
 }
 ```
+
+Key difference from earlier design: Sequence queries are against an **in-memory events array** scoped to the current turn — not against the full triologue history. This prevents hooks from re-firing based on events from prior user prompts.
 
 ## Duplicate Prevention
 
@@ -234,28 +283,18 @@ Skills can be injected via multiple paths:
 2. Skill embedding match (semantic search)
 3. Explicit load (`skill_load`)
 
-To prevent duplicate content in triologue, use markers:
+To prevent duplicate content, two mechanisms work together:
 
-```typescript
-hasSkillInConversation(skillName: string): boolean {
-  const hookMarker = `[Hook: ${skillName}]`;
-  const skillMarker = `[Skill: ${skillName}]`;
-  
-  return this.triologue.getMessagesRaw().some(msg => 
-    msg.content?.includes(hookMarker) || msg.content?.includes(skillMarker)
-  );
-}
-```
+1. **In-memory set** (`ConditionRegistry.injected`): Tracks skills injected in the current session
+2. **Triologue markers**: `[Hook: {skillName}]` and `[Skill: {skillName}]` markers in conversation, checked via `Sequence.hasSkillInConversation()`
 
 When injecting:
 ```typescript
-if (sequence.hasSkillInConversation(skillName)) {
+if (sequence.hasSkillInConversation(skillName) || conditions.hasInjected(skillName)) {
   // Already present - reference only
-  triologue.user(`[Hook: ${skillName}] (see earlier in conversation)`);
-} else {
-  // First injection - full content
-  triologue.user(`[Hook: ${skillName}]\n\n${skill.content}`);
+  return { action: 'proceed', message: `[Hook: ${skillName}] (content already in conversation)` };
 }
+// First injection - full content passed to agent
 ```
 
 ## Compilation (Lazy)
@@ -292,33 +331,8 @@ an executable condition and action.`,
   },
   scope: ['main', 'child'],
   handler: async (ctx, args) => {
-    const skillName = args.name as string;
-    const feedback = args.feedback as string | undefined;
-    
-    const skill = ctx.skill.getSkill(skillName);
-    if (!skill?.when) {
-      return `Error: Skill '${skillName}' not found or has no 'when' field`;
-    }
-    
-    const existing = await ctx.conditions.get(skillName);
-    
-    // Get available tools for trigger validation
-    const availableTools = ctx.skill.listAllTools();
-    
-    // Compile with tools list and source file tracking
-    const condition = await ctx.conditions.compile(
-      skill.when,
-      skillName,
-      skill.content,
-      existing,
-      skill.sourceFile,  // Track source for orphan detection
-      availableTools      // Validate trigger against known tools
-    );
-    
-    return `Compiled '${skillName}' (v${condition.version}):\n` +
-           `Trigger: ${condition.trigger}\n` +
-           `Condition: ${condition.condition}\n` +
-           `Action: ${JSON.stringify(condition.action)}`;
+    // Lazy-compile the "when" field into a structured condition
+    // Stores result in .mycc/conditions.json with validation gates
   }
 };
 ```
@@ -331,12 +345,21 @@ The compilation process includes:
 
 2. **Retry Logic**: Up to 3 retries with error feedback to the LLM for correction.
 
-3. **Trigger Validation**: Validates that the trigger is:
-   - `'stop'` (fires when LLM finishes, no tool calls)
-   - `'*'` (fires on any tool call)
-   - A known tool name from the tools list
+3. **Schema Validation** (`condition-validator.ts`): Checks `trigger` is a non-empty array of strings, `when`/`condition` are strings, `action` has valid `type`, etc.
 
-4. **Source File Tracking**: Each compiled condition tracks its source skill file using the format `"{layer}:{path}"` (e.g., `"project:lint-check/SKILL.md"`).
+4. **Expression Validation**: Parses the expression with jsep and walks the AST to verify:
+   - Only allowed `seq.X` functions are used (`has`, `hasAny`, `hasCommand`, `last`, `lastError`, `count`, `since`, `sinceEdit`, `isPlanMode`)
+   - No dangerous identifiers (`eval`, `Function`, `require`, `process`, etc.)
+   - No direct function calls (only method-call syntax)
+   - Only `seq` and `call` as root objects
+
+5. **Smoke Test**: Evaluates the expression against an empty mock sequence to verify it doesn't throw.
+
+6. **Trigger Validation**: Validates that each trigger is `'stop'`, `'*'`, or a known tool name from the tools list.
+
+7. **Atomic Persistence**: Writes to temp file then renames (prevents corruption).
+
+8. **Source File Tracking**: Each compiled condition tracks its source skill file using the format `"{layer}:{path}"` (e.g., `"project:lint-check/SKILL.md"`).
 
 ### Source File Notation
 
@@ -357,44 +380,54 @@ See `src/utils/skill-path-resolver.ts` for implementation details.
 
 ## Agent Loop Integration
 
+The hook system integrates via `HookExecutor.processToolCalls()`, which replaces the old imperative for-loop approach:
+
 ```typescript
-// In agent-loop.ts
+// In agent-loop (TOOL state)
 
-const sequence = new Sequence(triologue);
+// 1. Preprocessor: augment tool calls with metadata
+const augmented = augmentToolCalls(toolCalls);
 
-for (let i = 0; i < toolCalls.length; i++) {
-  const toolCall = toolCalls[i];
-  
-  // Check hooks BEFORE executing
-  const matchedHooks = conditions.matches(toolCall.function.name, sequence);
-  
-  for (const hookName of matchedHooks) {
-    const cond = conditions.get(hookName);
-    if (!cond) continue;
-    
-    const result = await conditions.execute(
-      hookName,
-      cond.action,
-      ctx,
-      toolCalls.slice(i)
-    );
-    
-    if (result.result === 'blocked') {
-      triologue.tool(toolCall.function.name, cond.action.reason, toolCall.id);
-      continue; // Skip this tool
-    }
-    
-    if (result.result === 'injected') {
-      i = -1; // Restart loop to process injected call
-      break;
-    }
-  }
-  
-  // Execute tool
-  const output = await loader.execute(toolCall.function.name, ctx, args);
-  triologue.tool(toolCall.function.name, output, toolCall.id);
+// 2. HookExecutor processes the entire delta at once
+const result = await hookExecutor.processToolCalls(
+  augmented,
+  ctx,
+  (name) => loader.getSkill(name)
+);
+
+// 3. Handle blocked calls (return rejection to LLM)
+for (const [callId, message] of result.blockedCalls) {
+  triologue.tool(callId, `BLOCKED: ${message}`);
 }
+
+// 4. Inject deferred messages into triologue
+for (const msg of result.deferredMessages) {
+  triologue.user(msg);
+}
+
+// 5. Execute the (possibly modified) tool calls
+toolCalls = result.calls;
 ```
+
+### Hook Priority Order
+
+When multiple hooks match a single tool call, they are evaluated in priority order:
+
+| Priority | Action Type | Rationale |
+|----------|-------------|-----------|
+| 0 (first) | `block` | Safety first — block danger before anything else |
+| 1 | `replace` | Modify the trigger before injection |
+| 2 | `inject_before`, `inject_after` | Add tool calls around the trigger |
+| 3 (last) | `message` | Weak action, only provides guidance |
+
+Within blocker/replacer groups, the **first match wins** (short-circuits). Within injector/message groups, **all matches are processed**.
+
+### `stop` Trigger Handling
+
+The `stop` trigger (empty tool calls array) is handled specially:
+- `block` actions on `stop` are treated as `message` (blocking a stop makes no sense semantically)
+- `inject_before`/`inject_after` can add tool calls to prevent the agent from stopping
+- `message` actions inject guidance into conversation
 
 ## Example Cases
 
@@ -413,8 +446,8 @@ Run `pnpm lint` after editing files to ensure code quality.
 Compiled:
 ```json
 {
-  "trigger": "git_commit",
-  "condition": "seq.hasAny(['edit_file', 'write_file']) && !seq.has('bash#lint')",
+  "trigger": ["git_commit"],
+  "condition": "hasAny(['edit_file', 'write_file']) && !hasCommand('bash#lint')",
   "action": {
     "type": "inject_before",
     "tool": "bash",
@@ -439,12 +472,12 @@ Use `wiki_get(query, domain)` with domain='pitfall' or 'example'.
 Compiled:
 ```json
 {
-  "trigger": "*",
-  "condition": "seq.lastError() && !seq.has('wiki_get')",
+  "trigger": ["*"],
+  "condition": "lastError() && !has('wiki_get')",
   "action": {
     "type": "inject_before",
     "tool": "wiki_get",
-    "args": { "query": "${seq.lastError().result}", "domain": "pitfall" }
+    "args": { "query": "error", "domain": "pitfall" }
   }
 }
 ```
@@ -465,7 +498,7 @@ Don't assume library versions or API signatures.
 Compiled:
 ```json
 {
-  "trigger": "issue_create",
+  "trigger": ["issue_create"],
   "condition": "true",
   "action": {
     "type": "message"
@@ -489,8 +522,8 @@ Check existing implementations before inventing new patterns.
 Compiled:
 ```json
 {
-  "trigger": "write_file",
-  "condition": "!seq.has('bash#grep') && !seq.has('bash#rg') && !seq.has('read_file')",
+  "trigger": ["write_file"],
+  "condition": "!hasCommand('bash#grep') && !hasCommand('bash#rg') && !has('read_file')",
   "action": {
     "type": "message"
   }
@@ -513,8 +546,8 @@ Use regular push or create a new branch.
 Compiled:
 ```json
 {
-  "trigger": "bash",
-  "condition": "seq.last().args.command.includes('git push --force') && seq.last().args.command.includes('main')",
+  "trigger": ["bash"],
+  "condition": "call.args.command.includes('git push --force') && call.args.command.includes('main')",
   "action": {
     "type": "block",
     "reason": "Force push to main branch is prohibited"
@@ -524,16 +557,16 @@ Compiled:
 
 ## Evolution Through Feedback
 
-The condition improves over time based on user feedback:
+The condition improves over time based on user feedback via `skill_compile` with the `feedback` parameter:
 
 ```
-v1: "seq.has('edit_file')"
+v1: "has('edit_file')"
     → User: "Didn't catch write_file"
     
-v2: "seq.hasAny(['edit_file', 'write_file'])"
+v2: "hasAny(['edit_file', 'write_file'])"
     → User: "Just warned, didn't run lint"
     
-v3: "seq.hasAny(['edit_file', 'write_file']) && !seq.has('bash#lint')"
+v3: "hasAny(['edit_file', 'write_file']) && !hasCommand('bash#lint')"
     → User: "Should run before commit, not after edit"
     
 v4: Trigger changed to "git_commit", action changed to "inject_before"
@@ -546,7 +579,7 @@ Each version is persisted in `history` array for audit trail.
 
 ```
 .mycc/
-├── conditions.json      # Compiled conditions (lazy)
+├── conditions.json      # Compiled conditions (lazy, atomic writes)
 ├── worktrees.json
 ├── .env
 ├── skills/
@@ -557,26 +590,17 @@ Each version is persisted in `history` array for audit trail.
 └── tools/
 ```
 
-## Implementation Phases
+## Key Source Files
 
-1. **Phase 1**: Core infrastructure
-   - Add `when` field to Skill type
-   - Create ConditionRegistry class
-   - Create Sequence wrapper
-
-2. **Phase 2**: Compilation
-   - Implement `skill_compile` tool
-   - LLM translates "when" → condition + action
-
-3. **Phase 3**: Runtime execution
-   - Integrate into agent-loop
-   - Implement action execution
-   - Add duplicate prevention
-
-4. **Phase 4**: Refinement
-   - Handle user feedback
-   - Version history tracking
-   - Condition evolution
+| File | Purpose |
+|------|---------|
+| `src/hook/conditions.ts` | `ConditionRegistry` — manages `.mycc/conditions.json`, compilation pipeline, trigger matching |
+| `src/hook/condition-validator.ts` | Schema + expression validation, smoke testing, `compileCondition()` pipeline |
+| `src/hook/evaluator.ts` | jsep-based AST expression evaluator (replaces `Function` constructor) |
+| `src/hook/sequence.ts` | `Sequence` class — per-turn event tracking, condition query interface |
+| `src/hook/hook-executor.ts` | `HookExecutor` — priority-based hook processing, action execution |
+| `src/hook/hook-preprocessor.ts` | `augmentToolCalls()` — adds metadata to tool calls for `call.metadata.*` |
+| `src/tools/skill_compile.ts` | `skill_compile` tool — triggers lazy compilation |
 
 ---
 
@@ -589,11 +613,11 @@ Claude Code provides a similar hook system but with different trade-offs. Here's
 | Aspect | Claude Code Hooks | MyCC Hookish Skills |
 |--------|-------------------|---------------------|
 | **Definition Location** | JSON in settings file | `when` field in skill markdown |
-| **Condition Language** | Matcher patterns (regex, exact) | LLM-translated natural language |
+| **Condition Language** | Matcher patterns (regex, exact) | LLM-translated expressions with jsep AST evaluation |
 | **Action Type** | Shell commands, HTTP, prompts | Tool injection, blocking, messages |
-| **State Tracking** | None (stateless) | Sequence history (seq.has, seq.last) |
-| **Compilation** | Static JSON config | Lazy LLM compilation |
-| **Evolution** | Manual editing | Version history with refinement |
+| **State Tracking** | None (stateless) | Per-turn sequence history (seq.has, seq.last) |
+| **Compilation** | Static JSON config | Lazy LLM compilation with validation gates |
+| **Evolution** | Manual editing | Version history with refinement feedback |
 
 ### Claude Code Hook Events
 
@@ -641,25 +665,24 @@ when: run pnpm lint after code changes before commit
 ```
 ```json
 {
-  "trigger": "git_commit",
-  "condition": "seq.hasAny(['edit_file', 'write_file']) && !seq.has('bash#lint')"
+  "trigger": ["git_commit"],
+  "condition": "hasAny(['edit_file', 'write_file']) && !hasCommand('bash#lint')"
 }
 ```
 - Natural language condition
 - LLM-translated to executable expression
-- Full access to sequence history
+- Full access to sequence history via `seq.*` and call context via `call.*`
 
 #### 2. State Awareness
 
 **Claude Code**: Stateless hooks. Cannot answer "did I already run lint?" without external state.
 
-**MyCC**: Sequence-aware. `seq.has('bash#lint')` checks conversation history.
+**MyCC**: Sequence-aware within the current turn. `hasCommand('bash#lint')` checks conversation history. Events are cleared at each prompt boundary to prevent stale triggers.
 
 #### 3. Action Types
 
 **Claude Code**: Actions are shell commands that output JSON to control behavior:
 ```json
-// PreToolUse can return:
 {
   "hookSpecificOutput": {
     "permissionDecision": "allow|deny|ask|defer",
@@ -668,7 +691,7 @@ when: run pnpm lint after code changes before commit
 }
 ```
 
-**MyCC**: Actions are tool calls that integrate directly:
+**MyCC**: Actions integrate directly with the tool system:
 ```json
 {
   "action": {
@@ -687,9 +710,9 @@ when: run pnpm lint after code changes before commit
 ```json
 {
   "history": [
-    { "version": 1, "condition": "seq.has('edit_file')", "reason": "initial" },
-    { "version": 2, "condition": "seq.hasAny(['edit_file', 'write_file'])", "reason": "user: didn't catch write_file" },
-    { "version": 3, "condition": "seq.hasAny(['edit_file', 'write_file']) && !seq.has('bash#lint')", "reason": "user: should run lint" }
+    { "version": 1, "condition": "has('edit_file')", "reason": "initial" },
+    { "version": 2, "condition": "hasAny(['edit_file', 'write_file'])", "reason": "user: didn't catch write_file" },
+    { "version": 3, "condition": "hasAny(['edit_file', 'write_file']) && !hasCommand('bash#lint')", "reason": "user: should run lint" }
   ]
 }
 ```
@@ -698,72 +721,24 @@ when: run pnpm lint after code changes before commit
 
 1. **Multiple Hook Events**: Claude Code has PreToolUse, PostToolUse, PermissionRequest, etc. MyCC could add similar lifecycle hooks.
 
-2. **Structured JSON Output**: Claude Code hooks return JSON for control. MyCC should define similar response schema.
+2. **Structured JSON Output**: Claude Code hooks return JSON for control. MyCC could define similar response schema.
 
-3. **Timeout Configuration**: Claude Code allows per-hook timeout. MyCC should add this.
+3. **Matcher Patterns**: Claude Code's matcher syntax (`Edit|Write`, `Bash(npm test*)`) is useful. MyCC's `trigger` field could support similar patterns.
 
-4. **Matcher Patterns**: Claude Code's matcher syntax (`Edit|Write`, `Bash(npm test*)`) is useful. MyCC's `trigger` field could support similar patterns.
-
-5. **HTTP Hooks**: Claude Code supports webhooks. MyCC could add `action.type: 'http'`.
+4. **HTTP Hooks**: Claude Code supports webhooks. MyCC could add `action.type: 'http'`.
 
 ### What MyCC Does Better
 
-1. **Sequence History**: Can query past tool calls (`seq.has`, `seq.last`).
+1. **Sequence History**: Can query past tool calls in the current turn (`seq.has`, `seq.last`).
 
-2. **Natural Language**: `when` field is more accessible than JSON config.
+2. **Call Context**: Access to current tool's metadata and arguments (`call.metadata.*`, `call.args.*`).
 
-3. **Lazy Compilation**: Skills don't need pre-configuration, compile on demand.
+3. **Natural Language**: `when` field is more accessible than JSON config.
 
-4. **Evolution**: Built-in refinement mechanism with version history.
+4. **Lazy Compilation**: Skills don't need pre-configuration, compile on demand.
 
-5. **Integration**: Actions integrate with MyCC's tool system directly.
+5. **Evolution**: Built-in refinement mechanism with version history.
 
-### Timeout Handling
+6. **Safety**: jsep AST evaluation with comprehensive identifier/method validation at compile time.
 
-Hook actions that inject tool calls should have timeout limits to prevent runaway execution:
-
-```json
-{
-  "lint-after-edit": {
-    "trigger": "git_commit",
-    "condition": "seq.hasAny(['edit_file', 'write_file']) && !seq.has('bash#lint')",
-    "action": {
-      "type": "inject_before",
-      "tool": "bash",
-      "args": { "command": "pnpm lint", "intent": "pre-commit lint check", "timeout": 60 },
-      "timeout": 60
-    }
-  }
-}
-```
-
-**Timeout behavior**:
-- If injected tool call exceeds timeout, abort the hook action
-- Log timeout event for debugging
-- Continue with original tool execution (don't block commit on timeout)
-- Timeout defaults to 60 seconds if not specified
-
-**Implementation**:
-```typescript
-async function executeWithTimeout(
-  action: HookAction,
-  ctx: AgentContext,
-  timeout: number
-): Promise<{ result: string; timedOut: boolean }> {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), timeout * 1000);
-  
-  try {
-    const result = await executeAction(action, ctx, controller.signal);
-    clearTimeout(timeoutId);
-    return { result, timedOut: false };
-  } catch (err) {
-    clearTimeout(timeoutId);
-    if (err.name === 'AbortError') {
-      ctx.core.brief('warn', 'hook', `Hook action timed out after ${timeout}s`);
-      return { result: '', timedOut: true };
-    }
-    throw err;
-  }
-}
-```
+7. **Integration**: Actions integrate with MyCC's tool system directly.

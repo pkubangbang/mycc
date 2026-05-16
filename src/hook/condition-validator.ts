@@ -25,6 +25,7 @@ export interface TestableSequence {
   last(toolName?: string): unknown;
   lastError(): unknown;
   count(toolName?: string): number;
+  totalCount(toolName?: string): number;
   since(toolName: string): unknown[];
   sinceEdit(): unknown[];
   isPlanMode(): boolean;
@@ -65,7 +66,7 @@ export interface CompileResult {
 
 const VALID_ACTION_TYPES = ['inject_before', 'inject_after', 'block', 'replace', 'message'];
 
-const SEQ_FUNCTIONS = ['has', 'hasAny', 'hasCommand', 'last', 'lastError', 'count', 'since', 'sinceEdit', 'isPlanMode'];
+const SEQ_FUNCTIONS = ['has', 'hasAny', 'hasCommand', 'last', 'lastError', 'count', 'totalCount', 'since', 'sinceEdit', 'isPlanMode'];
 
 // Allowed literal values in expressions
 const ALLOWED_LITERALS = ['true', 'false', 'null', 'undefined'];
@@ -484,6 +485,7 @@ export function testExpression(
       last: (tool?: string) => sequence.last(tool),
       lastError: () => sequence.lastError(),
       count: (tool?: string) => sequence.count(tool),
+      totalCount: (tool?: string) => sequence.totalCount(tool),
       since: (tool: string) => sequence.since(tool),
       sinceEdit: () => sequence.sinceEdit(),
       isPlanMode: () => sequence.isPlanMode(),
@@ -510,6 +512,7 @@ export function testExpression(
       .replace(/seq\.hasCommand\(/g, 'hasCommand(')
       .replace(/seq\.last\(/g, 'last(')
       .replace(/seq\.lastError\(/g, 'lastError(')
+      .replace(/seq\.totalCount\(/g, 'totalCount(')
       .replace(/seq\.count\(/g, 'count(')
       .replace(/seq\.since\(/g, 'since(')
       .replace(/seq\.sinceEdit\(/g, 'sinceEdit(')
@@ -519,13 +522,13 @@ export function testExpression(
       .replace(/call\.args\b/g, 'call.args');
 
     const fn = new Function(
-      'has', 'hasAny', 'hasCommand', 'last', 'lastError', 'count', 'since', 'sinceEdit', 'isPlanMode', 'call',
+      'has', 'hasAny', 'hasCommand', 'last', 'lastError', 'count', 'totalCount', 'since', 'sinceEdit', 'isPlanMode', 'call',
       `"use strict"; return (${jsExpr});`
     );
 
     const result = fn(
       seqCtx.has, seqCtx.hasAny, seqCtx.hasCommand, seqCtx.last, seqCtx.lastError,
-      seqCtx.count, seqCtx.since, seqCtx.sinceEdit, seqCtx.isPlanMode, call
+      seqCtx.count, seqCtx.totalCount, seqCtx.since, seqCtx.sinceEdit, seqCtx.isPlanMode, call
     );
 
     return { passed: true, evaluatedValue: Boolean(result) };
@@ -545,6 +548,7 @@ export function smokeTestExpression(expression: string): TestResult {
     last: () => undefined,
     lastError: () => undefined,
     count: () => 0,
+    totalCount: () => 0,
     since: () => [],
     sinceEdit: () => [],
     isPlanMode: () => false,
@@ -593,6 +597,7 @@ export class MockSequence {
   last(): unknown { return this.events.length === 0 ? undefined : this.events[this.events.length - 1]; }
   lastError(): undefined { return undefined; }
   count(toolName?: string): number { return toolName ? this.events.filter(e => e.tool === toolName).length : this.events.length; }
+  totalCount(toolName?: string): number { return toolName ? this.events.filter(e => e.tool === toolName).length : this.events.length; }
   since(): unknown[] { return []; }
   sinceEdit(): unknown[] { return []; }
   isPlanMode(): boolean { return false; }

@@ -41,6 +41,7 @@ export async function handleSlash(
     ctx,
     triologue,
     sessionFilePath,
+    sequence: env.sequence,
   };
 
   try {

@@ -186,6 +186,7 @@ export async function main(): Promise<void> {
   // Set up double Ctrl+L callback for clearing conversation history
   agentIO.setDoubleCtrlLCallback(() => {
     triologue.clear();
+    sequence.clear();
     clearWrapUp();
     // Use setWhisper if we have access to activeLineEditor, but we don't here.
     // However, the logic in agent-io.ts is where the whisper line is managed.

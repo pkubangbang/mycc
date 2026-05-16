@@ -515,12 +515,13 @@ ${existingInfo}
 ${toolsSection}
 
 Available condition functions (use seq.X syntax):
-- seq.has(toolName): Check if tool exists in sequence
-- seq.hasAny([tool1, tool2]): Check if any tool exists
+- seq.has(toolName): Check if tool exists in current turn
+- seq.hasAny([tool1, tool2]): Check if any tool exists in current turn
 - seq.hasCommand(pattern): Check bash command contains pattern (e.g., "bash#lint")
 - seq.last(toolName?): Get last event (optionally filtered by tool)
 - seq.lastError(): Get last error event
-- seq.count(toolName?): Count tool occurrences
+- seq.count(toolName?): Count tool occurrences since last user query (current turn)
+- seq.totalCount(toolName?): Count tool occurrences since session start (entire conversation)
 - seq.since(toolName): Events after last occurrence
 - seq.sinceEdit(): Events after last file edit
 - seq.isPlanMode(): Check if agent is in plan mode (prevents hooks during planning)

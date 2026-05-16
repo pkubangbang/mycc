@@ -1,5 +1,5 @@
 /**
- * /clear command - Clear conversation history
+ * /clear command - Clear conversation history and sequence state
  */
 
 import type { SlashCommand } from '../types.js';
@@ -13,6 +13,7 @@ export const clearCommand: SlashCommand = {
   handler: (context) => {
     const triologue = context.triologue as Triologue;
     triologue.clear();
+    context.sequence?.clear();
     clearWrapUp();
     console.log(chalk.green('Conversation cleared. Starting fresh.'));
   },

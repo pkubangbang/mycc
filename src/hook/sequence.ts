@@ -27,6 +27,7 @@ export interface SequenceEvent {
  */
 export class Sequence {
   private events: SequenceEvent[] = [];
+  private totalEventsCount: number = 0; // session-level total, never cleared at turn boundary
   private triologue?: Triologue;
   private getMode: () => 'plan' | 'normal';
 
@@ -40,11 +41,13 @@ export class Sequence {
    */
   add(event: SequenceEvent): void {
     this.events.push(event);
+    this.totalEventsCount++;
   }
 
   /**
    * Clear all events at turn boundary.
    * Called from PROMPT state on each new user query, so hooks only see events from the current turn.
+   * totalEventsCount is preserved — it tracks the entire session.
    */
   markPromptBoundary(): void {
     this.events = [];
@@ -55,6 +58,7 @@ export class Sequence {
    */
   clear(): void {
     this.events = [];
+    this.totalEventsCount = 0;
   }
 
   /**
@@ -132,13 +136,31 @@ export class Sequence {
   }
 
   /**
-   * Count occurrences of a tool in the sequence
+   * Count occurrences of a tool in the current turn (since last user query).
    */
   count(toolName?: string): number {
     if (!toolName) {
       return this.events.length;
     }
     return this.events.filter(e => e.tool === toolName).length;
+  }
+
+  /**
+   * Count occurrences of a tool across the entire session.
+   * Unlike count(), this is never reset at turn boundaries.
+   */
+  totalCount(toolName?: string): number {
+    if (!toolName) {
+      return this.totalEventsCount;
+    }
+    // Derive session-level counts from the triologue for per-tool accuracy
+    if (this.triologue) {
+      return this.triologue.getMessagesRaw()
+        .filter(m => m.role === 'tool' && m.tool_name === toolName)
+        .length;
+    }
+    // Fallback: approximate from in-memory total (can't distinguish by tool)
+    return toolName ? 0 : this.totalEventsCount;
   }
 
   /**
@@ -211,6 +233,7 @@ export class Sequence {
       last: (tool?: string) => this.last(tool),
       lastError: () => this.lastError(),
       count: (tool?: string) => this.count(tool),
+      totalCount: (tool?: string) => this.totalCount(tool),
       since: (tool: string) => this.since(tool),
       sinceEdit: () => this.sinceEdit(),
       isPlanMode: () => this.isPlanMode(),

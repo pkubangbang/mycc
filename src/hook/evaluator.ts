@@ -31,6 +31,7 @@ export interface EvalContext {
   last: (tool?: string) => unknown;
   lastError: () => unknown;
   count: (tool?: string) => number;
+  totalCount: (tool?: string) => number;
   since: (tool: string) => unknown[];
   sinceEdit: () => unknown[];
   isPlanMode: () => boolean;
@@ -290,6 +291,7 @@ export function evaluateExpression(expression: string, ctx: EvalContext): boolea
       .replace(/seq\.hasCommand\(/g, 'hasCommand(')
       .replace(/seq\.last\(/g, 'last(')
       .replace(/seq\.lastError\(/g, 'lastError(')
+      .replace(/seq\.totalCount\(/g, 'totalCount(')
       .replace(/seq\.count\(/g, 'count(')
       .replace(/seq\.since\(/g, 'since(')
       .replace(/seq\.sinceEdit\(/g, 'sinceEdit(')
