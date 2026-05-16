@@ -92,12 +92,19 @@ Use `issue_list` to check task status:
 issue_list()  # Shows all issues with status, owner, and blockers
 ```
 
+Use `tm_print` to check teammate availability:
+```
+tm_print()  # Shows all teammates with roles and status (working/idle/shutdown)
+```
+
 Use `tm_await` to wait for teammate completion:
 ```
 tm_await()  # Wait for all teammates
 # or
 tm_await(name="coder", timeout=60000)  # Wait for specific teammate
 ```
+
+**Tip**: `order(name, title, content)` combines `mail_to` + `tm_await` into a single call — use it when you need the teammate to complete work before you proceed.
 
 Check mail for updates from teammates.
 
@@ -117,6 +124,8 @@ After teammates complete:
 2. Read mail from teammates for details
 3. Use `brief` to update user on progress
 4. Use `tm_remove` if teammates are no longer needed
+
+**Tip**: Use `broadcast(title, content)` to send team-wide announcements (e.g., "all tasks complete, wrap up").
 
 ## Communication Best Practices
 

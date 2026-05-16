@@ -119,8 +119,7 @@ Let user test the tool manually. Iterate based on feedback.
 
 | Scope | Use Case | Examples |
 |-------|----------|----------|
-| `['main', 'child', 'bg']` | Safe read-only tools | bash, read_file |
-| `['main', 'child']` | Most tools | write_file, edit_file |
+| `['main', 'child']` | Most tools | bash, read_file, write_file, edit_file |
 | `['main']` | Sensitive operations | tm_create, tm_remove |
 
 ## Input Schema

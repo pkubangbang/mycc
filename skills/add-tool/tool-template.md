@@ -19,7 +19,7 @@ export default {
     },
     required: ['param1'],  // List required parameters
   },
-  scope: ['main', 'child'],  // Adjust scope based on sensitivity
+  scope: ['main', 'child'],  // Use ['main'] for sensitive operations
 
   handler: (ctx: AgentContext, args: Record<string, unknown>): string => {
     const param1 = args.param1 as string;

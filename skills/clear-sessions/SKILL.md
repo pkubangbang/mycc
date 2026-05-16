@@ -8,33 +8,35 @@ tags: [session, cleanup, troubleshooting, corruption]
 
 This guide explains how to identify and clean up corrupted or outdated session data in mycc.
 
-## Session Architecture Overview
+## Session Architecture
 
-Sessions consist of multiple components:
+A **session** consists of three parts:
 
-| Component | Location | Purpose |
-|-----------|----------|---------|
-| Project sessions | `.mycc/sessions/*.json` | Session metadata (UUID, timestamps, file references) |
-| User sessions | `~/.mycc-store/sessions/*.json` | User-level session storage (shadows project) |
-| Transcripts | `.mycc/transcripts/*.jsonl` | Conversation logs (triologues) |
-| State database | `.mycc/state.db` | SQLite DB (issues, teammates, worktrees) |
-| Mail files | `.mycc/mail/*.jsonl` | Inter-agent messages |
+| Component | Location | Format | Purpose |
+|-----------|----------|--------|---------|
+| **Session file** | `.mycc/sessions/<uuid>.json` | JSON | Metadata: UUID, timestamps, triologue path, teammates, first query |
+| **Triologue** | `.mycc/transcripts/<role>-<ts>-triologue.jsonl` | JSONL (append-only) | The three-way conversation log (user ↔ assistant ↔ tool) |
+| **Transcript** | (same as triologue) | — | Alias for the triologue file |
+
+All three together form a complete session. The session JSON references its triologue via the `lead_triologue` field (absolute path).
+
+User-level sessions in `~/.mycc-store/sessions/` follow the same structure.
+
+No SQLite database is used — session storage is purely file-based (JSON + JSONL).
 
 ## Types of Corruption
 
 ### 1. Empty Session Files
 
-Sessions created but never used (no `first_query`). These are normal but can accumulate.
+Sessions created but never used (no `first_query`). These are normal but accumulate.
 
 ```bash
-# Check for empty sessions (created >1 minute ago, no first_query)
-find .mycc/sessions -name "*.json" -mmin +1 -exec sh -c '
-  for f; do
-    if ! grep -q "first_query" "$f" 2>/dev/null || grep -q "\"first_query\": \"\"" "$f"; then
-      echo "Empty: $f"
-    fi
-  done
-' _ {} +
+# Find sessions with empty first_query
+for f in .mycc/sessions/*.json; do
+  if ! grep -q '"first_query"' "$f" 2>/dev/null || grep -q '"first_query": ""' "$f" 2>/dev/null; then
+    echo "Empty: $f"
+  fi
+done
 ```
 
 ### 2. Malformed JSON
@@ -44,109 +46,67 @@ Session files with incomplete or corrupted JSON content.
 ```bash
 # Validate all session JSON files
 for f in .mycc/sessions/*.json; do
-  if ! jq empty "$f" 2>/dev/null; then
+  if ! python3 -c "import json; json.load(open('$f'))" 2>/dev/null; then
     echo "Invalid JSON: $f"
   fi
 done
 ```
 
-### 3. Missing Transcript Files
+### 3. Missing Triologue Files
 
 Sessions referencing non-existent triologue files.
 
 ```bash
-# Check for missing transcript references
+# Check for missing triologue references
 for f in .mycc/sessions/*.json; do
-  lead_triologue=$(jq -r '.lead_triologue // empty' "$f" 2>/dev/null)
-  if [ -n "$lead_triologue" ] && [ ! -f "$lead_triologue" ]; then
-    echo "Missing lead_triologue in $f: $lead_triologue"
-  fi
-  
-  for child in $(jq -r '.child_triologues[]? // empty' "$f" 2>/dev/null); do
-    if [ ! -f "$child" ]; then
-      echo "Missing child_triologue in $f: $child"
-    fi
-  done
-done
-```
-
-### 4. Orphaned Transcripts
-
-Transcript files not referenced by any session.
-
-```bash
-# Find orphaned transcripts
-for t in .mycc/transcripts/*.jsonl; do
-  basename=$(basename "$t" .jsonl)
-  # Extract session ID pattern from transcript name
-  # Transcripts are named: {role}-{timestamp}-triologue.jsonl
-  # They should be referenced by session files
-  if ! grep -rq "$t" .mycc/sessions/ 2>/dev/null; then
-    echo "Orphaned transcript: $t"
+  lead=$(python3 -c "import json; d=json.load(open('$f')); print(d.get('lead_triologue',''))" 2>/dev/null)
+  if [ -n "$lead" ] && [ ! -f "$lead" ]; then
+    echo "Missing triologue in $f: $lead"
   fi
 done
 ```
 
-### 5. Empty Transcript Files (0-byte)
+### 4. Empty (0-byte) Triologue Files
 
-**Most common issue!** Transcript files created but never written to. These indicate interrupted session starts.
-
-**Real example found:**
-```
-Total transcripts: 165
-Empty (0-byte): 149
-```
-
-That's 90% of transcripts being empty!
+Triologue files created but never written to — indicates interrupted session starts.
 
 ```bash
-# Find empty transcripts
-find .mycc/transcripts -name "*.jsonl" -size 0
-
-# Count them
+# Find and count empty triologue files
 echo "Total: $(ls .mycc/transcripts/*.jsonl 2>/dev/null | wc -l)"
 echo "Empty: $(find .mycc/transcripts -name '*.jsonl' -size 0 | wc -l)"
 
-# Find sessions with empty lead_triologue
+# Find sessions referencing empty triologues
 for f in .mycc/sessions/*.json; do
-  lead=$(jq -r '.lead_triologue // empty' "$f" 2>/dev/null)
+  lead=$(python3 -c "import json; d=json.load(open('$f')); print(d.get('lead_triologue',''))" 2>/dev/null)
   if [ -n "$lead" ] && [ -f "$lead" ] && [ ! -s "$lead" ]; then
-    echo "Session $f has empty lead_triologue: $lead"
+    echo "Session $f has empty triologue: $lead"
   fi
 done
 ```
 
-### 6. Database Issues
+### 5. Orphaned Triologue Files
 
-WAL files left from unclean shutdown.
+Triologue files not referenced by any session.
 
 ```bash
-# Check for WAL files (normal during operation, may indicate crash if persistent)
-ls -la .mycc/state.db-wal .mycc/state.db-shm 2>/dev/null
+# Find orphaned triologues
+for t in .mycc/transcripts/*.jsonl; do
+  basename=$(basename "$t")
+  if ! grep -rq "$basename" .mycc/sessions/ 2>/dev/null; then
+    echo "Orphaned: $t"
+  fi
+done
 ```
 
 ## Cleanup Procedures
 
-### Quick Cleanup (Recommended)
+### Quick Fix: Remove Empty Triologues
 
-The built-in cleanup removes empty sessions safely:
-
-```bash
-# This is called automatically on session start
-# Removes empty sessions created >1 minute ago
-```
-
-### Quick Fix for Empty Transcripts
-
-**Most common cleanup needed.** Remove 0-byte transcript files:
+The most common cleanup — remove 0-byte triologue files:
 
 ```bash
-# Remove all empty transcripts
 find .mycc/transcripts -name "*.jsonl" -size 0 -delete
-
-# Verify cleanup
-find .mycc/transcripts -name "*.jsonl" -size 0 | wc -l
-# Should output: 0
+echo "Remaining empty: $(find .mycc/transcripts -name '*.jsonl' -size 0 | wc -l)"
 ```
 
 ### Full Session Reset
@@ -154,50 +114,53 @@ find .mycc/transcripts -name "*.jsonl" -size 0 | wc -l
 When starting fresh or after major corruption:
 
 ```bash
-# 1. Backup existing sessions (optional but recommended)
+# 1. Backup existing sessions
 tar -czf /tmp/mycc-sessions-backup-$(date +%Y%m%d-%H%M%S).tar.gz \
   .mycc/sessions .mycc/transcripts .mycc/mail 2>/dev/null
 
-# 2. Clear project sessions
-rm -rf .mycc/sessions/*.json
+# 2. Clear all session files
+rm -f .mycc/sessions/*.json
 
-# 3. Clear transcripts (orphaned conversations)
-rm -rf .mycc/transcripts/*.jsonl
+# 3. Clear all triologue files
+rm -f .mycc/transcripts/*.jsonl
 
 # 4. Clear mail files
-rm -rf .mycc/mail/*.jsonl
+rm -f .mycc/mail/*.jsonl
 
-# 5. Remove database file entirely (will be recreated on next start)
-rm -f .mycc/state.db
-
-# 6. Clean WAL files
-rm -f .mycc/state.db-wal .mycc/state.db-shm
-
-# 7. Reset worktrees JSON
+# 5. Reset worktrees
 echo '[]' > .mycc/worktrees.json
 ```
 
-**Note**: The sqlite3 CLI tool may not be available in all environments. Simply removing `state.db` is safe - it will be recreated automatically on the next session start.
+Note: the current session's triologue is actively being written and will not be deleted by `rm`.
 
 ### Selective Cleanup
 
 Remove only corrupted sessions:
 
 ```bash
-# 1. Find and remove sessions with missing transcripts
+# 1. Remove sessions with missing triologues
 for f in .mycc/sessions/*.json; do
-  lead=$(jq -r '.lead_triologue // empty' "$f" 2>/dev/null)
+  lead=$(python3 -c "import json; d=json.load(open('$f')); print(d.get('lead_triologue',''))" 2>/dev/null)
   if [ -n "$lead" ] && [ ! -f "$lead" ]; then
-    echo "Removing session with missing transcript: $f"
+    echo "Removing: $f"
     rm "$f"
   fi
 done
 
-# 2. Remove invalid JSON files
+# 2. Remove invalid JSON session files
 for f in .mycc/sessions/*.json; do
-  if ! jq empty "$f" 2>/dev/null; then
+  if ! python3 -c "import json; json.load(open('$f'))" 2>/dev/null; then
     echo "Removing invalid JSON: $f"
     rm "$f"
+  fi
+done
+
+# 3. Remove orphaned triologues
+for t in .mycc/transcripts/*.jsonl; do
+  basename=$(basename "$t")
+  if ! grep -rq "$basename" .mycc/sessions/ 2>/dev/null; then
+    echo "Removing orphaned: $t"
+    rm "$t"
   fi
 done
 ```
@@ -211,11 +174,11 @@ User-level sessions in `~/.mycc-store/sessions/` may also need cleanup:
 ls -la ~/.mycc-store/sessions/
 
 # Clear all user sessions
-rm -rf ~/.mycc-store/sessions/*.json
+rm -f ~/.mycc-store/sessions/*.json
 
 # Or validate and remove corrupted
 for f in ~/.mycc-store/sessions/*.json; do
-  if ! jq empty "$f" 2>/dev/null; then
+  if ! python3 -c "import json; json.load(open('$f'))" 2>/dev/null; then
     echo "Removing invalid user session: $f"
     rm "$f"
   fi
@@ -226,42 +189,23 @@ done
 
 ### Restore from Backup
 
-If you have backups:
-
 ```bash
-# Extract backup
-tar -xzf sessions-backup-YYYYMMDD.tar.gz
-
-# Restore specific session
-cp sessions-backup/UUID.json .mycc/sessions/
+tar -xzf /tmp/mycc-sessions-backup-YYYYMMDD.tar.gz
+cp sessions-backup/*.json .mycc/sessions/
 ```
 
-### Manually Fix Session File
+### Rebuild Session from Triologue
 
-If a session file has minor corruption:
-
-```bash
-# View session content
-cat .mycc/sessions/UUID.json | jq .
-
-# Fix missing required fields manually
-jq '. + {first_query: "Recovered session"}' .mycc/sessions/UUID.json > /tmp/fixed.json
-mv /tmp/fixed.json .mycc/sessions/UUID.json
-```
-
-### Rebuild Session from Transcript
-
-If transcript exists but session metadata is lost:
+If the triologue exists but session metadata is lost:
 
 ```bash
-# Create minimal session file for existing transcript
-cat > .mycc/sessions/new-uuid.json << 'EOF'
+cat > .mycc/sessions/<new-uuid>.json << 'EOF'
 {
   "version": "1.0",
-  "id": "new-uuid",
-  "create_time": "2024-01-01T00:00:00Z",
+  "id": "<new-uuid>",
+  "create_time": "2026-01-01T00:00:00Z",
   "project_dir": "/path/to/project",
-  "lead_triologue": ".mycc/transcripts/lead-XXXXXXX-triologue.jsonl",
+  "lead_triologue": "/path/to/.mycc/transcripts/lead-XXXXXXX-triologue.jsonl",
   "child_triologues": [],
   "teammates": [],
   "first_query": "Recovered session"
@@ -269,247 +213,108 @@ cat > .mycc/sessions/new-uuid.json << 'EOF'
 EOF
 ```
 
-## Diagnostic Commands
-
-### Check Session Integrity
+### Fix Minor Session File Corruption
 
 ```bash
-# Full session validation
-echo "=== Checking session files ==="
+# View content
+python3 -c "import json; print(json.dumps(json.load(open('.mycc/sessions/UUID.json')), indent=2))"
+
+# Fix by creating a minimal replacement
+# (use the triologue path from the original if still readable)
+```
+
+## Diagnostic Commands
+
+### Session Integrity Check
+
+```bash
+echo "=== Session Integrity ==="
 for f in .mycc/sessions/*.json; do
   [ -f "$f" ] || continue
-  id=$(jq -r '.id // "unknown"' "$f" 2>/dev/null)
-  lead=$(jq -r '.lead_triologue // "missing"' "$f" 2>/dev/null)
+  id=$(python3 -c "import json; d=json.load(open('$f')); print(d.get('id','unknown'))" 2>/dev/null)
+  lead=$(python3 -c "import json; d=json.load(open('$f')); print(d.get('lead_triologue',''))" 2>/dev/null)
   
   echo -n "Session $id: "
-  if [ ! -f "$lead" ]; then
-    echo "MISSING lead_triologue: $lead"
+  if [ -z "$lead" ]; then
+    echo "MISSING lead_triologue field"
+  elif [ ! -f "$lead" ]; then
+    echo "MISSING triologue file: $lead"
+  elif [ ! -s "$lead" ]; then
+    echo "EMPTY triologue: $lead"
   else
     echo "OK"
   fi
 done
-
-echo ""
-echo "=== Checking for empty sessions ==="
-for f in .mycc/sessions/*.json; do
-  [ -f "$f" ] || continue
-  query=$(jq -r '.first_query // empty' "$f" 2>/dev/null)
-  if [ -z "$query" ]; then
-    echo "Empty first_query: $f"
-  fi
-done
-
-echo ""
-echo "=== Checking transcript files ==="
-ls -lh .mycc/transcripts/*.jsonl | awk '{print $5, $9}' | sort -h
 ```
 
-### Database Status
+### Summary Stats
 
 ```bash
-# Check database tables
-sqlite3 .mycc/state.db ".tables"
-
-# Count records
-sqlite3 .mycc/state.db "
-  SELECT 'issues' as table, COUNT(*) as count FROM issues
-  UNION SELECT 'teammates', COUNT(*) FROM teammates
-  UNION SELECT 'worktrees', COUNT(*) FROM worktrees;
-"
-
-# Check for orphaned records
-sqlite3 .mycc/state.db "
-  SELECT * FROM issue_blockages 
-  WHERE blocker_id NOT IN (SELECT id FROM issues)
-     OR blocked_id NOT IN (SELECT id FROM issues);
-"
-```
-
-## Prevention Best Practices
-
-### 1. Regular Cleanup
-
-Empty sessions are cleaned automatically on startup. For manual cleanup:
-
-```bash
-# Run this periodically
-find .mycc/sessions -name "*.json" -mmin +1 -exec sh -c '
-  for f; do
-    query=$(jq -r ".first_query // empty" "$f")
-    if [ -z "$query" ]; then
-      rm "$f"
-    fi
-  done
-' _ {} +
-```
-
-### 2. Clean Shutdowns
-
-Always exit cleanly to allow proper database and session file writes.
-
-### 3. Backup Important Sessions
-
-Before risky operations:
-
-```bash
-# Backup specific session
-cp .mycc/sessions/important-uuid.json ~/backups/
-
-# Or backup all
-tar -czf ~/backups/mycc-$(date +%Y%m%d).tar.gz .mycc/
-```
-
-### 4. Monitor WAL Files
-
-If WAL files persist after shutdown, database may not have closed properly:
-
-```bash
-# After ensuring no mycc processes running
-rm -f .mycc/state.db-wal .mycc/state.db-shm
+echo "=== Storage Stats ==="
+echo "Session files: $(ls .mycc/sessions/*.json 2>/dev/null | wc -l)"
+echo "Triologue files: $(ls .mycc/transcripts/*.jsonl 2>/dev/null | wc -l)"
+echo "Empty triologues: $(find .mycc/transcripts -name '*.jsonl' -size 0 2>/dev/null | wc -l)"
+echo "Mail files: $(ls .mycc/mail/*.jsonl 2>/dev/null | wc -l)"
+echo "User sessions: $(ls ~/.mycc-store/sessions/*.json 2>/dev/null | wc -l)"
 ```
 
 ## Common Issues and Solutions
 
 ### Issue: "Session not found" but file exists
 
-**Cause**: JSON parsing failed silently.
+**Cause:** JSON parsing failed silently (malformed or incomplete file).
 
-**Solution**:
+**Solution:**
 ```bash
-# Validate JSON
-jq empty .mycc/sessions/UUID.json
-# If invalid, remove or fix manually
+python3 -c "import json; json.load(open('.mycc/sessions/UUID.json'))"
+# If it fails, remove the file: rm .mycc/sessions/UUID.json
 ```
 
 ### Issue: Session restore fails with "missing files"
 
-**Cause**: Transcript file deleted or moved.
+**Cause:** Triologue file deleted or moved.
 
-**Solution**:
+**Solution:**
 ```bash
-# Either remove the session
+# Remove the session referencing the missing triologue
 rm .mycc/sessions/UUID.json
-
-# Or create placeholder transcript
-touch .mycc/transcripts/lead-XXXX-triologue.jsonl
 ```
 
-### Issue: Database locked
+### Issue: User session shadows project session
 
-**Cause**: Another mycc process running or unclean shutdown.
+**Cause:** A session saved to user dir (`~/.mycc-store/sessions/`) takes precedence over the project-level session with the same UUID.
 
-**Solution**:
+**Solution:**
 ```bash
-# Check for running processes
-ps aux | grep mycc
-
-# Remove lock files
-rm -f .mycc/state.db-wal .mycc/state.db-shm
-```
-
-### Issue: User session shadows project session unexpectedly
-
-**Cause**: Session saved to user dir now takes precedence.
-
-**Solution**:
-```bash
-# Remove user session to use project session
+# Remove user session to fall back to project session
 rm ~/.mycc-store/sessions/UUID.json
 ```
 
-### Issue: sqlite3 command not found
+## Prevention
 
-**Cause**: The sqlite3 CLI tool is not installed in the environment.
+1. **Clean shutdowns** — Always exit cleanly (Ctrl+C or empty Enter at prompt) to allow triologue files to finalize.
+2. **Regular cleanup** — Empty sessions with no `first_query` are normal; clean them periodically.
+3. **Backup before risky operations** — `tar -czf /tmp/mycc-backup.tar.gz .mycc/`
+4. **No database concerns** — Since there is no SQLite, there are no WAL files, locks, or table corruption to worry about.
 
-**Solution**: Simply delete the database file - it will be recreated:
-```bash
-rm -f .mycc/state.db .mycc/state.db-wal .mycc/state.db-shm
-```
+## Verification After Cleanup
 
-### Issue: better-sqlite3 module not found
-
-**Cause**: The project doesn't include better-sqlite3 as a dependency.
-
-**Solution**: Don't try to use Node.js for database operations. Just delete the database file.
-
-## Practical Notes from Real Execution
-
-### What Actually Works
-
-1. **Backup first** - Always create a backup in `/tmp/` before cleanup
-2. **Simple deletion is enough** - No need for sqlite3 CLI or better-sqlite3 module
-3. **Database recreation** - `state.db` is recreated automatically on next session start
-4. **Worktrees in JSON** - The project uses `worktrees.json` not the database for worktree storage
-5. **Current session transcript** - Will NOT be deleted (expected behavior)
-
-### Verification Command
-
-After cleanup, verify with:
 ```bash
 echo "=== Final Status ==="
 echo "Sessions: $(ls .mycc/sessions/*.json 2>/dev/null | wc -l)"
-echo "Transcripts: $(ls .mycc/transcripts/*.jsonl 2>/dev/null | wc -l)"
+echo "Triologues: $(ls .mycc/transcripts/*.jsonl 2>/dev/null | wc -l)"
+echo "Empty triologues: $(find .mycc/transcripts -name '*.jsonl' -size 0 2>/dev/null | wc -l)"
 echo "Mail files: $(ls .mycc/mail/*.jsonl 2>/dev/null | wc -l)"
-echo "Database: $(ls .mycc/state.db 2>/dev/null | wc -l)"
-echo "Worktrees: $(cat .mycc/worktrees.json 2>/dev/null))"
 ```
 
-Expected result after cleanup:
-- Sessions: 0
-- Transcripts: 1 (current session)
-- Mail files: 0
-- Database: 0
-- Worktrees: []
+All sessions should have valid JSON and existing, non-empty triologue files.
 
 ## Checklist
 
-When cleaning up sessions:
-
-- [ ] Identify type of corruption
-- [ ] Backup important sessions before deleting
-- [ ] Remove corrupted session files
-- [ ] Clean up orphaned transcripts
-- [ ] Clear stale mail files
-- [ ] Remove database file (no sqlite3 needed)
-- [ ] Remove WAL files after shutdown
-- [ ] Verify remaining sessions load correctly
-
----
-
-## Quality Checklist
-
-Before considering cleanup complete:
-
-- [ ] All session JSON files are valid (`jq empty` passes)
-- [ ] No sessions reference missing transcript files
-- [ ] No sessions reference empty (0-byte) transcript files
-- [ ] No orphaned transcripts remain
-- [ ] Database tables are consistent (no orphaned foreign keys)
-- [ ] WAL files removed (if no active processes)
-- [ ] Mail directory cleaned of stale messages
-
-## Resources
-
-- Session source code: `src/session/index.ts`, `src/session/restoration.ts`
-- Database schema: `src/context/db.ts`
-- Types: `src/session/types.ts`
-- **Cleanup script**: `scripts/clear-sessions.sh` (bundled with mycc)
-
-## Quick Reference
-
-```bash
-# Dry run (see what would be deleted)
-node_modules/.bin/mycc-scripts/clear-sessions.sh --dry-run
-
-# Or if installed globally:
-# clear-sessions.sh --dry-run
-
-# Standard cleanup (backup + clean corrupted)
-# clear-sessions.sh
-
-# Full cleanup (everything including database)
-# clear-sessions.sh --full
-
-# Skip backup
-# clear-sessions.sh --no-backup
-```
+- [ ] Identified type of corruption
+- [ ] Backed up important sessions before deleting
+- [ ] Removed corrupted session JSON files
+- [ ] Removed 0-byte triologue files
+- [ ] Cleaned up orphaned triologues
+- [ ] Cleared stale mail files
+- [ ] Verified remaining sessions load correctly
