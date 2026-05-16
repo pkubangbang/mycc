@@ -224,9 +224,15 @@ function runCoordinator(): void {
       }
 
       // Parse and forward structured key events
+      // Single keys are sent individually for responsiveness.
+      // Multiple keys from one data event (paste) are batched so
+      // the line editor can insert them atomically without the
+      // first return key prematurely submitting the input.
       const keys = parseKeys(data);
-      for (const key of keys) {
-        lead?.send({ type: 'key', key });
+      if (keys.length === 1) {
+        lead?.send({ type: 'key', key: keys[0] });
+      } else if (keys.length > 1) {
+        lead?.send({ type: 'key-batch', keys });
       }
     });
   }

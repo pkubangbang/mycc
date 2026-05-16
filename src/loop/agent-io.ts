@@ -108,7 +108,7 @@ class AgentIO {
     this.isMainProcessFlag = true;
 
     // Handle IPC messages from coordinator
-    process.on('message', (msg: { type: string; key?: KeyInfo; columns?: number }) => {
+    process.on('message', (msg: { type: string; key?: KeyInfo; keys?: KeyInfo[]; columns?: number }) => {
       if (msg.type === 'neglection') {
         // Don't set neglected mode if user is in a LineEditor prompt (ask())
         if (this.activeLineEditor) {
@@ -134,6 +134,9 @@ class AgentIO {
       } else if (msg.type === 'key' && msg.key) {
         // Forward key event to active LineEditor
         this.handleKeyEvent(msg.key);
+      } else if (msg.type === 'key-batch' && Array.isArray(msg.keys)) {
+        // Batch key events from paste — insert atomically without submitting
+        this.handleKeyBatch(msg.keys);
       } else if (msg.type === 'resize' && msg.columns) {
         // Forward resize event to active LineEditor
         this.handleResize(msg.columns);
@@ -321,6 +324,28 @@ class AgentIO {
   }
 
   // Key event handling (for LineEditor)
+
+  /**
+   * Handle a batch of key events from Coordinator (via IPC)
+   * Used for paste — all keys from a single stdin data event are
+   * processed atomically. The combined text is inserted into the
+   * active LineEditor without submitting.
+   */
+  handleKeyBatch(keys: KeyInfo[]): void {
+    if (!this.activeLineEditor) return;
+
+    // Join all key sequences into a single string.
+    // Return/enter keys are mapped to \n (line feed) for insertion
+    // into the editor content, so pasted multi-line text renders
+    // correctly with visible line breaks.
+    const text = keys.map(k =>
+      (k.name === 'return' || k.name === 'enter') ? '\n' : k.sequence
+    ).join('');
+    if (text.length === 0) return;
+
+    // Insert at current cursor position in the line editor
+    this.activeLineEditor.insertAtCursor(text);
+  }
 
   /**
    * Handle a key event from Coordinator (via IPC)

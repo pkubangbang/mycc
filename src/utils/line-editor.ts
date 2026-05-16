@@ -140,7 +140,7 @@ export class LineEditor {
     return this.content.indexOf(CURSOR);
   }
 
-  private getContent(_forOutput: boolean = true): string {
+  getContent(_forOutput: boolean = true): string {
     return this.content.filter(c => c !== CURSOR).join('');
   }
 
@@ -159,6 +159,14 @@ export class LineEditor {
       const isCursor = char === CURSOR;
 
       if (skipLeadingBang && i === 0 && char === '!') continue;
+
+      // Hard line break on \n (inserted by paste or multi-line input)
+      if (char === '\n' && !isCursor) {
+        lines.push(currentLine);
+        currentLine = [];
+        currentLineWidth = 0;
+        continue;
+      }
 
       const maxWidth = lines.length === 0
         ? this.columns - this.promptLength
@@ -342,6 +350,23 @@ export class LineEditor {
 
   setContent(text: string): void {
     this.content = [...this.splitIntoChars(text), CURSOR];
+    this.checkPromptChange();
+    this.lineInfo = this.computeLineInfo();
+    this.render();
+    this.notifyContentChange();
+  }
+
+  /**
+   * Insert text at the current cursor position.
+   * Used for paste — inserts all characters at cursor without submitting.
+   * Embedded \n characters cause visible line breaks in the editor.
+   */
+  insertAtCursor(text: string): void {
+    const chars = this.splitIntoChars(text);
+    if (chars.length === 0) return;
+
+    const idx = this.getCursorIndex();
+    this.content.splice(idx, 0, ...chars);
     this.checkPromptChange();
     this.lineInfo = this.computeLineInfo();
     this.render();
