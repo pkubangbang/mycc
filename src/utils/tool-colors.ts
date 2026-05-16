@@ -82,7 +82,7 @@ const TOOL_COLORS: Record<string, (text: string) => string> = {
   mode_change: chalk.magenta,
 
   // Hooks
-  hook: chalk.cyanBright,
+  hook: chalk.gray,
 
   // System/Internal
   loop: chalk.gray,

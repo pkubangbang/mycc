@@ -326,7 +326,9 @@ ${buildCalendarSection()}
 
 ${buildOutputBehaviorSection()}
 
-${buildKnowledgeBoundarySection()}`;
+${buildKnowledgeBoundarySection()}
+
+${buildIntentLanguageSection()}`;
 }
 
 // ============================================================================
@@ -406,7 +408,9 @@ ${buildCalendarSection()}
 
 ${buildOutputBehaviorSection()}
 
-${buildKnowledgeBoundarySection()}`;
+${buildKnowledgeBoundarySection()}
+
+${buildIntentLanguageSection()}`;
 }
 
 // ============================================================================
