@@ -16,7 +16,6 @@ import type { ToolDefinition, AgentContext } from '../types.js';
 import { agentIO } from '../loop/agent-io.js';
 import { retryChat, MODEL } from '../ollama.js';
 
-
 const OUTPUT_CHAR_LIMIT = 20000;
 
 export const bashTool: ToolDefinition = {
@@ -35,7 +34,7 @@ export const bashTool: ToolDefinition = {
       },
       timeout: {
         type: 'number',
-        description: 'REQUIRED: Seconds before killing the process (SIGKILL). Max recommended: 300.',
+        description: 'REQUIRED: Seconds before killing the process (SIGKILL). Max: 30.',
       },
     },
     required: ['command', 'intent', 'timeout'],
@@ -101,8 +100,6 @@ export const bashTool: ToolDefinition = {
       parts.push(`Command completed successfully (exit: ${exitCode})`);
     } else {
       parts.push(`Command failed (exit: ${exitCode})`);
-      // Show error to user when command fails
-      const errorDetail = stderr.trim() ? `: ${stderr.trim().split('\n')[0].slice(0, 200)}` : '';
     }
 
     // Output sections with clear labels

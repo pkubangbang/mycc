@@ -541,7 +541,7 @@ Available action types:
 - message: Just inject a message (weak, use for reminders)
 
 Examples:
-- "run lint before commit if files changed": { "trigger": ["git_commit"], "condition": "seq.hasAny(['edit_file', 'write_file']) && !seq.hasCommand('bash#lint')", "action": { "type": "inject_before", "tool": "bash", "args": { "command": "pnpm lint", "intent": "pre-commit lint", "timeout": 60 } } }
+- "run lint before commit if files changed": { "trigger": ["git_commit"], "condition": "seq.hasAny(['edit_file', 'write_file']) && !seq.hasCommand('bash#lint')", "action": { "type": "inject_before", "tool": "bash", "args": { "command": "pnpm lint", "intent": "pre-commit lint", "timeout": 30 } } }
 - "search wiki on errors": { "trigger": ["*"], "condition": "seq.lastError() && !seq.has('wiki_get')", "action": { "type": "inject_before", "tool": "wiki_get", "args": { "query": "error", "domain": "pitfall" } } }
 - "block force push to main": { "trigger": ["bash"], "condition": "call.args.command.includes('git push --force') && call.args.command.includes('main')", "action": { "type": "block", "reason": "Force push to main is prohibited" } }
 - "block test files over 300 lines": { "trigger": ["write_file"], "condition": "call.metadata.filePath.includes('/tests/') && call.metadata.newLoc > 300", "action": { "type": "block", "reason": "Test files cannot exceed 300 lines" } }
