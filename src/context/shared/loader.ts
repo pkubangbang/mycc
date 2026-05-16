@@ -6,6 +6,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { pathToFileURL, fileURLToPath } from 'url';
 import { watch } from 'fs';
+import { createRequire } from 'node:module';
 import matter from 'gray-matter';
 import { agentIO } from '../../loop/agent-io.js';
 import { resolveToSkillPath, type SkillLayer } from '../../utils/skill-path-resolver.js';
@@ -20,8 +21,10 @@ import { resolveToSkillPath, type SkillLayer } from '../../utils/skill-path-reso
 function invalidateEsmCache(filepath: string): void {
   // Access the CJS module cache — removing from this cache also affects
   // ESM dynamic imports when the file is a CommonJS or transpiled module.
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const Module = require('module') as {
+  // Use createRequire (imported from node:module) which works in ESM.
+  // eslint-disable-next-line no-restricted-imports
+  const builtinRequire = createRequire(import.meta.url);
+  const Module = builtinRequire('node:module') as {
     _cache: Record<string, unknown>;
   };
   const key = pathToFileURL(path.resolve(filepath)).href;
@@ -230,6 +233,7 @@ export class Loader implements DynamicLoader, SkillModule {
     try {
       const modulePath = pathToFileURL(filepath).href;
       invalidateEsmCache(filepath);
+      // eslint-disable-next-line no-restricted-syntax
       const module = await import(modulePath);
       const tool = module.default as ToolDefinition;
 
@@ -309,6 +313,7 @@ export class Loader implements DynamicLoader, SkillModule {
         ? pathToFileURL(filepath).href
         : pathToFileURL(path.resolve(filepath)).href;
 
+      // eslint-disable-next-line no-restricted-syntax
       const module = await import(modulePath);
       const tool = module.default as ToolDefinition;
 

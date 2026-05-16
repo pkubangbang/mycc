@@ -130,7 +130,8 @@ function tryExtractBrownBag(content: string): BrownBag | null {
     return {
       originalQuery: parsed.originalQuery,
       wikiNotes: parsed.wikiNotes,
-      skills: parsed.skills,
+      // Filter out hallucinated skill names — only suggest skills that actually exist
+      skills: parsed.skills.filter((s: string) => loader.getSkill(s) !== undefined),
       title,
     };
   } catch {
@@ -140,8 +141,13 @@ function tryExtractBrownBag(content: string): BrownBag | null {
 
 /**
  * Format a BrownBag into a human-readable mail body.
+ * Returns null if the brown bag has no actionable content (no wiki notes, no skills, no title).
  */
-function formatBrownBag(brownBag: BrownBag): string {
+function formatBrownBag(brownBag: BrownBag): string | null {
+  if (brownBag.wikiNotes.length === 0 && brownBag.skills.length === 0) {
+    return null; // nothing actionable — don't send noise
+  }
+
   const lines: string[] = [];
   lines.push(`Regarding the user's query: ${brownBag.originalQuery}`);
   lines.push('Consider the suggestions below:');
@@ -194,7 +200,12 @@ function muteCore(core: MachineEnv['ctx']['core']): MachineEnv['ctx']['core'] {
 export async function runSuggestBackground(env: MachineEnv): Promise<void> {
   const { triologue, ctx } = env;
 
-  // Mute brief() output from tools executed in the background suggest loop
+  // Mute brief() output from tools executed in the background suggest loop.
+  // NOTE: mutedCtx is a shallow copy — wiki, mail, todo, team, etc. share references
+  // with the live ctx. This is currently safe because executeSuggestTool only passes
+  // mutedCtx to allowed tools (read_file, bash, wiki_get, skill_load, recall) which
+  // are read-only. If new mutation-capable tools are added to the allowlist, this
+  // must be hardened (deep copy or explicit deny of mutation modules).
   const mutedCtx = { ...ctx, core: muteCore(ctx.core) };
 
   // Graceful stop via timestamp-based flag.
@@ -202,8 +213,16 @@ export async function runSuggestBackground(env: MachineEnv): Promise<void> {
   // When stop() is called, stopRequestedAt is set to Date.now().
   // The loop captures the value at iteration start; if it's non-null and has changed,
   // the loop exits. This handles rapid stop/restart cycles.
+  //
+  // runId guards against handle corruption: if a new SUGGEST is launched before
+  // this one finishes, the new run will overwrite env.runningSuggest. The finally
+  // block must NOT null out the new run's handle — it only clears its own.
   let stopRequestedAt: number | null = null;
-  env.runningSuggest = { stop: () => { stopRequestedAt = Date.now(); } };
+  const runId = Symbol();
+  env.runningSuggest = {
+    stop: () => { stopRequestedAt = Date.now(); },
+    id: runId,
+  } as unknown as { stop: () => void };
 
   try {
     // 1. Fork the triologue — deep copy raw messages (latest is user's query)
@@ -253,6 +272,7 @@ ${domainList}
     const allTools: Tool[] = loader.getToolsForScope('main');
 
     // 7. Explorer-style loop
+    let noBagStreak = 0;
     for (let turn = 0; turn < MAX_TURNS; turn++) {
       // Check graceful stop BEFORE this iteration
       const stopAtIterStart = stopRequestedAt;
@@ -286,13 +306,27 @@ ${domainList}
         const content = assistantMsg.content || '';
         const brownBag = tryExtractBrownBag(content);
         if (brownBag) {
-          ctx.core.verbose('suggest', `Brown bag sent: wikiNotes=${brownBag.wikiNotes.length}, skills=${brownBag.skills.length}`);
-          env.ctx.mail.appendMail('suggest', 'Brown Bag', formatBrownBag(brownBag));
+          const body = formatBrownBag(brownBag);
+          if (body) {
+            ctx.core.verbose('suggest', `Brown bag sent: wikiNotes=${brownBag.wikiNotes.length}, skills=${brownBag.skills.length}`);
+            env.ctx.mail.appendMail('suggest', 'Brown Bag', body);
+            return;
+          }
+          // Brown bag had no actionable content — silently drop it
+          ctx.core.verbose('suggest', 'Brown bag produced no actionable content');
           return;
         }
-        // No brown bag yet — loop again (LLM will continue exploring)
+        // No brown bag yet — track streak and bail if LLM is stuck
+        noBagStreak++;
+        if (noBagStreak >= 3) {
+          ctx.core.verbose('suggest', `Bailing out after ${noBagStreak} consecutive no-brown-bag responses`);
+          return;
+        }
         continue;
       }
+
+      // Tool calls were emitted → reset noBagStreak
+      noBagStreak = 0;
 
       // Execute tool calls with restricted executor
       for (const tc of assistantMsg.tool_calls as ToolCall[]) {
@@ -322,8 +356,11 @@ ${domainList}
         if (chatMessages[i].role === 'assistant' && chatMessages[i].content) {
           const brownBag = tryExtractBrownBag(chatMessages[i].content!);
           if (brownBag) {
-            ctx.core.verbose('suggest', `Brown bag sent (max turns): wikiNotes=${brownBag.wikiNotes.length}, skills=${brownBag.skills.length}`);
-            env.ctx.mail.appendMail('suggest', 'Brown Bag', formatBrownBag(brownBag));
+            const body = formatBrownBag(brownBag);
+            if (body) {
+              ctx.core.verbose('suggest', `Brown bag sent (max turns): wikiNotes=${brownBag.wikiNotes.length}, skills=${brownBag.skills.length}`);
+              env.ctx.mail.appendMail('suggest', 'Brown Bag', body);
+            }
           }
           break;
         }
@@ -333,7 +370,10 @@ ${domainList}
     // Silently fail — SUGGEST is best-effort
     ctx.core.verbose('suggest', `SUGGEST failed: ${err instanceof Error ? err.message : String(err)}`);
   } finally {
-    env.runningSuggest = null;
+    // Only clear the stop handle if we still own it (prevent corrupting a newer suggest's handle)
+    if ((env.runningSuggest as { id?: symbol } | null)?.id === runId) {
+      env.runningSuggest = null;
+    }
   }
 }
 

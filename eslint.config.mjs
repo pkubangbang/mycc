@@ -49,6 +49,20 @@ export default tseslint.config(
       
       // Custom rule: no console.* in src/tools (rule self-checks directory)
       'custom/no-console-in-tools': 'error',
+
+      // Disallow require() — project uses ESM imports only
+      'no-restricted-imports': ['error', {
+        patterns: [{
+          group: ['require'],
+          message: 'Use ESM import syntax instead of require()',
+        }],
+      }],
+
+      // Disallow await import() — use static ESM imports
+      'no-restricted-syntax': ['error', {
+        selector: 'AwaitExpression > CallExpression[callee.type="Import"]',
+        message: 'Use static ESM import syntax instead of await import()',
+      }],
     },
   }
 );

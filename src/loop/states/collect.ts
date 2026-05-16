@@ -71,9 +71,30 @@ export async function handleCollect(
     // 2. Collect mails
     const mails = ctx.mail.collectMails();
     if (mails.length > 0) {
-      const mailContent = mails
-        .map((mail) => `Mail from ${mail.from}: ${mail.title}\n${mail.content}`)
-        .join('\n\n---\n\n');
+      // Separate suggest mails from regular mails for proper framing
+      const suggestMails = mails.filter(m => m.from === 'suggest');
+      const otherMails = mails.filter(m => m.from !== 'suggest');
+
+      const parts: string[] = [];
+
+      // Frame suggest/brown-bag mails with actionable instructions for the LLM
+      if (suggestMails.length > 0) {
+        const suggestContent = suggestMails
+          .map((mail) => mail.content)
+          .join('\n\n');
+        parts.push(
+          '[Context suggestion] The following resources were discovered for your task.\n' +
+          'Consider using wiki_get and skill_load to explore them:\n\n' +
+          suggestContent
+        );
+      }
+
+      // Regular mails use standard format
+      for (const mail of otherMails) {
+        parts.push(`Mail from ${mail.from}: ${mail.title}\n${mail.content}`);
+      }
+
+      const mailContent = parts.join('\n\n---\n\n');
 
       if (agentIO.isNeglectedMode()) {
         triologue.user(`[URGENT: user interrupted - wrap up quickly]\n${mailContent}`);
