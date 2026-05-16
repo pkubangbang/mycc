@@ -272,7 +272,16 @@ export async function main(): Promise<void> {
       return;
     }
     console.log(chalk.yellow('\nShutting down...'));
+    ctx.team.dismissTeam(false); // Graceful shutdown of all teammates
     process.send!({ type: 'exit' });
+  });
+
+  // ── SIGTERM handler ──
+  // Coordinator sends SIGTERM to process group on Ctrl+C.
+  // Gracefully dismiss all teammates so they don't become orphans.
+  process.on('SIGTERM', () => {
+    ctx.team.dismissTeam(false);
+    process.exit(0);
   });
 
   // Ready

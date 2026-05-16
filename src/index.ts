@@ -207,11 +207,31 @@ function runCoordinator(): void {
     process.stdin.resume();
 
     process.stdin.on('data', (data: Buffer) => {
-      // Ctrl+C - forcibly kill Lead and exit immediately
+      // Ctrl+C - kill entire process group and exit
+      // Using negative PID sends signal to the whole process group,
+      // which includes Lead and all teammates (grandchildren).
+      // SIGTERM allows graceful shutdown (teammates have SIGHUP/SIGTERM handlers).
+      // Fallback to SIGKILL after 5s if processes haven't exited.
       if (isCtrlC(data)) {
         console.log(chalk.yellow('\nCtrl+C - Exiting...'));
         if (lead) {
-          lead.kill('SIGKILL');
+          try {
+            // Send SIGTERM to the entire process group
+            process.kill(-lead.pid!, 'SIGTERM');
+          } catch {
+            // Process group might not exist, fall back to direct kill
+            lead.kill('SIGTERM');
+          }
+          // Fallback: SIGKILL after 5 seconds if still alive
+          const forceKillTimeout = setTimeout(() => {
+            try {
+              process.kill(-lead!.pid!, 'SIGKILL');
+            } catch {
+              lead!.kill('SIGKILL');
+            }
+          }, 5000);
+          // Don't let this timeout keep the process alive
+          if (forceKillTimeout.unref) forceKillTimeout.unref();
         }
         cleanup();
         process.exit(130);
