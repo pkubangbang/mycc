@@ -7,17 +7,8 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import type { ToolDefinition, AgentContext } from '../types.js';
-
-/**
- * Validate path doesn't escape workspace
- */
-function safePath(p: string, workdir: string): string {
-  const resolved = path.resolve(workdir, p);
-  if (!resolved.startsWith(workdir)) {
-    throw new Error(`Path escapes workspace: ${p}`);
-  }
-  return resolved;
-}
+import { resolvePath } from '../utils/path.js';
+import { checkSensitivePath } from '../utils/sensitive-paths.js';
 
 export const writeTool: ToolDefinition = {
   name: 'write_file',
@@ -38,21 +29,40 @@ export const writeTool: ToolDefinition = {
   },
   scope: ['main', 'child'],
   handler: async (ctx: AgentContext, args: Record<string, unknown>): Promise<string> => {
-    // Check permission (respects plan mode)
+    const filePath = args.path as string;
+    const content = args.content as string;
+
+    // Resolve path first (tilde expansion, relative → absolute)
+    const resolvedPath = resolvePath(filePath, ctx.core.getWorkDir());
+    args.path = resolvedPath;  // Update args for requestGrant
+
+    // Check permission (respects plan mode, worktree ownership)
     const grant = await ctx.core.requestGrant('write_file', args);
     if (!grant.approved) {
       return grant.reason || 'Operation not permitted in current mode';
     }
 
-    const filePath = args.path as string;
-    const content = args.content as string;
+    // Check if path is outside workspace
+    const isExternal = !resolvedPath.startsWith(ctx.core.getWorkDir());
+    if (isExternal) {
+      // Block sensitive system paths (never writable, regardless of grant)
+      const sensitive = checkSensitivePath(resolvedPath);
+      if (sensitive) {
+        return `Error: Cannot write to ${resolvedPath} — ${sensitive.reason}. This path is protected from automated modification.`;
+      }
+
+      // Request user grant for external path
+      const access = await ctx.core.requestExternalPathAccess('write_file', resolvedPath);
+      if (!access.approved) {
+        return `Error: ${access.reason || 'Access denied'}`;
+      }
+    }
 
     ctx.core.brief('info', 'write', `${filePath} (${content.length} bytes)`);
 
     try {
-      const safe = safePath(filePath, ctx.core.getWorkDir());
-      fs.mkdirSync(path.dirname(safe), { recursive: true });
-      fs.writeFileSync(safe, content, 'utf-8');
+      fs.mkdirSync(path.dirname(resolvedPath), { recursive: true });
+      fs.writeFileSync(resolvedPath, content, 'utf-8');
       return 'OK';
     } catch (error: unknown) {
       return `Error: ${(error as Error).message}`;

@@ -321,6 +321,21 @@ export class ParentContext implements AgentContext {
           sendResponse('grant_result', true, result);
         },
       },
+      // External path access handler (for read/write/edit outside workspace)
+      {
+        messageType: 'external_path_access',
+        module: 'grant',
+        handler: async (_sender, payload, ctx, sendResponse) => {
+          const { tool, requestedPath } = payload as {
+            tool: 'read_file' | 'write_file' | 'edit_file';
+            requestedPath: string;
+          };
+          // Cast to Core to access requestExternalPathAccess
+          const core = ctx.core as Core;
+          const result = await core.requestExternalPathAccess(tool, requestedPath);
+          sendResponse('grant_result', true, result);
+        },
+      },
     ];
 
     for (const handler of handlers) {

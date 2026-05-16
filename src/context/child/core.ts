@@ -96,6 +96,25 @@ export class ChildCore extends BaseCore implements CoreModule {
   }
 
   /**
+   * Request access to a file/directory outside the workspace.
+   * Child process always sends IPC to parent for evaluation.
+   * @param tool - The tool requesting external access
+   * @param requestedPath - The resolved absolute path
+   * @returns Result with approval, resolvedPath, and optional reason
+   */
+  async requestExternalPathAccess(
+    tool: 'read_file' | 'write_file' | 'edit_file',
+    requestedPath: string,
+  ): Promise<{ approved: boolean; resolvedPath: string; reason?: string }> {
+    const response = await ipc.sendRequest<{ approved: boolean; resolvedPath: string; reason?: string }>(
+      'external_path_access',
+      { tool, requestedPath },
+      0, // No timeout - user interaction may take arbitrary time
+    );
+    return response;
+  }
+
+  /**
    * Get current agent mode (plan or normal)
    * Child processes (teammates) are always in normal mode - they execute tasks, not plan
    * Plan mode is only for the lead agent

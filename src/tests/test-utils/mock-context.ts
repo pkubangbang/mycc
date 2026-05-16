@@ -27,6 +27,7 @@ export function createMockCore(overrides: Partial<CoreModule> = {}): CoreModule 
     webFetch: vi.fn(async () => ({ title: '', content: '', links: [] })),
     imgDescribe: vi.fn(async () => 'image description'),
     requestGrant: vi.fn(async () => ({ approved: true })),
+    requestExternalPathAccess: vi.fn(async (tool, path) => ({ approved: true, resolvedPath: path })),
     getMode: vi.fn(() => 'normal' as const),
     getMindmap: vi.fn(() => null),
     setMindmap: vi.fn(),

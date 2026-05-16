@@ -13,12 +13,24 @@ import { BaseCore } from '../shared/base-core.js';
 import { evaluateGrant } from '../grant/grant-evaluator.js';
 
 /**
+ * Grant scope for external path access
+ */
+type GrantScope = 'file' | 'folder' | 'folder_recursive';
+
+/**
  * Core module implementation for parent process
  * Extends BaseCore for workDir and mindmap management
  */
 export class Core extends BaseCore implements CoreModule {
   private modeState: 'plan' | 'normal' = 'normal';
   private allowedFile?: string;
+
+  /**
+   * Session-scoped grants for external path access.
+   * Maps resolved path → granted scope.
+   * One-way open: grants are never revoked during the session.
+   */
+  private externalGrants: Map<string, GrantScope> = new Map();
 
   constructor(workDir?: string) {
     super(workDir || process.cwd());
@@ -250,6 +262,82 @@ export class Core extends BaseCore implements CoreModule {
       };
     }
     return { approved: true };
+  }
+
+  /**
+   * Request access to a file/directory outside the workspace.
+   *
+   * Checks existing grants first (session-scoped, one-way open).
+   * If not yet granted, asks the user via question() with options 1/2/3/4.
+   *
+   * @param tool - The tool requesting external access
+   * @param requestedPath - The resolved absolute path
+   * @returns Result with approval, resolvedPath, and optional reason
+   */
+  async requestExternalPathAccess(
+    tool: 'read_file' | 'write_file' | 'edit_file',
+    requestedPath: string,
+  ): Promise<{ approved: boolean; resolvedPath: string; reason?: string }> {
+    // Check if already granted
+    const existingGrant = this.findExistingGrant(requestedPath);
+    if (existingGrant) {
+      return { approved: true, resolvedPath: requestedPath };
+    }
+
+    // Build the grant prompt
+    const dirName = path.dirname(requestedPath);
+    const fileName = path.basename(requestedPath);
+    const prompt = `${tool} wants to access a file outside the workspace:\n` +
+      `  ${requestedPath}\n\n` +
+      `Choose:\n` +
+      `  1) Grant access to this folder: ${dirName}/\n` +
+      `  2) Grant access to this folder and all subdirectories: ${dirName}/\n` +
+      `  3) Grant access to this file only: ${fileName}\n` +
+      `  4) Deny`;
+
+    const response = await this.question(prompt, 'lead');
+    const choice = response.trim();
+
+    // Parse user response
+    if (choice === '1') {
+      this.externalGrants.set(dirName, 'folder');
+      return { approved: true, resolvedPath: requestedPath };
+    } else if (choice === '2') {
+      this.externalGrants.set(dirName, 'folder_recursive');
+      return { approved: true, resolvedPath: requestedPath };
+    } else if (choice === '3') {
+      this.externalGrants.set(requestedPath, 'file');
+      return { approved: true, resolvedPath: requestedPath };
+    } else {
+      // 4 or any other response → deny
+      return { approved: false, resolvedPath: requestedPath, reason: 'Access denied by user' };
+    }
+  }
+
+  /**
+   * Check if a path is covered by an existing session-scoped grant.
+   * @returns The matching GrantScope, or undefined if no grant covers this path
+   */
+  private findExistingGrant(requestedPath: string): GrantScope | undefined {
+    // Check exact file grant
+    if (this.externalGrants.get(requestedPath) === 'file') {
+      return 'file';
+    }
+
+    // Check folder grants
+    for (const [grantedPath, scope] of this.externalGrants) {
+      if (scope === 'folder_recursive' && requestedPath.startsWith(grantedPath + path.sep)) {
+        return 'folder_recursive';
+      }
+      if (scope === 'folder_recursive' && requestedPath === grantedPath) {
+        return 'folder_recursive';
+      }
+      if (scope === 'folder' && path.dirname(requestedPath) === grantedPath) {
+        return 'folder';
+      }
+    }
+
+    return undefined;
   }
 
   /**

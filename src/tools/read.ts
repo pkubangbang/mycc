@@ -15,6 +15,7 @@ import * as path from 'path';
 import { filetypeinfo } from '../utils/magic-bytes.js';
 import type { ToolDefinition, AgentContext } from '../types.js';
 import { getTokenThreshold, isVerbose } from '../config.js';
+import { resolvePath } from '../utils/path.js';
 
 /** Hard-coded line limit to prevent context overflow */
 const LINE_LIMIT = 1000;
@@ -25,17 +26,6 @@ const LINE_LIMIT = 1000;
  */
 function getCharLimit(): number {
   return Math.floor(getTokenThreshold() / 2);
-}
-
-/**
- * Validate path doesn't escape workspace
- */
-function safePath(p: string, workdir: string): string {
-  const resolved = path.resolve(workdir, p);
-  if (!resolved.startsWith(workdir)) {
-    throw new Error(`Path escapes workspace: ${p}`);
-  }
-  return resolved;
 }
 
 /**
@@ -87,9 +77,11 @@ function detectFileType(filePath: string, buffer: Buffer): { isText: boolean; mi
 
 export const readTool: ToolDefinition = {
   name: 'read_file',
-  description: `Read file contents from the workspace. Paths use forward slashes and must be relative to workspace root.
+  description: `Read file contents from the workspace or external paths. Paths use forward slashes and can be relative to workspace root, absolute, or use ~ for home directory.
 
 Limits: reads first 1000 lines or half the token threshold (~1/8 of context window), whichever is smaller. Shows progress info (chars read / total chars, lines read / total lines) to help you decide next steps.
+
+Reading files outside the workspace requires user grant (session-scoped).
 
 Useful follow-ups for large files:
 - Use 'bash' with 'sed -n "start,end p"' to read specific line ranges
@@ -107,26 +99,35 @@ Useful follow-ups for large files:
     required: ['path'],
   },
   scope: ['main', 'child'],
-  handler: (ctx: AgentContext, args: Record<string, unknown>): string => {
+  handler: async (ctx: AgentContext, args: Record<string, unknown>): Promise<string> => {
     const filePath = args.path as string;
 
     try {
-      const safe = safePath(filePath, ctx.core.getWorkDir());
+      const resolved = resolvePath(filePath, ctx.core.getWorkDir());
+
+      // If path is outside workspace, request grant
+      const isExternal = !resolved.startsWith(ctx.core.getWorkDir());
+      if (isExternal) {
+        const access = await ctx.core.requestExternalPathAccess('read_file', resolved);
+        if (!access.approved) {
+          return `Error: ${access.reason || 'Access denied'}`;
+        }
+      }
 
       // Check if file exists
-      if (!fs.existsSync(safe)) {
+      if (!fs.existsSync(resolved)) {
         ctx.core.brief('error', 'read', `File not found: ${filePath}`);
         return `Error: File not found: ${filePath}`;
       }
 
       // Get file stats
-      const stats = fs.statSync(safe);
+      const stats = fs.statSync(resolved);
 
       // Read file as buffer first for type detection
-      const buffer = fs.readFileSync(safe);
+      const buffer = fs.readFileSync(resolved);
 
       // Detect file type
-      const typeInfo = detectFileType(safe, buffer);
+      const typeInfo = detectFileType(resolved, buffer);
       ctx.core.brief('info', 'read', `${filePath} (${typeInfo.isText ? 'text' : 'binary'})`);
 
       // Handle binary files

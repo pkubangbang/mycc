@@ -279,6 +279,26 @@ export interface CoreModule {
     intent?: string;
   }): Promise<{ approved: boolean; reason?: string }>;
   /**
+   * Request access to a file/directory outside the workspace (cwd).
+   *
+   * When a tool needs to read/write/edit a path outside the project workspace,
+   * this method asks the user for a session-scoped grant. The user can choose:
+   *   1. Grant access to the folder (non-recursive)
+   *   2. Grant access to the folder and all subdirectories
+   *   3. Grant access to this file only
+   *   4. Deny
+   *
+   * Grants are session-scoped and one-way open (never revoked).
+   *
+   * @param tool - The tool requesting external access
+   * @param requestedPath - The resolved absolute path to check/request access for
+   * @returns Result with approval status, resolved path, and optional reason
+   */
+  requestExternalPathAccess(
+    tool: 'read_file' | 'write_file' | 'edit_file',
+    requestedPath: string,
+  ): Promise<{ approved: boolean; resolvedPath: string; reason?: string }>;
+  /**
    * Get current agent mode ('plan' or 'normal')
    * Used by hooks to prevent false positives during planning
    * @returns 'plan' if in plan mode, 'normal' otherwise
