@@ -36,21 +36,19 @@ function getPlatformInfo(): { platform: string; shell: string; pathSep: string; 
 
 function buildIntentLanguageSection(): string {
   const lines: string[] = [];
-  const verbList = VALID_VERBS.join(', ');
-  const objectList = VALID_OBJECTS.join(', ');
 
-  lines.push('## Intent Language');
+  lines.push('## Intent Lang');
   lines.push('');
-  lines.push('Some tools (bash, etc.) require an `intent` parameter following this format:');
+  lines.push('When a tool requires an `intent` parameter, you MUST follow this format strictly:');
   lines.push('');
   lines.push('VERB OBJECT PARAM PARAM ... TO PURPOSE');
   lines.push('');
-  lines.push('**PARAM**: `key=value` pair describing the details of the OBJECT. Find suitable keys by yourself.');
-  lines.push('');
+  lines.push('where `PARAM` is a `key=value` pair to describe an aspect of the OBJECT. You choose the key.')
+  lines.push('The VERB and OBJECT MUST be chosen from the below table. You MUST NOT create your own.');
 
   // --- VERB table ---
-  lines.push(`**VERB** (choose one): ${verbList}`);
-  lines.push('');
+  lines.push(`### VERB`);
+  lines.push('IMPORTANT: you can only choose one from the table, you cannot create new word.');
   lines.push('| Verb | Meaning |');
   lines.push('|------|---------|');
   for (const v of VALID_VERBS) {
@@ -59,8 +57,8 @@ function buildIntentLanguageSection(): string {
   lines.push('');
 
   // --- OBJECT table ---
-  lines.push(`**OBJECT** (choose one): ${objectList}`);
-  lines.push('');
+  lines.push(`### OBJECT`);
+  lines.push('IMPORTANT: you can only choose one from the table, you cannot create new word.');
   lines.push('| Object | Meaning |');
   lines.push('|--------|---------|');
   for (const o of VALID_OBJECTS) {
