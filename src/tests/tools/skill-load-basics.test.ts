@@ -93,13 +93,13 @@ describe('skillLoadTool - Basics', () => {
     expect(ctx.skill.getSkill).toHaveBeenCalledWith('coordination');
   });
 
-  it('should call brief with skill name and intent', async () => {
+  it('should call brief with loaded skill name and intent', async () => {
     const skill = createSampleSkill();
     ctx = createMockContextWithSkills('/tmp/test', [skill]);
 
     await skillLoadTool.handler(ctx, { name: 'test-skill', intent: 'test purpose' });
 
-    expect(ctx.core.brief).toHaveBeenCalledWith('info', 'skill_load', 'test-skill', 'test purpose');
+    expect(ctx.core.brief).toHaveBeenCalledWith('info', 'skill_load', 'Loaded: test-skill', 'test purpose');
   });
 
   it('should handle skill with empty keywords', async () => {

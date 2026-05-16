@@ -42,12 +42,12 @@ Use this when:
     const skillName = args.name as string | undefined;
     const intent = args.intent as string;
 
-    ctx.core.brief('info', 'skill_load', skillName || '<discovery>', intent);
-
     // Case 1: Name provided - try exact match
     if (skillName) {
       const skill = ctx.skill.getSkill(skillName);
       if (skill) {
+        ctx.core.brief('info', 'skill_load', `Loaded: ${skillName}`, intent);
+
         // Try to re-index skill to wiki (best effort, may fail if no embedding model)
         try {
           const layer = loader.getSkillLayer(skillName) || 'project';
@@ -65,6 +65,7 @@ Use this when:
       }
 
       // No exact match found - instruct LLM to use intent-only mode
+      ctx.core.brief('warn', 'skill_load', `Not found: ${skillName}`, intent);
       return `ERROR: Skill '${skillName}' not found.
 
 Do not guess skill names. Instead, call skill_load again without the 'name' parameter, providing only the 'intent' parameter to discover relevant skills.
@@ -79,8 +80,17 @@ Example: skill_load(intent="${intent}")`;
       const results = await ctx.wiki.get(searchQuery, { domain: 'skills', topK: 3, threshold });
 
       if (results.length === 0) {
+        ctx.core.brief('warn', 'skill_load', 'No matches found', intent);
         return 'ERROR: No skills found matching your intent.\n\nNo skills are currently available in the knowledge base. Skills may need to be loaded or indexed first.';
       }
+
+      // Build a concise summary for the brief line showing matches and confidence
+      const matchSummary = results.map(r => {
+        const matchedName = r.document.title;
+        const pct = (r.similarity * 100).toFixed(0);
+        return `${matchedName} (${pct}%)`;
+      }).join(', ');
+      ctx.core.brief('info', 'skill_load', `→ ${matchSummary}`, intent);
 
       // Format suggestions with name and wiki content
       const suggestions = results.map(r => {
@@ -92,6 +102,7 @@ Example: skill_load(intent="${intent}")`;
       return `Found ${results.length} skill(s) matching your intent:\n\n---\n\n${suggestions}\n\n---\n\nTo load a specific skill, use: skill_load(name="<skill_name>", intent="...")`;
     } catch {
       // Semantic search failed (likely no embedding model)
+      ctx.core.brief('warn', 'skill_load', 'Search unavailable', intent);
       return 'ERROR: No skills found.\n\nSkill search is not available (embedding model may not be configured). Try providing a specific skill name if known.';
     }
   },
