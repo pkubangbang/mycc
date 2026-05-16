@@ -31,7 +31,7 @@ export const bashTool: ToolDefinition = {
       },
       intent: {
         type: 'string',
-        description: 'REQUIRED: Explain why this command is needed. This helps the system understand context and enables smarter output summarization when needed.',
+        description: 'REQUIRED: Explain why this command is needed. You MUST use the intent language to show your idea.',
       },
       timeout: {
         type: 'number',
@@ -52,14 +52,14 @@ export const bashTool: ToolDefinition = {
     const grant = await ctx.core.requestGrant('bash', { command, intent });
     if (!grant.approved) {
       const reason = grant.reason || 'Operation not permitted in current mode';
-      ctx.core.brief('error', 'bash', reason);
+      ctx.core.brief('error', 'bash', reason, 'the last bash call has error');
       return reason;
     }
 
     // Block direct git commit - must use git_commit tool
     if (/\bgit\s+commit\b/.test(command)) {
       const msg = 'Direct git commit is not allowed. Use the git_commit tool instead.';
-      ctx.core.brief('error', 'bash', msg);
+      ctx.core.brief('error', 'bash', msg, 'the last bash call has error');
       return `Error: ${msg}`;
     }
 
@@ -78,13 +78,13 @@ export const bashTool: ToolDefinition = {
       timedOut = result.timedOut;
     } catch (err) {
       const errorMsg = (err as Error).message;
-      ctx.core.brief('error', 'bash', `Failed to execute command: ${errorMsg}`);
+      ctx.core.brief('error', 'bash', `Failed to execute command: ${errorMsg}`, 'the last bash call has error');
       return `Error: ${errorMsg}`;
     }
 
     if (timedOut) {
       const msg = `timeout after ${timeoutSeconds} seconds`;
-      ctx.core.brief('warn', 'bash', msg);
+      ctx.core.brief('warn', 'bash', msg, 'the last bash call has timed out');
       return `Error: ${msg}. Use bg_create to run as a service, or set a longer timeout.`;
     }
 
@@ -103,7 +103,7 @@ export const bashTool: ToolDefinition = {
       parts.push(`Command failed (exit: ${exitCode})`);
       // Show error to user when command fails
       const errorDetail = stderr.trim() ? `: ${stderr.trim().split('\n')[0].slice(0, 200)}` : '';
-      ctx.core.brief('error', 'bash', `Command failed with exit code ${exitCode}${errorDetail}`);
+      ctx.core.brief('error', 'bash', `Command failed with exit code ${exitCode}${errorDetail}`, 'the last bash call has error');
     }
 
     // Output sections with clear labels
@@ -132,7 +132,7 @@ export const bashTool: ToolDefinition = {
       const summary = await summarizeOutput(output, intent, outputChars, ctx);
       return summary;
     } catch (err) {
-      ctx.core.brief('error', 'bash', `Failed to summarize output: ${(err as Error).message}`);
+      ctx.core.brief('error', 'bash', `Failed to summarize output: ${(err as Error).message}`, 'the last bash call has error');
       // Fall back to raw output instead of crashing
       return `[Summarization failed, showing raw output]\n\n${output}`;
     }
