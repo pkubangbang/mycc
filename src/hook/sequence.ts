@@ -225,6 +225,19 @@ export class Sequence {
    * Uses jsep AST parsing for safe evaluation (no Function constructor).
    */
   evaluate(expression: string): boolean {
+    return this.evaluateWithCall(expression, undefined);
+  }
+
+  /**
+   * Evaluate a condition expression with optional call context.
+   * When call context is provided, conditions can reference call.metadata.X
+   * and call.args.X for the current tool call being evaluated.
+   * Uses jsep AST parsing for safe evaluation (no Function constructor).
+   */
+  evaluateWithCall(
+    expression: string,
+    call?: { metadata?: Record<string, unknown>; args?: Record<string, unknown> }
+  ): boolean {
     // Create evaluation context
     const ctx: EvalContext = {
       has: (tool: string) => this.has(tool),
@@ -237,6 +250,7 @@ export class Sequence {
       since: (tool: string) => this.since(tool),
       sinceEdit: () => this.sinceEdit(),
       isPlanMode: () => this.isPlanMode(),
+      call,
     };
 
     return evaluateExpression(expression, ctx);

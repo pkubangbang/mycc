@@ -13,6 +13,7 @@
 
 import type { Condition, HookAction } from './conditions.js';
 import jsep from 'jsep';
+import { evaluateExpression } from './evaluator.js';
 
 /**
  * Minimal sequence interface for testing
@@ -471,6 +472,8 @@ export function validateCondition(condition: unknown): ValidationResult {
 
 /**
  * Test a condition expression against a sequence and optional call context
+ * Uses jsep AST evaluator (evaluator.ts) for safe evaluation
+ * without new Function(), preventing compiled-code memory leak.
  */
 export function testExpression(
   expression: string,
@@ -478,7 +481,8 @@ export function testExpression(
   callContext?: { metadata?: Record<string, unknown>; args?: Record<string, unknown> }
 ): TestResult {
   try {
-    const seqCtx = {
+    // Build EvalContext compatible with evaluator
+    const ctx = {
       has: (tool: string) => sequence.has(tool),
       hasAny: (tools: string[]) => sequence.hasAny(tools),
       hasCommand: (pattern: string) => sequence.hasCommand(pattern),
@@ -489,48 +493,22 @@ export function testExpression(
       since: (tool: string) => sequence.since(tool),
       sinceEdit: () => sequence.sinceEdit(),
       isPlanMode: () => sequence.isPlanMode(),
-    };
-
-    // Provide mock call context for call.metadata.X and call.args.X
-    const call = callContext || {
-      metadata: {
-        filePath: '/mock/test.ts',
-        newLoc: 100,
-        existingLoc: 50,
-        isDestructive: false,
-      },
-      args: {
-        command: 'mock command',
-        file_path: '/mock/test.ts',
-        content: 'mock content',
+      call: callContext || {
+        metadata: {
+          filePath: '/mock/test.ts',
+          newLoc: 100,
+          existingLoc: 50,
+          isDestructive: false,
+        },
+        args: {
+          command: 'mock command',
+          file_path: '/mock/test.ts',
+          content: 'mock content',
+        },
       },
     };
 
-    const jsExpr = expression
-      .replace(/seq\.has\(/g, 'has(')
-      .replace(/seq\.hasAny\(/g, 'hasAny(')
-      .replace(/seq\.hasCommand\(/g, 'hasCommand(')
-      .replace(/seq\.last\(/g, 'last(')
-      .replace(/seq\.lastError\(/g, 'lastError(')
-      .replace(/seq\.totalCount\(/g, 'totalCount(')
-      .replace(/seq\.count\(/g, 'count(')
-      .replace(/seq\.since\(/g, 'since(')
-      .replace(/seq\.sinceEdit\(/g, 'sinceEdit(')
-      .replace(/seq\.isPlanMode\(/g, 'isPlanMode(')
-      .replace(/call\.metadata\./g, 'call.metadata.')
-      .replace(/call\.args\./g, 'call.args.')
-      .replace(/call\.args\b/g, 'call.args');
-
-    const fn = new Function(
-      'has', 'hasAny', 'hasCommand', 'last', 'lastError', 'count', 'totalCount', 'since', 'sinceEdit', 'isPlanMode', 'call',
-      `"use strict"; return (${jsExpr});`
-    );
-
-    const result = fn(
-      seqCtx.has, seqCtx.hasAny, seqCtx.hasCommand, seqCtx.last, seqCtx.lastError,
-      seqCtx.count, seqCtx.totalCount, seqCtx.since, seqCtx.sinceEdit, seqCtx.isPlanMode, call
-    );
-
+    const result = evaluateExpression(expression, ctx);
     return { passed: true, evaluatedValue: Boolean(result) };
   } catch (err) {
     return { passed: false, error: err instanceof Error ? err.message : String(err) };

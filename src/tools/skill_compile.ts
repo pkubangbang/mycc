@@ -52,7 +52,7 @@ Returns the compiled condition with version history.`,
 
     // Check if skill has "when" field
     if (!skill.when) {
-      // Check if there's already a compiled condition
+      // Check if there's already a compiled condition (reuse the registry we'll load below)
       const conditions = new ConditionRegistry();
       await conditions.load();
       const existing = conditions.get(skillName);
@@ -68,7 +68,7 @@ Returns the compiled condition with version history.`,
       return `Error: Skill '${skillName}' has no "when" field. Only skills with "when" conditions can be compiled.`;
     }
 
-    // Get or create condition registry
+    // Get or create condition registry (single instance shared for the entire handler)
     const conditions = new ConditionRegistry();
     const loadResult = await conditions.load();
     

@@ -510,25 +510,15 @@ export class HookExecutor {
 
   /**
    * Evaluate a condition expression against sequence and call metadata.
+   * Uses the jsep AST evaluator (evaluator.ts) for safe evaluation
+   * without new Function(), preventing compiled-code memory leak.
    */
   private evaluateCondition(condition: string, call: AugmentedToolCall): boolean {
     try {
-      // Create evaluation context with seq and call
-      const seq = this.sequence;
-      const callContext = {
+      return this.sequence.evaluateWithCall(condition, {
         metadata: call.metadata || {},
         args: call.function.arguments,
-      };
-
-      // Transform condition: call.X → callContext.X
-      const expr = condition
-        .replace(/call\.metadata\./g, 'callContext.metadata.')
-        .replace(/call\.args\./g, 'callContext.args.')
-        .replace(/call\.args\b/g, 'callContext.args');
-
-      // Safely evaluate
-      const fn = new Function('seq', 'callContext', `return ${expr}`);
-      return fn(seq, callContext);
+      });
     } catch {
       return false;
     }
