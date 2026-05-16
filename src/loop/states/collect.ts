@@ -83,9 +83,7 @@ export async function handleCollect(
           .map((mail) => mail.content)
           .join('\n\n');
         parts.push(
-          '[Context suggestion] The following resources were discovered for your task.\n' +
-          'Consider using wiki_get and skill_load to explore them:\n\n' +
-          suggestContent
+          `[Context suggestion] The following resources were discovered for your task.\nConsider using wiki_get and skill_load to explore them:\n\n${suggestContent}`
         );
       }
 

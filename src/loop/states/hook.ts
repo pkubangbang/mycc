@@ -13,6 +13,7 @@ import chalk from 'chalk';
 import { AgentState } from '../state-machine.js';
 import type { MachineEnv, TurnVars, PassData, HandlerResult } from '../state-machine.js';
 import type { ToolCall } from '../../types.js';
+import type { AugmentedToolCall } from '../../hook/hook-executor.js';
 import { augmentToolCalls } from '../../hook/hook-preprocessor.js';
 import { agentIO } from '../agent-io.js';
 import { 
@@ -34,6 +35,143 @@ function createCheckpointContext(env: MachineEnv): CheckpointContext {
   };
 }
 
+/**
+ * Handle a checkpoint tool call.
+ * Creates a checkpoint marker, registers the tool response with triologue,
+ * and returns to COLLECT for the next round.
+ */
+async function handleCheckpointCall(
+  call: AugmentedToolCall,
+  env: MachineEnv,
+  pass: PassData,
+  turn: TurnVars,
+): Promise<HandlerResult> {
+  const { triologue, ctx } = env;
+
+  // Register the tool call
+  triologue.agent(pass.assistantContent, pass.rawToolCalls as ToolCall[] | undefined);
+
+  // Execute checkpoint using shared handler
+  const checkpointCtx = createCheckpointContext(env);
+  const result = handleCheckpoint(
+    call.function.arguments as Record<string, unknown>,
+    checkpointCtx,
+  );
+
+  // Add tool response
+  triologue.tool('checkpoint', result.result, call.id);
+
+  // Add checkpoint marker as user message if successful
+  if (result.success && result.id) {
+    addCheckpointMarker(triologue, result.id, result.description);
+  }
+
+  if (pass.assistantContent) {
+    ctx.core.brief('info', 'assistant', pass.assistantContent);
+  }
+
+  turn.isFirstRound = false;
+  return AgentState.COLLECT;
+}
+
+/**
+ * Handle a recap tool call.
+ * Finds the checkpoint, generates a summary (or abandons), compresses
+ * the triologue, and returns to COLLECT for the next round.
+ */
+async function handleRecapCall(
+  call: AugmentedToolCall,
+  env: MachineEnv,
+  pass: PassData,
+  turn: TurnVars,
+): Promise<HandlerResult> {
+  const { triologue, ctx } = env;
+
+  // Show assistant text content if any
+  if (pass.assistantContent) {
+    ctx.core.brief('info', 'assistant', pass.assistantContent);
+  }
+
+  // Validate and extract checkpoint + messages
+  const recapArgs = call.function.arguments as Record<string, unknown>;
+  const checkpointId = recapArgs.checkpoint_id as string;
+  const abandon = recapArgs.abandon === true;
+  const comment = typeof recapArgs.comment === 'string' && recapArgs.comment.trim()
+    ? recapArgs.comment.trim()
+    : undefined;
+
+  if (!checkpointId || typeof checkpointId !== 'string' || checkpointId.trim() === '') {
+    triologue.agent(pass.assistantContent, pass.rawToolCalls as ToolCall[] | undefined);
+    triologue.tool('recap', 'Error: checkpoint_id is required and must be a non-empty string.', call.id);
+    turn.isFirstRound = false;
+    return AgentState.COLLECT;
+  }
+
+  const checkpoint = triologue.findCheckpointById(checkpointId);
+  if (!checkpoint) {
+    triologue.agent(pass.assistantContent, pass.rawToolCalls as ToolCall[] | undefined);
+    const allCheckpoints = triologue.findAllCheckpoints();
+    const msg = allCheckpoints.length === 0
+      ? 'Error: No checkpoint found.'
+      : `Error: Checkpoint "${checkpointId}" not found. Available: ${allCheckpoints.map(cp => `[${cp.id}: ${cp.description}]`).join(', ')}`;
+    triologue.tool('recap', msg, call.id);
+    turn.isFirstRound = false;
+    return AgentState.COLLECT;
+  }
+
+  const messages = triologue.getMessagesFrom(checkpoint.index);
+  const tokensBefore = triologue.getTokenCount();
+
+  if (abandon) {
+    // Abandon: discard messages, append ?recap + !recap (abandon marker)
+    triologue.recapMessages(checkpoint.index);
+    triologue.agent(pass.assistantContent, pass.rawToolCalls as ToolCall[] | undefined);
+    const abandonResult = `[RECAP] Abandoned checkpoint "${checkpoint.description}"\n\n${messages.length} messages discarded. Checkpoint closed.${comment ? `\n\nComment: ${comment}` : ''}\n\nNote: the checkpoint todo item was auto-created with this checkpoint's ID as its note. Use todo_update to mark it as done.`;
+    triologue.tool('recap', abandonResult, call.id);
+
+    const tokensAfter = triologue.getTokenCount();
+    const coloredBefore = chalk.yellow(tokensBefore.toLocaleString());
+    const coloredAfter = chalk.green(tokensAfter.toLocaleString());
+    ctx.core.brief('info', 'recap',
+      `(${coloredBefore} → ${coloredAfter} tokens)`,
+      `Abandoned: ${checkpoint.description}${comment ? ` — ${comment}` : ''}`
+    );
+
+    turn.isFirstRound = false;
+    return AgentState.COLLECT;
+  }
+
+  // Normal: generate summary, then slice + append ?recap + !recap
+  const escAware = <T>(fn: (ac: AbortController) => Promise<T>, cleanup: () => T): Promise<T> => {
+    return ctx.core.escAware(fn, cleanup);
+  };
+  const summary = await handleRecap(messages, checkpoint.description, escAware, comment);
+
+  // Check for ESC cancellation (summary starts with cancellation marker)
+  if (summary.startsWith('[RECAP] Cancelled:')) {
+    triologue.agent(pass.assistantContent, pass.rawToolCalls as ToolCall[] | undefined);
+    triologue.tool('recap', summary, call.id);
+    ctx.core.brief('warn', 'recap', summary);
+    turn.isFirstRound = false;
+    return AgentState.COLLECT;
+  }
+
+  triologue.recapMessages(checkpoint.index);
+  triologue.agent(pass.assistantContent, pass.rawToolCalls as ToolCall[] | undefined);
+  triologue.tool('recap', summary, call.id);
+
+  const tokensAfter = triologue.getTokenCount();
+  const coloredBefore = chalk.yellow(tokensBefore.toLocaleString());
+  const coloredAfter = chalk.green(tokensAfter.toLocaleString());
+  ctx.core.brief('info', 'recap',
+    `(${coloredBefore} → ${coloredAfter} tokens)`,
+    `${checkpoint.description}${comment ? ` — ${comment}` : ''}`
+  );
+
+  turn.isFirstRound = false;
+  return AgentState.COLLECT;
+}
+
 export async function handleHook(
   env: MachineEnv,
   turn: TurnVars,
@@ -42,11 +180,11 @@ export async function handleHook(
   const { triologue, ctx, hookExecutor } = env;
 
   try {
-    // Augment tool calls with metadata (file paths, LOC, destructive detection)
+    // 1. Augment tool calls with metadata (file paths, LOC, destructive detection)
     const augmentedCalls = augmentToolCalls(pass.rawToolCalls);
     pass.augmentedCalls = augmentedCalls;
 
-    // Validate checkpoint isolation (must be called alone)
+    // 2. Validate checkpoint isolation (must be called alone)
     const checkpointValidation = validateCheckpointIsolation(augmentedCalls);
     if (!checkpointValidation.valid) {
       // Block all calls with the error message
@@ -54,129 +192,13 @@ export async function handleHook(
       for (const call of augmentedCalls) {
         triologue.tool(call.function.name, checkpointValidation.message!, call.id);
       }
-      
+
       agentIO.log(chalk.yellow(`[checkpoint] blocked: ${checkpointValidation.message}`));
       return AgentState.STOP;
     }
 
-    // Handle meta-tools (checkpoint and recap) - they need triologue access
-    const checkpointCall = augmentedCalls.find(c => c.function.name === 'checkpoint');
-    const recapCall = augmentedCalls.find(c => c.function.name === 'recap');
-
-    if (checkpointCall) {
-      // Register the tool call
-      triologue.agent(pass.assistantContent, pass.rawToolCalls as ToolCall[] | undefined);
-
-      // Execute checkpoint using shared handler
-      const checkpointCtx = createCheckpointContext(env);
-      const result = handleCheckpoint(
-        checkpointCall.function.arguments as Record<string, unknown>,
-        checkpointCtx
-      );
-
-      // Add tool response
-      triologue.tool('checkpoint', result.result, checkpointCall.id);
-
-      // Add checkpoint marker as user message if successful
-      if (result.success && result.id) {
-        addCheckpointMarker(triologue, result.id, result.description);
-      }
-
-      if (pass.assistantContent) {
-        ctx.core.brief('info', 'assistant', pass.assistantContent);
-      }
-
-      turn.isFirstRound = false;
-      return AgentState.COLLECT;
-    }
-
-    if (recapCall) {
-      // Show assistant text content if any
-      if (pass.assistantContent) {
-        ctx.core.brief('info', 'assistant', pass.assistantContent);
-      }
-
-      // Validate and extract checkpoint + messages
-      const recapArgs = recapCall.function.arguments as Record<string, unknown>;
-      const checkpointId = recapArgs.checkpoint_id as string;
-      const abandon = recapArgs.abandon === true;
-      const comment = typeof recapArgs.comment === 'string' && recapArgs.comment.trim()
-        ? recapArgs.comment.trim()
-        : undefined;
-
-      if (!checkpointId || typeof checkpointId !== 'string' || checkpointId.trim() === '') {
-        triologue.agent(pass.assistantContent, pass.rawToolCalls as ToolCall[] | undefined);
-        triologue.tool('recap', 'Error: checkpoint_id is required and must be a non-empty string.', recapCall.id);
-        turn.isFirstRound = false;
-        return AgentState.COLLECT;
-      }
-
-      const checkpoint = triologue.findCheckpointById(checkpointId);
-      if (!checkpoint) {
-        triologue.agent(pass.assistantContent, pass.rawToolCalls as ToolCall[] | undefined);
-        const allCheckpoints = triologue.findAllCheckpoints();
-        const msg = allCheckpoints.length === 0
-          ? 'Error: No checkpoint found.'
-          : `Error: Checkpoint "${checkpointId}" not found. Available: ${allCheckpoints.map(cp => `[${cp.id}: ${cp.description}]`).join(', ')}`;
-        triologue.tool('recap', msg, recapCall.id);
-        turn.isFirstRound = false;
-        return AgentState.COLLECT;
-      }
-
-      const messages = triologue.getMessagesFrom(checkpoint.index);
-      const tokensBefore = triologue.getTokenCount();
-
-      if (abandon) {
-        // Abandon: discard messages, append ?recap + !recap (abandon marker)
-        triologue.recapMessages(checkpoint.index);
-        triologue.agent(pass.assistantContent, pass.rawToolCalls as ToolCall[] | undefined);
-        const abandonResult = `[RECAP] Abandoned checkpoint "${checkpoint.description}"\n\n${messages.length} messages discarded. Checkpoint closed.${comment ? `\n\nComment: ${comment}` : ''}\n\nNote: the checkpoint todo item was auto-created with this checkpoint's ID as its note. Use todo_update to mark it as done.`;
-        triologue.tool('recap', abandonResult, recapCall.id);
-
-        const tokensAfter = triologue.getTokenCount();
-        const coloredBefore = chalk.yellow(tokensBefore.toLocaleString());
-        const coloredAfter = chalk.green(tokensAfter.toLocaleString());
-        ctx.core.brief('info', 'recap',
-          `(${coloredBefore} → ${coloredAfter} tokens)`,
-          `Abandoned: ${checkpoint.description}${comment ? ` — ${comment}` : ''}`
-        );
-
-        turn.isFirstRound = false;
-        return AgentState.COLLECT;
-      }
-
-      // Normal: generate summary, then slice + append ?recap + !recap
-      const escAware = <T>(fn: (ac: AbortController) => Promise<T>, cleanup: () => T): Promise<T> => {
-        return ctx.core.escAware(fn, cleanup);
-      };
-      const summary = await handleRecap(messages, checkpoint.description, escAware, comment);
-
-      // Check for ESC cancellation (summary starts with cancellation marker)
-      if (summary.startsWith('[RECAP] Cancelled:')) {
-        triologue.agent(pass.assistantContent, pass.rawToolCalls as ToolCall[] | undefined);
-        triologue.tool('recap', summary, recapCall.id);
-        ctx.core.brief('warn', 'recap', summary);
-        turn.isFirstRound = false;
-        return AgentState.COLLECT;
-      }
-
-      triologue.recapMessages(checkpoint.index);
-      triologue.agent(pass.assistantContent, pass.rawToolCalls as ToolCall[] | undefined);
-      triologue.tool('recap', summary, recapCall.id);
-
-      const tokensAfter = triologue.getTokenCount();
-      const coloredBefore = chalk.yellow(tokensBefore.toLocaleString());
-      const coloredAfter = chalk.green(tokensAfter.toLocaleString());
-      ctx.core.brief('info', 'recap',
-        `(${coloredBefore} → ${coloredAfter} tokens)`,
-        `${checkpoint.description}${comment ? ` — ${comment}` : ''}`
-      );
-
-      turn.isFirstRound = false;
-      return AgentState.COLLECT;
-    }
-
-    // Process hooks (block/replace/inject/message)
+    // 3. Process hooks (block/replace/inject/message) — moved before meta-tools
+    //    so hooks can also fire on checkpoint/recap calls.
     const hookResult = await hookExecutor.processToolCalls(
       augmentedCalls,
       ctx,
@@ -184,7 +206,19 @@ export async function handleHook(
     );
     pass.hookResult = hookResult;
 
-    // Register agent response with triologue (using manipulated tool calls)
+    // 4. Dispatch meta-tools (checkpoint and recap) from hook result
+    //    Guard against blocked meta-calls so the agent sees the rejection.
+    const checkpointCall = hookResult.calls.find(c => c.function.name === 'checkpoint');
+    if (checkpointCall && !hookResult.blockedCalls.has(checkpointCall.id)) {
+      return handleCheckpointCall(checkpointCall, env, pass, turn);
+    }
+
+    const recapCall = hookResult.calls.find(c => c.function.name === 'recap');
+    if (recapCall && !hookResult.blockedCalls.has(recapCall.id)) {
+      return handleRecapCall(recapCall, env, pass, turn);
+    }
+
+    // 5. Register agent response with triologue (using manipulated tool calls)
     const finalToolCalls =
       hookResult.calls.length > 0
         ? hookResult.calls.map((c) => ({ id: c.id, function: c.function }))

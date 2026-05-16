@@ -285,19 +285,18 @@ export class HookExecutor {
   }
 
   /**
-   * Just inject a message (weak action)
+   * Add a message inside the triologue on behalf of the user.
+   * This is the weakest hook action — it does not modify tool calls,
+   * but surfaces a suggestion to the agent via a user-role message.
    */
   private async message(
     skillName: string,
     _skillContent: string,
-    cond?: Condition
+    _cond?: Condition
   ): Promise<HookResult> {
-    const whenText = cond?.when ?? 'unknown condition';
-    const conditionExpr = cond?.condition ?? 'unknown';
-
     return {
       action: 'proceed',
-      message: `[Hook: ${skillName}]\nWhen: "${whenText}"\nExpr: ${conditionExpr}`,
+      message: `A skill called "${skillName}" seems suitable for your task, consider use it by skill_load("${skillName}")`,
     };
   }
 
