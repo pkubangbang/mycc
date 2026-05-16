@@ -126,8 +126,10 @@ export async function openEditor(files: string[], options?: { editor?: string })
         });
       });
     } else {
-      // For GUI editors, launch detached (don't wait)
-      const proc = spawn(editor.binary, args, { ...spawnOptions, detached: true });
+      // For GUI editors, launch without waiting (they outlive the parent anyway).
+      // Do NOT use detached: true — it breaks GApplication-based editors (e.g.,
+      // gnome-text-editor) that rely on D-Bus activation during startup.
+      const proc = spawn(editor.binary, args, spawnOptions);
       proc.unref();
     }
   } catch (err) {

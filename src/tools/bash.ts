@@ -103,7 +103,6 @@ export const bashTool: ToolDefinition = {
       parts.push(`Command failed (exit: ${exitCode})`);
       // Show error to user when command fails
       const errorDetail = stderr.trim() ? `: ${stderr.trim().split('\n')[0].slice(0, 200)}` : '';
-      ctx.core.brief('error', 'bash', `Command failed with exit code ${exitCode}${errorDetail}`, 'the last bash call has error');
     }
 
     // Output sections with clear labels

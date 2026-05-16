@@ -60,7 +60,7 @@ function writeMultilineFile(content: string): string {
   }
 
   const timestamp = Math.floor(Date.now() / 1000);
-  const filePath = path.join(tempDir, `input-${timestamp}.md`);
+  const filePath = path.join(tempDir, `input-${timestamp}-${process.pid}.md`);
   fs.writeFileSync(filePath, content, 'utf-8');
 
   return filePath;
@@ -98,7 +98,12 @@ export async function openMultilineEditor(initialContent: string): Promise<{ act
 
     if (answer.trim().toLowerCase() === 'r') {
       // User wants to reload: read current file content, return as reload action
-      const currentContent = fs.readFileSync(filePath, 'utf-8');
+      let currentContent: string;
+      try {
+        currentContent = fs.readFileSync(filePath, 'utf-8');
+      } catch {
+        currentContent = '';
+      }
       const reloaded = extractContent(currentContent);
 
       // Cleanup temp file
@@ -115,7 +120,12 @@ export async function openMultilineEditor(initialContent: string): Promise<{ act
   // User pressed Enter: read final content and submit
 
   // Read and extract content
-  const editedContent = fs.readFileSync(filePath, 'utf-8');
+  let editedContent: string;
+  try {
+    editedContent = fs.readFileSync(filePath, 'utf-8');
+  } catch {
+    return { action: 'submit', content: '' };
+  }
   const result = extractContent(editedContent);
 
   // Cleanup temp file
