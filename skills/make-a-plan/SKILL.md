@@ -34,6 +34,30 @@ keywords: [planning, coding, workflow, best-practices]
 This skill guides the agent in creating structured plans for coding tasks.
 
 
+## Plan Mode Integration
+
+Use `plan_on` to enter a restricted mode where code changes are prohibited while planning:
+
+```
+# Enter plan mode (strict - no code changes allowed)
+plan_on()
+
+# Enter plan mode with an allowed file (e.g., a planning doc)
+plan_on(allowed_file="docs/design.md")
+```
+
+When planning is complete and you're ready to implement, use `plan_off` to exit plan mode:
+
+```
+# Exit plan mode (requires user confirmation)
+plan_off()
+```
+
+**Why use plan mode:**
+- Prevents accidental code changes while discussing the plan
+- User can approve the plan before any edits happen
+- `plan_off` requires explicit user confirmation [y/N] to exit
+
 ## General Workflow
 
 Planning is a two-sided process: **user alignment first, then structured planning**.
@@ -152,7 +176,7 @@ Use PEX selectively (not required for simple tasks).
 
 **Actions**:
 1. Restate first task
-2. Create task tracking (todo list)
+2. Create task tracking (use `issue_create` for complex tasks, `todo_create` for simple tracking)
 3. Start from smallest atomic task
 4. Report progress incrementally
 
@@ -161,6 +185,7 @@ Use PEX selectively (not required for simple tasks).
 ## Anti-Patterns (Avoid)
 
 - Starting coding without confirmed assumptions
+- Making code changes during planning — use `plan_on` first
 - Vague tasks like "implement feature"
 - Missing acceptance criteria
 - Making irreversible design decisions without user input

@@ -63,66 +63,94 @@ mv .mycc/skills/skill-name skills/
 
 ## Tool Development Process
 
+Tools follow the `ToolDefinition` interface pattern — a plain object with `name`, `description`, `input_schema`, `scope`, and `handler`.
+
 ### Step 1: Create Prototype
 
-Create the tool in `.mycc/tools/`:
+Create the tool in `.mycc/tools/` as a `.ts` file:
 
 ```typescript
 // .mycc/tools/my-tool.ts
-import { Tool } from '../../tools/base';
+import type { ToolDefinition, AgentContext } from '../../src/types.js';
 
-export class MyTool extends Tool {
-  name = 'my-tool';
-  description = 'Description for RAG search (< 800 tokens)';
-  
-  async execute(params: any): Promise<any> {
-    // Implementation
-  }
-}
+export const myTool: ToolDefinition = {
+  name: 'my_tool',
+  description: 'Description for the tool — what it does and when to use it.',
+  input_schema: {
+    type: 'object',
+    properties: {
+      param1: {
+        type: 'string',
+        description: 'Description of param1',
+      },
+    },
+    required: ['param1'],
+  },
+  // scope: where this tool is available
+  //   ['main'] — only lead agent
+  //   ['main', 'child'] — both lead and teammates
+  scope: ['main'],
+  handler: async (ctx: AgentContext, args: Record<string, unknown>): Promise<string> => {
+    const param1 = args.param1 as string;
+
+    // Validate
+    if (!param1) {
+      return 'Error: param1 is required';
+    }
+
+    // Report via brief
+    ctx.core.brief('info', 'my_tool', `Processing with param1: ${param1}`);
+
+    // Implementation...
+    const result = `Result: ${param1}`;
+    return result;
+  },
+};
 ```
 
-### Step 2: Register Prototype
+**Key rules:**
+- The file must `export` a `ToolDefinition` object
+- Use `name`, `description`, `input_schema`, `scope`, `handler`
+- `scope`: `['main']` for lead-only, `['main', 'child']` for all agents
+- `handler` signature: `(ctx: AgentContext, args: Record<string, unknown>) => Promise<string> | string`
+- Always validate required parameters
+- Use `ctx.core.brief()` for status updates
 
-Add to `.mycc/tools/index.ts`:
+### Step 2: Test Iteratively
 
-```typescript
-import { MyTool } from './my-tool';
-
-export const myccTools = [
-  // ... existing tools
-  new MyTool(),
-];
-```
-
-### Step 3: Test Iteratively
-
+- Place the file in `.mycc/tools/` — it will be auto-loaded (hot-reload supported)
 - Test the tool with various inputs
 - Let user test and provide feedback
 - Fix issues and improve
 - Update documentation
 
-### Step 4: Migrate When Approved
+### Step 3: Migrate When Approved
 
 When user approves:
 
 ```bash
-# Move tool file
-mv .mycc/tools/my-tool.ts tools/
+# Move tool file to built-in directory
+mv .mycc/tools/my-tool.ts src/tools/
 
-# Update imports in tools/index.ts
-# Remove from .mycc/tools/index.ts
+# Register in loader.ts:
+# 1. Add import: import { myTool } from '../../tools/my-tool.js';
+# 2. Add to builtInTools array
 ```
 
-### Step 5: Register in Built-in
+### Step 4: Register in Built-in
 
-Add to `tools/index.ts`:
+In `src/context/shared/loader.ts`:
 
+1. Add the import at the top:
 ```typescript
-import { MyTool } from './my-tool';
+import { myTool } from '../../tools/my-tool.js';
+```
 
-export const builtInTools = [
+2. Add to the `builtInTools` array:
+```typescript
+const builtInTools: ToolDefinition[] = [
   // ... existing tools
-  new MyTool(),
+  myTool,
 ];
 ```
 
@@ -168,20 +196,22 @@ Test that the skill loads correctly from the new location.
 ### Tools
 
 ```
-.mycc/tools/          # Prototype tools (testing)
+.mycc/tools/          # Prototype tools (testing, auto-loaded, hot-reload)
 ├── my-tool.ts
-└── index.ts
 
-tools/                 # Built-in tools (stable)
+src/tools/            # Built-in tools (stable, registered in loader.ts)
 ├── bash.ts
 ├── read_file.ts
-└── index.ts
+├── ... (all built-in tools)
+└── my-tool.ts        # (after migration)
+
+src/context/shared/loader.ts  # Tool registration (builtInTools array)
 ```
 
 ### Skills
 
 ```
-.mycc/skills/          # Prototype skills (testing)
+.mycc/skills/          # Prototype skills (testing, auto-loaded, hot-reload)
 └── my-skill/
     └── SKILL.md
 
@@ -189,6 +219,10 @@ skills/                # Built-in skills (stable)
 ├── create-skill/
 │   └── SKILL.md
 └── coordination/
+    └── SKILL.md
+
+~/.mycc-store/skills/  # User-level skills (shared across projects)
+└── my-global-skill/
     └── SKILL.md
 ```
 

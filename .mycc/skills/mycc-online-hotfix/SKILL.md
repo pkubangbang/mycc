@@ -72,7 +72,7 @@ edit_file path: "src/tools/xxx.ts"
 
 Always run typecheck after editing:
 ```
-npm run typecheck
+pnpm typecheck
 ```
 
 ### Step 3: Test with bash + tmux
@@ -192,7 +192,7 @@ const gitPath = process.platform === 'win32'
 edit_file path: "src/tools/git_commit.ts"
 
 # 2. Verify
-npm run typecheck
+pnpm typecheck
 
 # 3. Create tmux session and start mycc (using bash tool, NOT hand_over)
 bash command: "tmux new-session -s mycc-test -d -x 120 -y 40"
