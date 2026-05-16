@@ -64,7 +64,7 @@ export async function handleLlm(
               model: MODEL,
               messages: triologue.getMessages(),
               tools,
-              think: agentIO.isNeglectedMode(),
+              think: agentIO.isNeglectedMode() || isInPlanMode(ctx),
             },
             { signal: abortController.signal, neglected: agentIO.isNeglectedMode() },
           );
