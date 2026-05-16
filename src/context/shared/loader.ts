@@ -10,6 +10,46 @@ import matter from 'gray-matter';
 import { agentIO } from '../../loop/agent-io.js';
 import { resolveToSkillPath, type SkillLayer } from '../../utils/skill-path-resolver.js';
 
+/**
+ * Invalidate a module from the ESM cache by its file path.
+ * Uses Node.js internal module cache to remove stale entries,
+ * avoiding the memory leak caused by cache-busting with ?t= query strings.
+ *
+ * After invalidation, the next import() of the same file will load a fresh copy.
+ */
+function invalidateEsmCache(filepath: string): void {
+  // Access the CJS module cache — removing from this cache also affects
+  // ESM dynamic imports when the file is a CommonJS or transpiled module.
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const Module = require('module') as {
+    _cache: Record<string, unknown>;
+  };
+  const key = pathToFileURL(path.resolve(filepath)).href;
+  delete Module._cache[key];
+}
+
+/**
+ * Debounce helper: returns a function that wraps the callback,
+ * ensuring it only fires once within `delay` ms for the same key.
+ */
+function debounce<T extends (...args: Parameters<T>) => void>(
+  fn: T,
+  delay: number,
+): (key: string, ...args: Parameters<T>) => void {
+  const timers = new Map<string, ReturnType<typeof setTimeout>>();
+  return (key: string, ...args: Parameters<T>) => {
+    const existing = timers.get(key);
+    if (existing) clearTimeout(existing);
+    timers.set(
+      key,
+      setTimeout(() => {
+        timers.delete(key);
+        fn(...args);
+      }, delay),
+    );
+  };
+}
+
 // Package root: resolve up from this file (src/context/shared/loader.ts or dist/context/shared/loader.js)
 const packageRoot = path.resolve(fileURLToPath(import.meta.url), '..', '..', '..', '..');
 import type { DynamicLoader, ToolDefinition, Skill, Tool, ToolScope, AgentContext, SkillModule, WikiModule, WikiDocument } from '../../types.js';
@@ -189,7 +229,8 @@ export class Loader implements DynamicLoader, SkillModule {
   private async loadUserTool(filepath: string, layer: Layer): Promise<void> {
     try {
       const modulePath = pathToFileURL(filepath).href;
-      const module = await import(`${modulePath}?t=${Date.now()}`);
+      invalidateEsmCache(filepath);
+      const module = await import(modulePath);
       const tool = module.default as ToolDefinition;
 
       if (!tool || !tool.name) {
@@ -261,13 +302,14 @@ export class Loader implements DynamicLoader, SkillModule {
    */
   private async reloadTool(filepath: string, isInitialLoad: boolean = false): Promise<void> {
     try {
-      // Use dynamic import with cache-busting
+      // Invalidate ESM cache before re-importing to get fresh module
+      // without relying on cache-busting query strings which leak memory
+      invalidateEsmCache(filepath);
       const modulePath = path.isAbsolute(filepath)
         ? pathToFileURL(filepath).href
         : pathToFileURL(path.resolve(filepath)).href;
 
-      // Add timestamp to bust cache
-      const module = await import(`${modulePath}?t=${Date.now()}`);
+      const module = await import(modulePath);
       const tool = module.default as ToolDefinition;
 
       if (!tool || !tool.name) {
@@ -450,27 +492,48 @@ export class Loader implements DynamicLoader, SkillModule {
    * - .mycc/tools/ - project tools (hot-reloadable)
    * - .mycc/skills/ - project skills (hot-reloadable)
    * Built-in tools/skills and user tools/skills are static and don't need watching.
+   *
+   * Re-entry safe: closes any existing watchers before creating new ones.
    */
   watchDirectories(): void {
+    // Close any existing watchers first (re-entry safe)
+    this.stopWatching();
+
     const toolsDir = getToolsDir();
     const skillsDir = getSkillsDir();
 
+    // Debounce tool reloads — fs.watch can fire multiple events per save
+    const debouncedReloadTool = debounce(
+      (filepath: string) => {
+        void this.reloadTool(filepath);
+      },
+      300,
+    );
+
+    // Debounce skill reloads
+    const debouncedReloadSkill = debounce(
+      (filepath: string) => {
+        this.reloadSkill(filepath, 'project');
+      },
+      300,
+    );
+
     // Watch .mycc/tools/ for project tool changes
     if (fs.existsSync(toolsDir)) {
-      this.toolWatcher = watch(toolsDir, async (event, filename) => {
+      this.toolWatcher = watch(toolsDir, (_event, filename) => {
         if (filename && (filename.endsWith('.ts') || filename.endsWith('.js'))) {
           const filepath = path.join(toolsDir, filename);
           if (!this.silent) {
             agentIO.verbose('loader', `Reloading tool: ${filename}`);
           }
-          await this.reloadTool(filepath);
+          debouncedReloadTool(filepath, filepath);
         }
       });
     }
 
     // Watch .mycc/skills/ for project skill changes (recursive for subdirectories)
     if (fs.existsSync(skillsDir)) {
-      this.skillWatcher = watch(skillsDir, { recursive: true }, (event, filename) => {
+      this.skillWatcher = watch(skillsDir, { recursive: true }, (_event, filename) => {
         if (filename && filename.endsWith('.md')) {
           // Only load valid entrypoints:
           // - Root level: any *.md file
@@ -481,9 +544,9 @@ export class Loader implements DynamicLoader, SkillModule {
           if (isRootLevel || isSkillEntrypoint) {
             const filepath = path.join(skillsDir, filename);
             if (!this.silent) {
-            agentIO.verbose('loader', `Reloading skill: ${filename}`);
-          }
-            this.reloadSkill(filepath, 'project');
+              agentIO.verbose('loader', `Reloading skill: ${filename}`);
+            }
+            debouncedReloadSkill(filepath, filepath);
           }
         }
       });
