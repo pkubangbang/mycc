@@ -23,6 +23,31 @@ export const READ_ONLY_VERBS = ['READ', 'TEST'] as const;
 
 export const MUTATION_VERBS = ['WRITE', 'EDIT', 'DELETE', 'BUILD', 'INSTALL'] as const;
 
+// ============================================================================
+// Semantic tables (for dynamic prompt generation)
+// ============================================================================
+
+export const VERB_MEANINGS: Record<string, string> = {
+  READ: 'Inspect or retrieve existing content',
+  WRITE: 'Create or overwrite content',
+  EDIT: 'Modify existing content in-place',
+  DELETE: 'Remove files, packages, or resources',
+  BUILD: 'Compile, transpile, or transform source',
+  TEST: 'Verify correctness or behavior',
+  INSTALL: 'Fetch and set up dependencies',
+  RUN: 'Execute a command or process',
+};
+
+export const OBJECT_MEANINGS: Record<string, string> = {
+  SOURCE: 'Source code files (*.ts, *.js, etc.)',
+  CONFIG: 'Configuration files and environment settings',
+  DEPENDENCY: 'Third-party packages and libraries',
+  ARTIFACT: 'Build outputs, binaries, and generated files',
+  SYSTEM: 'OS-level operations and environment state',
+  DATA: 'Data files, databases, and structured content',
+  TEMP: 'Temporary or intermediate files',
+};
+
 /**
  * Parse intent string into structured format.
  * Returns null if parsing fails.

@@ -5,6 +5,12 @@
 import * as os from 'os';
 import type { AgentContext } from '../types.js';
 import type { Core } from '../context/parent/core.js';
+import {
+  VALID_VERBS,
+  VALID_OBJECTS,
+  VERB_MEANINGS,
+  OBJECT_MEANINGS,
+} from '../context/grant/intent-parser.js';
 
 // ============================================================================
 // Platform Detection
@@ -22,6 +28,55 @@ function getPlatformInfo(): { platform: string; shell: string; pathSep: string; 
     home: os.homedir(),
     escapeChar: isWin ? 'caret (^)' : 'backslash (\\)',
   };
+}
+
+// ============================================================================
+// Intent Language Section (shared across all prompts)
+// ============================================================================
+
+function buildIntentLanguageSection(): string {
+  const lines: string[] = [];
+  const verbList = VALID_VERBS.join(', ');
+  const objectList = VALID_OBJECTS.join(', ');
+
+  lines.push('## Intent Language');
+  lines.push('');
+  lines.push('Some tools (bash, etc.) require an `intent` parameter following this format:');
+  lines.push('');
+  lines.push('VERB OBJECT PARAM PARAM ... TO PURPOSE');
+  lines.push('');
+  lines.push('**PARAM**: `key=value` pair describing the details of the OBJECT. Find suitable keys by yourself.');
+  lines.push('');
+
+  // --- VERB table ---
+  lines.push(`**VERB** (choose one): ${verbList}`);
+  lines.push('');
+  lines.push('| Verb | Meaning |');
+  lines.push('|------|---------|');
+  for (const v of VALID_VERBS) {
+    lines.push(`| ${v} | ${VERB_MEANINGS[v] || ''} |`);
+  }
+  lines.push('');
+
+  // --- OBJECT table ---
+  lines.push(`**OBJECT** (choose one): ${objectList}`);
+  lines.push('');
+  lines.push('| Object | Meaning |');
+  lines.push('|--------|---------|');
+  for (const o of VALID_OBJECTS) {
+    lines.push(`| ${o} | ${OBJECT_MEANINGS[o] || ''} |`);
+  }
+  lines.push('');
+
+  // --- Examples ---
+  lines.push('### Examples');
+  lines.push('- `READ SOURCE dir=src TO understand dependencies`');
+  lines.push('- `RUN SYSTEM TO check git status`');
+  lines.push('- `INSTALL DEPENDENCY TO set up project prerequisites`');
+  lines.push('- `BUILD ARTIFACT TO verify compilation`');
+  lines.push('- `WRITE CONFIG path=.env TO update environment settings`');
+
+  return lines.join('\n');
 }
 
 // ============================================================================
@@ -140,6 +195,8 @@ function buildCommonSections(): string {
     buildVerificationSection(),
     '',
     buildPlatformSection(),
+    '',
+    buildIntentLanguageSection(),
     '',
     buildCalendarSection(),
     '',
