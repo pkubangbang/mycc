@@ -237,6 +237,6 @@ Note: the checkpoint todo item was auto-created with this checkpoint's ID as its
  * Add checkpoint marker as user message (to be called after tool response)
  */
 export function addCheckpointMarker(triologue: Triologue, id: string, description: string): void {
-  triologue.user(`[CHECKPOINT ${id}: ${description}]`);
+  triologue.note('CHECKPOINT', `${id}: ${description}`);
 }
 

@@ -10,7 +10,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { retryChat, MODEL } from '../ollama.js';
-import type { Message, ToolCall, WikiModule } from '../types.js';
+import type { Message, ToolCall, WikiModule, NoteCategory } from '../types.js';
 import { minifyMessages, minifyForHint } from '../utils/llm-chat-minifier.js';
 import { estimateTokens, estimateTokensForMessages } from '../utils/token.js';
 import { ResultTooLargeError } from '../types.js';
@@ -143,6 +143,22 @@ export class Triologue {
       this.runMicroCompact();
     }
     this.addMessage({ role: 'user', content });
+  }
+
+  /**
+   * Add a system-generated note message (not from actual user).
+   * These are injected by the agent system for reminders, notifications, etc.
+   * Internally uses role: 'user' with note_category metadata for filtering.
+   * The category is prepended as a [TITLE] prefix on the content.
+   *
+   * @param category - The note category (REMINDER, HINT, FYI, etc.)
+   * @param message - The note content
+   */
+  note(category: NoteCategory, message: string): void {
+    if (this.getLastRole() === 'tool') {
+      this.runMicroCompact();
+    }
+    this.addMessage({ role: 'user', content: `[${category}] ${message}` });
   }
 
 
@@ -506,7 +522,7 @@ ${JSON.stringify(hintSchema, null, 2)}
         }
 
         // Format hint data for better readability
-        const hintLines: string[] = ['[HINT] Problem Analysis:'];
+        const hintLines: string[] = ['Problem Analysis:'];
         hintLines.push(``);
         hintLines.push(`**Blocker:** ${hintData.blocker}`);
         hintLines.push(`**Next Step:** ${hintData.next_step}`);
@@ -525,16 +541,7 @@ ${JSON.stringify(hintSchema, null, 2)}
         hintLines.push(``);
         hintLines.push(`Use \`ctx.core.brief()\` to provide status updates as needed.`);
 
-        const hintMessage: Message = {
-          role: 'user',
-          content: hintLines.join('\n'),
-        };
-
-        // Verbose logging: show the hint response
-        agentIO.verbose('triologue', `Hint round response: ${hintData.blocker.substring(0, 80)}`);
-
-        this.messages.push(hintMessage);
-        this.updateTokenCount(hintMessage);
+        this.note('HINT', hintLines.join('\n'));
 
         this.options.onHint();
         return 'success';
@@ -810,18 +817,35 @@ ${JSON.stringify(hintSchema, null, 2)}
   // === Checkpoint Methods ===
 
   /**
+   * Check if a message is a checkpoint by its [CHECKPOINT] content prefix
+   * or legacy regex for backwards compatibility
+   */
+  private isCheckpointMessage(msg: Message): { id: string; description: string } | null {
+    if (msg.role !== 'user' || !msg.content) return null;
+
+    // New format: "[CHECKPOINT] abc12345: description"
+    const newMatch = msg.content.match(/^\[CHECKPOINT\] ([a-z0-9]{8}): (.+)$/);
+    if (newMatch) {
+      return { id: newMatch[1], description: newMatch[2] };
+    }
+
+    // Legacy format: "[CHECKPOINT abc12345: description]"
+    const legacyMatch = msg.content.match(/^\[CHECKPOINT ([a-z0-9]{8}): (.+)\]$/);
+    if (legacyMatch) {
+      return { id: legacyMatch[1], description: legacyMatch[2] };
+    }
+
+    return null;
+  }
+
+  /**
    * Find the last open checkpoint in message history
    * @returns Checkpoint info if found, null otherwise
    */
   findOpenCheckpoint(): { id: string; description: string } | null {
     for (let i = this.messages.length - 1; i >= 0; i--) {
-      const msg = this.messages[i];
-      if (msg.role === 'user') {
-        const match = msg.content.match(/^\[CHECKPOINT ([a-z0-9]{8}): (.+)\]$/);
-        if (match) {
-          return { id: match[1], description: match[2] };
-        }
-      }
+      const result = this.isCheckpointMessage(this.messages[i]);
+      if (result) return result;
     }
     return null;
   }
@@ -833,12 +857,8 @@ ${JSON.stringify(hintSchema, null, 2)}
   findAllCheckpoints(): Array<{ id: string; description: string }> {
     const checkpoints: Array<{ id: string; description: string }> = [];
     for (const msg of this.messages) {
-      if (msg.role === 'user') {
-        const match = msg.content.match(/^\[CHECKPOINT ([a-z0-9]{8}): (.+)\]$/);
-        if (match) {
-          checkpoints.push({ id: match[1], description: match[2] });
-        }
-      }
+      const result = this.isCheckpointMessage(msg);
+      if (result) checkpoints.push(result);
     }
     return checkpoints;
   }
@@ -851,12 +871,9 @@ ${JSON.stringify(hintSchema, null, 2)}
   findCheckpointById(id: string): { id: string; description: string; index: number } | null {
     for (let i = 0; i < this.messages.length; i++) {
       const msg = this.messages[i];
-      if (msg.role === 'user') {
-        const regex = new RegExp(`^\\[CHECKPOINT ${id}: (.+)\\]$`);
-        const match = msg.content.match(regex);
-        if (match) {
-          return { id, description: match[1], index: i };
-        }
+      const result = this.isCheckpointMessage(msg);
+      if (result && result.id === id) {
+        return { id, description: result.description, index: i };
       }
     }
     return null;

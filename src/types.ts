@@ -21,6 +21,38 @@ export interface ToolCall extends OllamaToolCall {
 }
 
 /**
+ * Categories for system-generated notes added to the conversation.
+ * These are injected by the agent system (not from the actual user).
+ */
+export type NoteCategory =
+  /** Todo nudges, status reminders */
+  | 'REMINDER'
+  /** Problem analysis hints generated during confusion */
+  | 'HINT'
+  /** Informational messages (e.g., bang command results) */
+  | 'FYI'
+  /** Critical notifications requiring immediate attention (ESC interrupts) */
+  | 'URGENT'
+  /** System-level notifications (mode changes, configuration updates) */
+  | 'SYSTEM_NOTIFICATION'
+  /** Error notifications from the system */
+  | 'SYSTEM_ERROR'
+  /** Auto-claimed issue notifications for teammates */
+  | 'AUTO_CLAIMED'
+  /** Checkpoint markers for message compression */
+  | 'CHECKPOINT'
+  /** ESC wrap-up continuation messages */
+  | 'WRAP_UP'
+  /** Deferred hook messages injected after tool execution */
+  | 'DEFERRED'
+  /** Inter-agent mail messages */
+  | 'MAIL'
+  /** "Continue with your task" prompts */
+  | 'CONTINUE'
+  /** Timeout notifications */
+  | 'TIMEOUT';
+
+/**
  * Extended Message with tool response fields
  * - tool_name: the function name (Ollama API field)
  * - tool_call_id: hidden ID from agent's chat response (for alignment tracking)

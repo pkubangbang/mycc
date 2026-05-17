@@ -114,7 +114,7 @@ export async function handlePrompt(
       command: command || undefined,
       justification: command ? `User runs: ${command}` : 'Open terminal',
     });
-    triologue.user(`[FYI] ${result}`);
+    triologue.note('FYI', result);
     env.ctx.core.resetConfusionIndex();
     return AgentState.PROMPT;
   }

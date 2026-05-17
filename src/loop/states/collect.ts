@@ -95,9 +95,9 @@ export async function handleCollect(
       const mailContent = parts.join('\n\n---\n\n');
 
       if (agentIO.isNeglectedMode()) {
-        triologue.user(`[URGENT: user interrupted - wrap up quickly]\n${mailContent}`);
+        triologue.note('URGENT', `user interrupted - wrap up quickly\n${mailContent}`);
       } else {
-        triologue.user(mailContent);
+        triologue.note('MAIL', mailContent);
       }
     }
 
@@ -146,7 +146,7 @@ export async function handleCollect(
       }
       turn.nextTodoNudge--;
       if (turn.nextTodoNudge === 0) {
-        triologue.user(`<reminder>Update your todos. ${ctx.todo.printTodoList()}</reminder>`);
+        triologue.note('REMINDER', `Update your todos. ${ctx.todo.printTodoList()}`);
         turn.nextTodoNudge = 3;
       }
     }
@@ -154,13 +154,13 @@ export async function handleCollect(
     // 5. Brief nudging - remind agent to use brief tool
     turn.nextBriefNudge--;
     if (turn.nextBriefNudge <= 0) {
-      triologue.user('<reminder>Provide a brief status update using the brief tool. Example: brief("Working on X", 7)</reminder>');
+      triologue.note('REMINDER', 'Provide a brief status update using the brief tool. Example: brief("Working on X", 7)');
       turn.nextBriefNudge = 5;
     }
 
     // 6. Validate role sequence before LLM call
     if (lastRole === 'assistant') {
-      triologue.user('Continue with your task.');
+      triologue.note('CONTINUE', 'Continue with your task.');
     }
 
     // 7. Log message count and token consumption in verbose mode

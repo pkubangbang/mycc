@@ -235,7 +235,7 @@ export async function handleTool(
 
   // Inject deferred hook messages after tool execution
   if (hookResult.deferredMessages.length > 0) {
-    triologue.user(hookResult.deferredMessages.join('\n\n---\n\n'));
+    triologue.note('DEFERRED', hookResult.deferredMessages.join('\n\n---\n\n'));
   }
 
   return AgentState.COLLECT;

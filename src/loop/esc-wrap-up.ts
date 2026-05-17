@@ -177,7 +177,7 @@ export function shouldAppendWrapUp(): 'append' | 'discard' {
  */
 export function injectWrapUp(): void {
   if (wrapUpState.triologue && wrapUpState.content) {
-    wrapUpState.triologue.user(WRAP_UP_USER_MESSAGE);
+    wrapUpState.triologue.note('WRAP_UP', WRAP_UP_USER_MESSAGE);
     wrapUpState.triologue.agent(wrapUpState.content);
   }
 }

@@ -133,9 +133,45 @@ interface HintContext {
   confusionBreakdown: string;
 }
 
-// Regex to filter out todo nudging and other system messages
+// Regex to detect system-injected note messages by their [CATEGORY] prefix
+// These are injected by triologue.note() as "[CATEGORY] content..."
+const NOTE_PREFIX_REGEX = /^\[(?:REMINDER|HINT|FYI|URGENT|SYSTEM_NOTIFICATION|SYSTEM_ERROR|AUTO_CLAIMED|CHECKPOINT|WRAP_UP|DEFERRED|MAIL|CONTINUE|TIMEOUT)\]/;
+
+// Categories whose messages should be filtered out during hint generation
+// These are "noise" messages that don't represent user intent or progress
+const HINT_FILTERED_CATEGORIES = new Set([
+  'REMINDER',
+  'HINT',
+  'CONTINUE',
+  'FYI',
+  'WRAP_UP',
+]);
+
+// Legacy regex for backwards compatibility with old-format messages
 const TODO_NUDGE_REGEX = /<reminder>Update your todos/;
 const SYSTEM_MESSAGE_REGEX = /^(\[HINT\]|\[URGENT:|Continue with your task)/;
+
+/**
+ * Check if a message should be filtered from hint context
+ * Detects system notes by their [CATEGORY] content prefix or legacy patterns
+ */
+function shouldFilterForHint(msg: Message): boolean {
+  if (msg.role !== 'user' || !msg.content) return false;
+
+  // Check for [CATEGORY] prefix from triologue.note()
+  const prefixMatch = msg.content.match(NOTE_PREFIX_REGEX);
+  if (prefixMatch) {
+    // Extract category from the prefix: "[REMINDER] ..." -> "REMINDER"
+    const category = prefixMatch[0].slice(1, -1);
+    return HINT_FILTERED_CATEGORIES.has(category);
+  }
+
+  // Backwards compatibility: legacy content patterns
+  if (TODO_NUDGE_REGEX.test(msg.content)) return true;
+  if (SYSTEM_MESSAGE_REGEX.test(msg.content)) return true;
+
+  return false;
+}
 
 /** Check if a tool result string indicates an error */
 function isErrorResult(result: string): boolean {
@@ -163,10 +199,10 @@ export function minifyForHint(
   confusionScore: number,
   confusionBreakdown: string
 ): HintContext {
-  // 1. Extract user intent from first user message
+  // 1. Extract user intent from first real user message
   let userIntent = '(no user intent found)';
   for (const msg of messages) {
-    if (msg.role === 'user' && msg.content && !SYSTEM_MESSAGE_REGEX.test(msg.content)) {
+    if (msg.role === 'user' && msg.content && !shouldFilterForHint(msg)) {
       userIntent = truncate(msg.content, 300);
       break;
     }
@@ -175,8 +211,7 @@ export function minifyForHint(
   // 2. Filter messages and extract tool calls
   const filteredMessages = messages.filter(msg => {
     if (msg.role === 'system') return false;
-    if (msg.role === 'user' && TODO_NUDGE_REGEX.test(msg.content || '')) return false;
-    if (msg.role === 'user' && SYSTEM_MESSAGE_REGEX.test(msg.content || '')) return false;
+    if (shouldFilterForHint(msg)) return false;
     return true;
   });
 

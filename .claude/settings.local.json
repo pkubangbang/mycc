@@ -19,7 +19,8 @@
       "Bash(wc:*)",
       "Bash(pnpm lint *)",
       "Bash(git show *)",
-      "Bash(git log *)"
+      "Bash(git log *)",
+      "mcp__codegraph__codegraph_explore"
     ]
   }
 }

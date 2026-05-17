@@ -51,7 +51,8 @@ export async function handleStop(
     }
 
     if (result === 'timeout') {
-      triologue.user(
+      triologue.note(
+        'TIMEOUT',
         `Timeout waiting for teammates. Use tm_await to wait longer, or check team status with /team. ${ctx.team.printTeam()}`,
       );
       return AgentState.COLLECT;
