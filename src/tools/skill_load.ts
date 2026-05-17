@@ -13,16 +13,9 @@ import { getSkillMatchThreshold } from '../config.js';
 
 export const skillLoadTool: ToolDefinition = {
   name: 'skill_load',
-  description: `Load a skill by name. Returns specialized knowledge and instructions. Use when you need guidance for specific tasks like code-review or coordination.
+  description: `Load a skill by name, or Search skills by intention. Returns specialized knowledge and instructions.
 
-Two usage modes:
-- With name: Load a specific skill by exact name (returns error if not found)
-- Without name: Use semantic search to find relevant skills based on intent
-
-Use this when:
-- You need specialized knowledge for a task
-- You're unsure how to approach a problem
-- You want to discover relevant skills`,
+Important: this tool is AUXILIARY. Only when you are told to used this tool should you use it.`,
   input_schema: {
     type: 'object',
     properties: {

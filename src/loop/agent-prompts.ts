@@ -96,29 +96,6 @@ function buildOutputBehaviorSection(): string {
   ].join('\n');
 }
 
-function buildKnowledgeBoundarySection(): string {
-  return [
-    '## Knowledge Boundary',
-    '',
-    'You have access to these knowledge sources (in priority order):',
-    '- **Recall**: Explore the mindmap knowledge tree. Use `recall(path="/")` to discover available knowledge. START HERE for project context.',
-    '- **Skills**: Specialized knowledge for specific tasks. Use `skill_load(intent="...")` to discover relevant skills.',
-    '- **Wiki**: Project knowledge base (RAG). Use `wiki_get(query, domain)` to retrieve documents.',
-    '- **Teammates**: Parallel expertise. Use `tm_create(name, role, prompt)` to spawn specialists.',
-    '- **Web**: External information from the internet. Use `web_search(query)` and `web_fetch(url)` as LAST RESORT.',
-    '',
-    'When you encounter something outside your knowledge:',
-    '1. PAUSE and recognize the gap',
-    '2. Check local sources first (Recall → Skills → Wiki)',
-    '3. Only then search the web if needed',
-    '4. Continue with enhanced knowledge',
-    '',
-    '### Special notice',
-    'Do NOT guess. When in doubt, seek knowledge first.',
-    'Pay attention to the "pitfall" section in the mindmap if it exists.'
-  ].join('\n');
-}
-
 function buildVerificationSection(): string {
   return [
     '## Verification Before Action',
@@ -188,8 +165,6 @@ function buildPlatformSection(): string {
 
 function buildCommonSections(): string {
   return [
-    buildKnowledgeBoundarySection(),
-    '',
     buildVerificationSection(),
     '',
     buildPlatformSection(),
@@ -324,8 +299,6 @@ ${buildCalendarSection()}
 
 ${buildOutputBehaviorSection()}
 
-${buildKnowledgeBoundarySection()}
-
 ${buildIntentLanguageSection()}`;
 }
 
@@ -405,8 +378,6 @@ Use \`order\` to get synchronous results, \`mail_to\` for parallel work.
 ${buildCalendarSection()}
 
 ${buildOutputBehaviorSection()}
-
-${buildKnowledgeBoundarySection()}
 
 ${buildIntentLanguageSection()}`;
 }

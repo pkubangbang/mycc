@@ -238,9 +238,7 @@ export async function runSuggestBackground(env: MachineEnv): Promise<void> {
     // 3. Append "[REMINDER] you are in the suggest mode" with full instructions
     messages.push({
       role: 'user',
-      content: `[REMINDER] you are in the suggest mode
-
-You are in a restricted discovery mode. Your goal is to explore the codebase and discover
+      content: `[REMINDER] you are in the suggest mode. Your goal is to explore the codebase and discover
 relevant wiki notes and skills for the user's query.
 
 In suggest mode:
@@ -249,15 +247,17 @@ In suggest mode:
 - You may NOT: edit files, run destructive bash commands, use web_search, web_fetch,
   create teammates, or take any action beyond discovery
 
-Available wiki domains:
+For wiki notes, use wiki_get tool, specify the domain from one of below:
 ${domainList}
+
+For skills, use skill_load tool, specify intent using the intent lang, but DO NOT specify the name param, to search relavent skills.
 
 - After exploration, produce a "brown bag" as JSON:
   \`\`\`json
   {"originalQuery": "the user's original query", "wikiNotes": [{"domain": "project", "query": "keyword1 keyword2"}], "skills": ["skill-name-1"], "title": "optional brief title"}
   \`\`\`
   All fields are required except "title". wikiNotes and skills are arrays (may be empty).
-  Each wikiNote must use a domain from the available list above, paired with a keyword query.
+  Try search in different aspects to get complete results.
   Include "title" only if the user's query suggests a substantial topic change.`,
     });
 
