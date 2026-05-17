@@ -35,7 +35,7 @@ Important: this tool is AUXILIARY. Only when you are told to used this tool shou
     const skillName = args.name as string | undefined;
     const intent = args.intent as string;
 
-    // Case 1: Name provided - try exact match
+    // Try exact name match first
     if (skillName) {
       const skill = ctx.skill.getSkill(skillName);
       if (skill) {
@@ -56,47 +56,71 @@ Important: this tool is AUXILIARY. Only when you are told to used this tool shou
         const when = skill.when ? `When: ${skill.when}\n\n` : '';
         return `${header}${description}${keywords}${when}---\n\n${skill.content}`;
       }
-
-      // No exact match found - instruct LLM to use intent-only mode
-      ctx.core.brief('warn', 'skill_load', `Not found: ${skillName}`, intent);
-      return `ERROR: Skill '${skillName}' not found.
-
-Do not guess skill names. Instead, call skill_load again without the 'name' parameter, providing only the 'intent' parameter to discover relevant skills.
-
-Example: skill_load(intent="${intent}")`;
     }
 
-    // Case 2: No name provided - use semantic search to find relevant skills
+    // No exact match (or no name) → union semantic + name/keyword search
+    const threshold = getSkillMatchThreshold();
+    const searchQuery = `a skill to satisfy the intent: ${intent}`;
+    let semResults: Awaited<ReturnType<typeof ctx.wiki.get>> = [];
+
+    // Semantic search by intent
     try {
-      const threshold = getSkillMatchThreshold();
-      const searchQuery = `${intent} -- what specialist knowledge is required?`;
-      const results = await ctx.wiki.get(searchQuery, { domain: 'skills', topK: 3, threshold });
-
-      if (results.length === 0) {
-        ctx.core.brief('warn', 'skill_load', 'No matches found', intent);
-        return 'ERROR: No skills found matching your intent.\n\nNo skills are currently available in the knowledge base. Skills may need to be loaded or indexed first.';
-      }
-
-      // Build a concise summary for the brief line showing matches and confidence
-      const matchSummary = results.map(r => {
-        const matchedName = r.document.title;
-        const pct = (r.similarity * 100).toFixed(0);
-        return `${matchedName} (${pct}%)`;
-      }).join(', ');
-      ctx.core.brief('info', 'skill_load', `→ ${matchSummary}`, intent);
-
-      // Format suggestions with name and wiki content
-      const suggestions = results.map(r => {
-        const matchedName = r.document.title;
-        const similarity = (r.similarity * 100).toFixed(0);
-        return `## ${matchedName} (${similarity}% match)\n\n${r.document.content}`;
-      }).join('\n\n---\n\n');
-
-      return `Found ${results.length} skill(s) matching your intent:\n\n---\n\n${suggestions}\n\n---\n\nTo load a specific skill, use: skill_load(name="<skill_name>", intent="...")`;
+      semResults = await ctx.wiki.get(searchQuery, { domain: 'skills', topK: 3, threshold });
     } catch {
-      // Semantic search failed (likely no embedding model)
-      ctx.core.brief('warn', 'skill_load', 'Search unavailable', intent);
-      return 'ERROR: No skills found.\n\nSkill search is not available (embedding model may not be configured). Try providing a specific skill name if known.';
+      // Semantic search may not be available
     }
+
+    // Name/keyword search: match the name param against skill names and keywords
+    const nameResults: { name: string; description: string; keywords: string[] }[] = [];
+    if (skillName && skillName.length > 3) {
+      const lowerName = skillName.toLowerCase();
+      const allSkills = ctx.skill.listSkills();
+      for (const s of allSkills) {
+        const nameMatch = s.name.toLowerCase().includes(lowerName);
+        const kwMatch = s.keywords.some(kw => kw.toLowerCase().includes(lowerName));
+        if (nameMatch || kwMatch) {
+          nameResults.push({ name: s.name, description: s.description, keywords: s.keywords });
+        }
+      }
+    }
+
+    // Deduplicate and build suggestions
+    const matchedNames = new Set<string>();
+    const suggestions: string[] = [];
+
+    for (const r of semResults) {
+      if (!matchedNames.has(r.document.title)) {
+        matchedNames.add(r.document.title);
+        const pct = (r.similarity * 100).toFixed(0);
+        suggestions.push(`## ${r.document.title} (${pct}% semantic match)\n\n${r.document.content}`);
+      }
+    }
+
+    for (const nr of nameResults) {
+      if (!matchedNames.has(nr.name)) {
+        matchedNames.add(nr.name);
+        const desc = nr.description ? `\n*${nr.description}*` : '';
+        const kw = nr.keywords.length > 0 ? `\nKeywords: ${nr.keywords.join(', ')}` : '';
+        suggestions.push(`## ${nr.name} (name/keyword match)\n\n${desc}\n${kw}`.trim());
+      }
+    }
+
+    if (suggestions.length === 0) {
+      const label = skillName || intent;
+      ctx.core.brief('warn', 'skill_load', `No matches: ${label}`, intent);
+      return `ERROR: No skills found matching '${label}'.\n\nNo skills are currently available in the knowledge base. Skills may need to be loaded or indexed first. Try /skills build to rebuild the skill index.`;
+    }
+
+    const allNames = [...matchedNames];
+    const matchSummary = allNames.join(', ');
+    ctx.core.brief('info', 'skill_load', `→ ${matchSummary}`, intent);
+
+    const body = suggestions.join('\n\n---\n\n');
+
+    if (skillName) {
+      return `Skill '${skillName}' not found exactly, but found ${suggestions.length} suggestion(s):\n\n---\n\n${body}\n\n---\n\nTo load a specific skill, use: skill_load(name="<skill_name>", intent="...")`;
+    }
+
+    return `Found ${suggestions.length} skill(s) matching your intent:\n\n---\n\n${body}\n\n---\n\nTo load a specific skill, use: skill_load(name="<skill_name>", intent="...")`;
   },
 };
