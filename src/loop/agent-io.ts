@@ -90,6 +90,7 @@ class AgentIO {
   private static readonly CTRL_L_DOUBLE_PRESS_MS = 3000;  // 3 seconds for double press
   private lastCtrlLTime: number | null = null;
   private onDoubleCtrlLCallback: (() => void) | null = null;
+  private onConditionReloadCallback: (() => Promise<void>) | null = null;
   private whisperTimeout: ReturnType<typeof setTimeout> | null = null;
 
   // Buffer for output during user interaction (prompt displayed or wrapping up)
@@ -140,6 +141,11 @@ class AgentIO {
       } else if (msg.type === 'resize' && msg.columns) {
         // Forward resize event to active LineEditor
         this.handleResize(msg.columns);
+      } else if (msg.type === 'condition_reload') {
+        // skill_compile updated conditions.json — reload runtime registry
+        if (this.onConditionReloadCallback) {
+          this.onConditionReloadCallback().catch(() => {});
+        }
       }
     });
   }
@@ -307,6 +313,14 @@ class AgentIO {
    */
   setDoubleCtrlLCallback(callback: (() => void) | null): void {
     this.onDoubleCtrlLCallback = callback;
+  }
+
+  /**
+   * Set callback for condition reload (triggered by skill_compile via IPC)
+   * Called from agent-repl.ts after creating the ConditionRegistry
+   */
+  setConditionReloadCallback(callback: (() => Promise<void>) | null): void {
+    this.onConditionReloadCallback = callback;
   }
 
   /**

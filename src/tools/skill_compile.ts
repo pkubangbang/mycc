@@ -119,6 +119,12 @@ Returns the compiled condition with version history.`,
     ctx.core.brief('info', 'skill_compile',
       `${skillName} (v${condition.version})\nTrigger: ${condition.trigger}\nCondition: ${condition.condition}`);
 
+    // Push the newly compiled condition to the runtime condition registry
+    // via IPC, so the agent picks it up without restarting
+    if (process.send) {
+      process.send({ type: 'condition_reload' });
+    }
+
     // Build response
     const lines = [
       `Compiled '${skillName}' (v${condition.version}):`,

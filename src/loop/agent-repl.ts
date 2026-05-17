@@ -210,6 +210,12 @@ export async function main(): Promise<void> {
   const conditions = new ConditionRegistry();
   await conditions.load();
 
+  // Wire up IPC-based condition reload: skill_compile sends IPC message
+  // to refresh runtime conditions without restarting the agent
+  agentIO.setConditionReloadCallback(async () => {
+    await conditions.load();
+  });
+
   // Sync pending skills (skills with 'when' but no compiled condition)
   // Will be notified during hint round
   conditions.syncPending(loader);
