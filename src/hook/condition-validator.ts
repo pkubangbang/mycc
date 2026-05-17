@@ -482,6 +482,22 @@ export function testExpression(
   callContext?: { metadata?: Record<string, unknown>; args?: Record<string, unknown> }
 ): TestResult {
   try {
+    // Preprocess the expression the same way evaluateExpression does
+    const jsExpr = expression
+      .replace(/seq\.has\(/g, 'has(')
+      .replace(/seq\.hasAny\(/g, 'hasAny(')
+      .replace(/seq\.hasCommand\(/g, 'hasCommand(')
+      .replace(/seq\.last\(/g, 'last(')
+      .replace(/seq\.lastError\(/g, 'lastError(')
+      .replace(/seq\.totalCount\(/g, 'totalCount(')
+      .replace(/seq\.count\(/g, 'count(')
+      .replace(/seq\.since\(/g, 'since(')
+      .replace(/seq\.sinceEdit\(/g, 'sinceEdit(')
+      .replace(/seq\.isPlanMode\(/g, 'isPlanMode(');
+
+    // Try parsing first to catch syntax errors
+    // jsep throws on invalid syntax, which we surface as a test failure
+    jsep(jsExpr);
     // Build EvalContext compatible with evaluator
     const ctx = {
       has: (tool: string) => sequence.has(tool),

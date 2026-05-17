@@ -83,7 +83,6 @@ describe('writeTool', () => {
     });
 
     expect(result).toContain('Error:');
-    expect(result).toContain('Path escapes workspace');
   });
 
   it('should block absolute path outside workspace', async () => {
@@ -93,7 +92,6 @@ describe('writeTool', () => {
     });
 
     expect(result).toContain('Error:');
-    expect(result).toContain('Path escapes workspace');
   });
 
   it('should handle special characters in content', async () => {

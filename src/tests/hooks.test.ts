@@ -456,8 +456,8 @@ describe('HookExecutor', () => {
       );
 
       expect(result.action).toBe('proceed');
-      expect(result.message).toContain('[Hook: msg-hook]');
-      expect(result.message).toContain('unknown condition');
+      expect(result.message).toContain('msg-hook');
+      expect(result.message).toContain('skill_load');
       expect(result.newCalls).toBeUndefined();
     });
   });
@@ -486,7 +486,8 @@ describe('HookExecutor', () => {
         pendingCalls,
         'Test content'
       );
-      expect(result1.message).toContain('[Hook: test-hook]');
+      expect(result1.message).toContain('test-hook');
+      expect(result1.message).toContain('skill_load');
 
       // Second execution - should reference existing
       const result2 = await executor.execute(

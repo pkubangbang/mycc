@@ -108,7 +108,7 @@ describe('Core (Parent) - Mode System', () => {
     it('should approve bash grants in normal mode', async () => {
       core.setMode('normal');
 
-      const result = await core.requestGrant('bash', { command: 'echo test', intent: '[READ] SOURCE TO test output' });
+      const result = await core.requestGrant('bash', { command: 'echo test', intent: 'READ SOURCE TO test output' });
 
       expect(result.approved).toBe(true);
     });
@@ -136,7 +136,7 @@ describe('Core (Parent) - Mode System', () => {
     it('should reject bash grants in plan mode', async () => {
       core.setMode('plan');
 
-      const result = await core.requestGrant('bash', { command: 'echo test', intent: '[READ] SOURCE TO test output' });
+      const result = await core.requestGrant('bash', { command: 'echo test', intent: 'READ SOURCE TO test output' });
 
       expect(result.approved).toBe(true); // READ verb is allowed in plan mode
     });
@@ -144,7 +144,7 @@ describe('Core (Parent) - Mode System', () => {
     it('should reject mutation verbs in plan mode', async () => {
       core.setMode('plan');
 
-      const result = await core.requestGrant('bash', { command: 'npm run build', intent: '[BUILD] ARTIFACT TO compile project' });
+      const result = await core.requestGrant('bash', { command: 'npm run build', intent: 'BUILD ARTIFACT TO compile project' });
 
       expect(result.approved).toBe(false);
       expect(result.reason).toContain('Cannot BUILD in plan mode');

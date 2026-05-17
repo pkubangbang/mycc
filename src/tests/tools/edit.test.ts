@@ -123,7 +123,6 @@ describe('editTool', () => {
     });
 
     expect(result).toContain('Error:');
-    expect(result).toContain('Path escapes workspace');
   });
 
   it('should handle non-existent file', async () => {

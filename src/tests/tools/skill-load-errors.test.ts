@@ -64,7 +64,7 @@ describe('skillLoadTool - Errors', () => {
 
     const result = await skillLoadTool.handler(ctx, { name: 'nonexistent', intent: 'test purpose' });
 
-    expect(result).toContain("Skill 'nonexistent' not found");
+    expect(result).toContain("ERROR: No skills found matching 'nonexistent'");
   });
 
   it('should return message when no skills are loaded', async () => {
@@ -72,7 +72,7 @@ describe('skillLoadTool - Errors', () => {
 
     const result = await skillLoadTool.handler(ctx, { name: 'any-skill', intent: 'test purpose' });
 
-    expect(result).toContain("Skill 'any-skill' not found");
+    expect(result).toContain("ERROR: No skills found matching 'any-skill'");
   });
 
   it('should suggest using intent when skill not found', async () => {
@@ -84,8 +84,8 @@ describe('skillLoadTool - Errors', () => {
 
     const result = await skillLoadTool.handler(ctx, { name: 'unknown', intent: 'test purpose' });
 
-    expect(result).toContain("Skill 'unknown' not found");
-    expect(result).toContain("skill_load(intent=\"test purpose\")");
+    expect(result).toContain("ERROR: No skills found matching 'unknown'");
+    expect(result).toContain("Try /skills build");
   });
 
   // =========================================================================
@@ -108,7 +108,7 @@ describe('skillLoadTool - Errors', () => {
 
     const result = await skillLoadTool.handler(ctx, { name: 'invalid@skill!', intent: 'test purpose' });
 
-    expect(result).toContain("Skill 'invalid@skill!' not found");
+    expect(result).toContain("ERROR: No skills found matching 'invalid@skill!'");
   });
 
   it('should handle skill name with path traversal attempt', async () => {
@@ -117,7 +117,7 @@ describe('skillLoadTool - Errors', () => {
 
     const result = await skillLoadTool.handler(ctx, { name: '../../../etc/passwd', intent: 'test purpose' });
 
-    expect(result).toContain("Skill '../../../etc/passwd' not found");
+    expect(result).toContain("ERROR: No skills found matching '../../../etc/passwd'");
   });
 
   it('should handle skill name with only whitespace', async () => {
@@ -126,7 +126,7 @@ describe('skillLoadTool - Errors', () => {
 
     const result = await skillLoadTool.handler(ctx, { name: '   ', intent: 'test purpose' });
 
-    expect(result).toContain("Skill '   ' not found");
+    expect(result).toContain("ERROR: No skills found matching '   '");
   });
 
   it('should handle numeric skill name', async () => {
@@ -160,7 +160,7 @@ describe('skillLoadTool - Errors', () => {
 
     const result = await skillLoadTool.handler(ctx, { name: 123, intent: 'test purpose' });
 
-    expect(result).toContain("Skill '123' not found");
+    expect(result).toContain("ERROR: No skills found matching '123'");
   });
 
   it('should handle name with special characters that is valid', async () => {

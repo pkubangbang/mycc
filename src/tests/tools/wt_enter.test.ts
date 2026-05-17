@@ -16,6 +16,8 @@ describe('wtEnterTool', () => {
     ctx = createMockContext(tempDir);
     // Override getWorkDir to be a mock for testing
     ctx.core.getWorkDir = vi.fn().mockReturnValue(tempDir);
+    // Ensure question() returns 'y' so worktree entry is granted
+    vi.mocked(ctx.core.question).mockResolvedValue('y');
     ctx.wt = {
       createWorkTree: vi.fn(async () => {}),
       enterWorkTree: vi.fn(async () => {}),

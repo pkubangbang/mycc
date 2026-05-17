@@ -160,7 +160,7 @@ describe('bashTool', () => {
       timeout: 1,
     });
 
-    expect(result).toContain('Error: timeout');
+    expect(result).toContain('Error: Command timeout after 1 seconds');
     expect(result).toContain('1 seconds');
   });
 

@@ -122,7 +122,7 @@ describe('issueClaimTool', () => {
     expect(mockIssue.getIssue).toHaveBeenCalledWith(1);
     expect(mockIssue.claimIssue).toHaveBeenCalledWith(1, 'test-agent');
     expect(result).toBe('No issues.');
-    expect(ctx.core.brief).toHaveBeenCalledWith('info', 'issue_claim', 'Claimed issue #1: "Test Issue" by @test-agent');
+    expect(ctx.core.brief).toHaveBeenCalledWith('info', 'issue_claim', 'Claimed issue #1: "Test Issue"', '@test-agent');
   });
 
   it('should claim issue with different owner names', async () => {
