@@ -115,6 +115,10 @@ Returns the compiled condition with version history.`,
 
     const condition = result.condition!;
 
+    // Brief output — always visible summary of compilation
+    ctx.core.brief('info', 'skill_compile',
+      `${skillName} (v${condition.version})\nTrigger: ${condition.trigger}\nCondition: ${condition.condition}`);
+
     // Build response
     const lines = [
       `Compiled '${skillName}' (v${condition.version}):`,

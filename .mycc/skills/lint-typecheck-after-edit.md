@@ -3,7 +3,7 @@ name: lint-typecheck-after-edit
 description: >
   Run lint and typecheck before the agent finishes, if code changes were made without running quality checks.
   This ensures code quality and type safety before task completion.
-when: before git_commit or LLM finishes reply (no tool calls pending), if edit_file or write_file was used this session and lint/typecheck was not run
+when: before git_commit or LLM finishes reply (no tool calls pending), if edit_file or write_file was used this session and either lint or typecheck was not run (both must pass before finishing)
 ---
 
 # Code Quality Checks After Edits
@@ -13,8 +13,8 @@ This hook **injects** lint/typecheck before the agent stops, ensuring code quali
 ## Behavior
 
 When the agent tries to finish (no more tool calls) after making code changes:
-- **If lint/typecheck was run**: The agent can finish normally with its summary reply
-- **If lint/typecheck was NOT run**: The hook injects `pnpm lint && pnpm typecheck` before stopping
+- **If BOTH lint and typecheck were run**: The agent can finish normally with its summary reply
+- **If EITHER lint or typecheck was NOT run**: The hook injects `pnpm lint && pnpm typecheck` before stopping
 
 ## How It Works
 
