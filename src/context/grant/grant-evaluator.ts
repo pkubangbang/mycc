@@ -31,16 +31,9 @@ export async function evaluateGrant(
       return { approved: false, reason: 'No command provided for bash tool' };
     }
 
-    if (!request.intent) {
-      return {
-        approved: false,
-        reason: 'Missing intent parameter. Use format: VERB OBJECT TO PURPOSE. Example: READ SOURCE TO check dependencies',
-      };
-    }
-
     const result = await judgeBash(
       request.command,
-      request.intent,
+      request.intent || '',
       mode,
       isChildProcess,
       core.question.bind(core),  // Pass askUser function

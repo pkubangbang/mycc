@@ -136,6 +136,14 @@ export class Sequence {
   }
 
   /**
+   * Count tool results whose content contains a substring pattern.
+   * Scans events since the last user query (current turn).
+   */
+  countResult(pattern: string): number {
+    return this.events.filter(e => e.result.includes(pattern)).length;
+  }
+
+  /**
    * Count occurrences of a tool in the current turn (since last user query).
    */
   count(toolName?: string): number {
@@ -247,6 +255,7 @@ export class Sequence {
       lastError: () => this.lastError(),
       count: (tool?: string) => this.count(tool),
       totalCount: (tool?: string) => this.totalCount(tool),
+      countResult: (pattern: string) => this.countResult(pattern),
       since: (tool: string) => this.since(tool),
       sinceEdit: () => this.sinceEdit(),
       isPlanMode: () => this.isPlanMode(),

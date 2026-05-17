@@ -206,6 +206,13 @@ export async function handleHook(
     );
     pass.hookResult = hookResult;
 
+    // 3.5. Handle compact request (highest priority — short-circuits all processing)
+    if (hookResult.compactRequested) {
+      ctx.core.brief('info', 'compact', 'Compacting context due to intent language confusion...');
+      await triologue.compact();
+      return AgentState.COLLECT;
+    }
+
     // 4. Dispatch meta-tools (checkpoint and recap) from hook result
     //    Guard against blocked meta-calls so the agent sees the rejection.
     const checkpointCall = hookResult.calls.find(c => c.function.name === 'checkpoint');

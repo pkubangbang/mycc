@@ -35,7 +35,7 @@ const CONDITION_SCHEMA = {
     action: {
       type: 'object',
       properties: {
-        type: { type: 'string', enum: ['inject_before', 'inject_after', 'block', 'replace', 'message'] },
+        type: { type: 'string', enum: ['inject_before', 'inject_after', 'block', 'replace', 'message', 'compact'] },
         tool: { type: 'string' },
         args: { type: 'object' },
         reason: { type: 'string' },
@@ -84,7 +84,8 @@ export type HookAction =
   | { type: 'inject_after'; tool: string; args: Record<string, unknown>; timeout?: number }
   | { type: 'block'; reason?: string }
   | { type: 'replace'; tool: string; args: Record<string, unknown>; timeout?: number }
-  | { type: 'message' };
+  | { type: 'message' }
+  | { type: 'compact' };
 
 
 /**
@@ -522,6 +523,7 @@ Available condition functions (use seq.X syntax):
 - seq.lastError(): Get last error event
 - seq.count(toolName?): Count tool occurrences since last user query (current turn)
 - seq.totalCount(toolName?): Count tool occurrences since session start (entire conversation)
+- seq.countResult(pattern): Count tool results containing a substring since last user query
 - seq.since(toolName): Events after last occurrence
 - seq.sinceEdit(): Events after last file edit
 - seq.isPlanMode(): Check if agent is in plan mode (prevents hooks during planning)
@@ -539,6 +541,7 @@ Available action types:
 - block: Block the trigger tool (optional reason)
 - replace: Replace trigger with different tool (requires tool and args)
 - message: Just inject a message (weak, use for reminders)
+- compact: Trigger context compaction (no args needed, highest priority)
 
 Examples:
 - "run lint before commit if files changed": { "trigger": ["git_commit"], "condition": "seq.hasAny(['edit_file', 'write_file']) && !seq.hasCommand('bash#lint')", "action": { "type": "inject_before", "tool": "bash", "args": { "command": "pnpm lint", "intent": "pre-commit lint", "timeout": 30 } } }
@@ -546,6 +549,7 @@ Examples:
 - "block force push to main": { "trigger": ["bash"], "condition": "call.args.command.includes('git push --force') && call.args.command.includes('main')", "action": { "type": "block", "reason": "Force push to main is prohibited" } }
 - "block test files over 300 lines": { "trigger": ["write_file"], "condition": "call.metadata.filePath.includes('/tests/') && call.metadata.newLoc > 300", "action": { "type": "block", "reason": "Test files cannot exceed 300 lines" } }
 - "block destructive bash to main": { "trigger": ["bash"], "condition": "call.metadata.isDestructive && call.args.command.includes('main')", "action": { "type": "block", "reason": "Destructive operations on main branch prohibited" } }
+- "compact on repeated intent failures": { "trigger": ["bash"], "condition": "seq.countResult('[Intent]') >= 3 && seq.totalCount() > 20", "action": { "type": "compact" } }
 ${errorFeedback}
 
 Output a JSON object with trigger, condition, and action.`;

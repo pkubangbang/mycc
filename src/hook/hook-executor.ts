@@ -57,7 +57,7 @@ function formatArgsPreview(args: Record<string, unknown>, maxLen: number = 50): 
  * Result of hook execution
  */
 export interface HookResult {
-  action: 'proceed' | 'blocked' | 'injected';
+  action: 'proceed' | 'blocked' | 'injected' | 'compact';
   message?: string;
   newCalls?: ToolCall[];
 }
@@ -69,6 +69,7 @@ export interface ProcessToolCallsResult {
   calls: AugmentedToolCall[];       // Modified array (blocked calls kept, injections added)
   blockedCalls: Map<string, string>; // toolCall.id → blocking message
   deferredMessages: string[];        // Messages to inject after tool execution
+  compactRequested: boolean;         // Hook requested compaction
 }
 
 /**
@@ -79,6 +80,7 @@ interface CallProcessResult {
   blocked: boolean;
   blockMessage?: string;
   messages: string[];
+  compactRequested: boolean;
 }
 
 /**
@@ -86,6 +88,7 @@ interface CallProcessResult {
  * Blockers first (safety), then replacers (modification), then injectors (addition).
  */
 const HOOK_PRIORITY: Record<string, number> = {
+  compact: 0,
   block: 0,
   replace: 1,
   inject_before: 2,
@@ -152,6 +155,9 @@ export class HookExecutor {
 
       case 'message':
         return this.message(skillName, skillContent, cond);
+
+      case 'compact':
+        return { action: 'compact' };
     }
   }
 
@@ -325,6 +331,7 @@ export class HookExecutor {
       calls: [],
       blockedCalls: new Map(),
       deferredMessages: [],
+      compactRequested: false,
     };
 
     // Handle stop trigger (empty calls array)
@@ -340,6 +347,12 @@ export class HookExecutor {
     // Process each tool call
     for (const call of calls) {
       const processResult = await this.processSingleCall(call, ctx, getSkill);
+
+      // Compact has highest priority — stop processing immediately
+      if (processResult.compactRequested) {
+        result.compactRequested = true;
+        return result;
+      }
 
       // Always add calls to result (blocked calls are kept for visibility)
       result.calls.push(...processResult.calls);
@@ -440,7 +453,7 @@ export class HookExecutor {
     const matchedHooks = this.checkHooks(toolName);
 
     if (matchedHooks.length === 0) {
-      return { calls: [call], blocked: false, messages: [] };
+      return { calls: [call], blocked: false, messages: [], compactRequested: false };
     }
 
     // Group hooks by priority
@@ -462,16 +475,21 @@ export class HookExecutor {
 
         const result = await this.execute(hookName, cond.action, ctx, calls, skill.content || '', cond);
 
+        if (result.action === 'compact') {
+          // Stop processing immediately — caller will trigger compaction
+          return { calls: [call], blocked: false, messages, compactRequested: true };
+        }
+
         if (result.action === 'blocked') {
           // Keep the call in array but mark as blocked with rejection message
-          return { calls: [call], blocked: true, blockMessage: result.message, messages };
+          return { calls: [call], blocked: true, blockMessage: result.message, messages, compactRequested: false };
         }
 
         if (result.action === 'injected' && result.newCalls) {
           calls = result.newCalls as AugmentedToolCall[];
           // For blockers/replacers, return immediately (first wins)
           if (priority < 2) {
-            return { calls, blocked: false, messages };
+            return { calls, blocked: false, messages, compactRequested: false };
           }
           // For inject_before/after, continue to check other hooks
         }
@@ -482,7 +500,7 @@ export class HookExecutor {
       }
     }
 
-    return { calls, blocked: false, messages };
+    return { calls, blocked: false, messages, compactRequested: false };
   }
 
   /**

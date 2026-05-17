@@ -12,10 +12,11 @@ import { MODEL, retryMultipleChoice } from '../../ollama.js';
  * 
  * Steps:
  * 1. Check dangerous commands (pattern matching)
- * 2. Check intent grammar (fail fast with retry hint)
- * 3. Check mode + verb (local decision)
- * 4. LLM judging (parent only, for RUN verb)
- * 5. Ask user (parent only, when uncertain)
+ * 2. Check missing intent parameter
+ * 3. Check intent grammar (fail fast with retry hint)
+ * 4. Check mode + verb (local decision)
+ * 5. LLM judging (parent only, for RUN verb)
+ * 6. Ask user (parent only, when uncertain)
  * 
  * @param command - The bash command to execute
  * @param intent - The intent string (required)
@@ -41,19 +42,27 @@ export async function judgeBash(
     };
   }
 
-  // Step 2: Parse and validate intent (local, no LLM)
+  // Step 2: Check for missing intent parameter
+  if (!intent) {
+    return {
+      decision: 'block',
+      reason: 'Error: [Intent] missing intent parameter. Use format: VERB OBJECT TO PURPOSE. Example: READ SOURCE TO check dependencies',
+    };
+  }
+
+  // Step 3: Parse and validate intent grammar (local, no LLM)
   const parsed = parseIntent(intent);
   const validation = validateIntent(parsed);
-  
+
   if (!validation.valid) {
     // Return error with hint for LLM to retry
     return {
       decision: 'block',
-      reason: validation.error + (validation.hint ? `\nHint: ${validation.hint}` : ''),
+      reason: `Error: [Intent] ${validation.error}${validation.hint ? `\nHint: ${validation.hint}` : ''}`,
     };
   }
 
-  // Step 3: Mode + verb check (local, no LLM)
+  // Step 4: Mode + verb check (local, no LLM)
   if (mode === 'normal') {
     // Normal mode: all verbs allowed (dangerous commands already blocked)
     return { decision: 'allow' };
@@ -73,7 +82,7 @@ export async function judgeBash(
     };
   }
 
-  // Step 4: RUN verb - need LLM analysis (parent only)
+  // Step 5: RUN verb - need LLM analysis (parent only)
   if (parsed!.verb === 'RUN') {
     // Child processes cannot use LLM judging - must be explicit
     if (isChildProcess) {
@@ -97,7 +106,7 @@ export async function judgeBash(
       };
     }
 
-    // Step 5: Uncertain - ask user (parent only)
+    // Step 6: Uncertain - ask user (parent only)
     if (!askUser) {
       // No askUser function provided (shouldn't happen in parent)
       return { decision: 'block', reason: 'Unable to determine command safety' };

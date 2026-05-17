@@ -27,6 +27,7 @@ export interface TestableSequence {
   lastError(): unknown;
   count(toolName?: string): number;
   totalCount(toolName?: string): number;
+  countResult(pattern: string): number;
   since(toolName: string): unknown[];
   sinceEdit(): unknown[];
   isPlanMode(): boolean;
@@ -65,9 +66,9 @@ export interface CompileResult {
 // Constants
 // ============================================================================
 
-const VALID_ACTION_TYPES = ['inject_before', 'inject_after', 'block', 'replace', 'message'];
+const VALID_ACTION_TYPES = ['inject_before', 'inject_after', 'block', 'replace', 'message', 'compact'];
 
-const SEQ_FUNCTIONS = ['has', 'hasAny', 'hasCommand', 'last', 'lastError', 'count', 'totalCount', 'since', 'sinceEdit', 'isPlanMode'];
+const SEQ_FUNCTIONS = ['has', 'hasAny', 'hasCommand', 'last', 'lastError', 'count', 'totalCount', 'countResult', 'since', 'sinceEdit', 'isPlanMode'];
 
 // Allowed literal values in expressions
 const ALLOWED_LITERALS = ['true', 'false', 'null', 'undefined'];
@@ -490,6 +491,7 @@ export function testExpression(
       lastError: () => sequence.lastError(),
       count: (tool?: string) => sequence.count(tool),
       totalCount: (tool?: string) => sequence.totalCount(tool),
+      countResult: (pattern: string) => sequence.countResult(pattern),
       since: (tool: string) => sequence.since(tool),
       sinceEdit: () => sequence.sinceEdit(),
       isPlanMode: () => sequence.isPlanMode(),
@@ -527,6 +529,7 @@ export function smokeTestExpression(expression: string): TestResult {
     lastError: () => undefined,
     count: () => 0,
     totalCount: () => 0,
+    countResult: () => 0,
     since: () => [],
     sinceEdit: () => [],
     isPlanMode: () => false,
@@ -576,6 +579,7 @@ export class MockSequence {
   lastError(): undefined { return undefined; }
   count(toolName?: string): number { return toolName ? this.events.filter(e => e.tool === toolName).length : this.events.length; }
   totalCount(toolName?: string): number { return toolName ? this.events.filter(e => e.tool === toolName).length : this.events.length; }
+  countResult(pattern: string): number { return this.events.filter(e => e.result.includes(pattern)).length; }
   since(): unknown[] { return []; }
   sinceEdit(): unknown[] { return []; }
   isPlanMode(): boolean { return false; }

@@ -32,6 +32,7 @@ export interface EvalContext {
   lastError: () => unknown;
   count: (tool?: string) => number;
   totalCount: (tool?: string) => number;
+  countResult: (pattern: string) => number;
   since: (tool: string) => unknown[];
   sinceEdit: () => unknown[];
   isPlanMode: () => boolean;
