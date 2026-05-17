@@ -11,7 +11,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { retryChat, MODEL } from '../ollama.js';
 import type { Message, ToolCall, WikiModule, NoteCategory } from '../types.js';
-import { minifyMessages, minifyForHint } from '../utils/llm-chat-minifier.js';
+import { minifyMessages } from '../utils/llm-chat-minifier.js';
 import { estimateTokens, estimateTokensForMessages } from '../utils/token.js';
 import { ResultTooLargeError } from '../types.js';
 import { getMyccDir, getLongtextDir, ensureDirs, getTokenThreshold } from '../config.js';
@@ -55,7 +55,7 @@ interface TriologueOptions {
   wiki?: WikiModule;
 }
 
-const ANALYSIS_INSTRUCTION = `Analyze the gap between the user's intent and current progress.`;
+import { generateHintRound as doHintRound } from './hint-round.js';
 
 export class Triologue {
   private messages: Message[] = [];
@@ -380,178 +380,7 @@ export class Triologue {
     confusionBreakdown: string,
     pendingSkills?: string[]
   ): Promise<'aborted' | 'success'> {
-    if (agentIO.isNeglectedMode()) return 'aborted';
-
-    // Extract focused context for hint generation
-    const context = minifyForHint(
-      this.messages,
-      confusionScore,
-      confusionBreakdown
-    );
-
-    // Get wiki domains for knowledge search suggestion
-    const domains = this.options.wiki ? await this.options.wiki.listDomains() : [];
-    const domainInfo = domains.length > 0
-      ? domains.map(d => `- ${d.domain_name}${d.description ? `: ${d.description}` : ''}`).join('\n')
-      : 'No domains available';
-
-    // JSON Schema for structured output
-    const hintSchema = {
-      type: 'object',
-      properties: {
-        blocker: {
-          type: 'string',
-          description: 'What is preventing progress. Use "no blockers" if there are no real blockers. Be specific and concise.',
-        },
-        next_step: {
-          type: 'string',
-          description: 'Concrete, actionable next step. If no blockers, suggest continuing current work.',
-        },
-        focus_on: {
-          type: 'string',
-          description: 'Key area or priority to focus on.',
-        },
-        wiki_domain: {
-          type: 'string',
-          description: 'Domain name from available domains. Leave empty if no wiki search needed.',
-        },
-        wiki_query: {
-          type: 'string',
-          description: 'Search query for the wiki. Leave empty if no wiki search needed.',
-        },
-      },
-      required: ['blocker', 'next_step', 'focus_on', 'wiki_domain', 'wiki_query'],
-    };
-
-    const analysisPrompt = `## User's Intent
-${context.userIntent}
-
-## Current Progress
-${context.recentTools.map(t => `- ${t.name}: ${t.status}`).join('\n')}
-
-## Problems Encountered
-${context.errors.length > 0 ? context.errors.map(e => `- ${e.tool}: ${e.error}`).join('\n') : 'None'}
-
-## Stuck Patterns
-${context.repetition.length > 0 ? context.repetition.map(r => `- ${r.tool} called ${r.count} times`).join('\n') : 'None'}
-
-## Confusion Score: ${context.confusionScore}
-${context.confusionBreakdown}
-
-## Available Wiki Domains
-${domainInfo}
-
----
-
-${ANALYSIS_INSTRUCTION} 
-
-CRITICAL INSTRUCTIONS:
-1. If there are NO REAL blockers preventing progress, set blocker to exactly: "no blockers"
-2. Do NOT fabricate blockers. "no blockers" means the agent should simply continue with the current task.
-3. Only suggest wiki_domain and wiki_query if there's genuine knowledge gap. Leave empty strings if no wiki search needed.
-4. The reply should be a JSON string, with no extra commentary. JSON schema must be respected. The schema is:
-${JSON.stringify(hintSchema, null, 2)}
-`;
-
-    // Retry loop: parse JSON until success or abort
-    while (true) {
-      // Check if already aborted
-      if (abortController.signal.aborted) {
-        return 'aborted';
-      }
-
-      try {
-        // Verbose logging: show the hint round request (truncated at the critical instruction)
-        agentIO.verbose('triologue', 'Hint round request');
-        const truncatedPrompt = `${analysisPrompt.split(ANALYSIS_INSTRUCTION)[0]}${ANALYSIS_INSTRUCTION}\n...`;
-        agentIO.verbose('triologue', truncatedPrompt, '');
-
-        // Get analysis from LLM with JSON schema enforcement
-        const response = await retryChat(
-          {
-            model: MODEL,
-            messages: [
-              {
-                role: 'user',
-                content: analysisPrompt,
-              },
-            ],
-            format: hintSchema,
-            // use thinking mode for hint round analysis
-            think: true,
-          },
-          { signal: abortController.signal, neglected: agentIO.isNeglectedMode() },
-        );
-
-        const rawContent = response.message.content || '{}';
-
-        // Parse JSON response (schema enforcement should guarantee valid JSON)
-        // Note: LLM may still wrap JSON in markdown code blocks despite format constraint
-        let hintData: {
-          blocker: string;
-          next_step: string;
-          focus_on: string;
-          wiki_domain: string;
-          wiki_query: string;
-        };
-
-        try {
-          // Extract JSON from potentially markdown-wrapped content
-          const jsonMatch = rawContent.match(/\{[\s\S]*\}/);
-          if (!jsonMatch) {
-            agentIO.verbose('triologue', 'No JSON found in hint response, retrying...');
-            continue;
-          }
-          hintData = JSON.parse(jsonMatch[0]);
-        } catch {
-          // Parse failed - log and retry
-          agentIO.verbose('triologue', 'JSON parse failed in hint response, retrying...');
-          continue;
-        }
-
-        // Validate required fields exist
-        if (
-          typeof hintData.blocker !== 'string' ||
-          typeof hintData.next_step !== 'string' ||
-          typeof hintData.focus_on !== 'string' ||
-          typeof hintData.wiki_domain !== 'string' ||
-          typeof hintData.wiki_query !== 'string'
-        ) {
-          console.log('[hint round] Missing required fields, retrying...');
-          continue;
-        }
-
-        // Format hint data for better readability
-        const hintLines: string[] = ['Problem Analysis:'];
-        hintLines.push(``);
-        hintLines.push(`**Blocker:** ${hintData.blocker}`);
-        hintLines.push(`**Next Step:** ${hintData.next_step}`);
-        hintLines.push(`**Focus On:** ${hintData.focus_on}`);
-        if (hintData.wiki_domain && hintData.wiki_query) {
-          hintLines.push(`**Wiki Search:** Domain="${hintData.wiki_domain}", Query="${hintData.wiki_query}"`);
-        } else {
-          hintLines.push(`**Wiki Search:** None`);
-        }
-        // Add pending skills notification if any
-        if (pendingSkills && pendingSkills.length > 0) {
-          hintLines.push(``);
-          hintLines.push(`**Pending Skill Compilation:** ${pendingSkills.map(s => `'${s}'`).join(', ')}`);
-          hintLines.push(`Use \`skill_compile\` to compile these skills so the hook system can process them.`);
-        }
-        hintLines.push(``);
-        hintLines.push(`Use \`ctx.core.brief()\` to provide status updates as needed.`);
-
-        this.note('HINT', hintLines.join('\n'));
-
-        this.options.onHint();
-        return 'success';
-      } catch (err) {
-        if (err instanceof Error && err.message === 'Request aborted') {
-          return 'aborted'; // ESC pressed - abort hint round
-        }
-        throw err;
-      }
-    }
+    return doHintRound(this, abortController, confusionScore, confusionBreakdown, pendingSkills);
   }
 
   // === Accessors ===
@@ -576,10 +405,17 @@ ${JSON.stringify(hintSchema, null, 2)}
   }
 
   /**
-   * Get messages without system prompt
+   * Get raw messages array (for hint round context interface)
    */
   getMessagesRaw(): Message[] {
     return [...this.messages];
+  }
+
+  /**
+   * Get the wiki module if available (for hint round context interface)
+   */
+  getWiki(): WikiModule | undefined {
+    return this.options.wiki;
   }
 
 
