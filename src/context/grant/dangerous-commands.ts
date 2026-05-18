@@ -26,6 +26,18 @@ export const DANGEROUS_COMMANDS: DangerousCommand[] = [
     category: 'destructive' 
   },
   
+  // Batch deletions (defense-in-depth; also gated in bash-judge step 4)
+  {
+    pattern: /\brm\s+.*\*[^/]*$/, 
+    reason: 'Batch deletion with glob pattern', 
+    category: 'destructive' 
+  },
+  {
+    pattern: /\brm\s+-[a-zA-Z]*[rR][a-zA-Z]*\s+~/, 
+    reason: 'Recursive deletion in home directory', 
+    category: 'destructive' 
+  },
+
   // Irreversible operations
   { 
     pattern: /\bmkfs\b/i, 

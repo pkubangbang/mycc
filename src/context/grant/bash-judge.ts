@@ -62,9 +62,42 @@ export async function judgeBash(
     };
   }
 
-  // Step 4: Mode + verb check (local, no LLM)
+  // Step 4: Mode + verb check
   if (mode === 'normal') {
-    // Normal mode: all verbs allowed (dangerous commands already blocked)
+    // Normal mode: all verbs allowed, but batch deletions require scrutiny
+    if (parsed!.verb === 'DELETE' && isBatchDelete(command)) {
+      // Child processes cannot use LLM judging — block and suggest explicit verb
+      if (isChildProcess) {
+        return {
+          decision: 'block',
+          reason: 'Batch deletion from child process is not allowed. Ask the lead agent to perform this operation instead.',
+        };
+      }
+
+      // Parent process: use LLM to analyze batch deletion
+      const llmResult = await analyzeBatchDelete(command, parsed!, escAware);
+      if (llmResult.decision === 'allow') return { decision: 'allow' };
+      if (llmResult.decision === 'block') {
+        return { decision: 'block', reason: llmResult.reason || 'Batch deletion blocked by LLM analysis' };
+      }
+
+      // Uncertain — ask user
+      if (!askUser) {
+        return { decision: 'block', reason: 'Batch deletion requires user confirmation' };
+      }
+
+      const userResponse = await askUser(
+        `Batch deletion detected.\n\nCommand: ${command}\nPurpose: ${parsed!.purpose}\n\nAllow this command? [y/N]`,
+        'bash-judge'
+      );
+      const approved = userResponse.toLowerCase().trim() === 'y' ||
+                       userResponse.toLowerCase().trim() === 'yes';
+      return {
+        decision: approved ? 'allow' : 'block',
+        reason: approved ? undefined : 'User denied the batch deletion',
+      };
+    }
+
     return { decision: 'allow' };
   }
 
@@ -133,6 +166,90 @@ export async function judgeBash(
     decision: 'block',
     reason: `Unknown verb: ${parsed!.verb}`,
   };
+}
+
+/**
+ * Check if a command performs batch deletion (multiple files, globs, or recursive).
+ * Single-file deletions (rm file.txt) are not considered batch.
+ */
+function isBatchDelete(command: string): boolean {
+  // Glob characters indicate multi-file targeting
+  if (/[*?[\]]/.test(command)) return true;
+  // Recursive flag (-r, -rf, -fr, -R, --recursive)
+  if (/\brm\s+.*-[a-zA-Z]*[rR]/.test(command)) return true;
+  // Multiple explicit file arguments (rm a b c)
+  const parts = command.trim().split(/\s+/).filter(p => p !== '');
+  if (parts[0] === 'rm' || parts[0] === '\\rm' || parts[0].endsWith('/rm')) {
+    const nonFlags = parts.slice(1).filter(p => !p.startsWith('-'));
+    if (nonFlags.length > 1) return true;
+  }
+  // find ... -delete (batch deletion via find)
+  if (/\bfind\b.*-delete\b/.test(command)) return true;
+  return false;
+}
+
+/**
+ * Analyze a batch deletion command with LLM.
+ * Uses retryMultipleChoice for SAFE/DANGEROUS/UNCERTAIN classification.
+ * Only called for DELETE verb with batch detection in normal mode.
+ */
+async function analyzeBatchDelete(
+  command: string,
+  parsed: ParsedIntent,
+  escAware?: <T>(operation: (abortController: AbortController) => Promise<T>, onCleanUp: () => T | Promise<T>) => Promise<T>
+): Promise<{ decision: 'allow' | 'block' | 'uncertain'; reason?: string }> {
+  const systemPrompt = `You are a command safety analyzer. Classify batch deletion commands.
+
+SAFE = Expected cleanup targeting project build artifacts, temp files, or caches. Files are regeneratable.
+DANGEROUS = Deletes source code, user data, config files, or files outside the expected project structure.
+UNCERTAIN = Cannot determine with confidence.
+
+Answer ONLY with exactly one of: SAFE, DANGEROUS, UNCERTAIN. No other text.`;
+
+  const userPrompt = `Command: ${command}
+Purpose: ${parsed.purpose}
+
+Classify this batch deletion command: SAFE, DANGEROUS, or UNCERTAIN?`;
+
+  try {
+    const operation = async (abortController: AbortController) => {
+      return retryMultipleChoice(
+        {
+          model: MODEL,
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userPrompt },
+          ],
+        },
+        ['SAFE', 'DANGEROUS', 'UNCERTAIN'],
+        { signal: abortController.signal, maxRetries: 2 }
+      );
+    };
+
+    const onCleanUp = () => null as string | null;
+
+    let result: string | null;
+    if (escAware) {
+      result = await escAware(operation, onCleanUp);
+    } else {
+      const abortController = new AbortController();
+      result = await operation(abortController);
+    }
+
+    if (result === null) return { decision: 'uncertain' };
+
+    switch (result) {
+      case 'SAFE':
+        return { decision: 'allow' };
+      case 'DANGEROUS':
+        return { decision: 'block', reason: 'LLM determined batch deletion is dangerous' };
+      case 'UNCERTAIN':
+      default:
+        return { decision: 'uncertain' };
+    }
+  } catch {
+    return { decision: 'uncertain' };
+  }
 }
 
 /**
