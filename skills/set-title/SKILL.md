@@ -3,9 +3,9 @@ name: set-title
 description: >
   Reminds the agent to set the terminal window title when `brief` or `recap`
   is used, the session has accumulated enough tool calls (>10), and the
-  title has not been set yet. Helps identify sessions across multiple
-  terminal windows.
-keywords: [title, terminal, session, reminder, identification]
+  title has not been set yet. Also reminds to update the title if the topic
+  has changed. Helps identify sessions across multiple terminal windows.
+keywords: [title, terminal, session, reminder, identification, update]
 when: if brief or recap is used, and the total tool calls has exceeded 10, and mycc_title is not used yet, then prompt the agent to set a descriptive terminal title
 ---
 
@@ -39,7 +39,9 @@ should call `mycc_title` with a concise, descriptive title like:
 - Keep it under 40 characters
 - Describe the current task or focus area
 - Prefix with the project name if useful (e.g., `mycc:`)
-- Update it when focus changes
+- **Remember to update the title if the topic has changed, using `mycc_title` tool.**
+  When you switch to a different task or the focus of the conversation shifts,
+  call `mycc_title` again with a new descriptive title reflecting the current work.
 
 ## Notes
 
