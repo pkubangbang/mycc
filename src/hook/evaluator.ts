@@ -28,6 +28,7 @@ export interface EvalContext {
   has: (tool: string) => boolean;
   hasAny: (tools: string[]) => boolean;
   hasCommand: (pattern: string) => boolean;
+  lastIndexOf: (pattern: string) => number;
   last: (tool?: string) => unknown;
   lastError: () => unknown;
   count: (tool?: string) => number;
@@ -290,6 +291,7 @@ export function evaluateExpression(expression: string, ctx: EvalContext): boolea
       .replace(/seq\.has\(/g, 'has(')
       .replace(/seq\.hasAny\(/g, 'hasAny(')
       .replace(/seq\.hasCommand\(/g, 'hasCommand(')
+      .replace(/seq\.lastIndexOf\(/g, 'lastIndexOf(')
       .replace(/seq\.last\(/g, 'last(')
       .replace(/seq\.lastError\(/g, 'lastError(')
       .replace(/seq\.totalCount\(/g, 'totalCount(')

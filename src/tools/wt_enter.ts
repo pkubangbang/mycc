@@ -60,8 +60,8 @@ export const wtEnterTool: ToolDefinition = {
         const granted = normalized === 'y' || normalized === 'yes';
 
         if (!granted) {
-          ctx.core.brief('info', 'wt_enter', 'Worktree entry cancelled by user');
-          return 'Worktree entry cancelled by user';
+          ctx.core.brief('warn', 'wt_enter', 'Worktree entry cancelled by the user.');
+          return 'Worktree entry cancelled by the user. You may work on the current branch directly';
         }
       }
     }

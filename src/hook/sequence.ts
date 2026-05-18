@@ -103,6 +103,32 @@ export class Sequence {
   }
 
   /**
+   * Get the index (position) of the last occurrence of a tool or bash command pattern.
+   * Pattern syntax: "toolName" for simple tool match, "bash#pattern" for bash command substring.
+   * Returns -1 if not found. Higher index = more recent.
+   * 
+   * Example: seq.lastIndexOf('edit_file') >= seq.lastIndexOf('bash#lint')
+   *   → true if the last edit happened after (or at same position as) the last lint run
+   */
+  lastIndexOf(pattern: string): number {
+    // Handle bash#pattern syntax
+    if (pattern.includes('#')) {
+      const [tool, cmdPattern] = pattern.split('#');
+      for (let i = this.events.length - 1; i >= 0; i--) {
+        const e = this.events[i];
+        if (e.tool !== tool) continue;
+        const cmd = e.args?.command;
+        if (typeof cmd !== 'string') continue;
+        if (cmd.includes(cmdPattern)) return i;
+      }
+      return -1;
+    }
+    
+    // Regular tool name match
+    return this.events.map(e => e.tool).lastIndexOf(pattern);
+  }
+
+  /**
    * Get the last event, or last event matching a tool
    */
   last(toolName?: string): SequenceEvent | undefined {
@@ -251,6 +277,7 @@ export class Sequence {
       has: (tool: string) => this.has(tool),
       hasAny: (tools: string[]) => this.hasAny(tools),
       hasCommand: (pattern: string) => this.hasCommand(pattern),
+      lastIndexOf: (pattern: string) => this.lastIndexOf(pattern),
       last: (tool?: string) => this.last(tool),
       lastError: () => this.lastError(),
       count: (tool?: string) => this.count(tool),

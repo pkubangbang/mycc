@@ -23,6 +23,7 @@ export interface TestableSequence {
   has(toolName: string): boolean;
   hasAny(tools: string[]): boolean;
   hasCommand(pattern: string): boolean;
+  lastIndexOf(pattern: string): number;
   last(toolName?: string): unknown;
   lastError(): unknown;
   count(toolName?: string): number;
@@ -68,7 +69,7 @@ export interface CompileResult {
 
 const VALID_ACTION_TYPES = ['inject_before', 'inject_after', 'block', 'replace', 'message', 'compact'];
 
-const SEQ_FUNCTIONS = ['has', 'hasAny', 'hasCommand', 'last', 'lastError', 'count', 'totalCount', 'countResult', 'since', 'sinceEdit', 'isPlanMode'];
+const SEQ_FUNCTIONS = ['has', 'hasAny', 'hasCommand', 'lastIndexOf', 'last', 'lastError', 'count', 'totalCount', 'countResult', 'since', 'sinceEdit', 'isPlanMode'];
 
 // Allowed literal values in expressions
 const ALLOWED_LITERALS = ['true', 'false', 'null', 'undefined'];
@@ -487,6 +488,7 @@ export function testExpression(
       .replace(/seq\.has\(/g, 'has(')
       .replace(/seq\.hasAny\(/g, 'hasAny(')
       .replace(/seq\.hasCommand\(/g, 'hasCommand(')
+      .replace(/seq\.lastIndexOf\(/g, 'lastIndexOf(')
       .replace(/seq\.last\(/g, 'last(')
       .replace(/seq\.lastError\(/g, 'lastError(')
       .replace(/seq\.totalCount\(/g, 'totalCount(')
@@ -503,6 +505,7 @@ export function testExpression(
       has: (tool: string) => sequence.has(tool),
       hasAny: (tools: string[]) => sequence.hasAny(tools),
       hasCommand: (pattern: string) => sequence.hasCommand(pattern),
+      lastIndexOf: (pattern: string) => sequence.lastIndexOf(pattern),
       last: (tool?: string) => sequence.last(tool),
       lastError: () => sequence.lastError(),
       count: (tool?: string) => sequence.count(tool),
@@ -541,6 +544,7 @@ export function smokeTestExpression(expression: string): TestResult {
     has: () => false,
     hasAny: () => false,
     hasCommand: () => false,
+    lastIndexOf: () => -1,
     last: () => undefined,
     lastError: () => undefined,
     count: () => 0,
@@ -589,6 +593,19 @@ export class MockSequence {
       return this.events.some(e => e.tool === tool && typeof e.args?.command === 'string' && e.args.command.includes(cmdPattern));
     }
     return this.has(pattern);
+  }
+  
+  lastIndexOf(pattern: string): number {
+    if (pattern.includes('#')) {
+      const [tool, cmdPattern] = pattern.split('#');
+      for (let i = this.events.length - 1; i >= 0; i--) {
+        const e = this.events[i];
+        if (e.tool !== tool) continue;
+        if (typeof e.args?.command === 'string' && e.args.command.includes(cmdPattern)) return i;
+      }
+      return -1;
+    }
+    return this.events.map(e => e.tool).lastIndexOf(pattern);
   }
   
   last(): unknown { return this.events.length === 0 ? undefined : this.events[this.events.length - 1]; }
