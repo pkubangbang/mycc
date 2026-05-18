@@ -109,8 +109,8 @@ export async function handleCollect(
     if (confusionIndex >= CONFUSION_THRESHOLD && messageCount >= MIN_MESSAGES_FOR_HINT) {
       // Only generate hint after a valid transition point (assistant or tool message)
       if (lastRole === 'assistant' || lastRole === 'tool') {
-        // Use verbose for hint round notification (not user-facing)
-        ctx.core.verbose('collect', 'Generating problem analysis (hint round)');
+        // Use brief for hint round notification (user-facing)
+        ctx.core.brief('info', 'collect', 'Generating problem analysis (hint round)...');
         // Get pending skills (skills with 'when' but no compiled condition)
         const pendingSkills = env.conditions.getPending();
         // Generate confusion breakdown from sequence events

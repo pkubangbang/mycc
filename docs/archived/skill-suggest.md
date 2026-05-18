@@ -1,5 +1,7 @@
 # Skill Suggestions from Wiki (RAG)
 
+> NOTE: this design has been obsoleted, and superseded by a more robust and async "SUGGEST state" which produce a brown bag (mail) to the lead. The below content are for historic research.
+
 This document describes the implementation of skill suggestions using wiki-based semantic matching, replacing the static skill list in the system prompt.
 
 ## Overview
