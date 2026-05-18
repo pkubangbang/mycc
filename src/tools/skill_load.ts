@@ -13,9 +13,7 @@ import { getSkillMatchThreshold } from '../config.js';
 
 export const skillLoadTool: ToolDefinition = {
   name: 'skill_load',
-  description: `Load a skill by name, or Search skills by intention. Returns specialized knowledge and instructions.
-
-Important: this tool is AUXILIARY. Only when you are told to used this tool should you use it.`,
+  description: `Load a skill by name, or Search skills by intention. Returns specialized knowledge and instructions.`,
   input_schema: {
     type: 'object',
     properties: {
