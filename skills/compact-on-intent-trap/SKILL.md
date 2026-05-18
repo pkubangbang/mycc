@@ -5,7 +5,7 @@ description: >
   verbs, missing TO clause, unknown objects), and the conversation has
   grown large, compact the context to restore attention to the intent
   language format in the system prompt.
-when: before executing bash, if 3 or more bash tool results start with 'Error: [Intent]' (within first 20 chars) and total tool calls exceeds 20, then compact the context
+when: "before executing bash, if 3 or more bash tool results start with 'Error: [Intent]' (within first 20 chars) and total tool calls exceeds 20, then compact the context"
 ---
 
 # Compact on Intent Trap
