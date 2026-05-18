@@ -148,7 +148,7 @@ describe('HookExecutor', () => {
       expect(executor.checkHooks('git_commit')).toContain('has-edits');
     });
 
-    it('should skip already injected hooks', () => {
+    it('should always match hooks regardless of prior injection', () => {
       registry.set('test-hook', {
         trigger: ['bash'],
         when: 'test',
@@ -163,8 +163,8 @@ describe('HookExecutor', () => {
       // Mark as injected
       registry.markInjected('test-hook');
 
-      // Second check - should skip
-      expect(executor.checkHooks('bash')).not.toContain('test-hook');
+      // Second check - should still match (per-move dedup happens in execute(), not matches())
+      expect(executor.checkHooks('bash')).toContain('test-hook');
     });
   });
 
@@ -457,17 +457,16 @@ describe('HookExecutor', () => {
 
       expect(result.action).toBe('proceed');
       expect(result.message).toContain('msg-hook');
-      expect(result.message).toContain('skill_load');
       expect(result.newCalls).toBeUndefined();
     });
   });
 
   // ============================================================================
-  // Duplicate Prevention
+  // Per-move duplicate prevention
   // ============================================================================
 
-  describe('duplicate prevention', () => {
-    it('should skip already injected hooks', async () => {
+  describe('per-move duplicate prevention', () => {
+    it('should deduplicate within the same move', async () => {
       registry.set('test-hook', {
         trigger: ['bash'],
         when: 'test',
@@ -478,7 +477,7 @@ describe('HookExecutor', () => {
 
       const pendingCalls = [createToolCall('bash', { command: 'test' }, 'test-hook')];
 
-      // First execution
+      // First execution in this move
       const result1 = await executor.execute(
         'test-hook',
         registry.get('test-hook')!.action,
@@ -487,9 +486,8 @@ describe('HookExecutor', () => {
         'Test content'
       );
       expect(result1.message).toContain('test-hook');
-      expect(result1.message).toContain('skill_load');
 
-      // Second execution - should reference existing
+      // Second execution in same move — should be deduped
       const result2 = await executor.execute(
         'test-hook',
         registry.get('test-hook')!.action,
@@ -497,33 +495,44 @@ describe('HookExecutor', () => {
         pendingCalls,
         'Test content'
       );
-      expect(result2.message).toContain('already in conversation');
+      expect(result2.message).toContain('already injected this move');
     });
 
-    it('should mark hook as injected after execution', async () => {
-      registry.set('inject-hook', {
+    it('should allow reactivation in a new move', async () => {
+      registry.set('test-hook', {
         trigger: ['bash'],
         when: 'test',
         condition: 'true',
-        action: {
-          type: 'inject_before',
-          tool: 'read_file',
-          args: { path: 'test.ts' },
-        },
+        action: { type: 'message' },
         version: 1,
       });
 
-      expect(registry.hasInjected('inject-hook')).toBe(false);
+      const pendingCalls = [createToolCall('bash', { command: 'test' }, 'test-hook')];
 
-      await executor.execute(
-        'inject-hook',
-        registry.get('inject-hook')!.action,
+      // First move
+      let result = await executor.execute(
+        'test-hook',
+        registry.get('test-hook')!.action,
         ctx,
-        [createToolCall('bash', {}, 'test-hook')],
-        'Test'
+        pendingCalls,
+        'Test content'
+      );
+      expect(result.message).toContain('test-hook');
+
+      // Simulate new move — processToolCalls clears injectedThisMove
+      await executor.processToolCalls([], ctx, (name) =>
+        name === 'test-hook' ? { content: 'Test content' } : undefined
       );
 
-      expect(registry.hasInjected('inject-hook')).toBe(true);
+      // New move — should activate again
+      result = await executor.execute(
+        'test-hook',
+        registry.get('test-hook')!.action,
+        ctx,
+        pendingCalls,
+        'Test content'
+      );
+      expect(result.message).toContain('test-hook');
     });
   });
 

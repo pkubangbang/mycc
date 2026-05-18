@@ -430,7 +430,7 @@ describe('ConditionRegistry', () => {
       expect(matches).not.toContain('edit-reminder'); // Wrong trigger
     });
 
-    it('should skip already injected skills', () => {
+    it('should match even when previously injected (hooks always activate)', () => {
       seq.add({ tool: 'bash', args: { command: 'test' }, result: 'Error: failed', timestamp: 1000 });
 
       // First match
@@ -440,9 +440,9 @@ describe('ConditionRegistry', () => {
       // Mark as injected
       registry.markInjected('any-error');
 
-      // Second match - should skip
+      // Second match - should still match (hooks always activate)
       const matches2 = registry.matches('bash', seq);
-      expect(matches2).not.toContain('any-error');
+      expect(matches2).toContain('any-error');
     });
 
     it('should return multiple matching conditions', () => {

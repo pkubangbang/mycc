@@ -102,6 +102,7 @@ const HOOK_PRIORITY: Record<string, number> = {
 export class HookExecutor {
   private conditions: ConditionRegistry;
   private sequence: Sequence;
+  private injectedThisMove: Set<string> = new Set();
 
   constructor(conditions: ConditionRegistry, sequence: Sequence) {
     this.conditions = conditions;
@@ -128,17 +129,14 @@ export class HookExecutor {
     skillContent: string,
     cond?: Condition
   ): Promise<HookResult> {
-    // Check if already injected (duplicate prevention)
-    if (this.conditions.hasInjected(skillName)) {
-      // Already in conversation - just reference
+    // Prevent duplicate injection within the same move (one LLM response)
+    if (this.injectedThisMove.has(skillName)) {
       return {
         action: 'proceed',
-        message: `[Hook: ${skillName}] (content already in conversation)`,
+        message: `[Hook: ${skillName}] (already injected this move)`,
       };
     }
-
-    // Mark as injected
-    this.conditions.markInjected(skillName);
+    this.injectedThisMove.add(skillName);
 
     switch (action.type) {
       case 'inject_before':
@@ -370,6 +368,9 @@ export class HookExecutor {
     ctx: AgentContext,
     getSkill: (name: string) => { content?: string } | undefined
   ): Promise<ProcessToolCallsResult> {
+    // Clear per-move dedup at the start of each new move
+    this.injectedThisMove.clear();
+
     const result: ProcessToolCallsResult = {
       calls: [],
       blockedCalls: new Map(),
@@ -440,11 +441,6 @@ export class HookExecutor {
         const skill = getSkill(hookName);
         if (!skill) continue;
 
-        // Evaluate condition (stop triggers don't have call context, just sequence)
-        if (!this.evaluateConditionForStop(cond.condition)) {
-          continue;  // Condition doesn't match
-        }
-
         const result = await this.execute(hookName, cond.action, ctx, [], skill.content || '', cond);
 
         if (result.action === 'blocked') {
@@ -462,7 +458,7 @@ export class HookExecutor {
               metadata: {},
             });
           }
-          // For blockers/replacers, return immediately (first wins)
+          // For blockers/replacers, return immediately (first wins) so later tool calls are discarded
           if (priority < 2) {
             return { calls, messages };
           }
@@ -475,13 +471,6 @@ export class HookExecutor {
     }
 
     return { calls, messages };
-  }
-
-  /**
-   * Evaluate condition for stop trigger (no call context, just sequence)
-   */
-  private evaluateConditionForStop(condition: string): boolean {
-    return this.sequence.evaluate(condition);
   }
 
   /**
@@ -510,11 +499,6 @@ export class HookExecutor {
       for (const { name: hookName, cond } of hooksByPriority.get(priority)!) {
         const skill = getSkill(hookName);
         if (!skill) continue;
-
-        // Evaluate condition with BOTH sequence and call metadata
-        if (!this.evaluateCondition(cond.condition, call)) {
-          continue;  // Condition doesn't match
-        }
 
         const result = await this.execute(hookName, cond.action, ctx, calls, skill.content || '', cond);
 
@@ -576,21 +560,6 @@ export class HookExecutor {
     return result;
   }
 
-  /**
-   * Evaluate a condition expression against sequence and call metadata.
-   * Uses the jsep AST evaluator (evaluator.ts) for safe evaluation
-   * without new Function(), preventing compiled-code memory leak.
-   */
-  private evaluateCondition(condition: string, call: AugmentedToolCall): boolean {
-    try {
-      return this.sequence.evaluateWithCall(condition, {
-        metadata: call.metadata || {},
-        args: call.function.arguments,
-      });
-    } catch {
-      return false;
-    }
-  }
 }
 
 /**

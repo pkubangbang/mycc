@@ -270,7 +270,7 @@ export class Sequence {
       lastError: () => this.lastError(),
       count: (tool?: string) => this.count(tool),
       totalCount: (tool?: string) => this.totalCount(tool),
-      countResult: (pattern: string) => this.countResult(pattern),
+      countResult: (tool: string, pattern: string, maxChars?: number) => this.countResult(tool, pattern, maxChars),
       since: (tool: string) => this.since(tool),
       sinceEdit: () => this.sinceEdit(),
       isPlanMode: () => this.isPlanMode(),

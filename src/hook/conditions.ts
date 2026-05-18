@@ -422,12 +422,6 @@ export class ConditionRegistry {
     const matched: string[] = [];
 
     for (const [name, cond] of this.conditions) {
-      // Skip if already injected (duplicate prevention)
-      // Check both in-memory set AND conversation markers
-      if (this.hasInjected(name) || seq.hasSkillInConversation(name)) {
-        continue;
-      }
-
       // Check trigger
       if (!cond.trigger.includes('*') && !cond.trigger.includes(trigger)) {
         continue;
@@ -472,7 +466,7 @@ export class ConditionRegistry {
     // Build tools list for prompt
     const toolsSection = availableTools && availableTools.length > 0
       ? `Available tools (use these as trigger values):
-${availableTools.map(t => `- ${t.name}: ${t.description.split('\n')[0]}`).join('\n')}
+${availableTools.map(t => `- ${t.name}: ${t.description}`).join('\n')}
 
 NOTE: The trigger must be an array of strings:
 - "stop": Triggers when LLM finishes reply (no tool calls pending)
