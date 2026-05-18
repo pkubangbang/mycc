@@ -157,6 +157,7 @@ ${JSON.stringify(hintSchema, null, 2)}
           continue;
         }
         hintData = JSON.parse(jsonMatch[0]);
+        agentIO.verbose('triologue', `Hint round parsed result: ${JSON.stringify(hintData, null, 2)}`);
       } catch {
         agentIO.verbose('triologue', 'JSON parse failed in hint response, retrying...');
         continue;
