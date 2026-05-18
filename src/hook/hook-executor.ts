@@ -345,7 +345,7 @@ export class HookExecutor {
 
     return {
       action: 'proceed',
-      message: `A skill called "${skillName}" seems suitable for your task, consider use it by skill_load(name = "${skillName}")`,
+      message: `A skill called "${skillName}" seems suitable for your task, load it if you haven't.`,
     };
   }
 
