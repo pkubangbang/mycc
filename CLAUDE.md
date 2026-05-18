@@ -153,6 +153,16 @@ The system uses two distinct file types for persistence:
 
 Key distinction: the session file tells you *what sessions exist and where their logs live*; the triologue JSONL contains *what actually happened* during a session.
 
+### session, turn, and move
+
+These terms define the temporal scopes of agent operations, from broadest to narrowest:
+
+- **session**: The full conversation history from agent start to exit. Encompasses all turns and moves. `Sequence.totalEventsCount` and `seq.totalCount()` operate at this scope.
+
+- **turn**: From one user query to the next. Begins when the user submits a query at the prompt line and ends when the agent returns to PROMPT state. `Sequence.events` and most `seq.*` functions (`has`, `hasAny`, `count`, `countResult`, `last`, `lastError`, `lastIndexOf`, `since`, `sinceEdit`) operate at this scope — they are cleared at each `markPromptBoundary()` call in the PROMPT state.
+
+- **move**: A single LLM response, including all tool calls in its delta. Within a move, tool calls are batched — hooks evaluate against prior moves in the same turn, not sibling tools in the same delta (those haven't executed yet).
+
 ### mindmap
 
 A tree-structured knowledge system that compiles markdown files (like `CLAUDE.md`) into a navigable JSON structure. Each node has an ID (slash-separated path), text, title, summary (LLM-generated), level, children, and links. The agent can query specific nodes via `get_node` tool for efficient context retrieval without loading entire documentation.

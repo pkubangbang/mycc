@@ -144,9 +144,18 @@ export class Sequence {
   /**
    * Count tool results whose content contains a substring pattern.
    * Scans events since the last user query (current turn).
+   *
+   * @param tool - Tool name to filter by, or '*' for all tools
+   * @param pattern - Substring to search in the tool result
+   * @param maxChars - Optional: only search the first N chars of each result.
+   *                   Prevents false positives from file content read into results.
    */
-  countResult(pattern: string): number {
-    return this.events.filter(e => e.result.includes(pattern)).length;
+  countResult(tool: string, pattern: string, maxChars?: number): number {
+    return this.events.filter(e => {
+      if (tool !== '*' && e.tool !== tool) return false;
+      const searchText = maxChars ? e.result.slice(0, maxChars) : e.result;
+      return searchText.includes(pattern);
+    }).length;
   }
 
   /**

@@ -523,7 +523,7 @@ Available condition functions (use seq.X syntax):
 - seq.lastError(): Get last error event
 - seq.count(toolName?): Count tool occurrences since last user query (current turn)
 - seq.totalCount(toolName?): Count tool occurrences since session start (entire conversation)
-- seq.countResult(pattern): Count tool results containing a substring since last user query
+- seq.countResult(tool, pattern, maxChars?): Count tool results matching a substring. tool='*' for all tools. maxChars limits search to first N chars (prevents false positives from file content)
 - seq.since(toolName): Events after last occurrence
 - seq.sinceEdit(): Events after last file edit
 - seq.isPlanMode(): Check if agent is in plan mode (prevents hooks during planning)
@@ -550,7 +550,7 @@ Examples:
 - "block force push to main": { "trigger": ["bash"], "condition": "call.args.command.includes('git push --force') && call.args.command.includes('main')", "action": { "type": "block", "reason": "Force push to main is prohibited" } }
 - "block test files over 300 lines": { "trigger": ["write_file"], "condition": "call.metadata.filePath.includes('/tests/') && call.metadata.newLoc > 300", "action": { "type": "block", "reason": "Test files cannot exceed 300 lines" } }
 - "block destructive bash to main": { "trigger": ["bash"], "condition": "call.metadata.isDestructive && call.args.command.includes('main')", "action": { "type": "block", "reason": "Destructive operations on main branch prohibited" } }
-- "compact on repeated intent failures": { "trigger": ["bash"], "condition": "seq.countResult('[Intent]') >= 3 && seq.totalCount() > 20", "action": { "type": "compact" } }
+- "compact on repeated intent failures": { "trigger": ["bash"], "condition": "seq.countResult('bash', 'Error: [Intent]', 20) >= 3 && seq.totalCount() > 20", "action": { "type": "compact" } }
 ${errorFeedback}
 
 Output a JSON object with trigger, condition, and action.`;

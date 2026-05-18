@@ -27,7 +27,7 @@ export interface TestableSequence {
   lastError(): unknown;
   count(toolName?: string): number;
   totalCount(toolName?: string): number;
-  countResult(pattern: string): number;
+  countResult(tool: string, pattern: string, maxChars?: number): number;
   since(toolName: string): unknown[];
   sinceEdit(): unknown[];
   isPlanMode(): boolean;
@@ -507,7 +507,7 @@ export function testExpression(
       lastError: () => sequence.lastError(),
       count: (tool?: string) => sequence.count(tool),
       totalCount: (tool?: string) => sequence.totalCount(tool),
-      countResult: (pattern: string) => sequence.countResult(pattern),
+      countResult: (tool: string, pattern: string, maxChars?: number) => sequence.countResult(tool, pattern, maxChars),
       since: (tool: string) => sequence.since(tool),
       sinceEdit: () => sequence.sinceEdit(),
       isPlanMode: () => sequence.isPlanMode(),
@@ -545,7 +545,7 @@ export function smokeTestExpression(expression: string): TestResult {
     lastError: () => undefined,
     count: () => 0,
     totalCount: () => 0,
-    countResult: () => 0,
+    countResult: (_tool: string, _pattern: string, _maxChars?: number) => 0,
     since: () => [],
     sinceEdit: () => [],
     isPlanMode: () => false,
@@ -600,7 +600,13 @@ export class MockSequence {
   lastError(): undefined { return undefined; }
   count(toolName?: string): number { return toolName ? this.events.filter(e => e.tool === toolName).length : this.events.length; }
   totalCount(toolName?: string): number { return toolName ? this.events.filter(e => e.tool === toolName).length : this.events.length; }
-  countResult(pattern: string): number { return this.events.filter(e => e.result.includes(pattern)).length; }
+  countResult(tool: string, pattern: string, maxChars?: number): number {
+    return this.events.filter(e => {
+      if (tool !== '*' && e.tool !== tool) return false;
+      const searchText = maxChars ? e.result.slice(0, maxChars) : e.result;
+      return searchText.includes(pattern);
+    }).length;
+  }
   since(): unknown[] { return []; }
   sinceEdit(): unknown[] { return []; }
   isPlanMode(): boolean { return false; }
