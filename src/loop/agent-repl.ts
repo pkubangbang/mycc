@@ -208,12 +208,26 @@ export async function main(): Promise<void> {
 
   // Initialize hook system (machine lifetime)
   const conditions = new ConditionRegistry();
-  await conditions.load();
+  const loadResult = await conditions.load();
+  // Report load errors/warnings
+  for (const error of loadResult.errors) {
+    console.error(chalk.red(`[conditions] Error: ${error}`));
+  }
+  for (const warning of loadResult.warnings) {
+    console.log(chalk.yellow(`[conditions] Warning: ${warning}`));
+  }
 
   // Wire up IPC-based condition reload: skill_compile sends IPC message
   // to refresh runtime conditions without restarting the agent
   agentIO.setConditionReloadCallback(async () => {
-    await conditions.load();
+    const reloadResult = await conditions.load();
+    // Report reload errors/warnings
+    for (const error of reloadResult.errors) {
+      console.error(chalk.red(`[conditions] Error: ${error}`));
+    }
+    for (const warning of reloadResult.warnings) {
+      console.log(chalk.yellow(`[conditions] Warning: ${warning}`));
+    }
   });
 
   // Sync pending skills (skills with 'when' but no compiled condition)

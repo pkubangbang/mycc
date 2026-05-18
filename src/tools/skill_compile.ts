@@ -52,9 +52,16 @@ Returns the compiled condition with version history.`,
 
     // Check if skill has "when" field
     if (!skill.when) {
-      // Check if there's already a compiled condition (reuse the registry we'll load below)
+      // Check if there's already a compiled condition
       const conditions = new ConditionRegistry();
-      await conditions.load();
+      const preLoadResult = await conditions.load();
+      // Report load errors/warnings
+      for (const error of preLoadResult.errors) {
+        ctx.core.brief('error', 'skill_compile', `Load error: ${error}`);
+      }
+      for (const warning of preLoadResult.warnings) {
+        ctx.core.brief('warn', 'skill_compile', `Load warning: ${warning}`);
+      }
       const existing = conditions.get(skillName);
       
       if (existing) {
@@ -72,9 +79,12 @@ Returns the compiled condition with version history.`,
     const conditions = new ConditionRegistry();
     const loadResult = await conditions.load();
     
-    // Report load warnings/errors
-    if (loadResult.errors.length > 0) {
-      ctx.core.brief('warn', 'skill_compile', `Load warnings: ${loadResult.errors.join('; ')}`);
+    // Report load errors/warnings
+    for (const error of loadResult.errors) {
+      ctx.core.brief('error', 'skill_compile', `Load error: ${error}`);
+    }
+    for (const warning of loadResult.warnings) {
+      ctx.core.brief('warn', 'skill_compile', `Load warning: ${warning}`);
     }
 
     // Get existing condition if any
@@ -117,7 +127,7 @@ Returns the compiled condition with version history.`,
 
     // Brief output — always visible summary of compilation
     ctx.core.brief('info', 'skill_compile',
-      `${skillName} (v${condition.version})\nTrigger: ${condition.trigger}\nCondition: ${condition.condition}`);
+      `${skillName} (v${condition.version})\nTrigger: ${condition.trigger}\nCondition: ${condition.condition}\nAction: ${JSON.stringify(condition.action)}`);
 
     // Push the newly compiled condition to the runtime condition registry
     // via IPC, so the agent picks it up without restarting

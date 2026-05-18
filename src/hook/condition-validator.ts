@@ -240,10 +240,9 @@ export function validateSchema(condition: unknown): ValidationResult {
         if (typeof entry.condition !== 'string') {
           errors.push(`history[${i}].condition must be a string`);
         }
-        const entryActionResult = validateAction(entry.action);
-        for (const err of entryActionResult.errors) {
-          errors.push(`history[${i}].action: ${err}`);
-        }
+        // History entries are immutable records of past versions;
+        // do NOT validate their actions (old versions may not comply
+        // with current validation rules, e.g., intent format requirements).
       }
     }
   }
