@@ -381,6 +381,7 @@ export interface MailModule {
   hasNewMails(): boolean;
   appendMail(from: string, title: string, content: string, issueId?: number): void;
   collectMails(): Mail[];
+  listMails(): Mail[];
 }
 
 /**

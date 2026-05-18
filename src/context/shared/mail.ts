@@ -60,6 +60,37 @@ export class MailBox implements MailModule {
   }
 
   /**
+   * List all mails without consuming them (read-only peek)
+   */
+  listMails(): MailType[] {
+    const mailPath = this.getMailPath();
+
+    if (!fs.existsSync(mailPath)) {
+      return [];
+    }
+
+    const content = fs.readFileSync(mailPath, 'utf-8');
+    if (!content.trim()) {
+      return [];
+    }
+
+    const lines = content.trim().split('\n');
+    const mails: MailType[] = [];
+
+    for (const line of lines) {
+      try {
+        const mail = JSON.parse(line) as MailType;
+        mail.timestamp = new Date(mail.timestamp);
+        mails.push(mail);
+      } catch {
+        // Skip malformed lines
+      }
+    }
+
+    return mails;
+  }
+
+  /**
    * Collect all mails and clear the mailbox
    * Atomic: read file, then truncate
    */
