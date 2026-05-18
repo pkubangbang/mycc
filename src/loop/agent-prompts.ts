@@ -38,11 +38,10 @@ function buildIntentLanguageSection(): string {
   const lines: string[] = [];
 
   lines.push('## Intent Lang');
-  lines.push('');
   lines.push('When a tool requires an `intent` parameter, you MUST follow this format strictly:');
-  lines.push('');
+  lines.push('```');
   lines.push('VERB OBJECT PARAM PARAM ... TO PURPOSE');
-  lines.push('');
+  lines.push('```');
   lines.push('where `PARAM` is a `key=value` pair to describe an aspect of the OBJECT. You choose the key.')
   lines.push('The VERB and OBJECT MUST be chosen from the below table. You MUST NOT create your own.');
 
@@ -99,31 +98,20 @@ function buildOutputBehaviorSection(): string {
 function buildVerificationSection(): string {
   return [
     '## Verification Before Action',
-    '',
-    'Do NOT make assumptions. Always verify by:',
-    '1. Exploring the codebase to understand context',
-    '2. Asking the user for clarification',
-    '3. Searching local knowledge (Recall → Skills → Wiki)',
-    '4. Only then searching the web if needed',
-    '',
     'Understand the project structure first. Only write code when you are clear about the direction. If unsure, discuss with the user before proceeding.',
-    '',
+    'Make cautious moves before you understand the user\'s preference. Ask questions to confirm your assumptions instead of infering a reasonable one.',
     '### Environment Detection',
-    '',
     'If your exploration reveals an unusual project layout (e.g., unfamiliar directory structure,',
     'missing standard project files, unexpected file organization), load the environment_detection',
     'skill to help you understand the "shape" of the current working directory:',
-    '',
     '```',
     'skill_load(name="environment_detection")',
     '```',
-    '',
     'This skill helps you identify:',
     '- Is cwd a well-known system folder (e.g., user\'s home)?',
     '- Does cwd contain a git repo (indicating a project)?',
     '- If not a git repo: is it a collection of repos, materials, or empty folder?',
     '- What executables are available (ripgrep, yq, ffmpeg, etc.)?',
-    '',
     'Use this skill when you feel uncertain about the project context.',
   ].join('\n');
 }
