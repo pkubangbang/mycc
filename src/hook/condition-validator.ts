@@ -14,6 +14,7 @@
 import type { Condition, HookAction } from './conditions.js';
 import jsep from 'jsep';
 import { evaluateExpression } from './evaluator.js';
+import { parseIntent, validateIntent } from '../context/grant/intent-parser.js';
 
 /**
  * Minimal sequence interface for testing
@@ -149,6 +150,19 @@ export function validateAction(action: unknown): ValidationResult {
             errors.push('action.args.timeout must be a number');
           } else if (args.timeout < 1 || args.timeout > 30) {
             warnings.push(`action.args.timeout ${args.timeout} will be clamped to 1-30 range`);
+          }
+        }
+        // Validate bash tool intent format (bash requires intent language)
+        if (act.tool === 'bash') {
+          const intent = args.intent;
+          if (typeof intent !== 'string' || intent.trim() === '') {
+            errors.push('action.args.intent is required for bash tool and must follow intent language: VERB OBJECT TO PURPOSE');
+          } else {
+            const parsed = parseIntent(intent.trim());
+            const intentResult = validateIntent(parsed);
+            if (!intentResult.valid) {
+              errors.push(`action.args.intent: ${intentResult.error}${intentResult.hint ? ` — ${intentResult.hint}` : ''}`);
+            }
           }
         }
       }

@@ -23,6 +23,12 @@ import {
 import {
   getSkillAbsolutePath,
 } from '../utils/skill-path-resolver.js';
+import {
+  VALID_VERBS,
+  VALID_OBJECTS,
+  VERB_MEANINGS,
+  OBJECT_MEANINGS,
+} from '../context/grant/intent-parser.js';
 
 /**
  * JSON schema for condition compilation response
@@ -537,9 +543,26 @@ Available action types:
 - message: Just inject a message (weak, use for reminders)
 - compact: Trigger context compaction (no args needed, highest priority)
 
+IMPORTANT: When using inject_before, inject_after, or replace with tool="bash",
+the args.intent MUST follow the intent language format:
+  VERB OBJECT [key=value ...] TO PURPOSE
+Valid verbs: ${VALID_VERBS.join(', ')}
+Valid objects: ${VALID_OBJECTS.join(', ')}
+| Verb | Meaning |
+|------|---------|
+${VALID_VERBS.map(v => `| ${v} | ${VERB_MEANINGS[v] || ''} |`).join('\n')}
+| Object | Meaning |
+|--------|---------|
+${VALID_OBJECTS.map(o => `| ${o} | ${OBJECT_MEANINGS[o] || ''} |`).join('\n')}
+The intent will be validated at compile time. Invalid intents will be rejected.
+Example intents for bash:
+- "TEST ARTIFACT TO verify lint before commit"
+- "RUN SYSTEM TO check git status"
+- "TEST ARTIFACT TO run tests after code edits"
+
 Examples:
-- "run lint before commit if files changed": { "trigger": ["git_commit"], "condition": "seq.hasAny(['edit_file', 'write_file']) && seq.lastIndexOf('bash#lint') == -1", "action": { "type": "inject_before", "tool": "bash", "args": { "command": "pnpm lint", "intent": "pre-commit lint", "timeout": 30 } } }
-- "ensure lint after new edits": { "trigger": ["git_commit", "stop"], "condition": "seq.hasAny(['edit_file', 'write_file']) && (seq.lastIndexOf('edit_file') >= seq.lastIndexOf('bash#lint') || seq.lastIndexOf('write_file') >= seq.lastIndexOf('bash#lint')) && !seq.isPlanMode()", "action": { "type": "inject_before", "tool": "bash", "args": { "command": "pnpm lint", "intent": "lint after edits", "timeout": 30 } } }
+- "run lint before commit if files changed": { "trigger": ["git_commit"], "condition": "seq.hasAny(['edit_file', 'write_file']) && seq.lastIndexOf('bash#lint') == -1", "action": { "type": "inject_before", "tool": "bash", "args": { "command": "pnpm lint", "intent": "TEST ARTIFACT TO verify lint before commit", "timeout": 30 } } }
+- "block commit unless linted": { "trigger": ["git_commit"], "condition": "seq.hasAny(['edit_file', 'write_file']) && (seq.lastIndexOf('edit_file') >= seq.lastIndexOf('bash#lint') || seq.lastIndexOf('write_file') >= seq.lastIndexOf('bash#lint'))", "action": { "type": "block", "reason": "Run pnpm lint first - files have been edited since the last lint run" } }
 - "search wiki on errors": { "trigger": ["*"], "condition": "seq.lastError() && !seq.has('wiki_get')", "action": { "type": "inject_before", "tool": "wiki_get", "args": { "query": "error", "domain": "pitfall" } } }
 - "block force push to main": { "trigger": ["bash"], "condition": "call.args.command.includes('git push --force') && call.args.command.includes('main')", "action": { "type": "block", "reason": "Force push to main is prohibited" } }
 - "block test files over 300 lines": { "trigger": ["write_file"], "condition": "call.metadata.filePath.includes('/tests/') && call.metadata.newLoc > 300", "action": { "type": "block", "reason": "Test files cannot exceed 300 lines" } }
