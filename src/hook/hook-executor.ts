@@ -148,15 +148,19 @@ export class HookExecutor {
         return this.injectAfter(skillName, action, ctx, pendingCalls, skillContent, cond);
 
       case 'block':
-        return this.block(skillName, action, skillContent, cond);
+        return this.block(skillName, action, ctx, skillContent, cond, pendingCalls[0]?.function.name);
 
       case 'replace':
         return this.replace(skillName, action, ctx, pendingCalls, skillContent, cond);
 
       case 'message':
-        return this.message(skillName, skillContent, cond);
+        return this.message(skillName, ctx, skillContent, cond);
 
       case 'compact':
+        ctx.core.brief('info', 'hook',
+          `COMPACT requested`,
+          `${pendingCalls[0]?.function.name ?? 'stop'} → ${skillName}`
+        );
         return { action: 'compact' };
     }
   }
@@ -185,11 +189,14 @@ export class HookExecutor {
     const conditionExpr = cond?.condition ?? 'unknown';
     const argsPreview = formatArgsPreview(action.args);
 
-    // Brief (message): why it triggered (when field)
-    // Verbose (detail): skill name and tool transformation
+    // Detail (always shown): trigger → hook name
+    // Verbose: action description, when, and condition
     ctx.core.brief('info', 'hook',
-      `When: "${whenText}"\n\nExpr: ${conditionExpr}`,
-      `${skillName}: ${triggerTool} → ${action.tool}${argsPreview}`
+      `${action.tool}${argsPreview} injected BEFORE ${triggerTool}`,
+      `${triggerTool} → ${skillName}`
+    );
+    ctx.core.verbose('hook',
+      `When: "${whenText}"\nExpr: ${conditionExpr}`
     );
 
     return {
@@ -222,11 +229,14 @@ export class HookExecutor {
     const conditionExpr = cond?.condition ?? 'unknown';
     const argsPreview = formatArgsPreview(action.args);
 
-    // Brief (message): why it triggered (when field)
-    // Verbose (detail): skill name and tool transformation
+    // Detail (always shown): trigger → hook name
+    // Verbose: action description, when, and condition
     ctx.core.brief('info', 'hook',
-      `When: "${whenText}"\n\nExpr: ${conditionExpr}`,
-      `${skillName}: ${triggerTool} → ${triggerTool} + ${action.tool}${argsPreview}`
+      `${action.tool}${argsPreview} injected AFTER ${triggerTool}`,
+      `${triggerTool} → ${skillName}`
+    );
+    ctx.core.verbose('hook',
+      `When: "${whenText}"\nExpr: ${conditionExpr}`
     );
 
     // Insert after first call
@@ -243,16 +253,29 @@ export class HookExecutor {
   private async block(
     skillName: string,
     action: { type: 'block'; reason?: string },
+    ctx: AgentContext,
     _skillContent: string,
-    cond?: Condition
+    cond?: Condition,
+    triggerTool?: string
   ): Promise<HookResult> {
     const whenText = cond?.when ?? 'unknown condition';
     const conditionExpr = cond?.condition ?? 'unknown';
     const reason = action.reason ?? 'no reason provided';
+    const trigger = triggerTool ?? 'unknown';
+
+    // Detail (always shown): trigger → hook name
+    // Verbose: action description, when, and condition
+    ctx.core.brief('info', 'hook',
+      `BLOCKED: ${reason}`,
+      `${trigger} → ${skillName}`
+    );
+    ctx.core.verbose('hook',
+      `When: "${whenText}"\nExpr: ${conditionExpr}`
+    );
 
     return {
       action: 'blocked',
-      message: `[Hook: ${skillName}]\nWhen: "${whenText}"\nExpr: ${conditionExpr}\nReason: ${reason}`,
+      message: `[Hook: ${skillName}]\nReason: ${reason}`,
     };
   }
 
@@ -277,11 +300,14 @@ export class HookExecutor {
     firstCall.function.name = action.tool;
     firstCall.function.arguments = action.args;
 
-    // Brief (message): why it triggered (when field)
-    // Verbose (detail): skill name and tool transformation
+    // Detail (always shown): trigger → hook name
+    // Verbose: action description, when, and condition
     ctx.core.brief('info', 'hook',
-      `When: "${whenText}"\n\nExpr: ${conditionExpr}`,
-      `${skillName}: ${originalTool} → ${action.tool}${argsPreview}`
+      `REPLACED ${originalTool} → ${action.tool}${argsPreview}`,
+      `${originalTool} → ${skillName}`
+    );
+    ctx.core.verbose('hook',
+      `When: "${whenText}"\nExpr: ${conditionExpr}`
     );
 
     return {
@@ -297,9 +323,23 @@ export class HookExecutor {
    */
   private async message(
     skillName: string,
+    ctx: AgentContext,
     _skillContent: string,
-    _cond?: Condition
+    cond?: Condition
   ): Promise<HookResult> {
+    const triggerTool = 'any';
+
+    // Detail (always shown): trigger → hook name
+    ctx.core.brief('info', 'hook',
+      `MESSAGE: suggested using ${skillName}`,
+      `${triggerTool} → ${skillName}`
+    );
+    if (cond) {
+      ctx.core.verbose('hook',
+        `When: "${cond.when}"\nExpr: ${cond.condition}`
+      );
+    }
+
     return {
       action: 'proceed',
       message: `A skill called "${skillName}" seems suitable for your task, consider use it by skill_load("${skillName}")`,
