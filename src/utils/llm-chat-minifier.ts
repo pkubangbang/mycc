@@ -220,8 +220,11 @@ export function minifyForHint(
   const toolCallCounts = new Map<string, number>();
   const errors: ErrorSummary[] = [];
 
-  // Process messages in reverse to get most recent first
-  for (let i = filteredMessages.length - 1; i >= 0 && recentTools.length < 10; i--) {
+  // Process messages in forward order so tool results (which come after
+  // their tool calls in the conversation) can find and update the matching
+  // call's status. Previously reverse iteration caused all statuses to
+  // remain 'pending' because results were encountered before calls.
+  for (let i = 0; i < filteredMessages.length; i++) {
     const msg = filteredMessages[i];
 
     // Track tool calls
@@ -231,7 +234,7 @@ export function minifyForHint(
         // Count for repetition detection
         toolCallCounts.set(name, (toolCallCounts.get(name) || 0) + 1);
 
-        recentTools.unshift({
+        recentTools.push({
           name,
           args: truncateArgs(tc.function.arguments, 100),
           status: 'pending',
@@ -242,7 +245,7 @@ export function minifyForHint(
     // Track tool results and their status
     if (msg.role === 'tool') {
       const status = isErrorResult(msg.content || '') ? 'error' : 'success';
-      // Update the most recent matching tool call
+      // Update the most recent matching pending tool call
       for (let j = recentTools.length - 1; j >= 0; j--) {
         if (recentTools[j].name === msg.tool_name && recentTools[j].status === 'pending') {
           recentTools[j].status = status;
@@ -269,7 +272,7 @@ export function minifyForHint(
 
   return {
     userIntent,
-    recentTools,
+    recentTools: recentTools.slice(-10), // Keep last 10 tool calls
     errors: errors.slice(-5), // Keep last 5 errors
     repetition,
     confusionScore,
