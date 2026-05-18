@@ -66,7 +66,7 @@ describe('ConditionRegistry', () => {
         'pre-commit-lint': {
           trigger: ['git_commit'],
           when: 'run lint before commit',
-          condition: 'seq.hasAny(["edit_file", "write_file"]) && !seq.hasCommand("bash#lint")',
+          condition: 'seq.hasAny(["edit_file", "write_file"]) && seq.lastIndexOf("bash#lint") == -1',
           action: {
             type: 'inject_before',
             tool: 'bash',
@@ -230,7 +230,7 @@ describe('ConditionRegistry', () => {
       const fullCondition: Condition = {
         trigger: ['git_commit'],
         when: 'run lint before commit',
-        condition: 'seq.hasAny(["edit_file", "write_file"]) && !seq.hasCommand("bash#lint")',
+        condition: 'seq.hasAny(["edit_file", "write_file"]) && seq.lastIndexOf("bash#lint") == -1',
         action: {
           type: 'inject_before',
           tool: 'bash',
@@ -534,7 +534,7 @@ describe('ConditionRegistry', () => {
       const original: Condition = {
         trigger: ['git_commit'],
         when: 'run tests before commit',
-        condition: 'seq.hasAny(["edit_file", "write_file"]) && !seq.hasCommand("bash#test")',
+        condition: 'seq.hasAny(["edit_file", "write_file"]) && seq.lastIndexOf("bash#test") == -1',
         action: {
           type: 'inject_before',
           tool: 'bash',

@@ -27,7 +27,6 @@ export interface CallContext {
 export interface EvalContext {
   has: (tool: string) => boolean;
   hasAny: (tools: string[]) => boolean;
-  hasCommand: (pattern: string) => boolean;
   lastIndexOf: (pattern: string) => number;
   last: (tool?: string) => unknown;
   lastError: () => unknown;
@@ -290,12 +289,12 @@ export function evaluateExpression(expression: string, ctx: EvalContext): boolea
     const jsExpr = expression
       .replace(/seq\.has\(/g, 'has(')
       .replace(/seq\.hasAny\(/g, 'hasAny(')
-      .replace(/seq\.hasCommand\(/g, 'hasCommand(')
       .replace(/seq\.lastIndexOf\(/g, 'lastIndexOf(')
       .replace(/seq\.last\(/g, 'last(')
       .replace(/seq\.lastError\(/g, 'lastError(')
       .replace(/seq\.totalCount\(/g, 'totalCount(')
       .replace(/seq\.count\(/g, 'count(')
+      .replace(/seq\.countResult\(/g, 'countResult(')
       .replace(/seq\.since\(/g, 'since(')
       .replace(/seq\.sinceEdit\(/g, 'sinceEdit(')
       .replace(/seq\.isPlanMode\(/g, 'isPlanMode(');

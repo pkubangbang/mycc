@@ -7,7 +7,7 @@ The `lint-typecheck-after-edit` hook triggers during plan mode (false positive) 
 **Root Cause:**
 - `Core` stores `modeState: 'plan' | 'normal'` but it's not exposed in the `CoreModule` interface
 - `Sequence` (used by hook conditions) has no access to mode information
-- The hook condition `seq.hasAny(['edit_file', 'write_file']) && !seq.hasCommand('bash#lint') && !seq.hasCommand('bash#typecheck')` cannot check plan mode
+- The hook condition `seq.hasAny(['edit_file', 'write_file']) && seq.lastIndexOf('bash#lint') == -1 && seq.lastIndexOf('bash#typecheck') == -1` cannot check plan mode
 
 **Why It Happens:**
 1. HOOK state evaluates conditions BEFORE tools execute
@@ -74,7 +74,7 @@ export class Sequence {
     const ctx: EvalContext = {
       has: (tool: string) => this.has(tool),
       hasAny: (tools: string[]) => this.hasAny(tools),
-      hasCommand: (pattern: string) => this.hasCommand(pattern),
+      lastIndexOf: (pattern: string) => this.lastIndexOf(pattern),
       last: (tool?: string) => this.last(tool),
       lastError: () => this.lastError(),
       count: (tool?: string) => this.count(tool),
@@ -110,7 +110,7 @@ Add `isPlanMode` to the EvalContext interface:
 export interface EvalContext {
   has: (tool: string) => boolean;
   hasAny: (tools: string[]) => boolean;
-  hasCommand: (pattern: string) => boolean;
+  lastIndexOf: (pattern: string) => number;
   last: (tool?: string) => unknown;
   lastError: () => unknown;
   count: (tool?: string) => number;
@@ -132,7 +132,7 @@ export function evaluateExpression(expression: string, ctx: EvalContext): boolea
     const jsExpr = expression
       .replace(/seq\.has\(/g, 'has(')
       .replace(/seq\.hasAny\(/g, 'hasAny(')
-      .replace(/seq\.hasCommand\(/g, 'hasCommand(')
+      .replace(/seq\.lastIndexOf\(/g, 'lastIndexOf(')
       .replace(/seq\.last\(/g, 'last(')
       .replace(/seq\.lastError\(/g, 'lastError(')
       .replace(/seq\.count\(/g, 'count(')
@@ -156,7 +156,7 @@ When: before LLM finishes reply (no tool calls pending), if edit_file or write_f
 
 **Compiled condition:**
 ```
-seq.hasAny(['edit_file', 'write_file']) && !seq.hasCommand('bash#lint') && !seq.hasCommand('bash#typecheck') && !seq.isPlanMode()
+seq.hasAny(['edit_file', 'write_file']) && seq.lastIndexOf('bash#lint') == -1 && seq.lastIndexOf('bash#typecheck') == -1 && !seq.isPlanMode()
 ```
 
 ### 7. Recompile the Skill

@@ -518,8 +518,7 @@ ${toolsSection}
 Available condition functions (use seq.X syntax):
 - seq.has(toolName): Check if tool exists in current turn
 - seq.hasAny([tool1, tool2]): Check if any tool exists in current turn
-- seq.hasCommand(pattern): Check bash command contains pattern (e.g., "bash#lint")
-- seq.lastIndexOf(pattern): Get index (position) of last tool/command occurrence. Accepts "toolName" or "bash#pattern". Returns -1 if not found. Higher index = more recent. Useful for ordering checks (e.g., seq.lastIndexOf('edit_file') >= seq.lastIndexOf('bash#lint'))
+- seq.lastIndexOf(pattern): Get index (position) of last tool/command occurrence. Accepts "toolName" or "bash#pattern". Returns -1 if not found. Higher index = more recent. For checking if a command was run, use: seq.lastIndexOf('bash#lint') != -1. For ordering checks: seq.lastIndexOf('edit_file') >= seq.lastIndexOf('bash#lint')
 - seq.last(toolName?): Get last event (optionally filtered by tool)
 - seq.lastError(): Get last error event
 - seq.count(toolName?): Count tool occurrences since last user query (current turn)
@@ -545,7 +544,7 @@ Available action types:
 - compact: Trigger context compaction (no args needed, highest priority)
 
 Examples:
-- "run lint before commit if files changed": { "trigger": ["git_commit"], "condition": "seq.hasAny(['edit_file', 'write_file']) && !seq.hasCommand('bash#lint')", "action": { "type": "inject_before", "tool": "bash", "args": { "command": "pnpm lint", "intent": "pre-commit lint", "timeout": 30 } } }
+- "run lint before commit if files changed": { "trigger": ["git_commit"], "condition": "seq.hasAny(['edit_file', 'write_file']) && seq.lastIndexOf('bash#lint') == -1", "action": { "type": "inject_before", "tool": "bash", "args": { "command": "pnpm lint", "intent": "pre-commit lint", "timeout": 30 } } }
 - "ensure lint after new edits": { "trigger": ["git_commit", "stop"], "condition": "seq.hasAny(['edit_file', 'write_file']) && (seq.lastIndexOf('edit_file') >= seq.lastIndexOf('bash#lint') || seq.lastIndexOf('write_file') >= seq.lastIndexOf('bash#lint')) && !seq.isPlanMode()", "action": { "type": "inject_before", "tool": "bash", "args": { "command": "pnpm lint", "intent": "lint after edits", "timeout": 30 } } }
 - "search wiki on errors": { "trigger": ["*"], "condition": "seq.lastError() && !seq.has('wiki_get')", "action": { "type": "inject_before", "tool": "wiki_get", "args": { "query": "error", "domain": "pitfall" } } }
 - "block force push to main": { "trigger": ["bash"], "condition": "call.args.command.includes('git push --force') && call.args.command.includes('main')", "action": { "type": "block", "reason": "Force push to main is prohibited" } }

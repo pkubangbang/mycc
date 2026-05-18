@@ -83,26 +83,6 @@ export class Sequence {
   }
 
   /**
-   * Check if a bash command with a specific pattern exists
-   * Pattern: bash#pattern means bash command containing 'pattern'
-   */
-  hasCommand(pattern: string): boolean {
-    // Handle bash#pattern syntax
-    if (pattern.includes('#')) {
-      const [tool, cmdPattern] = pattern.split('#');
-      return this.events.some(e => {
-        if (e.tool !== tool) return false;
-        const cmd = e.args?.command;
-        if (typeof cmd !== 'string') return false;
-        return cmd.includes(cmdPattern);
-      });
-    }
-    
-    // Regular tool name check
-    return this.has(pattern);
-  }
-
-  /**
    * Get the index (position) of the last occurrence of a tool or bash command pattern.
    * Pattern syntax: "toolName" for simple tool match, "bash#pattern" for bash command substring.
    * Returns -1 if not found. Higher index = more recent.
@@ -276,7 +256,6 @@ export class Sequence {
     const ctx: EvalContext = {
       has: (tool: string) => this.has(tool),
       hasAny: (tools: string[]) => this.hasAny(tools),
-      hasCommand: (pattern: string) => this.hasCommand(pattern),
       lastIndexOf: (pattern: string) => this.lastIndexOf(pattern),
       last: (tool?: string) => this.last(tool),
       lastError: () => this.lastError(),

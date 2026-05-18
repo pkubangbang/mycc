@@ -29,12 +29,12 @@ describe('validateExpression()', () => {
     });
 
     it('should accept complex boolean expressions with isPlanMode', () => {
-      const result = validateExpression('seq.hasAny(["edit_file", "write_file"]) && !seq.hasCommand("bash#lint") && !seq.isPlanMode()');
+      const result = validateExpression('seq.hasAny(["edit_file", "write_file"]) && seq.lastIndexOf("bash#lint") == -1 && !seq.isPlanMode()');
       expect(result.valid).toBe(true);
     });
 
     it('should accept complex boolean expressions', () => {
-      const result = validateExpression('seq.has("edit_file") && !seq.hasCommand("bash#lint")');
+      const result = validateExpression('seq.has("edit_file") && seq.lastIndexOf("bash#lint") == -1');
       expect(result.valid).toBe(true);
     });
 
@@ -148,11 +148,11 @@ describe('testCondition()', () => {
       expect(result.evaluatedValue).toBe(true);
     });
 
-    it('should evaluate hasCommand()', () => {
+    it('should evaluate lastIndexOf()', () => {
       const mockSeq = createMockSequence([
         { tool: 'bash', args: { command: 'pnpm lint' }, result: 'ok' },
       ]);
-      const result = testCondition('seq.hasCommand("bash#lint")', mockSeq);
+      const result = testCondition('seq.lastIndexOf("bash#lint") != -1', mockSeq);
       expect(result.passed).toBe(true);
       expect(result.evaluatedValue).toBe(true);
     });
@@ -205,12 +205,12 @@ describe('createMockSequence()', () => {
     expect(seq.hasAny(['bash', 'write_file'])).toBe(false);
   });
 
-  it('should support hasCommand()', () => {
+  it('should support lastIndexOf()', () => {
     const seq = createMockSequence([
       { tool: 'bash', args: { command: 'pnpm lint' }, result: 'ok' },
     ]);
-    expect(seq.hasCommand('bash#lint')).toBe(true);
-    expect(seq.hasCommand('bash#test')).toBe(false);
+    expect(seq.lastIndexOf('bash#lint')).not.toBe(-1);
+    expect(seq.lastIndexOf('bash#test')).toBe(-1);
   });
 
   it('should support last()', () => {

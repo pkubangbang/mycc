@@ -415,10 +415,44 @@ when: run pnpm lint after code changes before commit
 Condition language can query conversation history:
 - `seq.has(toolName)` - Tool exists in conversation
 - `seq.hasAny([tool1, tool2])` - Any of these tools exist
+- `seq.lastIndexOf(pattern)` - Index of last matching tool/command (-1 if not found). Supports `"bash#pattern"` for bash command substring matching
 - `seq.lastError()` - Last error result
 - `seq.sinceEdit()` - Events after last file edit
+- `seq.totalCount(toolName?)` - Count tool occurrences across entire session
+- `seq.isPlanMode()` - Whether agent is in plan mode
 
-Actions: `inject_before`, `inject_after`, `block`, `replace`, `message`
+Actions: `inject_before`, `inject_after`, `block`, `replace`, `message`, `compact`
+
+#### Condition Compiler Principles
+
+The condition compiler translates natural-language `when` fields into structured `{ trigger, condition, action }` objects. It follows a strict safety-first pipeline with these principles:
+
+**1. Lazy Compilation** — Conditions are NOT compiled eagerly. A skill with a `when` field is marked as "pending" and only compiled when `skill_compile` is invoked (by user command or LLM initiative). This avoids unnecessary LLM calls for unused skills.
+
+**2. LLM Translation with Structured Output** — The `when` natural language is sent to the LLM along with the list of all available tools and a JSON schema that enforces the output shape (`trigger`, `condition`, `action`). The LLM chooses appropriate triggers from known tool names, writes a condition expression using `seq.*` functions, and selects the right action type.
+
+**3. Expression Safety via jsep AST** — Conditions are parsed with **jsep** into an AST and walked recursively to enforce safety **at compile time** (not runtime). This is NOT `eval` or `new Function()` — the evaluator walks the jsep tree manually. The validator checks:
+- Only `seq` and `call` are allowed as root identifiers
+- Only known `seq.*` functions are used (`has`, `hasAny`, `lastIndexOf`, `last`, `lastError`, `count`, `totalCount`, `countResult`, `since`, `sinceEdit`, `isPlanMode`)
+- No dangerous identifiers (`eval`, `Function`, `require`, `process`, `fs`, `constructor`, `__proto__`, etc.)
+- No direct function calls — only `seq.XXX()` or `call.metadata.X.method()` patterns
+- Method calls on results only allow safe string/array methods (`includes`, `indexOf`, `startsWith`, etc.)
+
+**4. Retry with Error Feedback** — Up to 3 retries. When a compilation fails (validation error, bad trigger, parse failure), the error is fed back to the LLM in the next attempt's prompt, so it can self-correct.
+
+**5. Smoke Test Before Persistence** — The compiled expression is evaluated against an empty mock sequence to verify it doesn't throw. Expressions that fail the smoke test are rejected and trigger a retry.
+
+**6. Atomic Persistence** — Conditions are written to a temp file in the same directory, then renamed over the target file. This prevents corruption from partial writes. A backup of the existing file is created before overwriting.
+
+**7. Source File Tracking & Orphan Cleanup** — Each condition records its `sourceFile` using `"{layer}:{path}"` notation (e.g., `"project:lint-check/SKILL.md"`). When loading, conditions whose source skill files no longer exist are detected as **orphans** and automatically removed from the registry. This keeps `conditions.json` clean when skills are deleted.
+
+**8. Version History** — Every compilation creates a new version. The `history` array preserves all past conditions with their version numbers, expressions, actions, and reasons for change. This provides a full audit trail of how a condition evolved over time.
+
+**Key files:**
+- `src/hook/conditions.ts` — `ConditionRegistry` class: load/save/compile/refine, pending tracking, trigger matching, orphan cleanup
+- `src/hook/condition-validator.ts` — `compileCondition()` pipeline: JSON extraction → schema validation → jsep expression validation → smoke test
+- `src/hook/evaluator.ts` — jsep-based expression evaluator (walks AST, no `eval`)
+- `src/tools/skill_compile.ts` — The `skill_compile` tool that triggers lazy compilation
 
 ### Sequence
 

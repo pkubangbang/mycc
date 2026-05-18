@@ -3,7 +3,7 @@
  *
  * Tests cover:
  * - Sequence.evaluate() with various expressions
- * - All seq.X functions (has, hasAny, hasCommand, last, lastError, count, since, sinceEdit)
+ * - All seq.X functions (has, hasAny, lastIndexOf, last, lastError, count, since, sinceEdit)
  * - Edge cases and error handling
  */
 
@@ -121,10 +121,10 @@ describe('seq.hasAny()', () => {
 });
 
 // ============================================================================
-// seq.hasCommand()
+// seq.lastIndexOf() - command pattern matching
 // ============================================================================
 
-describe('seq.hasCommand()', () => {
+describe('seq.lastIndexOf() command patterns', () => {
   let seq: Sequence;
 
   beforeEach(() => {
@@ -139,9 +139,9 @@ describe('seq.hasCommand()', () => {
         result: 'ok',
         timestamp: Date.now(),
       });
-      expect(seq.hasCommand('bash#lint')).toBe(true);
-      expect(seq.hasCommand('bash#pnpm')).toBe(true);
-      expect(seq.hasCommand('bash#test')).toBe(false);
+      expect(seq.lastIndexOf('bash#lint')).not.toBe(-1);
+      expect(seq.lastIndexOf('bash#pnpm')).not.toBe(-1);
+      expect(seq.lastIndexOf('bash#test')).toBe(-1);
     });
 
     it('should handle partial pattern matches', () => {
@@ -151,8 +151,8 @@ describe('seq.hasCommand()', () => {
         result: 'ok',
         timestamp: Date.now(),
       });
-      expect(seq.hasCommand('bash#git commit')).toBe(true);
-      expect(seq.hasCommand('bash#-m')).toBe(true);
+      expect(seq.lastIndexOf('bash#git commit')).not.toBe(-1);
+      expect(seq.lastIndexOf('bash#-m')).not.toBe(-1);
     });
 
     it('should not match non-bash tools', () => {
@@ -162,15 +162,21 @@ describe('seq.hasCommand()', () => {
         result: 'ok',
         timestamp: Date.now(),
       });
-      expect(seq.hasCommand('bash#lint')).toBe(false);
+      expect(seq.lastIndexOf('bash#lint')).toBe(-1);
     });
   });
 
-  describe('regular tool check', () => {
-    it('should work like has() without #', () => {
+  describe('regular tool index check', () => {
+    it('should return index for tool name without #', () => {
       seq.add({ tool: 'bash', args: { command: 'test' }, result: 'ok', timestamp: Date.now() });
-      expect(seq.hasCommand('bash')).toBe(true);
-      expect(seq.hasCommand('edit_file')).toBe(false);
+      seq.add({ tool: 'edit_file', args: { path: 'test' }, result: 'ok', timestamp: Date.now() });
+      expect(seq.lastIndexOf('bash')).toBe(0);
+      expect(seq.lastIndexOf('edit_file')).toBe(1);
+    });
+
+    it('should return -1 for non-existent tool', () => {
+      seq.add({ tool: 'bash', args: { command: 'test' }, result: 'ok', timestamp: Date.now() });
+      expect(seq.lastIndexOf('write_file')).toBe(-1);
     });
   });
 
@@ -182,7 +188,7 @@ describe('seq.hasCommand()', () => {
         result: 'ok',
         timestamp: Date.now(),
       });
-      expect(seq.hasCommand('bash#test')).toBe(false);
+      expect(seq.lastIndexOf('bash#test')).toBe(-1);
     });
 
     it('should handle missing command arg', () => {
@@ -192,7 +198,7 @@ describe('seq.hasCommand()', () => {
         result: 'ok',
         timestamp: Date.now(),
       });
-      expect(seq.hasCommand('bash#test')).toBe(false);
+      expect(seq.lastIndexOf('bash#test')).toBe(-1);
     });
   });
 });
@@ -497,8 +503,8 @@ describe('Sequence.evaluate()', () => {
     });
   });
 
-  describe('seq.hasCommand()', () => {
-    it('should evaluate seq.hasCommand() expression', () => {
+  describe('seq.lastIndexOf()', () => {
+    it('should evaluate seq.lastIndexOf() expression with command pattern', () => {
       seq.add({
         tool: 'bash',
         args: { command: 'pnpm lint' },
@@ -506,8 +512,16 @@ describe('Sequence.evaluate()', () => {
         timestamp: Date.now(),
       });
 
-      expect(seq.evaluate('seq.hasCommand("bash#lint")')).toBe(true);
-      expect(seq.evaluate('seq.hasCommand("bash#test")')).toBe(false);
+      expect(seq.evaluate('seq.lastIndexOf("bash#lint") != -1')).toBe(true);
+      expect(seq.evaluate('seq.lastIndexOf("bash#test") == -1')).toBe(true);
+    });
+
+    it('should compare ordering with lastIndexOf', () => {
+      seq.add({ tool: 'edit_file', args: { path: 'test' }, result: 'ok', timestamp: 1000 });
+      seq.add({ tool: 'bash', args: { command: 'pnpm lint' }, result: 'ok', timestamp: 2000 });
+
+      // lint happened after edit, so edit is not newer
+      expect(seq.evaluate('seq.lastIndexOf("edit_file") >= seq.lastIndexOf("bash#lint")')).toBe(false);
     });
   });
 
@@ -581,7 +595,7 @@ describe('Sequence.evaluate()', () => {
       seq.add({ tool: 'bash', args: { command: 'pnpm lint' }, result: 'ok', timestamp: Date.now() });
 
       expect(
-        seq.evaluate('seq.has("edit_file") && seq.hasCommand("bash#lint")')
+        seq.evaluate('seq.has("edit_file") && seq.lastIndexOf("bash#lint") != -1')
       ).toBe(true);
     });
 
@@ -596,14 +610,14 @@ describe('Sequence.evaluate()', () => {
     it('should evaluate negation', () => {
       seq.add({ tool: 'edit_file', args: { path: 'test' }, result: 'ok', timestamp: Date.now() });
 
-      expect(seq.evaluate('!seq.hasCommand("bash#lint")')).toBe(true);
+      expect(seq.evaluate('seq.lastIndexOf("bash#lint") == -1')).toBe(true);
     });
 
     it('should evaluate complex condition', () => {
       seq.add({ tool: 'edit_file', args: { path: 'test' }, result: 'ok', timestamp: 1000 });
       seq.add({ tool: 'bash', args: { command: 'pnpm test' }, result: 'ok', timestamp: 2000 });
 
-      const expr = 'seq.has("edit_file") && !seq.hasCommand("bash#lint") && seq.count("bash") >= 1';
+      const expr = 'seq.has("edit_file") && seq.lastIndexOf("bash#lint") == -1 && seq.count("bash") >= 1';
       expect(seq.evaluate(expr)).toBe(true);
     });
   });
@@ -661,7 +675,7 @@ describe('Sequence Integration Tests', () => {
 
     // Condition: files edited and no lint run yet
     const shouldLint = seq.evaluate(
-      'seq.hasAny(["edit_file", "write_file"]) && !seq.hasCommand("bash#lint")'
+      'seq.hasAny(["edit_file", "write_file"]) && seq.lastIndexOf("bash#lint") == -1'
     );
     expect(shouldLint).toBe(true);
 
@@ -670,7 +684,7 @@ describe('Sequence Integration Tests', () => {
 
     // Now condition should be false
     const shouldLintNow = seq.evaluate(
-      'seq.hasAny(["edit_file", "write_file"]) && !seq.hasCommand("bash#lint")'
+      'seq.hasAny(["edit_file", "write_file"]) && seq.lastIndexOf("bash#lint") == -1'
     );
     expect(shouldLintNow).toBe(false);
   });

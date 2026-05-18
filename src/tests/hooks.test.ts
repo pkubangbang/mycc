@@ -537,7 +537,7 @@ describe('HookExecutor', () => {
       registry.set('pre-commit-lint', {
         trigger: ['git_commit'],
         when: 'run lint before commit if files changed',
-        condition: 'seq.hasAny(["edit_file", "write_file"]) && !seq.hasCommand("bash#lint")',
+        condition: 'seq.hasAny(["edit_file", "write_file"]) && seq.lastIndexOf("bash#lint") == -1',
         action: {
           type: 'inject_before',
           tool: 'bash',
@@ -572,7 +572,7 @@ describe('HookExecutor', () => {
       registry.set('pre-commit-lint', {
         trigger: ['git_commit'],
         when: 'run lint before commit',
-        condition: 'seq.hasAny(["edit_file", "write_file"]) && !seq.hasCommand("bash#lint")',
+        condition: 'seq.hasAny(["edit_file", "write_file"]) && seq.lastIndexOf("bash#lint") == -1',
         action: {
           type: 'inject_before',
           tool: 'bash',

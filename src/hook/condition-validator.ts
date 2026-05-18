@@ -22,7 +22,6 @@ import { evaluateExpression } from './evaluator.js';
 export interface TestableSequence {
   has(toolName: string): boolean;
   hasAny(tools: string[]): boolean;
-  hasCommand(pattern: string): boolean;
   lastIndexOf(pattern: string): number;
   last(toolName?: string): unknown;
   lastError(): unknown;
@@ -69,7 +68,7 @@ export interface CompileResult {
 
 const VALID_ACTION_TYPES = ['inject_before', 'inject_after', 'block', 'replace', 'message', 'compact'];
 
-const SEQ_FUNCTIONS = ['has', 'hasAny', 'hasCommand', 'lastIndexOf', 'last', 'lastError', 'count', 'totalCount', 'countResult', 'since', 'sinceEdit', 'isPlanMode'];
+const SEQ_FUNCTIONS = ['has', 'hasAny', 'lastIndexOf', 'last', 'lastError', 'count', 'totalCount', 'countResult', 'since', 'sinceEdit', 'isPlanMode'];
 
 // Allowed literal values in expressions
 const ALLOWED_LITERALS = ['true', 'false', 'null', 'undefined'];
@@ -487,7 +486,6 @@ export function testExpression(
     const jsExpr = expression
       .replace(/seq\.has\(/g, 'has(')
       .replace(/seq\.hasAny\(/g, 'hasAny(')
-      .replace(/seq\.hasCommand\(/g, 'hasCommand(')
       .replace(/seq\.lastIndexOf\(/g, 'lastIndexOf(')
       .replace(/seq\.last\(/g, 'last(')
       .replace(/seq\.lastError\(/g, 'lastError(')
@@ -504,7 +502,6 @@ export function testExpression(
     const ctx = {
       has: (tool: string) => sequence.has(tool),
       hasAny: (tools: string[]) => sequence.hasAny(tools),
-      hasCommand: (pattern: string) => sequence.hasCommand(pattern),
       lastIndexOf: (pattern: string) => sequence.lastIndexOf(pattern),
       last: (tool?: string) => sequence.last(tool),
       lastError: () => sequence.lastError(),
@@ -543,7 +540,6 @@ export function smokeTestExpression(expression: string): TestResult {
   const emptyMock: TestableSequence = {
     has: () => false,
     hasAny: () => false,
-    hasCommand: () => false,
     lastIndexOf: () => -1,
     last: () => undefined,
     lastError: () => undefined,
@@ -586,14 +582,6 @@ export class MockSequence {
 
   has(toolName: string): boolean { return this.events.some(e => e.tool === toolName); }
   hasAny(tools: string[]): boolean { return tools.some(t => this.has(t)); }
-  
-  hasCommand(pattern: string): boolean {
-    if (pattern.includes('#')) {
-      const [tool, cmdPattern] = pattern.split('#');
-      return this.events.some(e => e.tool === tool && typeof e.args?.command === 'string' && e.args.command.includes(cmdPattern));
-    }
-    return this.has(pattern);
-  }
   
   lastIndexOf(pattern: string): number {
     if (pattern.includes('#')) {

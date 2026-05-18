@@ -84,7 +84,7 @@ Conditions can reference both sequence history and current call metadata:
 # Sequence functions
 seq.has('edit_file')
 seq.hasAny(['edit_file', 'write_file'])
-seq.hasCommand('bash#lint')
+seq.lastIndexOf('bash#lint') != -1
 seq.last().args.command
 seq.count('bash') > 3
 

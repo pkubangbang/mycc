@@ -36,7 +36,7 @@ Hookish Skill:  Conversation pattern → Condition matches → Skill activates
 │      "trigger": ["git_commit"],                              │
 │      "when": "run pnpm lint...",                              │
 │      "condition": "seq.hasAny(['edit_file', 'write_file'])   │
-│                    && !seq.hasCommand('bash#lint')",          │
+│                    && seq.lastIndexOf('bash#lint') == -1",    │
 │      "action": {                                              │
 │        "type": "inject_before",                               │
 │        "tool": "bash",                                        │
@@ -83,7 +83,7 @@ The `when` field is natural language - the LLM translates it to structured condi
   "lint-after-edit": {
     "trigger": ["git_commit", "stop"],
     "when": "run pnpm lint after you have done with the code changes",
-    "condition": "hasAny(['edit_file', 'write_file']) && !hasCommand('bash#lint')",
+    "condition": "hasAny(['edit_file', 'write_file']) && seq.lastIndexOf('bash#lint') == -1",
     "action": {
       "type": "inject_before",
       "tool": "bash",
@@ -104,7 +104,7 @@ The `when` field is natural language - the LLM translates it to structured condi
       },
       {
         "version": 2,
-        "condition": "hasAny(['edit_file', 'write_file']) && !hasCommand('bash#lint')",
+        "condition": "hasAny(['edit_file', 'write_file']) && seq.lastIndexOf('bash#lint') == -1",
         "action": { "type": "inject_before", "tool": "bash", "args": {"command": "pnpm lint", "intent": "pre-commit lint check (hook)", "timeout": 60} },
         "reason": "user: didn't catch write_file, and should run lint, not just warn"
       }
@@ -161,7 +161,7 @@ Hook conditions are JavaScript-like boolean expressions evaluated safely via **j
 |----------|---------|-------------|
 | `seq.has(toolName)` | `boolean` | Check if a tool exists in the current turn's sequence |
 | `seq.hasAny([t1, t2, ...])` | `boolean` | Check if any of the listed tools exist |
-| `seq.hasCommand(pattern)` | `boolean` | Check if a bash command contains a pattern. Use `"tool#pattern"` syntax, e.g., `"bash#lint"` matches bash calls whose command contains "lint" |
+| `seq.lastIndexOf(pattern)` | `number` | Find the index of the last tool call matching a pattern. Use `"tool#pattern"` syntax, e.g., `"bash#lint"` matches bash calls whose command contains "lint". Returns -1 if not found |
 | `seq.last(toolName?)` | `SequenceEvent\|undefined` | Get the last tool event (optionally filtered by tool name). Has `.tool`, `.args`, `.result` fields |
 | `seq.lastError()` | `(SequenceEvent & {message})\|undefined` | Get the last event whose result contains "error" or "failed". Has an extra `.message` field |
 | `seq.count(toolName?)` | `number` | Count tool occurrences since the last user query (current turn) |
@@ -200,7 +200,7 @@ Hook conditions are JavaScript-like boolean expressions evaluated safely via **j
 
 ```js
 // File changes exist and lint hasn't been run yet (current turn)
-seq.hasAny(['edit_file', 'write_file']) && !seq.hasCommand('bash#lint')
+seq.hasAny(['edit_file', 'write_file']) && seq.lastIndexOf('bash#lint') == -1
 
 // Last result was an error, and wiki hasn't been searched yet (current turn)
 seq.lastError() && !seq.has('wiki_get')
@@ -236,7 +236,7 @@ Expressions are stored with `seq.X` syntax in `conditions.json`, but at evaluati
 
 The evaluation context binds:
 ```
-has, hasAny, hasCommand, last, lastError, count, since, sinceEdit, isPlanMode, call
+has, hasAny, last, lastError, count, totalCount, since, sinceEdit, lastIndexOf, isPlanMode, call
 ```
 
 ## Sequence Tracking
@@ -262,7 +262,7 @@ export class Sequence {
   
   has(toolName: string): boolean
   hasAny(tools: string[]): boolean
-  hasCommand(pattern: string): boolean  // supports "bash#pattern" syntax
+  lastIndexOf(pattern: string): number  // supports "bash#pattern" syntax; returns -1 if not found
   last(toolName?: string): SequenceEvent | undefined
   lastError(): (SequenceEvent & { message: string }) | undefined  // checks for "error" or "failed"
   count(toolName?: string): number
@@ -348,7 +348,7 @@ The compilation process includes:
 3. **Schema Validation** (`condition-validator.ts`): Checks `trigger` is a non-empty array of strings, `when`/`condition` are strings, `action` has valid `type`, etc.
 
 4. **Expression Validation**: Parses the expression with jsep and walks the AST to verify:
-   - Only allowed `seq.X` functions are used (`has`, `hasAny`, `hasCommand`, `last`, `lastError`, `count`, `since`, `sinceEdit`, `isPlanMode`)
+   - Only allowed `seq.X` functions are used (`has`, `hasAny`, `last`, `lastError`, `count`, `totalCount`, `since`, `sinceEdit`, `lastIndexOf`, `isPlanMode`)
    - No dangerous identifiers (`eval`, `Function`, `require`, `process`, etc.)
    - No direct function calls (only method-call syntax)
    - Only `seq` and `call` as root objects
@@ -447,7 +447,7 @@ Compiled:
 ```json
 {
   "trigger": ["git_commit"],
-  "condition": "hasAny(['edit_file', 'write_file']) && !hasCommand('bash#lint')",
+  "condition": "hasAny(['edit_file', 'write_file']) && seq.lastIndexOf('bash#lint') == -1",
   "action": {
     "type": "inject_before",
     "tool": "bash",
@@ -523,7 +523,7 @@ Compiled:
 ```json
 {
   "trigger": ["write_file"],
-  "condition": "!hasCommand('bash#grep') && !hasCommand('bash#rg') && !has('read_file')",
+  "condition": "seq.lastIndexOf('bash#grep') == -1 && seq.lastIndexOf('bash#rg') == -1 && !seq.has('read_file')",
   "action": {
     "type": "message"
   }
@@ -566,7 +566,7 @@ v1: "has('edit_file')"
 v2: "hasAny(['edit_file', 'write_file'])"
     → User: "Just warned, didn't run lint"
     
-v3: "hasAny(['edit_file', 'write_file']) && !hasCommand('bash#lint')"
+v3: "hasAny(['edit_file', 'write_file']) && seq.lastIndexOf('bash#lint') == -1"
     → User: "Should run before commit, not after edit"
     
 v4: Trigger changed to "git_commit", action changed to "inject_before"
@@ -666,7 +666,7 @@ when: run pnpm lint after code changes before commit
 ```json
 {
   "trigger": ["git_commit"],
-  "condition": "hasAny(['edit_file', 'write_file']) && !hasCommand('bash#lint')"
+  "condition": "hasAny(['edit_file', 'write_file']) && seq.lastIndexOf('bash#lint') == -1"
 }
 ```
 - Natural language condition
@@ -677,7 +677,7 @@ when: run pnpm lint after code changes before commit
 
 **Claude Code**: Stateless hooks. Cannot answer "did I already run lint?" without external state.
 
-**MyCC**: Sequence-aware within the current turn. `hasCommand('bash#lint')` checks conversation history. Events are cleared at each prompt boundary to prevent stale triggers.
+**MyCC**: Sequence-aware within the current turn. `seq.lastIndexOf('bash#lint') != -1` checks conversation history. Events are cleared at each prompt boundary to prevent stale triggers.
 
 #### 3. Action Types
 
@@ -712,7 +712,7 @@ when: run pnpm lint after code changes before commit
   "history": [
     { "version": 1, "condition": "has('edit_file')", "reason": "initial" },
     { "version": 2, "condition": "hasAny(['edit_file', 'write_file'])", "reason": "user: didn't catch write_file" },
-    { "version": 3, "condition": "hasAny(['edit_file', 'write_file']) && !hasCommand('bash#lint')", "reason": "user: should run lint" }
+    { "version": 3, "condition": "hasAny(['edit_file', 'write_file']) && seq.lastIndexOf('bash#lint') == -1", "reason": "user: should run lint" }
   ]
 }
 ```
