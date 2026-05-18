@@ -92,6 +92,13 @@ export async function handleLlm(
       pass.assistantContent = assistantMessage.content || '';
       pass.abortController = null;
 
+      // Handle edge case where LLM returns empty content AND no tool calls
+      if (!pass.assistantContent && pass.rawToolCalls.length === 0) {
+        ctx.core.verbose('llm', 'LLM returned empty response (no content, no tool calls). Triggering automatic retry via triologue.note().');
+        triologue.note('CONTINUE', 'Continue with your task.');
+        continue; // Re-run the while loop and call LLM again
+      }
+
       return AgentState.HOOK;
     } catch (err) {
       // For transient errors that exhausted retryChat's internal retries
