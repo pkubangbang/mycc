@@ -47,10 +47,10 @@ export function loadEnv(): void {
 
 // Parse CLI args once at startup
 const args = minimist(process.argv.slice(2), {
-  boolean: ['v', 'verbose', 'skip-healthcheck', 'setup'],
+  boolean: ['v', 'verbose', 'skip-healthcheck', 'setup', 'debug-eval'],
   string: ['session'],
   alias: { v: 'verbose' },
-  default: { v: false, session: null, 'skip-healthcheck': false, setup: false },
+  default: { v: false, session: null, 'skip-healthcheck': false, setup: false, 'debug-eval': false },
 });
 
 /**
@@ -101,6 +101,14 @@ export function shouldRunSetup(): boolean {
  */
 export function isVerbose(): boolean {
   return globalConfig.verbose;
+}
+
+/**
+ * Check if debug-eval mode is enabled (--debug-eval flag)
+ * When enabled, expression evaluation prints AST trees via agentIO.brief.
+ */
+export function isDebuggingEval(): boolean {
+  return args['debug-eval'] || false;
 }
 
 /**

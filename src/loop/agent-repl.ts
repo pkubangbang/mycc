@@ -10,7 +10,7 @@ import { checkHealth } from '../setup/ollama-health-check.js';
 import { ParentContext } from '../context/parent-context.js';
 import { getSessionId } from '../session/index.js';
 import { slashRegistry } from '../slashes/index.js';
-import { getTokenThreshold } from '../config.js';
+import { getTokenThreshold, isDebuggingEval } from '../config.js';
 import { Triologue } from './triologue.js';
 import { agentIO } from './agent-io.js';
 import { shouldSkipHealthCheck } from '../config.js';
@@ -59,7 +59,13 @@ export async function main(): Promise<void> {
   let modelInfo: { family?: string; parameterSize?: string; contextLength: number } | null = null;
   if (shouldSkipHealthCheck()) {
     console.log(chalk.gray('Skipping health check (test mode)'));
-  } else {
+  }
+
+  if (isDebuggingEval()) {
+    console.log(chalk.yellow('Debug-eval mode enabled: expression AST trees will be printed'));
+  }
+
+  if (!shouldSkipHealthCheck()) {
     while (true) {
       const health = await checkHealth(tokenThreshold);
       if (health.ok) {

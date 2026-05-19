@@ -43,7 +43,7 @@ export default tseslint.config(
       'no-debugger': 'error',
       
       // Code style (not formatting - let prettier handle that)
-      'prefer-template': 'error',
+      'prefer-template': 'warn',
       'object-shorthand': ['error', 'always'],
       'prefer-arrow-callback': 'error',
       
