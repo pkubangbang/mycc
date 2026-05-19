@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import jsep, { Expression, CoreExpression } from 'jsep';
+import chalk from 'chalk';
 
 /**
  * take a jsep AST, print it back out as string
@@ -99,7 +100,10 @@ export function printJsepTree(eexpr: JsepEvaluatedNode, indent: number = 0): str
   const exprStr = eexpr.expr;
   const valueStr = formatValue(eexpr.value);
 
-  let result = `${prefix}${nodeType}: ${exprStr} => ${valueStr}`;
+  // Render structural part in grey, value in bright white for prominence
+  const structural = chalk.gray(`${prefix}${nodeType}: ${exprStr} =>`);
+  const value = chalk.whiteBright(valueStr);
+  let result = `${structural} ${value}`;
 
   // Recurse into children based on node type
   const children = getChildNodes(eexpr);

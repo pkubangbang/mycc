@@ -251,11 +251,13 @@ export async function handleHook(
       }
     }
 
-    // No tool calls = all blocked or LLM produced none → stop
+    // No tool calls = all blocked or LLM produced none
     if (hookResult.calls.length === 0) {
-      // Inject deferred hook messages before stopping so the LLM sees them
+      // Inject deferred hook messages so the LLM can respond to them
+      // (e.g., lint-after-edit, test-after-edit block messages)
       if (hookResult.deferredMessages.length > 0) {
         triologue.note('REMINDER', hookResult.deferredMessages.join('\n\n---\n\n'));
+        return AgentState.COLLECT;
       }
       return AgentState.STOP;
     }
