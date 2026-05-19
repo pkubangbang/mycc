@@ -43,8 +43,6 @@ export type NoteCategory =
   | 'CHECKPOINT'
   /** ESC wrap-up continuation messages */
   | 'WRAP_UP'
-  /** Deferred hook messages injected after tool execution */
-  | 'DEFERRED'
   /** Inter-agent mail messages */
   | 'MAIL'
   /** "Continue with your task" prompts */

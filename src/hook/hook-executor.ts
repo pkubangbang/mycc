@@ -146,7 +146,7 @@ export class HookExecutor {
         return this.injectAfter(skillName, action, ctx, pendingCalls, skillContent, cond);
 
       case 'block':
-        return this.block(skillName, action, ctx, skillContent, cond, pendingCalls[0]?.function.name);
+        return this.block(skillName, action, ctx, skillContent, cond, pendingCalls[0]?.function.name ?? (pendingCalls.length === 0 ? 'stop' : 'unknown'));
 
       case 'replace':
         return this.replace(skillName, action, ctx, pendingCalls, skillContent, cond);
@@ -343,7 +343,8 @@ export class HookExecutor {
 
     return {
       action: 'proceed',
-      message: `A skill called "${skillName}" is suitable for your task, ensure it is loaded. If not, use "skill_load" tool with name="${skillName}" and intent="READ ARTIFACT TO follow suggestion" to load it.`,
+      // NOTE: this message is critical to encourage the llm to load a skill
+      message: `A skill called "${skillName}" is suitable for your task, ensure it is loaded and used. If not, use "skill_load" tool with name="${skillName}" and intent="READ ARTIFACT TO follow suggestion" to load it.`,
     };
   }
 

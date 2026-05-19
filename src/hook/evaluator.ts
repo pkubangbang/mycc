@@ -5,6 +5,7 @@
  * Parses expression to AST with jsep, then walks the tree.
  */
 
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import jsep from 'jsep';
 import { type JsepEvaluatedNode, printJsepExpr, printJsepTree } from '../utils/jsep-expr-print';
 import { agentIO } from '../loop/agent-io';
@@ -91,7 +92,7 @@ function evaluateNode(node: jsep.Expression, ctx: EvalContext): JsepEvaluatedNod
       const value = evaluatedElements.map(e => e.value);
       const result = makeEvaluatedNode(node, value);
       // stitch evaluated children into the result for tree printing
-      (result as any).elements = arrNode.elements.map((el, i) =>
+      (result as any).elements = arrNode.elements.map(el =>
         el === null ? null : evaluatedElements.shift()!
       );
       return result;

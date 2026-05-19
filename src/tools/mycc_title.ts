@@ -28,11 +28,12 @@ function printBanner(title: string): void {
   // Truncate title if too long (leave room for padding and icons)
   const maxTitleLen = width - 12; // 6 for '📌  ' + '  📌', plus 6 safety margin
   const displayTitle = title.length > maxTitleLen
-    ? title.slice(0, maxTitleLen - 3) + '...'
+    ? `${title.slice(0, maxTitleLen - 3)  }...`
     : title;
 
   // Center the title text within the full-width bar
   const label = `📌  ${displayTitle}  📌`;
+  // eslint-disable-next-line no-control-regex
   const stripped = label.replace(/\x1b\[[0-9;]*m/g, '');
   const padLeft = Math.floor((width - stripped.length) / 2);
   const padRight = width - stripped.length - padLeft;
@@ -46,11 +47,11 @@ function printBanner(title: string): void {
   const text = chalk.bgYellow.black.bold;
 
   process.stdout.write(
-    '\n' +
-    bar(' '.repeat(width)) + '\n' +
-    text(centered) + '\n' +
-    bar(' '.repeat(width)) + '\n' +
-    '\n'
+    `\n${ 
+    bar(' '.repeat(width))  }\n${ 
+    text(centered)  }\n${ 
+    bar(' '.repeat(width))  }\n` +
+    `\n`
   );
 }
 

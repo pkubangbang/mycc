@@ -243,18 +243,20 @@ export async function handleHook(
       ctx.core.increaseConfusionIndex(1);
     }
 
-    // Register blocked calls as rejections in triologue
+    // Log blocked calls (tool responses are registered in tool.ts)
     if (hookResult.blockedCalls.size > 0) {
       for (const [callId, blockMessage] of hookResult.blockedCalls) {
         const name = hookResult.calls.find((c) => c.id === callId)?.function.name ?? 'unknown';
-        triologue.tool(name, blockMessage, callId);
-        // Blocked messages already contain detailed info from hook-executor
         agentIO.log(chalk.yellow(`[hook] blocked ${name}:\n${blockMessage}`));
       }
     }
 
     // No tool calls = all blocked or LLM produced none → stop
     if (hookResult.calls.length === 0) {
+      // Inject deferred hook messages before stopping so the LLM sees them
+      if (hookResult.deferredMessages.length > 0) {
+        triologue.note('REMINDER', hookResult.deferredMessages.join('\n\n---\n\n'));
+      }
       return AgentState.STOP;
     }
 

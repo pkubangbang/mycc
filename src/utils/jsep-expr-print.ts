@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import jsep, { Expression, CoreExpression } from 'jsep';
 
 /**
@@ -103,7 +104,7 @@ export function printJsepTree(eexpr: JsepEvaluatedNode, indent: number = 0): str
   // Recurse into children based on node type
   const children = getChildNodes(eexpr);
   for (const child of children) {
-    result += '\n' + printJsepTree(child as JsepEvaluatedNode, indent + 1);
+    result += `\n${  printJsepTree(child as JsepEvaluatedNode, indent + 1)}`;
   }
 
   return result;
