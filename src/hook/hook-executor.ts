@@ -343,7 +343,7 @@ export class HookExecutor {
 
     return {
       action: 'proceed',
-      message: `A skill called "${skillName}" is suitable for your task, ensure it is loaded. If not, use "skill_load" tool to load it.`,
+      message: `A skill called "${skillName}" is suitable for your task, ensure it is loaded. If not, use "skill_load" tool with name="${skillName}" and intent="READ ARTIFACT TO follow suggestion" to load it.`,
     };
   }
 

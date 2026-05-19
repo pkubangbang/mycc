@@ -70,7 +70,7 @@ describe('ConditionRegistry', () => {
           action: {
             type: 'inject_before',
             tool: 'bash',
-            args: { command: 'pnpm lint', intent: 'pre-commit lint' },
+            args: { command: 'pnpm lint', intent: 'TEST ARTIFACT TO verify lint before commit' },
           },
           version: 1,
         },
@@ -135,7 +135,7 @@ describe('ConditionRegistry', () => {
           action: {
             type: 'inject_before',
             tool: 'bash',
-            args: { command: 'test', timeout: 100 }, // Out of range
+            args: { command: 'test', timeout: 100, intent: 'TEST ARTIFACT TO verify timeout clamping' }, // Out of range
           },
           version: 1,
         },
@@ -159,7 +159,7 @@ describe('ConditionRegistry', () => {
           action: {
             type: 'inject_before',
             tool: 'bash',
-            args: { command: 'test' },
+            args: { command: 'test', intent: 'TEST ARTIFACT TO verify timeout fix' },
           },
           version: 2,
           history: [
@@ -234,7 +234,7 @@ describe('ConditionRegistry', () => {
         action: {
           type: 'inject_before',
           tool: 'bash',
-          args: { command: 'pnpm lint', intent: 'pre-commit lint', timeout: 60 },
+          args: { command: 'pnpm lint', intent: 'TEST ARTIFACT TO verify lint', timeout: 60 },
         },
         version: 2,
         history: [
@@ -538,7 +538,7 @@ describe('ConditionRegistry', () => {
         action: {
           type: 'inject_before',
           tool: 'bash',
-          args: { command: 'pnpm test', intent: 'pre-commit tests', timeout: 30 },
+          args: { command: 'pnpm test', intent: 'TEST ARTIFACT TO verify behavior before commit', timeout: 30 },
         },
         version: 2,
         history: [

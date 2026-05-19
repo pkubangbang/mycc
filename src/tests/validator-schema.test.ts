@@ -13,7 +13,7 @@ describe('validateSchema()', () => {
         trigger: ['bash'],
         when: 'run lint before commit',
         condition: 'seq.has("edit_file")',
-        action: { type: 'inject_before', tool: 'bash', args: { command: 'pnpm lint' } },
+        action: { type: 'inject_before', tool: 'bash', args: { command: 'pnpm lint', intent: 'TEST ARTIFACT TO verify lint' } },
         version: 1,
       };
       const result = validateSchema(condition);
@@ -135,7 +135,7 @@ describe('validateSchema()', () => {
 
 describe('validateAction()', () => {
   it('should validate inject_before action', () => {
-    const action = { type: 'inject_before', tool: 'bash', args: { command: 'pnpm lint' } };
+    const action = { type: 'inject_before', tool: 'bash', args: { command: 'pnpm lint', intent: 'TEST ARTIFACT TO verify lint' } };
     const result = validateAction(action);
     expect(result.valid).toBe(true);
   });
@@ -153,7 +153,7 @@ describe('validateAction()', () => {
   });
 
   it('should warn about out-of-range timeout', () => {
-    const action = { type: 'inject_before', tool: 'bash', args: { command: 'lint', timeout: 500 } };
+    const action = { type: 'inject_before', tool: 'bash', args: { command: 'lint', timeout: 500, intent: 'TEST ARTIFACT TO verify behavior' } };
     const result = validateAction(action);
     expect(result.valid).toBe(true);
     expect(result.warnings.some(w => w.includes('timeout'))).toBe(true);

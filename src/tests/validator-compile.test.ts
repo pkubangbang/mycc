@@ -12,7 +12,7 @@ describe('compileCondition()', () => {
       const jsonResponse = JSON.stringify({
         trigger: ['git_commit'],
         condition: 'seq.has("edit_file")',
-        action: { type: 'inject_before', tool: 'bash', args: { command: 'pnpm lint' } },
+        action: { type: 'inject_before', tool: 'bash', args: { command: 'pnpm lint', intent: 'TEST ARTIFACT TO verify lint' } },
       });
 
       const result = await compileCondition(jsonResponse, 'run lint before commit', 'test-skill', 0);
