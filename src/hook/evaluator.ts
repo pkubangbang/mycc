@@ -86,7 +86,7 @@ function nodeSummary(node: jsep.Expression): string {
  * Produces tree-structured debug output when DEBUG_EVALUATOR is set.
  */
 function evaluateNode(node: jsep.Expression, ctx: EvalContext, originalExpr: string): unknown {
-  const result = evaluateNodeImpl(node, ctx, 0, `expr: ${originalExpr}`);
+  const result = evaluateNodeImpl(node, ctx, 0, originalExpr);
   return result;
 }
 
@@ -101,8 +101,8 @@ function indent(depth: number): string {
  * Format a value for debug display (compact, single-line, truncated to ~80 chars).
  */
 function fmtVal(v: unknown): string {
+  if (typeof v === 'undefined') return '<undefined>'
   if (typeof v === 'function') return '<function>';
-  if (typeof v === 'object' && v !== null) return '<object>';
   const s = JSON.stringify(v);
   if (s.length <= 80) return s;
   return s.slice(0, 77) + '...';
@@ -183,6 +183,11 @@ function evaluateNodeImpl(node: jsep.Expression, ctx: EvalContext, depth: number
         fnName = nodeSummary(callee);
       }
 
+      // Print label BEFORE evaluating arguments to maintain proper tree structure
+      if (DEBUG) {
+        console.log(`${prefix}${label}`);
+      }
+
       // Evaluate arguments
       const args = callNode.arguments.map((arg, i) =>
         evaluateNodeImpl(arg, ctx, depth + 1, `arg[${i}]:`));
@@ -199,7 +204,6 @@ function evaluateNodeImpl(node: jsep.Expression, ctx: EvalContext, depth: number
 
         result = fn(...args);
         if (DEBUG) {
-          console.log(`${prefix}${label}`);
           console.log(`${prefix}function: ${idName}`);
           if (callNode.arguments.length > 0) {
             console.log(`${prefix}args:`);
@@ -210,7 +214,7 @@ function evaluateNodeImpl(node: jsep.Expression, ctx: EvalContext, depth: number
           }
           console.log(`${prefix}value: ${fmtVal(result)}`);
         }
-        
+
         return result;
       }
 
@@ -230,7 +234,6 @@ function evaluateNodeImpl(node: jsep.Expression, ctx: EvalContext, depth: number
           const fn = ctx[mName as keyof EvalContext] as (...a: unknown[]) => unknown;
 
           if (DEBUG) {
-            console.log(`${prefix}${label}`);
             console.log(`${prefix}function: ${fnName}`);
             if (callNode.arguments.length > 0) {
               console.log(`${prefix}args:`);
@@ -247,6 +250,11 @@ function evaluateNodeImpl(node: jsep.Expression, ctx: EvalContext, depth: number
         }
 
         // Regular method call on an object/array/string
+        // Print label BEFORE evaluating object to maintain proper tree structure
+        if (DEBUG) {
+          console.log(`${prefix}${label}`);
+        }
+
         const obj = evaluateNodeImpl(member.object, ctx, depth + 1, 'obj:');
 
         if (obj === null || obj === undefined) {
@@ -282,7 +290,6 @@ function evaluateNodeImpl(node: jsep.Expression, ctx: EvalContext, depth: number
         }
 
         if (DEBUG) {
-          console.log(`${prefix}${label}`);
           console.log(`${prefix}function: ${fnName}`);
           console.log(`${prefix}value: ${fmtVal(result)}`);
         }
@@ -352,7 +359,7 @@ function evaluateNodeImpl(node: jsep.Expression, ctx: EvalContext, depth: number
       }
 
       // Evaluate LHS
-      const left = evaluateNodeImpl(binary.left, ctx, depth + 1, 'LHS:');
+      const left = evaluateNodeImpl(binary.left, ctx, depth, 'LHS:');
 
       // Short-circuit for && and ||
       let shortCircuited = false;
@@ -372,7 +379,7 @@ function evaluateNodeImpl(node: jsep.Expression, ctx: EvalContext, depth: number
       }
 
       // Evaluate RHS
-      const right = evaluateNodeImpl(binary.right, ctx, depth + 1, 'RHS:');
+      const right = evaluateNodeImpl(binary.right, ctx, depth, 'RHS:');
 
       const leftNum = left as number;
       const rightNum = right as number;
