@@ -127,7 +127,7 @@ Returns the compiled condition with version history.`,
 
     // Brief output — always visible summary of compilation
     ctx.core.brief('info', 'skill_compile',
-      `${skillName} (v${condition.version})\nTrigger: ${condition.trigger}\nCondition: ${condition.condition}\nAction: ${JSON.stringify(condition.action)}`);
+      `${skillName} (v${condition.version})\nTrigger: ${condition.trigger}\nCondition: ${condition.condition}\nAction Type: ${condition.action.type}\nAction: ${JSON.stringify(condition.action)}`);
 
     // Push the newly compiled condition to the runtime condition registry
     // via IPC, so the agent picks it up without restarting
@@ -142,6 +142,7 @@ Returns the compiled condition with version history.`,
       `When: ${skill.when}`,
       `Trigger: ${condition.trigger}`,
       `Condition: ${condition.condition}`,
+      `Action Type: ${condition.action.type}`,
       `Action: ${JSON.stringify(condition.action, null, 2)}`,
     ];
 
