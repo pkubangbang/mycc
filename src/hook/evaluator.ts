@@ -94,7 +94,7 @@ function evaluateNode(node: jsep.Expression, ctx: EvalContext, originalExpr: str
  * Build an indentation string for the given depth level.
  */
 function indent(depth: number): string {
-  return '    '.repeat(depth);
+  return '  '.repeat(depth);
 }
 
 /**
@@ -197,6 +197,7 @@ function evaluateNodeImpl(node: jsep.Expression, ctx: EvalContext, depth: number
         }
         const fn = ctx[idName as keyof EvalContext] as (...a: unknown[]) => unknown;
 
+        result = fn(...args);
         if (DEBUG) {
           console.log(`${prefix}${label}`);
           console.log(`${prefix}function: ${idName}`);
@@ -207,10 +208,9 @@ function evaluateNodeImpl(node: jsep.Expression, ctx: EvalContext, depth: number
               console.log(`${prefix}- ${nodeSummary(arg)} = ${fmtVal(argVal)}`);
             });
           }
-          console.log(`${prefix}value: ${fmtVal(fn(...args))}`);
+          console.log(`${prefix}value: ${fmtVal(result)}`);
         }
-
-        result = fn(...args);
+        
         return result;
       }
 
