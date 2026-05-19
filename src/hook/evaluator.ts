@@ -83,17 +83,29 @@ function nodeSummary(node: jsep.Expression): string {
 
 /**
  * Evaluate a jsep AST node against a context.
- * Produces compact debug output when DEBUG_EVALUATOR is set.
- *
- * Output format:
- *   [eval] <nodeSummary> => <result>
+ * Produces tree-structured debug output when DEBUG_EVALUATOR is set.
  */
 function evaluateNode(node: jsep.Expression, ctx: EvalContext, originalExpr: string): unknown {
   const result = evaluateNodeImpl(node, ctx, 0, `expr: ${originalExpr}`);
-  if (DEBUG) {
-    console.log(`[eval] ${nodeSummary(node)} => ${JSON.stringify(result)}`);
-  }
   return result;
+}
+
+/**
+ * Build an indentation string for the given depth level.
+ */
+function indent(depth: number): string {
+  return '    '.repeat(depth);
+}
+
+/**
+ * Format a value for debug display (compact, single-line, truncated to ~80 chars).
+ */
+function fmtVal(v: unknown): string {
+  if (typeof v === 'function') return '<function>';
+  if (typeof v === 'object' && v !== null) return '<object>';
+  const s = JSON.stringify(v);
+  if (s.length <= 80) return s;
+  return s.slice(0, 77) + '...';
 }
 
 /**
@@ -102,13 +114,12 @@ function evaluateNode(node: jsep.Expression, ctx: EvalContext, originalExpr: str
  * @param label - debug label prefix for this node (e.g. "expr:", "LHS:")
  */
 function evaluateNodeImpl(node: jsep.Expression, ctx: EvalContext, depth: number, label: string): unknown {
-  // Debug logging is handled at the top level in evaluateNode — no per-node logging needed.
-  const dlog = () => {};
+  const prefix = indent(depth);
 
   switch (node.type) {
     case 'Literal': {
       const val = (node as jsep.Literal).value;
-      dlog(`- ${label} => ${JSON.stringify(val)}`);
+      if (DEBUG) console.log(`${prefix}${label} ${fmtVal(val)}`);
       return val;
     }
 
@@ -142,13 +153,13 @@ function evaluateNodeImpl(node: jsep.Expression, ctx: EvalContext, depth: number
       } else {
         throw new Error(`Unknown identifier: ${name}`);
       }
-      dlog(`- ${label} => ${JSON.stringify(result)}`);
+      if (DEBUG) console.log(`${prefix}${label} ${fmtVal(result)}`);
       return result;
     }
 
     case 'ArrayExpression': {
       const arrNode = node as jsep.ArrayExpression;
-      dlog(`- ${label}`);
+      if (DEBUG) console.log(`${prefix}${label}`);
       const elements = arrNode.elements.filter((el): el is jsep.Expression => el !== null);
       const arr: unknown[] = [];
       for (let i = 0; i < elements.length; i++) {
@@ -160,7 +171,17 @@ function evaluateNodeImpl(node: jsep.Expression, ctx: EvalContext, depth: number
     case 'CallExpression': {
       const callNode = node as jsep.CallExpression;
       const callee = callNode.callee;
-      dlog(`- ${label} ${nodeSummary(callNode)}`);
+
+      // Determine function name for debug
+      let fnName: string;
+      if (callee.type === 'Identifier') {
+        fnName = (callee as jsep.Identifier).name;
+      } else if (callee.type === 'MemberExpression') {
+        const mem = callee as jsep.MemberExpression;
+        fnName = nodeSummary(mem);
+      } else {
+        fnName = nodeSummary(callee);
+      }
 
       // Evaluate arguments
       const args = callNode.arguments.map((arg, i) =>
@@ -170,13 +191,26 @@ function evaluateNodeImpl(node: jsep.Expression, ctx: EvalContext, depth: number
 
       // Case 1: Direct function call like has('tool')
       if (callee.type === 'Identifier') {
-        const fnName = (callee as jsep.Identifier).name;
-        if (!(fnName in ctx)) {
-          throw new Error(`Unknown function: ${fnName}`);
+        const idName = (callee as jsep.Identifier).name;
+        if (!(idName in ctx)) {
+          throw new Error(`Unknown function: ${idName}`);
         }
-        const fn = ctx[fnName as keyof EvalContext] as (...a: unknown[]) => unknown;
+        const fn = ctx[idName as keyof EvalContext] as (...a: unknown[]) => unknown;
+
+        if (DEBUG) {
+          console.log(`${prefix}${label}`);
+          console.log(`${prefix}function: ${idName}`);
+          if (callNode.arguments.length > 0) {
+            console.log(`${prefix}args:`);
+            callNode.arguments.forEach((arg, i) => {
+              const argVal = args[i];
+              console.log(`${prefix}- ${nodeSummary(arg)} = ${fmtVal(argVal)}`);
+            });
+          }
+          console.log(`${prefix}value: ${fmtVal(fn(...args))}`);
+        }
+
         result = fn(...args);
-        dlog(`  => ${JSON.stringify(result)}`);
         return result;
       }
 
@@ -189,13 +223,26 @@ function evaluateNodeImpl(node: jsep.Expression, ctx: EvalContext, depth: number
           if (member.property.type !== 'Identifier') {
             throw new Error('Dynamic seq property not supported');
           }
-          const fnName = (member.property as jsep.Identifier).name;
-          if (!(fnName in ctx)) {
-            throw new Error(`Unknown seq function: ${fnName}`);
+          const mName = (member.property as jsep.Identifier).name;
+          if (!(mName in ctx)) {
+            throw new Error(`Unknown seq function: ${mName}`);
           }
-          const fn = ctx[fnName as keyof EvalContext] as (...a: unknown[]) => unknown;
+          const fn = ctx[mName as keyof EvalContext] as (...a: unknown[]) => unknown;
+
+          if (DEBUG) {
+            console.log(`${prefix}${label}`);
+            console.log(`${prefix}function: ${fnName}`);
+            if (callNode.arguments.length > 0) {
+              console.log(`${prefix}args:`);
+              callNode.arguments.forEach((arg, i) => {
+                const argVal = args[i];
+                console.log(`${prefix}- ${nodeSummary(arg)} = ${fmtVal(argVal)}`);
+              });
+            }
+            console.log(`${prefix}value: ${fmtVal(fn(...args))}`);
+          }
+
           result = fn(...args);
-          dlog(`  => ${JSON.stringify(result)}`);
           return result;
         }
 
@@ -234,7 +281,11 @@ function evaluateNodeImpl(node: jsep.Expression, ctx: EvalContext, depth: number
           throw new Error(`Cannot call method on ${typeof obj}`);
         }
 
-        dlog(`  => ${JSON.stringify(result)}`);
+        if (DEBUG) {
+          console.log(`${prefix}${label}`);
+          console.log(`${prefix}function: ${fnName}`);
+          console.log(`${prefix}value: ${fmtVal(result)}`);
+        }
         return result;
       }
 
@@ -243,7 +294,6 @@ function evaluateNodeImpl(node: jsep.Expression, ctx: EvalContext, depth: number
 
     case 'MemberExpression': {
       const member = node as jsep.MemberExpression;
-      dlog(`- ${label}`);
       const obj = evaluateNodeImpl(member.object, ctx, depth + 1, 'obj:');
 
       let prop: string | number;
@@ -261,7 +311,10 @@ function evaluateNodeImpl(node: jsep.Expression, ctx: EvalContext, depth: number
 
       if (typeof obj === 'object') {
         const result = (obj as Record<string, unknown>)[prop];
-        dlog(`  .${prop} => ${JSON.stringify(result)}`);
+        if (DEBUG) {
+          console.log(`${prefix}${label}`);
+          console.log(`${prefix}value: ${fmtVal(result)}`);
+        }
         return result;
       }
       throw new Error(`Cannot access property on non-object`);
@@ -269,7 +322,7 @@ function evaluateNodeImpl(node: jsep.Expression, ctx: EvalContext, depth: number
 
     case 'UnaryExpression': {
       const unary = node as jsep.UnaryExpression;
-      dlog(`- ${label} (${unary.operator})`);
+      if (DEBUG) console.log(`${prefix}${label}`);
       const arg = evaluateNodeImpl(unary.argument, ctx, depth + 1, 'arg:');
 
       let result: unknown;
@@ -281,15 +334,22 @@ function evaluateNodeImpl(node: jsep.Expression, ctx: EvalContext, depth: number
         default:
           throw new Error(`Unknown unary operator: ${unary.operator}`);
       }
-      dlog(`  => ${JSON.stringify(result)}`);
+      if (DEBUG) console.log(`${prefix}value: ${fmtVal(result)}`);
       return result;
     }
 
     case 'BinaryExpression': {
       const binary = node as jsep.BinaryExpression;
       const { operator } = binary;
-      dlog(`- ${label}`);
-      dlog(`  - operator: ${operator}`);
+
+      const opLabel = operator === '&&' ? 'LHS && RHS' :
+        operator === '||' ? 'LHS || RHS' :
+        `LHS ${operator} RHS`;
+
+      if (DEBUG) {
+        console.log(`${prefix}${label}`);
+        console.log(`${prefix}expr: ${opLabel}`);
+      }
 
       // Evaluate LHS
       const left = evaluateNodeImpl(binary.left, ctx, depth + 1, 'LHS:');
@@ -303,9 +363,11 @@ function evaluateNodeImpl(node: jsep.Expression, ctx: EvalContext, depth: number
       }
 
       if (shortCircuited) {
-        dlog(`  - RHS: skipped`);
         const result = operator === '&&' ? false : true;
-        dlog(`  => ${JSON.stringify(result)}`);
+        if (DEBUG) {
+          console.log(`${prefix}RHS: skipped`);
+          console.log(`${prefix}value: ${fmtVal(result)}`);
+        }
         return result;
       }
 
@@ -335,15 +397,18 @@ function evaluateNodeImpl(node: jsep.Expression, ctx: EvalContext, depth: number
         default:
           throw new Error(`Unknown binary operator: ${operator}`);
       }
-      dlog(`  => ${JSON.stringify(result)}`);
+
+      if (DEBUG) {
+        console.log(`${prefix}value: ${fmtVal(result)}`);
+      }
       return result;
     }
 
     case 'ConditionalExpression': {
       const conditional = node as jsep.ConditionalExpression;
-      dlog(`- ${label}`);
+      if (DEBUG) console.log(`${prefix}${label}`);
       const test = evaluateNodeImpl(conditional.test, ctx, depth + 1, 'test:');
-      dlog(`  => ${test ? 'consequent' : 'alternate'}`);
+      if (DEBUG) console.log(`${prefix}=> ${test ? 'consequent' : 'alternate'}`);
       const result = test
         ? evaluateNodeImpl(conditional.consequent, ctx, depth + 1, 'consequent:')
         : evaluateNodeImpl(conditional.alternate, ctx, depth + 1, 'alternate:');
