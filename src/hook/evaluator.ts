@@ -87,8 +87,14 @@ function evaluateNode(node: jsep.Expression, ctx: EvalContext): JsepEvaluatedNod
     case 'ArrayExpression': {
       const arrNode = node as jsep.ArrayExpression;
       const elements = arrNode.elements.filter((el): el is jsep.Expression => el !== null);
-      const value = elements.map(el => evaluateNode(el, ctx).value);
-      return makeEvaluatedNode(node, value);
+      const evaluatedElements = elements.map(el => evaluateNode(el, ctx));
+      const value = evaluatedElements.map(e => e.value);
+      const result = makeEvaluatedNode(node, value);
+      // stitch evaluated children into the result for tree printing
+      (result as any).elements = arrNode.elements.map((el, i) =>
+        el === null ? null : evaluatedElements.shift()!
+      );
+      return result;
     }
 
     case 'CallExpression': {
@@ -104,7 +110,10 @@ function evaluateNode(node: jsep.Expression, ctx: EvalContext): JsepEvaluatedNod
           throw new Error(`Unknown function: ${idName}`);
         }
         const fn = ctx[idName as keyof EvalContext] as (...a: unknown[]) => unknown;
-        return makeEvaluatedNode(node, fn(...args));
+        const result = makeEvaluatedNode(node, fn(...args));
+        // stitch evaluated args for tree printing (callee is Identifier, no children)
+        (result as any).arguments = evaluatedArgs;
+        return result;
       }
 
       // Case 2: Method call like obj.method() or str.includes()
@@ -122,7 +131,9 @@ function evaluateNode(node: jsep.Expression, ctx: EvalContext): JsepEvaluatedNod
             throw new Error(`Unknown seq function: ${mName}`);
           }
           const fn = ctx[mName as keyof EvalContext] as (...a: unknown[]) => unknown;
-          return makeEvaluatedNode(node, fn(...args));
+          const result = makeEvaluatedNode(node, fn(...args));
+          (result as any).arguments = evaluatedArgs;
+          return result;
         }
 
         // Regular method call on an object/array/string
@@ -134,34 +145,44 @@ function evaluateNode(node: jsep.Expression, ctx: EvalContext): JsepEvaluatedNod
         }
 
         let methodName: string;
+        let propEval: JsepEvaluatedNode | null = null;
         if (member.property.type === 'Identifier') {
           methodName = (member.property as jsep.Identifier).name;
         } else if (member.property.type === 'Literal') {
           methodName = String((member.property as jsep.Literal).value);
         } else {
-          methodName = String(evaluateNode(member.property, ctx).value);
+          propEval = evaluateNode(member.property, ctx);
+          methodName = String(propEval.value);
         }
 
-        let result: unknown;
+        let resultValue: unknown;
         if (typeof obj === 'string') {
-          if (methodName === 'includes') result = obj.includes(args[0] as string);
-          else if (methodName === 'startsWith') result = obj.startsWith(args[0] as string);
-          else if (methodName === 'endsWith') result = obj.endsWith(args[0] as string);
-          else if (methodName === 'indexOf') result = obj.indexOf(args[0] as string);
+          if (methodName === 'includes') resultValue = obj.includes(args[0] as string);
+          else if (methodName === 'startsWith') resultValue = obj.startsWith(args[0] as string);
+          else if (methodName === 'endsWith') resultValue = obj.endsWith(args[0] as string);
+          else if (methodName === 'indexOf') resultValue = obj.indexOf(args[0] as string);
           else throw new Error(`Unknown string method: ${methodName}`);
         } else if (Array.isArray(obj)) {
-          if (methodName === 'includes') result = obj.includes(args[0]);
-          else if (methodName === 'indexOf') result = obj.indexOf(args[0]);
-          else if (methodName === 'length') result = obj.length;
+          if (methodName === 'includes') resultValue = obj.includes(args[0]);
+          else if (methodName === 'indexOf') resultValue = obj.indexOf(args[0]);
+          else if (methodName === 'length') resultValue = obj.length;
           else throw new Error(`Unknown array method: ${methodName}`);
         } else if (typeof obj === 'object') {
           const method = (obj as Record<string, unknown>)[methodName];
-          if (typeof method === 'function') result = method.apply(obj, args);
-          else result = method;
+          if (typeof method === 'function') resultValue = method.apply(obj, args);
+          else resultValue = method;
         } else {
           throw new Error(`Cannot call method on ${typeof obj}`);
         }
-        return makeEvaluatedNode(node, result);
+        const result = makeEvaluatedNode(node, resultValue);
+        // stitch evaluated callee children for tree printing
+        const evalCallee = Object.assign({}, member, {
+          object: objEval,
+          property: propEval ?? member.property,
+        });
+        (result as any).callee = evalCallee;
+        (result as any).arguments = evaluatedArgs;
+        return result;
       }
 
       throw new Error(`Unsupported callee type: ${callee.type}`);
@@ -173,12 +194,14 @@ function evaluateNode(node: jsep.Expression, ctx: EvalContext): JsepEvaluatedNod
       const obj = objEval.value;
 
       let prop: string | number;
+      let propEval: JsepEvaluatedNode | null = null;
       if (member.property.type === 'Identifier') {
         prop = (member.property as jsep.Identifier).name;
       } else if (member.property.type === 'Literal') {
         prop = (member.property as jsep.Literal).value as string | number;
       } else {
-        prop = evaluateNode(member.property, ctx).value as string | number;
+        propEval = evaluateNode(member.property, ctx);
+        prop = propEval.value as string | number;
       }
 
       if (obj === null || obj === undefined) {
@@ -191,7 +214,11 @@ function evaluateNode(node: jsep.Expression, ctx: EvalContext): JsepEvaluatedNod
       } else {
         throw new Error(`Cannot access property on non-object`);
       }
-      return makeEvaluatedNode(node, value);
+      const result = makeEvaluatedNode(node, value);
+      // stitch evaluated children into the result for tree printing
+      (result as any).object = objEval;
+      (result as any).property = propEval ?? member.property;
+      return result;
     }
 
     case 'UnaryExpression': {
@@ -208,7 +235,10 @@ function evaluateNode(node: jsep.Expression, ctx: EvalContext): JsepEvaluatedNod
         default:
           throw new Error(`Unknown unary operator: ${unary.operator}`);
       }
-      return makeEvaluatedNode(node, value);
+      const result = makeEvaluatedNode(node, value);
+      // stitch evaluated child for tree printing
+      (result as any).argument = argEval;
+      return result;
     }
 
     case 'BinaryExpression': {
@@ -217,8 +247,16 @@ function evaluateNode(node: jsep.Expression, ctx: EvalContext): JsepEvaluatedNod
       const left = leftEval.value;
 
       // Short-circuit for && and ||
-      if (binary.operator === '&&' && !left) return makeEvaluatedNode(node, false);
-      if (binary.operator === '||' && left) return makeEvaluatedNode(node, left);
+      if (binary.operator === '&&' && !left) {
+        const result = makeEvaluatedNode(node, false);
+        (result as any).left = leftEval;
+        return result;
+      }
+      if (binary.operator === '||' && left) {
+        const result = makeEvaluatedNode(node, left);
+        (result as any).left = leftEval;
+        return result;
+      }
 
       const rightEval = evaluateNode(binary.right, ctx);
       const right = rightEval.value;
@@ -245,16 +283,31 @@ function evaluateNode(node: jsep.Expression, ctx: EvalContext): JsepEvaluatedNod
         default:
           throw new Error(`Unknown binary operator: ${binary.operator}`);
       }
-      return makeEvaluatedNode(node, value);
+      const result = makeEvaluatedNode(node, value);
+      // stitch evaluated children into the result for tree printing
+      (result as any).left = leftEval;
+      (result as any).right = rightEval;
+      return result;
     }
 
     case 'ConditionalExpression': {
       const conditional = node as jsep.ConditionalExpression;
       const testEval = evaluateNode(conditional.test, ctx);
       const test = testEval.value;
-      return test
+      const branchEval = test
         ? evaluateNode(conditional.consequent, ctx)
         : evaluateNode(conditional.alternate, ctx);
+      const result = makeEvaluatedNode(node, branchEval.value);
+      // stitch evaluated children for tree printing
+      (result as any).test = testEval;
+      if (test) {
+        (result as any).consequent = branchEval;
+        (result as any).alternate = conditional.alternate;
+      } else {
+        (result as any).consequent = conditional.consequent;
+        (result as any).alternate = branchEval;
+      }
+      return result;
     }
 
     default:
