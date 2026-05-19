@@ -236,8 +236,12 @@ export async function handleHook(
     );
 
     // Confusion scoring: +1 per assistant turn (agent spinning without progress)
-    // This is the primary driver that ensures hints trigger even during pure exploration.
-    ctx.core.increaseConfusionIndex(1);
+    // In plan mode, the agent explores by reading files — tool calls are sparse,
+    // so this +1 is the primary driver that ensures hints trigger.
+    // In normal mode, tool calls are frequent enough to drive the hint on their own.
+    if (ctx.core.getMode() === 'plan') {
+      ctx.core.increaseConfusionIndex(1);
+    }
 
     // Register blocked calls as rejections in triologue
     if (hookResult.blockedCalls.size > 0) {
