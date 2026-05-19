@@ -28,6 +28,8 @@ export interface SequenceEvent {
 export class Sequence {
   private events: SequenceEvent[] = [];
   private totalEventsCount: number = 0; // session-level total, never cleared at turn boundary
+  /** Session-level tally table: tool name → total call count across all turns */
+  private toolCallTally: Map<string, number> = new Map();
   private triologue?: Triologue;
   private getMode: () => 'plan' | 'normal';
 
@@ -42,6 +44,8 @@ export class Sequence {
   add(event: SequenceEvent): void {
     this.events.push(event);
     this.totalEventsCount++;
+    // Update session-level tally for totalCount lookups
+    this.toolCallTally.set(event.tool, (this.toolCallTally.get(event.tool) || 0) + 1);
   }
 
   /**
@@ -59,6 +63,7 @@ export class Sequence {
   clear(): void {
     this.events = [];
     this.totalEventsCount = 0;
+    this.toolCallTally.clear();
   }
 
   /**
@@ -171,19 +176,14 @@ export class Sequence {
   /**
    * Count occurrences of a tool across the entire session.
    * Unlike count(), this is never reset at turn boundaries.
+   * Uses an internal tally table maintained by add() for reliable per-tool counts
+   * without depending on the triologue or external data sources.
    */
   totalCount(toolName?: string): number {
     if (!toolName) {
       return this.totalEventsCount;
     }
-    // Derive session-level counts from the triologue for per-tool accuracy
-    if (this.triologue) {
-      return this.triologue.getMessagesRaw()
-        .filter(m => m.role === 'tool' && m.tool_name === toolName)
-        .length;
-    }
-    // Fallback: approximate from in-memory total (can't distinguish by tool)
-    return toolName ? 0 : this.totalEventsCount;
+    return this.toolCallTally.get(toolName) || 0;
   }
 
   /**

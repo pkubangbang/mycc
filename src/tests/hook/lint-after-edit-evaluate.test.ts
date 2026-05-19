@@ -143,37 +143,26 @@ describe('evaluate() with lint-after-edit condition', () => {
       expect(seq.has('bash')).toBe(true);
     });
 
-    it('[BUG-CAUGHT] seq.totalCount("edit_file") returns 0 without Triologue', () => {
-      // This is the root cause: totalCount falls back to 0 for specific tool
-      // names when no Triologue is attached.
-      // Expected: should be 1 (one edit_file in the session)
-      // Actual: 0 due to the fallback bug
+    it('seq.totalCount("edit_file") returns correct count without Triologue using tally table', () => {
       const count = seq.totalCount('edit_file');
-      expect(count).toBe(0);
+      expect(count).toBe(1);
     });
 
-    it('[BUG-CAUGHT] totalCount for any specific tool returns 0 without Triologue', () => {
-      expect(seq.totalCount('bash')).toBe(0);
+    it('totalCount for specific tools returns correct counts from tally table', () => {
+      expect(seq.totalCount('bash')).toBe(4);
       expect(seq.totalCount('write_file')).toBe(0);
-      expect(seq.totalCount('recall')).toBe(0);
-      expect(seq.totalCount('read_file')).toBe(0);
-      expect(seq.totalCount('brief')).toBe(0);
+      expect(seq.totalCount('recall')).toBe(2);
+      expect(seq.totalCount('read_file')).toBe(2);
+      expect(seq.totalCount('brief')).toBe(2);
     });
 
-    it('[BUG-CAUGHT] totalCount() without args returns correct session total', () => {
-      // totalCount() without args works correctly since it falls back to
-      // this.totalEventsCount which is tracked independently.
+    it('totalCount() without args returns correct session total', () => {
       expect(seq.totalCount()).toBe(11);
     });
 
-    it('[BUG-CAUGHT] evaluate() returns false due to totalCount bug', () => {
-      // Because totalCount('edit_file') returns 0 (instead of 1),
-      // the left part of the AND evaluates to false, making the whole
-      // condition false.
-      // Expected (correct): true (edit_file was used, no lint was run)
-      // Actual (bug): false
+    it('evaluate() returns true due to fixed totalCount', () => {
       const result = seq.evaluate(LINT_AFTER_EDIT_CONDITION);
-      expect(result).toBe(false);
+      expect(result).toBe(true);
     });
 
     it('other seq functions work correctly without Triologue', () => {
@@ -203,10 +192,8 @@ describe('evaluate() with lint-after-edit condition', () => {
       expect(seq.count('edit_file')).toBe(1);
     });
 
-    it('[BUG-CAUGHT] the condition would be true if using count() instead of totalCount()', () => {
-      // If the condition used count() instead of totalCount(), it would work.
-      // This demonstrates that the evaluator/jsep pipeline is fine — only
-      // the totalCount fallback is broken.
+    it('the condition works with count() as well (both count and totalCount give same result for single turn)', () => {
+      // count() and totalCount() both work correctly now — totalCount uses the tally table
       const countBasedCondition =
         `(seq.count('edit_file') > 0 || seq.count('write_file') > 0) ` +
         `&& (seq.lastIndexOf('edit_file') >= seq.lastIndexOf('bash#pnpm lint') ` +
@@ -309,7 +296,7 @@ describe('evaluate() with lint-after-edit condition', () => {
   // Only write_file (no edit_file) scenario
   // ==========================================================================
   describe('write_file scenario', () => {
-    it('[BUG-CAUGHT] totalCount("write_file") returns 0 without Triologue', () => {
+    it('totalCount("write_file") returns correct count from tally table', () => {
       const seq = new Sequence();
       seq.add({
         tool: 'write_file',
@@ -318,7 +305,7 @@ describe('evaluate() with lint-after-edit condition', () => {
         timestamp: Date.now(),
       });
 
-      expect(seq.totalCount('write_file')).toBe(0);
+      expect(seq.totalCount('write_file')).toBe(1);
     });
 
     it('evaluate() returns true with Triologue for write_file-only scenario', () => {
@@ -430,11 +417,8 @@ describe('evaluate() with lint-after-edit condition', () => {
         timestamp: 1000,
       });
 
-      // Exact same condition as lint-after-edit
       const result = seq.evaluate(LINT_AFTER_EDIT_CONDITION);
-      // Without triologue: false (bug)
-      // With triologue: true
-      expect(result).toBe(false); // Documenting current bug behavior
+      expect(result).toBe(true);
     });
 
     it('should not crash on deeply nested condition', () => {

@@ -101,21 +101,9 @@ describe('Sequence.evaluate() - lint-after-edit condition', () => {
       expect(seq.evaluate("seq.lastIndexOf('bash#pnpm lint') == -1")).toBe(true);
     });
 
-    it('should evaluate the full lint-after-edit condition as TRUE (BUG: currently fails)', () => {
-      // This test currently FAILS because totalCount('edit_file') returns 0
-      // when no Triologue is attached. The fallback in Sequence.totalCount() is:
-      //   return toolName ? 0 : this.totalEventsCount;
-      // This is wrong — it should scan this.events as a fallback.
+    it('should evaluate the full lint-after-edit condition as TRUE', () => {
       const result = seq.evaluate(LINT_AFTER_EDIT_CONDITION);
-      
-      // EXPECTED: true (edit_file was used, no lint run → condition should match)
-      // ACTUAL: false (due to totalCount bug)
-      //
-      // Uncomment the line below once the bug is fixed:
-      // expect(result).toBe(true);
-      
-      // For now, document the current broken behavior:
-      expect(result).toBe(false);
+      expect(result).toBe(true);
     });
 
     it('should evaluate the simplified condition (hasAny + lastIndexOf) correctly', () => {
@@ -138,9 +126,8 @@ describe('Sequence.evaluate() - lint-after-edit condition', () => {
       expect(seq.lastIndexOf('edit_file')).toBe(0);
       expect(seq.lastIndexOf('bash#pnpm lint')).toBe(1);
 
-      // But totalCount will fail...
-      // The simplified version correctly returns false:
-      expect(seq.evaluate(LINT_AFTER_EDIT_SIMPLE)).toBe(false);
+      // With the tally table fix, totalCount works correctly too
+      expect(seq.evaluate(LINT_AFTER_EDIT_CONDITION)).toBe(false);
     });
   });
 
@@ -239,8 +226,8 @@ describe('Sequence.evaluate() - lint-after-edit condition', () => {
 // Tests: The totalCount bug specifically
 // ============================================================================
 
-describe('Sequence.totalCount() — the bug', () => {
-  it('BUG: totalCount("toolName") returns 0 when no Triologue is attached', () => {
+describe('Sequence.totalCount()', () => {
+  it('totalCount("toolName") returns correct count from tally table', () => {
     const seq = new Sequence();
     seq.add({ tool: 'edit_file', args: { path: 'test.ts' }, result: 'ok', timestamp: 1000 });
     seq.add({ tool: 'bash', args: { command: 'echo hello' }, result: 'ok', timestamp: 2000 });
@@ -248,11 +235,10 @@ describe('Sequence.totalCount() — the bug', () => {
     // totalCount() without args correctly returns totalEventsCount (2)
     expect(seq.totalCount()).toBe(2);
 
-    // BUG: totalCount('edit_file') returns 0 because:
-    // - No triologue attached → falls through
-    // - Fallback: `return toolName ? 0 : this.totalEventsCount;` — returns 0!
-    const withTool = seq.totalCount('edit_file');
-    expect(withTool).toBe(0);  // FAILS: should be 1
+    // totalCount('edit_file') returns 1 from the tally table
+    expect(seq.totalCount('edit_file')).toBe(1);
+    expect(seq.totalCount('bash')).toBe(1);
+    expect(seq.totalCount('nonexistent')).toBe(0);
   });
 
   it('totalCount() without args should work correctly', () => {
@@ -269,13 +255,12 @@ describe('Sequence.totalCount() — the bug', () => {
     expect(seq.totalCount()).toBe(3);
   });
 
-  it('the condition relying on totalCount("edit_file") > 0 fails', () => {
+  it('the condition relying on totalCount("edit_file") > 0 succeeds', () => {
     const seq = new Sequence();
     seq.add({ tool: 'edit_file', args: { path: 'test.ts' }, result: 'ok', timestamp: 1000 });
 
-    // This sub-expression should be true but returns false due to the bug
     const result = seq.evaluate("seq.totalCount('edit_file') > 0");
-    expect(result).toBe(false);  // FAILS: should be true
+    expect(result).toBe(true);
   });
 });
 
