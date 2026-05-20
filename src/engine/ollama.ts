@@ -28,15 +28,13 @@ import {
   type RetryChatConfig,
 } from './chat-helpers.js';
 
-// Re-export for convenience (health-check, agent-repl, etc.)
-export { getOllamaHost, getOllamaApiKey, getOllamaModel };
-
-// Module-level constants
-export const OLLAMA_HOST = getOllamaHost();
-export const OLLAMA_API_KEY = getOllamaApiKey();
 export const MODEL = getOllamaModel();
 
-export const ollama = new Ollama({
+// Private module state
+const OLLAMA_HOST = getOllamaHost();
+const OLLAMA_API_KEY = getOllamaApiKey();
+
+const ollama = new Ollama({
   host: OLLAMA_HOST,
   ...(OLLAMA_API_KEY ? { headers: { Authorization: `Bearer ${OLLAMA_API_KEY}` } } : {}),
 });

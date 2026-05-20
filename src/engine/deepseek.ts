@@ -33,12 +33,6 @@ import {
 
 export const MODEL = process.env.DEEPSEEK_MODEL || 'deepseek-v4-pro';
 
-/** Not available when using DeepSeek — always undefined. */
-export const ollama: undefined = undefined;
-
-/** Not available when using DeepSeek — always empty. */
-export const OLLAMA_HOST = '';
-
 const NEGLECTED_SPINNER_TEXT = 'Hold on';
 
 function getHost(): string {

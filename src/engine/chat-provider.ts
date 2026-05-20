@@ -1,33 +1,29 @@
 /**
  * chat-provider.ts - Single facade for ALL LLM functionality.
  *
- * Based on API_PROVIDER env var, dynamically imports only the active provider.
- * Chat is switchable. Auxiliary features (webSearch, webFetch, imgDescribe)
- * are gated — they work with Ollama, throw with DeepSeek.
- * Embedding is always Ollama (local model, independent of chat provider).
+ * Based on API_PROVIDER env var, re-exports from the active provider.
+ * Both providers are statically imported — no top-level await needed.
  */
 
 import { getApiProvider } from '../config.js';
+import * as ollamaMod from './ollama.js';
+import * as deepseekMod from './deepseek.js';
 
-const provider = getApiProvider();
-
-const activeModule = provider === 'deepseek'
-  ? await import('./deepseek.js')
-  : await import('./ollama.js');
+const active = getApiProvider() === 'deepseek' ? deepseekMod : ollamaMod;
 
 // Chat (switchable — active provider)
-export const MODEL = activeModule.MODEL;
-export const retryChat = activeModule.retryChat;
-export const retryMultipleChoice = activeModule.retryMultipleChoice;
+export const MODEL = active.MODEL;
+export const retryChat = active.retryChat;
+export const retryMultipleChoice = active.retryMultipleChoice;
 
 // Auxiliary (gated — may throw from deepseek)
-export const webSearch = activeModule.webSearch;
-export const webFetch = activeModule.webFetch;
-export const imgDescribe = activeModule.imgDescribe;
-export const structuredChat = activeModule.structuredChat;
+export const webSearch = active.webSearch;
+export const webFetch = active.webFetch;
+export const imgDescribe = active.imgDescribe;
+export const structuredChat = active.structuredChat;
 
 // Health check (switchable — active provider)
-export const healthCheck = activeModule.healthCheck;
+export const healthCheck = active.healthCheck;
 
 // Embedding (always Ollama)
 export { getEmbedding } from './ollama-embedding.js';
