@@ -81,7 +81,7 @@ function normalizeMessage(msg: OllamaMessage): NormalizedMessage {
   if (extended.tool_calls && extended.tool_calls.length > 0) {
     normalized.tool_calls = extended.tool_calls.map((tc) => ({
       ...tc,
-      type: (tc as any).type || 'function',
+      type: (tc as unknown as Record<string, unknown>).type || 'function',
       function: {
         ...tc.function,
         arguments:
@@ -89,7 +89,7 @@ function normalizeMessage(msg: OllamaMessage): NormalizedMessage {
             ? tc.function.arguments
             : JSON.stringify(tc.function.arguments),
       },
-    }));
+    })) as unknown as OllamaToolCall[];
   }
 
   return normalized;

@@ -57,3 +57,17 @@ tmux kill-session -t mycc-test
 **Fix:** In `normalizeMessage()`, add `type: tc.type || 'function'` to each tool call.
 
 **File:** `src/engine/deepseek.ts` — `normalizeMessage()`.
+
+### 4. `reasoning_content` must be echoed back in subsequent requests
+
+**Symptom:** API returns 400 with `"The reasoning_content in the thinking mode must be passed back to the API"`.
+
+**Cause:** DeepSeek requires that when an assistant message has `tool_calls`, its `reasoning_content` MUST be included in all subsequent requests (same turn and future turns). The triologue was not storing `reasoning_content` on assistant messages — only `content` and `tool_calls` were captured.
+
+**Fix:**
+- Added `assistantReasoningContent` to `PassData` (state-machine.ts)
+- Extract `reasoning_content` from LLM response in `llm.ts` and `teammate-worker.ts`
+- Added optional `reasoningContent` parameter to `triologue.agent()`
+- `triologue.agent()` stores it in the message so `normalizeMessage()` can echo it back
+
+**Files:** `src/loop/state-machine.ts`, `src/loop/states/llm.ts`, `src/loop/states/hook.ts`, `src/loop/triologue.ts`, `src/context/teammate-worker.ts`

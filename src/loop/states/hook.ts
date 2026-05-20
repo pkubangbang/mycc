@@ -49,7 +49,7 @@ async function handleCheckpointCall(
   const { triologue, ctx } = env;
 
   // Register the tool call
-  triologue.agent(pass.assistantContent, pass.rawToolCalls as ToolCall[] | undefined);
+  triologue.agent(pass.assistantContent, pass.rawToolCalls as ToolCall[] | undefined, pass.assistantReasoningContent);
 
   // Execute checkpoint using shared handler
   const checkpointCtx = createCheckpointContext(env);
@@ -101,7 +101,7 @@ async function handleRecapCall(
     : undefined;
 
   if (!checkpointId || typeof checkpointId !== 'string' || checkpointId.trim() === '') {
-    triologue.agent(pass.assistantContent, pass.rawToolCalls as ToolCall[] | undefined);
+    triologue.agent(pass.assistantContent, pass.rawToolCalls as ToolCall[] | undefined, pass.assistantReasoningContent);
     triologue.tool('recap', 'Error: checkpoint_id is required and must be a non-empty string.', call.id);
     turn.isFirstRound = false;
     return AgentState.COLLECT;
@@ -109,7 +109,7 @@ async function handleRecapCall(
 
   const checkpoint = triologue.findCheckpointById(checkpointId);
   if (!checkpoint) {
-    triologue.agent(pass.assistantContent, pass.rawToolCalls as ToolCall[] | undefined);
+    triologue.agent(pass.assistantContent, pass.rawToolCalls as ToolCall[] | undefined, pass.assistantReasoningContent);
     const allCheckpoints = triologue.findAllCheckpoints();
     const msg = allCheckpoints.length === 0
       ? 'Error: No checkpoint found.'
@@ -125,7 +125,7 @@ async function handleRecapCall(
   if (abandon) {
     // Abandon: discard messages, append ?recap + !recap (abandon marker)
     triologue.recapMessages(checkpoint.index);
-    triologue.agent(pass.assistantContent, pass.rawToolCalls as ToolCall[] | undefined);
+    triologue.agent(pass.assistantContent, pass.rawToolCalls as ToolCall[] | undefined, pass.assistantReasoningContent);
     const abandonResult = `[RECAP] Abandoned checkpoint "${checkpoint.description}"\n\n${messages.length} messages discarded. Checkpoint closed.${comment ? `\n\nComment: ${comment}` : ''}\n\nNote: the checkpoint todo item was auto-created with this checkpoint's ID as its note. Use todo_update to mark it as done.`;
     triologue.tool('recap', abandonResult, call.id);
 
@@ -149,7 +149,7 @@ async function handleRecapCall(
 
   // Check for ESC cancellation (summary starts with cancellation marker)
   if (summary.startsWith('[RECAP] Cancelled:')) {
-    triologue.agent(pass.assistantContent, pass.rawToolCalls as ToolCall[] | undefined);
+    triologue.agent(pass.assistantContent, pass.rawToolCalls as ToolCall[] | undefined, pass.assistantReasoningContent);
     triologue.tool('recap', summary, call.id);
     ctx.core.brief('warn', 'recap', summary);
     turn.isFirstRound = false;
@@ -157,7 +157,7 @@ async function handleRecapCall(
   }
 
   triologue.recapMessages(checkpoint.index);
-  triologue.agent(pass.assistantContent, pass.rawToolCalls as ToolCall[] | undefined);
+  triologue.agent(pass.assistantContent, pass.rawToolCalls as ToolCall[] | undefined, pass.assistantReasoningContent);
   triologue.tool('recap', summary, call.id);
 
   const tokensAfter = triologue.getTokenCount();
@@ -188,7 +188,7 @@ export async function handleHook(
     const checkpointValidation = validateCheckpointIsolation(augmentedCalls);
     if (!checkpointValidation.valid) {
       // Block all calls with the error message
-      triologue.agent(pass.assistantContent, pass.rawToolCalls as ToolCall[] | undefined);
+      triologue.agent(pass.assistantContent, pass.rawToolCalls as ToolCall[] | undefined, pass.assistantReasoningContent);
       for (const call of augmentedCalls) {
         triologue.tool(call.function.name, checkpointValidation.message!, call.id);
       }
@@ -233,6 +233,7 @@ export async function handleHook(
     triologue.agent(
       pass.assistantContent,
       finalToolCalls as ToolCall[] | undefined,
+      pass.assistantReasoningContent,
     );
 
     // Confusion scoring: +1 per assistant turn (agent spinning without progress)

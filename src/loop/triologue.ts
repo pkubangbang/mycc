@@ -326,7 +326,7 @@ export class Triologue {
   /**
    * Add an assistant message
    */
-  agent(content: string, toolCalls?: ToolCall[]): void {
+  agent(content: string, toolCalls?: ToolCall[], reasoningContent?: string): void {
     const lastRole = this.getLastRole();
 
     // Reject invalid transitions
@@ -341,6 +341,7 @@ export class Triologue {
       role: 'assistant',
       content: content || '',
       tool_calls: toolCalls,
+      ...(reasoningContent ? { reasoning_content: reasoningContent } : {}),
     });
 
     // Track pending tool calls in order

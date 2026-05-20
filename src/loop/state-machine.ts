@@ -89,6 +89,8 @@ export interface PassData {
   rawToolCalls: ToolCall[];
   /** Text content from the LLM assistant message */
   assistantContent: string;
+  /** Reasoning content from thinking mode (must be echoed back for DeepSeek) */
+  assistantReasoningContent?: string;
   augmentedCalls: AugmentedToolCall[];
   hookResult: ProcessToolCallsResult | null;
 }

@@ -91,6 +91,7 @@ export async function handleLlm(
         ? [...(assistantMessage.tool_calls as ToolCall[])]
         : [];
       pass.assistantContent = assistantMessage.content || '';
+      pass.assistantReasoningContent = (assistantMessage as unknown as Record<string, unknown>).reasoning_content as string | undefined;
       pass.abortController = null;
 
       // Handle edge case where LLM returns empty content AND no tool calls

@@ -185,7 +185,8 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
       });
 
       const assistantMessage = response.message;
-      triologue.agent(assistantMessage.content || '', assistantMessage.tool_calls as ToolCall[] | undefined);
+      const reasoningContent = (assistantMessage as unknown as Record<string, unknown>).reasoning_content as string | undefined;
+      triologue.agent(assistantMessage.content || '', assistantMessage.tool_calls as ToolCall[] | undefined, reasoningContent);
 
       // Confusion scoring: +1 per assistant turn (agent spinning without progress)
       ctx.core.increaseConfusionIndex(1);
@@ -221,7 +222,7 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
         
         if (!validation.valid) {
           // Block with error message
-          triologue.agent(assistantMessage.content || '', toolCalls);
+          triologue.agent(assistantMessage.content || '', toolCalls, reasoningContent);
           for (const tc of toolCalls) {
             triologue.tool(tc.function.name, validation.message!, tc.id);
           }
@@ -242,7 +243,7 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
           const args = tc.function.arguments as Record<string, unknown>;
           
           // Register the tool call
-          triologue.agent(assistantMessage.content || '', toolCalls);
+          triologue.agent(assistantMessage.content || '', toolCalls, reasoningContent);
           
           // Execute checkpoint
           const result = handleCheckpointTool(args, checkpointCtx);
@@ -281,14 +282,14 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
             : undefined;
 
           if (!checkpointId || typeof checkpointId !== 'string' || checkpointId.trim() === '') {
-            triologue.agent(assistantMessage.content || '', toolCalls);
+            triologue.agent(assistantMessage.content || '', toolCalls, reasoningContent);
             triologue.tool('recap', 'Error: checkpoint_id is required and must be a non-empty string.', tc.id);
             continue;
           }
 
           const checkpoint = triologue.findCheckpointById(checkpointId);
           if (!checkpoint) {
-            triologue.agent(assistantMessage.content || '', toolCalls);
+            triologue.agent(assistantMessage.content || '', toolCalls, reasoningContent);
             const allCheckpoints = triologue.findAllCheckpoints();
             const msg = allCheckpoints.length === 0
               ? 'Error: No checkpoint found.'
@@ -303,7 +304,7 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
           if (abandon) {
             // Abandon: discard messages, append ?recap + !recap (abandon marker)
             triologue.recapMessages(checkpoint.index);
-            triologue.agent(assistantMessage.content || '', toolCalls);
+            triologue.agent(assistantMessage.content || '', toolCalls, reasoningContent);
             const abandonResult = `[RECAP] Abandoned checkpoint "${checkpoint.description}"\n\n${messages.length} messages discarded. Checkpoint closed.${comment ? `\n\nComment: ${comment}` : ''}\n\nNote: the checkpoint todo item was auto-created with this checkpoint's ID as its note. Use todo_update to mark it as done.`;
             triologue.tool('recap', abandonResult, tc.id);
 
@@ -321,14 +322,14 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
 
           // Check for ESC cancellation (summary starts with cancellation marker)
           if (summary.startsWith('[RECAP] Cancelled:')) {
-            triologue.agent(assistantMessage.content || '', toolCalls);
+            triologue.agent(assistantMessage.content || '', toolCalls, reasoningContent);
             triologue.tool('recap', summary, tc.id);
             ctx.core.brief('warn', 'recap', summary);
             continue;
           }
 
           triologue.recapMessages(checkpoint.index);
-          triologue.agent(assistantMessage.content || '', toolCalls);
+          triologue.agent(assistantMessage.content || '', toolCalls, reasoningContent);
           triologue.tool('recap', summary, tc.id);
 
           const tokensAfter = triologue.getTokenCount();
