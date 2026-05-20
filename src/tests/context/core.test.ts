@@ -35,6 +35,7 @@ vi.mock('../../engine/ollama.js', () => ({
   webFetch: vi.fn(),
   imgDescribe: vi.fn(),
   structuredChat: vi.fn(),
+  healthCheck: vi.fn(),
 }));
 vi.mock('../../engine/chat-helpers.js', () => ({
   retryWithBackoff: vi.fn(async (fn: any) => fn()),

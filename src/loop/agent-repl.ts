@@ -6,11 +6,11 @@ import * as fs from 'fs';
 import * as path from 'path';
 import chalk from 'chalk';
 import { MODEL } from '../engine/chat-provider.js';
-import { getOllamaHost } from '../config.js';
+import { getOllamaHost, getApiProvider } from '../config.js';
 
 const OLLAMA_HOST = getOllamaHost();
 import { classifyError } from '../engine/chat-helpers.js';
-import { checkHealth } from '../setup/ollama-health-check.js';
+import { healthCheck } from '../engine/chat-provider.js';
 import { ParentContext } from '../context/parent-context.js';
 import { getSessionId } from '../session/index.js';
 import { slashRegistry } from '../slashes/index.js';
@@ -71,7 +71,7 @@ export async function main(): Promise<void> {
 
   if (!shouldSkipHealthCheck()) {
     while (true) {
-      const health = await checkHealth(tokenThreshold);
+      const health = await healthCheck(tokenThreshold);
       if (health.ok) {
         if (health.modelInfo) modelInfo = health.modelInfo;
         if (health.warnings && health.warnings.length > 0) {
@@ -86,9 +86,15 @@ export async function main(): Promise<void> {
       console.error(chalk.red(`Health check failed: ${health.error}`));
       console.log(chalk.gray('─'.repeat(40)));
       console.log(chalk.yellow('Common fixes:'));
-      console.log(chalk.gray('  1. Ensure Ollama is running: ollama serve'));
-      console.log(chalk.gray('  2. Check OLLAMA_HOST in ~/.mycc-store/.env'));
-      console.log(chalk.gray('  3. Verify model exists: ollama list'));
+      if (getApiProvider() === 'deepseek') {
+        console.log(chalk.gray('  1. Check DEEPSEEK_API_KEY in .mycc/.env'));
+        console.log(chalk.gray('  2. Verify DEEPSEEK_MODEL is correct'));
+        console.log(chalk.gray('  3. Check network connectivity to api.deepseek.com'));
+      } else {
+        console.log(chalk.gray('  1. Ensure Ollama is running: ollama serve'));
+        console.log(chalk.gray('  2. Check OLLAMA_HOST in ~/.mycc-store/.env'));
+        console.log(chalk.gray('  3. Verify model exists: ollama list'));
+      }
       console.log();
 
       const answer = await agentIO.ask(chalk.cyan('Retry health check? [Y/n] > '), true);

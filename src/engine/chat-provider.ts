@@ -26,6 +26,9 @@ export const webFetch = activeModule.webFetch;
 export const imgDescribe = activeModule.imgDescribe;
 export const structuredChat = activeModule.structuredChat;
 
+// Health check (switchable — active provider)
+export const healthCheck = activeModule.healthCheck;
+
 // Embedding (always Ollama)
 export { getEmbedding } from './ollama-embedding.js';
 

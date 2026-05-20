@@ -5,10 +5,13 @@
  * Provider-agnostic utilities are imported from ./chat-helpers.js.
  */
 
+import chalk from 'chalk';
 import { Ollama } from 'ollama';
 import type { ChatRequest, ChatResponse, WebSearchResult, WebFetchResponse } from 'ollama';
-import { getOllamaHost, getOllamaApiKey, getOllamaModel, getVisionModel } from '../config.js';
+import { getOllamaHost, getOllamaApiKey, getOllamaModel, getVisionModel, isVisionEnabled } from '../config.js';
 import { agentIO } from '../loop/agent-io.js';
+import type { HealthCheckResult } from './health-check.js';
+import { probeModel } from './health-check.js';
 import {
   collectStream,
   isTransientError,
@@ -21,6 +24,8 @@ import {
   StreamTimeoutError,
   DEFAULT_RETRY_CONFIG,
   type RetryConfig,
+  type RetryChatRequest,
+  type RetryChatConfig,
 } from './chat-helpers.js';
 
 // Re-export for convenience (health-check, agent-repl, etc.)
@@ -81,8 +86,8 @@ function reconstructResponse(chunks: ChatResponse[], model: string): ChatRespons
 // ─── retryChat ──────────────────────────────────────────────────────────
 
 export async function retryChat(
-  request: Omit<ChatRequest, 'stream'> & { stream?: false },
-  config?: Partial<RetryConfig> & { signal?: AbortSignal; neglected?: boolean; noSpinner?: boolean },
+  request: RetryChatRequest,
+  config?: RetryChatConfig,
 ): Promise<ChatResponse> {
   const cfg = { ...DEFAULT_RETRY_CONFIG, ...config };
   const signal = config?.signal;
@@ -246,4 +251,63 @@ export async function structuredChat(
     format,
     options: { temperature: 0 },
   });
+}
+
+// ─── Health check ─────────────────────────────────────────────────────────
+
+export async function healthCheck(tokenThreshold: number): Promise<HealthCheckResult> {
+  try {
+    await ollama.list();
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return {
+      ok: false,
+      error: `Cannot connect to Ollama at ${OLLAMA_HOST}. ${msg}. Make sure Ollama is running.`,
+    };
+  }
+
+  try {
+    const modelInfo = await ollama.show({ model: MODEL });
+
+    startSpinner('Powered by Ollama. Initializing');
+    const startTime = Date.now();
+
+    const { contextLength, motd } = await probeModel(retryChat, MODEL);
+
+    stopSpinner();
+    const elapsed = Date.now() - startTime;
+    console.log(`[ollama] Health check passed (${elapsed}ms)`);
+    console.log(chalk.cyan(`✨ ${motd}`));
+
+    const maxThreshold = Math.floor(contextLength * 0.8);
+    if (tokenThreshold > maxThreshold) {
+      return {
+        ok: false,
+        error: `TOKEN_THRESHOLD (${tokenThreshold}) exceeds 80% of model context length (${contextLength}). Reduce TOKEN_THRESHOLD to ${maxThreshold} or less.`,
+      };
+    }
+
+    return {
+      ok: true,
+      warnings: isVisionEnabled()
+        ? undefined
+        : [
+            'OLLAMA_VISION_MODEL is not set. Vision features (screen/read_picture tools) are disabled.',
+            'Set it to a vision model (e.g., OLLAMA_VISION_MODEL=gemma4:31b-cloud) or "none" to dismiss this warning.',
+          ],
+      modelInfo: {
+        name: MODEL,
+        contextLength,
+        family: modelInfo.details?.family,
+        parameterSize: modelInfo.details?.parameter_size,
+      },
+    };
+  } catch (err) {
+    stopSpinner();
+    const msg = err instanceof Error ? err.message : String(err);
+    return {
+      ok: false,
+      error: `Model '${MODEL}' not found or unavailable. ${msg}. Run 'ollama list' to see available models.`,
+    };
+  }
 }

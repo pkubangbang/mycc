@@ -6,9 +6,12 @@
  * Messages are normalized from Ollama format to DeepSeek format.
  */
 
+import chalk from 'chalk';
 import type { ChatRequest, ChatResponse, WebSearchResult, WebFetchResponse, Message as OllamaMessage, ToolCall as OllamaToolCall } from 'ollama';
 import type { Message } from '../types.js';
 import { agentIO } from '../loop/agent-io.js';
+import type { HealthCheckResult } from './health-check.js';
+import { probeModel } from './health-check.js';
 import {
   collectStream,
   isTransientError,
@@ -20,6 +23,8 @@ import {
   StreamTimeoutError,
   DEFAULT_RETRY_CONFIG,
   type RetryConfig,
+  type RetryChatRequest,
+  type RetryChatConfig,
 } from './chat-helpers.js';
 
 // ============================================================================
@@ -290,8 +295,8 @@ function reconstructResponse(chunks: DeepSeekChunk[], model: string): ChatRespon
 // ============================================================================
 
 export async function retryChat(
-  request: Omit<ChatRequest, 'stream'> & { stream?: false },
-  config?: Partial<RetryConfig> & { signal?: AbortSignal; neglected?: boolean; noSpinner?: boolean },
+  request: RetryChatRequest,
+  config?: RetryChatConfig,
 ): Promise<ChatResponse> {
   const cfg = { ...DEFAULT_RETRY_CONFIG, ...config };
   const signal = config?.signal;
@@ -483,4 +488,45 @@ export async function structuredChat(
     eval_count: data.usage?.completion_tokens || 0,
     eval_duration: 0,
   };
+}
+
+// ─── Health check ─────────────────────────────────────────────────────────
+
+const DEEPSEEK_CONTEXT_LENGTH = 1048576;
+
+export async function healthCheck(tokenThreshold: number): Promise<HealthCheckResult> {
+  startSpinner('Powered by DeepSeek. Initializing');
+  const startTime = Date.now();
+
+  try {
+    const { motd } = await probeModel(retryChat, MODEL);
+
+    stopSpinner();
+    const elapsed = Date.now() - startTime;
+    console.log(`[deepseek] Health check passed (${elapsed}ms)`);
+    console.log(chalk.cyan(`✨ ${motd}`));
+
+    const maxThreshold = Math.floor(DEEPSEEK_CONTEXT_LENGTH * 0.8);
+    if (tokenThreshold > maxThreshold) {
+      return {
+        ok: false,
+        error: `TOKEN_THRESHOLD (${tokenThreshold}) exceeds 80% of model context length (${DEEPSEEK_CONTEXT_LENGTH}). Reduce TOKEN_THRESHOLD to ${maxThreshold} or less.`,
+      };
+    }
+
+    return {
+      ok: true,
+      modelInfo: {
+        name: MODEL,
+        contextLength: DEEPSEEK_CONTEXT_LENGTH,
+      },
+    };
+  } catch (err) {
+    stopSpinner();
+    const msg = err instanceof Error ? err.message : String(err);
+    return {
+      ok: false,
+      error: `DeepSeek API error for model '${MODEL}'. ${msg}. Check DEEPSEEK_API_KEY and DEEPSEEK_MODEL in .mycc/.env.`,
+    };
+  }
 }

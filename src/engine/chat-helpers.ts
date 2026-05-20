@@ -5,6 +5,7 @@
  * Provider-specific code lives in ollama.ts / deepseek.ts.
  */
 
+import type { ChatRequest } from 'ollama';
 import { agentIO } from '../loop/agent-io.js';
 
 // ============================================================================
@@ -105,6 +106,16 @@ export const DEFAULT_RETRY_CONFIG: RetryConfig = {
   maxDelayMs: 10000,
   firstTokenTimeoutMs: 20000,
   responseTimeoutMs: 120000,
+};
+
+/** Standard retryChat request shape used by all providers. */
+export type RetryChatRequest = Omit<ChatRequest, 'stream'> & { stream?: false };
+
+/** Standard retryChat config shape. */
+export type RetryChatConfig = Partial<RetryConfig> & {
+  signal?: AbortSignal;
+  neglected?: boolean;
+  noSpinner?: boolean;
 };
 
 // ============================================================================
