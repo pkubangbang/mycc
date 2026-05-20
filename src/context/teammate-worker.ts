@@ -241,20 +241,20 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
           // Handle checkpoint
           const tc = toolCalls[0]; // We validated it's alone
           const args = tc.function.arguments as Record<string, unknown>;
-          
-          // Register the tool call
-          triologue.agent(assistantMessage.content || '', toolCalls, reasoningContent);
-          
-          // Execute checkpoint
+
+          // Execute checkpoint (before agent — pure, no triologue access)
           const result = handleCheckpointTool(args, checkpointCtx);
-          
-          // Add tool response
-          triologue.tool('checkpoint', result.result, tc.id);
-          
-          // Add checkpoint marker if successful
+
+          // Add checkpoint marker BEFORE agent (TP-safe: note → agent → tool)
           if (result.success && result.id) {
             addCheckpointMarker(triologue, result.id, result.description);
           }
+
+          // Register the tool call
+          triologue.agent(assistantMessage.content || '', toolCalls, reasoningContent);
+
+          // Add tool response
+          triologue.tool('checkpoint', result.result, tc.id);
           
           // Brief the assistant content if any
           if (assistantMessage.content) {

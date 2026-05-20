@@ -48,23 +48,23 @@ async function handleCheckpointCall(
 ): Promise<HandlerResult> {
   const { triologue, ctx } = env;
 
-  // Register the tool call
-  triologue.agent(pass.assistantContent, pass.rawToolCalls as ToolCall[] | undefined, pass.assistantReasoningContent);
-
-  // Execute checkpoint using shared handler
+  // Execute checkpoint using shared handler (before agent — pure, no triologue access)
   const checkpointCtx = createCheckpointContext(env);
   const result = handleCheckpoint(
     call.function.arguments as Record<string, unknown>,
     checkpointCtx,
   );
 
-  // Add tool response
-  triologue.tool('checkpoint', result.result, call.id);
-
-  // Add checkpoint marker as user message if successful
+  // Add checkpoint marker as user message BEFORE agent (TP-safe: note → agent → tool)
   if (result.success && result.id) {
     addCheckpointMarker(triologue, result.id, result.description);
   }
+
+  // Register the assistant message with tool calls
+  triologue.agent(pass.assistantContent, pass.rawToolCalls as ToolCall[] | undefined, pass.assistantReasoningContent);
+
+  // Add tool response
+  triologue.tool('checkpoint', result.result, call.id);
 
   if (pass.assistantContent) {
     ctx.core.brief('info', 'assistant', pass.assistantContent);
