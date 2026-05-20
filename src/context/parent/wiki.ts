@@ -21,11 +21,9 @@ import type {
   RebuildResult,
   CoreModule,
 } from '../../types.js';
-import { ollama } from '../../engine/ollama.js';
+import { getEmbedding } from '../../engine/ollama-embedding.js';
 import { getWikiLogsDir, getWikiDbDir, getWikiDomainsFile, ensureDirs } from '../../config.js';
 
-// Embedding model configuration
-const EMBEDDING_MODEL = process.env.OLLAMA_EMBEDDING_MODEL || 'nomic-embed-text';
 const DUPLICATE_THRESHOLD = 0.95;
 const MIN_CONTENT_LENGTH = 50;
 const MAX_CONTENT_LENGTH = 1000;
@@ -96,22 +94,6 @@ export class WikiManager implements WikiModule {
       };
       this.table = await this.db.createTable(this.tableName, [initialRecord]);
     }
-  }
-
-  /**
-   * Generate embedding for text using Ollama
-   */
-  private async getEmbedding(text: string): Promise<number[]> {
-    const response = await ollama.embed({
-      model: EMBEDDING_MODEL,
-      input: text,
-    });
-
-    if (!response.embeddings || response.embeddings.length === 0) {
-      throw new Error('Failed to generate embedding');
-    }
-
-    return response.embeddings[0];
   }
 
   /**
@@ -222,7 +204,7 @@ export class WikiManager implements WikiModule {
 
     try {
       // Generate embedding for content
-      const embedding = await this.getEmbedding(document.content);
+      const embedding = await getEmbedding(document.content);
 
       // Check for duplicates
       const isDuplicate = await this.checkDuplicate(embedding);
@@ -271,7 +253,7 @@ export class WikiManager implements WikiModule {
       }
 
       // Generate embedding
-      const embedding = await this.getEmbedding(document.content);
+      const embedding = await getEmbedding(document.content);
 
       // Create record
       const record: Record<string, unknown> = {
@@ -316,7 +298,7 @@ export class WikiManager implements WikiModule {
 
     try {
       // Generate embedding for query
-      const queryEmbedding = await this.getEmbedding(query);
+      const queryEmbedding = await getEmbedding(query);
 
       // Get all records and filter manually (vector search requires embedding column)
       const records = await this.table.query().toArray();
@@ -643,7 +625,7 @@ export class WikiManager implements WikiModule {
 
           try {
             // Generate embedding
-            const embedding = await this.getEmbedding(entry.document.content);
+            const embedding = await getEmbedding(entry.document.content);
 
             // Create record
             const record: Record<string, unknown> = {
