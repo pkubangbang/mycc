@@ -646,18 +646,14 @@ export class Triologue {
    * or legacy regex for backwards compatibility
    */
   private isCheckpointMessage(msg: Message): { id: string; description: string } | null {
-    if (msg.role !== 'user' || !msg.content) return null;
+    // Checkpoint tool responses have role='tool' and tool_name='checkpoint'
+    if (msg.role !== 'tool' || (msg as unknown as Record<string, unknown>).tool_name !== 'checkpoint' || !msg.content) return null;
 
-    // New format: "[CHECKPOINT] abc12345: description"
-    const newMatch = msg.content.match(/^\[CHECKPOINT\] ([a-z0-9]{8}): (.+)$/);
-    if (newMatch) {
-      return { id: newMatch[1], description: newMatch[2] };
-    }
-
-    // Legacy format: "[CHECKPOINT abc12345: description]"
-    const legacyMatch = msg.content.match(/^\[CHECKPOINT ([a-z0-9]{8}): (.+)\]$/);
-    if (legacyMatch) {
-      return { id: legacyMatch[1], description: legacyMatch[2] };
+    // Content format: "Checkpoint created: abc12345\n\nDescription: ..."
+    const idMatch = msg.content.match(/^Checkpoint created: ([a-z0-9]{8})/m);
+    const descMatch = msg.content.match(/^Description: (.+)$/m);
+    if (idMatch) {
+      return { id: idMatch[1], description: descMatch?.[1] || '' };
     }
 
     return null;

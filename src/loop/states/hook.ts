@@ -16,12 +16,11 @@ import type { ToolCall } from '../../types.js';
 import type { AugmentedToolCall } from '../../hook/hook-executor.js';
 import { augmentToolCalls } from '../../hook/hook-preprocessor.js';
 import { agentIO } from '../agent-io.js';
-import { 
-  validateCheckpointIsolation, 
-  handleCheckpoint, 
+import {
+  validateCheckpointIsolation,
+  handleCheckpoint,
   handleRecap,
-  addCheckpointMarker,
-  type CheckpointContext 
+  type CheckpointContext
 } from '../checkpoint-recap.js';
 
 /**
@@ -48,22 +47,17 @@ async function handleCheckpointCall(
 ): Promise<HandlerResult> {
   const { triologue, ctx } = env;
 
-  // Execute checkpoint using shared handler (before agent — pure, no triologue access)
+  // Execute checkpoint using shared handler
   const checkpointCtx = createCheckpointContext(env);
   const result = handleCheckpoint(
     call.function.arguments as Record<string, unknown>,
     checkpointCtx,
   );
 
-  // Add checkpoint marker as user message BEFORE agent (TP-safe: note → agent → tool)
-  if (result.success && result.id) {
-    addCheckpointMarker(triologue, result.id, result.description);
-  }
-
   // Register the assistant message with tool calls
   triologue.agent(pass.assistantContent, pass.rawToolCalls as ToolCall[] | undefined, pass.assistantReasoningContent);
 
-  // Add tool response
+  // Add tool response (checkpoint info is in the tool result — no note needed)
   triologue.tool('checkpoint', result.result, call.id);
 
   if (pass.assistantContent) {

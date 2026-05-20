@@ -233,10 +233,6 @@ Checkpoint closed. ${messages.length} messages compressed into summary.
 Note: the checkpoint todo item was auto-created with this checkpoint's ID as its note. Use todo_update to mark it as done.`;
 }
 
-/**
- * Add checkpoint marker as user message (to be called after tool response)
- */
-export function addCheckpointMarker(triologue: Triologue, id: string, description: string): void {
-  triologue.note('CHECKPOINT', `${id}: ${description}`);
-}
+// addCheckpointMarker removed — checkpoint is now identified via tool message
+// (see isCheckpointMessage in triologue.ts)
 

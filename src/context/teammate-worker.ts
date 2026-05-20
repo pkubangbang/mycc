@@ -23,7 +23,6 @@ import {
   validateRecapIsolation,
   handleCheckpoint as handleCheckpointTool,
   handleRecap as handleRecapTool,
-  addCheckpointMarker,
   type CheckpointContext,
 } from '../loop/checkpoint-recap.js';
 
@@ -242,15 +241,10 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
           const tc = toolCalls[0]; // We validated it's alone
           const args = tc.function.arguments as Record<string, unknown>;
 
-          // Execute checkpoint (before agent — pure, no triologue access)
+          // Execute checkpoint
           const result = handleCheckpointTool(args, checkpointCtx);
 
-          // Add checkpoint marker BEFORE agent (TP-safe: note → agent → tool)
-          if (result.success && result.id) {
-            addCheckpointMarker(triologue, result.id, result.description);
-          }
-
-          // Register the tool call
+          // Register the tool call (checkpoint info is in the tool result — no note needed)
           triologue.agent(assistantMessage.content || '', toolCalls, reasoningContent);
 
           // Add tool response
