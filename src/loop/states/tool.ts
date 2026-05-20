@@ -233,8 +233,8 @@ export async function handleTool(
     }
   }
 
-  // Inject deferred hook messages after tool execution
-  if (hookResult.deferredMessages.length > 0) {
+  // Inject deferred hook messages after tool execution (only when TP-valid)
+  if (hookResult.deferredMessages.length > 0 && triologue.getLastRole() !== 'tool') {
     triologue.note('REMINDER', hookResult.deferredMessages.join('\n\n---\n\n'));
   }
 

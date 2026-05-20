@@ -14,7 +14,7 @@ import type { Message, ToolCall, WikiModule, NoteCategory } from '../types.js';
 import { minifyMessages } from '../utils/llm-chat-minifier.js';
 import { estimateTokens, estimateTokensForMessages } from '../utils/token.js';
 import { ResultTooLargeError } from '../types.js';
-import { getMyccDir, getLongtextDir, ensureDirs, getTokenThreshold } from '../config.js';
+import { getMyccDir, getLongtextDir, ensureDirs, getTokenThreshold, isDebuggingTp } from '../config.js';
 import { agentIO } from './agent-io.js';
 
 type Role = 'system' | 'user' | 'assistant' | 'tool';
@@ -138,9 +138,17 @@ export class Triologue {
    * Add a user message (real user input - clears temporary hint)
    */
   user(content: string): void {
-    // Run microCompact if transitioning from tool role
-    if (this.getLastRole() === 'tool') {
-      this.runMicroCompact();
+    const lastRole = this.getLastRole();
+    if (lastRole === 'tool') {
+      this.throwTpViolation('cannot add user message after tool role');
+    }
+    if (lastRole === 'user') {
+      // Combine: append to last user message
+      const lastMsg = this.messages[this.messages.length - 1];
+      lastMsg.content += `\n${content}`;
+      this.tokenCount = estimateTokensForMessages(this.messages);
+      this.options.onMessage([...this.messages]);
+      return;
     }
     this.addMessage({ role: 'user', content });
   }
@@ -155,10 +163,20 @@ export class Triologue {
    * @param message - The note content
    */
   note(category: NoteCategory, message: string): void {
-    if (this.getLastRole() === 'tool') {
-      this.runMicroCompact();
+    const lastRole = this.getLastRole();
+    if (lastRole === 'tool') {
+      this.throwTpViolation('cannot add note after tool role');
     }
-    this.addMessage({ role: 'user', content: `[${category}] ${message}` });
+    const noteContent = `[${category}] ${message}`;
+    if (lastRole === 'user') {
+      // Combine: append to last user message
+      const lastMsg = this.messages[this.messages.length - 1];
+      lastMsg.content += `\n${noteContent}`;
+      this.tokenCount = estimateTokensForMessages(this.messages);
+      this.options.onMessage([...this.messages]);
+      return;
+    }
+    this.addMessage({ role: 'user', content: noteContent });
   }
 
 
@@ -172,8 +190,7 @@ export class Triologue {
     // Check for missing assistant with tool_calls
     const lastRole = this.getLastRole();
     if (lastRole !== 'assistant' && lastRole !== 'tool') {
-      this.handleMisorder('tool', { content: result, tool_name: functionName, tool_call_id: toolCallId });
-      return;
+      this.throwTpViolation(`cannot add tool message after ${lastRole} role (gap: missing_assistant)`);
     }
 
     // Check result size threshold
@@ -312,10 +329,12 @@ export class Triologue {
   agent(content: string, toolCalls?: ToolCall[]): void {
     const lastRole = this.getLastRole();
 
-    // Check for unexpected duplicate assistant
+    // Reject invalid transitions
     if (lastRole === 'assistant') {
-      this.handleMisorder('assistant', { content, tool_calls: toolCalls });
-      return;
+      this.throwTpViolation('cannot add assistant message after assistant role (duplicate)');
+    }
+    if (lastRole === 'system') {
+      this.throwTpViolation('cannot add assistant message after system role');
     }
 
     this.addMessage({
@@ -471,9 +490,20 @@ export class Triologue {
   }
 
   /**
+   * Throw a TP violation error, with optional stack trace when --debug-tp is enabled.
+   */
+  private throwTpViolation(message: string): never {
+    if (isDebuggingTp()) {
+      const stack = new Error().stack;
+      agentIO.brief('error', 'tp', `${message}\nCall site:\n${stack}`);
+    }
+    throw new Error(`TP violation: ${message}`);
+  }
+
+  /**
    * Handle misordered role transition
    */
-  private handleMisorder(newRole: Role, newMessage: Partial<Message>): void {
+  private handleMisorder(newRole: Role, newMessage: Partial<Message>): never {
     const lastRole = this.getLastRole();
     const lastMessage = this.messages[this.messages.length - 1];
 
@@ -486,15 +516,7 @@ export class Triologue {
       context: { lastMessage, newMessage },
     });
 
-    // For missing_assistant, insert a static placeholder (no LLM call)
-    if (gap === 'missing_assistant') {
-      this.messages.push({
-        role: 'assistant',
-        content: '...',
-      });
-      this.updateTokenCount(this.messages[this.messages.length - 1]);
-    }
-    // For other gaps, we just warn and proceed
+    this.throwTpViolation(`invalid role transition ${lastRole} → ${newRole} (gap: ${gap})`);
   }
 
   /**
@@ -510,7 +532,6 @@ export class Triologue {
       return 'unexpected_duplicate';
     }
     if (lastRole === 'tool' && newRole === 'user') {
-      // This should have been handled by microCompact
       return 'missing_assistant';
     }
     return 'invalid_sequence';
@@ -523,39 +544,6 @@ export class Triologue {
     const increment = estimateTokens(message);
     this.tokenCount += increment;
     agentIO.verbose('triologue', `Token count: ${this.tokenCount} (+${increment} from ${message.role})`);
-  }
-
-  /**
-   * Run microCompact: collapse consecutive tool results into user message
-   */
-  private runMicroCompact(): void {
-    const newMessages: Message[] = [];
-    let pendingTools: Message[] = [];
-
-    for (const msg of this.messages) {
-      if (msg.role === 'tool') {
-        pendingTools.push(msg);
-      } else {
-        if (pendingTools.length > 0) {
-          // Combine pending tools into a single user message
-          const combined = pendingTools.map((m) => m.content).join('\n---\n');
-          newMessages.push({ role: 'user', content: `Previous tool results:\n${combined}` });
-          pendingTools = [];
-        }
-        newMessages.push(msg);
-      }
-    }
-
-    // Handle any remaining pending tools
-    if (pendingTools.length > 0) {
-      const combined = pendingTools.map((m) => m.content).join('\n---\n');
-      newMessages.push({ role: 'user', content: `Previous tool results:\n${combined}` });
-    }
-
-    this.messages = newMessages;
-    this.tokenCount = estimateTokensForMessages(this.messages);
-    this.pendingToolCalls.clear();
-    this.pendingToolCallOrder = [];
   }
 
   /**

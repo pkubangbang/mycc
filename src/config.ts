@@ -47,10 +47,10 @@ export function loadEnv(): void {
 
 // Parse CLI args once at startup
 const args = minimist(process.argv.slice(2), {
-  boolean: ['v', 'verbose', 'skip-healthcheck', 'setup', 'debug-eval'],
+  boolean: ['v', 'verbose', 'skip-healthcheck', 'setup', 'debug-eval', 'debug-tp'],
   string: ['session'],
   alias: { v: 'verbose' },
-  default: { v: false, session: null, 'skip-healthcheck': false, setup: false, 'debug-eval': false },
+  default: { v: false, session: null, 'skip-healthcheck': false, setup: false, 'debug-eval': false, 'debug-tp': false },
 });
 
 /**
@@ -109,6 +109,14 @@ export function isVerbose(): boolean {
  */
 export function isDebuggingEval(): boolean {
   return args['debug-eval'] || false;
+}
+
+/**
+ * Check if debug-tp mode is enabled (--debug-tp flag)
+ * When enabled, TP violations print the call site stack trace.
+ */
+export function isDebuggingTp(): boolean {
+  return args['debug-tp'] || false;
 }
 
 /**

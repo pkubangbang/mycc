@@ -68,47 +68,49 @@ export async function handleCollect(
     // 1. Handle pending questions from children
     await ctx.team.handlePendingQuestions();
 
-    // 2. Collect mails
-    const mails = ctx.mail.collectMails();
-    if (mails.length > 0) {
-      // Separate suggest mails from regular mails for proper framing
-      const suggestMails = mails.filter(m => m.from === 'suggest');
-      const otherMails = mails.filter(m => m.from !== 'suggest');
+    // 2. Collect mails (only when TP-valid — skip if lastRole is tool)
+    const lastRole = triologue.getLastRole();
+    if (lastRole !== 'tool') {
+      const mails = ctx.mail.collectMails();
+      if (mails.length > 0) {
+        // Separate suggest mails from regular mails for proper framing
+        const suggestMails = mails.filter(m => m.from === 'suggest');
+        const otherMails = mails.filter(m => m.from !== 'suggest');
 
-      const parts: string[] = [];
+        const parts: string[] = [];
 
-      // Frame suggest/brown-bag mails with actionable instructions for the LLM
-      if (suggestMails.length > 0) {
-        const suggestContent = suggestMails
-          .map((mail) => mail.content)
-          .join('\n\n');
-        parts.push(
-          `[Context suggestion] The following resources were discovered for your task.\nConsider using wiki_get and skill_load to explore them:\n\n${suggestContent}`
-        );
-      }
+        // Frame suggest/brown-bag mails with actionable instructions for the LLM
+        if (suggestMails.length > 0) {
+          const suggestContent = suggestMails
+            .map((mail) => mail.content)
+            .join('\n\n');
+          parts.push(
+            `[Context suggestion] The following resources were discovered for your task.\nConsider using wiki_get and skill_load to explore them:\n\n${suggestContent}`
+          );
+        }
 
-      // Regular mails use standard format
-      for (const mail of otherMails) {
-        parts.push(`Mail from ${mail.from}: ${mail.title}\n${mail.content}`);
-      }
+        // Regular mails use standard format
+        for (const mail of otherMails) {
+          parts.push(`Mail from ${mail.from}: ${mail.title}\n${mail.content}`);
+        }
 
-      const mailContent = parts.join('\n\n---\n\n');
+        const mailContent = parts.join('\n\n---\n\n');
 
-      if (agentIO.isNeglectedMode()) {
-        triologue.note('URGENT', `user interrupted - wrap up quickly\n${mailContent}`);
-      } else {
-        triologue.note('MAIL', mailContent);
+        if (agentIO.isNeglectedMode()) {
+          triologue.note('URGENT', `user interrupted - wrap up quickly\n${mailContent}`);
+        } else {
+          triologue.note('MAIL', mailContent);
+        }
       }
     }
 
     // 3. Generate hint round if confusion threshold reached
     const confusionIndex = ctx.core.getConfusionIndex();
     const messageCount = triologue.getMessagesRaw().length;
-    const lastRole = triologue.getLastRole();
 
     if (confusionIndex >= CONFUSION_THRESHOLD && messageCount >= MIN_MESSAGES_FOR_HINT) {
-      // Only generate hint after a valid transition point (assistant or tool message)
-      if (lastRole === 'assistant' || lastRole === 'tool') {
+      // Only generate hint after an assistant message (TP-safe: assistant → user via note)
+      if (lastRole === 'assistant') {
         // Use brief for hint round notification (user-facing)
         ctx.core.brief('info', 'loop', 'Generating hint...');
         // Get pending skills (skills with 'when' but no compiled condition)
@@ -145,7 +147,7 @@ export async function handleCollect(
         turn.lastTodoState = currentTodoState;
       }
       turn.nextTodoNudge--;
-      if (turn.nextTodoNudge === 0) {
+      if (turn.nextTodoNudge === 0 && lastRole !== 'tool') {
         triologue.note('REMINDER', `Update your todos. ${ctx.todo.printTodoList()}`);
         turn.nextTodoNudge = 3;
       }
@@ -153,7 +155,7 @@ export async function handleCollect(
 
     // 5. Brief nudging - remind agent to use brief tool
     turn.nextBriefNudge--;
-    if (turn.nextBriefNudge <= 0) {
+    if (turn.nextBriefNudge <= 0 && lastRole !== 'tool') {
       triologue.note('REMINDER', 'Provide a brief status update using the brief tool. Example: brief("Working on X", 7)');
       turn.nextBriefNudge = 5;
     }

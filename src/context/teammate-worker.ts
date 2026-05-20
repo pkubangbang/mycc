@@ -129,18 +129,23 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
   while (!shutdownRequested) {
     sendStatus('working');
 
+    const lastRole = triologue.getLastRole();
+
     try {
-      // 1. Collect mails from file-based mailbox (collated into single user message)
-      const mails = ctx.mail.collectMails();
-      if (mails.length > 0) {
-        const mailContent = mails
-          .map((mail) => `Mail from ${mail.from}: ${mail.title}\n${mail.content}`)
-          .join('\n\n---\n\n');
-        triologue.note('MAIL', mailContent);
+
+      // 1. Collect mails from file-based mailbox (only when TP-valid)
+      if (lastRole !== 'tool') {
+        const mails = ctx.mail.collectMails();
+        if (mails.length > 0) {
+          const mailContent = mails
+            .map((mail) => `Mail from ${mail.from}: ${mail.title}\n${mail.content}`)
+            .join('\n\n---\n\n');
+          triologue.note('MAIL', mailContent);
+        }
       }
 
-      // 2. Check for pending mode change notifications
-      if (pendingModeChange) {
+      // 2. Check for pending mode change notifications (only when TP-valid)
+      if (pendingModeChange && lastRole !== 'tool') {
         if (pendingModeChange === 'normal') {
           triologue.note('SYSTEM_NOTIFICATION', 'Plan mode has ended. Code changes are now allowed. All tools (write_file, edit_file, bash) are fully functional. Proceed with your tasks.');
         } else {
@@ -157,15 +162,14 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
           lastTodoState = currentTodoState;
         }
         nextTodoNudge--;
-        if (nextTodoNudge === 0) {
+        if (nextTodoNudge === 0 && lastRole !== 'tool') {
           triologue.note('REMINDER', `Update your todos. ${ctx.todo.printTodoList()}`);
           nextTodoNudge = 3;
         }
       }
 
-      // 3. Build system prompt and call LLM
+      // 4. Build system prompt and call LLM
       // Ensure we have a valid message sequence before calling LLM
-      const lastRole = triologue.getLastRole();
       if (lastRole === 'assistant') {
         // Last message was assistant with no tool calls - need user message before next LLM call
         // This can happen after resuming from idle without new input
@@ -417,9 +421,9 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
         }
       }
 
-      // 7. Brief nudging - remind agent to use brief tool
+      // 7. Brief nudging - remind agent to use brief tool (only when TP-valid)
       nextBriefNudge--;
-      if (nextBriefNudge <= 0) {
+      if (nextBriefNudge <= 0 && lastRole !== 'tool') {
         triologue.note('REMINDER', 'Provide a brief status update using the brief tool. Example: brief("Working on X", 7)');
         nextBriefNudge = 5;
       }
@@ -428,8 +432,10 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
       const errorMsg = (err as Error).message;
       ctx.core.brief('error', 'loop', `Error in main loop: ${errorMsg}. Recovering...`);
 
-      // Add error to triologue so LLM knows what happened
-      triologue.note('SYSTEM_ERROR', `An error occurred: ${errorMsg}. Please continue with your task.`);
+      // Add error to triologue so LLM knows what happened (only when TP-valid)
+      if (triologue.getLastRole() !== 'tool') {
+        triologue.note('SYSTEM_ERROR', `An error occurred: ${errorMsg}. Please continue with your task.`);
+      }
 
       // Brief pause before retrying
       await new Promise((resolve) => setTimeout(resolve, 1000));
