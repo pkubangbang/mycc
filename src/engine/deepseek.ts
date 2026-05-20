@@ -77,9 +77,19 @@ function normalizeMessage(msg: OllamaMessage): NormalizedMessage {
     normalized.reasoning_content = extended.thinking;
   }
 
-  // Tool calls on assistant messages
+  // Tool calls on assistant messages — ensure arguments are serialized as JSON strings
   if (extended.tool_calls && extended.tool_calls.length > 0) {
-    normalized.tool_calls = extended.tool_calls;
+    normalized.tool_calls = extended.tool_calls.map((tc) => ({
+      ...tc,
+      type: (tc as any).type || 'function',
+      function: {
+        ...tc.function,
+        arguments:
+          typeof tc.function.arguments === 'string'
+            ? tc.function.arguments
+            : JSON.stringify(tc.function.arguments),
+      },
+    }));
   }
 
   return normalized;
@@ -327,6 +337,7 @@ export async function retryChat(
         if (request.think !== undefined) {
           if (request.think === false) {
             body.thinking = { type: 'disabled' };
+            delete body.reasoning_effort;
           }
           // `true` / `'high'` / `'medium'` / `'low'` all map to enabled
         }
