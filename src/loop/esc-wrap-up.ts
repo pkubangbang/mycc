@@ -177,8 +177,12 @@ export function shouldAppendWrapUp(): 'append' | 'discard' {
  */
 export function injectWrapUp(): void {
   if (wrapUpState.triologue && wrapUpState.content) {
-    wrapUpState.triologue.note('WRAP_UP', WRAP_UP_USER_MESSAGE);
-    wrapUpState.triologue.agent(wrapUpState.content);
+    const triologue = wrapUpState.triologue;
+    // Skip the note if lastRole is tool (TP-safe: tool → agent is valid, tool → user is not)
+    if (triologue.getLastRole() !== 'tool') {
+      triologue.note('WRAP_UP', WRAP_UP_USER_MESSAGE);
+    }
+    triologue.agent(wrapUpState.content);
   }
 }
 
