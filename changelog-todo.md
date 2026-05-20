@@ -106,7 +106,7 @@ When updating the changelog, use the following procedure:
    - [x] recap (2026-05-13)
    - [x] auto-compaction (2026-05-13)
 - [x] mindmap not updated when only removal is included. (2026-05-13)
-- [ ] line-editor structure: 1 hint line + n prompt line + 1 blank line
+- [x] line-editor structure: 1 hint line + n prompt line + 1 blank line
 - [x] improve hook log output (2026-05-13)
 - [x] improve verbose logs (2026-05-13)
    - [x] hint round - log request prompt and response with chalk.cyan
@@ -120,6 +120,14 @@ When updating the changelog, use the following procedure:
 - [ ] In the plan mode, the produced plan will have self-debating.
 - [ ] In the plan mode, the plan may well have many options but mycc does not break them down and discuss with the user.
 - [x] The read/write/edit tool should ask for grant before access files outside cwd. (2026-05-16)
-- [ ] Enable thinking during plan mode
+- [x] Enable thinking during plan mode
 - [x] The intent lang's error is not clear for LLM to self-correct (2026-05-16)
 - [ ] tool loader may have memory leak
+
+- [ ] add deepseek api support
+   - [ ] env detection
+   - [ ] health checking
+   - [ ] setup wizard
+   - [ ] extend ollama.ts, to make compatible thinking/streaming/tool-using capabilities
+- [ ] deepseek api requires strict triologue parity
+- [ ] remove microCompact to utilize promptCache
