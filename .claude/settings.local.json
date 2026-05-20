@@ -20,7 +20,8 @@
       "Bash(pnpm lint *)",
       "Bash(git show *)",
       "Bash(git log *)",
-      "mcp__codegraph__codegraph_explore"
+      "mcp__codegraph__codegraph_explore",
+      "Skill(agent-browser)"
     ]
   }
 }
