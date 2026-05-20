@@ -21,7 +21,7 @@ import type {
   RebuildResult,
   CoreModule,
 } from '../../types.js';
-import { ollama } from '../../ollama.js';
+import { ollama } from '../../engine/ollama.js';
 import { getWikiLogsDir, getWikiDbDir, getWikiDomainsFile, ensureDirs } from '../../config.js';
 
 // Embedding model configuration

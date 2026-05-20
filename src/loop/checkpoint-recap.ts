@@ -8,7 +8,7 @@
 import chalk from 'chalk';
 import type { Message, TodoModule } from '../types.js';
 import { Triologue } from './triologue.js';
-import { retryChat, MODEL } from '../ollama.js';
+import { retryChat, MODEL } from '../engine/chat-provider.js';
 import { minifyMessages } from '../utils/llm-chat-minifier.js';
 
 /**

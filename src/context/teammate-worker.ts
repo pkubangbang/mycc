@@ -11,7 +11,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { ChildContext, silentLoader } from './child-context.js';
-import { retryChat, MODEL } from '../ollama.js';
+import { retryChat, MODEL } from '../engine/chat-provider.js';
 import type { AgentContext, Message } from '../types.js';
 import type { ToolCall } from '../types.js';
 import { buildNormalModePrompt } from '../loop/agent-prompts.js';

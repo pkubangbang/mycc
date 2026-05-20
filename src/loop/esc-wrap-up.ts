@@ -14,7 +14,7 @@
 import { displayLetterBox } from '../utils/letter-box.js';
 import type { Triologue } from './triologue.js';
 import type { LineEditor } from '../utils/line-editor.js';
-import { retryChat, MODEL } from '../ollama.js';
+import { retryChat, MODEL } from '../engine/chat-provider.js';
 
 /**
  * WrapUpState - Tracks the state of background wrap-up after ESC

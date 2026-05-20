@@ -6,7 +6,7 @@
 
 import * as fs from 'fs/promises';
 import type { ToolDefinition, AgentContext } from '../types.js';
-import { retryChat, MODEL } from '../ollama.js';
+import { retryChat, MODEL } from '../engine/chat-provider.js';
 import { getTokenThreshold } from '../config.js';
 
 export const readReadTool: ToolDefinition = {

@@ -19,7 +19,7 @@ import { spawn, exec, execSync } from 'child_process';
 import { promisify } from 'util';
 import chalk from 'chalk';
 import { agentIO } from '../loop/agent-io.js';
-import { retryChat, MODEL } from '../ollama.js';
+import { retryChat, MODEL } from '../engine/chat-provider.js';
 
 const execAsync = promisify(exec);
 

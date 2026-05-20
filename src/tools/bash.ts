@@ -14,7 +14,7 @@
 
 import type { ToolDefinition, AgentContext } from '../types.js';
 import { agentIO } from '../loop/agent-io.js';
-import { retryChat, MODEL } from '../ollama.js';
+import { retryChat, MODEL } from '../engine/chat-provider.js';
 
 const OUTPUT_CHAR_LIMIT = 20000;
 

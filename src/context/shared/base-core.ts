@@ -6,7 +6,8 @@
  */
 
 import type { Mindmap } from '../../mindmap/types.js';
-import { ollama, retryWithBackoff } from '../../ollama.js';
+import { ollama } from '../../engine/ollama.js';
+import { retryWithBackoff } from '../../engine/chat-helpers.js';
 import { WebFetchResponse, WebSearchResult } from 'ollama';
 
 /**

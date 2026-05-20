@@ -13,7 +13,8 @@
  * - web_fetch: Fetch content from a URL
  */
 
-import { ollama, MODEL, retryWithBackoff } from '../ollama.js';
+import { ollama, MODEL } from '../engine/ollama.js';
+import { retryWithBackoff } from '../engine/chat-helpers.js';
 import type { Message, Tool, ToolCall } from '../types.js';
 import type { WebFetchResponse } from 'ollama';
 import * as fs from 'fs';

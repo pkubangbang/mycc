@@ -56,7 +56,7 @@ export type NoteCategory =
  * - tool_call_id: hidden ID from agent's chat response (for alignment tracking)
  */
 export interface Message extends OllamaMessage {
-  tool_name?: string;
+  reasoning_content?: string;
   tool_call_id?: string;
 }
 

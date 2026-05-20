@@ -9,7 +9,7 @@
  * Launched from PROMPT state (at tail). Gracefully stopped by next PROMPT via timestamp-based stop flag.
  */
 
-import { retryChat, MODEL } from '../../ollama.js';
+import { retryChat, MODEL } from '../../engine/chat-provider.js';
 import { loader } from '../../context/shared/loader.js';
 import { agentIO } from '../agent-io.js';
 import type { MachineEnv, TurnVars, PassData, HandlerResult } from '../state-machine.js';

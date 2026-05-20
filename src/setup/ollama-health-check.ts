@@ -13,13 +13,15 @@ import {
   ollama,
   OLLAMA_HOST,
   MODEL,
+} from '../engine/ollama.js';
+import {
   isTransientError,
   DEFAULT_RETRY_CONFIG,
   calculateDelay,
   sleep,
   startSpinner,
   stopSpinner,
-} from '../ollama.js';
+} from '../engine/chat-helpers.js';
 
 /**
  * Health check result

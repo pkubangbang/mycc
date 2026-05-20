@@ -5,7 +5,7 @@
 import type { ParsedIntent, BashJudgeResult } from './types.js';
 import { parseIntent, validateIntent, isReadOnlyVerb, isMutationVerb } from './intent-parser.js';
 import { checkDangerousCommand } from './dangerous-commands.js';
-import { MODEL, retryMultipleChoice } from '../../ollama.js';
+import { MODEL, retryMultipleChoice } from '../../engine/chat-provider.js';
 
 /**
  * Judge a bash command for plan mode safety

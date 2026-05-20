@@ -22,13 +22,18 @@ vi.mock('../../loop/agent-io.js', () => ({
 }));
 
 // Mock ollama for web search/fetch
-vi.mock('../../ollama.js', () => ({
+vi.mock('../../engine/ollama.js', () => ({
   ollama: {
     webSearch: vi.fn(),
     webFetch: vi.fn(),
     chat: vi.fn(),
   },
-  retryWithBackoff: vi.fn(async (fn) => fn()),
+  MODEL: 'test-model',
+  retryChat: vi.fn(),
+  retryMultipleChoice: vi.fn(),
+}));
+vi.mock('../../engine/chat-helpers.js', () => ({
+  retryWithBackoff: vi.fn(async (fn: any) => fn()),
 }));
 
 // Mock config
@@ -36,6 +41,11 @@ vi.mock('../../config.js', () => ({
   isVerbose: vi.fn(() => false),
   getVisionModel: vi.fn(() => 'test-vision-model'),
   isVisionEnabled: vi.fn(() => false),
+  getApiProvider: vi.fn(() => 'ollama'),
+  getOllamaHost: vi.fn(() => 'http://127.0.0.1:11434'),
+  getOllamaApiKey: vi.fn(() => undefined),
+  getOllamaModel: vi.fn(() => 'test-model'),
+  getTokenThreshold: vi.fn(() => 50000),
 }));
 
 // Mock ipc-helpers for ChildCore tests - use factory that returns mock functions

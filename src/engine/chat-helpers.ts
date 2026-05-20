@@ -1,0 +1,313 @@
+/**
+ * chat-helpers.ts - Provider-agnostic utilities for LLM chat
+ *
+ * Extracted from ollama.ts. All functions here work with any LLM provider.
+ * Provider-specific code lives in ollama.ts / deepseek.ts.
+ */
+
+import { agentIO } from '../loop/agent-io.js';
+
+// ============================================================================
+// Error Helpers
+// ============================================================================
+
+const TRANSIENT_ERROR_PATTERNS = [
+  'econnreset',
+  'econnrefused',
+  'etimedout',
+  'enotfound',
+  'unexpected eof',
+  'connection reset',
+  'socket hang up',
+  'network error',
+  'fetch failed',
+  'rate limit',
+  'timeout',
+  'timed out',
+  'aborted',
+  'service temporarily unavailable',
+  '503',
+  '500',
+  '502',
+  '504',
+  'internal server error',
+  'bad gateway',
+  'gateway timeout',
+  'overloaded',
+  'overload',
+  // HTTP/2 GOAWAY errors — recoverable connection teardown
+  'goaway',
+  'http2',
+  'nghttp2',
+  'protocol error',
+  'stream error',
+  'session',
+  'socket is not writable',
+  'premature close',
+  'http2 session',
+  'frame',
+  'destroy',
+];
+
+/**
+ * Check if an error is transient (recoverable with retry)
+ */
+export function isTransientError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  const msg = err.message.toLowerCase();
+  return TRANSIENT_ERROR_PATTERNS.some((pattern) => msg.includes(pattern));
+}
+
+/**
+ * Error types for different handling strategies
+ */
+export type ErrorType = 'transient' | 'auth' | 'model' | 'config' | 'fatal';
+
+/**
+ * Classify an error by type for appropriate handling
+ */
+export function classifyError(err: unknown): ErrorType {
+  if (!(err instanceof Error)) return 'fatal';
+  const msg = err.message.toLowerCase();
+
+  if (msg.includes('401') || msg.includes('403') || msg.includes('unauthorized') || msg.includes('forbidden')) {
+    return 'auth';
+  }
+
+  if (msg.includes('model') && (msg.includes('not found') || msg.includes('does not exist'))) {
+    return 'model';
+  }
+
+  if (msg.includes('context') && msg.includes('exceed')) {
+    return 'config';
+  }
+
+  if (isTransientError(err)) return 'transient';
+
+  return 'fatal';
+}
+
+// ============================================================================
+// Retry Configuration
+// ============================================================================
+
+export interface RetryConfig {
+  maxRetries: number;
+  baseDelayMs: number;
+  maxDelayMs: number;
+  firstTokenTimeoutMs?: number;
+  responseTimeoutMs?: number;
+}
+
+export const DEFAULT_RETRY_CONFIG: RetryConfig = {
+  maxRetries: 3,
+  baseDelayMs: 1000,
+  maxDelayMs: 10000,
+  firstTokenTimeoutMs: 20000,
+  responseTimeoutMs: 120000,
+};
+
+// ============================================================================
+// Utilities
+// ============================================================================
+
+export function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+export function calculateDelay(attempt: number, config: RetryConfig): number {
+  const exponentialDelay = config.baseDelayMs * Math.pow(2, attempt - 1);
+  const cappedDelay = Math.min(exponentialDelay, config.maxDelayMs);
+  const jitter = cappedDelay * 0.25 * (Math.random() * 2 - 1);
+  return Math.max(0, Math.round(cappedDelay + jitter));
+}
+
+export async function retryWithBackoff<T>(
+  operation: () => Promise<T>,
+  config?: Partial<RetryConfig> & { timeoutMs?: number }
+): Promise<T> {
+  const cfg = { ...DEFAULT_RETRY_CONFIG, ...config };
+  let lastError: Error | null = null;
+
+  for (let attempt = 1; attempt <= cfg.maxRetries + 1; attempt++) {
+    try {
+      if (config?.timeoutMs) {
+        return await Promise.race([
+          operation(),
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error(`Request timed out after ${config.timeoutMs}ms`)), config.timeoutMs)
+          ),
+        ]);
+      }
+      return await operation();
+    } catch (err) {
+      if (!isTransientError(err)) {
+        throw err;
+      }
+
+      lastError = err instanceof Error ? err : new Error(String(err));
+
+      const isLastAttempt = attempt > cfg.maxRetries;
+      if (!isLastAttempt) {
+        const delay = calculateDelay(attempt, cfg);
+        agentIO.verbose('retry', `Attempt ${attempt}/${cfg.maxRetries + 1} failed: ${lastError.message}. Retrying in ${delay}ms...`);
+        await sleep(delay);
+      }
+    }
+  }
+
+  throw lastError || new Error('All retry attempts failed');
+}
+
+// ============================================================================
+// Spinner
+// ============================================================================
+
+const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+let spinnerInterval: ReturnType<typeof setInterval> | null = null;
+let spinnerFrame = 0;
+
+export function startSpinner(prefix: string = 'Thinking'): void {
+  if (spinnerInterval) return;
+
+  process.stderr.write('\x1b[?25l');
+  spinnerFrame = 0;
+  spinnerInterval = setInterval(() => {
+    const frame = SPINNER_FRAMES[spinnerFrame % SPINNER_FRAMES.length];
+    process.stderr.write(`\r${frame} ${prefix}...`);
+    spinnerFrame++;
+  }, 80);
+}
+
+export function stopSpinner(): void {
+  if (!spinnerInterval) return;
+
+  clearInterval(spinnerInterval);
+  spinnerInterval = null;
+  process.stderr.write('\r\x1b[K');
+  process.stderr.write('\x1b[?25h');
+}
+
+// ============================================================================
+// Stream Collection (provider-agnostic)
+// ============================================================================
+
+export class StreamTimeoutError extends Error {
+  constructor(
+    message: string,
+    public readonly reason: 'first-token' | 'response',
+  ) {
+    super(message);
+    this.name = 'StreamTimeoutError';
+  }
+}
+
+export class StreamAbortedError extends Error {
+  constructor(cause?: unknown) {
+    super('Request aborted');
+    this.name = 'StreamAbortedError';
+    if (cause) this.cause = cause;
+  }
+}
+
+export async function collectStream<T>(
+  stream: AsyncIterable<T>,
+  abort: (() => void) | undefined,
+  config: {
+    firstTokenTimeoutMs?: number;
+    responseTimeoutMs?: number;
+    signal?: AbortSignal;
+  },
+): Promise<T[]> {
+  const { firstTokenTimeoutMs, responseTimeoutMs, signal } = config;
+
+  let firstTokenTimeoutId: ReturnType<typeof setTimeout> | null = null;
+  let responseTimeoutId: ReturnType<typeof setTimeout> | null = null;
+  let firstTokenReceived = false;
+  let firstTokenTimeoutFired = false;
+  let responseTimeoutFired = false;
+
+  const cleanup = () => {
+    if (firstTokenTimeoutId) clearTimeout(firstTokenTimeoutId);
+    if (responseTimeoutId) clearTimeout(responseTimeoutId);
+    if (signal) signal.removeEventListener('abort', onAbort);
+  };
+
+  const onAbort = () => {
+    abort?.();
+    cleanup();
+  };
+
+  if (signal) {
+    if (signal.aborted) throw new StreamAbortedError();
+    signal.addEventListener('abort', onAbort, { once: true });
+  }
+
+  if (firstTokenTimeoutMs) {
+    firstTokenTimeoutId = setTimeout(() => {
+      if (!firstTokenReceived) {
+        firstTokenTimeoutFired = true;
+        abort?.();
+      }
+    }, firstTokenTimeoutMs);
+  }
+
+  if (responseTimeoutMs) {
+    responseTimeoutId = setTimeout(() => {
+      responseTimeoutFired = true;
+      abort?.();
+    }, responseTimeoutMs);
+  }
+
+  const abortPromise = signal
+    ? new Promise<never>((_, reject) => {
+        signal.addEventListener('abort', () => reject(new StreamAbortedError()), { once: true });
+      })
+    : null;
+
+  try {
+    const streamPromise = (async () => {
+      const chunks: T[] = [];
+
+      for await (const chunk of stream) {
+        if (!firstTokenReceived) {
+          firstTokenReceived = true;
+          if (firstTokenTimeoutId) {
+            clearTimeout(firstTokenTimeoutId);
+            firstTokenTimeoutId = null;
+          }
+        }
+
+        chunks.push(chunk);
+
+        if (signal?.aborted) throw new StreamAbortedError();
+      }
+
+      if (firstTokenTimeoutFired) {
+        throw new StreamTimeoutError(
+          `Request timed out after ${firstTokenTimeoutMs}ms (waiting for first token)`,
+          'first-token',
+        );
+      }
+      if (responseTimeoutFired) {
+        throw new StreamTimeoutError(
+          `Response timed out after ${responseTimeoutMs}ms`,
+          'response',
+        );
+      }
+
+      return chunks;
+    })();
+
+    const promises: Promise<T[] | never>[] = [streamPromise];
+    if (abortPromise) promises.push(abortPromise);
+
+    return await Promise.race(promises);
+  } catch (err) {
+    if (err instanceof StreamAbortedError) throw err;
+    if (signal?.aborted) throw new StreamAbortedError(err instanceof Error ? err : undefined);
+    throw err;
+  } finally {
+    cleanup();
+  }
+}

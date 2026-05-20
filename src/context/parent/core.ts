@@ -6,7 +6,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import sharp from 'sharp';
 import type { CoreModule } from '../../types.js';
-import { ollama } from '../../ollama.js';
+import { ollama } from '../../engine/ollama.js';
 import { agentIO } from '../../loop/agent-io.js';
 import { getVisionModel, isVisionEnabled } from '../../config.js';
 import { BaseCore } from '../shared/base-core.js';

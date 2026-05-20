@@ -16,7 +16,7 @@ vi.mock('../../loop/agent-io.js', () => ({
 }));
 
 // Mock the ollama module for bash summarization
-vi.mock('../../ollama.js', () => ({
+vi.mock('../../engine/chat-provider.js', () => ({
   retryChat: vi.fn().mockResolvedValue({
     message: { content: 'Summary of output' },
   }),

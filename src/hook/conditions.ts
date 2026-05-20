@@ -14,7 +14,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { getMyccDir } from '../config.js';
 import { Sequence } from './sequence.js';
-import { ollama, MODEL } from '../ollama.js';
+import { ollama, MODEL } from '../engine/ollama.js';
 import {
   validateCondition,
   compileCondition,

@@ -6,7 +6,7 @@
  * via LLM and injects it as a HINT note into the conversation.
  */
 
-import { retryChat, MODEL } from '../ollama.js';
+import { retryChat, MODEL } from '../engine/chat-provider.js';
 import type { Message, WikiModule, NoteCategory } from '../types.js';
 import { minifyForHint } from '../utils/llm-chat-minifier.js';
 import { agentIO } from './agent-io.js';

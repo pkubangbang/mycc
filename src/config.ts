@@ -156,6 +156,34 @@ export function getOllamaModel(): string {
 }
 
 /**
+ * Get DeepSeek API host
+ */
+export function getDeepSeekHost(): string {
+  return process.env.DEEPSEEK_HOST || 'https://api.deepseek.com';
+}
+
+/**
+ * Get DeepSeek API key
+ */
+export function getDeepSeekApiKey(): string | undefined {
+  return process.env.DEEPSEEK_API_KEY;
+}
+
+/**
+ * Get DeepSeek model name
+ */
+export function getDeepSeekModel(): string {
+  return process.env.DEEPSEEK_MODEL || 'deepseek-v4-pro';
+}
+
+/**
+ * Get the active API provider
+ */
+export function getApiProvider(): 'ollama' | 'deepseek' {
+  return process.env.API_PROVIDER === 'deepseek' ? 'deepseek' : 'ollama';
+}
+
+/**
  * Check if vision model is enabled
  * Returns true if OLLAMA_VISION_MODEL is set and not "none"
  */
