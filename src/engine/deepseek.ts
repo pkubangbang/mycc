@@ -90,6 +90,12 @@ function normalizeMessage(msg: OllamaMessage): NormalizedMessage {
             : JSON.stringify(tc.function.arguments),
       },
     })) as unknown as OllamaToolCall[];
+
+    // DeepSeek requires reasoning_content on ALL assistant messages with tool_calls
+    // when thinking mode is enabled, even for messages from before the mode switch.
+    if (!normalized.reasoning_content) {
+      normalized.reasoning_content = '';
+    }
   }
 
   return normalized;

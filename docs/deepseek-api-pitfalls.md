@@ -71,3 +71,13 @@ tmux kill-session -t mycc-test
 - `triologue.agent()` stores it in the message so `normalizeMessage()` can echo it back
 
 **Files:** `src/loop/state-machine.ts`, `src/loop/states/llm.ts`, `src/loop/states/hook.ts`, `src/loop/triologue.ts`, `src/context/teammate-worker.ts`
+
+### 5. Mode switch leaves assistant messages with tool_calls but no reasoning_content
+
+**Symptom:** After `plan_on` tool switches from normal to plan mode, the next LLM call returns 400 with `"The reasoning_content in the thinking mode must be passed back to the API"`.
+
+**Cause:** In normal mode, thinking is disabled (`think: false`), so assistant messages with tool_calls have no `reasoning_content`. When `plan_on` switches to plan mode, thinking is enabled. The pre-switch assistant messages (with tool_calls but no reasoning_content) are sent to DeepSeek, which requires reasoning_content on ALL assistant messages with tool_calls when thinking mode is active.
+
+**Fix:** In `normalizeMessage()`, for assistant messages with tool_calls that lack reasoning_content, set it to empty string `""`. DeepSeek accepts this for messages generated without thinking mode.
+
+**File:** `src/engine/deepseek.ts` — `normalizeMessage()`.
