@@ -13,8 +13,7 @@
  * - web_fetch: Fetch content from a URL
  */
 
-import { ollama, MODEL } from '../engine/ollama.js';
-import { retryWithBackoff } from '../engine/chat-helpers.js';
+import { MODEL, retryChat, webSearch as engineWebSearch, webFetch as engineWebFetch } from '../engine/chat-provider.js';
 import type { Message, Tool, ToolCall } from '../types.js';
 import type { WebFetchResponse } from 'ollama';
 import * as fs from 'fs';
@@ -94,26 +93,25 @@ async function compactMessages(
   // Build conversation text for summarization
   const conversationText = minifyMessages(messages);
 
-  const response = await retryWithBackoff(
-    () =>
-      ollama.chat({
-        model: MODEL,
-        messages: [
-          {
-            role: 'user',
-            content:
-              `Summarize this exploration session for continuity. Include:\n` +
-              `1) What was discovered\n` +
-              `2) Current progress\n` +
-              `3) Key findings so far\n` +
-              `4) Files/URLs marked as relevant\n\n` +
-              `Context: Exploring section "${nodeTitle}"\n\n` +
-              `${conversationText}`,
-          },
-        ],
-        think: false,
-      }),
-    { maxRetries: 3, baseDelayMs: 1000, maxDelayMs: 10000 }
+  const response = await retryChat(
+    {
+      model: MODEL,
+      messages: [
+        {
+          role: 'user',
+          content:
+            `Summarize this exploration session for continuity. Include:\n` +
+            `1) What was discovered\n` +
+            `2) Current progress\n` +
+            `3) Key findings so far\n` +
+            `4) Files/URLs marked as relevant\n\n` +
+            `Context: Exploring section "${nodeTitle}"\n\n` +
+            `${conversationText}`,
+        },
+      ],
+      think: false,
+    },
+    { noSpinner: true },
   );
 
   const summary = response.message.content || '(no summary)';
@@ -472,12 +470,11 @@ async function webSearch(query: string): Promise<string> {
   }
 
   try {
-    const response = await withTimeout(
-      ollama.webSearch({ query }),
+    const results = await withTimeout(
+      engineWebSearch(query),
       WEB_TIMEOUT_MS,
       `Web search timed out after ${WEB_TIMEOUT_MS / 1000}s`
     );
-    const results = response.results || [];
 
     if (results.length === 0) {
       return 'No search results found.';
@@ -515,7 +512,7 @@ async function webFetch(url: string): Promise<string> {
 
   try {
     const response: WebFetchResponse = await withTimeout(
-      ollama.webFetch({ url }),
+      engineWebFetch(url),
       WEB_TIMEOUT_MS,
       `Web fetch timed out after ${WEB_TIMEOUT_MS / 1000}s`
     );
@@ -605,15 +602,14 @@ async function runExplorationLoop(
 
     let response;
     try {
-      response = await retryWithBackoff(
-        () =>
-          ollama.chat({
-            model: MODEL,
-            messages,
-            tools: EXPLORER_TOOLS,
-            think: false,
-          }),
-        { maxRetries: 3, baseDelayMs: 1000, maxDelayMs: 10000 }
+      response = await retryChat(
+        {
+          model: MODEL,
+          messages,
+          tools: EXPLORER_TOOLS,
+          think: false,
+        },
+        { noSpinner: true },
       );
     } catch (err) {
       agentIO.brief('warn', 'explorer', `LLM chat failed at round ${rounds} for "${nodeTitle}": ${(err as Error).message}`);

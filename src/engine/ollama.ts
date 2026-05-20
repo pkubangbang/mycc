@@ -6,8 +6,8 @@
  */
 
 import { Ollama } from 'ollama';
-import type { ChatRequest, ChatResponse } from 'ollama';
-import { getOllamaHost, getOllamaApiKey, getOllamaModel } from '../config.js';
+import type { ChatRequest, ChatResponse, WebSearchResult, WebFetchResponse } from 'ollama';
+import { getOllamaHost, getOllamaApiKey, getOllamaModel, getVisionModel } from '../config.js';
 import { agentIO } from '../loop/agent-io.js';
 import {
   collectStream,
@@ -16,6 +16,7 @@ import {
   sleep,
   startSpinner,
   stopSpinner,
+  retryWithBackoff,
   StreamAbortedError,
   StreamTimeoutError,
   DEFAULT_RETRY_CONFIG,
@@ -189,4 +190,60 @@ export async function retryMultipleChoice(
   }
 
   return null;
+}
+
+// ─── Auxiliary (gated capabilities) ─────────────────────────────────────
+
+/**
+ * Web search via Ollama.
+ */
+export async function webSearch(query: string): Promise<WebSearchResult[]> {
+  return retryWithBackoff(async () => {
+    const response = await ollama.webSearch({ query });
+    return response.results || [];
+  }, { maxRetries: 2 });
+}
+
+/**
+ * Web fetch via Ollama.
+ */
+export async function webFetch(url: string): Promise<WebFetchResponse> {
+  return retryWithBackoff(async () => {
+    return await ollama.webFetch({ url });
+  }, { maxRetries: 2 });
+}
+
+/**
+ * Image description via Ollama vision model.
+ * @param image - Base64-encoded image string
+ * @param prompt - Custom prompt for the vision model
+ */
+export async function imgDescribe(image: string, prompt?: string): Promise<string> {
+  const response = await ollama.chat({
+    model: getVisionModel(),
+    messages: [
+      {
+        role: 'user',
+        content: prompt || 'Describe this image in detail.',
+        images: [image],
+      },
+    ],
+  });
+
+  return response.message?.content || 'No description returned from vision model.';
+}
+
+/**
+ * Structured chat with JSON format enforcement (Ollama-specific).
+ */
+export async function structuredChat(
+  messages: { role: string; content: string }[],
+  format: object,
+): Promise<ChatResponse> {
+  return ollama.chat({
+    model: MODEL,
+    messages: messages as ChatRequest['messages'],
+    format,
+    options: { temperature: 0 },
+  });
 }

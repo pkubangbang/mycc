@@ -6,7 +6,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import sharp from 'sharp';
 import type { CoreModule } from '../../types.js';
-import { ollama } from '../../engine/ollama.js';
+import { imgDescribe } from '../../engine/chat-provider.js';
 import { agentIO } from '../../loop/agent-io.js';
 import { getVisionModel, isVisionEnabled } from '../../config.js';
 import { BaseCore } from '../shared/base-core.js';
@@ -143,18 +143,7 @@ export class Core extends BaseCore implements CoreModule {
     base64Image = resizedBase64;
 
     try {
-      const response = await ollama.chat({
-        model: VISION_MODEL,
-        messages: [
-          {
-            role: 'user',
-            content: customPrompt,
-            images: [base64Image],
-          },
-        ],
-      });
-
-      const description = response.message?.content || 'No description returned from vision model.';
+      const description = await imgDescribe(base64Image, customPrompt);
       this.brief('info', 'img_describe', `Image description complete (${description.length} chars)`);
       return description;
     } catch (err) {

@@ -6,8 +6,7 @@
  */
 
 import type { Mindmap } from '../../mindmap/types.js';
-import { ollama } from '../../engine/ollama.js';
-import { retryWithBackoff } from '../../engine/chat-helpers.js';
+import { webSearch as engineWebSearch, webFetch as engineWebFetch } from '../../engine/chat-provider.js';
 import { WebFetchResponse, WebSearchResult } from 'ollama';
 
 /**
@@ -84,10 +83,7 @@ export abstract class BaseCore {
    */
   async webSearch(query: string): Promise<WebSearchResult[]> {
     try {
-      return await retryWithBackoff(async () => {
-        const response = await ollama.webSearch({ query });
-        return response.results || [];
-      }, { maxRetries: 2 });
+      return await engineWebSearch(query);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       if (message.includes('401') || message.includes('unauthorized') || message.includes('Unauthorized')) {
@@ -103,9 +99,7 @@ export abstract class BaseCore {
    */
   async webFetch(url: string): Promise<WebFetchResponse> {
     try {
-      return await retryWithBackoff(async () => {
-        return await ollama.webFetch({ url });
-      }, { maxRetries: 2 });
+      return await engineWebFetch(url);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       if (message.includes('401') || message.includes('unauthorized') || message.includes('Unauthorized')) {

@@ -6,7 +6,7 @@
  * Messages are normalized from Ollama format to DeepSeek format.
  */
 
-import type { ChatRequest, ChatResponse, Message as OllamaMessage, ToolCall as OllamaToolCall } from 'ollama';
+import type { ChatRequest, ChatResponse, WebSearchResult, WebFetchResponse, Message as OllamaMessage, ToolCall as OllamaToolCall } from 'ollama';
 import type { Message } from '../types.js';
 import { agentIO } from '../loop/agent-io.js';
 import {
@@ -422,4 +422,65 @@ export async function retryMultipleChoice(
   }
 
   return null;
+}
+
+// ─── Auxiliary (not supported by DeepSeek) ───────────────────────────────
+
+export async function webSearch(_query: string): Promise<WebSearchResult[]> {
+  throw new Error('webSearch not supported by DeepSeek provider');
+}
+
+export async function webFetch(_url: string): Promise<WebFetchResponse> {
+  throw new Error('webFetch not supported by DeepSeek provider');
+}
+
+export async function imgDescribe(_image: string, _prompt?: string): Promise<string> {
+  throw new Error('imgDescribe not supported by DeepSeek provider');
+}
+
+export async function structuredChat(
+  messages: { role: string; content: string }[],
+  _format: object,
+): Promise<ChatResponse> {
+  const url = `${getHost()}/chat/completions`;
+  const apiKey = getApiKey();
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model: MODEL,
+      messages,
+      response_format: { type: 'json_object' },
+      stream: false,
+    }),
+  });
+
+  if (!response.ok) {
+    const text = await response.text().catch(() => '');
+    throw new Error(`DeepSeek API error ${response.status}: ${text.slice(0, 500)}`);
+  }
+
+  const data = await response.json();
+  const choice = data.choices?.[0];
+
+  return {
+    model: data.model || MODEL,
+    created_at: new Date(),
+    message: {
+      role: 'assistant' as const,
+      content: choice?.message?.content || '',
+    },
+    done: true,
+    done_reason: choice?.finish_reason || 'stop',
+    total_duration: 0,
+    load_duration: 0,
+    prompt_eval_count: data.usage?.prompt_tokens || 0,
+    prompt_eval_duration: 0,
+    eval_count: data.usage?.completion_tokens || 0,
+    eval_duration: 0,
+  };
 }

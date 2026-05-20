@@ -1,9 +1,10 @@
 /**
- * chat-provider.ts - Barrel that re-exports from the active LLM provider.
+ * chat-provider.ts - Single facade for ALL LLM functionality.
  *
  * Based on API_PROVIDER env var, dynamically imports only the active provider.
- * The inactive provider's module is never loaded — no side effects (e.g. Ollama
- * client init) occur when using DeepSeek, and vice versa.
+ * Chat is switchable. Auxiliary features (webSearch, webFetch, imgDescribe)
+ * are gated — they work with Ollama, throw with DeepSeek.
+ * Embedding is always Ollama (local model, independent of chat provider).
  */
 
 import { getApiProvider } from '../config.js';
@@ -14,11 +15,21 @@ const activeModule = provider === 'deepseek'
   ? await import('./deepseek.js')
   : await import('./ollama.js');
 
+// Chat (switchable — active provider)
 export const MODEL = activeModule.MODEL;
 export const retryChat = activeModule.retryChat;
 export const retryMultipleChoice = activeModule.retryMultipleChoice;
 
-// Re-export agnostic utilities for callers that previously imported from ollama.ts
+// Auxiliary (gated — may throw from deepseek)
+export const webSearch = activeModule.webSearch;
+export const webFetch = activeModule.webFetch;
+export const imgDescribe = activeModule.imgDescribe;
+export const structuredChat = activeModule.structuredChat;
+
+// Embedding (always Ollama)
+export { getEmbedding } from './ollama-embedding.js';
+
+// Re-export agnostic utilities
 export {
   stopSpinner,
   isTransientError,

@@ -14,7 +14,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { getMyccDir } from '../config.js';
 import { Sequence } from './sequence.js';
-import { ollama, MODEL } from '../engine/ollama.js';
+import { structuredChat } from '../engine/chat-provider.js';
 import {
   validateCondition,
   compileCondition,
@@ -573,13 +573,11 @@ ${errorFeedback}
 Output a JSON object with trigger, condition, and action.`;
 
       try {
-        // Use Ollama with structured output (JSON schema enforcement)
-        const response = await ollama.chat({
-          model: MODEL,
-          messages: [{ role: 'user', content: prompt }],
-          format: CONDITION_SCHEMA,
-          options: { temperature: 0 },
-        });
+        // Use structured output (JSON schema enforcement)
+        const response = await structuredChat(
+          [{ role: 'user', content: prompt }],
+          CONDITION_SCHEMA,
+        );
 
         const content = response.message.content || '';
         
