@@ -233,8 +233,12 @@ export async function handleTool(
     }
   }
 
-  // Inject deferred hook messages after tool execution (only when TP-valid)
-  if (hookResult.deferredMessages.length > 0 && triologue.getLastRole() !== 'tool') {
+  // Inject deferred hook messages after tool execution
+  // Bridge tool → assistant first if needed, so the subsequent note is TP-valid
+  if (hookResult.deferredMessages.length > 0) {
+    if (triologue.getLastRole() === 'tool') {
+      triologue.agent('Continuing.');
+    }
     triologue.note('REMINDER', hookResult.deferredMessages.join('\n\n---\n\n'));
   }
 

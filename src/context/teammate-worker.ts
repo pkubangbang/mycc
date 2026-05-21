@@ -185,44 +185,30 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
 
       const assistantMessage = response.message;
       const reasoningContent = (assistantMessage as unknown as Record<string, unknown>).reasoning_content as string | undefined;
-      triologue.agent(assistantMessage.content || '', assistantMessage.tool_calls as ToolCall[] | undefined, reasoningContent);
+      const toolCalls = assistantMessage.tool_calls as ToolCall[] | undefined;
 
       // Confusion scoring: +1 per assistant turn (agent spinning without progress)
       ctx.core.increaseConfusionIndex(1);
 
-      // 4. No tool calls = enter idle state
-      if (!assistantMessage.tool_calls || assistantMessage.tool_calls.length === 0) {
-        // Reset brief nudge when entering idle (no more tool calls)
-        nextBriefNudge = 5;
-        
-        // IMPORTANT: send finishing words to lead to coordinate.
-        ctx.team.mailTo('lead', 'task done',
-          assistantMessage.content ?? 'I have done my task, now running idle.', ctx.core.getName());
-
-        const result = await enterIdleState(triologue);
-        if (result === 'shutdown') {
-          process.exit(0);
-        }
-        // Resume work phase
-        continue;
-      }
-
-      // 4.5. Handle meta-tools (checkpoint and recap) before regular tool execution
-      // These need special handling because they require triologue access
-      const toolCalls = assistantMessage.tool_calls as ToolCall[];
-      const hasCheckpoint = toolCalls.some(tc => tc.function.name === 'checkpoint');
-      const hasRecap = toolCalls.some(tc => tc.function.name === 'recap');
+      // ---- Meta-tool dispatch (checkpoint/recap) ----
+      // These must be handled BEFORE registering the assistant message with triologue,
+      // because the handlers take full ownership of agent() + tool() registration.
+      // This mirrors the lead's hook.ts pattern.
+      const hasCheckpoint = toolCalls && toolCalls.some(tc => tc.function.name === 'checkpoint');
+      const hasRecap = toolCalls && toolCalls.some(tc => tc.function.name === 'recap');
 
       if (hasCheckpoint || hasRecap) {
+        const tcs = toolCalls!;
+
         // Validate isolation (must be called alone)
-        const validation = hasCheckpoint 
-          ? validateCheckpointIsolation(toolCalls)
-          : validateRecapIsolation(toolCalls);
-        
+        const validation = hasCheckpoint
+          ? validateCheckpointIsolation(tcs)
+          : validateRecapIsolation(tcs);
+
         if (!validation.valid) {
-          // Block with error message
-          triologue.agent(assistantMessage.content || '', toolCalls, reasoningContent);
-          for (const tc of toolCalls) {
+          // Register assistant message, then block with error
+          triologue.agent(assistantMessage.content || '', tcs, reasoningContent);
+          for (const tc of tcs) {
             triologue.tool(tc.function.name, validation.message!, tc.id);
           }
           ctx.core.brief('error', hasCheckpoint ? 'checkpoint' : 'recap', validation.message!);
@@ -238,32 +224,28 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
 
         if (hasCheckpoint) {
           // Handle checkpoint
-          const tc = toolCalls[0]; // We validated it's alone
+          const tc = tcs[0]; // We validated it's alone
           const args = tc.function.arguments as Record<string, unknown>;
 
-          // Execute checkpoint
+          // Execute checkpoint (does not modify triologue)
           const result = handleCheckpointTool(args, checkpointCtx);
 
-          // Register the tool call (checkpoint info is in the tool result — no note needed)
-          triologue.agent(assistantMessage.content || '', toolCalls, reasoningContent);
-
-          // Add tool response
+          // Register the assistant message and tool response
+          triologue.agent(assistantMessage.content || '', tcs, reasoningContent);
           triologue.tool('checkpoint', result.result, tc.id);
-          
-          // Brief the assistant content if any
+
           if (assistantMessage.content) {
             ctx.core.brief('info', 'assistant', assistantMessage.content);
           }
-          
+
           continue; // Skip regular tool execution
         }
 
         if (hasRecap) {
           // Handle recap
-          const tc = toolCalls[0]; // We validated it's alone
+          const tc = tcs[0]; // We validated it's alone
           const args = tc.function.arguments as Record<string, unknown>;
 
-          // Show assistant text content if any
           if (assistantMessage.content) {
             ctx.core.brief('info', 'assistant', assistantMessage.content);
           }
@@ -275,15 +257,18 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
             ? args.comment.trim()
             : undefined;
 
+          // ── Error branches: no triologue modification before agent() ──
+          // These branches call agent() + tool() to register the error.
+          // No prior agent() call has been made — single registration only.
           if (!checkpointId || typeof checkpointId !== 'string' || checkpointId.trim() === '') {
-            triologue.agent(assistantMessage.content || '', toolCalls, reasoningContent);
+            triologue.agent(assistantMessage.content || '', tcs, reasoningContent);
             triologue.tool('recap', 'Error: checkpoint_id is required and must be a non-empty string.', tc.id);
             continue;
           }
 
           const checkpoint = triologue.findCheckpointById(checkpointId);
           if (!checkpoint) {
-            triologue.agent(assistantMessage.content || '', toolCalls, reasoningContent);
+            triologue.agent(assistantMessage.content || '', tcs, reasoningContent);
             const allCheckpoints = triologue.findAllCheckpoints();
             const msg = allCheckpoints.length === 0
               ? 'Error: No checkpoint found.'
@@ -295,10 +280,12 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
           const messages = triologue.getMessagesFrom(checkpoint.index);
           const tokensBefore = triologue.getTokenCount();
 
+          // ── Abandon branch: recapMessages() truncates, then agent() + tool() ──
+          // recapMessages() clears pending tool calls, so agent() re-registers them.
+          // This is safe because no prior agent() call was made.
           if (abandon) {
-            // Abandon: discard messages, append ?recap + !recap (abandon marker)
             triologue.recapMessages(checkpoint.index);
-            triologue.agent(assistantMessage.content || '', toolCalls, reasoningContent);
+            triologue.agent(assistantMessage.content || '', tcs, reasoningContent);
             const abandonResult = `[RECAP] Abandoned checkpoint "${checkpoint.description}"\n\n${messages.length} messages discarded. Checkpoint closed.${comment ? `\n\nComment: ${comment}` : ''}\n\nNote: the checkpoint todo item was auto-created with this checkpoint's ID as its note. Use todo_update to mark it as done.`;
             triologue.tool('recap', abandonResult, tc.id);
 
@@ -311,19 +298,19 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
             continue;
           }
 
-          // Normal: generate summary (no escAware for teammates), then slice + append ?recap + !recap
+          // ── Normal branch ──
           const summary = await handleRecapTool(messages, checkpoint.description, undefined, comment);
 
-          // Check for ESC cancellation (summary starts with cancellation marker)
           if (summary.startsWith('[RECAP] Cancelled:')) {
-            triologue.agent(assistantMessage.content || '', toolCalls, reasoningContent);
+            triologue.agent(assistantMessage.content || '', tcs, reasoningContent);
             triologue.tool('recap', summary, tc.id);
             ctx.core.brief('warn', 'recap', summary);
             continue;
           }
 
+          // recapMessages() truncates, then agent() + tool() re-registers
           triologue.recapMessages(checkpoint.index);
-          triologue.agent(assistantMessage.content || '', toolCalls, reasoningContent);
+          triologue.agent(assistantMessage.content || '', tcs, reasoningContent);
           triologue.tool('recap', summary, tc.id);
 
           const tokensAfter = triologue.getTokenCount();
@@ -336,8 +323,32 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
         }
       }
 
+      // ---- No meta-tools: register assistant message and execute tools ----
+      // No tool calls = enter idle state
+      if (!toolCalls || toolCalls.length === 0) {
+        // Register the assistant message (no tool calls to track)
+        triologue.agent(assistantMessage.content || '', undefined, reasoningContent);
+
+        // Reset brief nudge when entering idle (no more tool calls)
+        nextBriefNudge = 5;
+
+        // IMPORTANT: send finishing words to lead to coordinate.
+        ctx.team.mailTo('lead', 'task done',
+          assistantMessage.content ?? 'I have done my task, now running idle.', ctx.core.getName());
+
+        const result = await enterIdleState(triologue);
+        if (result === 'shutdown') {
+          process.exit(0);
+        }
+        // Resume work phase
+        continue;
+      }
+
+      // There are tool calls — register assistant message with pending tool calls
+      triologue.agent(assistantMessage.content || '', toolCalls, reasoningContent);
+
       // 5. Execute tools
-      for (const tc of (assistantMessage.tool_calls as ToolCall[])) {
+      for (const tc of toolCalls) {
         const toolName = tc.function.name;
         const args = tc.function.arguments as Record<string, unknown>;
 
