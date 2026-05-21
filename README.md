@@ -2,6 +2,9 @@
 
 A CLI coding agent using Ollama-cloud for LLM inference, written in nodejs.
 
+> 2026-05-21: added Deepseek API support! You can use Deepseek in place of `ollama.chat` to leverage prompt cache
+> (Ollama still need to be installed because of the embedding use)
+
 
 ## Features
 
