@@ -125,9 +125,9 @@ When updating the changelog, use the following procedure:
 - [ ] tool loader may have memory leak
 
 - [ ] add deepseek api support
-   - [ ] env detection
-   - [ ] health checking
+   - [x] env detection
+   - [x] health checking
    - [ ] setup wizard
-   - [ ] extend ollama.ts, to make compatible thinking/streaming/tool-using capabilities
-- [ ] deepseek api requires strict triologue parity
-- [ ] remove microCompact to utilize promptCache
+   - [x] extend ollama.ts, to make compatible thinking/streaming/tool-using capabilities
+- [x] deepseek api requires strict triologue parity
+- [x] remove microCompact to utilize promptCache
