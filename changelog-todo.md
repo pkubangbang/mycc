@@ -131,3 +131,14 @@ When updating the changelog, use the following procedure:
    - [x] extend ollama.ts, to make compatible thinking/streaming/tool-using capabilities
 - [x] deepseek api requires strict triologue parity
 - [x] remove microCompact to utilize promptCache
+
+- [ ] deepseek api when showing wrap-up will output like
+   ```
+   .================================== 10:24:14 ===================================.
+   <｜｜DSML｜｜tool_calls>
+   <｜｜DSML｜｜invoke name="brief">
+   <｜｜DSML｜｜parameter name="message" string="true">🚀 Merged into local `main` (commit 9aa4be5). The remote `origin/main` appears to be behind (at 62a9469). The push said "Everything up-to-date" — might need a force push or there's a discrepancy. Want me to investigate and push properly, or is this fine as-is?</｜｜DSML｜｜parameter>
+   </｜｜DSML｜｜invoke>
+   </｜｜DSML｜｜tool_calls>
+   '=============================================================================='
+   ```
