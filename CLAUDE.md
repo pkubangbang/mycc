@@ -642,6 +642,50 @@ For code that needs to work in both contexts:
 - Use `ctx.core.question()` for user questions (works in both main and child via IPC)
 - Use `ctx.core.brief()` for logging (works in both via IPC for child)
 
+### Loop Notation (LN)
+
+A compact notation for describing message role rotation in the agent loop. Each unit is separated by commas, and represents one message in the conversation sequence.
+
+Available unit types:
+
+- `system` → The system prompt
+- `user` → The user's query
+- `[tool1, tool2]?` → The assistant's tool call (batched, `?` means called by LLM)
+- `tool1!` → The result of a tool call, one at a time
+- `agent` → The assistant's text reply
+- `_tool1_` → A tool call replaced with a placeholder (after compaction)
+
+Examples:
+
+A simple single-turn sequence:
+```
+system, user, [tool1]?, tool1!, agent
+```
+
+A multi-turn conversation with tool batching and compaction:
+```
+system, user, [tool1]?, tool1!, [tool2, tool3]?, tool2!, _tool3_, agent, user, agent
+```
+
+This represents:
+1. System prompt loads
+2. User asks a question
+3. LLM calls `tool1`
+4. `tool1` returns its result
+5. LLM calls `tool2` and `tool3` in the same delta
+6. `tool2` returns its result
+7. `tool3`'s call was compacted (replaced with placeholder)
+8. LLM replies to the user
+9. User asks another question
+10. LLM replies directly (no tool calls needed)
+
+Key conventions:
+- `[]?` groups batched tool calls from the same LLM delta
+- `!` marks a tool result
+- `_` wraps a compacted/placeholder tool call
+- Units without special markers (system, user, agent) are pure text messages
+
+
 ## Reference Documents
 
 - `docs/agent-context.md` - AgentContext module (Chinese)
