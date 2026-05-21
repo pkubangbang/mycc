@@ -92,7 +92,6 @@ Uses ANSI OSC escape sequences supported by most terminal emulators (GNOME Termi
     // Print prominent banner so user can quickly identify the session
     printBanner(title);
 
-    ctx.core.brief('info', 'mycc_title', `terminal title set to: "${title}"`);
     return 'OK';
   },
 };
