@@ -694,7 +694,9 @@ export class Triologue {
       const msg = this.messages[i];
       const result = this.isCheckpointMessage(msg);
       if (result && result.id === id) {
-        return { id, description: result.description, index: i };
+        // Return index AFTER the checkpoint tool message so recapMessages
+        // keeps the full agent→tool pair and only discards the subtask
+        return { id, description: result.description, index: i + 1 };
       }
     }
     return null;
