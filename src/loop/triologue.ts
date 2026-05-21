@@ -16,6 +16,7 @@ import { estimateTokens, estimateTokensForMessages } from '../utils/token.js';
 import { ResultTooLargeError } from '../types.js';
 import { getMyccDir, getLongtextDir, ensureDirs, getTokenThreshold, isDebuggingTp } from '../config.js';
 import { agentIO } from './agent-io.js';
+import { attemptAutoFix } from './tp-auto-fixer.js';
 
 type Role = 'system' | 'user' | 'assistant' | 'tool';
 
@@ -150,7 +151,10 @@ export class Triologue {
   user(content: string): void {
     const lastRole = this.getLastRole();
     if (lastRole === 'tool') {
-      this.throwTpViolation('cannot add user message after tool role');
+      if (attemptAutoFix(this, 'user_after_tool', lastRole) === 'debug_throw') {
+        this.throwTpViolation('cannot add user message after tool role');
+      }
+      // Recovered: bridge was injected, fall through to add user message
     }
     if (lastRole === 'user') {
       // Combine: append to last user message
@@ -175,7 +179,10 @@ export class Triologue {
   note(category: NoteCategory, message: string): void {
     const lastRole = this.getLastRole();
     if (lastRole === 'tool') {
-      this.throwTpViolation('cannot add note after tool role');
+      if (attemptAutoFix(this, 'note_after_tool', lastRole) === 'debug_throw') {
+        this.throwTpViolation('cannot add note after tool role');
+      }
+      // Recovered: bridge was injected, now lastRole is 'assistant'
     }
     const noteContent = `[${category}] ${message}`;
     if (lastRole === 'user') {
@@ -200,7 +207,14 @@ export class Triologue {
     // Check for missing assistant with tool_calls
     const lastRole = this.getLastRole();
     if (lastRole !== 'assistant' && lastRole !== 'tool') {
-      this.throwTpViolation(`cannot add tool message after ${lastRole} role (gap: missing_assistant)`);
+      if (attemptAutoFix(this, 'tool_no_assistant', lastRole) === 'debug_throw') {
+        this.throwTpViolation(`cannot add tool message after ${lastRole} role (gap: missing_assistant)`);
+      }
+      // Recovered: a synthetic assistant with tool_calls was injected.
+      // After injection, the pending tool call map has an entry, but it's empty-named.
+      // We need to update it so findPendingToolCall works for this functionName.
+      // Update the last pending tool call entry with the correct function name.
+      this.updateLastPendingToolCall(functionName);
     }
 
     // Check result size threshold
@@ -341,10 +355,18 @@ export class Triologue {
 
     // Reject invalid transitions
     if (lastRole === 'assistant') {
-      this.throwTpViolation('cannot add assistant message after assistant role (duplicate)');
+      if (attemptAutoFix(this, 'duplicate_assistant', lastRole) === 'debug_throw') {
+        this.throwTpViolation('cannot add assistant message after assistant role (duplicate)');
+      }
+      // Recovered: pending tool calls cleared, fall through to add new assistant message
     }
     if (lastRole === 'system') {
-      this.throwTpViolation('cannot add assistant message after system role');
+      if (attemptAutoFix(this, 'agent_after_system', lastRole) === 'debug_throw') {
+        this.throwTpViolation('cannot add assistant message after system role');
+      }
+      // Recovered: bridge user message injected, fall through to add assistant message
+      // Note: lastRole is still 'system' locally, but the last message in the array
+      // is now the bridge user message. getLastRole() would return 'user'.
     }
 
     this.addMessage({
@@ -562,6 +584,44 @@ export class Triologue {
   // === Internal Methods ===
 
   /**
+   * INTERNAL: Add a message to the triologue bypassing TP validation.
+   * Used by tp-auto-fixer.ts only. Prefixed with _ to signal "internal use only".
+   *
+   * Pushes the message directly, updates token count, and calls onMessage callback.
+   */
+  _injectBypass(message: Message): void {
+    this.messages.push(message);
+    this.updateTokenCount(message);
+    if (this.options.onMessage) {
+      this.options.onMessage(this.messages);
+    }
+  }
+
+  /**
+   * INTERNAL: Clear all pending tool calls.
+   * Used by tp-auto-fixer.ts to clean up stale pending calls after recovery.
+   */
+  _clearPendingToolCalls(): void {
+    this.pendingToolCalls.clear();
+    this.pendingToolCallOrder = [];
+  }
+
+  /**
+   * INTERNAL: Update the function name of the last pending tool call entry.
+   * Used after tool_no_assistant recovery where a synthetic tool_call was injected
+   * with an empty function name. This updates it to match the actual tool being called.
+   */
+  private updateLastPendingToolCall(functionName: string): void {
+    if (this.pendingToolCallOrder.length > 0) {
+      const lastId = this.pendingToolCallOrder[this.pendingToolCallOrder.length - 1];
+      const tc = this.pendingToolCalls.get(lastId);
+      if (tc) {
+        tc.function.name = functionName;
+      }
+    }
+  }
+
+  /**
    * Add a message to the triologue.
    * Note: Auto-compact is NOT called here to avoid race conditions.
    * Overflow checking is done in tool.ts after each tool result.
@@ -602,6 +662,15 @@ export class Triologue {
       gap,
       context: { lastMessage, newMessage },
     });
+
+    // Auto-recover if not in debug mode
+    if (attemptAutoFix(this, 'invalid_sequence', lastRole) === 'recovered') {
+      // Recovery applied; inject the attempted message via bypass and throw a specific
+      // error to signal the caller that this should not have happened but was fixed.
+      // Since handleMisorder is a private method that returns never, we need to throw.
+      // But the caller can catch this and continue.
+      throw new Error(`TP auto-recovered: invalid role transition ${lastRole} → ${newRole} (gap: ${gap})`);
+    }
 
     this.throwTpViolation(`invalid role transition ${lastRole} → ${newRole} (gap: ${gap})`);
   }
