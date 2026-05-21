@@ -67,6 +67,16 @@ export class Triologue {
   // Project context files (in-memory only, not persisted)
   private projectContext: Message[] = [];
 
+  /**
+   * Wrap-up management: marks the message index at which a wrap-up turn started.
+   * - beginWrapUp() sets this to messages.length, adds a WRAP_UP user message
+   * - finishWrapUp() adds an agent message (keeps mark for potential rollback)
+   * - commitWrapUp() clears the mark (keep wrap-up permanently)
+   * - rollbackWrapUp() truncates messages to this mark (remove wrap-up turn)
+   * Value of -1 means no active wrap-up.
+   */
+  private wrapUpMark: number = -1;
+
   constructor(options: TriologueOptions = {}) {
     const hintThreshold = options.hintThreshold ?? 10;
     const tokenThreshold = options.tokenThreshold ?? 50000;
@@ -382,6 +392,82 @@ export class Triologue {
     this.tokenCount = 0;
     this.pendingToolCalls.clear();
     this.pendingToolCallOrder = [];
+    this.wrapUpMark = -1;
+  }
+
+  // === Wrap-Up Management (ESC interrupt) ===
+
+  /**
+   * Begin a wrap-up turn after ESC interrupt.
+   * Adds a WRAP_UP user message as a SEPARATE message (never combines with
+   * the last user message), ensuring rollbackWrapUp() can work via simple
+   * array truncation.
+   *
+   * Safe to call even if lastRole is 'tool' — silently returns without
+   * mutating the triologue to avoid TP violations.
+   */
+  beginWrapUp(): void {
+    if (this.wrapUpMark !== -1) return; // already in wrap-up
+    // Guard: cannot begin wrap-up if last role is 'tool'
+    // (that would violate tool → user TP)
+    if (this.getLastRole() === 'tool') return;
+    this.wrapUpMark = this.messages.length;
+    // Always add as SEPARATE message (never combine with last user)
+    this.addMessage({
+      role: 'user',
+      content: `[WRAP_UP] LLM call interrupted. Please wrap up quickly and ask user for next steps.`,
+    });
+  }
+
+  /**
+   * Complete the wrap-up turn with an agent response.
+   * The wrapUpMark is kept so rollbackWrapUp() can still undo both the
+   * user_wrap and agent_wrap messages during the grace period.
+   * This is safe to call even after rollbackWrapUp() has already been
+   * called (wrapUpMark === -1) — it becomes a no-op.
+   *
+   * @param content - The assistant's wrap-up response
+   */
+  finishWrapUp(content: string): void {
+    if (this.wrapUpMark === -1) return; // already committed or rolled back
+    // Direct push to bypass TP check (we know last role is user_wrap or tool)
+    this.messages.push({ role: 'assistant', content });
+    this.updateTokenCount(this.messages[this.messages.length - 1]);
+    if (this.options.onMessage) {
+      this.options.onMessage(this.messages);
+    }
+    // wrapUpMark stays — allows rollback to remove both user_wrap and agent_wrap
+  }
+
+  /**
+   * Permanently keep the wrap-up turn (user_wrap + agent_wrap).
+   * Clears the wrapUpMark so future rollbackWrapUp() calls are no-ops.
+   */
+  commitWrapUp(): void {
+    this.wrapUpMark = -1;
+  }
+
+  /**
+   * Roll back the wrap-up turn, removing all messages added since beginWrapUp().
+   * Truncates messages to the recorded wrapUpMark via simple array .length,
+   * which is instant and race-free.
+   * Also clears pending tool calls since any from the wrap-up turn are invalid.
+   */
+  rollbackWrapUp(): void {
+    if (this.wrapUpMark === -1) return; // nothing to roll back
+    this.messages.length = this.wrapUpMark;
+    this.tokenCount = estimateTokensForMessages(this.messages);
+    this.pendingToolCalls.clear();
+    this.pendingToolCallOrder = [];
+    this.wrapUpMark = -1;
+  }
+
+  /**
+   * Check if a wrap-up turn is currently active (beginWrapUp was called
+   * but not yet committed or rolled back).
+   */
+  hasActiveWrapUp(): boolean {
+    return this.wrapUpMark !== -1;
   }
 
   /**

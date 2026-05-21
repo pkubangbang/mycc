@@ -25,7 +25,7 @@ import { loader } from '../../context/shared/loader.js';
 import { openMultilineEditor } from '../../utils/multiline-input.js';
 import { readSession, writeSession } from '../../session/index.js';
 import { setSlashQuery } from './slash.js';
-import { injectWrapUp, shouldAppendWrapUp, clearWrapUp } from '../esc-wrap-up.js';
+import { evaluateWrapUp, clearWrapUp } from '../esc-wrap-up.js';
 import { runSuggestBackground } from './suggest.js';
 
 /** Captured once per machine lifetime */
@@ -126,10 +126,15 @@ export async function handlePrompt(
   }
 
   // Quick-return ESC: Handle wrap-up timing logic
-  const wrapUpAction = shouldAppendWrapUp();
-  if (wrapUpAction === 'append') {
-    // User submitted after grace period - inject wrap-up (user + agent messages) to triologue
-    injectWrapUp();
+  // The wrap-up turn is already in the triologue (from beginWrapUp + finishWrapUp).
+  // We just need to commit or rollback based on timing.
+  if (triologue.hasActiveWrapUp()) {
+    const action = evaluateWrapUp();
+    if (action === 'commit') {
+      triologue.commitWrapUp();  // keep user_wrap + agent_wrap permanently
+    } else {
+      triologue.rollbackWrapUp();  // remove user_wrap (and agent_wrap if present)
+    }
   }
 
   clearWrapUp();

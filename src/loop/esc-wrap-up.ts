@@ -5,10 +5,26 @@
  * while the LLM wrap-up continues in background. The wrap-up appears as a
  * letter-box above the prompt when complete.
  *
- * Timing logic:
- * - If user submits query before wrap-up shows → discard wrap-up
- * - If user submits query within 3s of wrap-up showing → discard wrap-up
- * - If user submits query after 3s of wrap-up showing → append wrap-up to triologue
+ * Architecture (redesigned to avoid triologue parity issues):
+ *
+ * 1. ESC pressed → startWrapUp() calls triologue.beginWrapUp()
+ *    - Adds [WRAP_UP] user message inline to triologue (never combined)
+ *    - Background LLM call runs to get wrap-up content
+ *    - Returns immediately so prompt shows ASAP
+ *
+ * 2. Wrap-up LLM completes → Promise resolves in background
+ *    - Calls triologue.finishWrapUp(content) to add agent response inline
+ *    - Stores content + completion timestamp for letter-box display
+ *
+ * 3. User submits next query → in prompt.ts:
+ *    - If wrap-up completed AND past 3s grace period:
+ *      → triologue.commitWrapUp() — permanently keep the wrap-up turn
+ *    - If wrap-up not completed OR within 3s:
+ *      → triologue.rollbackWrapUp() — remove wrap-up messages via truncation
+ *
+ * Key benefit: No message snapshot. The wrap-up turn is always in the triologue
+ * at the correct position. rollbackWrapUp() is a simple array .length truncation,
+ * instant and race-free.
  */
 
 import { displayLetterBox } from '../utils/letter-box.js';
@@ -38,11 +54,6 @@ interface WrapUpState {
  */
 const WRAP_UP_GRACE_PERIOD_MS = 3000;
 
-/**
- * User message to add to triologue when wrap-up is injected
- */
-const WRAP_UP_USER_MESSAGE = 'LLM call interrupted. Please wrap up quickly and ask user for next steps.';
-
 // Singleton wrap-up state
 let wrapUpState: WrapUpState = {
   promise: null,
@@ -54,15 +65,11 @@ let wrapUpState: WrapUpState = {
 
 /**
  * Run the wrap-up LLM call.
- * Builds a temporary messages array (triologue + wrap-up prompt) without
- * modifying the triologue. The triologue is only updated in injectWrapUp()
- * when the wrap-up succeeded and the grace period has passed.
+ * Uses triologue.getMessages() which INCLUDES the WRAP_UP note added by
+ * beginWrapUp() — always fresh, no snapshot needed.
  */
 async function runWrapUpLLM(triologue: Triologue): Promise<string> {
-  const messages = [
-    ...triologue.getMessages(),
-    { role: 'user' as const, content: WRAP_UP_USER_MESSAGE },
-  ];
+  const messages = triologue.getMessages();
 
   try {
     const response = await retryChat(
@@ -82,10 +89,14 @@ async function runWrapUpLLM(triologue: Triologue): Promise<string> {
 }
 
 /**
- * Start tracking a background wrap-up operation
- * Runs the LLM wrap-up in background and stores triologue for later injection
+ * Start tracking a background wrap-up operation.
+ * Calls triologue.beginWrapUp() to add WRAP_UP note inline.
+ * Runs the LLM wrap-up in background.
  */
 export function startWrapUp(triologue: Triologue): void {
+  // Add WRAP_UP user message inline (always separate, never combined)
+  triologue.beginWrapUp();
+
   const promise = runWrapUpLLM(triologue);
   wrapUpState = {
     promise,
@@ -99,6 +110,13 @@ export function startWrapUp(triologue: Triologue): void {
     if (wrapUpState.promise !== promise) return;
     wrapUpState.content = content;
     wrapUpState.completedAt = Date.now();
+
+    if (content) {
+      // Try to add agent response.
+      // If triologue was already rolled back (user submitted quickly),
+      // finishWrapUp is a no-op (wrapUpMark === -1).
+      triologue.finishWrapUp(content);
+    }
   }).catch(() => {
     if (wrapUpState.promise !== promise) return;
     wrapUpState.content = '';
@@ -141,49 +159,36 @@ export function clearWrapUp(): void {
 }
 
 /**
- * Check if user query should be appended (submitted after grace period)
- * Returns: 'append' if wrap-up should be appended, 'discard' if wrap-up should be discarded
+ * Check if the wrap-up is ready (completed with content) and past the grace period.
+ * If yes, returns 'commit' — caller should call commitWrapUp() on the triologue.
+ * If no, returns 'rollback' — caller should call rollbackWrapUp() on the triologue.
+ * Note: After calling commitWrapUp() or rollbackWrapUp(), caller should also
+ * call clearWrapUp() to reset the wrap-up state.
  */
-export function shouldAppendWrapUp(): 'append' | 'discard' {
+export function evaluateWrapUp(): 'commit' | 'rollback' {
   const { completedAt, shown, content } = wrapUpState;
 
-  // No wrap-up content, empty (failed), or already shown - discard
+  // No wrap-up content, empty (failed), or already shown - rollback
   if (!content || shown) {
-    return 'discard';
+    return 'rollback';
   }
 
-  // Wrap-up not yet completed - discard (user submitted before wrap-up)
+  // Wrap-up not yet completed - rollback (user submitted before wrap-up)
   if (completedAt === null) {
-    return 'discard';
+    return 'rollback';
   }
 
   // Check if within grace period (3s after wrap-up shows)
   const now = Date.now();
   const timeSinceCompletion = now - completedAt;
 
-  // If more than 3s since completion, append wrap-up
+  // If more than 3s since completion, commit the wrap-up
   if (timeSinceCompletion >= WRAP_UP_GRACE_PERIOD_MS) {
-    return 'append';
+    return 'commit';
   }
 
-  // Within grace period - discard wrap-up, let user query go through directly
-  return 'discard';
-}
-
-/**
- * Inject wrap-up into triologue (user message + agent response).
- * Only called when wrap-up succeeded with non-empty content
- * and the grace period has passed.
- */
-export function injectWrapUp(): void {
-  if (wrapUpState.triologue && wrapUpState.content) {
-    const triologue = wrapUpState.triologue;
-    // Skip the note if lastRole is tool (TP-safe: tool → agent is valid, tool → user is not)
-    if (triologue.getLastRole() !== 'tool') {
-      triologue.note('WRAP_UP', WRAP_UP_USER_MESSAGE);
-    }
-    triologue.agent(wrapUpState.content);
-  }
+  // Within grace period - rollback
+  return 'rollback';
 }
 
 /**
@@ -212,4 +217,3 @@ export function tryDisplayWrapUp(editor: LineEditor | null): boolean {
   editor.rerender();
   return true;
 }
-
