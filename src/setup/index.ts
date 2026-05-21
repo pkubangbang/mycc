@@ -8,7 +8,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import chalk from 'chalk';
-import { getUserConfigPath, getProjectConfigPath, getUserConfigDir, getProjectConfigDir } from './paths.js';
+import { getUserConfigPath, getProjectConfigPath } from './paths.js';
 import { displayCurrentSettings, getExistingConfig, hasExistingConfig } from './display.js';
 import { runWizard, isInteractiveTerminal, displaySetupHelp } from './wizard.js';
 import { pullConfiguredModels, checkOllamaAvailable } from './models.js';
@@ -67,13 +67,15 @@ export async function runSetup(): Promise<void> {
     console.log(chalk.dim('  Let\'s configure your environment.\n'));
   }
 
-  // Step 2: Run the wizard
+  // Step 2: Run the wizard (includes provider selection)
   const existingConfig = getExistingConfig();
   const { location, config } = await runWizard(existingConfig);
 
+  // Determine the selected provider
+  const provider = config['API_PROVIDER'] === 'deepseek' ? 'deepseek' : 'ollama';
+
   // Step 3: Determine config path
   const configPath = location === 'user' ? getUserConfigPath() : getProjectConfigPath();
-  const _configDir = location === 'user' ? getUserConfigDir() : getProjectConfigDir();
 
   // Step 4: Ensure directory exists
   ensureConfigDir(configPath);
@@ -81,17 +83,24 @@ export async function runSetup(): Promise<void> {
   // Step 5: Write config file
   writeEnvFile(configPath, config);
 
-  // Step 6: Pull models if Ollama is available
-  const ollamaAvailable = await checkOllamaAvailable();
-  if (ollamaAvailable) {
-    await pullConfiguredModels(config);
+  // Step 6: Pull models (provider-aware)
+  if (provider === 'ollama') {
+    const ollamaAvailable = await checkOllamaAvailable();
+    if (ollamaAvailable) {
+      await pullConfiguredModels(config, provider);
+    }
+  } else {
+    // DeepSeek: always run (shows info + pulls embedding model if Ollama available)
+    await pullConfiguredModels(config, provider);
   }
 
   // Step 7: Print success message
-  console.log(chalk.green('\n✅ Configuration saved successfully!'));
+  const providerLabel = provider === 'deepseek' ? 'DeepSeek' : 'Ollama';
+  console.log(chalk.green(`\n✅ Configuration saved successfully!`));
   console.log(chalk.dim(`   Location: ${configPath}`));
+  console.log(chalk.dim(`   Provider: ${providerLabel}`));
   console.log(chalk.dim(`   Type: ${location}-level\n`));
-  console.log(chalk.cyan('You can now run mycc normally.'));
+  console.log(chalk.cyan(`You can now run mycc normally.`));
 }
 
 // Export for CLI

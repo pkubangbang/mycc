@@ -1,5 +1,8 @@
 /**
  * prompts.ts - Prompt definitions and validation for setup wizard
+ *
+ * Supports both Ollama and DeepSeek providers. The API_PROVIDER choice
+ * determines which set of prompts is shown to the user.
  */
 
 import { getDefaultEditor, getEditorHelpText } from './editor.js';
@@ -41,9 +44,9 @@ function validatePositiveNumber(value: string): boolean | string {
 }
 
 /**
- * Prompt definitions for all environment variables
+ * Get Ollama-specific prompts
  */
-export function getPrompts(): PromptConfig[] {
+function getOllamaPrompts(): PromptConfig[] {
   return [
     {
       name: 'OLLAMA_HOST',
@@ -56,7 +59,7 @@ export function getPrompts(): PromptConfig[] {
       name: 'OLLAMA_MODEL',
       message: 'Ollama model name (general/chat)',
       default: 'glm-5:cloud',
-      help: 'The model to use for general chat and coding tasks',
+      help: 'The model to use for general chat and coding tasks. Use "ollama list" to see installed models.',
     },
     {
       name: 'OLLAMA_VISION_MODEL',
@@ -64,18 +67,47 @@ export function getPrompts(): PromptConfig[] {
       default: 'none',
       help: 'Set to "none" to disable vision features, or specify a vision-capable model (e.g., gemma4:31b-cloud)',
     },
+  ];
+}
+
+/**
+ * Get DeepSeek-specific prompts
+ */
+function getDeepSeekPrompts(): PromptConfig[] {
+  return [
     {
-      name: 'OLLAMA_EMBEDDING_MODEL',
-      message: 'Ollama embedding model (for semantic search/RAG)',
-      default: '',
-      help: 'Leave empty to skip, or specify an embedding model (e.g., nomic-embed-text)',
+      name: 'DEEPSEEK_HOST',
+      message: 'DeepSeek API host URL',
+      default: 'https://api.deepseek.com',
+      help: 'The DeepSeek API endpoint. Change only if using a proxy or compatible API.',
+      validate: validateUrl,
     },
     {
-      name: 'OLLAMA_API_KEY',
-      message: 'Ollama API key (optional, for cloud features)',
+      name: 'DEEPSEEK_API_KEY',
+      message: 'DeepSeek API key',
       default: '',
-      help: 'Leave empty if using local Ollama',
+      help: 'Required. Get yours at https://platform.deepseek.com/api_keys',
       sensitive: true,
+    },
+    {
+      name: 'DEEPSEEK_MODEL',
+      message: 'DeepSeek model name',
+      default: 'deepseek-chat',
+      help: 'The DeepSeek model to use (e.g., deepseek-chat, deepseek-reasoner)',
+    },
+  ];
+}
+
+/**
+ * Get shared prompts (always asked regardless of provider)
+ */
+function getSharedPrompts(): PromptConfig[] {
+  return [
+    {
+      name: 'OLLAMA_EMBEDDING_MODEL',
+      message: 'Ollama embedding model (for semantic search/RAG, always uses Ollama)',
+      default: '',
+      help: 'An embedding model is recommended for wiki/RAG features (e.g., nomic-embed-text). Leave empty to skip.',
     },
     {
       name: 'TOKEN_THRESHOLD',
@@ -94,6 +126,17 @@ export function getPrompts(): PromptConfig[] {
 }
 
 /**
+ * Get prompts based on the selected provider
+ */
+export function getPrompts(provider?: 'ollama' | 'deepseek'): PromptConfig[] {
+  const providerPrompts = provider === 'deepseek' ? getDeepSeekPrompts() : getOllamaPrompts();
+  return [
+    ...providerPrompts,
+    ...getSharedPrompts(),
+  ];
+}
+
+/**
  * Environment variable requirements (for display purposes)
  */
 export interface EnvRequirement {
@@ -104,6 +147,7 @@ export interface EnvRequirement {
 }
 
 export const ENV_REQUIREMENTS: EnvRequirement[] = [
+  // Ollama vars (always shown, some shared)
   {
     name: 'OLLAMA_HOST',
     required: false,
@@ -114,23 +158,48 @@ export const ENV_REQUIREMENTS: EnvRequirement[] = [
     name: 'OLLAMA_MODEL',
     required: false,
     default: 'glm-5:cloud',
-    instruction: 'Set OLLAMA_MODEL to specify which model to use',
+    instruction: 'Set OLLAMA_MODEL to specify which Ollama model to use',
   },
   {
     name: 'OLLAMA_VISION_MODEL',
     required: false,
-    instruction: 'Set OLLAMA_VISION_MODEL for vision/multimodal tasks',
+    instruction: 'Set OLLAMA_VISION_MODEL for vision/multimodal tasks (Ollama only)',
   },
   {
     name: 'OLLAMA_EMBEDDING_MODEL',
     required: false,
-    instruction: 'Set OLLAMA_EMBEDDING_MODEL for semantic search/RAG',
+    instruction: 'Set OLLAMA_EMBEDDING_MODEL for semantic search/RAG (always uses Ollama)',
   },
   {
     name: 'OLLAMA_API_KEY',
     required: false,
-    instruction: 'Set OLLAMA_API_KEY for cloud/web search features',
+    instruction: 'Set OLLAMA_API_KEY for cloud/web search features (Ollama only)',
   },
+  // DeepSeek vars
+  {
+    name: 'API_PROVIDER',
+    required: false,
+    default: 'ollama',
+    instruction: 'Set API_PROVIDER to "deepseek" to use DeepSeek instead of Ollama',
+  },
+  {
+    name: 'DEEPSEEK_HOST',
+    required: false,
+    default: 'https://api.deepseek.com',
+    instruction: 'Set DEEPSEEK_HOST for your DeepSeek API endpoint',
+  },
+  {
+    name: 'DEEPSEEK_API_KEY',
+    required: false,
+    instruction: 'Set DEEPSEEK_API_KEY for DeepSeek API access',
+  },
+  {
+    name: 'DEEPSEEK_MODEL',
+    required: false,
+    default: 'deepseek-chat',
+    instruction: 'Set DEEPSEEK_MODEL to specify which DeepSeek model to use',
+  },
+  // Shared vars
   {
     name: 'TOKEN_THRESHOLD',
     required: false,

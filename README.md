@@ -64,16 +64,23 @@ npm link
 
 ## Quick Start
 
-### 1. Install Ollama and enable Ollama Cloud
+### 1. Choose your LLM provider
 
-`mycc` relies on `ollama cloud` to work normally. So **ollama** must be installed beforehand.
+mycc supports two LLM providers:
 
+**Option A: Ollama (recommended)** — Run models locally. Enables all features including `web_search`, `web_fetch`, `screen`, and `read_picture`.
+
+Install Ollama:
 [download page of ollama](https://ollama.com/download)
 
-Ollama cloud provides the max capability, however if you do not need the online tools (web_search/web_fetch/screen/read_image),
-and you are fine with the local LLM, the `ollama ` alone without the cloud is also acceptable.
+Ollama cloud provides the max capability, however if you do not need the online tools,
+and you are fine with the local LLM, Ollama alone without the cloud is also acceptable.
 
-As the choice of LLM model, `glm-5:cloud` and `gemma4:31b-cloud` are recommended.
+Recommended models: `glm-5:cloud` and `gemma4:31b-cloud`.
+
+**Option B: DeepSeek** — Cloud-based API. Does not require local hardware. No `web_search`, `web_fetch`, `screen`, or `read_picture` support.
+
+Get an API key at [platform.deepseek.com](https://platform.deepseek.com/api_keys) and set it as `DEEPSEEK_API_KEY`. An embedding model via Ollama is still needed for wiki/RAG features.
 
 ### 2. Install an embedding model (Required)
 
@@ -124,6 +131,9 @@ Run the interactive setup wizard to configure your environment:
 mycc --setup
 ```
 
+The wizard will first ask you to choose an **API provider**:
+
+**Option A: Ollama (default)** — Local LLM inference via Ollama.
 The wizard will guide you through configuring:
 - **OLLAMA_HOST** - Ollama server URL (default: http://127.0.0.1:11434)
 - **OLLAMA_MODEL** - General/chat model (default: glm-5:cloud)
@@ -132,6 +142,17 @@ The wizard will guide you through configuring:
 - **OLLAMA_API_KEY** - API key for cloud features (optional)
 - **TOKEN_THRESHOLD** - Context limit threshold (default: 50000)
 - **EDITOR** - Text editor for file editing
+
+**Option B: DeepSeek** — Cloud-based LLM via DeepSeek API.
+The wizard will guide you through configuring:
+- **DEEPSEEK_HOST** - DeepSeek API endpoint (default: https://api.deepseek.com)
+- **DEEPSEEK_API_KEY** - Your DeepSeek API key (required)
+- **DEEPSEEK_MODEL** - DeepSeek model name (default: deepseek-chat)
+- **OLLAMA_EMBEDDING_MODEL** - Embedding model for semantic search (always uses Ollama)
+- **TOKEN_THRESHOLD** - Context limit threshold (default: 50000)
+- **EDITOR** - Text editor for file editing
+
+> **Note:** When using DeepSeek, `web_search`, `web_fetch`, `screen`, and `read_picture` tools are **not available**. Embeddings for wiki/RAG still require Ollama (any embedding model).
 
 You can choose to store configuration at:
 - **User-level**: `~/.mycc-store/.env` (global, applies to all projects)

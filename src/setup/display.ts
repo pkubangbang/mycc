@@ -24,7 +24,7 @@ interface SettingDisplay {
  */
 function isSensitive(name: string): boolean {
   // Only redact specific sensitive fields
-  const sensitiveFields = ['OLLAMA_API_KEY'];
+  const sensitiveFields = ['OLLAMA_API_KEY', 'DEEPSEEK_API_KEY'];
   return sensitiveFields.some((f) => name === f);
 }
 

@@ -112,11 +112,18 @@ export async function main(): Promise<void> {
   const labelWidth = 12;
   const alignLabel = (label: string) => label.padEnd(labelWidth);
 
+  const apiProvider = getApiProvider();
+  const providerLabel = apiProvider === 'deepseek' ? 'DeepSeek' : 'Ollama';
+  const hostUrl = apiProvider === 'deepseek'
+    ? process.env.DEEPSEEK_HOST || 'https://api.deepseek.com'
+    : OLLAMA_HOST;
+
   console.log();
   console.log(chalk.cyan.bold(`Coding Agent v${version}`));
   console.log(chalk.gray('─'.repeat(40)));
   console.log(chalk.cyan(`${alignLabel('Model:')}${MODEL}`));
-  console.log(chalk.gray(`${alignLabel('Host:')}${OLLAMA_HOST}`));
+  console.log(chalk.gray(`${alignLabel('Host:')}${hostUrl}`));
+  console.log(chalk.gray(`${alignLabel('Provider:')}${providerLabel}`));
 
   if (modelInfo) {
     if (modelInfo.family) console.log(chalk.gray(`${alignLabel('Family:')}${modelInfo.family}`));

@@ -1,7 +1,9 @@
 /**
  * models.ts - Model pulling via ollama
  *
- * Automatically pulls required models after configuration
+ * Automatically pulls required models after configuration.
+ * Only applicable when Ollama is the LLM provider. When DeepSeek
+ * is selected, model pulling is skipped.
  */
 
 import { spawn } from 'child_process';
@@ -65,9 +67,9 @@ async function pullModel(modelName: string): Promise<{ success: boolean; error?:
 }
 
 /**
- * Pull all configured models
+ * Pull all configured models (Ollama provider)
  */
-export async function pullConfiguredModels(config: Record<string, string>): Promise<void> {
+async function pullOllamaModels(config: Record<string, string>): Promise<void> {
   console.log(chalk.cyan('\n🔄 Checking and pulling required models...\n'));
 
   for (const model of MODELS_TO_PULL) {
@@ -93,8 +95,47 @@ export async function pullConfiguredModels(config: Record<string, string>): Prom
       );
     }
   }
+}
 
-  console.log(chalk.dim('\n  Model pull complete.\n'));
+/**
+ * Show informational message for DeepSeek provider
+ */
+function showDeepSeekInfo(): void {
+  console.log(chalk.cyan('\n🔄 DeepSeek model configuration'));
+  console.log(chalk.dim('  DeepSeek models are cloud-based; no local pull is needed.'));
+  console.log(chalk.dim('  Make sure your DEEPSEEK_API_KEY is valid at https://platform.deepseek.com'));
+  console.log();
+
+  // Still pull the embedding model (always uses Ollama)
+  console.log(chalk.dim('  Note: The embedding model for wiki/RAG still uses Ollama (if configured).\n'));
+}
+
+/**
+ * Pull all configured models based on provider
+ */
+export async function pullConfiguredModels(
+  config: Record<string, string>,
+  provider?: 'ollama' | 'deepseek'
+): Promise<void> {
+  if (provider === 'deepseek') {
+    showDeepSeekInfo();
+    // Still try to pull embedding model (uses Ollama)
+    const embeddingModel = config['OLLAMA_EMBEDDING_MODEL'];
+    if (embeddingModel && embeddingModel !== 'none' && embeddingModel.trim() !== '') {
+      const installed = await isOllamaInstalled();
+      if (installed) {
+        await pullModel(embeddingModel);
+      } else {
+        console.log(chalk.yellow('  ⚠ Ollama not found. Cannot pull embedding model.'));
+        console.log(chalk.dim('    Install Ollama and pull the embedding model manually:'));
+        console.log(chalk.dim(`    ollama pull ${embeddingModel}`));
+      }
+    }
+    return;
+  }
+
+  // Ollama provider — pull all models
+  await pullOllamaModels(config);
 }
 
 /**
