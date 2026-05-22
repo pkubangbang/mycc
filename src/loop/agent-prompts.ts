@@ -90,8 +90,10 @@ function buildCalendarSection(): string {
 function buildOutputBehaviorSection(): string {
   return [
     '## Output Behavior',
-    'Respond concisely when you use tools. Respond in detail otherwise.',
-    'Do NOT repeat the content that has shown in the brief tool.'
+    '- Respond concisely and when you use tools, and avoid over-explaining.',
+    '- When you found yourself using "Wait" or similar turning words, conclude this reply quickly, and use brief tool with a low confidence in the next round.',
+    '- Do NOT repeat the content that has been reported in the brief tool.',
+    '- User messages that starts with brackets (like [REMINDER]...) are FYI, you don\'t need to reply them, but focus on the task.'
   ].join('\n');
 }
 
