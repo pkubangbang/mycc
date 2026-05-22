@@ -12,10 +12,24 @@ import { agentIO } from '../agent-io.js';
 import { startWrapUp } from '../esc-wrap-up.js';
 import { isVerbose } from '../../config.js';
 import type { SequenceEvent } from '../../hook/sequence.js';
+import type { Triologue } from '../triologue.js';
 // Confusion threshold for hint generation
 const CONFUSION_THRESHOLD = 10;
 // Minimum message count before hint generation
 const MIN_MESSAGES_FOR_HINT = 6;
+
+/**
+ * Ensure the triologue is not in 'tool' role before injecting content.
+ * If the last role is 'tool', injects a bridge agent message
+ * to transition to 'assistant' for TP-safe note injection.
+ * This is called inline before each injection step — if the previous
+ * step already bridged, subsequent calls are no-ops.
+ */
+function ensureAssistant(tri: Triologue): void {
+  if (tri.getLastRole() === 'tool') {
+    tri.agent('Continuing.');
+  }
+}
 
 /**
  * Generate a human-readable breakdown of confusion factors
@@ -33,12 +47,17 @@ function generateBreakdown(
     parts.push(`${turnCount} assistant turns`);
   }
 
-  // Count errors
+  // Count errors — only match error/failed/fatal at the start of the result
+  // to avoid false positives from normal file content containing these words.
+  // Keep 'includes' for OS error codes (ENOENT, EACCES, EPERM) which are
+  // specific identifiers that won't appear in file content.
   const errors = events.filter(e => {
     const result = e.result?.toLowerCase() || '';
-    return result.includes('error') || result.includes('failed') ||
-           result.includes('fatal') || result.includes('enoent') ||
-           result.includes('eacces') || result.includes('eperm');
+    return result.startsWith('error:') || result.startsWith('error ') ||
+           result.startsWith('fatal:') || result.startsWith('failed:') ||
+           result.startsWith('failed ') ||
+           result.includes('enoent') || result.includes('eacces') ||
+           result.includes('eperm') || result.includes('permission denied');
   });
   if (errors.length > 0) {
     parts.push(`${errors.length} tool errors`);
@@ -68,39 +87,38 @@ export async function handleCollect(
     // 1. Handle pending questions from children
     await ctx.team.handlePendingQuestions();
 
-    // 2. Collect mails (only when TP-valid — skip if lastRole is tool)
-    const lastRole = triologue.getLastRole();
-    if (lastRole !== 'tool') {
-      const mails = ctx.mail.collectMails();
-      if (mails.length > 0) {
-        // Separate suggest mails from regular mails for proper framing
-        const suggestMails = mails.filter(m => m.from === 'suggest');
-        const otherMails = mails.filter(m => m.from !== 'suggest');
+    // 2. Collect mails — inject bridge on-demand if last role is 'tool'
+    const mails = ctx.mail.collectMails();
+    if (mails.length > 0) {
+      ensureAssistant(triologue);
 
-        const parts: string[] = [];
+      // Separate suggest mails from regular mails for proper framing
+      const suggestMails = mails.filter(m => m.from === 'suggest');
+      const otherMails = mails.filter(m => m.from !== 'suggest');
 
-        // Frame suggest/brown-bag mails with actionable instructions for the LLM
-        if (suggestMails.length > 0) {
-          const suggestContent = suggestMails
-            .map((mail) => mail.content)
-            .join('\n\n');
-          parts.push(
-            `[Context suggestion] The following resources were discovered for your task.\nConsider using wiki_get and skill_load to explore them:\n\n${suggestContent}`
-          );
-        }
+      const parts: string[] = [];
 
-        // Regular mails use standard format
-        for (const mail of otherMails) {
-          parts.push(`Mail from ${mail.from}: ${mail.title}\n${mail.content}`);
-        }
+      // Frame suggest/brown-bag mails with actionable instructions for the LLM
+      if (suggestMails.length > 0) {
+        const suggestContent = suggestMails
+          .map((mail) => mail.content)
+          .join('\n\n');
+        parts.push(
+          `[Context suggestion] The following resources were discovered for your task.\nConsider using wiki_get and skill_load to explore them:\n\n${suggestContent}`
+        );
+      }
 
-        const mailContent = parts.join('\n\n---\n\n');
+      // Regular mails use standard format
+      for (const mail of otherMails) {
+        parts.push(`Mail from ${mail.from}: ${mail.title}\n${mail.content}`);
+      }
 
-        if (agentIO.isNeglectedMode()) {
-          triologue.note('URGENT', `user interrupted - wrap up quickly\n${mailContent}`);
-        } else {
-          triologue.note('MAIL', mailContent);
-        }
+      const mailContent = parts.join('\n\n---\n\n');
+
+      if (agentIO.isNeglectedMode()) {
+        triologue.note('URGENT', `user interrupted - wrap up quickly\n${mailContent}`);
+      } else {
+        triologue.note('MAIL', mailContent);
       }
     }
 
@@ -109,34 +127,33 @@ export async function handleCollect(
     const messageCount = triologue.getMessagesRaw().length;
 
     if (confusionIndex >= CONFUSION_THRESHOLD && messageCount >= MIN_MESSAGES_FOR_HINT) {
-      // Only generate hint after an assistant message (TP-safe: assistant → user via note)
-      if (lastRole === 'assistant') {
-        // Use brief for hint round notification (user-facing)
-        ctx.core.brief('info', 'loop', 'Generating hint...');
-        // Get pending skills (skills with 'when' but no compiled condition)
-        const pendingSkills = env.conditions.getPending();
-        // Generate confusion breakdown from sequence events
-        const breakdown = generateBreakdown(confusionIndex, env.sequence.getEvents());
+      ensureAssistant(triologue);
 
-        // Use escAware for ESC-interruptible hint generation
-        const result = await ctx.core.escAware(
-          async (abortController) => {
-            return await triologue.generateHintRound(abortController, confusionIndex, breakdown, pendingSkills);
-          },
-          () => {
-            // Start wrap-up when ESC is pressed during hint generation
-            startWrapUp(triologue);
-            return 'aborted' as const;
-          }
-        );
-        
-        // If aborted (ESC pressed), skip to PROMPT to show prompt immediately
-        if (result === 'aborted') {
-          return AgentState.PROMPT;
+      // Use brief for hint round notification (user-facing)
+      ctx.core.brief('info', 'loop', 'Generating hint...');
+      // Get pending skills (skills with 'when' but no compiled condition)
+      const pendingSkills = env.conditions.getPending();
+      // Generate confusion breakdown from sequence events
+      const breakdown = generateBreakdown(confusionIndex, env.sequence.getEvents());
+
+      // Use escAware for ESC-interruptible hint generation
+      const result = await ctx.core.escAware(
+        async (abortController) => {
+          return await triologue.generateHintRound(abortController, confusionIndex, breakdown, pendingSkills);
+        },
+        () => {
+          // Start wrap-up when ESC is pressed during hint generation
+          startWrapUp(triologue);
+          return 'aborted' as const;
         }
-        // Reset confusion after hint
-        ctx.core.resetConfusionIndex();
+      );
+      
+      // If aborted (ESC pressed), skip to PROMPT to show prompt immediately
+      if (result === 'aborted') {
+        return AgentState.PROMPT;
       }
+      // Reset confusion after hint
+      ctx.core.resetConfusionIndex();
     }
 
     // 4. Todo nudging with state tracking
@@ -147,7 +164,8 @@ export async function handleCollect(
         turn.lastTodoState = currentTodoState;
       }
       turn.nextTodoNudge--;
-      if (turn.nextTodoNudge === 0 && lastRole !== 'tool') {
+      if (turn.nextTodoNudge === 0) {
+        ensureAssistant(triologue);
         triologue.note('REMINDER', `Update your todos. ${ctx.todo.printTodoList()}`);
         turn.nextTodoNudge = 3;
       }
@@ -155,17 +173,13 @@ export async function handleCollect(
 
     // 5. Brief nudging - remind agent to use brief tool
     turn.nextBriefNudge--;
-    if (turn.nextBriefNudge <= 0 && lastRole !== 'tool') {
+    if (turn.nextBriefNudge <= 0) {
+      ensureAssistant(triologue);
       triologue.note('REMINDER', 'Provide a brief status update using the brief tool. Example: brief("Working on X", 7)');
       turn.nextBriefNudge = 5;
     }
 
-    // 6. Validate role sequence before LLM call
-    if (lastRole === 'assistant') {
-      triologue.note('CONTINUE', 'Continue with your task.');
-    }
-
-    // 7. Log message count and token consumption in verbose mode
+    // 6. Log message count and token consumption in verbose mode
     if (isVerbose()) {
       const tokenCount = triologue.getTokenCount();
       const tokenThreshold = triologue.getTokenThreshold();
