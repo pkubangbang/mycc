@@ -39,12 +39,23 @@ export interface MarkedItem {
 }
 
 /**
+ * Marked term from exploration
+ */
+export interface MarkedTerm {
+  /** The term name (e.g. "STAR principle", "microCompact") */
+  term: string;
+  /** Brief context or definition for this term */
+  context?: string;
+}
+
+/**
  * Result of exploration - summary and marked files/URLs
  */
 export interface ExplorationResult {
   summary: string;
   markedFiles: MarkedItem[];
   markedUrls: MarkedItem[];
+  markedTerms: MarkedTerm[];
 }
 
 /**
@@ -268,6 +279,31 @@ const EXPLORER_TOOLS: Tool[] = [
       },
     },
   },
+  {
+    type: 'function',
+    function: {
+      name: 'mark_term',
+      description:
+        'Mark a project-specific term or concept as important and hoist it to be discoverable from root.\n' +
+        'Use this when you find a technical term, jargon, or named concept that is defined or central to this section.\n' +
+        'Terms are collected recursively and displayed at the mindmap root for quick discovery.\n' +
+        'Examples: "STAR principle", "microCompact", "triologue", "neglected mode", "ANC-E", "agent loop"',
+      parameters: {
+        type: 'object',
+        properties: {
+          term: {
+            type: 'string',
+            description: 'The term name (e.g. "STAR principle", "microCompact", "triologue")',
+          },
+          context: {
+            type: 'string',
+            description: 'Brief definition or context for this term (one sentence)',
+          },
+        },
+        required: ['term'],
+      },
+    },
+  },
 ];
 
 /**
@@ -275,13 +311,15 @@ const EXPLORER_TOOLS: Tool[] = [
  * @returns Tool output string
  * @param markedFiles - Set to track marked files (passed by reference)
  * @param markedUrls - Set to track marked URLs (passed by reference)
+ * @param markedTerms - Set to track marked terms (passed by reference)
  */
 async function executeTool(
   name: string,
   args: Record<string, unknown>,
   workDir: string,
   markedFiles: MarkedItem[],
-  markedUrls: MarkedItem[]
+  markedUrls: MarkedItem[],
+  markedTerms: MarkedTerm[]
 ): Promise<string> {
   switch (name) {
     case 'read_file':
@@ -310,6 +348,12 @@ async function executeTool(
         args.url as string,
         args.reason as string | undefined,
         markedUrls
+      );
+    case 'mark_term':
+      return markTerm(
+        args.term as string,
+        args.context as string | undefined,
+        markedTerms
       );
     default:
       return `Unknown tool: ${name}`;
@@ -442,6 +486,30 @@ function markUrl(
 }
 
 /**
+ * Mark a term as relevant to the topic
+ * Terms are hoisted to root-level discoverability
+ */
+function markTerm(
+  term: string,
+  context: string | undefined,
+  markedTerms: MarkedTerm[]
+): string {
+  if (!term) {
+    return 'Error: term is required';
+  }
+
+  // Check if already marked (case-insensitive)
+  if (markedTerms.some((item) => item.term.toLowerCase() === term.toLowerCase())) {
+    return `Already marked: ${term}`;
+  }
+
+  // Add to marked terms
+  markedTerms.push({ term, context });
+
+  return `Marked term: ${term}${context ? ` (${context})` : ''}`;
+}
+
+/**
  * Helper: Wrap a promise with a timeout
  */
 function withTimeout<T>(promise: Promise<T>, timeoutMs: number, errorMessage: string): Promise<T> {
@@ -559,11 +627,13 @@ ${ancestorContext || '(root level - no parent context)'}
 1. Use tools (read_file, ls, grep, mark_file, web_search, web_fetch, mark_url) to explore code and web resources relevant to this section
 2. Use mark_file to mark local files that are directly relevant to this topic
 3. Use mark_url to mark web URLs that contain important information
-4. Discover implementation details, file locations, and code patterns
-5. Write a concise summary that includes:
+4. Use mark_term to mark project-specific terms or concepts that are defined or central to this section (these will be hoisted to the mindmap root for quick discovery)
+5. Discover implementation details, file locations, and code patterns
+6. Write a concise summary that includes:
    - What this section covers
    - Relevant files/modules (use mark_file)
    - Relevant URLs (use mark_url)
+   - Key terms (use mark_term)
    - Key technical details
 
 Explore now. When done exploring, write your summary. Produce only the summary, without any additional explanations or commentary.`;
@@ -592,6 +662,7 @@ async function runExplorationLoop(
   const messages: Message[] = [];
   const markedFiles: MarkedItem[] = [];
   const markedUrls: MarkedItem[] = [];
+  const markedTerms: MarkedTerm[] = [];
 
   const prompt = buildExplorationPrompt(nodeTitle, nodeText, ancestorContext);
   messages.push({ role: 'user', content: prompt });
@@ -642,6 +713,7 @@ async function runExplorationLoop(
         summary: assistantMsg.content || '(no summary)',
         markedFiles,
         markedUrls,
+        markedTerms,
       };
     }
 
@@ -658,7 +730,8 @@ async function runExplorationLoop(
           tc.function.arguments as Record<string, unknown>,
           workDir,
           markedFiles,
-          markedUrls
+          markedUrls,
+          markedTerms
         );
       } catch (err) {
         output = `Tool execution error [${toolName}]: ${(err as Error).message}`;
@@ -689,6 +762,7 @@ async function runExplorationLoop(
     summary: lastAssistant?.content || '(exploration timeout)',
     markedFiles,
     markedUrls,
+    markedTerms,
   };
 }
 

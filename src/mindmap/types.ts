@@ -8,14 +8,16 @@
  * Links are stubs that store metadata only (no resolution)
  */
 export interface Link {
-  /** Type of target: node in same mindmap, file, or URL */
-  target_type: 'node' | 'file' | 'url';
+  /** Type of target: node in same mindmap, file, URL, or term */
+  target_type: 'node' | 'file' | 'url' | 'term';
   /** Target node id (when target_type is 'node') */
   node_id?: string;
   /** Target file path (when target_type is 'file') */
   file_path?: string;
   /** Target URL (when target_type is 'url') */
   url?: string;
+  /** The term name (when target_type is 'term'), e.g. "STAR principle" */
+  term_name?: string;
   /** Comment describing this relationship */
   comment: string;
 }

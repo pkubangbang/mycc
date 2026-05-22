@@ -60,14 +60,52 @@ PREFER this over reading files when you need high-level understanding. Use read/
       return `Node not found: ${nodePath}\n\nAvailable paths start from root "/". Use recall with path "/" to see top-level nodes.`;
     }
 
-    return formatNode(node);
+    // Collect hoisted terms only when querying root
+    const hoistedTerms = nodePath === '/' ? collectDescendantTerms(mindmap.root) : [];
+
+    return formatNode(node, hoistedTerms);
   },
 };
 
 /**
+ * Collect all marked terms from all descendant nodes, deduplicated
+ * Returns deduplicated list sorted alphabetically by term name
+ */
+function collectDescendantTerms(node: Node): Array<{ term: string; path: string; context: string }> {
+  const terms = new Map<string, { term: string; path: string; context: string }>();
+
+  function walk(n: Node) {
+    for (const link of n.links) {
+      if (link.target_type === 'term' && link.term_name) {
+        const key = link.term_name.toLowerCase();
+        if (!terms.has(key)) {
+          // Deduplicate: first occurrence wins (the node that defines the term)
+          terms.set(key, {
+            term: link.term_name,
+            path: n.id,
+            context: link.comment,
+          });
+        }
+      }
+    }
+    for (const child of n.children) {
+      walk(child);
+    }
+  }
+
+  walk(node);
+
+  // Sort alphabetically for consistent output
+  return Array.from(terms.values()).sort((a, b) => a.term.localeCompare(b.term));
+}
+
+/**
  * Format node for LLM consumption
  */
-function formatNode(node: Node): string {
+function formatNode(
+  node: Node,
+  hoistedTerms?: Array<{ term: string; path: string; context: string }>
+): string {
   const lines: string[] = [];
 
   lines.push(`# ${node.title}`);
@@ -104,11 +142,25 @@ function formatNode(node: Node): string {
     lines.push('');
   }
 
+  // Hoisted terms (only shown for root node)
+  if (hoistedTerms && hoistedTerms.length > 0) {
+    lines.push('## Key Terms');
+    lines.push('_Project-specific terminology defined in this codebase. Use recall to drill down._');
+    lines.push('');
+    for (const term of hoistedTerms) {
+      lines.push(`- ${term.term} → recall(path="${term.path}")`);
+      if (term.context) {
+        lines.push(`  ${term.context}`);
+      }
+    }
+    lines.push('');
+  }
+
   // Links (if any)
   if (node.links.length > 0) {
     lines.push('## Links');
     for (const link of node.links) {
-      const target = link.node_id || link.file_path || link.url;
+      const target = link.node_id || link.file_path || link.url || link.term_name;
       lines.push(`- ${link.target_type}: ${target}`);
       if (link.comment) {
         lines.push(`  ${link.comment}`);

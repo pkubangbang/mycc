@@ -148,6 +148,13 @@ async function summarize_with_explorer(
             comment: item.reason || 'Discovered during exploration',
           });
         }
+        for (const item of result.markedTerms) {
+          node.links.push({
+            target_type: 'term',
+            term_name: item.term,
+            comment: item.context || 'Project-specific term',
+          });
+        }
 
         if (onNodeComplete) onNodeComplete(node.title);
       } finally {

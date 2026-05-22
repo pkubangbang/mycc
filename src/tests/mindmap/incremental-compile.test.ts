@@ -21,6 +21,7 @@ vi.mock('../../mindmap/explorer-agent.js', () => ({
         summary: `[A] ${nodeTitle} [N] ${nodeText.slice(0, 40)} [C] ${ancestorContext.slice(0, 30)} [E] ${randSuffix}`,
         markedFiles: [],
         markedUrls: [],
+        markedTerms: [],
       };
     }
   ),

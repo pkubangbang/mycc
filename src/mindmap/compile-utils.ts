@@ -241,7 +241,8 @@ export function merge_existing_data(newNode: Node, existingNode: Node | null): v
         l.comment === link.comment &&
         ((l.target_type === 'url' && l.url === link.url) ||
           (l.target_type === 'file' && l.file_path === link.file_path) ||
-          (l.target_type === 'node' && l.node_id === link.node_id))
+          (l.target_type === 'node' && l.node_id === link.node_id) ||
+          (l.target_type === 'term' && l.term_name === link.term_name))
     );
     if (!exists) {
       newNode.links.push(link);

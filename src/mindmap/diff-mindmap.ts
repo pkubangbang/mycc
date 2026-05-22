@@ -241,6 +241,13 @@ export async function incremental_compile(
           comment: item.reason || 'Discovered during exploration',
         });
       }
+      for (const item of result.markedTerms) {
+        node.links.push({
+          target_type: 'term',
+          term_name: item.term,
+          comment: item.context || 'Project-specific term',
+        });
+      }
 
       tracker.onNodeComplete(node.title);
       processedCount++;
