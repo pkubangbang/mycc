@@ -136,6 +136,7 @@ interface DeepSeekRequestBody {
   reasoning_effort?: 'high' | 'max';
   max_tokens?: number;
   tools?: unknown[];
+  response_format?: { type: 'json_object' | 'text' };
 }
 
 // ============================================================================
@@ -350,6 +351,12 @@ export async function retryChat(
 
         if (request.tools && request.tools.length > 0) {
           body.tools = request.tools as unknown[];
+        }
+
+        // DeepSeek only supports { type: 'json_object' | 'text' }, not a raw
+        // JSON Schema. The schema is communicated through the prompt instead.
+        if (request.format) {
+          body.response_format = { type: 'json_object' };
         }
 
         const stream = await deepseekChat(body, signal);

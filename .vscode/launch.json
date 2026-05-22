@@ -5,17 +5,15 @@
       "name": "Debug Project",
       "type": "node",
       "request": "launch",
-      "runtimeExecutable": "npx",
-      "runtimeArgs": ["tsx", "src/index.ts", "--skip-healthcheck", "-v"],
+      "runtimeExecutable": "tsx",
+      "runtimeArgs": ["src/index.ts", "--skip-healthcheck", "-v"],
       "cwd": "${workspaceFolder}",
       "console": "integratedTerminal",
       "internalConsoleOptions": "neverOpen",
       "skipFiles": ["<node_internals>/**"],
       "env": {
-        "DEBUG_EVALUATOR": "1",
-        "OLLAMA_MODEL": "gemma4:31b-cloud",
         "EDITOR": "open",
-        "TOKEN_THRESHOLD": "70000"
+        "TOKEN_THRESHOLD": "128000"
       }
     }
   ]

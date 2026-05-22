@@ -5,7 +5,7 @@
  * - System messages omitted
  * - Two-letter role abbreviations (ux, ax, ti, to)
  * - Pipe separator for minimal overhead
- * - Tool results included in full (no truncation)
+ * - Tool results optionally truncated (controlled by truncateToolOutput)
  */
 
 import type { Message } from '../types.js';
@@ -15,6 +15,8 @@ interface MinifierOptions {
   maxContentLength?: number;
   /** Max length for tool call arguments (default: 200) */
   maxArgsLength?: number;
+  /** Whether to truncate tool result content as well (default: false) */
+  truncateToolOutput?: boolean;
 }
 
 const ROLE_ABBREVS: Record<string, string> = {
@@ -43,7 +45,7 @@ export function minifyMessages(
   messages: Message[],
   options: MinifierOptions = {}
 ): string {
-  const { maxContentLength = 500, maxArgsLength = 200 } = options;
+  const { maxContentLength = 500, maxArgsLength = 200, truncateToolOutput = false } = options;
 
   const lines: string[] = [
     '> ux = user, ax = assistant, ti = tool call, to = tool result'
@@ -66,9 +68,12 @@ export function minifyMessages(
       continue;
     }
 
-    // Handle tool result - included in full, no truncation
+    // Handle tool result - truncated if truncateToolOutput is true
     if (msg.role === 'tool') {
-      lines.push(`to|${msg.tool_name || 'unknown'}|${msg.content || ''}`);
+      const content = truncateToolOutput
+        ? truncate(msg.content || '', maxContentLength)
+        : (msg.content || '');
+      lines.push(`to|${msg.tool_name || 'unknown'}|${content}`);
       continue;
     }
 

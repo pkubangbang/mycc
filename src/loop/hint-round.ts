@@ -13,6 +13,42 @@ import { agentIO } from './agent-io.js';
 
 const ANALYSIS_INSTRUCTION = 'Analyze the gap between the user\'s intent and current progress.';
 
+const HINT_SCHEMA = {
+  type: 'object',
+  properties: {
+    blocker: {
+      type: 'string',
+      description: 'What is preventing progress. Use "no blockers" if there are no real blockers. Be specific and concise.',
+    },
+    next_step: {
+      type: 'string',
+      description: 'Concrete, actionable next step. If no blockers, suggest continuing current work.',
+    },
+    focus_on: {
+      type: 'string',
+      description: 'Key area or priority to focus on.',
+    },
+    wiki_domain: {
+      type: 'string',
+      description: 'Domain name from available domains. Leave empty if no wiki search needed.',
+    },
+    wiki_query: {
+      type: 'string',
+      description: 'Search query for the wiki. Leave empty if no wiki search needed.',
+    },
+  },
+  required: ['blocker', 'next_step', 'focus_on', 'wiki_domain', 'wiki_query'],
+} as const;
+
+const HINT_SYSTEM_PROMPT = `You are a problem-analysis assistant. Your task is to analyze the gap between the user's intent and the agent's current progress, then output a structured JSON analysis.
+
+CRITICAL INSTRUCTIONS:
+1. If there are NO REAL blockers preventing progress, set blocker to exactly: "no blockers"
+2. Do NOT fabricate blockers. "no blockers" means the agent should simply continue with the current task.
+3. Only suggest wiki_domain and wiki_query if there's genuine knowledge gap. Leave empty strings if no wiki search needed.
+4. Reply with ONLY a JSON object. No commentary, no markdown fences. The schema is:
+${JSON.stringify(HINT_SCHEMA, null, 2)}`;
+
 /** Minimal triologue surface needed by hint round generation */
 export interface HintRoundContext {
   /** The raw messages array (no system prompt / project context prepended) */
@@ -67,7 +103,7 @@ export async function generateHintRound(
     return true;
   });
 
-  const compactContext = minifyMessages(filteredMessages, { maxContentLength: 300, maxArgsLength: 100 });
+  const compactContext = minifyMessages(filteredMessages, { maxContentLength: 300, maxArgsLength: 100, truncateToolOutput: true });
 
   // Get wiki domains for knowledge search suggestion
   const wiki = ctx.getWiki();
@@ -76,54 +112,18 @@ export async function generateHintRound(
     ? domains.map(d => `- ${d.domain_name}${d.description ? `: ${d.description}` : ''}`).join('\n')
     : 'No domains available';
 
-  // JSON Schema for structured output
-  const hintSchema = {
-    type: 'object',
-    properties: {
-      blocker: {
-        type: 'string',
-        description: 'What is preventing progress. Use "no blockers" if there are no real blockers. Be specific and concise.',
-      },
-      next_step: {
-        type: 'string',
-        description: 'Concrete, actionable next step. If no blockers, suggest continuing current work.',
-      },
-      focus_on: {
-        type: 'string',
-        description: 'Key area or priority to focus on.',
-      },
-      wiki_domain: {
-        type: 'string',
-        description: 'Domain name from available domains. Leave empty if no wiki search needed.',
-      },
-      wiki_query: {
-        type: 'string',
-        description: 'Search query for the wiki. Leave empty if no wiki search needed.',
-      },
-    },
-    required: ['blocker', 'next_step', 'focus_on', 'wiki_domain', 'wiki_query'],
-  };
-
-  const analysisPrompt = `## Conversation Context
-${compactContext}
-
-## Confusion Score: ${confusionScore}
-${confusionBreakdown}
-
-## Available Wiki Domains
-${domainInfo}
-
----
-
-${ANALYSIS_INSTRUCTION} 
-
-CRITICAL INSTRUCTIONS:
-1. If there are NO REAL blockers preventing progress, set blocker to exactly: "no blockers"
-2. Do NOT fabricate blockers. "no blockers" means the agent should simply continue with the current task.
-3. Only suggest wiki_domain and wiki_query if there's genuine knowledge gap. Leave empty strings if no wiki search needed.
-4. The reply should be a JSON string, with no extra commentary. JSON schema must be respected. The schema is:
-${JSON.stringify(hintSchema, null, 2)}
-`;
+  const userPrompt = [
+    '## Conversation Context',
+    compactContext,
+    '',
+    `## Confusion Score: ${confusionScore}`,
+    confusionBreakdown,
+    '',
+    '## Available Wiki Domains',
+    domainInfo,
+    '',
+    ANALYSIS_INSTRUCTION,
+  ].join('\n');
 
   // Retry loop: parse JSON until success or abort
   while (true) {
@@ -133,14 +133,17 @@ ${JSON.stringify(hintSchema, null, 2)}
 
     try {
       agentIO.verbose('triologue', 'Hint round request');
-      const truncatedPrompt = `${analysisPrompt.split(ANALYSIS_INSTRUCTION)[0]}${ANALYSIS_INSTRUCTION}\n...`;
+      const truncatedPrompt = `${userPrompt.split(ANALYSIS_INSTRUCTION)[0]}${ANALYSIS_INSTRUCTION}\n...`;
       agentIO.verbose('triologue', truncatedPrompt, '');
 
       const response = await retryChat(
         {
           model: MODEL,
-          messages: [{ role: 'user', content: analysisPrompt }],
-          format: hintSchema,
+          messages: [
+            { role: 'system', content: HINT_SYSTEM_PROMPT },
+            { role: 'user', content: userPrompt },
+          ],
+          format: HINT_SCHEMA,
           think: true,
         },
         { signal: abortController.signal, neglected: agentIO.isNeglectedMode() },
