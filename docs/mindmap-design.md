@@ -346,6 +346,82 @@ use `/mindmap compile` to re-compile. The re-compilation is not done automatical
 without touching the CLAUDE.md; only when the user asks mycc to write to CLAUDE.md should
 it be updated (and re-compiled).
 
+## Terminology Hoisting
+
+**Terminology Hoisting** is a feature that makes project-specific terms discoverable from `recall("/")` so the LLM can quickly locate terminology without guessing which branch to drill into.
+
+### Problem
+
+When the LLM calls `recall("/")`, only direct children (level-1 nodes) are shown. Deep project-specific terms like **STAR principle**, **microCompact**, **triologue**, **neglected mode** are buried 2+ levels deep. The LLM has no signposts from the root, causing it to bail out of mindmap discovery.
+
+### GlossaryEntry Type
+
+```typescript
+interface GlossaryEntry {
+  /** The terminology term (e.g. "STAR principle") */
+  term: string;
+  /** Node path where the term is defined/used */
+  path: string;
+  /** Brief context snippet (< 100 chars) from the source text */
+  context: string;
+}
+```
+
+The `Mindmap` interface gets a new field:
+```typescript
+interface Mindmap {
+  // ... existing fields ...
+  terms: GlossaryEntry[];  // Hoisted glossary for root-level discovery
+}
+```
+
+### Extraction Algorithm
+
+During compilation, after the tree is built, a post-processing pass extracts terms:
+
+1. **Bold text scan**: Regex `\*\*(.+?)\*\*` matches **term** patterns in each node's `text`
+2. **Node title check**: If a term from bold text matches (or closely relates to) a node's title, prefer that node's path (the dedicated section is the authoritative source)
+3. **Deduplication**: By `term.toLowerCase()`. Keep the entry whose node has the term as its own title (deepest definition), or the first occurrence
+4. **Context**: Extract the first sentence or ~80 chars surrounding the term occurrence as context
+
+### Extraction is Deterministic
+
+No LLM calls are needed for term extraction. Pure regex-based, making it cheap and suitable for re-running on every incremental compile.
+
+### Recall Output
+
+When `recall("/")` is called, the output includes a "## Key Terms" section:
+
+```
+# root
+Path: /
+Level: 0
+
+## Summary
+...
+
+## Children
+- concept-a → recall(path="/concept-a")
+- architecture → recall(path="/architecture")
+
+## Key Terms
+_Project-specific terminology defined in this codebase:_
+
+- microCompact → recall(path="/concepts/agent-loop/micro-compact")
+- STAR principle → recall(path="/concepts/agent-loop/star-principle")
+- triologue → recall(path="/architecture/triologue")
+...
+
+## Links
+...
+```
+
+This gives the LLM immediate, actionable drill-down paths for any important term.
+
+### Incremental Compatibility
+
+Since extraction is cheap (no LLM), the entire glossary is regenerated after every incremental compile — no need to diff the `terms` field.
+
 ## Implementation Status
 
 | Feature | Status | Notes |
@@ -357,5 +433,6 @@ it be updated (and re-compiled).
 | patch_mindmap | 🚧 Planned | Node update with cascade |
 | Link resolution | 📋 Future | Stub design complete |
 | /mindmap commands | 🚧 Planned | User-facing slash commands |
+| **Terminology Hoisting** | 📋 Planned | Glossary extraction + recall display |
 
 Legend: ✅ Complete | 🚧 In Progress | 📋 Planned

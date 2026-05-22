@@ -8,7 +8,7 @@
 
 import { retryChat, MODEL } from '../engine/chat-provider.js';
 import type { Message, WikiModule, NoteCategory } from '../types.js';
-import { minifyForHint } from '../utils/llm-chat-minifier.js';
+import { minifyMessages } from '../utils/llm-chat-minifier.js';
 import { agentIO } from './agent-io.js';
 
 const ANALYSIS_INSTRUCTION = 'Analyze the gap between the user\'s intent and current progress.';
@@ -57,9 +57,19 @@ export async function generateHintRound(
 ): Promise<'aborted' | 'success'> {
   if (agentIO.isNeglectedMode()) return 'aborted';
 
-  // Extract focused context for hint generation
+  // Build compact conversation context for analysis
   const messages = ctx.getMessagesRaw();
-  const context = minifyForHint(messages, confusionScore, confusionBreakdown);
+
+  // Filter out system noise messages that would distract hint analysis
+  const filteredMessages = messages.filter(msg => {
+    if (msg.role === 'system') return false;
+    if (msg.role === 'user' && msg.content) {
+      if (/^\[(?:REMINDER|HINT|CONTINUE|FYI|WRAP_UP)\]/.test(msg.content)) return false;
+    }
+    return true;
+  });
+
+  const compactContext = minifyMessages(filteredMessages, { maxContentLength: 300, maxArgsLength: 100 });
 
   // Get wiki domains for knowledge search suggestion
   const wiki = ctx.getWiki();
@@ -96,20 +106,11 @@ export async function generateHintRound(
     required: ['blocker', 'next_step', 'focus_on', 'wiki_domain', 'wiki_query'],
   };
 
-  const analysisPrompt = `## User's Intent
-${context.userIntent}
+  const analysisPrompt = `## Conversation Context
+${compactContext}
 
-## Current Progress
-${context.recentTools.map(t => `- ${t.name}: ${t.status}`).join('\n')}
-
-## Problems Encountered
-${context.errors.length > 0 ? context.errors.map(e => `- ${e.tool}: ${e.error}`).join('\n') : 'None'}
-
-## Stuck Patterns
-${context.repetition.length > 0 ? context.repetition.map(r => `- ${r.tool} called ${r.count} times`).join('\n') : 'None'}
-
-## Confusion Score: ${context.confusionScore}
-${context.confusionBreakdown}
+## Confusion Score: ${confusionScore}
+${confusionBreakdown}
 
 ## Available Wiki Domains
 ${domainInfo}
