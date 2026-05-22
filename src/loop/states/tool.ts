@@ -148,6 +148,11 @@ export async function handleTool(
         // Run compact immediately
         await triologue.compact();
 
+        // Reset stat counts: confusion index and sequence events are stale
+        // after compaction — the old context has been summarized away.
+        ctx.core.resetConfusionIndex();
+        sequence.clear();
+
         // Return to COLLECT - agent will continue with fresh context
         return AgentState.COLLECT;
       }
@@ -216,6 +221,11 @@ export async function handleTool(
             'Tool skipped due to context overflow.'
           );
           await triologue.compact();
+
+          // Reset stat counts after compaction
+          ctx.core.resetConfusionIndex();
+          sequence.clear();
+
           return AgentState.COLLECT;
         }
 

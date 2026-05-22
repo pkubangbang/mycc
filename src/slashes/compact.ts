@@ -30,12 +30,17 @@ export const compactCommand: SlashCommand = {
 
     try {
       await triologue.compact(focus);
+      // Reset stat counts: confusion index and sequence events are no longer
+      // relevant after compaction (old context has been summarized away).
+      context.ctx.core.resetConfusionIndex();
+      context.sequence?.clear();
       if (focus) {
         console.log(chalk.green(`Compaction complete (focus: ${focus}).`));
       } else {
         console.log(chalk.green('Compaction complete.'));
       }
       console.log(chalk.gray('The conversation has been summarized. Domains were included for knowledge persistence.'));
+      console.log(chalk.gray('Stat counters (confusion index, sequence events) have been reset.'));
     } catch (err) {
       console.log(chalk.red(`Compaction failed: ${(err as Error).message}`));
     }

@@ -204,6 +204,12 @@ export async function handleHook(
     if (hookResult.compactRequested) {
       ctx.core.brief('info', 'compact', 'Compacting context due to intent language confusion...');
       await triologue.compact();
+
+      // Reset stat counts after hook-requested compaction — old context is
+      // now summarized and accumulated confusion/sequence events are stale.
+      env.ctx.core.resetConfusionIndex();
+      env.sequence.clear();
+
       return AgentState.COLLECT;
     }
 
