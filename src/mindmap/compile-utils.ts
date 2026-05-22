@@ -473,6 +473,8 @@ export function formatToolArg(tool: string, args: Record<string, unknown>): stri
       return String(args.url || '').slice(0, 30);
     case 'mark_url':
       return String(args.url || '').slice(0, 30);
+    case 'mark_term':
+      return `"${String(args.term || '').slice(0, 20)}"`;
     default:
       return '';
   }
