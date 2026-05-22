@@ -21,8 +21,6 @@ export interface HintRoundContext {
   note(category: NoteCategory, message: string): void;
   /** Optional wiki module for domain-aware knowledge suggestions */
   getWiki(): WikiModule | undefined;
-  /** Notify that hint round completed successfully */
-  onHint?(): void;
 }
 
 /** Shape of the parsed hint data from LLM response */
@@ -195,7 +193,6 @@ ${JSON.stringify(hintSchema, null, 2)}
       hintLines.push('Use `ctx.core.brief()` to provide status updates as needed.');
 
       ctx.note('HINT', hintLines.join('\n'));
-      ctx.onHint?.();
 
       return 'success';
     } catch (err) {

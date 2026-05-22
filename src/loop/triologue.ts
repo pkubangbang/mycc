@@ -50,8 +50,7 @@ interface TriologueOptions {
   onCompact?: (transcriptPath: string) => void;
   /** Called after each message is added */
   onMessage?: (messages: Message[]) => void;
-  /** Called when hint round is generated */
-  onHint?: () => void;
+
   /** Wiki module for domain list during compact */
   wiki?: WikiModule;
 }
@@ -91,7 +90,7 @@ export class Triologue {
       onToolMisalign: options.onToolMisalign ?? this.defaultOnToolMisalign,
       onCompact: options.onCompact ?? this.defaultOnCompact,
       onMessage: options.onMessage ?? (() => {}),
-      onHint: options.onHint ?? (() => {}),
+
       wiki: options.wiki,
     };
   }
