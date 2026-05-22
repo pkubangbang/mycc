@@ -145,7 +145,7 @@ function validate_link_structure(link: unknown): boolean {
   const obj = link as Record<string, unknown>;
   
   // Check required fields
-  if (obj.target_type !== 'node' && obj.target_type !== 'file' && obj.target_type !== 'url') {
+  if (obj.target_type !== 'node' && obj.target_type !== 'file' && obj.target_type !== 'url' && obj.target_type !== 'term') {
     return false;
   }
   
@@ -155,6 +155,7 @@ function validate_link_structure(link: unknown): boolean {
   if (obj.target_type === 'node' && typeof obj.node_id !== 'string') return false;
   if (obj.target_type === 'file' && typeof obj.file_path !== 'string') return false;
   if (obj.target_type === 'url' && typeof obj.url !== 'string') return false;
+  if (obj.target_type === 'term' && typeof obj.term_name !== 'string') return false;
   
   return true;
 }

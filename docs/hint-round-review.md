@@ -243,11 +243,146 @@ The lead receives this mail in its COLLECT state and injects it as a `[MAIL]` no
 - Noise filtering prevents system messages from polluting analysis
 
 ### Areas for Potential Improvement
-- **Same-model self-analysis**: Consider using a different model or richer context for hint analysis
-- **Hint cooldown**: Add minimum gap between hints to prevent rapid-fire looping
-- **Semantic repetition detection**: Go beyond tool-name matching
-- **Full context in hints**: Include system prompt/project context in analysis
-- **Metrics**: Track hint frequency and effectiveness
-- **Unify context extraction formats**: Align `minifyForHint()` with `minifyMessages()`
-- **`onHint` callback**: Either wire it up or remove it
-- **Breakdown heuristic**: Improve turn count estimation in `generateBreakdown()`
+- ~~**Same-model self-analysis**~~: Consider using a different model or richer context for hint analysis *(deferred)*
+- ~~**Hint cooldown**~~: Add minimum gap between hints *(accepted as-is, no cooldown needed)*
+- ~~**Semantic repetition detection**~~: Go beyond tool-name matching *(accepted as-is, repetition logic is fair)*
+- ~~**Full context in hints**~~: Include system prompt/project context in analysis *(deferred)*
+- ~~**Metrics**~~: Track hint frequency and effectiveness *(deferred)*
+- ~~**Unify context extraction formats**~~: Align `minifyForHint()` with `minifyMessages()` ✅ *done (commit 761ab12)*
+- ~~**`onHint` callback**~~: Either wire it up or remove it ✅ *done (commit 44ac827)*
+- ~~**Breakdown heuristic**~~: Improve turn count estimation *(deferred)*
+- ~~**Tool classification**~~: Centralize tool categories *(accepted as-is, stays hardcoded)*
+- ~~**Prepare error detection**~~: Only check error literals from text start *(accepted, actionable — see plan below)*
+
+---
+
+## 8. Action Plan: COLLECT Injection Rework
+
+> **Date**: 2026-05-22
+> **Status**: Planned
+> **Scope**: Two concrete changes to `src/loop/states/collect.ts`
+
+### Problem Summary
+
+**Issue A — Stale `lastRole`**: `collect.ts` captures `const lastRole = triologue.getLastRole()` once at function start, then uses it for guards across all injection steps (mails, hints, nudges). After mail injection changes the actual role, subsequent step guards are checking a stale value.
+
+**Issue B — Missing bridge for 'tool' role**: In multi-move sequences (`TOOL → COLLECT → LLM → HOOK → TOOL → ...`), COLLECT is entered with `lastRole='tool'`. The `lastRole !== 'tool'` guards silently skip ALL injections — mails, hints, and nudges are lost during these passes. Compare:
+
+| Guard | Stale check | Behavior with stale 'tool' |
+|-------|-------------|---------------------------|
+| `lastRole !== 'tool'` (mails) | false | ❌ Mail skipped |
+| `lastRole === 'assistant'` (hint) | false | ❌ Hint skipped |
+| `lastRole !== 'tool'` (todo nudge) | false | ❌ Nudge skipped |
+| `lastRole !== 'tool'` (brief nudge) | false | ❌ Nudge skipped |
+
+### Change 1: `ensureAssistant()` bridge helper
+
+Replace stale `lastRole` guards with an on-demand bridge that transitions `'tool' → 'assistant'` only when something actually needs to be injected.
+
+**New helper function:**
+```typescript
+function ensureAssistant(tri: Triologue): void {
+  if (tri.getLastRole() === 'tool') {
+    tri.agent('Continuing.');
+  }
+}
+```
+
+**`ensureAssistant()` is called inline before each injection** (mails, hints, nudges). It uses a fresh `getLastRole()` check, so if the previous step already bridged, subsequent calls are no-ops.
+
+### Change 2: Remove stale `lastRole` and restructure steps
+
+**At the top of `handleCollect()`:** Remove the stale capture `const lastRole = triologue.getLastRole()`.
+
+**Step 2 (Mails)** — Before: silently skipped if `lastRole !== 'tool'` is false.
+```typescript
+// BEFORE
+if (lastRole !== 'tool') {
+  const mails = ctx.mail.collectMails();
+  if (mails.length > 0) { ... }
+}
+
+// AFTER
+const mails = ctx.mail.collectMails();
+if (mails.length > 0) {
+  ensureAssistant(triologue);
+  // ... inject mail content via note()
+}
+```
+
+**Step 3 (Hint)** — Before: blocked by `lastRole === 'assistant'` stale guard.
+```typescript
+// BEFORE
+if (confusionIndex >= 10 && messageCount >= 6) {
+  if (lastRole === 'assistant') { ... hint generation ... }
+}
+
+// AFTER
+if (confusionIndex >= 10 && messageCount >= 6) {
+  ensureAssistant(triologue);
+  // ... hint generation (LLM call, then note('HINT', ...))
+}
+```
+
+**Step 4 (Todo nudge)** — Before: silently skipped if stale role is 'tool'.
+```typescript
+// BEFORE
+if (turn.nextTodoNudge === 0 && lastRole !== 'tool') {
+  triologue.note('REMINDER', `Update your todos. ${ctx.todo.printTodoList()}`);
+}
+
+// AFTER
+if (turn.nextTodoNudge === 0) {
+  ensureAssistant(triologue);
+  triologue.note('REMINDER', `Update your todos. ${ctx.todo.printTodoList()}`);
+}
+```
+
+**Step 5 (Brief nudge)** — Same pattern as step 4.
+
+**Step 6 (CONTINUE)** — **Removed entirely.** The note `'Continue with your task.'` is noise — the LLM was already going to continue.
+
+### Change 3: Fix `generateBreakdown()` error detection
+
+The function currently uses `result.includes('error')` which matches the word "error" **anywhere** in text — including inside normal file content read by the agent.
+
+**Before:**
+```typescript
+const errors = events.filter(e => {
+    const result = e.result?.toLowerCase() || '';
+    return result.includes('error') || result.includes('failed') ||
+           result.includes('fatal') || result.includes('enoent') ||
+           result.includes('eacces') || result.includes('eperm');
+});
+```
+
+**After:**
+```typescript
+const errors = events.filter(e => {
+    const result = e.result?.toLowerCase() || '';
+    return result.startsWith('error:') || result.startsWith('error ') ||
+           result.startsWith('fatal:') || result.startsWith('failed:') ||
+           result.startsWith('failed ') ||
+           result.includes('enoent') || result.includes('eacces') ||
+           result.includes('eperm') || result.includes('permission denied');
+});
+```
+
+(Keep `includes` for OS error codes like `ENOENT`/`EACCES` — those won't appear in normal file content. Change `error`, `failed`, `fatal` to use `startsWith`.)
+
+### Files Changed
+
+| File | Change | Risk |
+|------|--------|------|
+| `src/loop/states/collect.ts` | Add `ensureAssistant()` helper | Low — simple role check |
+| `src/loop/states/collect.ts` | Remove stale `lastRole` capture | Low — no longer referenced |
+| `src/loop/states/collect.ts` | Restructure steps 2–5 with fresh guards | Medium — changes injection timing for multi-move sequences |
+| `src/loop/states/collect.ts` | Remove step 6 (CONTINUE note) | Low — noise removal |
+| `src/loop/states/collect.ts` | Fix `generateBreakdown()` error detection | Low — only affects hint breakdown string |
+
+### Verification
+
+1. `pnpm lint` — no new warnings
+2. `npx tsc --noEmit` — no type errors
+3. `pnpm test` — all 1425+ tests pass
+4. Manual reasoning: trace TOOL → COLLECT → LLM (multi-move) to verify mails/nudges/hints now inject instead of being skipped
