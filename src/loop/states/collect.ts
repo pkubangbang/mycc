@@ -12,24 +12,11 @@ import { agentIO } from '../agent-io.js';
 import { startWrapUp } from '../esc-wrap-up.js';
 import { isVerbose } from '../../config.js';
 import type { SequenceEvent } from '../../hook/sequence.js';
-import type { Triologue } from '../triologue.js';
+
 // Confusion threshold for hint generation
 const CONFUSION_THRESHOLD = 10;
 // Minimum message count before hint generation
 const MIN_MESSAGES_FOR_HINT = 6;
-
-/**
- * Ensure the triologue is not in 'tool' role before injecting content.
- * If the last role is 'tool', injects a bridge agent message
- * to transition to 'assistant' for TP-safe note injection.
- * This is called inline before each injection step — if the previous
- * step already bridged, subsequent calls are no-ops.
- */
-function ensureAssistant(tri: Triologue): void {
-  if (tri.getLastRole() === 'tool') {
-    tri.agent('Continuing.');
-  }
-}
 
 /**
  * Generate a human-readable breakdown of confusion factors
@@ -87,11 +74,9 @@ export async function handleCollect(
     // 1. Handle pending questions from children
     await ctx.team.handlePendingQuestions();
 
-    // 2. Collect mails — inject bridge on-demand if last role is 'tool'
+    // 2. Collect mails — relies on auto-fix for TP-safe injection
     const mails = ctx.mail.collectMails();
     if (mails.length > 0) {
-      ensureAssistant(triologue);
-
       // Separate suggest mails from regular mails for proper framing
       const suggestMails = mails.filter(m => m.from === 'suggest');
       const otherMails = mails.filter(m => m.from !== 'suggest');
@@ -127,8 +112,6 @@ export async function handleCollect(
     const messageCount = triologue.getMessagesRaw().length;
 
     if (confusionIndex >= CONFUSION_THRESHOLD && messageCount >= MIN_MESSAGES_FOR_HINT) {
-      ensureAssistant(triologue);
-
       // Use brief for hint round notification (user-facing)
       ctx.core.brief('info', 'loop', 'Generating hint...');
       // Get pending skills (skills with 'when' but no compiled condition)
@@ -165,7 +148,6 @@ export async function handleCollect(
       }
       turn.nextTodoNudge--;
       if (turn.nextTodoNudge === 0) {
-        ensureAssistant(triologue);
         triologue.note('REMINDER', `Update your todos. ${ctx.todo.printTodoList()}`);
         turn.nextTodoNudge = 3;
       }
@@ -174,7 +156,6 @@ export async function handleCollect(
     // 5. Brief nudging - remind agent to use brief tool
     turn.nextBriefNudge--;
     if (turn.nextBriefNudge <= 0) {
-      ensureAssistant(triologue);
       triologue.note('REMINDER', 'Provide a brief status update using the brief tool. Example: brief("Working on X", 7)');
       turn.nextBriefNudge = 5;
     }
