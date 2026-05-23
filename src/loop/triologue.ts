@@ -150,10 +150,16 @@ export class Triologue {
   user(content: string): void {
     const lastRole = this.getLastRole();
     if (lastRole === 'tool') {
-      if (attemptAutoFix(this, 'user_after_tool', lastRole) === 'debug_throw') {
+      const fixResult = attemptAutoFix(this, 'user_after_tool', lastRole);
+      if (fixResult === 'debug_throw') {
         this.throwTpViolation('cannot add user message after tool role');
       }
-      // Recovered: bridge was injected, fall through to add user message
+      if (fixResult === 'allowed') {
+        // Provider supports tool → user natively — skip bridge, just append
+        this.addMessage({ role: 'user', content });
+        return;
+      }
+      // 'recovered': bridge was injected, fall through to add user message
     }
     if (lastRole === 'user') {
       // Combine: append to last user message (no onMessage call — the
@@ -179,10 +185,16 @@ export class Triologue {
   note(category: NoteCategory, message: string): void {
     const lastRole = this.getLastRole();
     if (lastRole === 'tool') {
-      if (attemptAutoFix(this, 'note_after_tool', lastRole) === 'debug_throw') {
+      const fixResult = attemptAutoFix(this, 'note_after_tool', lastRole);
+      if (fixResult === 'debug_throw') {
         this.throwTpViolation('cannot add note after tool role');
       }
-      // Recovered: bridge was injected, now lastRole is 'assistant'
+      if (fixResult === 'allowed') {
+        // Provider supports tool → note natively — skip bridge, just append
+        this.addMessage({ role: 'user', content: `[${category}] ${message}` });
+        return;
+      }
+      // 'recovered': bridge was injected, now lastRole is 'assistant'
     }
     const noteContent = `[${category}] ${message}`;
     if (lastRole === 'user') {

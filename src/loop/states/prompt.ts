@@ -139,12 +139,6 @@ export async function handlePrompt(
 
   clearWrapUp();
 
-  // Bridge tool → user gap: if ESC interrupted LLM after tool results and
-  // wrap-up was discarded, insert a placeholder assistant to maintain TP.
-  if (triologue.getLastRole() === 'tool') {
-    triologue.agent('...');
-  }
-
   // Add user message to triologue
   triologue.user(query);
   env.ctx.core.resetConfusionIndex();

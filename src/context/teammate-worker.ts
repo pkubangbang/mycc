@@ -40,18 +40,6 @@ let triologuePath = '';
 let pendingModeChange: 'plan' | 'normal' | null = null;
 
 /**
- * Ensure the triologue is not in 'tool' role before injecting content.
- * If the last role is 'tool', injects a bridge agent message
- * to transition to 'assistant' for TP-safe note injection.
- * Mirrors the ensureAssistant() in collect.ts.
- */
-function ensureAssistant(tri: Triologue): void {
-  if (tri.getLastRole() === 'tool') {
-    tri.agent('Continuing.');
-  }
-}
-
-/**
  * Create a triologue that persists messages to disk
  * @param name - Teammate name (for fallback path generation)
  * @param assignedPath - Pre-assigned path from parent (optional)
@@ -144,8 +132,7 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
 
     try {
 
-      // 1. Collect mails from file-based mailbox (bridge TP if needed)
-      ensureAssistant(triologue);
+      // 1. Collect mails from file-based mailbox
       const mails = ctx.mail.collectMails();
       if (mails.length > 0) {
         const mailContent = mails
@@ -154,9 +141,8 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
         triologue.note('MAIL', mailContent);
       }
 
-      // 2. Check for pending mode change notifications (bridge TP if needed)
+      // 2. Check for pending mode change notifications
       if (pendingModeChange) {
-        ensureAssistant(triologue);
         if (pendingModeChange === 'normal') {
           triologue.note('SYSTEM_NOTIFICATION', 'Plan mode has ended. Code changes are now allowed. All tools (write_file, edit_file, bash) are fully functional. Proceed with your tasks.');
         } else {
@@ -165,7 +151,7 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
         pendingModeChange = null;
       }
 
-      // 3. Todo nudging with counter and state tracking (bridge TP if needed)
+      // 3. Todo nudging with counter and state tracking
       if (ctx.todo.hasOpenTodo()) {
         const currentTodoState = ctx.todo.printTodoList();
         if (currentTodoState !== lastTodoState) {
@@ -174,7 +160,6 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
         }
         nextTodoNudge--;
         if (nextTodoNudge === 0) {
-          ensureAssistant(triologue);
           triologue.note('REMINDER', `Update your todos. ${ctx.todo.printTodoList()}`);
           nextTodoNudge = 3;
         }
@@ -440,10 +425,9 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
         }
       }
 
-      // 7. Brief nudging - remind agent to use brief tool (bridge TP if needed)
+      // 7. Brief nudging - remind agent to use brief tool
       nextBriefNudge--;
       if (nextBriefNudge <= 0) {
-        ensureAssistant(triologue);
         triologue.note('REMINDER', 'Provide a brief status update using the brief tool. Example: brief("Working on X", 7)');
         nextBriefNudge = 5;
       }
@@ -452,8 +436,7 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
       const errorMsg = (err as Error).message;
       ctx.core.brief('error', 'loop', `Error in main loop: ${errorMsg}. Recovering...`);
 
-      // Add error to triologue so LLM knows what happened (bridge TP if needed)
-      ensureAssistant(triologue);
+      // Add error to triologue so LLM knows what happened
       triologue.note('SYSTEM_ERROR', `An error occurred: ${errorMsg}. Please continue with your task.`);
 
       // Brief pause before retrying

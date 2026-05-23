@@ -7,9 +7,13 @@
  *
  * When --debug-tp IS set, the old throw+stacktrace behavior is preserved
  * for debugging the root cause.
+ *
+ * For certain providers (Ollama, DeepSeek), tool → user and tool → note
+ * transitions are valid — no bridge is needed. Provider support is checked
+ * directly via getApiProvider().
  */
 
-import { isDebuggingTp } from '../config.js';
+import { isDebuggingTp, getApiProvider } from '../config.js';
 import { agentIO } from './agent-io.js';
 import type { Triologue } from './triologue.js';
 import type { Message, ToolCall } from '../types.js';
@@ -27,10 +31,20 @@ export type TpViolationType =
 
 /**
  * Result of attempting auto-fix.
+ * - 'allowed': violation is a valid transition for this provider, no fix needed
  * - 'recovered': fix was applied, caller should continue normally
  * - 'debug_throw': --debug-tp is set, caller should throw the violation
  */
-export type AutoFixResult = 'recovered' | 'debug_throw';
+export type AutoFixResult = 'allowed' | 'recovered' | 'debug_throw';
+
+/**
+ * Check whether the current API provider supports tool → user transitions
+ * natively, making the bridge unnecessary.
+ */
+function supportsToolToUser(): boolean {
+  const provider = getApiProvider();
+  return provider === 'ollama' || provider === 'deepseek';
+}
 
 /**
  * Attempt to auto-recover a TP violation by injecting bridge messages.
@@ -38,7 +52,7 @@ export type AutoFixResult = 'recovered' | 'debug_throw';
  * @param triologue - The Triologue instance to fix
  * @param violation - The type of violation detected
  * @param lastRole - The last role before the violation (for context in warning)
- * @returns 'recovered' if fix applied, 'debug_throw' if caller should throw
+ * @returns 'allowed' if transition is valid for provider, 'recovered' if fix applied, 'debug_throw' if caller should throw
  */
 export function attemptAutoFix(
   triologue: Triologue,
@@ -48,6 +62,12 @@ export function attemptAutoFix(
   // ── Debug mode: preserve old throw+stacktrace behavior ──
   if (isDebuggingTp()) {
     return 'debug_throw';
+  }
+
+  // ── Provider-supported transitions: no bridge needed ──
+  if (supportsToolToUser() && (violation === 'user_after_tool' || violation === 'note_after_tool')) {
+    agentIO.verbose('tp', `Allowing ${formatViolationLabel(violation)} for provider ${getApiProvider()}`);
+    return 'allowed';
   }
 
   // ── Show warning on terminal ──
