@@ -70,9 +70,9 @@ export function attemptAutoFix(
     return 'allowed';
   }
 
-  // ── Show warning on terminal ──
+  // ── Log recovery in verbose mode only ──
   const violationLabel = formatViolationLabel(violation);
-  agentIO.brief('warn', 'tp', `Auto-recovering TP violation: ${violationLabel} (lastRole: ${lastRole})`);
+  agentIO.verbose('tp', `Auto-recovering TP violation: ${violationLabel} (lastRole: ${lastRole})`);
 
   // ── Apply recovery ──
   switch (violation) {

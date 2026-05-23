@@ -25,14 +25,14 @@ function getTerminalWidth(): number {
 function printBanner(title: string): void {
   const width = Math.min(getTerminalWidth(), 80);
 
-  // Truncate title if too long (leave room for padding and icons)
-  const maxTitleLen = width - 12; // 6 for '📌  ' + '  📌', plus 6 safety margin
+  // Truncate title if too long (leave room for padding)
+  const maxTitleLen = width - 6; // 3 chars padding on each side
   const displayTitle = title.length > maxTitleLen
     ? `${title.slice(0, maxTitleLen - 3)  }...`
     : title;
 
   // Center the title text within the full-width bar
-  const label = `📌  ${displayTitle}  📌`;
+  const label = `  ${displayTitle}  `;
   // eslint-disable-next-line no-control-regex
   const stripped = label.replace(/\x1b\[[0-9;]*m/g, '');
   const padLeft = Math.floor((width - stripped.length) / 2);
