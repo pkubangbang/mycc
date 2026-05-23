@@ -47,10 +47,10 @@ export function loadEnv(): void {
 
 // Parse CLI args once at startup
 const args = minimist(process.argv.slice(2), {
-  boolean: ['v', 'verbose', 'skip-healthcheck', 'setup', 'debug-eval', 'debug-tp'],
+  boolean: ['v', 'verbose', 'skip-healthcheck', 'setup', 'debug-eval', 'debug-tp', 'debug-suggest'],
   string: ['session'],
   alias: { v: 'verbose' },
-  default: { v: false, session: null, 'skip-healthcheck': false, setup: false, 'debug-eval': false, 'debug-tp': false },
+  default: { v: false, session: null, 'skip-healthcheck': false, setup: false, 'debug-eval': false, 'debug-tp': false, 'debug-suggest': false },
 });
 
 /**
@@ -117,6 +117,15 @@ export function isDebuggingEval(): boolean {
  */
 export function isDebuggingTp(): boolean {
   return args['debug-tp'] || false;
+}
+
+/**
+ * Check if debug-suggest mode is enabled (--debug-suggest flag)
+ * When enabled, the SUGGEST background task logs its LLM responses and
+ * feedback to the terminal via ctx.core.brief() for debugging.
+ */
+export function isDebuggingSuggest(): boolean {
+  return args['debug-suggest'] || false;
 }
 
 /**

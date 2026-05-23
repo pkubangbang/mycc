@@ -12,6 +12,7 @@
 import { retryChat, MODEL } from '../../engine/chat-provider.js';
 import { loader } from '../../context/shared/loader.js';
 import { agentIO } from '../agent-io.js';
+import { isDebuggingSuggest } from '../../config.js';
 import type { MachineEnv, TurnVars, PassData, HandlerResult } from '../state-machine.js';
 import type { Message, ToolCall, Tool } from '../../types.js';
 import {
@@ -94,48 +95,80 @@ async function executeSuggestTool(
 }
 
 /**
- * Try to parse a brown bag JSON from the assistant's text response.
- * Returns the parsed BrownBag or null.
+ * Result of trying to extract a brown bag from assistant text.
+ * - ok=true: a valid, actionable brown bag was found.
+ * - ok=false, feedback != null: the JSON was structurally close but had issues
+ *   (e.g., hallucinated skill names). The feedback string can be injected back
+ *   into the conversation to guide the LLM.
+ * - ok=false, feedback == null: no usable JSON found at all.
  */
-function tryExtractBrownBag(content: string): BrownBag | null {
+type ExtractResult =
+  | { ok: true; bag: BrownBag }
+  | { ok: false; feedback: string | null };
+
+/**
+ * Try to parse a brown bag JSON from the assistant's text response.
+ * Returns an ExtractResult with optional feedback for the LLM on failure.
+ */
+function tryExtractBrownBag(content: string): ExtractResult {
   const trimmed = content.trim();
-  if (!trimmed) return null;
+  if (!trimmed) return { ok: false, feedback: null };
 
   try {
     // Find JSON object in the content (may be wrapped in markdown code blocks)
     const jsonMatch = trimmed.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) return null;
+    if (!jsonMatch) return { ok: false, feedback: null };
 
     const parsed = JSON.parse(jsonMatch[0]);
 
     // Validate required fields
-    if (typeof parsed.originalQuery !== 'string') return null;
-    if (!Array.isArray(parsed.wikiNotes)) return null;
-    if (!Array.isArray(parsed.skills)) return null;
+    if (typeof parsed.originalQuery !== 'string') return { ok: false, feedback: null };
+    if (!Array.isArray(parsed.wikiNotes)) return { ok: false, feedback: null };
+    if (!Array.isArray(parsed.skills)) return { ok: false, feedback: null };
 
     // wikiNotes: each entry must be { domain: string, query: string }
     if (!parsed.wikiNotes.every((w: unknown) =>
       typeof w === 'object' && w !== null &&
       typeof (w as Record<string, unknown>).domain === 'string' &&
       typeof (w as Record<string, unknown>).query === 'string'
-    )) return null;
+    )) return { ok: false, feedback: null };
 
     // skills: all elements must be strings
-    if (!parsed.skills.every((s: unknown) => typeof s === 'string')) return null;
+    if (!parsed.skills.every((s: unknown) => typeof s === 'string')) return { ok: false, feedback: null };
 
     // title is optional but must be a string if present
     const title = parsed.title;
-    if (title !== undefined && typeof title !== 'string') return null;
+    if (title !== undefined && typeof title !== 'string') return { ok: false, feedback: null };
+
+    // Check for hallucinated skill names — provide feedback if any don't exist
+    const hallucinated: string[] = [];
+    const validSkills: string[] = [];
+    for (const s of parsed.skills as string[]) {
+      if (loader.getSkill(s) !== undefined) {
+        validSkills.push(s);
+      } else {
+        hallucinated.push(s);
+      }
+    }
+
+    if (hallucinated.length > 0) {
+      return {
+        ok: false,
+        feedback: `Skill(s) "${hallucinated.join('", "')}" do not exist. Use skill_load with intent to search for relevant skills, rather than guessing skill names.`,
+      };
+    }
 
     return {
-      originalQuery: parsed.originalQuery,
-      wikiNotes: parsed.wikiNotes,
-      // Filter out hallucinated skill names — only suggest skills that actually exist
-      skills: parsed.skills.filter((s: string) => loader.getSkill(s) !== undefined),
-      title,
+      ok: true,
+      bag: {
+        originalQuery: parsed.originalQuery,
+        wikiNotes: parsed.wikiNotes,
+        skills: validSkills,
+        title,
+      },
     };
   } catch {
-    return null;
+    return { ok: false, feedback: null };
   }
 }
 
@@ -206,7 +239,12 @@ export async function runSuggestBackground(env: MachineEnv): Promise<void> {
   // mutedCtx to allowed tools (read_file, bash, wiki_get, skill_load, recall) which
   // are read-only. If new mutation-capable tools are added to the allowlist, this
   // must be hardened (deep copy or explicit deny of mutation modules).
-  const mutedCtx = { ...ctx, core: muteCore(ctx.core) };
+  //
+  // When --debug-suggest is enabled, use the original ctx (including live core)
+  // so that tool brief() output is visible on the terminal.
+  const mutedCtx = isDebuggingSuggest()
+    ? ctx
+    : { ...ctx, core: muteCore(ctx.core) };
 
   // Graceful stop via timestamp-based flag.
   // Each new SUGGEST run creates a fresh closure with its own stopRequestedAt = null.
@@ -225,18 +263,16 @@ export async function runSuggestBackground(env: MachineEnv): Promise<void> {
   } as unknown as { stop: () => void };
 
   try {
-    // 1. Fork the triologue — deep copy raw messages (latest is user's query)
-    const rawMessages = triologue.getMessagesRaw();
-    const messages: Message[] = JSON.parse(JSON.stringify(rawMessages));
+    // 1. Fork the triologue — shallow copy is safe because we never mutate
+    //    the original Message objects, only push new ones.
+    const chatMessages: Message[] = [...triologue.getMessages()];
 
-    // 2. Fetch available wiki domains for the suggest prompt
+    // 2. Append "[REMINDER] you are in the suggest mode" with full instructions
     const domains = ctx.wiki ? await ctx.wiki.listDomains() : [];
     const domainList = domains.length > 0
       ? domains.map(d => `- ${d.domain_name}${d.description ? `: ${d.description}` : ''}`).join('\n')
       : '(no domains registered)';
-
-    // 3. Append "[REMINDER] you are in the suggest mode" with full instructions
-    messages.push({
+    chatMessages.push({
       role: 'user',
       content: `[REMINDER] you are in the suggest mode. Your goal is to explore the codebase and discover
 relevant wiki notes and skills for the user's query.
@@ -258,20 +294,16 @@ For skills, use skill_load tool, specify intent using the intent lang, but DO NO
   \`\`\`
   All fields are required except "title". wikiNotes and skills are arrays (may be empty).
   Try search in different aspects to get complete results.
-  Include "title" only if the user's query suggests a substantial topic change.`,
+  Include "title" only if the user's query suggests a substantial topic change.
+
+IMPORTANT: you have at most 10 turns to use before producing the brown bag JSON. One response takes a turn. Use them wisely.
+`,
     });
 
-    // 4. Get the existing system prompt
-    const fullMessages = triologue.getMessages();
-    const systemMsg = fullMessages[0]; // first message is always system prompt
-
-    // 5. Build the message array: system prompt + forked messages
-    const chatMessages: Message[] = [systemMsg, ...messages];
-
-    // 6. Get the FULL tool list
+    // 3. Get the FULL tool list
     const allTools: Tool[] = loader.getToolsForScope('main');
 
-    // 7. Explorer-style loop
+    // 4. Explorer-style loop
     let noBagStreak = 0;
     for (let turn = 0; turn < MAX_TURNS; turn++) {
       // Check graceful stop BEFORE this iteration
@@ -301,20 +333,44 @@ For skills, use skill_load tool, specify intent using the intent lang, but DO NO
         tool_calls: assistantMsg.tool_calls,
       } as Message);
 
+      // Debug output: show LLM response when --debug-suggest is enabled
+      if (isDebuggingSuggest() && assistantMsg.content) {
+        const preview = assistantMsg.content.length > 500
+          ? `${assistantMsg.content.slice(0, 500)  }...`
+          : assistantMsg.content;
+        ctx.core.brief('info', 'suggest', `LLM response (turn ${turn + 1}):`, preview);
+      }
+
       // No tool calls → try to extract brown bag
       if (!assistantMsg.tool_calls || assistantMsg.tool_calls.length === 0) {
         const content = assistantMsg.content || '';
-        const brownBag = tryExtractBrownBag(content);
-        if (brownBag) {
-          const body = formatBrownBag(brownBag);
+        const extractResult = tryExtractBrownBag(content);
+        if (extractResult.ok) {
+          const body = formatBrownBag(extractResult.bag);
           if (body) {
-            ctx.core.verbose('suggest', `Brown bag sent: wikiNotes=${brownBag.wikiNotes.length}, skills=${brownBag.skills.length}`);
+            if (isDebuggingSuggest()) {
+              ctx.core.brief('info', 'suggest', `Brown bag delivered:`, body);
+            }
+            ctx.core.verbose('suggest', `Brown bag sent: wikiNotes=${extractResult.bag.wikiNotes.length}, skills=${extractResult.bag.skills.length}`);
             env.ctx.mail.appendMail('suggest', 'Brown Bag', body);
             return;
           }
           // Brown bag had no actionable content — silently drop it
           ctx.core.verbose('suggest', 'Brown bag produced no actionable content');
           return;
+        }
+        // Has actionable feedback (e.g., hallucinated skill names) — inject back
+        if (extractResult.feedback) {
+          if (isDebuggingSuggest()) {
+            ctx.core.brief('warn', 'suggest', `Injecting feedback:`, extractResult.feedback);
+          }
+          ctx.core.verbose('suggest', `Injecting feedback: ${extractResult.feedback}`);
+          chatMessages.push({
+            role: 'user',
+            content: extractResult.feedback,
+          });
+          noBagStreak = 0; // LLM was close, give another chance
+          continue;
         }
         // No brown bag yet — track streak and bail if LLM is stuck
         noBagStreak++;
@@ -354,11 +410,14 @@ For skills, use skill_load tool, specify intent using the intent lang, but DO NO
     if (stopRequestedAt === null) {
       for (let i = chatMessages.length - 1; i >= 0; i--) {
         if (chatMessages[i].role === 'assistant' && chatMessages[i].content) {
-          const brownBag = tryExtractBrownBag(chatMessages[i].content!);
-          if (brownBag) {
-            const body = formatBrownBag(brownBag);
+          const extractResult = tryExtractBrownBag(chatMessages[i].content!);
+          if (extractResult.ok) {
+            const body = formatBrownBag(extractResult.bag);
             if (body) {
-              ctx.core.verbose('suggest', `Brown bag sent (max turns): wikiNotes=${brownBag.wikiNotes.length}, skills=${brownBag.skills.length}`);
+              if (isDebuggingSuggest()) {
+                ctx.core.brief('info', 'suggest', `Brown bag delivered (max turns):`, body);
+              }
+              ctx.core.verbose('suggest', `Brown bag sent (max turns): wikiNotes=${extractResult.bag.wikiNotes.length}, skills=${extractResult.bag.skills.length}`);
               env.ctx.mail.appendMail('suggest', 'Brown Bag', body);
             }
           }
