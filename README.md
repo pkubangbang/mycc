@@ -180,6 +180,21 @@ Or if you need more debug output, add a `-v` flag, or `--verbose`:
 mycc -v
 ```
 
+### Debug Flags
+
+mycc provides several `--debug-*` flags for investigating specific subsystems:
+
+| Flag | Effect |
+|------|--------|
+| `--debug-tp` | **Triologue Parity** — when a role transition violation occurs (e.g., `tool → user` without an `assistant` bridge), throw an error with a stack trace instead of auto-recovering. Useful when developing the auto-fixer or debugging `triologue.ts`. |
+| `--debug-suggest` | **SUGGEST Background Task** — logs the LLM response and feedback of the background suggest task to the terminal via `ctx.core.brief()`. The SUGGEST task runs after each turn to proactively discover relevant tools/skills for the next user query. |
+| `--debug-eval` | **Expression Evaluation** — prints the parsed AST tree for each hook condition expression during evaluation. Useful when developing hookish skills with custom `when` conditions in `evaluator.ts`. |
+
+Combine with `-v` (verbose) for maximum detail:
+```bash
+mycc -v --debug-tp --debug-suggest
+```
+
 ## Key Concepts
 
 See the following documentation for detailed explanations:
