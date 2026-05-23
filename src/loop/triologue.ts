@@ -156,11 +156,12 @@ export class Triologue {
       // Recovered: bridge was injected, fall through to add user message
     }
     if (lastRole === 'user') {
-      // Combine: append to last user message
+      // Combine: append to last user message (no onMessage call — the
+      // message was already serialized when first created; writing it
+      // again would duplicate its full content in the transcript).
       const lastMsg = this.messages[this.messages.length - 1];
       lastMsg.content += `\n${content}`;
       this.tokenCount = estimateTokensForMessages(this.messages);
-      this.options.onMessage([...this.messages]);
       return;
     }
     this.addMessage({ role: 'user', content });
@@ -185,11 +186,12 @@ export class Triologue {
     }
     const noteContent = `[${category}] ${message}`;
     if (lastRole === 'user') {
-      // Combine: append to last user message
+      // Combine: append to last user message (no onMessage call — the
+      // message was already serialized when first created; writing it
+      // again would duplicate its full content in the transcript).
       const lastMsg = this.messages[this.messages.length - 1];
       lastMsg.content += `\n${noteContent}`;
       this.tokenCount = estimateTokensForMessages(this.messages);
-      this.options.onMessage([...this.messages]);
       return;
     }
     this.addMessage({ role: 'user', content: noteContent });
