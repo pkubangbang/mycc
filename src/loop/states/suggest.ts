@@ -45,10 +45,15 @@ type ExtractResult =
 // ============================================================================
 
 function buildProbePrompt(): string {
-  return `Analyze the conversation history above and produce a concise signal for skill probing. Include:
-- Keywords that capture the user's mindflow — the conceptual thread of what they are thinking about or trying to accomplish.
+  return `Analyze the conversation history above and produce a concise signal for skill probing. Your goal is to surface relevant skills that the agent may need.
 
-IMPORTANT: Output text ONLY — do NOT use any tools. Signal format: a short paragraph of keywords and phrases (2-4 sentences).`;
+Focus on extracting:
+- **Intent** — what does the user want to accomplish? (e.g., browse web, edit code, search knowledge, run tests)
+- **Behavior** — what actions or operations would satisfy that intent? (e.g., navigating websites, reading files, searching the web)
+
+IMPORTANT: Identify the behavioral category — the kind of DOING the user needs, not just the topic they are thinking about.
+
+Output text ONLY — do NOT use any tools. Signal format: a short paragraph of keywords and phrases (2-5 sentences). Each phrase should be 2-5 words and describe a specific behavior or capability.`;
 }
 
 function buildSolvePrompt(signal: string): string {
