@@ -93,6 +93,9 @@ const TOOL_COLORS: Record<string, (text: string) => string> = {
   auto_claim: chalk.gray,
   awaitTeam: chalk.red,
 
+  // Suggest / Brownbag
+  brownbag: chalk.gray,
+
   // Default fallback
   _default: chalk.white,
 };

@@ -93,8 +93,10 @@ export async function retryChat(
   const noSpinner = config?.noSpinner ?? false;
   let lastError: Error | null = null;
 
+  let spinnerStarted = false;
   if (!noSpinner) {
     startSpinner(neglected ? NEGLECTED_SPINNER_TEXT : 'Thinking');
+    spinnerStarted = true;
   }
 
   try {
@@ -145,7 +147,7 @@ export async function retryChat(
 
     throw lastError || new Error('All retry attempts failed');
   } finally {
-    stopSpinner();
+    if (spinnerStarted) stopSpinner();
   }
 }
 

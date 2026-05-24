@@ -199,7 +199,7 @@ export class HookExecutor {
 
     return {
       action: 'injected',
-      message: `A hookish skill named "${skillName}" has been triggered (action: inject_before on ${triggerTool}). You can view the detail if curious by using skill_load(name="${skillName}", intent="I want to see what hook just intervened")`,
+      message: `A hookish skill named "${skillName}" has been triggered (action: inject_before on ${triggerTool}). You can view the detail if curious by using skill_load(name="${skillName}", search="what hook just intervened")`,
       newCalls: [newCall, ...pendingCalls],
     };
   }
@@ -242,7 +242,7 @@ export class HookExecutor {
     const remaining = pendingCalls.slice(1);
     return {
       action: 'injected',
-      message: `A hookish skill named "${skillName}" has been triggered (action: inject_after on ${triggerTool}). You can view the detail if curious by using skill_load(name="${skillName}", intent="I want to see what hook just intervened")`,
+      message: `A hookish skill named "${skillName}" has been triggered (action: inject_after on ${triggerTool}). You can view the detail if curious by using skill_load(name="${skillName}", search="what hook just intervened")`,
       newCalls: [...pendingCalls.slice(0, 1), newCall, ...remaining],
     };
   }
@@ -275,7 +275,7 @@ export class HookExecutor {
 
     return {
       action: 'blocked',
-      message: `[Hook: ${skillName}]\nReason: ${reason}\n\nA hookish skill named "${skillName}" has been triggered (action: block on ${trigger}). You can view the detail if curious by using skill_load(name="${skillName}", intent="I want to see what hook just intervened")`,
+      message: `[Hook: ${skillName}]\nReason: ${reason}\n\nA hookish skill named "${skillName}" has been triggered (action: block on ${trigger}). You can view the detail if curious by using skill_load(name="${skillName}", search="what hook just intervened")`,
     };
   }
 
@@ -312,7 +312,7 @@ export class HookExecutor {
 
     return {
       action: 'injected',
-      message: `A hookish skill named "${skillName}" has been triggered (action: replace on ${originalTool}). You can view the detail if curious by using skill_load(name="${skillName}", intent="I want to see what hook just intervened")`,
+      message: `A hookish skill named "${skillName}" has been triggered (action: replace on ${originalTool}). You can view the detail if curious by using skill_load(name="${skillName}", search="what hook just intervened")`,
       newCalls: pendingCalls,
     };
   }
@@ -344,7 +344,7 @@ export class HookExecutor {
     return {
       action: 'proceed',
       // NOTE: this message is critical to encourage the llm to load a skill
-      message: `A skill called "${skillName}" is suitable for your task, ensure it is loaded and used. If not, use "skill_load" tool with name="${skillName}" and intent="READ ARTIFACT TO follow suggestion" to load it.`,
+      message: `A skill called "${skillName}" is suitable for your task, ensure it is loaded and used. If not, use "skill_load" tool with name="${skillName}" and search="READ ARTIFACT TO follow suggestion" to load it.`,
     };
   }
 

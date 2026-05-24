@@ -157,9 +157,7 @@ export async function handlePrompt(
   }
 
   // Fire a background SUGGEST task for the next turn
-  runSuggestBackground(env).catch(err => {
-    env.ctx.core.verbose('suggest', `Unhandled SUGGEST error: ${err instanceof Error ? err.message : String(err)}`);
-  });
+  runSuggestBackground(env);
 
   return AgentState.COLLECT;
 }

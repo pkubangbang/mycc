@@ -92,10 +92,9 @@ function buildOutputBehaviorSection(): string {
     '## Output Behavior',
     '**CRITICAL**: you MUST follow these instructions when you respond.',
     '- Respond concisely and when you use tools, and avoid over-explaining.',
-    '- You should not respond with "Continuing" proactively. If you see these outputs, please ignore them.',
-    '- When you found yourself using "Wait" or similar turning words, conclude quickly, and use brief tool with a low confidence in the next round.',
+    '- After saying "Wait", "等等", "However", or other turning words, wrap up quickly, then use the "brief" tool with a low confidence (1~5) in the next round.',
     '- Do NOT repeat the content that has been reported in the brief tool.',
-    '- User messages that starts with brackets (like [REMINDER]...) are FYI, you don\'t need to reply them, but focus on the task.'
+    '- Messages whose content starts with brackets (like [REMINDER]...) are system notifications. You should follow the advice but do not respond with text.'
   ].join('\n');
 }
 
@@ -387,10 +386,6 @@ Use issue_* for complex tasks (divide and conquer), todo_* for simple tracking.
 ## Team Mode
 If the task would benefit from parallel work, create teammates using tm_create tool to help you.
 
-## Suggest Mode
-When the user says "[REMINDER] you are in the suggest mode", follow the instructions
-in that message to enter a restricted discovery mode.
-
 ## Rules
 - Use git_commit tool for ALL git commits. This tool will ask for user permission [y/N] before committing.
 - Use brief tool to report key progress or findings to the user.
@@ -439,10 +434,6 @@ Send mails to teammates only when necessary, and keep the content actionable.
 If you find yourself waiting for the reply from the teammates, do not use tools in this round.
 Remember that the teammates can directly ask questions to the user, and you will get a copy of the chat.
 If you want to ask me questions, do not use any tool, just leave your question as the reply.
-
-## Suggest Mode
-When the user says "[REMINDER] you are in the suggest mode", follow the instructions
-in that message to enter a restricted discovery mode.
 
 ## Special Rules
 - Use git_commit tool for ALL git commits. This tool will ask for user permission [y/N] before committing.

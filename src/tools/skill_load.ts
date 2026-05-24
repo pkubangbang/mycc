@@ -13,31 +13,31 @@ import { getSkillMatchThreshold } from '../config.js';
 
 export const skillLoadTool: ToolDefinition = {
   name: 'skill_load',
-  description: `Load a skill by name, or Search skills by intention. Returns specialized knowledge and instructions.`,
+  description: `Load a skill by name, or search skills by keywords. Returns specialized knowledge and instructions.`,
   input_schema: {
     type: 'object',
     properties: {
       name: {
         type: 'string',
-        description: 'Optional: The exact name of the skill to load. If not provided, semantic search will be used to find relevant skills based on intent.',
+        description: 'Optional: The exact name of the skill to load. If not provided, semantic search will be used to find relevant skills based on search keywords.',
       },
-      intent: {
+      search: {
         type: 'string',
-        description: 'REQUIRED: Explain why this skill is needed. This helps with semantic matching when the skill name is partial or unknown.',
+        description: 'REQUIRED: Short keywords/phrases (2-5 words) describing what you are looking for. Use concise terms, NOT full sentences or long descriptions.',
       },
     },
-    required: ['intent'],
+    required: ['search'],
   },
   scope: ['main', 'child'],
   handler: async (ctx: AgentContext, args: Record<string, unknown>): Promise<string> => {
     const skillName = args.name as string | undefined;
-    const intent = args.intent as string;
+    const search = args.search as string;
 
     // Try exact name match first
     if (skillName) {
       const skill = ctx.skill.getSkill(skillName);
       if (skill) {
-        ctx.core.brief('info', 'skill_load', `Loaded: ${skillName}`, intent);
+        ctx.core.brief('info', 'skill_load', `Loaded: ${skillName}`, search);
 
         // Try to re-index skill to wiki (best effort, may fail if no embedding model)
         try {
@@ -58,10 +58,10 @@ export const skillLoadTool: ToolDefinition = {
 
     // No exact match (or no name) → union semantic + name/keyword search
     const threshold = getSkillMatchThreshold();
-    const searchQuery = `a skill to satisfy the intent: ${intent}`;
+    const searchQuery = `a skill to satisfy: ${search}`;
     let semResults: Awaited<ReturnType<typeof ctx.wiki.get>> = [];
 
-    // Semantic search by intent
+    // Semantic search by search keywords
     try {
       semResults = await ctx.wiki.get(searchQuery, { domain: 'skills', topK: 3, threshold });
     } catch {
@@ -104,21 +104,21 @@ export const skillLoadTool: ToolDefinition = {
     }
 
     if (suggestions.length === 0) {
-      const label = skillName || intent;
-      ctx.core.brief('warn', 'skill_load', `No matches: ${label}`, intent);
+      const label = skillName || search;
+      ctx.core.brief('warn', 'skill_load', `No matches: ${label}`, search);
       return `ERROR: No skills found matching '${label}'.\n\nNo skills are currently available in the knowledge base. Skills may need to be loaded or indexed first. Try /skills build to rebuild the skill index.`;
     }
 
     const allNames = [...matchedNames];
     const matchSummary = allNames.join(', ');
-    ctx.core.brief('info', 'skill_load', `→ ${matchSummary}`, intent);
+    ctx.core.brief('info', 'skill_load', `→ ${matchSummary}`, search);
 
     const body = suggestions.join('\n\n---\n\n');
 
     if (skillName) {
-      return `Skill '${skillName}' not found exactly, but found ${suggestions.length} suggestion(s):\n\n---\n\n${body}\n\n---\n\nTo load a specific skill, use: skill_load(name="<skill_name>", intent="...")`;
+      return `Skill '${skillName}' not found exactly, but found ${suggestions.length} suggestion(s):\n\n---\n\n${body}\n\n---\n\nTo load a specific skill, use: skill_load(name="<skill_name>", search="<keywords>")`;
     }
 
-    return `Found ${suggestions.length} skill(s) matching your intent:\n\n---\n\n${body}\n\n---\n\nTo load a specific skill, use: skill_load(name="<skill_name>", intent="...")`;
+    return `Found ${suggestions.length} skill(s) matching your search:\n\n---\n\n${body}\n\n---\n\nTo load a specific skill, use: skill_load(name="<skill_name>", search="<keywords>")`;
   },
 };
