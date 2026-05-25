@@ -1,10 +1,12 @@
 /**
  * suggest.ts - Background SUGGEST task orchestrator
  *
- * Runs a single probing direction (skill) as a fire-and-forget background task.
- * Launched from PROMPT state (at tail). Gracefully stopped by next PROMPT via timestamp-based stop flag.
+ * Runs as a fire-and-forget background task launched from PROMPT state (at tail).
+ * Gracefully stopped by next PROMPT via timestamp-based stop flag.
  *
- * Pipeline: probe (summarize triologue) → solve (use skill_load to find relevant skills) → format (brownbag).
+ * Pipeline: summarizing (1 retryChat → directed summary)
+ *         → searching (1 retryChat with skill_search tool, returns {name,description}[])
+ *         → reranking (up to 3 retryChat attempts → brownbag JSON).
  */
 
 import { loader } from '../../context/shared/loader.js';
@@ -17,7 +19,7 @@ import { retryChat, MODEL } from '../../engine/chat-provider.js';
 // Constants
 // ============================================================================
 
-const MAX_SOLVE_TURNS = 5;
+const MAX_RERANK_ATTEMPTS = 3;
 
 // ============================================================================
 // Types
@@ -44,37 +46,44 @@ type ExtractResult =
 // Prompts
 // ============================================================================
 
-function buildProbePrompt(): string {
-  return `Analyze the conversation history above and produce a concise signal for skill probing. Your goal is to surface relevant skills that the agent may need.
+function buildSummarizingPrompt(): string {
+  return `Analyze the conversation history above and produce a concise summary of what the user is currently doing.
 
-First, identify the user's most recent query from the conversation history. Then produce a signal that:
+Focus on:
+1. **User's latest query** — what did the user just ask or request?
+2. **Intent** — what does the user want to accomplish? (e.g., browse web, edit code, search knowledge, run tests)
+3. **Behavior** — what actions or operations would satisfy that intent? (e.g., navigating websites, reading files, searching the web)
 
-1. **Carries forward the user's latest query** — include the actual user query or a faithful paraphrase of it
-2. **Extracts Intent** — what does the user want to accomplish? (e.g., browse web, edit code, search knowledge, run tests)
-3. **Extracts Behavior** — what actions or operations would satisfy that intent? (e.g., navigating websites, reading files, searching the web)
-
-IMPORTANT: Identify the behavioral category — the kind of DOING the user needs, not just the topic they are thinking about. The user's original query MUST be clearly represented in the signal.
-
-Output text ONLY — do NOT use any tools. Signal format: a short paragraph (2-5 sentences). Each sentence should describe a specific behavior or capability.`;
+Output text ONLY — do NOT use any tools. Format: a short paragraph (2-5 sentences). Each sentence should describe a specific behavior or capability relevant to identifying helpful skills.`;
 }
 
-function buildSolvePrompt(signal: string, luq: string): string {
-  return `You are in skill probing mode. Use the \`skill_search\` tool to find relevant skills.
+function buildSearchingPrompt(summary: string, luq: string): string {
+  return `You are in skill searching mode. Use the \`skill_search\` tool to find relevant skills.
 - You may ONLY use: skill_search
-- Use the analysis signal and the user's original query below to guide your searches.
+- Use the analysis and the user's original query below to guide your searches.
 - **IMPORTANT**: The \`search\` param should be short keywords/phrases (2-5 words), NOT full sentences or long descriptions.
-- Once you have found useful skills, produce a brownbag JSON:
-\`\`\`json
-{ "originalQuery": "...", "skills": ["skill-name-1", "skill-name-2"] }
-\`\`\`
+- You have only one turn. Search as many times as needed to find all relevant skills.
 
-Signal: ${signal}
+Summary: ${summary}
 
 User Query: ${luq}`;
 }
 
+function buildRerankingPrompt(): string {
+  return `Based on the skill search results above, produce a brownbag JSON containing the most relevant skills found.
+
+\`\`\`json
+{ "originalQuery": "...", "skills": ["skill-name-1", "skill-name-2"] }
+\`\`\`
+
+- "originalQuery" must be a faithful paraphrase of the user's query.
+- "skills" must be an array of exact skill names found via skill_search.
+- Only include skills that are genuinely relevant to the user's task. Rerank and pick the best ones.
+- Do NOT guess or invent skill names — only include skills you actually discovered.`;
+}
+
 // ============================================================================
-// Probe Utilities
+// Merge Utility
 // ============================================================================
 
 /**
@@ -90,25 +99,28 @@ function mergeIntoLastUserMessage(msgs: Message[], prompt: string): Message[] | 
   return result;
 }
 
+// ============================================================================
+// Phase 1: Summarizing
+// ============================================================================
+
 /**
- * Run one probe step: summarize triologue into a focused signal.
- * Returns the signal text, or null if the probe failed or was skipped.
+ * Summarizing phase: analyze full chat history + tools to produce a directed summary.
+ * Returns the summary text, or null if failed or skipped.
  */
-async function runProbe(
+async function runSummarizing(
   baseMessages: Message[],
-  probePrompt: string,
   allTools: Tool[],
   stopRequested: () => boolean,
 ): Promise<string | null> {
-  const probeMsgs = mergeIntoLastUserMessage(baseMessages, probePrompt);
-  if (!probeMsgs) return null;
+  const msgs = mergeIntoLastUserMessage(baseMessages, buildSummarizingPrompt());
+  if (!msgs) return null;
 
   if (stopRequested()) return null;
 
   const response = await retryChat(
     {
       model: MODEL,
-      messages: probeMsgs,
+      messages: msgs,
       tools: allTools, // preserve prompt cache
     },
     { noSpinner: true },
@@ -116,10 +128,77 @@ async function runProbe(
 
   if (stopRequested()) return null;
 
-  const signal = response.message.content || '';
-  if (!signal.trim()) return null;
+  const summary = response.message.content || '';
+  if (!summary.trim()) return null;
 
-  return signal;
+  return summary;
+}
+
+// ============================================================================
+// Phase 2: Searching
+// ============================================================================
+
+/**
+ * Searching phase: single retryChat with only skill_search tool.
+ * The LLM calls skill_search 0..N times in one move.
+ * Returns the search messages as context for reranking.
+ */
+async function runSearching(
+  searchMsgs: Message[],
+  skillSearchTool: Tool[],
+  stopRequested: () => boolean,
+  mutedCtx: MachineEnv['ctx'],
+  ctx: MachineEnv['ctx'],
+): Promise<Message[] | null> {
+  if (stopRequested()) return null;
+
+  const response = await retryChat(
+    {
+      model: MODEL,
+      messages: searchMsgs,
+      tools: skillSearchTool,
+    },
+    { noSpinner: true },
+  );
+
+  if (stopRequested()) return null;
+
+  const assistantMsg = response.message;
+
+  // Push the assistant message
+  searchMsgs.push({
+    role: 'assistant',
+    content: assistantMsg.content || '',
+    tool_calls: assistantMsg.tool_calls,
+  } as Message);
+
+  // Execute all tool calls and append results
+  if (assistantMsg.tool_calls && assistantMsg.tool_calls.length > 0) {
+    if (isDebuggingSuggest()) {
+      const toolNames = assistantMsg.tool_calls.map(tc =>
+        `${tc.function.name}("${(tc.function.arguments as Record<string, unknown>)?.search || ''}")`
+      ).join(', ');
+      ctx.core.brief('info', 'suggest', 'searching: executing skill_search calls', toolNames);
+    }
+
+    for (const tc of assistantMsg.tool_calls as ToolCall[]) {
+      if (stopRequested()) return null;
+
+      const result = await loader.execute(tc.function.name, mutedCtx, tc.function.arguments as Record<string, unknown>);
+      searchMsgs.push({
+        role: 'tool',
+        tool_name: tc.function.name,
+        content: result,
+        tool_call_id: tc.id,
+      } as Message);
+    }
+
+    if (isDebuggingSuggest()) {
+      ctx.core.brief('info', 'suggest', 'searching', `${assistantMsg.tool_calls.length} skill_search call(s) executed`);
+    }
+  }
+
+  return searchMsgs;
 }
 
 // ============================================================================
@@ -159,7 +238,7 @@ function tryExtractBrownBag(content: string): ExtractResult {
     if (hallucinated.length > 0) {
       return {
         ok: false,
-        feedback: `Skill(s) "${hallucinated.join('", "')}" do not exist. Use skill_load with search to find relevant skills, rather than guessing skill names.`,
+        feedback: `Skill(s) "${hallucinated.join('", "')}" do not exist. Use skill_search with short keywords to find relevant skills, rather than guessing skill names.`,
       };
     }
 
@@ -196,127 +275,82 @@ function formatBrownBag(brownBag: BrownBag): string | null {
 }
 
 // ============================================================================
-// Solve Loop
+// Phase 3: Reranking
 // ============================================================================
 
-async function runSolveLoop(
-  solveMsgs: Message[],
-  directionTool: Tool[],
+/**
+ * Reranking phase: take summary + LUQ + search results and produce a brownbag JSON.
+ * Runs up to MAX_RERANK_ATTEMPTS rounds with hallucination feedback.
+ * On success: format and append to suggest mailbox. After max attempts: abandon.
+ */
+async function runReranking(
+  searchMessages: Message[],
   stopRequested: () => boolean,
-  env: MachineEnv,
-  mutedCtx: MachineEnv['ctx'],
+  ctx: MachineEnv['ctx'],
 ): Promise<void> {
-  const { ctx } = env;
+  const rerankMsgs: Message[] = [
+    ...searchMessages,
+    { role: 'user', content: buildRerankingPrompt() },
+  ];
 
-  for (let turn = 0; turn < MAX_SOLVE_TURNS; turn++) {
+  for (let attempt = 0; attempt < MAX_RERANK_ATTEMPTS; attempt++) {
     if (stopRequested()) return;
 
     const response = await retryChat(
       {
         model: MODEL,
-        messages: solveMsgs,
-        tools: directionTool,
+        messages: rerankMsgs,
       },
       { noSpinner: true },
     );
 
     if (stopRequested()) return;
 
-    const assistantMsg = response.message;
-    solveMsgs.push({
-      role: 'assistant',
-      content: assistantMsg.content || '',
-      tool_calls: assistantMsg.tool_calls,
-    } as Message);
+    const content = response.message.content || '';
+    rerankMsgs.push({ role: 'assistant', content } as Message);
 
-    if (isDebuggingSuggest() && assistantMsg.content) {
-      const preview = assistantMsg.content.length > 500
-        ? `${assistantMsg.content.slice(0, 500)}...`
-        : assistantMsg.content;
-      ctx.core.brief('info', 'suggest', `skill solve (turn ${turn + 1})`, preview);
-    }
-
-    // Tool calls → execute
-    if (assistantMsg.tool_calls && assistantMsg.tool_calls.length > 0) {
-      for (const tc of assistantMsg.tool_calls as ToolCall[]) {
-        if (stopRequested()) return;
-
-        const result = await loader.execute(tc.function.name, mutedCtx, tc.function.arguments as Record<string, unknown>);
-        solveMsgs.push({
-          role: 'tool',
-          tool_name: tc.function.name,
-          content: result,
-          tool_call_id: tc.id,
-        } as Message);
-      }
-      continue;
-    }
-
-    // No tool calls → try to extract brownbag (with skill validation)
-    const content = assistantMsg.content || '';
     const extractResult = tryExtractBrownBag(content);
 
-    if (extractResult.ok) {
-      // Phase 3: Format
-      const body = formatBrownBag(extractResult.bag);
-      if (body) {
+    if (!extractResult.ok) {
+      // Hallucinated skills: inject feedback and retry
+      if (extractResult.feedback) {
         if (isDebuggingSuggest()) {
-          ctx.core.brief('info', 'suggest', `brown bag SUCCESS`, body);
-          ctx.core.brief('info', 'suggest', `  skills: ${extractResult.bag.skills.join(', ')}`);
+          ctx.core.brief('warn', 'suggest', `reranking FAILURE (hallucinated skills, attempt ${attempt + 1})`, extractResult.feedback);
         }
-        ctx.core.verbose('suggest', 'skill brown bag sent');
-        env.ctx.mail.appendMail('suggest', 'Brown Bag (skill)', body);
-      } else {
-        if (isDebuggingSuggest()) {
-          ctx.core.brief('warn', 'suggest', 'brown bag FAILURE', 'extracted but empty (no valid skills)');
-        }
+        rerankMsgs.push({ role: 'user', content: extractResult.feedback });
+        continue;
       }
-      return;
-    }
 
-    // Has actionable feedback (hallucinated skills)
-    if (extractResult.feedback) {
+      // No valid JSON — continue with no feedback
       if (isDebuggingSuggest()) {
-        ctx.core.brief('warn', 'suggest', 'brown bag FAILURE (hallucinated skills)', extractResult.feedback);
+        const preview = content.length > 200 ? `${content.slice(0, 200)}...` : content;
+        ctx.core.brief('warn', 'suggest', `reranking FAILURE (no valid JSON, attempt ${attempt + 1})`, preview);
       }
-      solveMsgs.push({ role: 'user', content: extractResult.feedback });
       continue;
     }
 
-    // No brown bag yet — just continue the loop
-    if (isDebuggingSuggest()) {
-      const preview = content.length > 200 ? `${content.slice(0, 200)}...` : content;
-      ctx.core.brief('warn', 'suggest', `brown bag FAILURE (no JSON at turn ${turn + 1})`, preview);
-    }
-  }
-
-  // Max turns exhausted — try final extraction
-  if (!stopRequested()) {
-    for (let i = solveMsgs.length - 1; i >= 0; i--) {
-      if (solveMsgs[i].role === 'assistant' && solveMsgs[i].content) {
-        const extractResult = tryExtractBrownBag(solveMsgs[i].content!);
-        if (extractResult.ok) {
-          const body = formatBrownBag(extractResult.bag);
-          if (body) {
-            if (isDebuggingSuggest()) {
-              ctx.core.brief('info', 'suggest', 'brown bag SUCCESS (max turns)', body);
-            }
-            ctx.core.verbose('suggest', 'skill brown bag sent (max turns)');
-            env.ctx.mail.appendMail('suggest', 'Brown Bag (skill)', body);
-          } else {
-            if (isDebuggingSuggest()) {
-              ctx.core.brief('warn', 'suggest', 'brown bag FAILURE (max turns)', 'extracted but empty');
-            }
-          }
-        } else {
-          if (isDebuggingSuggest()) {
-            ctx.core.brief('warn', 'suggest', 'brown bag FAILURE (max turns)', 'no valid brownbag found after all turns');
-          }
-        }
-        break;
+    // Success: format and send
+    const body = formatBrownBag(extractResult.bag);
+    if (body) {
+      if (isDebuggingSuggest()) {
+        ctx.core.brief('info', 'suggest', `reranking SUCCESS (attempt ${attempt + 1})`, body);
+        ctx.core.brief('info', 'suggest', `  skills: ${extractResult.bag.skills.join(', ')}`);
+      }
+      ctx.core.verbose('suggest', 'skill brown bag sent');
+      ctx.mail.appendMail('suggest', 'Brown Bag (skill)', body);
+    } else {
+      if (isDebuggingSuggest()) {
+        ctx.core.brief('warn', 'suggest', 'reranking FAILURE', 'extracted but empty (no valid skills)');
       }
     }
+    return;
   }
+
+  // Max attempts exhausted — abandon
+  if (isDebuggingSuggest()) {
+    ctx.core.brief('warn', 'suggest', 'reranking abandoned', 'max rerank attempts exhausted, no valid brownbag');
+  }
+  ctx.core.verbose('suggest', 'skill brown bag abandoned (max attempts)');
 }
 
 // ============================================================================
@@ -324,7 +358,7 @@ async function runSolveLoop(
 // ============================================================================
 
 /**
- * Run the skill probing direction (probe → solve → format).
+ * Run the skill probing pipeline: summarizing → searching → reranking.
  * Best-effort: silently catches errors.
  */
 async function runSkillDirection(
@@ -337,40 +371,42 @@ async function runSkillDirection(
   const { ctx } = env;
 
   try {
-    // Extract the last user content (LUQ) from baseMessages for the solve phase
+    // Extract the last user content (LUQ) from baseMessages
     const lastUserContent = extractLastUserContent(baseMessages);
 
-    // Phase 1: Probe
-    const signal = await runProbe(
-      baseMessages,
-      buildProbePrompt(),
-      allTools,
-      stopRequested,
-    );
-    if (!signal) {
-      ctx.core.verbose('suggest', 'skill: skipped (probe returned nothing)');
+    // Phase 1: Summarizing — chat history → directed summary
+    const summary = await runSummarizing(baseMessages, allTools, stopRequested);
+    if (!summary) {
+      ctx.core.verbose('suggest', 'skipped (summarizing returned nothing)');
       return;
     }
 
     if (isDebuggingSuggest()) {
-      ctx.core.brief('info', 'suggest', 'skill signal', signal);
+      ctx.core.brief('info', 'suggest', 'summary', summary);
     }
 
-    // Phase 2: Solve — pass signal + LUQ so skill_search has the raw user query
-    const directionTool: Tool[] = allTools.filter(t => t.function.name === 'skill_search');
-    if (directionTool.length === 0) {
-      ctx.core.verbose('suggest', 'skill: tool "skill_search" not found');
+    // Phase 2: Searching — 1 retryChat with skill_search tool
+    const skillSearchTool: Tool[] = allTools.filter(t => t.function.name === 'skill_search');
+    if (skillSearchTool.length === 0) {
+      ctx.core.verbose('suggest', 'tool "skill_search" not found');
       return;
     }
 
-    const solveMsgs: Message[] = [
-      { role: 'assistant', content: signal },
-      { role: 'user', content: buildSolvePrompt(signal, lastUserContent) },
+    const searchMsgs: Message[] = [
+      { role: 'assistant', content: summary },
+      { role: 'user', content: buildSearchingPrompt(summary, lastUserContent) },
     ];
 
-    await runSolveLoop(solveMsgs, directionTool, stopRequested, env, mutedCtx);
+    const searchResult = await runSearching(searchMsgs, skillSearchTool, stopRequested, mutedCtx, ctx);
+    if (!searchResult || stopRequested()) {
+      ctx.core.verbose('suggest', 'skipped (searching returned nothing)');
+      return;
+    }
+
+    // Phase 3: Reranking — produce valid brownbag from search results
+    await runReranking(searchResult, stopRequested, ctx);
   } catch (err) {
-    ctx.core.verbose('suggest', `skill failed: ${err instanceof Error ? err.message : String(err)}`);
+    ctx.core.verbose('suggest', `failed: ${err instanceof Error ? err.message : String(err)}`);
   }
 }
 
@@ -412,7 +448,7 @@ function muteCore(core: MachineEnv['ctx']['core']): MachineEnv['ctx']['core'] {
 // ============================================================================
 
 /**
- * Run the background SUGGEST task — single probing direction (skill).
+ * Run the background SUGGEST task.
  * Non-async: fires async functions without awaiting them for concurrency.
  * Called from PROMPT (at tail). Gracefully stopped by next PROMPT via stop flag.
  */
@@ -451,7 +487,7 @@ export function runSuggestBackground(env: MachineEnv): void {
   // Fire skill direction — handles its own errors
   runSkillDirection(baseMessages, allTools, env, mutedCtx, stopRequested)
     .catch(err => {
-      ctx.core.verbose('suggest', `skill direction failed: ${err instanceof Error ? err.message : String(err)}`);
+      ctx.core.verbose('suggest', `direction failed: ${err instanceof Error ? err.message : String(err)}`);
     })
     .finally(() => {
       if ((env.runningSuggest as { id?: symbol } | null)?.id === runId) {
