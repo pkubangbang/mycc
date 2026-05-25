@@ -125,12 +125,6 @@ function getDeepSeekPrompts(): PromptConfig[] {
 function getSharedPrompts(): PromptConfig[] {
   return [
     {
-      name: 'OLLAMA_EMBEDDING_MODEL',
-      message: 'Ollama embedding model (for semantic search/RAG, always uses Ollama)',
-      default: '',
-      help: 'An embedding model is recommended for wiki/RAG features (e.g., nomic-embed-text). Leave empty to skip.',
-    },
-    {
       name: 'TOKEN_THRESHOLD',
       message: 'Token threshold for context management',
       default: '50000',
