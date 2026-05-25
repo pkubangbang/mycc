@@ -272,7 +272,14 @@ export async function healthCheck(tokenThreshold: number): Promise<HealthCheckRe
     startSpinner('Powered by Ollama. Initializing');
     const startTime = Date.now();
 
-    const { contextLength, motd } = await probeModel(retryChat, MODEL);
+    // Pass model_info to probeModel so the LLM can parse it for context_length.
+    // Keys are architecture-dependent (e.g. glm5.context_length, qwen3.context_length),
+    // so the LLM is best placed to identify the right key. Fails fast if extraction fails.
+    const { contextLength, motd } = await probeModel(
+      retryChat,
+      MODEL,
+      modelInfo.model_info as unknown as Record<string, unknown> | undefined,
+    );
 
     stopSpinner();
     const elapsed = Date.now() - startTime;

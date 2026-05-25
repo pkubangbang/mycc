@@ -44,9 +44,17 @@ export const STARTUP_TOOL = {
 export async function probeModel(
   retryChat: (req: RetryChatRequest, cfg?: RetryChatConfig) => Promise<ChatResponse>,
   MODEL: string,
+  modelInfo?: Record<string, unknown>,
 ): Promise<{ contextLength: number; motd: string }> {
-  let contextLength = 4096;
+  let contextLength = 0;
   let motd = 'Ready!';
+
+  // Pass model_info so the LLM can parse it for context_length.
+  // Keys are architecture-dependent (e.g. glm5.context_length, qwen3.context_length),
+  // so the LLM is best placed to identify the right key.
+  const modelInfoPrompt = modelInfo
+    ? `\n\nHere is the model metadata from ollama.show().model_info. Read it and extract the context length:\n${JSON.stringify(modelInfo, null, 2)}`
+    : '';
 
   const response = await retryChat(
     {
@@ -56,7 +64,8 @@ export async function probeModel(
           role: 'user',
           content:
             `You are starting up. Call the start_up tool to report your context length ` +
-            `and provide a fun message of the day.`,
+            `by reading the model_info metadata provided below, ` +
+            `and provide a fun message of the day.${modelInfoPrompt}`,
         },
       ],
       tools: [STARTUP_TOOL],
@@ -75,6 +84,13 @@ export async function probeModel(
         motd = args.motd.trim();
       }
     }
+  }
+
+  if (contextLength === 0) {
+    throw new Error(
+      `Failed to extract context_length from model_info. ` +
+      `The LLM did not return a valid context_length. Please retry.`,
+    );
   }
 
   return { contextLength, motd };
