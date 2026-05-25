@@ -97,16 +97,16 @@ Some paragraph.
     expect(extractedContent).toBe(originalContent);
   });
 
-  it('should reject case-mismatched skill names', async () => {
+  it('should auto-correct case-mismatched skill names', async () => {
     const skill = createSampleSkill({ name: 'Code-Review' });
     ctx = createMockContextWithSkills('/tmp/test', [skill]);
 
     const exactResult = await skillLoadTool.handler(ctx, { name: 'Code-Review' });
     expect(exactResult).toContain('# Skill: Code-Review');
 
-    // Case-sensitive: 'code-review' should not match 'Code-Review'
+    // Case-insensitive fallback: 'code-review' should match 'Code-Review'
     const caseMismatchResult = await skillLoadTool.handler(ctx, { name: 'code-review' });
-    expect(caseMismatchResult).toContain("Skill 'code-review' not found by exact name");
+    expect(caseMismatchResult).toContain('# Skill: Code-Review');
   });
 
   it('should handle skill with unicode content', async () => {

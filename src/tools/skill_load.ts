@@ -4,8 +4,9 @@
  * Scope: ['main', 'child'] - Available to lead and teammate agents
  *
  * This tool loads a skill by its exact name and returns its full content.
- * It performs strict exact matching - no fuzzy search or fallback.
- * For fuzzy/keyword search, use skill_search instead.
+ * It first tries strict exact matching, then falls back to fuzzy matching
+ * (ignoring case, hyphens, and underscores) before reporting "not found".
+ * For keyword/fuzzy search, use skill_search instead.
  *
  * IMPORTANT: The 'name' parameter is REQUIRED for this tool.
  * If you are unsure of the exact name, use skill_search first to find it.
@@ -19,7 +20,8 @@ export const skillLoadTool: ToolDefinition = {
   description: `Load a skill by exact name. Returns the full skill content.
 
 IMPORTANT: You MUST provide the 'name' parameter with the exact skill name. This tool does NOT do fuzzy search.
-If you don't know the exact name, use skill_search with keywords to find relevant skills first.`,
+If you don't know the exact name, use skill_search with keywords to find relevant skills first.
+Note: minor variations (case, hyphens vs underscores) are auto-corrected.`,
   input_schema: {
     type: 'object',
     properties: {
@@ -45,7 +47,21 @@ If you don't know the exact name, use skill_search with keywords to find relevan
     }
 
     // Attempt exact name match (case-sensitive)
-    const skill = ctx.skill.getSkill(skillName);
+    let skill = ctx.skill.getSkill(skillName);
+    
+    // If exact match fails, try fuzzy matching (normalize case, hyphens, underscores)
+    if (!skill) {
+      const normalize = (s: string) => s.toLowerCase().replace(/[_-]/g, '');
+      const targetKey = normalize(skillName);
+      const allSkills = ctx.skill.listSkills();
+      const fuzzyMatch = allSkills.find(s => normalize(s.name) === targetKey);
+      if (fuzzyMatch) {
+        skill = ctx.skill.getSkill(fuzzyMatch.name);
+        if (skill) {
+          ctx.core.brief('warn', 'skill_load', `Auto-corrected: "${skillName}" → "${skill.name}"`);
+        }
+      }
+    }
     if (!skill) {
       ctx.core.brief('warn', 'skill_load', `Skill not found: ${skillName}`);
       return `ERROR: Skill '${skillName}' not found by exact name.

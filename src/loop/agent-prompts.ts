@@ -105,10 +105,10 @@ function buildVerificationSection(): string {
     'Make cautious moves before you understand the user\'s preference. Ask questions to confirm your assumptions instead of infering a reasonable one.',
     '### Environment Detection',
     'If your exploration reveals an unusual project layout (e.g., unfamiliar directory structure,',
-    'missing standard project files, unexpected file organization), load the environment_detection',
+    'missing standard project files, unexpected file organization), load the environment-detection',
     'skill to help you understand the "shape" of the current working directory:',
     '```',
-    'skill_load(name="environment_detection")',
+    'skill_load(name="environment-detection")',
     '```',
     'This skill helps you identify:',
     '- Is cwd a well-known system folder (e.g., user\'s home)?',
@@ -271,11 +271,11 @@ But your FINAL plan must be:
 ### Environment Detection
 
 If your exploration reveals an unusual project layout (e.g., unfamiliar directory structure,
-missing standard project files, unexpected file organization), load the environment_detection
+missing standard project files, unexpected file organization), load the environment-detection
 skill to help you understand the "shape" of the current working directory:
 
 \`\`\`
-skill_load(name="environment_detection")
+skill_load(name="environment-detection")
 \`\`\`
 
 This skill helps you identify:
