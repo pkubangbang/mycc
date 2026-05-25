@@ -47,26 +47,30 @@ type ExtractResult =
 function buildProbePrompt(): string {
   return `Analyze the conversation history above and produce a concise signal for skill probing. Your goal is to surface relevant skills that the agent may need.
 
-Focus on extracting:
-- **Intent** — what does the user want to accomplish? (e.g., browse web, edit code, search knowledge, run tests)
-- **Behavior** — what actions or operations would satisfy that intent? (e.g., navigating websites, reading files, searching the web)
+First, identify the user's most recent query from the conversation history. Then produce a signal that:
 
-IMPORTANT: Identify the behavioral category — the kind of DOING the user needs, not just the topic they are thinking about.
+1. **Carries forward the user's latest query** — include the actual user query or a faithful paraphrase of it
+2. **Extracts Intent** — what does the user want to accomplish? (e.g., browse web, edit code, search knowledge, run tests)
+3. **Extracts Behavior** — what actions or operations would satisfy that intent? (e.g., navigating websites, reading files, searching the web)
 
-Output text ONLY — do NOT use any tools. Signal format: a short paragraph of keywords and phrases (2-5 sentences). Each phrase should be 2-5 words and describe a specific behavior or capability.`;
+IMPORTANT: Identify the behavioral category — the kind of DOING the user needs, not just the topic they are thinking about. The user's original query MUST be clearly represented in the signal.
+
+Output text ONLY — do NOT use any tools. Signal format: a short paragraph (2-5 sentences). Each sentence should describe a specific behavior or capability.`;
 }
 
-function buildSolvePrompt(signal: string): string {
+function buildSolvePrompt(signal: string, luq: string): string {
   return `You are in skill probing mode. Use the \`skill_search\` tool to find relevant skills.
 - You may ONLY use: skill_search
-- Use the signal below to guide your searches.
+- Use the analysis signal and the user's original query below to guide your searches.
 - **IMPORTANT**: The \`search\` param should be short keywords/phrases (2-5 words), NOT full sentences or long descriptions.
 - Once you have found useful skills, produce a brownbag JSON:
 \`\`\`json
 { "originalQuery": "...", "skills": ["skill-name-1", "skill-name-2"] }
 \`\`\`
 
-Signal: ${signal}`;
+Signal: ${signal}
+
+User Query: ${luq}`;
 }
 
 // ============================================================================
@@ -333,6 +337,9 @@ async function runSkillDirection(
   const { ctx } = env;
 
   try {
+    // Extract the last user content (LUQ) from baseMessages for the solve phase
+    const lastUserContent = extractLastUserContent(baseMessages);
+
     // Phase 1: Probe
     const signal = await runProbe(
       baseMessages,
@@ -349,7 +356,7 @@ async function runSkillDirection(
       ctx.core.brief('info', 'suggest', 'skill signal', signal);
     }
 
-    // Phase 2: Solve
+    // Phase 2: Solve — pass signal + LUQ so skill_search has the raw user query
     const directionTool: Tool[] = allTools.filter(t => t.function.name === 'skill_search');
     if (directionTool.length === 0) {
       ctx.core.verbose('suggest', 'skill: tool "skill_search" not found');
@@ -358,13 +365,26 @@ async function runSkillDirection(
 
     const solveMsgs: Message[] = [
       { role: 'assistant', content: signal },
-      { role: 'user', content: buildSolvePrompt(signal) },
+      { role: 'user', content: buildSolvePrompt(signal, lastUserContent) },
     ];
 
     await runSolveLoop(solveMsgs, directionTool, stopRequested, env, mutedCtx);
   } catch (err) {
     ctx.core.verbose('suggest', `skill failed: ${err instanceof Error ? err.message : String(err)}`);
   }
+}
+
+/**
+ * Extract the content of the last user message from a messages array.
+ * Returns empty string if no user message is found.
+ */
+function extractLastUserContent(messages: Message[]): string {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i].role === 'user') {
+      return messages[i].content || '';
+    }
+  }
+  return '';
 }
 
 // ============================================================================
