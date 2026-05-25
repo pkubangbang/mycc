@@ -32,15 +32,12 @@ interface BrownBag {
 
 /**
  * Result of trying to extract a brown bag from assistant text.
- * - ok=true: a valid, actionable brown bag was found.
- * - ok=false, feedback != null: the JSON was structurally close but had issues
- *   (e.g., hallucinated skill names). The feedback string can be injected back
- *   into the conversation to guide the LLM.
- * - ok=false, feedback == null: no usable JSON found at all.
+ * - ok=true: a valid brown bag was found (JSON format correct).
+ * - ok=false: no valid JSON found or wrong types.
  */
 type ExtractResult =
   | { ok: true; bag: BrownBag }
-  | { ok: false; feedback: string | null };
+  | { ok: false };
 
 // ============================================================================
 // Prompts
@@ -207,50 +204,32 @@ async function runSearching(
 
 /**
  * Try to parse a brown bag JSON from the assistant's text response.
- * Validates skill names against the loaded skill registry.
+ * Validates JSON format only (required fields and types).
  */
 function tryExtractBrownBag(content: string): ExtractResult {
   const trimmed = content.trim();
-  if (!trimmed) return { ok: false, feedback: null };
+  if (!trimmed) return { ok: false };
 
   try {
     const jsonMatch = trimmed.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) return { ok: false, feedback: null };
+    if (!jsonMatch) return { ok: false };
 
     const parsed = JSON.parse(jsonMatch[0]);
 
     // Validate required fields
-    if (typeof parsed.originalQuery !== 'string') return { ok: false, feedback: null };
-    if (!Array.isArray(parsed.skills)) return { ok: false, feedback: null };
-    if (!parsed.skills.every((s: unknown) => typeof s === 'string')) return { ok: false, feedback: null };
-
-    // Validate skills against loaded registry (hallucination detection)
-    const valid: string[] = [];
-    const hallucinated: string[] = [];
-    for (const s of parsed.skills as string[]) {
-      if (loader.getSkill(s) !== undefined) {
-        valid.push(s);
-      } else {
-        hallucinated.push(s);
-      }
-    }
-
-    if (hallucinated.length > 0) {
-      return {
-        ok: false,
-        feedback: `Skill(s) "${hallucinated.join('", "')}" do not exist. Use skill_search with short keywords to find relevant skills, rather than guessing skill names.`,
-      };
-    }
+    if (typeof parsed.originalQuery !== 'string') return { ok: false };
+    if (!Array.isArray(parsed.skills)) return { ok: false };
+    if (!parsed.skills.every((s: unknown) => typeof s === 'string')) return { ok: false };
 
     return {
       ok: true,
       bag: {
         originalQuery: parsed.originalQuery,
-        skills: valid,
+        skills: parsed.skills,
       },
     };
   } catch {
-    return { ok: false, feedback: null };
+    return { ok: false };
   }
 }
 
@@ -280,7 +259,7 @@ function formatBrownBag(brownBag: BrownBag): string | null {
 
 /**
  * Reranking phase: take summary + LUQ + search results and produce a brownbag JSON.
- * Runs up to MAX_RERANK_ATTEMPTS rounds with hallucination feedback.
+ * Runs up to MAX_RERANK_ATTEMPTS rounds.
  * On success: format and append to suggest mailbox. After max attempts: abandon.
  */
 async function runReranking(
@@ -312,15 +291,6 @@ async function runReranking(
     const extractResult = tryExtractBrownBag(content);
 
     if (!extractResult.ok) {
-      // Hallucinated skills: inject feedback and retry
-      if (extractResult.feedback) {
-        if (isDebuggingSuggest()) {
-          ctx.core.brief('warn', 'suggest', `reranking FAILURE (hallucinated skills, attempt ${attempt + 1})`, extractResult.feedback);
-        }
-        rerankMsgs.push({ role: 'user', content: extractResult.feedback });
-        continue;
-      }
-
       // No valid JSON — continue with no feedback
       if (isDebuggingSuggest()) {
         const preview = content.length > 200 ? `${content.slice(0, 200)}...` : content;
