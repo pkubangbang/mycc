@@ -438,14 +438,21 @@ export class Triologue {
    * the last user message), ensuring rollbackWrapUp() can work via simple
    * array truncation.
    *
-   * Safe to call even if lastRole is 'tool' — silently returns without
-   * mutating the triologue to avoid TP violations.
+   * If there are stale pending tool calls (e.g., ESC was pressed during tool
+   * execution), flushes them via skipPendingTools to maintain TP parity before
+   * adding the wrap-up message. Safe to call regardless of current last role.
    */
   beginWrapUp(): void {
     if (this.wrapUpMark !== -1) return; // already in wrap-up
-    // Guard: cannot begin wrap-up if last role is 'tool'
-    // (that would violate tool → user TP)
-    if (this.getLastRole() === 'tool') return;
+    // If there are stale pending tool calls (e.g., ESC pressed during tool
+    // execution before skipPendingTools resolved them), flush them now to
+    // maintain TP parity before adding the WRAP_UP user message.
+    if (this.pendingToolCalls.size > 0) {
+      this.skipPendingTools(
+        'Tool use interrupted - user pressed ESC.',
+        'Tool use skipped due to ESC interruption.',
+      );
+    }
     this.wrapUpMark = this.messages.length;
     // Always add as SEPARATE message (never combine with last user)
     this.addMessage({
