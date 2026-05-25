@@ -54,7 +54,7 @@ Only when you are informed of the domain list should you use this tool to search
       lines.push(`    Domain: ${result.document.domain}`);
       lines.push(`    Similarity: ${(result.similarity * 100).toFixed(1)}%`);
       lines.push(`    Hash: ${result.hash}`);
-      lines.push(`    Content: ${result.document.content.slice(0, 200)}${result.document.content.length > 200 ? '...' : ''}`);
+      lines.push(`    Content: ${result.document.content}`);
       if (result.document.references.length > 0) {
         lines.push(`    References: ${result.document.references.join(', ')}`);
       }

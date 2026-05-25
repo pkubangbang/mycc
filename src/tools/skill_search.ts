@@ -70,14 +70,19 @@ Once you find the right skill, use skill_load(name="<exact_name>") to load its f
     }
 
     // Deduplicate and build suggestions
+    // Wiki titles now use format "<scope>:<skill-name>", while nameResults use bare skill name.
+    // Extract the base skill name to deduplicate correctly.
     const matchedNames = new Set<string>();
     const suggestions: string[] = [];
 
     for (const r of semResults) {
-      if (!matchedNames.has(r.document.title)) {
-        matchedNames.add(r.document.title);
+      // Strip "<scope>:" prefix to get bare skill name for user-facing display
+      const title = r.document.title;
+      const baseName = title.includes(':') ? title.split(':').slice(1).join(':') : title;
+      if (!matchedNames.has(baseName)) {
+        matchedNames.add(baseName);
         const pct = (r.similarity * 100).toFixed(0);
-        suggestions.push(`## ${r.document.title} (${pct}% semantic match)\n\n${r.document.content}`);
+        suggestions.push(`## ${baseName} (${pct}% semantic match)\n\n${r.document.content}`);
       }
     }
 

@@ -640,13 +640,13 @@ export class Loader implements DynamicLoader, SkillModule {
 
   /**
    * Get scope for a skill based on its layer
-   * - 'user' layer → 'user'
+   * - 'user' layer → '[user]'
    * - 'project' layer → project name (from cwd)
-   * - 'built-in' layer → 'built-in'
+   * - 'built-in' layer → '[built-in]'
    */
   private getSkillScope(layer: Layer): string {
-    if (layer === 'user') return 'user';
-    if (layer === 'built-in') return 'built-in';
+    if (layer === 'user') return '[user]';
+    if (layer === 'built-in') return '[built-in]';
     // For project skills, use the project name (directory name of cwd)
     return path.basename(process.cwd());
   }
@@ -666,14 +666,15 @@ export class Loader implements DynamicLoader, SkillModule {
 
     const document: WikiDocument = {
       domain: 'skills',
-      title: skill.name,
+      title: `${scope}:${skill.name}`,
       content,
       references: [],
     };
 
     // Check if already indexed with same content
+    const expectedTitle = `${scope}:${skill.name}`;
     const existingResults = await wiki.get(skill.name, { domain: 'skills', topK: 1 });
-    if (existingResults.length > 0 && existingResults[0].document.title === skill.name) {
+    if (existingResults.length > 0 && existingResults[0].document.title === expectedTitle) {
       // Check if content matches
       if (existingResults[0].document.content === content) {
         // No change needed
