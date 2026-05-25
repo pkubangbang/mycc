@@ -9,7 +9,7 @@ import { createMockContext } from './test-utils.js';
 import type { AgentContext, Skill, SkillModule } from '../../types.js';
 
 // Mock the loader singleton
-vi.mock('../../context/loader.js', () => ({
+vi.mock('../../context/shared/loader.js', () => ({
   loader: {
     getSkillLayer: vi.fn(() => 'project'),
     indexSkillToWiki: vi.fn(() => Promise.resolve()),
@@ -97,15 +97,16 @@ Some paragraph.
     expect(extractedContent).toBe(originalContent);
   });
 
-  it('should handle case-sensitive skill names', async () => {
+  it('should reject case-mismatched skill names', async () => {
     const skill = createSampleSkill({ name: 'Code-Review' });
     ctx = createMockContextWithSkills('/tmp/test', [skill]);
 
     const exactResult = await skillLoadTool.handler(ctx, { name: 'Code-Review' });
     expect(exactResult).toContain('# Skill: Code-Review');
 
-    const caseResult = await skillLoadTool.handler(ctx, { name: 'code-review' });
-    expect(caseResult).toContain("Skill 'code-review' not found");
+    // Case-sensitive: 'code-review' should not match 'Code-Review'
+    const caseMismatchResult = await skillLoadTool.handler(ctx, { name: 'code-review' });
+    expect(caseMismatchResult).toContain("Skill 'code-review' not found by exact name");
   });
 
   it('should handle skill with unicode content', async () => {

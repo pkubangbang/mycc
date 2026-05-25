@@ -31,6 +31,7 @@ const TOOL_COLORS: Record<string, (text: string) => string> = {
   recall: chalk.magentaBright,
   wiki: chalk.blueBright,
   skill_load: chalk.cyanBright,
+  skill_search: chalk.cyanBright,
   skill_compile: chalk.cyan,
 
   // Task management

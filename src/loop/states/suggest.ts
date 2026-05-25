@@ -57,8 +57,8 @@ Output text ONLY — do NOT use any tools. Signal format: a short paragraph of k
 }
 
 function buildSolvePrompt(signal: string): string {
-  return `You are in skill probing mode. Use the \`skill_load\` tool (with \`search\` param, do NOT specify \`name\`) to find relevant skills.
-- You may ONLY use: skill_load
+  return `You are in skill probing mode. Use the \`skill_search\` tool to find relevant skills.
+- You may ONLY use: skill_search
 - Use the signal below to guide your searches.
 - **IMPORTANT**: The \`search\` param should be short keywords/phrases (2-5 words), NOT full sentences or long descriptions.
 - Once you have found useful skills, produce a brownbag JSON:
@@ -350,9 +350,9 @@ async function runSkillDirection(
     }
 
     // Phase 2: Solve
-    const directionTool: Tool[] = allTools.filter(t => t.function.name === 'skill_load');
+    const directionTool: Tool[] = allTools.filter(t => t.function.name === 'skill_search');
     if (directionTool.length === 0) {
-      ctx.core.verbose('suggest', 'skill: tool "skill_load" not found');
+      ctx.core.verbose('suggest', 'skill: tool "skill_search" not found');
       return;
     }
 

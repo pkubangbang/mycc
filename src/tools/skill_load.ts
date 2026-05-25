@@ -1,124 +1,77 @@
 /**
- * skill_load.ts - Load a skill into context
+ * skill_load.ts - Load a skill by exact name
  *
  * Scope: ['main', 'child'] - Available to lead and teammate agents
  *
- * This tool loads a skill by name and returns its content.
- * If no name is provided, uses semantic search to find relevant skills.
+ * This tool loads a skill by its exact name and returns its full content.
+ * It performs strict exact matching - no fuzzy search or fallback.
+ * For fuzzy/keyword search, use skill_search instead.
+ *
+ * IMPORTANT: The 'name' parameter is REQUIRED for this tool.
+ * If you are unsure of the exact name, use skill_search first to find it.
  */
 
 import type { ToolDefinition, AgentContext } from '../types.js';
 import { loader } from '../context/shared/loader.js';
-import { getSkillMatchThreshold } from '../config.js';
 
 export const skillLoadTool: ToolDefinition = {
   name: 'skill_load',
-  description: `Load a skill by name, or search skills by keywords. Returns specialized knowledge and instructions.`,
+  description: `Load a skill by exact name. Returns the full skill content.
+
+IMPORTANT: You MUST provide the 'name' parameter with the exact skill name. This tool does NOT do fuzzy search.
+If you don't know the exact name, use skill_search with keywords to find relevant skills first.`,
   input_schema: {
     type: 'object',
     properties: {
       name: {
         type: 'string',
-        description: 'Optional: The exact name of the skill to load. If not provided, semantic search will be used to find relevant skills based on search keywords.',
+        description: 'REQUIRED: The exact name of the skill to load. Must match exactly (case-sensitive).',
       },
       search: {
         type: 'string',
-        description: 'REQUIRED: Short keywords/phrases (2-5 words) describing what you are looking for. Use concise terms, NOT full sentences or long descriptions.',
+        description: 'Deprecated - has no effect on exact name matching. Use skill_search tool for searching.',
       },
     },
-    required: ['search'],
+    required: ['name'],
   },
   scope: ['main', 'child'],
   handler: async (ctx: AgentContext, args: Record<string, unknown>): Promise<string> => {
-    const skillName = args.name as string | undefined;
-    const search = args.search as string;
+    const skillName = args.name as string;
 
-    // Try exact name match first
-    if (skillName) {
-      const skill = ctx.skill.getSkill(skillName);
-      if (skill) {
-        ctx.core.brief('info', 'skill_load', `Loaded: ${skillName}`, search);
-
-        // Try to re-index skill to wiki (best effort, may fail if no embedding model)
-        try {
-          const layer = loader.getSkillLayer(skillName) || 'project';
-          await loader.indexSkillToWiki(skill, ctx.wiki, layer);
-        } catch {
-          // Ignore indexing errors - skill content is still valid
-        }
-
-        // Return the full skill content
-        const header = `# Skill: ${skill.name}\n`;
-        const description = skill.description ? `Description: ${skill.description}\n\n` : '';
-        const keywords = skill.keywords.length > 0 ? `Keywords: ${skill.keywords.join(', ')}\n\n` : '';
-        const when = skill.when ? `When: ${skill.when}\n\n` : '';
-        return `${header}${description}${keywords}${when}---\n\n${skill.content}`;
-      }
+    // Validate that name is provided
+    if (!skillName || typeof skillName !== 'string' || skillName.trim() === '') {
+      ctx.core.brief('error', 'skill_load', 'Missing or empty name parameter', 'Use skill_load(name="<exact_skill_name>")');
+      return 'ERROR: The "name" parameter is required and must be a non-empty string.\n\nUsage: skill_load(name="<exact_skill_name>")\nFor fuzzy search, use: skill_search(search="<keywords>")';
     }
 
-    // No exact match (or no name) → union semantic + name/keyword search
-    const threshold = getSkillMatchThreshold();
-    const searchQuery = `a skill to satisfy: ${search}`;
-    let semResults: Awaited<ReturnType<typeof ctx.wiki.get>> = [];
+    // Attempt exact name match (case-sensitive)
+    const skill = ctx.skill.getSkill(skillName);
+    if (!skill) {
+      ctx.core.brief('warn', 'skill_load', `Skill not found: ${skillName}`);
+      return `ERROR: Skill '${skillName}' not found by exact name.
 
-    // Semantic search by search keywords
+To find the correct skill name, use:
+  skill_search(search="<keywords related to what you need>")
+
+Once you find the correct name, load it with:
+  skill_load(name="<exact_skill_name>")`;
+    }
+
+    ctx.core.brief('info', 'skill_load', `Loaded: ${skillName}`);
+
+    // Try to re-index skill to wiki (best effort, may fail if no embedding model)
     try {
-      semResults = await ctx.wiki.get(searchQuery, { domain: 'skills', topK: 3, threshold });
+      const layer = loader.getSkillLayer(skillName) || 'project';
+      await loader.indexSkillToWiki(skill, ctx.wiki, layer);
     } catch {
-      // Semantic search may not be available
+      // Ignore indexing errors - skill content is still valid
     }
 
-    // Name/keyword search: match the name param against skill names and keywords
-    const nameResults: { name: string; description: string; keywords: string[] }[] = [];
-    if (skillName && skillName.length > 3) {
-      const lowerName = skillName.toLowerCase();
-      const allSkills = ctx.skill.listSkills();
-      for (const s of allSkills) {
-        const nameMatch = s.name.toLowerCase().includes(lowerName);
-        const kwMatch = s.keywords.some(kw => kw.toLowerCase().includes(lowerName));
-        if (nameMatch || kwMatch) {
-          nameResults.push({ name: s.name, description: s.description, keywords: s.keywords });
-        }
-      }
-    }
-
-    // Deduplicate and build suggestions
-    const matchedNames = new Set<string>();
-    const suggestions: string[] = [];
-
-    for (const r of semResults) {
-      if (!matchedNames.has(r.document.title)) {
-        matchedNames.add(r.document.title);
-        const pct = (r.similarity * 100).toFixed(0);
-        suggestions.push(`## ${r.document.title} (${pct}% semantic match)\n\n${r.document.content}`);
-      }
-    }
-
-    for (const nr of nameResults) {
-      if (!matchedNames.has(nr.name)) {
-        matchedNames.add(nr.name);
-        const desc = nr.description ? `\n*${nr.description}*` : '';
-        const kw = nr.keywords.length > 0 ? `\nKeywords: ${nr.keywords.join(', ')}` : '';
-        suggestions.push(`## ${nr.name} (name/keyword match)\n\n${desc}\n${kw}`.trim());
-      }
-    }
-
-    if (suggestions.length === 0) {
-      const label = skillName || search;
-      ctx.core.brief('warn', 'skill_load', `No matches: ${label}`, search);
-      return `ERROR: No skills found matching '${label}'.\n\nNo skills are currently available in the knowledge base. Skills may need to be loaded or indexed first. Try /skills build to rebuild the skill index.`;
-    }
-
-    const allNames = [...matchedNames];
-    const matchSummary = allNames.join(', ');
-    ctx.core.brief('info', 'skill_load', `→ ${matchSummary}`, search);
-
-    const body = suggestions.join('\n\n---\n\n');
-
-    if (skillName) {
-      return `Skill '${skillName}' not found exactly, but found ${suggestions.length} suggestion(s):\n\n---\n\n${body}\n\n---\n\nTo load a specific skill, use: skill_load(name="<skill_name>", search="<keywords>")`;
-    }
-
-    return `Found ${suggestions.length} skill(s) matching your search:\n\n---\n\n${body}\n\n---\n\nTo load a specific skill, use: skill_load(name="<skill_name>", search="<keywords>")`;
+    // Return the full skill content
+    const header = `# Skill: ${skill.name}\n`;
+    const description = skill.description ? `Description: ${skill.description}\n\n` : '';
+    const keywords = skill.keywords.length > 0 ? `Keywords: ${skill.keywords.join(', ')}\n\n` : '';
+    const when = skill.when ? `When: ${skill.when}\n\n` : '';
+    return `${header}${description}${keywords}${when}---\n\n${skill.content}`;
   },
 };

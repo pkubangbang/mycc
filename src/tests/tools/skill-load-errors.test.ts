@@ -9,7 +9,7 @@ import { createMockContext } from './test-utils.js';
 import type { AgentContext, Skill, SkillModule } from '../../types.js';
 
 // Mock the loader singleton
-vi.mock('../../context/loader.js', () => ({
+vi.mock('../../context/shared/loader.js', () => ({
   loader: {
     getSkillLayer: vi.fn(() => 'project'),
     indexSkillToWiki: vi.fn(() => Promise.resolve()),
@@ -62,78 +62,78 @@ describe('skillLoadTool - Errors', () => {
     const existingSkill = createSampleSkill({ name: 'existing' });
     ctx = createMockContextWithSkills('/tmp/test', [existingSkill]);
 
-    const result = await skillLoadTool.handler(ctx, { name: 'nonexistent', search: 'test keywords' });
+    const result = await skillLoadTool.handler(ctx, { name: 'nonexistent' });
 
-    expect(result).toContain("ERROR: No skills found matching 'nonexistent'");
+    expect(result).toContain("Skill 'nonexistent' not found by exact name");
   });
 
-  it('should return message when no skills are loaded', async () => {
+  it('should return error when no skills are loaded', async () => {
     ctx = createMockContextWithSkills('/tmp/test', []);
 
-    const result = await skillLoadTool.handler(ctx, { name: 'any-skill', search: 'test keywords' });
+    const result = await skillLoadTool.handler(ctx, { name: 'any-skill' });
 
-    expect(result).toContain("ERROR: No skills found matching 'any-skill'");
+    expect(result).toContain("Skill 'any-skill' not found by exact name");
   });
 
-  it('should suggest using search when skill not found', async () => {
+  it('should suggest using skill_search when skill not found', async () => {
     const skills = [
       createSampleSkill({ name: 'code-review', description: 'Review code' }),
       createSampleSkill({ name: 'testing', description: 'Write tests' }),
     ];
     ctx = createMockContextWithSkills('/tmp/test', skills);
 
-    const result = await skillLoadTool.handler(ctx, { name: 'unknown', search: 'test keywords' });
+    const result = await skillLoadTool.handler(ctx, { name: 'unknown' });
 
-    expect(result).toContain("ERROR: No skills found matching 'unknown'");
-    expect(result).toContain("Try /skills build");
+    expect(result).toContain("Skill 'unknown' not found by exact name");
+    expect(result).toContain('skill_search');
   });
 
   // =========================================================================
   // Invalid Skill Names
   // =========================================================================
 
-  it('should handle empty skill name', async () => {
+  it('should return error for empty skill name', async () => {
     const skill = createSampleSkill();
     ctx = createMockContextWithSkills('/tmp/test', [skill]);
 
-    const result = await skillLoadTool.handler(ctx, { name: '', search: 'test keywords' });
+    const result = await skillLoadTool.handler(ctx, { name: '' });
 
-    // Empty name triggers semantic search (no exact match for '')
     expect(result).toContain('ERROR');
+    expect(result).toContain('name');
   });
 
   it('should handle skill name with special characters', async () => {
     const skill = createSampleSkill();
     ctx = createMockContextWithSkills('/tmp/test', [skill]);
 
-    const result = await skillLoadTool.handler(ctx, { name: 'invalid@skill!', search: 'test keywords' });
+    const result = await skillLoadTool.handler(ctx, { name: 'invalid@skill!' });
 
-    expect(result).toContain("ERROR: No skills found matching 'invalid@skill!'");
+    expect(result).toContain("Skill 'invalid@skill!' not found by exact name");
   });
 
   it('should handle skill name with path traversal attempt', async () => {
     const skill = createSampleSkill();
     ctx = createMockContextWithSkills('/tmp/test', [skill]);
 
-    const result = await skillLoadTool.handler(ctx, { name: '../../../etc/passwd', search: 'test keywords' });
+    const result = await skillLoadTool.handler(ctx, { name: '../../../etc/passwd' });
 
-    expect(result).toContain("ERROR: No skills found matching '../../../etc/passwd'");
+    expect(result).toContain("Skill '../../../etc/passwd' not found by exact name");
   });
 
   it('should handle skill name with only whitespace', async () => {
     const skill = createSampleSkill();
     ctx = createMockContextWithSkills('/tmp/test', [skill]);
 
-    const result = await skillLoadTool.handler(ctx, { name: '   ', search: 'test keywords' });
+    const result = await skillLoadTool.handler(ctx, { name: '   ' });
 
-    expect(result).toContain("ERROR: No skills found matching '   '");
+    expect(result).toContain('ERROR');
   });
 
   it('should handle numeric skill name', async () => {
     const skill = createSampleSkill({ name: '123' });
     ctx = createMockContextWithSkills('/tmp/test', [skill]);
 
-    const result = await skillLoadTool.handler(ctx, { name: '123', search: 'test keywords' });
+    const result = await skillLoadTool.handler(ctx, { name: '123' });
 
     expect(result).toContain('# Skill: 123');
   });
@@ -142,32 +142,30 @@ describe('skillLoadTool - Errors', () => {
   // Error Handling - Missing/Invalid Parameters
   // =========================================================================
 
-  it('should handle missing name parameter (uses semantic search)', async () => {
+  it('should return error when name parameter is missing', async () => {
     const skill = createSampleSkill();
     ctx = createMockContextWithSkills('/tmp/test', [skill]);
 
-    // When name is missing, it uses semantic search with wiki
-    // Since wiki mock may not have skills indexed, we check for the error message
-    const result = await skillLoadTool.handler(ctx, { search: 'test keywords' });
+    const result = await skillLoadTool.handler(ctx, {});
 
-    // Either it finds skills or returns an error about wiki/semantic search
-    expect(result).toBeDefined();
+    expect(result).toContain('ERROR');
+    expect(result).toContain('name');
   });
 
   it('should handle invalid name type (number)', async () => {
     const skill = createSampleSkill();
     ctx = createMockContextWithSkills('/tmp/test', [skill]);
 
-    const result = await skillLoadTool.handler(ctx, { name: 123, search: 'test keywords' });
+    const result = await skillLoadTool.handler(ctx, { name: 123 as unknown as string });
 
-    expect(result).toContain("ERROR: No skills found matching '123'");
+    expect(result).toContain('ERROR');
   });
 
   it('should handle name with special characters that is valid', async () => {
     const skill = createSampleSkill({ name: 'my-skill_v2.0' });
     ctx = createMockContextWithSkills('/tmp/test', [skill]);
 
-    const result = await skillLoadTool.handler(ctx, { name: 'my-skill_v2.0', search: 'test keywords' });
+    const result = await skillLoadTool.handler(ctx, { name: 'my-skill_v2.0' });
 
     expect(result).toContain('# Skill: my-skill_v2.0');
   });
