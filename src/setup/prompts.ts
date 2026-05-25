@@ -44,28 +44,49 @@ function validatePositiveNumber(value: string): boolean | string {
 }
 
 /**
- * Get Ollama-specific prompts
+ * Get Ollama connection prompts (common to all providers)
  */
-function getOllamaPrompts(): PromptConfig[] {
+function getOllamaConnectionPrompts(): PromptConfig[] {
   return [
     {
       name: 'OLLAMA_HOST',
       message: 'Ollama server URL',
       default: 'http://127.0.0.1:11434',
-      help: 'The URL of your Ollama server',
+      help: 'The URL of your Ollama server (used for embeddings)',
       validate: validateUrl,
+    },
+    {
+      name: 'OLLAMA_EMBEDDING_MODEL',
+      message: 'Ollama embedding model (for semantic search/RAG)',
+      default: 'nomic-embed-text',
+      help: 'An embedding model is recommended for wiki/RAG features. Leave empty to skip.',
+    },
+  ];
+}
+
+/**
+ * Get Ollama-specific prompts (after connection setup)
+ */
+function getOllamaPrompts(): PromptConfig[] {
+  return [
+    {
+      name: 'OLLAMA_API_KEY',
+      message: 'Ollama API key (optional, for cloud features)',
+      default: '',
+      help: 'Set if using Ollama cloud features. Leave empty for local Ollama.',
+      sensitive: true,
     },
     {
       name: 'OLLAMA_MODEL',
       message: 'Ollama model name (general/chat)',
       default: 'glm-5:cloud',
-      help: 'The model to use for general chat and coding tasks. Use "ollama list" to see installed models.',
+      help: 'The model to use for general chat and coding tasks.',
     },
     {
       name: 'OLLAMA_VISION_MODEL',
       message: 'Ollama vision model (for screen/image tools)',
       default: 'none',
-      help: 'Set to "none" to disable vision features, or specify a vision-capable model (e.g., gemma4:31b-cloud)',
+      help: 'Set to "none" to disable vision features, or specify a vision-capable model.',
     },
   ];
 }
@@ -131,6 +152,7 @@ function getSharedPrompts(): PromptConfig[] {
 export function getPrompts(provider?: 'ollama' | 'deepseek'): PromptConfig[] {
   const providerPrompts = provider === 'deepseek' ? getDeepSeekPrompts() : getOllamaPrompts();
   return [
+    ...getOllamaConnectionPrompts(),
     ...providerPrompts,
     ...getSharedPrompts(),
   ];
@@ -147,41 +169,43 @@ export interface EnvRequirement {
 }
 
 export const ENV_REQUIREMENTS: EnvRequirement[] = [
-  // Ollama vars (always shown, some shared)
+  // Ollama connection (common to all providers)
   {
     name: 'OLLAMA_HOST',
     required: false,
     default: 'http://127.0.0.1:11434',
-    instruction: 'Set OLLAMA_HOST for your Ollama server',
-  },
-  {
-    name: 'OLLAMA_MODEL',
-    required: false,
-    default: 'glm-5:cloud',
-    instruction: 'Set OLLAMA_MODEL to specify which Ollama model to use',
-  },
-  {
-    name: 'OLLAMA_VISION_MODEL',
-    required: false,
-    instruction: 'Set OLLAMA_VISION_MODEL for vision/multimodal tasks (Ollama only)',
+    instruction: 'Set OLLAMA_HOST for your Ollama server (used for embeddings)',
   },
   {
     name: 'OLLAMA_EMBEDDING_MODEL',
     required: false,
     instruction: 'Set OLLAMA_EMBEDDING_MODEL for semantic search/RAG (always uses Ollama)',
   },
-  {
-    name: 'OLLAMA_API_KEY',
-    required: false,
-    instruction: 'Set OLLAMA_API_KEY for cloud/web search features (Ollama only)',
-  },
-  // DeepSeek vars
+  // Provider selection
   {
     name: 'API_PROVIDER',
     required: false,
     default: 'ollama',
     instruction: 'Set API_PROVIDER to "deepseek" to use DeepSeek instead of Ollama',
   },
+  // Ollama vars
+  {
+    name: 'OLLAMA_API_KEY',
+    required: false,
+    instruction: 'Set OLLAMA_API_KEY for cloud features',
+  },
+  {
+    name: 'OLLAMA_MODEL',
+    required: false,
+    default: 'glm-5:cloud',
+    instruction: 'Set OLLAMA_MODEL for chat model',
+  },
+  {
+    name: 'OLLAMA_VISION_MODEL',
+    required: false,
+    instruction: 'Set OLLAMA_VISION_MODEL for vision/multimodal tasks',
+  },
+  // DeepSeek vars
   {
     name: 'DEEPSEEK_HOST',
     required: false,

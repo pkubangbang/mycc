@@ -208,7 +208,7 @@ export function isVisionEnabled(): boolean {
 export function getVisionModel(): string {
   const model = process.env.OLLAMA_VISION_MODEL;
   if (!model) {
-    throw new Error('OLLAMA_VISION_MODEL is not set. Set it to a vision model (e.g., gemma4:31b-cloud) or "none" to disable vision features.');
+    throw new Error('OLLAMA_VISION_MODEL is not set. Set it to a vision model or "none" to disable vision features.');
   }
   if (model === 'none') {
     throw new Error('Vision features are disabled (OLLAMA_VISION_MODEL=none). Set a vision model to enable screen and read_picture tools.');

@@ -2,7 +2,7 @@
  * wizard.ts - Interactive readline prompts for setup
  *
  * Uses Node.js readline for cross-platform interactive input.
- * Supports provider selection (Ollama vs DeepSeek) with
+ * Supports provider selection (ollama-cloud vs DeepSeek) with
  * conditional prompting based on the choice.
  */
 
@@ -81,7 +81,7 @@ async function prompt(
 /**
  * Prompt for API provider choice (Ollama or DeepSeek)
  */
-async function promptProviderChoice(
+async function promptChatProvider(
   rl: readline.ReadLine,
   existingConfig: Record<string, string>
 ): Promise<'ollama' | 'deepseek'> {
@@ -89,12 +89,10 @@ async function promptProviderChoice(
     const currentProvider = existingConfig['API_PROVIDER'] || 'ollama';
     const currentLabel = currentProvider === 'deepseek' ? 'DeepSeek' : 'Ollama';
 
-    console.log(chalk.cyan('\n🔌 API Provider Selection'));
-    console.log(chalk.dim('  mycc supports two LLM providers:'));
-    console.log('  [1] Ollama  - Local LLM inference (default). Requires Ollama installed.');
-    console.log('  [2] DeepSeek - Cloud API. Requires an API key. Supports web_search/web_fetch/vision? No.');
-    console.log();
-    console.log(chalk.dim('  Note: Embeddings (wiki/RAG) always use Ollama regardless of provider choice.'));
+    console.log(chalk.cyan('\n🤖 Chat Provider Selection'));
+    console.log(chalk.dim('  Choose your chat model provider:'));
+    console.log('  [1] Ollama   - Local or cloud LLM (requires API key for cloud)');
+    console.log('  [2] DeepSeek - DeepSeek Cloud API (requires API key)');
     console.log();
 
     const promptText = currentProvider
@@ -115,16 +113,19 @@ async function promptProviderChoice(
 /**
  * Prompt for config location
  */
-async function promptConfigLocation(rl: readline.ReadLine): Promise<'user' | 'project'> {
+async function promptConfigLocation(rl: readline.ReadLine): Promise<'user' | 'project' | 'delete'> {
   return new Promise((resolve) => {
-    console.log(chalk.cyan('\n📁 Where do you want to store the configuration?'));
-    console.log('  [1] User-level (~/.mycc-store/.env) - Global, applies to all projects');
+    console.log(chalk.cyan('\n📁 Configuration Location'));
+    console.log('  [1] User-level   (~/.mycc-store/.env) - Global, applies to all projects');
     console.log('  [2] Project-level (./.mycc/.env) - Local, applies only to current project');
+    console.log('  [3] Delete project config - Remove local config, inherit from user config');
 
-    rl.question(chalk.white('\nChoice [1-2, default: 1]: '), (answer) => {
+    rl.question(chalk.white('\nChoice [1-3, default: 1]: '), (answer) => {
       const trimmed = answer.trim();
       if (trimmed === '2' || trimmed.toLowerCase() === 'project' || trimmed.toLowerCase() === 'local') {
         resolve('project');
+      } else if (trimmed === '3' || trimmed.toLowerCase() === 'delete') {
+        resolve('delete');
       } else {
         resolve('user'); // Default to user-level
       }
@@ -154,7 +155,7 @@ export function isInteractiveTerminal(): boolean {
  */
 export async function runWizard(
   existingConfig: Record<string, string>
-): Promise<{ location: 'user' | 'project'; config: Record<string, string> }> {
+): Promise<{ location: 'user' | 'project' | 'delete'; config: Record<string, string> }> {
   const rl = createRL();
   const config: Record<string, string> = {};
 
@@ -162,21 +163,39 @@ export async function runWizard(
     // Step 1: Choose config location
     const location = await promptConfigLocation(rl);
 
-    // Step 2: Choose API provider
-    const provider = await promptProviderChoice(rl, existingConfig);
-    config['API_PROVIDER'] = provider;
+    // Handle delete case
+    if (location === 'delete') {
+      return { location: 'delete', config: {} };
+    }
 
-    // Step 3: Get existing config for the selected location only (not merged)
+    // Step 2: Get existing config for the selected location only (not merged)
     const locationConfig = getLocationConfig(location);
 
-    // Step 4: Prompt for provider-specific values
+    // Step 3: Prompt for Ollama connection (common to all providers)
+    console.log(chalk.cyan('\n🔌 Ollama Connection (used for embeddings)\n'));
+    console.log(chalk.dim('  Press Enter to accept the default or keep existing value.\n'));
+    const ollamaConnectionPrompts = getPrompts('ollama').slice(0, 2); // OLLAMA_HOST, OLLAMA_EMBEDDING_MODEL
+    for (const promptConfig of ollamaConnectionPrompts) {
+      const currentValue = locationConfig[promptConfig.name] || existingConfig[promptConfig.name];
+      const value = await prompt(rl, promptConfig, currentValue);
+      if (value !== undefined && value !== '') {
+        config[promptConfig.name] = value;
+      }
+    }
+
+    // Step 4: Choose chat provider
+    const provider = await promptChatProvider(rl, existingConfig);
+    config['API_PROVIDER'] = provider;
+
+    // Step 5: Prompt for provider-specific values
     const providerLabel = provider === 'deepseek' ? 'DeepSeek' : 'Ollama';
     console.log(chalk.cyan(`\n⚙️  ${providerLabel} Configuration\n`));
     console.log(chalk.dim('  Press Enter to accept the default or keep existing value.\n'));
 
-    const prompts = getPrompts(provider);
-    for (const promptConfig of prompts) {
-      // Check existing config in order: location-specific, then merged
+    // Get provider-specific prompts (skip Ollama connection prompts)
+    const allPrompts = getPrompts(provider);
+    const providerPrompts = allPrompts.slice(2); // Skip OLLAMA_HOST, OLLAMA_EMBEDDING_MODEL
+    for (const promptConfig of providerPrompts) {
       const currentValue = locationConfig[promptConfig.name] || existingConfig[promptConfig.name];
       const value = await prompt(rl, promptConfig, currentValue);
       if (value !== undefined && value !== '') {
@@ -211,20 +230,21 @@ export function displaySetupHelp(): void {
   console.log(chalk.dim('  User-level:   ~/.mycc-store/.env (global)'));
   console.log(chalk.dim('  Project-level: ./.mycc/.env (local)\n'));
   console.log(chalk.cyan('Providers:'));
-  console.log(chalk.dim('  [1] Ollama (default)'));
-  console.log(chalk.dim('  [2] DeepSeek\n'));
+  console.log(chalk.dim('  [1] Ollama   - Local or cloud LLM'));
+  console.log(chalk.dim('  [2] DeepSeek - DeepSeek Cloud API (requires API key)\n'));
+  console.log(chalk.cyan('Environment variables (Ollama connection - always required):'));
+  console.log(chalk.dim('  OLLAMA_HOST            - Ollama server URL (for embeddings)'));
+  console.log(chalk.dim('  OLLAMA_EMBEDDING_MODEL - Embedding model name\n'));
   console.log(chalk.cyan('Environment variables (Ollama):'));
-  console.log(chalk.dim('  OLLAMA_HOST          - Ollama server URL'));
-  console.log(chalk.dim('  OLLAMA_MODEL         - General/chat model'));
-  console.log(chalk.dim('  OLLAMA_VISION_MODEL  - Vision model (or "none")'));
-  console.log(chalk.dim('  OLLAMA_API_KEY       - API key for cloud features'));
+  console.log(chalk.dim('  OLLAMA_API_KEY      - API key for cloud features'));
+  console.log(chalk.dim('  OLLAMA_MODEL        - Chat model name'));
+  console.log(chalk.dim('  OLLAMA_VISION_MODEL - Vision model (or "none")\n'));
   console.log(chalk.cyan('Environment variables (DeepSeek):'));
-  console.log(chalk.dim('  DEEPSEEK_HOST        - DeepSeek API endpoint'));
-  console.log(chalk.dim('  DEEPSEEK_API_KEY     - DeepSeek API key'));
-  console.log(chalk.dim('  DEEPSEEK_MODEL       - DeepSeek model name'));
+  console.log(chalk.dim('  DEEPSEEK_HOST      - DeepSeek API endpoint'));
+  console.log(chalk.dim('  DEEPSEEK_API_KEY   - DeepSeek API key'));
+  console.log(chalk.dim('  DEEPSEEK_MODEL     - DeepSeek model name\n'));
   console.log(chalk.cyan('Environment variables (shared):'));
-  console.log(chalk.dim('  OLLAMA_EMBEDDING_MODEL - Embedding model (always uses Ollama)'));
-  console.log(chalk.dim('  TOKEN_THRESHOLD      - Context limit threshold'));
-  console.log(chalk.dim('  EDITOR               - Text editor\n'));
-  console.log(chalk.dim('  API_PROVIDER         - Set automatically based on your choice\n'));
+  console.log(chalk.dim('  TOKEN_THRESHOLD    - Context limit threshold'));
+  console.log(chalk.dim('  EDITOR             - Text editor\n'));
+  console.log(chalk.dim('  API_PROVIDER       - Set automatically based on your choice\n'));
 }

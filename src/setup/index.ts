@@ -71,6 +71,21 @@ export async function runSetup(): Promise<void> {
   const existingConfig = getExistingConfig();
   const { location, config } = await runWizard(existingConfig);
 
+  // Handle delete case
+  if (location === 'delete') {
+    const projectConfigPath = getProjectConfigPath();
+    const fs = await import('fs');
+    if (fs.existsSync(projectConfigPath)) {
+      fs.unlinkSync(projectConfigPath);
+      console.log(chalk.green('\n✅ Project configuration deleted.'));
+      console.log(chalk.dim('   Will inherit from user-level config if it exists.\n'));
+    } else {
+      console.log(chalk.yellow('\n⚠️  No project configuration found to delete.'));
+      console.log(chalk.dim('   Already using user-level config.\n'));
+    }
+    return;
+  }
+
   // Determine the selected provider
   const provider = config['API_PROVIDER'] === 'deepseek' ? 'deepseek' : 'ollama';
 
