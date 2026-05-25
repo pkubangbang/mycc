@@ -31,6 +31,8 @@ import { displayLetterBox } from '../utils/letter-box.js';
 import type { Triologue } from './triologue.js';
 import type { LineEditor } from '../utils/line-editor.js';
 import { retryChat, MODEL } from '../engine/chat-provider.js';
+import { getApiProvider } from '../config.js';
+import type { Tool } from 'ollama';
 
 /**
  * WrapUpState - Tracks the state of background wrap-up after ESC
@@ -67,20 +69,36 @@ let wrapUpState: WrapUpState = {
  * Run the wrap-up LLM call.
  * Uses triologue.getMessages() which INCLUDES the WRAP_UP note added by
  * beginWrapUp() — always fresh, no snapshot needed.
+ *
+ * For DeepSeek: keeps the full tool list so the model has context, but sets
+ * tool_choice='none' to prevent tool calls (avoids raw XML in content).
+ * For Ollama: passes empty tools list (unchanged behavior).
  */
-async function runWrapUpLLM(triologue: Triologue): Promise<string> {
+async function runWrapUpLLM(triologue: Triologue, tools?: Tool[]): Promise<string> {
   const messages = triologue.getMessages();
+  const isDeepseek = getApiProvider() === 'deepseek';
 
   try {
-    const response = await retryChat(
-      {
-        model: MODEL,
-        messages,
-        tools: [], // No tools for wrap-up
-        think: true,
-      },
-      { noSpinner: true },
-    );
+    const response = isDeepseek
+      ? await retryChat(
+          {
+            model: MODEL,
+            messages,
+            tools: tools || [],
+            think: true,
+            toolChoice: 'none',
+          } as Parameters<typeof retryChat>[0],
+          { noSpinner: true },
+        )
+      : await retryChat(
+          {
+            model: MODEL,
+            messages,
+            tools: [],
+            think: true,
+          },
+          { noSpinner: true },
+        );
 
     return response.message?.content || '';
   } catch {
@@ -93,11 +111,11 @@ async function runWrapUpLLM(triologue: Triologue): Promise<string> {
  * Calls triologue.beginWrapUp() to add WRAP_UP note inline.
  * Runs the LLM wrap-up in background.
  */
-export function startWrapUp(triologue: Triologue): void {
+export function startWrapUp(triologue: Triologue, tools?: Tool[]): void {
   // Add WRAP_UP user message inline (always separate, never combined)
   triologue.beginWrapUp();
 
-  const promise = runWrapUpLLM(triologue);
+  const promise = runWrapUpLLM(triologue, tools);
   wrapUpState = {
     promise,
     content: null,

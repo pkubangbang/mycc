@@ -51,7 +51,7 @@ export async function handleLlm(
       if (agentIO.isNeglectedMode()) {
         ctx.core.verbose('llm', 'ESC pressed before LLM call - starting wrap-up');
         stopSpinner(); // Ensure spinner is stopped before returning to PROMPT
-        startWrapUp(triologue);
+        startWrapUp(triologue, tools);
         return AgentState.PROMPT;
       }
 
@@ -73,7 +73,7 @@ export async function handleLlm(
         () => {
           // This runs when ESC is pressed DURING the LLM call
           // Always start wrap-up to give user a quick response
-          startWrapUp(triologue);
+          startWrapUp(triologue, tools);
           return null;
         }
       );

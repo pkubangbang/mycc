@@ -11,6 +11,7 @@ import type { MachineEnv, TurnVars, PassData, HandlerResult } from '../state-mac
 import { agentIO } from '../agent-io.js';
 import { startWrapUp } from '../esc-wrap-up.js';
 import { isVerbose } from '../../config.js';
+import { loader } from '../../context/shared/loader.js';
 import type { SequenceEvent } from '../../hook/sequence.js';
 
 // Confusion threshold for hint generation
@@ -126,7 +127,7 @@ export async function handleCollect(
         },
         () => {
           // Start wrap-up when ESC is pressed during hint generation
-          startWrapUp(triologue);
+          startWrapUp(triologue, loader.getToolsForScope(env.scope));
           return 'aborted' as const;
         }
       );

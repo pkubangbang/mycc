@@ -136,6 +136,7 @@ interface DeepSeekRequestBody {
   reasoning_effort?: 'high' | 'max';
   max_tokens?: number;
   tools?: unknown[];
+  tool_choice?: 'none' | 'auto' | 'required';
   response_format?: { type: 'json_object' | 'text' };
 }
 
@@ -353,6 +354,12 @@ export async function retryChat(
 
         if (request.tools && request.tools.length > 0) {
           body.tools = request.tools as unknown[];
+        }
+
+        // Allow callers to override tool_choice (e.g., 'none' for wrap-up)
+        const toolChoice = (request as Record<string, unknown>).toolChoice;
+        if (toolChoice) {
+          body.tool_choice = toolChoice as DeepSeekRequestBody['tool_choice'];
         }
 
         // DeepSeek only supports { type: 'json_object' | 'text' }, not a raw
