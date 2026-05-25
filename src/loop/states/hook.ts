@@ -117,8 +117,14 @@ async function handleRecapCall(
   const tokensBefore = triologue.getTokenCount();
 
   if (abandon) {
+    // Preserve the last user query from the recapped section before truncating,
+    // so follow-up queries after the checkpoint are not lost.
+    const lastUserMsg = [...messages].reverse().find(m => m.role === 'user');
     // Abandon: discard messages, append ?recap + !recap (abandon marker)
     triologue.recapMessages(checkpoint.index);
+    if (lastUserMsg) {
+      triologue._injectBypass(lastUserMsg);
+    }
     triologue.agent(pass.assistantContent, pass.rawToolCalls as ToolCall[] | undefined, pass.assistantReasoningContent);
     const abandonResult = `[RECAP] Abandoned checkpoint "${checkpoint.description}"\n\n${messages.length} messages discarded. Checkpoint closed.${comment ? `\n\nComment: ${comment}` : ''}\n\nNote: the checkpoint todo item was auto-created with this checkpoint's ID as its note. Use todo_update to mark it as done.`;
     triologue.tool('recap', abandonResult, call.id);
@@ -150,7 +156,13 @@ async function handleRecapCall(
     return AgentState.COLLECT;
   }
 
+  // Preserve the last user query from the recapped section before truncating,
+  // so follow-up queries after the checkpoint are not lost.
+  const lastUserMsg = [...messages].reverse().find(m => m.role === 'user');
   triologue.recapMessages(checkpoint.index);
+  if (lastUserMsg) {
+    triologue._injectBypass(lastUserMsg);
+  }
   triologue.agent(pass.assistantContent, pass.rawToolCalls as ToolCall[] | undefined, pass.assistantReasoningContent);
   triologue.tool('recap', summary, call.id);
 
