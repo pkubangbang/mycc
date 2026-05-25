@@ -159,12 +159,12 @@ export async function runWizard(
   const config: Record<string, string> = {};
 
   try {
-    // Step 1: Choose API provider
+    // Step 1: Choose config location
+    const location = await promptConfigLocation(rl);
+
+    // Step 2: Choose API provider
     const provider = await promptProviderChoice(rl, existingConfig);
     config['API_PROVIDER'] = provider;
-
-    // Step 2: Choose config location
-    const location = await promptConfigLocation(rl);
 
     // Step 3: Get existing config for the selected location only (not merged)
     const locationConfig = getLocationConfig(location);
