@@ -584,7 +584,7 @@ export interface RebuildResult {
  * Wiki module interface for persistent memory
  */
 export interface WikiModule {
-  prepare(document: WikiDocument): Promise<PrepareResult>;
+  prepare(document: WikiDocument, skipDuplicateCheck?: boolean): Promise<PrepareResult>;
   put(hash: string, document: WikiDocument): Promise<PutResult>;
   get(query: string, options?: GetOptions): Promise<SearchResult[]>;
   delete(hash: string): Promise<boolean>;

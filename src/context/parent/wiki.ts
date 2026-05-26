@@ -174,8 +174,10 @@ export class WikiManager implements WikiModule {
 
   /**
    * Prepare document for storage - evaluate and return hash or rejection
+   * @param document - The document to prepare
+   * @param skipDuplicateCheck - If true, skip the embedding-based duplicate check (used for skill indexing where titles already de-duplicate)
    */
-  async prepare(document: WikiDocument): Promise<PrepareResult> {
+  async prepare(document: WikiDocument, skipDuplicateCheck: boolean = false): Promise<PrepareResult> {
     // Validate document structure
     if (!document.domain || !document.title || !document.content) {
       return { accepted: false, reason: 'Missing required fields: domain, title, or content' };
@@ -206,10 +208,12 @@ export class WikiManager implements WikiModule {
       // Generate embedding for content
       const embedding = await getEmbedding(document.content);
 
-      // Check for duplicates
-      const isDuplicate = await this.checkDuplicate(embedding);
-      if (isDuplicate) {
-        return { accepted: false, reason: 'Similar document already exists in knowledge base' };
+      // Check for duplicates (skip for skill indexing where titles serve as primary keys)
+      if (!skipDuplicateCheck) {
+        const isDuplicate = await this.checkDuplicate(embedding);
+        if (isDuplicate) {
+          return { accepted: false, reason: 'Similar document already exists in knowledge base' };
+        }
       }
 
       return { accepted: true, hash };

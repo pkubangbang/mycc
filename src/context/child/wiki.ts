@@ -10,8 +10,8 @@ import { ipc } from './ipc-helpers.js';
  * All operations go through IPC to parent
  */
 export class ChildWiki implements WikiModule {
-  async prepare(document: WikiDocument): Promise<PrepareResult> {
-    const result = await ipc.sendRequest<PrepareResult>('wiki_prepare', { document });
+  async prepare(document: WikiDocument, skipDuplicateCheck?: boolean): Promise<PrepareResult> {
+    const result = await ipc.sendRequest<PrepareResult>('wiki_prepare', { document, skipDuplicateCheck });
     return result;
   }
 

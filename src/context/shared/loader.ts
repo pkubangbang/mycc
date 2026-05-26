@@ -684,8 +684,8 @@ export class Loader implements DynamicLoader, SkillModule {
       await wiki.delete(existingResults[0].hash);
     }
 
-    // Prepare and put
-    const result = await wiki.prepare(document);
+    // Prepare and put (skip duplicate embedding check — title de-duplication is sufficient for skills)
+    const result = await wiki.prepare(document, true);
     if (result.accepted && result.hash) {
       await wiki.put(result.hash, document);
     }
