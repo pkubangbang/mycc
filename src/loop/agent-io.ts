@@ -570,7 +570,7 @@ class AgentIO {
                   const all = slashRegistry.list();
                   const matches = all.filter(n => n.startsWith(trimmed));
                   if (matches.length > 0) {
-                    this.activeLineEditor?.setWhisper('/' + matches.join(', /'));
+                    this.activeLineEditor?.setWhisper(`/${  matches.join(', /')}`);
                   }
                 }
               }
