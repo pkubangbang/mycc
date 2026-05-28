@@ -81,6 +81,8 @@ export interface TurnVars {
   nextTodoNudge: number;
   lastTodoState: string;
   nextBriefNudge: number;
+  /** User's last real query, stored for recap to preserve across compression */
+  lastUserQuery: string;
 }
 
 /** Pass lifetime — fresh at every COLLECT entry, flows LLM→HOOK→{TOOL|STOP} */
@@ -153,7 +155,7 @@ export class AgentStateMachine {
    * Errors propagate to the caller.
    */
   async run(): Promise<void> {
-    let turn: TurnVars = { isFirstRound: true, nextTodoNudge: 3, lastTodoState: '', nextBriefNudge: 5 };
+    let turn: TurnVars = { isFirstRound: true, nextTodoNudge: 3, lastTodoState: '', nextBriefNudge: 5, lastUserQuery: '' };
     let pass: PassData = { abortController: null, rawToolCalls: [], assistantContent: '', augmentedCalls: [], hookResult: null };
     let state: AgentState = AgentState.PROMPT;
     let prevState: AgentState | null = null;
@@ -163,7 +165,7 @@ export class AgentStateMachine {
       // PROMPT = new conversational turn — but only when coming from STOP or startup.
       // When coming from SLASH we preserve TurnVars (same turn, slash was a side trip).
       if (state === AgentState.PROMPT && prevState !== AgentState.SLASH) {
-        turn = { isFirstRound: true, nextTodoNudge: 3, lastTodoState: '', nextBriefNudge: 5 };
+        turn = { isFirstRound: true, nextTodoNudge: 3, lastTodoState: '', nextBriefNudge: 5, lastUserQuery: '' };
       }
       // COLLECT = fresh pipeline pass — always reset.
       if (state === AgentState.COLLECT) {

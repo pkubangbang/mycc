@@ -141,6 +141,7 @@ export async function handlePrompt(
 
   // Add user message to triologue
   triologue.user(query);
+  turn.lastUserQuery = query;
   env.ctx.core.resetConfusionIndex();
 
   // Reset sequence to current turn (hooks only see events since last user query)

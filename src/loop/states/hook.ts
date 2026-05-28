@@ -12,7 +12,7 @@
 import chalk from 'chalk';
 import { AgentState } from '../state-machine.js';
 import type { MachineEnv, TurnVars, PassData, HandlerResult } from '../state-machine.js';
-import type { ToolCall } from '../../types.js';
+import type { ToolCall, Message } from '../../types.js';
 import type { AugmentedToolCall } from '../../hook/hook-executor.js';
 import { augmentToolCalls } from '../../hook/hook-preprocessor.js';
 import { agentIO } from '../agent-io.js';
@@ -117,17 +117,19 @@ async function handleRecapCall(
   const tokensBefore = triologue.getTokenCount();
 
   if (abandon) {
-    // Preserve the last user query from the recapped section before truncating,
-    // so follow-up queries after the checkpoint are not lost.
-    const lastUserMsg = [...messages].reverse().find(m => m.role === 'user');
+    // Preserve the user's last query from TurnVars (stored at PROMPT time),
+    // so the active intention survives compression and drives the next round.
+    const lastUserMsg: Message | undefined = turn.lastUserQuery
+      ? { role: 'user', content: turn.lastUserQuery }
+      : undefined;
     // Abandon: discard messages, append ?recap + !recap (abandon marker)
     triologue.recapMessages(checkpoint.index);
-    if (lastUserMsg) {
-      triologue._injectBypass(lastUserMsg);
-    }
     triologue.agent(pass.assistantContent, pass.rawToolCalls as ToolCall[] | undefined, pass.assistantReasoningContent);
     const abandonResult = `[RECAP] Abandoned checkpoint "${checkpoint.description}"\n\n${messages.length} messages discarded. Checkpoint closed.${comment ? `\n\nComment: ${comment}` : ''}\n\nNote: the checkpoint todo item was auto-created with this checkpoint's ID as its note. Use todo_update to mark it as done.`;
     triologue.tool('recap', abandonResult, call.id);
+    if (lastUserMsg) {
+      triologue._injectBypass(lastUserMsg);
+    }
 
     const tokensAfter = triologue.getTokenCount();
     const coloredBefore = chalk.yellow(tokensBefore.toLocaleString());
@@ -156,15 +158,18 @@ async function handleRecapCall(
     return AgentState.COLLECT;
   }
 
-  // Preserve the last user query from the recapped section before truncating,
-  // so follow-up queries after the checkpoint are not lost.
-  const lastUserMsg = [...messages].reverse().find(m => m.role === 'user');
+  // Preserve the user's last query from TurnVars (stored at PROMPT time),
+  // so the active intention survives compression and drives the next round.
+  const lastUserMsg: Message | undefined = turn.lastUserQuery
+    ? { role: 'user', content: turn.lastUserQuery }
+    : undefined;
   triologue.recapMessages(checkpoint.index);
+  triologue.note('REMINDER', `[RECAP] ${summary}`);
+  triologue.agent(pass.assistantContent, pass.rawToolCalls as ToolCall[] | undefined, pass.assistantReasoningContent);
+  triologue.tool('recap', summary, call.id);
   if (lastUserMsg) {
     triologue._injectBypass(lastUserMsg);
   }
-  triologue.agent(pass.assistantContent, pass.rawToolCalls as ToolCall[] | undefined, pass.assistantReasoningContent);
-  triologue.tool('recap', summary, call.id);
 
   const tokensAfter = triologue.getTokenCount();
   const coloredBefore = chalk.yellow(tokensBefore.toLocaleString());
