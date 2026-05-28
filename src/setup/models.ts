@@ -8,8 +8,7 @@
 
 import { spawn } from 'child_process';
 import chalk from 'chalk';
-import { isWindows } from './paths.js';
-import { isModelInstalled, isOllamaInstalled } from './ollama-setup.js';
+import { isModelInstalled, isOllamaInstalled, getOllamaBinaryPath } from './ollama-setup.js';
 
 /**
  * Model info for pulling
@@ -44,10 +43,9 @@ async function pullModel(modelName: string): Promise<{ success: boolean; error?:
 
     // Pull the model with progress output
     await new Promise((resolve, reject) => {
-      const pull = spawn('ollama', ['pull', modelName], {
+      const ollamaPath = getOllamaBinaryPath();
+      const pull = spawn(ollamaPath, ['pull', modelName], {
         stdio: 'inherit',
-        // On Windows, shell: true helps with PATH resolution
-        shell: isWindows(),
       });
 
       pull.on('close', (code) => {

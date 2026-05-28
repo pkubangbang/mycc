@@ -13,9 +13,11 @@ import { isWindows } from './paths.js';
 const execAsync = promisify(exec);
 
 /**
- * Get the default Ollama binary path based on platform
+ * Get the default Ollama binary path based on platform.
+ * On Windows, checks known install locations and returns the absolute path
+ * if found. Returns 'ollama' (relying on PATH) as fallback.
  */
-function getOllamaBinaryPath(): string {
+export function getOllamaBinaryPath(): string {
   if (isWindows()) {
     // Windows: Check common install locations
     const windowsPaths = [
@@ -33,12 +35,21 @@ function getOllamaBinaryPath(): string {
 }
 
 /**
- * Check if Ollama is installed and accessible
+ * Check if Ollama is installed and accessible.
+ * On Windows, checks known install locations via filesystem first,
+ * then falls back to PATH-based detection.
  */
 export async function isOllamaInstalled(): Promise<boolean> {
+  // First, check via filesystem (handles Windows where ollama is installed
+  // but not added to PATH — the installer doesn't always do this)
+  const ollamaPath = getOllamaBinaryPath();
+  if (ollamaPath !== 'ollama' && existsSync(ollamaPath)) {
+    return true;
+  }
+
+  // Fall back to PATH-based detection
   try {
-    const ollamaPath = getOllamaBinaryPath();
-    const command = isWindows() ? `where ${ollamaPath}` : `which ${ollamaPath}`;
+    const command = isWindows() ? 'where ollama' : 'which ollama';
     await execAsync(command);
     return true;
   } catch {
@@ -47,11 +58,14 @@ export async function isOllamaInstalled(): Promise<boolean> {
 }
 
 /**
- * Get list of installed models from Ollama
+ * Get list of installed models from Ollama.
+ * Uses the discovered binary path so it works even when
+ * ollama is not on PATH (common on Windows).
  */
 async function getInstalledModels(): Promise<string[]> {
   try {
-    const { stdout } = await execAsync('ollama list');
+    const ollamaPath = getOllamaBinaryPath();
+    const { stdout } = await execAsync(`"${ollamaPath}" list`);
     // Parse output: lines like "NAME\tID\tSIZE\tMODIFIED"
     const lines = stdout.trim().split('\n').slice(1); // Skip header
     return lines
