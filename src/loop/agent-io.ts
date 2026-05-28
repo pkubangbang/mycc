@@ -14,6 +14,25 @@ import { getWrapUpState, tryDisplayWrapUp } from './esc-wrap-up.js';
 import chalk from 'chalk';
 import { isVerbose } from '../config.js';
 import { getToolColor } from '../utils/tool-colors.js';
+import { slashRegistry } from '../slashes/index.js';
+
+/**
+ * Subcommand hints for slash commands.
+ * Keyed by command name — displayed after the user types "<command> ".
+ * Commands not listed here have no subcommand hints.
+ */
+const COMMAND_SUBCOMMANDS: Record<string, string[]> = {
+  wiki:      ['edit', 'rebuild', 'delete', 'domains'],
+  todos:     ['add', 'clear', 'done', 'undone'],
+  issues:    ['[id]'],
+  load:      ['[id]'],
+  compact:   ['[focus]'],
+  mode:      ['plan', 'normal'],
+  plan:      ['on', 'off'],
+  skills:    ['build'],
+  mindmap:   ['compile', 'get', 'patch', 'validate'],
+  domain:    ['add'],
+};
 
 /**
  * ReplayBuffer - Buffer for collecting stdout/stderr bytes
@@ -505,7 +524,56 @@ class AgentIO {
           history: this.lineHistory,
           onContentChange: (content: string) => {
             if (content.startsWith('/')) {
-              this.activeLineEditor?.setWhisper('/help, /skills, /todos, /wiki');
+              const trimmed = content.slice(1);
+              const spaceIdx = trimmed.indexOf(' ');
+
+              if (trimmed.length === 0) {
+                // State 1: just "/"
+                this.activeLineEditor?.setWhisper('slash command: get help by /help');
+              } else if (spaceIdx >= 0) {
+                // State 4/5/6: command + space + optional subcommand
+                const cmdName = trimmed.slice(0, spaceIdx);
+                const cmd = slashRegistry.get(cmdName);
+                const resolvedName = cmd ? cmd.name : cmdName;
+                const subs = COMMAND_SUBCOMMANDS[resolvedName];
+
+                if (subs) {
+                  const afterSpace = trimmed.slice(spaceIdx + 1);
+                  if (afterSpace.length === 0) {
+                    // State 4: just "/wiki " — show all subcommands
+                    this.activeLineEditor?.setWhisper(`/${resolvedName} → ${subs.join(', ')}`);
+                  } else {
+                    // State 5/6: user typing subcommand — filter by prefix
+                    const matching = subs.filter(s => s.startsWith(afterSpace));
+                    if (matching.length > 0) {
+                      // State 5: partial subcommand match
+                      this.activeLineEditor?.setWhisper(`/${resolvedName} → ${matching.join(', ')}`);
+                    } else if (cmd) {
+                      // State 6: no subcommand match — fallback to description
+                      this.activeLineEditor?.setWhisper(cmd.description);
+                    }
+                  }
+                } else if (cmd) {
+                  // Command has no subcommands, just show description
+                  this.activeLineEditor?.setWhisper(cmd.description);
+                }
+              } else {
+                // State 2/3: typing command name (no space yet)
+                const cmd = slashRegistry.get(trimmed);
+                if (cmd) {
+                  // Exact match — show description (with subcommand hint if available)
+                  const subs = COMMAND_SUBCOMMANDS[cmd.name];
+                  const hint = subs ? `${cmd.description} → ${subs.join(', ')}` : cmd.description;
+                  this.activeLineEditor?.setWhisper(hint);
+                } else {
+                  // Partial match — filter command names by prefix
+                  const all = slashRegistry.list();
+                  const matches = all.filter(n => n.startsWith(trimmed));
+                  if (matches.length > 0) {
+                    this.activeLineEditor?.setWhisper('/' + matches.join(', /'));
+                  }
+                }
+              }
             } else if (content.startsWith('!')) {
               this.activeLineEditor?.setWhisper('run command in another terminal');
             } else {
