@@ -19,6 +19,7 @@ import {
   build_node,
   extract_links,
   count_nodes,
+  count_incomplete_nodes,
   create_lock,
   try_read_lock,
   is_lock_fresh,
@@ -218,19 +219,23 @@ export async function compile_mindmap(
   // Check for existing mindmap
   const existingMindmap = try_load_existing_mindmap(outFile);
 
-  // No changes - return existing (fast path)
+  // Fast path: existing mindmap with same hash and fully compiled (no empty summaries)
   if (!force && existingMindmap && existingMindmap.hash === hash) {
-    return existingMindmap;
+    const incompleteNodes = count_incomplete_nodes(existingMindmap.root);
+    if (incompleteNodes === 0) {
+      return existingMindmap;
+    }
+    console.log(`[mindmap] Source unchanged but ${incompleteNodes} nodes incomplete (interrupted), resuming`);
   }
 
-  // Incremental compile when existing mindmap exists (not forced)
-  if (!force && existingMindmap) {
+  // Incremental compile when source changed and existing mindmap exists (not forced)
+  if (!force && existingMindmap && existingMindmap.hash !== hash) {
     console.log('[mindmap] Incremental compilation (source changed)');
     const result = await incremental_compile(absolutePath, existingMindmap, workDir, outFile);
     return result;
   }
 
-  // Full compile (force=true or no existing mindmap)
+  // Full compile (force=true, no existing mindmap, or interrupted with same hash)
 
   // Lock handling for resumption (same hash = interrupted compilation)
   if (!force) {
