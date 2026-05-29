@@ -138,7 +138,7 @@ export class Core extends BaseCore implements CoreModule {
       this.brief('info', 'img_describe', `Processing base64 image (${base64Image.length} chars)`);
     }
 
-    // Resize image if too large (width > 1280px) to keep payload manageable
+    // Resize image if too large (width > 1920px) to keep payload manageable
     const { base64: resizedBase64, tempPath } = await this.resizeImageIfNeeded(base64Image, imagePath);
     base64Image = resizedBase64;
 
@@ -176,12 +176,12 @@ export class Core extends BaseCore implements CoreModule {
   }
 
   /**
-   * Resize image if width > 1280px using sharp (cross-platform)
+   * Resize image if width > 1920px using sharp (cross-platform)
    * Returns the base64-encoded image and optional temp file path for cleanup
    * @throws Error if resize is needed but fails
    */
   private async resizeImageIfNeeded(base64Image: string, _originalPath?: string): Promise<{ base64: string; tempPath?: string }> {
-    const maxWidth = 1280;
+    const maxWidth = 1920;
 
     try {
       // Decode base64 to buffer

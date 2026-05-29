@@ -20,6 +20,7 @@ import {
   validateCheckpointIsolation,
   handleCheckpoint,
   handleRecap,
+  extractNextSteps,
   type CheckpointContext
 } from '../checkpoint-recap.js';
 
@@ -147,7 +148,8 @@ async function handleRecapCall(
   const escAware = <T>(fn: (ac: AbortController) => Promise<T>, cleanup: () => T): Promise<T> => {
     return ctx.core.escAware(fn, cleanup);
   };
-  const summary = await handleRecap(messages, checkpoint.description, escAware, comment);
+  const lastQueryForRecap = turn.lastUserQuery || undefined;
+  const summary = await handleRecap(messages, checkpoint.description, escAware, comment, lastQueryForRecap);
 
   // Check for ESC cancellation (summary starts with cancellation marker)
   if (summary.startsWith('[RECAP] Cancelled:')) {
@@ -167,6 +169,15 @@ async function handleRecapCall(
   triologue.note('REMINDER', `[RECAP] ${summary}`);
   triologue.agent(pass.assistantContent, pass.rawToolCalls as ToolCall[] | undefined, pass.assistantReasoningContent);
   triologue.tool('recap', summary, call.id);
+
+  // Inject extracted NEXT STEPS guidance as a HINT for the next round,
+  // so the agent gets explicit direction on what to do next — especially
+  // useful when the user has steered or changed the topic mid-subtask.
+  const nextStepGuidance = extractNextSteps(summary);
+  if (nextStepGuidance) {
+    triologue.note('HINT', `Next steps after checkpoint:\n${nextStepGuidance}`);
+  }
+
   if (lastUserMsg) {
     triologue._injectBypass(lastUserMsg);
   }

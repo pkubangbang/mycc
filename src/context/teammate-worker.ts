@@ -23,6 +23,7 @@ import {
   validateRecapIsolation,
   handleCheckpoint as handleCheckpointTool,
   handleRecap as handleRecapTool,
+  extractNextSteps,
   type CheckpointContext,
 } from '../loop/checkpoint-recap.js';
 
@@ -310,6 +311,12 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
           triologue.recapMessages(checkpoint.index);
           triologue.agent(assistantMessage.content || '', tcs, reasoningContent);
           triologue.tool('recap', summary, tc.id);
+
+          // Inject extracted NEXT STEPS guidance as a HINT for the next round
+          const nextStepGuidance = extractNextSteps(summary);
+          if (nextStepGuidance) {
+            triologue.note('HINT', `Next steps after checkpoint:\n${nextStepGuidance}`);
+          }
 
           const tokensAfter = triologue.getTokenCount();
           ctx.core.brief('info', 'recap',

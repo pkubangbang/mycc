@@ -29,7 +29,14 @@ Usage:
 IMPORTANT: This tool MUST be called alone. No other tools can be used in the same turn.
 
 The tool replaces all messages from checkpoint onwards with a summary pair,
-keeping your context clean and focused.`,
+keeping your context clean and focused.
+
+Output format (when not abandoning):
+The recap generates a structured story with these sections:
+- WHY: What the subtask was pursuing (the original goal)
+- WHAT: What was discovered or accomplished (key findings, files, decisions)
+- HOW: What tool calls were used and in what sequence to get the result
+- NEXT STEPS: Recommended continuation actions, noting if the user's latest query steers in a different direction`,
   input_schema: {
     type: 'object',
     properties: {

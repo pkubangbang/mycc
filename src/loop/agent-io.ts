@@ -430,9 +430,11 @@ class AgentIO {
 
   /**
    * Handle terminal resize event from Coordinator
-   * Forwards to active LineEditor if one exists
+   * Forwards to active LineEditor if one exists and updates COLUMNS env var
+   * so subprocesses spawned later inherit the correct terminal width.
    */
   handleResize(columns: number): void {
+    process.env.COLUMNS = String(columns);
     if (this.activeLineEditor) {
       this.activeLineEditor.resize(columns);
     }

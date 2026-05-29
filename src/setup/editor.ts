@@ -4,6 +4,8 @@
  * Provides platform-specific default editors and suggestions
  */
 
+import fs from 'fs';
+import path from 'path';
 import { isWindows, isMacOS } from './paths.js';
 
 /**
@@ -46,4 +48,79 @@ function getEditorSuggestions(): string[] {
 export function getEditorHelpText(): string {
   const suggestions = getEditorSuggestions();
   return `Common values: ${suggestions.join(', ')}`;
+}
+
+/**
+ * Extract the binary name from a raw editor input string.
+ * Handles: bare names, absolute paths, quoted paths, and trailing arguments.
+ */
+function extractBinary(rawValue: string): string {
+  const trimmed = rawValue.trim();
+  if (trimmed.startsWith('"') || trimmed.startsWith("'")) {
+    const quote = trimmed[0];
+    const closeIdx = trimmed.indexOf(quote, 1);
+    if (closeIdx === -1) {
+      return trimmed.slice(1);
+    }
+    return trimmed.slice(1, closeIdx);
+  }
+  return trimmed.split(/\s+/)[0];
+}
+
+/**
+ * Validate that an editor binary exists.
+ * Returns true if the binary is found, or an error message string if not.
+ */
+export function validateEditor(rawValue: string): boolean | string {
+  const binaryPath = extractBinary(rawValue);
+  if (!binaryPath) {
+    return true; // empty — wizard will use default
+  }
+
+  // Absolute path: check directly
+  if (path.isAbsolute(binaryPath)) {
+    try {
+      fs.accessSync(binaryPath, fs.constants.X_OK);
+      return true;
+    } catch {
+      return `"${binaryPath}" does not exist or is not executable.`;
+    }
+  }
+
+  // Bare name: search PATH
+  const pathDirs = (process.env.PATH || '').split(path.delimiter).filter(Boolean);
+
+  if (isWindows()) {
+    const pathext = (process.env.PATHEXT || '.EXE;.CMD;.BAT;.COM;.VBS;.PS1')
+      .split(';')
+      .filter(Boolean);
+
+    for (const dir of pathDirs) {
+      for (const ext of pathext) {
+        try {
+          fs.accessSync(path.join(dir, binaryPath + ext), fs.constants.X_OK);
+          return true;
+        } catch {
+          /* try next extension */
+        }
+      }
+      try {
+        fs.accessSync(path.join(dir, binaryPath), fs.constants.X_OK);
+        return true;
+      } catch {
+        /* try next directory */
+      }
+    }
+  } else {
+    for (const dir of pathDirs) {
+      try {
+        fs.accessSync(path.join(dir, binaryPath), fs.constants.X_OK);
+        return true;
+      } catch {
+        /* try next directory */
+      }
+    }
+  }
+
+  return `"${binaryPath}" not found in PATH. Is the editor installed?`;
 }

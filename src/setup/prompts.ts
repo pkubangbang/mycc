@@ -5,7 +5,7 @@
  * determines which set of prompts is shown to the user.
  */
 
-import { getDefaultEditor, getEditorHelpText } from './editor.js';
+import { getDefaultEditor, getEditorHelpText, validateEditor } from './editor.js';
 
 /**
  * Prompt configuration for a single environment variable
@@ -136,6 +136,7 @@ function getSharedPrompts(): PromptConfig[] {
       message: 'Text editor (for file editing)',
       default: getDefaultEditor(),
       help: getEditorHelpText(),
+      validate: validateEditor,
     },
   ];
 }

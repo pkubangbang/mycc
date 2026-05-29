@@ -452,7 +452,10 @@ export class LineEditor {
     this.resizeTimer = null;
     const oldColumns = this.columns;
     this.columns = Math.max(columns, 20);
+    if (this.columns > 120) this.columns = 120;
     if (oldColumns === this.columns) return;
+    // Update env var so subprocesses spawned later inherit the correct width
+    process.env.COLUMNS = String(this.columns);
     this.lineInfo = this.computeLineInfo();
     this.doRender();
   }

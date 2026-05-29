@@ -147,16 +147,24 @@ Next steps:
  * Pure function: takes messages and description, returns a summary string.
  * Does NOT touch the triologue — callers own the context manipulation.
  *
+ * Produces a structured story with:
+ *   WHY   — What goal the subtask was pursuing
+ *   WHAT  — What was discovered or accomplished (the summary)
+ *   HOW   — How tool calls led to the result
+ *   NEXT  — What the agent should do next, especially if user steered topic
+ *
  * @param messages - Messages from checkpoint to current end
  * @param description - Checkpoint description (focus for summarization)
  * @param escAware - Optional ESC-aware wrapper for lead agent
  * @param comment - Optional user comment to append to the summary
+ * @param lastUserQuery - The user's most recent query, used to detect topic change
  */
 export async function handleRecap(
   messages: Message[],
   description: string,
   escAware?: <T>(fn: (ac: AbortController) => Promise<T>, cleanup: () => T) => Promise<T>,
   comment?: string,
+  lastUserQuery?: string,
 ): Promise<string> {
   if (messages.length === 0) {
     return '(no messages to summarize)';
@@ -164,6 +172,31 @@ export async function handleRecap(
 
   // Generate summary using LLM
   const conversationText = minifyMessages(messages);
+
+  const topicChangeSection = lastUserQuery
+    ? `\n\n**Topic Change Detection:** Compare the checkpoint description ("${description}") with the user's most recent query ("${lastUserQuery}"). If they indicate a different concern, flag this as a topic change and recommend a fresh start in NEXT STEPS.`
+    : '';
+
+  const storyPrompt = `Summarize the following conversation segment as a structured story. Focus on: "${description}"
+
+Format your response with these sections:
+
+### WHY
+What was the purpose of this subtask? Restate the original intent (the checkpoint description) and explain why it was needed.
+
+### WHAT
+What was discovered, learned, or accomplished? Be specific — list key findings, files created/modified, decisions made.
+
+### HOW
+What tool calls drove the work and in what sequence? Use a compact timeline like "read_file → grep → web_search → read_file — first read to understand structure, then searched for patterns, then looked up reference, then confirmed with a read." Highlight which tool contributed what.
+
+### NEXT STEPS
+What should the agent do now?
+- If the recent work is complete: suggest what to do next to move the overall task forward.
+- If the user's latest query steers in a different direction or changes the topic: note the topic shift and recommend a fresh approach aligned with the new focus.${topicChangeSection}
+
+Conversation:
+${conversationText}`;
 
   let response;
   if (escAware) {
@@ -176,16 +209,7 @@ export async function handleRecap(
             messages: [
               {
                 role: 'user',
-                content: `Summarize the following conversation segment. Focus on: "${description}"
-
-Include:
-1. What was discovered/accomplished
-2. Key files and locations
-3. Important decisions or findings
-4. Any pending items
-
-Conversation:
-${conversationText}`,
+                content: storyPrompt,
               },
             ],
           },
@@ -206,16 +230,7 @@ ${conversationText}`,
       messages: [
         {
           role: 'user',
-          content: `Summarize the following conversation segment. Focus on: "${description}"
-
-Include:
-1. What was discovered/accomplished
-2. Key files and locations
-3. Important decisions or findings
-4. Any pending items
-
-Conversation:
-${conversationText}`,
+          content: storyPrompt,
         },
       ],
     });
@@ -225,12 +240,23 @@ ${conversationText}`,
 
   return `[RECAP] Completed checkpoint "${description}"
 
-Summary:
-${summary}${comment ? `\n\nLLM Comment: ${comment}` : ''}
+${summary}${comment ? `\n\n**LLM Comment:** ${comment}` : ''}
 
 Checkpoint closed. ${messages.length} messages compressed into summary.
 
 Note: the checkpoint todo item was auto-created with this checkpoint's ID as its note. Use todo_update to mark it as done.`;
+}
+
+/**
+ * Extract the NEXT STEPS section from a recap summary for injection as guidance.
+ * Returns the raw text of the NEXT STEPS section, or null if not found.
+ */
+export function extractNextSteps(summary: string): string | null {
+  const match = summary.match(/### NEXT STEPS\s*\n([\s\S]*?)(?:\n### |$)/);
+  if (match && match[1].trim()) {
+    return match[1].trim();
+  }
+  return null;
 }
 
 // addCheckpointMarker removed — checkpoint is now identified via tool message
