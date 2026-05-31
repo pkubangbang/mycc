@@ -112,10 +112,11 @@ export async function openEditor(files: string[], options?: { editor?: string })
   // drains and exits before the editor finishes exec().
   // On Linux/macOS: avoid detached: true — it creates a new session via
   // setsid(), which breaks GApplication/D-Bus singleton activation.
-  // On Windows: NEED detached: true for child to survive parent exit,
-  // plus windowsHide to avoid a flashing console window.
+  // On Windows: NEED detached: true for child to survive parent exit.
+  // Note: windowsHide must NOT be used — it sets CREATE_NO_WINDOW which
+  // prevents GUI editors (e.g., notepad.exe) from showing their window.
   const guiSpawnOptions = isWin
-    ? { stdio: 'ignore' as const, detached: true, windowsHide: true }
+    ? { stdio: 'ignore' as const, detached: true }
     : { stdio: 'ignore' as const };
 
   const termSpawnOptions = isWin
