@@ -8,6 +8,7 @@
  */
 
 import chalk from 'chalk';
+import stringWidth from 'string-width';
 import type { ToolDefinition, AgentContext } from '../types.js';
 
 /**
@@ -25,18 +26,26 @@ function getTerminalWidth(): number {
 function printBanner(title: string): void {
   const width = Math.min(getTerminalWidth(), 80);
 
-  // Truncate title if too long (leave room for padding)
+  // Truncate title if too long (leave room for padding, respecting CJK width)
   const maxTitleLen = width - 6; // 3 chars padding on each side
-  const displayTitle = title.length > maxTitleLen
-    ? `${title.slice(0, maxTitleLen - 3)  }...`
-    : title;
+  let displayTitle = title;
+  if (stringWidth(title) > maxTitleLen) {
+    // Build title char by char to respect fullwidth characters
+    let built = '';
+    for (const ch of title) {
+      if (stringWidth(`${built + ch  }...`) > maxTitleLen) break;
+      built += ch;
+    }
+    displayTitle = `${built  }...`;
+  }
 
   // Center the title text within the full-width bar
   const label = `  ${displayTitle}  `;
   // eslint-disable-next-line no-control-regex
   const stripped = label.replace(/\x1b\[[0-9;]*m/g, '');
-  const padLeft = Math.floor((width - stripped.length) / 2);
-  const padRight = width - stripped.length - padLeft;
+  const labelWidth = stringWidth(stripped);
+  const padLeft = Math.floor((width - labelWidth) / 2);
+  const padRight = width - labelWidth - padLeft;
   const centered = ' '.repeat(padLeft) + label + ' '.repeat(padRight);
 
   // Build a 3-line bright yellow banner:
