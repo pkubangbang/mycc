@@ -13,7 +13,7 @@ import { loader } from '../../context/shared/loader.js';
 import { isDebuggingSuggest } from '../../config.js';
 import type { MachineEnv, TurnVars, PassData, HandlerResult } from '../state-machine.js';
 import type { Message, Tool, ToolCall } from '../../types.js';
-import { retryChat, MODEL } from '../../engine/chat-provider.js';
+import { retryChat, MODEL, forkChat } from '../../engine/chat-provider.js';
 
 // ============================================================================
 // Constants
@@ -80,23 +80,6 @@ function buildRerankingPrompt(): string {
 }
 
 // ============================================================================
-// Merge Utility
-// ============================================================================
-
-/**
- * Merge a prompt into the last user message (copy-on-write).
- * Returns a new message array; does NOT mutate the original.
- * Returns null if the last message is not a user role (direction skipped).
- */
-function mergeIntoLastUserMessage(msgs: Message[], prompt: string): Message[] | null {
-  const lastIdx = msgs.length - 1;
-  if (lastIdx < 0 || msgs[lastIdx].role !== 'user') return null;
-  const result = [...msgs];
-  result[lastIdx] = { ...result[lastIdx], content: `${result[lastIdx].content}\n\n${prompt}` };
-  return result;
-}
-
-// ============================================================================
 // Phase 1: Summarizing
 // ============================================================================
 
@@ -109,23 +92,15 @@ async function runSummarizing(
   allTools: Tool[],
   stopRequested: () => boolean,
 ): Promise<string | null> {
-  const msgs = mergeIntoLastUserMessage(baseMessages, buildSummarizingPrompt());
-  if (!msgs) return null;
+  // Guard: last message must be 'user' for forkChat merging
+  const lastIdx = baseMessages.length - 1;
+  if (lastIdx < 0 || baseMessages[lastIdx].role !== 'user') return null;
 
   if (stopRequested()) return null;
 
-  const response = await retryChat(
-    {
-      model: MODEL,
-      messages: msgs,
-      tools: allTools, // preserve prompt cache
-    },
-    { noSpinner: true },
-  );
+  const summary = await forkChat(baseMessages, allTools, buildSummarizingPrompt());
 
   if (stopRequested()) return null;
-
-  const summary = response.message.content || '';
   if (!summary.trim()) return null;
 
   return summary;

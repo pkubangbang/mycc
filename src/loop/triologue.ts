@@ -860,17 +860,34 @@ export class Triologue {
   }
 
   /**
-   * Find a checkpoint by ID in message history
+   * Find a checkpoint by ID in message history.
+   * Returns the index of the ASSISTANT message that originally called the checkpoint,
+   * so that recapMessages can remove the entire span (assistant → checkpoint tool →
+   * subtask → recap call → recap tool) and replace it with a single note().
+   *
    * @param id - The checkpoint ID to find
-   * @returns Checkpoint info with index if found, null otherwise
+   * @returns Checkpoint info with assistant message index if found, null otherwise
    */
   findCheckpointById(id: string): { id: string; description: string; index: number } | null {
     for (let i = 0; i < this.messages.length; i++) {
       const msg = this.messages[i];
       const result = this.isCheckpointMessage(msg);
       if (result && result.id === id) {
-        // Return index AFTER the checkpoint tool message so recapMessages
-        // keeps the full agent→tool pair and only discards the subtask
+        // Scan backwards from the checkpoint tool message to find the
+        // assistant message whose tool_calls include the checkpoint call.
+        for (let j = i - 1; j >= 0; j--) {
+          const candidate = this.messages[j];
+          if (candidate.role === 'assistant' && candidate.tool_calls) {
+            const hasCheckpointCall = candidate.tool_calls.some(
+              (tc: { function: { name: string } }) => tc.function.name === 'checkpoint'
+            );
+            if (hasCheckpointCall) {
+              return { id, description: result.description, index: j };
+            }
+          }
+        }
+        // Fallback: if no assistant found (shouldn't happen in normal flow),
+        // return index after the checkpoint tool message.
         return { id, description: result.description, index: i + 1 };
       }
     }

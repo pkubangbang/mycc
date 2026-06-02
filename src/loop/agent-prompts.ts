@@ -165,8 +165,6 @@ function buildCommonSections(): string {
     buildCalendarSection(),
     '',
     buildOutputBehaviorSection(),
-    '',
-    buildContextManagementSection(),
   ].join('\n');
 }
 
@@ -391,7 +389,9 @@ If the task would benefit from parallel work, create teammates using tm_create t
 - Use brief tool to report key progress or findings to the user.
 - Use mycc_title tool to set a descriptive terminal title (e.g., current task, project name) so the user can identify this session among multiple terminal windows.
 
-${buildCommonSections()}`;
+${buildCommonSections()}
+
+${buildContextManagementSection()}`;
 }
 
 // ============================================================================
@@ -439,7 +439,9 @@ If you want to ask me questions, do not use any tool, just leave your question a
 - Use git_commit tool for ALL git commits. This tool will ask for user permission [y/N] before committing.
 - Use mycc_title tool to set a descriptive terminal title (e.g., current task, project name) so the user can identify this session among multiple terminal windows.
 
-${buildCommonSections()}`;
+${buildCommonSections()}
+
+${buildContextManagementSection()}`;
 }
 
 // ============================================================================

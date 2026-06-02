@@ -6,10 +6,9 @@
  */
 
 import chalk from 'chalk';
-import type { Message, TodoModule } from '../types.js';
+import type { Message, TodoModule, Tool } from '../types.js';
 import { Triologue } from './triologue.js';
-import { retryChat, MODEL } from '../engine/chat-provider.js';
-import { minifyMessages } from '../utils/llm-chat-minifier.js';
+import { forkChat } from '../engine/chat-provider.js';
 
 /**
  * Core module interface (common between AgentContext and ChildContext)
@@ -143,120 +142,93 @@ Next steps:
 }
 
 /**
+ * Build the summarization prompt, merged into the last user message of the
+ * full triologue. Mirrors SUGGEST phase: uses full context + allTools for
+ * prompt cache, instructs LLM to output text only.
+ */
+function buildRecapPrompt(description: string, lastUserQuery?: string, comment?: string): string {
+  const topicLine = lastUserQuery
+    ? `\n- **User's latest query**: "${lastUserQuery}" — compare with the checkpoint description; if they diverge, flag a topic change.`
+    : '';
+
+  return `[RECAP] Close the checkpoint "${description}". You have access to the full conversation history above.
+
+Review everything from when the checkpoint was created up to this recap call. Produce a concise structured note covering:
+
+### Key Decisions
+What was decided and why?
+
+### Steps Taken
+What tool calls were used and what did each contribute? Use a compact timeline like "read_file → grep → web_search → write_file".
+
+### User's Intent
+What was the user trying to achieve?${topicLine}
+
+### Next Steps
+What should the agent do now? If the user's latest query changed topics, note the shift and recommend alignment.
+${comment ? `\n**LLM Comment:** "${comment}" — incorporate this insight into the summary.` : ''}
+
+Output TEXT ONLY — do NOT use any tools. No preamble, no sign-off.`;
+}
+
+/**
  * Generate recap summary using LLM.
- * Pure function: takes messages and description, returns a summary string.
+ * Uses the FULL triologue messages (pre-truncation) with all tools for prompt cache,
+ * mirroring the SUGGEST phase pattern. Produces a structured summary string.
  * Does NOT touch the triologue — callers own the context manipulation.
  *
- * Produces a structured story with:
- *   WHY   — What goal the subtask was pursuing
- *   WHAT  — What was discovered or accomplished (the summary)
- *   HOW   — How tool calls led to the result
- *   NEXT  — What the agent should do next, especially if user steered topic
- *
- * @param messages - Messages from checkpoint to current end
+ * @param fullMessages - Full triologue messages before truncation
+ * @param allTools - All tools for prompt cache preservation
  * @param description - Checkpoint description (focus for summarization)
  * @param escAware - Optional ESC-aware wrapper for lead agent
- * @param comment - Optional user comment to append to the summary
+ * @param comment - Optional LLM comment to incorporate
  * @param lastUserQuery - The user's most recent query, used to detect topic change
  */
 export async function handleRecap(
-  messages: Message[],
+  fullMessages: Message[],
+  allTools: Tool[],
   description: string,
   escAware?: <T>(fn: (ac: AbortController) => Promise<T>, cleanup: () => T) => Promise<T>,
   comment?: string,
   lastUserQuery?: string,
 ): Promise<string> {
-  if (messages.length === 0) {
-    return '(no messages to summarize)';
+  if (fullMessages.length === 0) {
+    return '[RECAP] No messages to summarize.';
   }
 
-  // Generate summary using LLM
-  const conversationText = minifyMessages(messages);
+  const recapPrompt = buildRecapPrompt(description, lastUserQuery, comment);
 
-  const topicChangeSection = lastUserQuery
-    ? `\n\n**Topic Change Detection:** Compare the checkpoint description ("${description}") with the user's most recent query ("${lastUserQuery}"). If they indicate a different concern, flag this as a topic change and recommend a fresh start in NEXT STEPS.`
-    : '';
-
-  const storyPrompt = `Summarize the following conversation segment as a structured story. Focus on: "${description}"
-
-Format your response with these sections:
-
-### WHY
-What was the purpose of this subtask? Restate the original intent (the checkpoint description) and explain why it was needed.
-
-### WHAT
-What was discovered, learned, or accomplished? Be specific — list key findings, files created/modified, decisions made.
-
-### HOW
-What tool calls drove the work and in what sequence? Use a compact timeline like "read_file → grep → web_search → read_file — first read to understand structure, then searched for patterns, then looked up reference, then confirmed with a read." Highlight which tool contributed what.
-
-### NEXT STEPS
-What should the agent do now?
-- If the recent work is complete: suggest what to do next to move the overall task forward.
-- If the user's latest query steers in a different direction or changes the topic: note the topic shift and recommend a fresh approach aligned with the new focus.${topicChangeSection}
-
-Conversation:
-${conversationText}`;
-
-  let response;
+  let summary: string;
   if (escAware) {
-    // Lead agent: use ESC-aware call
-    response = await escAware(
+    // Lead agent: use ESC-aware forkChat
+    const result = await escAware(
       async (abortController) => {
-        return await retryChat(
-          {
-            model: MODEL,
-            messages: [
-              {
-                role: 'user',
-                content: storyPrompt,
-              },
-            ],
-          },
-          { signal: abortController.signal },
-        );
+        return await forkChat(fullMessages, allTools, recapPrompt, abortController.signal);
       },
-      () => null
+      () => null as string | null
     );
-
-    // Check if ESC was pressed (null response from cleanup)
-    if (!response) {
+    if (result === null) {
       return `[RECAP] Cancelled: ESC pressed during summarization. Checkpoint "${description}" remains open.`;
     }
+    summary = result;
   } else {
-    // Teammate: regular LLM call (no ESC handling)
-    response = await retryChat({
-      model: MODEL,
-      messages: [
-        {
-          role: 'user',
-          content: storyPrompt,
-        },
-      ],
-    });
+    // Teammate: regular forkChat (no ESC handling)
+    summary = await forkChat(fullMessages, allTools, recapPrompt);
   }
 
-  const summary = response.message.content || '(no summary)';
+  summary = summary || '(no summary)';
 
-  return `[RECAP] Completed checkpoint "${description}"
-
-${summary}${comment ? `\n\n**LLM Comment:** ${comment}` : ''}
-
-Checkpoint closed. ${messages.length} messages compressed into summary.
-
-Note: the checkpoint todo item was auto-created with this checkpoint's ID as its note. Use todo_update to mark it as done.`;
-}
-
-/**
- * Extract the NEXT STEPS section from a recap summary for injection as guidance.
- * Returns the raw text of the NEXT STEPS section, or null if not found.
- */
-export function extractNextSteps(summary: string): string | null {
-  const match = summary.match(/### NEXT STEPS\s*\n([\s\S]*?)(?:\n### |$)/);
-  if (match && match[1].trim()) {
-    return match[1].trim();
+  // Build the compact note that replaces the entire checkpoint span
+  const parts: string[] = [];
+  parts.push(`[RECAP] Checkpoint "${description}" closed.`);
+  parts.push('');
+  parts.push(summary);
+  if (comment) {
+    parts.push('');
+    parts.push(`**LLM Comment:** ${comment}`);
   }
-  return null;
+
+  return parts.join('\n');
 }
 
 // addCheckpointMarker removed — checkpoint is now identified via tool message

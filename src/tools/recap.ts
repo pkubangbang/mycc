@@ -55,7 +55,7 @@ The recap generates a structured story with these sections:
     },
     required: ['checkpoint_id'],
   },
-  scope: ['main', 'child'],
+  scope: ['main'],
   handler: () => {
     // This is a meta-tool - execution happens in hook.ts
     // The handler returns empty string because the real logic

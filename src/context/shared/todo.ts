@@ -97,4 +97,27 @@ export class Todo implements TodoModule {
   getItems(): TodoItem[] {
     return this.items.map((i) => ({ ...i }));
   }
+
+  /**
+   * Find the todo item auto-created for a checkpoint.
+   * Checkpoint todos have note === checkpointId.
+   * Returns null if not found or already done.
+   */
+  findCheckpointTodo(checkpointId: string): TodoItem | null {
+    const item = this.items.find((i) => i.note === checkpointId);
+    if (!item || item.done) return null;
+    return { ...item };
+  }
+
+  /**
+   * Close the todo item auto-created for a checkpoint.
+   * Marks it as done. Best-effort — no error if not found.
+   */
+  closeCheckpointTodo(checkpointId: string): void {
+    const item = this.items.find((i) => i.note === checkpointId && !i.done);
+    if (item) {
+      item.done = true;
+      item.hash = computeHash(item.name, true, item.note);
+    }
+  }
 }

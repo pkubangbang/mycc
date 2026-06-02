@@ -34,7 +34,7 @@ the messages into a summary and keep your context clean.`,
     },
     required: ['description'],
   },
-  scope: ['main', 'child'],
+  scope: ['main'],
   handler: () => {
     // This is a meta-tool - execution happens in hook.ts
     // The handler returns empty string because the real logic

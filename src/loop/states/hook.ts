@@ -12,15 +12,15 @@
 import chalk from 'chalk';
 import { AgentState } from '../state-machine.js';
 import type { MachineEnv, TurnVars, PassData, HandlerResult } from '../state-machine.js';
-import type { ToolCall, Message } from '../../types.js';
+import type { ToolCall } from '../../types.js';
 import type { AugmentedToolCall } from '../../hook/hook-executor.js';
 import { augmentToolCalls } from '../../hook/hook-preprocessor.js';
 import { agentIO } from '../agent-io.js';
+import { loader } from '../../context/shared/loader.js';
 import {
   validateCheckpointIsolation,
   handleCheckpoint,
   handleRecap,
-  extractNextSteps,
   type CheckpointContext
 } from '../checkpoint-recap.js';
 
@@ -71,8 +71,10 @@ async function handleCheckpointCall(
 
 /**
  * Handle a recap tool call.
- * Finds the checkpoint, generates a summary (or abandons), compresses
- * the triologue, and returns to COLLECT for the next round.
+ * Recap is transparent — its assistant message and tool result are never persisted.
+ * The full triologue (pre-truncation) is passed to the LLM for summarization,
+ * then the entire checkpoint span (assistant→checkpoint-tool→subtask→recap) is
+ * replaced by a single note().
  */
 async function handleRecapCall(
   call: AugmentedToolCall,
@@ -87,7 +89,7 @@ async function handleRecapCall(
     ctx.core.brief('info', 'assistant', pass.assistantContent);
   }
 
-  // Validate and extract checkpoint + messages
+  // Validate and extract checkpoint
   const recapArgs = call.function.arguments as Record<string, unknown>;
   const checkpointId = recapArgs.checkpoint_id as string;
   const abandon = recapArgs.abandon === true;
@@ -114,44 +116,47 @@ async function handleRecapCall(
     return AgentState.COLLECT;
   }
 
-  const messages = triologue.getMessagesFrom(checkpoint.index);
   const tokensBefore = triologue.getTokenCount();
 
   if (abandon) {
-    // Preserve the user's last query from TurnVars (stored at PROMPT time),
-    // so the active intention survives compression and drives the next round.
-    const lastUserMsg: Message | undefined = turn.lastUserQuery
-      ? { role: 'user', content: turn.lastUserQuery }
-      : undefined;
-    // Abandon: discard messages, append ?recap + !recap (abandon marker)
+    // Truncate at the assistant that called checkpoint — removes entire span.
     triologue.recapMessages(checkpoint.index);
-    triologue.agent(pass.assistantContent, pass.rawToolCalls as ToolCall[] | undefined, pass.assistantReasoningContent);
-    const abandonResult = `[RECAP] Abandoned checkpoint "${checkpoint.description}"\n\n${messages.length} messages discarded. Checkpoint closed.${comment ? `\n\nComment: ${comment}` : ''}\n\nNote: the checkpoint todo item was auto-created with this checkpoint's ID as its note. Use todo_update to mark it as done.`;
-    triologue.tool('recap', abandonResult, call.id);
-    if (lastUserMsg) {
-      triologue._injectBypass(lastUserMsg);
+
+    // Inject a single note with the abandon marker.
+    const abandonNote = `[RECAP] Abandoned checkpoint "${checkpoint.description}".${comment ? ` Comment: ${comment}` : ''}\n\nNote: the checkpoint todo item was auto-created with this checkpoint's ID as its note. Use todo_update to mark it as done.`;
+
+    // Preserve user's last query so intent survives compression.
+    if (turn.lastUserQuery) {
+      triologue.note('RECAP', `${abandonNote}\n\nUser's last query: ${turn.lastUserQuery}`);
+    } else {
+      triologue.note('RECAP', abandonNote);
     }
 
     const tokensAfter = triologue.getTokenCount();
-    const coloredBefore = chalk.yellow(tokensBefore.toLocaleString());
-    const coloredAfter = chalk.green(tokensAfter.toLocaleString());
     ctx.core.brief('info', 'recap',
-      `(${coloredBefore} → ${coloredAfter} tokens)`,
+      `(${chalk.yellow(tokensBefore.toLocaleString())} → ${chalk.green(tokensAfter.toLocaleString())} tokens)`,
       `Abandoned: ${checkpoint.description}${comment ? ` — ${comment}` : ''}`
     );
+
+    // Close the auto-created checkpoint todo
+    ctx.todo.closeCheckpointTodo(checkpointId);
 
     turn.isFirstRound = false;
     return AgentState.COLLECT;
   }
 
-  // Normal: generate summary, then slice + append ?recap + !recap
+  // Normal: capture full triologue BEFORE truncation for the LLM
+  const fullMessages = [...triologue.getMessages()];
+  const allTools = loader.getToolsForScope('main');
+
   const escAware = <T>(fn: (ac: AbortController) => Promise<T>, cleanup: () => T): Promise<T> => {
     return ctx.core.escAware(fn, cleanup);
   };
   const lastQueryForRecap = turn.lastUserQuery || undefined;
-  const summary = await handleRecap(messages, checkpoint.description, escAware, comment, lastQueryForRecap);
 
-  // Check for ESC cancellation (summary starts with cancellation marker)
+  const summary = await handleRecap(fullMessages, allTools, checkpoint.description, escAware, comment, lastQueryForRecap);
+
+  // Check for ESC cancellation
   if (summary.startsWith('[RECAP] Cancelled:')) {
     triologue.agent(pass.assistantContent, pass.rawToolCalls as ToolCall[] | undefined, pass.assistantReasoningContent);
     triologue.tool('recap', summary, call.id);
@@ -160,35 +165,24 @@ async function handleRecapCall(
     return AgentState.COLLECT;
   }
 
-  // Preserve the user's last query from TurnVars (stored at PROMPT time),
-  // so the active intention survives compression and drives the next round.
-  const lastUserMsg: Message | undefined = turn.lastUserQuery
-    ? { role: 'user', content: turn.lastUserQuery }
-    : undefined;
+  // Truncate at the assistant that called checkpoint — removes entire span.
+  // The recap's own assistant message and tool result are never persisted.
   triologue.recapMessages(checkpoint.index);
-  triologue.note('REMINDER', `[RECAP] ${summary}`);
-  triologue.agent(pass.assistantContent, pass.rawToolCalls as ToolCall[] | undefined, pass.assistantReasoningContent);
-  triologue.tool('recap', summary, call.id);
 
-  // Inject extracted NEXT STEPS guidance as a HINT for the next round,
-  // so the agent gets explicit direction on what to do next — especially
-  // useful when the user has steered or changed the topic mid-subtask.
-  const nextStepGuidance = extractNextSteps(summary);
-  if (nextStepGuidance) {
-    triologue.note('HINT', `Next steps after checkpoint:\n${nextStepGuidance}`);
-  }
-
-  if (lastUserMsg) {
-    triologue._injectBypass(lastUserMsg);
-  }
+  // Inject a single note with the summary + user's last query.
+  const noteContent = turn.lastUserQuery
+    ? `${summary}\n\nUser's last query: ${turn.lastUserQuery}`
+    : summary;
+  triologue.note('RECAP', noteContent);
 
   const tokensAfter = triologue.getTokenCount();
-  const coloredBefore = chalk.yellow(tokensBefore.toLocaleString());
-  const coloredAfter = chalk.green(tokensAfter.toLocaleString());
   ctx.core.brief('info', 'recap',
-    `(${coloredBefore} → ${coloredAfter} tokens)`,
+    `(${chalk.yellow(tokensBefore.toLocaleString())} → ${chalk.green(tokensAfter.toLocaleString())} tokens)`,
     `${checkpoint.description}${comment ? ` — ${comment}` : ''}`
   );
+
+  // Close the auto-created checkpoint todo
+  ctx.todo.closeCheckpointTodo(checkpointId);
 
   turn.isFirstRound = false;
   return AgentState.COLLECT;

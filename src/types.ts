@@ -33,6 +33,8 @@ export type NoteCategory =
   | 'FYI'
   /** Critical notifications requiring immediate attention (ESC interrupts) */
   | 'URGENT'
+  /** Checkpoint recap summaries replacing compressed message spans */
+  | 'RECAP'
   /** System-level notifications (mode changes, configuration updates) */
   | 'SYSTEM_NOTIFICATION'
   /** Error notifications from the system */
@@ -370,6 +372,10 @@ export interface TodoModule {
   hasOpenTodo(): boolean;
   clear(): void;
   getItems(): TodoItem[];
+  /** Find the todo item auto-created for a checkpoint (by note=checkpointId). Returns null if not found or already done. */
+  findCheckpointTodo(checkpointId: string): TodoItem | null;
+  /** Close the todo item auto-created for a checkpoint. Best-effort, no error if not found. */
+  closeCheckpointTodo(checkpointId: string): void;
 }
 
 /**
