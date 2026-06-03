@@ -14,6 +14,7 @@
 
 import type { ToolDefinition, AgentContext } from '../types.js';
 import { loader } from '../context/shared/loader.js';
+import { getSkillAbsolutePath } from '../utils/skill-path-resolver.js';
 
 export const skillLoadTool: ToolDefinition = {
   name: 'skill_load',
@@ -73,11 +74,16 @@ Once you find the correct name, load it with:
   skill_load(name="<exact_skill_name>")`;
     }
 
-    ctx.core.brief('info', 'skill_load', `Loaded: ${skillName}`);
+    // Retrospect: show the skill's location and level
+    const layer = loader.getSkillLayer(skillName) || 'project';
+    const levelLabel = layer.toUpperCase();
+    const absPath = skill.sourceFile
+      ? getSkillAbsolutePath(skill.sourceFile) || skill.sourceFile
+      : 'unknown';
+    ctx.core.brief('info', 'skill_load', `Loaded: ${skillName} (${levelLabel} — ${absPath})`);
 
     // Try to re-index skill to wiki (best effort, may fail if no embedding model)
     try {
-      const layer = loader.getSkillLayer(skillName) || 'project';
       await loader.indexSkillToWiki(skill, ctx.wiki, layer);
     } catch {
       // Ignore indexing errors - skill content is still valid
