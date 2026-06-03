@@ -5,7 +5,7 @@
  * - User input via InputProvider (or autonomous skip)
  * - Restored session initial query (first turn only)
  * - Pending slash query (from /load)
- * - Multi-line input (trailing backslash)
+ * - Multi-line input (trailing backslash or Chinese enumeration comma)
  * - Exit commands (q/exit/quit)
  * - Bang commands (!)
  * - Slash command routing (→ SLASH)
@@ -84,8 +84,8 @@ export async function handlePrompt(
         return null; // signal machine exit
       }
 
-      // Multi-line input: trailing backslash opens editor
-      if (p0Input.endsWith('\\') && p0Input.trim() !== '\\') {
+      // Multi-line input: trailing backslash or Chinese enumeration comma opens editor
+      if ((p0Input.endsWith('\\') && p0Input.trim() !== '\\') || p0Input.endsWith('、')) {
         const result = await openMultilineEditor(p0Input.slice(0, -1));
         if (result.action === 'submit' && !result.content) {
           console.log(chalk.gray('Multi-line input cancelled.'));
