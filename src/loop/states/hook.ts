@@ -19,6 +19,7 @@ import { agentIO } from '../agent-io.js';
 import { loader } from '../../context/shared/loader.js';
 import {
   validateCheckpointIsolation,
+  validateRecapIsolation,
   handleCheckpoint,
   handleRecap,
   type CheckpointContext
@@ -203,14 +204,26 @@ export async function handleHook(
     // 2. Validate checkpoint isolation (must be called alone)
     const checkpointValidation = validateCheckpointIsolation(augmentedCalls);
     if (!checkpointValidation.valid) {
-      // Block all calls with the error message
+      // Register the error as tool responses so the LLM sees it and can retry
       triologue.agent(pass.assistantContent, pass.rawToolCalls as ToolCall[] | undefined, pass.assistantReasoningContent);
       for (const call of augmentedCalls) {
         triologue.tool(call.function.name, checkpointValidation.message!, call.id);
       }
 
       agentIO.log(chalk.yellow(`[checkpoint] blocked: ${checkpointValidation.message}`));
-      return AgentState.STOP;
+      return AgentState.COLLECT;
+    }
+
+    // 2b. Validate recap isolation (must be called alone)
+    const recapValidation = validateRecapIsolation(augmentedCalls);
+    if (!recapValidation.valid) {
+      triologue.agent(pass.assistantContent, pass.rawToolCalls as ToolCall[] | undefined, pass.assistantReasoningContent);
+      for (const call of augmentedCalls) {
+        triologue.tool(call.function.name, recapValidation.message!, call.id);
+      }
+
+      agentIO.log(chalk.yellow(`[recap] blocked: ${recapValidation.message}`));
+      return AgentState.COLLECT;
     }
 
     // 3. Process hooks (block/replace/inject/message) — moved before meta-tools
