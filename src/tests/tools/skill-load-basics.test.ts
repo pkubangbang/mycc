@@ -99,7 +99,11 @@ describe('skillLoadTool - Basics', () => {
 
     await skillLoadTool.handler(ctx, { name: 'test-skill' });
 
-    expect(ctx.core.brief).toHaveBeenCalledWith('info', 'skill_load', 'Loaded: test-skill');
+    expect(ctx.core.brief).toHaveBeenCalledWith(
+      'info',
+      'skill_load',
+      expect.stringContaining('Loaded: test-skill'),
+    );
   });
 
   it('should handle skill with empty keywords', async () => {

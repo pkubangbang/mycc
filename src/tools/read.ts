@@ -5,6 +5,8 @@
  *
  * Features:
  * - Detects file type (text vs binary)
+ * - For files with extremely long lines (e.g., minified JS): shows head+tail preview
+ *   of each long line rather than truncating at a random byte offset
  * - Hard-coded limit of 1000 lines (~1/8 of context window)
  * - Shows read progress (chars/lines read vs total)
  * - Suggests follow-up tools for large files
@@ -148,6 +150,48 @@ ${typeInfo.extension === '.png' || typeInfo.extension === '.jpg' || typeInfo.ext
       const totalChars = content.length;
       const lines = content.split('\n');
       const totalLines = lines.length;
+
+      // Detect minified / single-long-line files (e.g., minified JS).
+      // A single enormous line passes LINE_LIMIT trivially, then gets brutally
+      // truncated at charLimit, yielding useless fragments.
+      // Show a head/tail preview of each long line so the LLM gets usable context.
+      const MAX_LINE_LENGTH = 5000;
+      const PREVIEW_CHARS = 2000; // chars to show from start + end of each long line
+      let hasLongLines = false;
+      for (const line of lines) {
+        if (line.length > MAX_LINE_LENGTH) { hasLongLines = true; break; }
+      }
+      if (hasLongLines) {
+        // Build a preview: for each long line, show first + last N chars
+        const previewParts: string[] = [];
+        for (let i = 0; i < lines.length; i++) {
+          const line = lines[i];
+          if (line.length > MAX_LINE_LENGTH) {
+            const head = line.slice(0, PREVIEW_CHARS);
+            const tail = line.slice(-PREVIEW_CHARS);
+            previewParts.push(
+              `--- Line ${i + 1} (${line.length.toLocaleString()} chars, showing first + last ${PREVIEW_CHARS}) ---\n` +
+              `${head}\n... [${(line.length - PREVIEW_CHARS * 2).toLocaleString()} chars omitted] ...\n${tail}`
+            );
+          } else {
+            previewParts.push(line);
+          }
+        }
+
+        const header = `File: ${filePath}
+Chars: ${totalChars.toLocaleString()} | Lines: ${totalLines}
+${'─'.repeat(60)}`;
+
+        const suggestions = `
+${'─'.repeat(60)}
+⚠ This file has extremely long lines (likely minified). Shown: first + last ${PREVIEW_CHARS.toLocaleString()} chars of each long line.
+To read the full content, try:
+  bash: npx prettier --write ${filePath}          # De-minify JS/TS/JSON/CSS
+  bash: fold -w 120 ${filePath} | head -500       # Word-wrap to 120-char lines
+  bash: head -c 8000 ${filePath}                  # Raw first 8K chars`;
+
+        return `${header}\n${previewParts.join('\n')}${suggestions}`;
+      }
 
       // Apply hard-coded limit
       if (totalLines > LINE_LIMIT) {

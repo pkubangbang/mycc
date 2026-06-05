@@ -95,21 +95,23 @@ describe('readTool', () => {
     expect(result).toContain('File not found');
   });
 
-  it('should handle large single-line files', async () => {
+  it('should show head/tail preview for minified files with extremely long lines', async () => {
     const testFile = path.join(tempDir, 'large.txt');
     // Create a file with one very long line (300,000 chars, no newlines)
-    // This exceeds any reasonable char limit and forces truncation
+    // This exceeds MAX_LINE_LENGTH (5000) and should show a preview
     const largeContent = 'x'.repeat(300000);
     fs.writeFileSync(testFile, largeContent);
 
     const result = await readTool.handler(ctx, { path: 'large.txt' });
 
-    // Result should contain header with file stats
+    // Should show a preview with head + tail of the long line, not an error
     expect(result).toContain('File: large.txt');
-    // Large files are truncated and show progress info
-    expect(result).toContain('more chars');
-    // File content should be present (either full or truncated)
+    expect(result).toContain('extremely long lines');
+    expect(result).toContain('minified');
+    // Should still contain actual file content (the x's)
     expect(result).toContain('x');
+    // Should show the omitted chars count
+    expect(result).toContain('chars omitted');
   });
 
   it('should handle file with only newlines', async () => {
