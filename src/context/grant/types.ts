@@ -52,5 +52,5 @@ export interface GrantRequest {
   tool: GrantTool;
   path?: string;
   command?: string;
-  intent?: string;  // Required for bash tool
+  intent?: string;  // Required for bash and hand_over tools
 }

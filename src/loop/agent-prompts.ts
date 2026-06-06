@@ -64,6 +64,10 @@ function buildIntentLanguageSection(): string {
     lines.push(`| ${o} | ${OBJECT_MEANINGS[o] || ''} |`);
   }
   lines.push('');
+  lines.push('### Special Rule');
+  lines.push('For tools that require user interaction (terminal sessions, password prompts),');
+  lines.push('the OBJECT must reflect that a human user is involved.');
+  lines.push('');
 
   // --- Examples ---
   lines.push('### Examples');

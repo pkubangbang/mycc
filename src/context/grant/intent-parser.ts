@@ -13,7 +13,7 @@ import type { ParsedIntent, IntentValidation } from './types.js';
 
 export const VALID_VERBS = ['READ', 'WRITE', 'EDIT', 'DELETE', 'BUILD', 'TEST', 'INSTALL', 'RUN'] as const;
 
-export const VALID_OBJECTS = ['SOURCE', 'CONFIG', 'DEPENDENCY', 'ARTIFACT', 'SYSTEM', 'DATA', 'TEMP'] as const;
+export const VALID_OBJECTS = ['SOURCE', 'CONFIG', 'DEPENDENCY', 'ARTIFACT', 'SYSTEM', 'DATA', 'TEMP', 'USER'] as const;
 
 // ============================================================================
 // Read-only vs mutation classification
@@ -46,6 +46,7 @@ export const OBJECT_MEANINGS: Record<string, string> = {
   SYSTEM: 'OS-level operations and environment state',
   DATA: 'Data files, databases, and structured content',
   TEMP: 'Temporary or intermediate files',
+  USER: 'User interaction and terminal sessions',
 };
 
 /**

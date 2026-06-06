@@ -19,6 +19,7 @@ import { spawn, exec, execSync } from 'child_process';
 import { promisify } from 'util';
 import chalk from 'chalk';
 import { agentIO } from '../loop/agent-io.js';
+import { parseIntent } from '../context/grant/intent-parser.js';
 import { retryChat, MODEL } from '../engine/chat-provider.js';
 
 const execAsync = promisify(exec);
@@ -30,7 +31,8 @@ export const handOverTool: ToolDefinition = {
 DO NOT USE THIS TOOL unless the user EXPLICITLY requests an interactive terminal,
 or the command REQUIRES user interaction (passwords, prompts, SSH sessions).
 
-For MOST commands, use 'bash' tool instead - it runs non-interactively without interrupting the user.
+When calling this tool, you MUST provide an \`intent\` parameter using the intent language format.
+The OBJECT must indicate that user interaction is required.
 
 Use ONLY when:
 - User explicitly asks for a terminal/shell/SSH session
@@ -54,12 +56,12 @@ When in doubt, use 'bash' tool with appropriate timeout.`,
         type: 'string',
         description: 'Initial command to run in the terminal.',
       },
-      justification: {
+      intent: {
         type: 'string',
-        description: 'REQUIRED: Justify why this command MUST be interactive and cannot use bash tool instead. What user input is expected?',
+        description: 'REQUIRED: Explain why this command is needed. You MUST use the intent language to show your idea.',
       },
     },
-    required: ['command', 'justification'],
+    required: ['command', 'intent'],
   },
   scope: ['main'],
   handler: (ctx: AgentContext, args: Record<string, unknown>): Promise<string> => {
@@ -69,10 +71,16 @@ When in doubt, use 'bash' tool with appropriate timeout.`,
 
 async function handleHandOver(ctx: AgentContext, args: Record<string, unknown>): Promise<string> {
   const command = args.command as string;
-  const justification = args.justification as string;
+  const intent = args.intent as string;
   const isWin = process.platform === 'win32';
 
-  // 1. Prerequisites
+  // 1. Validate intent: must use USER object to confirm user interaction is needed
+  const parsed = parseIntent(intent);
+  if (!parsed || parsed.object !== 'USER') {
+    return `Error: hand_over requires user interaction and pauses the agent loop. Your intent must use the correct OBJECT to indicate that a human user is involved. If your command can run without blocking the agent, use the 'bash' tool with tmux instead (tmux new-session -d; tmux send-keys; tmux capture-pane -p). Rethink your intent and try again.`;
+  }
+
+  // 2. Prerequisites
   if (!hasTmux()) {
     const installInstructions = isWin
       ? 'Windows: Install psmux and ensure it is in PATH'
@@ -90,7 +98,7 @@ async function handleHandOver(ctx: AgentContext, args: Record<string, unknown>):
     return `Error: No external terminal. Use bash tool for non-interactive commands.`;
   }
 
-  // 2. Create session
+  // 3. Create session
   const cwd = ctx.core.getWorkDir();
   const sessionName = `mycc-${Date.now()}`;
 
@@ -122,7 +130,7 @@ async function handleHandOver(ctx: AgentContext, args: Record<string, unknown>):
     stdio: 'ignore',
   }).unref();
 
-  ctx.core.brief('info', 'hand_over', `Opened: ${sessionName}`, justification);
+  ctx.core.brief('info', 'hand_over', `Opened: ${sessionName}`, intent);
 
   // 5. Wait for user confirmation and capture output
   const answer = await agentIO.ask(

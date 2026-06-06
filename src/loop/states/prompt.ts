@@ -108,7 +108,7 @@ export async function handlePrompt(
     const command = query.trim().slice(1).trim();
     const result = await loader.execute('hand_over', env.ctx, {
       command: command || undefined,
-      justification: command ? `User runs: ${command}` : 'Open terminal',
+      intent: `RUN USER TO execute interactive command from user`,
     });
     triologue.note('FYI', result);
     env.ctx.core.resetConfusionIndex();
