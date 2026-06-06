@@ -143,8 +143,8 @@ Next steps:
 
 /**
  * Build the summarization prompt, merged into the last user message of the
- * full triologue. Mirrors SUGGEST phase: uses full context + allTools for
- * prompt cache, instructs LLM to output text only.
+ * full triologue. Uses full context + allTools for prompt cache,
+ * instructs LLM to output text only.
  */
 function buildRecapPrompt(description: string, lastUserQuery?: string, comment?: string): string {
   const topicLine = lastUserQuery
@@ -173,8 +173,8 @@ Output TEXT ONLY — do NOT use any tools. No preamble, no sign-off.`;
 
 /**
  * Generate recap summary using LLM.
- * Uses the FULL triologue messages (pre-truncation) with all tools for prompt cache,
- * mirroring the SUGGEST phase pattern. Produces a structured summary string.
+ * Uses the FULL triologue messages (pre-truncation) with all tools for prompt cache.
+ * Produces a structured summary string.
  * Does NOT touch the triologue — callers own the context manipulation.
  *
  * @param fullMessages - Full triologue messages before truncation

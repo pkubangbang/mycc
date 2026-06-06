@@ -26,7 +26,6 @@ import { openMultilineEditor } from '../../utils/multiline-input.js';
 import { readSession, writeSession } from '../../session/index.js';
 import { setSlashQuery } from './slash.js';
 import { evaluateWrapUp, clearWrapUp } from '../esc-wrap-up.js';
-import { runSuggestBackground } from './suggest.js';
 
 /** Captured once per machine lifetime */
 let bookmarkCaptured = false;
@@ -44,9 +43,6 @@ export async function handlePrompt(
   _pass: PassData,
 ): Promise<HandlerResult> {
   const { triologue, inputProvider, sessionFilePath } = env;
-
-  // Gracefully stop any running SUGGEST task from previous turn
-  env.runningSuggest?.stop();
 
   // Reset brief nudge when entering PROMPT state (start of new turn)
   turn.nextBriefNudge = 5;
@@ -156,9 +152,6 @@ export async function handlePrompt(
       bookmarkCaptured = true;
     }
   }
-
-  // Fire a background SUGGEST task for the next turn
-  runSuggestBackground(env);
 
   return AgentState.COLLECT;
 }

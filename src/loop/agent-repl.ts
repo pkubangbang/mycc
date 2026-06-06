@@ -30,7 +30,6 @@ import { UserInputProvider } from './input-provider.js';
 import { handlePrompt, setInitialQuery } from './states/prompt.js';
 import { handleSlash } from './states/slash.js';
 import { handleCollect } from './states/collect.js';
-import { handleSuggest } from './states/suggest.js';
 import { handleLlm } from './states/llm.js';
 import { handleHook } from './states/hook.js';
 import { handleTool } from './states/tool.js';
@@ -266,7 +265,6 @@ export async function main(): Promise<void> {
     prompt: handlePrompt as StateHandler,
     slash: handleSlash as StateHandler,
     collect: handleCollect as StateHandler,
-    suggest: handleSuggest as StateHandler,
     llm: handleLlm as StateHandler,
     hook: handleHook as StateHandler,
     tool: handleTool as StateHandler,

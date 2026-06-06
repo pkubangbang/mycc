@@ -78,24 +78,10 @@ export async function handleCollect(
     // 2. Collect mails — relies on auto-fix for TP-safe injection
     const mails = ctx.mail.collectMails();
     if (mails.length > 0) {
-      // Separate suggest mails from regular mails for proper framing
-      const suggestMails = mails.filter(m => m.from === 'suggest');
-      const otherMails = mails.filter(m => m.from !== 'suggest');
-
       const parts: string[] = [];
 
-      // Frame suggest/brown-bag mails with actionable instructions for the LLM
-      if (suggestMails.length > 0) {
-        const suggestContent = suggestMails
-          .map((mail) => mail.content)
-          .join('\n\n');
-        parts.push(
-          `[Context suggestion] The following resources were discovered for your task.\nConsider using wiki_get and skill_load to explore them:\n\n${suggestContent}`
-        );
-      }
-
-      // Regular mails use standard format
-      for (const mail of otherMails) {
+      // Standard mail format
+      for (const mail of mails) {
         parts.push(`Mail from ${mail.from}: ${mail.title}\n${mail.content}`);
       }
 

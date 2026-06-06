@@ -54,7 +54,6 @@ export type { RetryConfig, ErrorType } from './chat-helpers.js';
  * text content. Does NOT touch the triologue — callers own context management.
  *
  * Used by:
- * - SUGGEST phase (runSummarizing) — analyze conversation for skill probing
  * - handleRecap — summarize checkpoint span for context compression
  *
  * @param messages - Full messages to fork from (caller's copy before mutation)

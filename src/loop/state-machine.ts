@@ -38,7 +38,6 @@ export enum AgentState {
   PROMPT = 'prompt',
   SLASH = 'slash',
   COLLECT = 'collect',
-  SUGGEST = 'suggest',
   LLM = 'llm',
   HOOK = 'hook',
   TOOL = 'tool',
@@ -65,14 +64,6 @@ export interface MachineEnv {
    * Consumed and cleared by PROMPT handler on next entry.
    */
   pendingSlashQuery: string | null;
-  /**
-   * Stop handle for a running background SUGGEST task.
-   * Set by COLLECT when launching a new SUGGEST; cleared by SUGGEST on finish.
-   * `stop()` sets a timestamp; the SUGGEST loop checks if stopRequestedAt >
-   * the timestamp captured at iteration start. This handles rapid stop/restart
-   * cycles (e.g., future auto-reply).
-   */
-  runningSuggest: { stop: () => void } | null;
 }
 
 /** Turn lifetime — fresh when entering PROMPT from STOP/startup, persists across COLLECT→LLM→HOOK iterations */
@@ -139,7 +130,6 @@ export class AgentStateMachine {
       inputProvider,
       sessionFilePath,
       pendingSlashQuery: null,
-      runningSuggest: null,
     };
     this.handlers = handlers;
   }
