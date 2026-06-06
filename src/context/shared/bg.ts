@@ -38,7 +38,7 @@ export class BackgroundTasks implements BgModule {
     this.tasks.set(pid, task);
     this.processes.set(pid, child);
 
-    // Handle output
+    // Handle output — accumulate silently, viewable via bg_print
     child.stdout?.on('data', (data: Buffer) => {
       const output = data.toString();
       if (task.output) {
@@ -46,7 +46,6 @@ export class BackgroundTasks implements BgModule {
       } else {
         task.output = output;
       }
-      this.core.brief('info', `bg:${pid}`, output.trim().slice(0, 100));
     });
 
     child.stderr?.on('data', (data: Buffer) => {
@@ -56,18 +55,15 @@ export class BackgroundTasks implements BgModule {
       } else {
         task.output = output;
       }
-      this.core.brief('error', `bg:${pid}`, output.trim().slice(0, 100));
     });
 
     // Handle completion
     child.on('close', (code) => {
       task.status = code === 0 ? 'completed' : 'failed';
-      this.core.brief('info', `bg:${pid}`, `Process exited with code ${code}`);
     });
 
-    child.on('error', (err) => {
+    child.on('error', (_err) => {
       task.status = 'failed';
-      this.core.brief('error', `bg:${pid}`, `Process error: ${err.message}`);
     });
 
     return pid;
