@@ -9,79 +9,100 @@ import type { DangerousCommand } from './types.js';
  * Extensible - add new patterns here
  */
 export const DANGEROUS_COMMANDS: DangerousCommand[] = [
-  // Destructive operations
-  { 
-    pattern: /\brm\s+(-[rf]+\s+)*\//i, 
-    reason: 'Recursive delete from root directory', 
-    category: 'destructive' 
-  },
-  { 
-    pattern: /\bsudo\s+rm\b/i, 
-    reason: 'Privileged deletion', 
-    category: 'destructive' 
-  },
-  { 
-    pattern: /\bsudo\s+chmod\s+000/i, 
-    reason: 'Privileged permission removal', 
-    category: 'destructive' 
-  },
-  
-  // Batch deletions (defense-in-depth; also gated in bash-judge step 4)
+  // ── Privileged operations (before root/home patterns — more specific) ──
   {
-    pattern: /\brm\s+.*\*[^/]*$/, 
-    reason: 'Batch deletion with glob pattern', 
-    category: 'destructive' 
+    pattern: /\bsudo\b.*\brm\b/i,
+    reason: 'Privileged deletion',
+    category: 'destructive',
   },
   {
-    pattern: /\brm\s+-[a-zA-Z]*[rR][a-zA-Z]*\s+~/, 
-    reason: 'Recursive deletion in home directory', 
-    category: 'destructive' 
+    pattern: /\bsudo\b.*\bchmod\b.*\b000\b/i,
+    reason: 'Privileged permission removal',
+    category: 'destructive',
   },
 
-  // Irreversible operations
-  { 
-    pattern: /\bmkfs\b/i, 
-    reason: 'Filesystem formatting', 
-    category: 'irreversible' 
+  // ── Root-level deletions ───────────────────────────────────────────
+  {
+    pattern: /\brm\s+(?:-[a-zA-Z]*[rR][a-zA-Z]*\s+)+(?:--?[a-zA-Z][a-zA-Z-]*\s+)*\/(?:\*|\s|$)/i,
+    reason: 'Recursive delete from root directory',
+    category: 'destructive',
   },
-  { 
-    pattern: /\bdd\s+if=/i, 
-    reason: 'Disk imaging operation', 
-    category: 'irreversible' 
+
+  // ── Current-directory deletions ─────────────────────────────────────
+  {
+    pattern: /\brm\s+(?:-[a-zA-Z]*[rR][a-zA-Z]*\s+)+(?:--?[a-zA-Z][a-zA-Z-]*\s+)*\.(?:\s|$)/,
+    reason: 'Recursive delete of current directory',
+    category: 'destructive',
   },
-  { 
-    pattern: /\bshutdown\b/i, 
-    reason: 'System shutdown', 
-    category: 'irreversible' 
+
+  // ── Home-directory deletions ────────────────────────────────────────
+  {
+    pattern: /\brm\s+(?:-[a-zA-Z]*[rR][a-zA-Z]*\s+)+(?:--?[a-zA-Z][a-zA-Z-]*\s+)*~(?:\/|\s|$)/i,
+    reason: 'Recursive deletion in home directory',
+    category: 'destructive',
   },
-  { 
-    pattern: /\breboot\b/i, 
-    reason: 'System reboot', 
-    category: 'irreversible' 
+
+  // ── Batch deletions (defense-in-depth; also gated in bash-judge step 4)
+  {
+    pattern: /\brm\s+(?:-[a-zA-Z]+\s+)?[^/\s]*\*[^/\s]*$/,
+    reason: 'Batch deletion with glob pattern',
+    category: 'destructive',
   },
-  
-  // Git operations (should use dedicated tools)
-  { 
-    pattern: /\bgit\s+commit\b/i, 
-    reason: 'Use git_commit tool instead', 
-    category: 'system' 
+
+  // ── Irreversible operations ─────────────────────────────────────────
+  {
+    pattern: /\bmkfs\b/i,
+    reason: 'Filesystem formatting',
+    category: 'irreversible',
   },
-  { 
-    pattern: /\bgit\s+push\s+--force\b/i, 
-    reason: 'Force push is dangerous', 
-    category: 'destructive' 
+  {
+    pattern: /\bdd\b.*\bif=/i,
+    reason: 'Disk imaging operation',
+    category: 'irreversible',
   },
-  
-  // Package publishing
-  { 
-    pattern: /\bnpm\s+publish\b/i, 
-    reason: 'Package publishing requires manual confirmation', 
-    category: 'system' 
+  {
+    pattern: /\bshutdown\b/i,
+    reason: 'System shutdown',
+    category: 'irreversible',
   },
-  { 
-    pattern: /\bpip\s+upload\b/i, 
-    reason: 'Package publishing requires manual confirmation', 
-    category: 'system' 
+  {
+    pattern: /\breboot\b/i,
+    reason: 'System reboot',
+    category: 'irreversible',
+  },
+
+  // ── Git operations (should use dedicated tools) ─────────────────────
+  {
+    pattern: /\bgit\s+commit\b/i,
+    reason: 'Use git_commit tool instead',
+    category: 'system',
+  },
+  {
+    pattern: /\bgit\s+push\s+.*--force(?:$|\s)/i,
+    reason: 'Force push',
+    category: 'destructive',
+  },
+  {
+    pattern: /\bgit\s+push\s+.*(?<!\S)-f(?:$|\s)/i,
+    reason: 'Force push (-f)',
+    category: 'destructive',
+  },
+  {
+    pattern: /\bgit\s+reset\s+--hard\b/i,
+    reason: 'Hard reset discards working changes',
+    category: 'destructive',
+  },
+
+  // ── Package publishing ──────────────────────────────────────────────
+  {
+    pattern: /\bnpm\s+publish\b/i,
+    reason: 'Package publishing requires manual confirmation',
+    category: 'system',
+  },
+  {
+    pattern: /\b(?:twine|python\s+(?:-m\s+)?twine)\s+upload\b/i,
+    reason: 'Package publishing requires manual confirmation',
+    category: 'system',
   },
 ];
 
