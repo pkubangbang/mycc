@@ -72,10 +72,9 @@ async function handleCheckpointCall(
 
 /**
  * Handle a recap tool call.
- * Recap is transparent — its assistant message and tool result are never persisted.
  * The full triologue (pre-truncation) is passed to the LLM for summarization,
  * then the entire checkpoint span (assistant→checkpoint-tool→subtask→recap) is
- * replaced by a single note().
+ * replaced by an artificial agent() + tool() pair preserving natural tool-call flow.
  */
 async function handleRecapCall(
   call: AugmentedToolCall,
@@ -123,15 +122,21 @@ async function handleRecapCall(
     // Truncate at the assistant that called checkpoint — removes entire span.
     triologue.recapMessages(checkpoint.index);
 
-    // Inject a single note with the abandon marker.
-    const abandonNote = `[RECAP] Abandoned checkpoint "${checkpoint.description}".${comment ? ` Comment: ${comment}` : ''}\n\nNote: the checkpoint todo item was auto-created with this checkpoint's ID as its note. Use todo_update to mark it as done.`;
+    // Inject artificial assistant + tool result instead of note(),
+    // so the triologue maintains natural tool-call flow.
+    const abandonNote = `[RECAP] Abandoned checkpoint "${checkpoint.description}".${comment ? ` Comment: ${comment}` : ''}`;
+    const noteContent = turn.lastUserQuery
+      ? `${abandonNote}\n\nNote: the checkpoint todo item was auto-created with this checkpoint's ID as its note. Use todo_update to mark it as done.\n\nUser's last query: ${turn.lastUserQuery}`
+      : `${abandonNote}\n\nNote: the checkpoint todo item was auto-created with this checkpoint's ID as its note. Use todo_update to mark it as done.`;
 
-    // Preserve user's last query so intent survives compression.
-    if (turn.lastUserQuery) {
-      triologue.note('RECAP', `${abandonNote}\n\nUser's last query: ${turn.lastUserQuery}`);
-    } else {
-      triologue.note('RECAP', abandonNote);
-    }
+    triologue.agent('', [{
+      id: call.id,
+      function: {
+        name: 'recap',
+        arguments: call.function.arguments,
+      },
+    }]);
+    triologue.tool('recap', noteContent, call.id);
 
     const tokensAfter = triologue.getTokenCount();
     ctx.core.brief('info', 'recap',
@@ -167,14 +172,23 @@ async function handleRecapCall(
   }
 
   // Truncate at the assistant that called checkpoint — removes entire span.
-  // The recap's own assistant message and tool result are never persisted.
   triologue.recapMessages(checkpoint.index);
 
-  // Inject a single note with the summary + user's last query.
+  // Inject artificial assistant + tool result instead of note(),
+  // so the triologue maintains natural tool-call flow.
+  // The recap's own assistant message and tool result are persisted.
   const noteContent = turn.lastUserQuery
     ? `${summary}\n\nUser's last query: ${turn.lastUserQuery}`
     : summary;
-  triologue.note('RECAP', noteContent);
+
+  triologue.agent('', [{
+    id: call.id,
+    function: {
+      name: 'recap',
+      arguments: call.function.arguments,
+    },
+  }]);
+  triologue.tool('recap', noteContent, call.id);
 
   const tokensAfter = triologue.getTokenCount();
   ctx.core.brief('info', 'recap',

@@ -155,20 +155,26 @@ function buildRecapPrompt(description: string, lastUserQuery?: string, comment?:
 
 Review everything from when the checkpoint was created up to this recap call. Produce a concise structured note covering:
 
-### Key Decisions
-What was decided and why?
+### Exploration Coverage
+For EVERY file examined during this checkpoint span:
+- path → one-line key takeaway (what was learned, found, or decided)
+- Mark files that were ruled out as irrelevant with "(irrelevant)"
+This section serves as a "do not re-read" list for subsequent turns.
 
-### Steps Taken
-What tool calls were used and what did each contribute? Use a compact timeline like "read_file → grep → web_search → write_file".
+### Key Discoveries
+Concrete findings with specificity: function names, line numbers, patterns identified, bugs found. Avoid vague descriptions.
 
-### User's Intent
-What was the user trying to achieve?${topicLine}
+### Current State
+What the agent now knows that it did NOT know before the checkpoint. This MUST be detailed enough that subsequent turns do NOT need to re-verify or re-investigate any findings already made. Think of this as the agent's updated "mental model" after the exploration.
 
 ### Next Steps
-What should the agent do now? If the user's latest query changed topics, note the shift and recommend alignment.
+What still needs to be done, ordered by priority.${topicLine}
 ${comment ? `\n**LLM Comment:** "${comment}" — incorporate this insight into the summary.` : ''}
 
-Output TEXT ONLY — do NOT use any tools. No preamble, no sign-off.`;
+**CRITICAL RULES:**
+- The Exploration Coverage section is a "do not re-read" list — include every file
+- The Current State section is a "do not re-verify" record — be specific
+- Output TEXT ONLY — do NOT use any tools. No preamble, no sign-off.`;
 }
 
 /**
@@ -221,6 +227,8 @@ export async function handleRecap(
   // Build the compact note that replaces the entire checkpoint span
   const parts: string[] = [];
   parts.push(`[RECAP] Checkpoint "${description}" closed.`);
+  parts.push('');
+  parts.push('Some actions have been performed before this recap but the details have been omitted. Here is the summary:');
   parts.push('');
   parts.push(summary);
   if (comment) {

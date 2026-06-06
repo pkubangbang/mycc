@@ -32,11 +32,11 @@ The tool replaces all messages from checkpoint onwards with a summary pair,
 keeping your context clean and focused.
 
 Output format (when not abandoning):
-The recap generates a structured story with these sections:
-- WHY: What the subtask was pursuing (the original goal)
-- WHAT: What was discovered or accomplished (key findings, files, decisions)
-- HOW: What tool calls were used and in what sequence to get the result
-- NEXT STEPS: Recommended continuation actions, noting if the user's latest query steers in a different direction`,
+The recap generates a structured summary with these sections:
+- Exploration Coverage: Files examined, what was found in each, what was ruled out
+- Key Discoveries: Concrete findings with specificity (names, locations, line numbers)
+- Current State: What the agent now knows that enables resumption without re-exploration or re-verification
+- Next Steps: Recommended continuation actions, noting if the user's latest query steers in a different direction`,
   input_schema: {
     type: 'object',
     properties: {
