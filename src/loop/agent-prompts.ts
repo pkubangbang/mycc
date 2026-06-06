@@ -169,6 +169,40 @@ function buildCommonSections(): string {
 }
 
 // ============================================================================
+// Knowledge Boundary Section
+// ============================================================================
+
+function buildKnowledgeBoundarySection(): string {
+  return [
+    '## Knowledge Boundary',
+    '',
+    'You have access to these knowledge sources (in priority order):',
+    '- **Recall**: Explore the mindmap knowledge tree. Use `recall(path="/")` to discover available knowledge. START HERE for project context.',
+    '- **Skills**: Specialized knowledge for specific tasks. Use `skill_load(intent="...")` to discover relevant skills.',
+    '- **Wiki**: Project knowledge base (RAG). Use `wiki_get(query, domain)` to retrieve documents.',
+    '- **Teammates**: Parallel expertise. Use `tm_create(name, role, prompt)` to spawn specialists.',
+    '- **Web**: External information from the internet. Use `web_search(query)` and `web_fetch(url)` as LAST RESORT.',
+    '',
+    '**Priority Rule**: Always check local knowledge sources (Recall → Skills → Wiki) BEFORE searching the web.',
+    'Local sources are faster, more accurate for this project, and always available.',
+    'Use web_search only when:',
+    '- No local knowledge matches your query',
+    '- You need the latest information (e.g., current library versions)',
+    '- You need external documentation not in the project',
+    '',
+    'When you encounter something outside your knowledge:',
+    '1. PAUSE and recognize the gap',
+    '2. Check local sources first (Recall → Skills → Wiki)',
+    '3. Only then search the web if needed',
+    '4. Continue with enhanced knowledge',
+    '',
+    '### Special notice',
+    'Do NOT guess. When in doubt, seek knowledge first.',
+    'Pay attention to the "pitfall" section in the mindmap if it exists.'
+  ].join('\n');
+}
+
+// ============================================================================
 // Context Management Section
 // ============================================================================
 
@@ -284,6 +318,8 @@ This skill helps you identify:
 
 Use this skill when you feel uncertain about the project context.
 
+${buildKnowledgeBoundarySection()}
+
 ${buildCalendarSection()}
 
 ${buildOutputBehaviorSection()}
@@ -364,6 +400,8 @@ Use web_search to validate assumptions if necessary.
 ### Delegating Exploration
 Use \`order\` to get synchronous results, \`mail_to\` for parallel work.
 
+${buildKnowledgeBoundarySection()}
+
 ${buildCalendarSection()}
 
 ${buildOutputBehaviorSection()}
@@ -388,6 +426,8 @@ If the task would benefit from parallel work, create teammates using tm_create t
 - Use git_commit tool for ALL git commits. This tool will ask for user permission [y/N] before committing.
 - Use brief tool to report key progress or findings to the user.
 - Use mycc_title tool to set a descriptive terminal title (e.g., current task, project name) so the user can identify this session among multiple terminal windows.
+
+${buildKnowledgeBoundarySection()}
 
 ${buildCommonSections()}
 
@@ -439,6 +479,8 @@ If you want to ask me questions, do not use any tool, just leave your question a
 - Use git_commit tool for ALL git commits. This tool will ask for user permission [y/N] before committing.
 - Use mycc_title tool to set a descriptive terminal title (e.g., current task, project name) so the user can identify this session among multiple terminal windows.
 
+${buildKnowledgeBoundarySection()}
+
 ${buildCommonSections()}
 
 ${buildContextManagementSection()}`;
@@ -461,6 +503,8 @@ REMEMBER: you cannot use the same type of tool from the above 3 tools consecutiv
 When you choose not to use any tool (thus finishing the task), your ending words will be mailed to "lead" automatically.
 
 When you feel lost about the context, send mail to "lead".
+
+${buildKnowledgeBoundarySection()}
 
 ${buildCommonSections()}`;
 }
