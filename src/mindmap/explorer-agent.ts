@@ -18,10 +18,10 @@ import type { Message, Tool, ToolCall } from '../types.js';
 import type { WebFetchResponse } from 'ollama';
 import * as fs from 'fs';
 import * as path from 'path';
-import { execSync } from 'child_process';
 import { minifyMessages } from '../utils/llm-chat-minifier.js';
 import { getTokenThreshold, getMyccDir, ensureDirs } from '../config.js';
 import { agentIO } from '../loop/agent-io.js';
+import { grepSearch } from '../utils/grep-search.js';
 
 /**
  * Configuration constants
@@ -327,7 +327,7 @@ async function executeTool(
     case 'ls':
       return ls(args.path as string | undefined, workDir);
     case 'grep':
-      return grep(
+      return await grep(
         args.pattern as string,
         args.path as string | undefined,
         workDir
@@ -403,9 +403,11 @@ function ls(p: string | undefined, workDir: string): string {
 }
 
 /**
- * Search for pattern in files using grep
+ * Search for pattern in files using the shared grep tool.
+ * Delegates to grepSearch() which has hierarchical fallback:
+ * native rg → system grep → npm ripgrep WASM → error.
  */
-function grep(pattern: string, p: string | undefined, workDir: string): string {
+async function grep(pattern: string, p: string | undefined, workDir: string): Promise<string> {
   const dir = p ? path.resolve(workDir, p) : workDir;
   if (!dir.startsWith(workDir)) {
     return 'Error: Path escapes workspace';
@@ -413,18 +415,8 @@ function grep(pattern: string, p: string | undefined, workDir: string): string {
   if (!fs.existsSync(dir)) {
     return 'Error: Directory not found';
   }
-  try {
-    // Use grep with line limit
-    const result = execSync(
-      `grep -rn "${pattern.replace(/"/g, '\\"')}" "${dir}" ` +
-        `--include="*.ts" --include="*.js" --include="*.md" --include="*.json" ` +
-        `2>/dev/null | head -50`,
-      { encoding: 'utf-8', timeout: 10000, maxBuffer: 50 * 1024 }
-    );
-    return result || 'No matches found';
-  } catch {
-    return 'No matches found';
-  }
+  const { output } = await grepSearch(pattern, dir, undefined, 50);
+  return output;
 }
 
 /**

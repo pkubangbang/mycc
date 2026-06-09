@@ -14,7 +14,6 @@
 
 import type { ToolDefinition, AgentContext } from '../types.js';
 import { agentIO } from '../loop/agent-io.js';
-import { retryChat, MODEL } from '../engine/chat-provider.js';
 
 const OUTPUT_CHAR_LIMIT = 20000;
 
@@ -116,51 +115,19 @@ export const bashTool: ToolDefinition = {
     // Verbose output: show the full result contents
     ctx.core.verbose('bash', 'Command output', { command, exitCode, stdout: stdout.slice(0, 2000), stderr: stderr.slice(0, 500) });
 
-    // Check if we need to summarize (by character count, not lines)
+    // Check if we need to truncate
     const outputChars = output.length;
 
     if (outputChars <= OUTPUT_CHAR_LIMIT) {
       return output;
     }
 
-    // Summarize the output
-    try {
-      const summary = await summarizeOutput(output, intent, outputChars, ctx);
-      return summary;
-    } catch (err) {
-      ctx.core.brief('error', 'bash', `Failed to summarize output: ${(err as Error).message}`, 'the last bash call has error');
-      // Fall back to raw output instead of crashing
-      return `[Summarization failed, showing raw output]\n\n${output}`;
-    }
+    // Truncate output — show head + tail with a summary line
+    const halfLimit = Math.floor(OUTPUT_CHAR_LIMIT / 2);
+    const head = output.slice(0, halfLimit);
+    const tail = output.slice(outputChars - halfLimit);
+    const truncated = `${head}\n\n... [${outputChars - OUTPUT_CHAR_LIMIT} chars truncated] ...\n\n${tail}`;
+    return truncated;
   },
 };
-
-/**
- * Summarize command output when it exceeds the character limit
- */
-async function summarizeOutput(
-  output: string,
-  intent: string,
-  totalChars: number,
-  ctx: AgentContext
-): Promise<string> {
-  ctx.core.brief('info', 'bash', `Summarizing ${(totalChars / 1000).toFixed(1)}k chars (limit: ${OUTPUT_CHAR_LIMIT / 1000}k)`);
-
-  const response = await retryChat({
-    model: MODEL,
-    messages: [
-      {
-        role: 'system',
-        content: `Summarize this command output concisely.
-User's intent: ${intent}
-Total characters: ${totalChars}
-Keep the summary concise and focused on what's relevant to the user's intent.
-Report the total character count at the start of your response.`
-      },
-      { role: 'user', content: output }
-    ]
-  });
-
-  return `Summary of ${(totalChars / 1000).toFixed(1)}k chars:\n${response.message.content || 'No summary generated'}`;
-}
 

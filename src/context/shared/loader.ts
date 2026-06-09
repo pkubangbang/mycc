@@ -99,6 +99,7 @@ import { wikiGetTool } from '../../tools/wiki_get.js';
 import { orderTool } from '../../tools/order.js';
 import { handOverTool } from '../../tools/hand_over.js';
 import { gitCommitTool } from '../../tools/git_commit.js';
+import { grepTool } from '../../tools/grep.js';
 import { skillCompileTool } from '../../tools/skill_compile.js';
 import { skillSearchTool } from '../../tools/skill_search.js';
 import { planOnTool } from '../../tools/plan_on.js';
@@ -154,6 +155,7 @@ const builtInTools: ToolDefinition[] = [
   orderTool,
   handOverTool,
   gitCommitTool,
+  grepTool,
   skillCompileTool,
   skillSearchTool,
   planOnTool,

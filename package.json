@@ -31,6 +31,7 @@
     "jsep": "^1.4.0",
     "minimist": "^1.2.8",
     "ollama": "^0.6.3",
+    "ripgrep": "^0.3.1",
     "sharp": "^0.34.5",
     "string-width": "^8.2.0",
     "strip-ansi": "^7.2.0",

@@ -29,6 +29,9 @@ importers:
       ollama:
         specifier: ^0.6.3
         version: 0.6.3
+      ripgrep:
+        specifier: ^0.3.1
+        version: 0.3.1
       sharp:
         specifier: ^0.34.5
         version: 0.34.5
@@ -1209,6 +1212,10 @@ packages:
   resolve-pkg-maps@1.0.0:
     resolution: {integrity: sha512-seS2Tj26TBVOC2NIc2rOe2y2ZO7efxITtLZcGSOnHHNOQ7CkiUBfw0Iw2ck6xkIhPwLhKNLS8BO+hEpngQlqzw==}
 
+  ripgrep@0.3.1:
+    resolution: {integrity: sha512-6bDtNIBh1qPviVIU685/4uv0Ap5t8eS4wiJhy/tR2LdIeIey9CVasENlGS+ul3HnTmGANIp7AjnfsztsRmALfQ==}
+    hasBin: true
+
   rolldown@1.0.0-rc.16:
     resolution: {integrity: sha512-rzi5WqKzEZw3SooTt7cgm4eqIoujPIyGcJNGFL7iPEuajQw7vxMHUkXylu4/vhCkJGXsgRmxqMKXUpT6FEgl0g==}
     engines: {node: ^20.19.0 || >=22.12.0}
@@ -2367,6 +2374,8 @@ snapshots:
   reflect-metadata@0.2.2: {}
 
   resolve-pkg-maps@1.0.0: {}
+
+  ripgrep@0.3.1: {}
 
   rolldown@1.0.0-rc.16:
     dependencies:
