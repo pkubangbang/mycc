@@ -29,6 +29,7 @@ const TOOL_COLORS: Record<string, (text: string) => string> = {
 
   // Knowledge & Skills
   recall: chalk.magentaBright,
+  grep: chalk.greenBright,
   wiki: chalk.blueBright,
   skill_load: chalk.cyanBright,
   skill_search: chalk.cyanBright,
