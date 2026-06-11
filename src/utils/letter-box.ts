@@ -13,8 +13,69 @@ function getTimestamp(): string {
 }
 
 /**
+ * Fullwidth vertical line (U+FF5C) used in DeepSeek DSML tags.
+ * DeepSeek emits markup like: <\uff5c\uff5cDSML\uff5c\uff5ctagname>...</\uff5c\uff5cDSML\uff5c\uff5ctagname>
+ * The "||" in rendered display is actually two U+FF5C characters.
+ */
+const FW_VLINE = '\uff5c';
+const FW_DSML_OPEN = '<' + FW_VLINE + FW_VLINE + 'DSML' + FW_VLINE + FW_VLINE;
+const FW_DSML_CLOSE = '</' + FW_VLINE + FW_VLINE + 'DSML' + FW_VLINE + FW_VLINE;
+
+/**
+ * Strip internal markup tags from content before display.
+ *
+ * DeepSeek sometimes emits DSML (DeepSeek Markup Language) tags directly
+ * into the text content stream. These use fullwidth vertical lines (U+FF5C):
+ *   <||DSML||tagname>...</||DSML||tagname>
+ * where "||" is rendered as two fullwidth vertical bars (U+FF5C).
+ */
+function stripInternalMarkup(content: string): string {
+  let result = content;
+
+  if (result.includes(FW_VLINE)) {
+    // Strip full DSML paired tags: <||DSML||tagname>...</||DSML||tagname>
+    const fullTagRe = new RegExp(
+      FW_DSML_OPEN.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&') +
+      '(\\w+)>[\\s\\S]*?' +
+      FW_DSML_CLOSE.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&') +
+      '\\1>',
+      'g'
+    );
+    result = result.replace(fullTagRe, '');
+
+    // Strip self-closing DSML tags: <||DSML||tagname />
+    const selfCloseRe = new RegExp(
+      FW_DSML_OPEN.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&') +
+      '(\\w+)\\s*\\/\\s*>',
+      'g'
+    );
+    result = result.replace(selfCloseRe, '');
+
+    // Strip opening-only DSML tags: <||DSML||tagname>
+    const openTagRe = new RegExp(
+      FW_DSML_OPEN.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&') +
+      '(\\w+)>',
+      'g'
+    );
+    result = result.replace(openTagRe, '');
+
+    // Strip closing-only DSML tags: </||DSML||tagname>
+    const closeTagRe = new RegExp(
+      FW_DSML_CLOSE.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&') +
+      '(\\w+)>',
+      'g'
+    );
+    result = result.replace(closeTagRe, '');
+  }
+
+  // Clean up extra blank lines left by tag removal (more than 2 consecutive newlines)
+  result = result.replace(/\n{3,}/g, '\n\n');
+  return result.trim();
+}
+
+/**
  * Display text in a pseudo parenthesis-style box with readable green color.
- * Outputs content exactly as-is, preserving all whitespace.
+ * Internal markup tags (e.g. DeepSeek DSML) are stripped before display.
  */
 export function displayLetterBox(content: string): void {
   const borderColor = chalk.hex('#22c55e'); // Bright green (Tailwind green-500)
@@ -29,6 +90,6 @@ export function displayLetterBox(content: string): void {
   const rightEquals = totalEquals - leftEquals;
 
   process.stdout.write(`\n${borderColor(`.${'='.repeat(leftEquals)}${headerText}${'='.repeat(rightEquals)}.`)}\n`);
-  process.stdout.write(`${textColor(content)}\n`);
+  process.stdout.write(`${textColor(stripInternalMarkup(content))}\n`);
   process.stdout.write(`${borderColor(`'${'='.repeat(boxWidth - 2)}'`)}\n`);
 }
