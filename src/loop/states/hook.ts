@@ -7,6 +7,10 @@
  *
  * META-TOOLS: checkpoint and recap are handled here (not as regular tools)
  * because they need access to triologue which is not in AgentContext.
+ *
+ * CROSSROAD: When crossroadContinuation is set on pass, the continuation
+ * is appended to the last assistant message and a CONTINUE note is injected.
+ * The flow goes to COLLECT so the LLM can regenerate tool calls.
  */
 
 import chalk from 'chalk';
@@ -203,6 +207,33 @@ async function handleRecapCall(
   return AgentState.COLLECT;
 }
 
+/**
+ * Inject crossroad continuation into the triologue.
+ * Appends continuation to last assistant message, adds CONTINUE note,
+ * and displays the result to the terminal.
+ */
+function injectCrossroadContinuation(
+  triologue: import('../triologue.js').Triologue,
+  pass: PassData,
+  ctx: import('../../types.js').AgentContext,
+): void {
+  if (!pass.crossroadContinuation) return;
+
+  // Append continuation to the last assistant message
+  const lastMsg = triologue.getMessagesRaw().at(-1);
+  if (lastMsg?.role === 'assistant') {
+    lastMsg.content += '\n' + pass.crossroadContinuation;
+  }
+
+  // Tell LLM to continue — it will generate tool calls naturally
+  triologue.note('CONTINUE', 'continue with your work');
+
+  ctx.core.brief('info', 'crossroad', `Resolved: ${pass.assistantContent}\n${pass.crossroadContinuation}`);
+
+  // Clear the flag to prevent double-injection
+  pass.crossroadContinuation = undefined;
+}
+
 export async function handleHook(
   env: MachineEnv,
   turn: TurnVars,
@@ -284,6 +315,16 @@ export async function handleHook(
       finalToolCalls as ToolCall[] | undefined,
       pass.assistantReasoningContent,
     );
+
+    // =====================================================================
+    // Crossroad: inject continuation after the agent message
+    // =====================================================================
+    if (pass.crossroadContinuation) {
+      injectCrossroadContinuation(triologue, pass, ctx);
+      // Crossroad replaces the remaining flow — go straight to COLLECT
+      // so the LLM can regenerate tool calls from the continuation
+      return AgentState.COLLECT;
+    }
 
     // Confusion scoring: +1 per assistant turn (agent spinning without progress)
     // In plan mode, the agent explores by reading files — tool calls are sparse,

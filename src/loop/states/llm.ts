@@ -5,6 +5,11 @@
  * handles abort and transient errors, and stores the response data
  * on PassData for downstream states.
  *
+ * Crossroad feature:
+ * - After LLM response, detect turning words (However, Wait, 但, etc.)
+ * - If found, truncate output, generate alternative continuations, select best
+ * - Discard tool calls — LLM will regenerate them after crossroad
+ *
  * Quick-return ESC behavior:
  * - When ESC is pressed during LLM call, start background wrap-up
  * - Return PROMPT immediately so user sees the prompt ASAP
@@ -21,6 +26,7 @@ import { buildPlanModePrompt, buildNormalModePrompt, isInPlanMode } from '../age
 import { agentIO } from '../agent-io.js';
 import { startWrapUp } from '../esc-wrap-up.js';
 import { loader } from '../../context/shared/loader.js';
+import { handleCrossroad } from '../crossroad.js';
 
 export async function handleLlm(
   env: MachineEnv,
@@ -92,7 +98,31 @@ export async function handleLlm(
         : [];
       pass.assistantContent = assistantMessage.content || '';
       pass.assistantReasoningContent = (assistantMessage as unknown as Record<string, unknown>).reasoning_content as string | undefined;
+
+      // Capture signal before nulling abortController for crossroad use
+      const crossroadSignal = pass.abortController?.signal;
       pass.abortController = null;
+
+      // =====================================================================
+      // Crossroad: detect turning words, generate alternative continuations
+      // =====================================================================
+      const crossroadResult = await handleCrossroad(
+        triologue.getMessages(),
+        pass.assistantContent,
+        pass.rawToolCalls,
+        crossroadSignal,
+      );
+      if (crossroadResult) {
+        ctx.core.verbose('llm',
+          `Crossroad: truncated at "${crossroadResult.truncated.slice(0, 80)}..."`,
+          `Continuation: "${crossroadResult.continuation.slice(0, 80)}..."`,
+        );
+        // Replace content with truncated prefix + continuation will be injected in hook.ts
+        pass.assistantContent = crossroadResult.truncated;
+        pass.crossroadContinuation = crossroadResult.continuation;
+        // Discard original tool calls — LLM will regenerate them after crossroad
+        pass.rawToolCalls = [];
+      }
 
       // Handle edge case where LLM returns empty content AND no tool calls
       if (!pass.assistantContent && pass.rawToolCalls.length === 0) {

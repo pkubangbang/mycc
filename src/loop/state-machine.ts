@@ -86,6 +86,8 @@ export interface PassData {
   assistantReasoningContent?: string;
   augmentedCalls: AugmentedToolCall[];
   hookResult: ProcessToolCallsResult | null;
+  /** If crossroad was triggered, the best continuation text (injected in hook.ts) */
+  crossroadContinuation?: string;
 }
 
 // ============================================================================
