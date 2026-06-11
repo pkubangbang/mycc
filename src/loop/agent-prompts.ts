@@ -23,10 +23,10 @@ function getPlatformInfo(): { platform: string; shell: string; pathSep: string; 
   
   return {
     platform: isWin ? 'Windows' : isMac ? 'macOS' : 'Linux',
-    shell: isWin ? 'cmd.exe or PowerShell' : 'bash/zsh',
+    shell: isWin ? 'PowerShell' : 'bash/zsh',
     pathSep: isWin ? 'backslash (\\)' : 'forward slash (/)',
     home: os.homedir(),
-    escapeChar: isWin ? 'caret (^)' : 'backslash (\\)',
+    escapeChar: isWin ? 'backtick (`)' : 'backslash (\\)',
   };
 }
 
@@ -128,11 +128,11 @@ function buildPlatformSection(): string {
   const isWin = info.platform === 'Windows';
   
   const shellCommands = isWin
-    ? '- Use PowerShell or cmd syntax: `Get-Content file`, `Copy-Item src dest`'
+    ? '- Use PowerShell syntax: `Get-Content file`, `Copy-Item src dest`\n- The bash tool executes commands via PowerShell (not cmd)'
     : '- Use bash/zsh syntax: `cat file`, `cp src dest`';
-  
+
   const escaping = isWin
-    ? '- In cmd: use ^ to escape special chars (e.g., ^| for |)\n- In PowerShell: use backtick ` to escape (e.g., `$ for $)'
+    ? '- In PowerShell: use backtick ` to escape special chars (e.g., `$ for literal $)'
     : '- In bash/zsh: use backslash \\ to escape (e.g., \\$ for $)';
 
   return [
