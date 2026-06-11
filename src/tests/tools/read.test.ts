@@ -126,6 +126,10 @@ describe('readTool', () => {
   });
 
   it('should handle symlink within workspace', async () => {
+    // Skip on Windows: symlink creation requires admin privileges
+    if (process.platform === 'win32') {
+      return;
+    }
     const realFile = path.join(tempDir, 'real.txt');
     fs.writeFileSync(realFile, 'real content');
 

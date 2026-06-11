@@ -66,6 +66,9 @@ importers:
       '@typescript-eslint/parser':
         specifier: ^8.59.0
         version: 8.59.0(eslint@10.2.1)(typescript@5.9.3)
+      chai:
+        specifier: ^6.2.2
+        version: 6.2.2
       eslint:
         specifier: ^10.2.1
         version: 10.2.1

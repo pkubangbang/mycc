@@ -9,23 +9,32 @@ import * as path from 'path';
 import * as os from 'os';
 
 /**
+ * Normalize a Unix-style path prefix for the current platform.
+ * On Windows, path.resolve('/etc') => 'C:\\etc', on Unix it stays '/etc'.
+ * This ensures patterns match the normalized input path format.
+ */
+function platformPattern(unixPath: string): string {
+  return path.resolve(unixPath);
+}
+
+/**
  * Sensitive path prefixes that should NEVER be writable.
  * These are system-critical or security-sensitive directories.
  */
 const SENSITIVE_PATTERNS: { pattern: string; reason: string }[] = [
   // System directories
-  { pattern: '/etc', reason: 'system configuration directory' },
-  { pattern: '/boot', reason: 'boot loader directory' },
-  { pattern: '/sys', reason: 'kernel sysfs' },
-  { pattern: '/proc', reason: 'process information filesystem' },
-  { pattern: '/dev', reason: 'device files' },
-  { pattern: '/usr/lib', reason: 'system libraries' },
-  { pattern: '/usr/bin', reason: 'system binaries' },
-  { pattern: '/usr/sbin', reason: 'system admin binaries' },
-  { pattern: '/lib', reason: 'system libraries' },
-  { pattern: '/bin', reason: 'system binaries' },
-  { pattern: '/sbin', reason: 'system admin binaries' },
-  { pattern: '/root', reason: 'root user home directory' },
+  { pattern: platformPattern('/etc'), reason: 'system configuration directory' },
+  { pattern: platformPattern('/boot'), reason: 'boot loader directory' },
+  { pattern: platformPattern('/sys'), reason: 'kernel sysfs' },
+  { pattern: platformPattern('/proc'), reason: 'process information filesystem' },
+  { pattern: platformPattern('/dev'), reason: 'device files' },
+  { pattern: platformPattern('/usr/lib'), reason: 'system libraries' },
+  { pattern: platformPattern('/usr/bin'), reason: 'system binaries' },
+  { pattern: platformPattern('/usr/sbin'), reason: 'system admin binaries' },
+  { pattern: platformPattern('/lib'), reason: 'system libraries' },
+  { pattern: platformPattern('/bin'), reason: 'system binaries' },
+  { pattern: platformPattern('/sbin'), reason: 'system admin binaries' },
+  { pattern: platformPattern('/root'), reason: 'root user home directory' },
 
   // Security-sensitive
   { pattern: path.join(os.homedir(), '.ssh'), reason: 'SSH keys directory' },

@@ -18,8 +18,15 @@ function getTimestamp(): string {
  * The "||" in rendered display is actually two U+FF5C characters.
  */
 const FW_VLINE = '\uff5c';
-const FW_DSML_OPEN = '<' + FW_VLINE + FW_VLINE + 'DSML' + FW_VLINE + FW_VLINE;
-const FW_DSML_CLOSE = '</' + FW_VLINE + FW_VLINE + 'DSML' + FW_VLINE + FW_VLINE;
+const FW_DSML_OPEN = `<${FW_VLINE}${FW_VLINE}DSML${FW_VLINE}${FW_VLINE}`;
+const FW_DSML_CLOSE = `</${FW_VLINE}${FW_VLINE}DSML${FW_VLINE}${FW_VLINE}`;
+
+/**
+ * Escape special regex characters in a string for use in RegExp constructor.
+ */
+function escapeRegex(str: string): string {
+  return str.replace(/[-\\^$*+?.()|[\]{}]/g, '\\$&');
+}
 
 /**
  * Strip internal markup tags from content before display.
@@ -33,38 +40,29 @@ function stripInternalMarkup(content: string): string {
   let result = content;
 
   if (result.includes(FW_VLINE)) {
+    const escapedOpen = escapeRegex(FW_DSML_OPEN);
+    const escapedClose = escapeRegex(FW_DSML_CLOSE);
+
     // Strip full DSML paired tags: <||DSML||tagname>...</||DSML||tagname>
     const fullTagRe = new RegExp(
-      FW_DSML_OPEN.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&') +
-      '(\\w+)>[\\s\\S]*?' +
-      FW_DSML_CLOSE.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&') +
-      '\\1>',
+      escapedOpen + '(\\w+)>[\\s\\S]*?' + escapedClose + '\\1>',
       'g'
     );
     result = result.replace(fullTagRe, '');
 
     // Strip self-closing DSML tags: <||DSML||tagname />
     const selfCloseRe = new RegExp(
-      FW_DSML_OPEN.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&') +
-      '(\\w+)\\s*\\/\\s*>',
+      escapedOpen + '(\\w+)\\s*/\\s*>',
       'g'
     );
     result = result.replace(selfCloseRe, '');
 
     // Strip opening-only DSML tags: <||DSML||tagname>
-    const openTagRe = new RegExp(
-      FW_DSML_OPEN.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&') +
-      '(\\w+)>',
-      'g'
-    );
+    const openTagRe = new RegExp(escapedOpen + '(\\w+)>', 'g');
     result = result.replace(openTagRe, '');
 
     // Strip closing-only DSML tags: </||DSML||tagname>
-    const closeTagRe = new RegExp(
-      FW_DSML_CLOSE.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&') +
-      '(\\w+)>',
-      'g'
-    );
+    const closeTagRe = new RegExp(escapedClose + '(\\w+)>', 'g');
     result = result.replace(closeTagRe, '');
   }
 
