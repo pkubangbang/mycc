@@ -353,18 +353,13 @@ export function ensureDirs(): void {
 // Tool Type Imports
 // ============================================================================
 
-import { execSync } from 'child_process';
 import chalk from 'chalk';
 import { ENV_REQUIREMENTS } from './setup/prompts.js';
 
-/** Timeout for npm link operations (ms) */
-const NPM_LINK_TIMEOUT_MS = 5000;
-
 /**
- * Ensure mycc is linked in a directory for type imports
- * Creates node_modules symlink if needed
- *
- * Uses timeout to fail fast when network is unavailable or slow.
+ * Ensure mycc is linked in a directory for type imports.
+ * Creates a direct symlink to the mycc project root — no npm involved,
+ * so it's fast and never times out. MYCC_ROOT is set by bin/mycc.js.
  */
 function ensureMyccLink(dir: string, label: string): void {
   const nodeModules = path.join(dir, 'node_modules');
@@ -375,22 +370,19 @@ function ensureMyccLink(dir: string, label: string): void {
     fs.mkdirSync(nodeModules, { recursive: true });
   }
 
-  // Link mycc globally if not already linked
+  // Symlink mycc directly to the project root (resolved by bin/mycc.js)
   if (!fs.existsSync(myccLink)) {
-    console.log(chalk.dim(`[config] Linking mycc for ${label}...`));
+    const myccRoot = process.env.MYCC_ROOT;
+    if (!myccRoot) {
+      console.warn(chalk.yellow(`[config] MYCC_ROOT not set — cannot link mycc for ${label}`));
+      return;
+    }
     try {
-      execSync('npm link mycc', {
-        cwd: dir,
-        stdio: 'ignore',
-        timeout: NPM_LINK_TIMEOUT_MS,
-      });
+      const isWin = process.platform === 'win32';
+      // 'junction' on Windows doesn't require admin; 'dir' on Unix resolves cleanly
+      fs.symlinkSync(myccRoot, myccLink, isWin ? 'junction' : 'dir');
     } catch (err) {
-      // Check if it's a timeout error
-      const isTimeout = err instanceof Error && err.message.includes('ETIMEDOUT');
-      const message = isTimeout
-        ? `[config] npm link timed out after ${NPM_LINK_TIMEOUT_MS / 1000}s. Check network connectivity.`
-        : `[config] Could not link mycc in ${dir}. Run 'npm link mycc' manually.`;
-      console.warn(chalk.yellow(message));
+      console.warn(chalk.yellow(`[config] Could not link mycc in ${dir}: ${(err as Error).message}`));
     }
   }
 }

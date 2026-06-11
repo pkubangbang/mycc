@@ -18,6 +18,8 @@ const PROJECT_ROOT = resolve(__dirname, '..');
 const entry = resolve(PROJECT_ROOT, 'src', 'index.ts');
 const isWin = process.platform === 'win32';
 
+const env = { ...process.env, MYCC_ROOT: PROJECT_ROOT };
+
 let child;
 if (isWin) {
   // Windows: use node --import with tsx/esm loader (requires file:// URL)
@@ -25,14 +27,14 @@ if (isWin) {
   const tsxEsmUrl = pathToFileURL(tsxEsmPath).href;
   child = spawn(process.execPath, ['--import', tsxEsmUrl, entry, ...process.argv.slice(2)], {
     stdio: 'inherit',
-    env: process.env,
+    env,
   });
 } else {
   // Unix: use tsx binary directly
   const tsx = resolve(PROJECT_ROOT, 'node_modules', '.bin', 'tsx');
   child = spawn(tsx, [entry, ...process.argv.slice(2)], {
     stdio: 'inherit',
-    env: process.env,
+    env,
   });
 }
 
