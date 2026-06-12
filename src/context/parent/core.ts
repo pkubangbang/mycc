@@ -381,7 +381,15 @@ export class Core extends BaseCore implements CoreModule {
 
       // Race between the operation and ESC
       // MUST use await so finally runs after the race completes, not immediately
-      return await Promise.race([operationPromise, escPromise]);
+      const result = await Promise.race([operationPromise, escPromise]);
+
+      // Suppress unhandled rejection from the losing promise.
+      // When ESC wins the race, operationPromise may still reject later
+      // (e.g., retryChat throws StreamAbortedError on the aborted signal).
+      // Attaching a no-op catch prevents UnhandledPromiseRejection.
+      operationPromise.catch(() => {});
+
+      return result;
     } finally {
       unsubscribe();
     }
