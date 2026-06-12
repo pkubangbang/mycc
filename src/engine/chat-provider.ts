@@ -9,6 +9,7 @@ import { getApiProvider } from '../config.js';
 import * as ollamaMod from './ollama.js';
 import * as deepseekMod from './deepseek.js';
 import type { Message, Tool } from '../types.js';
+import type { RetryConfig } from './chat-helpers.js';
 
 const active = getApiProvider() === 'deepseek' ? deepseekMod : ollamaMod;
 
@@ -67,6 +68,8 @@ export async function forkChat(
   tools: Tool[],
   prompt: string,
   signal?: AbortSignal,
+  toolChoice?: 'none' | 'auto' | 'required',
+  retryConfig?: Partial<RetryConfig>,
 ): Promise<string> {
   const msgs = [...messages];
   const lastIdx = msgs.length - 1;
@@ -76,13 +79,21 @@ export async function forkChat(
     msgs.push({ role: 'user', content: prompt });
   }
 
+  // Build request with optional toolChoice for prompt cache preservation.
+  // DeepSeek reads toolChoice from the request object (deepseek.ts:359-362);
+  // Ollama spreads the entire request and silently ignores unknown fields.
+  const chatRequest: Record<string, unknown> = {
+    model: MODEL,
+    messages: msgs,
+    tools,
+  };
+  if (toolChoice) {
+    chatRequest.toolChoice = toolChoice;
+  }
+
   const response = await retryChat(
-    {
-      model: MODEL,
-      messages: msgs,
-      tools,
-    },
-    { signal, noSpinner: true },
+    chatRequest as Parameters<typeof retryChat>[0],
+    { signal, noSpinner: true, ...retryConfig },
   );
 
   return response.message.content || '';
