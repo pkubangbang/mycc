@@ -10,7 +10,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { retryChat, MODEL } from '../engine/chat-provider.js';
-import type { Message, ToolCall, WikiModule, NoteCategory } from '../types.js';
+import type { Message, ToolCall, WikiModule, NoteCategory, Skill } from '../types.js';
 import { minifyMessages } from '../utils/llm-chat-minifier.js';
 import { estimateTokens, estimateTokensForMessages } from '../utils/token.js';
 import { ResultTooLargeError } from '../types.js';
@@ -141,6 +141,43 @@ export class Triologue {
     this.projectContext.push(
       { role: 'user', content: '[System] No mindmap found. Please read CLAUDE.md to understand the project context and structure. IMPORTANT: The recall tool will not work without a mindmap, so do NOT use it. Use read_file tool to explore CLAUDE.md instead.' },
       { role: 'assistant', content: 'Understood. I will read CLAUDE.md using read_file to understand the project. I will NOT use the recall tool since no mindmap is available.' }
+    );
+  }
+
+  /**
+   * Add instructions for pending hookish skills (skills with "when" but no compiled condition).
+   * Lists each pending skill with its name, description, and when-condition, along with
+   * the skill_compile command to activate it. Only adds content if there are pending skills.
+   *
+   * Injected into projectContext so the LLM always sees which hooks could be activated
+   * - closing the gap on fresh installations where hooks are loaded but not yet compiled.
+   */
+  setPendingHooksInfo(hooks: Skill[]): void {
+    if (hooks.length === 0) return;
+
+    const lines: string[] = [
+      '[Hooks Pending] The following skills have "when" conditions that can be compiled into proactive hooks. They are NOT active yet - use skill_compile to activate them:',
+      '',
+    ];
+
+    for (const hook of hooks) {
+      lines.push(`- ${hook.name}: ${hook.description}`);
+      if (hook.when) {
+        lines.push(`  When: ${hook.when}`);
+      }
+      if (hook.keywords && hook.keywords.length > 0) {
+        lines.push(`  Keywords: ${hook.keywords.join(', ')}`);
+      }
+      lines.push('  Activate: skill_compile(name="' + hook.name + '")');
+      lines.push('');
+    }
+
+    lines.push('Not all hooks need to be compiled upfront. Only compile the ones relevant to your current task. A compiled hook stays in effect until the skill file changes.');
+    lines.push('');
+
+    this.projectContext.push(
+      { role: 'user', content: lines.join('\n') },
+      { role: 'assistant', content: 'Understood. I know which hooks are available but not yet active. I can compile them when needed using the skill_compile tool.' }
     );
   }
 

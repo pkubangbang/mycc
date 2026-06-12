@@ -38,6 +38,7 @@ import { clearWrapUp } from './esc-wrap-up.js';
 import pkg from '../../package.json';
 import { get_default_mindmap_path, load_mindmap, validate_mindmap } from '../mindmap/index.js';
 import type { Node } from '../mindmap/types.js';
+import type { Skill } from '../types.js';
 
 const version = pkg.version;
 
@@ -255,6 +256,17 @@ export async function main(): Promise<void> {
   // Sync pending skills (skills with 'when' but no compiled condition)
   // Will be notified during hint round
   conditions.syncPending(loader);
+
+  // Inject pending hook info into project context so the LLM knows
+  // which hooks are available but not yet compiled (closes the gap
+  // on fresh installations where hooks are loaded but inactive).
+  const pendingSkillNames = conditions.getPending();
+  if (pendingSkillNames.length > 0) {
+    const pendingSkills = pendingSkillNames
+      .map(name => loader.getSkill(name))
+      .filter((s): s is Skill => !!s);
+    triologue.setPendingHooksInfo(pendingSkills);
+  }
 
   const core = ctx.core as Core;
   const sequence = new Sequence(triologue, () => core.getMode());
