@@ -106,7 +106,7 @@ export class Triologue {
 
   /**
    * Set README.md content (project context)
-   * Appends context pair to project context (appears after CLAUDE.md if both set)
+   * Appends context pair to project context (appears after MYCC.md if both set)
    * If content is too large, skips it entirely.
    */
   setReadmeMd(content: string): void {
@@ -135,12 +135,12 @@ export class Triologue {
 
   /**
    * Add instruction when no mindmap exists
-   * Tells LLM to read CLAUDE.md directly and NOT use the recall tool
+   * Tells LLM to read MYCC.md directly and NOT use the recall tool
    */
   setNoMindmapInstruction(): void {
     this.projectContext.push(
-      { role: 'user', content: '[System] No mindmap found. Please read CLAUDE.md to understand the project context and structure. IMPORTANT: The recall tool will not work without a mindmap, so do NOT use it. Use read_file tool to explore CLAUDE.md instead.' },
-      { role: 'assistant', content: 'Understood. I will read CLAUDE.md using read_file to understand the project. I will NOT use the recall tool since no mindmap is available.' }
+      { role: 'user', content: '[System] No mindmap found. Please read MYCC.md to understand the project context and structure. IMPORTANT: The recall tool will not work without a mindmap, so do NOT use it. Use read_file tool to explore MYCC.md instead.' },
+      { role: 'assistant', content: 'Understood. I will read MYCC.md using read_file to understand the project. I will NOT use the recall tool since no mindmap is available.' }
     );
   }
 

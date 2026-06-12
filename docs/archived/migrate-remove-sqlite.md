@@ -668,7 +668,7 @@ pnpm install
 #### 4.2 Update documentation
 
 1. Remove `docs/database-schema.md` (archived)
-2. Update `CLAUDE.md` to remove SQLite references
+2. Update `MYCC.md` to remove SQLite references
 3. Update `README.md` if needed
 
 ---

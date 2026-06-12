@@ -4,7 +4,7 @@ This guide explains how to use the mindmap feature from a user's perspective.
 
 ## Overview
 
-The mindmap is a navigable knowledge structure compiled from your project's `CLAUDE.md` file. It enables the agent to efficiently retrieve project-specific knowledge on-demand, rather than loading the entire CLAUDE.md into context at startup.
+The mindmap is a navigable knowledge structure compiled from your project's `MYCC.md` file. It enables the agent to efficiently retrieve project-specific knowledge on-demand, rather than loading the entire MYCC.md into context at startup.
 
 ### Why Use Mindmap?
 
@@ -23,7 +23,7 @@ Compile a markdown file into a mindmap.
 
 **Usage:**
 ```
-/mindmap compile              # Compile ./CLAUDE.md
+/mindmap compile              # Compile ./MYCC.md
 /mindmap compile ./docs/api.md   # Compile specific file
 ```
 
@@ -39,7 +39,7 @@ Compile a markdown file into a mindmap.
 **Example:**
 ```
 > /mindmap compile
-Compiling CLAUDE.md...
+Compiling MYCC.md...
 Parsed 15 sections into tree structure.
 Summarizing nodes (bottom-up)...
 ✓ Mindmap compiled: 15 nodes, root summary: "Project overview..."
@@ -89,7 +89,7 @@ Update a node's content and trigger cascading summary updates.
 3. Re-summarizes all ancestors (up to root)
 4. Updates `.mycc/mindmap.json`
 
-**Note:** This updates the mindmap only, not the source CLAUDE.md file. To persist changes, update CLAUDE.md and recompile.
+**Note:** This updates the mindmap only, not the source MYCC.md file. To persist changes, update MYCC.md and recompile.
 
 ### `/mindmap validate`
 
@@ -107,7 +107,7 @@ Check if the mindmap is in sync with the source file.
 **Example:**
 ```
 > /mindmap validate
-✓ Mindmap is valid and in sync with CLAUDE.md
+✓ Mindmap is valid and in sync with MYCC.md
 ```
 
 ## Tool Usage: get_node
@@ -150,7 +150,7 @@ At startup, the agent receives:
 - Root node summary
 - Instruction: "Use `get_node` tool to navigate project knowledge as needed"
 
-This replaces loading the entire CLAUDE.md into context.
+This replaces loading the entire MYCC.md into context.
 
 ## Startup Behavior
 
@@ -165,7 +165,7 @@ When mycc starts:
 │  1. Check for .mycc/mindmap.json                               │
 │     │                                                           │
 │     ├─ File exists?                                             │
-│     │  ├─ Yes → Validate hash against CLAUDE.md                │
+│     │  ├─ Yes → Validate hash against MYCC.md                │
 │     │  │         ├─ Valid → Load mindmap into context           │
 │     │  │         └─ Invalid → Warning, suggest recompile       │
 │     │  │                                                        │
@@ -184,7 +184,7 @@ When mycc starts:
 
 The startup validation compares:
 - Stored hash in `mindmap.json`
-- Current hash of `CLAUDE.md`
+- Current hash of `MYCC.md`
 
 If they differ, the mindmap is stale and a warning is shown.
 
@@ -233,13 +233,13 @@ Each process compiles its own mindmap:
 
 ```
 Lead process:
-  CLAUDE.md → compile_mindmap → .mycc/mindmap.json
+  MYCC.md → compile_mindmap → .mycc/mindmap.json
 
 Teammate process (in worktree):
-  worktree/CLAUDE.md → compile_mindmap → .mycc/mindmap-{name}.json
+  worktree/MYCC.md → compile_mindmap → .mycc/mindmap-{name}.json
 ```
 
-Each worktree may have different CLAUDE.md content, leading to different mindmaps.
+Each worktree may have different MYCC.md content, leading to different mindmaps.
 
 ## Wiki vs Mindmap
 
@@ -247,7 +247,7 @@ These are **separate concerns** with different purposes:
 
 | Aspect | Wiki | Mindmap |
 |--------|------|---------|
-| **Purpose** | General knowledge storage | CLAUDE.md navigation |
+| **Purpose** | General knowledge storage | MYCC.md navigation |
 | **Content** | User-curated facts/rules | Compiled from markdown |
 | **Storage** | Vector database (RAG) | JSON file |
 | **Query** | Semantic search (similarity) | Path traversal |
@@ -260,18 +260,18 @@ These are **separate concerns** with different purposes:
 **Use Wiki when:**
 - Storing facts, rules, or references for semantic retrieval
 - Knowledge should be shared across all agents
-- Content doesn't belong in CLAUDE.md
+- Content doesn't belong in MYCC.md
 
 **Use Mindmap when:**
 - Navigating structured project documentation
-- Agent needs hierarchical context from CLAUDE.md
+- Agent needs hierarchical context from MYCC.md
 - Querying specific sections by path
 
 ## Best Practices
 
-### CLAUDE.md Structure
+### MYCC.md Structure
 
-Organize your CLAUDE.md for effective mindmap navigation:
+Organize your MYCC.md for effective mindmap navigation:
 
 ```markdown
 # Project Overview
@@ -331,12 +331,12 @@ This becomes a child section.
 ### When to Recompile
 
 Recompile when:
-- CLAUDE.md is modified
-- Starting a new session after CLAUDE.md changes
+- MYCC.md is modified
+- Starting a new session after MYCC.md changes
 - Validation fails at startup
 
 ### Performance Tips
 
-- Keep CLAUDE.md reasonably sized (mindmap is for navigation, not storing everything)
+- Keep MYCC.md reasonably sized (mindmap is for navigation, not storing everything)
 - Use clear section headings for predictable paths
 - Let the agent navigate rather than loading everything upfront

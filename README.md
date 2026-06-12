@@ -14,7 +14,7 @@ A CLI coding agent using Ollama-cloud for LLM inference, written in nodejs.
 
 - **skill use**: describe the specialist knowledge using markdown, and LLM will learn it when needed.
 
-- **mindmap**: compile your `CLAUDE.md` into a navigable knowledge tree; agents retrieve context on-demand via `get_node` tool for efficient knowledge navigation.
+- **mindmap**: compile your `MYCC.md` into a navigable knowledge tree; agents retrieve context on-demand via `get_node` tool for efficient knowledge navigation.
 
 - **extensibility**: you can bring your own tools/skills into mycc, at project-level, or at the user-level that shared across projects.
 

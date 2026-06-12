@@ -210,7 +210,7 @@ These commands accept additional arguments.
 **Usage**:
 ```
 /mindmap              - Show mindmap status
-/mindmap compile      - Compile mindmap from CLAUDE.md
+/mindmap compile      - Compile mindmap from MYCC.md
 /mindmap validate     - Validate mindmap structure
 ```
 

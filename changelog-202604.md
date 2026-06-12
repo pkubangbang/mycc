@@ -105,7 +105,7 @@ For current changelog, see `changelog-todo.md`.
 
 ## 2026-04-17
 ### Session Isolation & Context
-- **Project Context**: Implemented auto-injection of `CLAUDE.md` and `README.md` into chat history.
+- **Project Context**: Implemented auto-injection of `MYCC.md` and `README.md` into chat history.
 - **Isolation**: Resolved SQLite multiple statement errors and implemented session isolation.
 - **UX**: Renamed user directory to `~/.mycc-store`; updated `/load` to hide the current session.
 - **Version**: Bumped version to `v0.3.0`.

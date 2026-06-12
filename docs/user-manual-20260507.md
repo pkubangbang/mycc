@@ -137,7 +137,7 @@ All state is persisted in `.mycc/state.db`:
 ### 6. Mindmap Knowledge Navigation
 
 Navigate project documentation efficiently:
-- Compiled from CLAUDE.md for efficient context loading
+- Compiled from MYCC.md for efficient context loading
 - Hierarchical structure for easy navigation
 - On-demand retrieval reduces token usage
 - Each process has isolated mindmap instance
@@ -233,7 +233,7 @@ The agent will use `wiki_get` with the domain filter to find relevant documents.
 Navigate project documentation efficiently:
 
 ```
-> /mindmap compile    # Compile CLAUDE.md into mindmap
+> /mindmap compile    # Compile MYCC.md into mindmap
 > /mindmap get /skill  # Explore skill documentation
 ```
 
@@ -655,7 +655,7 @@ Manage mindmap knowledge tree.
 
 ```
 /mindmap              - Show mindmap status
-/mindmap compile      - Compile mindmap from CLAUDE.md
+/mindmap compile      - Compile mindmap from MYCC.md
 /mindmap validate     - Validate mindmap structure
 ```
 
@@ -849,7 +849,7 @@ These are **separate concerns** with different purposes:
 
 | Aspect | Wiki | Mindmap |
 |--------|------|---------|
-| **Purpose** | General knowledge storage | CLAUDE.md navigation |
+| **Purpose** | General knowledge storage | MYCC.md navigation |
 | **Content** | User-curated facts/rules | Compiled from markdown |
 | **Storage** | Vector database (RAG) | JSON file |
 | **Query** | Semantic search (similarity) | Path traversal |
@@ -862,11 +862,11 @@ These are **separate concerns** with different purposes:
 **Use Wiki when:**
 - Storing facts, rules, or references for semantic retrieval
 - Knowledge should be shared across all agents
-- Content doesn't belong in CLAUDE.md
+- Content doesn't belong in MYCC.md
 
 **Use Mindmap when:**
 - Navigating structured project documentation
-- Agent needs hierarchical context from CLAUDE.md
+- Agent needs hierarchical context from MYCC.md
 - Querying specific sections by path
 
 ### Wiki Best Practices
@@ -878,8 +878,8 @@ These are **separate concerns** with different purposes:
 
 ### Mindmap Best Practices
 
-1. **Organize CLAUDE.md well**: Use clear section headings for predictable paths
-2. **Recompile after changes**: Run `/mindmap compile` when CLAUDE.md is modified
+1. **Organize MYCC.md well**: Use clear section headings for predictable paths
+2. **Recompile after changes**: Run `/mindmap compile` when MYCC.md is modified
 3. **Start from root**: Use `recall(path="/")` to discover top-level topics
 4. **Navigate hierarchically**: Follow children paths to relevant sections
 
@@ -977,7 +977,7 @@ This becomes a child section.
 **Solutions**:
 1. Run `/mindmap compile` to create mindmap
 2. Run `/mindmap validate` to check validity
-3. Recompile if CLAUDE.md has been modified
+3. Recompile if MYCC.md has been modified
 
 #### Setup Wizard Not Starting
 
@@ -1233,7 +1233,7 @@ SQLite tables in `.mycc/state.db`:
 | `skills/*.md` | Built-in skill definitions |
 | `.mycc/skills/*.md` | User-defined skills (hot-reload) |
 | `.mycc/mail/*.jsonl` | Mailbox files for inter-agent communication |
-| `.mycc/mindmap.json` | Compiled mindmap from CLAUDE.md |
+| `.mycc/mindmap.json` | Compiled mindmap from MYCC.md |
 | `~/.mycc-store/wiki/db/` | LanceDB vector store for knowledge base |
 | `~/.mycc-store/wiki/logs/*.wal` | Write-Ahead Log files (daily) |
 | `~/.mycc-store/wiki/domains.json` | Domain registry with metadata |
@@ -1312,7 +1312,7 @@ To add a new command:
 
 For issues, questions, or contributions:
 - Check the `docs/` directory for detailed documentation
-- Review `CLAUDE.md` for development guidance
+- Review `MYCC.md` for development guidance
 - Submit issues via the project repository
 
 ---

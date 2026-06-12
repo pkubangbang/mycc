@@ -159,7 +159,7 @@ For current changelog, see `changelog-todo.md`.
 - **Setup Wizard**: Added optional DeepSeek provider to setup wizard flow.
 - **Recap**: Fixed `recapMessages` preserving checkpoint agent→tool pair; moved teammate meta-tool dispatch before agent registration.
 - **Cleanup**: Removed redundant `ctx.core.brief()` from `mycc_title` tool.
-- **Docs**: Added DeepSeek provider design spec; added Loop Notation (LN) guidance to CLAUDE.md; updated README.
+- **Docs**: Added DeepSeek provider design spec; added Loop Notation (LN) guidance to MYCC.md; updated README.
 
 ## 2026-05-22
 ### Terminology Hoisting

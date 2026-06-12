@@ -103,7 +103,7 @@ class AgentIO {
   // LineEditor management
   private activeLineEditor: LineEditor | null = null;
   // Default history with common slash commands for easy access
-  private lineHistory: string[] = ['/mindmap compile CLAUDE.md', '/mode plan', 'show me all the tools and skills that you can use'];
+  private lineHistory: string[] = ['/mindmap compile MYCC.md', '/mode plan', 'show me all the tools and skills that you can use'];
 
   // Double Ctrl+L detection (clear conversation history)
   private static readonly CTRL_L_DOUBLE_PRESS_MS = 3000;  // 3 seconds for double press

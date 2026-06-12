@@ -166,13 +166,13 @@ export async function main(): Promise<void> {
 
   if (!fs.existsSync(mindmapPath)) {
     // No mindmap.json - show warning
-    console.log(chalk.yellow('[mindmap] No mindmap found. LLM will read CLAUDE.md directly.'));
+    console.log(chalk.yellow('[mindmap] No mindmap found. LLM will read MYCC.md directly.'));
   } else {
     try {
       const mindmap = load_mindmap(mindmapPath);
 
-      // Validate against CLAUDE.md
-      const claudeMdPath = path.join(workDir, 'CLAUDE.md');
+      // Validate against MYCC.md
+      const claudeMdPath = path.join(workDir, 'MYCC.md');
       if (fs.existsSync(claudeMdPath) && !validate_mindmap(mindmap, claudeMdPath)) {
         // Validation failed - show warning but continue loading
         console.log(chalk.yellow('[mindmap] Validation failed (outdated). Loading anyway.'));
@@ -221,7 +221,7 @@ export async function main(): Promise<void> {
     // Mindmap available - instruct LLM to use recall tool
     triologue.setMindmapInstruction();
   } else {
-    // No mindmap - instruct LLM to read CLAUDE.md and NOT use recall
+    // No mindmap - instruct LLM to read MYCC.md and NOT use recall
     triologue.setNoMindmapInstruction();
   }
 

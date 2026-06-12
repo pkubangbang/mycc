@@ -36,7 +36,7 @@ interface JsonlMessage {
 const SESSION_TRANSCRIPT_RAW: JsonlMessage[] = [
   { "role": "user", "content": "add \"action type\" to the skill_compile's log output." },
   { "role": "assistant", "content": "I'll help you add \"action type\" to the skill_compile's log output.", "tool_calls": [{ "id": "call_iza7gvcm", "function": { "name": "recall", "arguments": { "path": "/" } } }] },
-  { "role": "tool", "tool_name": "recall", "content": "# CLAUDE\nPath: /\nLevel: 0\n\n## Summary\nThe **CLAUDE** section covers the project's CLAUDE.md file and mindmap memory system...", "tool_call_id": "call_iza7gvcm" },
+  { "role": "tool", "tool_name": "recall", "content": "# MYCC\nPath: /\nLevel: 0\n\n## Summary\nThe **MYCC** section covers the project's MYCC.md file and mindmap memory system...", "tool_call_id": "call_iza7gvcm" },
   { "role": "assistant", "content": "Let me explore more to find the skill_compile tool:", "tool_calls": [{ "id": "call_zkch77d2", "function": { "name": "recall", "arguments": { "path": "/skill" } } }] },
   { "role": "tool", "tool_name": "recall", "content": "Node not found: /skill", "tool_call_id": "call_zkch77d2" },
   { "role": "assistant", "content": "Let me look at the actual skill_compile implementation:", "tool_calls": [{ "id": "call_a1", "function": { "name": "bash", "arguments": { "command": "grep -rn 'skill_compile' src/" } } }] },

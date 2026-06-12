@@ -67,7 +67,7 @@ async function handleCompile(context: { ctx: import('../types.js').AgentContext;
   // Parse: /mindmap compile [source.md] [output.json]
   const parts = (remaining || '').trim().split(/\s+/).filter(Boolean);
 
-  const sourceFile = parts[0] || 'CLAUDE.md';
+  const sourceFile = parts[0] || 'MYCC.md';
   const outputFile = parts[1] || undefined;  // undefined = default .mycc/mindmap.json
 
   const workDir = context.ctx.core.getWorkDir();
@@ -115,7 +115,7 @@ async function handleGet(context: { ctx: import('../types.js').AgentContext; arg
   // Try exact match first, then try replacing underscores with spaces
   let node = get_node(mindmap, nodePath);
   if (!node) {
-    // Try replacing underscores with spaces for paths like /CLAUDE_md/Setup/Unit_Test
+    // Try replacing underscores with spaces for paths like /MYCC_md/Setup/Unit_Test
     const pathWithSpaces = nodePath.replace(/_/g, ' ');
     node = get_node(mindmap, pathWithSpaces);
   }
@@ -185,10 +185,10 @@ async function handleValidate(context: { ctx: import('../types.js').AgentContext
 
   // Find the source markdown file
   const workDir = context.ctx.core.getWorkDir();
-  const claudeMd = path.join(workDir, 'CLAUDE.md');
+  const claudeMd = path.join(workDir, 'MYCC.md');
 
   if (!fs.existsSync(claudeMd)) {
-    console.log(chalk.yellow('\n⚠ Cannot validate: CLAUDE.md not found'));
+    console.log(chalk.yellow('\n⚠ Cannot validate: MYCC.md not found'));
     return;
   }
 
@@ -210,11 +210,11 @@ function showHelp(): void {
   console.log(chalk.white('  /mindmap validate') + chalk.gray('                 - Check mindmap validity'));
   console.log();
   console.log(chalk.gray('Examples:'));
-  console.log(chalk.gray('  /mindmap compile                  # CLAUDE.md → .mycc/mindmap.json'));
+  console.log(chalk.gray('  /mindmap compile                  # MYCC.md → .mycc/mindmap.json'));
   console.log(chalk.gray('  /mindmap compile README.md        # README.md → .mycc/mindmap.json'));
   console.log(chalk.gray('  /mindmap compile PLAN.md plan.json # PLAN.md → plan.json'));
   console.log();
-  console.log(chalk.gray('Note: Use underscores for spaces in paths (e.g., /CLAUDE_md/Setup/Unit_Test)'));
+  console.log(chalk.gray('Note: Use underscores for spaces in paths (e.g., /MYCC_md/Setup/Unit_Test)'));
 }
 
 function printNode(node: Node, indent: number): void {

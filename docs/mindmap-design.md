@@ -284,7 +284,7 @@ If knowledge sharing is needed between agents:
 | Scope | Project-level, shared | Process-level, isolated |
 | Storage | Vector database | JSON file |
 | Query | Semantic search | Path traversal (get_node) |
-| Use case | General knowledge retrieval | CLAUDE.md navigation |
+| Use case | General knowledge retrieval | MYCC.md navigation |
 | Updates | Manual (wiki_put) | Compilation from markdown |
 
 ## Compilation Flow
@@ -292,14 +292,14 @@ If knowledge sharing is needed between agents:
 The mindmap compilation is **uni-directional**:
 
 ```
-CLAUDE.md --> [compile_mindmap] --> mindmap.json
+MYCC.md --> [compile_mindmap] --> mindmap.json
 ```
 
 ### Key Points
 
-1. **Source of Truth**: `CLAUDE.md` is the authoritative source
+1. **Source of Truth**: `MYCC.md` is the authoritative source
 2. **Derived Artifact**: `mindmap.json` is generated, not manually edited
-3. **Re-compilation**: When CLAUDE.md changes, re-run `/mindmap compile`
+3. **Re-compilation**: When MYCC.md changes, re-run `/mindmap compile`
 
 ### Startup Behavior
 
@@ -308,7 +308,7 @@ CLAUDE.md --> [compile_mindmap] --> mindmap.json
 │                      mycc start                              │
 ├─────────────────────────────────────────────────────────────┤
 │  1. Check for .mycc/mindmap.json                            │
-│     ├─ Exists? ──> Validate hash against CLAUDE.md           │
+│     ├─ Exists? ──> Validate hash against MYCC.md           │
 │     │              ├─ Valid? ──> Load mindmap               │
 │     │              └─ Invalid? ──> Warn user, use fallback │
 │     └─ Missing? ──> Warn user to run /mindmap compile       │
@@ -330,9 +330,9 @@ If mindmap validation fails at startup:
 
 ## Workflows
 
-The mindmap is originally designed for better understanding of `CLAUDE.md` but the process
+The mindmap is originally designed for better understanding of `MYCC.md` but the process
 has been generalized since then. For `mycc`, the mindmap is used to replace the initial
-context population of `CLAUDE.md` -- previously the file content, now only the root node
+context population of `MYCC.md` -- previously the file content, now only the root node
 and a piece of notice telling LLM to `get_node` on its own if needed.
 
 The expected workflow of user/mycc interaction is:
@@ -343,7 +343,7 @@ use `/mindmap compile` to re-compile. The re-compilation is not done automatical
 - Mycc finds itself lacking of knowledge, and initiates the knowledge searching using tools, including `get_node`
 - After getting enough background knowledge, mycc is good to work.
 - During the work if there is misunderstanding and the user has pointed it out, patch the mindmap
-without touching the CLAUDE.md; only when the user asks mycc to write to CLAUDE.md should
+without touching the MYCC.md; only when the user asks mycc to write to MYCC.md should
 it be updated (and re-compiled).
 
 ## Terminology Hoisting

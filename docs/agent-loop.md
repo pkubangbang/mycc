@@ -189,7 +189,7 @@ async function agentLoop(
 You spawn teammates, create issues and collect results.
 Use tools to finish tasks. Use skills to access specialized knowledge.
 Report proactively using the brief tool.
-Read README.md or CLAUDE.md first if you feel lost about the context.
+Read README.md or MYCC.md first if you feel lost about the context.
 You must ask for grant BEFORE "git commit" with no exception.
 Skills: ${skills}`
 ```

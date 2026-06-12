@@ -132,7 +132,7 @@ Change error message:
 
 ### Phase 2: Documentation Updates
 
-#### 2.1 Update CLAUDE.md
+#### 2.1 Update MYCC.md
 - Line 39: `~/.mycc/sessions` → `~/.mycc-store/sessions`
 
 #### 2.2 Update README.md
@@ -164,7 +164,7 @@ Change error message:
 | `src/lead.ts` | 1 constant |
 | `src/config.ts` | 1 error message |
 | `src/utils/open-editor.ts` | 1 error message |
-| `CLAUDE.md` | 1 reference |
+| `MYCC.md` | 1 reference |
 | `README.md` | 4 references |
 | `docs/user-manual-20260408.md` | 4 references |
 | `docs/how-to-build-persistent-memory.md` | 2 references |

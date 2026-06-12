@@ -1,4 +1,4 @@
-# CLAUDE.md
+# MYCC.md
 
 This file provides guidance for Claude Code (claude.ai/code) when working with code in this repository.
 
@@ -165,12 +165,12 @@ These terms define the temporal scopes of agent operations, from broadest to nar
 
 ### mindmap
 
-A tree-structured knowledge system that compiles markdown files (like `CLAUDE.md`) into a navigable JSON structure. Each node has an ID (slash-separated path), text, title, summary (LLM-generated), level, children, and links. The agent can query specific nodes via `get_node` tool for efficient context retrieval without loading entire documentation.
+A tree-structured knowledge system that compiles markdown files (like `MYCC.md`) into a navigable JSON structure. Each node has an ID (slash-separated path), text, title, summary (LLM-generated), level, children, and links. The agent can query specific nodes via `get_node` tool for efficient context retrieval without loading entire documentation.
 
 Key concepts:
 - **Node**: Knowledge unit with `id`, `text`, `title`, `summary`, `level`, `children`, `links`
 - **Mindmap**: Root structure with `dir`, `hash`, `compiled_at`, `root` node
-- **Compilation**: One-way process: `CLAUDE.md --> [compile_mindmap] --> mindmap.json`
+- **Compilation**: One-way process: `MYCC.md --> [compile_mindmap] --> mindmap.json`
 - **Process Isolation**: Each agent (lead/teammate) has independent mindmap instance
 
 See `docs/mindmap-design.md` for detailed design.
@@ -350,7 +350,7 @@ Key use cases:
 2. **E2E testing** - Simulate user input and capture output
 3. **Persistent sessions** - Keep dev servers, SSH sessions alive
 
-Testing commands (from CLAUDE.md):
+Testing commands (from MYCC.md):
 ```bash
 tmux new-session -s mycc-test -d -x 80 -y 24
 tmux send-keys -t mycc-test "/help" Enter

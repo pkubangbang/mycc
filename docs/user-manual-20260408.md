@@ -542,7 +542,7 @@ Skills provide specialized knowledge to guide the agent's behavior.
 
 For issues, questions, or contributions:
 - Check the `docs/` directory for detailed documentation
-- Review `CLAUDE.md` for development guidance
+- Review `MYCC.md` for development guidance
 - Submit issues via the project repository
 
 ---
