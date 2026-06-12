@@ -19,27 +19,81 @@ import { agentIO } from './agent-io.js';
 // Turning Words
 // ============================================================================
 
-/** Regex patterns for turning words — indicators that LLM is changing its mind */
-const TURNING_WORDS: RegExp[] = [
-  // English
+/**
+ * Turning-word detection is tiered to reduce false positives.
+ *
+ * A genuine "turning word" means the LLM is changing its own mind mid-response —
+ * it committed to a direction, then pivots to contradict or reverse course.
+ * This is distinct from ordinary conjunctions used for balanced analysis.
+ *
+ * Key heuristics:
+ * 1. Minimum prefix length (60 chars) — the LLM must have said something substantive
+ *    before the turn, otherwise it hasn't "committed" to a direction yet.
+ * 2. Minimum suffix length (15 chars) — there must be meaningful content after the
+ *    turn; a turning word at the very end is just trailing rhetoric.
+ * 3. Sentence-boundary requirement for weak signals — common conjunctions like "But"
+ *    and "However" only count as turns when they start a new sentence/paragraph,
+ *    not when used mid-sentence for balanced contrast.
+ * 4. Refined patterns for ambiguous words — "Wait" must be an interjection (not
+ *    "wait for/until/to"), "等等" must mean "wait!" (not "etc.").
+ */
+
+/**
+ * Minimum chars before a turning word — ensures LLM has committed to a direction.
+ * Set to 30 to work for both English (~one substantial sentence) and Chinese
+ * (where each character carries more meaning; 30 chars ≈ two full sentences).
+ */
+const MIN_PREFIX_LENGTH = 30;
+
+/** Minimum chars after a turning word — ensures there is content after the pivot */
+const MIN_SUFFIX_LENGTH = 15;
+
+/**
+ * Tier 1 — Strong turning signals.
+ * These phrases almost always indicate the speaker is reversing course.
+ * Subject only to position checks (prefix/suffix length).
+ */
+const STRONG_TURNING_WORDS: RegExp[] = [
+  /\bHaving said that\b/i,
+  /\bThat being said\b/i,
+  /\bOn the other hand\b/i,
+  /话说回来/,
+  /等一下/,
+];
+
+/**
+ * Tier 2 — Sentence-boundary conjunctions.
+ * These are common words that ONLY indicate a turn when they start a new
+ * sentence or paragraph. Mid-sentence usage is ordinary balanced analysis.
+ */
+const SENTENCE_BOUNDARY_TURNING_WORDS: RegExp[] = [
   /\bHowever\b/i,
-  /\bActually\b/i,
-  /\bWait\b/i,
-  /\bBut\b/i,
   /\bNevertheless\b/i,
   /\bNonetheless\b/i,
-  /\bOn the other hand\b/i,
   /\bThat said\b/i,
-  /\bThat being said\b/i,
-  /\bHaving said that\b/i,
-  // Chinese
-  /等等/,
-  /但/,
-  /不过/,
-  /然而/,
-  /其实/,
-  /等一下/,
-  /话说回来/,
+  /\bActually\b/i,
+  /\bBut\b/i,
+  // Chinese — match only after sentence-ending punctuation or newline
+  /(?<=^|[。！？\n])\s*然而/,
+  /(?<=^|[。！？\n])\s*但/,
+  /(?<=^|[。！？\n])\s*不过/,
+  /(?<=^|[。！？\n])\s*其实/,
+];
+
+/**
+ * Tier 3 — Special patterns that need extra context to disambiguate.
+ *
+ * "Wait" must be an interjection (followed by punctuation), not a verb
+ * meaning "await" (followed by "for", "until", "to", etc.).
+ *
+ * "等等" must mean "wait!" (followed by punctuation), not "etc."
+ * (list terminator followed by more sentence content).
+ */
+const SPECIAL_TURNING_PATTERNS: RegExp[] = [
+  // "Wait" as interjection: followed by comma, exclamation, dash, ellipsis, or end-of-text
+  /\bWait\b(?=\s*[,!.—]|\s*$)/i,
+  // "等等" as interjection: followed by Chinese/English punctuation or end-of-text
+  /等等(?=\s*[,，!！。.—]|\s*$)/,
 ];
 
 // ============================================================================
@@ -76,17 +130,84 @@ interface TurningWordMatch {
 }
 
 /**
- * Detect the first turning word in content.
+ * Check whether a position in content is at a sentence or paragraph boundary.
+ * A boundary is: start of text, after .!? or 。！？, or after a newline.
+ * We look at the 3 characters immediately before the position.
+ */
+function isAtSentenceBoundary(content: string, index: number): boolean {
+  if (index === 0) return true;
+  const before = content.slice(Math.max(0, index - 3), index);
+  return /[.!?。！？]\s*$/.test(before) || /\n\s*$/.test(before);
+}
+
+/**
+ * Detect the first turning word in content using tiered matching with
+ * accuracy guards to reduce false positives.
+ *
+ * Tier 1 (strong signals): always flag, subject to position checks.
+ * Tier 2 (sentence-boundary): only flag when at a sentence/paragraph start.
+ * Tier 3 (special patterns): refined regex already encodes disambiguation.
+ *
+ * All matches must pass:
+ * - MIN_PREFIX_LENGTH: enough content before the turn (LLM committed to a direction)
+ * - MIN_SUFFIX_LENGTH: enough content after the turn (not just trailing rhetoric)
+ *
  * Returns the matched word and its position, or null if no turning word found.
  */
 export function detectTurningWord(content: string): TurningWordMatch | null {
   let earliest: TurningWordMatch | null = null;
 
-  for (const regex of TURNING_WORDS) {
-    const match = content.match(regex);
-    if (match && match.index !== undefined) {
-      if (!earliest || match.index < earliest.index) {
-        earliest = { word: match[0], index: match.index };
+  // Helper: test a candidate match against all guards
+  const acceptCandidate = (match: RegExpMatchArray, requireBoundary: boolean): boolean => {
+    if (match.index === undefined) return false;
+    const idx = match.index;
+    // Position guards
+    if (idx < MIN_PREFIX_LENGTH) return false;
+    if (idx + match[0].length + MIN_SUFFIX_LENGTH > content.length) return false;
+    // Sentence-boundary guard (only for tier 2)
+    if (requireBoundary && !isAtSentenceBoundary(content, idx)) return false;
+    return true;
+  };
+
+  /**
+   * Build a global regex from a source pattern for matchAll().
+   * matchAll() requires the `g` flag; we add it if not already present.
+   */
+  const toGlobal = (regex: RegExp): RegExp =>
+    new RegExp(regex.source, regex.flags.includes('g') ? regex.flags : `${regex.flags}g`);
+
+  // Scan tier 1 — strong signals (no boundary requirement)
+  for (const regex of STRONG_TURNING_WORDS) {
+    for (const match of content.matchAll(toGlobal(regex))) {
+      if (acceptCandidate(match, false)) {
+        if (!earliest || match.index! < earliest.index) {
+          earliest = { word: match[0], index: match.index! };
+        }
+        break; // Only need the first valid match per pattern
+      }
+    }
+  }
+
+  // Scan tier 2 — sentence-boundary conjunctions
+  for (const regex of SENTENCE_BOUNDARY_TURNING_WORDS) {
+    for (const match of content.matchAll(toGlobal(regex))) {
+      if (acceptCandidate(match, true)) {
+        if (!earliest || match.index! < earliest.index) {
+          earliest = { word: match[0], index: match.index! };
+        }
+        break;
+      }
+    }
+  }
+
+  // Scan tier 3 — special patterns (boundary already encoded in regex)
+  for (const regex of SPECIAL_TURNING_PATTERNS) {
+    for (const match of content.matchAll(toGlobal(regex))) {
+      if (acceptCandidate(match, false)) {
+        if (!earliest || match.index! < earliest.index) {
+          earliest = { word: match[0], index: match.index! };
+        }
+        break;
       }
     }
   }
