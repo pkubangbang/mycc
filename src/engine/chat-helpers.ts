@@ -270,9 +270,13 @@ export async function collectStream<T>(
     }, responseTimeoutMs);
   }
 
+  // Sentinel value for the abort promise — resolves instead of rejects
+  // to avoid unhandled Promise rejections when abort wins the race.
+  const ABORT_SENTINEL = Symbol('abort-sentinel');
+
   const abortPromise = signal
-    ? new Promise<never>((_, reject) => {
-        signal.addEventListener('abort', () => reject(new StreamAbortedError()), { once: true });
+    ? new Promise<typeof ABORT_SENTINEL>((resolve) => {
+        signal.addEventListener('abort', () => resolve(ABORT_SENTINEL), { once: true });
       })
     : null;
 
@@ -310,10 +314,18 @@ export async function collectStream<T>(
       return chunks;
     })();
 
-    const promises: Promise<T[] | never>[] = [streamPromise];
+    const promises: Promise<T[] | typeof ABORT_SENTINEL>[] = [streamPromise];
     if (abortPromise) promises.push(abortPromise);
 
-    return await Promise.race(promises);
+    const result = await Promise.race(promises);
+
+    // If the abort sentinel won the race, throw — but only after the race
+    // resolves, so the rejection is handled by the caller's await/catch.
+    if (result === ABORT_SENTINEL) {
+      throw new StreamAbortedError();
+    }
+
+    return result;
   } catch (err) {
     if (err instanceof StreamAbortedError) throw err;
     if (signal?.aborted) throw new StreamAbortedError(err instanceof Error ? err : undefined);

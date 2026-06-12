@@ -99,8 +99,7 @@ export async function handleLlm(
       pass.assistantContent = assistantMessage.content || '';
       pass.assistantReasoningContent = (assistantMessage as unknown as Record<string, unknown>).reasoning_content as string | undefined;
 
-      // Capture signal before nulling abortController for crossroad use
-      const crossroadSignal = pass.abortController?.signal;
+      // Release the LLM call's abort controller — it's no longer needed
       pass.abortController = null;
 
       // =====================================================================
@@ -108,13 +107,20 @@ export async function handleLlm(
       // =====================================================================
       // Only run when tools are available — crossroad needs tool definitions
       // to preserve prompt cache during forkChat calls.
+      // Wrapped in escAware so ESC during crossroad processing returns null
+      // (transparent skip), using the original LLM output as-is.
       if (tools.length > 0) {
-        const crossroadResult = await handleCrossroad(
-          triologue.getMessages(),
-          pass.assistantContent,
-          pass.rawToolCalls,
-          tools,
-          crossroadSignal,
+        const crossroadResult = await ctx.core.escAware(
+          async (abortController) => {
+            return await handleCrossroad(
+              triologue.getMessages(),
+              pass.assistantContent,
+              pass.rawToolCalls,
+              tools,
+              abortController.signal,
+            );
+          },
+          () => null,
         );
         if (crossroadResult) {
           ctx.core.verbose('llm',
