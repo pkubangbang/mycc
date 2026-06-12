@@ -155,7 +155,7 @@ export async function main(): Promise<void> {
   const ctx = new ParentContext(sessionFilePath);
   ctx.initializeIpcHandlers();
 
-  await ctx.wiki.checkSkillsDomain();
+  await loader.indexAllSkillsToWiki(ctx.wiki);
   await ctx.wt.syncWorkTrees();
 
   // Load mindmap

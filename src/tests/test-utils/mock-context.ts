@@ -163,7 +163,6 @@ export function createMockWiki(overrides: Partial<WikiModule> = {}): WikiModule 
     listDomains: vi.fn(async () => []),
     getDomain: vi.fn(async () => undefined),
     registerDomain: vi.fn(async () => {}),
-    checkSkillsDomain: vi.fn(async () => false),
     ...overrides,
   };
 }

@@ -158,9 +158,4 @@ export class ChildWiki implements WikiModule {
     await ipc.sendRequest<void>('wiki_domain_register', { name, description });
   }
 
-  // Skill domain check (no-op for child, parent handles)
-  async checkSkillsDomain(): Promise<boolean> {
-    // Child process doesn't need to check - parent handles this
-    return true;
-  }
 }

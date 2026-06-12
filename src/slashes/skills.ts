@@ -3,7 +3,7 @@
  *
  * Usage:
  *   /skills          - List available skills
- *   /skills build    - Rebuild wiki index for semantic skill matching
+ *   /skills build    - Reload skills from disk and rebuild wiki index
  */
 
 import chalk from 'chalk';
@@ -18,9 +18,10 @@ export const skillsCommand: SlashCommand = {
     const { args, ctx } = context;
 
     if (args[1] === 'build') {
-      // Index all skills to wiki
+      // Reload skills from disk to pick up newly added skills, then index to wiki
+      loader.loadSkills();
       await loader.indexAllSkillsToWiki(ctx.wiki);
-      console.log(`${chalk.green('✓')} Skills rebuilt and indexed in wiki.`);
+      console.log(`${chalk.green('✓')} Skills reloaded and indexed in wiki.`);
       return;
     }
 
@@ -52,7 +53,7 @@ export const skillsCommand: SlashCommand = {
     }
 
     console.log(chalk.dim('─'.repeat(50)));
-    console.log(chalk.dim('Use ') + chalk.green('/skill build') + chalk.dim(' to build skill wiki-db.'));
+    console.log(chalk.dim('Skills are auto-indexed at startup. Use ') + chalk.green('/skill build') + chalk.dim(' to reload and re-index after adding new skills.'));
     console.log('');
   },
 };

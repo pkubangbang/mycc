@@ -37,7 +37,6 @@ describe('Hint Round JSON Output', () => {
       rebuild: vi.fn(),
       getDomain: vi.fn(),
       registerDomain: vi.fn(),
-      checkSkillsDomain: vi.fn(),
     } as unknown as WikiModule;
 
     triologue = new Triologue({
