@@ -9,7 +9,7 @@ import { safeNodeId } from '../utils/sanitize.js';
 /**
  * Regular expressions for markdown parsing
  */
-const HEADING_REGEX = /^(#{1,6})\s+(.+)$/;
+const HEADING_REGEX = /^(#{1,6})\s+(.+)$/m;
 const LINK_REGEX = /\[([^\]]+)\]\(([^)]+)\)/g;
 
 /**

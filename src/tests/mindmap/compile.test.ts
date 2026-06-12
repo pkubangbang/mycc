@@ -212,6 +212,18 @@ Section content`;
       expect(c.title).toBe('C');
       expect(c.children).toHaveLength(0);
     });
+
+    it('should parse headings with CRLF line endings', () => {
+      const md = '# Title\r\n\r\nContent\r\n## Section\r\nSection content\r\n';
+      const sections = parse_markdown(md);
+
+      expect(sections).toHaveLength(1);
+      expect(sections[0].title).toBe('Title');
+      expect(sections[0].level).toBe(1);
+      expect(sections[0].children).toHaveLength(1);
+      expect(sections[0].children[0].title).toBe('Section');
+      expect(sections[0].children[0].level).toBe(2);
+    });
   });
 });
 
