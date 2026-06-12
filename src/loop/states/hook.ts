@@ -283,7 +283,7 @@ export async function handleHook(
     //    Crossroad: merge continuation into the content BEFORE agent registration
     //    so the full reconstructed response is captured in one clean addMessage call.
     const finalAssistantContent = pass.crossroadContinuation
-      ? (pass.assistantContent || '') + '\n' + pass.crossroadContinuation
+      ? `${pass.assistantContent || ''  }\n${  pass.crossroadContinuation}`
       : pass.assistantContent;
     const finalToolCalls =
       hookResult.calls.length > 0

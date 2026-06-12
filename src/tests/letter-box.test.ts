@@ -1,4 +1,20 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+
+// Capture stdout for displayLetterBox tests
+let stdoutData: string[] = [];
+const originalStdoutWrite = process.stdout.write;
+
+function captureStdout() {
+  stdoutData = [];
+  process.stdout.write = ((chunk: any): boolean => {
+    stdoutData.push(String(chunk));
+    return true;
+  }) as typeof process.stdout.write;
+}
+
+function restoreStdout() {
+  process.stdout.write = originalStdoutWrite;
+}
 
 // Fullwidth vertical line character used in DeepSeek DSML tags (U+FF5C)
 const FW_VLINE = '\uff5c';
@@ -165,5 +181,42 @@ describe('stripInternalMarkup', () => {
     const input = 'Regular text with <b>html</b> that should stay as-is.';
     const result = stripInternalMarkup(input);
     expect(result).toBe(input);
+  });
+});
+
+// We need to import displayLetterBox for the display tests.
+// Since it's a side-effect function (writes to stdout), we test via stdout capture.
+import { displayLetterBox } from '../../src/utils/letter-box.js';
+
+describe('displayLetterBox', () => {
+  beforeEach(() => {
+    captureStdout();
+  });
+
+  afterEach(() => {
+    restoreStdout();
+  });
+
+  it('should show fallback content when all text is DSML markup', () => {
+    const input = dsmlOpen('tool_calls') + dsmlOpen('invoke') +
+      dsmlOpen('parameter') + 'hello' + dsmlClose('parameter') +
+      dsmlClose('invoke') + dsmlClose('tool_calls');
+
+    displayLetterBox(input);
+
+    const output = stdoutData.join('');
+    // Should contain the fallback message, not empty content
+    expect(output).toContain('no displayable content');
+    // Should still have box borders
+    expect(output).toContain('.=');
+  });
+
+  it('should show normal content when text survives stripping', () => {
+    const input = 'Hello, this is real content.';
+
+    displayLetterBox(input);
+
+    const output = stdoutData.join('');
+    expect(output).toContain('Hello, this is real content.');
   });
 });

@@ -45,24 +45,24 @@ function stripInternalMarkup(content: string): string {
 
     // Strip full DSML paired tags: <||DSML||tagname>...</||DSML||tagname>
     const fullTagRe = new RegExp(
-      escapedOpen + '(\\w+)>[\\s\\S]*?' + escapedClose + '\\1>',
+      `${escapedOpen  }(\\w+)>[\\s\\S]*?${  escapedClose  }\\1>`,
       'g'
     );
     result = result.replace(fullTagRe, '');
 
     // Strip self-closing DSML tags: <||DSML||tagname />
     const selfCloseRe = new RegExp(
-      escapedOpen + '(\\w+)\\s*/\\s*>',
+      `${escapedOpen  }(\\w+)\\s*/\\s*>`,
       'g'
     );
     result = result.replace(selfCloseRe, '');
 
     // Strip opening-only DSML tags: <||DSML||tagname>
-    const openTagRe = new RegExp(escapedOpen + '(\\w+)>', 'g');
+    const openTagRe = new RegExp(`${escapedOpen  }(\\w+)>`, 'g');
     result = result.replace(openTagRe, '');
 
     // Strip closing-only DSML tags: </||DSML||tagname>
-    const closeTagRe = new RegExp(escapedClose + '(\\w+)>', 'g');
+    const closeTagRe = new RegExp(`${escapedClose  }(\\w+)>`, 'g');
     result = result.replace(closeTagRe, '');
   }
 
@@ -87,7 +87,18 @@ export function displayLetterBox(content: string): void {
   const leftEquals = Math.floor(totalEquals / 2);
   const rightEquals = totalEquals - leftEquals;
 
+  const stripped = stripInternalMarkup(content);
+
+  // If stripping leaves nothing meaningful, show a friendly fallback
+  if (!stripped || stripped.trim().length === 0) {
+    const fallback = chalk.dim('(no displayable content — internal markup was stripped)');
+    process.stdout.write(`\n${borderColor(`.${'='.repeat(leftEquals)}${headerText}${'='.repeat(rightEquals)}.`)}\n`);
+    process.stdout.write(`${fallback}\n`);
+    process.stdout.write(`${borderColor(`'${'='.repeat(boxWidth - 2)}'`)}\n`);
+    return;
+  }
+
   process.stdout.write(`\n${borderColor(`.${'='.repeat(leftEquals)}${headerText}${'='.repeat(rightEquals)}.`)}\n`);
-  process.stdout.write(`${textColor(stripInternalMarkup(content))}\n`);
+  process.stdout.write(`${textColor(stripped)}\n`);
   process.stdout.write(`${borderColor(`'${'='.repeat(boxWidth - 2)}'`)}\n`);
 }
