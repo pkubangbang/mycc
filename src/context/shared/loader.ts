@@ -10,6 +10,7 @@ import { createRequire } from 'node:module';
 import matter from 'gray-matter';
 import { agentIO } from '../../loop/agent-io.js';
 import { resolveToSkillPath, type SkillLayer } from '../../utils/skill-path-resolver.js';
+import { builtInTools } from './registry.js';
 
 /**
  * Invalidate a module from the ESM cache by its file path.
@@ -56,114 +57,6 @@ function debounce<T extends (...args: Parameters<T>) => void>(
 const packageRoot = path.resolve(fileURLToPath(import.meta.url), '..', '..', '..', '..');
 import type { DynamicLoader, ToolDefinition, Skill, Tool, ToolScope, AgentContext, SkillModule, WikiModule, WikiDocument } from '../../types.js';
 import { getToolsDir, getSkillsDir, getUserToolsDir, getUserSkillsDir, ensureDirs } from '../../config.js';
-import { bashTool } from '../../tools/bash.js';
-import { readTool } from '../../tools/read.js';
-import { writeTool } from '../../tools/write.js';
-import { editTool } from '../../tools/edit.js';
-import { todoCreateTool } from '../../tools/todo_create.js';
-import { todoUpdateTool } from '../../tools/todo_update.js';
-import { skillLoadTool } from '../../tools/skill_load.js';
-import { tmCreateTool } from '../../tools/tm_create.js';
-import { tmRemoveTool } from '../../tools/tm_remove.js';
-import { tmAwaitTool } from '../../tools/tm_await.js';
-import { tmPrintTool } from '../../tools/tm_print.js';
-import { mailToTool } from '../../tools/mail_to.js';
-import { myccTitleTool } from '../../tools/mycc_title.js';
-import { broadcastTool } from '../../tools/broadcast.js';
-import { questionTool } from '../../tools/question.js';
-import { briefTool } from '../../tools/brief.js';
-import { issueCreateTool } from '../../tools/issue_create.js';
-import { issueCloseTool } from '../../tools/issue_close.js';
-import { issueCommentTool } from '../../tools/issue_comment.js';
-import { issueClaimTool } from '../../tools/issue_claim.js';
-import { issueListTool } from '../../tools/issue_list.js';
-import { blockageCreateTool } from '../../tools/blockage_create.js';
-import { blockageRemoveTool } from '../../tools/blockage_remove.js';
-import { webFetchTool } from '../../tools/web_fetch.js';
-import { webSearchTool } from '../../tools/web_search.js';
-import { wtCreateTool } from '../../tools/wt_create.js';
-import { wtRemoveTool } from '../../tools/wt_remove.js';
-import { wtEnterTool } from '../../tools/wt_enter.js';
-import { wtLeaveTool } from '../../tools/wt_leave.js';
-import { wtPrintTool } from '../../tools/wt_print.js';
-import { bgCreateTool } from '../../tools/bg_create.js';
-import { bgPrintTool } from '../../tools/bg_print.js';
-import { bgRemoveTool } from '../../tools/bg_remove.js';
-import { bgAwaitTool } from '../../tools/bg_await.js';
-import { screenTool } from '../../tools/screen.js';
-import { readReadTool } from '../../tools/read-read.js';
-import { readPictureTool } from '../../tools/read-picture.js';
-import { wikiPrepareTool } from '../../tools/wiki_prepare.js';
-import { wikiPutTool } from '../../tools/wiki_put.js';
-import { wikiGetTool } from '../../tools/wiki_get.js';
-import { orderTool } from '../../tools/order.js';
-import { handOverTool } from '../../tools/hand_over.js';
-import { gitCommitTool } from '../../tools/git_commit.js';
-import { grepTool } from '../../tools/grep.js';
-import { skillCompileTool } from '../../tools/skill_compile.js';
-import { skillSearchTool } from '../../tools/skill_search.js';
-import { planOnTool } from '../../tools/plan_on.js';
-import { recallTool } from '../../tools/recall.js';
-import { planOffTool } from '../../tools/plan_off.js';
-import { checkpointTool } from '../../tools/checkpoint.js';
-import { recapTool } from '../../tools/recap.js';
-
-/**
- * Built-in tools
- */
-const builtInTools: ToolDefinition[] = [
-  bashTool,
-  readTool,
-  writeTool,
-  editTool,
-  todoCreateTool,
-  todoUpdateTool,
-  skillLoadTool,
-  tmCreateTool,
-  tmRemoveTool,
-  tmAwaitTool,
-  tmPrintTool,
-  mailToTool,
-  myccTitleTool,
-  broadcastTool,
-  questionTool,
-  briefTool,
-  issueCreateTool,
-  issueCloseTool,
-  issueCommentTool,
-  issueClaimTool,
-  issueListTool,
-  blockageCreateTool,
-  blockageRemoveTool,
-  webFetchTool,
-  webSearchTool,
-  wtCreateTool,
-  wtRemoveTool,
-  wtEnterTool,
-  wtLeaveTool,
-  wtPrintTool,
-  bgCreateTool,
-  bgPrintTool,
-  bgRemoveTool,
-  bgAwaitTool,
-  screenTool,
-  readPictureTool,
-  readReadTool,
-  wikiPrepareTool,
-  wikiPutTool,
-  wikiGetTool,
-  orderTool,
-  handOverTool,
-  gitCommitTool,
-  grepTool,
-  skillCompileTool,
-  skillSearchTool,
-  planOnTool,
-  planOffTool,
-  recallTool,
-  checkpointTool,
-  recapTool,
-];
 
 /**
  * Dynamic loader implementation
@@ -188,6 +81,7 @@ export class Loader implements DynamicLoader, SkillModule {
   private toolWatcher: fs.FSWatcher | null = null;
   private skillWatcher: fs.FSWatcher | null = null;
   private silent: boolean;
+  private skillKeywords: string[] | null = null;
 
   constructor(silent: boolean = false) {
     this.silent = silent;
@@ -198,6 +92,7 @@ export class Loader implements DynamicLoader, SkillModule {
    * Order: user → project → built-in (later overrides earlier)
    */
   async loadAll(): Promise<void> {
+    this.skillKeywords = null; // reset keyword cache
     ensureDirs();
 
     // Load in order: user → project → built-in
@@ -592,6 +487,23 @@ export class Loader implements DynamicLoader, SkillModule {
       when: entry.skill.when,
       content: '', // Exclude content
     }));
+  }
+
+  /**
+   * Get deduplicated, sorted list of all skill keywords.
+   * Result is cached per load cycle — reset when loadAll() is called.
+   */
+  getSkillKeywords(): string[] {
+    if (this.skillKeywords === null) {
+      const allKeywords = new Set<string>();
+      for (const [, entry] of this.skills) {
+        for (const kw of entry.skill.keywords) {
+          allKeywords.add(kw);
+        }
+      }
+      this.skillKeywords = [...allKeywords].sort();
+    }
+    return this.skillKeywords;
   }
 
   /**

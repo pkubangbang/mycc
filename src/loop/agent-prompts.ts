@@ -5,6 +5,7 @@
 import * as os from 'os';
 import type { AgentContext } from '../types.js';
 import type { Core } from '../context/parent/core.js';
+import { loader } from '../context/shared/loader.js';
 import {
   VALID_VERBS,
   VALID_OBJECTS,
@@ -177,7 +178,7 @@ function buildCommonSections(): string {
 // ============================================================================
 
 function buildKnowledgeBoundarySection(): string {
-  return [
+  const lines = [
     '## Knowledge Boundary',
     '',
     'You have access to these knowledge sources (in priority order):',
@@ -202,13 +203,22 @@ function buildKnowledgeBoundarySection(): string {
     '',
     '### Special notice',
     'Do NOT guess. When in doubt, seek knowledge first.',
-    'Pay attention to the "pitfall" section in the mindmap if it exists.'
-  ].join('\n');
+    'Pay attention to the "pitfall" section in the mindmap if it exists.',
+  ];
+  const keywords = loader.getSkillKeywords();
+  if (keywords.length > 0) {
+    lines.push(
+      '',
+      '### Skill Keywords',
+      '',
+      `Available skill keywords: \`${keywords.join('\`, \`')}\``,
+      '',
+      'If your current task is relevant to or exactly matches any of these keywords, **proactively** use `skill_search(search="<keyword>")` to discover relevant skills before proceeding with a generic approach.',
+    );
+  }
+  return lines.join('\n');
 }
 
-// ============================================================================
-// Context Management Section
-// ============================================================================
 
 function buildContextManagementSection(): string {
   return `## Checkpoint and recap
