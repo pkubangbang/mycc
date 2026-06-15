@@ -91,6 +91,12 @@ function insert_node(mindmap: MindmapJSON, node: Node): boolean {
     return false;
   }
 
+  // Prevent duplicate insertion — if node already exists under parent, skip
+  const exists = parent.children.some((c) => c.id === node.id);
+  if (exists) {
+    return true;
+  }
+
   parent.children.push(node);
   return true;
 }

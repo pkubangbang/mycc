@@ -211,7 +211,7 @@ function buildKnowledgeBoundarySection(): string {
       '',
       '### Skill Keywords',
       '',
-      `Available skill keywords: \`${keywords.join('\`, \`')}\``,
+      `Available skill keywords: \`${keywords.join('`, `')}\``,
       '',
       'If your current task is relevant to or exactly matches any of these keywords, **proactively** use `skill_search(search="<keyword>")` to discover relevant skills before proceeding with a generic approach.',
     );
