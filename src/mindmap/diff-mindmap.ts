@@ -284,6 +284,6 @@ export async function incremental_compile(
  */
 export function save_mindmap_atomic(mindmap: MindmapJSON, outPath: string): void {
   const tempPath = `${outPath}.tmp`;
-  fs.writeFileSync(tempPath, JSON.stringify(mindmap, null, 2));
+  fs.writeFileSync(tempPath, JSON.stringify(mindmap, null, 2), 'utf-8');
   fs.renameSync(tempPath, outPath);
 }

@@ -289,7 +289,7 @@ export function create_lock(outFile: string, mdPath: string, hash: string): Lock
     output_file: outFile,
   };
   const lockPath = get_lock_path(outFile);
-  fs.writeFileSync(lockPath, JSON.stringify(lock, null, 2));
+  fs.writeFileSync(lockPath, JSON.stringify(lock, null, 2), 'utf-8');
   return lock;
 }
 

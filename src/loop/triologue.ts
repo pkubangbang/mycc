@@ -284,7 +284,7 @@ export class Triologue {
         `Time: ${new Date(timestamp).toISOString()}\n` +
         `Use read_read tool to summarize, or bash with head/tail to read.\n` +
         `---\n\n`;
-      fs.writeFileSync(filepath, header + result);
+      fs.writeFileSync(filepath, header + result, 'utf-8');
 
       // Throw error with file reference
       throw new ResultTooLargeError(
