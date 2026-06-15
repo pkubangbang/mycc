@@ -667,13 +667,19 @@ class AgentIO {
     // Windows: powershell -EncodedCommand avoids cmd's quoting/escaping issues.
     //   The command is base64-encoded as UTF-16LE, so it's passed verbatim —
     //   echo "hello" outputs hello (no quotes), just like typing in PowerShell.
+    //   On Windows, prepend UTF8 encoding fix for CJK character support:
+    //   $OutputEncoding fixes stdout pipe encoding (default: US-ASCII)
+    //   [Console]::OutputEncoding fixes console output encoding (default: GB2312)
     const isWin = process.platform === 'win32';
+    const effectiveCommand = isWin
+      ? `$OutputEncoding = [System.Text.Encoding]::UTF8; [Console]::OutputEncoding = [System.Text.Encoding]::UTF8; ${command}`
+      : command;
     const proc = isWin
       ? spawn('powershell', [
           '-NoProfile',
           '-NonInteractive',
           '-EncodedCommand',
-          Buffer.from(command, 'utf16le').toString('base64'),
+          Buffer.from(effectiveCommand, 'utf16le').toString('base64'),
         ], { cwd, windowsHide: true })
       : spawn('setsid', ['bash', '-c', command], { cwd });
 
