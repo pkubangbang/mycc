@@ -147,7 +147,18 @@ class AgentIO {
           }
           // Notify all neglected listeners (e.g., exec to skip subprocess wait)
           for (const cb of this.onNeglectedCallbacks) {
-            cb();
+            // Wrap each callback to prevent unhandled rejections from
+            // async callbacks (e.g., escAware's onNeglectedHandler) and
+            // sync throws from any listener.
+            try {
+              const maybePromise: unknown = cb();
+              // Check for thenable (promise-like) to avoid any type dependency
+              if (maybePromise && typeof (maybePromise as { catch?: unknown }).catch === 'function') {
+                (maybePromise as Promise<unknown>).catch(() => {});
+              }
+            } catch {
+              // Sync errors from neglected callbacks are swallowed
+            }
           }
           this.onNeglectedCallbacks.clear();
         }

@@ -379,6 +379,15 @@ export class Core extends BaseCore implements CoreModule {
       // Start the operation AFTER callback is registered, passing the abort controller
       const operationPromise = operation(abortController);
 
+      // Suppress unhandled rejection from the losing promise BEFORE the race.
+      // When ESC wins the race, operationPromise may reject during the race
+      // itself (e.g., retryChat throws StreamAbortedError on the aborted signal
+      // as soon as abortController.abort() fires inside onNeglectedHandler).
+      // The .catch() must be attached before Promise.race, otherwise Node.js
+      // detects an UnhandledPromiseRejection between the rejection and the
+      // late .catch() attachment after the await.
+      operationPromise.catch(() => {});
+
       // Race between the operation and ESC
       // MUST use await so finally runs after the race completes, not immediately
       return await Promise.race([operationPromise, escPromise]);

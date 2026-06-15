@@ -10,9 +10,10 @@
  * 5. Reconstruct triologue with A + C_best + [CONTINUE] continue with your work
  */
 
-import type { Message, ToolCall } from '../types.js';
+import type { Message, Tool, ToolCall } from '../types.js';
+import type { RetryConfig } from '../engine/chat-helpers.js';
 import { forkChat } from '../engine/chat-provider.js';
-import { startSpinner, stopSpinner } from '../engine/chat-helpers.js';
+import { startSpinner, stopSpinner, sleep } from '../engine/chat-helpers.js';
 import { agentIO } from './agent-io.js';
 
 // ============================================================================
@@ -120,6 +121,20 @@ const GENERATION_DIRECTIONS: GenerationDirection[] = [
   },
 ];
 
+/**
+ * Tighter retry config for crossroad continuation generation.
+ * Crossroad continuations are short text-only responses, so the generous
+ * defaults (20s first-token / 120s response) would cause unacceptable
+ * delays during network failures. 10s/30s with 1 retry is sufficient.
+ */
+const CROSSROAD_RETRY_CONFIG: Partial<RetryConfig> = {
+  firstTokenTimeoutMs: 10_000,
+  responseTimeoutMs: 30_000,
+  maxRetries: 1,
+  baseDelayMs: 500,
+  maxDelayMs: 3_000,
+};
+
 // ============================================================================
 // Detection
 // ============================================================================
@@ -221,32 +236,40 @@ export function detectTurningWord(content: string): TurningWordMatch | null {
 
 /**
  * Generate continuations from multiple directions using forkChat.
- * Each forkChat call passes empty tools to constrain text-only output.
+ * Runs all directions in parallel via Promise.allSettled.
+ * Passes full tools + toolChoice: 'none' to preserve prompt cache
+ * while constraining text-only output.
  * Returns array of continuation strings (or empty array if all failed).
  */
 export async function generateContinuations(
   messages: Message[],
+  tools: Tool[],
   prefix: string,
   signal?: AbortSignal,
 ): Promise<string[]> {
-  const results: string[] = [];
+  const results = await Promise.allSettled(
+    GENERATION_DIRECTIONS.map((direction) =>
+      forkChat(messages, tools, direction.prompt, signal, 'none', CROSSROAD_RETRY_CONFIG).then(
+        (text) => ({ directionName: direction.name, text: text.trim() }),
+      ),
+    ),
+  );
 
-  for (const direction of GENERATION_DIRECTIONS) {
-    try {
-      // Use forkChat with empty tools array to force text-only output
-      const text = await forkChat(messages, [], direction.prompt, signal);
-      if (text && text.trim()) {
-        agentIO.verbose('crossroad', `Direction "${direction.name}" produced: ${text.slice(0, 100)}...`);
-        results.push(text.trim());
-      }
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      agentIO.verbose('crossroad', `Direction "${direction.name}" failed: ${msg}`);
-      // Silently catch — we proceed with whatever we got
+  const continuations: string[] = [];
+  for (const result of results) {
+    if (result.status === 'fulfilled' && result.value.text) {
+      agentIO.verbose(
+        'crossroad',
+        `Direction "${result.value.directionName}" produced: ${result.value.text.slice(0, 100)}...`,
+      );
+      continuations.push(result.value.text);
+    } else if (result.status === 'rejected') {
+      const msg = result.reason instanceof Error ? result.reason.message : String(result.reason);
+      agentIO.verbose('crossroad', `Direction failed: ${msg}`);
     }
   }
 
-  return results;
+  return continuations;
 }
 
 // ============================================================================
@@ -285,6 +308,7 @@ No other text, no preamble, no sign-off.`);
  */
 export async function selectBestContinuation(
   messages: Message[],
+  tools: Tool[],
   prefix: string,
   continuations: string[],
   signal?: AbortSignal,
@@ -299,7 +323,7 @@ export async function selectBestContinuation(
   const selectionPrompt = buildSelectionPrompt(prefix, continuations);
 
   try {
-    const response = await forkChat(messages, [], selectionPrompt, signal);
+    const response = await forkChat(messages, tools, selectionPrompt, signal, 'none', CROSSROAD_RETRY_CONFIG);
     const text = (response || '').trim();
     agentIO.verbose('crossroad', `Selection response: ${text.slice(0, 200)}...`);
 
@@ -366,6 +390,7 @@ export async function handleCrossroad(
   messages: Message[],
   originalContent: string,
   _originalToolCalls: ToolCall[],
+  tools: Tool[],
   signal?: AbortSignal,
 ): Promise<CrossroadResult | null> {
   // Step 1: Detect turning word
@@ -382,15 +407,20 @@ export async function handleCrossroad(
   // Show spinner during processing
   startSpinner('LLM is at its crossroad...');
   try {
-    // Step 3: Generate continuations
-    const continuations = await generateContinuations(messages, prefix, signal);
+    // Step 3: Generate continuations (with crossroad-level retry)
+    let continuations = await generateContinuations(messages, tools, prefix, signal);
     if (continuations.length === 0) {
-      agentIO.verbose('crossroad', 'No continuations generated, aborting crossroad');
+      agentIO.verbose('crossroad', 'All continuations failed, retrying once...');
+      await sleep(500);
+      continuations = await generateContinuations(messages, tools, prefix, signal);
+    }
+    if (continuations.length === 0) {
+      agentIO.verbose('crossroad', 'No continuations generated after retry, aborting crossroad');
       return null;
     }
 
     // Step 4: Select the best one
-    const best = await selectBestContinuation(messages, prefix, continuations, signal);
+    const best = await selectBestContinuation(messages, tools, prefix, continuations, signal);
     if (!best) {
       agentIO.verbose('crossroad', 'Best continuation is empty, aborting crossroad');
       return null;

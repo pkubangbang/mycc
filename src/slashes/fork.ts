@@ -2,7 +2,13 @@
  * /fork command - Run a new mycc instance in parallel from current session
  *
  * Usage:
- *   /fork - Start a new mycc instance with the current session
+ *   /fork                                - Start a new mycc instance
+ *   /fork --env KEY=VALUE                - Forward an env var to the instance
+ *   /fork --env KEY1=V1 --env KEY2=V2    - Forward multiple env vars
+ *
+ * The forked instance reads its own config from .env files (just like the
+ * original) — user-level ~/.mycc-store/.env and project-level .mycc/.env.
+ * Use --env to forward shell-level env vars that aren't in .env files.
  *
  * Flow:
  *   1. Get current session ID from session file path
@@ -13,13 +19,54 @@
  * Design reference: docs/fork-design.md
  */
 
-import type { SlashCommand } from '../types.js';
+import type { SlashCommand, SlashCommandContext } from '../types.js';
 import chalk from 'chalk';
 import { resolve } from 'path';
 import { getSessionId } from '../session/index.js';
 import { getProjectRoot } from '../utils/tsx-run.js';
 import { shouldSkipHealthCheck } from '../config.js';
 import { openTerminal } from '../utils/open-terminal.js';
+
+// ---------------------------------------------------------------------------
+// --env flag support
+// ---------------------------------------------------------------------------
+
+/**
+ * Parse --env KEY=VALUE arguments from the fork command.
+ * Returns shell export statements for each override.
+ */
+function buildEnvExports(context: SlashCommandContext): string {
+  const args = context.args;
+  const exports: string[] = [];
+
+  for (let i = 1; i < args.length; i++) {
+    if (args[i] === '--env' && i + 1 < args.length) {
+      const envArg = args[i + 1];
+      i++; // consume the value
+      const eqIdx = envArg.indexOf('=');
+      if (eqIdx === -1) {
+        console.log(chalk.yellow(`  Warning: --env "${envArg}" has no '=' sign, skipping.`));
+        continue;
+      }
+      const key = envArg.slice(0, eqIdx).trim();
+      let value = envArg.slice(eqIdx + 1).trim();
+      // Strip surrounding quotes if present
+      if (value.length >= 2) {
+        const q = value[0];
+        if ((q === '"' || q === "'") && value.endsWith(q)) {
+          value = value.slice(1, -1);
+        }
+      }
+      if (key) {
+        // Escape single quotes for shell safety
+        const escaped = value.replace(/'/g, "'\\''");
+        exports.push(`export ${key}='${escaped}';`);
+      }
+    }
+  }
+
+  return exports.join('\n');
+}
 
 // ---------------------------------------------------------------------------
 // Build the mycc shell command
@@ -55,10 +102,11 @@ function buildMyccShellCommand(sessionId: string): string {
 // Manual instructions fallback
 // ---------------------------------------------------------------------------
 
-function printManualInstructions(sessionId: string): void {
+function printManualInstructions(sessionId: string, workDir: string): void {
   const skipFlag = shouldSkipHealthCheck() ? ' --skip-healthcheck' : '';
   console.log(chalk.yellow('\nCould not open a terminal window automatically.'));
   console.log(chalk.cyan('\nTo fork, open a new terminal and run:'));
+  console.log(chalk.white(`  cd ${workDir}`));
   console.log(chalk.white(`  mycc --session ${sessionId}${skipFlag}`));
 }
 
@@ -68,22 +116,28 @@ function printManualInstructions(sessionId: string): void {
 
 export const forkCommand: SlashCommand = {
   name: 'fork',
-  description: 'Start a new mycc instance from current session',
+  description: 'Start a new mycc instance from current session. Use --env KEY=VALUE to forward environment variables.',
   handler: (context) => {
     try {
-      // Step 1: Get current session ID
+      // Step 1: Parse --env overrides
+      const envExports = buildEnvExports(context);
+
+      // Step 2: Get current session ID
       const sessionId = getSessionId(context.sessionFilePath);
 
-      // Step 2: Get working directory
+      // Step 3: Get working directory
       const workDir = context.ctx.core.getWorkDir();
 
-      // Step 3: Build the mycc command
+      // Step 4: Build the mycc command
       const shellCommand = buildMyccShellCommand(sessionId);
 
-      // Step 4: Prepend cd to workDir so the new terminal starts in the right directory
-      const fullCommand = `cd "${workDir}" && ${shellCommand}`;
+      // Step 5: Prepend --env exports if any
+      const commandWithEnv = envExports ? `${envExports}\n${shellCommand}` : shellCommand;
 
-      // Step 5: Open in native terminal
+      // Step 6: Prepend cd to workDir so the new terminal starts in the right directory
+      const fullCommand = `cd "${workDir}" && ${commandWithEnv}`;
+
+      // Step 7: Open in native terminal
       console.log(chalk.cyan(`\nForking session ${sessionId.slice(0, 7)}...`));
 
       try {
@@ -94,7 +148,7 @@ export const forkCommand: SlashCommand = {
       } catch (err) {
         // openTerminal throws if no terminal is found
         console.error(chalk.red((err as Error).message));
-        printManualInstructions(sessionId);
+        printManualInstructions(sessionId, workDir);
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

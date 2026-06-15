@@ -168,7 +168,7 @@ export class Triologue {
       if (hook.keywords && hook.keywords.length > 0) {
         lines.push(`  Keywords: ${hook.keywords.join(', ')}`);
       }
-      lines.push('  Activate: skill_compile(name="' + hook.name + '")');
+      lines.push(`  Activate: skill_compile(name="${  hook.name  }")`);
       lines.push('');
     }
 
