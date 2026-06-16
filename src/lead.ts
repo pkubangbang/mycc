@@ -15,6 +15,17 @@ import { main } from './loop/agent-repl.js';
 import { agentIO } from './loop/agent-io.js';
 
 // ---------------------------------------------------------------------------
+// Terminal Title
+// ---------------------------------------------------------------------------
+
+// Set early — tsx/esbuild may have overwritten the Coordinator's title during
+// import loading. Restore 'mycc' so the user sees the right label immediately.
+process.title = 'mycc';
+if (process.stdout.isTTY) {
+  process.stdout.write('\x1b]0;mycc\x07');
+}
+
+// ---------------------------------------------------------------------------
 // Environment Setup
 // ---------------------------------------------------------------------------
 

@@ -36,17 +36,18 @@ Fires when:
 ## Action
 
 The hook injects this skill body as a reminder. On the next turn, the agent
-should call `mycc_title` with a concise, descriptive title like:
+should call `mycc_title` with a concise, descriptive title. The "mycc: "
+prefix is added automatically, so pass only the descriptive part like:
 
-- `mycc: fixing bash tool`
-- `mycc: reviewing hook system`
-- `mycc: adding wiki search`
+- `fixing bash tool`
+- `reviewing hook system`
+- `adding wiki search`
 
 ## Guidelines for title
 
-- Keep it under 40 characters
+- Keep it under 40 characters (the "mycc: " prefix is added on top)
 - Describe the current task or focus area
-- Prefix with the project name if useful (e.g., `mycc:`)
+- Do NOT include "mycc:" yourself — it's prepended automatically
 - **Remember to update the title if the topic has changed, using `mycc_title` tool.**
   When you switch to a different task or the focus of the conversation shifts,
   call `mycc_title` again with a new descriptive title reflecting the current work.

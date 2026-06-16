@@ -81,11 +81,16 @@ Uses ANSI OSC escape sequences supported by most terminal emulators (GNOME Termi
   },
   scope: ['main', 'child'],
   handler: (ctx: AgentContext, args: Record<string, unknown>): string => {
-    const title = args.title as string;
+    const rawTitle = args.title as string;
 
-    if (!title || typeof title !== 'string') {
+    if (!rawTitle || typeof rawTitle !== 'string') {
       return 'Error: title parameter is required and must be a string';
     }
+
+    // Always prefix with 'mycc: ' for consistent session identification.
+    // The prefix is automatic — agents should NOT include "mycc:" in the
+    // title they pass; just pass the descriptive part (e.g., "fixing bash").
+    const title = rawTitle.startsWith('mycc:') ? rawTitle : `mycc: ${rawTitle}`;
 
     // ANSI OSC 0 escape sequence — sets both window title and icon/tab title
     // Format: ESC ] 0 ; <title> BEL

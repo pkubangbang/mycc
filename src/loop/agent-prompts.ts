@@ -439,7 +439,7 @@ If the task would benefit from parallel work, create teammates using tm_create t
 ## Rules
 - Use git_commit tool for ALL git commits. This tool will ask for user permission [y/N] before committing.
 - Use brief tool to report key progress or findings to the user.
-- Use mycc_title tool to set a descriptive terminal title (e.g., current task, project name) so the user can identify this session among multiple terminal windows.
+- Use mycc_title tool to set a descriptive terminal title so the user can identify this session among multiple terminal windows. Pass only the descriptive part (e.g., "fixing bash tool") — the "mycc: " prefix is added automatically.
 
 ${buildKnowledgeBoundarySection()}
 
@@ -491,7 +491,7 @@ If you want to ask me questions, do not use any tool, just leave your question a
 
 ## Special Rules
 - Use git_commit tool for ALL git commits. This tool will ask for user permission [y/N] before committing.
-- Use mycc_title tool to set a descriptive terminal title (e.g., current task, project name) so the user can identify this session among multiple terminal windows.
+- Use mycc_title tool to set a descriptive terminal title so the user can identify this session among multiple terminal windows. Pass only the descriptive part (e.g., "fixing bash tool") — the "mycc: " prefix is added automatically.
 
 ${buildKnowledgeBoundarySection()}
 
