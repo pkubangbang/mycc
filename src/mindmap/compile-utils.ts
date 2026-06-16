@@ -268,8 +268,8 @@ export interface LockFile {
   output_file: string;
 }
 
-/** Lock freshness threshold in milliseconds (3 hours) */
-const LOCK_FRESHNESS_MS = 3 * 60 * 60 * 1000;
+/** Lock freshness threshold in milliseconds (4 hours) */
+const LOCK_FRESHNESS_MS = 4 * 60 * 60 * 1000;
 
 /**
  * Get lock file path

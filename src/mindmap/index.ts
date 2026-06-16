@@ -50,5 +50,5 @@ export { compile_mindmap, compile_mindmap_from_content } from './compile.js';
 export { exploreAndSummarize, summarizeWithExplorer } from './explorer-agent.js';
 export type { ExplorationResult } from './explorer-agent.js';
 export { patch_mindmap, summarize_node, add_child_node, remove_node, move_node } from './patch.js';
-export { diff_nodes, incremental_compile, save_mindmap_atomic } from './diff-mindmap.js';
+export { diff_nodes, save_mindmap_atomic } from './diff-mindmap.js';
 export type { DiffResult } from './diff-mindmap.js';

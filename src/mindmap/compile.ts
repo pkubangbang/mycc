@@ -27,10 +27,8 @@ import {
   try_load_existing_mindmap,
   collect_nodes_bottom_up,
   ProgressTracker,
-  merge_existing_data,
 } from './compile-utils.js';
 import { summarizeWithExplorer } from './explorer-agent.js';
-import { incremental_compile } from './diff-mindmap.js';
 
 // Re-export for backward compatibility (tests import directly from compile.js)
 export { parse_markdown, get_bottom_up_nodes } from './compile-utils.js';
@@ -72,18 +70,21 @@ class Semaphore {
 /**
  * Summarize all nodes in parallel using a dependency-aware approach
  * Concurrency is limited to MAX_CONCURRENT_NODES to avoid overwhelming Ollama
+ *
  * @param root - The root node
  * @param workDir - Working directory for file operations
  * @param onProgress - Progress callback
  * @param onNodeStart - Called when a node starts processing
  * @param onNodeComplete - Called when a node completes
+ * @param oldNodeMap - Map of old node IDs to nodes for pre-population
  */
 async function summarize_with_explorer(
   root: Node,
   workDir: string,
   onProgress?: (nodeTitle: string, level: number, round: number, tool: string, args: Record<string, unknown>) => void,
   onNodeStart?: (nodeTitle: string) => void,
-  onNodeComplete?: (nodeTitle: string) => void
+  onNodeComplete?: (nodeTitle: string) => void,
+  oldNodeMap?: Map<string, Node>
 ): Promise<void> {
   const allNodes = collect_nodes_bottom_up(root);
   const nodePromises = new Map<Node, Promise<void>>();
@@ -106,7 +107,7 @@ async function summarize_with_explorer(
       // Wait for children first (fail-fast on error)
       await Promise.all(node.children.map((child) => nodePromises.get(child)!));
 
-      // Skip if already summarized
+      // Skip if already summarized (resumed from temp file)
       if (node.summary !== '') return;
 
       // Acquire semaphore
@@ -121,9 +122,15 @@ async function summarize_with_explorer(
               onProgress(node.title, node.level, round, tool, args)
           : undefined;
 
+        // Look up existing node for pre-population
+        const existingNode = oldNodeMap?.get(node.id);
+
         let result;
         try {
-          result = await summarizeWithExplorer(node.title, node.text, ancestorContext, workDir, wrappedOnProgress);
+          result = await summarizeWithExplorer(
+            node.title, node.text, ancestorContext, workDir,
+            wrappedOnProgress, existingNode
+          );
         } catch (err) {
           const wrappedError = new Error(
             `Failed to summarize Node: "${node.title}" (id: ${node.id}): ${(err as Error).message}`
@@ -180,14 +187,51 @@ function save_mindmap_atomic(mindmap: MindmapJSON, outPath: string): void {
 }
 
 /**
- * Compile a markdown file into a mindmap
+ * Build a map of nodes by ID for quick lookup
+ */
+function build_node_map(node: Node, map: Map<string, Node>): void {
+  map.set(node.id, node);
+  for (const child of node.children) {
+    build_node_map(child, map);
+  }
+}
+
+/**
+ * Get the temp file path for rotation-based compilation
+ */
+function get_new_file_path(outFile: string): string {
+  return `${outFile}.new`;
+}
+
+/**
+ * Get the backup file path for rotation-based compilation
+ */
+function get_bak_file_path(outFile: string): string {
+  return `${outFile}.bak`;
+}
+
+/**
+ * Try to load old mindmap from main file or backup
+ */
+function try_load_old_mindmap(outFile: string): MindmapJSON | null {
+  // Try main file first, then backup
+  const existing = try_load_existing_mindmap(outFile);
+  if (existing) return existing;
+  return try_load_existing_mindmap(get_bak_file_path(outFile));
+}
+
+/**
+ * Compile a markdown file into a mindmap using rotation-based approach.
  *
- * Uses incremental compilation when possible:
- * - If existing mindmap exists and hash matches, returns existing (no changes)
- * - If existing mindmap exists but hash differs, uses incremental compile
- * - Only full compile when force=true or no existing mindmap
+ * Instead of diffing and applying changes to the old tree, this always creates
+ * a new tree from scratch. If an old tree exists, matching nodes are pre-populated
+ * with existing context (summary, links, text) to accelerate the explorer agent.
  *
- * Lock-based resumption is supported for interrupted compilations.
+ * On successful completion, files are rotated:
+ *   mindmap.json → mindmap.json.bak
+ *   mindmap.json.new → mindmap.json
+ *
+ * Lock-based resumption is supported for interrupted compilations (4h threshold).
  *
  * @param mdPath - Path to the markdown file (relative to cwd)
  * @param cwd - Current working directory (for resolving paths)
@@ -210,13 +254,14 @@ export async function compile_mindmap(
 
   const defaultOutput = path.join(workDir, '.mycc', 'mindmap.json');
   const outFile = outputPath ? path.resolve(workDir, outputPath) : defaultOutput;
+  const newFile = get_new_file_path(outFile);
 
   const outDir = path.dirname(outFile);
   if (!fs.existsSync(outDir)) {
     fs.mkdirSync(outDir, { recursive: true });
   }
 
-  // Check for existing mindmap
+  // Check for existing mindmap (main file)
   const existingMindmap = try_load_existing_mindmap(outFile);
 
   // Fast path: existing mindmap with same hash and fully compiled (no empty summaries)
@@ -228,32 +273,67 @@ export async function compile_mindmap(
     console.log(`[mindmap] Source unchanged but ${incompleteNodes} nodes incomplete (interrupted), resuming`);
   }
 
-  // Incremental compile when source changed and existing mindmap exists (not forced)
-  if (!force && existingMindmap && existingMindmap.hash !== hash) {
-    console.log('[mindmap] Incremental compilation (source changed)');
-    const result = await incremental_compile(absolutePath, existingMindmap, workDir, outFile);
-    return result;
-  }
+  // --- Rotation-based compilation ---
 
-  // Full compile (force=true, no existing mindmap, or interrupted with same hash)
-
-  // Lock handling for resumption (same hash = interrupted compilation)
+  // Lock handling for resumption
   if (!force) {
     const existingLock = try_read_lock(outFile);
     if (existingLock && is_lock_fresh(existingLock) && existingLock.source_hash === hash) {
-      console.log('[mindmap] Fresh lock found, resuming interrupted compilation');
+      // Fresh lock: try to resume from temp file
+      const tempMindmap = try_load_existing_mindmap(newFile);
+      if (tempMindmap) {
+        console.log('[mindmap] Fresh lock found, resuming from temp file');
+        // Continue with temp mindmap - nodes with non-empty summaries are already done
+        const incompleteNodes = count_incomplete_nodes(tempMindmap.root);
+        if (incompleteNodes === 0) {
+          // All done! Rotate and return
+          console.log('[mindmap] Temp file already complete, rotating');
+          rotate_files(outFile, newFile);
+          remove_lock(outFile);
+          return tempMindmap;
+        }
+        console.log(`[mindmap] Resuming: ${incompleteNodes} nodes remaining`);
+
+        // Build old node map from the old mindmap for pre-population
+        const oldNodeMap = new Map<string, Node>();
+        const oldMindmap = try_load_old_mindmap(outFile);
+        if (oldMindmap) {
+          build_node_map(oldMindmap.root, oldNodeMap);
+        }
+
+        // Continue summarizing remaining nodes
+        await summarize_with_explorer(tempMindmap.root, workDir, undefined, undefined, undefined, oldNodeMap);
+
+        // Finalize
+        tempMindmap.updated_at = new Date().toISOString();
+        rotate_files(outFile, newFile);
+        remove_lock(outFile);
+        console.log(`[mindmap] Completed ${count_nodes(tempMindmap.root)} nodes`);
+        return tempMindmap;
+      }
+      // Lock exists but no temp file - start fresh
+      console.log('[mindmap] Fresh lock found but no temp file, starting fresh');
+      remove_lock(outFile);
     } else if (existingLock) {
       console.log('[mindmap] Stale or mismatched lock, starting fresh');
       remove_lock(outFile);
+      // Clean up any stale temp file
+      if (fs.existsSync(newFile)) {
+        fs.unlinkSync(newFile);
+      }
     }
   } else {
+    // Force mode: clean up everything
     remove_lock(outFile);
+    if (fs.existsSync(newFile)) {
+      fs.unlinkSync(newFile);
+    }
   }
 
   // Create lock file
   create_lock(outFile, mdPath, hash);
 
-  // Parse markdown and build tree
+  // Parse markdown and build new tree
   const sections = parse_markdown(content);
   const fileName = path.basename(absolutePath, path.extname(absolutePath));
 
@@ -272,11 +352,6 @@ export async function compile_mindmap(
     links: extract_links(preamble),
   };
 
-  // Merge existing data for resumption
-  if (existingMindmap) {
-    merge_existing_data(root, existingMindmap.root);
-  }
-
   // Create mindmap
   const now = new Date();
   const mindmap: MindmapJSON = {
@@ -293,6 +368,14 @@ export async function compile_mindmap(
 
   console.log(`[mindmap] Processing ${totalNodes} nodes`);
 
+  // Build old node map for pre-population
+  const oldNodeMap = new Map<string, Node>();
+  const oldMindmap = try_load_old_mindmap(outFile);
+  if (oldMindmap) {
+    build_node_map(oldMindmap.root, oldNodeMap);
+    console.log(`[mindmap] Loaded old tree (${oldNodeMap.size} nodes) for pre-population`);
+  }
+
   // Progress tracking
   const tracker = new ProgressTracker(totalNodes, 3);
 
@@ -307,14 +390,15 @@ export async function compile_mindmap(
   const onNodeComplete = (nodeTitle: string) => {
     tracker.onNodeComplete(nodeTitle);
     mindmap.updated_at = new Date().toISOString();
-    save_mindmap_atomic(mindmap, outFile);
+    // Save to .new file (not the main file)
+    save_mindmap_atomic(mindmap, newFile);
   };
 
   // Print initial empty lines for progress display
   process.stdout.write('\n\n\n\n');
 
   try {
-    await summarize_with_explorer(root, workDir, onProgress, onNodeStart, onNodeComplete);
+    await summarize_with_explorer(root, workDir, onProgress, onNodeStart, onNodeComplete, oldNodeMap);
   } catch (err) {
     tracker.finish();
     process.stdout.write('\x1b[4A\x1b[J');
@@ -327,11 +411,34 @@ export async function compile_mindmap(
   process.stdout.write('\x1b[4A\x1b[J');
 
   mindmap.updated_at = new Date().toISOString();
-  save_mindmap_atomic(mindmap, outFile);
+  // Save final state to .new file
+  save_mindmap_atomic(mindmap, newFile);
+
+  // Rotate: main → .bak, .new → main
+  rotate_files(outFile, newFile);
   remove_lock(outFile);
 
   console.log(`[mindmap] Completed ${totalNodes} nodes`);
   return mindmap;
+}
+
+/**
+ * Rotate files: rename main to .bak, then rename .new to main
+ */
+function rotate_files(outFile: string, newFile: string): void {
+  // If main file exists, rename to .bak
+  if (fs.existsSync(outFile)) {
+    const bakFile = get_bak_file_path(outFile);
+    // Remove old .bak if exists
+    if (fs.existsSync(bakFile)) {
+      fs.unlinkSync(bakFile);
+    }
+    fs.renameSync(outFile, bakFile);
+  }
+  // Rename .new to main
+  if (fs.existsSync(newFile)) {
+    fs.renameSync(newFile, outFile);
+  }
 }
 
 /**

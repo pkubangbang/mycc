@@ -119,6 +119,11 @@ function build_root_node(sections: ReturnType<typeof parse_markdown>, preamble: 
 /**
  * Incrementally compile mindmap by re-summarizing only changed nodes
  *
+ * @deprecated Use compile_mindmap() from compile.ts instead, which uses the
+ * rotation-based approach: always creates a new tree, pre-populates matching
+ * nodes from the old tree, and rotates files on completion (main → .bak, .new → main).
+ * This function is kept for backward compatibility but is no longer called by compile.ts.
+ *
  * Algorithm:
  * 1. Parse new markdown
  * 2. Diff old and new trees to find changes

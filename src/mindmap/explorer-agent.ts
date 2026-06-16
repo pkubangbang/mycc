@@ -15,6 +15,7 @@
 
 import { MODEL, retryChat, webSearch as engineWebSearch, webFetch as engineWebFetch } from '../engine/chat-provider.js';
 import type { Message, Tool, ToolCall } from '../types.js';
+import type { Node } from './types.js';
 import type { WebFetchResponse } from 'ollama';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -602,9 +603,39 @@ async function webFetch(url: string): Promise<string> {
 }
 
 /**
- * Build the exploration prompt
+ * Build the exploration prompt, optionally with existing context from a previous compilation
  */
-function buildExplorationPrompt(nodeTitle: string, nodeText: string, ancestorContext: string): string {
+function buildExplorationPrompt(
+  nodeTitle: string,
+  nodeText: string,
+  ancestorContext: string,
+  existingNode?: Node
+): string {
+  let existingContextSection = '';
+  if (existingNode) {
+    const existingLinks = existingNode.links || [];
+    const fileLinks = existingLinks.filter((l) => l.target_type === 'file');
+    const urlLinks = existingLinks.filter((l) => l.target_type === 'url');
+    const termLinks = existingLinks.filter((l) => l.target_type === 'term');
+
+    existingContextSection = `
+## Existing Context (from previous compilation)
+This section was previously summarized. Review the existing context below. If it is still accurate, you can reuse it. Otherwise, explore further and update.
+
+### Previous Summary
+${existingNode.summary || '(no previous summary)'}
+
+### Previously Marked Files
+${fileLinks.length > 0 ? fileLinks.map((l) => `- ${l.file_path}${l.comment ? ` (${l.comment})` : ''}`).join('\n') : '(none)'}
+
+### Previously Marked URLs
+${urlLinks.length > 0 ? urlLinks.map((l) => `- ${l.url}${l.comment ? ` (${l.comment})` : ''}`).join('\n') : '(none)'}
+
+### Previously Marked Terms
+${termLinks.length > 0 ? termLinks.map((l) => `- ${l.term_name}${l.comment ? ` (${l.comment})` : ''}`).join('\n') : '(none)'}
+`;
+  }
+
   return `You are exploring a codebase to write a summary for a documentation section.
 
 ## Section to Summarize
@@ -614,7 +645,7 @@ ${nodeText}
 
 ## Context from Parent Sections
 ${ancestorContext || '(root level - no parent context)'}
-
+${existingContextSection}
 ## Your Task
 1. Use tools (read_file, ls, grep, mark_file, web_search, web_fetch, mark_url) to explore code and web resources relevant to this section
 2. Use mark_file to mark local files that are directly relevant to this topic
@@ -641,6 +672,7 @@ Explore now. When done exploring, write your summary. Produce only the summary, 
  * @param workDir - The working directory for file operations
  * @param maxRounds - Maximum number of LLM rounds
  * @param onProgress - Optional progress callback (round, tool name, tool args)
+ * @param existingNode - Optional node from previous compilation for pre-population
  * @returns Exploration result with summary and marked files
  */
 async function runExplorationLoop(
@@ -649,14 +681,15 @@ async function runExplorationLoop(
   ancestorContext: string,
   workDir: string,
   maxRounds: number,
-  onProgress?: (round: number, tool: string, args: Record<string, unknown>) => void
+  onProgress?: (round: number, tool: string, args: Record<string, unknown>) => void,
+  existingNode?: Node
 ): Promise<ExplorationResult> {
   const messages: Message[] = [];
   const markedFiles: MarkedItem[] = [];
   const markedUrls: MarkedItem[] = [];
   const markedTerms: MarkedTerm[] = [];
 
-  const prompt = buildExplorationPrompt(nodeTitle, nodeText, ancestorContext);
+  const prompt = buildExplorationPrompt(nodeTitle, nodeText, ancestorContext, existingNode);
   messages.push({ role: 'user', content: prompt });
 
   let rounds = 0;
@@ -767,6 +800,7 @@ async function runExplorationLoop(
  * @param ancestorContext - Combined text from parent sections
  * @param workDir - The working directory for file operations
  * @param maxRounds - Maximum number of LLM rounds (default: 10)
+ * @param existingNode - Optional node from previous compilation for pre-population
  * @returns Exploration result with summary and marked files
  */
 export async function exploreAndSummarize(
@@ -774,21 +808,31 @@ export async function exploreAndSummarize(
   nodeText: string,
   ancestorContext: string,
   workDir: string,
-  maxRounds: number = MAX_ROUNDS_DEFAULT
+  maxRounds: number = MAX_ROUNDS_DEFAULT,
+  existingNode?: Node
 ): Promise<ExplorationResult> {
-  return runExplorationLoop(nodeTitle, nodeText, ancestorContext, workDir, maxRounds);
+  return runExplorationLoop(nodeTitle, nodeText, ancestorContext, workDir, maxRounds, undefined, existingNode);
 }
 
 /**
  * Summarize a node with exploration (used during compilation)
  * Wraps exploration loop with progress reporting
+ *
+ * @param nodeTitle - The title of the section being summarized
+ * @param nodeText - The text content of the section
+ * @param ancestorContext - Combined text from parent sections
+ * @param workDir - The working directory for file operations
+ * @param onProgress - Optional progress callback (round, tool name, tool args)
+ * @param existingNode - Optional node from previous compilation for pre-population
+ * @returns Exploration result with summary and marked files
  */
 export async function summarizeWithExplorer(
   nodeTitle: string,
   nodeText: string,
   ancestorContext: string,
   workDir: string,
-  onProgress?: (round: number, tool: string, args: Record<string, unknown>) => void
+  onProgress?: (round: number, tool: string, args: Record<string, unknown>) => void,
+  existingNode?: Node
 ): Promise<ExplorationResult> {
-  return runExplorationLoop(nodeTitle, nodeText, ancestorContext, workDir, MAX_ROUNDS_DEFAULT, onProgress);
+  return runExplorationLoop(nodeTitle, nodeText, ancestorContext, workDir, MAX_ROUNDS_DEFAULT, onProgress, existingNode);
 }
