@@ -43,6 +43,10 @@ import { agentIO } from './agent-io.js';
  * Minimum chars before a turning word — ensures LLM has committed to a direction.
  * Set to 30 to work for both English (~one substantial sentence) and Chinese
  * (where each character carries more meaning; 30 chars ≈ two full sentences).
+ *
+ * Exception: position 0 (turning word at the very start of the response) is
+ * always allowed, because the LLM's "commitment" was in the conversation
+ * history (previous assistant messages), not in the current response text.
  */
 const MIN_PREFIX_LENGTH = 30;
 
@@ -177,7 +181,11 @@ export function detectTurningWord(content: string): TurningWordMatch | null {
     if (match.index === undefined) return false;
     const idx = match.index;
     // Position guards
-    if (idx < MIN_PREFIX_LENGTH) return false;
+    // Allow position-0 turning words: the LLM's "commitment" was in the
+    // conversation history (previous assistant messages), not in the current
+    // response. A turning word at the very start of a response is a genuine
+    // reversal of course from the previous turn's direction.
+    if (idx > 0 && idx < MIN_PREFIX_LENGTH) return false;
     if (idx + match[0].length + MIN_SUFFIX_LENGTH > content.length) return false;
     // Sentence-boundary guard (only for tier 2)
     if (requireBoundary && !isAtSentenceBoundary(content, idx)) return false;

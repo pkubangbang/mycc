@@ -158,11 +158,16 @@ describe('detectTurningWord — edge cases', () => {
     expect(result).toBeNull();
   });
 
-  it('rejects turning word at very start (no prefix)', () => {
+  it('detects turning word at very start (commitment was in conversation history)', () => {
+    // A turning word at position 0 is valid — the LLM's "commitment" was in
+    // the conversation history (previous assistant messages), not in the
+    // current response text. This is a genuine reversal of course.
     const content =
       'However, I think we should reconsider the entire approach to this problem from a different angle.';
     const result = detectTurningWord(content);
-    expect(result).toBeNull();
+    expect(result).not.toBeNull();
+    expect(result!.word).toBe('However');
+    expect(result!.index).toBe(0);
   });
 
   it('rejects empty content', () => {
@@ -175,6 +180,17 @@ describe('detectTurningWord — edge cases', () => {
       'The authentication module is well-structured and follows clean architecture principles. We should proceed with the current implementation.';
     const result = detectTurningWord(content);
     expect(result).toBeNull();
+  });
+
+  it('detects Chinese 等等 at position 0 (reversal from conversation history)', () => {
+    // The LLM starts its response with "等等" — a reversal from the
+    // previous turn's direction. The commitment was in conversation history.
+    const content =
+      '等等，这个只是输出到 stdout，不会写到文件。而且 `bg_create` 的输出我看不到。让我换个更可靠的方法。';
+    const result = detectTurningWord(content);
+    expect(result).not.toBeNull();
+    expect(result!.word).toBe('等等');
+    expect(result!.index).toBe(0);
   });
 
   it('detects the earliest turning word when multiple exist', () => {
