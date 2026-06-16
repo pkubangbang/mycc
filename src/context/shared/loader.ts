@@ -93,6 +93,7 @@ export class Loader implements DynamicLoader, SkillModule {
    */
   async loadAll(): Promise<void> {
     this.skillKeywords = null; // reset keyword cache
+    this.skills.clear(); // reset skills map for clean re-load
     ensureDirs();
 
     // Load in order: user → project → built-in
