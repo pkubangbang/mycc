@@ -6,7 +6,7 @@
  *
  * Fallback chain:
  *   1. Native ripgrep (rg) — fastest, respects .gitignore by default
- *   2. System grep (Unix) or findstr (Windows) — platform native
+ *   2. System grep (Unix) or PowerShell Select-String (Windows) — platform native
  *   3. npm ripgrep WASM package — cross-platform, zero native deps
  *   4. Error directing LLM to use bash (with node_modules exclusion warning)
  */
@@ -165,7 +165,7 @@ function tryNativeRg(
       encoding: 'utf-8',
       timeout: 15000,
       maxBuffer: 500 * 1024,
-      shell: IS_WINDOWS ? 'cmd.exe' : '/bin/bash',
+      shell: IS_WINDOWS ? undefined : '/bin/bash',
     });
     const lines = stdout.split('\n');
     const truncated = lines.slice(0, maxResults + 1);
@@ -182,7 +182,7 @@ function tryNativeRg(
 }
 
 /**
- * Attempt to run system grep (Unix) or findstr (Windows).
+ * Attempt to run system grep (Unix) or PowerShell Select-String (Windows).
  */
 function trySystemGrep(
   pattern: string,
@@ -191,7 +191,7 @@ function trySystemGrep(
   maxResults: number
 ): { stdout: string; stderr: string; code: number } | null {
   if (IS_WINDOWS) {
-    return tryFindstr(pattern, dir, include, maxResults);
+    return tryPowerShellSelectString(pattern, dir, include, maxResults);
   }
   return tryUnixGrep(pattern, dir, include, maxResults);
 }
@@ -230,9 +230,14 @@ function tryUnixGrep(
 }
 
 /**
- * Windows: findstr with recursive flag and .gitignore-aware exclusions.
+ * Windows: PowerShell Select-String with .gitignore-aware exclusions.
+ * Replaces findstr (which has poor Unicode support) with PowerShell's
+ * native Select-String cmdlet that operates on .NET strings (Unicode-aware).
+ *
+ * Uses -EncodedCommand with UTF-16LE base64 encoding to avoid shell quoting
+ * issues, matching the pattern used by agent-io.ts.
  */
-function tryFindstr(
+function tryPowerShellSelectString(
   pattern: string,
   dir: string,
   include: string | undefined,
@@ -240,17 +245,43 @@ function tryFindstr(
 ): { stdout: string; stderr: string; code: number } | null {
   try {
     const gi = collectGitignores(dir);
-    const filePattern = include || '*.*';
-    let cmd = `cmd /c "dir /s /b ${shellQuote(path.join(dir, filePattern))} 2>nul`;
+
+    // Build directory exclusion using -notlike (wildcard matching, not regex)
+    // to avoid regex-escaping directory names. Match both \ and / path separators.
+    let dirExclusions = '';
     for (const excludeDir of gi.excludeDirs) {
-      cmd += ` | findstr /v /i /c:"\\\\${excludeDir}\\\\" /c:"/${excludeDir}/"`;
+      dirExclusions += ` -and $_.FullName -notlike '*\\${excludeDir}\\*' -and $_.FullName -notlike '*/${excludeDir}/*'`;
     }
-    cmd += ` | findstr /n /i ${shellQuote(pattern)}"`;
-    const stdout = execSync(cmd, {
-      encoding: 'utf-8',
-      timeout: 15000,
-      maxBuffer: 500 * 1024,
-    });
+
+    // Build Get-ChildItem filter for file pattern
+    const filterPart = include ? `-Filter '${include.replace(/'/g, "''")}'` : '';
+
+    // Escape single quotes in pattern and dir for PowerShell single-quoted strings
+    const psEscapedPattern = pattern.replace(/'/g, "''");
+    const psEscapedDir = dir.replace(/'/g, "''");
+
+    // PowerShell pipeline: recursive file listing → exclude dirs → Select-String → limit → format
+    // Select-String uses regex matching by default (same as grep/rg)
+    const psCmd =
+      `Get-ChildItem -Path '${psEscapedDir}' -Recurse -File ${filterPart} -ErrorAction SilentlyContinue | ` +
+      `Where-Object { $true ${dirExclusions} } | ` +
+      `Select-String -Pattern '${psEscapedPattern}' | ` +
+      `Select-Object -First ${maxResults} | ` +
+      `ForEach-Object { "$($_.Path):$($_.LineNumber):$($_.Line)" }`;
+
+    // Base64-encode as UTF-16LE for -EncodedCommand (matching agent-io.ts pattern)
+    const fullCmd = `try { chcp 65001 > $null } catch {}; $OutputEncoding = [System.Text.Encoding]::UTF8; [Console]::OutputEncoding = [System.Text.Encoding]::UTF8; ${psCmd}`;
+    const base64Cmd = Buffer.from(fullCmd, 'utf16le').toString('base64');
+
+    const stdout = execSync(
+      `powershell -NoProfile -NonInteractive -EncodedCommand ${base64Cmd}`,
+      {
+        encoding: 'utf-8',
+        timeout: 15000,
+        maxBuffer: 500 * 1024,
+      }
+    );
+
     const lines = stdout.split('\n').filter(Boolean);
     const truncated = lines.slice(0, maxResults);
     return { stdout: truncated.join('\n'), stderr: '', code: 0 };
@@ -322,7 +353,7 @@ export async function grepSearch(
   dir: string,
   include?: string,
   maxResults: number = DEFAULT_MAX_RESULTS
-): Promise<{ output: string; method: 'rg' | 'grep' | 'findstr' | 'ripgrep_wasm' | 'none' }> {
+): Promise<{ output: string; method: 'rg' | 'grep' | 'powershell' | 'ripgrep_wasm' | 'none' }> {
   const cappedMax = Math.min(maxResults, MAX_MAX_RESULTS);
 
   // 1. Try native ripgrep
@@ -332,11 +363,11 @@ export async function grepSearch(
     return { output: output || 'No matches found', method: 'rg' };
   }
 
-  // 2. Try system grep / findstr
+  // 2. Try system grep / PowerShell
   const grepResult = trySystemGrep(pattern, dir, include, cappedMax);
   if (grepResult !== null) {
     const output = grepResult.stdout.trim();
-    return { output: output || 'No matches found', method: IS_WINDOWS ? 'findstr' : 'grep' };
+    return { output: output || 'No matches found', method: IS_WINDOWS ? 'powershell' : 'grep' };
   }
 
   // 3. Try npm ripgrep WASM package

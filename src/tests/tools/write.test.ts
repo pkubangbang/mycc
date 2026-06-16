@@ -151,6 +151,33 @@ describe('writeTool', () => {
     expect(written).toBe('content');
   });
 
+  it('should strip BOM from content before writing', async () => {
+    const result = await writeTool.handler(ctx, {
+      path: 'bom.txt',
+      content: '﻿' + 'Hello, World!',
+    });
+
+    expect(result).toBe('OK');
+
+    const written = fs.readFileSync(path.join(tempDir, 'bom.txt'), 'utf-8');
+    // BOM should NOT be in the written file
+    expect(written).toBe('Hello, World!');
+    expect(written.charCodeAt(0)).not.toBe(0xfeff);
+  });
+
+  it('should not add BOM to output', async () => {
+    const result = await writeTool.handler(ctx, {
+      path: 'no-bom.txt',
+      content: 'Normal content without BOM',
+    });
+
+    expect(result).toBe('OK');
+
+    const written = fs.readFileSync(path.join(tempDir, 'no-bom.txt'), 'utf-8');
+    expect(written).toBe('Normal content without BOM');
+    expect(written.charCodeAt(0)).not.toBe(0xfeff);
+  });
+
   it('should have correct metadata', () => {
     expect(writeTool.name).toBe('write_file');
     expect(writeTool.scope).toEqual(['main', 'child']);

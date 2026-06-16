@@ -8,6 +8,7 @@ import * as fs from 'fs';
 import type { ToolDefinition, AgentContext } from '../types.js';
 import { resolvePath } from '../utils/path.js';
 import { checkSensitivePath } from '../utils/sensitive-paths.js';
+import { stripBom, detectLineEnding, normalizeLineEndings } from '../utils/encoding.js';
 
 export const editTool: ToolDefinition = {
   name: 'edit_file',
@@ -65,19 +66,41 @@ export const editTool: ToolDefinition = {
     ctx.core.brief('info', 'edit', filePath);
 
     try {
-      const content = fs.readFileSync(resolvedPath, 'utf-8');
+      const rawContent = fs.readFileSync(resolvedPath, 'utf-8');
 
-      if (!content.includes(oldText)) {
+      // Strip BOM if present (Windows tools like Notepad often prepend it)
+      const content = stripBom(rawContent);
+
+      // Detect original line ending style (CRLF on Windows, LF on Unix)
+      const isCRLF = detectLineEnding(content) === 'crlf';
+
+      // Normalize file content and search/replace strings to LF-only
+      // This is critical for CRLF/LF compatibility: the LLM always sends
+      // LF-only strings in JSON tool-call arguments, but the file on disk
+      // may use CRLF. Normalizing both to LF before matching ensures the
+      // edit always succeeds regardless of line ending mismatch.
+      const normalizedContent = isCRLF ? normalizeLineEndings(content) : content;
+      const normalizedOldText = normalizeLineEndings(oldText);
+      const normalizedNewText = normalizeLineEndings(newText);
+
+      if (!normalizedContent.includes(normalizedOldText)) {
         return `Error: Text not found in ${filePath}`;
       }
 
-      // Count occurrences
-      const occurrences = content.split(oldText).length - 1;
+      // Count occurrences on normalized content
+      const occurrences = normalizedContent.split(normalizedOldText).length - 1;
       if (occurrences > 1) {
         return `Error: Found ${occurrences} occurrences of old_text. Please provide more context to make it unique.`;
       }
 
-      fs.writeFileSync(resolvedPath, content.replace(oldText, newText), 'utf-8');
+      let result = normalizedContent.replace(normalizedOldText, normalizedNewText);
+
+      // Restore original line ending style so the file's convention is preserved
+      if (isCRLF) {
+        result = result.replace(/\n/g, '\r\n');
+      }
+
+      fs.writeFileSync(resolvedPath, result, 'utf-8');
       return 'OK';
     } catch (error: unknown) {
       return `Error: ${(error as Error).message}`;

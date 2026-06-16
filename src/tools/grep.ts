@@ -4,7 +4,7 @@
  * Scope: ['main', 'child'] - Available to lead and teammate agents
  *
  * Delegates the actual search to src/utils/grep-search.ts which has
- * a hierarchical fallback: native rg → system grep/findstr → WASM ripgrep.
+ * a hierarchical fallback: native rg → system grep/PowerShell → WASM ripgrep.
  */
 
 import type { ToolDefinition, AgentContext } from '../types.js';
@@ -25,10 +25,10 @@ function buildFallbackError(): string {
     return (
       'Error: No search tool available.\n' +
       'Use the bash tool instead, but be careful:\n' +
-      '1. Use findstr: findstr /s /n /i pattern *.*\n' +
-      '2. Or use PowerShell: Get-ChildItem -Recurse | Select-String "pattern"\n' +
-      '3. Exclude node_modules: dir /s /b *.ts | findstr /v node_modules | findstr /n /i pattern\n' +
-      '4. Limit results by piping to findstr or Select-Object -First 100'
+      '1. Use PowerShell: Get-ChildItem -Recurse -File | Select-String -Pattern "pattern"\n' +
+      '2. Limit results: Get-ChildItem -Recurse -File | Select-String "pattern" | Select-Object -First 100\n' +
+      '3. Exclude node_modules: Get-ChildItem -Recurse -File | Where-Object { $_ -notmatch "node_modules" } | Select-String "pattern"\n' +
+      '4. Reuse bash output: pipe earlier results to Select-String for further filtering'
     );
   }
   return (

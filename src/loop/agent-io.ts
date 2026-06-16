@@ -668,11 +668,14 @@ class AgentIO {
     //   The command is base64-encoded as UTF-16LE, so it's passed verbatim —
     //   echo "hello" outputs hello (no quotes), just like typing in PowerShell.
     //   On Windows, prepend UTF8 encoding fix for CJK character support:
-    //   $OutputEncoding fixes stdout pipe encoding (default: US-ASCII)
-    //   [Console]::OutputEncoding fixes console output encoding (default: GB2312)
+    //   - chcp 65001 switches the console codepage to UTF-8 so native commands
+    //     (find, type, dir, etc.) output correctly
+    //   - $OutputEncoding fixes stdout pipe encoding (default: US-ASCII)
+    //   - [Console]::OutputEncoding fixes .NET console output (default: GB2312)
+    //   chcp is wrapped in try/catch for resilience on restricted systems
     const isWin = process.platform === 'win32';
     const effectiveCommand = isWin
-      ? `$OutputEncoding = [System.Text.Encoding]::UTF8; [Console]::OutputEncoding = [System.Text.Encoding]::UTF8; ${command}`
+      ? `try { chcp 65001 > $null } catch {}; $OutputEncoding = [System.Text.Encoding]::UTF8; [Console]::OutputEncoding = [System.Text.Encoding]::UTF8; ${command}`
       : command;
     const proc = isWin
       ? spawn('powershell', [

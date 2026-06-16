@@ -18,14 +18,31 @@ export class BackgroundTasks implements BgModule {
   }
 
   /**
-   * Run a command in the background
+   * Run a command in the background.
+   * On Windows, uses PowerShell with UTF-8 encoding preamble matching agent-io.ts.
+   * On Unix, uses the system shell directly.
    */
   async runCommand(cmd: string): Promise<number> {
-    const child = spawn(cmd, [], {
-      cwd: this.core.getWorkDir(),
-      shell: true,
-      detached: true,
-    });
+    const isWin = process.platform === 'win32';
+    const child = isWin
+      ? spawn('powershell', [
+          '-NoProfile',
+          '-NonInteractive',
+          '-EncodedCommand',
+          Buffer.from(
+            `try { chcp 65001 > $null } catch {}; $OutputEncoding = [System.Text.Encoding]::UTF8; [Console]::OutputEncoding = [System.Text.Encoding]::UTF8; ${cmd}`,
+            'utf16le'
+          ).toString('base64'),
+        ], {
+          cwd: this.core.getWorkDir(),
+          windowsHide: true,
+          detached: true,
+        })
+      : spawn(cmd, [], {
+          cwd: this.core.getWorkDir(),
+          shell: true,
+          detached: true,
+        });
 
     const pid = child.pid || Date.now();
     const task: BgTask = {

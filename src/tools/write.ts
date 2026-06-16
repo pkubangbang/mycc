@@ -9,6 +9,7 @@ import * as path from 'path';
 import type { ToolDefinition, AgentContext } from '../types.js';
 import { resolvePath } from '../utils/path.js';
 import { checkSensitivePath } from '../utils/sensitive-paths.js';
+import { stripBom } from '../utils/encoding.js';
 
 export const writeTool: ToolDefinition = {
   name: 'write_file',
@@ -62,7 +63,8 @@ export const writeTool: ToolDefinition = {
 
     try {
       fs.mkdirSync(path.dirname(resolvedPath), { recursive: true });
-      fs.writeFileSync(resolvedPath, content, 'utf-8');
+      // Strip BOM defensively — LLM might include BOM from previously-read files
+      fs.writeFileSync(resolvedPath, stripBom(content), 'utf-8');
       return 'OK';
     } catch (error: unknown) {
       return `Error: ${(error as Error).message}`;

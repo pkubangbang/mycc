@@ -218,6 +218,108 @@ describe('editTool', () => {
     expect(edited).toBe('edited');
   });
 
+  it('should match LF old_text in CRLF file', async () => {
+    const testFile = path.join(tempDir, 'crlf.txt');
+    fs.writeFileSync(testFile, 'line1\r\nline2\r\nline3');
+
+    // LLM provides LF-only old_text (as always happens in JSON tool calls)
+    const result = await editTool.handler(ctx, {
+      path: 'crlf.txt',
+      old_text: 'line1\nline2',
+      new_text: 'replaced',
+    });
+
+    expect(result).toBe('OK');
+
+    const edited = fs.readFileSync(testFile, 'utf-8');
+    expect(edited).toBe('replaced\r\nline3');
+  });
+
+  it('should preserve CRLF in output after edit', async () => {
+    const testFile = path.join(tempDir, 'preserve-crlf.txt');
+    fs.writeFileSync(testFile, 'header\r\ncontent\r\nfooter');
+
+    const result = await editTool.handler(ctx, {
+      path: 'preserve-crlf.txt',
+      old_text: 'content',
+      new_text: 'modified',
+    });
+
+    expect(result).toBe('OK');
+
+    const edited = fs.readFileSync(testFile, 'utf-8');
+    // File should still use CRLF after edit
+    expect(edited).toBe('header\r\nmodified\r\nfooter');
+  });
+
+  it('should handle CRLF old_text in LF file', async () => {
+    const testFile = path.join(tempDir, 'lf-file.txt');
+    fs.writeFileSync(testFile, 'a\nb\nc');
+
+    // LLM might send CRLF if it previously read a CRLF file
+    const result = await editTool.handler(ctx, {
+      path: 'lf-file.txt',
+      old_text: 'a\r\nb',
+      new_text: 'replaced',
+    });
+
+    expect(result).toBe('OK');
+
+    const edited = fs.readFileSync(testFile, 'utf-8');
+    expect(edited).toBe('replaced\nc');
+  });
+
+  it('should handle BOM in file', async () => {
+    const testFile = path.join(tempDir, 'bom.txt');
+    fs.writeFileSync(testFile, '﻿' + 'Hello, World!');
+
+    // LLM sends old_text without BOM (from read output after BOM stripping)
+    const result = await editTool.handler(ctx, {
+      path: 'bom.txt',
+      old_text: 'Hello',
+      new_text: 'Bonjour',
+    });
+
+    expect(result).toBe('OK');
+
+    const edited = fs.readFileSync(testFile, 'utf-8');
+    // BOM should be stripped; content should be replaced
+    expect(edited).toBe('Bonjour, World!');
+  });
+
+  it('should handle BOM + CRLF combo', async () => {
+    const testFile = path.join(tempDir, 'bom-crlf.txt');
+    fs.writeFileSync(testFile, '﻿' + 'line1\r\nline2\r\nline3');
+
+    const result = await editTool.handler(ctx, {
+      path: 'bom-crlf.txt',
+      old_text: 'line1\nline2',
+      new_text: 'replaced',
+    });
+
+    expect(result).toBe('OK');
+
+    const edited = fs.readFileSync(testFile, 'utf-8');
+    // BOM stripped, CRLF preserved
+    expect(edited).toBe('replaced\r\nline3');
+  });
+
+  it('should handle CJK content with CRLF', async () => {
+    const testFile = path.join(tempDir, 'cjk-crlf.txt');
+    fs.writeFileSync(testFile, '你好\r\n世界\r\n中文');
+
+    const result = await editTool.handler(ctx, {
+      path: 'cjk-crlf.txt',
+      old_text: '你好\n世界',
+      new_text: '헬로\n월드',
+    });
+
+    expect(result).toBe('OK');
+
+    const edited = fs.readFileSync(testFile, 'utf-8');
+    expect(edited).toBe('헬로\r\n월드\r\n中文');
+  });
+
   it('should have correct metadata', () => {
     expect(editTool.name).toBe('edit_file');
     expect(editTool.scope).toEqual(['main', 'child']);

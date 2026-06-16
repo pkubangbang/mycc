@@ -18,6 +18,7 @@ import { filetypeinfo } from '../utils/magic-bytes.js';
 import type { ToolDefinition, AgentContext } from '../types.js';
 import { getTokenThreshold, isVerbose } from '../config.js';
 import { resolvePath } from '../utils/path.js';
+import { stripBom } from '../utils/encoding.js';
 
 /** Hard-coded line limit to prevent context overflow */
 const LINE_LIMIT = 1000;
@@ -146,7 +147,8 @@ ${typeInfo.extension === '.png' || typeInfo.extension === '.jpg' || typeInfo.ext
       }
 
       // Handle text files
-      const content = buffer.toString('utf-8');
+      // Strip BOM if present (e.g., from Windows Notepad-saved files)
+      const content = stripBom(buffer.toString('utf-8'));
       const totalChars = content.length;
       const lines = content.split('\n');
       const totalLines = lines.length;

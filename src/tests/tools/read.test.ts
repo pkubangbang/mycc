@@ -154,6 +154,36 @@ describe('readTool', () => {
     expect(result).toContain('File: space folder/space file.txt');
   });
 
+  it('should strip BOM from UTF-8 file', async () => {
+    const testFile = path.join(tempDir, 'bom.txt');
+    fs.writeFileSync(testFile, '﻿' + 'Hello, World!');
+
+    const result = await readTool.handler(ctx, { path: 'bom.txt' });
+
+    // Should contain the content but NOT the BOM character
+    expect(result).toContain('Hello, World!');
+    expect(result).not.toContain('﻿');
+  });
+
+  it('should read normal file without BOM unchanged', async () => {
+    const testFile = path.join(tempDir, 'no-bom.txt');
+    fs.writeFileSync(testFile, 'Normal content');
+
+    const result = await readTool.handler(ctx, { path: 'no-bom.txt' });
+
+    expect(result).toContain('Normal content');
+  });
+
+  it('should handle CJK content with BOM', async () => {
+    const testFile = path.join(tempDir, 'cjk-bom.txt');
+    fs.writeFileSync(testFile, '﻿' + '你好世界');
+
+    const result = await readTool.handler(ctx, { path: 'cjk-bom.txt' });
+
+    expect(result).toContain('你好世界');
+    expect(result).not.toContain('﻿');
+  });
+
   it('should have correct metadata', () => {
     expect(readTool.name).toBe('read_file');
     expect(readTool.scope).toEqual(['main', 'child']);
