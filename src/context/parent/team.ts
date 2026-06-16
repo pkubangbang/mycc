@@ -210,13 +210,15 @@ export class TeamManager implements TeamModule {
 
     if (msg.type === 'log') {
       const message = msg.message as string;
-      this.context.core.brief('info', sender, message);
+      const detail = msg.detail as string | undefined;
+      this.context.core.brief('info', sender, message, detail);
       return;
     }
 
     if (msg.type === 'error') {
       const error = msg.error as string;
-      this.context.core.brief('error', sender, error);
+      const detail = msg.detail as string | undefined;
+      this.context.core.brief('error', sender, error, detail);
       return;
     }
 

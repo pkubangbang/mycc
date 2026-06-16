@@ -24,12 +24,11 @@ export class ChildCore extends BaseCore implements CoreModule {
     return this.name;
   }
 
-  brief(level: 'info' | 'warn' | 'error', tool: string, message: string): void {
-    const formatted = `[${tool}] ${message}`;
+  brief(level: 'info' | 'warn' | 'error', tool: string, message: string, detail?: string): void {
     if (level === 'error') {
-      ipc.sendNotification('error', { error: formatted });
+      ipc.sendNotification('error', { error: message, detail, tool });
     } else {
-      ipc.sendNotification('log', { message: formatted });
+      ipc.sendNotification('log', { message, detail });
     }
   }
 
