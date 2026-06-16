@@ -9,7 +9,7 @@
 
 import { LineEditor } from '../utils/line-editor.js';
 import type { KeyInfo } from '../utils/key-parser.js';
-import { spawn } from 'child_process';
+import { spawn, execSync } from 'child_process';
 import { getWrapUpState, tryDisplayWrapUp } from './esc-wrap-up.js';
 import chalk from 'chalk';
 import { isVerbose } from '../config.js';
@@ -663,7 +663,9 @@ class AgentIO {
     const stderrBuffer = new ReplayBuffer();
 
     // 3. Create subprocess with platform-appropriate shell
-    // Unix: setsid + bash -c runs in a new session without controlling terminal
+    // Unix: bash -c with detached:true runs in its own process group without
+    //   a controlling terminal (same isolation as setsid, but proc.pid is the
+    //   bash PID directly, enabling process-group kill on timeout).
     // Windows: powershell -EncodedCommand avoids cmd's quoting/escaping issues.
     //   The command is base64-encoded as UTF-16LE, so it's passed verbatim —
     //   echo "hello" outputs hello (no quotes), just like typing in PowerShell.
@@ -684,7 +686,7 @@ class AgentIO {
           '-EncodedCommand',
           Buffer.from(effectiveCommand, 'utf16le').toString('base64'),
         ], { cwd, windowsHide: true })
-      : spawn('setsid', ['bash', '-c', command], { cwd });
+      : spawn('bash', ['-c', command], { cwd, detached: true });
 
     // Collect stdout and stderr
     proc.stdout?.on('data', (chunk: Buffer) => {
@@ -701,7 +703,23 @@ class AgentIO {
       const timer = setTimeout(() => {
         if (!completed) {
           completed = true;
-          proc.kill('SIGKILL');
+          // Kill the entire process tree reliably, not just the top-level
+          // process. proc.kill('SIGKILL') is insufficient:
+          //   - Unix: setsid/bashed children survive in a different session
+          //   - Windows: TerminateProcess doesn't kill child processes
+          try {
+            if (proc.pid) {
+              if (isWin) {
+                execSync(`taskkill /F /T /PID ${proc.pid}`, { stdio: 'ignore' });
+              } else {
+                // Negative PID = kill entire process group (bash is group leader
+                // because of detached:true)
+                process.kill(-proc.pid, 'SIGKILL');
+              }
+            }
+          } catch {
+            // Process may have already exited — ignore
+          }
           resolve({
             stdout: '',
             stderr: '',

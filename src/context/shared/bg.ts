@@ -2,7 +2,7 @@
  * bg.ts - Background tasks module: run bash commands in background
  */
 
-import { spawn, ChildProcess } from 'child_process';
+import { spawn, execSync, ChildProcess } from 'child_process';
 import type { BgModule, BgTask, CoreModule } from '../../types.js';
 
 /**
@@ -117,10 +117,17 @@ export class BackgroundTasks implements BgModule {
    * Kill a background task
    */
   async killTask(pid: number): Promise<void> {
-    const process = this.processes.get(pid);
-    if (process) {
+    const proc = this.processes.get(pid);
+    if (proc) {
       try {
-        process.kill('SIGTERM');
+        const isWin = process.platform === 'win32';
+        if (isWin) {
+          // Windows: kill entire process tree
+          execSync(`taskkill /F /T /PID ${pid}`, { stdio: 'ignore' });
+        } else {
+          // Unix: negative PID kills the entire process group
+          process.kill(-pid, 'SIGKILL');
+        }
       } catch {
         // Process may have already exited
       }
