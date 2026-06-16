@@ -64,6 +64,25 @@ function printBanner(title: string): void {
   );
 }
 
+/**
+ * Strip any "mycc" prefix variant from the title so we can apply the
+ * canonical "mycc: " prefix. Handles:
+ *   "mycc: foo"     → "foo"
+ *   "mycc foo"      → "foo"
+ *   "mycc - foo"    → "foo"
+ *   "mycc : foo"    → "foo"
+ *   "MyCC: foo"     → "foo"   (case-insensitive)
+ *   "  mycc: foo  " → "foo"   (whitespace-tolerant)
+ *   "fixing bash"   → "fixing bash"  (no prefix, passed through)
+ */
+function normalizeTitle(raw: string): string {
+  // Strip leading "mycc" prefix (case-insensitive) with optional separator.
+  // The alternation |\s*mycc\s+ is NOT anchored — it would match "mycc" mid-title
+  // and corrupt content like "fix mycc bug" → "fixbug".
+  const stripped = raw.trim().replace(/^\s*mycc\s*(?:[-:]\s*)?/i, '').trim();
+  return stripped ? `mycc: ${stripped}` : 'mycc';
+}
+
 export const myccTitleTool: ToolDefinition = {
   name: 'mycc_title',
   description: `Change the terminal window/tab title. Sets a descriptive title to help identify this mycc session among multiple terminal windows.
@@ -87,10 +106,9 @@ Uses ANSI OSC escape sequences supported by most terminal emulators (GNOME Termi
       return 'Error: title parameter is required and must be a string';
     }
 
-    // Always prefix with 'mycc: ' for consistent session identification.
-    // The prefix is automatic — agents should NOT include "mycc:" in the
-    // title they pass; just pass the descriptive part (e.g., "fixing bash").
-    const title = rawTitle.startsWith('mycc:') ? rawTitle : `mycc: ${rawTitle}`;
+    // Normalize: strip any "mycc" prefix variant the agent may have included,
+    // then apply the canonical "mycc: " prefix consistently.
+    const title = normalizeTitle(rawTitle);
 
     // ANSI OSC 0 escape sequence — sets both window title and icon/tab title
     // Format: ESC ] 0 ; <title> BEL
