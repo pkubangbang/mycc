@@ -199,7 +199,7 @@ function wrapCommand(cmd: string): string {
 function isBinaryAvailable(binary: string): boolean {
   try {
     const whichCmd = process.platform === 'win32' ? 'where' : 'which';
-    execSync(`${whichCmd} ${binary} 2>/dev/null`, { encoding: 'utf8', stdio: 'pipe' });
+    execSync(`${whichCmd} ${binary}`, { encoding: 'utf8', stdio: 'pipe' });
     return true;
   } catch {
     return false;
