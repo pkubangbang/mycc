@@ -284,6 +284,8 @@ export class Loader implements DynamicLoader, SkillModule {
    * @deprecated Use loadUserSkills(), loadProjectSkills(), loadBuiltInSkills() instead
    */
   loadSkills(): Promise<void> {
+    this.skillKeywords = null; // reset keyword cache
+    this.skills.clear(); // reset skills map for clean re-load
     this.loadUserSkills();
     this.loadProjectSkills();
     this.loadBuiltInSkills();
