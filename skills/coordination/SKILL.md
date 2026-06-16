@@ -1,23 +1,20 @@
 ---
 name: coordination
 description: >
-  Use when tasks can benefit from parallel work.
-
-  Helps coordinate:
-  - spawning multiple teammates
-  - distributing independent tasks
-  - collecting and integrating results
-
-  Relevant for:
-  team, parallel, distribute, spawn, teammate, coordinate
-
-  Example requests:
-  - "run these tasks in parallel"
-  - "coordinate a team to do X"
-  - "spawn teammates for these tasks"
-
-  Avoid for sequential tasks or quick one-off work.
-keywords: [team, coordination, workflow, parallel, distribute]
+  Use when tasks can benefit from parallel work or multi-agent collaboration.
+  Covers the full team coordination workflow: creating issues for task
+  tracking, spawning teammates with tm_create, assigning work via issues
+  and mail_to, monitoring progress with issue_list and tm_print, waiting
+  for completion with tm_await, and collecting results. Includes three
+  common patterns: sequential tasks with blocking dependencies, parallel
+  independent tasks, and issue-based handoff chains. Also covers
+  communication best practices (ordering via order(), broadcasting with
+  broadcast()), troubleshooting teammate non-response, blocked issues,
+  and overly complex task decomposition. Use for distributing independent
+  work across teammates, running tasks in parallel, coordinating multi-agent
+  workflows, or managing a team of agents. Avoid for purely sequential
+  tasks with no parallelism benefit or quick one-off operations.
+keywords: [team, coordination, workflow, parallel, distribute, spawn, teammate, multi-agent, delegate, collaborate, issue, task, broadcast, handoff, concurrency, tm_create, tm_await, order]
 ---
 
 # Team Coordination Best Practices

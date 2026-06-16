@@ -1,10 +1,20 @@
 ---
 name: compact-on-intent-trap
 description: >
-  When the LLM repeatedly produces malformed bash intent strings (wrong
-  verbs, missing TO clause, unknown objects), and the conversation has
-  grown large, compact the context to restore attention to the intent
-  language format in the system prompt.
+  Detects when the LLM is trapped in intent language syntax errors —
+  repeatedly producing malformed VERB OBJECT TO PURPOSE strings for bash
+  calls. When 3 or more bash tool results start with 'Error: [Intent]' and
+  the session has grown large enough (>20 tool calls) that attention
+  degradation is likely, triggers a context compaction to restore the intent
+  language table to the attention window. The intent format requires specific
+  verbs (TEST, RUN, BUILD, CHECK, etc.), objects (ARTIFACT, SYSTEM, etc.),
+  and a TO PURPOSE clause — when the LLM can no longer see the format table
+  due to context length, it falls into repeated syntax errors. Compaction
+  summarises the conversation, bringing the system prompt (including the
+  intent language table) back into the attention window. Use when the agent
+  repeatedly fails bash intent validation with [Intent] errors despite
+  receiving correction hints.
+keywords: [intent, trap, bash, compact, context, error, syntax, malformed, recovery, attention, degradation, intent-language]
 when: "before executing bash, if 3 or more bash tool results start with 'Error: [Intent]' (within first 20 chars) and total tool calls exceeds 20, then compact the context"
 ---
 

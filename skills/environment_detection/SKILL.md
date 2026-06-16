@@ -1,19 +1,22 @@
 ---
 name: environment-detection
 description: >
-  Use this skill to understand the "shape" of the current working directory (cwd).
-  Helps answer: Is this a known system folder? Is there a git repo? Is it a project,
-  a collection of repos, or empty? What executables are available?
-  
-  Use this skill when:
-  - Starting work in a new directory
-  - Encountering an unusual project layout
-  - Need to understand available tools and environment
-  - Unsure about the user's intentions for this directory
-  
-  Keywords: environment, detection, directory, project, git, executables, tools,
-  working directory, cwd, layout, exploration.
-keywords: [environment, detection, directory, project, git, executables, cwd]
+  Use to understand the "shape" of the current working directory (cwd).
+  Answers five detection questions: Is this a well-known system folder
+  (home, temp, /etc, /usr, C:\Windows)? Does cwd contain a git repo
+  (with remote and branch info)? If not git, what is this directory
+  (project, collection of repos, staging area, empty folder)? What
+  executables are available (ripgrep, fd, fzf, jq, yq, ffmpeg, python,
+  node, go, rustc)? And what is the user's likely intention (create new
+  project, work on existing, manage multiple, be cautious in system dir)?
+  Each step includes bash and PowerShell commands for cross-platform
+  detection. Reports findings via brief() with a confidence level (0-10).
+  Use when starting work in a new directory, encountering an unusual
+  project layout, needing to understand available tools, or when unsure
+  about the user's intentions for the current directory. Also covers
+  common pitfalls: assuming project structure without checking, ignoring
+  system folder constraints, and missing available tool detection.
+keywords: [environment, detection, directory, project, git, executables, tools, cwd, working-directory, layout, exploration, workspace, setup, context, system, discover, analyze, assess]
 ---
 
 # Environment Detection

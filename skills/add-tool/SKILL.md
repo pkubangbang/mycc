@@ -1,14 +1,19 @@
 ---
 name: add-tool
 description: >
-  Use this skill when creating new tools for the mycc agent. Provides
-  templates, guidelines, and checklist for tool development.
-  
-  Covers tool structure, parameter validation, error handling, logging,
-  scope selection, and best practices.
-  
-  Keywords: tool, create, add, new, implement, extend, development.
-keywords: [tool, development, create, workflow]
+  Use when creating new tools for the mycc agent. Provides templates,
+  guidelines, and a step-by-step checklist for tool development.
+  Covers the full tool creation lifecycle: gathering requirements,
+  selecting scope, defining input schemas (string, number, enum, array,
+  optional parameters), implementing handlers with parameter validation,
+  error handling with try-catch, meaningful logging via ctx.core.brief(),
+  async support for I/O operations, and manual testing. Also covers export
+  style (ToolDefinition type), naming conventions (kebab-case), and common
+  pitfalls: missing parameter validation, no logging, wrong scope selection,
+  sync handlers for async operations. Use when the user asks to create,
+  add, implement, or extend a custom tool. Relevant for tool development,
+  custom tool creation, extending mycc with new capabilities.
+keywords: [tool, development, create, add, implement, extend, new, custom, handler, schema, scope, validation, logging, error-handling, template, workflow]
 ---
 
 # Adding a New Tool

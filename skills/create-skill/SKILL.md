@@ -1,16 +1,23 @@
 ---
 name: create-skill
 description: >
-  Use this skill when the user requests creation of a new skill. Examples:
-  "create a skill for X", "I need a skill to handle Y", "make a skill for Z".
-  
-  This is a meta-skill that guides the process of creating effective skills.
-  Covers skill types (process, reference, lesson), template selection,
-  content research, and quality verification.
-  
-  Related keywords: skill, create, new, template, documentation, knowledge,
-  workflow, process, reference, lesson, best-practices.
-keywords: [skill, create, template, documentation, knowledge]
+  Use when the user requests creation of a new skill. Examples: "create a
+  skill for X", "I need a skill to handle Y", "make a skill for Z", "make
+  this knowledge reusable". This is a meta-skill that guides the entire
+  skill creation process: gathering requirements (domain, problem, type),
+  researching the topic via web_search and wiki_get, selecting the
+  appropriate template from four types (process for step-by-step workflows,
+  reference for lookup information and formats, lesson for captured
+  experiences, hookish for auto-triggering skills with when conditions),
+  writing quality content with specific examples and documented pitfalls,
+  creating the file in .mycc/skills/, and verifying against a quality
+  checklist. Covers frontmatter best practices: detailed descriptions for
+  RAG semantic search (<800 tokens), keyword selection for discoverability,
+  and when field usage for hookish skills. Also covers naming conventions
+  (lowercase-hyphenated), anti-patterns to avoid, and iteration based on
+  user feedback. Do NOT use for automatic knowledge distillation after
+  tasks — only when explicitly requested.
+keywords: [skill, create, new, template, documentation, knowledge, meta, process, reference, lesson, hookish, frontmatter, RAG, best-practices, discoverability, reusable]
 ---
 
 # Creating Effective Skills

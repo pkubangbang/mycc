@@ -1,23 +1,22 @@
 ---
 name: pdf
 description: >
-  Use when working with PDF files.
-
-  Supports:
-  - text extraction from PDFs
-  - OCR for scanned documents
-  - multi-language support
-
-  Relevant for:
-  pdf, extract, document, ocr, scan
-
-  Example requests:
-  - "extract text from this PDF"
-  - "read a scanned document"
-  - "process this PDF file"
-
-  Uses unpdf for text-based PDFs, tesseract.js for image-based PDFs.
-keywords: [pdf, document, extraction]
+  Use when working with PDF files — extracting text, performing OCR on
+  scanned documents, or processing PDF content. Covers two main workflows:
+  text-based PDF extraction using unpdf (modern, zero-dependency library)
+  and image-based PDF OCR using pdf-to-img + tesseract.js. For text-based
+  PDFs: create an isolated working directory, install unpdf, use
+  extractText with getDocumentProxy, and verify extraction quality. For
+  scanned/image-based PDFs: convert pages to images with pdf-to-img at
+  scale 3.0 for better recognition, then run tesseract.js OCR with
+  reusable workers for performance. Supports multiple languages via
+  tesseract.js language packs: English (eng), Simplified Chinese
+  (chi_sim), Traditional Chinese (chi_tra), and combined (eng+chi_sim).
+  Always uses isolated temp directories (cd <dir> && npm install) to
+  avoid polluting the project. Use for reading PDFs, extracting text
+  from documents, processing scanned files, OCR of image-based PDFs,
+  or converting PDF content to plain text for analysis.
+keywords: [pdf, document, extraction, ocr, scan, text, image, unpdf, tesseract, read, parse, convert, processing]
 ---
 
 # PDF Processing Skill

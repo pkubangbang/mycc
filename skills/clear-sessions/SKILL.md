@@ -1,7 +1,16 @@
 ---
 name: clear-sessions
-description: "Guide for clearing corrupted or outdated sessions. Use when sessions fail to load, restore, or when cleaning up stale session data."
-tags: [session, cleanup, troubleshooting, corruption]
+description: >
+  Use when sessions fail to load, restore, or when cleaning up corrupted or
+  outdated session data. Covers diagnosing and fixing five corruption types:
+  empty session files, malformed JSON, missing triologue files, empty (0-byte)
+  triologue files, and orphaned triologue files. Also covers user-level session
+  cleanup (~/.mycc-store/sessions/), selective cleanup, full session reset with
+  backup, and recovery from backup. Includes diagnostic commands for session
+  integrity checks and storage stats. Use for troubleshooting session corruption,
+  stale session data, session restore failures, cleaning up disk space from old
+  sessions, and resetting session state after major changes.
+keywords: [session, cleanup, troubleshooting, corruption, restore, recovery, diagnostic, triologue, reset, stale, backup, repair]
 ---
 
 # Clearing Corrupted or Outdated Sessions

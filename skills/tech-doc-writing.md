@@ -1,24 +1,28 @@
 ---
 name: tech-doc-writing
 description: >
-  Use when creating or updating technical documentation.
-
-  Helps with:
-  - API documentation
-  - README files
-  - technical guides
-  - library documentation
-
-  Relevant for:
-  documentation, docs, readme, api, guide, write
-
-  Example requests:
-  - "write API docs for this endpoint"
-  - "create a README for this library"
-  - "document this API"
-
-  Covers wire formats, response structures, and verification checklists.
-keywords: [documentation, api, writing, technical, best-practices]
+  Use when creating or updating technical documentation — API documentation,
+  README files, technical guides, library documentation, or any developer-
+  facing docs. Covers the full documentation process from pre-writing
+  research to final verification. Pre-writing: gather information from
+  official docs, web search, code examples, and live API experiments to
+  verify behavior. Structure: getting started, installation, basic usage,
+  data flow diagrams (showing what travels over the wire), exact request/
+  response JSON structures, complete copy-paste-ready code examples, API
+  reference, best practices, and troubleshooting. Key principle: show the
+  wire format — users need to understand actual HTTP requests and responses.
+  Documents common pitfalls: incomplete response field documentation,
+  missing complete multi-step workflows (e.g., tool calling full cycle:
+  define → send → receive tool_calls → execute → pass back → final answer),
+  and ignoring streaming response differences (token-by-token chunks vs
+  complete objects, accumulation strategies for thinking fields). Includes
+  a verification checklist covering all response fields, request params,
+  streaming examples, error handling, multi-turn conversations, and
+  cross-referencing with official docs. Also covers PDF generation tips
+  using pdfkit for Node.js. Use for writing API docs, README files,
+  library guides, technical tutorials, or documenting any software
+  interface.
+keywords: [documentation, docs, api, writing, technical, readme, guide, library, tutorial, best-practices, reference, wire-format, response, request, streaming, tool-calling, verification, examples, pdf-generation]
 ---
 
 # Technical Documentation Writing Skill

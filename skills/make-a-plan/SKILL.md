@@ -1,32 +1,26 @@
 ---
 name: coding-task-planner
 description: >
-  Use this before implementing any non-trivial coding task.
-
-  Helps plan tasks such as:
-  - building new features
-  - designing APIs or systems
-  - refactoring code
-  - debugging complex issues
-  - adding integrations or infrastructure
-
-  If the user asks to build or modify code, this skill should be used first.
-
-  Relevant for:
-  build, implement, create, develop,
-  design, architect, plan,
-  refactor, rewrite, improve,
-  debug, fix, investigate,
-  add feature, extend system
-
-  Example requests:
-  - "build a login system"
-  - "refactor this module"
-  - "add caching layer"
-  - "design an API"
-
-  Do NOT use for trivial or one-step tasks.
-keywords: [planning, coding, workflow, best-practices]
+  Use before implementing any non-trivial coding task. This is the primary
+  planning skill — it guides the agent through structured planning before
+  writing code. Covers the full planning workflow: establishing and
+  confirming assumptions with the user (mandatory first step), producing a
+  structured plan with goal, assumptions, task breakdown, acceptance
+  criteria, impact analysis (affected files, breaking changes, risks,
+  dependencies), bold guesses, and open questions. Integrates with plan
+  mode (plan_on/plan_off) to prevent accidental code changes during
+  planning. Covers three critical transitions: fleshing out technical
+  details with trade-off options, splitting large plans into phases
+  (core MVP → enhancements → optimization), and starting coding after
+  user approval. Includes PEX (Progressive Explanation) for explaining
+  complex systems. Use for building new features, designing APIs or
+  systems, refactoring code, debugging complex issues, adding integrations,
+  or any non-trivial implementation task. Documents anti-patterns: coding
+  without confirmed assumptions, making changes during planning, vague
+  tasks, missing acceptance criteria, irreversible decisions without user
+  input. Core principle: vague request → explicit plan → validated approach
+  → implementation. Do NOT use for trivial or one-step tasks.
+keywords: [planning, coding, plan, design, architect, implement, build, create, develop, refactor, rewrite, improve, debug, fix, investigate, feature, system, api, architecture, workflow, approach, strategy, structured, best-practices, plan-mode, task-breakdown]
 ---
 
 # Make-a-Plan Skill
