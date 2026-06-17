@@ -31,6 +31,7 @@ export function createMockContext(workdir: string): AgentContext {
     imgDescribe: vi.fn(),
     requestGrant: vi.fn(async () => ({ approved: true })),
     requestExternalPathAccess: vi.fn(async () => ({ approved: false, resolvedPath: '', reason: 'Path escapes workspace' })),
+    addExternalAutoGrant: vi.fn(),
     getMode: vi.fn(() => 'normal' as const),
     getMindmap: vi.fn(() => null),
     setMindmap: vi.fn(),

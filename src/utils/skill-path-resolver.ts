@@ -66,7 +66,7 @@ function getPackageRoot(): string {
 /**
  * Get the base directory for a skill layer
  */
-function getLayerBaseDir(layer: SkillLayer): string {
+export function getLayerBaseDir(layer: SkillLayer): string {
   switch (layer) {
     case 'user':
       return path.join(os.homedir(), '.mycc-store', 'skills');

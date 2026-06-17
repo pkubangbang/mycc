@@ -24,16 +24,18 @@ export function createMockCore(overrides: Partial<CoreModule> = {}): CoreModule 
     verbose: vi.fn(),
     question: vi.fn(async () => 'test response'),
     webSearch: vi.fn(async () => []),
-    webFetch: vi.fn(async () => ({ title: '', content: '', links: [] })),
+    webFetch: vi.fn(async () => ({ title: '', url: '', content: '', links: [] })),
     imgDescribe: vi.fn(async () => 'image description'),
     requestGrant: vi.fn(async () => ({ approved: true })),
     requestExternalPathAccess: vi.fn(async (tool, path) => ({ approved: true, resolvedPath: path })),
+    addExternalAutoGrant: vi.fn(),
     getMode: vi.fn(() => 'normal' as const),
     getMindmap: vi.fn(() => null),
     setMindmap: vi.fn(),
     getConfusionIndex: vi.fn(() => 0),
     increaseConfusionIndex: vi.fn(),
     resetConfusionIndex: vi.fn(),
+    escAware: (vi.fn() as unknown) as CoreModule['escAware'],
     ...overrides,
   };
 }
@@ -47,6 +49,8 @@ export function createMockTodo(overrides: Partial<TodoModule> = {}): TodoModule 
     updateTodo: vi.fn(() => ({ id: 1, name: 'test', done: true, hash: 'abcdef01' })),
     printTodoList: vi.fn(() => 'No todos.'),
     hasOpenTodo: vi.fn(() => false),
+    findCheckpointTodo: vi.fn(() => null),
+    closeCheckpointTodo: vi.fn(),
     clear: vi.fn(),
     getItems: vi.fn(() => []),
     ...overrides,
@@ -74,6 +78,7 @@ export function createMockSkill(overrides: Partial<SkillModule> = {}): SkillModu
     loadSkills: vi.fn(async () => {}),
     listSkills: vi.fn(() => []),
     getSkill: vi.fn(() => undefined),
+    listAllTools: vi.fn(() => []),
     ...overrides,
   };
 }
@@ -106,6 +111,7 @@ export function createMockBg(overrides: Partial<BgModule> = {}): BgModule {
     printBgTasks: vi.fn(async () => ''),
     hasRunningBgTasks: vi.fn(async () => false),
     killTask: vi.fn(async () => {}),
+    getTask: vi.fn(() => undefined),
     ...overrides,
   };
 }

@@ -15,7 +15,7 @@ import { evaluateGrant } from '../grant/grant-evaluator.js';
 /**
  * Grant scope for external path access
  */
-type GrantScope = 'file' | 'folder' | 'folder_recursive';
+type GrantScope = 'file' | 'folder' | 'folder_recursive' | 'folder_recursive_readonly';
 
 /**
  * Core module implementation for parent process
@@ -268,7 +268,7 @@ export class Core extends BaseCore implements CoreModule {
     requestedPath: string,
   ): Promise<{ approved: boolean; resolvedPath: string; reason?: string }> {
     // Check if already granted
-    const existingGrant = this.findExistingGrant(requestedPath);
+    const existingGrant = this.findExistingGrant(requestedPath, tool);
     if (existingGrant) {
       return { approved: true, resolvedPath: requestedPath };
     }
@@ -304,10 +304,22 @@ export class Core extends BaseCore implements CoreModule {
   }
 
   /**
+   * Pre-grant external path access for a directory and all subdirectories.
+   * Session-scoped — no user prompt is shown for paths under this directory.
+   *
+   * @param dir - Absolute directory path to auto-grant
+   */
+  addExternalAutoGrant(dir: string): void {
+    this.externalGrants.set(dir, 'folder_recursive_readonly');
+  }
+
+  /**
    * Check if a path is covered by an existing session-scoped grant.
+   * @param requestedPath - The resolved absolute path to check
+   * @param tool - The tool requesting access (read-only grants reject write tools)
    * @returns The matching GrantScope, or undefined if no grant covers this path
    */
-  private findExistingGrant(requestedPath: string): GrantScope | undefined {
+  private findExistingGrant(requestedPath: string, tool?: 'read_file' | 'write_file' | 'edit_file'): GrantScope | undefined {
     // Check exact file grant
     if (this.externalGrants.get(requestedPath) === 'file') {
       return 'file';
@@ -315,6 +327,16 @@ export class Core extends BaseCore implements CoreModule {
 
     // Check folder grants
     for (const [grantedPath, scope] of this.externalGrants) {
+      // Read-only grants only allow read_file
+      if (scope === 'folder_recursive_readonly' && tool !== 'read_file') {
+        continue;
+      }
+      if (scope === 'folder_recursive_readonly' && requestedPath.startsWith(grantedPath + path.sep)) {
+        return 'folder_recursive_readonly';
+      }
+      if (scope === 'folder_recursive_readonly' && requestedPath === grantedPath) {
+        return 'folder_recursive_readonly';
+      }
       if (scope === 'folder_recursive' && requestedPath.startsWith(grantedPath + path.sep)) {
         return 'folder_recursive';
       }

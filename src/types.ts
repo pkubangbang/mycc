@@ -331,6 +331,14 @@ export interface CoreModule {
     requestedPath: string,
   ): Promise<{ approved: boolean; resolvedPath: string; reason?: string }>;
   /**
+   * Pre-grant external path access for a directory (session-scoped, no user prompt).
+   * All files within this directory and subdirectories are auto-approved
+   * when requestExternalPathAccess is called.
+   *
+   * @param dir - Absolute path of the directory to auto-grant
+   */
+  addExternalAutoGrant(dir: string): void;
+  /**
    * Get current agent mode ('plan' or 'normal')
    * Used by hooks to prevent false positives during planning
    * @returns 'plan' if in plan mode, 'normal' otherwise

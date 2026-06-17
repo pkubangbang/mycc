@@ -19,6 +19,7 @@ import { Triologue } from './triologue.js';
 import { agentIO } from './agent-io.js';
 import { shouldSkipHealthCheck } from '../config.js';
 import { loader } from '../context/shared/loader.js';
+import { getLayerBaseDir } from '../utils/skill-path-resolver.js';
 import { initializeSession } from '../session/index.js';
 import { ConditionRegistry } from '../hook/conditions.js';
 import { Sequence } from '../hook/sequence.js';
@@ -155,6 +156,12 @@ export async function main(): Promise<void> {
   // Create context
   const ctx = new ParentContext(sessionFilePath);
   ctx.initializeIpcHandlers();
+
+  // Auto-grant read access to skill directories so the LLM can read
+  // skill asset files (cheat sheets, scripts, etc.) without permission prompts.
+  // Project skills (.mycc/skills/) are already inside the workspace — no grant needed.
+  ctx.core.addExternalAutoGrant(getLayerBaseDir('built-in'));
+  ctx.core.addExternalAutoGrant(getLayerBaseDir('user'));
 
   await loader.indexAllSkillsToWiki(ctx.wiki);
   await ctx.wt.syncWorkTrees();

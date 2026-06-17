@@ -114,6 +114,15 @@ export class ChildCore extends BaseCore implements CoreModule {
   }
 
   /**
+   * Pre-grant external path access for a directory (no-op in child process).
+   * Child processes send external path requests to parent via IPC;
+   * the parent's Core handles the actual grant check.
+   */
+  addExternalAutoGrant(_dir: string): void {
+    // No-op: grants are managed by the parent process
+  }
+
+  /**
    * Get current agent mode (plan or normal)
    * Child processes (teammates) are always in normal mode - they execute tasks, not plan
    * Plan mode is only for the lead agent
