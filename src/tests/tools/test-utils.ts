@@ -38,6 +38,7 @@ export function createMockContext(workdir: string): AgentContext {
     getConfusionIndex: vi.fn(() => 0),
     increaseConfusionIndex: vi.fn(),
     resetConfusionIndex: vi.fn(),
+    escAware: (vi.fn() as unknown) as CoreModule['escAware'],
   };
 
   return {

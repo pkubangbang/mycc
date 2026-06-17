@@ -314,6 +314,45 @@ Get-Date -Format "yyyy-MM-dd HH:mm:ss"   # 格式化
 
 ---
 
+### curl 命令 (Windows 内置)
+
+Windows 内置了 `curl.exe`（基于上游 curl 项目），与 Linux/macOS 的 curl 行为一致。
+
+**重要：PowerShell 5.1 的别名冲突**
+
+PowerShell 5.1 定义了一个内置别名 `curl` 指向 `Invoke-WebRequest`，这会遮蔽真正的 `curl.exe`。解决方法：
+
+```powershell
+# 方式一：显式使用 curl.exe（推荐）
+curl.exe -O https://example.com/file.zip
+
+# 方式二：删除别名（仅当前会话有效）
+Remove-Item Alias:curl
+curl -O https://example.com/file.zip
+
+# 方式三：在 PowerShell 7+ 中无此问题，直接使用 curl
+```
+
+**常见用法：**
+
+```powershell
+# 下载文件
+curl.exe -O https://example.com/file.zip
+
+# GET 请求并打印响应
+curl.exe https://api.example.com/data
+
+# JSON POST 请求
+curl.exe -X POST https://api.example.com/items `
+    -H "Content-Type: application/json" `
+    -d '{"name":"widget"}'
+
+# 查看帮助
+curl.exe --help
+```
+
+---
+
 ## 8. 管道与常用模式
 
 ```powershell
