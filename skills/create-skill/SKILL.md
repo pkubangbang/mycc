@@ -224,14 +224,57 @@ Include common mistakes and solutions:
 **Solution:** Wrap in try-catch with context.
 ```
 
-### Step 6: Create the File
+### Step 6: Create the Skill File(s)
 
-Create the skill in `.mycc/skills/` folder:
+Create the skill in `.mycc/skills/` folder. There are two ways to organize a skill:
+
+#### Option A: Single-File Skill (Simple Skills)
+
+For small, self-contained skills, create a single `SKILL.md` file directly in the skills directory:
+
+```
+.mycc/skills/
+└── my-skill.md              # 单文件，所有内容都在此
+```
+
+**When to use:** Small skills (< 200 lines), no supporting files needed, simple reference or lesson.
+
+#### Option B: Folder + SKILL.md (Structured Skills)
+
+For larger skills that benefit from a directory structure, create a folder with `SKILL.md` as the entry point, and reference other files from it:
+
+```
+.mycc/skills/
+└── my-skill/                # 文件夹
+    ├── SKILL.md             # 入口文件，引用其他文件
+    ├── cheatsheet-a.md      # 被引用的速查表
+    ├── cheatsheet-b.md      # 被引用的速查表
+    └── examples/            # 子目录
+        └── sample.txt
+```
+
+**When to use:** Large skills (> 200 lines), multiple reference files, cheat sheets, examples, or any content that benefits from separation.
+
+**How to reference:** In `SKILL.md`, use relative links to reference sibling files:
+
+```markdown
+## Reference: Cheat Sheets
+
+- [PowerShell Cheat Sheet](./powershell-cheatsheet.md)
+- [Bash Cheat Sheet](./bash-cheatsheet.md)
+- [CMD Cheat Sheet](./cmd-cheatsheet.md)
+```
+
+**How the agent loads it:** When the agent loads the skill via `skill_load(name="my-skill")`, it reads `SKILL.md` from the folder. The referenced files are available alongside it — the agent can read them using `read_file` as needed.
+
+**Steps for folder-based skills:**
 
 1. Create `.mycc/skills/skill-name/` folder
-2. Create `SKILL.md` file inside
-3. Copy template files if needed
-4. Write the skill content
+2. Create `SKILL.md` file inside as the entry point
+3. Create supporting files (cheatsheets, examples, etc.) alongside it
+4. In `SKILL.md`, use relative links to reference the supporting files
+5. Copy template files if needed
+6. Write the skill content
 
 ### Step 7: Verify Quality
 
@@ -264,9 +307,10 @@ Iterate based on user feedback to improve the skill.
 
 ## Naming Conventions
 
-- Use lowercase with hyphens: `tech-doc-writing.md`, not `TechDocWriting.md`
+- Use lowercase with hyphens: `tech-doc-writing.md` or `tech-doc-writing/SKILL.md`, not `TechDocWriting.md`
 - Be descriptive: `api-error-handling.md`, not `errors.md`
-- Match name in frontmatter: filename and `name:` should match
+- Match name in frontmatter: filename/folder name and `name:` should match
+- For folder-based skills: the folder name is the skill name (e.g., `my-skill/`), and the entry file is always `SKILL.md`
 
 ## Quality Guidelines
 
@@ -305,7 +349,9 @@ User: "create a skill for handling docx files"
 
 4. **Write Skill:** Follow process template structure
 
-5. **Create File:** `.mycc/skills/docx-handling/SKILL.md`
+5. **Create Files:**
+   - Option A (simple): `.mycc/skills/docx-handling.md`
+   - Option B (structured): `.mycc/skills/docx-handling/SKILL.md` + supporting files
 
 6. **Verify:** Check quality checklist
 
@@ -320,8 +366,12 @@ Creating skills is a user-initiated process:
 2. Research topic
 3. Select template (process/reference/lesson)
 4. Write quality content
-5. Create in `.mycc/skills/`
+5. Create in `.mycc/skills/` (single `SKILL.md` file, or folder with `SKILL.md` + supporting files)
 6. Verify and present
 7. Iterate based on feedback
 
 Use the templates in this folder as starting points. Ensure descriptions are detailed for RAG search. Always create skills in `.mycc/skills/`.
+
+**Choosing between single-file and folder:**
+- **Single file** (`my-skill.md`): Simple, self-contained skills under ~200 lines
+- **Folder** (`my-skill/SKILL.md` + files): Larger skills with cheat sheets, examples, or multiple reference files that benefit from separation

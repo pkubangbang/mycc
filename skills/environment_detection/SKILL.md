@@ -261,3 +261,11 @@ Agent uses brief():
 - [ ] Listed available executables
 - [ ] Inferred user intention
 - [ ] Reported findings via `brief()` with confidence level
+
+---
+
+## Reference: Cheat Sheets
+
+- [PowerShell Cheat Sheet](./powershell-cheatsheet.md) -- PowerShell 语法速查，涵盖变量、数组、操作符、控制流、函数、Cmdlet、管道、错误处理、模块管理、别名等
+- [Bash Cheat Sheet](./bash-cheatsheet.md) -- Bash 语法速查，涵盖基础语法、grep、sed、jq、实用管道组合等
+- [CMD Cheat Sheet](./cmd-cheatsheet.md) -- CMD (Command Prompt) 语法速查，涵盖变量、文件操作、重定向、控制流、批处理、网络命令、系统管理、FINDSTR 正则等
