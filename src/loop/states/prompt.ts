@@ -26,6 +26,7 @@ import { openMultilineEditor } from '../../utils/multiline-input.js';
 import { readSession, writeSession } from '../../session/index.js';
 import { setSlashQuery } from './slash.js';
 import { evaluateWrapUp, clearWrapUp } from '../esc-wrap-up.js';
+import { extractKeywords } from '../keyword-extractor.js';
 
 /** Captured once per machine lifetime */
 let bookmarkCaptured = false;
@@ -152,6 +153,13 @@ export async function handlePrompt(
       bookmarkCaptured = true;
     }
   }
+
+  // Extract English keywords from user query for proactive skill discovery.
+  // Runs asynchronously with ESC support — on interrupt, silently yields empty.
+  turn.extractedKeywords = await env.ctx.core.escAware(
+    async (ac) => extractKeywords(query, ac.signal),
+    () => [] as string[],
+  );
 
   return AgentState.COLLECT;
 }

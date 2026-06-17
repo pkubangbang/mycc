@@ -109,7 +109,11 @@ export const DEFAULT_RETRY_CONFIG: RetryConfig = {
 };
 
 /** Standard retryChat request shape used by all providers. */
-export type RetryChatRequest = Omit<ChatRequest, 'stream'> & { stream?: false };
+export type RetryChatRequest = Omit<ChatRequest, 'stream'> & {
+  stream?: false;
+  /** Force tool choice for structured output (deepseek also reads this) */
+  tool_choice?: 'none' | 'auto' | 'required' | string;
+};
 
 /** Standard retryChat config shape. */
 export type RetryChatConfig = Partial<RetryConfig> & {

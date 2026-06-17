@@ -147,7 +147,31 @@ export async function handleCollect(
       turn.nextBriefNudge = 5;
     }
 
-    // 6. Log message count and token consumption in verbose mode
+    // 6. Consume extracted keywords for proactive skill discovery.
+    //    Matches extracted English keywords against loaded skill names and keywords.
+    //    Injects a SKILLS note so the LLM knows which skills to load.
+    if (turn.extractedKeywords.length > 0) {
+      const keywords = turn.extractedKeywords;
+      turn.extractedKeywords = []; // consume — only fire once per turn
+
+      const allSkills = ctx.skill.listSkills();
+      const matched = allSkills.filter(s => {
+        const nameLower = s.name.toLowerCase();
+        const kwLower = s.keywords.map(k => k.toLowerCase());
+        return keywords.some(kw =>
+          nameLower.includes(kw) ||
+          kwLower.some(k => k.includes(kw) || kw.includes(k)),
+        );
+      });
+
+      if (matched.length > 0) {
+        const names = matched.map(s => s.name).join(', ');
+        triologue.note('HINT',
+          `Possible relevant skills: ${names}. Use skill_search(search="...") to discover, then skill_load(name="<exact_name>") to load.`);
+      }
+    }
+
+    // 7. Log message count and token consumption in verbose mode
     if (isVerbose()) {
       const tokenCount = triologue.getTokenCount();
       const tokenThreshold = triologue.getTokenThreshold();
