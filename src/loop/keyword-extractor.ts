@@ -66,7 +66,13 @@ export async function extractKeywords(
         messages: [
           {
             role: 'user',
-            content: `Extract 2-5 English keywords from this query for skill matching. Focus on actionable concepts, tools, or objects. Return ONLY via the extract_keywords tool.\n\nQuery: ${trimmed}`,
+            content: `Extract 2-5 English keywords from this query for skill matching.
+Focus on actionable concepts, tools, or objects.
+Keywords can be multi-word like "best practice".
+Any of the following keywords must be included if the query implies: "plan, learning, collaboration, recovery".
+Return ONLY via the extract_keywords tool.
+
+Query: ${trimmed}`,
           },
         ],
         tools: [EXTRACT_KEYWORDS_TOOL],
