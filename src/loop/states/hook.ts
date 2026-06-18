@@ -257,7 +257,7 @@ export async function handleHook(
     // 3.5. Handle compact request (highest priority — short-circuits all processing)
     if (hookResult.compactRequested) {
       ctx.core.brief('info', 'compact', 'Compacting context due to intent language confusion...');
-      await triologue.compact();
+      await triologue.compact(turn.lastUserQuery || undefined);
 
       // Reset stat counts after hook-requested compaction — old context is
       // now summarized and accumulated confusion/sequence events are stale.

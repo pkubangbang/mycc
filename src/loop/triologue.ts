@@ -68,6 +68,12 @@ export class Triologue {
   private projectContext: Message[] = [];
 
   /**
+   * The last real user query (not system notes).
+   * Tracked to preserve user intent during auto-compaction.
+   */
+  private lastUserQuery: string = '';
+
+  /**
    * Wrap-up management: marks the message index at which a wrap-up turn started.
    * - beginWrapUp() sets this to messages.length, adds a WRAP_UP user message
    * - finishWrapUp() adds an agent message (keeps mark for potential rollback)
@@ -209,6 +215,8 @@ export class Triologue {
       this.options.onMessage(this.messages);
       return;
     }
+    // Track last real user query for auto-compact context preservation
+    this.lastUserQuery = content;
     this.addMessage({ role: 'user', content });
   }
 
@@ -615,6 +623,14 @@ export class Triologue {
   }
 
   /**
+   * Get the last real user query (not system notes).
+   * Used by auto-compact to preserve user intent in the summary.
+   */
+  getLastUserQuery(): string {
+    return this.lastUserQuery;
+  }
+
+  /**
    * Get current token count
    */
   getTokenCount(): number {
@@ -795,7 +811,7 @@ export class Triologue {
     const conversationText = minifyMessages(this.messages);
 
     const knowledgeInstruction = domains.length > 0
-      ? `4) Important knowledge to persist (if any)\n\n` +
+      ? `### Knowledge Persistence\n` +
       `Available wiki domains:\n${domainList}\n\n` +
       `IMPORTANT: Only persist knowledge that matches one of the available domains above.\n` +
       `For knowledge worth remembering, note as: "Knowledge: [domain] - [fact/rule]"\n` +
@@ -806,31 +822,46 @@ export class Triologue {
       ? `\n**Focus Area:** Pay special attention to information related to "${focus}" and ensure the summary captures all relevant details about this topic.\n`
       : '';
 
+    const userQueryInstruction = this.lastUserQuery
+      ? `\n**User's Last Instruction:** "${this.lastUserQuery}"\nEnsure the summary preserves ALL constraints, pending tasks, and requests from this instruction. The agent should continue working on this after the compact.\n`
+      : '';
+
     const response = await retryChat({
       model: MODEL,
       messages: [
         {
           role: 'user',
           content:
-            `Summarize this conversation for continuity. Include:\n` +
-            `1) What was accomplished\n` +
-            `2) Current state\n` +
-            `3) Key decisions made\n${knowledgeInstruction
-            }${focusInstruction}${conversationText}`,
+            `Summarize this conversation for continuity. Cover the following sections:\n\n` +
+            `### 1) What Was Accomplished\n` +
+            `Key actions taken, files created/modified, findings made.\n\n` +
+            `### 2) Current State\n` +
+            `What the agent now knows — be specific enough that subsequent turns do NOT need to re-verify findings already made.\n` +
+            `Include any pending or unfinished tasks.\n\n` +
+            `### 3) Key Decisions Made\n` +
+            `Design choices, fix strategies, or workflow decisions.\n\n` +
+            `${knowledgeInstruction}` +
+            `${focusInstruction}` +
+            `${userQueryInstruction}` +
+            `${conversationText}`,
         },
       ],
     });
 
     const summary = response.message.content || '(no summary)';
 
-    const summaryPrefix = focus
-      ? `[Conversation compressed. Focus: ${focus}. Transcript: ${transcriptPath}]\n\n`
-      : `[Conversation compressed. Transcript: ${transcriptPath}]\n\n`;
+    // Build a compact summary pair that includes user intent preservation
+    const focusPrefix = focus ? `Focus: ${focus}. ` : '';
+    const userQueryNote = this.lastUserQuery
+      ? `\n\n**Previous user instruction:** ${this.lastUserQuery}`
+      : '';
+
+    const summaryPrefix = `[Conversation compressed. ${focusPrefix}Transcript: ${transcriptPath}]\n\n`;
 
     return [
       {
         role: 'user',
-        content: `${summaryPrefix}${summary}`,
+        content: `${summaryPrefix}${summary}${userQueryNote}`,
       },
       {
         role: 'assistant',
@@ -838,7 +869,6 @@ export class Triologue {
       },
     ];
   }
-
   // === Default Callbacks ===
 
   private defaultOnMisorder(warning: MisorderWarning): void {

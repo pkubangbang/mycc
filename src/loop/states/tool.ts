@@ -145,8 +145,8 @@ export async function handleTool(
           'Tool skipped due to context overflow.'
         );
 
-        // Run compact immediately
-        await triologue.compact();
+        // Run compact immediately with focus on the current task
+        await triologue.compact(turn.lastUserQuery || undefined);
 
         // Reset stat counts: confusion index and sequence events are stale
         // after compaction — the old context has been summarized away.
@@ -220,7 +220,7 @@ export async function handleTool(
             'Tool skipped due to context overflow - auto-compacting.',
             'Tool skipped due to context overflow.'
           );
-          await triologue.compact();
+          await triologue.compact(turn.lastUserQuery || undefined);
 
           // Reset stat counts after compaction
           ctx.core.resetConfusionIndex();

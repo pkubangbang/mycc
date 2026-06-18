@@ -137,9 +137,21 @@ export async function handleLlm(
 
       // Handle edge case where LLM returns empty content AND no tool calls
       if (!pass.assistantContent && pass.rawToolCalls.length === 0) {
-        ctx.core.verbose('llm', 'LLM returned empty response (no content, no tool calls). Triggering automatic retry via triologue.note().');
+        ctx.core.verbose('llm', 'LLM returned empty response (no content, no tool calls). Injecting synthetic brief() to prompt re-engagement.');
         if (triologue.getLastRole() !== 'tool') {
-          triologue.note('CONTINUE', 'Continue with your task.');
+          // Inject a synthetic brief tool call so the LLM sees its own
+          // "Let me see what to do next." thought in the conversation,
+          // rather than a passive [CONTINUE] note. Confidence 7 means
+          // slightly uncertain, nudging confusion index toward hint threshold.
+          const briefCallId = Math.random().toString(36).slice(2, 10);
+          triologue.agent('', [{
+            id: briefCallId,
+            function: {
+              name: 'brief',
+              arguments: { message: 'Let me see what to do next.', confidence: 7 },
+            },
+          }]);
+          triologue.tool('brief', 'OK', briefCallId);
         }
         continue; // Re-run the while loop and call LLM again
       }
