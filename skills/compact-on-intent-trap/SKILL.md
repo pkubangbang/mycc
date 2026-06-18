@@ -14,7 +14,7 @@ description: >
   intent language table) back into the attention window. Use when the agent
   repeatedly fails bash intent validation with [Intent] errors despite
   receiving correction hints.
-keywords: [intent, trap, bash, compact, context, error, syntax, malformed, recovery, attention, degradation, intent-language]
+keywords: [intent, trap, bash, compact, context, error, syntax, malformed, recovery, attention, degradation, "intent language"]
 when: "before executing bash, if 3 or more bash tool results start with 'Error: [Intent]' (within first 20 chars) and total tool calls exceeds 20, then compact the context"
 ---
 

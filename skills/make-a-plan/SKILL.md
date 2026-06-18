@@ -20,7 +20,7 @@ description: >
   tasks, missing acceptance criteria, irreversible decisions without user
   input. Core principle: vague request → explicit plan → validated approach
   → implementation. Do NOT use for trivial or one-step tasks.
-keywords: [planning, coding, plan, design, architect, implement, build, create, develop, refactor, rewrite, improve, debug, fix, investigate, feature, system, api, architecture, workflow, approach, strategy, structured, best-practices, plan-mode, task-breakdown]
+keywords: [plan, design, architecture, refactor, rewrite, improve, debug, fix, investigate, feature, structured, "best practice", "plan mode", breakdown]
 ---
 
 # Make-a-Plan Skill

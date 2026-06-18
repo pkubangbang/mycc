@@ -17,7 +17,7 @@ description: >
   (lowercase-hyphenated), anti-patterns to avoid, and iteration based on
   user feedback. Do NOT use for automatic knowledge distillation after
   tasks — only when explicitly requested.
-keywords: [skill, create, new, template, documentation, knowledge, meta, process, reference, lesson, hookish, frontmatter, RAG, best-practices, discoverability, reusable]
+keywords: [skill, create, new, template, documentation, knowledge, meta, process, reference, lesson, hookish, frontmatter, RAG, "best practice", discoverability, reusable]
 ---
 
 # Creating Effective Skills

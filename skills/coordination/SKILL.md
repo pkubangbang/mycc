@@ -14,7 +14,7 @@ description: >
   work across teammates, running tasks in parallel, coordinating multi-agent
   workflows, or managing a team of agents. Avoid for purely sequential
   tasks with no parallelism benefit or quick one-off operations.
-keywords: [team, coordination, workflow, parallel, distribute, spawn, teammate, multi-agent, delegate, collaborate, issue, task, broadcast, handoff, concurrency, tm_create, tm_await, order]
+keywords: [team, coordination, workflow, parallel, distribute, spawn, teammate, "multi agent", delegate, collaborate, issue, task, broadcast, handoff, concurrency, tm_create, tm_await, order]
 ---
 
 # Team Coordination Best Practices

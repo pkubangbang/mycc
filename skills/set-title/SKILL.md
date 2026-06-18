@@ -13,7 +13,7 @@ description: >
   session — once mycc_title is called, the condition no longer matches.
   Use when you need session identification in multi-window setups,
   terminal tab management, or tracking what each mycc instance is doing.
-keywords: [title, terminal, session, reminder, identification, update, window, tab, label, rename, mycc_title, multi-window, workspace]
+keywords: [title, terminal, session, reminder, identification, update, window, tab, label, rename, mycc_title, "multi window", workspace]
 when: "after brief or recap is used, if total tool calls exceeds 10 and mycc_title has not been used yet this session, then prompt the agent to set a descriptive terminal title"
 ---
 

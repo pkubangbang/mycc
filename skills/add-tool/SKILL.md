@@ -13,7 +13,7 @@ description: >
   sync handlers for async operations. Use when the user asks to create,
   add, implement, or extend a custom tool. Relevant for tool development,
   custom tool creation, extending mycc with new capabilities.
-keywords: [tool, development, create, add, implement, extend, new, custom, handler, schema, scope, validation, logging, error-handling, template, workflow]
+keywords: [tool, development, create, add, implement, extend, new, custom, handler, schema, scope, validation, logging, "error handling", template, workflow]
 ---
 
 # Adding a New Tool

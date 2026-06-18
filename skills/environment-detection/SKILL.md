@@ -16,7 +16,7 @@ description: >
   about the user's intentions for the current directory. Also covers
   common pitfalls: assuming project structure without checking, ignoring
   system folder constraints, and missing available tool detection.
-keywords: [environment, detection, directory, project, git, executables, tools, cwd, working-directory, layout, exploration, workspace, setup, context, system, discover, analyze, assess]
+keywords: [environment, detection, directory, project, git, executables, tools, cwd, "working directory", layout, exploration, workspace, setup, context, system, discover, analyze, assess]
 ---
 
 # Environment Detection
