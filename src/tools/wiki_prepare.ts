@@ -40,6 +40,7 @@ export const wikiPrepareTool: ToolDefinition = {
     };
 
     const result = await ctx.wiki.prepare(document);
+    ctx.core.brief('info', 'wiki_prepare', `Document "${document.title}" (${document.domain}): ${result.accepted ? 'accepted' : 'rejected'}`);
     return JSON.stringify(result, null, 2);
   },
 };
