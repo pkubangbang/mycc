@@ -1,5 +1,5 @@
 ---
-name: coding-task-planner
+name: make-a-plan
 description: >
   Use before implementing any non-trivial coding task. This is the primary
   planning skill — it guides the agent through structured planning before
