@@ -13,6 +13,7 @@ import { startWrapUp } from '../esc-wrap-up.js';
 import { isVerbose } from '../../config.js';
 import { loader } from '../../context/shared/loader.js';
 import type { SequenceEvent } from '../../hook/sequence.js';
+import { getSkillTriologueStatus } from '../../utils/skill-dedup.js';
 
 // Confusion threshold for hint generation
 const CONFUSION_THRESHOLD = 10;
@@ -149,7 +150,9 @@ export async function handleCollect(
 
     // 6. Consume extracted keywords for proactive skill discovery.
     //    Matches extracted English keywords against loaded skill names and keywords.
-    //    Injects a SKILLS note so the LLM knows which skills to load.
+    //    Injects a HINT note with skill names and descriptions so the LLM can
+    //    decide which skills to load without needing an extra skill_search step.
+    //    Dedups against skills already loaded or suggested in the triologue.
     if (turn.extractedKeywords.length > 0) {
       const keywords = turn.extractedKeywords;
       turn.extractedKeywords = []; // consume — only fire once per turn
@@ -165,9 +168,39 @@ export async function handleCollect(
       });
 
       if (matched.length > 0) {
-        const names = matched.map(s => s.name).join(', ');
-        triologue.note('HINT',
-          `Possible relevant skills: ${names}. Use skill_search(search="...") to discover, then skill_load(name="<exact_name>") to load.`);
+        const newSkills: string[] = [];
+        const suggestedSkills: string[] = [];
+        const loadedSkills: string[] = [];
+
+        for (const skill of matched) {
+          const status = getSkillTriologueStatus(triologue, skill);
+          switch (status) {
+            case 'new':
+              const desc = skill.description ? ` (${skill.description})` : '';
+              newSkills.push(`${skill.name}${desc}`);
+              break;
+            case 'suggested':
+              suggestedSkills.push(skill.name);
+              break;
+            case 'loaded':
+              loadedSkills.push(skill.name);
+              break;
+          }
+        }
+
+        const lines: string[] = [];
+        if (newSkills.length > 0) {
+          lines.push(`New relevant skills: ${newSkills.join(', ')}. Use skill_load(name="<exact_name>") to load them.`);
+        }
+        if (suggestedSkills.length > 0) {
+          lines.push(`Also suggesting: ${suggestedSkills.join(', ')}. Use skill_load(name="<exact_name>") to load it.`);
+        }
+        if (loadedSkills.length > 0) {
+          lines.push(`The below skills are loaded and also relevant: ${loadedSkills.join(', ')}.`);
+        }
+        lines.push('Note: you can also use skill_search to search for skills semantically.');
+
+        triologue.note('HINT', lines.join('\n'));
       }
     }
 
