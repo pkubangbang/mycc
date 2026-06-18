@@ -723,52 +723,6 @@ export class Triologue {
   }
 
   /**
-   * Handle misordered role transition
-   */
-  private handleMisorder(newRole: Role, newMessage: Partial<Message>): never {
-    const lastRole = this.getLastRole();
-    const lastMessage = this.messages[this.messages.length - 1];
-
-    const gap = this.diagnoseGap(newRole);
-
-    this.options.onMisorder({
-      from: lastRole!,
-      to: newRole,
-      gap,
-      context: { lastMessage, newMessage },
-    });
-
-    // Auto-recover if not in debug mode
-    if (attemptAutoFix(this, 'invalid_sequence', lastRole) === 'recovered') {
-      // Recovery applied; inject the attempted message via bypass and throw a specific
-      // error to signal the caller that this should not have happened but was fixed.
-      // Since handleMisorder is a private method that returns never, we need to throw.
-      // But the caller can catch this and continue.
-      throw new Error(`TP auto-recovered: invalid role transition ${lastRole} → ${newRole} (gap: ${gap})`);
-    }
-
-    this.throwTpViolation(`invalid role transition ${lastRole} → ${newRole} (gap: ${gap})`);
-  }
-
-  /**
-   * Diagnose the gap type for a misordered transition
-   */
-  private diagnoseGap(newRole: Role): MisorderWarning['gap'] {
-    const lastRole = this.getLastRole();
-
-    if (lastRole === 'user' && newRole === 'tool') {
-      return 'missing_assistant';
-    }
-    if (lastRole === 'assistant' && newRole === 'assistant') {
-      return 'unexpected_duplicate';
-    }
-    if (lastRole === 'tool' && newRole === 'user') {
-      return 'missing_assistant';
-    }
-    return 'invalid_sequence';
-  }
-
-  /**
    * Update token count incrementally
    */
   private updateTokenCount(message: Message): void {
