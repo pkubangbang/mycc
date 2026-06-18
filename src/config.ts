@@ -47,10 +47,10 @@ export function loadEnv(): void {
 
 // Parse CLI args once at startup
 const args = minimist(process.argv.slice(2), {
-  boolean: ['v', 'verbose', 'skip-healthcheck', 'setup', 'debug-eval', 'debug-tp'],
+  boolean: ['v', 'verbose', 'skip-healthcheck', 'setup', 'debug-eval', 'debug-tp', 'debug-prompt'],
   string: ['session'],
   alias: { v: 'verbose' },
-  default: { v: false, session: null, 'skip-healthcheck': false, setup: false, 'debug-eval': false, 'debug-tp': false },
+  default: { v: false, session: null, 'skip-healthcheck': false, setup: false, 'debug-eval': false, 'debug-tp': false, 'debug-prompt': false },
 });
 
 /**
@@ -117,6 +117,14 @@ export function isDebuggingEval(): boolean {
  */
 export function isDebuggingTp(): boolean {
   return args['debug-tp'] || false;
+}
+
+/**
+ * Check if debug-prompt mode is enabled (--debug-prompt flag)
+ * When enabled, extracted keywords are printed to the console during prompt stage.
+ */
+export function isDebuggingPrompt(): boolean {
+  return args['debug-prompt'] || false;
 }
 
 /**

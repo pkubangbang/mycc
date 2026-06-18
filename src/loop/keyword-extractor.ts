@@ -10,7 +10,8 @@
  * the extract_keywords tool, avoiding fragile text parsing.
  */
 
-import { retryChat, MODEL } from '../engine/chat-provider.js';
+import { retryChat, MODEL, stopSpinner } from '../engine/chat-provider.js';
+import { startSpinner } from '../engine/chat-helpers.js';
 import type { Tool } from '../types.js';
 
 /** Tool definition for structured keyword extraction */
@@ -57,6 +58,8 @@ export async function extractKeywords(
   if (trivialPatterns.test(trimmed)) return [];
 
   try {
+    startSpinner('Parsing');
+
     const response = await retryChat(
       {
         model: MODEL,
@@ -72,6 +75,8 @@ export async function extractKeywords(
       { signal, noSpinner: true, maxRetries: 1 },
     );
 
+    stopSpinner();
+
     const toolCalls = response.message.tool_calls;
     if (!toolCalls || toolCalls.length === 0) return [];
 
@@ -84,6 +89,7 @@ export async function extractKeywords(
       .map((kw: unknown) => String(kw).trim().toLowerCase())
       .filter((kw: string) => kw.length > 0);
   } catch {
+    stopSpinner();
     // Silent degradation — empty result means "no keywords extracted"
     return [];
   }

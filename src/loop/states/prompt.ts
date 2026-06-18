@@ -27,6 +27,7 @@ import { readSession, writeSession } from '../../session/index.js';
 import { setSlashQuery } from './slash.js';
 import { evaluateWrapUp, clearWrapUp } from '../esc-wrap-up.js';
 import { extractKeywords } from '../keyword-extractor.js';
+import { isDebuggingPrompt } from '../../config.js';
 
 /** Captured once per machine lifetime */
 let bookmarkCaptured = false;
@@ -160,6 +161,10 @@ export async function handlePrompt(
     async (ac) => extractKeywords(query, ac.signal),
     () => [] as string[],
   );
+
+  if (isDebuggingPrompt() && turn.extractedKeywords.length > 0) {
+    console.log(chalk.yellow(`[debug-prompt] keywords: ${turn.extractedKeywords.join(', ')}`));
+  }
 
   return AgentState.COLLECT;
 }
