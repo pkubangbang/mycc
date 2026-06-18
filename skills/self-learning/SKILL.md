@@ -119,6 +119,12 @@ Input → [Load Profile] → [Diagnose] → [Build Roadmap] → [Tutor Loop] →
    ```
    Write `sigma/{topic}/README.md` with attribution to the original creator and the 2-Sigma principle.
 
+6. **Create a todo for the overall session:**
+   ```markdown
+   todo_create(name="Teach {topic}: {concept_count} concepts", note="Session started at {timestamp}")
+   ```
+   This todo tracks the overall session progress. Update it as concepts are completed.
+
 ### Step 1: Diagnose Level
 
 **Goal**: Determine what the learner already knows. This shapes everything.
@@ -146,12 +152,19 @@ Based on diagnosis, create a structured learning path:
 2. **Mark mastery status**: `not-started` | `in-progress` | `mastered` | `skipped`
 3. **Save to `session.md`** with concept map, misconceptions table, and session log.
 
-4. **Generate visual roadmap** → `roadmap.html`
+4. **Create todos for each concept:**
+   After decomposing the topic into concepts, create a todo for each concept to track progress:
+   ```markdown
+   todo_create(name="Teach concept {n}: {concept_name}")
+   ```
+   This helps you track which concepts have been covered and which remain. Mark each as done when the concept passes mastery check and practice phase.
+
+5. **Generate visual roadmap** → `roadmap.html`
    - Show all concepts as nodes with dependency arrows
    - Color-code by status: gray (not started), blue (in progress), green (mastered)
    - Open in browser: use the `bash` tool to run `open roadmap.html` (Linux/macOS) or `start roadmap.html` (Windows)
 
-5. **Generate concept map** → `concept-map/` using Excalidraw HTML template
+6. **Generate concept map** → `concept-map/` using Excalidraw HTML template
    - Show topic hierarchy, relationships between concepts
    - Update as learner progresses
 
@@ -236,6 +249,12 @@ Ask learner self-assessment via `question` tool BEFORE revealing evaluation:
 
 If mastery NOT met: check misconceptions table, cycle back with targeted questions.
 
+**Mark concept todo as done:**
+When a concept passes the mastery check and practice phase, mark its todo as completed:
+```markdown
+todo_update(id=<id>, hash=<hash>, name="Teach concept {n}: {concept_name}", done=true)
+```
+
 #### 3g. Practice Phase (REQUIRED before marking mastered)
 
 Understanding ≠ ability. Give the learner a **small practice task** (2-5 minutes):
@@ -247,13 +266,24 @@ Practice is pass/fail. Pass → mark mastered. Fail → diagnose gap and cycle b
 ### Step 4: Session Milestones & End
 
 **On session end**:
-1. Update `session.md` with final state
-2. Update `sigma/{topic}/learner-profile.md` with cross-topic insights
+1. **Create todos for output files** before generating them:
+   ```markdown
+   todo_create(name="Generate summary.html for {topic}")
+   todo_create(name="Update learner-profile.md for {topic}")
+   ```
+   Mark each as done after the file is generated.
+
+2. Update `session.md` with final state
+3. Update `sigma/{topic}/learner-profile.md` with cross-topic insights
    - Learning style, misconception patterns, mastered topics, metacognition
    - Only add patterns observed across 2+ sessions
    - Keep under 80 lines
-3. Generate `summary.html` with achievements and areas for further study
-4. Use the `brief` tool to report session summary to user
+4. Generate `summary.html` with achievements and areas for further study
+5. **Mark the overall session todo as done:**
+   ```markdown
+   todo_update(id=<id>, hash=<hash>, name="Teach {topic}: {concept_count} concepts", done=true)
+   ```
+6. Use the `brief` tool to report session summary to user
 
 ### Resuming Sessions
 
