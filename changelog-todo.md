@@ -52,7 +52,7 @@ When updating the changelog, use the following procedure:
 - [ ] In the plan mode, the produced plan will have self-debating.
 - [ ] In the plan mode, the plan may well have many options but mycc does not break them down and discuss with the user.
 - [ ] tool loader may have memory leak
-- [ ] deepseek api when showing wrap-up will output like
+- [x] deepseek api when showing wrap-up will output like
    ```
    .================================== 10:24:14 ===================================.
    <｜｜DSML｜｜tool_calls>
@@ -62,3 +62,6 @@ When updating the changelog, use the following procedure:
    </｜｜DSML｜｜tool_calls>
    '=============================================================================='
    ```
+
+- [ ] subsequent triologue.note() call will not show in the jsonl.
+- [ ] LLM blind-spot: I see a tool/skill that could help me, but I don't load it because I think I already know the domain.
