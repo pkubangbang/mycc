@@ -179,8 +179,6 @@ function buildCommonSections(): string {
   return [
     buildVerificationSection(),
     '',
-    buildSelfLearningSection(),
-    '',
     buildPlatformSection(),
     '',
     buildIntentLanguageSection(),
@@ -203,7 +201,7 @@ function buildKnowledgeBoundarySection(): string {
     '- **Recall**: Explore the mindmap knowledge tree. Use `recall(path="/")` to discover available knowledge. START HERE for project context.',
     '- **Skills**: Specialized knowledge for specific tasks. Use `skill_search(search="...")` to discover relevant skills.',
     '- **Wiki**: Project knowledge base (RAG). Use `wiki_get(query, domain)` to retrieve documents.',
-    '- **Teammates**: Parallel expertise. Use `tm_create(name, role, prompt)` to spawn specialists with your question as the prompt.',
+    '- **Teammates**: Parallel expertise. If teammates exist, use `mail_to` to consult them with your question.',
     '- **Web**: External information from the internet. Use `web_search(query)` and `web_fetch(url)` as LAST RESORT.',
     '',
     '**Priority Rule**: Always check local knowledge sources (Recall → Skills → Wiki) BEFORE searching the web.',
@@ -237,29 +235,6 @@ function buildKnowledgeBoundarySection(): string {
   return lines.join('\n');
 }
 
-
-function buildSelfLearningSection(): string {
-  return [
-    '## Self-Learning Behavior',
-    '',
-    'You are expected to learn and improve from your own experience:',
-    '',
-    '### Learning from Mistakes',
-    '- When you make an error (syntax, logic, tool misuse), identify the root cause and adjust your approach',
-    '- If the same type of error repeats, change your strategy — don\'t keep trying the same thing',
-    '- Use wiki_put to persist important lessons: domain="pitfall", title="<what went wrong>", content="<root cause and fix>"',
-    '',
-    '### Proactive Knowledge Building',
-    '- When you discover a non-obvious pattern, convention, or gotcha in the codebase, store it in wiki',
-    '- Before starting a complex task, check if relevant wiki entries exist',
-    '- If you\'re unsure about something, seek knowledge (recall, wiki_get, skill_load) before guessing',
-    '',
-    '### Continuous Improvement',
-    '- After completing a task, reflect briefly on what worked and what didn\'t',
-    '- If you notice a gap in your understanding, fill it proactively',
-    '- Adapt your workflow based on what\'s effective for the current project',
-  ].join('\n');
-}
 
 function buildContextManagementSection(): string {
   return `## Checkpoint and recap
@@ -315,7 +290,7 @@ You are in PLAN MODE. Your goal is NOT to implement, but to:
 ## Allowed Actions
 
 You CAN:
-- Read files (read_file, bash with cat/ls/grep/find)
+- Read files (read_file, bash (READ verb only))
 - Explore the codebase structure
 - Search the web for documentation
 - Access knowledge (recall, wiki_get, skill_load)
@@ -357,7 +332,7 @@ But your FINAL plan must be:
 
 ${buildVerificationSection()}
 
-${buildSelfLearningSection()}
+${buildPlatformSection()}
 
 ${buildKnowledgeBoundarySection()}
 
@@ -385,7 +360,7 @@ You are in PLAN MODE. Your goal is NOT to implement, but to:
 ## Allowed Actions
 
 You CAN:
-- Read files (read_file, bash with cat/ls/grep/find)
+- Read files (read_file, bash (READ verb only))
 - Explore the codebase structure
 - Search the web for documentation
 - Access knowledge (recall, wiki_get, skill_load)
@@ -443,7 +418,7 @@ Use \`order\` to get synchronous results, \`mail_to\` for parallel work.
 
 ${buildVerificationSection()}
 
-${buildSelfLearningSection()}
+${buildPlatformSection()}
 
 ${buildKnowledgeBoundarySection()}
 
@@ -539,7 +514,7 @@ function buildTeammatePrompt(workDir: string, identity: { name: string; role: st
   return `You are ${identity.name}, a specialized agent working as part of a team, created by the "lead".
 Your role is ${identity.role}. You are working at ${workDir}.
 
-You have only 3 ways to interact with others:
+You have 3 ways to communicate with others:
 1. use mail_to tool to inform other teammates.
 2. use question tool to pause and get input from the user.
 3. use brief tool to send status updates with confidence (0-10). High confidence (8-10) means you are making progress, low confidence (0-7) indicates being stuck.
@@ -551,9 +526,7 @@ When you feel lost about the context, send mail to "lead".
 
 ${buildKnowledgeBoundarySection()}
 
-${buildCommonSections()}
-
-${buildSelfLearningSection()}`;
+${buildCommonSections()}`;
 }
 
 // ============================================================================
