@@ -3,7 +3,7 @@ name: test-after-edit
 description: >
   Remind to run pnpm test before committing or finishing, if code changes
   were made after the last test run. Uses lastIndexOf for ordering-aware checks.
-when: block git_commit (and message on stop) if edit_file or write_file was used this session and the last edit is newer than the last pnpm test run, requiring tests to pass before commit can proceed
+when: block git_commit (and message on stop) if NOT in plan mode, edit_file or write_file was used this session, and the last edit is newer than the last pnpm test run, requiring tests to pass before commit can proceed
 ---
 
 # Test After Edits
