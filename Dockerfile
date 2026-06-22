@@ -8,7 +8,7 @@ RUN apt-get update && apt-get install -y \
 WORKDIR /app
 
 # Install deps first (layer cache: only rebuilds when package.json changes)
-COPY package.json pnpm-lock.yaml ./
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
 RUN corepack enable && pnpm install --frozen-lockfile
 
 # Bake mycc source into image
