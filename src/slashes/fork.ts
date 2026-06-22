@@ -149,7 +149,10 @@ export const forkCommand: SlashCommand = {
       const commandWithEnv = envExports ? `${envExports}\n${shellCommand}` : shellCommand;
 
       // Step 6: Prepend cd to workDir so the new terminal starts in the right directory
-      // Use platform-appropriate syntax: Unix uses "cd dir && cmd", Windows PowerShell uses "cd 'dir'; cmd"
+      // Use platform-appropriate syntax:
+      //   - Unix: "cd dir && cmd" (bash-compatible)
+      //   - Windows: "Set-Location 'dir'; cmd" (PowerShell-native, works because
+      //     the cmd.exe terminal config now uses powershell.exe instead of cmd.exe)
       const isWin = process.platform === 'win32';
       const fullCommand = isWin
         ? `Set-Location '${workDir.replace(/'/g, "''")}'; ${commandWithEnv}`

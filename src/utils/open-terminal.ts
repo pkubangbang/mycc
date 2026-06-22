@@ -120,7 +120,7 @@ const WINDOWS_TERMINALS: TerminalConfig[] = [
   {
     id: 'cmd',
     binary: 'cmd.exe',
-    getArgs: (cmd) => ['/c', 'start', 'cmd.exe', '/k', cmd],
+    getArgs: (cmd) => ['/c', 'start', 'powershell', '-NoExit', '-Command', cmd],
     shell: true,
   },
   {
