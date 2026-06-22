@@ -115,7 +115,7 @@ const WINDOWS_TERMINALS: TerminalConfig[] = [
   {
     id: 'windows-terminal',
     binary: 'wt.exe',
-    getArgs: (cmd) => ['bash', '-c', cmd],
+    getArgs: (cmd) => ['powershell', '-NoExit', '-Command', cmd],
   },
   {
     id: 'cmd',

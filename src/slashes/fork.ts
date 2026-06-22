@@ -39,6 +39,8 @@ function buildEnvExports(context: SlashCommandContext): string {
   const args = context.args;
   const exports: string[] = [];
 
+  const isWin = process.platform === 'win32';
+
   for (let i = 1; i < args.length; i++) {
     if (args[i] === '--env' && i + 1 < args.length) {
       const envArg = args[i + 1];
@@ -58,9 +60,15 @@ function buildEnvExports(context: SlashCommandContext): string {
         }
       }
       if (key) {
-        // Escape single quotes for shell safety
-        const escaped = value.replace(/'/g, "'\\''");
-        exports.push(`export ${key}='${escaped}';`);
+        if (isWin) {
+          // PowerShell syntax: $env:KEY='value'
+          const escaped = value.replace(/'/g, "''");
+          exports.push(`$env:${key}='${escaped}';`);
+        } else {
+          // Unix shell syntax: export KEY='value'
+          const escaped = value.replace(/'/g, "'\\''");
+          exports.push(`export ${key}='${escaped}';`);
+        }
       }
     }
   }
@@ -77,7 +85,7 @@ function buildEnvExports(context: SlashCommandContext): string {
  *
  * Strategy:
  *  - On Unix: use the tsx binary directly (same as how index.ts spawns children)
- *  - On Windows: fall back to the global `mycc` command
+ *  - On Windows: use the global `mycc` command (via npm wrapper)
  *
  * Forwards --skip-healthcheck if the current instance was started with it.
  */
@@ -104,10 +112,16 @@ function buildMyccShellCommand(sessionId: string): string {
 
 function printManualInstructions(sessionId: string, workDir: string): void {
   const skipFlag = shouldSkipHealthCheck() ? ' --skip-healthcheck' : '';
+  const isWin = process.platform === 'win32';
   console.log(chalk.yellow('\nCould not open a terminal window automatically.'));
   console.log(chalk.cyan('\nTo fork, open a new terminal and run:'));
-  console.log(chalk.white(`  cd ${workDir}`));
-  console.log(chalk.white(`  mycc --session ${sessionId}${skipFlag}`));
+  if (isWin) {
+    console.log(chalk.white(`  cd "${workDir}"`));
+    console.log(chalk.white(`  mycc --session ${sessionId}${skipFlag}`));
+  } else {
+    console.log(chalk.white(`  cd ${workDir}`));
+    console.log(chalk.white(`  mycc --session ${sessionId}${skipFlag}`));
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -135,7 +149,11 @@ export const forkCommand: SlashCommand = {
       const commandWithEnv = envExports ? `${envExports}\n${shellCommand}` : shellCommand;
 
       // Step 6: Prepend cd to workDir so the new terminal starts in the right directory
-      const fullCommand = `cd "${workDir}" && ${commandWithEnv}`;
+      // Use platform-appropriate syntax: Unix uses "cd dir && cmd", Windows PowerShell uses "cd 'dir'; cmd"
+      const isWin = process.platform === 'win32';
+      const fullCommand = isWin
+        ? `Set-Location '${workDir.replace(/'/g, "''")}'; ${commandWithEnv}`
+        : `cd "${workDir}" && ${commandWithEnv}`;
 
       // Step 7: Open in native terminal
       console.log(chalk.cyan(`\nForking session ${sessionId.slice(0, 7)}...`));
