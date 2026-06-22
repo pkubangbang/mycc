@@ -28,6 +28,7 @@ import { Core } from '../context/parent/core.js';
 import { AgentStateMachine } from './state-machine.js';
 import type { StateHandler } from './state-machine.js';
 import { UserInputProvider } from './input-provider.js';
+import { FileInputProvider } from './file-input-provider.js';
 import { handlePrompt, setInitialQuery } from './states/prompt.js';
 import { handleSlash } from './states/slash.js';
 import { handleCollect } from './states/collect.js';
@@ -44,8 +45,8 @@ import type { Skill } from '../types.js';
 const version = pkg.version;
 
 export async function main(): Promise<void> {
-  // Guard: Must run under Coordinator
-  if (!process.send) {
+  // Guard: Must run under Coordinator (unless autonomous mode via MYCC_AUTO_IN_JSONL)
+  if (!process.send && !process.env.MYCC_AUTO_IN_JSONL) {
     console.error(chalk.red('Error: Lead process must be started via Coordinator (mycc command)'));
     console.error(chalk.gray('Run: mycc'));
     process.exit(1);
@@ -162,6 +163,16 @@ export async function main(): Promise<void> {
   // Project skills (.mycc/skills/) are already inside the workspace — no grant needed.
   ctx.core.addExternalAutoGrant(getLayerBaseDir('built-in'));
   ctx.core.addExternalAutoGrant(getLayerBaseDir('user'));
+
+  // Auto-grant IO file directories for autonomous mode (MYCC_AUTO_IN_JSONL / MYCC_AUTO_OUT_JSONL)
+  // These files live outside the workspace (e.g., /io/ in a container) and the LLM
+  // may try to read them — without a grant, requestExternalPathAccess would block.
+  if (process.env.MYCC_AUTO_IN_JSONL) {
+    ctx.core.addExternalAutoGrant(path.dirname(path.resolve(process.env.MYCC_AUTO_IN_JSONL)));
+  }
+  if (process.env.MYCC_AUTO_OUT_JSONL) {
+    ctx.core.addExternalAutoGrant(path.dirname(path.resolve(process.env.MYCC_AUTO_OUT_JSONL)));
+  }
 
   await loader.indexAllSkillsToWiki(ctx.wiki);
   await ctx.wt.syncWorkTrees();
@@ -291,7 +302,9 @@ export async function main(): Promise<void> {
   };
 
   // ── Create state machine ──
-  const inputProvider = new UserInputProvider(() => (ctx.core as Core).getMode());
+  const inputProvider = process.env.MYCC_AUTO_IN_JSONL
+    ? new FileInputProvider(process.env.MYCC_AUTO_IN_JSONL)
+    : new UserInputProvider(() => (ctx.core as Core).getMode());
   const machine = new AgentStateMachine(
     triologue,
     ctx,
@@ -333,7 +346,7 @@ export async function main(): Promise<void> {
     }
     console.log(chalk.yellow('\nShutting down...'));
     ctx.team.dismissTeam(false); // Graceful shutdown of all teammates
-    process.send!({ type: 'exit' });
+    if (process.send) process.send({ type: 'exit' });
   });
 
   // ── SIGTERM handler ──
@@ -345,7 +358,7 @@ export async function main(): Promise<void> {
   });
 
   // Ready
-  process.send({ type: 'ready' });
+  if (process.send) process.send({ type: 'ready' });
 
   // ── Run state machine (REPL loop) with resilient retry ──
   // Only Ctrl+C (handled by Coordinator), empty input, 'exit'/'q'/'quit',
@@ -391,7 +404,7 @@ export async function main(): Promise<void> {
   }
 
   // Signal Coordinator to exit
-  process.send({ type: 'exit' });
+  if (process.send) process.send({ type: 'exit' });
 }
 
 /**

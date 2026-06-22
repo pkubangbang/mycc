@@ -89,18 +89,58 @@ export class Core extends BaseCore implements CoreModule {
 
   /**
    * Ask user a question and wait for response
-   * In main process: uses agentIO.ask() directly
-   * In child process: routes to main via IPC (overridden in ChildCore)
+   * In main process: uses agentIO.ask() directly (TTY)
+   * In autonomous mode (MYCC_AUTO_IN_JSONL set): routes through JSONL file channels
+   *   - Both channels: question → output file (as QUESTION mail), answer ← input file
+   *   - Only auto-in: question → terminal (visible), answer ← input file
    * @param query - The question to ask
    * @param asker - Name of who is asking (required)
    */
   async question(query: string, asker: string): Promise<string> {
-    // Validate query
     if (!query || typeof query !== 'string') {
       throw new Error('Question query must be a non-empty string');
     }
 
-    // Display who is asking, then the query (via agentIO.ask)
+    const hasAutoIn = !!process.env.MYCC_AUTO_IN_JSONL;
+    const hasAutoOut = !!process.env.MYCC_AUTO_OUT_JSONL;
+
+    // Autonomous modes — answer always comes from the input file
+    if (hasAutoIn) {
+      // Full autonomous: write question to output file (teammate sees QUESTION mail)
+      if (hasAutoOut) {
+        const mail = {
+          id: Math.random().toString(36).substring(2, 10),
+          from: process.env.MYCC_CONTAINER_NAME || 'container',
+          title: 'QUESTION',
+          content: query,
+          timestamp: new Date().toISOString(),
+        };
+        fs.appendFileSync(process.env.MYCC_AUTO_OUT_JSONL!, JSON.stringify(mail) + '\n', 'utf-8');
+      } else {
+        // Semi-autonomous: display question on terminal (still visible to a human)
+        this.brief('info', 'question', '--------------------', `${asker} has a question`);
+        console.log(query);
+      }
+
+      // Poll input channel for answer (same file as getInput uses — never simultaneous
+      // because question() fires during TOOL state, getInput() during PROMPT state)
+      while (true) {
+        try {
+          const content = fs.readFileSync(process.env.MYCC_AUTO_IN_JSONL!, 'utf-8');
+          if (content.trim()) {
+            fs.truncateSync(process.env.MYCC_AUTO_IN_JSONL!, 0);
+            const lines = content.trim().split('\n');
+            const answer = JSON.parse(lines[lines.length - 1]).content;
+            return answer;
+          }
+        } catch {
+          // File may not exist yet
+        }
+        await new Promise((resolve) => setTimeout(resolve, 500));
+      }
+    }
+
+    // Normal mode: use TTY via agentIO.ask()
     this.brief('info', 'question', '--------------------', `${asker} has a question`);
     return await agentIO.ask(query);
   }

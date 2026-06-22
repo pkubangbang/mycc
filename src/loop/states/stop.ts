@@ -6,6 +6,7 @@
  */
 
 import chalk from 'chalk';
+import * as fs from 'fs';
 import { AgentState, presentResult } from '../state-machine.js';
 import type { MachineEnv, TurnVars, PassData, HandlerResult } from '../state-machine.js';
 import { agentIO } from '../agent-io.js';
@@ -30,6 +31,7 @@ export async function handleStop(
 
       agentIO.flushOutput();
       presentResult(triologue);
+      writeAutoOutJsonl(triologue);
       return AgentState.PROMPT;
     }
 
@@ -47,6 +49,7 @@ export async function handleStop(
 
     if (result === 'all done' || result === 'no workload' || result === 'no teammates') {
       presentResult(triologue);
+      writeAutoOutJsonl(triologue);
       return AgentState.PROMPT;
     }
 
@@ -64,5 +67,35 @@ export async function handleStop(
     const errorMessage = err instanceof Error ? err.message : String(err);
     ctx.core.brief('error', 'stop', `STOP state error: ${errorMessage}`);
     return AgentState.PROMPT;
+  }
+}
+
+/**
+ * Write the last assistant reply to MYCC_AUTO_OUT_JSONL (if set).
+ *
+ * Gated only by MYCC_AUTO_OUT_JSONL — independent of MYCC_AUTO_IN_JSONL.
+ * Terminal output (letter box) continues normally; this is additive.
+ * Each line is in mailbox JSONL format so teammate's COLLECT/collectMails()
+ * can parse it directly.
+ */
+function writeAutoOutJsonl(triologue: MachineEnv['triologue']): void {
+  const outPath = process.env.MYCC_AUTO_OUT_JSONL;
+  if (!outPath) return;
+
+  const lastMsg = triologue.getMessagesRaw().at(-1);
+  if (!lastMsg?.content) return;
+
+  const mail = {
+    id: Math.random().toString(36).substring(2, 10),
+    from: process.env.MYCC_CONTAINER_NAME || 'container',
+    title: 'Reply',
+    content: lastMsg.content,
+    timestamp: new Date().toISOString(),
+  };
+
+  try {
+    fs.appendFileSync(outPath, JSON.stringify(mail) + '\n', 'utf-8');
+  } catch {
+    // Ignore write errors (file may not be mounted or writable)
   }
 }
