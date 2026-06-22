@@ -355,10 +355,20 @@ export class Loader implements DynamicLoader, SkillModule {
         return;
       }
 
+      // Normalize keywords: YAML can parse "tag1, tag2" as string, not array
+      let keywords: string[];
+      if (Array.isArray(data.keywords)) {
+        keywords = data.keywords.map((k: unknown) => String(k).trim());
+      } else if (typeof data.keywords === 'string' && data.keywords.trim()) {
+        keywords = data.keywords.split(',').map((k: string) => k.trim()).filter(Boolean);
+      } else {
+        keywords = [];
+      }
+
       const skill: Skill = {
         name: data.name,
         description: data.description || '',
-        keywords: data.keywords || [],
+        keywords,
         content: body.trim(),
         when: data.when,  // Hook condition (natural language)
         sourceFile,  // Track source file for orphan detection (format: "layer:path")

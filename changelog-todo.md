@@ -45,8 +45,13 @@ When updating the changelog, use the following procedure:
 - **read_file**: Show head+tail preview for minified/single-long-line files.
 
 
+## 2026-06-22
+### Fixes
+- **Fork on Windows**: Fixed `/fork` command on Windows. Three root causes: (1) `mycc` not on PATH → `0x80070002`; (2) `shell:true` in open-terminal.ts wrapped command in `cmd.exe /d /s /c` which broke nested quoting and created double windows; (3) `wt.exe` has a known bug (microsoft/terminal#13264) where it splits on `;` even inside quoted arguments, causing the forked command to be treated as two separate wt actions. Fixed by using `node.exe + bin/mycc.js` (no PATH dependency), removing `shell:true` from Windows terminal configs (spawn powershell directly), and encoding the PowerShell script as UTF-16LE Base64 via `-EncodedCommand` (eliminates all `;`, spaces, and quotes from the command line).
+
 # Todo
 
+- [x] 2026-06-22 Fix `/fork` on Windows — `mycc` not found, shell:true nested quoting, wt.exe semicolon splitting bug
 - [ ] add e2e test using tmux, with meaningful test cases, written as a skill
 - [ ] racing condition: submittion without showing "mycc is wrapping up" will not show the spinner.
 - [ ] In the plan mode, the produced plan will have self-debating.

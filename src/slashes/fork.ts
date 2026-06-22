@@ -85,7 +85,9 @@ function buildEnvExports(context: SlashCommandContext): string {
  *
  * Strategy:
  *  - On Unix: use the tsx binary directly (same as how index.ts spawns children)
- *  - On Windows: use the global `mycc` command (via npm wrapper)
+ *  - On Windows: use node.exe with bin/mycc.js (same as the npm bin wrapper).
+ *    Uses PowerShell call operator (&) with single-quoted paths to avoid
+ *    double-quote collisions with spawn() and -Command parsing.
  *
  * Forwards --skip-healthcheck if the current instance was started with it.
  */
@@ -99,7 +101,14 @@ function buildMyccShellCommand(sessionId: string): string {
   }
 
   if (process.platform === 'win32') {
-    return `mycc ${flags.join(' ')}`;
+    // Use node.exe + bin/mycc.js (bin/mycc.js internally handles the tsx ESM
+    // loader on Windows).  Single-quoted paths — PowerShell treats them as
+    // literal strings, so they won't conflict with double-quote wrapping from
+    // spawn() or -Command.  Also avoids depending on `mycc` being globally
+    // installed on PATH.
+    const esc = (s: string) => s.replace(/'/g, "''");
+    const myccBin = resolve(projectRoot, 'bin', 'mycc.js');
+    return `& '${esc(process.execPath)}' '${esc(myccBin)}' ${flags.join(' ')}`;
   }
 
   const tsxPath = resolve(projectRoot, 'node_modules', '.bin', 'tsx');
@@ -115,11 +124,14 @@ function printManualInstructions(sessionId: string, workDir: string): void {
   const isWin = process.platform === 'win32';
   console.log(chalk.yellow('\nCould not open a terminal window automatically.'));
   console.log(chalk.cyan('\nTo fork, open a new terminal and run:'));
+  console.log(chalk.white(`  cd "${workDir}"`));
   if (isWin) {
-    console.log(chalk.white(`  cd "${workDir}"`));
-    console.log(chalk.white(`  mycc --session ${sessionId}${skipFlag}`));
+    // Same approach as buildMyccShellCommand — node + bin/mycc.js, single-quoted
+    const projectRoot = getProjectRoot();
+    const esc = (s: string) => s.replace(/'/g, "''");
+    const myccBin = resolve(projectRoot, 'bin', 'mycc.js');
+    console.log(chalk.white(`  & '${esc(process.execPath)}' '${esc(myccBin)}' --session ${sessionId}${skipFlag}`));
   } else {
-    console.log(chalk.white(`  cd ${workDir}`));
     console.log(chalk.white(`  mycc --session ${sessionId}${skipFlag}`));
   }
 }
@@ -148,15 +160,19 @@ export const forkCommand: SlashCommand = {
       // Step 5: Prepend --env exports if any
       const commandWithEnv = envExports ? `${envExports}\n${shellCommand}` : shellCommand;
 
-      // Step 6: Prepend cd to workDir so the new terminal starts in the right directory
-      // Use platform-appropriate syntax:
-      //   - Unix: "cd dir && cmd" (bash-compatible)
-      //   - Windows: "Set-Location 'dir'; cmd" (PowerShell-native, works because
-      //     the cmd.exe terminal config now uses powershell.exe instead of cmd.exe)
+      // Step 6: Build the command to run in the new terminal.
+      // On Windows use PowerShell -EncodedCommand (Base64 UTF-16LE) so the
+      // command string contains no ; or quotes — avoids wt.exe's known bug
+      // where it splits on ; even inside quoted arguments (GitHub #13264).
       const isWin = process.platform === 'win32';
-      const fullCommand = isWin
-        ? `Set-Location '${workDir.replace(/'/g, "''")}'; ${commandWithEnv}`
-        : `cd "${workDir}" && ${commandWithEnv}`;
+      let fullCommand: string;
+      if (isWin) {
+        const psScript = `Set-Location '${workDir.replace(/'/g, "''")}'\n${commandWithEnv}`;
+        const encoded = Buffer.from(psScript, 'utf16le').toString('base64');
+        fullCommand = `powershell -NoExit -EncodedCommand ${encoded}`;
+      } else {
+        fullCommand = `cd "${workDir}" && ${commandWithEnv}`;
+      }
 
       // Step 7: Open in native terminal
       console.log(chalk.cyan(`\nForking session ${sessionId.slice(0, 7)}...`));

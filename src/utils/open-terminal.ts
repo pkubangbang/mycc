@@ -110,6 +110,15 @@ const LINUX_TERMINALS: TerminalConfig[] = [
 ];
 
 // ─── Windows terminals ──────────────────────────────────────────────────────
+//
+// NOTE: shell: true must NOT be used on Windows.  It wraps the command in
+// cmd.exe /d /s /c "..." which:
+//   1. Creates an extra console window (the "cmd tab" users see)
+//   2. Breaks CMD's /s quoting when the -Command value contains nested quotes
+//   3. Causes error 0x80070002 when start/powershell misparse the mangled string
+//
+// Instead, spawn powershell.exe directly.  detached: true (set in openTerminal)
+// gives it its own console window — no start / Start-Process needed.
 
 const WINDOWS_TERMINALS: TerminalConfig[] = [
   {
@@ -118,16 +127,17 @@ const WINDOWS_TERMINALS: TerminalConfig[] = [
     getArgs: (cmd) => ['powershell', '-NoExit', '-Command', cmd],
   },
   {
+    // Direct PowerShell — detached: true gives it a new console window.
+    // Simpler than cmd.exe + start and avoids double-window + quoting issues.
+    id: 'powershell',
+    binary: 'powershell.exe',
+    getArgs: (cmd) => ['-NoExit', '-Command', cmd],
+  },
+  {
+    // Last resort: cmd.exe /c start.  No shell: true — spawn cmd.exe directly.
     id: 'cmd',
     binary: 'cmd.exe',
     getArgs: (cmd) => ['/c', 'start', 'powershell', '-NoExit', '-Command', cmd],
-    shell: true,
-  },
-  {
-    id: 'powershell',
-    binary: 'powershell.exe',
-    getArgs: (cmd) => ['-Command', `Start-Process powershell -ArgumentList '-NoExit','-Command','${cmd.replace(/'/g, "''")}'`],
-    shell: true,
   },
 ];
 
@@ -324,7 +334,6 @@ export function openTerminal(cmd: string): void {
     stdio: 'ignore',
   };
 
-  // Windows terminals like cmd.exe need shell: true
   if (terminal.shell) {
     spawnOptions.shell = true;
   }
