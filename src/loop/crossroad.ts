@@ -255,11 +255,22 @@ export async function generateContinuations(
   prefix: string,
   signal?: AbortSignal,
 ): Promise<string[]> {
+  // Inject the prefix into each direction prompt so the LLM sees what was
+  // already said and continues from it rather than regenerating it from
+  // scratch. Without this, forkChat only sees conversation history + the
+  // direction instruction, so it restates the prefix before pivoting —
+  // producing duplicated content in the final assembled output.
+  const prefixBlock = `A response was cut off at a turning word. The prefix (before the turning word, already written and shown to the user) is:\n\n"""\n${prefix}\n"""\n\n`;
   const results = await Promise.allSettled(
     GENERATION_DIRECTIONS.map((direction) =>
-      forkChat(messages, tools, direction.prompt, signal, 'none', CROSSROAD_RETRY_CONFIG).then(
-        (text) => ({ directionName: direction.name, text: text.trim() }),
-      ),
+      forkChat(
+        messages,
+        tools,
+        prefixBlock + direction.prompt,
+        signal,
+        'none',
+        CROSSROAD_RETRY_CONFIG,
+      ).then((text) => ({ directionName: direction.name, text: text.trim() })),
     ),
   );
 
