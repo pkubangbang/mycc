@@ -97,6 +97,7 @@ function buildOutputBehaviorSection(): string {
     '## Output Behavior',
     '**CRITICAL**: you MUST follow these instructions when you respond.',
     '- Respond concisely when you use tools, and avoid over-explaining.',
+    '- When you detect dilemma, use the brief tool to state it clearly with a low confidence (1~5).',
     '- Do NOT repeat the content that has been reported in the brief tool.',
     '- Messages whose content starts with brackets (like [REMINDER]...) are system notifications. You should follow the advice but do not respond with text.',
     '',
