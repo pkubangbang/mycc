@@ -160,15 +160,19 @@ export const forkCommand: SlashCommand = {
       // Step 5: Prepend --env exports if any
       const commandWithEnv = envExports ? `${envExports}\n${shellCommand}` : shellCommand;
 
-      // Step 6: Prepend cd to workDir so the new terminal starts in the right directory
-      // Use platform-appropriate syntax:
-      //   - Unix: "cd dir && cmd" (bash-compatible)
-      //   - Windows: "Set-Location 'dir'; cmd" (PowerShell-native, works because
-      //     the cmd.exe terminal config now uses powershell.exe instead of cmd.exe)
+      // Step 6: Build the command to run in the new terminal.
+      // On Windows use PowerShell -EncodedCommand (Base64 UTF-16LE) so the
+      // command string contains no ; or quotes — avoids wt.exe's known bug
+      // where it splits on ; even inside quoted arguments (GitHub #13264).
       const isWin = process.platform === 'win32';
-      const fullCommand = isWin
-        ? `Set-Location '${workDir.replace(/'/g, "''")}'; ${commandWithEnv}`
-        : `cd "${workDir}" && ${commandWithEnv}`;
+      let fullCommand: string;
+      if (isWin) {
+        const psScript = `Set-Location '${workDir.replace(/'/g, "''")}'\n${commandWithEnv}`;
+        const encoded = Buffer.from(psScript, 'utf16le').toString('base64');
+        fullCommand = `powershell -NoExit -EncodedCommand ${encoded}`;
+      } else {
+        fullCommand = `cd "${workDir}" && ${commandWithEnv}`;
+      }
 
       // Step 7: Open in native terminal
       console.log(chalk.cyan(`\nForking session ${sessionId.slice(0, 7)}...`));
