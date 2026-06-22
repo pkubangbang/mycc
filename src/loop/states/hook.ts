@@ -257,7 +257,7 @@ export async function handleHook(
     // 3.5. Handle compact request (highest priority — short-circuits all processing)
     if (hookResult.compactRequested) {
       ctx.core.brief('info', 'compact', 'Compacting context due to intent language confusion...');
-      await triologue.compact();
+      await triologue.compact(turn.lastUserQuery || undefined);
 
       // Reset stat counts after hook-requested compaction — old context is
       // now summarized and accumulated confusion/sequence events are stale.
@@ -296,11 +296,23 @@ export async function handleHook(
     );
 
     // =====================================================================
-    // Crossroad: inject CONTINUE note and go to COLLECT
+    // Crossroad: inject synthetic brief() instead of CONTINUE note
     // =====================================================================
     if (pass.crossroadContinuation) {
       ctx.core.brief('info', 'crossroad', `Resolved: ${pass.assistantContent}\n${pass.crossroadContinuation}`);
-      triologue.note('CONTINUE', 'continue with your work');
+      // Use synthetic brief() to re-engage LLM actively, rather than a passive
+      // [CONTINUE] note. This follows the same pattern as the empty-response fix
+      // in llm.ts — an annotated tool call gives the LLM a thinking trace to
+      // follow, nudging it to regenerate tool calls for the continued direction.
+      const briefCallId = Math.random().toString(36).slice(2, 10);
+      triologue.agent('', [{
+        id: briefCallId,
+        function: {
+          name: 'brief',
+          arguments: { message: 'Resolved my direction. Let me continue with the tools.', confidence: 7 },
+        },
+      }]);
+      triologue.tool('brief', 'OK', briefCallId);
       pass.crossroadContinuation = undefined;
       return AgentState.COLLECT;
     }

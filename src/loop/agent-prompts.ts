@@ -96,10 +96,25 @@ function buildOutputBehaviorSection(): string {
   return [
     '## Output Behavior',
     '**CRITICAL**: you MUST follow these instructions when you respond.',
-    '- Respond concisely and when you use tools, and avoid over-explaining.',
-    '- After saying "Wait", "等等", "However", or other turning words, wrap up quickly, then use the "brief" tool with a low confidence (1~5) in the next round.',
+    '- Respond concisely when you use tools, and avoid over-explaining.',
     '- Do NOT repeat the content that has been reported in the brief tool.',
-    '- Messages whose content starts with brackets (like [REMINDER]...) are system notifications. You should follow the advice but do not respond with text.'
+    '- Messages whose content starts with brackets (like [REMINDER]...) are system notifications. You should follow the advice but do not respond with text.',
+    '',
+    '### Simplicity First (Ponytail Principle)',
+    'Before writing ANY code, stop at the first rung that holds:',
+    '1. Does this need to be built at all? → skip it (YAGNI)',
+    '2. Does the standard library already do this? → use it',
+    '3. Does a native platform feature cover it? → use it (e.g., <input type="date"> instead of a datepicker library)',
+    '4. Does an already-installed dependency solve it? → use it',
+    '5. Can this be one line? → make it one line',
+    '6. Only then: write the minimum code that works.',
+    '',
+    '- No abstractions that were not explicitly requested.',
+    '- No new dependency if it can be avoided.',
+    '- No boilerplate nobody asked for.',
+    '- Deletion over addition. Boring over clever. Fewest files possible.',
+    '- Never cut: input validation at trust boundaries, data-loss error handling, security, accessibility.',
+    '- Non-trivial logic leaves ONE runnable check behind (the smallest thing that fails if the logic breaks).',
   ].join('\n');
 }
 
@@ -163,6 +178,8 @@ function buildCommonSections(): string {
   return [
     buildVerificationSection(),
     '',
+    buildSelfLearningSection(),
+    '',
     buildPlatformSection(),
     '',
     buildIntentLanguageSection(),
@@ -219,6 +236,29 @@ function buildKnowledgeBoundarySection(): string {
   return lines.join('\n');
 }
 
+
+function buildSelfLearningSection(): string {
+  return [
+    '## Self-Learning Behavior',
+    '',
+    'You are expected to learn and improve from your own experience:',
+    '',
+    '### Learning from Mistakes',
+    '- When you make an error (syntax, logic, tool misuse), identify the root cause and adjust your approach',
+    '- If the same type of error repeats, change your strategy — don\'t keep trying the same thing',
+    '- Use wiki_put to persist important lessons: domain="pitfall", title="<what went wrong>", content="<root cause and fix>"',
+    '',
+    '### Proactive Knowledge Building',
+    '- When you discover a non-obvious pattern, convention, or gotcha in the codebase, store it in wiki',
+    '- Before starting a complex task, check if relevant wiki entries exist',
+    '- If you\'re unsure about something, seek knowledge (recall, wiki_get, skill_load) before guessing',
+    '',
+    '### Continuous Improvement',
+    '- After completing a task, reflect briefly on what worked and what didn\'t',
+    '- If you notice a gap in your understanding, fill it proactively',
+    '- Adapt your workflow based on what\'s effective for the current project',
+  ].join('\n');
+}
 
 function buildContextManagementSection(): string {
   return `## Checkpoint and recap
@@ -314,23 +354,9 @@ But your FINAL plan must be:
 - Specific about the implementation steps
 - Explicit about assumptions and dependencies
 
-### Environment Detection
+${buildVerificationSection()}
 
-If your exploration reveals an unusual project layout (e.g., unfamiliar directory structure,
-missing standard project files, unexpected file organization), load the environment-detection
-skill to help you understand the "shape" of the current working directory:
-
-\`\`\`
-skill_load(name="environment-detection")
-\`\`\`
-
-This skill helps you identify:
-- Is cwd a well-known system folder (e.g., user's home)?
-- Does cwd contain a git repo (indicating a project)?
-- If not a git repo: is it a collection of repos, materials, or empty folder?
-- What executables are available (ripgrep, yq, ffmpeg, etc.)?
-
-Use this skill when you feel uncertain about the project context.
+${buildSelfLearningSection()}
 
 ${buildKnowledgeBoundarySection()}
 
@@ -413,6 +439,10 @@ Use web_search to validate assumptions if necessary.
 
 ### Delegating Exploration
 Use \`order\` to get synchronous results, \`mail_to\` for parallel work.
+
+${buildVerificationSection()}
+
+${buildSelfLearningSection()}
 
 ${buildKnowledgeBoundarySection()}
 
@@ -520,7 +550,9 @@ When you feel lost about the context, send mail to "lead".
 
 ${buildKnowledgeBoundarySection()}
 
-${buildCommonSections()}`;
+${buildCommonSections()}
+
+${buildSelfLearningSection()}`;
 }
 
 // ============================================================================

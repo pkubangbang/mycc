@@ -175,10 +175,11 @@ export async function handleCollect(
         for (const skill of matched) {
           const status = getSkillTriologueStatus(triologue, skill);
           switch (status) {
-            case 'new':
+            case 'new': {
               const desc = skill.description ? ` (${skill.description})` : '';
               newSkills.push(`${skill.name}${desc}`);
               break;
+            }
             case 'suggested':
               suggestedSkills.push(skill.name);
               break;
