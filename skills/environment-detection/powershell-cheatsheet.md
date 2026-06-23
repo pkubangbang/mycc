@@ -12,6 +12,34 @@
 | 注释 `#` | 单行注释，`<# #>` 多行注释 |
 | 不区分大小写 | PowerShell 默认不区分大小写 |
 
+### 命令连接符（与 Bash 的关键差异）
+
+**⚠️ PowerShell 不支持 `&&` 和 `||` 操作符**（这是 Bash/CMD 语法）。在 PowerShell 中连接命令必须使用下表中的运算符：
+
+| Bash 语法 | PowerShell 等价 | 说明 |
+|-----------|----------------|------|
+| `cmd1 && cmd2` | `cmd1 ; cmd2` | 顺序执行（不检查前一条是否成功）|
+| `cmd1 && cmd2` | `if ($?) { cmd2 }` | 仅在前一条成功时执行（语义等价于 `&&`）|
+| `cmd1 \|\| cmd2` | `if (-not $?) { cmd2 }` | 仅在前一条失败时执行（语义等价于 `\|\|`）|
+| `cmd1 ; cmd2` | `cmd1 ; cmd2` | 顺序执行，无论成功失败（相同）|
+
+```powershell
+# ❌ 错误：PowerShell 会把 && 当作参数或报错
+agent-browser open "https://example.com" && agent-browser snapshot
+
+# ✅ 正确方式一：用分号顺序执行（不关心前者是否成功）
+agent-browser open "https://example.com" ; agent-browser snapshot
+
+# ✅ 正确方式二：用 $? 检查前一条命令是否成功（等价于 &&）
+agent-browser open "https://example.com"
+if ($?) { agent-browser snapshot }
+
+# ✅ PowerShell 7+ 支持新的管道链运算符（语义与 bash && 一致）
+agent-browser open "https://example.com" && agent-browser snapshot
+```
+
+> **注意：** PowerShell 7+ 新增了 `&&` 和 `||` 管道链运算符（pipeline chain operators），语义与 Bash 一致。但 Windows 自带的 **PowerShell 5.1 不支持**，为兼容旧版本请使用 `;` 或 `if ($?)`。
+
 ---
 
 ## 2. 变量与数据类型
