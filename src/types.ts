@@ -194,7 +194,7 @@ export interface Skill {
 /**
  * Background task status
  */
-export type BgTaskStatus = 'running' | 'completed' | 'failed';
+export type BgTaskStatus = 'running' | 'completed' | 'failed' | 'killed';
 
 /**
  * Background task - running bash command
@@ -433,7 +433,13 @@ export interface IssueModule {
  */
 export interface BgModule {
   runCommand(cmd: string): Promise<number>;
-  printBgTasks(): Promise<string>;
+  /**
+   * Print background tasks. If pid is provided and the task exists,
+   * returns a detailed view including accumulated output (tail-capped).
+   * If pid is provided but not found, returns a not-found message.
+   * If pid is omitted, returns a compact status list of all tasks.
+   */
+  printBgTasks(pid?: number): Promise<string>;
   hasRunningBgTasks(): Promise<boolean>;
   killTask(pid: number): Promise<void>;
   /** Get task by pid (for status checking in bg_await) */

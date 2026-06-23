@@ -12,7 +12,7 @@ import { agentIO } from '../loop/agent-io.js';
 
 export const bgAwaitTool: ToolDefinition = {
   name: 'bg_await',
-  description: 'Block until background tasks complete. Use after bg_create when you need results before proceeding. Default timeout 60 seconds.',
+  description: 'Block until background tasks complete. Use after bg_create when you need results before proceeding. Default timeout 60 seconds. When waiting for a specific pid, returns the accumulated task output on completion; when waiting for all tasks, returns OK (use bg_print to inspect individual outputs).',
   input_schema: {
     type: 'object',
     properties: {
@@ -62,21 +62,23 @@ export const bgAwaitTool: ToolDefinition = {
     try {
       while (elapsed < timeout && !interrupted) {
         try {
-          const hasRunning = await ctx.bg.hasRunningBgTasks();
-
-          if (!hasRunning) {
-            ctx.core.brief('info', 'bg_await', `${targetDesc} completed`);
-            return 'OK';
-          }
-
-          // If waiting for specific pid, check if it's still running
           if (pid !== undefined) {
-            // Access the internal task map to check specific task status
-            // This is a bit of a hack, but we need direct access to task status
-            const bgModule = ctx.bg as unknown as { getTask: (pid: number) => { status: string } | undefined };
-            const task = bgModule.getTask(pid);
+            // Waiting for a specific pid: check just that task (no redundant full scan)
+            const task = ctx.bg.getTask(pid);
             if (!task || task.status !== 'running') {
-              ctx.core.brief('info', 'bg_await', `Task ${pid} completed`);
+              const stateLabel = task?.status === 'killed' ? 'killed' : 'completed';
+              ctx.core.brief('info', 'bg_await', `Task ${pid} ${stateLabel}`);
+              // Return accumulated output when available (Fix 4)
+              if (task?.output) {
+                return `Task ${pid} ${stateLabel}.\n\n[output]\n${task.output}`;
+              }
+              return `Task ${pid} ${stateLabel} (no output).`;
+            }
+          } else {
+            // Waiting for ALL tasks: check if any are still running
+            const hasRunning = await ctx.bg.hasRunningBgTasks();
+            if (!hasRunning) {
+              ctx.core.brief('info', 'bg_await', `${targetDesc} completed`);
               return 'OK';
             }
           }
