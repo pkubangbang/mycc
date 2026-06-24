@@ -142,10 +142,12 @@ class GlobalConfig {
 const globalConfig = new GlobalConfig();
 
 /**
- * Get session ID from CLI args (--session flag)
+ * Get session ID from CLI args (--session flag).
+ * Reads from parsed minimist args directly (not process.env) to avoid
+ * inheriting a stale MYCC_SESSION env var from a parent process.
  */
 export function getSessionArg(): string | null {
-  return process.env.MYCC_SESSION || null;
+  return args.session || null;
 }
 
 /**
