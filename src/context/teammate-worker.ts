@@ -32,6 +32,18 @@ let shutdownRequested = false;
 let triologuePath = '';
 let pendingModeChange: 'plan' | 'normal' | null = null;
 
+// Budget/deadline tracking
+let budgetSent = false;
+let startTime = 0;
+let hasDoneWork = false;
+let deadlineMs = 0;        // Absolute deadline in ms (computed from eta)
+
+// Heartbeat interval (30s)
+const HEARTBEAT_INTERVAL_MS = 30_000;
+
+// Time nudge every N rounds
+const TIME_NUDGE_INTERVAL = 3;
+
 /**
  * Create a triologue that persists messages to disk
  * @param name - Teammate name (for fallback path generation)
@@ -91,6 +103,10 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
     'read_file', 'web_search', 'web_fetch', 'brief', 'issue_list',
     'wt_print', 'bg_print', 'tm_print', 'question', 'recall',
   ]);
+
+  // Loop-scope tracking for time management
+  let lastHeartbeatTime = Date.now();
+  let nextTimeNudge = TIME_NUDGE_INTERVAL;
 
   // Tools that modify state (progress indicators)
   const ACTION_TOOLS = new Set([
@@ -158,7 +174,21 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
         }
       }
 
-      // 4. Build system prompt and call LLM
+      // 4. Time reminder if budget is set (every N rounds)
+      if (budgetSent) {
+        nextTimeNudge--;
+        if (nextTimeNudge <= 0) {
+          nextTimeNudge = TIME_NUDGE_INTERVAL;
+          const remaining = Math.max(0, Math.round((deadlineMs - Date.now()) / 1000));
+          triologue.note('REMINDER',
+            `~${remaining}s left.` +
+            (remaining < 30
+              ? ` Send mail_to with a new eta to extend.`
+              : ``));
+        }
+      }
+
+      // 5. Build system prompt and call LLM
       // Ensure we have a valid message sequence before calling LLM
       if (lastRole === 'assistant') {
         // Last message was assistant with no tool calls - need user message before next LLM call
@@ -181,24 +211,36 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
       // Confusion scoring: +1 per assistant turn (agent spinning without progress)
       ctx.core.increaseConfusionIndex(1);
 
-      // ---- No tools/meta-tools: register assistant message and execute tools ----
-      // No tool calls = enter idle state
+      // ---- No tools: guard against premature idle ----
+      // No tool calls
       if (!toolCalls || toolCalls.length === 0) {
         // Register the assistant message (no tool calls to track)
         triologue.agent(assistantMessage.content || '', undefined, reasoningContent);
 
-        // Reset brief nudge when entering idle (no more tool calls)
-        nextBriefNudge = 5;
-
-        // IMPORTANT: send finishing words to lead to coordinate.
-        ctx.team.mailTo('lead', 'task done',
-          assistantMessage.content ?? 'I have done my task, now running idle.', ctx.core.getName());
-
-        const result = await enterIdleState(triologue);
-        if (result === 'shutdown') {
-          process.exit(0);
+        if (!budgetSent) {
+          // Never sent budget or did any work — re-prompt instead of idle
+          nextBriefNudge = 5;
+          const exampleEta = Math.floor(Date.now() / 1000 + 120);
+          triologue.note('CONTINUE',
+            `Request a time budget from lead via mail_to(name="lead", eta=${exampleEta}, ...).`);
+          continue;
         }
-        // Resume work phase
+
+        if (hasDoneWork) {
+          // Actually did work and LLM says it's done — enter completing phase
+          nextBriefNudge = 5;
+          sendCompletionMail();
+          const result = await enterIdleState(triologue);
+          if (result === 'shutdown') {
+            process.exit(0);
+          }
+          // Resume work phase
+          continue;
+        }
+
+        // Has budget but no work done yet — re-prompt to use tools
+        nextBriefNudge = 5;
+        triologue.note('CONTINUE', 'Use tools to make progress on the task.');
         continue;
       }
 
@@ -213,6 +255,30 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
         try {
           const output = await silentLoader.execute(toolName, ctx, args);
           triologue.tool(toolName, output, tc.id);
+
+          // Track budget from mail_to call
+          if (toolName === 'mail_to' && !budgetSent) {
+            const eta = args?.eta as number | undefined;
+            if (eta && eta > 0) {
+              budgetSent = true;
+              deadlineMs = Date.now() + eta * 1000;
+              startTime = Date.now();
+              lastHeartbeatTime = Date.now();
+            }
+          }
+
+          // Heartbeat every 30s to lead
+          if (budgetSent && (Date.now() - lastHeartbeatTime >= HEARTBEAT_INTERVAL_MS)) {
+            const elapsed = Math.round((Date.now() - startTime) / 1000);
+            ctx.team.mailTo('lead', `Progress: ${teammateName}`,
+              `[PROGRESS] ${elapsed}s elapsed, still working.`);
+            lastHeartbeatTime = Date.now();
+          }
+
+          // Track work done (non-exploration tools)
+          if (!EXPLORATION_TOOLS.has(toolName)) {
+            hasDoneWork = true;
+          }
 
           // Confusion scoring based on tool classification
           // Check for repetition (same tool in last 5 calls)
@@ -307,6 +373,17 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
   // Graceful exit after shutdown requested
   sendStatus('shutdown');
   process.exit(0);
+}
+
+/**
+ * Send completion mail before entering idle
+ */
+function sendCompletionMail(): void {
+  if (!budgetSent) return;
+  const elapsedSec = Math.round((Date.now() - startTime) / 1000);
+  ctx.team.mailTo('lead', `Results: ${teammateName}`,
+    `[COMPLETE] ${teammateName} finished in ${elapsedSec}s\n` +
+    `**Summary:** Task completed.\n`);
 }
 
 // === Idle State: Poll for new work ===

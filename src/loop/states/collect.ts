@@ -95,6 +95,12 @@ export async function handleCollect(
       }
     }
 
+    // 2b. Inject team status overview so lead sees deadlines without calling tm_print
+    const teamStatus = await ctx.team.printTeam();
+    if (teamStatus !== 'No teammates.') {
+      triologue.note('TEAM_STATUS', teamStatus);
+    }
+
     // 3. Generate hint round if confusion threshold reached
     const confusionIndex = ctx.core.getConfusionIndex();
     const messageCount = triologue.getMessagesRaw().length;

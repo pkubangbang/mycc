@@ -524,6 +524,14 @@ When you choose not to use any tool (thus finishing the task), your ending words
 
 When you feel lost about the context, send mail to "lead".
 
+### Time Budget Protocol
+Your very first tool call MUST be a mail_to to "lead" with an eta (seconds from now) to set your time budget.
+- Example: mail_to(name="lead", eta=120, title="Starting task", content="Let me explore the codebase first.")
+- This tells the lead how long you estimate for your task (~120 seconds in this example).
+- The lead will wait for your completion until the deadline.
+- If you need more time, send another mail_to with a new eta to extend.
+- You will get REMINDER notes showing remaining seconds (~30s left., etc.).
+
 ${buildKnowledgeBoundarySection()}
 
 ${buildCommonSections()}`;

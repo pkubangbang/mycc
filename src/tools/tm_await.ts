@@ -8,7 +8,7 @@ import type { ToolDefinition, AgentContext } from '../types.js';
 
 export const tmAwaitTool: ToolDefinition = {
   name: 'tm_await',
-  description: 'Block until teammate(s) finish their task. Prefer NOT to use - let teammates work asynchronously. Only needed when results are required before proceeding.',
+  description: 'Block until teammate(s) finish their task. Prefer NOT to use - let teammates work asynchronously. Only needed when results are required before proceeding. The timeout is automatically set from the teammate\'s ETA (deadline) if provided via mail_to.',
   input_schema: {
     type: 'object',
     properties: {
@@ -18,7 +18,7 @@ export const tmAwaitTool: ToolDefinition = {
       },
       timeout: {
         type: 'number',
-        description: 'Timeout in milliseconds (default: 60000)',
+        description: 'Timeout in milliseconds. Default: 300000 (5 min). The teammate\'s ETA is used instead if provided.',
       },
     },
     required: [],
@@ -26,7 +26,7 @@ export const tmAwaitTool: ToolDefinition = {
   scope: ['main'],
   handler: async (ctx: AgentContext, args: Record<string, unknown>): Promise<string> => {
     const name = args.name as string | undefined;
-    const timeout = (args.timeout as number) ?? 60000;
+    const timeout = (args.timeout as number) ?? 300000;
 
     try {
       if (name) {

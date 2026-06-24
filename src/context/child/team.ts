@@ -99,11 +99,18 @@ export class ChildTeam implements TeamModule {
 
   /**
    * Send mail to a teammate or lead
-   * Writes directly to mailbox file
+   * If sending to lead with eta>0 (seconds from now), sends IPC 'eta_update'
+   * so the parent's TeamManager can track the deadline.
    */
-  mailTo(name: string, title: string, content: string, from?: string): void {
+  mailTo(name: string, title: string, content: string, from?: string, eta?: number): void {
     const mail = new MailBox(name);
     mail.appendMail(from ?? this.owner, title, content);
+
+    // If this is child→lead with a positive eta, send IPC for budget tracking
+    if (name === 'lead' && eta !== undefined && Number.isInteger(eta) && eta > 0) {
+      const absoluteEta = Math.floor(Date.now() / 1000) + eta;
+      ipc.sendNotification('eta_update', { eta: absoluteEta, sender: from ?? this.owner });
+    }
   }
 
   /**

@@ -49,6 +49,8 @@ export type NoteCategory =
   | 'MAIL'
   /** "Continue with your task" prompts */
   | 'CONTINUE'
+  /** Team status updates with deadline info */
+  | 'TEAM_STATUS'
   /** Timeout notifications */
   | 'TIMEOUT';
 
@@ -513,7 +515,7 @@ export interface TeamModule {
   printTeam(): string | Promise<string>;
   removeTeammate(name: string, force?: boolean): void;
   dismissTeam(force?: boolean): void;
-  mailTo(name: string, title: string, content: string, from?: string): void;
+  mailTo(name: string, title: string, content: string, from?: string, eta?: number): void;
   broadcast(title: string, content: string): void;
   // Pending questions from children
   handlePendingQuestions(): Promise<void>;

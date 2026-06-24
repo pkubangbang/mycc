@@ -33,33 +33,26 @@ export async function handleStop(
       return AgentState.PROMPT;
     }
 
-    // Normal mode: wait for teammates
-    const { result } = await ctx.team.awaitTeam(30000);
+    // Normal mode: wait for teammates (each respects their ETA deadline)
+    const { result } = await ctx.team.awaitTeam();
 
     if (result === 'got question' || ctx.mail.hasNewMails()) {
       return AgentState.COLLECT;
     }
 
-    if (result === 'interrupted') {
-      // ESC was pressed during awaitTeam - return to prompt
-      return AgentState.PROMPT;
-    }
-
-    if (result === 'all done' || result === 'no workload' || result === 'no teammates') {
-      presentResult(triologue);
-      return AgentState.PROMPT;
-    }
-
     if (result === 'timeout') {
+      const teamInfo = ctx.team.printTeam();
       triologue.note(
         'TIMEOUT',
-        `Timeout waiting for teammates. Use tm_await to wait longer, or check team status with /team. ${ctx.team.printTeam()}`,
+        `Timeout waiting for teammates.\n${teamInfo}\n\n` +
+        `Use tm_await to wait longer, or tm_remove to terminate.`,
       );
       return AgentState.COLLECT;
     }
 
-    ctx.core.brief('warn', 'awaitTeam', `Unexpected result: ${result}`);
-    return AgentState.COLLECT;
+    // 'all done' or 'no teammates'
+    presentResult(triologue);
+    return AgentState.PROMPT;
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : String(err);
     ctx.core.brief('error', 'stop', `STOP state error: ${errorMessage}`);

@@ -19,7 +19,6 @@ import * as MemoryStore from '../memory-store.js';
 import { MailBox } from '../shared/mail.js';
 import { IpcRegistry } from '../ipc-registry.js';
 import { readSession, writeSession } from '../../session/index.js';
-import { agentIO } from '../../loop/agent-io.js';
 
 // Project root for resolving paths
 const PROJECT_ROOT = getProjectRoot();
@@ -62,6 +61,12 @@ export class TeamManager implements TeamModule {
   private phase1Subscribers: Map<string, Set<() => void>> = new Map(); // waiting for working
   private phase2Subscribers: Map<string, Set<() => void>> = new Map(); // waiting for idle/shutdown
 
+  // ETA/deadline tracking per teammate (from eta_update IPC)
+  private teammateEta: Map<string, {
+    deadlineMs: number;     // Absolute deadline in ms (eta * 1000)
+    updatedAt: number;      // When this ETA was last set
+  }> = new Map();
+
   constructor(context: AgentContext, sessionFilePath: string) {
     this.context = context;
     this.sessionFilePath = sessionFilePath;
@@ -85,6 +90,7 @@ export class TeamManager implements TeamModule {
 
   /**
    * Spawn a teammate as a child process
+   * Waits for the child to send 'teammate_ready' before returning
    */
   async createTeammate(name: string, role: string, prompt: string): Promise<string> {
     // Check if teammate already exists
@@ -157,6 +163,28 @@ export class TeamManager implements TeamModule {
       triologuePath,
     });
 
+    // Wait for 'teammate_ready' notification with 30s timeout
+    const ready = await new Promise<boolean>((resolve) => {
+      const timeout = setTimeout(() => {
+        child.removeAllListeners('message');
+        resolve(false);
+      }, 30000);
+
+      const handler = (msg: IpcMessage) => {
+        if (msg.type === 'teammate_ready' && msg.name === name) {
+          clearTimeout(timeout);
+          child.removeListener('message', handler);
+          resolve(true);
+        }
+      };
+      child.on('message', handler);
+    });
+
+    if (!ready) {
+      child.kill('SIGTERM');
+      return `Error: Teammate '${name}' failed to initialize within 30s. The child process was killed.`;
+    }
+
     return `Spawned teammate '${name}' (role: ${role}) as child process (pid: ${child.pid})`;
   }
 
@@ -206,6 +234,16 @@ export class TeamManager implements TeamModule {
         return;
       }
       this.context.core.brief('info', teammateName, 'Teammate ready');
+    }
+
+    if (msg.type === 'eta_update') {
+      // Teammate sent a time budget (absolute ETA)
+      const etaMsg = msg as unknown as { eta: number; sender: string };
+      const deadlineMs = etaMsg.eta * 1000;
+      this.teammateEta.set(etaMsg.sender, { deadlineMs, updatedAt: Date.now() });
+      this.context.core.brief('info', 'eta_update',
+        `${etaMsg.sender}: deadline ${new Date(deadlineMs).toLocaleTimeString()}`);
+      return;
     }
 
     if (msg.type === 'log') {
@@ -313,12 +351,15 @@ export class TeamManager implements TeamModule {
   /**
    * Wait for a specific teammate to finish.
    *
-   * Resolves on the TRANSITION from 'working' to another status, not just the being of a status.
-   * - If 'holding': resolve immediately (lead should process pending questions)
-   * - If 'working': wait for transition to non-working (phase 2)
-   * - If 'idle'/'shutdown' or undefined: subscribe to phase 1 (will move to phase 2 when they start)
+   * Uses the teammate's ETA (from mail_to) as the dynamic timeout.
+   * Polls every 1s for status changes and deadline extensions.
+   * - If 'idle'/'shutdown': resolve immediately (finished)
+   * - If 'holding': resolve immediately (need to answer question)
+   * - If 'working': wait for status change or deadline expiry
+   *
+   * @param defaultTimeout - Fallback timeout in ms when no ETA is set (default: 5min)
    */
-  async awaitTeammate(name: string, timeout: number = 60000): Promise<{ waited: boolean }> {
+  async awaitTeammate(name: string, defaultTimeout: number = 300000): Promise<{ waited: boolean }> {
     const status = this.statuses.get(name);
 
     // Create promise that resolves when teammate finishes their current work cycle
@@ -342,9 +383,36 @@ export class TeamManager implements TeamModule {
       }
     });
 
-    // Race with timeout
-    const timeoutPromise = new Promise<void>((_, reject) => {
-      setTimeout(() => reject(new Error(`Timeout waiting for teammate ${name}`)), timeout);
+    // Dynamic timeout with poll-based deadline tracking
+    const timeoutPromise = new Promise<void>((resolve) => {
+      let lastCheck = 0;
+      const poll = () => {
+        const currentStatus = this.statuses.get(name);
+        if (currentStatus === 'idle' || currentStatus === 'shutdown') {
+          resolve(); return; // finished
+        }
+
+        const eta = this.teammateEta.get(name);
+        if (eta) {
+          if (eta.updatedAt > lastCheck) {
+            lastCheck = eta.updatedAt; // deadline was extended
+          }
+          if (Date.now() >= eta.deadlineMs) {
+            // Deadline passed — notify lead via brief
+            this.context.core.brief('warn', name,
+              `Deadline ${new Date(eta.deadlineMs).toLocaleTimeString()} passed. ` +
+              `Use tm_await to wait longer, tm_remove to terminate.`);
+            resolve(); return;
+          }
+        } else if (lastCheck === 0) {
+          lastCheck = Date.now(); // start default timeout
+        } else if (Date.now() - lastCheck >= defaultTimeout) {
+          resolve(); return; // default timeout expired
+        }
+
+        setTimeout(poll, 1000);
+      };
+      poll();
     });
 
     await Promise.race([promise, timeoutPromise]);
@@ -354,124 +422,42 @@ export class TeamManager implements TeamModule {
   /**
    * Wait for all teammates to finish.
    *
-   * Implements a phased waiting strategy:
-   * 1. If no teammates or all shutdown → return "no teammates" immediately
-   * 2. Watch for 'holding' status every 1s → return "got question" immediately
-   * 3. Wait 5 seconds for teammates to enter working state
-   * 4. After 5s, if all idle/shutdown → return "no workload"
-   * 5. Else watch for all to finish (idle/shutdown/holding) with timeout
-   * 6. If all finish in time → return "all done", else → return "timeout"
+   * Uses each teammate's ETA deadline as the dynamic timeout.
+   * Resolves as soon as one teammate raises a question (holding).
    *
-   * @returns result: "no teammates" | "got question" | "no workload" | "all done" | "timeout"
+   * @returns result: "no teammates" | "got question" | "all done" | "timeout"
    */
-  async awaitTeam(timeout: number = 60000): Promise<{ result: string }> {
-    const POLL_INTERVAL_MS = 1000;
-    const INITIAL_WAIT_MS = 5000;
-
+  async awaitTeam(_timeout?: number): Promise<{ result: string }> {
     const teammates = this.listTeammates();
 
-    // Step 1: Check if no teammates or all shutdown
+    // No teammates or all shutdown
     if (teammates.length === 0 || teammates.every((t) => t.status === 'shutdown')) {
       return { result: 'no teammates' };
     }
 
-    // Short-circuit: holding is highest priority - return immediately
-    if (teammates.some((t) => t.status === 'holding')) {
+    // Holding is highest priority — return immediately
+    const holding = teammates.find((t) => t.status === 'holding');
+    if (holding) {
       return { result: 'got question' };
     }
 
-    // Helper to get current statuses
-    const getStatuses = () => {
-      const current = this.listTeammates();
-      return {
-        holding: current.some((t) => t.status === 'holding'),
-        working: current.some((t) => t.status === 'working'),
-        allSettled: current.every((t) => t.status === 'idle' || t.status === 'shutdown'),
-      };
-    };
-
-    // Step 2: Set up periodic watcher for holding status during initial wait
-    const startTime = Date.now();
-    let holdingDetected = false;
-
-    // Watch for holding during the initial 5-second period
-    const initialWatchPromise = new Promise<void>((resolve) => {
-      const intervalId = setInterval(() => {
-        // Check for ESC interruption
-        if (agentIO.isNeglectedMode()) {
-          clearInterval(intervalId);
-          resolve();
-          return;
-        }
-        const statuses = getStatuses();
-        if (statuses.holding) {
-          holdingDetected = true;
-          clearInterval(intervalId);
-          resolve();
-        }
-      }, POLL_INTERVAL_MS);
-
-      // Clean up after initial wait
-      setTimeout(() => {
-        clearInterval(intervalId);
-        resolve();
-      }, INITIAL_WAIT_MS);
-    });
-
-    await initialWatchPromise;
-
-    // If ESC was pressed during initial watch, return interrupted
-    if (agentIO.isNeglectedMode()) {
-      return { result: 'interrupted' };
+    // If nobody is working, no need to wait
+    const working = teammates.filter((t) => t.status === 'working');
+    if (working.length === 0) {
+      return { result: 'all done' };
     }
 
-    // If holding detected during initial watch, return immediately
-    if (holdingDetected) {
+    // Wait for each working teammate via awaitTeammate (which respects ETA deadlines)
+    await Promise.all(working.map((t) => this.awaitTeammate(t.name)));
+
+    // After all resolves, check final state
+    const finalTeammates = this.listTeammates();
+    const finalHolding = finalTeammates.some((t) => t.status === 'holding');
+    if (finalHolding) {
       return { result: 'got question' };
     }
 
-    // Step 3: Check status after initial wait
-    const afterInitial = getStatuses();
-
-    // Step 4: If all idle/shutdown after 5 seconds, return "no workload"
-    if (afterInitial.allSettled) {
-      return { result: 'no workload' };
-    }
-
-    // Step 5: At least one working - watch for completion with timeout
-    const remainingTimeout = Math.max(0, timeout - (Date.now() - startTime));
-
-    if (remainingTimeout <= 0) {
-      return { result: 'timeout' };
-    }
-
-    const completionPromise = new Promise<string>((resolve) => {
-      const intervalId = setInterval(() => {
-        // Check for ESC interruption
-        if (agentIO.isNeglectedMode()) {
-          clearInterval(intervalId);
-          resolve('interrupted');
-          return;
-        }
-        const statuses = getStatuses();
-        if (statuses.holding) {
-          clearInterval(intervalId);
-          resolve('got question');
-        } else if (statuses.allSettled) {
-          clearInterval(intervalId);
-          resolve('all done');
-        }
-      }, POLL_INTERVAL_MS);
-
-      // Timeout
-      setTimeout(() => {
-        clearInterval(intervalId);
-        resolve('timeout');
-      }, remainingTimeout);
-    });
-
-    const result = await completionPromise;
-    return { result };
+    return { result: 'all done' };
   }
 
   /**
@@ -485,7 +471,15 @@ export class TeamManager implements TeamModule {
 
     const lines = ['Team:'];
     for (const t of teammates) {
-      lines.push(`  ${t.name} (${t.role}): ${t.status}`);
+      let info = `  ${t.name} (${t.role}): ${t.status}`;
+      const eta = this.teammateEta.get(t.name);
+      if (eta && t.status === 'working') {
+        const remaining = Math.max(0,
+          Math.round((eta.deadlineMs - Date.now()) / 1000));
+        const deadlineStr = new Date(eta.deadlineMs).toLocaleTimeString();
+        info += `, deadline ${deadlineStr} (${remaining}s remaining)`;
+      }
+      lines.push(info);
     }
     return lines.join('\n');
   }
@@ -502,14 +496,14 @@ export class TeamManager implements TeamModule {
         // Force kill the process
         child.kill('SIGTERM');
       } else if (child.connected) {
-        // Soft shutdown: send IPC message and disconnect
+        // Soft shutdown: send IPC message (do NOT disconnect - child exits cooperatively)
         child.send({ type: 'shutdown' } as ParentMessage);
-        child.disconnect();
       }
     }
 
     this.processes.delete(name);
     this.statuses.delete(name);
+    this.teammateEta.delete(name);
     MemoryStore.removeTeammate(name);
   }
 
@@ -523,9 +517,8 @@ export class TeamManager implements TeamModule {
         // Force kill the process
         child.kill('SIGTERM');
       } else if (child.connected) {
-        // Soft shutdown: send IPC message and disconnect
+        // Soft shutdown: send IPC message (do NOT disconnect - child exits cooperatively)
         child.send({ type: 'shutdown' } as ParentMessage);
-        child.disconnect();
       }
     }
 
@@ -544,8 +537,9 @@ export class TeamManager implements TeamModule {
    * @param title - Message title
    * @param content - Message content
    * @param from - Sender name (defaults to 'lead')
+   * @param _eta - Optional time budget in seconds. Ignored by parent (only child sends IPC).
    */
-  mailTo(name: string, title: string, content: string, from: string = 'lead'): void {
+  mailTo(name: string, title: string, content: string, from: string = 'lead', _eta?: number): void {
     const mail = new MailBox(name);
     mail.appendMail(from, title, content);
   }
