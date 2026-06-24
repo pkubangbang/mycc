@@ -682,6 +682,22 @@ export class Triologue {
   }
 
   /**
+   * INTERNAL: Get pending tool call order (copy).
+   * Used by tp-auto-fixer.ts to iterate over pending calls for recovery.
+   */
+  _getPendingToolCallOrder(): string[] {
+    return [...this.pendingToolCallOrder];
+  }
+
+  /**
+   * INTERNAL: Get a pending tool call by ID.
+   * Used by tp-auto-fixer.ts to look up pending calls for recovery.
+   */
+  _getPendingToolCall(id: string): ToolCall | undefined {
+    return this.pendingToolCalls.get(id);
+  }
+
+  /**
    * INTERNAL: Update the function name of the last pending tool call entry.
    * Used after tool_no_assistant recovery where a synthetic tool_call was injected
    * with an empty function name. This updates it to match the actual tool being called.

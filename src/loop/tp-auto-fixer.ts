@@ -109,8 +109,22 @@ export function attemptAutoFix(
     }
 
     case 'duplicate_assistant':
-      // Clear pending tool calls (any from the previous assistant are now invalid),
-      // then allow the duplicate assistant message.
+      // Inject tool results for all pending calls BEFORE clearing, so the first
+      // assistant message's tool_calls each have a corresponding tool result.
+      // DeepSeek strictly requires this — every tool_call_id must have a tool
+      // response before the next assistant message. Ollama tolerates the omission,
+      // but injecting results is semantically correct for all providers.
+      for (const id of triologue._getPendingToolCallOrder()) {
+        const tc = triologue._getPendingToolCall(id);
+        if (tc) {
+          triologue._injectBypass({
+            role: 'tool',
+            tool_name: tc.function.name,
+            content: '[TP_RECOVERY] Tool call skipped due to consecutive assistant messages.',
+            tool_call_id: id,
+          });
+        }
+      }
       triologue._clearPendingToolCalls();
       break;
 

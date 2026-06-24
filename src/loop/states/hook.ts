@@ -279,12 +279,39 @@ export async function handleHook(
       return handleRecapCall(recapCall, env, pass, turn);
     }
 
-    // 5. Register agent response with triologue (using manipulated tool calls)
-    //    Crossroad: merge continuation into the content BEFORE agent registration
-    //    so the full reconstructed response is captured in one clean addMessage call.
-    const finalAssistantContent = pass.crossroadContinuation
-      ? `${pass.assistantContent || ''  }\n${  pass.crossroadContinuation}`
-      : pass.assistantContent;
+    // 5. Crossroad: FIRST-CLASS branch — handled BEFORE normal registration.
+    //    Emits a SINGLE triologue.agent() call with merged content + brief tool call
+    //    to engage the LLM actively. The brief gives a thinking trace to follow,
+    //    nudging the LLM to regenerate tool calls for the continued direction.
+    //    Stop-trigger hooks that fired on the empty rawToolCalls are intentionally
+    //    not carried forward — crossroad's purpose is to have the LLM regenerate
+    //    tool calls after resolving its direction.
+    if (pass.crossroadContinuation) {
+      const finalContent = `${pass.assistantContent || ''}\n${pass.crossroadContinuation}`;
+      const briefCallId = Math.random().toString(36).slice(2, 10);
+      triologue.agent(finalContent, [{
+        id: briefCallId,
+        function: {
+          name: 'brief',
+          arguments: { message: 'Resolved my direction. Let me continue with the tools.', confidence: 7 },
+        },
+      }] as ToolCall[], pass.assistantReasoningContent);
+      triologue.tool('brief', 'OK', briefCallId);
+
+      ctx.core.brief('info', 'crossroad', `Resolved: ${pass.assistantContent}\n${pass.crossroadContinuation}`);
+
+      // Inject deferred hook messages so the LLM sees them in the next round
+      if (hookResult.deferredMessages.length > 0) {
+        triologue.note('REMINDER', hookResult.deferredMessages.join('\n\n---\n\n'));
+      }
+
+      pass.crossroadContinuation = undefined;
+      return AgentState.COLLECT;
+    }
+
+    // 6. Normal agent registration (no crossroad — mutual exclusion ensured
+    //    by the early return above).
+    const finalAssistantContent = pass.assistantContent;
     const finalToolCalls =
       hookResult.calls.length > 0
         ? hookResult.calls.map((c) => ({ id: c.id, function: c.function }))
@@ -294,28 +321,6 @@ export async function handleHook(
       finalToolCalls as ToolCall[] | undefined,
       pass.assistantReasoningContent,
     );
-
-    // =====================================================================
-    // Crossroad: inject synthetic brief() instead of CONTINUE note
-    // =====================================================================
-    if (pass.crossroadContinuation) {
-      ctx.core.brief('info', 'crossroad', `Resolved: ${pass.assistantContent}\n${pass.crossroadContinuation}`);
-      // Use synthetic brief() to re-engage LLM actively, rather than a passive
-      // [CONTINUE] note. This follows the same pattern as the empty-response fix
-      // in llm.ts — an annotated tool call gives the LLM a thinking trace to
-      // follow, nudging it to regenerate tool calls for the continued direction.
-      const briefCallId = Math.random().toString(36).slice(2, 10);
-      triologue.agent('', [{
-        id: briefCallId,
-        function: {
-          name: 'brief',
-          arguments: { message: 'Resolved my direction. Let me continue with the tools.', confidence: 7 },
-        },
-      }]);
-      triologue.tool('brief', 'OK', briefCallId);
-      pass.crossroadContinuation = undefined;
-      return AgentState.COLLECT;
-    }
 
     // Confusion scoring: +1 per assistant turn (agent spinning without progress)
     // In plan mode, the agent explores by reading files — tool calls are sparse,
