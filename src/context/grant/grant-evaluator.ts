@@ -86,6 +86,13 @@ export async function evaluateGrant(
       }
     }
 
+    // No owned worktree — fall back to allowing writes within the project root.
+    // This supports teammates spawned for general project work (not worktree-specific tasks).
+    const resolved = path.resolve(core.getWorkDir(), request.path);
+    if (resolved.startsWith(core.getWorkDir())) {
+      return { approved: true };
+    }
+
     return {
       approved: false,
       reason: `'${request.path}' is outside your worktree. Teammates can only modify files within their assigned worktree.`,
