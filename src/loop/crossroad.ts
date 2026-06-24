@@ -113,15 +113,15 @@ interface GenerationDirection {
 const GENERATION_DIRECTIONS: GenerationDirection[] = [
   {
     name: 'go forward',
-    prompt: `You are generating a continuation for a response that was cut off. Continue in a proactive, action-oriented direction. Focus on what to do next, taking decisive steps. Output ONLY the continuation text — no preamble, no sign-off, no tool calls. Start directly from where the prefix left off, maintaining the same tone and voice.`,
+    prompt: `You are generating a continuation for a response that was cut off. Continue in a proactive, action-oriented direction. Focus on what to do next, taking decisive steps. Output ONLY the continuation text — no preamble, no sign-off, no tool calls. Start directly from where the prefix left off, maintaining the same tone and voice. Keep your continuation brief — at most 2-3 concise sentences. Do not start a new complex reasoning chain; just provide a short, clear direction pivot.`,
   },
   {
     name: 'go backward',
-    prompt: `You are generating a continuation for a response that was cut off. Reconsider the basic assumptions and be cautious. Question whether the current direction is correct, and suggest re-examining foundations before proceeding. Output ONLY the continuation text — no preamble, no sign-off, no tool calls. Start directly from where the prefix left off, maintaining the same tone and voice.`,
+    prompt: `You are generating a continuation for a response that was cut off. Reconsider the basic assumptions and be cautious. Question whether the current direction is correct, and suggest re-examining foundations before proceeding. Output ONLY the continuation text — no preamble, no sign-off, no tool calls. Start directly from where the prefix left off, maintaining the same tone and voice. Keep your continuation brief — at most 2-3 concise sentences. Do not start a new complex reasoning chain; just provide a short, clear direction pivot.`,
   },
   {
     name: 'synthesize at a high level',
-    prompt: `You are generating a continuation for a response that was cut off. Step back and provide a higher-level abstraction. Synthesize the situation, identify the core question or principle at play, and reframe the problem in broader terms. Output ONLY the continuation text — no preamble, no sign-off, no tool calls. Start directly from where the prefix left off, maintaining the same tone and voice.`,
+    prompt: `You are generating a continuation for a response that was cut off. Step back and provide a higher-level abstraction. Synthesize the situation, identify the core question or principle at play, and reframe the problem in broader terms. Output ONLY the continuation text — no preamble, no sign-off, no tool calls. Start directly from where the prefix left off, maintaining the same tone and voice. Keep your continuation brief — at most 2-3 concise sentences. Do not start a new complex reasoning chain; just provide a short, clear direction pivot.`,
   },
 ];
 
@@ -313,6 +313,7 @@ function buildSelectionPrompt(prefix: string, continuations: string[]): string {
 1. Which one flows most naturally from the prefix?
 2. Which one is most useful and actionable?
 3. Which one shows the best judgment?
+4. Which one is most concise and direct?
 
 Reply with EXACTLY ONE line containing only the option number (e.g., "1", "2", or "3").
 Then on the next line, optionally provide the full text of that option as the continuation.
@@ -425,9 +426,12 @@ export async function handleCrossroad(
 
   // Show spinner during processing
   startSpinner('LLM is at its crossroad...');
+  let result: CrossroadResult | null = null;
+  let continuations: string[] = [];
+  let selectedIndex = -1;
   try {
     // Step 3: Generate continuations (with crossroad-level retry)
-    let continuations = await generateContinuations(messages, tools, prefix, signal);
+    continuations = await generateContinuations(messages, tools, prefix, signal);
     if (continuations.length === 0) {
       agentIO.verbose('crossroad', 'All continuations failed, retrying once...');
       await sleep(500);
@@ -445,9 +449,24 @@ export async function handleCrossroad(
       return null;
     }
 
-    agentIO.verbose('crossroad', `Selected continuation: ${best.slice(0, 150)}...`);
-    return { truncated: prefix, continuation: best };
+    selectedIndex = continuations.indexOf(best);
+    agentIO.verbose('crossroad', `Selected continuation #${selectedIndex + 1}: ${best.slice(0, 150)}...`);
+    result = { truncated: prefix, continuation: best };
+    return result;
   } finally {
     stopSpinner();
+    // Log all alternatives and which was chosen (after spinner stops for clean output)
+    if (result && continuations.length > 1) {
+      const lines: string[] = ['', '── Crossroad ──'];
+      for (let i = 0; i < continuations.length; i++) {
+        const marker = i === selectedIndex ? '→' : ' ';
+        const label = i === selectedIndex ? `#${i + 1} [SELECTED]` : `#${i + 1}`;
+        const preview = continuations[i].length > 120
+          ? continuations[i].slice(0, 120) + '...'
+          : continuations[i];
+        lines.push(`${marker} ${label}: ${preview}`);
+      }
+      agentIO.log(lines.join('\n'));
+    }
   }
 }
