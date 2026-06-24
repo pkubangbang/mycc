@@ -35,7 +35,6 @@ let pendingModeChange: 'plan' | 'normal' | null = null;
 // Budget/deadline tracking
 let budgetSent = false;
 let startTime = 0;
-let hasDoneWork = false;
 let deadlineMs = 0;        // Absolute deadline in ms (computed from eta)
 
 // Heartbeat interval (30s)
@@ -211,36 +210,27 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
       // Confusion scoring: +1 per assistant turn (agent spinning without progress)
       ctx.core.increaseConfusionIndex(1);
 
-      // ---- No tools: guard against premature idle ----
-      // No tool calls
+      // ---- No tools: re-prompt or enter idle ----
       if (!toolCalls || toolCalls.length === 0) {
         // Register the assistant message (no tool calls to track)
         triologue.agent(assistantMessage.content || '', undefined, reasoningContent);
 
+        nextBriefNudge = 5;
         if (!budgetSent) {
-          // Never sent budget or did any work — re-prompt instead of idle
-          nextBriefNudge = 5;
           const exampleEta = Math.floor(Date.now() / 1000 + 120);
           triologue.note('CONTINUE',
             `Request a time budget from lead via mail_to(name="lead", eta=${exampleEta}, ...).`);
-          continue;
-        }
-
-        if (hasDoneWork) {
-          // Actually did work and LLM says it's done — enter completing phase
-          nextBriefNudge = 5;
-          sendCompletionMail();
+        } else if (!ctx.todo.hasOpenTodo()) {
+          // No open todos and LLM produced no tool calls — likely done
           const result = await enterIdleState(triologue);
           if (result === 'shutdown') {
             process.exit(0);
           }
           // Resume work phase
           continue;
+        } else {
+          triologue.note('CONTINUE', 'Use tools to make progress on the task.');
         }
-
-        // Has budget but no work done yet — re-prompt to use tools
-        nextBriefNudge = 5;
-        triologue.note('CONTINUE', 'Use tools to make progress on the task.');
         continue;
       }
 
@@ -273,11 +263,6 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
             ctx.team.mailTo('lead', `Progress: ${teammateName}`,
               `[PROGRESS] ${elapsed}s elapsed, still working.`);
             lastHeartbeatTime = Date.now();
-          }
-
-          // Track work done (non-exploration tools)
-          if (!EXPLORATION_TOOLS.has(toolName)) {
-            hasDoneWork = true;
           }
 
           // Confusion scoring based on tool classification
@@ -373,17 +358,6 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
   // Graceful exit after shutdown requested
   sendStatus('shutdown');
   process.exit(0);
-}
-
-/**
- * Send completion mail before entering idle
- */
-function sendCompletionMail(): void {
-  if (!budgetSent) return;
-  const elapsedSec = Math.round((Date.now() - startTime) / 1000);
-  ctx.team.mailTo('lead', `Results: ${teammateName}`,
-    `[COMPLETE] ${teammateName} finished in ${elapsedSec}s\n` +
-    `**Summary:** Task completed.\n`);
 }
 
 // === Idle State: Poll for new work ===
