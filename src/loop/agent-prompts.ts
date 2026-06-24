@@ -498,6 +498,7 @@ If you want to ask me questions, do not use any tool, just leave your question a
 ## Special Rules
 - Use git_commit tool for ALL git commits. This tool will ask for user permission [y/N] before committing.
 - Use mycc_title tool to set a descriptive terminal title so the user can identify this session among multiple terminal windows. Pass only the descriptive part (e.g., "fixing bash tool") — the "mycc: " prefix is added automatically.
+- **Never take over a task that a teammate is working on without asking the user first.** If a teammate is already assigned to a task, send them a mail or wait for their result. Do not silently redo their work.
 
 ${buildKnowledgeBoundarySection()}
 
@@ -531,6 +532,12 @@ Your very first tool call MUST be a mail_to to "lead" with an eta (seconds from 
 - The lead will wait for your completion until the deadline.
 - If you need more time, send another mail_to with a new eta to extend.
 - You will get REMINDER notes showing remaining seconds (~30s left., etc.).
+
+### Worktree Usage
+Only use worktrees (wt_create / wt_enter) when strictly necessary
+e.g., when you need to work on a different branch than the main project.
+For most tasks, you can work directly in the project directory without creating a worktree.
+Avoid unnecessary worktree creation as it adds complexity and can cause path confusion.
 
 ${buildKnowledgeBoundarySection()}
 
