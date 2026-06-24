@@ -14,35 +14,80 @@ import minimist from 'minimist';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import { config } from 'dotenv';
 import { getUserConfigPath, getProjectConfigPath } from './setup/paths.js';
 
 // ============================================================================
-// Environment File Paths
+// Inline .env File Parser
 // ============================================================================
 
 /**
- * Load environment variables from config files
- * Priority (highest to lowest): ENV_VAR > Project env > User env
+ * Parse a .env file and return key-value pairs.
+ * Handles: comments (#), empty lines, KEY=VALUE, quoted values,
+ * export KEY=VALUE prefix, UTF-8 BOM on first line.
+ */
+export function parseEnvFile(filePath: string): Record<string, string> {
+  const raw = fs.readFileSync(filePath, 'utf-8');
+  const result: Record<string, string> = {};
+
+  const lines = raw.split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    let line = lines[i].trim();
+
+    // Strip UTF-8 BOM from the first line
+    if (i === 0 && line.codePointAt(0) === 0xfeff) {
+      line = line.slice(1).trim();
+    }
+
+    // Skip empty lines and comments
+    if (!line || line.startsWith('#')) continue;
+
+    // Strip optional 'export ' prefix
+    if (line.startsWith('export ')) {
+      line = line.slice(7).trim();
+    }
+
+    const eqIdx = line.indexOf('=');
+    if (eqIdx === -1) continue; // no '=', skip
+
+    const key = line.slice(0, eqIdx).trim();
+    if (!key) continue; // empty key, skip
+
+    let value = line.slice(eqIdx + 1).trim();
+
+    // Unwrap matching quotes
+    if (value.length >= 2) {
+      const first = value[0];
+      const last = value[value.length - 1];
+      if ((first === '"' && last === '"') || (first === "'" && last === "'")) {
+        value = value.slice(1, -1);
+      }
+    }
+
+    result[key] = value;
+  }
+
+  return result;
+}
+
+// ============================================================================
+// Environment Loading
+// ============================================================================
+
+/**
+ * Load environment variables from .env files and merge into process.env.
  *
- * dotenv.config() doesn't overwrite existing values, so we load in
- * priority order: highest priority first, lowest priority last.
- * - System ENV_VAR already exists before this runs (highest priority)
- * - Load project env next (medium priority) - won't overwrite ENV_VAR
- * - Load user env last (lowest priority) - won't overwrite project or ENV_VAR
+ * Priority (lowest to highest): user .env → project .env → system env → cmd-args
+ * Encoded directly via Object.assign argument order.
  */
 export function loadEnv(): void {
-  const userEnvPath = getUserConfigPath();
-  const projectEnvPath = getProjectConfigPath();
+  const userConfig = fs.existsSync(getUserConfigPath())
+    ? parseEnvFile(getUserConfigPath()) : {};
+  const projConfig = fs.existsSync(getProjectConfigPath())
+    ? parseEnvFile(getProjectConfigPath()) : {};
 
-  // Load higher priority first (project overrides user)
-  if (fs.existsSync(projectEnvPath)) {
-    config({ path: projectEnvPath });
-  }
-  // Load lower priority last (user is fallback)
-  if (fs.existsSync(userEnvPath)) {
-    config({ path: userEnvPath });
-  }
+  // Later arguments override earlier ones
+  const result = Object.assign({}, userConfig, projConfig, process.env, cmdArgsEnv);
+  Object.assign(process.env, result);
 }
 
 // Parse CLI args once at startup
@@ -54,22 +99,43 @@ const args = minimist(process.argv.slice(2), {
 });
 
 /**
+ * Build a plain object mapping cmd-args to MYCC_* env vars.
+ * Modules can read process.env.MYCC_* without knowing about minimist.
+ */
+function buildCmdArgsEnv(parsed: typeof args): Record<string, string> {
+  const env: Record<string, string> = {};
+  const map: Record<string, string> = {
+    'verbose': 'MYCC_VERBOSE',
+    'session': 'MYCC_SESSION',
+    'skip-healthcheck': 'MYCC_SKIP_HEALTHCHECK',
+    'setup': 'MYCC_SETUP',
+    'debug-eval': 'MYCC_DEBUG_EVAL',
+    'debug-tp': 'MYCC_DEBUG_TP',
+    'debug-prompt': 'MYCC_DEBUG_PROMPT',
+  };
+  for (const [argKey, envKey] of Object.entries(map)) {
+    const value = parsed[argKey];
+    if (value !== undefined && value !== null && value !== false) {
+      env[envKey] = String(value);
+    }
+  }
+  return env;
+}
+
+// Built once at module load — used by loadEnv() to merge into process.env
+const cmdArgsEnv = buildCmdArgsEnv(args);
+
+/**
  * Global runtime configuration singleton
  */
 class GlobalConfig {
-  private _verbose: boolean;
-
-  constructor() {
-    this._verbose = args.v || args.verbose || false;
-  }
-
   /** Verbose mode - show detailed debug output */
   get verbose(): boolean {
-    return this._verbose;
+    return process.env.MYCC_VERBOSE === 'true';
   }
 
   set verbose(value: boolean) {
-    this._verbose = value;
+    process.env.MYCC_VERBOSE = String(value);
   }
 }
 
@@ -79,21 +145,21 @@ const globalConfig = new GlobalConfig();
  * Get session ID from CLI args (--session flag)
  */
 export function getSessionArg(): string | null {
-  return args.session || null;
+  return process.env.MYCC_SESSION || null;
 }
 
 /**
  * Check if health check should be skipped
  */
 export function shouldSkipHealthCheck(): boolean {
-  return args['skip-healthcheck'] || false;
+  return process.env.MYCC_SKIP_HEALTHCHECK === 'true';
 }
 
 /**
  * Check if setup mode is requested
  */
 export function shouldRunSetup(): boolean {
-  return args.setup === true;
+  return process.env.MYCC_SETUP === 'true';
 }
 
 /**
@@ -108,7 +174,7 @@ export function isVerbose(): boolean {
  * When enabled, expression evaluation prints AST trees via agentIO.brief.
  */
 export function isDebuggingEval(): boolean {
-  return args['debug-eval'] || false;
+  return process.env.MYCC_DEBUG_EVAL === 'true';
 }
 
 /**
@@ -116,7 +182,7 @@ export function isDebuggingEval(): boolean {
  * When enabled, TP violations print the call site stack trace.
  */
 export function isDebuggingTp(): boolean {
-  return args['debug-tp'] || false;
+  return process.env.MYCC_DEBUG_TP === 'true';
 }
 
 /**
@@ -124,7 +190,7 @@ export function isDebuggingTp(): boolean {
  * When enabled, extracted keywords are printed to the console during prompt stage.
  */
 export function isDebuggingPrompt(): boolean {
-  return args['debug-prompt'] || false;
+  return process.env.MYCC_DEBUG_PROMPT === 'true';
 }
 
 /**
