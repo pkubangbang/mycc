@@ -62,26 +62,32 @@ export const mailToTool: ToolDefinition = {
     const senderName = ctx.core.getName();
     const isTeammateToLead = name === 'lead' && senderName !== 'lead';
 
-    // Conditional enforcement: child→lead requires positive eta (seconds from now)
+    // Conditional enforcement: child→lead requires eta (seconds from now)
     if (isTeammateToLead) {
       if (eta === undefined) {
         ctx.core.brief('error', 'mail_to',
           'eta is required when sending to lead. ' +
-          'Estimate how long you need in seconds (e.g., eta=120 for ~2 minutes).');
+          'Estimate how long you need in seconds (e.g., eta=120 for ~2 minutes). ' +
+          'Set to 0 for non-budget messages (progress updates, lead responses).');
         return 'Error: eta is required when sending to lead. ' +
-               'Set eta to the number of seconds you need (e.g., eta=120 for 2 minutes).';
+               'Set eta to the number of seconds you need (e.g., eta=120 for 2 minutes). ' +
+               'Set to 0 for non-budget messages (progress updates, lead responses).';
       }
-      if (typeof eta !== 'number' || !Number.isInteger(eta) || eta <= 0) {
+      if (typeof eta !== 'number' || !Number.isInteger(eta) || eta < 0) {
         ctx.core.brief('error', 'mail_to',
-          `eta must be a positive integer (seconds from now), got: ${eta}`);
-        return 'Error: eta must be a positive integer (seconds from now). ' +
-               'Example: eta=120 for about 2 minutes.';
+          `eta must be a non-negative integer (seconds from now), got: ${eta}`);
+        return 'Error: eta must be a non-negative integer (seconds from now). ' +
+               'Example: eta=120 for about 2 minutes, eta=0 for non-budget messages.';
       }
 
       // ctx.team.mailTo handles IPC (eta_update) in ChildTeam implementation
       ctx.core.brief('info', 'mail_to', `(...to ${name}) ${title}\n${chalk.gray(content)}`);
       ctx.team.mailTo(name, title, content, undefined, eta);
-      return `OK. Budget sent to lead: ~${eta}s from now. The lead will wait until the deadline. Extend by sending mail_to with a new eta.`;
+
+      if (eta > 0) {
+        return `OK. Budget sent to lead: ~${eta}s from now. The lead will wait until the deadline. Extend by sending mail_to with a new eta.`;
+      }
+      return 'OK';
     }
 
     // Lead→anyone or child→other: eta is optional, mail as usual
