@@ -13,6 +13,7 @@ import type {
   IpcHandlerRegistration,
   SendResponseCallback,
 } from '../../types.js';
+import chalk from 'chalk';
 import { getMyccDir } from '../../config.js';
 import { getProjectRoot, spawnTsx } from '../../utils/tsx-run.js';
 import * as MemoryStore from '../memory-store.js';
@@ -241,8 +242,11 @@ export class TeamManager implements TeamModule {
       const etaMsg = msg as unknown as { eta: number; sender: string };
       const deadlineMs = etaMsg.eta * 1000;
       this.teammateEta.set(etaMsg.sender, { deadlineMs, updatedAt: Date.now() });
-      this.context.core.brief('info', 'eta_update',
-        `${etaMsg.sender}: deadline ${new Date(deadlineMs).toLocaleTimeString()}`);
+      const deadlineStr = new Date(deadlineMs).toLocaleTimeString();
+      const banner = chalk.bgCyan.black.bold(
+        ` ${etaMsg.sender} will be finishing the task by ${deadlineStr} `
+      );
+      this.context.core.brief('info', 'eta_update', banner);
       return;
     }
 
