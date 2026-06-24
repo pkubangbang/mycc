@@ -9,7 +9,7 @@ import os from 'os';
 import path from 'path';
 import chalk from 'chalk';
 import { getUserConfigPath, getProjectConfigPath } from './paths.js';
-import { displayCurrentSettings, getExistingConfig, hasExistingConfig } from './display.js';
+import { displayCurrentSettings, getExistingConfig, hasExistingConfig, parseEnvFile } from './display.js';
 import { runWizard, isInteractiveTerminal, displaySetupHelp } from './wizard.js';
 import { pullConfiguredModels, checkOllamaAvailable } from './models.js';
 
@@ -95,10 +95,17 @@ export async function runSetup(): Promise<void> {
   // Step 4: Ensure directory exists
   ensureConfigDir(configPath);
 
-  // Step 5: Write config file
-  writeEnvFile(configPath, config);
+  // Step 5: Merge with existing config to preserve untouched variables
+  let existingFileConfig: Record<string, string> = {};
+  if (fs.existsSync(configPath)) {
+    existingFileConfig = parseEnvFile(configPath);
+  }
+  const mergedConfig = { ...existingFileConfig, ...config };
 
-  // Step 6: Pull models (provider-aware)
+  // Step 6: Write config file
+  writeEnvFile(configPath, mergedConfig);
+
+  // Step 7: Pull models (provider-aware)
   if (provider === 'ollama') {
     const ollamaAvailable = await checkOllamaAvailable();
     if (ollamaAvailable) {
@@ -109,7 +116,7 @@ export async function runSetup(): Promise<void> {
     await pullConfiguredModels(config, provider);
   }
 
-  // Step 7: Print success message
+  // Step 8: Print success message
   const providerLabel = provider === 'deepseek' ? 'DeepSeek' : 'Ollama';
   console.log(chalk.green(`\n✅ Configuration saved successfully!`));
   console.log(chalk.dim(`   Location: ${configPath}`));
