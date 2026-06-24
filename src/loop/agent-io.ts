@@ -118,6 +118,9 @@ class AgentIO {
     args: unknown[];
   }> = [];
 
+  // ESC cancel support for ask()
+  private askOnDone: ((value: string) => void) | null = null;
+
   // Lifecycle
 
   /**
@@ -130,9 +133,11 @@ class AgentIO {
     // Handle IPC messages from coordinator
     process.on('message', (msg: { type: string; key?: KeyInfo; keys?: KeyInfo[]; columns?: number }) => {
       if (msg.type === 'neglection') {
-        // Don't set neglected mode if user is in a LineEditor prompt (ask())
+        // If user is in a LineEditor prompt (ask()), cancel the current input
+        // and return to a fresh prompt instead of ignoring ESC.
         if (this.activeLineEditor) {
-          return; // ESC during ask() - just ignore
+          this.cancelAsk();
+          return;
         }
 
         // ESC pressed - set neglected mode and abort LLM call if running
@@ -517,23 +522,26 @@ class AgentIO {
       }
 
       try {
+        // Store the resolve callback for ESC cancel support
+        this.askOnDone = (value: string) => {
+          // Stop wrap-up polling
+          stopPolling();
+
+          // Save history
+          this.lineHistory = this.activeLineEditor?.getHistory() || [];
+          this.activeLineEditor?.close();
+          this.activeLineEditor = null;  // Clear FIRST - so isInteractionMode() returns false
+
+          // Flush buffered output (after clearing activeLineEditor)
+          this.flushOutput();
+
+          resolve(value);
+        };
+
         this.activeLineEditor = new LineEditor({
           prompt,
           stdout: process.stdout,
-          onDone: (value: string) => {
-            // Stop wrap-up polling
-            stopPolling();
-
-            // Save history
-            this.lineHistory = this.activeLineEditor?.getHistory() || [];
-            this.activeLineEditor?.close();
-            this.activeLineEditor = null;  // Clear FIRST - so isInteractionMode() returns false
-
-            // Flush buffered output (after clearing activeLineEditor)
-            this.flushOutput();
-
-            resolve(value);
-          },
+          onDone: this.askOnDone,
           history: this.lineHistory,
           onContentChange: (content: string) => {
             if (content.startsWith('/')) {
@@ -610,6 +618,22 @@ class AgentIO {
         throw e;
       }
     });
+  }
+
+  /**
+   * Cancel the current ask() call — clears the LineEditor and resolves
+   * with a sentinel value so the caller can return to a fresh prompt.
+   * Called when ESC is pressed during prompt input.
+   */
+  private cancelAsk(): void {
+    if (this.activeLineEditor && this.askOnDone) {
+      // Clear the editor content
+      this.activeLineEditor.setContent('');
+      // Close the editor and resolve with sentinel
+      const onDone = this.askOnDone;
+      this.askOnDone = null;
+      onDone('__ESC_CANCEL__');
+    }
   }
 
   // LLM Abort handling
