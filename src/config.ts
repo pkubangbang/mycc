@@ -156,10 +156,13 @@ export function shouldSkipHealthCheck(): boolean {
 }
 
 /**
- * Check if setup mode is requested
+ * Check if setup mode is requested.
+ * Reads the parsed CLI args directly (not process.env) because this is called
+ * at module top-level, before loadEnv() merges cmd-args into process.env.
+ * Setup is a pre-agent wizard, not part of the agent lifecycle.
  */
 export function shouldRunSetup(): boolean {
-  return process.env.MYCC_SETUP === 'true';
+  return args.setup === true;
 }
 
 /**
