@@ -45,6 +45,9 @@ export class BackgroundTasks implements BgModule {
           // which breaks stdout/stderr piping (output goes to that console
           // instead of the pipes). We use unref() instead to allow the
           // child to outlive the parent while keeping pipes intact.
+          // PYTHONIOENCODING forces Python scripts to use UTF-8 for their
+          // stdout/stderr pipes regardless of the system code page.
+          env: { ...process.env, PYTHONIOENCODING: 'utf-8' },
         })
       : spawn(cmd, [], {
           cwd: this.core.getWorkDir(),
@@ -81,7 +84,7 @@ export class BackgroundTasks implements BgModule {
 
     // Handle output — accumulate silently, viewable via bg_print (Fix 3: cap at MAX_OUTPUT_BYTES)
     const appendOutput = (data: Buffer): void => {
-      const text = data.toString();
+      const text = data.toString('utf-8');
       if (task.output) {
         task.output += text;
       } else {
