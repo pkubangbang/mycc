@@ -30,11 +30,11 @@ const HINT_SCHEMA = {
     },
     wiki_domain: {
       type: 'string',
-      description: 'Domain name from available domains. Leave empty if no wiki search needed.',
+      description: 'Domain name from available domains (see list below). Set this when the blocker involves errors, unfamiliar tools, or missing knowledge.',
     },
     wiki_query: {
       type: 'string',
-      description: 'Search query for the wiki. Leave empty if no wiki search needed.',
+      description: 'Search query for the wiki. REQUIRED when wiki_domain is set. Describe what knowledge is needed.',
     },
   },
   required: ['blocker', 'next_step', 'focus_on', 'wiki_domain', 'wiki_query'],
@@ -45,7 +45,7 @@ const HINT_SYSTEM_PROMPT = `You are a problem-analysis assistant. Your task is t
 CRITICAL INSTRUCTIONS:
 1. If there are NO REAL blockers preventing progress, set blocker to exactly: "no blockers"
 2. Do NOT fabricate blockers. "no blockers" means the agent should simply continue with the current task.
-3. Only suggest wiki_domain and wiki_query if there's genuine knowledge gap. Leave empty strings if no wiki search needed.
+3. When the blocker involves errors, unfamiliar tools, or missing knowledge, ALWAYS suggest a wiki search by setting wiki_domain and wiki_query. The available domains are listed below. Only leave both empty if the blocker is purely about code logic or syntax.
 4. Reply with ONLY a JSON object. No commentary, no markdown fences. The schema is:
 ${JSON.stringify(HINT_SCHEMA, null, 2)}`;
 
