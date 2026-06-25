@@ -5,6 +5,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { wtLeaveTool } from '../../tools/wt_leave.js';
 import { createMockContext, createTempDir, removeTempDir } from './test-utils.js';
+import { agentIO } from '../../loop/agent-io.js';
 import type { AgentContext } from '../../types.js';
 
 describe('wtLeaveTool', () => {
@@ -26,6 +27,8 @@ describe('wtLeaveTool', () => {
       getWorkTreePath: vi.fn(async () => ''),
     };
     vi.clearAllMocks();
+    // Initialize as main process so mail notification block is skipped
+    vi.spyOn(agentIO, 'isMainProcess').mockReturnValue(true);
   });
 
   afterEach(() => {

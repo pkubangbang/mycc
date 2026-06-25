@@ -181,10 +181,7 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
           nextTimeNudge = TIME_NUDGE_INTERVAL;
           const remaining = Math.max(0, Math.round((deadlineMs - Date.now()) / 1000));
           triologue.note('REMINDER',
-            `~${remaining}s left.` +
-            (remaining < 30
-              ? ` Send mail_to with a new eta to extend.`
-              : ``));
+            `~${remaining}s left.${remaining < 30 ? ' Send mail_to with a new eta to extend.' : ''}`);
         }
       }
 
