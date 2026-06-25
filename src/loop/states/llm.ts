@@ -132,7 +132,19 @@ export async function handleLlm(
           pass.crossroadContinuation = crossroadResult.continuation;
           // Discard original tool calls — LLM will regenerate them after crossroad
           pass.rawToolCalls = [];
+
+          // Consecutive crossroad = LLM stuck hesitating → count towards hint round
+          if (env.crossroadOccurred) {
+            ctx.core.increaseConfusionIndex(2);
+          }
+          env.crossroadOccurred = true;
+        } else {
+          // No crossroad this pass — reset the consecutive flag
+          env.crossroadOccurred = false;
         }
+      } else {
+        // No tools available (e.g. neglected mode) — reset the consecutive flag
+        env.crossroadOccurred = false;
       }
 
       // Handle edge case where LLM returns empty content AND no tool calls

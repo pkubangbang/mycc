@@ -64,6 +64,8 @@ export interface MachineEnv {
    * Consumed and cleared by PROMPT handler on next entry.
    */
   pendingSlashQuery: string | null;
+  /** Tracks whether the previous LLM pass had a crossroad (for consecutive detection) */
+  crossroadOccurred: boolean;
 }
 
 /** Turn lifetime — fresh when entering PROMPT from STOP/startup, persists across COLLECT→LLM→HOOK iterations */
@@ -134,6 +136,7 @@ export class AgentStateMachine {
       inputProvider,
       sessionFilePath,
       pendingSlashQuery: null,
+      crossroadOccurred: false,
     };
     this.handlers = handlers;
   }
