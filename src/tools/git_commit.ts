@@ -41,7 +41,12 @@ The tool will:
 2. Ask for permission with [y/N] prompt
 3. If user types 'y' or 'yes': execute the commit
 4. If user types 'n' or 'no': cancel the commit
-5. Otherwise: return the user's response for LLM to iterate (e.g., user feedback on message)`,
+5. Otherwise: return the user's response for LLM to iterate (e.g., user feedback on message)
+
+After a successful commit, the tool detects:
+- Full commit (working directory clean): tells the LLM to reply concisely.
+- Partial commit (uncommitted changes remain): tells the LLM to continue working.
+- Empty commit (no staged files): returns error asking to stage changes first.`,
   input_schema: {
     type: 'object',
     properties: {
@@ -150,7 +155,8 @@ The tool will:
     }
 
     // If neither granted nor denied, return the response for LLM to iterate
-    // This allows user to provide feedback like "add more details" or "change the message"
+    // This is a PARTIAL commit — user provided feedback instead of y/n
+    // Example: "refine commit message" or "commit all"
     if (!granted) {
       ctx.core.brief('info', 'git_commit', `User responded: "${response}"`);
       return `User did not confirm the commit. User's response: "${response}"\n\nPlease consider the user's feedback and try again with a modified commit message if appropriate, or ask for clarification.`;
@@ -227,7 +233,30 @@ The tool will:
 
       if (exitCode === 0) {
         ctx.core.brief('info', 'git_commit', 'Commit successful');
-        parts.push('Commit successful');
+
+        // Check for remaining unstaged changes (partial commit)
+        let hasRemainingChanges = false;
+        try {
+          const { stdout: statusAfter } = await agentIO.exec({
+            cwd: ctx.core.getWorkDir(),
+            command: 'git status --porcelain',
+            timeout: 5,
+          });
+          hasRemainingChanges = statusAfter.trim().length > 0;
+        } catch {
+          // If status check fails, assume no remaining changes
+        }
+
+        if (hasRemainingChanges) {
+          // Partial commit — there are still unstaged/uncommitted files
+          ctx.core.brief('info', 'git_commit', 'Uncommitted changes remain — continue working');
+          parts.push('Commit successful — however, there are still uncommitted changes remaining (partial commit).');
+          parts.push('Continue working: stage and commit the remaining files, or inform the user about what was committed and what still needs attention.');
+        } else {
+          // Full commit — everything is committed
+          parts.push('Commit successful');
+          parts.push('Reply concisely to inform the user.');
+        }
         if (stdout.trim()) {
           parts.push(`[stdout]\n${stdout.trim()}`);
         }
