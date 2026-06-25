@@ -197,9 +197,13 @@ export class HookExecutor {
       `When: "${whenText}"\nExpr: ${conditionExpr}`
     );
 
+    // Use custom message from compiled condition if available
+    const customMsg = cond?.action && 'message' in cond.action ? (cond.action as { message?: string }).message : undefined;
+    const displayMsg = customMsg || `A hookish skill named "${skillName}" has been triggered (action: inject_before on ${triggerTool}). You can view the detail if curious by using skill_load(name="${skillName}", search="what hook just intervened")`;
+
     return {
       action: 'injected',
-      message: `A hookish skill named "${skillName}" has been triggered (action: inject_before on ${triggerTool}). You can view the detail if curious by using skill_load(name="${skillName}", search="what hook just intervened")`,
+      message: displayMsg,
       newCalls: [newCall, ...pendingCalls],
     };
   }
@@ -238,11 +242,15 @@ export class HookExecutor {
       `When: "${whenText}"\nExpr: ${conditionExpr}`
     );
 
+    // Use custom message from compiled condition if available
+    const customMsg = cond?.action && 'message' in cond.action ? (cond.action as { message?: string }).message : undefined;
+    const displayMsg = customMsg || `A hookish skill named "${skillName}" has been triggered (action: inject_after on ${triggerTool}). You can view the detail if curious by using skill_load(name="${skillName}", search="what hook just intervened")`;
+
     // Insert after first call
     const remaining = pendingCalls.slice(1);
     return {
       action: 'injected',
-      message: `A hookish skill named "${skillName}" has been triggered (action: inject_after on ${triggerTool}). You can view the detail if curious by using skill_load(name="${skillName}", search="what hook just intervened")`,
+      message: displayMsg,
       newCalls: [...pendingCalls.slice(0, 1), newCall, ...remaining],
     };
   }
@@ -273,9 +281,13 @@ export class HookExecutor {
       `When: "${whenText}"\nExpr: ${conditionExpr}`
     );
 
+    // Use custom message from compiled condition if available
+    const customMsg = cond?.action && 'message' in cond.action ? (cond.action as { message?: string }).message : undefined;
+    const blockMsg = customMsg || `[Hook: ${skillName}]\nReason: ${reason}\n\nA hookish skill named "${skillName}" has been triggered (action: block on ${trigger}). You can view the detail if curious by using skill_load(name="${skillName}", search="what hook just intervened")`;
+
     return {
       action: 'blocked',
-      message: `[Hook: ${skillName}]\nReason: ${reason}\n\nA hookish skill named "${skillName}" has been triggered (action: block on ${trigger}). You can view the detail if curious by using skill_load(name="${skillName}", search="what hook just intervened")`,
+      message: blockMsg,
     };
   }
 
@@ -310,9 +322,13 @@ export class HookExecutor {
       `When: "${whenText}"\nExpr: ${conditionExpr}`
     );
 
+    // Use custom message from compiled condition if available
+    const customMsg = cond?.action && 'message' in cond.action ? (cond.action as { message?: string }).message : undefined;
+    const displayMsg = customMsg || `A hookish skill named "${skillName}" has been triggered (action: replace on ${originalTool}). You can view the detail if curious by using skill_load(name="${skillName}", search="what hook just intervened")`;
+
     return {
       action: 'injected',
-      message: `A hookish skill named "${skillName}" has been triggered (action: replace on ${originalTool}). You can view the detail if curious by using skill_load(name="${skillName}", search="what hook just intervened")`,
+      message: displayMsg,
       newCalls: pendingCalls,
     };
   }
@@ -341,10 +357,14 @@ export class HookExecutor {
       );
     }
 
+    // Use custom message from compiled condition if available
+    const customMessage = cond?.action && 'message' in cond.action ? (cond.action as { message?: string }).message : undefined;
+    const displayMessage = customMessage || `A skill called "${skillName}" is suitable for your task, ensure it is loaded and used. If not, use "skill_load" tool with name="${skillName}" and search="READ ARTIFACT TO follow suggestion" to load it.`;
+
     return {
       action: 'proceed',
       // NOTE: this message is critical to encourage the llm to load a skill
-      message: `A skill called "${skillName}" is suitable for your task, ensure it is loaded and used. If not, use "skill_load" tool with name="${skillName}" and search="READ ARTIFACT TO follow suggestion" to load it.`,
+      message: displayMessage,
     };
   }
 

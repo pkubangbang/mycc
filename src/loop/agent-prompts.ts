@@ -100,6 +100,7 @@ function buildOutputBehaviorSection(): string {
     '- When you detect dilemma, use the brief tool to state it clearly with a low confidence (1~5).',
     '- Do NOT repeat the content that has been reported in the brief tool.',
     '- Messages whose content starts with brackets (like [REMINDER]...) are system notifications. You should follow the advice but do not respond with text.',
+    '- Do NOT explain, comment on, or narrate your response to hook/skill [REMINDER] or [Hook] notifications. If a reminder tells you to do something, do it silently. If it is informational, acknowledge it implicitly by continuing your task.',
     '',
     '### Simplicity First (Ponytail Principle)',
     'Before writing ANY code, stop at the first rung that holds:',

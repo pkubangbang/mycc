@@ -45,6 +45,7 @@ const CONDITION_SCHEMA = {
         tool: { type: 'string' },
         args: { type: 'object' },
         reason: { type: 'string' },
+        message: { type: 'string' },
       },
       required: ['type'],
     },
@@ -90,7 +91,7 @@ export type HookAction =
   | { type: 'inject_after'; tool: string; args: Record<string, unknown>; timeout?: number }
   | { type: 'block'; reason?: string }
   | { type: 'replace'; tool: string; args: Record<string, unknown>; timeout?: number }
-  | { type: 'message' }
+  | { type: 'message'; message?: string }
   | { type: 'compact' };
 
 
