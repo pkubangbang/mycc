@@ -48,25 +48,56 @@ When updating the changelog, use the following procedure:
 ## 2026-06-22
 ### Fixes
 - **Fork on Windows**: Fixed `/fork` command on Windows. Three root causes: (1) `mycc` not on PATH → `0x80070002`; (2) `shell:true` in open-terminal.ts wrapped command in `cmd.exe /d /s /c` which broke nested quoting and created double windows; (3) `wt.exe` has a known bug (microsoft/terminal#13264) where it splits on `;` even inside quoted arguments, causing the forked command to be treated as two separate wt actions. Fixed by using `node.exe + bin/mycc.js` (no PATH dependency), removing `shell:true` from Windows terminal configs (spawn powershell directly), and encoding the PowerShell script as UTF-16LE Base64 via `-EncodedCommand` (eliminates all `;`, spaces, and quotes from the command line).
+- **Loader**: Normalize skill keywords to array on parse to prevent TypeError when keywords is a single string.
+
+## 2026-06-23
+### Features
+- **Background Tools**: Expose bg tool output, grant integration, killed status, and output cap for better background task management.
+
+### Documentation
+- **environment-detection**: Document PowerShell lacks `&&` operator in cheatsheet.
+
+## 2026-06-24
+### Features
+- **Crossroad**: Shorten continuations and log alternatives with selection for better decision tracking.
+- **ESC Cancel**: Allow ESC to cancel prompt input and return to fresh prompt instead of ignoring it.
+- **Walkthrough Docs**: Added walkthrough documentation for common workflows.
+
+### Fixes
+- **Hook/Crossroad**: Restructure crossroad as first-class branch, fix `duplicate_assistant` TP recovery.
+- **Setup**: Preserve all config vars in `.env`, not just current provider's.
+- **Config**: Inline `.env` parsing, remove `dotenv` dependency.
+- **Config**: Read `args.setup` directly instead of `process.env.MYCC_SETUP`.
+- **Config**: Read `--session` from minimist args instead of `process.env`.
+- **Path Normalization**: Normalize path separators before regex in `ensureSameTeammate`.
+- **Mail**: Allow `eta=0` in `mail_to` tool for non-budget messages.
+- **Grants**: Allow child process writes to project root when no worktree assigned.
+- **Prompts**: Add permission rule for lead and worktree guidance for teammates.
+- **Team**: Polish `eta_update` to show styled banner with bg-color.
+- **Teammate Idle**: Update teammate idle logic for better state management.
+
+### Tests
+- **Unit Tests**: Add 81 new unit tests and fix bg-create test mock.
+- **bg-create**: Add `bg-create.test.ts` (13 tests) for background task creation tool.
+
+## 2026-06-25
+### Features
+- **CLI Config Flags**: All env-configurable vars are now available as CLI flags via minimist. New flags: `--ollama-host`, `--ollama-api-key`, `--ollama-model`, `--ollama-vision-model`, `--ollama-embedding-model`, `--deepseek-host`, `--deepseek-api-key`, `--deepseek-model`, `--api-provider`, `--token-threshold`, `--editor`, `--skill-match-threshold`. These override `.env` files and system environment variables with highest priority.
+- **Session Reorganization**: All session files now stored in session subdirectories for cleaner organization.
+
+### Documentation
+- **README**: Added "Configuration Flags" section documenting all CLI flags and their env variable mappings.
 
 # Todo
 
 - [x] 2026-06-22 Fix `/fork` on Windows — `mycc` not found, shell:true nested quoting, wt.exe semicolon splitting bug
+- [x] 2026-06-24 Remove `dotenv` dependency, inline .env parsing
+- [x] 2026-06-24 Add unit tests (81 new tests)
+- [x] 2026-06-25 Add all env-configurable vars as cmd-args for minimist parsing
 - [ ] add e2e test using tmux, with meaningful test cases, written as a skill
 - [ ] racing condition: submittion without showing "mycc is wrapping up" will not show the spinner.
 - [ ] In the plan mode, the produced plan will have self-debating.
 - [ ] In the plan mode, the plan may well have many options but mycc does not break them down and discuss with the user.
 - [ ] tool loader may have memory leak
-- [x] deepseek api when showing wrap-up will output like
-   ```
-   .================================== 10:24:14 ===================================.
-   <｜｜DSML｜｜tool_calls>
-   <｜｜DSML｜｜invoke name="brief">
-   <｜｜DSML｜｜parameter name="message" string="true">🚀 Merged into local `main` (commit 9aa4be5). The remote `origin/main` appears to be behind (at 62a9469). The push said "Everything up-to-date" — might need a force push or there's a discrepancy. Want me to investigate and push properly, or is this fine as-is?</｜｜DSML｜｜parameter>
-   </｜｜DSML｜｜invoke>
-   </｜｜DSML｜｜tool_calls>
-   '=============================================================================='
-   ```
-
 - [ ] subsequent triologue.note() call will not show in the jsonl.
 - [ ] LLM blind-spot: I see a tool/skill that could help me, but I don't load it because I think I already know the domain.
