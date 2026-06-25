@@ -180,6 +180,30 @@ Or if you need more debug output, add a `-v` flag, or `--verbose`:
 mycc -v
 ```
 
+### Configuration Flags
+
+All environment variables can be overridden via CLI flags. These take highest priority, overriding `.env` files and system environment variables.
+
+| Flag | Env Variable | Description |
+|------|-------------|-------------|
+| `--ollama-host` | `OLLAMA_HOST` | Ollama server URL (default: http://127.0.0.1:11434) |
+| `--ollama-api-key` | `OLLAMA_API_KEY` | Ollama API key for cloud features |
+| `--ollama-model` | `OLLAMA_MODEL` | Ollama chat model (default: glm-5:cloud) |
+| `--ollama-vision-model` | `OLLAMA_VISION_MODEL` | Ollama vision model for screen/image tools |
+| `--ollama-embedding-model` | `OLLAMA_EMBEDDING_MODEL` | Embedding model for semantic search/RAG |
+| `--deepseek-host` | `DEEPSEEK_HOST` | DeepSeek API endpoint (default: https://api.deepseek.com) |
+| `--deepseek-api-key` | `DEEPSEEK_API_KEY` | DeepSeek API key |
+| `--deepseek-model` | `DEEPSEEK_MODEL` | DeepSeek model name (default: deepseek-chat) |
+| `--api-provider` | `API_PROVIDER` | API provider: "ollama" or "deepseek" (default: ollama) |
+| `--token-threshold` | `TOKEN_THRESHOLD` | Context limit threshold (default: 50000) |
+| `--editor` | `EDITOR` | Text editor for file editing |
+| `--skill-match-threshold` | `SKILL_MATCH_THRESHOLD` | Skill similarity threshold 0-1 (default: 0.5) |
+
+Example usage:
+```bash
+mycc --ollama-model gemma4:31b-cloud --token-threshold 80000
+```
+
 ### Debug Flags
 
 mycc provides several `--debug-*` flags for investigating specific subsystems:

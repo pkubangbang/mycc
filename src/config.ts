@@ -78,6 +78,9 @@ export function parseEnvFile(filePath: string): Record<string, string> {
  *
  * Priority (lowest to highest): user .env → project .env → system env → cmd-args
  * Encoded directly via Object.assign argument order.
+ *
+ * Cmd-args (e.g. --ollama-model, --token-threshold) are the highest priority,
+ * overriding .env files and system environment variables.
  */
 export function loadEnv(): void {
   const userConfig = fs.existsSync(getUserConfigPath())
@@ -93,9 +96,18 @@ export function loadEnv(): void {
 // Parse CLI args once at startup
 const args = minimist(process.argv.slice(2), {
   boolean: ['v', 'verbose', 'skip-healthcheck', 'setup', 'debug-eval', 'debug-tp', 'debug-prompt'],
-  string: ['session'],
+  string: [
+    'session',
+    'ollama-host', 'ollama-api-key', 'ollama-model', 'ollama-vision-model', 'ollama-embedding-model',
+    'deepseek-host', 'deepseek-api-key', 'deepseek-model',
+    'api-provider', 'token-threshold', 'editor', 'skill-match-threshold',
+  ],
   alias: { v: 'verbose' },
-  default: { v: false, session: null, 'skip-healthcheck': false, setup: false, 'debug-eval': false, 'debug-tp': false, 'debug-prompt': false },
+  default: {
+    v: false, session: null,
+    'skip-healthcheck': false, setup: false,
+    'debug-eval': false, 'debug-tp': false, 'debug-prompt': false,
+  },
 });
 
 /**
@@ -112,6 +124,19 @@ function buildCmdArgsEnv(parsed: typeof args): Record<string, string> {
     'debug-eval': 'MYCC_DEBUG_EVAL',
     'debug-tp': 'MYCC_DEBUG_TP',
     'debug-prompt': 'MYCC_DEBUG_PROMPT',
+    // Env-configurable vars (override .env files)
+    'ollama-host': 'OLLAMA_HOST',
+    'ollama-api-key': 'OLLAMA_API_KEY',
+    'ollama-model': 'OLLAMA_MODEL',
+    'ollama-vision-model': 'OLLAMA_VISION_MODEL',
+    'ollama-embedding-model': 'OLLAMA_EMBEDDING_MODEL',
+    'deepseek-host': 'DEEPSEEK_HOST',
+    'deepseek-api-key': 'DEEPSEEK_API_KEY',
+    'deepseek-model': 'DEEPSEEK_MODEL',
+    'api-provider': 'API_PROVIDER',
+    'token-threshold': 'TOKEN_THRESHOLD',
+    'editor': 'EDITOR',
+    'skill-match-threshold': 'SKILL_MATCH_THRESHOLD',
   };
   for (const [argKey, envKey] of Object.entries(map)) {
     const value = parsed[argKey];
