@@ -4,7 +4,7 @@ This file provides guidance for Claude Code (claude.ai/code) when working with c
 
 ## Project Overview
 
-This project builds a tool called "mycc" -- A node.js coding agent implementation using Ollama for LLM inference. The architecture follows a modular design with AgentContext as the central state container.
+This project builds a tool called "mycc" -- A node.js coding agent implementation using Ollama (default) or DeepSeek API for LLM inference. The architecture follows a modular design with AgentContext as the central state container. Two API providers are supported: Ollama (full features including web_search, screen, read_picture) and DeepSeek (cloud-based, no web/screen tools but with prompt caching). Embedding for wiki/RAG always uses Ollama regardless of provider.
 
 
 ## Setup
@@ -12,6 +12,18 @@ This project builds a tool called "mycc" -- A node.js coding agent implementatio
 Refer to `README.md` for instructions.
 
 Prefer using pnpm instead of npm. The only exception is `npm link` to install the mycc globally.
+
+### Cross-Platform Notes (Windows / PowerShell)
+
+mycc runs on Windows, Linux, and macOS. Notable differences:
+
+- **Shell**: On Windows, all `bash` tool commands execute via **PowerShell** (not cmd). Use PowerShell syntax: `Get-Content file`, `Copy-Item src dest`. Concatenate commands with `;` not `&&`. Use backtick `` ` `` for escaping.
+- **UTF-8**: On Windows, set `PYTHONIOENCODING=utf-8` for Python subprocesses. Write operations use explicit `utf-8` encoding. The bash tool prepends `[Console]::OutputEncoding = [System.Text.Encoding]::UTF8` for CJK display.
+- **Path separators**: Always use forward slashes `/` in tool file paths for cross-platform compatibility. Internally, `normalizePathSeparators` handles `\` → `/` conversion before regex matching.
+- **/fork command**: Uses `PowerShell -EncodedCommand` to spawn new terminals, avoiding `wt.exe` semicolon bugs. The `shell:true` option is removed and paths are single-quoted.
+- **tmux alternative**: On Windows, `psmux` replaces `tmux` for interactive terminal operations. Install via `winget install psmux`.
+- **Binary detection**: Uses `Where.exe` or `Get-Command` instead of `which` on Windows. The `isBinaryAvailable` helper handles platform-specific detection.
+- **GUI editor**: On Windows, GUI editor spawn does not use `windowsHide` to prevent process freezing.
 
 ## Terminology
 
@@ -59,7 +71,30 @@ Key components:
 - `agentIO.onNeglected(callback)` - Register callbacks for ESC events
 - IPC message `{ type: 'neglection' }` - Coordinator sends to Lead on ESC press
 
-### escAware
+### crossroad
+
+The crossroad feature improves LLM response quality by detecting "turning words" (e.g., "However", "Wait", "但", "但是") in the LLM's draft response, generating alternative continuations via parallel `forkChat` calls, selecting the best path to enhance response quality while preserving prompt cache.
+
+Key behaviors:
+- **Turning word detection**: Scans the LLM response for signal words that indicate the LLM is about to change direction
+- **Parallel continuation**: Uses `forkChat` to generate multiple alternative continuations concurrently
+- **Best path selection**: Compares alternatives and selects the most coherent continuation
+- **Continuation shortening**: Trims verbose continuations and logs alternatives with selection
+- **Confusion index integration**: Consecutive crossroads contribute to the hint round confusion index
+
+Implementation: `src/hook/crossroad.ts`. The crossroad runs in the HOOK state before tool execution. Debug with `--debug-tp` flag.
+
+### esc-aware wrap-up
+
+When the user presses ESC during LLM inference, the system enters **wrap-up mode**:
+1. The LLM call is aborted via AbortController
+2. A quick "wrap-up" LLM call runs in background to produce a concise text-only response
+3. The prompt line reappears immediately for user input (no waiting)
+4. The wrap-up result is displayed when ready, with commit/rollback logic
+
+Grace period: If the user starts typing before wrap-up completes, the wrap-up result is discarded. If the user hasn't typed, a brief summary or the agent's last thought is displayed.
+
+Key reference: `docs/esc-wrap-up-redesign.md`
 
 A utility method in `ctx.core` that wraps slow operations for ESC-aware quick return. When ESC is pressed during a slow operation:
 - The original promise continues in background
@@ -252,12 +287,15 @@ team mode handles the particular challenges of collaboration by using dedicated 
 
 **Todos** are simple task tracking items with title, status, and blockedBy dependencies. **Issues** are more structured task objects with ID, status, owner, blockedBy/blocks dependencies, and comments. Issues support team coordination—teammates claim issues and close them when done.
 
+Hash integrity: Each todo item has a SHA256-based hash (first 8 hex chars) computed from `name|done|note`. `todo_update` requires matching hash to prevent stale or mangled updates — if the hash doesn't match, the update is rejected.
+
 Key types:
 - `Todo` - `{ id, subject, description, status, blockedBy, blocks, owner, activeForm }`
 - `Issue` - `{ id, title, status, owner, content, comments, blockedBy, blocks, createdAt }`
 
 Tools:
-- `todo_create`, `todo_update` - Create/update todos
+- `todo_create` - Create a todo item with name, optional note; returns id and integrity hash
+- `todo_update` - Update a todo item by id; requires matching hash to prevent stale updates
 - `issue_create` - Create issue with dependencies
 - `issue_claim` - Assign issue to teammate
 - `issue_list` - List all issues
@@ -267,6 +305,8 @@ Tools:
 Slash commands:
 - `/todos` - View all todos
 - `/issues` - View all issues
+
+Note: `todo_write` is the legacy tool (deprecated) — use `todo_create` and `todo_update` instead.
 
 ### bang command
 
@@ -328,6 +368,10 @@ leaving the agent loop. It displays as a green block of text with the first line
 .================================ 17:32:45 =================================.
 ```
 
+**DSML stripping**: When using DeepSeek as the API provider, the response may contain internal DSML markup tags
+(`<ds_safety>`, `<ds_thinking>`, etc.) that are not meant for user display. The letter-box automatically strips
+these tags using regex before rendering. If stripping removes all content, a friendly fallback message is shown.
+
 
 ### prompt N (p0, p1)
 
@@ -385,6 +429,22 @@ Key responsibilities:
 - Tracks the `Sequence` for hookish skill conditions
 - Supports hint round generation for confusion recovery
 
+### AgentIO Singleton
+
+`AgentIO` (`src/loop/agent-io.ts`) is a singleton that manages I/O state for the agent process. It provides the LineEditor (prompt input), handles ESC/neglected mode, and detects process type.
+
+Key methods and properties:
+- `agentIO.isMainProcess()` — Returns `true` in the lead process (main), `false` in child/teammate processes
+- `agentIO.isNeglectedMode()` / `agentIO.setNeglectedMode(value)` — Check/set the neglected flag
+- `agentIO.onNeglected(callback)` — Register callbacks for ESC events
+- `agentIO.ask(prompt)` — Display a prompt and wait for user input (main process only)
+- `agentIO.exec(cmd)` — Execute a command with output display (main process only)
+- `agentIO.execEditor(args)` — Open external editor for multi-line input
+
+Bang mode (LineEditor): When user types `!` at the prompt start, the `checkPromptChange` method switches the prompt to a magenta `run cmd ! ` prompt (BANG_PROMPT). The `!` prefix is preserved in the submitted content for slash command routing.
+
+Important: Child processes cannot use `agentIO.ask()` or `agentIO.exec()` — they will throw errors. Use `ctx.core.question()` for user questions (works via IPC) and `ctx.core.brief()` for logging.
+
 ### IPC and IOC
 
 **IPC (Inter-Process Communication)** enables communication between the main process (lead agent) and child processes (teammate agents) using Node.js `child_process.fork()` and message passing.
@@ -439,6 +499,8 @@ The condition compiler translates natural-language `when` fields into structured
 
 **1. Lazy Compilation** — Conditions are NOT compiled eagerly. A skill with a `when` field is marked as "pending" and only compiled when `skill_compile` is invoked (by user command or LLM initiative). This avoids unnecessary LLM calls for unused skills.
 
+**Pending Hook Injection**: At startup, any skills with un-compiled `when` conditions are detected and their names are injected as "pending hooks" into the LLM context. The agent is informed that these skills can be activated via `skill_compile(name="<skill_name>")`. This ensures the agent is aware of available hooks without eagerly compiling them.
+
 **2. LLM Translation with Structured Output** — The `when` natural language is sent to the LLM along with the list of all available tools and a JSON schema that enforces the output shape (`trigger`, `condition`, `action`). The LLM chooses appropriate triggers from known tool names, writes a condition expression using `seq.*` functions, and selects the right action type.
 
 **3. Expression Safety via jsep AST** — Conditions are parsed with **jsep** into an AST and walked recursively to enforce safety **at compile time** (not runtime). This is NOT `eval` or `new Function()` — the evaluator walks the jsep tree manually. The validator checks:
@@ -485,6 +547,15 @@ When score >= threshold (default 10): Main process triggers hint round (LLM self
 
 A permission system for child processes to request approval before performing sensitive operations.
 
+**Intent Language**: The `bash` tool requires an `intent` parameter in a structured format:
+```
+VERB OBJECT PARAM PARAM ... TO PURPOSE
+```
+Where VERB is one of: READ, WRITE, EDIT, DELETE, BUILD, TEST, INSTALL, RUN, and OBJECT is one of: SOURCE, CONFIG, DEPENDENCY, ARTIFACT, SYSTEM, DATA, TEMP, USER.
+Example: `READ SOURCE dir=src TO understand dependencies`.
+
+The `hand_over` tool also requires intent language validation with a `justification` parameter.
+
 Grant flow:
 ```
 Child → requestGrant(tool, args) → IPC → Parent
@@ -526,7 +597,57 @@ Feature where idle child processes automatically claim unassigned issues. When a
 | Teammate (child) | Cannot use: tm_create, tm_remove, tm_await, broadcast |
 | Background (bg) | Can only use: bash, read_file, write_file, edit_file |
 
-**Main-only tools**: tm_create, tm_remove, tm_await, broadcast
+**Main-only tools**: tm_create, tm_remove, tm_await, broadcast, order, hand_over, plan_on, plan_off
+
+## Background Task Tools
+
+The bg module (`bg_create`, `bg_print`, `bg_await`, `bg_remove`) provides non-blocking command execution:
+
+- **bg_create**: Spawn a bash command asynchronously, returns PID immediately
+- **bg_print**: List all background tasks (running/completed/failed/killed) or show output for a specific PID
+- **bg_await**: Block until background task(s) complete (with optional timeout)
+- **bg_remove**: Terminate a background task by PID
+
+Process management:
+- Uses `spawn()` on all platforms (not `exec()`)
+- On Windows, `detached:true` is removed to capture stdout/stderr properly
+- Output is capped to ~100KB (tail-capped) for each task
+- Killed status is tracked separately from failed
+
+## Interactive Shell / /fork Command
+
+The **/fork** slash command spawns a new mycc instance in a separate terminal window. Usage:
+
+```
+/fork                          # Spawn new mycc in current project
+/fork --env KEY=VALUE          # Forward environment variables to child
+```
+
+Implementation details:
+- On Linux: Uses `gnome-terminal` or `x-terminal-emulator` with bash
+- On Windows: Uses `PowerShell -EncodedCommand` via `wt.exe`, with `shell:true` disabled and single-quoted paths
+
+## Built-in Skills Reference
+
+mycc ships with the following built-in skills (in `skills/` directory):
+
+| Skill | Description |
+|-------|-------------|
+| `self-learning` | Bloom's 2-Sigma tutor — guides the LLM to teach the user, with `todo_create`/`todo_update` integration for progress tracking |
+| `mycc-self-awareness` | Meta-knowledge about mycc itself — capabilities, architecture, and how to interact with the system |
+| `coordination` | Human-in-the-loop guidance for lead-teammate collaboration workflow |
+| `hint-round` | Encourages wiki search when stuck on errors or missing knowledge |
+| `environment-detection` | Multi-platform directory detection with PowerShell/Bash/CMD cheatsheets |
+| `add-tool` | Step-by-step guide for adding custom tools to the project |
+| `create-skill` | Meta-skill for creating new skills with templates (process, reference, lesson, hookish) |
+| `pdf` | PDF text extraction via unpdf and OCR via tesseract.js |
+| `tech-doc-writing` | Technical documentation writing guide covering wire format, API docs, READMEs |
+| `clear-sessions` | Session cleanup and management |
+| `compact-on-intent-trap` | Automatic compaction when agent is stuck in intent loops |
+| `set-title` | Terminal title management |
+| `mycc-online-hotfix` | Live debugging and hotfix workflow using bash + tmux for tool bugs |
+
+Skills are loaded from three layers: built-in (`skills/`), project (`.mycc/skills/`), and user (`~/.mycc-store/skills/`). Built-in skills have the highest priority.
 
 ## How to add a tool/skill
 
@@ -577,6 +698,22 @@ pnpm test                    # Run all tests
 pnpm test src/tests/tools/   # Run specific directory
 ```
 
+## Output Behavior Principles
+
+### High-Contrast Explanations
+
+When explaining code changes, design choices, or analysis results, the agent follows high-contrast style:
+
+1. **Lead with the conclusion** — State what changed in ONE line before explanation
+2. **Use tables for comparison** — Before/after, old/new side-by-side
+3. **Use diff notation** — `+` added, `-` removed, `→` renamed/moved
+4. **One change = one line** — 3 changes = 3 bullet points, not a story
+5. **Avoid filler narration** — No "Let me take a look..." or "I can see that..."
+
+### Ponytail (Simplicity First) Principle
+
+In plan mode, responses should be concise and avoid over-explaining. Prioritize simple, direct answers. State the conclusion, provide the reasoning only if requested. This is documented in the plan-mode system prompt.
+
 ## Code Cleanup
 
 Use TypeScript's strict checks to find unused imports/variables:
@@ -585,18 +722,37 @@ Use TypeScript's strict checks to find unused imports/variables:
 pnpm typecheck --noUnusedLocals --noUnusedParameters
 ```
 
-Use pnpm for linting (you MUST do it before commit):
+Use ESLint for linting (you MUST do it before commit):
 
 ```bash
 pnpm lint                    # Run lint on all files
 pnpm lint src/tools/screen.ts  # Run lint on specific files
 ```
 
+The project uses `typescript-eslint` with a custom rule (`no-console-in-tools`) that disallows `console.log`/`console.error` calls in `src/tools/` — use `ctx.core.brief()` instead.
+
 Use prettier for formatting (run after significant changes):
 
 ```bash
 pnpm format
 ```
+
+### 中文顿号 Multi-line Edit
+
+The `edit_file` tool supports multi-line mode triggered by Chinese enumeration punctuation. When `old_text` ends with `、` (顿号), the tool auto-detects that multiple matching blocks may exist and adjusts its matching strategy accordingly. This handles the common case in Chinese-language code comments where enumerated items use 顿号 as separators.
+
+## Debug Flags
+
+mycc provides several `--debug-*` flags for investigating specific subsystems:
+
+| Flag | Effect |
+|------|--------|
+| `--debug-tp` | **Triologue Parity** — when a role transition violation occurs, throw an error with stack trace instead of auto-recovering. For developing the auto-fixer or debugging `triologue.ts`. |
+| `--debug-suggest` | **SUGGEST Background Task** — logs the LLM response and feedback of the background suggest task to the terminal via `ctx.core.brief()`. The SUGGEST task runs after each turn to proactively discover relevant tools/skills. |
+| `--debug-eval` | **Expression Evaluation** — prints the parsed AST tree for each hook condition expression during evaluation. For developing hookish skills with custom `when` conditions. |
+| `--debug-prompt` | **Prompt Debug** — shows the full system prompt sent to the LLM, including tool descriptions and skill content. Also shows the 'Parsing...' spinner during keyword extraction. |
+
+Combine with `-v` (verbose) for maximum detail.
 
 ## Pitfalls
 
@@ -625,6 +781,18 @@ description: 'Switch to a git worktree. Changes working directory to the worktre
 ```
 
 The LLM only needs to know the tool's purpose and parameters. Implementation details like confirmation prompts and mail notifications should be in code comments or file-level documentation, not in the description field. The description is about **what** the tool does, not **how** it does it internally.
+
+### DeepSeek API pitfalls
+
+When using DeepSeek as the API provider (API_PROVIDER=deepseek):
+
+- **No web/screen tools**: `web_search`, `web_fetch`, `screen`, `read_picture` are unavailable
+- **DSML stripping**: DeepSeek may wrap content in internal DSML markup (`<ds_safety>`, `<ds_thinking>`, etc.) — the letter-box automatically strips these
+- **Prompt caching**: DeepSeek supports automatic prompt caching for repeated prefixes, reducing cost on long conversations
+- **Embedding still uses Ollama**: Wiki/RAG still requires a local Ollama instance with an embedding model like `nomic-embed-text`
+- **tool_choice=none for wrap-up**: When using DeepSeek in wrap-up mode, set `tool_choice="none"` to prevent raw XML tool calls in the response
+
+Detailed reference: `docs/deepseek-api-reference.md`
 
 ### agentIO singleton works differently in child processes
 
@@ -685,6 +853,27 @@ Key conventions:
 - `_` wraps a compacted/placeholder tool call
 - Units without special markers (system, user, agent) are pure text messages
 
+
+## Docker Support
+
+A Dockerfile is provided at project root for containerized deployment. The Docker setup:
+- Builds the mycc application in a Node.js container
+- Supports auto-input and output via JSONL files (`auto in/out jsonl`)
+- Useful for CI/CD pipelines and automated testing environments
+
+```bash
+docker build -t mycc .
+docker run -it mycc
+```
+
+## WebUI (Experimental)
+
+An experimental Vue-based WebUI is available in the `feat/serve-webui` branch. It provides a browser-based chat interface for interacting with mycc:
+- Markdown rendering for LLM responses
+- Session management via web interface
+- Built with Vue 3 and modern CSS
+
+This is a Work-In-Progress feature and is not yet merged into main.
 
 ## Reference Documents
 
