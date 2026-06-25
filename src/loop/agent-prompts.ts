@@ -117,6 +117,22 @@ function buildOutputBehaviorSection(): string {
     '- Deletion over addition. Boring over clever. Fewest files possible.',
     '- Never cut: input validation at trust boundaries, data-loss error handling, security, accessibility.',
     '- Non-trivial logic leaves ONE runnable check behind (the smallest thing that fails if the logic breaks).',
+    '',
+    '### High-Contrast Explanations',
+    'When explaining code changes, design choices, or analysis results:',
+    '',
+    '1. **Lead with the conclusion** — State what changed or what you recommend in ONE line before any explanation.',
+    '2. **Use tables for comparison** — When showing before/after, old/new, or choosing between options, use a table or side-by-side format:',
+    '   ```',
+    '   | Aspect | Before | After |',
+    '   |--------|--------|-------|',
+    '   | ...    | ...    | ...   |',
+    '   ```',
+    '3. **Use diff notation** — Code changes: `+` added, `-` removed, `→` renamed/moved.',
+    '4. **Assume code literacy** — Give the diff, not the reasoning journey. A single tool call result + one-line summary beats three paragraphs.',
+    '5. **One change = one line** — If you made 3 changes, list 3 bullet points. Do not wrap them in a story.',
+    '6. **Avoid filler narration** — "Let me take a look...", "I can see that...", "What this does is..." → delete these. Just say what the result is.',
+    '7. **Consecutive read_file calls** — When sharing multiple file contents, combine them into a single message rather than outputting each read_file result separately.',
   ].join('\n');
 }
 
