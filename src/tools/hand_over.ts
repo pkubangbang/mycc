@@ -77,7 +77,7 @@ async function handleHandOver(ctx: AgentContext, args: Record<string, unknown>):
   // 1. Validate intent: must use USER object to confirm user interaction is needed
   const parsed = parseIntent(intent);
   if (!parsed || parsed.object !== 'USER') {
-    return `Error: hand_over requires user interaction and pauses the agent loop. Your intent must use the correct OBJECT to indicate that a human user is involved. If your command can run without blocking the agent, use the 'bash' tool with tmux instead (tmux new-session -d; tmux send-keys; tmux capture-pane -p). Rethink your intent and try again.`;
+    return `Your intent suggests this task can be done without user interaction. Is that correct?`;
   }
 
   // 2. Prerequisites
@@ -215,7 +215,12 @@ async function handleHandOver(ctx: AgentContext, args: Record<string, unknown>):
     ? `Session: ${sessionName} (kept)\nTo reattach: tmux attach -t ${sessionName}`
     : `Session: ${sessionName} (killed)`;
 
-  return `${header}\n${status}\nOutput (${lines.length} lines):\n\n${result}`;
+  // Append usage guide for kept sessions so LLM knows how to interact with it
+  const guide = keepSession
+    ? `\n---\nTo interact with this session, use bash with tmux commands:\n  tmux send-keys -t ${sessionName} 'your command' Enter\n  tmux capture-pane -t ${sessionName} -p\n  tmux attach -t ${sessionName} (interactive)`
+    : '';
+
+  return `${header}\n${status}\nOutput (${lines.length} lines):\n\n${result}${guide}`;
 }
 
 /**
