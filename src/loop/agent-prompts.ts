@@ -145,7 +145,7 @@ function buildPlatformSection(): string {
   const isWin = info.platform === 'Windows';
   
   const shellCommands = isWin
-    ? '- Use PowerShell syntax: `Get-Content file`, `Copy-Item src dest`\n- The bash tool executes commands via PowerShell (not cmd)'
+    ? '- Use PowerShell syntax: `Get-Content file`, `Copy-Item src dest`\n- The bash tool executes commands via PowerShell (not cmd). Note that multiple commands should be concatenated using ";", not "&&".'
     : '- Use bash/zsh syntax: `cat file`, `cp src dest`';
 
   const escaping = isWin
