@@ -41,7 +41,10 @@ export class BackgroundTasks implements BgModule {
         ], {
           cwd: this.core.getWorkDir(),
           windowsHide: true,
-          detached: true,
+          // NOTE: detached:true on Windows creates a new console window,
+          // which breaks stdout/stderr piping (output goes to that console
+          // instead of the pipes). We use unref() instead to allow the
+          // child to outlive the parent while keeping pipes intact.
         })
       : spawn(cmd, [], {
           cwd: this.core.getWorkDir(),
@@ -56,6 +59,13 @@ export class BackgroundTasks implements BgModule {
       child.removeAllListeners();
       throw new Error(`Failed to spawn background process for command: ${cmd}`);
     }
+
+    // Allow parent to exit without killing the child process.
+    // On Windows, this replaces detached:true (which breaks pipes).
+    // On Linux, this is needed because detached:true still keeps the
+    // parent's event loop waiting for the child without unref().
+    child.unref();
+
     const task: BgTask = {
       pid,
       command: cmd,
