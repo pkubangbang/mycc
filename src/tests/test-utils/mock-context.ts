@@ -66,6 +66,7 @@ export function createMockMail(overrides: Partial<MailModule> = {}): MailModule 
     appendMail: vi.fn(),
     collectMails: vi.fn(() => []),
     listMails: vi.fn(() => []),
+    clearUnread: vi.fn(),
     ...overrides,
   };
 }

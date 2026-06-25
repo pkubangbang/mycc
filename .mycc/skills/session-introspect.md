@@ -10,27 +10,27 @@ This skill guides you through parsing session files and triologues to identify p
 
 ## File Structure Overview
 
-### Session File (`.mycc/sessions/*.json`)
+### Session File (`.mycc/sessions/<session-id>/session-<sessionid>.json`)
 
 ```json
 {
-  "version": "1.0",
+  "version": "2.0",
   "id": "uuid",
   "create_time": "ISO timestamp",
   "project_dir": "/path/to/project",
-  "lead_triologue": "/path/to/lead-triologue.jsonl",
-  "child_triologues": ["/path/to/child-triologue.jsonl"],
+  "lead_triologue": "/path/to/.mycc/sessions/<uuid>/triologue-lead-<ts>.jsonl",
+  "child_triologues": ["/path/to/.mycc/sessions/<uuid>/triologue-<name>-<ts>.jsonl"],
   "teammates": ["teammate-name"],
   "first_query": "user's first message"
 }
 ```
 
 **Key fields:**
-- `lead_triologue`: Path to the lead agent's conversation log
-- `child_triologues`: Array of paths to teammate conversation logs
+- `lead_triologue`: Path to the lead agent's conversation log (inside session dir)
+- `child_triologues`: Array of paths to teammate conversation logs (inside session dir)
 - `teammates`: Array of teammate names that were spawned
 
-### Triologue File (`.mycc/transcripts/*.jsonl`)
+### Triologue File (`.mycc/sessions/<session-id>/triologue-<role>-<ts>.jsonl`)
 
 JSONL format - one JSON object per line:
 
@@ -51,10 +51,10 @@ JSONL format - one JSON object per line:
 
 ```bash
 # Find recent sessions
-ls -lt .mycc/sessions/*.json | head -5
+ls -lt .mycc/sessions/*/session-*.json | head -5
 
 # Read session file
-cat .mycc/sessions/<session-id>.json | jq .
+cat .mycc/sessions/<session-id>/session-<session-id>.json | jq .
 ```
 
 **Extract:**
@@ -66,13 +66,13 @@ cat .mycc/sessions/<session-id>.json | jq .
 
 ```bash
 # Read lead triologue (use jq for JSONL)
-cat .mycc/transcripts/lead-*.jsonl | jq -c .
+cat .mycc/sessions/*/triologue-lead-*.jsonl | jq -c .
 
 # Filter for tool calls only
-cat .mycc/transcripts/lead-*.jsonl | jq -c 'select(.tool_calls != null)'
+cat .mycc/sessions/*/triologue-lead-*.jsonl | jq -c 'select(.tool_calls != null)'
 
 # Find specific tool patterns
-cat .mycc/transcripts/lead-*.jsonl | jq -c 'select(.tool_name != null)'
+cat .mycc/sessions/*/triologue-lead-*.jsonl | jq -c 'select(.tool_name != null)'
 ```
 
 **Look for coordination tools:**
@@ -86,10 +86,10 @@ cat .mycc/transcripts/lead-*.jsonl | jq -c 'select(.tool_name != null)'
 
 ```bash
 # Read specific teammate's triologue
-cat .mycc/transcripts/<teammate>-*.jsonl | jq -c .
+cat .mycc/sessions/*/triologue-<teammate>-*.jsonl | jq -c .
 
 # Find tool calls by teammate
-cat .mycc/transcripts/<teammate>-*.jsonl | jq -c 'select(.tool_calls != null)'
+cat .mycc/sessions/*/triologue-<teammate>-*.jsonl | jq -c 'select(.tool_calls != null)'
 ```
 
 **Track:**
@@ -246,9 +246,9 @@ Detection:
 {
   "teammates": ["prompt-expert", "tool-reviewer"],  // 2 teammates
   "child_triologues": [
-    "prompt-expert-*.jsonl",
-    "tool-reviewer-1111.jsonl",  // first spawn
-    "tool-reviewer-2222.jsonl"   // second spawn (re-spawn)
+    ".mycc/sessions/uuid/triologue-prompt-expert-1111.jsonl",
+    ".mycc/sessions/uuid/triologue-tool-reviewer-1111.jsonl",  // first spawn
+    ".mycc/sessions/uuid/triologue-tool-reviewer-2222.jsonl"   // second spawn (re-spawn)
   ]  // 3 triologues!
 }
 ```
@@ -305,18 +305,20 @@ tm_create("tool-reviewer") → ERROR: already exists
 
 ```bash
 # Recent sessions with teammates
-cat .mycc/sessions/*.json | jq -s '
-  sort_by(.create_time) | reverse | 
-  .[] | select(.teammates | length > 0) |
-  {id, create_time, teammates, child_count: (.child_triologues | length)}
-'
+for f in .mycc/sessions/*/session-*.json; do
+  cat "$f" | jq -s '
+    sort_by(.create_time) | reverse | 
+    .[] | select(.teammates | length > 0) |
+    {id, create_time, teammates, child_count: (.child_triologues | length)}
+  '
+done
 ```
 
 ### Find All Coordination Tool Calls
 
 ```bash
 # Extract coordination-related tool calls from lead
-cat .mycc/transcripts/lead-*.jsonl | jq -c '
+cat .mycc/sessions/*/triologue-lead-*.jsonl | jq -c '
   select(.tool_calls != null) |
   .tool_calls[] | select(.function.name | 
     test("tm_|mail_to|issue_|blockage"))
@@ -328,7 +330,7 @@ cat .mycc/transcripts/lead-*.jsonl | jq -c '
 ```bash
 # For a specific session, show teammate lifecycle
 SESSION_ID="your-session-id"
-SESSION=".mycc/sessions/${SESSION_ID}.json"
+SESSION=".mycc/sessions/${SESSION_ID}/session-${SESSION_ID}.json"
 LEAD_TRI=$(cat $SESSION | jq -r '.lead_triologue')
 
 echo "=== Teammate spawns ==="
@@ -348,8 +350,8 @@ cat $LEAD_TRI | jq -c 'select(.tool_name == "tm_remove") |
 
 ```bash
 # Count tool calls per child triologue
-for f in .mycc/transcripts/*-triologue.jsonl; do
-  if [[ "$f" != *"lead"* ]]; then
+for f in .mycc/sessions/*/triologue-*.jsonl; do
+  if [[ "$f" != *"triologue-lead"* ]]; then
     count=$(grep -c '"tool_calls"' "$f" 2>/dev/null || echo 0)
     echo "$f: $count tool calls"
   fi
@@ -360,14 +362,14 @@ done
 
 ```bash
 # Messages sent TO teammates
-cat .mycc/transcripts/lead-*.jsonl | jq -c '
+cat .mycc/sessions/*/triologue-lead-*.jsonl | jq -c '
   select(.tool_name == "mail_to") | 
   select(.arguments.name != "lead") |
   {to: .arguments.name, title: .arguments.title}
 '
 
 # Messages sent FROM teammates (to lead)
-cat .mycc/transcripts/*-triologue.jsonl | jq -c '
+cat .mycc/sessions/*/triologue-*.jsonl | jq -c '
   select(.tool_name == "mail_to") |
   select(.arguments.name == "lead") |
   {from: .tool_call_id, title: .arguments.title}
@@ -429,7 +431,7 @@ When tm_create fails, previously created teammates may not be cleaned up. Always
 analyze_session() {
   SESSION_FILE="$1"
   
-  echo "=== Session: $(basename $SESSION_FILE) ==="
+  echo "=== Session: $(basename $(dirname $SESSION_FILE)) ==="
   
   # Extract paths
   LEAD=$(cat "$SESSION_FILE" | jq -r '.lead_triologue')
@@ -463,7 +465,7 @@ analyze_session() {
 }
 
 # Run on all sessions
-for s in .mycc/sessions/*.json; do
+for s in .mycc/sessions/*/session-*.json; do
   analyze_session "$s"
   echo ""
 done
@@ -471,8 +473,8 @@ done
 
 ## Summary
 
-1. **Session file** contains metadata and paths to triologues
-2. **Triologues** are JSONL conversation logs
+1. **Session file** contains metadata and paths to triologues (inside session dir)
+2. **Triologues** are JSONL conversation logs (inside session dir)
 3. **Key patterns**: orphaned teammates, missing cleanup, dead mail, stale references
 4. **Use jq** to parse JSONL and extract relevant tool calls
 5. **Build timelines** to understand teammate lifecycle

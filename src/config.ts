@@ -356,8 +356,8 @@ export function getMyccDir(): string {
   return path.resolve(MYCC_DIR);
 }
 
-export function getMailDir(): string {
-  return path.join(MYCC_DIR, 'mail');
+export function getSessionDir(sessionId: string): string {
+  return path.join(MYCC_DIR, 'sessions', sessionId);
 }
 
 export function getToolsDir(): string {
@@ -407,7 +407,6 @@ export function getWikiDomainsFile(): string {
 export function ensureDirs(): void {
   const dirs = [
     MYCC_DIR,
-    getMailDir(),
     getToolsDir(),
     getSkillsDir(),
     getSessionsDir(),

@@ -122,7 +122,7 @@ function ensureSameTeammate(teammate: string, summaryPath: string): void {
   // Normalize path separators so the regex works on both Windows and Unix
   const normalizedPath = summaryPath.replace(/\\/g, '/');
   // Extract teammate name from summary path (e.g., "teammate-foo-123" from path)
-  const pathMatch = normalizedPath.match(/\.mycc\/transcripts\/([^/]+)-triologue\.jsonl/);
+  const pathMatch = normalizedPath.match(/\.mycc\/sessions\/[^/]+\/triologue-([^/]+)-.*\.jsonl/);
   const pathTeammate = pathMatch ? pathMatch[1] : summaryPath;
 
   if (!pathTeammate.startsWith(teammate)) {

@@ -15,7 +15,7 @@ import { retryChat, MODEL } from '../engine/chat-provider.js';
 import type { AgentContext, Message } from '../types.js';
 import type { ToolCall } from '../types.js';
 import { buildNormalModePrompt } from '../loop/agent-prompts.js';
-import { getTokenThreshold, getMyccDir } from '../config.js';
+import { getTokenThreshold, getSessionContext, getSessionDir, setSessionContext } from '../config.js';
 import { Triologue } from '../loop/triologue.js';
 import { ipc, sendStatus } from './child/ipc-helpers.js';
 
@@ -49,17 +49,18 @@ const TIME_NUDGE_INTERVAL = 3;
  * @param assignedPath - Pre-assigned path from parent (optional)
  */
 function createPersistentTriologue(name: string, assignedPath?: string): Triologue {
-  const transcriptDir = path.join(getMyccDir(), 'transcripts');
-  if (!fs.existsSync(transcriptDir)) {
-    fs.mkdirSync(transcriptDir, { recursive: true });
-  }
-
-  // Use assigned path if provided, otherwise generate
+  // Use assigned path if provided, otherwise generate in session dir
   if (assignedPath) {
     triologuePath = assignedPath;
   } else {
+    // Fallback: use session directory
+    const sessionId = getSessionContext();
+    const sessionDir = getSessionDir(sessionId);
+    if (!fs.existsSync(sessionDir)) {
+      fs.mkdirSync(sessionDir, { recursive: true });
+    }
     const timestamp = Math.floor(Date.now() / 1000);
-    triologuePath = path.join(transcriptDir, `${name}-${timestamp}-triologue.jsonl`);
+    triologuePath = path.join(sessionDir, `triologue-${name}-${timestamp}.jsonl`);
   }
 
   // Clear existing file on start
@@ -433,9 +434,15 @@ async function handleSpawn(msg: {
   role: string;
   prompt: string;
   triologuePath?: string;
+  sessionId?: string;
 }): Promise<void> {
   teammateName = msg.name;
   teammateRole = msg.role;
+
+  // Set session context before creating any mailboxes (fail-fast)
+  if (msg.sessionId) {
+    setSessionContext(msg.sessionId);
+  }
 
   // Create child context
   ctx = new ChildContext(teammateName, WORKDIR);

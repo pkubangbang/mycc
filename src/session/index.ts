@@ -1,9 +1,9 @@
 /**
  * session/index.ts - Session file management (stateless utilities)
  *
- * Sessions are JSON files stored in:
- * - Project sessions: .mycc/sessions/
- * - User sessions: ~/.mycc-store/sessions/
+ * Sessions are stored in per-ID subdirectories:
+ * - Project sessions: .mycc/sessions/{session-id}/session-{sessionid}.json
+ * - User sessions: ~/.mycc-store/sessions/{session-id}/session-{sessionid}.json
  */
 
 import { randomUUID } from 'crypto';
@@ -11,9 +11,9 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import chalk from 'chalk';
-import type { Session, SessionFile, SessionDisplay, SessionInit } from './types.js';
+import type { Session, SessionDisplay, SessionInit } from './types.js';
 import { prepareRestoration, readDosq, extractFirstQuery } from './restoration.js';
-import { getMyccDir, setSessionContext, getSessionArg } from '../config.js';
+import { setSessionContext, getSessionArg } from '../config.js';
 import { clearAll } from '../context/memory-store.js';
 import { agentIO } from '../loop/agent-io.js';
 import { openEditor } from '../utils/open-editor.js';
@@ -72,21 +72,25 @@ function ensureDir(dir: string): void {
 
 /**
  * Create a new session file on fresh start.
+ * Creates a subdirectory .mycc/sessions/{id}/ and writes session-{id}.json inside it.
  *
- * @param initial - Initial session data
- * @returns Object containing path and id
+ * @param lead_triologue - Path to the lead's triologue file
+ * @param id - Optional session ID (UUID). If not provided, a new one is generated.
+ * @returns Path to the session file
  */
-export function createSessionFile(lead_triologue: string): string {
+export function createSessionFile(lead_triologue: string, id?: string): string {
   const sessionsDir = getSessionsDir();
   ensureDir(sessionsDir);
 
   const now = new Date();
-  const id = randomUUID();
-  const filename = `${id}.json`;
+  const sessionId = id || randomUUID();
+  const sessionDir = path.join(sessionsDir, sessionId);
+  ensureDir(sessionDir);
+  const filename = `session-${sessionId}.json`;
 
-  const session: SessionFile = {
-    version: '1.0',
-    id,
+  const session: Session = {
+    version: '2.0',
+    id: sessionId,
     create_time: now.toISOString(),
     project_dir: process.cwd(),
     lead_triologue,
@@ -95,7 +99,7 @@ export function createSessionFile(lead_triologue: string): string {
     first_query: '',
   };
 
-  const filePath = path.join(sessionsDir, filename);
+  const filePath = path.join(sessionDir, filename);
   fs.writeFileSync(filePath, JSON.stringify(session, null, 2), 'utf-8');
 
   return filePath;
@@ -113,7 +117,7 @@ export function readSession(filePath: string): Session | null {
       return null;
     }
     const content = fs.readFileSync(filePath, 'utf-8');
-    const session = JSON.parse(content) as SessionFile;
+    const session = JSON.parse(content) as Session;
     // Validate required fields
     if (!session.id || !session.create_time) {
       console.warn(`Session file missing required fields: ${filePath}`);
@@ -132,9 +136,9 @@ export function readSession(filePath: string): Session | null {
  * @param session - Session object to write
  */
 export function writeSession(filePath: string, session: Session): void {
-  const sessionFile: SessionFile = {
-    version: '1.0',
+  const sessionFile: Session = {
     ...session,
+    version: '2.0',
   };
   fs.writeFileSync(filePath, JSON.stringify(sessionFile, null, 2), 'utf-8');
 }
@@ -147,8 +151,8 @@ export function writeSession(filePath: string, session: Session): void {
  * @returns Path to session file or null if not found
  */
 export function getSessionPathById(id: string, preferUser = true): string | null {
-  const userSessionPath = path.join(getUserSessionsDir(), `${id}.json`);
-  const projectSessionPath = path.join(getSessionsDir(), `${id}.json`);
+  const userSessionPath = path.join(getUserSessionsDir(), id, `session-${id}.json`);
+  const projectSessionPath = path.join(getSessionsDir(), id, `session-${id}.json`);
 
   if (preferUser && fs.existsSync(userSessionPath)) {
     return userSessionPath;
@@ -198,9 +202,9 @@ export function loadSessionById(id: string): Session {
 export function findSessionPaths(id: string): SessionMatch[] {
   const matches: SessionMatch[] = [];
 
-  // Try exact match first
-  const exactUser = path.join(getUserSessionsDir(), `${id}.json`);
-  const exactProject = path.join(getSessionsDir(), `${id}.json`);
+  // Try exact match first (subdirectory + session-{id}.json)
+  const exactUser = path.join(getUserSessionsDir(), id, `session-${id}.json`);
+  const exactProject = path.join(getSessionsDir(), id, `session-${id}.json`);
 
   const userExists = fs.existsSync(exactUser);
   const projectExists = fs.existsSync(exactProject);
@@ -218,11 +222,13 @@ export function findSessionPaths(id: string): SessionMatch[] {
     // Search in user sessions
     const userDir = getUserSessionsDir();
     if (fs.existsSync(userDir)) {
-      const files = fs.readdirSync(userDir).filter((f) => f.endsWith('.json'));
-      for (const file of files) {
-        const fileId = file.replace('.json', '');
-        if (fileId.startsWith(id)) {
-          matches.push({ id: fileId, path: path.join(userDir, file), source: 'user' });
+      const dirs = fs.readdirSync(userDir).filter((d) => {
+        const sessionFile = path.join(userDir, d, `session-${d}.json`);
+        return fs.statSync(path.join(userDir, d)).isDirectory() && fs.existsSync(sessionFile);
+      });
+      for (const dir of dirs) {
+        if (dir.startsWith(id)) {
+          matches.push({ id: dir, path: path.join(userDir, dir, `session-${dir}.json`), source: 'user' });
         }
       }
     }
@@ -230,14 +236,16 @@ export function findSessionPaths(id: string): SessionMatch[] {
     // Search in project sessions
     const projectDir = getSessionsDir();
     if (fs.existsSync(projectDir)) {
-      const files = fs.readdirSync(projectDir).filter((f) => f.endsWith('.json'));
-      for (const file of files) {
-        const fileId = file.replace('.json', '');
-        if (fileId.startsWith(id)) {
+      const dirs = fs.readdirSync(projectDir).filter((d) => {
+        const sessionFile = path.join(projectDir, d, `session-${d}.json`);
+        return fs.statSync(path.join(projectDir, d)).isDirectory() && fs.existsSync(sessionFile);
+      });
+      for (const dir of dirs) {
+        if (dir.startsWith(id)) {
           // Check if same ID already found in user sessions (user shadows project)
-          const alreadyFound = matches.find((m) => m.id === fileId);
+          const alreadyFound = matches.find((m) => m.id === dir);
           if (!alreadyFound) {
-            matches.push({ id: fileId, path: path.join(projectDir, file), source: 'project' });
+            matches.push({ id: dir, path: path.join(projectDir, dir, `session-${dir}.json`), source: 'project' });
           }
         }
       }
@@ -256,12 +264,15 @@ export function listSessions(): SessionDisplay[] {
   const sessions: SessionDisplay[] = [];
   const seenIds = new Set<string>();
 
-  // Read project sessions
+  // Read project sessions (iterate subdirectories)
   const projectDir = getSessionsDir();
   if (fs.existsSync(projectDir)) {
-    const files = fs.readdirSync(projectDir).filter((f) => f.endsWith('.json'));
-    for (const file of files) {
-      const sessionPath = path.join(projectDir, file);
+    const dirs = fs.readdirSync(projectDir).filter((d) => {
+      const sessionFile = path.join(projectDir, d, `session-${d}.json`);
+      return fs.statSync(path.join(projectDir, d)).isDirectory() && fs.existsSync(sessionFile);
+    });
+    for (const dir of dirs) {
+      const sessionPath = path.join(projectDir, dir, `session-${dir}.json`);
       const session = readSession(sessionPath);
       if (session) {
         seenIds.add(session.id);
@@ -280,9 +291,12 @@ export function listSessions(): SessionDisplay[] {
   // Read user sessions (user sessions shadow project sessions)
   const userDir = getUserSessionsDir();
   if (fs.existsSync(userDir)) {
-    const files = fs.readdirSync(userDir).filter((f) => f.endsWith('.json'));
-    for (const file of files) {
-      const sessionPath = path.join(userDir, file);
+    const dirs = fs.readdirSync(userDir).filter((d) => {
+      const sessionFile = path.join(userDir, d, `session-${d}.json`);
+      return fs.statSync(path.join(userDir, d)).isDirectory() && fs.existsSync(sessionFile);
+    });
+    for (const dir of dirs) {
+      const sessionPath = path.join(userDir, dir, `session-${dir}.json`);
       const session = readSession(sessionPath);
       if (session) {
         if (seenIds.has(session.id)) {
@@ -312,6 +326,7 @@ export function listSessions(): SessionDisplay[] {
 
 /**
  * Save session to user directory
+ * Copies the entire session subdirectory to ~/.mycc-store/sessions/{id}/
  *
  * @param sessionPath - Path to project session file
  * @returns Path to saved user session file
@@ -325,10 +340,24 @@ export function saveToUserDir(sessionPath: string): string {
   const userDir = getUserSessionsDir();
   ensureDir(userDir);
 
-  const destPath = path.join(userDir, `${session.id}.json`);
-  fs.copyFileSync(sessionPath, destPath);
+  // Copy entire session directory
+  const srcDir = path.dirname(sessionPath);
+  const destDir = path.join(userDir, session.id);
+  if (!fs.existsSync(destDir)) {
+    fs.mkdirSync(destDir, { recursive: true });
+  }
 
-  return destPath;
+  // Copy all files from source session directory to user directory
+  const files = fs.readdirSync(srcDir);
+  for (const file of files) {
+    const srcFile = path.join(srcDir, file);
+    const destFile = path.join(destDir, file);
+    if (fs.statSync(srcFile).isFile()) {
+      fs.copyFileSync(srcFile, destFile);
+    }
+  }
+
+  return path.join(destDir, `session-${session.id}.json`);
 }
 
 /**
@@ -360,12 +389,18 @@ export function validateSession(session: Session): { valid: boolean; missingFile
 
 /**
  * Get session ID from file path
+ * Extracts UUID from `session-{uuid}.json` filename or from parent directory name.
  *
  * @param filePath - Path to session file
  * @returns Session ID (UUID)
  */
 export function getSessionId(filePath: string): string {
-  return path.basename(filePath, '.json');
+  const basename = path.basename(filePath, '.json');
+  // Handle both old format (plain UUID) and new format (session-{uuid})
+  if (basename.startsWith('session-')) {
+    return basename.slice('session-'.length);
+  }
+  return basename;
 }
 
 /**
@@ -385,15 +420,29 @@ export function cleanupEmptySessions(currentSessionId: string): number {
     return createTime > oneMinuteAgo;
   };
 
+  const isSessionDir = (dir: string): boolean => {
+    const sessionFile = path.join(dir, `session-${path.basename(dir)}.json`);
+    return fs.existsSync(sessionFile);
+  };
+
   // Clean up project sessions
   const projectDir = getSessionsDir();
   if (fs.existsSync(projectDir)) {
-    const files = fs.readdirSync(projectDir).filter((f) => f.endsWith('.json'));
-    for (const file of files) {
-      const sessionPath = path.join(projectDir, file);
+    const dirs = fs.readdirSync(projectDir).filter((d) => {
+      const fullPath = path.join(projectDir, d);
+      return fs.statSync(fullPath).isDirectory() && isSessionDir(fullPath);
+    });
+    for (const dir of dirs) {
+      const sessionPath = path.join(projectDir, dir, `session-${dir}.json`);
       const session = readSession(sessionPath);
       if (session && !session.first_query && session.id !== currentSessionId && !isRecent(session)) {
-        fs.unlinkSync(sessionPath);
+        // Remove the entire session directory
+        const sessionDir = path.join(projectDir, dir);
+        const files = fs.readdirSync(sessionDir);
+        for (const file of files) {
+          fs.unlinkSync(path.join(sessionDir, file));
+        }
+        fs.rmdirSync(sessionDir);
         removed++;
       }
     }
@@ -402,12 +451,21 @@ export function cleanupEmptySessions(currentSessionId: string): number {
   // Clean up user sessions
   const userDir = getUserSessionsDir();
   if (fs.existsSync(userDir)) {
-    const files = fs.readdirSync(userDir).filter((f) => f.endsWith('.json'));
-    for (const file of files) {
-      const sessionPath = path.join(userDir, file);
+    const dirs = fs.readdirSync(userDir).filter((d) => {
+      const fullPath = path.join(userDir, d);
+      return fs.statSync(fullPath).isDirectory() && isSessionDir(fullPath);
+    });
+    for (const dir of dirs) {
+      const sessionPath = path.join(userDir, dir, `session-${dir}.json`);
       const session = readSession(sessionPath);
       if (session && !session.first_query && session.id !== currentSessionId && !isRecent(session)) {
-        fs.unlinkSync(sessionPath);
+        // Remove the entire session directory
+        const sessionDir = path.join(userDir, dir);
+        const files = fs.readdirSync(sessionDir);
+        for (const file of files) {
+          fs.unlinkSync(path.join(sessionDir, file));
+        }
+        fs.rmdirSync(sessionDir);
         removed++;
       }
     }
@@ -484,7 +542,7 @@ export async function restoreSession(sessionArg: string): Promise<SessionInit> {
   const initialQuery = extractFirstQuery(dosqContent);
   const triologuePath = session.lead_triologue;
   const sessionFilePath = getSessionPathById(session.id)
-    || path.join(path.dirname(session.lead_triologue), '..', 'sessions', `${session.id}.json`);
+    || path.join(getSessionsDir(), session.id, `session-${session.id}.json`);
 
   console.log(chalk.gray(`Restored session: ${session.id.slice(0, 7)}`));
 
@@ -495,16 +553,17 @@ export async function restoreSession(sessionArg: string): Promise<SessionInit> {
  * Create a new session with fresh triologue and session files
  */
 export function createNewSession(): SessionInit {
-  const transcriptDir = path.join(getMyccDir(), 'transcripts');
-  if (!fs.existsSync(transcriptDir)) {
-    fs.mkdirSync(transcriptDir, { recursive: true });
-  }
+  // Generate session ID first so we can create the session directory
+  const id = randomUUID();
+  const sessionDir = path.join(getSessionsDir(), id);
+  ensureDir(sessionDir);
 
   const timestamp = Math.floor(Date.now() / 1000);
-  const triologuePath = path.join(transcriptDir, `lead-${timestamp}-triologue.jsonl`);
+  const triologuePath = path.join(sessionDir, `triologue-lead-${timestamp}.jsonl`);
   fs.writeFileSync(triologuePath, '', 'utf-8');
 
-  const sessionFilePath = createSessionFile(triologuePath);
+  // Pass the same id so session file goes in the same directory as triologue
+  const sessionFilePath = createSessionFile(triologuePath, id);
 
   // Clean up empty sessions from previous runs
   const currentSessionId = getSessionId(sessionFilePath);

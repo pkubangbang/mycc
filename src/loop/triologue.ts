@@ -14,7 +14,7 @@ import type { Message, ToolCall, WikiModule, NoteCategory, Skill } from '../type
 import { minifyMessages } from '../utils/llm-chat-minifier.js';
 import { estimateTokens, estimateTokensForMessages } from '../utils/token.js';
 import { ResultTooLargeError } from '../types.js';
-import { getMyccDir, getLongtextDir, ensureDirs, getTokenThreshold, isDebuggingTp } from '../config.js';
+import { getLongtextDir, ensureDirs, getTokenThreshold, isDebuggingTp, getSessionContext, getSessionDir } from '../config.js';
 import { agentIO } from './agent-io.js';
 import { attemptAutoFix } from './tp-auto-fixer.js';
 
@@ -752,16 +752,16 @@ export class Triologue {
    * @param focus - Optional focus topic to emphasize in summary
    */
   private async runAutoCompact(focus?: string): Promise<Message[]> {
-    // Ensure transcript directory exists
-    ensureDirs();
-    const transcriptDir = path.join(getMyccDir(), 'transcripts');
+    // Ensure transcript directory exists (session dir)
+    const sessionId = getSessionContext();
+    const transcriptDir = getSessionDir(sessionId);
     if (!fs.existsSync(transcriptDir)) {
       fs.mkdirSync(transcriptDir, { recursive: true });
     }
 
     // Save full transcript to disk
     const timestamp = Math.floor(Date.now() / 1000);
-    const transcriptPath = path.join(transcriptDir, `transcript_${timestamp}.jsonl`);
+    const transcriptPath = path.join(transcriptDir, `transcript-lead-${timestamp}.jsonl`);
 
     const writeStream = fs.createWriteStream(transcriptPath);
     for (const msg of this.messages) {

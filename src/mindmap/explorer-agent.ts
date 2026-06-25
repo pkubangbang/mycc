@@ -20,7 +20,7 @@ import type { WebFetchResponse } from 'ollama';
 import * as fs from 'fs';
 import * as path from 'path';
 import { minifyMessages } from '../utils/llm-chat-minifier.js';
-import { getTokenThreshold, getMyccDir, ensureDirs } from '../config.js';
+import { getTokenThreshold, getMyccDir, getSessionContext, getSessionDir } from '../config.js';
 import { agentIO } from '../loop/agent-io.js';
 import { grepSearch } from '../utils/grep-search.js';
 
@@ -85,16 +85,21 @@ async function compactMessages(
   messages: Message[],
   nodeTitle: string
 ): Promise<Message[]> {
-  // Ensure transcript directory exists
-  ensureDirs();
-  const transcriptDir = path.join(getMyccDir(), 'transcripts');
+  // Use session directory if available, otherwise fall back to transcripts
+  let transcriptDir: string;
+  try {
+    const sessionId = getSessionContext();
+    transcriptDir = getSessionDir(sessionId);
+  } catch {
+    transcriptDir = path.join(getMyccDir(), 'transcripts');
+  }
   if (!fs.existsSync(transcriptDir)) {
     fs.mkdirSync(transcriptDir, { recursive: true });
   }
 
   // Save full transcript to disk
   const timestamp = Math.floor(Date.now() / 1000);
-  const transcriptPath = path.join(transcriptDir, `explorer_${timestamp}.jsonl`);
+  const transcriptPath = path.join(transcriptDir, `explorer-${timestamp}.jsonl`);
 
   const writeStream = fs.createWriteStream(transcriptPath);
   for (const msg of messages) {

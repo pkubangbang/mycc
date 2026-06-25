@@ -64,7 +64,7 @@ describe('AgentStateMachine', () => {
         printTodoList: vi.fn(() => ''),
         closeCheckpointTodo: vi.fn(),
       },
-      mail: { collectMails: vi.fn(() => []) },
+      mail: { collectMails: vi.fn(() => []), clearUnread: vi.fn() },
       skill: {
         listSkills: vi.fn(() => []),
         getSkill: vi.fn(),

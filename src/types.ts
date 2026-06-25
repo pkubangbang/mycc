@@ -396,6 +396,7 @@ export interface MailModule {
   appendMail(from: string, title: string, content: string, issueId?: number): void;
   collectMails(): Mail[];
   listMails(): Mail[];
+  clearUnread(): void;
 }
 
 /**

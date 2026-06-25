@@ -14,12 +14,12 @@ import type {
   SendResponseCallback,
 } from '../../types.js';
 import chalk from 'chalk';
-import { getMyccDir } from '../../config.js';
+import { getSessionDir } from '../../config.js';
 import { getProjectRoot, spawnTsx } from '../../utils/tsx-run.js';
 import * as MemoryStore from '../memory-store.js';
 import { MailBox } from '../shared/mail.js';
 import { IpcRegistry } from '../ipc-registry.js';
-import { readSession, writeSession } from '../../session/index.js';
+import { readSession, writeSession, getSessionId } from '../../session/index.js';
 
 // Project root for resolving paths
 const PROJECT_ROOT = getProjectRoot();
@@ -28,7 +28,7 @@ const PROJECT_ROOT = getProjectRoot();
  * IPC message types (parent to child)
  */
 type ParentMessage =
-  | { type: 'spawn'; name: string; role: string; prompt: string }
+  | { type: 'spawn'; name: string; role: string; prompt: string; sessionId: string }
   | { type: 'message'; from: string; title: string; content: string }
   | { type: 'shutdown' }
   | { type: 'mode_change'; mode: 'plan' | 'normal' }
@@ -100,13 +100,14 @@ export class TeamManager implements TeamModule {
       return `Error: Teammate '${name}' already exists with status ${existing.status}`;
     }
 
-    // Generate triologue path upfront
-    const transcriptDir = path.join(getMyccDir(), 'transcripts');
-    if (!fs.existsSync(transcriptDir)) {
-      fs.mkdirSync(transcriptDir, { recursive: true });
+    // Generate triologue path in session directory
+    const sessionId = getSessionId(this.sessionFilePath);
+    const sessionDir = getSessionDir(sessionId);
+    if (!fs.existsSync(sessionDir)) {
+      fs.mkdirSync(sessionDir, { recursive: true });
     }
     const timestamp = Math.floor(Date.now() / 1000);
-    const triologuePath = path.join(transcriptDir, `${name}-${timestamp}-triologue.jsonl`);
+    const triologuePath = path.join(sessionDir, `triologue-${name}-${timestamp}.jsonl`);
 
     // Register in session file BEFORE spawning child
     const session = readSession(this.sessionFilePath);
@@ -122,6 +123,10 @@ export class TeamManager implements TeamModule {
 
     // Store in memory
     MemoryStore.createTeammate(name, role, prompt);
+
+    // Clear stale unread mail from a previous incarnation of this teammate
+    const mailbox = new MailBox(name);
+    mailbox.clearUnread();
 
     // Spawn child process using tsx
     const child = spawnTsx({
@@ -155,13 +160,14 @@ export class TeamManager implements TeamModule {
       this.processes.delete(name);
     });
 
-    // Send spawn config to child via IPC (with pre-assigned triologue path)
+    // Send spawn config to child via IPC (with pre-assigned triologue path and session ID)
     child.send({
       type: 'spawn',
       name,
       role,
       prompt,
       triologuePath,
+      sessionId,
     });
 
     // Wait for 'teammate_ready' notification with 30s timeout

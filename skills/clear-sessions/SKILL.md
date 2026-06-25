@@ -19,17 +19,19 @@ This guide explains how to identify and clean up corrupted or outdated session d
 
 ## Session Architecture
 
-A **session** consists of three parts:
+A **session** consists of all files inside a session directory:
 
 | Component | Location | Format | Purpose |
 |-----------|----------|--------|---------|
-| **Session file** | `.mycc/sessions/<uuid>.json` | JSON | Metadata: UUID, timestamps, triologue path, teammates, first query |
-| **Triologue** | `.mycc/transcripts/<role>-<ts>-triologue.jsonl` | JSONL (append-only) | The three-way conversation log (user ↔ assistant ↔ tool) |
-| **Transcript** | (same as triologue) | — | Alias for the triologue file |
+| **Session file** | `.mycc/sessions/<uuid>/session-<uuid>.json` | JSON | Metadata: UUID, timestamps, triologue path, teammates, first query |
+| **Triologue** | `.mycc/sessions/<uuid>/triologue-<role>-<ts>.jsonl` | JSONL (append-only) | The three-way conversation log (user ↔ assistant ↔ tool) |
+| **Transcript** | `.mycc/sessions/<uuid>/transcript-<role>-<ts>.jsonl` | JSONL | Auto-compacted conversation summaries |
+| **Mail (unread)** | `.mycc/sessions/<uuid>/unread-<owner>-<ts>.jsonl` | JSONL | Incoming mailbox messages |
+| **Mail (read)** | `.mycc/sessions/<uuid>/readmail-<owner>-<ts>.jsonl` | JSONL | Read mailbox backlog |
 
-All three together form a complete session. The session JSON references its triologue via the `lead_triologue` field (absolute path).
+All files for a session live in a single subdirectory under `.mycc/sessions/<session-id>/`.
 
-User-level sessions in `~/.mycc-store/sessions/` follow the same structure.
+User-level sessions in `~/.mycc-store/sessions/` follow the same directory structure.
 
 No SQLite database is used — session storage is purely file-based (JSON + JSONL).
 
@@ -41,9 +43,13 @@ Sessions created but never used (no `first_query`). These are normal but accumul
 
 ```bash
 # Find sessions with empty first_query
-for f in .mycc/sessions/*.json; do
-  if ! grep -q '"first_query"' "$f" 2>/dev/null || grep -q '"first_query": ""' "$f" 2>/dev/null; then
-    echo "Empty: $f"
+for d in .mycc/sessions/*/; do
+  f="${d}session-*.json"
+  # Use ls to get the actual file (there should be one)
+  json_file=$(ls "$f" 2>/dev/null | head -1)
+  [ -z "$json_file" ] && continue
+  if ! grep -q '"first_query"' "$json_file" 2>/dev/null || grep -q '"first_query": ""' "$json_file" 2>/dev/null; then
+    echo "Empty: $json_file"
   fi
 done
 ```
@@ -54,7 +60,7 @@ Session files with incomplete or corrupted JSON content.
 
 ```bash
 # Validate all session JSON files
-for f in .mycc/sessions/*.json; do
+for f in .mycc/sessions/*/session-*.json; do
   if ! python3 -c "import json; json.load(open('$f'))" 2>/dev/null; then
     echo "Invalid JSON: $f"
   fi
@@ -67,7 +73,7 @@ Sessions referencing non-existent triologue files.
 
 ```bash
 # Check for missing triologue references
-for f in .mycc/sessions/*.json; do
+for f in .mycc/sessions/*/session-*.json; do
   lead=$(python3 -c "import json; d=json.load(open('$f')); print(d.get('lead_triologue',''))" 2>/dev/null)
   if [ -n "$lead" ] && [ ! -f "$lead" ]; then
     echo "Missing triologue in $f: $lead"
@@ -81,11 +87,11 @@ Triologue files created but never written to — indicates interrupted session s
 
 ```bash
 # Find and count empty triologue files
-echo "Total: $(ls .mycc/transcripts/*.jsonl 2>/dev/null | wc -l)"
-echo "Empty: $(find .mycc/transcripts -name '*.jsonl' -size 0 | wc -l)"
+echo "Total: $(find .mycc/sessions -name 'triologue-*.jsonl' 2>/dev/null | wc -l)"
+echo "Empty: $(find .mycc/sessions -name 'triologue-*.jsonl' -size 0 | wc -l)"
 
 # Find sessions referencing empty triologues
-for f in .mycc/sessions/*.json; do
+for f in .mycc/sessions/*/session-*.json; do
   lead=$(python3 -c "import json; d=json.load(open('$f')); print(d.get('lead_triologue',''))" 2>/dev/null)
   if [ -n "$lead" ] && [ -f "$lead" ] && [ ! -s "$lead" ]; then
     echo "Session $f has empty triologue: $lead"
@@ -99,9 +105,9 @@ Triologue files not referenced by any session.
 
 ```bash
 # Find orphaned triologues
-for t in .mycc/transcripts/*.jsonl; do
+for t in .mycc/sessions/*/triologue-*.jsonl; do
   basename=$(basename "$t")
-  if ! grep -rq "$basename" .mycc/sessions/ 2>/dev/null; then
+  if ! grep -rq "$basename" .mycc/sessions/*/session-*.json 2>/dev/null; then
     echo "Orphaned: $t"
   fi
 done
@@ -114,8 +120,8 @@ done
 The most common cleanup — remove 0-byte triologue files:
 
 ```bash
-find .mycc/transcripts -name "*.jsonl" -size 0 -delete
-echo "Remaining empty: $(find .mycc/transcripts -name '*.jsonl' -size 0 | wc -l)"
+find .mycc/sessions -name "triologue-*.jsonl" -size 0 -delete
+echo "Remaining empty: $(find .mycc/sessions -name 'triologue-*.jsonl' -size 0 | wc -l)"
 ```
 
 ### Full Session Reset
@@ -125,18 +131,12 @@ When starting fresh or after major corruption:
 ```bash
 # 1. Backup existing sessions
 tar -czf /tmp/mycc-sessions-backup-$(date +%Y%m%d-%H%M%S).tar.gz \
-  .mycc/sessions .mycc/transcripts .mycc/mail 2>/dev/null
+  .mycc/sessions 2>/dev/null
 
-# 2. Clear all session files
-rm -f .mycc/sessions/*.json
+# 2. Clear all session directories
+rm -rf .mycc/sessions/*/
 
-# 3. Clear all triologue files
-rm -f .mycc/transcripts/*.jsonl
-
-# 4. Clear mail files
-rm -f .mycc/mail/*.jsonl
-
-# 5. Reset worktrees
+# 3. Reset worktrees
 echo '[]' > .mycc/worktrees.json
 ```
 
@@ -148,26 +148,28 @@ Remove only corrupted sessions:
 
 ```bash
 # 1. Remove sessions with missing triologues
-for f in .mycc/sessions/*.json; do
+for d in .mycc/sessions/*/; do
+  f=$(ls "${d}session-*.json" 2>/dev/null | head -1)
+  [ -z "$f" ] && continue
   lead=$(python3 -c "import json; d=json.load(open('$f')); print(d.get('lead_triologue',''))" 2>/dev/null)
   if [ -n "$lead" ] && [ ! -f "$lead" ]; then
-    echo "Removing: $f"
-    rm "$f"
+    echo "Removing session dir: $d"
+    rm -rf "$d"
   fi
 done
 
 # 2. Remove invalid JSON session files
-for f in .mycc/sessions/*.json; do
+for f in .mycc/sessions/*/session-*.json; do
   if ! python3 -c "import json; json.load(open('$f'))" 2>/dev/null; then
-    echo "Removing invalid JSON: $f"
-    rm "$f"
+    echo "Removing invalid JSON session dir: $(dirname "$f")"
+    rm -rf "$(dirname "$f")"
   fi
 done
 
 # 3. Remove orphaned triologues
-for t in .mycc/transcripts/*.jsonl; do
+for t in .mycc/sessions/*/triologue-*.jsonl; do
   basename=$(basename "$t")
-  if ! grep -rq "$basename" .mycc/sessions/ 2>/dev/null; then
+  if ! grep -rq "$basename" .mycc/sessions/*/session-*.json 2>/dev/null; then
     echo "Removing orphaned: $t"
     rm "$t"
   fi
@@ -183,13 +185,15 @@ User-level sessions in `~/.mycc-store/sessions/` may also need cleanup:
 ls -la ~/.mycc-store/sessions/
 
 # Clear all user sessions
-rm -f ~/.mycc-store/sessions/*.json
+rm -rf ~/.mycc-store/sessions/*/
 
 # Or validate and remove corrupted
-for f in ~/.mycc-store/sessions/*.json; do
+for d in ~/.mycc-store/sessions/*/; do
+  f=$(ls "${d}session-*.json" 2>/dev/null | head -1)
+  [ -z "$f" ] && continue
   if ! python3 -c "import json; json.load(open('$f'))" 2>/dev/null; then
-    echo "Removing invalid user session: $f"
-    rm "$f"
+    echo "Removing invalid user session: $d"
+    rm -rf "$d"
   fi
 done
 ```
@@ -200,7 +204,7 @@ done
 
 ```bash
 tar -xzf /tmp/mycc-sessions-backup-YYYYMMDD.tar.gz
-cp sessions-backup/*.json .mycc/sessions/
+# The backup contains .mycc/sessions/ directories
 ```
 
 ### Rebuild Session from Triologue
@@ -208,13 +212,14 @@ cp sessions-backup/*.json .mycc/sessions/
 If the triologue exists but session metadata is lost:
 
 ```bash
-cat > .mycc/sessions/<new-uuid>.json << 'EOF'
+mkdir -p .mycc/sessions/<new-uuid>
+cat > .mycc/sessions/<new-uuid>/session-<new-uuid>.json << 'EOF'
 {
-  "version": "1.0",
+  "version": "2.0",
   "id": "<new-uuid>",
   "create_time": "2026-01-01T00:00:00Z",
   "project_dir": "/path/to/project",
-  "lead_triologue": "/path/to/.mycc/transcripts/lead-XXXXXXX-triologue.jsonl",
+  "lead_triologue": "/path/to/.mycc/sessions/<new-uuid>/triologue-lead-20260624T000000Z.jsonl",
   "child_triologues": [],
   "teammates": [],
   "first_query": "Recovered session"
@@ -226,7 +231,7 @@ EOF
 
 ```bash
 # View content
-python3 -c "import json; print(json.dumps(json.load(open('.mycc/sessions/UUID.json')), indent=2))"
+python3 -c "import json; print(json.dumps(json.load(open('.mycc/sessions/UUID/session-UUID.json')), indent=2))"
 
 # Fix by creating a minimal replacement
 # (use the triologue path from the original if still readable)
@@ -238,7 +243,7 @@ python3 -c "import json; print(json.dumps(json.load(open('.mycc/sessions/UUID.js
 
 ```bash
 echo "=== Session Integrity ==="
-for f in .mycc/sessions/*.json; do
+for f in .mycc/sessions/*/session-*.json; do
   [ -f "$f" ] || continue
   id=$(python3 -c "import json; d=json.load(open('$f')); print(d.get('id','unknown'))" 2>/dev/null)
   lead=$(python3 -c "import json; d=json.load(open('$f')); print(d.get('lead_triologue',''))" 2>/dev/null)
@@ -260,11 +265,12 @@ done
 
 ```bash
 echo "=== Storage Stats ==="
-echo "Session files: $(ls .mycc/sessions/*.json 2>/dev/null | wc -l)"
-echo "Triologue files: $(ls .mycc/transcripts/*.jsonl 2>/dev/null | wc -l)"
-echo "Empty triologues: $(find .mycc/transcripts -name '*.jsonl' -size 0 2>/dev/null | wc -l)"
-echo "Mail files: $(ls .mycc/mail/*.jsonl 2>/dev/null | wc -l)"
-echo "User sessions: $(ls ~/.mycc-store/sessions/*.json 2>/dev/null | wc -l)"
+echo "Session dirs: $(ls -d .mycc/sessions/*/ 2>/dev/null | wc -l)"
+echo "Session files: $(ls .mycc/sessions/*/session-*.json 2>/dev/null | wc -l)"
+echo "Triologue files: $(find .mycc/sessions -name 'triologue-*.jsonl' 2>/dev/null | wc -l)"
+echo "Empty triologues: $(find .mycc/sessions -name 'triologue-*.jsonl' -size 0 2>/dev/null | wc -l)"
+echo "Mail files: $(find .mycc/sessions -name 'unread-*.jsonl' -o -name 'readmail-*.jsonl' 2>/dev/null | wc -l)"
+echo "User sessions: $(ls -d ~/.mycc-store/sessions/*/ 2>/dev/null | wc -l)"
 ```
 
 ## Common Issues and Solutions
@@ -275,8 +281,8 @@ echo "User sessions: $(ls ~/.mycc-store/sessions/*.json 2>/dev/null | wc -l)"
 
 **Solution:**
 ```bash
-python3 -c "import json; json.load(open('.mycc/sessions/UUID.json'))"
-# If it fails, remove the file: rm .mycc/sessions/UUID.json
+python3 -c "import json; json.load(open('.mycc/sessions/UUID/session-UUID.json'))"
+# If it fails, remove the directory: rm -rf .mycc/sessions/UUID
 ```
 
 ### Issue: Session restore fails with "missing files"
@@ -285,8 +291,8 @@ python3 -c "import json; json.load(open('.mycc/sessions/UUID.json'))"
 
 **Solution:**
 ```bash
-# Remove the session referencing the missing triologue
-rm .mycc/sessions/UUID.json
+# Remove the session directory referencing the missing triologue
+rm -rf .mycc/sessions/UUID
 ```
 
 ### Issue: User session shadows project session
@@ -296,7 +302,7 @@ rm .mycc/sessions/UUID.json
 **Solution:**
 ```bash
 # Remove user session to fall back to project session
-rm ~/.mycc-store/sessions/UUID.json
+rm -rf ~/.mycc-store/sessions/UUID
 ```
 
 ## Prevention
@@ -310,10 +316,11 @@ rm ~/.mycc-store/sessions/UUID.json
 
 ```bash
 echo "=== Final Status ==="
-echo "Sessions: $(ls .mycc/sessions/*.json 2>/dev/null | wc -l)"
-echo "Triologues: $(ls .mycc/transcripts/*.jsonl 2>/dev/null | wc -l)"
-echo "Empty triologues: $(find .mycc/transcripts -name '*.jsonl' -size 0 2>/dev/null | wc -l)"
-echo "Mail files: $(ls .mycc/mail/*.jsonl 2>/dev/null | wc -l)"
+echo "Session dirs: $(ls -d .mycc/sessions/*/ 2>/dev/null | wc -l)"
+echo "Session files: $(ls .mycc/sessions/*/session-*.json 2>/dev/null | wc -l)"
+echo "Triologue files: $(find .mycc/sessions -name 'triologue-*.jsonl' 2>/dev/null | wc -l)"
+echo "Empty triologues: $(find .mycc/sessions -name 'triologue-*.jsonl' -size 0 2>/dev/null | wc -l)"
+echo "Mail files: $(find .mycc/sessions -name 'unread-*.jsonl' -o -name 'readmail-*.jsonl' 2>/dev/null | wc -l)"
 ```
 
 All sessions should have valid JSON and existing, non-empty triologue files.
@@ -322,7 +329,7 @@ All sessions should have valid JSON and existing, non-empty triologue files.
 
 - [ ] Identified type of corruption
 - [ ] Backed up important sessions before deleting
-- [ ] Removed corrupted session JSON files
+- [ ] Removed corrupted session directories
 - [ ] Removed 0-byte triologue files
 - [ ] Cleaned up orphaned triologues
 - [ ] Cleared stale mail files

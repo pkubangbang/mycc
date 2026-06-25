@@ -39,7 +39,7 @@ vi.mock('../../config.js', () => ({
   MYCC_DIR: '.mycc',
   setSessionContext: () => {},
   getSessionContext: () => '',
-  getMailDir: () => '/tmp/.mycc/mail',
+  getSessionDir: () => '/tmp/.mycc/sessions/test-session',
   getToolsDir: () => '/tmp/.mycc/tools',
   getSkillsDir: () => '/tmp/.mycc/skills',
   getSessionsDir: () => '/tmp/.mycc/sessions',
