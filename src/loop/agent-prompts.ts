@@ -102,22 +102,6 @@ function buildOutputBehaviorSection(): string {
     '- Messages whose content starts with brackets (like [REMINDER]...) are system notifications. You should follow the advice but do not respond with text.',
     '- Do NOT explain, comment on, or narrate your response to hook/skill [REMINDER] or [Hook] notifications. If a reminder tells you to do something, do it silently. If it is informational, acknowledge it implicitly by continuing your task.',
     '',
-    '### Simplicity First (Ponytail Principle)',
-    'Before writing ANY code, stop at the first rung that holds:',
-    '1. Does this need to be built at all? → skip it (YAGNI)',
-    '2. Does the standard library already do this? → use it',
-    '3. Does a native platform feature cover it? → use it (e.g., <input type="date"> instead of a datepicker library)',
-    '4. Does an already-installed dependency solve it? → use it',
-    '5. Can this be one line? → make it one line',
-    '6. Only then: write the minimum code that works.',
-    '',
-    '- No abstractions that were not explicitly requested.',
-    '- No new dependency if it can be avoided.',
-    '- No boilerplate nobody asked for.',
-    '- Deletion over addition. Boring over clever. Fewest files possible.',
-    '- Never cut: input validation at trust boundaries, data-loss error handling, security, accessibility.',
-    '- Non-trivial logic leaves ONE runnable check behind (the smallest thing that fails if the logic breaks).',
-    '',
     '### High-Contrast Explanations',
     'When explaining code changes, design choices, or analysis results:',
     '',
@@ -290,6 +274,26 @@ You can add a \`comment\` property to recap to record your findings, like:
 The comment is shown in the recap log for user visibility.`;
 }
 
+function buildPonytailSection(): string {
+  return [
+    '### Simplicity First (Ponytail Principle)',
+    'Before writing ANY code, stop at the first rung that holds:',
+    '1. Does this need to be built at all? → skip it (YAGNI)',
+    '2. Does the standard library already do this? → use it',
+    '3. Does a native platform feature cover it? → use it (e.g., <input type="date"> instead of a datepicker library)',
+    '4. Does an already-installed dependency solve it? → use it',
+    '5. Can this be one line? → make it one line',
+    '6. Only then: write the minimum code that works.',
+    '',
+    '- No abstractions that were not explicitly requested.',
+    '- No new dependency if it can be avoided.',
+    '- No boilerplate nobody asked for.',
+    '- Deletion over addition. Boring over clever. Fewest files possible.',
+    '- Never cut: input validation at trust boundaries, data-loss error handling, security, accessibility.',
+    '- Non-trivial logic leaves ONE runnable check behind (the smallest thing that fails if the logic breaks).',
+  ].join('\n');
+}
+
 // ============================================================================
 // Solo Plan Mode Prompt
 // ============================================================================
@@ -354,6 +358,8 @@ ${buildPlatformSection()}
 ${buildKnowledgeBoundarySection()}
 
 ${buildCalendarSection()}
+
+${buildPonytailSection()}
 
 ${buildOutputBehaviorSection()}
 
@@ -440,6 +446,8 @@ ${buildPlatformSection()}
 ${buildKnowledgeBoundarySection()}
 
 ${buildCalendarSection()}
+
+${buildPonytailSection()}
 
 ${buildOutputBehaviorSection()}
 
