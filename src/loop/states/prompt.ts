@@ -77,11 +77,6 @@ export async function handlePrompt(
         return AgentState.COLLECT;
       }
 
-      // ESC cancel — continue the loop to show a fresh prompt
-      if (p0Input === '__ESC_CANCEL__') {
-        continue;
-      }
-
       // Exit commands (only handled when not pre-filled — i.e., first iteration)
       if (['q', 'exit', 'quit', ''].includes(p0Input.trim().toLowerCase())) {
         return null; // signal machine exit
