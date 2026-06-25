@@ -15,6 +15,8 @@ import type { RetryConfig } from '../engine/chat-helpers.js';
 import { forkChat } from '../engine/chat-provider.js';
 import { startSpinner, stopSpinner, sleep } from '../engine/chat-helpers.js';
 import { agentIO } from './agent-io.js';
+import { stripInternalMarkup } from '../utils/letter-box.js';
+import chalk from 'chalk';
 
 // ============================================================================
 // Turning Words
@@ -277,11 +279,12 @@ export async function generateContinuations(
   const continuations: string[] = [];
   for (const result of results) {
     if (result.status === 'fulfilled' && result.value.text) {
+      const cleanText = stripInternalMarkup(result.value.text);
       agentIO.verbose(
         'crossroad',
-        `Direction "${result.value.directionName}" produced: ${result.value.text.slice(0, 100)}...`,
+        `Direction "${result.value.directionName}" produced: ${cleanText.slice(0, 100)}...`,
       );
-      continuations.push(result.value.text);
+      continuations.push(cleanText);
     } else if (result.status === 'rejected') {
       const msg = result.reason instanceof Error ? result.reason.message : String(result.reason);
       agentIO.verbose('crossroad', `Direction failed: ${msg}`);
@@ -457,16 +460,29 @@ export async function handleCrossroad(
     stopSpinner();
     // Log all alternatives and which was chosen (after spinner stops for clean output)
     if (result && continuations.length > 1) {
-      const lines: string[] = ['', '── Crossroad ──'];
+      const boxWidth = 76;
+      const sep = chalk.gray('─');
+      const header = ` Crossroad (selected ${selectedIndex + 1} of ${continuations.length}) `;
+      const leftPad = Math.floor((boxWidth - header.length) / 2);
+      const rightPad = boxWidth - header.length - leftPad;
+      agentIO.log('');
+      agentIO.log(chalk.gray(`┌${sep.repeat(leftPad)}${chalk.white(header)}${sep.repeat(rightPad)}┐`));
       for (let i = 0; i < continuations.length; i++) {
-        const marker = i === selectedIndex ? '→' : ' ';
-        const label = i === selectedIndex ? `#${i + 1} [SELECTED]` : `#${i + 1}`;
-        const preview = continuations[i].length > 120
-          ? continuations[i].slice(0, 120) + '...'
+        const isSelected = i === selectedIndex;
+        const directionName = GENERATION_DIRECTIONS[i]?.name ?? `option ${i + 1}`;
+        const bullet = isSelected ? chalk.green('✓') : chalk.gray(' ');
+        const namePart = isSelected ? chalk.green.bold(directionName) : chalk.gray(directionName);
+        const preview = continuations[i].length > 100
+          ? `${continuations[i].slice(0, 100)}…`
           : continuations[i];
-        lines.push(`${marker} ${label}: ${preview}`);
+        const previewPart = isSelected ? chalk.white(preview) : chalk.gray(preview);
+        // Indent continuation text to align below direction name
+        agentIO.log(` ${bullet} ${namePart}: ${previewPart}`);
+        if (isSelected) {
+          agentIO.log(chalk.green(` ${chalk.dim('└─')} ${chalk.dim('selected')}`));
+        }
       }
-      agentIO.log(lines.join('\n'));
+      agentIO.log(chalk.gray(`└${sep.repeat(boxWidth)}┘`));
     }
   }
 }

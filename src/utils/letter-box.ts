@@ -36,7 +36,7 @@ function escapeRegex(str: string): string {
  *   <||DSML||tagname>...</||DSML||tagname>
  * where "||" is rendered as two fullwidth vertical bars (U+FF5C).
  */
-function stripInternalMarkup(content: string): string {
+export function stripInternalMarkup(content: string): string {
   let result = content;
 
   if (result.includes(FW_VLINE)) {
