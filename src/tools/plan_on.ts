@@ -67,7 +67,8 @@ However, you may want to allow edits to this file:
 Allow edits to this file during plan mode?
   - Press Enter or type 'y'/'yes' to allow this file
   - Type 'n'/'no' to enter strict plan mode (no files allowed)
-  - Or type a different file path to allow that file instead`;
+  - Or type a different file path to allow that file instead
+    (e.g., "docs/new-plan.md" or "README.md")`;
 
       const response = await ctx.core.question(prompt, ctx.core.getName());
 
@@ -104,6 +105,58 @@ Allow edits to this file during plan mode?
 
       // Outcome 3: User typed a different file path
       const userFile = response.trim();
+
+      // Heuristic to distinguish file paths from casual user responses
+      function looksLikeFilePath(input: string): boolean {
+        const trimmed = input.trim();
+        if (!trimmed) return false;
+
+        // Special path references: current dir, parent dir, root, Windows drive
+        if (trimmed === '.' || trimmed === '..' || trimmed === '/' || /^[a-zA-Z]:$/.test(trimmed)) return true;
+
+        // Factor 1: Has a file extension — the last segment must be a filename-like word
+        // followed by a dot and extension (e.g., "README.md", "src/file.ts")
+        // This rejects version numbers ("1.0"), prices ("$5.99"), and dotted phrases ("hello.world")
+        const lastSegment = trimmed.split(/[/\\]/).pop() || trimmed;
+        if (/^[a-zA-Z0-9_~-]+\.[a-zA-Z0-9]+$/.test(lastSegment)) return true;
+
+        // Factor 2: Known extensionless filenames (only unambiguous ones)
+        const knownFiles = new Set([
+          'makefile', 'dockerfile', 'gemfile', 'procfile',
+        ]);
+        if (knownFiles.has(lastSegment.toLowerCase())) return true;
+
+        // Factor 3: Contains a path separator with structural validation
+        const hasSep = trimmed.includes('/') || trimmed.includes('\\');
+        if (hasSep) {
+          // Reject if whitespace immediately around separator (catches "yes / no")
+          if (/[/\\]\s|\s[/\\]/.test(trimmed)) return false;
+          // Reject if no alphanumeric characters (catches "+-*/")
+          if (!/[a-zA-Z0-9]/.test(trimmed)) return false;
+          // Reject single-character segments on both sides (catches "y/n", "a/b", "n/m")
+          const segments = trimmed.split(/[/\\]+/).filter(s => s.length > 0);
+          if (segments.length >= 2 && segments.every(s => s.length <= 2)) {
+            // All segments are very short — likely a binary choice like "y/n", "on/off"
+            // Only allow if at least one segment has a dot (extension) or is >2 chars
+            if (!segments.some(s => s.length > 2 || s.includes('.'))) return false;
+          }
+          return true;
+        }
+
+        return false;
+      }
+
+      if (!looksLikeFilePath(userFile)) {
+        // User typed something that doesn't look like a file path (e.g., "hold on", "wait")
+        // — treat as strict plan mode
+        ctx.core.brief('info', 'plan_on', 'Strict plan mode activated (user response not a file path)');
+        const core = ctx.core as Core;
+        core.setMode('plan');
+        const team = ctx.team as TeamManager;
+        team.broadcastModeChange('plan');
+        return `Plan mode activated (strict - no files allowed for editing).\n\nThe user responded with "${userFile}" which does not look like a file path, so strict plan mode was applied. All code changes are prohibited.`;
+      }
+
       const resolvedUserPath = path.isAbsolute(userFile)
         ? userFile
         : path.resolve(ctx.core.getWorkDir(), userFile);
