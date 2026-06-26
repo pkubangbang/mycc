@@ -39,12 +39,12 @@ function buildIntentLanguageSection(): string {
   const lines: string[] = [];
 
   lines.push('## Intent Lang');
-  lines.push('When a tool requires an `intent` parameter, you MUST follow this format strictly:');
+  lines.push('When a tool requires an `intent` parameter, you MUST speak the Intent Lang. The Intent Lang follows this format strictly:');
   lines.push('```');
-  lines.push('VERB OBJECT PARAM PARAM ... TO PURPOSE');
+  lines.push('VERB OBJECT [PARAM PARAM ...] TO PURPOSE');
   lines.push('```');
-  lines.push('where `PARAM` is a `key=value` pair to describe an aspect of the OBJECT. You choose the key.')
-  lines.push('The VERB and OBJECT MUST be chosen from the below table. You MUST NOT create your own.');
+  lines.push('where each `PARAM` is a `key=value` pair to describe an aspect of the OBJECT. You choose the key.')
+  lines.push('IMPORTANT: The VERB / OBJECT vocabulary is very limited, however you can not use words outside the vocabulary.');
 
   // --- VERB table ---
   lines.push(`### VERB`);
@@ -55,7 +55,7 @@ function buildIntentLanguageSection(): string {
     lines.push(`| ${v} | ${VERB_MEANINGS[v] || ''} |`);
   }
   lines.push('');
-
+  
   // --- OBJECT table ---
   lines.push(`### OBJECT`);
   lines.push('IMPORTANT: you can only choose one from the table, you cannot create new word.');
@@ -65,14 +65,14 @@ function buildIntentLanguageSection(): string {
     lines.push(`| ${o} | ${OBJECT_MEANINGS[o] || ''} |`);
   }
   lines.push('');
-  lines.push('### Special Rule');
-  lines.push('For tools that require user interaction (terminal sessions, password prompts),');
-  lines.push('the OBJECT must reflect that a human user is involved.');
-  lines.push('');
+
+  lines.push('### Mindflow');
+  lines.push('Think carefully before you speak the Intent Lang. The Intent Lang you speak must reflect your intent faithfully.');
+  lines.push('The VERB + OBJECT is the backbone; The PARAM of the OBJECT and the PURPOSE of the VERB should be considered in parallel and in consistency.');
 
   // --- Examples ---
   lines.push('### Examples');
-  lines.push('- `READ SOURCE dir=src TO understand dependencies`');
+  lines.push('- `READ SOURCE dir=src type=.ts TO understand dependencies`');
   lines.push('- `RUN SYSTEM TO check git status`');
   lines.push('- `INSTALL DEPENDENCY TO set up project prerequisites`');
   lines.push('- `BUILD ARTIFACT TO verify compilation`');
@@ -96,27 +96,19 @@ function buildOutputBehaviorSection(): string {
   return [
     '## Output Behavior',
     '**CRITICAL**: you MUST follow these instructions when you respond.',
-    '- Respond concisely when you use tools, and avoid over-explaining.',
     '- When you detect dilemma, use the brief tool to state it clearly with a low confidence (1~5).',
-    '- Do NOT repeat the content that has been reported in the brief tool.',
-    '- Messages whose content starts with brackets (like [REMINDER]...) are system notifications. You should follow the advice but do not respond with text.',
+    '- Avoid repeating the content that has been output by the brief tool.',
     '- Do NOT explain, comment on, or narrate your response to hook/skill [REMINDER] or [Hook] notifications. If a reminder tells you to do something, do it silently. If it is informational, acknowledge it implicitly by continuing your task.',
     '',
-    '### High-Contrast Explanations',
+    '### High-Quality Explanations',
+    '**Before output**, double check the resources you used to ensure they exist.',
     'When explaining code changes, design choices, or analysis results:',
     '',
-    '1. **Lead with the conclusion** — State what changed or what you recommend in ONE line before any explanation.',
-    '2. **Use tables for comparison** — When showing before/after, old/new, or choosing between options, use a table or side-by-side format:',
-    '   ```',
-    '   | Aspect | Before | After |',
-    '   |--------|--------|-------|',
-    '   | ...    | ...    | ...   |',
-    '   ```',
-    '3. **Use diff notation** — Code changes: `+` added, `-` removed, `→` renamed/moved.',
-    '4. **Assume code literacy** — Give the diff, not the reasoning journey. A single tool call result + one-line summary beats three paragraphs.',
-    '5. **One change = one line** — If you made 3 changes, list 3 bullet points. Do not wrap them in a story.',
-    '6. **Avoid filler narration** — "Let me take a look...", "I can see that...", "What this does is..." → delete these. Just say what the result is.',
-    '7. **Consecutive read_file calls** — When sharing multiple file contents, combine them into a single message rather than outputting each read_file result separately.',
+    '1. Start with the conclusion - State what changed or what you recommend in ONE line before any explanation.',
+    '2. Provide your evidence - The arguments you provide should be "mutually exclusive and collectively exhaustive (MECE)" to support your conclusion.',
+    '3. Outline the difference - Use "BEFORE / AFTER" to say it clear.',
+    '4. Avoid filler narration - "Let me take a look...", "I can see that...", "What this does is..." → delete these. Just say what the result is.',
+    '5. Trace the exploration - At the end of your explanation, list out all the file / resources you have read and mark each one with "IN USE / NOT RELAVENT / NOT EXIST".'
   ].join('\n');
 }
 
@@ -201,27 +193,16 @@ function buildKnowledgeBoundarySection(): string {
     'You have access to these knowledge sources (in priority order):',
     '- **Recall**: Explore the mindmap knowledge tree. Use `recall(path="/")` to discover available knowledge. START HERE for project context.',
     '- **Skills**: Specialized knowledge for specific tasks. Use `skill_search(search="...")` to discover relevant skills.',
-    '- **Wiki**: Project knowledge base (RAG). Use `wiki_get(query, domain)` to retrieve documents.',
-    '- **Teammates**: Parallel expertise. If teammates exist, use `mail_to` to consult them with your question.',
     '- **Web**: External information from the internet. Use `web_search(query)` and `web_fetch(url)` as LAST RESORT.',
     '',
-    '**Priority Rule**: Always check local knowledge sources (Recall → Skills → Wiki) BEFORE searching the web.',
+    '**Priority Rule**: Always check local knowledge sources (Recall → Skills) BEFORE searching the web.',
     'Local sources are faster, more accurate for this project, and always available.',
     'Use web_search only when:',
     '- No local knowledge matches your query',
     '- You need the latest information (e.g., current library versions)',
-    '- You need external documentation not in the project',
-    '',
-    'When you encounter something outside your knowledge:',
-    '1. PAUSE and recognize the gap',
-    '2. Check local sources first (Recall → Skills → Wiki)',
-    '3. Only then search the web if needed',
-    '4. Continue with enhanced knowledge',
-    '',
-    '### Special notice',
-    'Do NOT guess. When in doubt, seek knowledge first.',
-    'Pay attention to the "pitfall" section in the mindmap if it exists.',
+    '- You need external documentation not in the project'
   ];
+
   const keywords = loader.getSkillKeywords();
   if (keywords.length > 0) {
     lines.push(
@@ -257,15 +238,13 @@ Checkpoint and recap tools work together to manage subtask boundaries and keep y
 2. [Explore files, read code, investigate] - Messages accumulate
 3. Close the checkpoint with one of two options:
    - recap({ checkpoint_id: "abc12345" }) - Summarize findings and close
-   - recap({ checkpoint_id: "abc12345", abandon: true }) - Discard and close (if distracted)
+   - recap({ checkpoint_id: "abc12345", abandon: true }) - Discard and close
 4. Continue with clean context
 
 **Rules:**
 - Only ONE open checkpoint at a time
 - Checkpoint must be called ALONE (no other tools in same turn)
 - Use the checkpoint ID from step 1 when calling recap
-- The todo list tracks open checkpoints
-- If you get distracted or abandon a subtask, use recap with abandon: true to discard the exploration
 
 **Optional comment:**
 You can add a \`comment\` property to recap to record your findings, like:
