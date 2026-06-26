@@ -17,6 +17,12 @@ import { getSessionDir, getSessionContext, ensureDirs } from '../../config.js';
 
 /**
  * Mail module implementation
+ *
+ * NOTE: Prefer using `context.mail` (the MailModule instance on AgentContext)
+ * over creating a new `MailBox` directly. The context already has a shared
+ * instance — creating a new one is wasteful and bypasses the module interface.
+ * Only use `new MailBox(...)` when you don't have access to AgentContext
+ * (e.g., in standalone utility code or test setup).
  */
 export class MailBox implements MailModule {
   private owner: string;

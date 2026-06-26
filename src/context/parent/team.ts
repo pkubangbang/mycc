@@ -402,6 +402,11 @@ export class TeamManager implements TeamModule {
           resolve(); return; // finished
         }
 
+        // Check if the teammate sent mail to lead — resolve so lead can read it
+        if (this.context.mail.hasNewMails()) {
+          resolve(); return; // mail waiting — let lead read and respond
+        }
+
         const eta = this.teammateEta.get(name);
         if (eta) {
           if (eta.updatedAt > lastCheck) {
