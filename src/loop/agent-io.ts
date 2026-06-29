@@ -22,7 +22,7 @@ import { slashRegistry } from '../slashes/index.js';
  * Commands not listed here have no subcommand hints.
  */
 const COMMAND_SUBCOMMANDS: Record<string, string[]> = {
-  wiki:      ['edit', 'rebuild', 'delete', 'domains'],
+  wiki:      ['edit', 'rebuild', 'delete', 'domains', 'export', 'import'],
   todos:     ['add', 'clear', 'done', 'undone'],
   issues:    ['[id]'],
   load:      ['[id]'],

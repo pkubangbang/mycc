@@ -9,6 +9,8 @@
  *   /wiki domains              - List all domains
  *   /wiki domains add <name> <description>  - Add domain
  *   /wiki domains remove <name>             - Remove domain
+ *   /wiki export [--domain domain] [file]   - Export wiki entries to JSON
+ *   /wiki import <file>        - Import wiki entries from JSON
  */
 
 import type { SlashCommand, WikiModule, WALEntry, WikiDomain } from '../types.js';
@@ -42,6 +44,12 @@ export const wikiCommand: SlashCommand = {
     } else if (args[0] === 'domains') {
       // Domain management
       await handleDomains(context.ctx.wiki, args.slice(1));
+    } else if (args[0] === 'export') {
+      // Export wiki entries
+      await handleExport(context.ctx.wiki, args.slice(1));
+    } else if (args[0] === 'import') {
+      // Import wiki entries
+      await handleImport(context.ctx.wiki, args.slice(1));
     } else {
       // Show today's WAL
       const today = formatDate(new Date());
@@ -259,4 +267,216 @@ async function removeDomain(name: string): Promise<void> {
   // Save
   fs.writeFileSync(domainsFile, JSON.stringify(domains, null, 2), 'utf-8');
   console.log(chalk.green(`Domain "${name}" removed.`));
+}
+
+// ============================================================================
+// Export / Import
+// ============================================================================
+
+interface WikiExportData {
+  version: '1.0';
+  exported_at: string;
+  project_dir: string;
+  domains: WikiDomain[];
+  entries: WALEntry[];
+}
+
+function parseExportArgs(rawArgs: string[]): {
+  domain: string | null;
+  file: string;
+} {
+  let domain: string | null = null;
+  let file: string = '';
+  const positional: string[] = [];
+
+  for (let i = 0; i < rawArgs.length; i++) {
+    if (rawArgs[i] === '--domain' && i + 1 < rawArgs.length) {
+      if (domain !== null) {
+        console.log(chalk.red('Error: --domain can only be specified once.'));
+        throw new Error('duplicate --domain');
+      }
+      domain = rawArgs[i + 1];
+      i++; // consume the value
+    } else if (rawArgs[i].startsWith('--domain=')) {
+      if (domain !== null) {
+        console.log(chalk.red('Error: --domain can only be specified once.'));
+        throw new Error('duplicate --domain');
+      }
+      domain = rawArgs[i].substring('--domain='.length);
+    } else {
+      positional.push(rawArgs[i]);
+    }
+  }
+
+  file = positional[0] || '';
+
+  return { domain, file };
+}
+
+function buildDefaultExportFilename(domain: string | null): string {
+  const now = new Date();
+  const yyyy = now.getFullYear().toString();
+  const MM = (now.getMonth() + 1).toString().padStart(2, '0');
+  const dd = now.getDate().toString().padStart(2, '0');
+  const hh = now.getHours().toString().padStart(2, '0');
+  const mm = now.getMinutes().toString().padStart(2, '0');
+  const ss = now.getSeconds().toString().padStart(2, '0');
+  const domainSuffix = domain ? `-${domain}` : '';
+  return `./wiki-export${domainSuffix}-${yyyy}${MM}${dd}-${hh}${mm}${ss}.json`;
+}
+
+async function handleExport(wiki: WikiModule, rawArgs: string[]): Promise<void> {
+  let parsed: { domain: string | null; file: string };
+  try {
+    parsed = parseExportArgs(rawArgs);
+  } catch {
+    return; // error already printed
+  }
+
+  const { domain, file } = parsed;
+  const exportFile = file || buildDefaultExportFilename(domain);
+
+  // Read all WAL files
+  const walDir = getWikiLogsDir();
+  const allEntries: WALEntry[] = [];
+
+  if (fs.existsSync(walDir)) {
+    const walFiles = fs.readdirSync(walDir)
+      .filter(f => f.endsWith('.wal'))
+      .sort();
+
+    for (const walFile of walFiles) {
+      const walPath = path.join(walDir, walFile);
+      const content = fs.readFileSync(walPath, 'utf-8');
+      // WAL files are JSON lines, not ASCII format — parse each line as JSON
+      for (const line of content.trim().split('\n')) {
+        if (!line.trim()) continue;
+        try {
+          const entry = JSON.parse(line) as WALEntry;
+          if (!domain || entry.document.domain === domain) {
+            allEntries.push(entry);
+          }
+        } catch {
+          // skip malformed lines
+        }
+      }
+    }
+  }
+
+  // Gather domains relevant to the export
+  let domains: WikiDomain[] = [];
+  if (domain) {
+    const targetDomain = await wiki.getDomain(domain);
+    if (targetDomain) {
+      domains = [targetDomain];
+    } else {
+      console.log(chalk.yellow(`Domain "${domain}" not found. Exporting entries without domain metadata.`));
+    }
+  } else {
+    domains = await wiki.listDomains();
+  }
+
+  // Build export data
+  const exportData: WikiExportData = {
+    version: '1.0',
+    exported_at: new Date().toISOString(),
+    project_dir: process.cwd(),
+    domains,
+    entries: allEntries,
+  };
+
+  // Resolve file path (relative to cwd)
+  const resolvedPath = path.isAbsolute(exportFile)
+    ? exportFile
+    : path.resolve(process.cwd(), exportFile);
+
+  // Ensure parent directory exists
+  const parentDir = path.dirname(resolvedPath);
+  if (!fs.existsSync(parentDir)) {
+    fs.mkdirSync(parentDir, { recursive: true });
+  }
+
+  // Write
+  fs.writeFileSync(resolvedPath, JSON.stringify(exportData, null, 2), 'utf-8');
+
+  const entryCount = allEntries.length;
+  const domainInfo = domain ? `domain "${domain}"` : `${domains.length} domains`;
+  const fileLabel = path.relative(process.cwd(), resolvedPath);
+
+  console.log(
+    chalk.green(`Exported ${entryCount} entries from ${domainInfo} to ${fileLabel}`),
+  );
+}
+
+async function handleImport(wiki: WikiModule, rawArgs: string[]): Promise<void> {
+  const file = rawArgs[0];
+  if (!file) {
+    console.log(chalk.red('Usage: /wiki import <file>'));
+    console.log(chalk.gray('Provide the path to a wiki-export JSON file.'));
+    return;
+  }
+
+  const resolvedPath = path.isAbsolute(file)
+    ? file
+    : path.resolve(process.cwd(), file);
+
+  if (!fs.existsSync(resolvedPath)) {
+    console.log(chalk.red(`File not found: ${resolvedPath}`));
+    return;
+  }
+
+  // Read and parse
+  let data: WikiExportData;
+  try {
+    const content = fs.readFileSync(resolvedPath, 'utf-8');
+    data = JSON.parse(content) as WikiExportData;
+  } catch (err) {
+    console.log(chalk.red(`Failed to parse export file: ${(err as Error).message}`));
+    return;
+  }
+
+  // Validate
+  if (!data.version || !Array.isArray(data.entries)) {
+    console.log(chalk.red('Invalid export file: missing "version" or "entries" array.'));
+    return;
+  }
+  if (!Array.isArray(data.domains)) {
+    data.domains = [];
+  }
+
+  // Register domains
+  let domainsAdded = 0;
+  for (const domain of data.domains) {
+    const existing = await wiki.getDomain(domain.domain_name);
+    if (!existing) {
+      try {
+        await wiki.registerDomain(domain.domain_name, domain.description || '');
+        domainsAdded++;
+      } catch {
+        // skip if registration fails
+      }
+    }
+  }
+
+  // Import entries
+  let imported = 0;
+  let skipped = 0;
+  for (const entry of data.entries) {
+    if (!entry.hash || !entry.document) continue;
+
+    try {
+      await wiki.put(entry.hash, entry.document);
+      imported++;
+    } catch {
+      skipped++;
+    }
+  }
+
+  console.log(
+    chalk.green(
+      `Import complete: ${imported} entries imported` +
+      (skipped > 0 ? `, ${skipped} skipped` : '') +
+      (domainsAdded > 0 ? `, ${domainsAdded} domains added` : ''),
+    ),
+  );
 }

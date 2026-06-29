@@ -117,6 +117,8 @@ function buildVerificationSection(): string {
     '## Verification Before Action',
     'Understand the project structure first. Only write code when you are clear about the direction. If unsure, discuss with the user before proceeding.',
     'Make cautious moves before you understand the user\'s preference. Ask questions to confirm your assumptions instead of infering a reasonable one.',
+    'Before adding code to enforce a requirement, check whether the code already enforces it.',
+    '',
     '### Environment Detection',
     'If your exploration reveals an unusual project layout (e.g., unfamiliar directory structure,',
     'missing standard project files, unexpected file organization), load the environment-detection',
