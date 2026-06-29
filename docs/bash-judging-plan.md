@@ -17,6 +17,7 @@ VERB OBJECT TO PURPOSE
 | Verb | Meaning | Plan Mode | Examples |
 |------|---------|-----------|----------|
 | `READ` | Observe without changing | ✅ Allow | `cat`, `ls`, `grep`, `git status` |
+| `FIND` | Search for or locate content | ✅ Allow | `find`, `grep`, `rg`, `locate` |
 | `WRITE` | Create new content | ❌ Block | Create new file, write output |
 | `EDIT` | Modify existing content | ❌ Block | Edit existing file |
 | `DELETE` | Remove content | ❌ Block | `rm file`, `git clean` |
@@ -156,7 +157,7 @@ export interface DangerousCommand {
 ### Intent Parser (`intent-parser.ts`)
 
 - Parse intent using regex: `/^\[([A-Z]+)\]\s+\[([A-Z]+)\](?:\s+([a-z_]+=[^\s]+))*\s+TO\s+(.+)$/i`
-- Validate verb against known list: `['READ', 'WRITE', 'EDIT', 'DELETE', 'BUILD', 'TEST', 'INSTALL', 'RUN']`
+- Validate verb against known list: `['READ', 'FIND', 'WRITE', 'EDIT', 'DELETE', 'BUILD', 'TEST', 'INSTALL', 'RUN']`
 - Validate object against known list: `['SOURCE', 'CONFIG', 'DEPENDENCY', 'ARTIFACT', 'SYSTEM', 'DATA', 'TEMP']`
 - Return structured error with hint on failure
 

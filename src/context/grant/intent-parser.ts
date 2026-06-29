@@ -11,7 +11,7 @@ import type { ParsedIntent, IntentValidation } from './types.js';
 // Verb & Object definitions
 // ============================================================================
 
-export const VALID_VERBS = ['READ', 'WRITE', 'EDIT', 'DELETE', 'BUILD', 'TEST', 'INSTALL', 'RUN'] as const;
+export const VALID_VERBS = ['READ', 'WRITE', 'EDIT', 'DELETE', 'FIND', 'BUILD', 'TEST', 'INSTALL', 'RUN'] as const;
 
 export const VALID_OBJECTS = ['SOURCE', 'CONFIG', 'DEPENDENCY', 'ARTIFACT', 'SYSTEM', 'DATA', 'TEMP', 'USER'] as const;
 
@@ -19,7 +19,7 @@ export const VALID_OBJECTS = ['SOURCE', 'CONFIG', 'DEPENDENCY', 'ARTIFACT', 'SYS
 // Read-only vs mutation classification
 // ============================================================================
 
-export const READ_ONLY_VERBS = ['READ', 'TEST'] as const;
+export const READ_ONLY_VERBS = ['READ', 'FIND', 'TEST'] as const;
 
 export const MUTATION_VERBS = ['WRITE', 'EDIT', 'DELETE', 'BUILD', 'INSTALL'] as const;
 
@@ -29,6 +29,7 @@ export const MUTATION_VERBS = ['WRITE', 'EDIT', 'DELETE', 'BUILD', 'INSTALL'] as
 
 export const VERB_MEANINGS: Record<string, string> = {
   READ: 'Inspect or retrieve existing content',
+  FIND: 'Search for or locate content',
   WRITE: 'Create or overwrite content',
   EDIT: 'Modify existing content in-place',
   DELETE: 'Remove files, packages, or resources',
