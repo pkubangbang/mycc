@@ -428,6 +428,7 @@ export interface IssueModule {
   addComment(id: number, comment: string, poster?: string): Promise<void>;
   createBlockage(blocker: number, blocked: number): Promise<void>;
   removeBlockage(blocker: number, blocked: number): Promise<void>;
+  clearAll(): void;
 }
 
 /**

@@ -71,4 +71,9 @@ export class ChildIssue implements IssueModule {
   async removeBlockage(blocker: number, blocked: number): Promise<void> {
     await ipc.sendRequest<void>('db_block_remove', { blocker, blocked });
   }
+
+  clearAll(): void {
+    // Fire-and-forget: child processes delegate to parent via IPC
+    ipc.sendNotification('db_issue_clear_all', {});
+  }
 }

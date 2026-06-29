@@ -112,4 +112,11 @@ export class IssueManager implements IssueModule {
   async removeBlockage(blocker: number, blocked: number): Promise<void> {
     MemoryStore.removeBlockage(blocker, blocked);
   }
+
+  /**
+   * Clear all issues, blockages, and reset ID counter
+   */
+  clearAll(): void {
+    MemoryStore.clearAll();
+  }
 }

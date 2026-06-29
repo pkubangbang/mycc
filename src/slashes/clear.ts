@@ -1,5 +1,5 @@
 /**
- * /clear command - Clear conversation history and sequence state
+ * /clear command - Clear conversation history, todos, issues, and sequence state
  */
 
 import type { SlashCommand } from '../types.js';
@@ -9,12 +9,14 @@ import { clearWrapUp } from '../loop/esc-wrap-up.js';
 
 export const clearCommand: SlashCommand = {
   name: 'clear',
-  description: 'Clear conversation history and start fresh',
+  description: 'Clear conversation history, todos, issues, and start fresh',
   handler: (context) => {
     const triologue = context.triologue as Triologue;
     triologue.clear();
     context.sequence?.clear();
     clearWrapUp();
-    console.log(chalk.green('Conversation cleared. Starting fresh.'));
+    context.ctx.todo.clear();
+    context.ctx.issue.clearAll();
+    console.log(chalk.green('Conversation, todos, and issues cleared. Starting fresh.'));
   },
 };

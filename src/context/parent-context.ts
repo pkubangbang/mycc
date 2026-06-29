@@ -145,6 +145,14 @@ export class ParentContext implements AgentContext {
           sendResponse('db_result', true);
         },
       },
+      {
+        messageType: 'db_issue_clear_all',
+        module: 'issue',
+        handler: async (_sender, _payload, ctx, sendResponse) => {
+          ctx.issue.clearAll();
+          sendResponse('db_result', true);
+        },
+      },
       // Worktree handlers
       {
         messageType: 'wt_create',
