@@ -286,7 +286,6 @@ function parseExportArgs(rawArgs: string[]): {
   file: string;
 } {
   let domain: string | null = null;
-  let file: string = '';
   const positional: string[] = [];
 
   for (let i = 0; i < rawArgs.length; i++) {
@@ -308,9 +307,7 @@ function parseExportArgs(rawArgs: string[]): {
     }
   }
 
-  file = positional[0] || '';
-
-  return { domain, file };
+  return { domain, file: positional[0] || '' };
 }
 
 function buildDefaultExportFilename(domain: string | null): string {
@@ -333,8 +330,8 @@ async function handleExport(wiki: WikiModule, rawArgs: string[]): Promise<void> 
     return; // error already printed
   }
 
-  const { domain, file } = parsed;
-  const exportFile = file || buildDefaultExportFilename(domain);
+  const { domain, file: exportFileArg } = parsed;
+  const exportFile = exportFileArg || buildDefaultExportFilename(domain);
 
   // Read all WAL files
   const walDir = getWikiLogsDir();
@@ -472,11 +469,9 @@ async function handleImport(wiki: WikiModule, rawArgs: string[]): Promise<void> 
     }
   }
 
+  const skippedMsg = skipped > 0 ? `, ${skipped} skipped` : '';
+  const domainsMsg = domainsAdded > 0 ? `, ${domainsAdded} domains added` : '';
   console.log(
-    chalk.green(
-      `Import complete: ${imported} entries imported` +
-      (skipped > 0 ? `, ${skipped} skipped` : '') +
-      (domainsAdded > 0 ? `, ${domainsAdded} domains added` : ''),
-    ),
+    chalk.green(`Import complete: ${imported} entries imported${skippedMsg}${domainsMsg}`),
   );
 }

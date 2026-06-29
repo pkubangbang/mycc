@@ -16,7 +16,9 @@ description: >
   about the user's intentions for the current directory. Also covers
   common pitfalls: assuming project structure without checking, ignoring
   system folder constraints, and missing available tool detection.
-keywords: [environment, detection, directory, project, git, executables, tools, cwd, "working directory", layout, exploration, workspace, setup, context, system, discover, analyze, assess]
+  For mycc projects, also detects tool/skill extension layers (project
+  and user) and their priority ordering.
+keywords: [environment, detection, directory, project, git, executables, tools, cwd, "working directory", layout, exploration, workspace, setup, context, system, discover, analyze, assess, "mycc", "tool layers", "skill layers", "built-in", "user-level", "project-level", "extension"]
 ---
 
 # Environment Detection
@@ -150,9 +152,79 @@ Based on findings, infer user intent:
 
 **Use `brief()` to report:** Inferred intention and confidence level.
 
-## Process
+## mycc Tool/Skill Layer Detection
 
-### Step 1: Check System Folder
+When the project is a **mycc project** (detected by `.mycc/` directory or `mycc` in package.json), tools and skills can be extended at two user-facing layers:
+
+### Tool Layers
+
+| Layer | Path | Scope | Priority |
+|-------|------|-------|----------|
+| **Project** | `./.mycc/tools/` | Current project only | Higher (shadows user) |
+| **User** | `~/.mycc-store/tools/` | All projects for current user | Lower (shadowed by project) |
+
+**Loading order**: User → Project. Project-level tools override user-level tools with the same name.
+
+### Skill Layers
+
+| Layer | Path | Scope | Priority |
+|-------|------|-------|----------|
+| **Project** | `./.mycc/skills/` | Current project only | Higher (shadows user) |
+| **User** | `~/.mycc-store/skills/` | All projects for current user | Lower (shadowed by project) |
+
+**Loading order**: User → Project. Project-level skills override user-level skills with the same name.
+
+### Development Workflow
+
+To add a new tool or skill:
+1. **Prototype** in `.mycc/tools/` or `.mycc/skills/` (hot-reloadable, project-level)
+2. **Test** manually and iterate based on feedback
+3. If you want it available across all projects, move to `~/.mycc-store/tools/` or `~/.mycc-store/skills/` (user-level)
+
+### Detection Commands
+
+```bash
+# Check if mycc project
+ls .mycc/ 2>/dev/null && echo "mycc project detected"
+
+# List project-level tools
+ls .mycc/tools/ 2>/dev/null
+
+# List project-level skills
+ls .mycc/skills/ 2>/dev/null
+
+# Check user-level tools
+ls ~/.mycc-store/tools/ 2>/dev/null
+
+# Check user-level skills
+ls ~/.mycc-store/skills/ 2>/dev/null
+```
+
+On Windows PowerShell:
+```powershell
+# Check if mycc project
+Get-ChildItem .mycc -ErrorAction SilentlyContinue
+
+# List project-level tools
+Get-ChildItem .mycc/tools -ErrorAction SilentlyContinue
+
+# List project-level skills
+Get-ChildItem .mycc/skills -ErrorAction SilentlyContinue
+
+# Check user-level tools
+Get-ChildItem "$env:USERPROFILE/.mycc-store/tools" -ErrorAction SilentlyContinue
+
+# Check user-level skills
+Get-ChildItem "$env:USERPROFILE/.mycc-store/skills" -ErrorAction SilentlyContinue
+```
+
+### Common Pitfalls
+
+**Pitfall: Confusing tool/skill layers**
+- **Problem**: Adding a tool to `.mycc/tools/` but expecting it to be available in all projects
+- **Solution**: Project tools are scoped to the current project. Use `~/.mycc-store/tools/` for cross-project tools.
+
+## Process
 
 ```bash
 # Linux/macOS
