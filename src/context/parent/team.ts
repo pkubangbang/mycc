@@ -241,6 +241,7 @@ export class TeamManager implements TeamModule {
         return;
       }
       this.context.core.brief('info', teammateName, 'Teammate ready');
+      return;
     }
 
     if (msg.type === 'eta_update') {

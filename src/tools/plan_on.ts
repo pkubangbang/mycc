@@ -116,13 +116,16 @@ Allow edits to this file during plan mode?
 
         // Factor 1: Has a file extension — the last segment must be a filename-like word
         // followed by a dot and extension (e.g., "README.md", "src/file.ts")
+        // Supports compound extensions (.env.example, .d.ts) and hidden files (.env)
         // This rejects version numbers ("1.0"), prices ("$5.99"), and dotted phrases ("hello.world")
         const lastSegment = trimmed.split(/[/\\]/).pop() || trimmed;
-        if (/^[a-zA-Z0-9_~-]+\.[a-zA-Z0-9]+$/.test(lastSegment)) return true;
+        if (/^\.?[a-zA-Z0-9_~-]+(\.[a-zA-Z0-9_~-]+)*\.[a-zA-Z0-9]+$/.test(lastSegment)) return true;
 
-        // Factor 2: Known extensionless filenames (only unambiguous ones)
+        // Factor 2: Known extensionless filenames (dotfiles and conventional names)
         const knownFiles = new Set([
           'makefile', 'dockerfile', 'gemfile', 'procfile',
+          '.gitignore', '.gitattributes', '.env', '.editorconfig',
+          '.prettierrc', '.eslintrc', '.npmrc', '.nvmrc',
         ]);
         if (knownFiles.has(lastSegment.toLowerCase())) return true;
 

@@ -108,7 +108,10 @@ export class BackgroundTasks implements BgModule {
     });
 
     child.on('error', (_err) => {
-      task.status = 'failed';
+      // Only set failed if not already finalized (close may have already set completed/failed)
+      if (task.status === 'running') {
+        task.status = 'failed';
+      }
     });
 
     return pid;

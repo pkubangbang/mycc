@@ -127,7 +127,7 @@ export function handleCheckpoint(
     if (msg.role === 'assistant' && msg.content && msg.content.trim()) {
       // Take up to 200 chars of the last assistant response for context
       const truncated = msg.content.length > 200
-        ? `${msg.content.slice(0, 200)  }...`
+        ? `${msg.content.slice(0, 200)}...`
         : msg.content;
       recentAssistantContext = truncated;
       break;
