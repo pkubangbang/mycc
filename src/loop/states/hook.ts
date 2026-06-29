@@ -160,12 +160,21 @@ async function handleRecapCall(
   const fullMessages = [...triologue.getMessages()];
   const allTools = loader.getToolsForScope('main');
 
+  // Extract the original checkpoint tool result from fullMessages for "before state" context
+  let checkpointResult: string | undefined;
+  for (const msg of fullMessages) {
+    if (msg.role === 'tool' && (msg as unknown as Record<string, unknown>).tool_name === 'checkpoint' && msg.content) {
+      checkpointResult = msg.content;
+      break;
+    }
+  }
+
   const escAware = <T>(fn: (ac: AbortController) => Promise<T>, cleanup: () => T): Promise<T> => {
     return ctx.core.escAware(fn, cleanup);
   };
   const lastQueryForRecap = turn.lastUserQuery || undefined;
 
-  const summary = await handleRecap(fullMessages, allTools, checkpoint.description, escAware, comment, lastQueryForRecap);
+  const summary = await handleRecap(fullMessages, allTools, checkpoint.description, escAware, comment, lastQueryForRecap, checkpointResult);
 
   // Check for ESC cancellation
   if (summary.startsWith('[RECAP] Cancelled:')) {

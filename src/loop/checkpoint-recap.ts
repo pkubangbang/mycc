@@ -117,6 +117,36 @@ export function handleCheckpoint(
   const tokenThreshold = triologue.getTokenThreshold();
   const usagePercent = Math.round((tokenCount / tokenThreshold) * 100);
 
+  // Capture "before" state: last user query and recent assistant context
+  const lastUserQuery = triologue.getLastUserQuery();
+  const rawMessages = triologue.getMessagesRaw();
+  let recentAssistantContext = '';
+  // Scan backwards from the end to find the last assistant message with content
+  for (let i = rawMessages.length - 1; i >= 0; i--) {
+    const msg = rawMessages[i];
+    if (msg.role === 'assistant' && msg.content && msg.content.trim()) {
+      // Take up to 200 chars of the last assistant response for context
+      const truncated = msg.content.length > 200
+        ? `${msg.content.slice(0, 200)  }...`
+        : msg.content;
+      recentAssistantContext = truncated;
+      break;
+    }
+  }
+
+  // Build the "before state" section
+  const beforeStateParts: string[] = [];
+  beforeStateParts.push('### Current State (at checkpoint creation)');
+  if (lastUserQuery) {
+    beforeStateParts.push(`**Last user instruction**: "${lastUserQuery}"`);
+  }
+  if (recentAssistantContext) {
+    beforeStateParts.push(`**Recent context**: ${recentAssistantContext}`);
+  }
+  beforeStateParts.push('');
+  beforeStateParts.push(`**Exploration Goal**: ${description}`);
+  const beforeStateSection = beforeStateParts.join('\n');
+
   // Brief the user (simple, colorized)
   const coloredId = chalk.cyan.bold(id);
   const coloredTokens = chalk.yellow(`${tokenCount.toLocaleString()}`);
@@ -133,6 +163,8 @@ export function handleCheckpoint(
 Description: ${description}
 Context: ${tokenCount} / ${tokenThreshold} tokens (${usagePercent}%)
 
+${beforeStateSection}
+
 Next steps:
 1. Perform your subtask (read files, run commands, etc.)
 2. When done, call recap({ checkpoint_id: "${id}" }) to compress messages into a summary`,
@@ -146,10 +178,19 @@ Next steps:
  * full triologue. Uses full context + allTools for prompt cache,
  * instructs LLM to output text only.
  */
-function buildRecapPrompt(description: string, lastUserQuery?: string, comment?: string): string {
+function buildRecapPrompt(description: string, lastUserQuery?: string, comment?: string, checkpointResult?: string): string {
   const topicLine = lastUserQuery
     ? `\n- **User's latest query**: "${lastUserQuery}" — compare with the checkpoint description; if they diverge, flag a topic change.`
     : '';
+
+  // Extract the "before state" section from the checkpoint result if available
+  let beforeStateSection = '';
+  if (checkpointResult) {
+    const beforeMatch = checkpointResult.match(/### Current State \(at checkpoint creation\)[\s\S]*?(?=\n\nNext steps:|$)/);
+    if (beforeMatch) {
+      beforeStateSection = `\n### Before State (captured at checkpoint creation)\n${beforeMatch[0].trim()}\n\nCompare this "before" state with what was actually found during exploration. Did the exploration stay on track? Were there any topic changes or unexpected discoveries?\n`;
+    }
+  }
 
   return `[RECAP] Close the checkpoint "${description}". You have access to the full conversation history above.
 
@@ -170,7 +211,7 @@ What the agent now knows that it did NOT know before the checkpoint. This MUST b
 ### Next Steps
 What still needs to be done, ordered by priority.${topicLine}
 ${comment ? `\n**LLM Comment:** "${comment}" — incorporate this insight into the summary.` : ''}
-
+${beforeStateSection}
 **CRITICAL RULES:**
 - The Exploration Coverage section is a "do not re-read" list — include every file
 - The Current State section is a "do not re-verify" record — be specific
@@ -189,6 +230,7 @@ ${comment ? `\n**LLM Comment:** "${comment}" — incorporate this insight into t
  * @param escAware - Optional ESC-aware wrapper for lead agent
  * @param comment - Optional LLM comment to incorporate
  * @param lastUserQuery - The user's most recent query, used to detect topic change
+ * @param checkpointResult - The original checkpoint tool result (for "before state" context)
  */
 export async function handleRecap(
   fullMessages: Message[],
@@ -197,12 +239,13 @@ export async function handleRecap(
   escAware?: <T>(fn: (ac: AbortController) => Promise<T>, cleanup: () => T) => Promise<T>,
   comment?: string,
   lastUserQuery?: string,
+  checkpointResult?: string,
 ): Promise<string> {
   if (fullMessages.length === 0) {
     return '[RECAP] No messages to summarize.';
   }
 
-  const recapPrompt = buildRecapPrompt(description, lastUserQuery, comment);
+  const recapPrompt = buildRecapPrompt(description, lastUserQuery, comment, checkpointResult);
 
   let summary: string;
   if (escAware) {
