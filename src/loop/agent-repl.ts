@@ -145,6 +145,8 @@ export async function main(): Promise<void> {
   const sessionId = getSessionId(sessionFilePath);
   console.log(chalk.gray(`${alignLabel('Session:')}${sessionId.slice(0, 7)}`));
 
+  console.log(chalk.redBright(`${alignLabel('WorkDir:')}${process.cwd()}`));
+
   const commands = slashRegistry.list().map((c) => `/${c}`).join(', ');
   console.log(chalk.gray(`${alignLabel('Commands:')}${commands}, /exit`));
   console.log();
