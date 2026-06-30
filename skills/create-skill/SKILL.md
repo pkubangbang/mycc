@@ -375,3 +375,19 @@ Use the templates in this folder as starting points. Ensure descriptions are det
 **Choosing between single-file and folder:**
 - **Single file** (`my-skill.md`): Simple, self-contained skills under ~200 lines
 - **Folder** (`my-skill/SKILL.md` + files): Larger skills with cheat sheets, examples, or multiple reference files that benefit from separation
+
+## Related Skills
+
+### Understanding Skill Layers
+
+Skills can be created at two user-facing layers with different scopes and priorities:
+
+| Layer | Path | Scope | Priority |
+|-------|------|-------|----------|
+| **Project** | `.mycc/skills/` | Current project only | Higher (shadows user) |
+| **User** | `~/.mycc-store/skills/` | All projects for current user | Lower (shadowed by project) |
+
+- **Prototype** new skills in `.mycc/skills/` (project-level) for testing
+- **Share** across projects by placing in `~/.mycc-store/skills/` (user-level)
+
+For detailed detection of available skill layers and their current contents, use the **`environment-detection`** skill (`skill_load(name="environment-detection")`). It provides commands to list project-level and user-level skills, explains the priority ordering, and covers common pitfalls about confusing layers.

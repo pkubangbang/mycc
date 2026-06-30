@@ -109,11 +109,10 @@ objects with `name`, `description`, `input_schema` (JSON Schema), `scope`
 
 ### Tool Loading Priority
 
-Tools are loaded from three layers (highest priority first):
+Tools are loaded from two user-facing layers (project overrides user):
 
-1. **Built-in** (`src/tools/`) — cannot be overridden
-2. **Project** (`.mycc/tools/`) — hot-reloadable
-3. **User** (`~/.mycc-store/tools/`) — shared across projects
+1. **Project** (`.mycc/tools/`) — hot-reloadable, scoped to current project
+2. **User** (`~/.mycc-store/tools/`) — shared across projects
 
 ### Tool Scope
 
@@ -167,10 +166,9 @@ Hooks are evaluated in the HOOK state between LLM and TOOL execution.
 
 ### Skill Loading Priority
 
-Same as tools (highest first):
-1. **Built-in** (`skills/`) — cannot be overridden
-2. **Project** (`.mycc/skills/`) — hot-reloadable
-3. **User** (`~/.mycc-store/skills/`) — shared across projects
+Same as tools (project overrides user):
+1. **Project** (`.mycc/skills/`) — hot-reloadable, scoped to current project
+2. **User** (`~/.mycc-store/skills/`) — shared across projects
 
 ## Mindmap (Knowledge Tree)
 

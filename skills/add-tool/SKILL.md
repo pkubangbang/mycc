@@ -246,6 +246,22 @@ const param3 = args.param3 as string[];
 
 **Solution:** Use `async` handler for any async operations.
 
+## Related Skills
+
+### Understanding Tool Layers
+
+Tools can be created at two user-facing layers with different scopes and priorities:
+
+| Layer | Path | Scope | Priority |
+|-------|------|-------|----------|
+| **Project** | `.mycc/tools/` | Current project only | Higher (shadows user) |
+| **User** | `~/.mycc-store/tools/` | All projects for current user | Lower (shadowed by project) |
+
+- **Prototype** new tools in `.mycc/tools/` (project-level) for testing
+- **Share** across projects by placing in `~/.mycc-store/tools/` (user-level)
+
+For detailed detection of available tool layers and their current contents, use the **`environment-detection`** skill (`skill_load(name="environment-detection")`). It provides commands to list project-level and user-level tools, explains the priority ordering, and covers common pitfalls about confusing layers.
+
 ## Checklist
 
 Before considering a tool complete:
