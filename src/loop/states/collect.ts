@@ -52,16 +52,6 @@ function generateBreakdown(
     parts.push(`${errors.length} tool errors`);
   }
 
-  // Count repeated actions (same tool in last 5 calls)
-  const toolCounts = new Map<string, number>();
-  for (const e of events) {
-    toolCounts.set(e.tool, (toolCounts.get(e.tool) || 0) + 1);
-  }
-  const repeatedTools = Array.from(toolCounts.entries()).filter(([, count]) => count > 1);
-  if (repeatedTools.length > 0) {
-    parts.push(`${repeatedTools.length} repeated tools`);
-  }
-
   return parts.length > 0 ? parts.join(', ') : 'No issues detected';
 }
 

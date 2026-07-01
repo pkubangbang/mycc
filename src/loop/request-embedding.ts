@@ -143,9 +143,16 @@ export class RequestEmbeddingTracker {
     const lines: string[] = ['Semantic Duplication Analysis:'];
     let found = false;
 
+    // Only report pairs involving the last 5 entries to keep the report
+    // focused on recent/active duplication rather than stale historical pairs.
+    const recentStart = Math.max(0, this.buffer.length - 5);
+
     for (let i = 1; i < this.buffer.length; i++) {
       const latest = this.buffer[i];
       for (let j = 0; j < i; j++) {
+        // Skip pairs where neither entry is in the recent window
+        if (i < recentStart && j < recentStart) continue;
+
         const sim = this.cosineSimilarity(latest.embedding, this.buffer[j].embedding);
         if (sim >= 0.7) {
           found = true;
