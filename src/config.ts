@@ -14,6 +14,7 @@ import minimist from 'minimist';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+import { execSync } from 'child_process';
 import { getUserConfigPath, getProjectConfigPath } from './setup/paths.js';
 
 // ============================================================================
@@ -429,6 +430,55 @@ export function getWikiDomainsFile(): string {
 // Directory Initialization
 // ============================================================================
 
+/**
+ * Check if the current working directory is inside a git repository.
+ * Returns true if git is available and the cwd is inside a git work tree.
+ */
+function isInsideGitRepo(): boolean {
+  try {
+    execSync('git rev-parse --is-inside-work-tree', {
+      stdio: 'pipe',
+      encoding: 'utf8',
+      timeout: 3000,
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Ensure .mycc/ is listed in .gitignore when the project is git-managed.
+ * Appends the entry if .gitignore exists but lacks it, or creates .gitignore
+ * with the entry if it doesn't exist yet.
+ *
+ * Uses `/.mycc/` (root-relative) to ignore the entire directory without
+ * affecting nested .mycc directories in subfolders.
+ */
+export function ensureGitignore(): void {
+  if (!isInsideGitRepo()) return;
+
+  const gitignorePath = path.resolve('.gitignore');
+  const entry = '/.mycc/';
+
+  // If .gitignore doesn't exist, create it with the entry
+  if (!fs.existsSync(gitignorePath)) {
+    fs.writeFileSync(gitignorePath, `${entry  }\n`, 'utf-8');
+    return;
+  }
+
+  // Check if the entry already exists (exact match or commented out)
+  const content = fs.readFileSync(gitignorePath, 'utf-8');
+  const lines = content.split('\n');
+  const hasEntry = lines.some(line => line.trim() === entry);
+  if (hasEntry) return;
+
+  // Append the entry
+  const trimmed = content.trimEnd();
+  const needsNewline = trimmed.length > 0 && !trimmed.endsWith('\n');
+  fs.writeFileSync(gitignorePath, `${content + (needsNewline ? '\n' : '') + entry  }\n`, 'utf-8');
+}
+
 export function ensureDirs(): void {
   const dirs = [
     MYCC_DIR,
@@ -450,6 +500,9 @@ export function ensureDirs(): void {
       fs.mkdirSync(dir, { recursive: true });
     }
   }
+
+  // Ensure .mycc/ is gitignored if the project is git-managed
+  ensureGitignore();
 }
 
 // ============================================================================
