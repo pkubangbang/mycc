@@ -26,6 +26,7 @@ import { Sequence } from '../hook/sequence.js';
 import { HookExecutor } from '../hook/hook-executor.js';
 import { Core } from '../context/parent/core.js';
 import { AgentStateMachine } from './state-machine.js';
+import { RequestEmbeddingTracker } from './request-embedding.js';
 import type { StateHandler } from './state-machine.js';
 import { UserInputProvider } from './input-provider.js';
 import { handlePrompt, setInitialQuery } from './states/prompt.js';
@@ -197,9 +198,12 @@ export async function main(): Promise<void> {
     }
   }
 
+  const requestEmbeddingTracker = new RequestEmbeddingTracker();
+
   const triologue = new Triologue({
     tokenThreshold,
     wiki: ctx.wiki,
+    getDuplicationReport: () => requestEmbeddingTracker.getDuplicationReport(),
     onMessage: (messages) => {
       const lastMsg = messages[messages.length - 1];
       try {
@@ -303,6 +307,7 @@ export async function main(): Promise<void> {
     inputProvider,
     sessionFilePath,
     handlers,
+    requestEmbeddingTracker,
   );
 
   // ── Global error handlers — keep lead alive on unexpected errors ──

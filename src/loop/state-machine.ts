@@ -28,6 +28,7 @@ import type { ConditionRegistry } from '../hook/conditions.js';
 import type { Sequence } from '../hook/sequence.js';
 import type { HookExecutor, AugmentedToolCall, ProcessToolCallsResult } from '../hook/hook-executor.js';
 import type { InputProvider } from './input-provider.js';
+import type { RequestEmbeddingTracker } from './request-embedding.js';
 import { displayLetterBox } from '../utils/letter-box.js';
 
 // ============================================================================
@@ -66,6 +67,8 @@ export interface MachineEnv {
   pendingSlashQuery: string | null;
   /** Tracks whether the previous LLM pass had a crossroad (for consecutive detection) */
   crossroadOccurred: boolean;
+  /** Semantic duplication tracker for embedding-based confusion scoring */
+  requestEmbeddingTracker: RequestEmbeddingTracker;
 }
 
 /** Turn lifetime — fresh when entering PROMPT from STOP/startup, persists across COLLECT→LLM→HOOK iterations */
@@ -125,6 +128,7 @@ export class AgentStateMachine {
     inputProvider: InputProvider,
     sessionFilePath: string,
     handlers: Record<AgentState, StateHandler>,
+    requestEmbeddingTracker: RequestEmbeddingTracker,
   ) {
     this.env = {
       triologue,
@@ -137,6 +141,7 @@ export class AgentStateMachine {
       sessionFilePath,
       pendingSlashQuery: null,
       crossroadOccurred: false,
+      requestEmbeddingTracker,
     };
     this.handlers = handlers;
   }

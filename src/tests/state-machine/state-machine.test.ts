@@ -10,6 +10,7 @@ import type { ConditionRegistry } from '../../hook/conditions.js';
 import type { Sequence } from '../../hook/sequence.js';
 import type { HookExecutor } from '../../hook/hook-executor.js';
 import type { InputProvider } from '../../loop/input-provider.js';
+import type { RequestEmbeddingTracker } from '../../loop/request-embedding.js';
 
 // ============================================================================
 // AgentState enum
@@ -115,7 +116,15 @@ describe('AgentStateMachine', () => {
       setMode: vi.fn(),
     } as unknown as InputProvider;
 
-    return { triologue, ctx, conditions, sequence, hookExecutor, inputProvider };
+    const requestEmbeddingTracker = {
+      addEntry: vi.fn(),
+      getMaxSimilarity: vi.fn(() => 0),
+      similarityToDelta: vi.fn(() => 0),
+      getDuplicationReport: vi.fn(() => ''),
+      clear: vi.fn(),
+    } as unknown as RequestEmbeddingTracker;
+
+    return { triologue, ctx, conditions, sequence, hookExecutor, inputProvider, requestEmbeddingTracker };
   }
 
   it('should construct with env containing all required fields', () => {
@@ -133,7 +142,7 @@ describe('AgentStateMachine', () => {
     const machine = new AgentStateMachine(
       deps.triologue, deps.ctx, 'main' as ToolScope,
       deps.conditions, deps.sequence, deps.hookExecutor, deps.inputProvider,
-      '/tmp/session.json', handlers,
+      '/tmp/session.json', handlers, deps.requestEmbeddingTracker,
     );
 
     expect(machine).toBeInstanceOf(AgentStateMachine);
@@ -160,7 +169,7 @@ describe('AgentStateMachine', () => {
     const machine = new AgentStateMachine(
       deps.triologue, deps.ctx, 'main' as ToolScope,
       deps.conditions, deps.sequence, deps.hookExecutor, deps.inputProvider,
-      '/tmp/session.json', handlers,
+      '/tmp/session.json', handlers, deps.requestEmbeddingTracker,
     );
 
     await machine.run();
@@ -189,7 +198,7 @@ describe('AgentStateMachine', () => {
     const machine = new AgentStateMachine(
       deps.triologue, deps.ctx, 'main' as ToolScope,
       deps.conditions, deps.sequence, deps.hookExecutor, deps.inputProvider,
-      '/tmp/session.json', handlers,
+      '/tmp/session.json', handlers, deps.requestEmbeddingTracker,
     );
 
     await machine.run();
@@ -219,7 +228,7 @@ describe('AgentStateMachine', () => {
     const machine = new AgentStateMachine(
       deps.triologue, deps.ctx, 'main' as ToolScope,
       deps.conditions, deps.sequence, deps.hookExecutor, deps.inputProvider,
-      '/tmp/session.json', handlers,
+      '/tmp/session.json', handlers, deps.requestEmbeddingTracker,
     );
 
     await machine.run();
@@ -258,7 +267,7 @@ describe('AgentStateMachine', () => {
     const machine = new AgentStateMachine(
       deps.triologue, deps.ctx, 'main' as ToolScope,
       deps.conditions, deps.sequence, deps.hookExecutor, deps.inputProvider,
-      '/tmp/session.json', handlers,
+      '/tmp/session.json', handlers, deps.requestEmbeddingTracker,
     );
 
     await machine.run();
@@ -289,7 +298,7 @@ describe('AgentStateMachine', () => {
     const machine = new AgentStateMachine(
       deps.triologue, deps.ctx, 'main' as ToolScope,
       deps.conditions, deps.sequence, deps.hookExecutor, deps.inputProvider,
-      '/tmp/session.json', handlers,
+      '/tmp/session.json', handlers, deps.requestEmbeddingTracker,
     );
 
     await machine.run();
@@ -322,7 +331,7 @@ describe('AgentStateMachine', () => {
     const machine = new AgentStateMachine(
       deps.triologue, deps.ctx, 'main' as ToolScope,
       deps.conditions, deps.sequence, deps.hookExecutor, deps.inputProvider,
-      '/tmp/session.json', handlers,
+      '/tmp/session.json', handlers, deps.requestEmbeddingTracker,
     );
 
     await expect(machine.run()).rejects.toThrow('Handler error');
@@ -357,7 +366,7 @@ describe('AgentStateMachine', () => {
     const machine = new AgentStateMachine(
       deps.triologue, deps.ctx, 'main' as ToolScope,
       deps.conditions, deps.sequence, deps.hookExecutor, deps.inputProvider,
-      '/tmp/session.json', handlers,
+      '/tmp/session.json', handlers, deps.requestEmbeddingTracker,
     );
 
     await machine.run();

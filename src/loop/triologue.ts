@@ -53,6 +53,8 @@ interface TriologueOptions {
 
   /** Wiki module for domain list during compact */
   wiki?: WikiModule;
+  /** Optional duplication report provider for hint round */
+  getDuplicationReport?: () => string;
 }
 
 import { generateHintRound as doHintRound } from './hint-round.js';
@@ -63,7 +65,7 @@ export class Triologue {
   private pendingToolCallOrder: string[] = []; // Track order for sequential resolution
   private tokenCount: number = 0;
   private systemPrompt: string | null = null;
-  private options: Required<Omit<TriologueOptions, 'wiki'>> & Pick<TriologueOptions, 'wiki'>;
+  private options: Required<Omit<TriologueOptions, 'wiki' | 'getDuplicationReport'>> & Pick<TriologueOptions, 'wiki' | 'getDuplicationReport'>;
   // Project context files (in-memory only, not persisted)
   private projectContext: Message[] = [];
 
@@ -98,6 +100,7 @@ export class Triologue {
       onMessage: options.onMessage ?? (() => {}),
 
       wiki: options.wiki,
+      getDuplicationReport: options.getDuplicationReport,
     };
   }
 
@@ -611,6 +614,13 @@ export class Triologue {
    */
   getWiki(): WikiModule | undefined {
     return this.options.wiki;
+  }
+
+  /**
+   * Get the duplication report from the embedding tracker (for hint round context interface)
+   */
+  getDuplicationReport(): string {
+    return this.options.getDuplicationReport ? this.options.getDuplicationReport() : '';
   }
 
 

@@ -27,32 +27,6 @@ const EXPLORATION_TOOLS = new Set([
   'recall',
 ]);
 
-// Tools that modify state (progress indicators)
-const ACTION_TOOLS = new Set([
-  'write_file',
-  'edit_file',
-  'todo_create',
-  'todo_update',
-  'issue_create',
-  'issue_close',
-  'issue_claim',
-  'issue_comment',
-  'blockage_create',
-  'blockage_remove',
-  'tm_create',
-  'tm_remove',
-  'wt_create',
-  'wt_remove',
-  'bg_create',
-  'bg_remove',
-  'mail_to',
-  'broadcast',
-  'git_commit',
-]);
-
-// Read-only bash commands (exploration)
-const READ_ONLY_BASH = /^(ls|cat|pwd|head|tail|wc|find|which|git\s+(status|log|diff|branch|show|ls-files))/;
-
 /**
  * Check if a tool result indicates an error
  */
@@ -137,6 +111,9 @@ export async function handleTool(
 
       triologue.tool(toolName, output, toolCallId);
 
+      // Track this tool call for semantic duplication detection
+      await env.requestEmbeddingTracker.addEntry(toolName, toolCall.function.arguments as Record<string, unknown>);
+
       // Check for context overflow - if exceeded, abandon remaining tools and compact
       if (triologue.needsCompact()) {
         // Skip remaining pending tools with placeholder messages
@@ -151,47 +128,24 @@ export async function handleTool(
         // Reset stat counts: confusion index and sequence events are stale
         // after compaction — the old context has been summarized away.
         ctx.core.resetConfusionIndex();
+        env.requestEmbeddingTracker.clear();
         sequence.clear();
 
         // Return to COLLECT - agent will continue with fresh context
         return AgentState.COLLECT;
       }
 
-      // Confusion scoring based on tool classification
-      // Exploration tools: no change to confusion
-      // Action tools: reduce confusion (progress being made), unless repetition
-      // Repetition: increases confusion (potential loop)
-      // Error results: increase confusion
+      // Semantic duplication detection via embedding similarity.
+      // Replaces the old "same tool name in last 5 calls" heuristic.
+      // Exploration tools don't affect confusion.
       if (!EXPLORATION_TOOLS.has(toolName)) {
-        // Check for repetition (same tool in last 5 calls)
-        const recentTools = sequence.getEvents().slice(-5).map(e => e.tool);
-        const isRepetition = recentTools.includes(toolName);
-
-        if (toolName === 'bash') {
-          const cmd = String(toolCall.function.arguments?.command || '');
-          if (!READ_ONLY_BASH.test(cmd)) {
-            // Action bash command
-            if (isRepetition) {
-              // Repetition increases confusion
-              ctx.core.increaseConfusionIndex(1);
-            } else {
-              ctx.core.increaseConfusionIndex(-1);
-            }
-          }
-          // Read-only bash: no change to confusion
-        } else if (ACTION_TOOLS.has(toolName)) {
-          if (isRepetition) {
-            // Repetition increases confusion
-            // mail_to is highly confusing when repeated
-            if (toolName === 'mail_to') {
-              ctx.core.increaseConfusionIndex(2);
-            } else {
-              ctx.core.increaseConfusionIndex(1);
-            }
-          } else {
-            // Non-repeated action tool reduces confusion
-            ctx.core.increaseConfusionIndex(-1);
-          }
+        const maxSim = env.requestEmbeddingTracker.getMaxSimilarity();
+        const delta = env.requestEmbeddingTracker.similarityToDelta(maxSim);
+        if (delta > 0) {
+          ctx.core.increaseConfusionIndex(delta);
+        } else {
+          // No semantic duplication — progress is being made
+          ctx.core.increaseConfusionIndex(-1);
         }
       }
 
@@ -224,6 +178,7 @@ export async function handleTool(
 
           // Reset stat counts after compaction
           ctx.core.resetConfusionIndex();
+          env.requestEmbeddingTracker.clear();
           sequence.clear();
 
           return AgentState.COLLECT;

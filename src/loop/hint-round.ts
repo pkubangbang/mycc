@@ -57,6 +57,8 @@ export interface HintRoundContext {
   note(category: NoteCategory, message: string): void;
   /** Optional wiki module for domain-aware knowledge suggestions */
   getWiki(): WikiModule | undefined;
+  /** Optional duplication report from the embedding tracker */
+  getDuplicationReport?(): string;
 }
 
 /** Shape of the parsed hint data from LLM response */
@@ -121,6 +123,8 @@ export async function generateHintRound(
     '',
     '## Available Wiki Domains',
     domainInfo,
+    '',
+    ctx.getDuplicationReport ? ctx.getDuplicationReport() : '',
     '',
     ANALYSIS_INSTRUCTION,
   ].join('\n');
