@@ -648,14 +648,14 @@ class AgentIO {
    * Uses spawn with bash -c for full control over subprocess lifecycle.
    * @param options - Command options (cwd, command, timeout in seconds)
    * @returns Result with stdout, stderr, interrupted flag, exit code, and timedOut flag
-   * @throws Error if timeout is invalid (not integer between 1-30)
+   * @throws Error if timeout is invalid (not integer between 1-60)
    */
   async exec(options: ExecOptions): Promise<ExecResult> {
     const { cwd, command, timeout } = options;
 
-    // 1. Validate timeout: must be positive integer between 1 and 30
-    if (!Number.isInteger(timeout) || timeout < 1 || timeout > 30) {
-      throw new Error(`timeout must be an integer between 1 and 30, got: ${timeout}`);
+    // 1. Validate timeout: must be positive integer between 1 and 60
+    if (!Number.isInteger(timeout) || timeout < 1 || timeout > 60) {
+      throw new Error(`timeout must be an integer between 1 and 60, got: ${timeout}`);
     }
 
     const timeoutMs = timeout * 1000;

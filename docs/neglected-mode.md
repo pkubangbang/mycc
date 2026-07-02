@@ -247,13 +247,13 @@ type CoordinatorToLeadMessage =
 ```
 User: run `sleep 30`
 Tool: bash with timeout 35
-Error: timeout must be an integer between 1 and 30, got: 35
+Error: timeout must be an integer between 1 and 60, got: 65
 
 User: [presses ESC]
 [ESC] LLM call interrupted
 
 LLM: I encountered a timeout constraint - the bash tool has a maximum timeout 
-     of 30 seconds. Would you like me to:
+     of 60 seconds. Would you like me to:
      1. Run it as a background task with `bg_create`?
      2. Run a shorter sleep duration?
      3. Do something else?

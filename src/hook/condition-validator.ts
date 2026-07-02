@@ -148,8 +148,8 @@ export function validateAction(action: unknown): ValidationResult {
         if (args.timeout !== undefined) {
           if (typeof args.timeout !== 'number') {
             errors.push('action.args.timeout must be a number');
-          } else if (args.timeout < 1 || args.timeout > 30) {
-            warnings.push(`action.args.timeout ${args.timeout} will be clamped to 1-30 range`);
+          } else if (args.timeout < 1 || args.timeout > 60) {
+            warnings.push(`action.args.timeout ${args.timeout} will be clamped to 1-60 range`);
           }
         }
         // Validate bash tool intent format (bash requires intent language)

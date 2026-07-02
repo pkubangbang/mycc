@@ -146,8 +146,8 @@ describe('ConditionRegistry', () => {
 
       const cond = registry.get('test-skill');
       const args = cond?.action as { args: { timeout?: number } };
-      // Timeout is clamped to 300 max in applyRuntimeFixes
-      expect(args.args.timeout).toBeLessThanOrEqual(300);
+      // Timeout is clamped to 1-60 range in applyRuntimeFixes
+      expect(args.args.timeout).toBeLessThanOrEqual(60);
     });
 
     it('should fix timeout in history entries too', async () => {

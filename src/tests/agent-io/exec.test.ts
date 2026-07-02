@@ -38,7 +38,7 @@ describe('agent-io', () => {
       };
 
       await expect(agentIO.exec(options)).rejects.toThrow(
-        'timeout must be an integer between 1 and 30'
+        'timeout must be an integer between 1 and 60'
       );
     });
 
@@ -50,7 +50,7 @@ describe('agent-io', () => {
       };
 
       await expect(agentIO.exec(options)).rejects.toThrow(
-        'timeout must be an integer between 1 and 30'
+        'timeout must be an integer between 1 and 60'
       );
     });
 
@@ -58,11 +58,11 @@ describe('agent-io', () => {
       const options: ExecOptions = {
         cwd: '/tmp',
         command: 'echo test',
-        timeout: 31,
+        timeout: 61,
       };
 
       await expect(agentIO.exec(options)).rejects.toThrow(
-        'timeout must be an integer between 1 and 30'
+        'timeout must be an integer between 1 and 60'
       );
     });
 
@@ -74,7 +74,7 @@ describe('agent-io', () => {
       };
 
       await expect(agentIO.exec(options)).rejects.toThrow(
-        'timeout must be an integer between 1 and 30'
+        'timeout must be an integer between 1 and 60'
       );
     });
 
@@ -94,7 +94,7 @@ describe('agent-io', () => {
       const options: ExecOptions = {
         cwd: '/tmp',
         command: 'echo test',
-        timeout: 30,
+        timeout: 60,
       };
 
       const result = await agentIO.exec(options);

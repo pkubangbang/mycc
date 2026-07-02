@@ -19,7 +19,7 @@ const OUTPUT_CHAR_LIMIT = 20000;
 
 export const bashTool: ToolDefinition = {
   name: 'bash',
-  description: `Run a shell command`,
+  description: `Run a command in the platform shell`,
   input_schema: {
     type: 'object',
     properties: {
@@ -33,9 +33,9 @@ export const bashTool: ToolDefinition = {
       },
       timeout: {
         type: 'number',
-        description: 'REQUIRED: Seconds before killing the process (SIGKILL). Max: 30.',
+        description: 'REQUIRED: Seconds before killing the process (SIGKILL). Max: 60.',
         minimum: 1,
-        maximum: 30
+        maximum: 60
       },
     },
     required: ['command', 'intent', 'timeout'],
