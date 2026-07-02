@@ -10,7 +10,7 @@ import type { ToolDefinition, AgentContext } from '../types.js';
 
 export const briefTool: ToolDefinition = {
   name: 'brief',
-  description: 'Send a status update to the user. Displays message in terminal. Use to report progress or findings during task execution. IMPORTANT: Always include confidence parameter (0-10) to indicate your certainty about the current state.',
+  description: 'Talk to yourself and let the user know. Use to report progress or findings during task execution. IMPORTANT: Always include confidence parameter (0-10) to indicate your certainty about the current state.',
   input_schema: {
     type: 'object',
     properties: {

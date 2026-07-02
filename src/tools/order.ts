@@ -12,8 +12,7 @@ import type { ToolDefinition, AgentContext } from '../types.js';
 
 export const orderTool: ToolDefinition = {
   name: 'order',
-  description: 'Send an order (task) to a teammate and wait for completion. ' +
-    'Use this when you need results before proceeding. ' +
+  description: 'Pause yourself and send a task to a teammate, waiting for completion. ' +
     'This combines mail_to + tm_await - sends task and blocks until teammate finishes.',
   input_schema: {
     type: 'object',

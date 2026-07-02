@@ -85,15 +85,13 @@ function normalizeTitle(raw: string): string {
 
 export const myccTitleTool: ToolDefinition = {
   name: 'mycc_title',
-  description: `Change the terminal window/tab title. Sets a descriptive title to help identify this mycc session among multiple terminal windows.
-
-Uses ANSI OSC escape sequences supported by most terminal emulators (GNOME Terminal, iTerm2, Windows Terminal, tmux, etc.), with a Windows fallback via process.title.`,
+  description: `Add a notification banner among the chat, to mark the change of topic in discussion.`,
   input_schema: {
     type: 'object',
     properties: {
       title: {
         type: 'string',
-        description: 'The new title for the terminal window. Keep it concise and descriptive.',
+        description: 'The new title. Keep it concise and descriptive.',
       },
     },
     required: ['title'],
