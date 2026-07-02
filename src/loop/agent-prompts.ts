@@ -453,11 +453,6 @@ Use issue_* for complex tasks (divide and conquer), todo_* for simple tracking.
 ## Team Mode
 If the task would benefit from parallel work, create teammates using tm_create tool to help you.
 
-## Rules
-- Use git_commit tool for ALL git commits. This tool will ask for user permission [y/N] before committing.
-- Use brief tool to report key progress or findings to the user.
-- Use mycc_title tool to set a descriptive terminal title so the user can identify this session among multiple terminal windows. Pass only the descriptive part (e.g., "fixing bash tool") — the "mycc: " prefix is added automatically.
-
 ${buildKnowledgeBoundarySection()}
 
 ${buildCommonSections()}
@@ -507,8 +502,6 @@ Remember that the teammates can directly ask questions to the user, and you will
 If you want to ask me questions, do not use any tool, just leave your question as the reply.
 
 ## Special Rules
-- Use git_commit tool for ALL git commits. This tool will ask for user permission [y/N] before committing.
-- Use mycc_title tool to set a descriptive terminal title so the user can identify this session among multiple terminal windows. Pass only the descriptive part (e.g., "fixing bash tool") — the "mycc: " prefix is added automatically.
 - **Never take over a task that a teammate is working on without asking the user first.** If a teammate is already assigned to a task, send them a mail or wait for their result. Do not silently redo their work.
 
 ${buildKnowledgeBoundarySection()}
