@@ -226,10 +226,10 @@ describe('RequestEmbeddingTracker', () => {
       expect(tracker.similarityToDelta(0.85)).toBe(1);
     });
 
-    it('should return 2 for similarity > 0.85', () => {
-      expect(tracker.similarityToDelta(0.851)).toBe(2);
-      expect(tracker.similarityToDelta(0.9)).toBe(2);
-      expect(tracker.similarityToDelta(1.0)).toBe(2);
+    it('should return 3 for similarity > 0.85', () => {
+      expect(tracker.similarityToDelta(0.851)).toBe(3);
+      expect(tracker.similarityToDelta(0.9)).toBe(3);
+      expect(tracker.similarityToDelta(1.0)).toBe(3);
     });
   });
 

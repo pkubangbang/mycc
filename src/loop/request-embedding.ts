@@ -120,14 +120,14 @@ export class RequestEmbeddingTracker {
   }
 
   /**
-   * Map a similarity score (0.0–1.0) to a confusion delta (0–2).
+   * Map a similarity score (0.0–1.0) to a confusion delta (0–3).
    *
    *   < 0.7   → 0  (no significant similarity)
    *   0.7–0.85 → +1 (moderate similarity — possible loop)
-   *   > 0.85  → +2 (high similarity — likely stuck)
+   *   > 0.85  → +3 (high similarity — likely stuck)
    */
   similarityToDelta(similarity: number): number {
-    if (similarity > 0.85) return 2;
+    if (similarity > 0.85) return 3;
     if (similarity >= 0.7) return 1;
     return 0;
   }
