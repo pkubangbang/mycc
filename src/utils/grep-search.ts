@@ -6,9 +6,12 @@
  *
  * Fallback chain:
  *   1. Native ripgrep (rg) — fastest, respects .gitignore by default
- *   2. System grep (Unix) or PowerShell Select-String (Windows) — platform native
- *   3. npm ripgrep WASM package — cross-platform, zero native deps
+ *   2. npm ripgrep WASM package — cross-platform, zero native deps
+ *   3. System grep (Unix) or PowerShell Select-String (Windows) — platform native
  *   4. Error directing LLM to use bash (with node_modules exclusion warning)
+ *
+ * On Windows, ripgrep WASM is tried before PowerShell Select-String because
+ * Get-ChildItem -Recurse is very slow on large directory trees.
  */
 
 import { execSync } from 'child_process';
@@ -27,7 +30,7 @@ const ALWAYS_EXCLUDE_DIRS = new Set(['node_modules', '.git', '.svn', '.hg']);
 /**
  * Result of parsing .gitignore files along a directory path.
  */
-interface GitignoreResult {
+export interface GitignoreResult {
   /** Directory names to exclude (e.g., "node_modules", "dist") */
   excludeDirs: Set<string>;
   /** File patterns to exclude (e.g., "*.log", "*.min.js") */
@@ -38,10 +41,12 @@ interface GitignoreResult {
  * Escape a string for use in a shell command as a pattern argument.
  * Uses single-quote escaping on Unix, double-quote on Windows.
  */
-function shellQuote(s: string): string {
+export function shellQuote(s: string): string {
   if (IS_WINDOWS) {
+    // PowerShell: escape double quotes by doubling them
     return `"${s.replace(/"/g, '""')}"`;
   }
+  // Unix: single quotes with embedded single-quote handling
   return `'${s.replace(/'/g, "'\\''")}'`;
 }
 
@@ -135,7 +140,7 @@ export function collectGitignores(searchDir: string): GitignoreResult {
 /**
  * Build --exclude-dir and --exclude flags for grep from gitignore data.
  */
-function buildGrepExcludeFlags(gi: GitignoreResult): string {
+export function buildGrepExcludeFlags(gi: GitignoreResult): string {
   const parts: string[] = [];
   for (const d of gi.excludeDirs) {
     parts.push(`--exclude-dir=${shellQuote(d)}`);
@@ -147,152 +152,52 @@ function buildGrepExcludeFlags(gi: GitignoreResult): string {
 }
 
 /**
+ * Truncate output to at most maxResults lines.
+ * Works cross-platform (no dependency on `head` command).
+ */
+export function truncateLines(output: string, maxResults: number): string {
+  const lines = output.split('\n');
+  if (lines.length <= maxResults) return output;
+  return lines.slice(0, maxResults).join('\n');
+}
+
+/**
  * Attempt to run native ripgrep (cross-platform binary).
- * Returns { stdout, stderr, code } or null if rg is not available.
+ * Uses Node.js to truncate output instead of shell piping to `head`,
+ * which is not available on Windows.
  */
 function tryNativeRg(
   pattern: string,
   dir: string,
   include: string | undefined,
+  exclude: string | undefined,
   maxResults: number
 ): { stdout: string; stderr: string; code: number } | null {
   try {
     const includeFlag = include ? `--glob ${shellQuote(include)}` : '';
-    const headCmd = IS_WINDOWS
-      ? `rg -n --no-heading --color never ${includeFlag} ${shellQuote(pattern)} ${shellQuote(dir)} 2>&1`
-      : `rg -n --no-heading --color never ${includeFlag} ${shellQuote(pattern)} ${shellQuote(dir)} 2>&1 | head -n ${maxResults}`;
-    const stdout = execSync(headCmd, {
-      encoding: 'utf-8',
-      timeout: 15000,
-      maxBuffer: 500 * 1024,
-      shell: IS_WINDOWS ? undefined : '/bin/bash',
-    });
-    const lines = stdout.split('\n');
-    const truncated = lines.slice(0, maxResults + 1);
-    return { stdout: truncated.join('\n'), stderr: '', code: 0 };
-  } catch (err: unknown) {
-    const e = err as NodeJS.ErrnoException & { stdout?: Buffer | string; stderr?: Buffer | string; status?: number };
-    if (e.code === 'ENOENT') {
-      return null;
-    }
-    const stdout = e.stdout ? String(e.stdout) : '';
-    const stderr = e.stderr ? String(e.stderr) : '';
-    return { stdout, stderr, code: e.status ?? 2 };
-  }
-}
-
-/**
- * Attempt to run system grep (Unix) or PowerShell Select-String (Windows).
- */
-function trySystemGrep(
-  pattern: string,
-  dir: string,
-  include: string | undefined,
-  maxResults: number
-): { stdout: string; stderr: string; code: number } | null {
-  if (IS_WINDOWS) {
-    return tryPowerShellSelectString(pattern, dir, include, maxResults);
-  }
-  return tryUnixGrep(pattern, dir, include, maxResults);
-}
-
-/**
- * Unix: grep -rn with file include and .gitignore-aware exclusions.
- */
-function tryUnixGrep(
-  pattern: string,
-  dir: string,
-  include: string | undefined,
-  maxResults: number
-): { stdout: string; stderr: string; code: number } | null {
-  try {
-    const gi = collectGitignores(dir);
-    const excludeFlags = buildGrepExcludeFlags(gi);
-    const includeArg = include
-      ? `--include=${shellQuote(include)}`
-      : '';
-    const cmd = `grep -rn ${excludeFlags} ${includeArg} -- ${shellQuote(pattern)} ${shellQuote(dir)} 2>/dev/null | head -n ${maxResults}`;
+    const excludeFlag = exclude ? `--glob ${shellQuote(`!${exclude}`)}` : '';
+    // Build the command WITHOUT shell piping — use Node.js truncation instead
+    const cmd = `rg -n --no-heading --color never ${includeFlag} ${excludeFlag} ${shellQuote(pattern)} ${shellQuote(dir)} 2>&1`;
     const stdout = execSync(cmd, {
       encoding: 'utf-8',
       timeout: 15000,
       maxBuffer: 500 * 1024,
+      // Use default shell (no /bin/bash hardcoding) for cross-platform compatibility
     });
-    return { stdout, stderr: '', code: 0 };
+    const truncated = truncateLines(stdout, maxResults + 1);
+    return { stdout: truncated, stderr: '', code: 0 };
   } catch (err: unknown) {
     const e = err as NodeJS.ErrnoException & { stdout?: Buffer | string; stderr?: Buffer | string; status?: number };
     if (e.code === 'ENOENT') {
-      return null;
+      return null; // rg not installed
     }
     const stdout = e.stdout ? String(e.stdout) : '';
     const stderr = e.stderr ? String(e.stderr) : '';
-    return { stdout, stderr, code: e.status ?? 1 };
-  }
-}
-
-/**
- * Windows: PowerShell Select-String with .gitignore-aware exclusions.
- * Replaces findstr (which has poor Unicode support) with PowerShell's
- * native Select-String cmdlet that operates on .NET strings (Unicode-aware).
- *
- * Uses -EncodedCommand with UTF-16LE base64 encoding to avoid shell quoting
- * issues, matching the pattern used by agent-io.ts.
- */
-function tryPowerShellSelectString(
-  pattern: string,
-  dir: string,
-  include: string | undefined,
-  maxResults: number
-): { stdout: string; stderr: string; code: number } | null {
-  try {
-    const gi = collectGitignores(dir);
-
-    // Build directory exclusion using -notlike (wildcard matching, not regex)
-    // to avoid regex-escaping directory names. Match both \ and / path separators.
-    let dirExclusions = '';
-    for (const excludeDir of gi.excludeDirs) {
-      dirExclusions += ` -and $_.FullName -notlike '*\\${excludeDir}\\*' -and $_.FullName -notlike '*/${excludeDir}/*'`;
+    // rg exits with code 1 when no matches found — that's not a failure
+    if (e.status === 1 && !stderr) {
+      return { stdout: '', stderr: '', code: 0 };
     }
-
-    // Build Get-ChildItem filter for file pattern
-    const filterPart = include ? `-Filter '${include.replace(/'/g, "''")}'` : '';
-
-    // Escape single quotes in pattern and dir for PowerShell single-quoted strings
-    const psEscapedPattern = pattern.replace(/'/g, "''");
-    const psEscapedDir = dir.replace(/'/g, "''");
-
-    // PowerShell pipeline: recursive file listing → exclude dirs → Select-String → limit → format
-    // Select-String uses regex matching by default (same as grep/rg)
-    const psCmd =
-      `Get-ChildItem -Path '${psEscapedDir}' -Recurse -File ${filterPart} -ErrorAction SilentlyContinue | ` +
-      `Where-Object { $true ${dirExclusions} } | ` +
-      `Select-String -Pattern '${psEscapedPattern}' | ` +
-      `Select-Object -First ${maxResults} | ` +
-      `ForEach-Object { "$($_.Path):$($_.LineNumber):$($_.Line)" }`;
-
-    // Base64-encode as UTF-16LE for -EncodedCommand (matching agent-io.ts pattern)
-    const fullCmd = `try { chcp 65001 > $null } catch {}; $OutputEncoding = [System.Text.Encoding]::UTF8; [Console]::OutputEncoding = [System.Text.Encoding]::UTF8; ${psCmd}`;
-    const base64Cmd = Buffer.from(fullCmd, 'utf16le').toString('base64');
-
-    const stdout = execSync(
-      `powershell -NoProfile -NonInteractive -EncodedCommand ${base64Cmd}`,
-      {
-        encoding: 'utf-8',
-        timeout: 15000,
-        maxBuffer: 500 * 1024,
-      }
-    );
-
-    const lines = stdout.split('\n').filter(Boolean);
-    const truncated = lines.slice(0, maxResults);
-    return { stdout: truncated.join('\n'), stderr: '', code: 0 };
-  } catch (err: unknown) {
-    const e = err as NodeJS.ErrnoException & { stdout?: Buffer | string; stderr?: Buffer | string; status?: number };
-    const stdout = e.stdout ? String(e.stdout) : '';
-    const stderr = e.stderr ? String(e.stderr) : '';
-    if (e.code === 'ENOENT' || e.status === 255) {
-      return null;
-    }
-    return { stdout, stderr, code: e.status ?? 1 };
+    return { stdout, stderr, code: e.status ?? 2 };
   }
 }
 
@@ -305,6 +210,7 @@ async function tryNpmRipgrep(
   pattern: string,
   dir: string,
   include: string | undefined,
+  exclude: string | undefined,
   maxResults: number
 ): Promise<{ stdout: string; code: number } | null> {
   try {
@@ -316,6 +222,9 @@ async function tryNpmRipgrep(
     ];
     if (include) {
       args.push('--glob', include);
+    }
+    if (exclude) {
+      args.push('--glob', `!${exclude}`);
     }
     for (const d of gi.excludeDirs) {
       args.push('--glob', `!${d}/**`);
@@ -340,41 +249,185 @@ async function tryNpmRipgrep(
 }
 
 /**
+ * Attempt to run system grep (Unix) or PowerShell Select-String (Windows).
+ */
+function trySystemGrep(
+  pattern: string,
+  dir: string,
+  include: string | undefined,
+  exclude: string | undefined,
+  maxResults: number
+): { stdout: string; stderr: string; code: number } | null {
+  if (IS_WINDOWS) {
+    return tryPowerShellSelectString(pattern, dir, include, exclude, maxResults);
+  }
+  return tryUnixGrep(pattern, dir, include, exclude, maxResults);
+}
+
+/**
+ * Unix: grep -rn with file include and .gitignore-aware exclusions.
+ * Uses Node.js truncation instead of shell piping to `head`.
+ */
+function tryUnixGrep(
+  pattern: string,
+  dir: string,
+  include: string | undefined,
+  exclude: string | undefined,
+  maxResults: number
+): { stdout: string; stderr: string; code: number } | null {
+  try {
+    const gi = collectGitignores(dir);
+    const excludeFlags = buildGrepExcludeFlags(gi);
+    const includeArg = include
+      ? `--include=${shellQuote(include)}`
+      : '';
+    const excludeArg = exclude
+      ? `--exclude=${shellQuote(exclude)}`
+      : '';
+    const cmd = `grep -rn ${excludeFlags} ${includeArg} ${excludeArg} -- ${shellQuote(pattern)} ${shellQuote(dir)} 2>/dev/null`;
+    const stdout = execSync(cmd, {
+      encoding: 'utf-8',
+      timeout: 15000,
+      maxBuffer: 500 * 1024,
+      // Use default shell — no /bin/bash hardcoding
+    });
+    const truncated = truncateLines(stdout, maxResults);
+    return { stdout: truncated, stderr: '', code: 0 };
+  } catch (err: unknown) {
+    const e = err as NodeJS.ErrnoException & { stdout?: Buffer | string; stderr?: Buffer | string; status?: number };
+    if (e.code === 'ENOENT') {
+      return null;
+    }
+    const stdout = e.stdout ? String(e.stdout) : '';
+    const stderr = e.stderr ? String(e.stderr) : '';
+    // grep exits with code 1 when no matches found
+    if (e.status === 1 && !stderr) {
+      return { stdout: '', stderr: '', code: 0 };
+    }
+    return { stdout, stderr, code: e.status ?? 1 };
+  }
+}
+
+/**
+ * Windows: PowerShell Select-String with .gitignore-aware exclusions.
+ * Replaces findstr (which has poor Unicode support) with PowerShell's
+ * native Select-String cmdlet that operates on .NET strings (Unicode-aware).
+ *
+ * Uses -EncodedCommand with UTF-16LE base64 encoding to avoid shell quoting
+ * issues, matching the pattern used by agent-io.ts.
+ */
+function tryPowerShellSelectString(
+  pattern: string,
+  dir: string,
+  include: string | undefined,
+  exclude: string | undefined,
+  maxResults: number
+): { stdout: string; stderr: string; code: number } | null {
+  try {
+    const gi = collectGitignores(dir);
+
+    // Build directory exclusion using -notlike (wildcard matching, not regex)
+    // to avoid regex-escaping directory names. Match both \ and / path separators.
+    let dirExclusions = '';
+    for (const excludeDir of gi.excludeDirs) {
+      dirExclusions += ` -and $_.FullName -notlike '*\\${excludeDir}\\*' -and $_.FullName -notlike '*/${excludeDir}/*'`;
+    }
+
+    // Build Get-ChildItem filter for file pattern
+    const filterPart = include ? `-Filter '${include.replace(/'/g, "''")}'` : '';
+
+    // Build file exclusion filter (e.g., exclude "*.min.js")
+    const excludeFilterPart = exclude
+      ? ` | Where-Object { $_.Name -notlike '${exclude.replace(/'/g, "''")}' }`
+      : '';
+
+    // Escape single quotes in pattern and dir for PowerShell single-quoted strings
+    const psEscapedPattern = pattern.replace(/'/g, "''");
+    const psEscapedDir = dir.replace(/'/g, "''");
+
+    // PowerShell pipeline: recursive file listing → exclude dirs → Select-String → limit → format
+    // Select-String uses regex matching by default (same as grep/rg)
+    const psCmd =
+      `Get-ChildItem -Path '${psEscapedDir}' -Recurse -File ${filterPart} -ErrorAction SilentlyContinue | ` +
+      `Where-Object { $true ${dirExclusions} }${excludeFilterPart} | ` +
+      `Select-String -Pattern '${psEscapedPattern}' | ` +
+      `Select-Object -First ${maxResults} | ` +
+      `ForEach-Object { "$($_.Path):$($_.LineNumber):$($_.Line)" }`;
+
+    // Base64-encode as UTF-16LE for -EncodedCommand (matching agent-io.ts pattern)
+    const fullCmd = `try { chcp 65001 > $null } catch {}; $OutputEncoding = [System.Text.Encoding]::UTF8; [Console]::OutputEncoding = [System.Text.Encoding]::UTF8; ${psCmd}`;
+    const base64Cmd = Buffer.from(fullCmd, 'utf16le').toString('base64');
+
+    const stdout = execSync(
+      `powershell -NoProfile -NonInteractive -EncodedCommand ${base64Cmd}`,
+      {
+        encoding: 'utf-8',
+        timeout: 30000, // PowerShell is slower, give it more time
+        maxBuffer: 500 * 1024,
+      }
+    );
+
+    const lines = stdout.split('\n').filter(Boolean);
+    const truncated = lines.slice(0, maxResults);
+    return { stdout: truncated.join('\n'), stderr: '', code: 0 };
+  } catch (err: unknown) {
+    const e = err as NodeJS.ErrnoException & { stdout?: Buffer | string; stderr?: Buffer | string; status?: number };
+    const stdout = e.stdout ? String(e.stdout) : '';
+    const stderr = e.stderr ? String(e.stderr) : '';
+    if (e.code === 'ENOENT' || e.status === 255) {
+      return null;
+    }
+    return { stdout, stderr, code: e.status ?? 1 };
+  }
+}
+
+/**
  * Core grep function with hierarchical fallback.
+ *
+ * Fallback order:
+ *   1. Native ripgrep (rg) — fastest, respects .gitignore by default
+ *   2. npm ripgrep WASM — cross-platform, tried early on Windows because
+ *      PowerShell Get-ChildItem -Recurse is very slow on large directories
+ *   3. System grep (Unix) or PowerShell Select-String (Windows)
+ *   4. 'none' — all attempts failed
  *
  * @param pattern - Search pattern (regex compatible)
  * @param dir - Directory to search
- * @param include - Optional file glob pattern (e.g., "*.ts")
+ * @param include - Optional file glob pattern to include (e.g., "*.ts")
  * @param maxResults - Maximum results to return (default: 200, max: 500)
+ * @param exclude - Optional file glob pattern to exclude (e.g., "*.min.js")
  * @returns Object with { output, method } where method indicates which engine was used
  */
 export async function grepSearch(
   pattern: string,
   dir: string,
   include?: string,
-  maxResults: number = DEFAULT_MAX_RESULTS
-): Promise<{ output: string; method: 'rg' | 'grep' | 'powershell' | 'ripgrep_wasm' | 'none' }> {
+  maxResults: number = DEFAULT_MAX_RESULTS,
+  exclude?: string
+): Promise<{ output: string; method: 'rg' | 'ripgrep_wasm' | 'grep' | 'powershell' | 'none' }> {
   const cappedMax = Math.min(maxResults, MAX_MAX_RESULTS);
 
-  // 1. Try native ripgrep
-  const rgResult = tryNativeRg(pattern, dir, include, cappedMax);
+  // 1. Try native ripgrep (fastest, respects .gitignore)
+  const rgResult = tryNativeRg(pattern, dir, include, exclude, cappedMax);
   if (rgResult !== null) {
     const output = rgResult.stdout.trim();
     return { output: output || 'No matches found', method: 'rg' };
   }
 
-  // 2. Try system grep / PowerShell
-  const grepResult = trySystemGrep(pattern, dir, include, cappedMax);
-  if (grepResult !== null) {
-    const output = grepResult.stdout.trim();
-    return { output: output || 'No matches found', method: IS_WINDOWS ? 'powershell' : 'grep' };
-  }
-
-  // 3. Try npm ripgrep WASM package
-  const npmResult = await tryNpmRipgrep(pattern, dir, include, cappedMax);
+  // 2. Try npm ripgrep WASM package
+  //    On Windows, this is tried before system grep because PowerShell
+  //    Get-ChildItem -Recurse is very slow on large directory trees.
+  const npmResult = await tryNpmRipgrep(pattern, dir, include, exclude, cappedMax);
   if (npmResult !== null) {
     const output = npmResult.stdout.trim();
     return { output: output || 'No matches found', method: 'ripgrep_wasm' };
+  }
+
+  // 3. Try system grep / PowerShell
+  const grepResult = trySystemGrep(pattern, dir, include, exclude, cappedMax);
+  if (grepResult !== null) {
+    const output = grepResult.stdout.trim();
+    return { output: output || 'No matches found', method: IS_WINDOWS ? 'powershell' : 'grep' };
   }
 
   // 4. All attempts failed

@@ -4,7 +4,7 @@
  * Scope: ['main', 'child'] - Available to lead and teammate agents
  *
  * Delegates the actual search to src/utils/grep-search.ts which has
- * a hierarchical fallback: native rg → system grep/PowerShell → WASM ripgrep.
+ * a hierarchical fallback: native rg → ripgrep WASM → system grep/PowerShell.
  */
 
 import type { ToolDefinition, AgentContext } from '../types.js';
@@ -59,6 +59,10 @@ export const grepTool: ToolDefinition = {
         type: 'string',
         description: 'File glob pattern to include, e.g., "*.ts" or "*.md"',
       },
+      exclude: {
+        type: 'string',
+        description: 'File glob pattern to exclude, e.g., "*.min.js" or "*.generated.*"',
+      },
       maxResults: {
         type: 'number',
         description: `Maximum results to return (default: ${DEFAULT_MAX_RESULTS}, max: ${MAX_MAX_RESULTS})`,
@@ -71,6 +75,7 @@ export const grepTool: ToolDefinition = {
     const pattern = args.pattern as string;
     const searchPath = (args.path as string) || '.';
     const include = args.include as string | undefined;
+    const exclude = args.exclude as string | undefined;
     const maxResults = (args.maxResults as number) || DEFAULT_MAX_RESULTS;
 
     const workDir = ctx.core.getWorkDir();
@@ -82,7 +87,7 @@ export const grepTool: ToolDefinition = {
       return msg;
     }
 
-    const { output, method } = await grepSearch(pattern, resolvedDir, include, maxResults);
+    const { output, method } = await grepSearch(pattern, resolvedDir, include, maxResults, exclude);
 
     if (method === 'none') {
       ctx.core.brief('error', 'grep', 'No search tool available', buildFallbackError());
