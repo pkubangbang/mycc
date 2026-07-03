@@ -217,6 +217,32 @@ export class LineEditor {
     }
   }
 
+  /**
+   * Truncate text so its display width fits within maxWidth columns.
+   * If truncation is needed, appends an ellipsis ('…', width 1) and keeps
+   * the result within maxWidth. Returns the (possibly truncated) text.
+   */
+  private truncateToWidth(text: string, maxWidth: number): string {
+    if (maxWidth <= 0) return '';
+    const width = stringWidth(text);
+    if (width <= maxWidth) return text;
+
+    // Reserve 1 column for the ellipsis; fill the rest with leading chars.
+    const target = maxWidth - 1;
+    if (target <= 0) return '…';
+
+    const chars = this.splitIntoChars(text);
+    let acc = '';
+    let accWidth = 0;
+    for (const ch of chars) {
+      const w = stringWidth(ch);
+      if (accWidth + w > target) break;
+      acc += ch;
+      accWidth += w;
+    }
+    return acc + '…';
+  }
+
   // Layout: whisper (1 line) + prompt/content (1+ lines) + blank (1 line) + cursor row
   private doRender(): void {
     const { lines, cursorLine, cursorCol } = this.lineInfo;
@@ -227,7 +253,10 @@ export class LineEditor {
     output.push('\r');
     if (this.screenStartRow > 0) output.push(`\x1b[${this.screenStartRow}A`);
     output.push('\x1b[2K\x1b[J');
-    output.push(`\x1b[90m${this.whisperText ?? ''}\x1b[0m\n`);
+    const whisper = this.whisperText !== null
+      ? this.truncateToWidth(this.whisperText, this.columns)
+      : '';
+    output.push(`\x1b[90m${whisper}\x1b[0m\n`);
 
     for (let i = 0; i < totalLines; i++) {
       if (i === 0) output.push(this.prompt);

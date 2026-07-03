@@ -1,4 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import stringWidth from 'string-width';
+import stripAnsi from 'strip-ansi';
 import { LineEditor } from '../../utils/line-editor.js';
 import type { KeyInfo } from '../../utils/key-parser.js';
 
@@ -297,6 +299,44 @@ describe('LineEditor - Whisper Line', () => {
       // Should not throw
       expect(() => editor.setWhisper(longText)).not.toThrow();
       expect(editor['whisperText']).toBe(longText);
+    });
+
+    it('should truncate long whisper text to fit within terminal width (one line)', () => {
+      editor = createEditor({ columns: 40 });
+      // 80 chars, wider than 40 columns
+      const longText = 'This is a very long whisper message that exceeds the terminal width';
+
+      editor.setWhisper(longText);
+      editor.rerender();
+
+      const output = getAllWrites();
+      // The whisper line is the first line, terminated by \n.
+      // Extract the text between the gray escape codes on the first line.
+      const firstLine = output.split('\n')[0];
+      const match = firstLine.match(/\x1b\[90m(.*?)\x1b\[0m/);
+      expect(match).not.toBeNull();
+      const rendered = match![1];
+      const width = stringWidth(stripAnsi(rendered));
+
+      // Whisper line must be exactly one line: width fits within columns (40).
+      expect(width).toBeLessThanOrEqual(40);
+      // Truncation should add an ellipsis.
+      expect(rendered).toContain('…');
+      // The untruncated original must NOT be fully present (it would wrap).
+      expect(output).not.toContain(longText);
+    });
+
+    it('should not truncate short whisper text', () => {
+      editor = createEditor({ columns: 80 });
+      editor.setWhisper('short hint');
+      editor.rerender();
+
+      const output = getAllWrites();
+      const firstLine = output.split('\n')[0];
+      const match = firstLine.match(/\x1b\[90m(.*?)\x1b\[0m/);
+      expect(match).not.toBeNull();
+      expect(match![1]).toBe('short hint');
+      expect(match![1]).not.toContain('…');
     });
 
     it('should handle whisper with special characters', () => {
