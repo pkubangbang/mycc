@@ -27,7 +27,7 @@ function formatDate(date: Date): string {
 
 export const wikiCommand: SlashCommand = {
   name: 'wiki',
-  description: 'Manage knowledge base (/wiki [edit|rebuild|domains])',
+  description: 'Manage knowledge base: show WAL, edit [date], rebuild, delete <hash>, domains [add|remove|list], export [--domain d] [file], import <file>',
   handler: async (context) => {
     const args = context.args.slice(1); // First arg is 'wiki'
 
