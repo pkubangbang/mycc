@@ -220,6 +220,8 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
             `Request a time budget from lead via mail_to(name="lead", eta=${exampleEta}, ...).`);
         } else if (!ctx.todo.hasOpenTodo()) {
           // No open todos and LLM produced no tool calls — likely done
+          // Auto-mail the assistant message to lead
+          ctx.team.mailTo('lead', 'Teammate phase completed', assistantMessage.content || '');
           const result = await enterIdleState(triologue);
           if (result === 'shutdown') {
             process.exit(0);
