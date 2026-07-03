@@ -224,7 +224,7 @@ export class WikiManager implements WikiModule {
 
     // Short circuit: check if hash already exists
     if (await this.hashExists(hash)) {
-      this.core.brief('info', 'wiki', `Document already exists: ${hash}`);
+      this.core.verbose('wiki', `Document already exists: ${hash}`);
       return { success: true, hash };
     }
 
