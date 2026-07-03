@@ -181,6 +181,11 @@ async function handleRecapCall(
     triologue.agent(pass.assistantContent, pass.rawToolCalls as ToolCall[] | undefined, pass.assistantReasoningContent);
     triologue.tool('recap', summary, call.id);
     ctx.core.brief('warn', 'recap', summary);
+    // ESC pressed during recap - return to PROMPT immediately
+    if (agentIO.isNeglectedMode()) {
+      agentIO.setNeglectedMode(false);
+      return AgentState.PROMPT;
+    }
     turn.isFirstRound = false;
     return AgentState.COLLECT;
   }

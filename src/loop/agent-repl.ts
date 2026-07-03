@@ -99,7 +99,7 @@ export async function main(): Promise<void> {
       }
       console.log();
 
-      const answer = await agentIO.ask(chalk.cyan('Retry health check? [Y/n] > '), true);
+      const answer = await agentIO.ask(chalk.cyan('Retry health check? [Y/n] > '), { useAsPrompt: true, onEsc: 'n', onEnter: 'y' });
       if (answer.toLowerCase() === 'n' || answer.toLowerCase() === 'no') {
         console.log(chalk.yellow('Exiting at user request.'));
         process.exit(1);
@@ -384,7 +384,7 @@ export async function main(): Promise<void> {
 
       // Always prompt for retry — only 'n'/'no' exits
       console.log(chalk.gray('─'.repeat(40)));
-      const answer = await agentIO.ask(chalk.cyan('Retry? [Y/n] > '), true);
+      const answer = await agentIO.ask(chalk.cyan('Retry? [Y/n] > '), { useAsPrompt: true, onEsc: 'n', onEnter: 'y' });
       if (answer.toLowerCase() === 'n' || answer.toLowerCase() === 'no') {
         console.log(chalk.yellow('Exiting at user request.'));
         break;

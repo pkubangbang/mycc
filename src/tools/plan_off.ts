@@ -46,7 +46,7 @@ Idempotent: If already in normal mode, returns success without prompting.`,
     // Transitioning from plan mode -> require user confirmation
     const prompt = `Exit plan mode and allow code changes? [y/N]`;
 
-    const response = await ctx.core.question(prompt, ctx.core.getName());
+    const response = await ctx.core.question(prompt, ctx.core.getName(), { onEsc: 'n' });
 
     // Parse response - only 'y' or 'yes' (case-insensitive) grants permission
     let normalized = response.trim().toLowerCase();

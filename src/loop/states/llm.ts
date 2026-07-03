@@ -58,6 +58,7 @@ export async function handleLlm(
         ctx.core.verbose('llm', 'ESC pressed before LLM call - starting wrap-up');
         stopSpinner(); // Ensure spinner is stopped before returning to PROMPT
         startWrapUp(triologue, tools);
+        agentIO.setNeglectedMode(false);
         return AgentState.PROMPT;
       }
 
@@ -88,6 +89,7 @@ export async function handleLlm(
       if (!response) {
         ctx.core.verbose('llm', 'LLM response discarded due to ESC interruption');
         stopSpinner(); // Ensure spinner is stopped before returning to PROMPT
+        agentIO.setNeglectedMode(false);
         return AgentState.PROMPT;
       }
 
@@ -122,6 +124,11 @@ export async function handleLlm(
           },
           () => null,
         );
+        // ESC pressed during crossroad processing - return to PROMPT immediately
+        if (agentIO.isNeglectedMode()) {
+          stopSpinner();
+          return AgentState.PROMPT;
+        }
         if (crossroadResult) {
           ctx.core.verbose('llm',
             `Crossroad: truncated at "${crossroadResult.truncated.slice(0, 80)}..."`,

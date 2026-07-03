@@ -32,7 +32,7 @@ export const questionTool: ToolDefinition = {
 
     const asker = ctx.core.getName();
     try {
-      const response = await ctx.core.question(query, asker);
+      const response = await ctx.core.question(query, asker, { onEsc: '' });
       return `User response: ${response}`;
     } catch (error) {
       return `Error: ${(error as Error).message}`;

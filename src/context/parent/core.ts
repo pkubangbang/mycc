@@ -94,7 +94,7 @@ export class Core extends BaseCore implements CoreModule {
    * @param query - The question to ask
    * @param asker - Name of who is asking (required)
    */
-  async question(query: string, asker: string): Promise<string> {
+  async question(query: string, asker: string, options?: { onEsc?: string; onEnter?: string }): Promise<string> {
     // Validate query
     if (!query || typeof query !== 'string') {
       throw new Error('Question query must be a non-empty string');
@@ -102,7 +102,7 @@ export class Core extends BaseCore implements CoreModule {
 
     // Display who is asking, then the query (via agentIO.ask)
     this.brief('info', 'question', '--------------------', `${asker} has a question`);
-    return await agentIO.ask(query);
+    return await agentIO.ask(query, { onEsc: options?.onEsc, onEnter: options?.onEnter });
   }
 
   /**
@@ -284,7 +284,7 @@ export class Core extends BaseCore implements CoreModule {
       `  3) Grant access to this file only: ${fileName}\n` +
       `  4) Deny`;
 
-    const response = await this.question(prompt, 'lead');
+    const response = await this.question(prompt, 'lead', { onEsc: '4' });
     const choice = response.trim();
 
     // Parse user response

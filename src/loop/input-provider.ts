@@ -50,16 +50,16 @@ export class UserInputProvider implements InputProvider {
   async getInput(initialContent?: string): Promise<string | null> {
     const mode = this.getMode();
     if (mode === 'plan') {
-      return agentIO.ask(chalk.bgBlueBright.bold.whiteBright('plan >> '), true, initialContent);
+      return agentIO.ask(chalk.bgBlueBright.bold.whiteBright('plan >> '), { useAsPrompt: true, initialContent });
     }
-    return agentIO.ask(chalk.bgYellow.black('agent >> '), true, initialContent);
+    return agentIO.ask(chalk.bgYellow.black('agent >> '), { useAsPrompt: true, initialContent });
   }
 
   async promptRetry(errorMessage: string): Promise<boolean> {
     console.error();
     console.error(chalk.red(`Error: ${errorMessage}`));
     console.log(chalk.gray('─'.repeat(40)));
-    const answer = await agentIO.ask(chalk.cyan('Retry? [Y/n] > '), true);
+    const answer = await agentIO.ask(chalk.cyan('Retry? [Y/n] > '), { useAsPrompt: true, onEsc: 'n', onEnter: 'y' });
     return answer.toLowerCase() !== 'n' && answer.toLowerCase() !== 'no';
   }
 }

@@ -136,7 +136,7 @@ After a successful commit, the tool detects:
       ? `Amend commit with message:\n\n  "${message}"\n\nProceed? [y/N]`
       : `Commit with message:\n\n  "${message}"\n\nProceed? [y/N]`;
 
-    const response = await ctx.core.question(prompt, ctx.core.getName());
+    const response = await ctx.core.question(prompt, ctx.core.getName(), { onEsc: 'n' });
 
     // Parse response - only 'y' or 'yes' (case-insensitive) grants permission
     // Strip surrounding quotes (tmux send-keys may add them)

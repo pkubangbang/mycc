@@ -41,7 +41,7 @@ export class ChildCore extends BaseCore implements CoreModule {
     ipc.sendNotification('verbose', { tool, message, data });
   }
 
-  async question(query: string, asker: string): Promise<string> {
+  async question(query: string, asker: string, options?: { onEsc?: string; onEnter?: string }): Promise<string> {
     // Transition to holding while waiting for answer
     sendStatus('holding');
 
@@ -50,6 +50,7 @@ export class ChildCore extends BaseCore implements CoreModule {
       const response = await ipc.sendRequest<{ response: string }>('question', {
         query,
         asker,
+        options,
       }, 0);
       return response.response;
     } finally {

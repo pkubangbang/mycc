@@ -94,7 +94,7 @@ export async function openMultilineEditor(initialContent: string): Promise<{ act
   // Wait for user — loop allows 'r' + Enter to reload content without submitting
   let answer: string;
   do {
-    answer = await agentIO.ask(chalk.cyan('Press Enter to submit (r to return) > '), true);
+    answer = await agentIO.ask(chalk.cyan('Press Enter to submit (r to return) > '), { useAsPrompt: true, onEsc: 'r' });
 
     if (answer.trim().toLowerCase() === 'r') {
       // User wants to reload: read current file content, return as reload action

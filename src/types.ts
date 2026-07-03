@@ -280,8 +280,9 @@ export interface CoreModule {
    * Used by tools to get user input during execution
    * @param query - The question to ask
    * @param asker - Optional name of who is asking (e.g., 'lead' or teammate name)
+   * @param options - Optional: onEsc (value to resolve on ESC press), onEnter (value on empty Enter)
    */
-  question(query: string, asker: string): Promise<string>;
+  question(query: string, asker: string, options?: { onEsc?: string; onEnter?: string }): Promise<string>;
   /**
    * Search the web for information
    * @param query - The search query

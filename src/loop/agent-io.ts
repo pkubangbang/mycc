@@ -88,6 +88,21 @@ export interface ExecResult {
 }
 
 /**
+ * Options for ask()
+ */
+export interface AskOptions {
+  /** If true, use query as the LineEditor prompt (single line format).
+   *  If false (default), print query above and use '> ' as prompt. */
+  useAsPrompt?: boolean;
+  /** Pre-fill the input line with this content */
+  initialContent?: string;
+  /** Value to resolve with when ESC is pressed. If not set, ESC is ignored. */
+  onEsc?: string;
+  /** Value to resolve with when Enter pressed on empty input. If not set, returns ''. */
+  onEnter?: string;
+}
+
+/**
  * AgentIO - Singleton for managing I/O state
  */
 class AgentIO {
@@ -118,6 +133,11 @@ class AgentIO {
     args: unknown[];
   }> = [];
 
+  // ESC-during-ask() cancellation support
+  private askResolver: ((value: string) => void) | null = null;
+  private askOnEsc: string | null = null;
+  private askOnEnter: string | null = null;
+
 
 
   // Lifecycle
@@ -132,9 +152,22 @@ class AgentIO {
     // Handle IPC messages from coordinator
     process.on('message', (msg: { type: string; key?: KeyInfo; keys?: KeyInfo[]; columns?: number }) => {
       if (msg.type === 'neglection') {
-        // Don't set neglected mode if user is in a LineEditor prompt (ask())
+        // ESC during ask(): cancel the question if onEsc was provided
         if (this.activeLineEditor) {
-          return; // ESC during ask() - just ignore
+          const resolver = this.askResolver;
+          const onEscValue = this.askOnEsc;
+          this.askResolver = null;
+          this.askOnEsc = null;
+          this.askOnEnter = null;
+          if (onEscValue !== null) {
+            // ESC cancels the question with the specified value
+            this.activeLineEditor.close();
+            this.activeLineEditor = null;
+            this.flushOutput();
+            if (resolver) resolver(onEscValue);
+          }
+          // If onEsc not provided, ESC is ignored (main prompt no-op)
+          return;
         }
 
         // ESC pressed - set neglected mode and abort LLM call if running
@@ -463,13 +496,15 @@ class AgentIO {
    * While waiting, polls for wrap-up completion and displays it above the prompt
    *
    * @param query - The question to display, or the prompt text if useAsPrompt is true
-   * @param useAsPrompt - If true, use query as the LineEditor prompt (single line format)
-   *                      If false, print query above and use '> ' as prompt (split format)
+   * @param options - Optional settings: useAsPrompt, initialContent, onEsc, onEnter
    */
-  async ask(query: string, useAsPrompt: boolean = false, initialContent?: string): Promise<string> {
+  async ask(query: string, options?: AskOptions): Promise<string> {
     if (!this.isMainProcessFlag) {
       throw new Error('question() only available in main process');
     }
+
+    const useAsPrompt = options?.useAsPrompt ?? false;
+    const initialContent = options?.initialContent;
 
     // Clear any pending neglected mode before entering ask()
     // This handles the race condition where ESC is pressed while ask() is waiting:
@@ -489,6 +524,11 @@ class AgentIO {
     }
 
     return new Promise((resolve) => {
+      // Store resolver and ESC/Enter options for cancellation support
+      this.askResolver = resolve;
+      this.askOnEsc = options?.onEsc ?? null;
+      this.askOnEnter = options?.onEnter ?? null;
+
       // Wrap-up polling timer
       let wrapUpPollTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -531,10 +571,19 @@ class AgentIO {
             this.activeLineEditor?.close();
             this.activeLineEditor = null;  // Clear FIRST - so isInteractionMode() returns false
 
+            // Clear ask cancellation state
+            this.askResolver = null;
+            this.askOnEsc = null;
+            this.askOnEnter = null;
+
             // Flush buffered output (after clearing activeLineEditor)
             this.flushOutput();
 
-            resolve(value);
+            // If onEnter is set and value is empty, use onEnter value
+            const finalValue = (value === '' && options?.onEnter !== undefined)
+              ? options.onEnter
+              : value;
+            resolve(finalValue);
           },
           history: this.lineHistory,
           onContentChange: (content: string) => {
@@ -609,6 +658,9 @@ class AgentIO {
         }
       } catch (e) {
         stopPolling();
+        this.askResolver = null;
+        this.askOnEsc = null;
+        this.askOnEnter = null;
         throw e;
       }
     });

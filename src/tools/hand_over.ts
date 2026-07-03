@@ -135,7 +135,7 @@ async function handleHandOver(ctx: AgentContext, args: Record<string, unknown>):
   // 5. Wait for user confirmation and capture output
   const answer = await agentIO.ask(
     chalk.cyan(`Save tmux session? [y/N] > `),
-    true  // use query as prompt (single line format)
+    { useAsPrompt: true }  // use query as prompt (single line format)
   );
 
   // Parse response similar to git_commit tool

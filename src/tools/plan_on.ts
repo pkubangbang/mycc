@@ -70,7 +70,7 @@ Allow edits to this file during plan mode?
   - Or type a different file path to allow that file instead
     (e.g., "docs/new-plan.md" or "README.md")`;
 
-      const response = await ctx.core.question(prompt, ctx.core.getName());
+      const response = await ctx.core.question(prompt, ctx.core.getName(), { onEsc: 'n' });
 
       // Parse response
       let normalized = response.trim().toLowerCase();

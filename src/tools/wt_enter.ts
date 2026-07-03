@@ -49,7 +49,7 @@ export const wtEnterTool: ToolDefinition = {
       if (!isInOwnedWorktree) {
         // Ask for confirmation before entering
         const prompt = `Teammate '${agentName}' wants to enter worktree '${name}'. Proceed? [y/N]`;
-        const response = await ctx.core.question(prompt, ctx.core.getName());
+        const response = await ctx.core.question(prompt, ctx.core.getName(), { onEsc: 'n' });
 
         // Parse response - only 'y' or 'yes' grants permission
         let normalized = response.trim().toLowerCase();

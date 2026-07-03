@@ -117,6 +117,7 @@ export async function handleCollect(
       
       // If aborted (ESC pressed), skip to PROMPT to show prompt immediately
       if (result === 'aborted') {
+        agentIO.setNeglectedMode(false);
         return AgentState.PROMPT;
       }
       // Reset confusion after hint
