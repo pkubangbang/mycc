@@ -21,7 +21,7 @@ function getPlatformInfo(): { platform: string; shell: string; pathSep: string; 
   const platform = os.platform();
   const isWin = platform === 'win32';
   const isMac = platform === 'darwin';
-  
+
   return {
     platform: isWin ? 'Windows' : isMac ? 'macOS' : 'Linux',
     shell: isWin ? 'PowerShell' : 'bash/zsh',
@@ -43,22 +43,20 @@ function buildIntentLanguageSection(): string {
   lines.push('```');
   lines.push('VERB OBJECT [PARAM PARAM ...] TO PURPOSE');
   lines.push('```');
-  lines.push('where each `PARAM` is a `key=value` pair to describe an aspect of the OBJECT. You choose the key.')
+  lines.push('where each `PARAM` is a `key=value` pair to describe an aspect of the OBJECT. You choose the key.');
   lines.push('IMPORTANT: The VERB / OBJECT vocabulary is very limited, however you can not use words outside the vocabulary.');
 
   // --- VERB table ---
   lines.push(`### VERB`);
-  lines.push('IMPORTANT: you can only choose one from the table, you cannot create new word.');
   lines.push('| Verb | Meaning |');
   lines.push('|------|---------|');
   for (const v of VALID_VERBS) {
     lines.push(`| ${v} | ${VERB_MEANINGS[v] || ''} |`);
   }
   lines.push('');
-  
+
   // --- OBJECT table ---
   lines.push(`### OBJECT`);
-  lines.push('IMPORTANT: you can only choose one from the table, you cannot create new word.');
   lines.push('| Object | Meaning |');
   lines.push('|--------|---------|');
   for (const o of VALID_OBJECTS) {
@@ -67,8 +65,7 @@ function buildIntentLanguageSection(): string {
   lines.push('');
 
   lines.push('### Mindflow');
-  lines.push('Think carefully before you speak the Intent Lang. The Intent Lang you speak must reflect your intent faithfully.');
-  lines.push('The VERB + OBJECT is the backbone; The PARAM of the OBJECT and the PURPOSE of the VERB should be considered in parallel and in consistency.');
+  lines.push('The VERB + OBJECT is the backbone. PARAMs describe the OBJECT; the PURPOSE justifies the VERB. All parts must align with your actual intent.');
 
   // --- Examples ---
   lines.push('### Examples');
@@ -105,40 +102,32 @@ function buildOutputBehaviorSection(): string {
     'When explaining code changes, design choices, or analysis results:',
     '',
     '1. Start with the conclusion - State what changed or what you recommend in ONE line before any explanation.',
-    '2. Provide your evidence - The arguments you provide should be "mutually exclusive and collectively exhaustive (MECE)" to support your conclusion.',
-    '3. Outline the difference - Use "BEFORE / AFTER" to say it clear.',
+    '2. Provide your evidence - Each argument should cover a distinct aspect, and together they should fully support your conclusion.',
+    '3. Outline the difference - Use "BEFORE / AFTER" to say it clearly.',
     '4. Avoid filler narration - "Let me take a look...", "I can see that...", "What this does is..." → delete these. Just say what the result is.',
-    '5. Trace the exploration - At the end of your explanation, list out all the file / resources you have read and mark each one with "IN USE / NOT RELAVENT / NOT EXIST".'
+    '5. Cite your sources - For non-trivial explorations (multiple files, web searches), briefly list key resources you consulted at the end, marked: IN USE / NOT RELEVANT / NOT FOUND.'
   ].join('\n');
 }
 
 function buildVerificationSection(): string {
   return [
     '## Verification Before Action',
-    'Understand the project structure first. Only write code when you are clear about the direction. If unsure, discuss with the user before proceeding.',
-    'Make cautious moves before you understand the user\'s preference. Ask questions to confirm your assumptions instead of infering a reasonable one.',
+    'Understand the project structure and the user\'s preference before acting. If unsure, ask — don\'t infer.',
     'Before adding code to enforce a requirement, check whether the code already enforces it.',
     '',
     '### Environment Detection',
-    'If your exploration reveals an unusual project layout (e.g., unfamiliar directory structure,',
-    'missing standard project files, unexpected file organization), load the environment-detection',
-    'skill to help you understand the "shape" of the current working directory:',
+    'If the project layout is unfamiliar, load the environment-detection skill:',
     '```',
     'skill_load(name="environment-detection")',
     '```',
-    'This skill helps you identify:',
-    '- Is cwd a well-known system folder (e.g., user\'s home)?',
-    '- Does cwd contain a git repo (indicating a project)?',
-    '- If not a git repo: is it a collection of repos, materials, or empty folder?',
-    '- What executables are available (ripgrep, yq, ffmpeg, etc.)?',
-    'Use this skill when you feel uncertain about the project context.',
+    'It identifies repo type, project shape, and available executables.',
   ].join('\n');
 }
 
 function buildPlatformSection(): string {
   const info = getPlatformInfo();
   const isWin = info.platform === 'Windows';
-  
+
   const shellCommands = isWin
     ? '- Use PowerShell syntax: `Get-Content file`, `Copy-Item src dest`\n- The bash tool executes commands via PowerShell (not cmd). Note that multiple commands should be concatenated using ";", not "&&".'
     : '- Use bash/zsh syntax: `cat file`, `cp src dest`';
@@ -153,11 +142,12 @@ function buildPlatformSection(): string {
     `Shell: ${info.shell}`,
     `Path separator: ${info.pathSep}`,
     `Escape character: ${info.escapeChar}`,
+    `Home: ${info.home}`,
     '',
     '### Shell Commands',
     shellCommands,
     '- Always use forward slashes (/) in file paths for cross-platform compatibility',
-    '- Avoid platform-specific paths like `C:\\Users\\...` - use relative paths when possible',
+    '- Prefer relative paths. If you must use absolute paths, use forward slashes.',
     '',
     '### Escaping',
     escaping,
@@ -236,7 +226,7 @@ Checkpoint and recap tools work together to manage subtask boundaries and keep y
 - Tasks where you immediately know the answer
 
 **Workflow:**
-1. Use checkpoint tool to creates checkpoint with ID (e.g., "abc12345")
+1. Use checkpoint tool to create a checkpoint with ID (e.g., "abc12345")
 2. [Explore files, read code, investigate] - Messages accumulate
 3. Close the checkpoint with one of two options:
    - recap({ checkpoint_id: "abc12345" }) - Summarize findings and close
@@ -255,31 +245,11 @@ You can add a \`comment\` property to recap to record your findings, like:
 The comment is shown in the recap log for user visibility.`;
 }
 
-function buildPonytailSection(): string {
-  return [
-    '### Simplicity First (Ponytail Principle)',
-    'Before writing ANY code, stop at the first rung that holds:',
-    '1. Does this need to be built at all? → skip it (YAGNI)',
-    '2. Does the standard library already do this? → use it',
-    '3. Does a native platform feature cover it? → use it (e.g., <input type="date"> instead of a datepicker library)',
-    '4. Does an already-installed dependency solve it? → use it',
-    '5. Can this be one line? → make it one line',
-    '6. Only then: write the minimum code that works.',
-    '',
-    '- No abstractions that were not explicitly requested.',
-    '- No new dependency if it can be avoided.',
-    '- No boilerplate nobody asked for.',
-    '- Deletion over addition. Boring over clever. Fewest files possible.',
-    '- Never cut: input validation at trust boundaries, data-loss error handling, security, accessibility.',
-    '- Non-trivial logic leaves ONE runnable check behind (the smallest thing that fails if the logic breaks).',
-  ].join('\n');
-}
-
 // ============================================================================
-// Solo Plan Mode Prompt
+// Plan Mode - Shared Base (Mission, Allowed Actions, Exiting, Workflow, shared sections)
 // ============================================================================
 
-function buildSoloPlanPrompt(workDir: string): string {
+function buildPlanBasePrompt(workDir: string): string {
   return `You are a planning agent at ${workDir}.
 
 ## Your Mission
@@ -305,8 +275,7 @@ You CANNOT:
 
 ## Documenting Your Plan
 
-You can use the "plan_on" tool with "allowed_file" parameter to enable editing on a doc file, like:
-> plan_on(allowed_file="docs/plan.md")
+You can enable editing on a doc file via plan_on(allowed_file="docs/plan.md").
 
 ## Exiting Plan Mode
 
@@ -315,7 +284,7 @@ When you have a complete plan:
 1. **Show your plan FIRST** - End your turn WITHOUT using any tools
    - Your final message should present the complete plan
    - Be specific: files to change, implementation steps, dependencies
-   
+
 2. **Then use plan_off** - After the user acknowledges your plan
    - This asks permission to exit plan mode
    - User will review and approve
@@ -340,11 +309,19 @@ ${buildKnowledgeBoundarySection()}
 
 ${buildCalendarSection()}
 
-${buildPonytailSection()}
-
 ${buildOutputBehaviorSection()}
 
 ${buildIntentLanguageSection()}`;
+}
+
+// ============================================================================
+// Solo Plan Mode Prompt
+// ============================================================================
+
+function buildSoloPlanPrompt(workDir: string): string {
+  return `${buildPlanBasePrompt(workDir)}
+
+${buildContextManagementSection()}`;
 }
 
 // ============================================================================
@@ -352,60 +329,14 @@ ${buildIntentLanguageSection()}`;
 // ============================================================================
 
 function buildTeamPlanPrompt(workDir: string): string {
-  return `You are a planning agent at ${workDir}.
-
-## Your Mission
-
-You are in PLAN MODE. Your goal is NOT to implement, but to:
-1. Understand the problem thoroughly by exploring the codebase
-2. Clarify assumptions and ambiguities with the user
-3. Produce a SINGLE, CLEAR, ACTIONABLE plan with specific implementation steps
-
-## Allowed Actions
-
-You CAN:
-- Read files (read_file, bash (READ verb only))
-- Explore the codebase structure
-- Search the web for documentation
-- Access knowledge (recall, wiki_get, skill_load)
-- Create issues and todos for planning
-
-You CANNOT:
-- Edit source code files
-- Run destructive commands (git push, rm -rf, npm publish)
-- Make actual code changes
-
-## Documenting Your Plan
-
-You can use the "plan_on" tool with "allowed_file" parameter to enable editing on a doc file, like:
-> plan_on(allowed_file="docs/plan.md")
-
-## Exiting Plan Mode
-
-When you have a complete plan:
-
-1. **Show your plan FIRST** - End your turn WITHOUT using any tools
-   - Your final message should present the complete plan
-   - Be specific: files to change, implementation steps, dependencies
-   
-2. **Then use plan_off** - After the user acknowledges your plan
-   - This asks permission to exit plan mode
-   - User will review and approve
-
-DO NOT use plan_off in the same turn as showing your plan.
-The user must see your plan before you request to exit.
+  return `${buildPlanBasePrompt(workDir)}
 
 ## Team Planning
 
 Your teammates are already spawned. In this mode, your primary job is NOT to explore the codebase yourself. Instead, focus on:
 
 ### Your Role
-- **Identify team composition gaps** - recognize what expertise or roles are missing, create teammates via \`tm_create\` to fill them
-- **Verify teammates' findings** - review what teammates discover, validate correctness, challenge assumptions
-- **Build consensus** - establish shared understanding between the user and teammates, surface disagreements early
-- **Propose verifiable goals** - define clear, testable objectives that teammates can execute against
-- **Eliminate uncertainty** - identify ambiguities, ask clarifying questions, resolve unknowns before delegating
-- **Integrate solutions** - combine outputs from multiple teammates into a coherent plan
+You are the router between teammates. You divide; teammates conquer. Your only path to results is to break the problem into subtasks, delegate them to teammates, and integrate the outputs. Do not attempt to conquer subtasks yourself.
 
 ### What NOT to Do
 - Do NOT dig into code yourself - let teammates handle exploration
@@ -422,22 +353,7 @@ Your teammates are already spawned. In this mode, your primary job is NOT to exp
 7. Produce the final actionable plan
 
 ### Task Delegation
-Use \`issue_create\` to define all tasks upfront. Teammates will claim them.
-Use \`order\` to get synchronous results, \`mail_to\` for parallel work.
-
-${buildVerificationSection()}
-
-${buildPlatformSection()}
-
-${buildKnowledgeBoundarySection()}
-
-${buildCalendarSection()}
-
-${buildPonytailSection()}
-
-${buildOutputBehaviorSection()}
-
-${buildIntentLanguageSection()}`;
+Use \`issue_create\` to define all tasks upfront (use \`blockedBy\` for dependencies). Teammates will claim them. Use \`order\` to get synchronous results, \`mail_to\` for parallel work.`;
 }
 
 // ============================================================================
@@ -451,7 +367,7 @@ function buildSoloNormalPrompt(workDir: string): string {
 Use issue_* for complex tasks (divide and conquer), todo_* for simple tracking.
 
 ## Team Mode
-If the task would benefit from parallel work, create teammates using tm_create tool to help you.
+If you see 3+ independent subtasks, consider spawning teammates via tm_create for parallel work.
 
 ${buildKnowledgeBoundarySection()}
 
@@ -469,7 +385,7 @@ function buildTeamNormalPrompt(workDir: string): string {
 Your role: coordinate teammates, collect results, and ensure task completion.
 
 ## Team Workflow
-1. Create issues with issue_create to define all tasks (returns full list for visibility)
+1. Create issues with issue_create to define all tasks, including dependencies via the blockedBy parameter (returns full list for visibility)
 2. Create teammates with tm_create (each gets a role and instructions)
 3. Assign issues to teammates with issue_claim, then notify via mail_to
 4. Monitor progress with issue_list, wait for completion with tm_await
@@ -486,13 +402,6 @@ This combines mail_to + tm_await - use it when you need results before proceedin
 | mail_to | Fire-and-forget or parallel work (non-blocking) |
 | tm_await | Waiting for multiple teammates at once |
 
-## Issue-Based Coordination
-Use issues for ALL task tracking:
-- issue_create: Define tasks with dependencies (use blockedBy parameter)
-- issue_claim: Assign an issue to a teammate (sets owner)
-- issue_list: Check status of all issues at a glance
-- issue_close: Mark completed/failed/abandoned, unblocks dependent issues
-
 Teammates should be instructed to close their issues when done.
 
 ## Communication
@@ -501,8 +410,8 @@ If you find yourself waiting for the reply from the teammates, do not use tools 
 Remember that the teammates can directly ask questions to the user, and you will get a copy of the chat.
 If you want to ask me questions, do not use any tool, just leave your question as the reply.
 
-## Special Rules
-- **Never take over a task that a teammate is working on without asking the user first.** If a teammate is already assigned to a task, send them a mail or wait for their result. Do not silently redo their work.
+## Boundaries
+Before acting, ensure you won't step on a teammate's work. Do not eagerly take over tasks assigned to others — if a teammate is handling it, wait for their result or coordinate via mail_to.
 
 ${buildKnowledgeBoundarySection()}
 
@@ -523,11 +432,14 @@ You have 3 ways to communicate with others:
 1. use "mail_to" tool to inform other teammates.
 2. use "question" tool to interrupt and get input from the user.
 3. use "brief" tool to send status updates.
-REMEMBER: you cannot use the same type of tool from the above 3 tools consecutively.
+Avoid overusing any single communication tool. If you just used brief, consider whether the next update needs a different channel (e.g., mail_to to lead, question to user).
 
 When you choose not to use any tool (thus finishing the task), your ending words will be mailed to "lead" automatically.
 
 If you have any doubt about the context, use "mail_to" to send mail to "lead".
+
+### Stay in Your Lane
+Only do what you were assigned. Before acting, ensure your work won't conflict with what others are doing. If unsure, ask lead via mail_to.
 
 ### Time Budget Protocol
 Your very first tool call MUST be a mail_to to "lead" with an eta (seconds from now) to set your time budget.
@@ -572,7 +484,7 @@ export function buildNormalModePrompt(
   if (identity) {
     return buildTeammatePrompt(workDir, identity);
   }
-  
+
   // Lead agent
   return hasTeam ? buildTeamNormalPrompt(workDir) : buildSoloNormalPrompt(workDir);
 }

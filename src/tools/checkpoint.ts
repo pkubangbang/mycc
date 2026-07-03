@@ -1,7 +1,7 @@
 /**
  * checkpoint.ts - Create a checkpoint for context management
  *
- * Scope: ['main', 'child'] - Available to both lead and teammate agents
+ * Scope: ['main'] - Available to lead agent only
  *
  * NOTE: This is a META-TOOL. The tool definition is for LLM visibility,
  * but the actual execution happens in the state machine (hook.ts for lead,
