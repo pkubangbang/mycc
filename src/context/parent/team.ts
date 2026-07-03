@@ -20,6 +20,7 @@ import * as MemoryStore from '../memory-store.js';
 import { MailBox } from '../shared/mail.js';
 import { IpcRegistry } from '../ipc-registry.js';
 import { readSession, writeSession, getSessionId } from '../../session/index.js';
+import { agentIO } from '../../loop/agent-io.js';
 
 // Project root for resolving paths
 const PROJECT_ROOT = getProjectRoot();
@@ -398,6 +399,11 @@ export class TeamManager implements TeamModule {
     const timeoutPromise = new Promise<void>((resolve) => {
       let lastCheck = 0;
       const poll = () => {
+        // ESC pressed — resolve immediately so the lead can return to PROMPT
+        if (agentIO.isNeglectedMode()) {
+          resolve(); return;
+        }
+
         const currentStatus = this.statuses.get(name);
         if (currentStatus === 'idle' || currentStatus === 'shutdown') {
           resolve(); return; // finished
