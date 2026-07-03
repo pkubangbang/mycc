@@ -27,73 +27,40 @@ When updating the changelog, use the following procedure:
 
 # Change Log
 
-> **Archive**: For changelog entries before June 2026, see `changelog-202605.md`. For April 2026, see `changelog-202604.md`.
+> **Archive**: For changelog entries before July 2026, see `changelog-202606.md`. For May 2026, see `changelog-202605.md`. For April 2026, see `changelog-202604.md`.
 
-## 2026-06-02
-### Fixes
-- **CJK Alignment**: Fixed string-width for CJK-aware banner alignment in `mycc_title`.
-- **Checkpoint/Recap**: Refactored checkpoint/recap with transparent recap, forkChat, and teammate cleanup.
+## 2026-07-01
+### Features
+- **Duplication Detection**: Embedding-based duplication detection for the hint round.
+- **Gitignore**: Auto-add `.mycc/` to `.gitignore` when project is git-managed.
+### Refactoring & Chores
+- **Refactor**: Review fixes for embedding-based duplication detection.
+- **Chore**: Simplify `.gitignore` rule for `.mycc` directory.
 
-## 2026-06-03
+## 2026-07-02
 ### Features & Fixes
-- **Multi-line**: Chinese "、" (enumeration comma) at end of line now also triggers multi-line editing.
-- **Hook**: Checkpoint/recap isolation failures now return COLLECT instead of STOP.
-- **skill_load**: Added retrospect showing skill location and level on load.
+- **Repetition Detection**: Map delta from 2 to 3 for high similarity (reduces false positives).
+- **Bash Timeout**: Update bash timeout max from 30 to 60 across all layers.
+- **Agent Prompts**: Update agent prompts and tool descriptions for clarity.
 
-## 2026-06-05
-### Fixes
-- **read_file**: Show head+tail preview for minified/single-long-line files.
-
-
-## 2026-06-22
-### Fixes
-- **Fork on Windows**: Fixed `/fork` command on Windows. Three root causes: (1) `mycc` not on PATH → `0x80070002`; (2) `shell:true` in open-terminal.ts wrapped command in `cmd.exe /d /s /c` which broke nested quoting and created double windows; (3) `wt.exe` has a known bug (microsoft/terminal#13264) where it splits on `;` even inside quoted arguments, causing the forked command to be treated as two separate wt actions. Fixed by using `node.exe + bin/mycc.js` (no PATH dependency), removing `shell:true` from Windows terminal configs (spawn powershell directly), and encoding the PowerShell script as UTF-16LE Base64 via `-EncodedCommand` (eliminates all `;`, spaces, and quotes from the command line).
-- **Loader**: Normalize skill keywords to array on parse to prevent TypeError when keywords is a single string.
-
-## 2026-06-23
+## 2026-07-03
+### Release
+- **v0.9.4**: Auto-mail teammate's no-tool-call message to lead.
 ### Features
-- **Background Tools**: Expose bg tool output, grant integration, killed status, and output cap for better background task management.
-
-### Documentation
-- **environment-detection**: Document PowerShell lacks `&&` operator in cheatsheet.
-
-## 2026-06-24
-### Features
-- **Crossroad**: Shorten continuations and log alternatives with selection for better decision tracking.
-- **ESC Cancel**: Allow ESC to cancel prompt input and return to fresh prompt instead of ignoring it.
-- **Walkthrough Docs**: Added walkthrough documentation for common workflows.
-
+- **Wiki**: Improve wiki slash command hints and subcommand descriptions.
 ### Fixes
-- **Hook/Crossroad**: Restructure crossroad as first-class branch, fix `duplicate_assistant` TP recovery.
-- **Setup**: Preserve all config vars in `.env`, not just current provider's.
-- **Config**: Inline `.env` parsing, remove `dotenv` dependency.
-- **Config**: Read `args.setup` directly instead of `process.env.MYCC_SETUP`.
-- **Config**: Read `--session` from minimist args instead of `process.env`.
-- **Path Normalization**: Normalize path separators before regex in `ensureSameTeammate`.
-- **Mail**: Allow `eta=0` in `mail_to` tool for non-budget messages.
-- **Grants**: Allow child process writes to project root when no worktree assigned.
-- **Prompts**: Add permission rule for lead and worktree guidance for teammates.
-- **Team**: Polish `eta_update` to show styled banner with bg-color.
-- **Teammate Idle**: Update teammate idle logic for better state management.
-
+- **ESC**: Consolidate `ask()` options, add `onEsc` to all grant prompts, fix state handler ESC returns.
+- **ESC Deadlock**: Fix deadlock when ESC pressed while lead awaits teammates.
+- **Line Editor**: Truncate whisper line to terminal width.
+- **Windows Spawn**: DEP0190-safe spawn pattern for Windows `.cmd` files.
+### Refactoring & Chores
+- **Prompts**: Improve `agent-prompts.ts` clarity and conciseness.
+- **Chore**: Suppress "Document already exists" message on startup.
 ### Tests
-- **Unit Tests**: Add 81 new unit tests and fix bg-create test mock.
-- **bg-create**: Add `bg-create.test.ts` (13 tests) for background task creation tool.
-
-## 2026-06-25
-### Features
-- **CLI Config Flags**: All env-configurable vars are now available as CLI flags via minimist. New flags: `--ollama-host`, `--ollama-api-key`, `--ollama-model`, `--ollama-vision-model`, `--ollama-embedding-model`, `--deepseek-host`, `--deepseek-api-key`, `--deepseek-model`, `--api-provider`, `--token-threshold`, `--editor`, `--skill-match-threshold`. These override `.env` files and system environment variables with highest priority.
-- **Session Reorganization**: All session files now stored in session subdirectories for cleaner organization.
-
-### Documentation
-- **README**: Added "Configuration Flags" section documenting all CLI flags and their env variable mappings.
+- **grep Tool**: Thoroughly test grep tool with 72 tests covering all functions, edge cases, and failure modes.
 
 # Todo
 
-- [x] 2026-06-22 Fix `/fork` on Windows — `mycc` not found, shell:true nested quoting, wt.exe semicolon splitting bug
-- [x] 2026-06-24 Remove `dotenv` dependency, inline .env parsing
-- [x] 2026-06-24 Add unit tests (81 new tests)
-- [x] 2026-06-25 Add all env-configurable vars as cmd-args for minimist parsing
 - [ ] add e2e test using tmux, with meaningful test cases, written as a skill
 - [ ] racing condition: submittion without showing "mycc is wrapping up" will not show the spinner.
 - [ ] In the plan mode, the produced plan will have self-debating.
