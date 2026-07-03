@@ -1,5 +1,10 @@
 /**
  * open-editor-gui.test.ts - GUI editor tests
+ *
+ * NOTE: These tests run on Windows (process.platform === 'win32'), so the
+ * DEP0190-safe code path is always exercised: spawn(cmdString, [], options)
+ * instead of spawn(binary, args, options). On non-Windows, the old pattern
+ * (spawn(binary, args, options)) is used since shell:true is not needed there.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -30,6 +35,15 @@ function mockGuiProcess() {
   return { on, unref };
 }
 
+/**
+ * Build the expected command string as the code does on Windows.
+ * On Windows (isWin=true), the code constructs:
+ *   [binary, ...args.map(a => a.includes(' ') ? `"${a}"` : a)].join(' ')
+ */
+function winCmd(binary: string, ...args: string[]): string {
+  return [binary, ...args.map(a => a.includes(' ') ? `"${a}"` : a)].join(' ');
+}
+
 describe('openEditor - GUI editors', () => {
   let mockSpawn: ReturnType<typeof vi.fn>;
 
@@ -53,10 +67,11 @@ describe('openEditor - GUI editors', () => {
 
       await openEditor(['file.ts:10:5'], { editor: 'vscode' });
 
+      // On Windows: spawn(cmdString, [], options) to avoid DEP0190
       expect(mockSpawn).toHaveBeenCalledWith(
-        'code',
-        ['--goto', 'file.ts:10:5'],
-        expect.objectContaining({ stdio: 'ignore' })
+        winCmd('code', '--goto', 'file.ts:10:5'),
+        [],
+        expect.objectContaining({ stdio: 'ignore', detached: true, shell: true })
       );
       expect(mockProc.unref).toHaveBeenCalled();
     });
@@ -68,9 +83,9 @@ describe('openEditor - GUI editors', () => {
       await openEditor(['file.ts:10'], { editor: 'vscode' });
 
       expect(mockSpawn).toHaveBeenCalledWith(
-        'code',
-        ['--goto', 'file.ts:10'],
-        expect.objectContaining({ stdio: 'ignore' })
+        winCmd('code', '--goto', 'file.ts:10'),
+        [],
+        expect.objectContaining({ stdio: 'ignore', detached: true, shell: true })
       );
     });
 
@@ -81,9 +96,9 @@ describe('openEditor - GUI editors', () => {
       await openEditor(['file.ts'], { editor: 'vscode' });
 
       expect(mockSpawn).toHaveBeenCalledWith(
-        'code',
-        ['file.ts'],
-        expect.objectContaining({ stdio: 'ignore' })
+        winCmd('code', 'file.ts'),
+        [],
+        expect.objectContaining({ stdio: 'ignore', detached: true, shell: true })
       );
     });
   });
@@ -96,9 +111,9 @@ describe('openEditor - GUI editors', () => {
       await openEditor(['file.ts:42:10'], { editor: 'sublime' });
 
       expect(mockSpawn).toHaveBeenCalledWith(
-        'subl',
-        ['--goto', 'file.ts:42:10'],
-        expect.any(Object)
+        winCmd('subl', '--goto', 'file.ts:42:10'),
+        [],
+        expect.objectContaining({ detached: true, shell: true })
       );
     });
   });
@@ -111,9 +126,9 @@ describe('openEditor - GUI editors', () => {
       await openEditor(['file.ts:5'], { editor: 'zed' });
 
       expect(mockSpawn).toHaveBeenCalledWith(
-        'zed',
-        ['--goto', 'file.ts:5'],
-        expect.any(Object)
+        winCmd('zed', '--goto', 'file.ts:5'),
+        [],
+        expect.objectContaining({ detached: true, shell: true })
       );
     });
   });
@@ -126,9 +141,9 @@ describe('openEditor - GUI editors', () => {
       await openEditor(['file.ts:20:5'], { editor: 'atom' });
 
       expect(mockSpawn).toHaveBeenCalledWith(
-        'atom',
-        ['--goto', 'file.ts:20:5'],
-        expect.any(Object)
+        winCmd('atom', '--goto', 'file.ts:20:5'),
+        [],
+        expect.objectContaining({ detached: true, shell: true })
       );
     });
   });
@@ -141,9 +156,9 @@ describe('openEditor - GUI editors', () => {
       await openEditor(['file.ts:10'], { editor: 'vscodium' });
 
       expect(mockSpawn).toHaveBeenCalledWith(
-        'codium',
-        ['--goto', 'file.ts:10'],
-        expect.any(Object)
+        winCmd('codium', '--goto', 'file.ts:10'),
+        [],
+        expect.objectContaining({ detached: true, shell: true })
       );
     });
   });
@@ -156,9 +171,9 @@ describe('openEditor - GUI editors', () => {
       await openEditor(['file.ts:10:5'], { editor: 'vscode-insiders' });
 
       expect(mockSpawn).toHaveBeenCalledWith(
-        'code-insiders',
-        ['--goto', 'file.ts:10:5'],
-        expect.any(Object)
+        winCmd('code-insiders', '--goto', 'file.ts:10:5'),
+        [],
+        expect.objectContaining({ detached: true, shell: true })
       );
     });
   });
@@ -171,9 +186,9 @@ describe('openEditor - GUI editors', () => {
       await openEditor(['file.ts'], { editor: 'vscode' });
 
       expect(mockSpawn).toHaveBeenCalledWith(
-        'code',
-        expect.any(Array),
-        expect.objectContaining({ stdio: 'ignore' })
+        winCmd('code', 'file.ts'),
+        [],
+        expect.objectContaining({ stdio: 'ignore', detached: true, shell: true })
       );
     });
 
@@ -183,11 +198,11 @@ describe('openEditor - GUI editors', () => {
 
       await openEditor(['file.ts'], { editor: 'atom' });
 
-      // The spawn should happen without detached on Linux/macOS
+      // On Windows: spawn(cmdString, [], { stdio: 'ignore', detached: true, shell: true })
       expect(mockSpawn).toHaveBeenCalledWith(
-        'atom',
-        expect.any(Array),
-        expect.objectContaining({ stdio: 'ignore' })
+        winCmd('atom', 'file.ts'),
+        [],
+        expect.objectContaining({ stdio: 'ignore', detached: true, shell: true })
       );
       // unref is called only after 'spawn' event
       expect(mockProc.unref).toHaveBeenCalled();
@@ -200,9 +215,9 @@ describe('openEditor - GUI editors', () => {
       await openEditor(['file1.ts:10', 'file2.ts:20:5'], { editor: 'vscode' });
 
       expect(mockSpawn).toHaveBeenCalledWith(
-        'code',
-        ['--goto', 'file1.ts:10', '--goto', 'file2.ts:20:5'],
-        expect.objectContaining({ stdio: 'ignore' })
+        winCmd('code', '--goto', 'file1.ts:10', '--goto', 'file2.ts:20:5'),
+        [],
+        expect.objectContaining({ stdio: 'ignore', detached: true, shell: true })
       );
     });
 
@@ -212,7 +227,12 @@ describe('openEditor - GUI editors', () => {
 
       await openEditor([], { editor: 'vscode' });
 
-      expect(mockSpawn).toHaveBeenCalledWith('code', [], expect.any(Object));
+      // Empty args: command is just the binary name
+      expect(mockSpawn).toHaveBeenCalledWith(
+        'code',
+        [],
+        expect.objectContaining({ detached: true, shell: true })
+      );
     });
   });
 });
@@ -231,10 +251,11 @@ describe('openEditor - unknown editors (GUI)', () => {
 
     await openEditor(['file.ts'], { editor: 'xdg-open' });
 
+    // On Windows: spawn(cmdString, [], options) to avoid DEP0190
     expect(mockSpawn).toHaveBeenCalledWith(
-      'xdg-open',
-      ['file.ts'],
-      expect.objectContaining({ stdio: 'ignore' })
+      winCmd('xdg-open', 'file.ts'),
+      [],
+      expect.objectContaining({ stdio: 'ignore', detached: true, shell: true })
     );
   });
 
@@ -244,10 +265,11 @@ describe('openEditor - unknown editors (GUI)', () => {
 
     await openEditor(['file.ts'], { editor: 'some-gui-editor' });
 
+    // On Windows: spawn(cmdString, [], options) to avoid DEP0190
     expect(mockSpawn).toHaveBeenCalledWith(
-      'some-gui-editor',
-      ['file.ts'],
-      expect.objectContaining({ stdio: 'ignore' })
+      winCmd('some-gui-editor', 'file.ts'),
+      [],
+      expect.objectContaining({ stdio: 'ignore', detached: true, shell: true })
     );
   });
 
@@ -257,10 +279,11 @@ describe('openEditor - unknown editors (GUI)', () => {
 
     await openEditor(['file.ts:10:5'], { editor: 'xdg-open' });
 
+    // On Windows: spawn(cmdString, [], options) to avoid DEP0190
     expect(mockSpawn).toHaveBeenCalledWith(
-      'xdg-open',
-      ['file.ts'],
-      expect.any(Object)
+      winCmd('xdg-open', 'file.ts'),
+      [],
+      expect.objectContaining({ stdio: 'ignore', detached: true, shell: true })
     );
   });
 
@@ -301,7 +324,12 @@ describe('openEditor - default editor', () => {
 
     await openEditor(['file.ts']);
 
-    expect(mockSpawn).toHaveBeenCalledWith('code', expect.any(Array), expect.any(Object));
+    // On Windows: spawn(cmdString, [], options) to avoid DEP0190
+    expect(mockSpawn).toHaveBeenCalledWith(
+      winCmd('code', 'file.ts'),
+      [],
+      expect.objectContaining({ stdio: 'ignore', detached: true, shell: true })
+    );
   });
 
   it('should throw when no EDITOR env and no editor option', async () => {

@@ -17,6 +17,15 @@ const originalVisual = process.env.VISUAL;
 // Import after mocking
 const { openEditor } = await import('../../utils/open-editor.js');
 
+/**
+ * Build the expected command string as the code does on Windows.
+ * On Windows (isWin=true), the code constructs:
+ *   [binary, ...args.map(a => a.includes(' ') ? `"${a}"` : a)].join(' ')
+ */
+function winCmd(binary: string, ...args: string[]): string {
+  return [binary, ...args.map(a => a.includes(' ') ? `"${a}"` : a)].join(' ');
+}
+
 describe('openEditor - terminal editors', () => {
   let mockSpawn: ReturnType<typeof vi.fn>;
 
@@ -45,10 +54,11 @@ describe('openEditor - terminal editors', () => {
 
       await openEditor(['file.ts:10'], { editor: 'vim' });
 
+      // On Windows: spawn(cmdString, [], options) to avoid DEP0190
       expect(mockSpawn).toHaveBeenCalledWith(
-        'vim',
-        ['+call cursor(10, 1)', 'file.ts'],
-        expect.objectContaining({ stdio: 'inherit' })
+        winCmd('vim', '+call cursor(10, 1)', 'file.ts'),
+        [],
+        expect.objectContaining({ stdio: 'inherit', shell: true })
       );
     });
 
@@ -63,10 +73,11 @@ describe('openEditor - terminal editors', () => {
 
       await openEditor(['file.ts:10:5'], { editor: 'vim' });
 
+      // On Windows: spawn(cmdString, [], options) to avoid DEP0190
       expect(mockSpawn).toHaveBeenCalledWith(
-        'vim',
-        ['+call cursor(10, 5)', 'file.ts'],
-        expect.any(Object)
+        winCmd('vim', '+call cursor(10, 5)', 'file.ts'),
+        [],
+        expect.objectContaining({ stdio: 'inherit', shell: true })
       );
     });
 
@@ -81,10 +92,11 @@ describe('openEditor - terminal editors', () => {
 
       await openEditor(['file.ts:42'], { editor: 'vim' });
 
+      // On Windows: spawn(cmdString, [], options) to avoid DEP0190
       expect(mockSpawn).toHaveBeenCalledWith(
-        'vim',
-        ['+call cursor(42, 1)', 'file.ts'],
-        expect.any(Object)
+        winCmd('vim', '+call cursor(42, 1)', 'file.ts'),
+        [],
+        expect.objectContaining({ stdio: 'inherit', shell: true })
       );
     });
 
@@ -99,7 +111,8 @@ describe('openEditor - terminal editors', () => {
 
       await openEditor(['file.ts'], { editor: 'vim' });
 
-      expect(mockSpawn).toHaveBeenCalledWith('vim', ['file.ts'], expect.any(Object));
+      // On Windows: spawn(cmdString, [], options) to avoid DEP0190
+      expect(mockSpawn).toHaveBeenCalledWith(winCmd('vim', 'file.ts'), [], expect.any(Object));
     });
 
     it('should handle multiple files with cursor positioning', async () => {
@@ -113,9 +126,10 @@ describe('openEditor - terminal editors', () => {
 
       await openEditor(['file1.ts:5', 'file2.ts'], { editor: 'vim' });
 
+      // On Windows: spawn(cmdString, [], options) to avoid DEP0190
       expect(mockSpawn).toHaveBeenCalledWith(
-        'vim',
-        ['+call cursor(5, 1)', 'file1.ts', 'file2.ts'],
+        winCmd('vim', '+call cursor(5, 1)', 'file1.ts', 'file2.ts'),
+        [],
         expect.any(Object)
       );
     });
@@ -133,9 +147,10 @@ describe('openEditor - terminal editors', () => {
 
       await openEditor(['file.ts:25:8'], { editor: 'neovim' });
 
+      // On Windows: spawn(cmdString, [], options) to avoid DEP0190
       expect(mockSpawn).toHaveBeenCalledWith(
-        'nvim',
-        ['+call cursor(25, 8)', 'file.ts'],
+        winCmd('nvim', '+call cursor(25, 8)', 'file.ts'),
+        [],
         expect.any(Object)
       );
     });
@@ -151,7 +166,12 @@ describe('openEditor - terminal editors', () => {
 
       await openEditor(['file.ts:10'], { editor: 'nvim' });
 
-      expect(mockSpawn).toHaveBeenCalledWith('nvim', expect.any(Array), expect.any(Object));
+      // On Windows: spawn(cmdString, [], options) to avoid DEP0190
+      expect(mockSpawn).toHaveBeenCalledWith(
+        winCmd('nvim', '+call cursor(10, 1)', 'file.ts'),
+        [],
+        expect.any(Object)
+      );
     });
   });
 
@@ -167,7 +187,8 @@ describe('openEditor - terminal editors', () => {
 
       await openEditor(['file.ts:10:5'], { editor: 'nano' });
 
-      expect(mockSpawn).toHaveBeenCalledWith('nano', ['file.ts'], expect.any(Object));
+      // On Windows: spawn(cmdString, [], options) to avoid DEP0190
+      expect(mockSpawn).toHaveBeenCalledWith(winCmd('nano', 'file.ts'), [], expect.any(Object));
     });
   });
 
@@ -183,10 +204,11 @@ describe('openEditor - terminal editors', () => {
 
       await openEditor(['file.ts'], { editor: 'emacs' });
 
+      // On Windows: spawn(cmdString, [], options) to avoid DEP0190
       expect(mockSpawn).toHaveBeenCalledWith(
-        'emacs',
-        ['file.ts'],
-        expect.objectContaining({ stdio: 'inherit' })
+        winCmd('emacs', 'file.ts'),
+        [],
+        expect.objectContaining({ stdio: 'inherit', shell: true })
       );
     });
   });
@@ -203,10 +225,11 @@ describe('openEditor - terminal editors', () => {
 
       await openEditor(['file.ts'], { editor: 'vim' });
 
+      // On Windows: spawn(cmdString, [], options) to avoid DEP0190
       expect(mockSpawn).toHaveBeenCalledWith(
-        'vim',
-        expect.any(Array),
-        expect.objectContaining({ stdio: 'inherit' })
+        winCmd('vim', 'file.ts'),
+        [],
+        expect.objectContaining({ stdio: 'inherit', shell: true })
       );
     });
 

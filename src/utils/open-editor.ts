@@ -112,11 +112,14 @@ export async function openEditor(files: string[], options?: { editor?: string })
   // drains and exits before the editor finishes exec().
   // On Linux/macOS: avoid detached: true — it creates a new session via
   // setsid(), which breaks GApplication/D-Bus singleton activation.
-  // On Windows: NEED detached: true for child to survive parent exit.
+  // On Windows: NEED shell: true because many editors (e.g., code, code-insiders)
+  // are .cmd batch files, not real executables. Without shell: true,
+  // child_process.spawn() cannot execute them (ENOENT).
+  // Also NEED detached: true for child to survive parent exit.
   // Note: windowsHide must NOT be used — it sets CREATE_NO_WINDOW which
   // prevents GUI editors (e.g., notepad.exe) from showing their window.
   const guiSpawnOptions = isWin
-    ? { stdio: 'ignore' as const, detached: true }
+    ? { stdio: 'ignore' as const, detached: true, shell: true }
     : { stdio: 'ignore' as const };
 
   const termSpawnOptions = isWin
@@ -127,7 +130,12 @@ export async function openEditor(files: string[], options?: { editor?: string })
     if (editor.isTerminalEditor) {
       // For terminal editors, wait for them to complete
       await new Promise<void>((resolve, reject) => {
-        const proc = spawn(editor.binary, args, termSpawnOptions);
+        // On Windows with shell:true, pass args as a full command string to avoid DEP0190.
+        // Quote file paths that contain spaces to ensure proper shell parsing.
+        const termCmd = isWin
+          ? [editor.binary, ...args.map(a => a.includes(' ') ? `"${a}"` : a)].join(' ')
+          : editor.binary;
+        const proc = spawn(termCmd, isWin ? [] : args, termSpawnOptions);
         proc.on('close', (code) => {
           if (code === 0) {
             resolve();
@@ -142,7 +150,12 @@ export async function openEditor(files: string[], options?: { editor?: string })
     } else {
       // For GUI editors, confirm spawn before releasing
       await new Promise<void>((resolve, reject) => {
-        const proc = spawn(editor.binary, args, guiSpawnOptions);
+        // On Windows with shell:true, pass args as a full command string to avoid DEP0190.
+        // Quote file paths that contain spaces to ensure proper shell parsing.
+        const guiCmd = isWin
+          ? [editor.binary, ...args.map(a => a.includes(' ') ? `"${a}"` : a)].join(' ')
+          : editor.binary;
+        const proc = spawn(guiCmd, isWin ? [] : args, guiSpawnOptions);
         proc.on('spawn', () => {
           // Child confirmed alive — safe to unref so parent can exit
           proc.unref();
