@@ -6,7 +6,7 @@ description: >
   Covers the iterative process: edit source, test with bash + tmux (non-interruptive), debug via capture-pane, commit.
   Platform-agnostic - works on Windows, Linux, macOS.
 keywords: [hotfix, debug, bash, tmux, live-testing, fix, tool-bug]
-when: after tool execution error, if the user has mentioned "tmux" to test the mycc
+when: after the bash tool fails with an error AND the user has explicitly mentioned "tmux" or "hotfix" in this session, to load the hotfix workflow; do NOT fire on skill_load, read_file, grep, or any non-bash tool result, and do NOT fire if a bash error has already been handled by a prior inject
 ---
 
 # mycc-online-hotfix
