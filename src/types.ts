@@ -7,6 +7,8 @@ import type { JSONSchema7 } from 'json-schema';
 import type { Message as OllamaMessage, ToolCall as OllamaToolCall } from 'ollama';
 import { WebFetchResponse, WebSearchResult } from 'ollama';
 import type { Mindmap } from './mindmap/types.js';
+import type { Condition } from './hook/conditions.js';
+import type { ValidationResult } from './hook/condition-validator.js';
 
 // ============================================================================
 // Ollama Type Extensions
@@ -413,6 +415,32 @@ export interface SkillModule {
    * Used for condition compilation to validate trigger tool names
    */
   listAllTools(): Array<{ name: string; description: string }>;
+  /**
+   * Compile a skill's "when" condition into a structured hook and update the
+   * runtime condition registry so the hook system picks it up immediately.
+   *
+   * Lead process: compiles directly on the runtime ConditionRegistry (in-memory
+   * update + disk persist, no restart needed).
+   * Child process: compiles to disk via a temporary registry, then sends a
+   * 'condition_replace' IPC message so the Lead reloads from disk.
+   *
+   * @param skillName - Name of the skill whose "when" field to compile
+   * @param feedback - Optional refinement feedback to fold into the compile prompt
+   * @returns The compile result (condition + validation + error)
+   */
+  compileCondition(
+    skillName: string,
+    feedback?: string,
+  ): Promise<{ condition?: Condition; validation?: ValidationResult; error?: string }>;
+  /**
+   * Reload the compiled condition for a skill from disk into the runtime
+   * ConditionRegistry. Used by the 'condition_replace' IPC handler so that a
+   * teammate's compileCondition() (which writes to disk in the child) is
+   * picked up by the Lead's in-memory registry without a restart.
+   *
+   * No-op (returns error) when no runtime registry is available (child process).
+   */
+  replaceCondition(skillName: string): Promise<{ success: boolean; error?: string }>;
 }
 
 /**

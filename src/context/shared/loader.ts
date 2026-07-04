@@ -11,6 +11,8 @@ import matter from 'gray-matter';
 import { agentIO } from '../../loop/agent-io.js';
 import { resolveToSkillPath, type SkillLayer } from '../../utils/skill-path-resolver.js';
 import { builtInTools } from './registry.js';
+import { ConditionRegistry, type Condition } from '../../hook/conditions.js';
+import type { ValidationResult } from '../../hook/condition-validator.js';
 
 /**
  * Invalidate a module from the ESM cache by its file path.
@@ -82,9 +84,27 @@ export class Loader implements DynamicLoader, SkillModule {
   private skillWatcher: fs.FSWatcher | null = null;
   private silent: boolean;
   private skillKeywords: string[] | null = null;
+  /**
+   * Runtime ConditionRegistry (lead process only).
+   * Set via setConditionRegistry() so compileCondition() can update the
+   * in-memory conditions directly instead of writing to disk and relying
+   * on a broken IPC reload path. Children (silentLoader) leave this null
+   * and fall back to disk + IPC.
+   */
+  private conditionRegistry: ConditionRegistry | null = null;
 
   constructor(silent: boolean = false) {
     this.silent = silent;
+  }
+
+  /**
+   * Inject the runtime ConditionRegistry (lead process only).
+   * Called once in agent-repl.ts after both the Loader and the runtime
+   * ConditionRegistry are created. Enables compileCondition() to update
+   * the in-memory condition registry directly.
+   */
+  setConditionRegistry(registry: ConditionRegistry): void {
+    this.conditionRegistry = registry;
   }
 
   /**
@@ -563,6 +583,124 @@ export class Loader implements DynamicLoader, SkillModule {
       name: entry.tool.name,
       description: entry.tool.description,
     }));
+  }
+
+  /**
+   * Compile a skill's "when" condition into a structured hook and update the
+   * runtime condition registry so the hook system picks it up immediately.
+   *
+   * Lineage: conditions are the compiled form of a skill's "when" field, so
+   * the Loader (skill manager) owns condition compilation. This replaces
+   * the old approach where skill_compile created a throwaway
+   * ConditionRegistry and sent a broken IPC message that the Coordinator
+   * silently dropped.
+   *
+   * Lead process: compiles directly on the runtime ConditionRegistry, which
+   * atomically calls .set() (in-memory update) and .save() (disk persist).
+   * No IPC, no restart needed.
+   *
+   * Child process (silentLoader, conditionRegistry === null): compiles to a
+   * temporary registry that persists to disk, then sends a 'condition_replace'
+   * IPC message to the Lead so its runtime registry reloads from disk.
+   *
+   * @returns The compile result (condition + validation + error), mirroring
+   *          ConditionRegistry.compile()'s return shape.
+   */
+  async compileCondition(
+    skillName: string,
+    feedback?: string,
+  ): Promise<{ condition?: Condition; validation?: ValidationResult; error?: string }> {
+    const skill = this.getSkill(skillName);
+    if (!skill) {
+      return { error: `Skill '${skillName}' not found.` };
+    }
+    if (!skill.when) {
+      // Caller (skill_compile tool) handles the "no when field" case with a
+      // lookup of any existing compiled condition. We only report the missing
+      // field so the caller can present the existing condition if present.
+      return { error: `Skill '${skillName}' has no "when" field. Only skills with "when" conditions can be compiled.` };
+    }
+
+    const availableTools = this.listAllTools();
+    const sourceFile = skill.sourceFile;
+
+    // Build skill content for the compiler. When feedback is provided
+    // (refinement of an existing condition), fold it into the content so
+    // the LLM sees the user's correction guidance during compilation.
+    const compileContent = feedback
+      ? `${skill.content}\n\n--- Refinement feedback ---\n${feedback}`
+      : skill.content;
+
+    // Lead process: compile directly on the runtime registry. compile()
+    // atomically calls .set() (in-memory update) and .save() (disk persist),
+    // so the hook system picks up the new condition immediately — no IPC,
+    // no restart needed.
+    if (this.conditionRegistry) {
+      const existing = this.conditionRegistry.get(skillName);
+      return await this.conditionRegistry.compile(
+        skill.when,
+        skillName,
+        compileContent,
+        existing,
+        sourceFile,
+        availableTools,
+      );
+    }
+
+    // Child process: compile to a temporary registry that persists to disk,
+    // then send a 'condition_replace' IPC message so the Lead reloads its
+    // runtime registry from disk. The Coordinator forwards this message
+    // type to the Lead (handled by ParentContext.initializeIpcHandlers()).
+    const tempRegistry = new ConditionRegistry();
+    const loadResult = await tempRegistry.load();
+    for (const error of loadResult.errors) {
+      agentIO.brief('error', 'loader', `Condition load error: ${error}`);
+    }
+    for (const warning of loadResult.warnings) {
+      agentIO.brief('warn', 'loader', `Condition load warning: ${warning}`);
+    }
+    const existing = tempRegistry.get(skillName);
+    const result = await tempRegistry.compile(
+      skill.when,
+      skillName,
+      compileContent,
+      existing,
+      sourceFile,
+      availableTools,
+    );
+
+    // Persist succeeded → ask the Lead to reload its runtime registry from disk
+    if (!result.error && process.send) {
+      process.send({ type: 'condition_replace', skillName });
+    }
+    return result;
+  }
+
+  /**
+   * Reload the compiled condition for a skill from disk into the runtime
+   * ConditionRegistry. Used by the 'condition_replace' IPC handler so that
+   * a teammate's compileCondition() (which writes to disk in the child) is
+   * picked up by the Lead's in-memory registry without a restart.
+   *
+   * No-op (returns error) when conditionRegistry is null (child process).
+   */
+  async replaceCondition(
+    skillName: string,
+  ): Promise<{ success: boolean; error?: string }> {
+    if (!this.conditionRegistry) {
+      return { success: false, error: 'Condition registry not available (child process)' };
+    }
+    // Reload all conditions from disk — load() validates and atomically
+    // replaces the in-memory map from conditions.json, which the child
+    // already wrote to via its temporary registry.
+    const loadResult = await this.conditionRegistry.load();
+    if (loadResult.errors.length > 0) {
+      return { success: false, error: loadResult.errors.join('; ') };
+    }
+    if (!this.conditionRegistry.get(skillName)) {
+      return { success: false, error: `Condition '${skillName}' not found after reload` };
+    }
+    return { success: true };
   }
 
   /**

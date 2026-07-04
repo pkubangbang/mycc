@@ -5,6 +5,13 @@
  *
  * This tool translates natural language "when" conditions into executable
  * expressions that can be evaluated against the conversation sequence.
+ *
+ * Lineage: compilation is delegated to ctx.skill (Loader), which owns the
+ * runtime ConditionRegistry in the lead process (in-memory update + disk
+ * persist, no restart needed) and falls back to disk + IPC for child
+ * processes. This replaces the old approach of creating a throwaway
+ * ConditionRegistry and sending a 'condition_reload' IPC message that the
+ * Coordinator silently dropped.
  */
 
 import type { ToolDefinition, AgentContext } from '../types.js';
@@ -52,10 +59,10 @@ Returns the compiled condition with version history.`,
 
     // Check if skill has "when" field
     if (!skill.when) {
-      // Check if there's already a compiled condition
+      // No "when" field — look up any existing compiled condition from disk
+      // (read-only lookup; we don't want to compile or mutate anything here).
       const conditions = new ConditionRegistry();
       const preLoadResult = await conditions.load();
-      // Report load errors/warnings
       for (const error of preLoadResult.errors) {
         ctx.core.brief('error', 'skill_compile', `Load error: ${error}`);
       }
@@ -63,7 +70,7 @@ Returns the compiled condition with version history.`,
         ctx.core.brief('warn', 'skill_compile', `Load warning: ${warning}`);
       }
       const existing = conditions.get(skillName);
-      
+
       if (existing) {
         return `Skill '${skillName}' has no "when" field but has a compiled condition:\n` +
           `Trigger: ${existing.trigger}\n` +
@@ -71,45 +78,21 @@ Returns the compiled condition with version history.`,
           `Action: ${JSON.stringify(existing.action)}\n` +
           `Version: ${existing.version}`;
       }
-      
+
       return `Error: Skill '${skillName}' has no "when" field. Only skills with "when" conditions can be compiled.`;
     }
 
-    // Get or create condition registry (single instance shared for the entire handler)
-    const conditions = new ConditionRegistry();
-    const loadResult = await conditions.load();
-    
-    // Report load errors/warnings
-    for (const error of loadResult.errors) {
-      ctx.core.brief('error', 'skill_compile', `Load error: ${error}`);
-    }
-    for (const warning of loadResult.warnings) {
-      ctx.core.brief('warn', 'skill_compile', `Load warning: ${warning}`);
-    }
-
-    // Get existing condition if any
-    const existing = conditions.get(skillName);
-
-    // Get available tools for trigger validation
-    const availableTools = ctx.skill.listAllTools();
-
-    // Get source file path for orphan detection
-    const sourceFile = skill.sourceFile;
-
-    // Compile with tools list for validation
-    const result = await conditions.compile(
-      skill.when,
-      skillName,
-      skill.content,
-      existing,
-      sourceFile,
-      availableTools
-    );
+    // Delegate compilation to the Loader (ctx.skill), which owns the runtime
+    // ConditionRegistry in the lead process. This performs an in-memory
+    // update + atomic disk persist in the lead, and a disk write + IPC
+    // 'condition_replace' message in child processes — no broken IPC, no
+    // restart needed.
+    const result = await ctx.skill.compileCondition(skillName, feedback);
 
     // Handle compilation result
     if (result.error) {
       const lines = [`Error compiling skill: ${result.error}`];
-      
+
       if (result.validation) {
         lines.push('', 'Validation details:');
         for (const err of result.validation.errors) {
@@ -119,7 +102,7 @@ Returns the compiled condition with version history.`,
           lines.push(`  - Warning: ${warn}`);
         }
       }
-      
+
       return lines.join('\n');
     }
 
@@ -128,12 +111,6 @@ Returns the compiled condition with version history.`,
     // Brief output — always visible summary of compilation
     ctx.core.brief('info', 'skill_compile',
       `${skillName} (v${condition.version})\nTrigger: ${condition.trigger}\nCondition: ${condition.condition}\nAction Type: ${condition.action.type}\nAction: ${JSON.stringify(condition.action)}`);
-
-    // Push the newly compiled condition to the runtime condition registry
-    // via IPC, so the agent picks it up without restarting
-    if (process.send) {
-      process.send({ type: 'condition_reload' });
-    }
 
     // Build response
     const lines = [

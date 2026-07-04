@@ -270,6 +270,13 @@ export async function main(): Promise<void> {
   // Will be notified during hint round
   conditions.syncPending(loader);
 
+  // Wire the runtime ConditionRegistry into the Loader so that
+  // skill_compile (via ctx.skill.compileCondition) can update the in-memory
+  // conditions directly — no throwaway registry, no broken IPC, no restart.
+  // Lead process only; child processes leave the loader's registry null and
+  // fall back to disk write + 'condition_replace' IPC.
+  loader.setConditionRegistry(conditions);
+
   // Inject pending hook info into project context so the LLM knows
   // which hooks are available but not yet compiled (closes the gap
   // on fresh installations where hooks are loaded but inactive).

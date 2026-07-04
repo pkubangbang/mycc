@@ -289,6 +289,25 @@ export class TeamManager implements TeamModule {
       return;
     }
 
+    // Condition replacement notification from a teammate's skill_compile call.
+    // A teammate (child process) has no runtime ConditionRegistry, so its
+    // loader.compileCondition() writes the compiled condition to disk and
+    // sends this notification. We reload the Lead's in-memory registry from
+    // disk so the hook system picks up the new condition without a restart.
+    // Fire-and-forget (no reqId, no response).
+    if (msg.type === 'condition_replace') {
+      const { skillName } = msg as unknown as { skillName: string };
+      const result = await this.context.skill.replaceCondition(skillName);
+      if (!result.success) {
+        this.context.core.brief('warn', sender,
+          `condition_replace for '${skillName}' failed: ${result.error}`);
+      } else {
+        this.context.core.brief('info', sender,
+          `Hook condition for '${skillName}' reloaded from disk`);
+      }
+      return;
+    }
+
     // === Request/Response (requires response) ===
     if (reqId === undefined) {
       // No reqId means it's a notification we don't recognize
