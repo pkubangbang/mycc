@@ -8,7 +8,7 @@ import type { ToolDefinition, AgentContext } from '../types.js';
 
 export const issueCreateTool: ToolDefinition = {
   name: 'issue_create',
-  description: 'Create a new issue to track work. Returns full issue list for visibility. Use blockedBy to set dependencies.',
+  description: 'Create a new shared issue to track team work. Unlike private todos, issues are visible to all agents (lead + teammates) and support dependency tracking. Returns full issue list for visibility. Use blockedBy to set dependencies.',
   input_schema: {
     type: 'object',
     properties: {

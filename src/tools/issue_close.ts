@@ -8,7 +8,7 @@ import type { ToolDefinition, AgentContext } from '../types.js';
 
 export const issueCloseTool: ToolDefinition = {
   name: 'issue_close',
-  description: 'Close an issue with final status: completed, failed, or abandoned. Returns full issue list. Closing a blocker unblocks dependent issues.',
+  description: 'Close a shared team issue with final status: completed, failed, or abandoned. Unlike private todos, issues are visible to all agents. Returns full issue list. Closing a blocker unblocks dependent issues.',
   input_schema: {
     type: 'object',
     properties: {

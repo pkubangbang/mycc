@@ -8,7 +8,7 @@ import type { ToolDefinition, AgentContext } from '../types.js';
 
 export const issueListTool: ToolDefinition = {
   name: 'issue_list',
-  description: 'List all issues with status, owner, and blocking relationships. Use to find pending issues to claim or check dependency status.',
+  description: 'List all shared team issues with status, owner, and blocking relationships. Unlike private todos, issues are visible to all agents. Use to find pending issues to claim or check dependency status.',
   input_schema: {
     type: 'object',
     properties: {},

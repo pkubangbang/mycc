@@ -8,7 +8,7 @@ import type { ToolDefinition, AgentContext } from '../types.js';
 
 export const issueClaimTool: ToolDefinition = {
   name: 'issue_claim',
-  description: 'Claim a pending issue to start work. Sets status to in_progress and assigns owner. Returns full issue list.',
+  description: 'Claim a pending shared team issue to start work. Sets status to in_progress and assigns owner so all agents can see who is working on what. Returns full issue list.',
   input_schema: {
     type: 'object',
     properties: {
