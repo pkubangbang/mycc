@@ -13,7 +13,6 @@ export {
   createMockSkill,
   createMockIssue,
   createMockBg,
-  createMockWt,
   createMockTeam,
   createMockWiki,
   type MockContextOptions,

@@ -6,7 +6,7 @@
  */
 
 import { vi } from 'vitest';
-import type { AgentContext, CoreModule, TodoModule, MailModule, SkillModule, IssueModule, BgModule, WtModule, TeamModule, WikiModule } from '../../types.js';
+import type { AgentContext, CoreModule, TodoModule, MailModule, SkillModule, IssueModule, BgModule, TeamModule, WikiModule } from '../../types.js';
 
 // ============================================================================
 // Mock Factories
@@ -118,22 +118,6 @@ export function createMockBg(overrides: Partial<BgModule> = {}): BgModule {
 }
 
 /**
- * Create a mock WtModule with optional overrides
- */
-export function createMockWt(overrides: Partial<WtModule> = {}): WtModule {
-  return {
-    syncWorkTrees: vi.fn(async () => {}),
-    createWorkTree: vi.fn(async () => '/tmp/worktree'),
-    printWorkTrees: vi.fn(async () => ''),
-    enterWorkTree: vi.fn(async () => {}),
-    leaveWorkTree: vi.fn(async () => {}),
-    removeWorkTree: vi.fn(async () => {}),
-    getWorkTreePath: vi.fn(async () => '/tmp/worktree'),
-    ...overrides,
-  };
-}
-
-/**
  * Create a mock TeamModule with optional overrides
  */
 export function createMockTeam(overrides: Partial<TeamModule> = {}): TeamModule {
@@ -189,7 +173,6 @@ export interface MockContextOptions {
   skill?: Partial<SkillModule>;
   issue?: Partial<IssueModule>;
   bg?: Partial<BgModule>;
-  wt?: Partial<WtModule>;
   team?: Partial<TeamModule>;
   wiki?: Partial<WikiModule>;
 }
@@ -229,7 +212,6 @@ export function createMockContext(options: MockContextOptions = {}): AgentContex
     skill: createMockSkill(options.skill),
     issue: createMockIssue(options.issue),
     bg: createMockBg(options.bg),
-    wt: createMockWt(options.wt),
     team: createMockTeam(options.team),
     wiki: createMockWiki(options.wiki),
   };
@@ -247,7 +229,6 @@ export function createMinimalMockContext(workdir?: string): AgentContext {
     skill: {} as SkillModule,
     issue: {} as IssueModule,
     bg: {} as BgModule,
-    wt: {} as WtModule,
     team: {} as TeamModule,
     wiki: {} as WikiModule,
   };

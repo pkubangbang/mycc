@@ -221,6 +221,7 @@ export interface WorkTree {
   path: string; // worktree path
   branch: string; // branch name
   createdAt: Date;
+  owner?: string; // teammate assigned to this worktree (if any)
 }
 
 // ============================================================================
@@ -451,20 +452,6 @@ export interface BgModule {
   getTask(pid: number): { pid: number; command: string; status: string; output?: string } | undefined;
 }
 
-/**
- * Worktree module interface
- * All methods are async for consistency between main and child contexts
- */
-export interface WtModule {
-  syncWorkTrees(): Promise<void>;
-  createWorkTree(name: string, branch: string): Promise<string>;
-  printWorkTrees(): Promise<string>;
-  enterWorkTree(name: string): Promise<void>;
-  leaveWorkTree(): Promise<void>;
-  removeWorkTree(name: string): Promise<void>;
-  getWorkTreePath(name: string): Promise<string>;
-}
-
 // ============================================================================
 // IPC Handler Registry
 // ============================================================================
@@ -510,7 +497,7 @@ export interface IpcHandlerRegistration {
  * Team module interface
  */
 export interface TeamModule {
-  createTeammate(name: string, role: string, prompt: string): Promise<string>;
+  createTeammate(name: string, role: string, prompt: string, cwd?: string): Promise<string>;
   getTeammate(name: string): Teammate | undefined;
   listTeammates(): { name: string; role: string; status: TeammateStatus }[];
   awaitTeammate(name: string, timeout?: number): Promise<{ waited: boolean }>;
@@ -634,7 +621,6 @@ export interface AgentContext {
   skill: SkillModule;
   issue: IssueModule;
   bg: BgModule;
-  wt: WtModule;
   team: TeamModule;
   wiki: WikiModule;
 }

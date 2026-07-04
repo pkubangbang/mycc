@@ -14,6 +14,7 @@ import { isVerbose } from '../../config.js';
 import { loader } from '../../context/shared/loader.js';
 import type { SequenceEvent } from '../../hook/sequence.js';
 import { getSkillTriologueStatus } from '../../utils/skill-dedup.js';
+import { loadWorktrees } from '../../context/worktree-store.js';
 
 // Confusion threshold for hint generation
 const CONFUSION_THRESHOLD = 10;
@@ -143,6 +144,31 @@ export async function handleCollect(
     if (turn.nextBriefNudge <= 0) {
       triologue.note('REMINDER', 'Provide a brief status update using the brief tool. Example: brief("Working on X", 7)');
       turn.nextBriefNudge = 5;
+    }
+
+    // 5b. Worktree cleanup nudge — file-as-state pattern.
+    //     nextWtNudge == 0 is the "check now" sentinel: cheaply call
+    //     loadWorktrees() each pass. If worktrees exist, inject a REMINDER
+    //     and arm the counter to N so we don't nag every turn. If none,
+    //     leave the counter at 0 (re-checks next pass).
+    //     When the counter is nonzero, just decrement it.
+    if (env.nextWtNudge === 0) {
+      const worktrees = loadWorktrees();
+      if (worktrees.length > 0) {
+        const lines = worktrees.map(w =>
+          w.owner
+            ? `- ${w.name} at ${w.path} (owner: ${w.owner})`
+            : `- ${w.name} at ${w.path}`
+        );
+        triologue.note(
+          'REMINDER',
+          `Stale worktrees detected. Consider cleaning them up with bash (git worktree remove <path>) once the work is merged:\n${lines.join('\n')}`
+        );
+        env.nextWtNudge = 5;
+      }
+      // else: no worktrees — leave at 0, re-check next pass
+    } else {
+      env.nextWtNudge--;
     }
 
     // 6. Consume extracted keywords for proactive skill discovery.

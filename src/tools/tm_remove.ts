@@ -5,6 +5,7 @@
  */
 
 import type { ToolDefinition, AgentContext } from '../types.js';
+import { removeWorktree, getWorktree } from '../context/worktree-store.js';
 
 export const tmRemoveTool: ToolDefinition = {
   name: 'tm_remove',
@@ -45,6 +46,22 @@ export const tmRemoveTool: ToolDefinition = {
 
     try {
       ctx.team.removeTeammate(name, force);
+
+      // If the teammate had an assigned worktree, close its cleanup todo and
+      // remove the worktree store record. The actual git worktree directory
+      // is left for the lead to remove via bash (e.g., git worktree remove).
+      const wt = getWorktree(name);
+      if (wt) {
+        const todo = ctx.todo.getItems().find(
+          (i) => i.note === `cwd=${wt.path}` && !i.done
+        );
+        if (todo) {
+          ctx.todo.updateTodo(todo.id, todo.hash, todo.name, true, todo.note);
+        }
+        removeWorktree(name);
+        ctx.core.brief('info', 'tm_remove', `Removed worktree record for '${name}' at ${wt.path}`);
+      }
+
       return 'OK';
     } catch (error: unknown) {
       const err = error as Error;

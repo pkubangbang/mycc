@@ -62,13 +62,8 @@ const TOOL_COLORS: Record<string, (text: string) => string> = {
   bg_remove: chalk.red,
   bg_await: chalk.blue,
 
-  // Git & Worktrees
+  // Git
   git_commit: chalk.greenBright,
-  wt_create: chalk.cyan,
-  wt_enter: chalk.cyan,
-  wt_leave: chalk.cyan,
-  wt_print: chalk.cyan,
-  wt_remove: chalk.red,
 
   // Screen & Vision
   screen: chalk.greenBright,

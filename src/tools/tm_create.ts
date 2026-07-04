@@ -5,6 +5,7 @@
  */
 
 import type { ToolDefinition, AgentContext } from '../types.js';
+import { addWorktree } from '../context/worktree-store.js';
 
 export const tmCreateTool: ToolDefinition = {
   name: 'tm_create',
@@ -24,6 +25,10 @@ export const tmCreateTool: ToolDefinition = {
         type: 'string',
         description: 'Initial instructions and context for the teammate to follow',
       },
+      cwd: {
+        type: 'string',
+        description: 'Working directory for the teammate (e.g., a worktree path). If omitted, uses the lead\'s current working directory. Use this to spawn a teammate directly inside a git worktree for parallel branch work.',
+      },
     },
     required: ['name', 'role', 'prompt'],
   },
@@ -32,6 +37,7 @@ export const tmCreateTool: ToolDefinition = {
     const name = args.name as string;
     const role = args.role as string;
     const prompt = args.prompt as string;
+    const cwd = args.cwd as string | undefined;
 
     // Validate required parameters
     if (!name || typeof name !== 'string') {
@@ -50,7 +56,23 @@ export const tmCreateTool: ToolDefinition = {
     ctx.core.brief('info', 'tm_create', `Creating teammate '${name}' with role: ${role}`, prompt);
 
     try {
-      const result = await ctx.team.createTeammate(name, role, prompt);
+      const result = await ctx.team.createTeammate(name, role, prompt, cwd);
+
+      // If a cwd (worktree) was assigned, record it in the worktree store
+      // and create a cleanup-tracking todo so the lead remembers to remove it.
+      if (cwd) {
+        addWorktree({
+          name,
+          path: cwd,
+          branch: '',
+          createdAt: new Date(),
+          owner: name,
+        });
+        ctx.todo.createTodo(
+          `Remove worktree for teammate '${name}'`,
+          `cwd=${cwd}`
+        );
+      }
 
       // Check if this is the first teammate created
       const teammates = ctx.team.listTeammates();

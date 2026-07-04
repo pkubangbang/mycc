@@ -69,6 +69,8 @@ export interface MachineEnv {
   crossroadOccurred: boolean;
   /** Semantic duplication tracker for embedding-based confusion scoring */
   requestEmbeddingTracker: RequestEmbeddingTracker;
+  /** Countdown to the next worktree cleanup nudge (0 = no worktrees present) */
+  nextWtNudge: number;
 }
 
 /** Turn lifetime — fresh when entering PROMPT from STOP/startup, persists across COLLECT→LLM→HOOK iterations */
@@ -142,6 +144,7 @@ export class AgentStateMachine {
       pendingSlashQuery: null,
       crossroadOccurred: false,
       requestEmbeddingTracker,
+      nextWtNudge: 0,
     };
     this.handlers = handlers;
   }

@@ -19,7 +19,6 @@ import { getTokenThreshold, getSessionContext, getSessionDir, setSessionContext 
 import { Triologue } from '../loop/triologue.js';
 import { ipc, sendStatus } from './child/ipc-helpers.js';
 
-const WORKDIR = process.cwd();
 const POLL_INTERVAL = 5000; // 5 seconds
 const CONFUSION_THRESHOLD = 10; // Same as main process
 const MIN_MESSAGES_FOR_HINT = 6; // Same as main process
@@ -31,6 +30,9 @@ let ctx: AgentContext;
 let shutdownRequested = false;
 let triologuePath = '';
 let pendingModeChange: 'plan' | 'normal' | null = null;
+
+// Working directory — set from spawn message (defaults to process.cwd())
+let WORKDIR = process.cwd();
 
 // Budget/deadline tracking
 let budgetSent = false;
@@ -101,7 +103,7 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
   // Tools that are purely exploratory (information gathering)
   const EXPLORATION_TOOLS = new Set([
     'read_file', 'web_search', 'web_fetch', 'brief', 'issue_list',
-    'wt_print', 'bg_print', 'tm_print', 'question', 'recall',
+    'bg_print', 'tm_print', 'question', 'recall',
   ]);
 
   // Loop-scope tracking for time management
@@ -112,7 +114,7 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
   const ACTION_TOOLS = new Set([
     'write_file', 'edit_file', 'todo_create', 'todo_update', 'issue_create', 'issue_close',
     'issue_claim', 'issue_comment', 'blockage_create', 'blockage_remove',
-    'tm_create', 'tm_remove', 'wt_create', 'wt_remove', 'bg_create',
+    'tm_create', 'tm_remove', 'bg_create',
     'bg_remove', 'mail_to', 'broadcast', 'git_commit',
   ]);
 
@@ -434,9 +436,15 @@ async function handleSpawn(msg: {
   prompt: string;
   triologuePath?: string;
   sessionId?: string;
+  cwd?: string;
 }): Promise<void> {
   teammateName = msg.name;
   teammateRole = msg.role;
+
+  // Set working directory from spawn message (e.g., a worktree path) or fall back to process.cwd()
+  if (msg.cwd) {
+    WORKDIR = msg.cwd;
+  }
 
   // Set session context before creating any mailboxes (fail-fast)
   if (msg.sessionId) {

@@ -29,7 +29,7 @@ const PROJECT_ROOT = getProjectRoot();
  * IPC message types (parent to child)
  */
 type ParentMessage =
-  | { type: 'spawn'; name: string; role: string; prompt: string; sessionId: string }
+  | { type: 'spawn'; name: string; role: string; prompt: string; sessionId: string; cwd?: string }
   | { type: 'message'; from: string; title: string; content: string }
   | { type: 'shutdown' }
   | { type: 'mode_change'; mode: 'plan' | 'normal' }
@@ -95,12 +95,15 @@ export class TeamManager implements TeamModule {
    * Spawn a teammate as a child process
    * Waits for the child to send 'teammate_ready' before returning
    */
-  async createTeammate(name: string, role: string, prompt: string): Promise<string> {
+  async createTeammate(name: string, role: string, prompt: string, cwd?: string): Promise<string> {
     // Check if teammate already exists
     const existing = this.getTeammate(name);
     if (existing && existing.status !== 'shutdown') {
       return `Error: Teammate '${name}' already exists with status ${existing.status}`;
     }
+
+    // Determine working directory: use provided cwd (e.g., a worktree) or lead's workdir
+    const spawnCwd = cwd || this.context.core.getWorkDir();
 
     // Generate triologue path in session directory
     const sessionId = getSessionId(this.sessionFilePath);
@@ -130,10 +133,15 @@ export class TeamManager implements TeamModule {
     const mailbox = new MailBox(name);
     mailbox.clearUnread();
 
-    // Spawn child process using tsx
+    // Spawn child process using tsx.
+    // NOTE: the process cwd is ALWAYS the project root (not the worktree), so that
+    // relative `.mycc/` store paths (sessions, mail, issues, memory-store) resolve
+    // against the real project store. The teammate's agent WORKDIR (which drives
+    // bash/file/grant/bg via core.getWorkDir()) is conveyed separately via the
+    // spawn IPC message's `cwd` field and applied in teammate-worker.ts.
     const child = spawnTsx({
       script: path.join(PROJECT_ROOT, 'src', 'context', 'teammate-worker.ts'),
-      cwd: this.context.core.getWorkDir(),
+      cwd: PROJECT_ROOT,
       stdio: ['pipe', 'pipe', 'pipe', 'ipc'],
     });
 
@@ -170,6 +178,7 @@ export class TeamManager implements TeamModule {
       prompt,
       triologuePath,
       sessionId,
+      cwd: spawnCwd,
     });
 
     // Wait for 'teammate_ready' notification with 30s timeout

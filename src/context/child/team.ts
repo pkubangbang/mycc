@@ -28,7 +28,7 @@ export class ChildTeam implements TeamModule {
    * Request lead to create a teammate (via mail)
    * Lead decides whether to act on this suggestion
    */
-  async createTeammate(name: string, role: string, prompt: string): Promise<string> {
+  async createTeammate(name: string, role: string, prompt: string, cwd?: string): Promise<string> {
     const mail = new MailBox('lead');
     mail.appendMail(
       this.owner,
@@ -37,6 +37,7 @@ export class ChildTeam implements TeamModule {
         `I suggest creating a teammate:`,
         `- Name: ${name}`,
         `- Role: ${role}`,
+        ...(cwd ? [`- Working directory: ${cwd}`] : []),
         ``,
         `Reason/Prompt:`,
         prompt,

@@ -12,6 +12,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import { execSync } from 'child_process';
 import type { WorkTree } from '../types.js';
 import { getMyccDir } from '../config.js';
 
@@ -119,4 +120,98 @@ export function removeWorktree(name: string): boolean {
 export function getWorktree(name: string): WorkTree | undefined {
   const worktrees = loadWorktrees();
   return worktrees.find(w => w.name === name);
+}
+
+/**
+ * Parse git worktree list --porcelain output
+ */
+interface GitWorktreeInfo {
+  path: string;
+  commit: string;
+  branch: string | null;
+}
+
+function parseGitWorktreeList(output: string): GitWorktreeInfo[] {
+  const worktrees: GitWorktreeInfo[] = [];
+  const lines = output.split('\n');
+  let current: Partial<GitWorktreeInfo> | null = null;
+
+  for (const line of lines) {
+    if (line.startsWith('worktree ')) {
+      if (current && current.path) {
+        worktrees.push(current as GitWorktreeInfo);
+      }
+      current = { path: line.substring(9) };
+    } else if (line.startsWith('HEAD ')) {
+      if (current) current.commit = line.substring(5);
+    } else if (line.startsWith('branch ')) {
+      if (current) current.branch = line.substring(7);
+    }
+  }
+
+  // Add last worktree
+  if (current && current.path) {
+    worktrees.push(current as GitWorktreeInfo);
+  }
+
+  return worktrees;
+}
+
+/**
+ * Sync the worktree store with actual git worktrees.
+ * Reconciles orphaned records (in store but not in git) and missing records
+ * (in git but not in store). Only tracks worktrees inside the .worktrees directory.
+ *
+ * @param workDir - The project working directory
+ */
+export function syncWorkTrees(workDir: string): void {
+  try {
+    // Get actual git worktrees
+    const output = execSync('git worktree list --porcelain', {
+      cwd: workDir,
+      encoding: 'utf-8',
+      stdio: ['pipe', 'pipe', 'pipe'], // Capture stderr to suppress fatal messages
+    });
+    const gitWorktrees = parseGitWorktreeList(output);
+
+    // Get stored records
+    const storedRecords = loadWorktrees();
+
+    // Build maps for comparison
+    const storedByPath = new Map(storedRecords.map(r => [r.path, r]));
+    const gitByPath = new Map(gitWorktrees.map(w => [w.path, w]));
+
+    // Find orphaned records (in store but not in git)
+    for (const record of storedRecords) {
+      if (!gitByPath.has(record.path)) {
+        // Remove orphaned record
+        removeWorktree(record.name);
+      }
+    }
+
+    // Find missing records (in git but not in store)
+    for (const worktree of gitWorktrees) {
+      // Skip the main worktree (project root)
+      if (worktree.path === workDir) continue;
+
+      // Skip worktrees outside .worktrees directory (user-created)
+      if (!worktree.path.includes('.worktrees')) continue;
+
+      if (!storedByPath.has(worktree.path)) {
+        // Extract name from path
+        const name = path.basename(worktree.path);
+        const branch = worktree.branch ? path.basename(worktree.branch) : 'detached';
+
+        // Add missing record
+        addWorktree({
+          name,
+          path: worktree.path,
+          branch,
+          createdAt: new Date(),
+        });
+      }
+    }
+  } catch {
+    // Git not available or no worktrees - ignore
+  }
 }

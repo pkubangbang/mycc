@@ -20,7 +20,6 @@ const EXPLORATION_TOOLS = new Set([
   'web_fetch',
   'brief',
   'issue_list',
-  'wt_print',
   'bg_print',
   'tm_print',
   'question',

@@ -20,6 +20,7 @@ import { agentIO } from './agent-io.js';
 import { shouldSkipHealthCheck } from '../config.js';
 import { loader } from '../context/shared/loader.js';
 import { getLayerBaseDir } from '../utils/skill-path-resolver.js';
+import { syncWorkTrees } from '../context/worktree-store.js';
 import { initializeSession } from '../session/index.js';
 import { ConditionRegistry } from '../hook/conditions.js';
 import { Sequence } from '../hook/sequence.js';
@@ -167,7 +168,7 @@ export async function main(): Promise<void> {
   ctx.core.addExternalAutoGrant(getLayerBaseDir('user'));
 
   await loader.indexAllSkillsToWiki(ctx.wiki);
-  await ctx.wt.syncWorkTrees();
+  syncWorkTrees(process.cwd());
 
   // Load mindmap
   const workDir = process.cwd();

@@ -32,11 +32,6 @@ import { blockageCreateTool } from '../../tools/blockage_create.js';
 import { blockageRemoveTool } from '../../tools/blockage_remove.js';
 import { webFetchTool } from '../../tools/web_fetch.js';
 import { webSearchTool } from '../../tools/web_search.js';
-import { wtCreateTool } from '../../tools/wt_create.js';
-import { wtRemoveTool } from '../../tools/wt_remove.js';
-import { wtEnterTool } from '../../tools/wt_enter.js';
-import { wtLeaveTool } from '../../tools/wt_leave.js';
-import { wtPrintTool } from '../../tools/wt_print.js';
 import { bgCreateTool } from '../../tools/bg_create.js';
 import { bgPrintTool } from '../../tools/bg_print.js';
 import { bgRemoveTool } from '../../tools/bg_remove.js';
@@ -89,11 +84,6 @@ export const builtInTools: ToolDefinition[] = [
   blockageRemoveTool,
   webFetchTool,
   webSearchTool,
-  wtCreateTool,
-  wtRemoveTool,
-  wtEnterTool,
-  wtLeaveTool,
-  wtPrintTool,
   bgCreateTool,
   bgPrintTool,
   bgRemoveTool,

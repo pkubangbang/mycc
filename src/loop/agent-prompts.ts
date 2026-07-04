@@ -450,9 +450,8 @@ Your very first tool call MUST be a mail_to to "lead" with an eta (seconds from 
 - You will get REMINDER notes showing remaining seconds (~30s left., etc.).
 
 ### Worktree Usage
-Only use worktrees (wt_create / wt_enter) when strictly necessary
-e.g., when you need to work on a different branch than the main project.
-For most tasks, you can work directly in the project directory without creating a worktree.
+Worktrees are managed via bash (git worktree commands). Use the worktree skill for guidance.
+The lead creates worktrees and assigns them to teammates at spawn time via the \`cwd\` parameter of \`tm_create\`.
 Avoid unnecessary worktree creation as it adds complexity and can cause path confusion.
 
 ${buildKnowledgeBoundarySection()}

@@ -8,12 +8,11 @@ import { Todo } from './shared/todo.js';
 import { MailBox } from './shared/mail.js';
 import { IssueManager } from './parent/issue.js';
 import { BackgroundTasks } from './shared/bg.js';
-import { WorktreeManager } from './parent/wt.js';
 import { TeamManager } from './parent/team.js';
 import { WikiManager } from './parent/wiki.js';
 import { loader } from './shared/loader.js';
 import { evaluateGrant } from './grant/index.js';
-import type { CoreModule, TodoModule, MailModule, SkillModule, IssueModule, BgModule, WtModule, TeamModule } from '../types.js';
+import type { CoreModule, TodoModule, MailModule, SkillModule, IssueModule, BgModule, TeamModule } from '../types.js';
 
 // Re-export loader for convenience
 export { loader };
@@ -29,7 +28,6 @@ export class ParentContext implements AgentContext {
   private skillModule: SkillModule;
   private issueModule: IssueManager;
   private bgModule: BackgroundTasks;
-  private wtModule: WorktreeManager;
   private teamModule: TeamManager;
   private wikiModule: WikiManager;
 
@@ -40,7 +38,6 @@ export class ParentContext implements AgentContext {
     this.mailModule = new MailBox('lead');
     this.issueModule = new IssueManager();
     this.bgModule = new BackgroundTasks(this.coreModule);
-    this.wtModule = new WorktreeManager(this.coreModule);
     // Pass 'this' to TeamManager - context is used lazily so this is safe
     this.teamModule = new TeamManager(this, sessionFilePath);
     this.wikiModule = new WikiManager(this.coreModule);
@@ -53,7 +50,6 @@ export class ParentContext implements AgentContext {
   get skill(): SkillModule { return this.skillModule; }
   get issue(): IssueModule { return this.issueModule; }
   get bg(): BgModule { return this.bgModule; }
-  get wt(): WtModule { return this.wtModule; }
   get team(): TeamModule { return this.teamModule; }
   get wiki(): WikiModule { return this.wikiModule; }
 
@@ -151,48 +147,6 @@ export class ParentContext implements AgentContext {
         handler: async (_sender, _payload, ctx, sendResponse) => {
           ctx.issue.clearAll();
           sendResponse('db_result', true);
-        },
-      },
-      // Worktree handlers
-      {
-        messageType: 'wt_create',
-        module: 'wt',
-        handler: async (_sender, payload, ctx, sendResponse) => {
-          const { name, branch } = payload as { name: string; branch: string };
-          const result = await ctx.wt.createWorkTree(name, branch);
-          const match = result.match(/at (.+) on branch/);
-          const wtPath = match ? match[1] : '';
-          sendResponse('wt_result', true, { path: wtPath });
-        },
-      },
-      {
-        messageType: 'wt_print',
-        module: 'wt',
-        handler: async (_sender, _payload, ctx, sendResponse) => {
-          const output = await ctx.wt.printWorkTrees();
-          sendResponse('wt_result', true, output);
-        },
-      },
-      {
-        messageType: 'wt_get_path',
-        module: 'wt',
-        handler: async (_sender, payload, ctx, sendResponse) => {
-          const { name } = payload as { name: string };
-          try {
-            const path = await ctx.wt.getWorkTreePath(name);
-            sendResponse('wt_result', true, { path });
-          } catch (err) {
-            sendResponse('wt_result', false, undefined, (err as Error).message);
-          }
-        },
-      },
-      {
-        messageType: 'wt_remove',
-        module: 'wt',
-        handler: async (_sender, payload, ctx, sendResponse) => {
-          const { name } = payload as { name: string };
-          await ctx.wt.removeWorkTree(name);
-          sendResponse('wt_result', true);
         },
       },
       // Team handlers

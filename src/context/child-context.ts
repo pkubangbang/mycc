@@ -2,13 +2,12 @@
  * child-context.ts - ChildContext for child process (teammate)
  */
 
-import type { AgentContext, SkillModule, CoreModule, TodoModule, MailModule, IssueModule, BgModule, WtModule, TeamModule, WikiModule } from '../types.js';
+import type { AgentContext, SkillModule, CoreModule, TodoModule, MailModule, IssueModule, BgModule, TeamModule, WikiModule } from '../types.js';
 import { Todo } from './shared/todo.js';
 import { MailBox } from './shared/mail.js';
 import { Loader } from './shared/loader.js';
 import { ChildCore } from './child/core.js';
 import { ChildIssue } from './child/issue.js';
-import { ChildWt } from './child/wt.js';
 import { ChildTeam } from './child/team.js';
 import { ChildWiki } from './child/wiki.js';
 import { BackgroundTasks } from './shared/bg.js';
@@ -30,7 +29,6 @@ export class ChildContext implements AgentContext {
   private skillModule: SkillModule;
   private issueModule: ChildIssue;
   private bgModule: BackgroundTasks;
-  private wtModule: ChildWt;
   private teamModule: ChildTeam;
   private wikiModule: ChildWiki;
 
@@ -41,7 +39,6 @@ export class ChildContext implements AgentContext {
     this.skillModule = silentLoader;
     this.issueModule = new ChildIssue();
     this.bgModule = new BackgroundTasks(this.coreModule);
-    this.wtModule = new ChildWt(this.coreModule);
     this.teamModule = new ChildTeam(name); // Pass owner name for mailTo
     this.wikiModule = new ChildWiki();
   }
@@ -53,7 +50,6 @@ export class ChildContext implements AgentContext {
   get skill(): SkillModule { return this.skillModule; }
   get issue(): IssueModule { return this.issueModule; }
   get bg(): BgModule { return this.bgModule; }
-  get wt(): WtModule { return this.wtModule; }
   get team(): TeamModule { return this.teamModule; }
   get wiki(): WikiModule { return this.wikiModule; }
 }
