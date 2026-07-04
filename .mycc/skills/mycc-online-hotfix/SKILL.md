@@ -157,6 +157,40 @@ if ((normalized.startsWith('"') && normalized.endsWith('"')) ||
 }
 ```
 
+### mycc Enter Throttle (sending user input)
+
+**Problem:** mycc has throttle logic that rejects an Enter keypress if it comes
+too quickly after the prompt becomes ready (prevents accidental double-submit).
+If you send the input text and `Enter` in a **single** `tmux send-keys` call
+(e.g. `tmux send-keys -t s 'some query' Enter`), the text and Enter are typed
+back-to-back with no gap — the throttle fires and the input may be ignored or
+mis-timed.
+
+**Solution:** Send the text and the `Enter` as **two separate** tmux commands,
+with a ~2 second pause **between** them, so the pause lands right before the
+Enter:
+
+```bash
+# 1. Type the text (NO Enter yet)
+tmux send-keys -t mycc-test "your query here"
+
+# 2. Pause ~2 seconds
+sleep 2            # bash:   sleep 2
+Start-Sleep -Seconds 2   # PowerShell
+
+# 3. NOW press Enter
+tmux send-keys -t mycc-test Enter
+```
+
+**Wrong** (single call — text and Enter typed with no gap, throttle may trip):
+```bash
+tmux send-keys -t mycc-test "your query here" Enter
+```
+
+This applies to any input submitted at the `agent >>` prompt: queries,
+`y`/`n` confirmations, etc. Always split text and Enter into two commands with
+a pause between when submitting user input to mycc.
+
 ### Shell Quoting Differences (Platform-Specific)
 
 **Windows cmd.exe:** Treats quotes differently, may pass them literally to commands.
