@@ -276,6 +276,9 @@ You CANNOT:
 ## Documenting Your Plan
 
 You can enable editing on a doc file via plan_on(allowed_file="docs/plan.md").
+This works even when you are ALREADY in plan mode (including strict plan mode):
+calling plan_on with allowed_file re-prompts the user and enables editing for that
+one file while you stay in plan mode. All other files remain blocked.
 
 ## Exiting Plan Mode
 
