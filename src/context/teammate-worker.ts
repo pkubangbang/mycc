@@ -326,10 +326,16 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
       if (confusionIndex >= CONFUSION_THRESHOLD && messageCount >= MIN_MESSAGES_FOR_HINT) {
         const lastRole = triologue.getLastRole();
         if (lastRole === 'assistant' || lastRole === 'tool') {
-          // Send help request to lead
-          ctx.team.mailTo('lead', 'Stuck - need guidance',
-            `I'm stuck (confusion index: ${confusionIndex}). ` +
-            `Please provide guidance or clarify the next steps. ` +
+          // Send guidance request to lead. NOTE: reaching the confusion
+          // threshold means the teammate has done enough turns without a
+          // strong progress signal that a check-in would help — it is NOT
+          // necessarily blocked. The wording reflects that the teammate is
+          // still working and is asking for direction/feedback, so the lead
+          // doesn't mistake this for a hard blocker (which caused false
+          // "stuck" alarms and premature teammate removals in the past).
+          ctx.team.mailTo('lead', 'Guidance request',
+            `Guidance request (confusion index: ${confusionIndex}). ` +
+            `I'm working but could benefit from direction or feedback. ` +
             `Current state: ${ctx.todo.hasOpenTodo() ? ctx.todo.printTodoList() : 'No active todos'}`,
             ctx.core.getName());
 
