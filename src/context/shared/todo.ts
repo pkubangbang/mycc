@@ -56,6 +56,14 @@ export class Todo implements TodoModule {
     existing.note = note;
     existing.hash = computeHash(name, done, note);
 
+    // Auto-clear: when every item is done, drop the list so the prompt
+    // stops showing a fully-checked checklist. Keep nextId monotonic
+    // across the session so IDs never collide with prior (now-cleared)
+    // hash references the LLM may still hold in the triologue.
+    if (this.items.length > 0 && this.items.every((i) => i.done)) {
+      this.items = [];
+    }
+
     return { ...existing };
   }
 
