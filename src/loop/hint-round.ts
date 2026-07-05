@@ -46,7 +46,8 @@ CRITICAL INSTRUCTIONS:
 1. If there are NO REAL blockers preventing progress, set blocker to exactly: "no blockers"
 2. Do NOT fabricate blockers. "no blockers" means the agent should simply continue with the current task.
 3. When the blocker involves errors, unfamiliar tools, or missing knowledge, ALWAYS suggest a wiki search by setting wiki_domain and wiki_query. The available domains are listed below. Only leave both empty if the blocker is purely about code logic or syntax.
-4. Reply with ONLY a JSON object. No commentary, no markdown fences. The schema is:
+4. In the conversation context, tool calls tagged as ti[hook-name]|tool-name|args were injected by a hookish skill, NOT chosen by the agent. When diagnosing confusion, consider whether a hook is misbehaving — injecting the wrong tool, blocking spuriously, replacing incorrectly, or firing when it shouldn't. If a hook is the blocker, name the hook skill in the blocker field and describe what it is doing wrong.
+5. Reply with ONLY a JSON object. No commentary, no markdown fences. The schema is:
 ${JSON.stringify(HINT_SCHEMA, null, 2)}`;
 
 /** Minimal triologue surface needed by hint round generation */

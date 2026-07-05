@@ -59,7 +59,15 @@ export function minifyMessages(
     if (msg.role === 'assistant' && msg.tool_calls?.length) {
       for (const tc of msg.tool_calls) {
         const args = truncateArgs(tc.function.arguments, maxArgsLength);
-        lines.push(`ti|${tc.function.name}|${args}`);
+        // Hook-injected calls use IDs of the form `hook-${skillName}-${timestamp}`.
+        // Surface the hook skill name so downstream consumers (hint round) can
+        // attribute tool calls to hookish skills rather than the agent.
+        // Note: Ollama's ToolCall type lacks `id`, but mycc's extended ToolCall
+        // (src/types.ts) adds it; tool_calls populated by the triologue carry it.
+        const hookName = extractHookName((tc as { id?: string }).id);
+        lines.push(hookName
+          ? `ti[${hookName}]|${tc.function.name}|${args}`
+          : `ti|${tc.function.name}|${args}`);
       }
       // Also include text content if present
       if (msg.content?.trim()) {
@@ -103,6 +111,19 @@ function truncateArgs(args: Record<string, unknown>, maxLen: number): string {
   }
   const compact = `{${parts.join(',')}}`;
   return compact.length <= maxLen ? compact : `${compact.slice(0, maxLen - 3)  }...`;
+}
+
+/**
+ * Extract the hookish skill name from a tool call ID.
+ * Hook-injected calls use IDs of the form `hook-${skillName}-${timestamp}`.
+ * Returns the skill name, or null if the ID is not a hook-originated call.
+ * The non-greedy `(.+?)` allows skill names containing hyphens (e.g.
+ * `lint-after-edit`) by expanding until the trailing `-timestamp` anchors.
+ */
+function extractHookName(id?: string): string | null {
+  if (!id) return null;
+  const m = id.match(/^hook-(.+?)-\d+$/);
+  return m ? m[1] : null;
 }
 
 // Note: isErrorResult is intentionally not placed here — it has platform-specific
