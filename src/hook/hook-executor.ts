@@ -68,7 +68,7 @@ export interface HookResult {
 export interface ProcessToolCallsResult {
   calls: AugmentedToolCall[];       // Modified array (blocked calls kept, injections added)
   blockedCalls: Map<string, string>; // toolCall.id → blocking message
-  deferredMessages: string[];        // Messages to inject after tool execution
+  deferredMessages: Array<{ hookName: string; message: string }>; // Messages to inject after tool execution, attributed to their originating hook
   compactRequested: boolean;         // Hook requested compaction
 }
 
@@ -79,7 +79,7 @@ interface CallProcessResult {
   calls: AugmentedToolCall[];  // Resulting calls (may be multiple due to inject_before)
   blocked: boolean;
   blockMessage?: string;
-  messages: string[];
+  messages: Array<{ hookName: string; message: string }>;
   compactRequested: boolean;
 }
 
@@ -443,7 +443,7 @@ export class HookExecutor {
   private async processStopTrigger(
     ctx: AgentContext,
     getSkill: (name: string) => { content?: string } | undefined
-  ): Promise<{ calls: AugmentedToolCall[]; messages: string[] }> {
+  ): Promise<{ calls: AugmentedToolCall[]; messages: Array<{ hookName: string; message: string }> }> {
     const matchedHooks = this.checkHooks('stop');
 
     if (matchedHooks.length === 0) {
@@ -455,7 +455,7 @@ export class HookExecutor {
     const sortedPriorities = Array.from(hooksByPriority.keys()).sort((a, b) => a - b);
 
     const calls: AugmentedToolCall[] = [];
-    const messages: string[] = [];
+    const messages: Array<{ hookName: string; message: string }> = [];
 
     for (const priority of sortedPriorities) {
       for (const { name: hookName, cond } of hooksByPriority.get(priority)!) {
@@ -467,7 +467,7 @@ export class HookExecutor {
         if (result.action === 'blocked') {
           // Blocking a stop trigger doesn't make sense - treat as message instead
           // This provides guidance to the agent about what to do instead
-          messages.push(result.message!);
+          messages.push({ hookName, message: result.message! });
           continue;
         }
 
@@ -486,7 +486,7 @@ export class HookExecutor {
         }
 
         if (result.action === 'proceed' && result.message) {
-          messages.push(result.message);
+          messages.push({ hookName, message: result.message });
         }
       }
     }
@@ -514,7 +514,7 @@ export class HookExecutor {
     const sortedPriorities = Array.from(hooksByPriority.keys()).sort((a, b) => a - b);
 
     let calls: AugmentedToolCall[] = [call];
-    const messages: string[] = [];
+    const messages: Array<{ hookName: string; message: string }> = [];
 
     for (const priority of sortedPriorities) {
       for (const { name: hookName, cond } of hooksByPriority.get(priority)!) {
@@ -532,7 +532,7 @@ export class HookExecutor {
           // Keep the call in array but mark as blocked with rejection message
           // Also capture any FYI message from the block hook
           if (result.message) {
-            messages.push(result.message);
+            messages.push({ hookName, message: result.message });
           }
           return { calls: [call], blocked: true, blockMessage: result.message, messages, compactRequested: false };
         }
@@ -541,7 +541,7 @@ export class HookExecutor {
           calls = result.newCalls as AugmentedToolCall[];
           // Capture FYI message about the hook intervention
           if (result.message) {
-            messages.push(result.message);
+            messages.push({ hookName, message: result.message });
           }
           // For blockers/replacers, return immediately (first wins)
           if (priority < 2) {
@@ -551,7 +551,7 @@ export class HookExecutor {
         }
 
         if (result.action === 'proceed' && result.message) {
-          messages.push(result.message);
+          messages.push({ hookName, message: result.message });
         }
       }
     }

@@ -112,7 +112,7 @@ export async function handlePrompt(
       command: command || undefined,
       intent: `RUN USER TO execute interactive command from user`,
     });
-    triologue.note('FYI', result);
+    triologue.note('REMINDER', result);
     env.ctx.core.resetConfusionIndex();
     return AgentState.PROMPT;
   }

@@ -97,11 +97,14 @@ export async function generateHintRound(
   // Build compact conversation context for analysis
   const messages = ctx.getMessagesRaw();
 
-  // Filter out system noise messages that would distract hint analysis
+  // Filter out system noise messages that would distract hint analysis.
+  // REMINDER now covers what was previously CONTINUE/FYI (merged into REMINDER).
+  // WRAP_UP remains a hardcoded string prefix (no longer a NoteCategory, but
+  // the literal "[WRAP_UP] ..." still appears in the triologue from beginWrapUp()).
   const filteredMessages = messages.filter(msg => {
     if (msg.role === 'system') return false;
     if (msg.role === 'user' && msg.content) {
-      if (/^\[(?:REMINDER|HINT|CONTINUE|FYI|WRAP_UP)\]/.test(msg.content)) return false;
+      if (/^\[(?:REMINDER|HINT|WRAP_UP)\]/.test(msg.content)) return false;
     }
     return true;
   });

@@ -197,9 +197,11 @@ export async function handleTool(
     }
   }
 
-  // Inject deferred hook messages after tool execution
-  if (hookResult.deferredMessages.length > 0) {
-    triologue.note('REMINDER', hookResult.deferredMessages.join('\n\n---\n\n'));
+  // Inject deferred hook messages after tool execution.
+  // Each deferred message carries its originating hook name so the minifier
+  // can emit ux[hookName]| and the hint round can attribute notes to hooks.
+  for (const dm of hookResult.deferredMessages) {
+    triologue.note('REMINDER', dm.message, dm.hookName);
   }
 
   return AgentState.COLLECT;

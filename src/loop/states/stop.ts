@@ -43,7 +43,7 @@ export async function handleStop(
     if (result === 'timeout') {
       const teamInfo = ctx.team.printTeam();
       triologue.note(
-        'TIMEOUT',
+        'SYSTEM',
         `Timeout waiting for teammates.\n${teamInfo}\n\n` +
         `Use tm_await to wait longer, or tm_remove to terminate.`,
       );

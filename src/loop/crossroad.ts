@@ -7,7 +7,7 @@
  * 2. Truncate output at the turning word (keep prefix A)
  * 3. Generate multiple continuations via forkChat in different directions
  * 4. Select the best continuation via LLM
- * 5. Reconstruct triologue with A + C_best + [CONTINUE] continue with your work
+ * 5. Reconstruct triologue with A + C_best + [REMINDER] continue with your work
  */
 
 import type { Message, Tool, ToolCall } from '../types.js';

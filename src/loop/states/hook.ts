@@ -10,7 +10,7 @@
  *
  * CROSSROAD: When crossroadContinuation is set on pass, the continuation is
  * merged into finalAssistantContent before triologue.agent() is called, and a
- * CONTINUE note is injected after. No mutation of triologue internals occurs.
+ * REMINDER note is injected after. No mutation of triologue internals occurs.
  * The flow goes to COLLECT so the LLM can regenerate tool calls.
  */
 
@@ -314,9 +314,10 @@ export async function handleHook(
 
       ctx.core.brief('info', 'crossroad', `Resolved: ${pass.assistantContent}\n${pass.crossroadContinuation}`);
 
-      // Inject deferred hook messages so the LLM sees them in the next round
-      if (hookResult.deferredMessages.length > 0) {
-        triologue.note('REMINDER', hookResult.deferredMessages.join('\n\n---\n\n'));
+      // Inject deferred hook messages so the LLM sees them in the next round.
+      // Each deferred message carries its originating hook name for attribution.
+      for (const dm of hookResult.deferredMessages) {
+        triologue.note('REMINDER', dm.message, dm.hookName);
       }
 
       pass.crossroadContinuation = undefined;
@@ -355,9 +356,12 @@ export async function handleHook(
     // No tool calls = all blocked or LLM produced none
     if (hookResult.calls.length === 0) {
       // Inject deferred hook messages so the LLM can respond to them
-      // (e.g., lint-after-edit, test-after-edit block messages)
+      // (e.g., lint-after-edit, test-after-edit block messages).
+      // Each deferred message carries its originating hook name for attribution.
       if (hookResult.deferredMessages.length > 0) {
-        triologue.note('REMINDER', hookResult.deferredMessages.join('\n\n---\n\n'));
+        for (const dm of hookResult.deferredMessages) {
+          triologue.note('REMINDER', dm.message, dm.hookName);
+        }
         return AgentState.COLLECT;
       }
       return AgentState.STOP;

@@ -48,7 +48,8 @@ export function minifyMessages(
   const { maxContentLength = 500, maxArgsLength = 200, truncateToolOutput = false } = options;
 
   const lines: string[] = [
-    '> ux = user, ax = assistant, ti = tool call, to = tool result'
+    '> ux = user, ax = assistant, ti = tool call, to = tool result',
+    '> [name] suffix = hook-injected (ux[name] = hook note, ti[name] = hook tool call)'
   ];
 
   for (const msg of messages) {
@@ -85,9 +86,15 @@ export function minifyMessages(
       continue;
     }
 
-    // Regular user/assistant messages
+    // Regular user/assistant messages.
+    // Hook-injected user-role notes carry hook_name metadata; surface it as
+    // `ux[hookName]|` (parallel to `ti[hookName]|` for hook tool calls) so
+    // downstream consumers (hint round) can attribute notes to their hook.
     const abbrev = ROLE_ABBREVS[msg.role] || msg.role;
-    lines.push(`${abbrev}|${truncate(msg.content || '', maxContentLength)}`);
+    const hookName = (msg as { hook_name?: string }).hook_name;
+    lines.push(hookName
+      ? `${abbrev}[${hookName}]|${truncate(msg.content || '', maxContentLength)}`
+      : `${abbrev}|${truncate(msg.content || '', maxContentLength)}`);
   }
 
   return lines.join('\n');

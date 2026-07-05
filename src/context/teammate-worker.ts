@@ -155,9 +155,9 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
       // 2. Check for pending mode change notifications
       if (pendingModeChange) {
         if (pendingModeChange === 'normal') {
-          triologue.note('SYSTEM_NOTIFICATION', 'Plan mode has ended. Code changes are now allowed. All tools (write_file, edit_file, bash) are fully functional. Proceed with your tasks.');
+          triologue.note('SYSTEM', 'Plan mode has ended. Code changes are now allowed. All tools (write_file, edit_file, bash) are fully functional. Proceed with your tasks.');
         } else {
-          triologue.note('SYSTEM_NOTIFICATION', 'Plan mode is now active. Code changes are temporarily restricted. Continue with read-only operations while waiting.');
+          triologue.note('SYSTEM', 'Plan mode is now active. Code changes are temporarily restricted. Continue with read-only operations while waiting.');
         }
         pendingModeChange = null;
       }
@@ -192,7 +192,7 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
       if (lastRole === 'assistant') {
         // Last message was assistant with no tool calls - need user message before next LLM call
         // This can happen after resuming from idle without new input
-        triologue.note('CONTINUE', 'Continue with your task.');
+        triologue.note('REMINDER', 'Continue with your task.');
       }
 
       triologue.setSystemPrompt(buildNormalModePrompt(WORKDIR, { name: teammateName, role: teammateRole }));
@@ -218,7 +218,7 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
         nextBriefNudge = 5;
         if (!budgetSent) {
           const exampleEta = Math.floor(Date.now() / 1000 + 120);
-          triologue.note('CONTINUE',
+          triologue.note('REMINDER',
             `Request a time budget from lead via mail_to(name="lead", eta=${exampleEta}, ...).`);
         } else if (!ctx.todo.hasOpenTodo()) {
           // No open todos and LLM produced no tool calls — likely done
@@ -231,7 +231,7 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
           // Resume work phase
           continue;
         } else {
-          triologue.note('CONTINUE', 'Use tools to make progress on the task.');
+          triologue.note('REMINDER', 'Use tools to make progress on the task.');
         }
         continue;
       }
@@ -350,7 +350,7 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
       ctx.core.brief('error', 'loop', `Error in main loop: ${errorMsg}. Recovering...`);
 
       // Add error to triologue so LLM knows what happened
-      triologue.note('SYSTEM_ERROR', `An error occurred: ${errorMsg}. Please continue with your task.`);
+      triologue.note('SYSTEM', `An error occurred: ${errorMsg}. Please continue with your task.`);
 
       // Brief pause before retrying
       await new Promise((resolve) => setTimeout(resolve, 1000));
@@ -405,7 +405,7 @@ async function enterIdleState(triologue: Triologue): Promise<'shutdown' | 'resum
           if (claimed) {
             ctx.core.brief('info', 'auto_claim', `Issue #${issue.id}: ${issue.title}`);
             // Identity is preserved in system prompt, no need to re-inject
-            triologue.note('AUTO_CLAIMED', `Issue #${issue.id}: ${issue.title}\n${issue.content || ''}`);
+            triologue.note('SYSTEM', `Issue #${issue.id}: ${issue.title}\n${issue.content || ''}`);
             return 'resume';
           }
         } catch (err) {

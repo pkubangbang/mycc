@@ -24,46 +24,47 @@ export interface ToolCall extends OllamaToolCall {
 
 /**
  * Categories for system-generated notes added to the conversation.
- * These are injected by the agent system (not from the actual user).
+ * These are injected by the agent system (not from the actual user) via
+ * `triologue.note(category, message, hookName?)`, which stores them as
+ * role:'user' messages with a `[CATEGORY]` prefix baked into the content.
+ *
+ * NOTE — Hardcoded content prefixes (NOT NoteCategory values):
+ * Several `[UPPERCASE]` prefixes appear in the conversation as string literals
+ * baked directly into message content, bypassing note(). They are kept here as
+ * a reference so readers don't mistake them for missing categories:
+ *   - `[WRAP_UP]`   — triologue.beginWrapUp() (triologue.ts)
+ *   - `[RECAP]`     — checkpoint-recap.ts recap summaries; hook.ts abandon note
+ *   - `[CHECKPOINT]`— checkpoint tool results (role:'tool', tool_name='checkpoint')
+ *   - `[Hook: <name>]` — hook block messages (hook-executor.ts, sequence.ts)
+ *   - `[Project Context - ...]`, `[Hooks Pending]`, `[System]`, `[DUMPED TOOL RESULT]`
+ *                   — project-context injection + longtext dump headers (triologue.ts)
+ * These intentionally stay as raw strings because they carry dynamic payload
+ * (skill names, file paths, checkpoint IDs) or live on role:'tool' messages,
+ * neither of which fits the static note() category model.
  */
 export type NoteCategory =
-  /** Todo nudges, status reminders */
+  /** Reminders: todo nudges, brief nudges, "continue with task" prompts, bang command results */
   | 'REMINDER'
   /** Problem analysis hints generated during confusion */
   | 'HINT'
-  /** Informational messages (e.g., bang command results) */
-  | 'FYI'
   /** Critical notifications requiring immediate attention (ESC interrupts) */
   | 'URGENT'
-  /** Checkpoint recap summaries replacing compressed message spans */
-  | 'RECAP'
-  /** System-level notifications (mode changes, configuration updates) */
-  | 'SYSTEM_NOTIFICATION'
-  /** Error notifications from the system */
-  | 'SYSTEM_ERROR'
-  /** Auto-claimed issue notifications for teammates */
-  | 'AUTO_CLAIMED'
-  /** Checkpoint markers for message compression */
-  | 'CHECKPOINT'
-  /** ESC wrap-up continuation messages */
-  | 'WRAP_UP'
+  /** System-level notifications: mode changes, errors, auto-claimed issues, team status, timeouts */
+  | 'SYSTEM'
   /** Inter-agent mail messages */
-  | 'MAIL'
-  /** "Continue with your task" prompts */
-  | 'CONTINUE'
-  /** Team status updates with deadline info */
-  | 'TEAM_STATUS'
-  /** Timeout notifications */
-  | 'TIMEOUT';
+  | 'MAIL';
 
 /**
  * Extended Message with tool response fields
  * - tool_name: the function name (Ollama API field)
  * - tool_call_id: hidden ID from agent's chat response (for alignment tracking)
+ * - hook_name: for user-role messages injected by hooks, the originating hook skill name
+ *   (used by the minifier to emit ux[hook-name]| and attribute the note to its source)
  */
 export interface Message extends OllamaMessage {
   reasoning_content?: string;
   tool_call_id?: string;
+  hook_name?: string;
 }
 
 // ============================================================================

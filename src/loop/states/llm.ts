@@ -160,7 +160,7 @@ export async function handleLlm(
         if (triologue.getLastRole() !== 'tool') {
           // Inject a synthetic brief tool call so the LLM sees its own
           // "Let me see what to do next." thought in the conversation,
-          // rather than a passive [CONTINUE] note. Confidence 7 means
+          // rather than a passive [REMINDER] note. Confidence 7 means
           // slightly uncertain, nudging confusion index toward hint threshold.
           const briefCallId = Math.random().toString(36).slice(2, 10);
           triologue.agent('', [{

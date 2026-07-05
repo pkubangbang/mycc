@@ -229,10 +229,14 @@ export class Triologue {
    * Internally uses role: 'user' with note_category metadata for filtering.
    * The category is prepended as a [TITLE] prefix on the content.
    *
-   * @param category - The note category (REMINDER, HINT, FYI, etc.)
+   * @param category - The note category (REMINDER, HINT, URGENT, SYSTEM, MAIL)
    * @param message - The note content
+   * @param hookName - Optional: the originating hook skill name. When set, the
+   *   note is stored as a SEPARATE message (never combined with the last user
+   *   message) and tagged with `hook_name` so the minifier can emit `ux[hookName]|`.
+   *   This preserves per-hook attribution when multiple hooks fire in one move.
    */
-  note(category: NoteCategory, message: string): void {
+  note(category: NoteCategory, message: string, hookName?: string): void {
     const lastRole = this.getLastRole();
     if (lastRole === 'tool') {
       const fixResult = attemptAutoFix(this, 'note_after_tool', lastRole);
@@ -241,13 +245,15 @@ export class Triologue {
       }
       if (fixResult === 'allowed') {
         // Provider supports tool → note natively — skip bridge, just append
-        this.addMessage({ role: 'user', content: `[${category}] ${message}` });
+        this.addMessage({ role: 'user', content: `[${category}] ${message}`, ...(hookName ? { hook_name: hookName } : {}) });
         return;
       }
       // 'recovered': bridge was injected, now lastRole is 'assistant'
     }
     const noteContent = `[${category}] ${message}`;
-    if (lastRole === 'user') {
+    // Hook-originated notes are always separate messages (never combined) so
+    // each hook retains its own attribution in the minifier output.
+    if (lastRole === 'user' && !hookName) {
       // Combine: append to last user message, then fire onMessage so
       // the JSONL transcript records this combined state.
       const lastMsg = this.messages[this.messages.length - 1];
@@ -256,7 +262,7 @@ export class Triologue {
       this.options.onMessage(this.messages);
       return;
     }
-    this.addMessage({ role: 'user', content: noteContent });
+    this.addMessage({ role: 'user', content: noteContent, ...(hookName ? { hook_name: hookName } : {}) });
   }
 
 
