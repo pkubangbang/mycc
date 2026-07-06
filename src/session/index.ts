@@ -509,15 +509,17 @@ export async function restoreSession(sessionArg: string): Promise<SessionInit> {
     process.exit(1);
   }
 
-  // Validate session files exist
+  // Check for missing triologue files. We only WARN now: prepareRestoration
+  // degrades gracefully (missing lead → empty-context pair; missing children
+  // → placeholder narratives via the READY-event scan). Hard-exiting here
+  // would prevent the user from continuing a partially-recorded session.
   const missingFiles = [
     session.lead_triologue,
     ...session.child_triologues,
   ].filter(p => !fs.existsSync(p));
 
   if (missingFiles.length > 0) {
-    console.error(chalk.red(`Session files missing: ${missingFiles.join(', ')}`));
-    process.exit(1);
+    console.warn(chalk.yellow(`[restore] Session files missing (will degrade gracefully): ${missingFiles.join(', ')}`));
   }
 
   console.log(chalk.cyan('Restoring session...'));

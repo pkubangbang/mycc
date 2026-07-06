@@ -15,7 +15,7 @@ import { retryChat, MODEL } from '../engine/chat-provider.js';
 import type { AgentContext, Message } from '../types.js';
 import type { ToolCall } from '../types.js';
 import { buildNormalModePrompt } from '../loop/agent-prompts.js';
-import { getTokenThreshold, getSessionContext, getSessionDir, setSessionContext } from '../config.js';
+import { getTokenThreshold, getSessionContext, getSessionDir, setSessionContext, isVerbose } from '../config.js';
 import { Triologue } from '../loop/triologue.js';
 import { ipc, sendStatus } from './child/ipc-helpers.js';
 
@@ -92,6 +92,15 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
   const tools = silentLoader.getToolsForScope('child');
   // Send ready notification (path already registered by parent)
   ipc.sendNotification('teammate_ready', { name: teammateName });
+
+  // Record the triologue file path in the lead's transcript so /load can
+  // recover it directly from the lead JSONL. This decouples session
+  // restoration from tm_create positional alignment: the path is
+  // self-reported by the teammate that actually created the file, and
+  // lands in the lead's triologue as a [MAIL] note at the next COLLECT.
+  // Format chosen to be greppable: "[READY] triologue file: <path>".
+  ctx.team.mailTo('lead', 'Teammate ready',
+    `[READY] triologue file: ${triologuePath}\nname: ${teammateName}`);
 
   // Todo nudging state (counter-based, same as lead agent)
   let nextTodoNudge = 3;
@@ -460,13 +469,17 @@ async function handleSpawn(msg: {
   // Create child context
   ctx = new ChildContext(teammateName, WORKDIR);
 
-  // Log initialization (ctx is now available)
-  ctx.core.brief('info', 'worker', `${teammateName} initializing...`);
+  // Startup lifecycle logs are verbose-only (see note above).
+  ctx.core.verbose('worker', `${teammateName} initializing...`);
 
   // Load tools and skills (silent mode - suppress loading logs)
   await silentLoader.loadAll();
 
-  ctx.core.brief('info', 'worker', `${teammateName} started successfully`);
+  // Startup lifecycle logs are verbose-only: they fire on every teammate
+  // spawn and would otherwise clutter the lead's terminal in normal mode.
+  // (ChildCore.verbose() forwards an IPC 'verbose' notification that the
+  // parent only prints when -v is set.)
+  ctx.core.verbose('worker', `${teammateName} started successfully`);
 
   // Run the teammate loop with the prompt (and pre-assigned triologue path)
   await teammateLoop(msg.prompt, msg.triologuePath);
@@ -520,8 +533,14 @@ process.on('SIGHUP', () => {
   process.exit(0);
 });
 
-// Log that worker is ready (before ctx is available, use sendNotification)
-ipc.sendNotification('log', { message: 'Worker process started, waiting for spawn message' });
+// Log that worker is ready (before ctx is available, use sendNotification).
+// Verbose-only: this fires on every teammate spawn and would otherwise clutter
+// the lead's terminal in normal mode. We send an IPC 'verbose' notification
+// (which the parent only prints under -v) gated by isVerbose() to avoid
+// unnecessary IPC traffic in normal mode.
+if (isVerbose()) {
+  ipc.sendNotification('verbose', { tool: 'worker', message: 'Worker process started, waiting for spawn message' });
+}
 
 // === Global Error Handlers - Keep Worker Alive ===
 process.on('uncaughtException', (err) => {

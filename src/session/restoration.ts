@@ -116,18 +116,66 @@ function fixOrphanedToolCalls(messages: Message[]): Message[] {
 }
 
 /**
- * Verify that teammate name matches the expected path
+ * Extract the teammate name from a child triologue file path.
+ *
+ * Filenames follow `triologue-{name}-{timestamp}.jsonl`, where `{name}` may
+ * itself contain hyphens and `{timestamp}` is a unix-seconds number. The
+ * regex anchors on the trailing `-{digits}.jsonl` so the greedy `.+`
+ * captures the full name regardless of internal hyphens/digits.
  */
-function ensureSameTeammate(teammate: string, summaryPath: string): void {
-  // Normalize path separators so the regex works on both Windows and Unix
+function extractTeammateFromPath(summaryPath: string): string {
   const normalizedPath = summaryPath.replace(/\\/g, '/');
-  // Extract teammate name from summary path (e.g., "teammate-foo-123" from path)
-  const pathMatch = normalizedPath.match(/\.mycc\/sessions\/[^/]+\/triologue-([^/]+)-.*\.jsonl/);
-  const pathTeammate = pathMatch ? pathMatch[1] : summaryPath;
+  const basename = normalizedPath.slice(normalizedPath.lastIndexOf('/') + 1);
+  const match = basename.match(/^triologue-(.+)-(\d+)\.jsonl$/);
+  if (match) return match[1];
+  const noExt = basename.replace(/\.jsonl$/, '');
+  return noExt.startsWith('triologue-') ? noExt.slice('triologue-'.length) : basename;
+}
 
-  if (!pathTeammate.startsWith(teammate)) {
-    throw new Error(`Teammate mismatch: expected "${teammate}" but summary path contains "${pathTeammate}"`);
+/**
+ * A "ready" event parsed from the lead transcript: a teammate reported its
+ * triologue file path via a `[READY] triologue file: <path>` mail note.
+ */
+interface ReadyEvent {
+  /** Teammate name (from the `name:` line, falling back to the filename). */
+  name: string;
+  /** Absolute path to the teammate's triologue JSONL. */
+  triologuePath: string;
+}
+
+/**
+ * Regex for the ready marker line. The teammate sends a mail whose body is:
+ *   [READY] triologue file: <path>\nname: <name>
+ * After collect.ts wraps it as a [MAIL] note, the content still contains the
+ * `[READY] triologue file:` substring, so a single regex over message content
+ * recovers the path. The `name:` line is optional (parsed separately).
+ */
+const READY_PATH_REGEX = /\[READY\] triologue file:\s*(.+)/;
+const READY_NAME_REGEX = /^name:\s*(.+)/m;
+
+/**
+ * Scan lead messages for teammate "ready" events.
+ *
+ * Each ready event is a mail note (role 'user', content starting with `[MAIL]`)
+ * containing a `[READY] triologue file: <path>` marker, emitted by the
+ * teammate right after it becomes ready (see teammate-worker.ts).
+ *
+ * Returns events in transcript order. If a teammate reported ready more than
+ * once (re-spawn), every occurrence is returned so the caller can decide how
+ * to merge them.
+ */
+function scanReadyEvents(messages: Message[]): ReadyEvent[] {
+  const events: ReadyEvent[] = [];
+  for (const m of messages) {
+    if (typeof m.content !== 'string') continue;
+    const pathMatch = m.content.match(READY_PATH_REGEX);
+    if (!pathMatch) continue;
+    const triologuePath = pathMatch[1].trim();
+    const nameMatch = m.content.match(READY_NAME_REGEX);
+    const name = nameMatch ? nameMatch[1].trim() : extractTeammateFromPath(triologuePath);
+    events.push({ name, triologuePath });
   }
+  return events;
 }
 
 /**
@@ -208,7 +256,51 @@ async function summarizeChildTriologue(messages: Message[]): Promise<SummaryPair
   return summarizeMessages(buffer);
 }
 
-async function summarizeLeadTriologue(messages: Message[], childSummaries: { path: string, summary: Message }[]) {
+/**
+ * Summarize a single child triologue by path, with graceful degradation.
+ *
+ * - Missing file → placeholder summary (warn, don't throw).
+ * - Empty/unreadable file → empty-conversation summary.
+ *
+ * @param name - Teammate name (for the narrative label).
+ * @param triologuePath - Path to the child's triologue JSONL.
+ * @returns A SummaryPair whose first element is the narrative-ready user message.
+ */
+async function summarizeChildByPath(name: string, triologuePath: string): Promise<SummaryPair> {
+  if (!fs.existsSync(triologuePath)) {
+    console.warn(chalk.yellow(`[restoration] Child triologue not found for ${name}, injecting placeholder: ${triologuePath}`));
+    return [
+      { role: 'user', content: `[${name} summary]\n[Teammate triologue file was missing or unreadable. No conversation summary available.]` },
+      { role: 'assistant', content: 'OK' },
+    ];
+  }
+  const triologue = readTriologue(triologuePath);
+  const fixedTriologue = fixOrphanedToolCalls(triologue);
+  const pair = await summarizeChildTriologue(fixedTriologue);
+  // Re-label the narrative with the teammate name so the lead can attribute it.
+  return [
+    { role: 'user', content: `[${name} summary]\n${pair[0].content}` },
+    pair[1],
+  ];
+}
+
+/**
+ * Summarize the lead triologue, injecting child summaries at "ready" events.
+ *
+ * Child summaries are NO LONGER pegged to tm_create tool results. Instead the
+ * lead transcript is scanned for `[READY] triologue file: <path>` mail notes
+ * (emitted by each teammate right after it becomes ready). At each ready note
+ * the corresponding child triologue is read, summarized, and its narrative is
+ * injected into the buffer — decoupled from tm_create positional alignment.
+ *
+ * tm_create tool results are now treated as ordinary messages: no positional
+ * queue, no "missing summary" throw. A missing/empty child triologue degrades
+ * to a placeholder for that one teammate only.
+ *
+ * Sessions recorded before the ready-mail mechanism existed will have no ready
+ * events and therefore no child summaries injected — by design.
+ */
+async function summarizeLeadTriologue(messages: Message[]) {
   if (messages.length === 0) {
     return [
       { role: 'user', content: '[Empty conversation]' },
@@ -216,54 +308,48 @@ async function summarizeLeadTriologue(messages: Message[], childSummaries: { pat
     ] as SummaryPair;
   }
 
+  // Pre-scan ready events so we can summarize children in parallel-ish order
+  // and report progress. Summaries are keyed by the ready event index.
+  const readyEvents = scanReadyEvents(messages);
+  if (readyEvents.length > 0) {
+    console.log(chalk.gray(`  Found ${readyEvents.length} teammate ready event(s) in lead transcript`));
+  }
+
+  // Summarize each child triologue up front (preserving order). Re-spawns of
+  // the same name produce one entry per ready event.
+  const childNarratives: Message[] = [];
+  for (const ev of readyEvents) {
+    const pair = await summarizeChildByPath(ev.name, ev.triologuePath);
+    childNarratives.push(pair[0]);
+  }
+
+  // Build a quick lookup from the ready note's source message content to its
+  // narrative, so we can inject the narrative right where the note appeared.
+  // We match on the `[READY] triologue file: <path>` substring, which uniquely
+  // identifies a ready event within the transcript.
+  const narrativeByPath = new Map<string, Message>();
+  for (let i = 0; i < readyEvents.length; i++) {
+    narrativeByPath.set(readyEvents[i].triologuePath, childNarratives[i]);
+  }
+
   // Buffer holds only Message[] — never pairs mixed in
   let buffer: Message[] = [];
   let tokens = 0;
-  const summaries = [...childSummaries];
 
-  // tool_call_id -> teammate name
-  const pendingTmCreateCall: Record<string, string> = {};
   for (const m of messages) {
-    if (Array.isArray(m.tool_calls)) {
-      for (const toolCall of m.tool_calls) {
-        if (toolCall.function.name === 'tm_create') {
-          const args = toolCall.function.arguments ?? {};
-          pendingTmCreateCall[(toolCall as ToolCall).id] = args.name || 'unknown';
+    // If this message is a ready note, inject the child's narrative summary
+    // ahead of the note itself so the context reads naturally.
+    if (typeof m.content === 'string') {
+      const pathMatch = m.content.match(READY_PATH_REGEX);
+      if (pathMatch) {
+        const p = pathMatch[1].trim();
+        const narrative = narrativeByPath.get(p);
+        if (narrative) {
+          buffer.push(narrative);
+          tokens += estimateTokens(narrative);
         }
       }
     }
-
-    if (m.tool_name === 'tm_create') {
-      const teammate = pendingTmCreateCall[m.tool_call_id || 'unknown'];
-      if (!teammate) {
-        throw new Error(`no corresponding teammate found for tool call ${m.tool_call_id}`)
-      }
-
-      // Check if tm_create was successful (response should not contain "Error:")
-      const responseContent = m.content || '';
-      const isFailed = responseContent.startsWith('Error:') || responseContent.includes('already exists');
-
-      if (isFailed) {
-        // tm_create failed - no triologue to inject, just skip
-        // The teammate was not spawned, so there's no summary to inject
-        delete pendingTmCreateCall[m.tool_call_id || 'unknown'];
-        continue;
-      }
-
-      const s = summaries.shift();
-
-      if (!s) {
-        throw new Error(`missing summary for teammate ${teammate}`);
-      }
-
-      ensureSameTeammate(teammate, s.path);
-
-      // inject the user narration of child's summary
-      const narration = createNarrativeSummary(teammate, s.summary);
-      buffer.push(narration);
-      tokens += estimateTokens(narration);
-    }
-
 
     buffer.push(m);
     tokens += estimateTokens(m);
@@ -368,42 +454,42 @@ export function extractFirstQuery(dosqContent: string): string {
 /**
  * Full session restoration workflow.
  * Returns a single summary pair and DOSQ path.
+ *
+ * Degradation policy:
+ * - Missing lead triologue → warn and return an empty-context pair. We do NOT
+ *   throw: the caller (restoreSession) still wants a DOSQ so the user can
+ *   write a fresh query and continue. Old/corrupt sessions are allowed to
+ *   fail soft rather than aborting the whole app via process.exit.
+ * - Missing child triologues are handled inside summarizeLeadTriologue via
+ *   the READY-event scan (each missing child becomes a placeholder narrative
+ *   for that one teammate only). Sessions recorded before the ready-mail
+ *   mechanism simply have no READY events and thus no child summaries — by
+ *   design ("do not cater for old sessions").
  */
 export async function prepareRestoration(session: Session): Promise<{ pair: SummaryPair; dosqPath: string }> {
-  // Validate lead triologue exists (required)
-  if (!fs.existsSync(session.lead_triologue)) {
-    throw new Error(`Lead triologue not found: ${session.lead_triologue}`);
-  }
-
   console.log(chalk.blue('Restoring session...'));
   console.log(chalk.gray(`  Lead triologue: ${session.lead_triologue}`));
-  console.log(chalk.gray(`  Child triologues: ${session.child_triologues.length}`));
+  console.log(chalk.gray(`  Child triologues (registered): ${session.child_triologues.length}`));
 
-  // Summarize child triologues - skip missing files
-  const childSummaries: { path: string, summary: Message }[] = [];
-  for (const path of session.child_triologues) {
-    if (!fs.existsSync(path)) {
-      console.warn(chalk.yellow(`[restoration] Child triologue not found, skipping: ${path}`));
-      continue;
-    }
-    const triologue = readTriologue(path);
-    const fixedTriologue = fixOrphanedToolCalls(triologue);
-    const pair = await summarizeChildTriologue(fixedTriologue);
-    childSummaries.push({
-      path,
-      summary: pair[0]
-    });
+  // Lead triologue is the primary record. If it is missing, degrade to an
+  // empty-context pair instead of throwing — the user can still continue.
+  let combined: SummaryPair;
+  if (!fs.existsSync(session.lead_triologue)) {
+    console.warn(chalk.yellow(`[restoration] Lead triologue not found, restoring with empty context: ${session.lead_triologue}`));
+    combined = [
+      { role: 'user', content: '[Context from previous conversation]\n\nThe lead triologue file was missing or unreadable. No prior context could be restored.' },
+      { role: 'assistant', content: 'Understood. Starting fresh since the prior session record is unavailable.' },
+    ];
+  } else {
+    // Read lead triologue, fix orphaned tool calls. Child summaries are
+    // discovered and injected via the READY-event scan inside
+    // summarizeLeadTriologue — no separate child loop here.
+    const rawLeadMessages = readTriologue(session.lead_triologue);
+    const leadMessages = fixOrphanedToolCalls(rawLeadMessages);
+    combined = await summarizeLeadTriologue(leadMessages);
+
+    console.log(chalk.gray(`  Processed ${leadMessages.length} lead messages`));
   }
-
-  console.log(chalk.gray(`  Summarized ${childSummaries.length} child triologues`));
-
-  // Read lead triologue, fix orphaned tool calls, and inject child summaries at tm_create positions
-  const rawLeadMessages = readTriologue(session.lead_triologue);
-  const leadMessages = fixOrphanedToolCalls(rawLeadMessages);
-  const combined = await summarizeLeadTriologue(leadMessages, childSummaries);
-
-  console.log(chalk.gray(`  Combined ${leadMessages.length + childSummaries.length} messages (lead + child summaries)`));
-
 
   // Generate DOSQ
   const dosqContent = generateDosq(session, combined);
