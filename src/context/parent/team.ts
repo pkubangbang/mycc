@@ -134,14 +134,15 @@ export class TeamManager implements TeamModule {
     mailbox.clearUnread();
 
     // Spawn child process using tsx.
-    // NOTE: the process cwd is ALWAYS the project root (not the worktree), so that
-    // relative `.mycc/` store paths (sessions, mail, issues, memory-store) resolve
-    // against the real project store. The teammate's agent WORKDIR (which drives
-    // bash/file/grant/bg via core.getWorkDir()) is conveyed separately via the
-    // spawn IPC message's `cwd` field and applied in teammate-worker.ts.
+    // Spawn with the LEAD's workdir as cwd so the teammate's relative `.mycc/`
+    // store resolves to the same project store the lead uses (shared
+    // session/mail/issues/mindmap). The `cwd` param above is NOT the process
+    // cwd — it's the teammate's sandboxed WORKDIR, sent via IPC and enforced
+    // by the grant system (writes confined to WORKDIR; reads outside it stay
+    // allowed).
     const child = spawnTsx({
       script: path.join(PROJECT_ROOT, 'src', 'context', 'teammate-worker.ts'),
-      cwd: PROJECT_ROOT,
+      cwd: this.context.core.getWorkDir(),
       stdio: ['pipe', 'pipe', 'pipe', 'ipc'],
     });
 
