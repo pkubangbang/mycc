@@ -73,7 +73,7 @@ export async function forkChat(
 ): Promise<string> {
   const msgs = [...messages];
   const lastIdx = msgs.length - 1;
-  if (lastIdx >= 0 && msgs[lastIdx].role === 'user') {
+  if (lastIdx >= 0 && msgs[lastIdx] && msgs[lastIdx].role === 'user') {
     msgs[lastIdx] = { ...msgs[lastIdx], content: `${msgs[lastIdx].content}\n\n${prompt}` };
   } else {
     msgs.push({ role: 'user', content: prompt });

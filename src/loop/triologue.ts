@@ -590,7 +590,16 @@ export class Triologue {
   // === Accessors ===
 
   /**
-   * Get messages with system prompt and project context prepended
+   * Get messages with system prompt and project context prepended.
+   *
+   * Defensive filtering: any undefined / null / non-object entry that slipped
+   * into `projectContext` or `messages` (e.g. via sparse-array length
+   * manipulation, wrap-up rollback, TP auto-fixer injection, or session
+   * restoration) is dropped here at the source. This prevents the DeepSeek
+   * provider from crashing with "Cannot read properties of undefined
+   * (reading 'role')" — a DeepSeek-specific failure because the Ollama
+   * native binding never reads `.role` from JS. The filter keeps a single
+   * chokepoint rather than guarding every possible producer of a hole.
    */
   getMessages(): Message[] {
     const result: Message[] = [];
@@ -600,10 +609,14 @@ export class Triologue {
     }
 
     // Inject project context (README, mindmap instructions, etc.)
-    result.push(...this.projectContext);
+    for (const m of this.projectContext) {
+      if (m && typeof m === 'object' && m.role) result.push(m);
+    }
 
     // Conversation history
-    result.push(...this.messages);
+    for (const m of this.messages) {
+      if (m && typeof m === 'object' && m.role) result.push(m);
+    }
 
     return result;
   }
@@ -631,11 +644,17 @@ export class Triologue {
 
 
   /**
-   * Get last message role, or null if empty
+   * Get last message role, or null if empty.
+   * Defensive: skip any trailing undefined / sparse-hole entries so a
+   * corrupted array tail (e.g. from length-manipulation or restore) cannot
+   * crash here with "Cannot read properties of undefined (reading 'role')".
    */
   getLastRole(): Role | null {
-    if (this.messages.length === 0) return null;
-    return this.messages[this.messages.length - 1].role as Role;
+    for (let i = this.messages.length - 1; i >= 0; i--) {
+      const m = this.messages[i];
+      if (m && typeof m === 'object' && m.role) return m.role as Role;
+    }
+    return null;
   }
 
   /**

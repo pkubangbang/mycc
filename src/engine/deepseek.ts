@@ -331,8 +331,14 @@ export async function retryChat(
       }
 
       try {
-        // Normalize messages from Ollama format to DeepSeek format
-        const messages = (request.messages || []).map(normalizeMessage);
+        // Normalize messages from Ollama format to DeepSeek format.
+        // Filter out any undefined / null / non-object entries defensively —
+        // getMessages() already filters, but this is a second chokepoint so a
+        // hole from any other caller (forkChat, retryMultipleChoice, wrap-up)
+        // can never reach normalizeMessage and crash on `extended.role`.
+        const messages = (request.messages || [])
+          .filter((m): m is OllamaMessage => !!m && typeof m === 'object' && m.role !== undefined)
+          .map(normalizeMessage);
 
         // Build DeepSeek request body
         const body: DeepSeekRequestBody = {
@@ -439,7 +445,7 @@ export async function retryMultipleChoice(
         const delay = calculateDelay(attempt, cfg);
         if (request.messages && request.messages.length > 0) {
           const lastMessage = request.messages[request.messages.length - 1];
-          if (lastMessage.role === 'user') {
+          if (lastMessage && lastMessage.role === 'user') {
             lastMessage.content += `\n\nYour previous response was invalid. You must respond with exactly one of: ${validChoices.join(', ')}. No other text.`;
           }
         }

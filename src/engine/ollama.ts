@@ -180,7 +180,7 @@ export async function retryMultipleChoice(
         const delay = calculateDelay(attempt, cfg);
         if (request.messages && request.messages.length > 0) {
           const lastMessage = request.messages[request.messages.length - 1];
-          if (lastMessage.role === 'user') {
+          if (lastMessage && lastMessage.role === 'user') {
             lastMessage.content += `\n\nYour previous response was invalid. You must respond with exactly one of: ${validChoices.join(', ')}. No other text.`;
           }
         }

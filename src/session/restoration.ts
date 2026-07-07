@@ -13,7 +13,7 @@ import * as path from 'path';
 import * as os from 'os';
 import chalk from 'chalk';
 import { retryChat, MODEL } from '../engine/chat-provider.js';
-import type { Message, ToolCall } from '../types.js';
+import type { Message } from '../types.js';
 import type { Session } from './types.js';
 import { getTokenThreshold } from '../config.js';
 import { estimateTokens } from '../utils/token.js';
@@ -176,16 +176,6 @@ function scanReadyEvents(messages: Message[]): ReadyEvent[] {
     events.push({ name, triologuePath });
   }
   return events;
-}
-
-/**
- * Create a narrative summary message for a child agent's conversation
- */
-function createNarrativeSummary(teammate: string, summary: Message): Message {
-  return {
-    role: 'user',
-    content: `[${teammate} summary]\n${summary.content}`,
-  };
 }
 
 /**
