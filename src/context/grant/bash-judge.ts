@@ -52,7 +52,7 @@ export async function judgeBash(
 
   // Step 3: Parse and validate intent grammar (local, no LLM)
   const parsed = parseIntent(intent);
-  const validation = validateIntent(parsed);
+  const validation = validateIntent(parsed, intent);
 
   if (!validation.valid) {
     // Return error with hint for LLM to retry

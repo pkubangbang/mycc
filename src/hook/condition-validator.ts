@@ -158,8 +158,9 @@ export function validateAction(action: unknown): ValidationResult {
           if (typeof intent !== 'string' || intent.trim() === '') {
             errors.push('action.args.intent is required for bash tool and must follow intent language: VERB OBJECT TO PURPOSE');
           } else {
-            const parsed = parseIntent(intent.trim());
-            const intentResult = validateIntent(parsed);
+            const trimmed = intent.trim();
+            const parsed = parseIntent(trimmed);
+            const intentResult = validateIntent(parsed, trimmed);
             if (!intentResult.valid) {
               errors.push(`action.args.intent: ${intentResult.error}${intentResult.hint ? ` — ${intentResult.hint}` : ''}`);
             }

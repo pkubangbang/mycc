@@ -16,6 +16,7 @@ import { describe, it, expect } from 'vitest';
 import {
   parseIntent,
   validateIntent,
+  detectMalformedParam,
   VALID_VERBS,
   VALID_OBJECTS,
 } from '../../context/grant/intent-parser.js';
@@ -273,5 +274,146 @@ describe('validateIntent', () => {
     const result = validateIntent(parsed);
     expect(result.valid).toBe(false);
     expect(result.error).toContain('Missing purpose');
+  });
+});
+
+// ═══════════════════════════════════════════════════════════
+// Malformed PARAM detection
+// ═══════════════════════════════════════════════════════════
+
+describe('detectMalformedParam', () => {
+  // ── Well-formed (no malformed PARAM) ──────────────────────
+
+  it('should return null when there are no PARAMs', () => {
+    expect(detectMalformedParam('READ SOURCE TO check deps')).toBeNull();
+  });
+
+  it('should return null for a single well-formed key=value', () => {
+    expect(detectMalformedParam('READ SOURCE path=src/utils.ts TO verify imports')).toBeNull();
+  });
+
+  it('should return null for multiple well-formed key=value pairs', () => {
+    expect(detectMalformedParam('INSTALL DEPENDENCY name=express version=4.18.0 TO add framework')).toBeNull();
+  });
+
+  it('should return null for snake_case keys', () => {
+    expect(detectMalformedParam('READ DATA file_path=users.csv TO inspect')).toBeNull();
+  });
+
+  it('should return null for empty / invalid input', () => {
+    expect(detectMalformedParam('')).toBeNull();
+    expect(detectMalformedParam('   ')).toBeNull();
+    expect(detectMalformedParam(undefined as unknown as string)).toBeNull();
+  });
+
+  it('should return null when there is no TO separator', () => {
+    // No TO means no isolatable PARAM region — not a PARAM problem.
+    expect(detectMalformedParam('READ SOURCE path=src/utils.ts')).toBeNull();
+  });
+
+  // ── Malformed: colon separator ─────────────────────────────
+
+  it('should detect key:value (colon instead of equals)', () => {
+    const r = detectMalformedParam('READ SOURCE path:src/utils.ts TO verify imports');
+    expect(r).not.toBeNull();
+    expect(r!.token).toBe('path:src/utils.ts');
+    expect(r!.issue).toContain(':');
+  });
+
+  it('should detect key: with no value', () => {
+    const r = detectMalformedParam('READ SOURCE path: TO verify imports');
+    expect(r).not.toBeNull();
+    expect(r!.token).toBe('path:');
+  });
+
+  // ── Malformed: empty value / missing key ──────────────────
+
+  it('should detect key= with empty value', () => {
+    const r = detectMalformedParam('READ SOURCE path= TO verify imports');
+    expect(r).not.toBeNull();
+    expect(r!.token).toBe('path=');
+    expect(r!.issue).toContain('empty value');
+  });
+
+  it('should detect =value with missing key', () => {
+    const r = detectMalformedParam('READ SOURCE =src/utils.ts TO verify imports');
+    expect(r).not.toBeNull();
+    expect(r!.token).toBe('=src/utils.ts');
+    expect(r!.issue).toContain('missing a key');
+  });
+
+  // ── Malformed: uppercase key ──────────────────────────────
+
+  it('should detect an uppercase key', () => {
+    const r = detectMalformedParam('READ SOURCE Path=src/utils.ts TO verify imports');
+    expect(r).not.toBeNull();
+    expect(r!.token).toBe('Path=src/utils.ts');
+    expect(r!.issue).toContain('uppercase');
+  });
+
+  // ── Malformed: missing equals (key value) ─────────────────
+
+  it('should detect key value (missing equals, split across tokens)', () => {
+    const r = detectMalformedParam('READ SOURCE path src/utils.ts TO verify imports');
+    expect(r).not.toBeNull();
+    expect(r!.token).toBe('path src/utils.ts');
+    expect(r!.issue).toContain("missing '='");
+  });
+
+  // ── Malformed: double-equals / extra separators ────────────
+
+  it('should detect key==value (double equals)', () => {
+    const r = detectMalformedParam('READ SOURCE path==src/utils.ts TO verify imports');
+    expect(r).not.toBeNull();
+    expect(r!.token).toBe('path==src/utils.ts');
+    expect(r!.issue).toContain('malformed');
+  });
+});
+
+describe('validateIntent — malformed PARAM error path', () => {
+  it('should report a specific malformed-PARAM error for key:value', () => {
+    const raw = 'READ SOURCE path:src/utils.ts TO verify imports';
+    const parsed = parseIntent(raw);
+    // The colon form fails the main regex, so parseIntent returns null…
+    expect(parsed).toBeNull();
+    // …but validateIntent with the raw string surfaces a targeted error.
+    const result = validateIntent(parsed, raw);
+    expect(result.valid).toBe(false);
+    expect(result.error).toContain('Malformed PARAM');
+    expect(result.error).toContain('path:src/utils.ts');
+    expect(result.hint).toContain('key=value');
+  });
+
+  it('should report a specific malformed-PARAM error for missing equals', () => {
+    const raw = 'READ SOURCE path src/utils.ts TO verify imports';
+    const result = validateIntent(parseIntent(raw), raw);
+    expect(result.valid).toBe(false);
+    expect(result.error).toContain('Malformed PARAM');
+    expect(result.error).toContain("missing '='");
+  });
+
+  it('should NOT report a malformed PARAM for a fully valid intent', () => {
+    const raw = 'READ SOURCE path=src/utils.ts TO verify imports';
+    const result = validateIntent(parseIntent(raw), raw);
+    expect(result.valid).toBe(true);
+    expect(result.error).toBeUndefined();
+  });
+
+  it('should still surface the generic error when there is no PARAM-like token', () => {
+    // A completely malformed intent with no PARAM-shaped token falls back
+    // to the generic "invalid or missing" error, not the malformed-PARAM one.
+    const raw = 'READ SOURCE';
+    const result = validateIntent(parseIntent(raw), raw);
+    expect(result.valid).toBe(false);
+    expect(result.error).toContain('invalid or missing');
+    expect(result.error).not.toContain('Malformed PARAM');
+  });
+
+  it('should prefer the malformed-PARAM error over the unknown-verb error when both the verb is bad and a PARAM is malformed', () => {
+    // Malformed PARAM is checked first, so it wins even with a bad verb.
+    const raw = 'FLY SOURCE path:src/utils.ts TO go somewhere';
+    const result = validateIntent(parseIntent(raw), raw);
+    expect(result.valid).toBe(false);
+    expect(result.error).toContain('Malformed PARAM');
   });
 });
