@@ -94,6 +94,12 @@ export const grepTool: ToolDefinition = {
       return buildFallbackError();
     }
 
+    // Visible status line on every successful search (mirrors bash tool),
+    // so the user/agent can observe that grep ran. Previously this only
+    // logged via verbose() which is hidden unless -v, making grep appear
+    // "unusable" because no [grep] line ever showed in the terminal.
+    const matchCount = output && output !== 'No matches found' ? output.split('\n').filter(Boolean).length : 0;
+    ctx.core.brief('info', 'grep', `Searched for "${pattern}" in ${searchPath}`, `${method}, ${matchCount} match(es)`);
     ctx.core.verbose('grep', `Searched with ${method}`, { pattern, searchPath, resultsLen: output.length });
 
     if (output.length <= OUTPUT_CHAR_LIMIT) {
