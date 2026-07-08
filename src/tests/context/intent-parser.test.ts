@@ -10,6 +10,7 @@
  * - Whitespace tolerance
  * - Valid verb and object enumeration
  * - Hard errors for invalid verbs, objects, missing purpose
+ * - Rigid single-pass malformed PARAM detection (exhaustive violation matrix)
  */
 
 import { describe, it, expect } from 'vitest';
@@ -261,10 +262,14 @@ describe('validateIntent', () => {
 
   it('should reject when purpose is empty', () => {
     const parsed = parseIntent('READ SOURCE TO ');
-    expect(parsed).toBeNull();
+    // With the rigid parser, an empty purpose is structurally parsed (not
+    // null) — validateIntent catches it with a targeted "Missing purpose"
+    // error instead of the generic "invalid or missing" message.
+    expect(parsed).not.toBeNull();
+    expect(parsed!.purpose).toBe('');
     const result = validateIntent(parsed);
     expect(result.valid).toBe(false);
-    expect(result.error).toContain('invalid or missing');
+    expect(result.error).toContain('Missing purpose');
   });
 
   it('should reject when purpose is only whitespace after TO', () => {
@@ -278,7 +283,7 @@ describe('validateIntent', () => {
 });
 
 // ═══════════════════════════════════════════════════════════
-// Malformed PARAM detection
+// Malformed PARAM detection — exhaustive violation matrix
 // ═══════════════════════════════════════════════════════════
 
 describe('detectMalformedParam', () => {
@@ -324,6 +329,7 @@ describe('detectMalformedParam', () => {
     const r = detectMalformedParam('READ SOURCE path: TO verify imports');
     expect(r).not.toBeNull();
     expect(r!.token).toBe('path:');
+    expect(r!.issue).toContain(':');
   });
 
   // ── Malformed: empty value / missing key ──────────────────
@@ -351,15 +357,6 @@ describe('detectMalformedParam', () => {
     expect(r!.issue).toContain('uppercase');
   });
 
-  // ── Malformed: missing equals (key value) ─────────────────
-
-  it('should detect key value (missing equals, split across tokens)', () => {
-    const r = detectMalformedParam('READ SOURCE path src/utils.ts TO verify imports');
-    expect(r).not.toBeNull();
-    expect(r!.token).toBe('path src/utils.ts');
-    expect(r!.issue).toContain("missing '='");
-  });
-
   // ── Malformed: double-equals / extra separators ────────────
 
   it('should detect key==value (double equals)', () => {
@@ -368,13 +365,60 @@ describe('detectMalformedParam', () => {
     expect(r!.token).toBe('path==src/utils.ts');
     expect(r!.issue).toContain('malformed');
   });
+
+  // ── Malformed: bare token (missing '=') ───────────────────
+
+  it('should detect a lone bare token (missing equals)', () => {
+    const r = detectMalformedParam('BUILD SOURCE typecheck TO verify esc-test-helpers.ts has no type errors');
+    expect(r).not.toBeNull();
+    expect(r!.token).toBe('typecheck');
+    expect(r!.issue).toContain("missing '='");
+  });
+
+  it('should detect a snake_case bare token (missing equals)', () => {
+    const r = detectMalformedParam('RUN SYSTEM watch_logs TO monitor service output');
+    expect(r).not.toBeNull();
+    expect(r!.token).toBe('watch_logs');
+    expect(r!.issue).toContain("missing '='");
+  });
+
+  // ── Malformed: split key-value pair ────────────────────────
+
+  it('should detect key value (missing equals, split across tokens)', () => {
+    const r = detectMalformedParam('READ SOURCE path src/utils.ts TO verify imports');
+    expect(r).not.toBeNull();
+    expect(r!.token).toBe('path src/utils.ts');
+    expect(r!.issue).toContain("missing '='");
+  });
+
+  // ── Malformed: mixed valid + invalid ───────────────────────
+
+  it('should detect a bare token after a valid param (mixed valid + invalid)', () => {
+    const r = detectMalformedParam('READ SOURCE path=src.ts typecheck TO verify');
+    expect(r).not.toBeNull();
+    expect(r!.token).toBe('typecheck');
+    expect(r!.issue).toContain("missing '='");
+  });
+
+  // ── Malformed: multiple bare tokens ────────────────────────
+
+  it('should detect foo bar (multiple bare tokens consumed as a pair)', () => {
+    const r = detectMalformedParam('READ SOURCE foo bar TO test');
+    expect(r).not.toBeNull();
+    expect(r!.token).toBe('foo bar');
+    expect(r!.issue).toContain("missing '='");
+  });
 });
+
+// ═══════════════════════════════════════════════════════════
+// validateIntent — malformed PARAM error path
+// ═══════════════════════════════════════════════════════════
 
 describe('validateIntent — malformed PARAM error path', () => {
   it('should report a specific malformed-PARAM error for key:value', () => {
     const raw = 'READ SOURCE path:src/utils.ts TO verify imports';
     const parsed = parseIntent(raw);
-    // The colon form fails the main regex, so parseIntent returns null…
+    // The colon form fails the tokenizer, so parseIntent returns null…
     expect(parsed).toBeNull();
     // …but validateIntent with the raw string surfaces a targeted error.
     const result = validateIntent(parsed, raw);
@@ -384,12 +428,22 @@ describe('validateIntent — malformed PARAM error path', () => {
     expect(result.hint).toContain('key=value');
   });
 
-  it('should report a specific malformed-PARAM error for missing equals', () => {
+  it('should report a specific malformed-PARAM error for missing equals (split pair)', () => {
     const raw = 'READ SOURCE path src/utils.ts TO verify imports';
     const result = validateIntent(parseIntent(raw), raw);
     expect(result.valid).toBe(false);
     expect(result.error).toContain('Malformed PARAM');
     expect(result.error).toContain("missing '='");
+  });
+
+  it('should report a specific malformed-PARAM error for a lone bare token', () => {
+    const raw = 'BUILD SOURCE typecheck TO verify esc-test-helpers.ts has no type errors';
+    const result = validateIntent(parseIntent(raw), raw);
+    expect(result.valid).toBe(false);
+    expect(result.error).toContain('Malformed PARAM');
+    expect(result.error).toContain('typecheck');
+    // The targeted malformed-PARAM error should win over the generic message.
+    expect(result.error).not.toContain('invalid or missing');
   });
 
   it('should NOT report a malformed PARAM for a fully valid intent', () => {

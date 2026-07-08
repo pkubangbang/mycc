@@ -3,6 +3,11 @@
  *
  * Intent format: VERB OBJECT [key=value ...] TO PURPOSE
  * PARAM describes attributes of the OBJECT (not the verb).
+ *
+ * This module implements a rigid, single-pass compiler that detects ANY
+ * form of PARAM violation. The tokenizer (`tokenizeParams`) classifies
+ * each whitespace-delimited token in the PARAM region with a
+ * precedence-ordered ruleset and stops at the first malformed token.
  */
 
 import type { ParsedIntent, IntentValidation } from './types.js';
@@ -50,51 +55,152 @@ export const OBJECT_MEANINGS: Record<string, string> = {
   USER: 'User interaction and terminal sessions',
 };
 
+// ============================================================================
+// Single-pass PARAM tokenizer
+// ============================================================================
+
 /**
- * Parse intent string into structured format.
- * Returns null if parsing fails.
+ * Result of tokenizing the PARAM region.
  */
-export function parseIntent(intent: string): ParsedIntent | null {
-  if (!intent || typeof intent !== 'string') {
-    return null;
-  }
-
-  // Pattern: VERB OBJECT [key=value]* TO PURPOSE
-  const match = intent.match(/^([A-Z]+)\s+([A-Z]+)(?:\s+([a-z_]+=[^\s]+))*\s+TO\s+(.+)$/i);
-
-  if (!match) {
-    return null;
-  }
-
-  const verb = match[1].toUpperCase();
-  const object = match[2].toUpperCase();
-  const purpose = match[4] ? match[4].trim() : '';
-
-  // Extract key=value params
-  const params: Record<string, string> = {};
-  const paramMatches = intent.matchAll(/([a-z_]+)=([^\s]+)/gi);
-  for (const pm of paramMatches) {
-    params[pm[1]] = pm[2];
-  }
-
-  return { verb, object, params, purpose, raw: intent };
+interface TokenizeResult {
+  wellFormed: Array<{ key: string; value: string }>;
+  malformed: { token: string; issue: string } | null;
 }
+
+/**
+ * Tokenize the PARAM region (text between OBJECT and ` TO `) in a single
+ * left-to-right pass.
+ *
+ * Each whitespace-delimited token is classified by a precedence-ordered
+ * ruleset:
+ *
+ * | Priority | Check (regex)                          | Classification     |
+ * |----------|----------------------------------------|--------------------|
+ * | 1        | `^[a-z_]+=[^\s=]+$`                    | well-formed        |
+ * | 2        | `^[A-Za-z_]+=[^\s=]+$` (not priority 1)| uppercase key      |
+ * | 3        | `^[A-Za-z_]+:[^\s]*$`                  | colon separator    |
+ * | 4        | `^[a-z_]+=$`                            | empty value        |
+ * | 5        | `^=[^\s=]+$`                           | missing key        |
+ * | 6        | token contains `=` (not 1-5)           | malformed equals    |
+ * | 7        | bare token (no `=`, no `:`)            | missing `=`        |
+ *
+ * For priority 7 (bare token), the compiler looks ahead to the NEXT token
+ * within the same loop iteration:
+ * - If a next token exists AND it also has no `=` and no `:` â†?classify the
+ *   PAIR as `key value` (missing `=`), consume BOTH tokens.
+ * - If it is the last token OR the next token has `=`/`:` â†?classify the
+ *   single token as a missing-`=` PARAM.
+ *
+ * Returns immediately at the first malformed token.
+ */
+function tokenizeParams(paramRegion: string): TokenizeResult {
+  const wellFormed: Array<{ key: string; value: string }> = [];
+  const tokens = paramRegion.split(/\s+/).filter((t) => t.length > 0);
+
+  for (let i = 0; i < tokens.length; i++) {
+    const token = tokens[i];
+
+    // Priority 1: well-formed key=value (lowercase/snake_case key, non-empty value, single '=')
+    if (/^[a-z_]+=[^\s=]+$/.test(token)) {
+      const eqIdx = token.indexOf('=');
+      wellFormed.push({ key: token.slice(0, eqIdx), value: token.slice(eqIdx + 1) });
+      continue;
+    }
+
+    // Priority 2: uppercase key (alphanumeric key with at least one uppercase letter)
+    if (/^[A-Za-z_]+=[^\s=]+$/.test(token)) {
+      return {
+        wellFormed,
+        malformed: {
+          token,
+          issue: `has an uppercase key â€?PARAM keys must be lowercase (snake_case)`,
+        },
+      };
+    }
+
+    // Priority 3: colon separator (key:value or key:)
+    if (/^[A-Za-z_]+:[^\s]*$/.test(token)) {
+      return {
+        wellFormed,
+        malformed: {
+          token,
+          issue: `uses ':' separator â€?PARAMs must use 'key=value' (equals, no spaces)`,
+        },
+      };
+    }
+
+    // Priority 4: empty value (key=)
+    if (/^[a-z_]+=$/.test(token)) {
+      return {
+        wellFormed,
+        malformed: {
+          token,
+          issue: `has empty value â€?PARAMs must be 'key=value' with a non-empty value`,
+        },
+      };
+    }
+
+    // Priority 5: missing key (=value)
+    if (/^=[^\s=]+$/.test(token)) {
+      return {
+        wellFormed,
+        malformed: {
+          token,
+          issue: `is missing a key â€?PARAMs must be 'key=value'`,
+        },
+      };
+    }
+
+    // Priority 6: token contains '=' but doesn't match 1-5 (double equals, extra '=')
+    if (token.includes('=')) {
+      return {
+        wellFormed,
+        malformed: {
+          token,
+          issue: `is malformed â€?PARAMs must be a single 'key=value' (one '=', no spaces)`,
+        },
+      };
+    }
+
+    // Priority 7: bare token (no '=' and no ':') â€?missing '='
+    // Look ahead to the next token within the same iteration.
+    const nextToken = tokens[i + 1];
+    if (nextToken !== undefined && !nextToken.includes('=') && !nextToken.includes(':')) {
+      // Two adjacent bare tokens â†?"key value" (missing '=' between them).
+      // Consume both tokens (advance index by 1 extra).
+      i++;
+      return {
+        wellFormed,
+        malformed: {
+          token: `${token} ${nextToken}`,
+          issue: `is missing '=' between key and value â€?PARAMs must be 'key=value'`,
+        },
+      };
+    }
+
+    // Last token or next token has '=' / ':' â†?single bare token.
+    return {
+      wellFormed,
+      malformed: {
+        token,
+        issue: `is missing '=' between key and value â€?PARAMs must be 'key=value'`,
+      },
+    };
+  }
+
+  return { wellFormed, malformed: null };
+}
+
+// ============================================================================
+// Malformed PARAM detection
+// ============================================================================
 
 /**
  * Detect malformed PARAM tokens in the segment between OBJECT and TO.
  *
- * A well-formed PARAM is `key=value` where the key is `[a-z_]+` and the value
- * is any non-whitespace run. This helper inspects each whitespace-delimited
- * token in the pre-TO segment and flags any token that *looks* like an
- * attempted PARAM (contains a `:` or `=`, or is a bare `key:value` / `key`
- * with an adjacent value) but does NOT match the canonical `key=value` form.
- *
- * Recognized malformed forms:
- *  - `key:value`  â€” colon separator instead of `=`
- *  - `key value`  â€” missing `=` entirely (two adjacent tokens after OBJECT)
- *  - `key=`       â€” empty value
- *  - `=value`     â€” missing key
- *  - `Key=value`  â€” uppercase key (keys must be lowercase / snake_case)
+ * Isolates the PARAM region (text between OBJECT and ` TO `), then runs
+ * the single-pass tokenizer. Returns the first malformed token or null
+ * if all PARAMs are well-formed (or there are no PARAM-like tokens).
  *
  * @returns the first malformed token's description, or null if all PARAMs are
  *          well-formed (or there are no PARAM-like tokens in the segment).
@@ -103,9 +209,7 @@ export function detectMalformedParam(intent: string): { token: string; issue: st
   if (!intent || typeof intent !== 'string') return null;
 
   // Isolate the pre-TO segment: VERB OBJECT [params...] before " TO ".
-  // We match VERB and OBJECT loosely, then take everything up to the first
-  // ` TO ` (case-insensitive) as the PARAM region.
-  const headMatch = intent.match(/^\s*([A-Za-z]+)\s+([A-Za-z]+)(.*)$/);
+  const headMatch = intent.match(/^([A-Za-z]+)\s+([A-Za-z]+)(.*)$/);
   if (!headMatch) return null;
 
   const rest = headMatch[3] as string;
@@ -116,65 +220,74 @@ export function detectMalformedParam(intent: string): { token: string; issue: st
   const paramRegion = rest.slice(0, toIdx).trim();
   if (paramRegion.length === 0) return null;
 
-  const tokens = paramRegion.split(/\s+/).filter((t) => t.length > 0);
-
-  for (const token of tokens) {
-    // Well-formed: lowercase/snake_case key, `=`, non-empty value, no spaces.
-    if (/^[a-z_]+=[^\s=]+$/.test(token)) continue;
-
-    // Malformed â€” classify the issue for a targeted hint.
-    let issue: string;
-    if (/^[A-Za-z_]+:$/.test(token) || /^[A-Za-z_]+:[^\s]+$/.test(token)) {
-      issue = `uses ':' separator â€” PARAMs must use 'key=value' (equals, no spaces)`;
-    } else if (/^[a-z_]+=$/i.test(token)) {
-      issue = `has empty value â€” PARAMs must be 'key=value' with a non-empty value`;
-    } else if (/^=[^\s]+$/.test(token)) {
-      issue = `is missing a key â€” PARAMs must be 'key=value'`;
-    } else if (/^[A-Za-z_]+=[^\s=]+$/.test(token) && !/^[a-z_]+=[^\s=]+$/.test(token)) {
-      // Alphanumeric key with at least one uppercase letter (e.g. Path=, MyKey=).
-      // The value side allows no '=' so double-equals stays in the bucket below.
-      issue = `has an uppercase key â€” PARAM keys must be lowercase (snake_case)`;
-    } else if (token.includes('=')) {
-      // e.g. key==value, key=value=extra, =value=, etc.
-      issue = `is malformed â€” PARAMs must be a single 'key=value' (one '=', no spaces)`;
-    } else {
-      // A bare token with no '=' and no ':' â€” only flag if it sits where a
-      // PARAM is expected. We treat a lone alphanumeric/snake token as a
-      // missing-'=' case only when it is not the last token before TO (a
-      // trailing bare token is more likely just stray text). To keep this
-      // targeted, flag bare tokens that look like an attempted key:value pair
-      // split across two tokens (key value) â€” detect via a colon-less token
-      // immediately followed by another token.
-      continue;
-    }
-    return { token, issue };
-  }
-
-  // Second pass: detect `key value` (missing '=') â€” two adjacent tokens where
-  // the first looks like a key (lowercase/snake, no separator) and the second
-  // looks like a value (not itself a key=value). This catches the common
-  // "path src/utils.ts" mistake.
-  for (let i = 0; i < tokens.length - 1; i++) {
-    const a = tokens[i];
-    const b = tokens[i + 1];
-    if (/^[a-z_]+$/.test(a) && !b.includes('=') && !b.includes(':')) {
-      return { token: `${a} ${b}`, issue: `is missing '=' between key and value â€” PARAMs must be 'key=value'` };
-    }
-  }
-
-  return null;
+  const result = tokenizeParams(paramRegion);
+  return result.malformed;
 }
+
+// ============================================================================
+// Intent parsing
+// ============================================================================
+
+/**
+ * Parse intent string into structured format.
+ * Returns null if parsing fails (malformed PARAM, bad structure, etc.).
+ */
+export function parseIntent(intent: string): ParsedIntent | null {
+  if (!intent || typeof intent !== 'string') {
+    return null;
+  }
+
+  // Extract VERB OBJECT rest â€?anchor at start-of-string (NO leading whitespace).
+  const headMatch = intent.match(/^([A-Za-z]+)\s+([A-Za-z]+)(.*)$/);
+  if (!headMatch) {
+    return null;
+  }
+
+  const verb = headMatch[1].toUpperCase();
+  const object = headMatch[2].toUpperCase();
+  const rest = headMatch[3] as string;
+
+  // Find the first " TO " separator (case-insensitive).
+  const toIdx = rest.search(/\s+TO\s+/i);
+  if (toIdx === -1) {
+    return null;
+  }
+
+  const paramRegion = rest.slice(0, toIdx).trim();
+  // Purpose is everything after " TO " â€?trim trailing whitespace only.
+  const afterTo = rest.slice(toIdx).replace(/^\s+TO\s+/i, '');
+  const purpose = afterTo.replace(/\s+$/, '');
+
+  // If there are params, tokenize them. A malformed PARAM â†?return null.
+  let params: Record<string, string> = {};
+  if (paramRegion.length > 0) {
+    const tokenized = tokenizeParams(paramRegion);
+    if (tokenized.malformed) {
+      return null;
+    }
+    for (const { key, value } of tokenized.wellFormed) {
+      params[key] = value;
+    }
+  }
+
+  return { verb, object, params, purpose, raw: intent };
+}
+
+// ============================================================================
+// Intent validation
+// ============================================================================
 
 /**
  * Validate parsed intent.
  * Returns validation result with error or success.
  *
- * Errors (hard block): unknown verb, unknown object, missing purpose, invalid format,
- * malformed PARAM format.
+ * Errors (hard block): unknown verb, unknown object, missing purpose, invalid
+ * format, malformed PARAM format.
  *
  * When `parsed` is null, we run a malformed-PARAM scan on the raw intent (if
  * provided via the second argument) so that a malformed PARAM is reported with
- * a targeted error instead of the generic "Intent format is invalid or missing".
+ * a targeted error instead of the generic "Intent format is invalid or
+ * missing".
  */
 export function validateIntent(parsed: ParsedIntent | null, raw?: string): IntentValidation {
   // --- Malformed PARAM check (runs before the generic null error so a
@@ -229,6 +342,10 @@ export function validateIntent(parsed: ParsedIntent | null, raw?: string): Inten
 
   return { valid: true };
 }
+
+// ============================================================================
+// Verb classification helpers
+// ============================================================================
 
 /**
  * Check if verb is read-only (safe in plan mode).
