@@ -5,7 +5,6 @@
  */
 
 import type { ToolDefinition, AgentContext } from '../types.js';
-import { removeWorktree, getWorktree } from '../context/worktree-store.js';
 
 export const tmRemoveTool: ToolDefinition = {
   name: 'tm_remove',
@@ -47,19 +46,21 @@ export const tmRemoveTool: ToolDefinition = {
     try {
       ctx.team.removeTeammate(name, force);
 
-      // If the teammate had an assigned worktree, close its cleanup todo and
-      // remove the worktree store record. The actual git worktree directory
-      // is left for the lead to remove via bash (e.g., git worktree remove).
-      const wt = getWorktree(name);
-      if (wt) {
-        const todo = ctx.todo.getItems().find(
-          (i) => i.note === `cwd=${wt.path}` && !i.done
-        );
-        if (todo) {
+      // Close the cleanup todo auto-created in tm_create for this teammate.
+      // The todo note follows the convention `cwd=<path>`. The actual git
+      // worktree directory is left for the lead to remove via bash
+      // (e.g., `git worktree remove .worktrees/<name>`).
+      const todos = ctx.todo.getItems().filter(
+        (i) => !i.done && i.note && i.note.startsWith('cwd=')
+      );
+      for (const todo of todos) {
+        // Only close todos whose cwd path basename matches the teammate name
+        const cwdVal = todo.note!.substring(4);
+        const lastSeg = cwdVal.replace(/\\/g, '/').split('/').pop();
+        if (lastSeg === name) {
           ctx.todo.updateTodo(todo.id, todo.hash, todo.name, true, todo.note);
+          ctx.core.brief('info', 'tm_remove', `Closed worktree cleanup todo for '${name}' (${cwdVal})`);
         }
-        removeWorktree(name);
-        ctx.core.brief('info', 'tm_remove', `Removed worktree record for '${name}' at ${wt.path}`);
       }
 
       return 'OK';

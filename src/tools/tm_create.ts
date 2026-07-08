@@ -5,7 +5,7 @@
  */
 
 import type { ToolDefinition, AgentContext } from '../types.js';
-import { addWorktree } from '../context/worktree-store.js';
+import path from 'path';
 
 export const tmCreateTool: ToolDefinition = {
   name: 'tm_create',
@@ -55,19 +55,24 @@ export const tmCreateTool: ToolDefinition = {
 
     ctx.core.brief('info', 'tm_create', `Creating teammate '${name}' with role: ${role}`, prompt);
 
+    // Enforce the worktree directory-name convention: the worktree directory
+    // basename must equal the teammate name. This lets us derive the
+    // teammate→worktree mapping from `git worktree list` without a JSON store.
+    if (cwd) {
+      const dirName = path.basename(cwd);
+      if (dirName !== name) {
+        ctx.core.brief('error', 'tm_create', `Worktree dir '${dirName}' does not match teammate name '${name}'`);
+        return `Error: The worktree directory name must match the teammate name. Expected '${name}', got '${dirName}'. Use cwd=".worktrees/${name}".`;
+      }
+    }
+
     try {
       const result = await ctx.team.createTeammate(name, role, prompt, cwd);
 
-      // If a cwd (worktree) was assigned, record it in the worktree store
-      // and create a cleanup-tracking todo so the lead remembers to remove it.
+      // If a cwd (worktree) was assigned, create a cleanup-tracking todo so
+      // the lead remembers to remove the worktree. The worktree itself is
+      // tracked via `git worktree list` — no JSON persistence needed.
       if (cwd) {
-        addWorktree({
-          name,
-          path: cwd,
-          branch: '',
-          createdAt: new Date(),
-          owner: name,
-        });
         ctx.todo.createTodo(
           `Remove worktree for teammate '${name}'`,
           `cwd=${cwd}`

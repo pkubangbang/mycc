@@ -4,7 +4,7 @@
 
 import type { Core } from '../parent/core.js';
 import { judgeBash } from './bash-judge.js';
-import { loadWorktrees } from '../worktree-store.js';
+import { listWorktrees } from '../worktree-store.js';
 import * as path from 'path';
 import type { GrantRequest } from './types.js';
 
@@ -76,7 +76,7 @@ export async function evaluateGrant(
       return { approved: false, reason: `No path provided for ${request.tool}` };
     }
 
-    const worktrees = loadWorktrees();
+    const worktrees = await listWorktrees(core.getWorkDir());
     const ownedWt = worktrees.find(wt => wt.name === sender);
 
     if (ownedWt) {

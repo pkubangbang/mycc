@@ -60,7 +60,7 @@ vi.mock('../../../utils/skill-dedup.js', () => ({
 }));
 
 vi.mock('../../../context/worktree-store.js', () => ({
-  loadWorktrees: vi.fn(() => []),
+  listWorktrees: vi.fn(async () => []),
 }));
 
 // Triologue stub: configurable message count + hint generation

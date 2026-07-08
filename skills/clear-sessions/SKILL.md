@@ -136,8 +136,8 @@ tar -czf /tmp/mycc-sessions-backup-$(date +%Y%m%d-%H%M%S).tar.gz \
 # 2. Clear all session directories
 rm -rf .mycc/sessions/*/
 
-# 3. Reset worktrees
-echo '[]' > .mycc/worktrees.json
+# 3. Prune stale worktree metadata (no JSON file to reset)
+git worktree prune
 ```
 
 Note: the current session's triologue is actively being written and will not be deleted by `rm`.

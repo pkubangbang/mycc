@@ -19,7 +19,7 @@
 import type { ToolDefinition, AgentContext } from '../types.js';
 import { agentIO } from '../loop/agent-io.js';
 import { MailBox } from '../context/shared/mail.js';
-import { loadWorktrees } from '../context/worktree-store.js';
+import { findWorktreeByName } from '../context/worktree-store.js';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
@@ -35,6 +35,7 @@ Use this tool for ALL git commits. Never use 'bash' with 'git commit' - that is 
 Parameters:
 - message: The commit message (required)
 - amend: Set to true to amend the previous commit (optional, default false)
+- cwd: Working directory for the git commit (optional). Use this to commit inside a specific git worktree (e.g., ".worktrees/feat"). If omitted, uses the agent's current working directory.
 
 The tool will:
 1. Show the commit message to the user
@@ -58,6 +59,10 @@ After a successful commit, the tool detects:
         type: 'boolean',
         description: 'Set to true to amend the previous commit (optional, default false)',
       },
+      cwd: {
+        type: 'string',
+        description: 'Working directory for the git commit (e.g., a worktree path like ".worktrees/feat"). If omitted, uses the agent\'s current working directory.',
+      },
     },
     required: ['message'],
   },
@@ -65,25 +70,34 @@ After a successful commit, the tool detects:
   handler: async (ctx: AgentContext, args: Record<string, unknown>): Promise<string> => {
     const message = args.message as string;
     const amend = args.amend === true;
+    const cwdArg = args.cwd as string | undefined;
 
     // Validate message parameter
     if (!message || typeof message !== 'string' || message.trim() === '') {
       return 'Error: The "message" parameter is required and must be a non-empty string';
     }
 
+    // Determine the working directory for git operations.
+    // Default to the agent's workDir; allow override via `cwd` (e.g., a worktree).
+    let commitCwd = cwdArg || ctx.core.getWorkDir();
+
+    // Resolve relative cwd against the agent workDir so the lead can pass
+    // ".worktrees/feat" and have it resolve against the project root.
+    if (!path.isAbsolute(commitCwd)) {
+      commitCwd = path.resolve(ctx.core.getWorkDir(), commitCwd);
+    }
+
     // Check if this is a child process (teammate) without a worktree
     // Teammates can only commit if they are in a dedicated worktree
     if (!agentIO.isMainProcess()) {
-      const workDir = ctx.core.getWorkDir();
       const agentName = ctx.core.getName();
 
-      // Load worktrees and check if this agent owns one
-      const worktrees = loadWorktrees();
-      const ownedWorktree = worktrees.find(wt => wt.name === agentName);
+      // Query git worktrees and check if this agent owns one (by name convention)
+      const ownedWorktree = await findWorktreeByName(agentName, ctx.core.getWorkDir());
 
-      // Check if we're inside a worktree owned by this agent
+      // Check if we're committing inside a worktree owned by this agent
       const isInOwnedWorktree = ownedWorktree &&
-        (workDir === ownedWorktree.path || workDir.startsWith(ownedWorktree.path + path.sep));
+        (commitCwd === ownedWorktree.path || commitCwd.startsWith(ownedWorktree.path + path.sep));
 
       if (!isInOwnedWorktree) {
         // Not in a worktree - send mail to lead instead of committing
@@ -113,7 +127,7 @@ After a successful commit, the tool detects:
     // Check if there are staged changes before asking for permission
     try {
       const { stdout: statusOutput } = await agentIO.exec({
-        cwd: ctx.core.getWorkDir(),
+        cwd: commitCwd,
         command: 'git status --porcelain',
         timeout: 5,
       });
@@ -186,7 +200,7 @@ After a successful commit, the tool detects:
         : ['commit', '-F', gitPath];
 
       // Use spawn directly to avoid cmd.exe quote issues
-      const proc = spawn('git', args, { cwd: ctx.core.getWorkDir() });
+      const proc = spawn('git', args, { cwd: commitCwd });
 
       // Collect output
       const stdoutBuffer: Buffer[] = [];
@@ -238,7 +252,7 @@ After a successful commit, the tool detects:
         let hasRemainingChanges = false;
         try {
           const { stdout: statusAfter } = await agentIO.exec({
-            cwd: ctx.core.getWorkDir(),
+            cwd: commitCwd,
             command: 'git status --porcelain',
             timeout: 5,
           });

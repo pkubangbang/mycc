@@ -218,13 +218,15 @@ export interface BgTask {
 
 /**
  * Worktree - git worktree for parallel work
+ *
+ * Worktrees are queried live from `git worktree list --porcelain` — there is
+ * no JSON persistence. The `name` field is derived from `path.basename(path)`
+ * and by convention equals the teammate name assigned to the worktree.
  */
 export interface WorkTree {
-  name: string; // teammate name
+  name: string; // path basename; conventionally the teammate name
   path: string; // worktree path
   branch: string; // branch name
-  createdAt: Date;
-  owner?: string; // teammate assigned to this worktree (if any)
 }
 
 // ============================================================================

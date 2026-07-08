@@ -1,129 +1,18 @@
 /**
- * worktree-store.ts - Persistent worktree storage using JSON
+ * worktree-store.ts - Query git worktrees via `git worktree list --porcelain`
  *
- * Worktrees are project-level resources that persist across sessions.
- * Uses .mycc/worktrees.json for persistence.
- *
- * Features:
- * - Atomic writes (write to temp file, then rename)
- * - Graceful handling of missing files
- * - Date parsing on load
+ * Worktrees are NOT persisted to a JSON file. They are always queried live
+ * from git, which is the single source of truth. The teammate→worktree
+ * mapping is derived by convention: the worktree directory name equals the
+ * teammate name (enforced in tm_create.ts).
  */
 
-import * as fs from 'fs';
+import { exec } from 'child_process';
 import * as path from 'path';
-import { execSync } from 'child_process';
 import type { WorkTree } from '../types.js';
-import { getMyccDir } from '../config.js';
-
-const WORKTREES_FILE = 'worktrees.json';
 
 /**
- * Get the path to the worktrees JSON file
- */
-function getWorktreesFile(): string {
-  return path.join(getMyccDir(), WORKTREES_FILE);
-}
-
-/**
- * Get the path to the temp file for atomic writes
- */
-function getTempFile(): string {
-  return path.join(getMyccDir(), `${WORKTREES_FILE}.tmp`);
-}
-
-/**
- * Ensure the worktrees file exists, creating empty array if missing
- */
-function ensureFile(): void {
-  const file = getWorktreesFile();
-  if (!fs.existsSync(file)) {
-    // Ensure parent directory exists
-    const dir = getMyccDir();
-    if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true });
-    }
-    fs.writeFileSync(file, '[]', 'utf-8');
-  }
-}
-
-/**
- * Load all worktrees from JSON file
- * Parses date strings back into Date objects
- */
-export function loadWorktrees(): WorkTree[] {
-  ensureFile();
-  const file = getWorktreesFile();
-  try {
-    const content = fs.readFileSync(file, 'utf-8');
-    const data = JSON.parse(content);
-    // Parse dates when loading
-    return data.map((w: WorkTree) => ({
-      ...w,
-      createdAt: new Date(w.createdAt),
-    }));
-  } catch (error) {
-    // If JSON is corrupted, return empty array
-    console.error('Failed to load worktrees, returning empty array:', error);
-    return [];
-  }
-}
-
-/**
- * Save worktrees to JSON file using atomic write pattern
- * Writes to temp file first, then renames for atomicity
- */
-export function saveWorktrees(worktrees: WorkTree[]): void {
-  ensureFile();
-  const file = getWorktreesFile();
-  const tempFile = getTempFile();
-
-  // Write to temp file first
-  fs.writeFileSync(tempFile, JSON.stringify(worktrees, null, 2), 'utf-8');
-
-  // Rename temp file to target (atomic on same filesystem)
-  fs.renameSync(tempFile, file);
-}
-
-/**
- * Add or update a worktree
- * If worktree with same name exists, it will be updated
- */
-export function addWorktree(worktree: WorkTree): void {
-  const worktrees = loadWorktrees();
-  const existing = worktrees.findIndex(w => w.name === worktree.name);
-  if (existing >= 0) {
-    worktrees[existing] = worktree;
-  } else {
-    worktrees.push(worktree);
-  }
-  saveWorktrees(worktrees);
-}
-
-/**
- * Remove a worktree by name
- * @returns true if worktree was found and removed, false if not found
- */
-export function removeWorktree(name: string): boolean {
-  const worktrees = loadWorktrees();
-  const index = worktrees.findIndex(w => w.name === name);
-  if (index < 0) return false;
-  worktrees.splice(index, 1);
-  saveWorktrees(worktrees);
-  return true;
-}
-
-/**
- * Get a worktree by name
- * @returns the worktree if found, undefined otherwise
- */
-export function getWorktree(name: string): WorkTree | undefined {
-  const worktrees = loadWorktrees();
-  return worktrees.find(w => w.name === name);
-}
-
-/**
- * Parse git worktree list --porcelain output
+ * Raw info parsed from `git worktree list --porcelain`
  */
 interface GitWorktreeInfo {
   path: string;
@@ -131,6 +20,9 @@ interface GitWorktreeInfo {
   branch: string | null;
 }
 
+/**
+ * Parse `git worktree list --porcelain` output into structured records.
+ */
 function parseGitWorktreeList(output: string): GitWorktreeInfo[] {
   const worktrees: GitWorktreeInfo[] = [];
   const lines = output.split('\n');
@@ -158,60 +50,100 @@ function parseGitWorktreeList(output: string): GitWorktreeInfo[] {
 }
 
 /**
- * Sync the worktree store with actual git worktrees.
- * Reconciles orphaned records (in store but not in git) and missing records
- * (in git but not in store). Only tracks worktrees inside the .worktrees directory.
- *
- * @param workDir - The project working directory
+ * Run `git worktree list --porcelain` in the given directory.
+ * Returns the raw stdout string, or empty string on failure.
  */
-export function syncWorkTrees(workDir: string): void {
-  try {
-    // Get actual git worktrees
-    const output = execSync('git worktree list --porcelain', {
-      cwd: workDir,
-      encoding: 'utf-8',
-      stdio: ['pipe', 'pipe', 'pipe'], // Capture stderr to suppress fatal messages
+function execGitWorktreeList(workDir: string): Promise<string> {
+  return new Promise((resolve) => {
+    exec(
+      'git worktree list --porcelain',
+      { cwd: workDir, encoding: 'utf-8' },
+      (err, stdout) => {
+        if (err) {
+          // Git not available, not a repo, or no worktrees — return empty
+          resolve('');
+        } else {
+          resolve(stdout || '');
+        }
+      },
+    );
+  });
+}
+
+/**
+ * List all git worktrees (excluding the main worktree).
+ *
+ * Only worktrees whose path contains `.worktrees` are tracked — this is the
+ * mycc convention for parallel branch work. User-created worktrees outside
+ * `.worktrees/` are ignored.
+ *
+ * The `name` field is derived from `path.basename(worktree.path)`, which by
+ * convention equals the teammate name.
+ *
+ * @param workDir - The project working directory (defaults to process.cwd())
+ * @returns Array of worktree records (empty if none or git unavailable)
+ */
+export async function listWorktrees(workDir?: string): Promise<WorkTree[]> {
+  const cwd = workDir || process.cwd();
+  const output = await execGitWorktreeList(cwd);
+  if (!output) return [];
+
+  const gitWorktrees = parseGitWorktreeList(output);
+  const result: WorkTree[] = [];
+
+  for (const wt of gitWorktrees) {
+    // Skip the main worktree (project root)
+    if (wt.path === cwd) continue;
+
+    // Skip worktrees outside .worktrees directory (user-created, not tracked)
+    if (!wt.path.includes('.worktrees')) continue;
+
+    const name = path.basename(wt.path);
+    const branch = wt.branch ? path.basename(wt.branch) : 'detached';
+
+    result.push({
+      name,
+      path: wt.path,
+      branch,
     });
-    const gitWorktrees = parseGitWorktreeList(output);
-
-    // Get stored records
-    const storedRecords = loadWorktrees();
-
-    // Build maps for comparison
-    const storedByPath = new Map(storedRecords.map(r => [r.path, r]));
-    const gitByPath = new Map(gitWorktrees.map(w => [w.path, w]));
-
-    // Find orphaned records (in store but not in git)
-    for (const record of storedRecords) {
-      if (!gitByPath.has(record.path)) {
-        // Remove orphaned record
-        removeWorktree(record.name);
-      }
-    }
-
-    // Find missing records (in git but not in store)
-    for (const worktree of gitWorktrees) {
-      // Skip the main worktree (project root)
-      if (worktree.path === workDir) continue;
-
-      // Skip worktrees outside .worktrees directory (user-created)
-      if (!worktree.path.includes('.worktrees')) continue;
-
-      if (!storedByPath.has(worktree.path)) {
-        // Extract name from path
-        const name = path.basename(worktree.path);
-        const branch = worktree.branch ? path.basename(worktree.branch) : 'detached';
-
-        // Add missing record
-        addWorktree({
-          name,
-          path: worktree.path,
-          branch,
-          createdAt: new Date(),
-        });
-      }
-    }
-  } catch {
-    // Git not available or no worktrees - ignore
   }
+
+  return result;
+}
+
+/**
+ * Find a worktree by its name (directory basename, conventionally the
+ * teammate name).
+ *
+ * @param name - The worktree name to search for
+ * @param workDir - The project working directory (defaults to process.cwd())
+ * @returns The matching worktree, or undefined if not found
+ */
+export async function findWorktreeByName(
+  name: string,
+  workDir?: string,
+): Promise<WorkTree | undefined> {
+  const worktrees = await listWorktrees(workDir);
+  return worktrees.find((wt) => wt.name === name);
+}
+
+/**
+ * Find a worktree by its path.
+ *
+ * Matches when the worktree path exactly equals `targetPath`, or when
+ * `targetPath` is inside the worktree directory (prefix match with separator).
+ *
+ * @param targetPath - The path to search for (absolute or relative)
+ * @param workDir - The project working directory (defaults to process.cwd())
+ * @returns The matching worktree, or undefined if not found
+ */
+export async function findWorktreeByPath(
+  targetPath: string,
+  workDir?: string,
+): Promise<WorkTree | undefined> {
+  const worktrees = await listWorktrees(workDir);
+  return worktrees.find(
+    (wt) =>
+      targetPath === wt.path || targetPath.startsWith(wt.path + path.sep),
+  );
 }
