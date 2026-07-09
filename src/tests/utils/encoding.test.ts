@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { stripBom, detectLineEnding, normalizeLineEndings } from '../../utils/encoding.js';
+import { stripBom, detectLineEnding, normalizeLineEndings, countReplacementChars } from '../../utils/encoding.js';
 
 describe('stripBom', () => {
   it('should strip UTF-8 BOM from string start', () => {
@@ -103,5 +103,42 @@ describe('normalizeLineEndings', () => {
 
   it('should handle multiple consecutive CRLF', () => {
     expect(normalizeLineEndings('a\r\n\r\nb')).toBe('a\n\nb');
+  });
+});
+
+describe('countReplacementChars', () => {
+  it('should return 0 for clean ASCII text', () => {
+    expect(countReplacementChars('hello world')).toBe(0);
+  });
+
+  it('should return 0 for clean CJK text', () => {
+    expect(countReplacementChars('你好世界')).toBe(0);
+  });
+
+  it('should count a single U+FFFD replacement character', () => {
+    expect(countReplacementChars('foo\uFFFDbar')).toBe(1);
+  });
+
+  it('should count multiple U+FFFD replacement characters', () => {
+    expect(countReplacementChars('\uFFFDfoo\uFFFDbar\uFFFD')).toBe(3);
+  });
+
+  it('should return 0 for empty string', () => {
+    expect(countReplacementChars('')).toBe(0);
+  });
+
+  it('should not count other non-ASCII characters as replacement chars', () => {
+    // Em dash (U+2014), CJK, emoji are NOT replacement chars
+    expect(countReplacementChars('—你好😀')).toBe(0);
+  });
+
+  it('should count consecutive replacement characters', () => {
+    expect(countReplacementChars('\uFFFD\uFFFD\uFFFD')).toBe(3);
+  });
+
+  it('should detect corruption in a realistic code snippet', () => {
+    // Simulates a comment line where an em dash was corrupted to U+FFFD + '?'
+    const corrupted = '      // Two adjacent bare tokens \uFFFD?"key value".';
+    expect(countReplacementChars(corrupted)).toBe(1);
   });
 });

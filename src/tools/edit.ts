@@ -8,7 +8,7 @@ import * as fs from 'fs';
 import type { ToolDefinition, AgentContext } from '../types.js';
 import { resolvePath } from '../utils/path.js';
 import { checkSensitivePath } from '../utils/sensitive-paths.js';
-import { stripBom, detectLineEnding, normalizeLineEndings } from '../utils/encoding.js';
+import { stripBom, detectLineEnding, normalizeLineEndings, countReplacementChars } from '../utils/encoding.js';
 
 export const editTool: ToolDefinition = {
   name: 'edit_file',
@@ -84,7 +84,14 @@ export const editTool: ToolDefinition = {
       const normalizedNewText = normalizeLineEndings(newText);
 
       if (!normalizedContent.includes(normalizedOldText)) {
-        return `Error: Text not found in ${filePath}`;
+        // Check for encoding corruption (U+FFFD) that may explain the mismatch:
+        // the LLM may have misread a replacement char and constructed old_text
+        // with a guessed character that differs from the actual bytes on disk.
+        const replacementCount = countReplacementChars(normalizedContent);
+        if (replacementCount > 0) {
+          return `Error: Text not found in ${filePath}. This file contains ${replacementCount} replacement character${replacementCount > 1 ? 's' : ''} (U+FFFD) from encoding corruption — your old_text may differ from the actual bytes on lines with these characters. Use grep to find exact text, or use ASCII-only anchors that avoid corrupted lines.`;
+        }
+        return `Error: Text not found in ${filePath}. Check for invisible characters, trailing whitespace, or line ending differences. Use grep to find the exact text: grep -n "your text" ${filePath}`;
       }
 
       // Count occurrences on normalized content

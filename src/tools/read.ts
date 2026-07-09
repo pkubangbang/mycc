@@ -18,7 +18,7 @@ import { filetypeinfo } from '../utils/magic-bytes.js';
 import type { ToolDefinition, AgentContext } from '../types.js';
 import { getTokenThreshold, isVerbose } from '../config.js';
 import { resolvePath } from '../utils/path.js';
-import { stripBom } from '../utils/encoding.js';
+import { stripBom, countReplacementChars } from '../utils/encoding.js';
 
 /** Hard-coded line limit to prevent context overflow */
 const LINE_LIMIT = 1000;
@@ -153,6 +153,15 @@ ${typeInfo.extension === '.png' || typeInfo.extension === '.jpg' || typeInfo.ext
       const lines = content.split('\n');
       const totalLines = lines.length;
 
+      // Detect encoding corruption: U+FFFD replacement characters indicate
+      // the file was decoded as UTF-8 but originally encoded in a different
+      // codepage (e.g. GBK/ANSI). Warn the LLM so it uses ASCII-only anchors
+      // for edit_file, since old_text matching fails on corrupted lines.
+      const replacementCount = countReplacementChars(content);
+      const encodingWarning = replacementCount > 0
+        ? `\n⚠ Encoding: ${replacementCount} replacement character${replacementCount > 1 ? 's' : ''} (U+FFFD) detected — this file has encoding corruption.\n  edit_file old_text matching may fail on lines containing these characters.\n  Use ASCII-only anchors for edits, or verify exact bytes with: [System.IO.File]::ReadAllBytes(...)`
+        : '';
+
       // Detect minified / single-long-line files (e.g., minified JS).
       // A single enormous line passes LINE_LIMIT trivially, then gets brutally
       // truncated at charLimit, yielding useless fragments.
@@ -181,7 +190,7 @@ ${typeInfo.extension === '.png' || typeInfo.extension === '.jpg' || typeInfo.ext
         }
 
         const header = `File: ${filePath}
-Chars: ${totalChars.toLocaleString()} | Lines: ${totalLines}
+Chars: ${totalChars.toLocaleString()} | Lines: ${totalLines}${encodingWarning}
 ${'─'.repeat(60)}`;
 
         const suggestions = `
@@ -204,7 +213,7 @@ To read the full content, try:
         // Build progress header
         const header = `File: ${filePath}
 Read: ${readChars.toLocaleString()} / ${totalChars.toLocaleString()} chars (${((readChars / totalChars) * 100).toFixed(1)}%)
-Lines: ${LINE_LIMIT} / ${totalLines} (${remainingLines} more lines below)
+Lines: ${LINE_LIMIT} / ${totalLines} (${remainingLines} more lines below)${encodingWarning}
 ${'─'.repeat(60)}`;
 
         // Build suggestions
@@ -227,7 +236,7 @@ ${remainingLines} more lines not shown. Options to continue:
         const truncated = content.slice(0, charLimit);
         const header = `File: ${filePath}
 Read: ${charLimit.toLocaleString()} / ${totalChars.toLocaleString()} chars (${((charLimit / totalChars) * 100).toFixed(1)}%)
-Lines: ${totalLines} total
+Lines: ${totalLines} total${encodingWarning}
 ${'─'.repeat(60)}`;
 
         return `${header}\n${truncated}\n... (${(totalChars - charLimit).toLocaleString()} more chars)`;
@@ -235,7 +244,7 @@ ${'─'.repeat(60)}`;
 
       // Show full file with stats
       const header = `File: ${filePath}
-Chars: ${totalChars.toLocaleString()} | Lines: ${totalLines}
+Chars: ${totalChars.toLocaleString()} | Lines: ${totalLines}${encodingWarning}
 ${'─'.repeat(60)}`;
 
       // Verbose logging: show first 50 lines in verbose mode

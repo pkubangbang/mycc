@@ -86,9 +86,9 @@ interface TokenizeResult {
  *
  * For priority 7 (bare token), the compiler looks ahead to the NEXT token
  * within the same loop iteration:
- * - If a next token exists AND it also has no `=` and no `:` �?classify the
+ * - If a next token exists AND it also has no `=` and no `:` — classify the
  *   PAIR as `key value` (missing `=`), consume BOTH tokens.
- * - If it is the last token OR the next token has `=`/`:` �?classify the
+ * - If it is the last token OR the next token has `=`/`:` — classify the
  *   single token as a missing-`=` PARAM.
  *
  * Returns immediately at the first malformed token.
@@ -113,7 +113,7 @@ function tokenizeParams(paramRegion: string): TokenizeResult {
         wellFormed,
         malformed: {
           token,
-          issue: `has an uppercase key �?PARAM keys must be lowercase (snake_case)`,
+          issue: `has an uppercase key — PARAM keys must be lowercase (snake_case)`,
         },
       };
     }
@@ -124,7 +124,7 @@ function tokenizeParams(paramRegion: string): TokenizeResult {
         wellFormed,
         malformed: {
           token,
-          issue: `uses ':' separator �?PARAMs must use 'key=value' (equals, no spaces)`,
+          issue: `uses ':' separator — PARAMs must use 'key=value' (equals, no spaces)`,
         },
       };
     }
@@ -135,7 +135,7 @@ function tokenizeParams(paramRegion: string): TokenizeResult {
         wellFormed,
         malformed: {
           token,
-          issue: `has empty value �?PARAMs must be 'key=value' with a non-empty value`,
+          issue: `has empty value — PARAMs must be 'key=value' with a non-empty value`,
         },
       };
     }
@@ -146,7 +146,7 @@ function tokenizeParams(paramRegion: string): TokenizeResult {
         wellFormed,
         malformed: {
           token,
-          issue: `is missing a key �?PARAMs must be 'key=value'`,
+          issue: `is missing a key — PARAMs must be 'key=value'`,
         },
       };
     }
@@ -157,32 +157,32 @@ function tokenizeParams(paramRegion: string): TokenizeResult {
         wellFormed,
         malformed: {
           token,
-          issue: `is malformed �?PARAMs must be a single 'key=value' (one '=', no spaces)`,
+          issue: `is malformed — PARAMs must be a single 'key=value' (one '=', no spaces)`,
         },
       };
     }
 
-    // Priority 7: bare token (no '=' and no ':') �?missing '='
+    // Priority 7: bare token (no '=' and no ':') — missing '='
     // Look ahead to the next token within the same iteration.
     const nextToken = tokens[i + 1];
     if (nextToken !== undefined && !nextToken.includes('=') && !nextToken.includes(':')) {
-      // Two adjacent bare tokens �?"key value" (missing '=' between them).
+      // Two adjacent bare tokens — "key value" (missing '=' between them).
       // Consume both tokens (advance index by 1 extra).
       return {
         wellFormed,
         malformed: {
           token: `${token} ${nextToken}`,
-          issue: `is missing '=' between key and value �?PARAMs must be 'key=value'`,
+          issue: `is missing '=' between key and value — PARAMs must be 'key=value'`,
         },
       };
     }
 
-    // Last token or next token has '=' / ':' �?single bare token.
+    // Last token or next token has '=' / ':' — single bare token.
     return {
       wellFormed,
       malformed: {
         token,
-        issue: `is missing '=' between key and value �?PARAMs must be 'key=value'`,
+        issue: `is missing '=' between key and value — PARAMs must be 'key=value'`,
       },
     };
   }
@@ -236,7 +236,7 @@ export function parseIntent(intent: string): ParsedIntent | null {
     return null;
   }
 
-  // Extract VERB OBJECT rest �?anchor at start-of-string (NO leading whitespace).
+  // Extract VERB OBJECT rest — anchor at start-of-string (NO leading whitespace).
   const headMatch = intent.match(/^([A-Za-z]+)\s+([A-Za-z]+)(.*)$/);
   if (!headMatch) {
     return null;
@@ -253,11 +253,11 @@ export function parseIntent(intent: string): ParsedIntent | null {
   }
 
   const paramRegion = rest.slice(0, toIdx).trim();
-  // Purpose is everything after " TO " �?trim trailing whitespace only.
+  // Purpose is everything after " TO " — trim trailing whitespace only.
   const afterTo = rest.slice(toIdx).replace(/^\s+TO\s+/i, '');
   const purpose = afterTo.replace(/\s+$/, '');
 
-  // If there are params, tokenize them. A malformed PARAM �?return null.
+  // If there are params, tokenize them. A malformed PARAM — return null.
   const params: Record<string, string> = {};
   if (paramRegion.length > 0) {
     const tokenized = tokenizeParams(paramRegion);

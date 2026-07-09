@@ -32,3 +32,22 @@ export function detectLineEnding(s: string): 'crlf' | 'lf' {
 export function normalizeLineEndings(s: string): string {
   return s.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
 }
+
+/**
+ * Count U+FFFD (REPLACEMENT CHARACTER) occurrences in a string.
+ *
+ * U+FFFD appears when bytes are decoded as UTF-8 but were originally encoded
+ * in a different codepage (e.g. GBK/ANSI on Windows). It signals **irreversible
+ * encoding corruption**: the original bytes cannot be recovered from U+FFFD.
+ *
+ * Used by read_file to warn the LLM that edit_file old_text matching may fail
+ * on lines containing these characters, and by edit_file to give a targeted
+ * error message when old_text is not found in a corrupted file.
+ */
+export function countReplacementChars(s: string): number {
+  let count = 0;
+  for (let i = 0; i < s.length; i++) {
+    if (s.charCodeAt(i) === 0xfffd) count++;
+  }
+  return count;
+}
