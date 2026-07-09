@@ -129,7 +129,7 @@ function buildPlatformSection(): string {
   const isWin = info.platform === 'Windows';
 
   const shellCommands = isWin
-    ? '- Use PowerShell syntax: `Get-Content file`, `Copy-Item src dest`\n- The bash tool executes commands via PowerShell (not cmd). Note that multiple commands should be concatenated using ";", not "&&".'
+    ? '- Use PowerShell syntax: `Get-Content file`, `Copy-Item src dest`\n- The bash tool executes commands via PowerShell (not cmd). Note that multiple commands should be concatenated using ";", not "&&".\n- **File encoding (avoid mojibake):** `Get-Content`/`Set-Content` default to the system ANSI codepage on Windows PowerShell 5.1, garbling UTF-8 files with non-ASCII chars. ALWAYS pass `-Encoding UTF8` when reading/writing source files (e.g. `Get-Content file -Encoding UTF8`). Prefer the built-in `read_file`/`edit_file` tools which handle UTF-8 automatically.'
     : '- Use bash/zsh syntax: `cat file`, `cp src dest`';
 
   const escaping = isWin

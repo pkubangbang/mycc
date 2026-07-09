@@ -1,24 +1,18 @@
 ---
 name: environment-detection
 description: >
-  Use to understand the "shape" of the current working directory (cwd).
-  Answers five detection questions: Is this a well-known system folder
-  (home, temp, /etc, /usr, C:\Windows)? Does cwd contain a git repo
-  (with remote and branch info)? If not git, what is this directory
-  (project, collection of repos, staging area, empty folder)? What
-  executables are available (ripgrep, fd, fzf, jq, yq, ffmpeg, python,
-  node, go, rustc)? And what is the user's likely intention (create new
-  project, work on existing, manage multiple, be cautious in system dir)?
-  Each step includes bash and PowerShell commands for cross-platform
-  detection. Reports findings via brief() with a confidence level (0-10).
-  Use when starting work in a new directory, encountering an unusual
-  project layout, needing to understand available tools, or when unsure
-  about the user's intentions for the current directory. Also covers
-  common pitfalls: assuming project structure without checking, ignoring
-  system folder constraints, and missing available tool detection.
-  For mycc projects, also detects tool/skill extension layers (project
-  and user) and their priority ordering.
-keywords: [environment, detection, directory, project, git, executables, tools, cwd, "working directory", layout, exploration, workspace, setup, context, system, discover, analyze, assess, "mycc", "tool layers", "skill layers", "built-in", "user-level", "project-level", "extension"]
+  Understand the "shape" of the current working directory (cwd) by answering
+  five questions: Is it a well-known system folder? Does it contain a git
+  repo (with remote/branch)? If not git, what is it (project, collection of
+  repos, staging, empty)? What executables are available (ripgrep, fd, jq,
+  python, node, etc.)? What is the user's likely intention? Each step gives
+  cross-platform bash and PowerShell commands and reports via brief() with a
+  confidence level (0-10). Use when starting in a new directory, facing an
+  unusual project layout, or unsure of user intent. Covers common pitfalls
+  (assuming structure, ignoring system folders, missing tools) and the
+  Windows Get-Content ANSI-vs-UTF-8 mojibake trap. For mycc projects, also
+  detects tool/skill extension layers (project and user) and priority.
+keywords: [environment, detection, directory, project, git, executables, tools, cwd, "working directory", layout, exploration, workspace, setup, context, system, discover, analyze, assess, "mycc", "tool layers", "skill layers", "built-in", "user-level", "project-level", "extension", "encoding", "UTF-8", "mojibake", "乱码", "PowerShell", "Windows", "Get-Content"]
 ---
 
 # Environment Detection
@@ -325,6 +319,17 @@ Agent uses brief():
 
 **Solution:** Check with `which` before using specialized tools like `ripgrep` or `yq`.
 
+### Pitfall 4: Windows File Encoding (Mojibake)
+
+**Problem:** On Windows PowerShell 5.1, `Get-Content` / `Set-Content` / `Out-File` / `Add-Content` default to the **system ANSI codepage** (GBK on Chinese systems), not UTF-8. Reading a UTF-8 source file with non-ASCII chars (Chinese comments, emoji, etc.) produces **mojibake**, and the byte-width mismatch makes line numbers unreliable. Writing without `-Encoding` can corrupt a UTF-8 file into ANSI. The console codepage fix (`chcp 65001`, which mycc auto-injects) only affects **stdout pipe encoding** — it does **not** change how `Get-Content` decodes files.
+
+**Solution:** On Windows, **always pass `-Encoding UTF8`** when reading/writing source files:
+```powershell
+Get-Content src/api/mock.js -Encoding UTF8    # NOT: Get-Content src/api/mock.js
+Set-Content file.txt "内容" -Encoding UTF8
+```
+Even better, **prefer the built-in `read_file` / `edit_file` / `write_file` tools** — they handle UTF-8 (including BOM) automatically, so you never hit this trap. If mojibake already occurred: don't trust line numbers, use `grep`/`Select-String` to locate by English anchors, and re-read the full target range with `-Encoding UTF8` in one shot (don't re-read the same failed slice piecemeal). See the PowerShell cheat sheet's "文件编码 (Encoding)" section for full details.
+
 ## Verification Checklist
 
 - [ ] Identified if cwd is a system folder
@@ -333,6 +338,7 @@ Agent uses brief():
 - [ ] Listed available executables
 - [ ] Inferred user intention
 - [ ] Reported findings via `brief()` with confidence level
+- [ ] On Windows: using `-Encoding UTF8` with Get-Content/Set-Content (or built-in read_file/edit_file) for non-ASCII source files
 
 ---
 

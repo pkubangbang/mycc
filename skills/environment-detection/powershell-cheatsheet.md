@@ -316,6 +316,60 @@ Test-Path C:\Windows               # 路径是否存在
 Get-Item file.txt | Select-Object FullName, Length, LastWriteTime
 ```
 
+### ⚠️ 文件编码 (Encoding) — 避免 Windows 乱码的高频陷阱
+
+**这是 Windows 上最容易反复踩的坑之一。** Windows PowerShell 5.1 的 `Get-Content` / `Set-Content` / `Out-File` / `Add-Content` **默认使用系统 ANSI 代码页**（中文系统为 GBK/GB2312，英文系统为 Windows-1252），而现代源代码文件几乎都是 **UTF-8** 编码。两者不匹配时：
+
+- 读取含中文/日文/韩文/Emoji 等**非 ASCII 字符**的文件 → 显示为乱码 (mojibake)
+- 乱码字符的字节宽度与原文不同 → 行号偏移变得**不可靠**
+- 用 `Set-Content` 不带 `-Encoding` 写入 → 把 UTF-8 文件**破坏**成 ANSI 编码
+
+> **注意：** 控制台输出编码 (`$OutputEncoding`、`[Console]::OutputEncoding`、`chcp 65001`) 由 mycc 的 bash 工具自动注入，**只解决 stdout 管道编码**。它**不影响** `Get-Content` 读取文件时的解码方式——文件读取的编码由 `-Encoding` 参数决定，与控制台 codepage 无关。所以即使控制台已是 UTF-8，`Get-Content` 不加 `-Encoding UTF8` 仍会乱码。
+
+**规则：在 Windows 上读写源代码文件时，始终显式指定 `-Encoding UTF8`。**
+
+| 操作 | ❌ 错误（默认 ANSI，会乱码） | ✅ 正确（UTF-8） |
+|------|------------------------------|------------------|
+| 读取 | `Get-Content src/api/mock.js` | `Get-Content src/api/mock.js -Encoding UTF8` |
+| 读取片段 | `$lines = Get-Content file; $lines[0..50]` | `$lines = Get-Content file -Encoding UTF8; $lines[0..50]` |
+| 写入 | `Set-Content file.txt "内容"` | `Set-Content file.txt "内容" -Encoding UTF8` |
+| 追加 | `Add-Content file.txt "行"` | `Add-Content file.txt "行" -Encoding UTF8` |
+| 管道输出 | `... \| Out-File out.txt` | `... \| Out-File out.txt -Encoding UTF8` |
+
+**BEFORE / AFTER：**
+
+```powershell
+# BEFORE — 中文注释乱码，行号偏移不可信
+$lines = Get-Content src/api/mock.js
+$lines[1013..1035]   # → 显示为 ï¿½ï¿½ ä¹±ç ï¿½...
+
+# AFTER — 正确显示，行号可信
+$lines = Get-Content src/api/mock.js -Encoding UTF8
+$lines[1013..1035]   # → 显示为正常的中文注释
+```
+
+**BOM 注意事项：**
+- **读取**：`-Encoding UTF8` 能正确解析带 BOM 和不带 BOM 的 UTF-8 文件，读取场景无副作用。
+- **写入**：PowerShell 5.1 的 `-Encoding UTF8` 会写入 **BOM** (EF BB BF)。大多数编辑器/工具能处理，但某些工具（如某些 `cat`/`diff`/shell 脚本）会把 BOM 当作正文首字符。若需写**无 BOM** 的 UTF-8，用 .NET API：
+  ```powershell
+  [System.IO.File]::WriteAllText("file.txt", $content, [System.Text.UTF8Encoding]::new($false))
+  ```
+- PowerShell 7+ 的 `-Encoding utf8NoBOM` 可直接写无 BOM UTF-8，但 5.1 不支持。
+
+**更优方案：优先使用 mycc 内置工具**
+mycc 的 `read_file` / `edit_file` / `write_file` 工具内置了 UTF-8（含 BOM 处理），无需关心编码问题。当目标是源代码文件时，优先用这些工具而非手写 `Get-Content`：
+```
+read_file(path="src/api/mock.js")          # 自动 UTF-8
+edit_file(path="src/api/mock.js", old_text=..., new_text=...)
+```
+仅在需要行号切片、复杂管道、或批量处理等内置工具不便的场景，才用 `Get-Content -Encoding UTF8`。
+
+**遇到乱码时的恢复策略：**
+1. 不要在乱码基础上继续读行号（行号已不可信）。
+2. 改用 `grep`（`Select-String`）按**英文锚点**定位，而非依赖行号。
+3. 用 `edit_file` 的 `old_text` 精确匹配**英文代码段**（不依赖编码/行号）来修改。
+4. 对完整目标区间用 `-Encoding UTF8` **一次性重读**，不要分段试探重复读已失败区间。
+
 ### 文本处理
 
 ```powershell
