@@ -9,7 +9,7 @@
  * into the confusion index for hint round triggering.
  */
 
-import { getEmbedding } from '../engine/ollama-embedding.js';
+import { getEmbedding } from '../engine/rag-provider.js';
 import { agentIO } from './agent-io.js';
 
 /** A single tracked tool call with its embedding */
@@ -47,7 +47,7 @@ export class RequestEmbeddingTracker {
   async addEntry(toolName: string, args: Record<string, unknown>): Promise<void> {
     try {
       const text = this.buildText(toolName, args);
-      const embedding = await getEmbedding(text);
+      const embedding = await getEmbedding(text, 'document');
 
       this.buffer.push({
         text,

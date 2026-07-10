@@ -21,7 +21,7 @@ import type {
   RebuildResult,
   CoreModule,
 } from '../../types.js';
-import { getEmbedding } from '../../engine/ollama-embedding.js';
+import { getEmbedding, EMBEDDING_DIM, NAMESPACE } from '../../engine/rag-provider.js';
 import { getWikiLogsDir, getWikiDbDir, getWikiDomainsFile, ensureDirs } from '../../config.js';
 
 const DUPLICATE_THRESHOLD = 0.95;
@@ -38,7 +38,7 @@ export class WikiManager implements WikiModule {
   private db: lancedb.Connection | null = null;
   private table: lancedb.Table | null = null;
   private core: CoreModule;
-  private tableName = 'wiki';
+  private tableName = `wiki_${NAMESPACE}`;
   constructor(core: CoreModule) {
     this.core = core;
   }
@@ -67,7 +67,7 @@ export class WikiManager implements WikiModule {
         title: '',
         content: '',
         references: '[]',
-        embedding: new Array(768).fill(0), // nomic-embed-text dimension
+        embedding: new Array(EMBEDDING_DIM).fill(0),
         createdAt: new Date().toISOString(),
       };
       this.table = await this.db.createTable(this.tableName, [initialRecord]);
@@ -184,7 +184,7 @@ export class WikiManager implements WikiModule {
 
     try {
       // Generate embedding for content
-      const embedding = await getEmbedding(document.content);
+      const embedding = await getEmbedding(document.content, 'document');
 
       // Check for duplicates (skip for skill indexing where titles serve as primary keys)
       if (!skipDuplicateCheck) {
@@ -235,7 +235,7 @@ export class WikiManager implements WikiModule {
       }
 
       // Generate embedding
-      const embedding = await getEmbedding(document.content);
+      const embedding = await getEmbedding(document.content, 'document');
 
       // Create record
       const record: Record<string, unknown> = {
@@ -257,6 +257,7 @@ export class WikiManager implements WikiModule {
         hash,
         document,
         approved: true,
+        namespace: NAMESPACE,
       });
 
       this.core.brief('info', 'wiki', `Stored document: ${document.title}`);
@@ -280,7 +281,7 @@ export class WikiManager implements WikiModule {
 
     try {
       // Generate embedding for query
-      const queryEmbedding = await getEmbedding(query);
+      const queryEmbedding = await getEmbedding(query, 'query');
 
       // Get all records and filter manually (vector search requires embedding column)
       const records = await this.table.query().toArray();
@@ -605,9 +606,14 @@ export class WikiManager implements WikiModule {
           if (entry.deleted) continue;
           if (!entry.approved) continue;
 
+          // Only rebuild entries belonging to the current namespace.
+          // Entries without a namespace field are legacy (pre-rag-provider)
+          // and are re-embedded with the current model on first rebuild.
+          if (entry.namespace && entry.namespace !== NAMESPACE) continue;
+
           try {
             // Generate embedding
-            const embedding = await getEmbedding(entry.document.content);
+            const embedding = await getEmbedding(entry.document.content, 'document');
 
             // Create record
             const record: Record<string, unknown> = {

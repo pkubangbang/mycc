@@ -17,7 +17,7 @@ vi.mock('../../loop/agent-io.js', () => ({
 }));
 
 // Mock getEmbedding — each test controls the return value via mockGetEmbedding
-vi.mock('../../engine/ollama-embedding.js', () => ({
+vi.mock('../../engine/rag-provider.js', () => ({
   getEmbedding: mockGetEmbedding,
 }));
 
@@ -61,6 +61,17 @@ describe('RequestEmbeddingTracker', () => {
       expect(tracker.getMaxSimilarity()).toBe(0);
     });
 
+    it('should call getEmbedding with mode="document"', async () => {
+      mockGetEmbedding.mockResolvedValueOnce(fakeEmbedding(1));
+
+      await tracker.addEntry('read_file', { path: '/foo/bar.ts' });
+
+      expect(mockGetEmbedding).toHaveBeenCalledTimes(1);
+      // Second arg is the embed mode — must be 'document' for stored tool calls
+      const modeArg = mockGetEmbedding.mock.calls[0][1];
+      expect(modeArg).toBe('document');
+    });
+
     it('should generate the correct text representation format', async () => {
       // Spy on the embedding call to inspect the text being embedded
       mockGetEmbedding.mockResolvedValueOnce(fakeEmbedding(1));
@@ -89,6 +100,8 @@ describe('RequestEmbeddingTracker', () => {
       expect(textArg).toContain('d="world"');
       expect(textArg).not.toContain('b=');
       expect(textArg).not.toContain('c=');
+      // Mode should still be 'document' regardless of args
+      expect(mockGetEmbedding.mock.calls[0][1]).toBe('document');
     });
 
     it('should truncate long individual values at MAX_VALUE_LENGTH (200)', async () => {
@@ -101,6 +114,8 @@ describe('RequestEmbeddingTracker', () => {
       // The value should be truncated to 200 chars + "..."
       expect(textArg).toContain('x'.repeat(200) + '..."');
       expect(textArg).not.toContain('x'.repeat(201));
+      // Mode must be 'document' for stored tool-call embeddings
+      expect(mockGetEmbedding.mock.calls[0][1]).toBe('document');
     });
 
     it('should truncate the full text at MAX_TEXT_LENGTH (1000)', async () => {

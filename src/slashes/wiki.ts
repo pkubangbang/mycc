@@ -350,6 +350,8 @@ async function handleExport(wiki: WikiModule, rawArgs: string[]): Promise<void> 
         if (!line.trim()) continue;
         try {
           const entry = JSON.parse(line) as WALEntry;
+          // Skip deleted entries — they should not be exported (would revive on import)
+          if (entry.deleted) continue;
           if (!domain || entry.document.domain === domain) {
             allEntries.push(entry);
           }
@@ -458,8 +460,14 @@ async function handleImport(wiki: WikiModule, rawArgs: string[]): Promise<void> 
   // Import entries
   let imported = 0;
   let skipped = 0;
+  let deletedSkipped = 0;
   for (const entry of data.entries) {
     if (!entry.hash || !entry.document) continue;
+
+    // Skip deleted entries — importing them would revive documents the user
+    // explicitly removed. Also skip entries marked !approved (never stored).
+    if (entry.deleted) { deletedSkipped++; continue; }
+    if (entry.approved === false) { skipped++; continue; }
 
     try {
       await wiki.put(entry.hash, entry.document);
@@ -470,8 +478,9 @@ async function handleImport(wiki: WikiModule, rawArgs: string[]): Promise<void> 
   }
 
   const skippedMsg = skipped > 0 ? `, ${skipped} skipped` : '';
+  const deletedMsg = deletedSkipped > 0 ? `, ${deletedSkipped} deleted entries ignored` : '';
   const domainsMsg = domainsAdded > 0 ? `, ${domainsAdded} domains added` : '';
   console.log(
-    chalk.green(`Import complete: ${imported} entries imported${skippedMsg}${domainsMsg}`),
+    chalk.green(`Import complete: ${imported} entries imported${skippedMsg}${deletedMsg}${domainsMsg}`),
   );
 }

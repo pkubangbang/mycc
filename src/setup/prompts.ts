@@ -59,7 +59,7 @@ function getOllamaConnectionPrompts(): PromptConfig[] {
       name: 'OLLAMA_EMBEDDING_MODEL',
       message: 'Ollama embedding model (for semantic search/RAG)',
       default: 'nomic-embed-text',
-      help: 'An embedding model is recommended for wiki/RAG features. Leave empty to skip.',
+      help: 'Embedding model for wiki/RAG. Options: nomic-embed-text (default), embeddinggemma (needs Ollama v0.11.10+, applies prompt prefixes automatically).',
     },
   ];
 }

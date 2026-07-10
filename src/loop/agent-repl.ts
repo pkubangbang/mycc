@@ -14,7 +14,7 @@ import { healthCheck } from '../engine/chat-provider.js';
 import { ParentContext } from '../context/parent-context.js';
 import { getSessionId } from '../session/index.js';
 import { slashRegistry } from '../slashes/index.js';
-import { getTokenThreshold, isDebuggingEval } from '../config.js';
+import { getTokenThreshold, isDebuggingEval, getEmbeddingModel } from '../config.js';
 import { Triologue } from './triologue.js';
 import { agentIO } from './agent-io.js';
 import { shouldSkipHealthCheck } from '../config.js';
@@ -134,6 +134,7 @@ export async function main(): Promise<void> {
   }
 
   console.log(chalk.gray(`${alignLabel('Threshold:')}${tokenThreshold} tokens`));
+  console.log(chalk.gray(`${alignLabel('Embedding:')}${getEmbeddingModel()}`));
 
   // Initialize session (restore or create new)
   const sessionInit = await initializeSession();

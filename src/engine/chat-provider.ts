@@ -27,8 +27,8 @@ export const structuredChat = active.structuredChat;
 // Health check (switchable — active provider)
 export const healthCheck = active.healthCheck;
 
-// Embedding (always Ollama)
-export { getEmbedding } from './ollama-embedding.js';
+// Embedding (RAG provider — model-aware, auto-inferred from OLLAMA_EMBEDDING_MODEL)
+export { getEmbedding, EMBEDDING_DIM, NAMESPACE, type EmbedMode } from './rag-provider.js';
 
 // Re-export agnostic utilities
 export {

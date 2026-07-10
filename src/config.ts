@@ -289,6 +289,33 @@ export function getApiProvider(): 'ollama' | 'deepseek' {
 }
 
 /**
+ * Get the configured embedding model name (always via Ollama, even with DeepSeek).
+ * Used for semantic search, skill matching, and wiki/RAG features.
+ */
+export function getEmbeddingModel(): string {
+  return process.env.OLLAMA_EMBEDDING_MODEL || 'nomic-embed-text';
+}
+
+/**
+ * RAG embedding provider type.
+ *
+ * The provider is auto-inferred from OLLAMA_EMBEDDING_MODEL:
+ *   - starts with "embeddinggemma" → 'embeddinggemma' (needs prompt prefixes)
+ *   - otherwise → 'nomic' (no prefixes, covers nomic-embed-text etc.)
+ */
+export type RagProvider = 'nomic' | 'embeddinggemma';
+
+/**
+ * Get the active RAG embedding provider based on the configured model name.
+ * Used by rag-provider.ts to select the embedding implementation.
+ */
+export function getRagProvider(): RagProvider {
+  const model = getEmbeddingModel();
+  if (model.startsWith('embeddinggemma')) return 'embeddinggemma';
+  return 'nomic';
+}
+
+/**
  * Check if vision model is enabled
  * Returns true if OLLAMA_VISION_MODEL is set and not "none"
  */

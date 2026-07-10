@@ -50,6 +50,7 @@ vi.mock('../../config.js', () => ({
   getWikiDbDir: () => '/tmp/.mycc-store/wiki/db',
   getWikiDomainsFile: () => '/tmp/.mycc-store/wiki/domains.json',
   ensureToolTypeImports: () => {},
+  getRagProvider: () => 'nomic',
 }));
 
 function createMockTriologue(): Triologue {

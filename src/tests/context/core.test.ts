@@ -51,6 +51,7 @@ vi.mock('../../config.js', () => ({
   getOllamaApiKey: vi.fn(() => undefined),
   getOllamaModel: vi.fn(() => 'test-model'),
   getTokenThreshold: vi.fn(() => 50000),
+  getRagProvider: vi.fn(() => 'nomic'),
 }));
 
 // Mock ipc-helpers for ChildCore tests - use factory that returns mock functions

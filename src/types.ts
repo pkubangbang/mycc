@@ -612,6 +612,8 @@ export interface WALEntry {
   approved: boolean;
   persistent?: boolean;
   deleted?: boolean; // Marks entry as deleted from vector store
+  /** RAG provider namespace (the configured model name, e.g. 'nomic-embed-text', 'embeddinggemma') for rebuild filtering */
+  namespace?: string;
 }
 
 /**
