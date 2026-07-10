@@ -138,6 +138,18 @@ class AgentIO {
   private askOnEsc: string | null = null;
   private askOnEnter: string | null = null;
 
+  // Re-entrancy guard: queue concurrent ask() calls so the singleton
+  // askResolver/askOnEsc/askOnEnter/activeLineEditor fields are never
+  // overwritten while a previous ask() is still pending.
+  //
+  // Without this guard, two IPC handlers that both call ask() (e.g.
+  // external_path_access from two teammates reading files outside their
+  // worktree simultaneously) run concurrently via fire-and-forget
+  // handleChildMessage() calls. The second ask() overwrites the first's
+  // askResolver, so the first ask()'s Promise never resolves — the first
+  // teammate is permanently blocked.
+  private askQueue: Array<() => void> = [];
+
 
 
   // Lifecycle
@@ -165,6 +177,8 @@ class AgentIO {
             this.activeLineEditor = null;
             this.flushOutput();
             if (resolver) resolver(onEscValue);
+            // Wake the next queued ask() so it can proceed
+            this.drainAskQueue();
           }
           // If onEsc not provided, ESC is ignored (main prompt no-op)
           return;
@@ -489,6 +503,16 @@ class AgentIO {
   // Question (main process only)
 
   /**
+   * Wake the next queued ask() call (if any) so it can proceed now that
+   * the current ask() has resolved. Called from every ask() completion
+   * path (onDone, ESC cancel, catch).
+   */
+  private drainAskQueue(): void {
+    const next = this.askQueue.shift();
+    if (next) next();
+  }
+
+  /**
    * Ask user a question via line editor
    * Only available in main process
    *
@@ -501,6 +525,18 @@ class AgentIO {
   async ask(query: string, options?: AskOptions): Promise<string> {
     if (!this.isMainProcessFlag) {
       throw new Error('question() only available in main process');
+    }
+
+    // Re-entrancy guard: if another ask() is already active (askResolver set),
+    // wait in a queue until it completes. This prevents the singleton
+    // askResolver/askOnEsc/askOnEnter/activeLineEditor fields from being
+    // overwritten by a concurrent call, which would orphan the first call's
+    // Promise and permanently block the caller (e.g. a teammate waiting for
+    // an external_path_access or grant_request response).
+    if (this.askResolver !== null) {
+      await new Promise<void>((release) => {
+        this.askQueue.push(release);
+      });
     }
 
     const useAsPrompt = options?.useAsPrompt ?? false;
@@ -584,6 +620,9 @@ class AgentIO {
               ? options.onEnter
               : value;
             resolve(finalValue);
+
+            // Wake the next queued ask() so it can proceed
+            this.drainAskQueue();
           },
           history: this.lineHistory,
           onContentChange: (content: string) => {
@@ -661,6 +700,8 @@ class AgentIO {
         this.askResolver = null;
         this.askOnEsc = null;
         this.askOnEnter = null;
+        // Wake the next queued ask() so it can proceed
+        this.drainAskQueue();
         throw e;
       }
     });
