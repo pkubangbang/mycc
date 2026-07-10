@@ -622,10 +622,24 @@ export class Triologue {
   }
 
   /**
-   * Get raw messages array (for hint round context interface)
+   * Get raw messages array (for hint round context interface).
+   *
+   * Defensive filtering: drops any undefined / null / non-object entry that
+   * slipped into `messages` (e.g. via sparse-array length manipulation from
+   * wrap-up rollback, TP auto-fixer injection, session restoration, or recap
+   * slicing). Without this, unguarded raw consumers (hint-round, minifier,
+   * checkpoint-recap) that read `.role` / `.content` directly would throw
+   * "Cannot read properties of undefined (reading 'role'/'content')" — an
+   * intermittent error surfaced most often in the COLLECT state because that
+   * is where hint-round runs. Mirrors the guard already present in
+   * getMessages() so there is a single chokepoint for ALL message access.
    */
   getMessagesRaw(): Message[] {
-    return [...this.messages];
+    const result: Message[] = [];
+    for (const m of this.messages) {
+      if (m && typeof m === 'object' && m.role) result.push(m);
+    }
+    return result;
   }
 
   /**

@@ -234,8 +234,22 @@ export async function handleCollect(
 
     return AgentState.LLM;
   } catch (err) {
+    // Defensive: log as much context as possible for this intermittent error.
+    // The classic "Cannot read properties of undefined (reading 'role'/content')"
+    // surfaced in COLLECT comes from holes in triologue.messages read by
+    // unguarded raw consumers (hint-round, minifier). getMessagesRaw() now
+    // filters holes, but if a new throw path emerges we want the stack and
+    // the array shape to debug it instead of just the bare error message.
     const errorMessage = err instanceof Error ? err.message : String(err);
-    ctx.core.brief('error', 'collect', `COLLECT state error: ${errorMessage}`);
+    const errorStack = err instanceof Error && err.stack ? err.stack : '';
+    const rawLen = triologue.getMessagesRaw().length;
+    const tokLen = triologue.getTokenCount();
+    ctx.core.brief(
+      'error',
+      'collect',
+      `COLLECT state error: ${errorMessage}`,
+      `messages(raw)=${rawLen} tokens=${tokLen}\n${errorStack}`,
+    );
     return AgentState.PROMPT;
   }
 }
