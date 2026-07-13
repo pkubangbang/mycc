@@ -44,6 +44,28 @@ const ESCAPE_SEQUENCES_HEX: Record<string, string> = {
   '1b5b32347e': 'f12',
 };
 
+// Final bytes for modifier-extended arrow/home/end sequences (ESC[1;N<final>)
+const MODIFIER_FINAL_BYTES: Record<number, string> = {
+  0x41: 'up',     // A
+  0x42: 'down',   // B
+  0x43: 'right',  // C
+  0x44: 'left',   // D
+  0x48: 'home',   // H
+  0x46: 'end',    // F
+};
+
+// Modifier codes in the ;N portion of ESC[1;N<final>
+// (xterm modifier encoding: bit 1 = Shift, bit 2 = Alt, bit 3 = Ctrl)
+const MODIFIER_CODES: Record<number, { shift: boolean; ctrl: boolean }> = {
+  2: { shift: true,  ctrl: false },  // Shift
+  3: { shift: false, ctrl: false },  // Alt (not tracked as a flag)
+  4: { shift: true,  ctrl: false },  // Shift+Alt
+  5: { shift: false, ctrl: true  },  // Ctrl
+  6: { shift: true,  ctrl: true  },  // Shift+Ctrl
+  7: { shift: false, ctrl: true  },  // Ctrl+Alt
+  8: { shift: true,  ctrl: true  },  // Shift+Ctrl+Alt
+};
+
 // Ctrl key mappings (Ctrl+A = 1, Ctrl+B = 2, etc.)
 const CTRL_CHARS = 'abcdefghijklmnopqrstuvwxyz';
 const CTRL_CHAR_NAMES: Record<number, string> = {};
@@ -91,6 +113,32 @@ function parseNextKey(data: Buffer, offset: number): { keyInfo: KeyInfo; consume
             ctrl: false,
             meta: true,
             shift: false,
+            sequence: data.toString('utf8', offset, offset + consumed),
+          },
+          consumed,
+        };
+      }
+    }
+
+    // Modifier-extended escape sequences: ESC[1;N<final>
+    // e.g., ESC[1;2D = Shift+Left, ESC[1;5C = Ctrl+Right, ESC[1;2H = Shift+Home
+    // Format: 0x1b 0x5b 0x31 0x3b <mod-digit> <final-byte>  (6 bytes total)
+    if (remaining >= 6 &&
+        data[offset + 1] === 0x5b &&  // [
+        data[offset + 2] === 0x31 &&  // 1
+        data[offset + 3] === 0x3b) {   // ;
+      const modCode = data[offset + 4] - 0x30;  // ASCII digit -> number
+      const finalByte = data[offset + 5];
+      const baseName = MODIFIER_FINAL_BYTES[finalByte];
+      const mod = MODIFIER_CODES[modCode];
+      if (baseName && mod) {
+        const consumed = 6;
+        return {
+          keyInfo: {
+            name: baseName,
+            ctrl: mod.ctrl,
+            meta: true,
+            shift: mod.shift,
             sequence: data.toString('utf8', offset, offset + consumed),
           },
           consumed,

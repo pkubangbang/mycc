@@ -49,6 +49,10 @@ export class LineEditor {
   private lineInfo: LineInfo;
   private screenStartRow = 0;
 
+  // Selection anchor: index into content[] (same space as CURSOR sentinel).
+  // null = no selection. Set on Shift+arrow; cursor is the active end.
+  private selectionAnchor: number | null = null;
+
   private whisperText: string | null = null;
   private whisperTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -154,6 +158,13 @@ export class LineEditor {
     const inBangMode = this.prompt === BANG_PROMPT;
     const skipLeadingBang = inBangMode && this.content[0] === '!';
 
+    // Selection range (content[] indices, inclusive of both ends, excluding CURSOR).
+    // Computed once so doRender gets consistent highlighting.
+    const cursorIdx = this.content.indexOf(CURSOR);
+    const hasSelection = this.selectionAnchor !== null && this.selectionAnchor !== cursorIdx;
+    const selStart = hasSelection ? Math.min(this.selectionAnchor!, cursorIdx) : -1;
+    const selEnd = hasSelection ? Math.max(this.selectionAnchor!, cursorIdx) : -1;
+
     for (let i = 0; i < this.content.length; i++) {
       const char = this.content[i];
       const isCursor = char === CURSOR;
@@ -172,6 +183,8 @@ export class LineEditor {
         ? this.columns - this.promptLength
         : this.columns;
 
+      // Width is always computed on the raw char (pre-ANSI) so wrapping
+      // is unaffected by inverse-video highlighting.
       const width = isCursor ? 0 : stringWidth(char);
 
       if (currentLineWidth + width > maxWidth && currentLine.length > 0) {
@@ -186,7 +199,12 @@ export class LineEditor {
         continue;
       }
 
-      currentLine.push(char);
+      // Apply inverse video to selected graphemes (excluding CURSOR index).
+      if (hasSelection && i >= selStart && i <= selEnd) {
+        currentLine.push(`\x1b[7m${char}\x1b[0m`);
+      } else {
+        currentLine.push(char);
+      }
       currentLineWidth += width;
     }
 
@@ -272,6 +290,88 @@ export class LineEditor {
 
     this.stdout.write(output.join(''));
     this.screenStartRow = 1 + cursorLine;
+  }
+
+  // === Selection ===
+
+  /** True if a non-empty selection is active (anchor set and != cursor). */
+  private hasSelection(): boolean {
+    return this.selectionAnchor !== null && this.selectionAnchor !== this.getCursorIndex();
+  }
+
+  /** Clear the current selection (anchor = null). Does not render. */
+  private clearSelection(): void {
+    this.selectionAnchor = null;
+  }
+
+  /**
+   * Get the selection range as [start, end] content[] indices (inclusive),
+   * or null if no active selection. Excludes the CURSOR sentinel index.
+   */
+  private getSelectionRange(): [number, number] | null {
+    if (!this.hasSelection()) return null;
+    const cursorIdx = this.getCursorIndex();
+    return [
+      Math.min(this.selectionAnchor!, cursorIdx),
+      Math.max(this.selectionAnchor!, cursorIdx),
+    ];
+  }
+
+  /**
+   * Delete the currently selected range (if any) and place the cursor at
+   * the low end of the deleted range. Clears the anchor, recomputes line
+   * info, and re-renders so all callers see consistent post-deletion state.
+   * No-op for empty or absent selection.
+   */
+  private deleteSelection(): void {
+    const range = this.getSelectionRange();
+    if (!range) return;
+    const [selStart, selEnd] = range;
+    // Remove all chars in [selStart, selEnd] except CURSOR (which lives at
+    // either selStart or selEnd since it's one of the range endpoints).
+    this.content = this.content.filter((c, i) => c === CURSOR || i < selStart || i > selEnd);
+    // Move CURSOR to the low end of the deleted range.
+    const curIdx = this.getCursorIndex();
+    if (curIdx !== selStart) {
+      this.content.splice(curIdx, 1);
+      this.content.splice(selStart, 0, CURSOR);
+    }
+    this.selectionAnchor = null;
+    this.checkPromptChange();
+    this.lineInfo = this.computeLineInfo();
+    this.render();
+  }
+
+  /** Shift+Left: set anchor if none, then move cursor left. */
+  private extendSelectionLeft(): void {
+    if (this.selectionAnchor === null) {
+      this.selectionAnchor = this.getCursorIndex();
+    }
+    this.moveLeft();
+  }
+
+  /** Shift+Right: set anchor if none, then move cursor right. */
+  private extendSelectionRight(): void {
+    if (this.selectionAnchor === null) {
+      this.selectionAnchor = this.getCursorIndex();
+    }
+    this.moveRight();
+  }
+
+  /** Shift+Home: set anchor if none, then move cursor to start. */
+  private extendSelectionHome(): void {
+    if (this.selectionAnchor === null) {
+      this.selectionAnchor = this.getCursorIndex();
+    }
+    this.moveHome();
+  }
+
+  /** Shift+End: set anchor if none, then move cursor to end. */
+  private extendSelectionEnd(): void {
+    if (this.selectionAnchor === null) {
+      this.selectionAnchor = this.getCursorIndex();
+    }
+    this.moveEnd();
   }
 
   // === Cursor Movement ===
@@ -378,6 +478,7 @@ export class LineEditor {
   }
 
   setContent(text: string): void {
+    this.selectionAnchor = null;
     this.content = [...this.splitIntoChars(text), CURSOR];
     this.checkPromptChange();
     this.lineInfo = this.computeLineInfo();
@@ -394,6 +495,11 @@ export class LineEditor {
     const chars = this.splitIntoChars(text);
     if (chars.length === 0) return;
 
+    // Paste replaces the active selection (standard editor behavior).
+    if (this.hasSelection()) {
+      this.deleteSelection();
+    }
+
     const idx = this.getCursorIndex();
     this.content.splice(idx, 0, ...chars);
     this.checkPromptChange();
@@ -409,13 +515,57 @@ export class LineEditor {
   }
 
   handleKey(key: KeyInfo): void {
-    if (key.name === 'left') { this.moveLeft(); return; }
-    if (key.name === 'right') { this.moveRight(); return; }
-    if (key.name === 'home' || (key.ctrl && key.name === 'a')) { this.moveHome(); return; }
-    if (key.name === 'end' || (key.ctrl && key.name === 'e')) { this.moveEnd(); return; }
-    if (key.name === 'up') { this.historyUp(); return; }
-    if (key.name === 'down') { this.historyDown(); return; }
+    // Phase 1 — Replace-guard: if a non-empty selection is active and the key
+    // is destructive, delete the selection first. Backspace/Delete return;
+    // typing/Enter/Ctrl+K/Ctrl+U fall through to their handlers below.
+    if (this.hasSelection()) {
+      if (key.name === 'backspace' || key.name === 'delete') {
+        this.deleteSelection();
+        this.notifyContentChange();
+        return;
+      }
+      if (key.name === 'return' || key.name === 'enter') {
+        this.deleteSelection();
+        // fall through to return handler below
+      } else if (key.ctrl && (key.name === 'k' || key.name === 'u')) {
+        this.deleteSelection();
+        // fall through to ctrl+k/ctrl+u handlers below
+      } else if (key.sequence && !key.ctrl && !key.meta) {
+        // Typing a printable char replaces the selection, then inserts.
+        this.deleteSelection();
+        this.insertChar(key.sequence);
+        this.notifyContentChange();
+        return;
+      }
+    }
 
+    // Phase 2 — Shift+arrow/home/end: extend selection (anchor stays fixed).
+    if (key.shift && !key.ctrl) {
+      if (key.name === 'left') { this.extendSelectionLeft(); return; }
+      if (key.name === 'right') { this.extendSelectionRight(); return; }
+      if (key.name === 'home') { this.extendSelectionHome(); return; }
+      if (key.name === 'end') { this.extendSelectionEnd(); return; }
+    }
+
+    // Phase 3 — Non-shift movement: clear selection, then move.
+    if (!key.shift) {
+      if (key.name === 'left') { this.clearSelection(); this.moveLeft(); return; }
+      if (key.name === 'right') { this.clearSelection(); this.moveRight(); return; }
+      if (key.name === 'home' || (key.ctrl && key.name === 'a')) { this.clearSelection(); this.moveHome(); return; }
+      if (key.name === 'end' || (key.ctrl && key.name === 'e')) { this.clearSelection(); this.moveEnd(); return; }
+      if (key.name === 'up') { this.clearSelection(); this.historyUp(); return; }
+      if (key.name === 'down') { this.clearSelection(); this.historyDown(); return; }
+    } else {
+      // Shift is held but not an extendable movement key — still clear so a
+      // stale selection doesn't persist through unrelated shift+key combos.
+      if (key.name === 'up' || key.name === 'down') { this.clearSelection(); }
+      if (key.name === 'home' || key.name === 'end' ||
+          (key.ctrl && (key.name === 'a' || key.name === 'e'))) {
+        this.clearSelection();
+      }
+    }
+
+    // Phase 4 — Existing handlers for non-movement keys.
     if (key.name === 'backspace') {
       this.backspace();
       this.notifyContentChange();
@@ -429,6 +579,7 @@ export class LineEditor {
     }
 
     if (key.ctrl && key.name === 'k') {
+      this.clearSelection();
       this.content = this.content.slice(0, this.getCursorIndex() + 1);
       this.checkPromptChange();
       this.lineInfo = this.computeLineInfo();
@@ -438,6 +589,7 @@ export class LineEditor {
     }
 
     if (key.ctrl && key.name === 'u') {
+      this.clearSelection();
       const idx = this.getCursorIndex();
       this.content = [CURSOR, ...this.content.slice(idx + 1)];
       this.checkPromptChange();
@@ -448,6 +600,7 @@ export class LineEditor {
     }
 
     if (key.name === 'return' || key.name === 'enter') {
+      this.clearSelection();
       this.doRender();
       this.stdout.write('\n');
       const val = this.getContent();
@@ -457,6 +610,11 @@ export class LineEditor {
     }
 
     if (key.sequence && !key.ctrl && !key.meta) {
+      // Typing always resets selection state. This covers the case where
+      // the anchor was set but equals the cursor (empty selection): without
+      // this clear, insertChar would move the cursor and retroactively make
+      // the stale anchor look like an active selection.
+      this.clearSelection();
       this.insertChar(key.sequence);
       this.notifyContentChange();
     }

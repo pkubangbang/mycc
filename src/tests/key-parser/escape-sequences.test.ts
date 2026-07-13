@@ -193,4 +193,97 @@ describe('key-parser', () => {
       });
     });
   });
+
+  describe('Escape Sequences - Modifier-Extended (Shift/Ctrl+Arrow)', () => {
+    it('should parse Shift+Left (ESC[1;2D)', () => {
+      const result = parseKeys(hexBuf(0x1b, 0x5b, 0x31, 0x3b, 0x32, 0x44));
+      expect(result).toHaveLength(1);
+      expect(result[0].name).toBe('left');
+      expect(result[0].shift).toBe(true);
+      expect(result[0].ctrl).toBe(false);
+      expect(result[0].meta).toBe(true);
+      expect(result[0].sequence).toBe('\x1b[1;2D');
+    });
+
+    it('should parse Shift+Right (ESC[1;2C)', () => {
+      const result = parseKeys(hexBuf(0x1b, 0x5b, 0x31, 0x3b, 0x32, 0x43));
+      expect(result).toHaveLength(1);
+      expect(result[0].name).toBe('right');
+      expect(result[0].shift).toBe(true);
+      expect(result[0].ctrl).toBe(false);
+    });
+
+    it('should parse Shift+Up (ESC[1;2A)', () => {
+      const result = parseKeys(hexBuf(0x1b, 0x5b, 0x31, 0x3b, 0x32, 0x41));
+      expect(result).toHaveLength(1);
+      expect(result[0].name).toBe('up');
+      expect(result[0].shift).toBe(true);
+    });
+
+    it('should parse Shift+Down (ESC[1;2B)', () => {
+      const result = parseKeys(hexBuf(0x1b, 0x5b, 0x31, 0x3b, 0x32, 0x42));
+      expect(result).toHaveLength(1);
+      expect(result[0].name).toBe('down');
+      expect(result[0].shift).toBe(true);
+    });
+
+    it('should parse Ctrl+Left (ESC[1;5D)', () => {
+      const result = parseKeys(hexBuf(0x1b, 0x5b, 0x31, 0x3b, 0x35, 0x44));
+      expect(result).toHaveLength(1);
+      expect(result[0].name).toBe('left');
+      expect(result[0].ctrl).toBe(true);
+      expect(result[0].shift).toBe(false);
+    });
+
+    it('should parse Ctrl+Right (ESC[1;5C)', () => {
+      const result = parseKeys(hexBuf(0x1b, 0x5b, 0x31, 0x3b, 0x35, 0x43));
+      expect(result).toHaveLength(1);
+      expect(result[0].name).toBe('right');
+      expect(result[0].ctrl).toBe(true);
+    });
+
+    it('should parse Shift+Ctrl+Left (ESC[1;6D)', () => {
+      const result = parseKeys(hexBuf(0x1b, 0x5b, 0x31, 0x3b, 0x36, 0x44));
+      expect(result).toHaveLength(1);
+      expect(result[0].name).toBe('left');
+      expect(result[0].shift).toBe(true);
+      expect(result[0].ctrl).toBe(true);
+    });
+
+    it('should parse Shift+Ctrl+Right (ESC[1;6C)', () => {
+      const result = parseKeys(hexBuf(0x1b, 0x5b, 0x31, 0x3b, 0x36, 0x43));
+      expect(result).toHaveLength(1);
+      expect(result[0].name).toBe('right');
+      expect(result[0].shift).toBe(true);
+      expect(result[0].ctrl).toBe(true);
+    });
+
+    it('should parse Shift+Home (ESC[1;2H)', () => {
+      const result = parseKeys(hexBuf(0x1b, 0x5b, 0x31, 0x3b, 0x32, 0x48));
+      expect(result).toHaveLength(1);
+      expect(result[0].name).toBe('home');
+      expect(result[0].shift).toBe(true);
+    });
+
+    it('should parse Shift+End (ESC[1;2F)', () => {
+      const result = parseKeys(hexBuf(0x1b, 0x5b, 0x31, 0x3b, 0x32, 0x46));
+      expect(result).toHaveLength(1);
+      expect(result[0].name).toBe('end');
+      expect(result[0].shift).toBe(true);
+    });
+
+    it('should not produce garbled chars for Shift+Left (single key, not 6)', () => {
+      const result = parseKeys(hexBuf(0x1b, 0x5b, 0x31, 0x3b, 0x32, 0x44));
+      expect(result).toHaveLength(1);
+      expect(result[0].name).toBe('left');
+    });
+
+    it('should parse Shift+Left followed by a printable char', () => {
+      const result = parseKeys(hexBuf(0x1b, 0x5b, 0x31, 0x3b, 0x32, 0x44, 0x61));
+      expect(result).toHaveLength(2);
+      expect(result[0].name).toBe('left');
+      expect(result[0].shift).toBe(true);
+      expect(result[1].name).toBe('a');
+    });
+  });
 });
