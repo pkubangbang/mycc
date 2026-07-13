@@ -157,6 +157,10 @@ async function handleRecapCall(
   }
 
   // Normal: capture full triologue BEFORE truncation for the LLM
+  // fullMessages + allTools form the cached prefix the main loop already paid
+  // for — pass both un-minified and complete so the fork hits that cache.
+  // (toolChoice:'none' is applied inside handleRecap; it constrains output to
+  // text-only without touching the cached prefix.)
   const fullMessages = [...triologue.getMessages()];
   const allTools = loader.getToolsForScope('main');
 

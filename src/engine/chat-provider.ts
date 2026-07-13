@@ -54,13 +54,29 @@ export type { RetryConfig, ErrorType } from './chat-helpers.js';
  * retryChat with all tools (to preserve prompt cache). Returns the LLM's
  * text content. Does NOT touch the triologue — callers own context management.
  *
+ * PROMPT-CACHE CONTRACT — the fork's whole value is reusing the prefix the
+ * main agent loop already paid to compute. That cached prefix is the EXACT
+ * token sequence of system + projectContext + conversation messages + the
+ * FULL tools schema. To keep the cache hit:
+ *   - `messages` MUST be the un-minified, untruncated array the main loop sends
+ *     (minifying/truncating rewrites the sequence → cache miss → full recompute).
+ *   - `tools` MUST be the complete tool list (omitting it drops cached tokens
+ *     → cache miss). Pass the same `getToolsForScope(...)` result the loop uses.
+ * The ONE safe knob is `toolChoice`: it is a sampling parameter that governs
+ * whether the model may EMIT tool calls — it is NOT part of the cached prefix
+ * token sequence, so `toolChoice:'none'` constrains output to text-only while
+ * keeping the tools schema cached. Use it for text-only forks (recap, crossroad).
+ *
  * Used by:
  * - handleRecap — summarize checkpoint span for context compression
+ * - crossroad — generate/select continuation candidates (toolChoice:'none')
  *
  * @param messages - Full messages to fork from (caller's copy before mutation)
  * @param tools - All available tools (for prompt cache preservation)
  * @param prompt - The prompt to merge into the last user message
  * @param signal - Optional AbortSignal for ESC handling
+ * @param toolChoice - Optional 'none'|'auto'|'required'; 'none' keeps the cached
+ *   prefix intact while forbidding tool-call output (text-only forks)
  * @returns The LLM's text response, or empty string on failure
  */
 export async function forkChat(
@@ -79,7 +95,9 @@ export async function forkChat(
     msgs.push({ role: 'user', content: prompt });
   }
 
-  // Build request with optional toolChoice for prompt cache preservation.
+  // Build request with full tools (preserves the cached prefix) plus optional
+  // toolChoice. toolChoice is a sampling param — NOT part of the cached token
+  // sequence — so 'none' constrains output to text-only without a cache miss.
   // DeepSeek reads toolChoice from the request object (deepseek.ts:359-362);
   // Ollama spreads the entire request and silently ignores unknown fields.
   const chatRequest: Record<string, unknown> = {

@@ -175,8 +175,23 @@ Next steps:
 
 /**
  * Build the summarization prompt, merged into the last user message of the
- * full triologue. Uses full context + allTools for prompt cache,
- * instructs LLM to output text only.
+ * full triologue.
+ *
+ * CACHE INVARIANT — do NOT "optimize" the recap fork call by:
+ *   - minifying/truncating the messages, or
+ *   - dropping the tools array.
+ * The recap fork reuses the prompt-cache prefix the main agent loop already
+ * paid for. That cached prefix is the EXACT token sequence of
+ *   system + projectContext + conversation messages + full tools schema.
+ * Minifying rewrites the message sequence → cache miss; omitting tools drops
+ * cached tokens → cache miss. Either forces a full recompute of the entire
+ * conversation, far costlier than any request-size savings.
+ *
+ * The ONE safe knob is `toolChoice: 'none'` — it is a sampling parameter
+ * (governs whether the model may EMIT tool calls), NOT part of the cached
+ * prefix token sequence, so the tools schema stays cached while output is
+ * constrained to text-only at the API level. The prompt still forbids tool
+ * use in prose as a belt-and-suspenders measure.
  */
 function buildRecapPrompt(description: string, lastUserQuery?: string, comment?: string, checkpointResult?: string): string {
   const topicLine = lastUserQuery
@@ -224,6 +239,12 @@ ${beforeStateSection}
  * Produces a structured summary string.
  * Does NOT touch the triologue — callers own the context manipulation.
  *
+ * CACHE: fullMessages + allTools MUST be the un-minified, full-tools array the
+ * main loop uses, so the fork hits the cached prefix. toolChoice:'none' is passed
+ * to constrain output to text-only without invalidating that cache (it is a
+ * sampling parameter, not part of the cached token sequence). See the CACHE
+ * INVARIANT on buildRecapPrompt for the full rationale.
+ *
  * @param fullMessages - Full triologue messages before truncation
  * @param allTools - All tools for prompt cache preservation
  * @param description - Checkpoint description (focus for summarization)
@@ -249,10 +270,13 @@ export async function handleRecap(
 
   let summary: string;
   if (escAware) {
-    // Lead agent: use ESC-aware forkChat
+    // Lead agent: use ESC-aware forkChat.
+    // toolChoice:'none' constrains output to text-only WITHOUT touching the
+    // cached prefix (it's a sampling param, not part of the cached token
+    // sequence) — see the CACHE INVARIANT above.
     const result = await escAware(
       async (abortController) => {
-        return await forkChat(fullMessages, allTools, recapPrompt, abortController.signal);
+        return await forkChat(fullMessages, allTools, recapPrompt, abortController.signal, 'none');
       },
       () => null as string | null
     );
@@ -261,8 +285,9 @@ export async function handleRecap(
     }
     summary = result;
   } else {
-    // Teammate: regular forkChat (no ESC handling)
-    summary = await forkChat(fullMessages, allTools, recapPrompt);
+    // Teammate: regular forkChat (no ESC handling). Same toolChoice:'none'
+    // rationale as the lead branch.
+    summary = await forkChat(fullMessages, allTools, recapPrompt, undefined, 'none');
   }
 
   summary = summary || '(no summary)';
