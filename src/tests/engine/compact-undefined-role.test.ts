@@ -1,4 +1,4 @@
-/**
+﻿/**
  * compact-undefined-role.test.ts
  *
  * Regression test for the DeepSeek-specific /compact crash:
@@ -55,6 +55,7 @@ vi.mock('../../engine/ollama.js', () => ({
   webSearch: vi.fn(),
   webFetch: vi.fn(),
   imgDescribe: vi.fn(),
+    readPictureCached: vi.fn(),
   structuredChat: vi.fn(),
   healthCheck: vi.fn(),
   getEmbedding: vi.fn(),

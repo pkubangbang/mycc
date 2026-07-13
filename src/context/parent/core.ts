@@ -4,11 +4,12 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import { createHash } from 'crypto';
 import sharp from 'sharp';
-import type { CoreModule } from '../../types.js';
+import type { CoreModule, PictureResult } from '../../types.js';
 import { imgDescribe } from '../../engine/chat-provider.js';
 import { agentIO } from '../../loop/agent-io.js';
-import { getVisionModel, isVisionEnabled } from '../../config.js';
+import { getVisionModel, isVisionEnabled, getImgCacheDir } from '../../config.js';
 import { BaseCore } from '../shared/base-core.js';
 import { evaluateGrant } from '../grant/grant-evaluator.js';
 
@@ -16,6 +17,22 @@ import { evaluateGrant } from '../grant/grant-evaluator.js';
  * Grant scope for external path access
  */
 type GrantScope = 'file' | 'folder' | 'folder_recursive' | 'folder_recursive_readonly';
+
+/**
+ * A cached [focus, description] pair for an image.
+ */
+interface FocusPair {
+  focus: string;        // original prompt string, or "general description" if none given
+  description: string;  // vision model output for this focus
+}
+
+/**
+ * On-disk cache entry for a described image, stored at .mycc/imgcache/<hash>.json
+ */
+interface PictureCacheEntry {
+  statKey: string;      // `${mtimeMs}|${size}` — staleness check
+  pairs: FocusPair[];   // accumulated focus+description pairs
+}
 
 /**
  * Core module implementation for parent process
@@ -32,8 +49,15 @@ export class Core extends BaseCore implements CoreModule {
    */
   private externalGrants: Map<string, GrantScope> = new Map();
 
+  /**
+   * Directory for the disk-based image description cache (.mycc/imgcache/).
+   * Cached read_picture results live here as <hash>.json files.
+   */
+  private readonly pictureCacheDir: string;
+
   constructor(workDir?: string) {
     super(workDir || process.cwd());
+    this.pictureCacheDir = getImgCacheDir();
   }
 
   /**
@@ -208,6 +232,153 @@ export class Core extends BaseCore implements CoreModule {
     } catch (err) {
       throw new Error(`Failed to process image: ${(err as Error).message}`, { cause: err });
     }
+  }
+
+  // ─── Multi-Focus Image Cache (readPictureCached) ───────────────────────
+
+  /**
+   * Normalize an absolute path to a stable, cross-platform string before hashing.
+   * - Replace backslashes with forward slashes (Windows-safe)
+   * - Lowercase the Windows drive letter
+   * - Strip a trailing slash (but keep root '/')
+   */
+  private normalizeForHash(p: string): string {
+    let n = p.replace(/\\/g, '/');
+    if (/^[A-Z]:\//.test(n)) {
+      n = n[0].toLowerCase() + n.slice(1);
+    }
+    if (n.length > 1 && n.endsWith('/')) {
+      n = n.slice(0, -1);
+    }
+    return n;
+  }
+
+  /**
+   * Compute the cache file path for a given image absolute path.
+   * 16 hex chars of SHA-256 — filesystem-safe, fixed length, project-consistent
+   * (matches wiki.ts and todo.ts hash conventions).
+   */
+  private getCacheFilePath(absolutePath: string): string {
+    const hash = createHash('sha256').update(this.normalizeForHash(absolutePath)).digest('hex').slice(0, 16);
+    return path.join(this.pictureCacheDir, `${hash}.json`);
+  }
+
+  /**
+   * Compute the M cache token from the normalized path + all focuses (in order).
+   * The token encodes the current state of the cache entry. The LLM passes it
+   * back to authorize adding a new focus; a stale token returns the current
+   * state without a vision call.
+   *
+   * Uses JSON.stringify of the [path, ...focuses] array rather than plain
+   * string concatenation: `["a","bc"]` and `["ab","c"]` would produce the same
+   * joined string, causing a token collision. JSON.stringify preserves the
+   * element boundaries.
+   */
+  private computeCacheToken(absolutePath: string, focuses: string[]): string {
+    const normalizedPath = this.normalizeForHash(absolutePath);
+    return createHash('sha256').update(JSON.stringify([normalizedPath, ...focuses])).digest('hex').slice(0, 16);
+  }
+
+  /**
+   * Read a cache file. Returns null if the file is missing, corrupt, or
+   * structurally invalid — the caller treats null as a cache miss.
+   */
+  private readCacheFile(filePath: string): PictureCacheEntry | null {
+    try {
+      if (!fs.existsSync(filePath)) return null;
+      const raw = fs.readFileSync(filePath, 'utf-8');
+      const entry = JSON.parse(raw) as PictureCacheEntry;
+      if (!entry.statKey || !Array.isArray(entry.pairs)) return null;
+      return entry;
+    } catch {
+      return null; // corrupt JSON → treat as cache miss
+    }
+  }
+
+  /**
+   * Atomically write a cache entry. Uses a PID-suffixed temp file then
+   * fs.renameSync (atomic on both POSIX and NTFS) so concurrent writers from
+   * different processes never observe a torn write.
+   */
+  private writeCacheFile(filePath: string, entry: PictureCacheEntry): void {
+    // Ensure the cache directory exists (defensive — ensureDirs() also covers it)
+    if (!fs.existsSync(this.pictureCacheDir)) {
+      fs.mkdirSync(this.pictureCacheDir, { recursive: true });
+    }
+    const tempPath = `${filePath}.${process.pid}.tmp`;
+    fs.writeFileSync(tempPath, JSON.stringify(entry, null, 2));
+    fs.renameSync(tempPath, filePath);
+  }
+
+  /**
+   * Read an image with multi-focus caching. Returns accumulated [focus, description]
+   * pairs and a cache token (M). Pass the token back to add a new focus.
+   *
+   * Flow:
+   * - Cache miss (no file or stale statKey): vision call, write fresh entry, return pairs + M.
+   * - Cache hit, no cache token: return cached pairs + M_current, no vision call (prompt ignored).
+   * - Cache hit, valid token + new focus: vision call, add pair, return all pairs + new M.
+   * - Cache hit, valid token + existing focus: no vision call, return all pairs + same M.
+   * - Cache hit, stale token: no vision call, return current pairs + M_current.
+   *
+   * @param imagePath - Absolute path to the image file
+   * @param prompt - Optional prompt (becomes the focus label; defaults to "general description")
+   * @param cacheToken - Optional M token from a previous read; authorizes adding a new focus
+   * @returns PictureResult with accumulated pairs and the current cache token
+   */
+  async readPictureCached(
+    imagePath: string,
+    prompt?: string,
+    cacheToken?: string,
+  ): Promise<PictureResult> {
+    const focus = (prompt || 'general description').trim();
+    const stat = fs.statSync(imagePath);
+    const statKey = `${stat.mtimeMs}|${stat.size}`;
+    const cacheFile = this.getCacheFilePath(imagePath);
+
+    const entry = this.readCacheFile(cacheFile);
+    const cacheHit = !!entry && entry.statKey === statKey;
+
+    // Cache miss: vision call, write fresh entry
+    if (!cacheHit) {
+      this.brief('info', 'read_picture_cached', `cache miss: ${imagePath}`);
+      const description = await this.imgDescribe(imagePath, prompt);
+      const newEntry: PictureCacheEntry = { statKey, pairs: [{ focus, description }] };
+      this.writeCacheFile(cacheFile, newEntry);
+      const token = this.computeCacheToken(imagePath, [focus]);
+      return { pairs: newEntry.pairs, cacheToken: token };
+    }
+
+    // Cache hit: compute the current token from existing focuses
+    const currentFocuses = entry!.pairs.map(p => p.focus);
+    const currentToken = this.computeCacheToken(imagePath, currentFocuses);
+
+    // No cache token passed: return cached pairs, no vision call (prompt ignored)
+    if (!cacheToken) {
+      this.brief('info', 'read_picture_cached', `cache hit (no token): ${imagePath}`);
+      return { pairs: entry!.pairs, cacheToken: currentToken };
+    }
+
+    // Stale token: return current state, no vision call
+    if (cacheToken !== currentToken) {
+      this.brief('info', 'read_picture_cached', `cache hit (stale token): ${imagePath}`);
+      return { pairs: entry!.pairs, cacheToken: currentToken };
+    }
+
+    // Valid token: check if focus exists (exact string match, trimmed)
+    const existing = entry!.pairs.find(p => p.focus.trim() === focus);
+    if (existing) {
+      this.brief('info', 'read_picture_cached', `cache hit (focus exists): ${imagePath}`);
+      return { pairs: entry!.pairs, cacheToken: currentToken };
+    }
+
+    // New focus: vision call, add pair, return all pairs + new token
+    this.brief('info', 'read_picture_cached', `cache merge (new focus): ${imagePath}`);
+    const description = await this.imgDescribe(imagePath, prompt);
+    const updatedEntry: PictureCacheEntry = { statKey, pairs: [...entry!.pairs, { focus, description }] };
+    this.writeCacheFile(cacheFile, updatedEntry);
+    const newToken = this.computeCacheToken(imagePath, [...currentFocuses, focus]);
+    return { pairs: updatedEntry.pairs, cacheToken: newToken };
   }
 
   /**

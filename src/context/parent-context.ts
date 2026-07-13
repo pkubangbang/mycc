@@ -266,6 +266,23 @@ export class ParentContext implements AgentContext {
           }
         },
       },
+      {
+        messageType: 'core_read_picture_cached',
+        module: 'core',
+        handler: async (_sender, payload, ctx, sendResponse) => {
+          const { imagePath, prompt, cacheToken } = payload as {
+            imagePath: string;
+            prompt?: string;
+            cacheToken?: string;
+          };
+          try {
+            const result = await ctx.core.readPictureCached(imagePath, prompt, cacheToken);
+            sendResponse('core_result', true, result);
+          } catch (err) {
+            sendResponse('core_result', false, undefined, (err as Error).message);
+          }
+        },
+      },
       // Grant handler
       {
         messageType: 'grant_request',

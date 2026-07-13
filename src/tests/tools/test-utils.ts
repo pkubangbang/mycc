@@ -29,6 +29,7 @@ export function createMockContext(workdir: string): AgentContext {
     webSearch: vi.fn(),
     webFetch: vi.fn(),
     imgDescribe: vi.fn(),
+    readPictureCached: vi.fn(),
     requestGrant: vi.fn(async () => ({ approved: true })),
     requestExternalPathAccess: vi.fn(async () => ({ approved: false, resolvedPath: '', reason: 'Path escapes workspace' })),
     addExternalAutoGrant: vi.fn(),

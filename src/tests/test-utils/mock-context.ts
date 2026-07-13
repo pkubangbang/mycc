@@ -26,6 +26,7 @@ export function createMockCore(overrides: Partial<CoreModule> = {}): CoreModule 
     webSearch: vi.fn(async () => []),
     webFetch: vi.fn(async () => ({ title: '', url: '', content: '', links: [] })),
     imgDescribe: vi.fn(async () => 'image description'),
+    readPictureCached: vi.fn(async () => ({ pairs: [], cacheToken: 'token' })),
     requestGrant: vi.fn(async () => ({ approved: true })),
     requestExternalPathAccess: vi.fn(async (tool, path) => ({ approved: true, resolvedPath: path })),
     addExternalAutoGrant: vi.fn(),

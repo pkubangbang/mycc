@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Tests for hooks.ts
  *
  * Tests cover:
@@ -32,6 +32,7 @@ function createMockCore(): CoreModule {
     webSearch: vi.fn(),
     webFetch: vi.fn(),
     imgDescribe: vi.fn(),
+    readPictureCached: vi.fn(),
     requestGrant: vi.fn(async () => ({ approved: true })),
   };
 }

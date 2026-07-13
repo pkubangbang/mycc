@@ -2,7 +2,7 @@
  * core.ts - ChildCore implementation for IPC-based core operations
  */
 
-import type { CoreModule } from '../../types.js';
+import type { CoreModule, PictureResult } from '../../types.js';
 import { ipc, sendStatus } from './ipc-helpers.js';
 import { isVerbose } from '../../config.js';
 import { BaseCore } from '../shared/base-core.js';
@@ -72,6 +72,23 @@ export class ChildCore extends BaseCore implements CoreModule {
       prompt,
     });
     return response.description;
+  }
+
+  /**
+   * Read an image with multi-focus caching. Delegates to the parent's Core
+   * via IPC — only the parent process touches the disk cache files.
+   * @param imagePath - Absolute path to the image file
+   * @param prompt - Optional prompt (becomes the focus label)
+   * @param cacheToken - Optional M token from a previous read
+   * @returns PictureResult with accumulated pairs and the current cache token
+   */
+  async readPictureCached(imagePath: string, prompt?: string, cacheToken?: string): Promise<PictureResult> {
+    const response = await ipc.sendRequest<PictureResult>('core_read_picture_cached', {
+      imagePath,
+      prompt,
+      cacheToken,
+    });
+    return response;
   }
 
   /**

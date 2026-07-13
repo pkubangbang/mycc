@@ -1,4 +1,4 @@
-/**
+﻿/**
  * issue-comment.test.ts - Tests for the issue_comment tool
  */
 
@@ -34,6 +34,7 @@ function createMockContext(issueModule: IssueModule): AgentContext {
     webSearch: vi.fn(),
     webFetch: vi.fn(),
     imgDescribe: vi.fn(),
+    readPictureCached: vi.fn(),
     requestGrant: vi.fn(async () => ({ approved: true })),
   };
 

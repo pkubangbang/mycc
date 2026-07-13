@@ -112,6 +112,17 @@ export interface Tool {
  */
 export type ToolScope = 'main' | 'child';
 
+/**
+ * Result from cached image reading via readPictureCached.
+ * Contains accumulated [focus, description] pairs and a cache token (M).
+ * The cache token encodes the current state of the cache entry (which focuses
+ * have been accumulated). Pass it back to readPictureCached to add a new focus.
+ */
+export interface PictureResult {
+  pairs: Array<{ focus: string; description: string }>;
+  cacheToken: string;
+}
+
 // ============================================================================
 // Mailbox
 // ============================================================================
@@ -306,6 +317,20 @@ export interface CoreModule {
    * @returns Description of the image
    */
   imgDescribe(image: string, prompt?: string): Promise<string>;
+  /**
+   * Read an image with multi-focus caching. Returns accumulated [focus, description]
+   * pairs and a cache token (M). Pass the token back to add a new focus.
+   *
+   * The cache persists to `.mycc/imgcache/` on disk. Only the parent process touches
+   * cache files; child processes delegate via IPC.
+   *
+   * @param imagePath - Absolute path to the image file
+   * @param prompt - Optional prompt (becomes the focus label; defaults to "general description")
+   * @param cacheToken - Optional M token from a previous read; authorizes adding a new focus.
+   *                     Without it, a cache hit returns cached pairs with no vision call.
+   * @returns PictureResult with accumulated pairs and the current cache token
+   */
+  readPictureCached(imagePath: string, prompt?: string, cacheToken?: string): Promise<PictureResult>;
   /**
    * Request grant for sensitive operations (write_file, edit_file, bash)
    * Parent's Core checks mode and worktree ownership internally.

@@ -47,6 +47,7 @@ export const contextFactories = {
       webSearch: async () => [],
       webFetch: async () => ({ title: '', content: '', links: [], url: 'https://example.com' }),
       imgDescribe: async () => '',
+      readPictureCached: async () => ({ pairs: [], cacheToken: 'token' }),
     },
     todo: {} as never,
     mail: {} as never,

@@ -429,6 +429,10 @@ export function getLongtextDir(): string {
   return path.join(MYCC_DIR, 'longtext');
 }
 
+export function getImgCacheDir(): string {
+  return path.join(MYCC_DIR, 'imgcache');
+}
+
 export function getUserToolsDir(): string {
   return path.join(os.homedir(), '.mycc-store', 'tools');
 }
@@ -513,6 +517,7 @@ export function ensureDirs(): void {
     getSkillsDir(),
     getSessionsDir(),
     getLongtextDir(),
+    getImgCacheDir(),
   ];
   for (const dir of dirs) {
     if (!fs.existsSync(dir)) {
