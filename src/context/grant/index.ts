@@ -15,4 +15,4 @@ export { DANGEROUS_COMMANDS, checkDangerousCommand } from './dangerous-commands.
 export { judgeBash } from './bash-judge.js';
 
 // Grant evaluator
-export { evaluateGrant } from './grant-evaluator.js';
+export { evaluateGrant, isPlanModeWritablePath } from './grant-evaluator.js';

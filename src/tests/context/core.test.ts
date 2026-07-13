@@ -53,6 +53,8 @@ vi.mock('../../config.js', () => ({
   getTokenThreshold: vi.fn(() => 50000),
   getRagProvider: vi.fn(() => 'nomic'),
   getImgCacheDir: vi.fn(() => '.mycc/imgcache'),
+  getLongtextDir: vi.fn(() => '.mycc/longtext'),
+  getPlanModeWritableDirs: vi.fn(() => ['.mycc/longtext', '.mycc/imgcache']),
 }));
 
 // Mock ipc-helpers for ChildCore tests - use factory that returns mock functions
@@ -174,6 +176,46 @@ describe('Core (Parent) - Mode System', () => {
 
       expect(result.approved).toBe(false);
       expect(result.reason).toContain('intent');
+    });
+
+    it('should allow write_file into .mycc/longtext in plan mode', async () => {
+      core.setMode('plan');
+
+      const longtextFile = path.join(tempDir, '.mycc', 'longtext', 'dump.txt');
+      const result = await core.requestGrant('write_file', { path: longtextFile });
+
+      expect(result.approved).toBe(true);
+      expect(result.reason).toBeUndefined();
+    });
+
+    it('should allow edit_file into .mycc/imgcache in plan mode', async () => {
+      core.setMode('plan');
+
+      const imgcacheFile = path.join(tempDir, '.mycc', 'imgcache', 'abc123.json');
+      const result = await core.requestGrant('edit_file', { path: imgcacheFile });
+
+      expect(result.approved).toBe(true);
+      expect(result.reason).toBeUndefined();
+    });
+
+    it('should still reject writes to project source in plan mode', async () => {
+      core.setMode('plan');
+
+      const srcFile = path.join(tempDir, 'src', 'index.ts');
+      const result = await core.requestGrant('write_file', { path: srcFile });
+
+      expect(result.approved).toBe(false);
+      expect(result.reason).toContain('plan mode');
+    });
+
+    it('should reject writes to .mycc/sessions (not a tool-output dir)', async () => {
+      core.setMode('plan');
+
+      const sessionFile = path.join(tempDir, '.mycc', 'sessions', 'sess-1', 'state.json');
+      const result = await core.requestGrant('write_file', { path: sessionFile });
+
+      expect(result.approved).toBe(false);
+      expect(result.reason).toContain('plan mode');
     });
   });
 });

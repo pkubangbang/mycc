@@ -11,7 +11,7 @@ import { imgDescribe } from '../../engine/chat-provider.js';
 import { agentIO } from '../../loop/agent-io.js';
 import { getVisionModel, isVisionEnabled, getImgCacheDir } from '../../config.js';
 import { BaseCore } from '../shared/base-core.js';
-import { evaluateGrant } from '../grant/grant-evaluator.js';
+import { evaluateGrant, isPlanModeWritablePath } from '../grant/grant-evaluator.js';
 
 /**
  * Grant scope for external path access
@@ -412,6 +412,18 @@ export class Core extends BaseCore implements CoreModule {
           : path.resolve(this.workDir, this.allowedFile);
 
         if (resolvedRequested === resolvedAllowed) {
+          return { approved: true };
+        }
+      }
+
+      // Allow writes into plan-mode-writable tool-output directories
+      // (e.g. .mycc/longtext, .mycc/imgcache). These hold transient analysis
+      // artifacts, not project source, so they stay writable in plan mode.
+      if (args.path) {
+        const resolvedRequested = path.isAbsolute(args.path)
+          ? args.path
+          : path.resolve(this.workDir, args.path);
+        if (isPlanModeWritablePath(resolvedRequested, this.workDir)) {
           return { approved: true };
         }
       }

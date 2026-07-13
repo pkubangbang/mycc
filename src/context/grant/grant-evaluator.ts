@@ -5,11 +5,36 @@
 import type { Core } from '../parent/core.js';
 import { judgeBash } from './bash-judge.js';
 import { listWorktrees } from '../worktree-store.js';
+import { getPlanModeWritableDirs } from '../../config.js';
 import * as path from 'path';
 import type { GrantRequest } from './types.js';
 
 // Re-export types for convenience
 export type { GrantRequest, GrantTool } from './types.js';
+
+/**
+ * Check whether a resolved absolute path falls inside one of the
+ * plan-mode-writable tool-output directories (e.g. .mycc/longtext,
+ * .mycc/imgcache). These hold transient analysis artifacts, not project
+ * source code, so writing to them does not violate plan-mode's read-only
+ * contract. Used to unblock teammates/tools that emit long-text dumps or
+ * image-description caches while the lead is in plan mode.
+ *
+ * @param resolvedPath - Absolute path of the requested write target
+ * @param workDir - Absolute project work directory (dirs are resolved under it)
+ * @returns true if the path is inside a plan-mode-writable directory
+ */
+export function isPlanModeWritablePath(resolvedPath: string, workDir: string): boolean {
+  const sep = path.sep;
+  for (const rel of getPlanModeWritableDirs()) {
+    const dirAbs = path.isAbsolute(rel) ? rel : path.resolve(workDir, rel);
+    // Match the directory itself or anything strictly beneath it.
+    if (resolvedPath === dirAbs || resolvedPath.startsWith(dirAbs + sep)) {
+      return true;
+    }
+  }
+  return false;
+}
 
 /**
  * Evaluate a grant request from a child process or tool
@@ -60,6 +85,19 @@ export async function evaluateGrant(
         : path.resolve(core.getWorkDir(), allowedFile);
 
       if (resolvedRequested === resolvedAllowed) {
+        return { approved: true };
+      }
+    }
+
+    // Allow writes into plan-mode-writable tool-output directories
+    // (e.g. .mycc/longtext, .mycc/imgcache). These hold transient analysis
+    // artifacts, not project source, so they stay writable in plan mode —
+    // unblocking teammates/tools that dump long text or image descriptions.
+    if (request.path) {
+      const resolvedRequested = path.isAbsolute(request.path)
+        ? request.path
+        : path.resolve(core.getWorkDir(), request.path);
+      if (isPlanModeWritablePath(resolvedRequested, core.getWorkDir())) {
         return { approved: true };
       }
     }

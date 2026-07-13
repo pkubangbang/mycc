@@ -433,6 +433,24 @@ export function getImgCacheDir(): string {
   return path.join(MYCC_DIR, 'imgcache');
 }
 
+/**
+ * Directories under .mycc/ that hold tool-generated output (not user source
+ * code). Writes into these directories are safe in plan mode because they do
+ * not modify the project under review — they are analysis artifacts
+ * (long-text dumps, image-description caches, etc.).
+ *
+ * Returns relative paths (joined under MYCC_DIR); callers resolve them
+ * against the workDir to get absolute paths. Kept narrow on purpose: sessions,
+ * tools, and skills dirs are NOT included because those are state/config, not
+ * transient tool output.
+ */
+export function getPlanModeWritableDirs(): string[] {
+  return [
+    getLongtextDir(),
+    getImgCacheDir(),
+  ];
+}
+
 export function getUserToolsDir(): string {
   return path.join(os.homedir(), '.mycc-store', 'tools');
 }
