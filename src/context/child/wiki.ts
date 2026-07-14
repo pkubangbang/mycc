@@ -25,6 +25,16 @@ export class ChildWiki implements WikiModule {
     return result;
   }
 
+  async getByDomain(domain: string): Promise<SearchResult[]> {
+    const result = await ipc.sendRequest<SearchResult[]>('wiki_get_by_domain', { domain });
+    return result;
+  }
+
+  async batchPut(entries: Array<{ document: WikiDocument; embedding: number[] }>): Promise<PutResult[]> {
+    const result = await ipc.sendRequest<PutResult[]>('wiki_batch_put', { entries });
+    return result;
+  }
+
   async delete(hash: string): Promise<boolean> {
     const result = await ipc.sendRequest<boolean>('wiki_delete', { hash });
     return result;

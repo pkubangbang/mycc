@@ -657,6 +657,20 @@ export interface WikiModule {
   prepare(document: WikiDocument, skipDuplicateCheck?: boolean): Promise<PrepareResult>;
   put(hash: string, document: WikiDocument): Promise<PutResult>;
   get(query: string, options?: GetOptions): Promise<SearchResult[]>;
+  /**
+   * Retrieve all documents in a domain in a single table scan (no embedding).
+   * Used for batch re-indexing where a full domain listing is needed without
+   * the per-query embedding cost of {@link get}.
+   */
+  getByDomain(domain: string): Promise<SearchResult[]>;
+  /**
+   * Batch-insert pre-embedded documents in a single table.add() call.
+   * Each entry pairs a document with its precomputed embedding vector,
+   * skipping the per-record hashExists scan and embedding generation that
+   * {@link put} performs. Callers must compute hashes via the same scheme
+   * as prepare()/put() (sha256 of `${domain}:${title}:${content}`, first 16 hex).
+   */
+  batchPut(entries: Array<{ document: WikiDocument; embedding: number[] }>): Promise<PutResult[]>;
   delete(hash: string): Promise<boolean>;
   getWAL(date?: string): Promise<WALEntry[]>;
   parseWAL(asciiContent: string): WALEntry[];

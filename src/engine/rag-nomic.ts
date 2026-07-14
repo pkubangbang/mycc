@@ -50,3 +50,30 @@ export async function getEmbedding(text: string, _mode?: 'query' | 'document'): 
 
   return response.embeddings[0];
 }
+
+/**
+ * Generate embedding vectors for multiple texts in a single Ollama request.
+ *
+ * Ollama's /api/embed endpoint accepts an array of inputs and returns a
+ * parallel array of embeddings, so N texts cost one network round-trip
+ * instead of N. The `mode` parameter is accepted for interface
+ * compatibility but ignored (nomic does not use prompt prefixes).
+ *
+ * @param texts - Raw texts to embed (must be non-empty)
+ * @param _mode - Ignored (nomic does not use prompt prefixes)
+ * @returns Array of embedding vectors, one per input text (same order)
+ */
+export async function getEmbeddings(texts: string[], _mode?: 'query' | 'document'): Promise<number[][]> {
+  if (texts.length === 0) return [];
+
+  const response = await ollama.embed({
+    model: EMBEDDING_MODEL,
+    input: texts,
+  });
+
+  if (!response.embeddings || response.embeddings.length === 0) {
+    throw new Error('Failed to generate embeddings');
+  }
+
+  return response.embeddings;
+}

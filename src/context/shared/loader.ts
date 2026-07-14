@@ -58,7 +58,9 @@ function debounce<T extends (...args: Parameters<T>) => void>(
 // Package root: resolve up from this file (src/context/shared/loader.ts or dist/context/shared/loader.js)
 const packageRoot = path.resolve(fileURLToPath(import.meta.url), '..', '..', '..', '..');
 import type { DynamicLoader, ToolDefinition, Skill, Tool, ToolScope, AgentContext, SkillModule, WikiModule, WikiDocument } from '../../types.js';
-import { getToolsDir, getSkillsDir, getUserToolsDir, getUserSkillsDir, ensureDirs } from '../../config.js';
+import { getToolsDir, getSkillsDir, getUserToolsDir, getUserSkillsDir, ensureDirs, getMyccDir } from '../../config.js';
+import * as crypto from 'crypto';
+import { getEmbeddings, NAMESPACE } from '../../engine/rag-provider.js';
 
 /**
  * Dynamic loader implementation
@@ -757,18 +759,202 @@ export class Loader implements DynamicLoader, SkillModule {
   }
 
   /**
-   * Index all skills into wiki (called by /skills build)
+   * Build the WikiDocument that represents a skill in the wiki "skills" domain.
+   * The content (Scope + Name + Description + Keywords) is what gets embedded.
+   */
+  private buildSkillDocument(skill: Skill, layer: Layer): WikiDocument {
+    const scope = this.getSkillScope(layer);
+    const keywordsStr = skill.keywords.length > 0
+      ? ` Keywords: ${skill.keywords.join(', ')}`
+      : '';
+    const content = `Scope: ${scope}\nName: ${skill.name}\nDescription: ${skill.description}${keywordsStr}`;
+    return {
+      domain: 'skills',
+      title: `${scope}:${skill.name}`,
+      content,
+      references: [],
+    };
+  }
+
+  /**
+   * Path to the skill-index cache file (under project .mycc/, gitignored).
+   * The cache stores a snapshot of every indexed skill's title→content hash
+   * plus the RAG namespace, so unchanged skills can be skipped on restart.
+   */
+  private getSkillIndexCachePath(): string {
+    return path.join(getMyccDir(), 'skill-index-cache.json');
+  }
+
+  /**
+   * Compute a stable short hash for a skill's wiki content string.
+   * Used as the cache value (content→hash) so we can compare without
+   * storing full content blobs in the cache file.
+   */
+  private hashSkillContent(content: string): string {
+    return crypto.createHash('sha256').update(content).digest('hex').slice(0, 16);
+  }
+
+  /**
+   * Index all skills into wiki (called at startup and by /skills build).
+   *
+   * Optimized to avoid the per-skill Ollama round-trips that previously made
+   * this step block startup:
+   *  1. Cache check — if every skill's content hash matches the on-disk
+   *     snapshot (and the RAG namespace is unchanged), skip indexing entirely.
+   *  2. Batch path — one table scan (getByDomain, 0 embeddings), an in-memory
+   *     diff, ONE batched embedding call (getEmbeddings) for changed/new
+   *     skills, batch delete of stale records, and ONE batchPut insert.
    */
   async indexAllSkillsToWiki(wiki: WikiModule): Promise<void> {
     // Register 'skills' domain
     await wiki.registerDomain('skills', 'Skills indexed for semantic matching');
 
-    // Index each skill
-    for (const [_name, entry] of this.skills) {
-      await this.indexSkillToWiki(entry.skill, wiki, entry.layer);
+    // Build the full set of skill documents + per-skill content hashes in memory
+    const entries: Array<{ document: WikiDocument; layer: Layer; contentHash: string }> = [];
+    for (const [, skillEntry] of this.skills) {
+      const document = this.buildSkillDocument(skillEntry.skill, skillEntry.layer);
+      entries.push({
+        document,
+        layer: skillEntry.layer,
+        contentHash: this.hashSkillContent(document.content),
+      });
     }
 
+    // ── Optimization 0: cache check ──
+    // If the on-disk cache matches every skill (title→contentHash) and the
+    // RAG namespace is unchanged, skip the whole indexing pass — nothing to do.
+    if (this.isSkillIndexCacheValid(entries)) {
+      agentIO.brief('info', 'loader', `Indexed ${this.skills.size} skills to wiki (cached)`);
+      return;
+    }
+
+    // ── Optimization 1: batch path ──
+    // One table scan for all existing 'skills' records (no embeddings).
+    const existing = await wiki.getByDomain('skills');
+    const existingByTitle = new Map<string, { hash: string; content: string }>();
+    for (const r of existing) {
+      existingByTitle.set(r.document.title, { hash: r.hash, content: r.document.content });
+    }
+
+    // In-memory diff: partition into unchanged / stale / new
+    const toDelete: string[] = [];
+    const toAdd: WikiDocument[] = [];
+    for (const { document } of entries) {
+      const found = existingByTitle.get(document.title);
+      if (found && found.content === document.content) {
+        continue; // unchanged
+      }
+      if (found) {
+        toDelete.push(found.hash); // content changed → delete old before re-add
+      }
+      toAdd.push(document);
+    }
+    // Detect orphaned existing records (titles no longer present) and delete them.
+    //
+    // IMPORTANT: the wiki DB is shared across ALL projects (it lives in
+    // ~/.mycc-store/wiki, not under the project). Skill record titles are
+    // prefixed with their scope — `[user]:`, `[built-in]:`, or
+    // `<project-basename>:`. A record written by project A therefore has a
+    // title prefix project B cannot match, so it must NOT be treated as an
+    // orphan by project B — otherwise two projects would mutually wipe each
+    // other's project-scoped skill records on every startup.
+    //
+    // Only records whose title prefix is in THIS project's own scope set
+    // ([user], [built-in], and the current project basename) are eligible for
+    // orphan deletion. Records from other projects are left untouched.
+    const projectName = path.basename(process.cwd());
+    const ownScopePrefixes = new Set(['[user]:', '[built-in]:', `${projectName}:`]);
+    const isOwnScope = (title: string): boolean => {
+      for (const prefix of ownScopePrefixes) {
+        if (title.startsWith(prefix)) return true;
+      }
+      return false;
+    };
+    const currentTitles = new Set(entries.map((e) => e.document.title));
+    for (const [title, rec] of existingByTitle) {
+      if (currentTitles.has(title)) continue; // still present
+      if (!isOwnScope(title)) continue; // belongs to another project — leave it
+      toDelete.push(rec.hash);
+    }
+
+    // Batch embed all new/changed documents in ONE Ollama call
+    let embeddings: number[][] = [];
+    if (toAdd.length > 0) {
+      embeddings = await getEmbeddings(
+        toAdd.map((d) => d.content),
+        'document',
+      );
+    }
+
+    // Batch delete stale/orphaned records
+    for (const hash of toDelete) {
+      await wiki.delete(hash);
+    }
+
+    // Batch insert all new/changed documents in ONE table.add() call
+    if (toAdd.length > 0) {
+      const batchEntries = toAdd.map((document, i) => ({ document, embedding: embeddings[i] }));
+      await wiki.batchPut(batchEntries);
+    }
+
+    // Write the cache so the next startup can skip if nothing changed
+    this.writeSkillIndexCache(entries);
+
     agentIO.brief('info', 'loader', `Indexed ${this.skills.size} skills to wiki`);
+  }
+
+  /**
+   * Read the on-disk skill-index cache and return whether it covers every
+   * current skill with a matching content hash, under the same RAG namespace.
+   */
+  private isSkillIndexCacheValid(
+    entries: Array<{ document: WikiDocument; contentHash: string }>,
+  ): boolean {
+    const cachePath = this.getSkillIndexCachePath();
+    if (!fs.existsSync(cachePath)) return false;
+
+    try {
+      const raw = fs.readFileSync(cachePath, 'utf-8');
+      const cache = JSON.parse(raw) as {
+        namespace?: string;
+        skills?: Record<string, string>;
+      };
+
+      // Namespace change (embedding model swap) invalidates the cache —
+      // vectors live in a different LanceDB table.
+      if (cache.namespace !== NAMESPACE) return false;
+      if (!cache.skills) return false;
+
+      // Every current skill must be present with a matching content hash
+      const cached = cache.skills;
+      if (Object.keys(cached).length !== entries.length) return false;
+      for (const { document, contentHash } of entries) {
+        if (cached[document.title] !== contentHash) return false;
+      }
+      return true;
+    } catch {
+      return false; // corrupt cache → treat as miss
+    }
+  }
+
+  /**
+   * Persist the skill-index cache snapshot to disk.
+   */
+  private writeSkillIndexCache(
+    entries: Array<{ document: WikiDocument; contentHash: string }>,
+  ): void {
+    try {
+      ensureDirs();
+      const cachePath = this.getSkillIndexCachePath();
+      const skills: Record<string, string> = {};
+      for (const { document, contentHash } of entries) {
+        skills[document.title] = contentHash;
+      }
+      const cache = { namespace: NAMESPACE, skills };
+      fs.writeFileSync(cachePath, JSON.stringify(cache, null, 2), 'utf-8');
+    } catch {
+      // Cache write failure is non-fatal — indexing already succeeded.
+    }
   }
 
   /**

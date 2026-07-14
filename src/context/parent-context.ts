@@ -200,6 +200,26 @@ export class ParentContext implements AgentContext {
         },
       },
       {
+        messageType: 'wiki_get_by_domain',
+        module: 'wiki',
+        handler: async (_sender, payload, ctx, sendResponse) => {
+          const { domain } = payload as { domain: string };
+          const results = await ctx.wiki.getByDomain(domain);
+          sendResponse('wiki_result', true, results);
+        },
+      },
+      {
+        messageType: 'wiki_batch_put',
+        module: 'wiki',
+        handler: async (_sender, payload, ctx, sendResponse) => {
+          const { entries } = payload as {
+            entries: Parameters<WikiModule['batchPut']>[0];
+          };
+          const results = await ctx.wiki.batchPut(entries);
+          sendResponse('wiki_result', true, results);
+        },
+      },
+      {
         messageType: 'wiki_wal_get',
         module: 'wiki',
         handler: async (_sender, payload, ctx, sendResponse) => {

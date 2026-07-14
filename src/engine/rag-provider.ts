@@ -31,6 +31,12 @@ const active = getRagProvider() === 'embeddinggemma' ? gemmaMod : nomicMod;
 /** Generate an embedding vector. Mode controls prompt prefix (ignored by nomic). */
 export const getEmbedding = active.getEmbedding;
 
+/**
+ * Generate embedding vectors for multiple texts in a single Ollama request.
+ * Mode controls prompt prefix (ignored by nomic). Order is preserved.
+ */
+export const getEmbeddings = active.getEmbeddings;
+
 /** Configured embedding model name */
 export const EMBEDDING_MODEL = active.EMBEDDING_MODEL;
 

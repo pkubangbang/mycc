@@ -326,6 +326,155 @@ export class WikiManager implements WikiModule {
   }
 
   /**
+   * Retrieve all documents in a domain in a single table scan (no embedding).
+   * Used for batch re-indexing where a full domain listing is needed without
+   * the per-query embedding cost of get().
+   */
+  async getByDomain(domain: string): Promise<SearchResult[]> {
+    await this.initDb();
+    if (!this.table) return [];
+
+    try {
+      const records = await this.table.query().toArray();
+      const results: SearchResult[] = [];
+
+      for (const record of records) {
+        const r = record as Record<string, unknown>;
+
+        // Skip schema record
+        if (r.hash === '__schema__') continue;
+
+        // Domain filter
+        if (r.domain !== domain) continue;
+
+        results.push({
+          document: {
+            domain: r.domain as string,
+            title: r.title as string,
+            content: r.content as string,
+            references: JSON.parse(r.references as string || '[]'),
+          },
+          similarity: 1, // Not a similarity search; placeholder
+          hash: r.hash as string,
+        });
+      }
+
+      return results;
+    } catch (err) {
+      const error = err instanceof Error ? err.message : String(err);
+      this.core.brief('error', 'wiki', `getByDomain failed: ${error}`);
+      return [];
+    }
+  }
+
+  /**
+   * Batch-insert pre-embedded documents in a single table.add() call.
+   * Skips the per-record hashExists scan and embedding generation that put()
+   * performs. Callers must compute hashes via generateHash() (same scheme as
+   * prepare()/put()). WAL entries are appended in a single write.
+   *
+   * Returns one PutResult per input entry (same order). Entries whose hash
+   * already exists in the table are skipped (success: true) to preserve the
+   * idempotency guarantee of put().
+   */
+  async batchPut(entries: Array<{ document: WikiDocument; embedding: number[] }>): Promise<PutResult[]> {
+    if (entries.length === 0) return [];
+
+    try {
+      await this.initDb();
+      if (!this.table) {
+        return entries.map(() => ({ success: false, hash: '', error: 'Database not initialized' }));
+      }
+
+      // Validate domains once (all entries share the domain set)
+      const domains = this.loadDomains();
+      if (domains.length === 0) {
+        const reason = 'No domains registered. Use /wiki domains add <name> to create a domain first.';
+        return entries.map((e) => ({ success: false, hash: this.generateHash(e.document), error: reason }));
+      }
+      const domainSet = new Set(domains.map((d) => d.domain_name));
+
+      // Build records, collecting hashes for a single existence scan
+      const hashes = new Set<string>();
+      const validEntries: Array<{ document: WikiDocument; embedding: number[]; hash: string; record: Record<string, unknown>; walEntry: WALEntry }> = [];
+
+      for (const { document, embedding } of entries) {
+        const hash = this.generateHash(document);
+
+        // Validate required fields + domain
+        if (!document.domain || !document.title || !document.content) {
+          return [{ success: false, hash, error: 'Missing required fields: domain, title, or content' }];
+        }
+        if (!domainSet.has(document.domain)) {
+          return [{ success: false, hash, error: `Unknown domain "${document.domain}"` }];
+        }
+
+        hashes.add(hash);
+        validEntries.push({
+          document,
+          embedding,
+          hash,
+          record: {
+            hash,
+            domain: document.domain,
+            title: document.title,
+            content: document.content,
+            references: JSON.stringify(document.references || []),
+            embedding,
+            createdAt: new Date().toISOString(),
+          },
+          walEntry: {
+            timestamp: new Date().toISOString(),
+            hash,
+            document,
+            approved: true,
+            namespace: NAMESPACE,
+          },
+        });
+      }
+
+      // Single table scan to find which hashes already exist (skip them)
+      const records = await this.table.query().toArray();
+      const existingHashes = new Set<string>();
+      for (const record of records) {
+        const r = record as Record<string, unknown>;
+        if (hashes.has(r.hash as string)) {
+          existingHashes.add(r.hash as string);
+        }
+      }
+
+      const toInsert = validEntries.filter((e) => !existingHashes.has(e.hash));
+
+      // Single batch insert
+      if (toInsert.length > 0) {
+        await this.table.add(toInsert.map((e) => e.record));
+
+        // Single batched WAL append
+        const walLines = toInsert.map((e) => JSON.stringify(e.walEntry)).join('\n');
+        ensureDirs();
+        const walDir = getWikiLogsDir();
+        const today = this.formatDate(new Date());
+        const walPath = path.join(walDir, `${today}.wal`);
+        fs.appendFileSync(walPath, `${walLines}\n`, 'utf-8');
+
+        this.core.brief('info', 'wiki', `Batch stored ${toInsert.length} documents`);
+      }
+
+      // Build results in original order
+      return validEntries.map((e) => {
+        if (existingHashes.has(e.hash)) {
+          return { success: true, hash: e.hash };
+        }
+        return { success: true, hash: e.hash };
+      });
+    } catch (err) {
+      const error = err instanceof Error ? err.message : String(err);
+      this.core.brief('error', 'wiki', `batchPut failed: ${error}`);
+      return entries.map((e) => ({ success: false, hash: this.generateHash(e.document), error }));
+    }
+  }
+
+  /**
    * Delete a document by hash
    */
   async delete(hash: string): Promise<boolean> {
