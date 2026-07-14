@@ -85,7 +85,7 @@ function reconstructResponse(chunks: ChatResponse[], model: string): ChatRespons
 
 export async function retryChat(
   request: RetryChatRequest,
-  config?: RetryChatConfig,
+  config?: RetryChatConfig & { onChunk?: (chunk: ChatResponse) => void },
 ): Promise<ChatResponse> {
   const cfg = { ...DEFAULT_RETRY_CONFIG, ...config };
   const signal = config?.signal;
@@ -120,6 +120,7 @@ export async function retryChat(
             firstTokenTimeoutMs: cfg.firstTokenTimeoutMs,
             responseTimeoutMs: cfg.responseTimeoutMs,
             signal,
+            onChunk: config?.onChunk,
           },
         );
 

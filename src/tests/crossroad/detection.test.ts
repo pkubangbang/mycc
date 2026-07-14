@@ -187,4 +187,30 @@ describe('detectTurningWord — edge cases', () => {
     const result = detectTurningWord('   \n\n   ');
     expect(result).toBeNull();
   });
+
+  // --- New turn words added from session crossroad data analysis ---
+
+  it('should detect Then again at sentence boundary', () => {
+    const content =
+      'The incremental approach is safer and less risky for the current release cycle. Then again, a full rewrite would eliminate the technical debt that keeps slowing us down every sprint.';
+    const result = detectTurningWord(content);
+    expect(result).not.toBeNull();
+    expect(result!.word).toBe('Then again');
+  });
+
+  it('should detect On second thought at sentence boundary', () => {
+    const content =
+      'I was planning to refactor the entire authentication module to use the new token system. On second thought, the existing session-based approach is well-tested and migration risk outweighs the benefit right now.';
+    const result = detectTurningWord(content);
+    expect(result).not.toBeNull();
+    expect(result!.word).toBe('On second thought');
+  });
+
+  it('should detect Mind you at sentence boundary', () => {
+    const content =
+      'The new caching layer should speed up most read-heavy endpoints significantly. Mind you, it does add operational complexity since we now need to manage cache invalidation across multiple nodes.';
+    const result = detectTurningWord(content);
+    expect(result).not.toBeNull();
+    expect(result!.word).toBe('Mind you');
+  });
 });

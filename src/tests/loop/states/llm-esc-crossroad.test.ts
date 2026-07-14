@@ -57,6 +57,19 @@ vi.mock('../../../loop/esc-wrap-up.js', () => ({
 // handleCrossroad is the unit under test's collaborator — mock it per-test
 vi.mock('../../../loop/crossroad.js', () => ({
   handleCrossroad: vi.fn(),
+  generateAndSelect: vi.fn(),
+  collectTrainingData: vi.fn(),
+}));
+
+vi.mock('../../../loop/crossroad-encoder.js', () => ({
+  getCrossroadEncoder: vi.fn(async () => null),
+}));
+
+vi.mock('../../../loop/streaming-crossroad-detector.js', () => ({
+  StreamingCrossroadDetector: class {
+    onChunk = vi.fn();
+    finalize = vi.fn(async () => ({ detected: false, fullText: '', turnIndex: -1 }));
+  },
 }));
 
 vi.mock('../../../engine/chat-helpers.js', () => ({ stopSpinner: vi.fn() }));

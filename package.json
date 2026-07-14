@@ -24,12 +24,14 @@
     "format:check": "prettier --check \"src/**/*.ts\""
   },
   "dependencies": {
+    "@huggingface/transformers": "^4.2.0",
     "@lancedb/lancedb": "^0.27.2",
     "chalk": "^5.6.2",
     "gray-matter": "^4.0.3",
     "jsep": "^1.4.0",
     "minimist": "^1.2.8",
     "ollama": "^0.6.3",
+    "onnxruntime-node": "^1.22.0",
     "ripgrep": "^0.3.1",
     "sharp": "^0.34.5",
     "string-width": "^8.2.0",

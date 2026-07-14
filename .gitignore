@@ -7,3 +7,14 @@ sigma/
 
 
 /.mycc/
+
+# Python artifacts from .crossroad-gen training (templates are tracked, local run output is not)
+__pycache__/
+*.pyc
+.crossroad-gen/.venv/
+.crossroad-gen/data/
+.crossroad-gen/*.onnx
+
+# Temp data files from crossroad data-generation experiments
+tmp_*.jsonl
+.tmp_*.jsonl
