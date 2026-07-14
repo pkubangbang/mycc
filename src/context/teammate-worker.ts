@@ -257,6 +257,22 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
           const output = await silentLoader.execute(toolName, ctx, args);
           triologue.tool(toolName, output, tc.id);
 
+          // === Auto-compact: check after each tool result (mirrors lead's tool.ts) ===
+          // Without this, large write_file/edit_file outputs bloat the context
+          // indefinitely until retryChat() fails and the worker stalls in a
+          // retry loop (see session aecf9aea root cause).
+          if (triologue.needsCompact()) {
+            // Skip any remaining pending tools in this batch
+            triologue.skipPendingTools(
+              'Context limit reached. Remaining tool calls in this batch were skipped.',
+              'Compacting conversation to continue.'
+            );
+            await triologue.compact(undefined);
+            ctx.core.resetConfusionIndex();
+            recentToolCalls.length = 0;
+            break; // Exit the for-loop, let the while-loop continue
+          }
+
           // Track budget from mail_to call
           if (toolName === 'mail_to' && !budgetSent) {
             const eta = args?.eta as number | undefined;
