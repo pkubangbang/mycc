@@ -12,6 +12,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { ChildContext, silentLoader } from './child-context.js';
 import { retryChat, MODEL } from '../engine/chat-provider.js';
+import { StreamAbortedError } from '../engine/chat-provider.js';
 import type { AgentContext, Message } from '../types.js';
 import type { ToolCall } from '../types.js';
 import { buildNormalModePrompt } from '../loop/agent-prompts.js';
@@ -44,6 +45,90 @@ const HEARTBEAT_INTERVAL_MS = 30_000;
 
 // Time nudge every N rounds
 const TIME_NUDGE_INTERVAL = 3;
+
+// === Per-turn watchdog ===
+// Caps how long a single retryChat (main-loop turn OR compact summarization)
+// may block. Without this, a hung/slow LLM call keeps status at 'working'
+// forever and starves the cooperative mail poll at the top of the while-loop
+// (see "stuck teammate" investigation: lead's mail sits unread in
+// unread-{name}.jsonl until the ETA deadline). When the watchdog fires we
+// abort the in-flight call, mail a WARNING to lead, inject a SYSTEM note, and
+// let the loop continue so mail polling resumes.
+//
+// Budget-aware: when an ETA deadline is set we use a fraction of the REMAINING
+// budget per turn so a single turn can never eat the whole budget. When no
+// budget is set yet we fall back to a fixed cap.
+const TURN_WATCHDOG_FALLBACK_MS = 180_000;   // 3 min cap when no ETA budget
+const TURN_WATCHDOG_MIN_MS = 60_000;        // never shorter than 60s
+const TURN_WATCHDOG_BUDGET_FRACTION = 0.5;  // use up to half of remaining budget
+
+/**
+ * Create a per-turn AbortController + deadline watchdog.
+ * Returns the signal to pass into retryChat/compact, plus an abort() to call
+ * on early completion (frees the timer) and the deadline ms (for logging).
+ *
+ * The watchdog aborts the call if it runs past the computed turn deadline.
+ * Caller MUST call .abort(true) (manual=false) to release the timer once the
+ * awaited call settles, otherwise the setTimeout keeps a dangling reference.
+ */
+function createTurnWatchdog(): {
+  signal: AbortSignal;
+  clearTimeout: () => void;
+  deadlineMs: number;
+} {
+  // Compute remaining ETA budget (if known)
+  let remaining = Infinity;
+  if (budgetSent && deadlineMs > 0) {
+    remaining = Math.max(0, deadlineMs - Date.now());
+  }
+
+  // Per-turn cap: half the remaining budget, bounded to [min, fallback].
+  let cap: number;
+  if (Number.isFinite(remaining)) {
+    cap = Math.min(remaining * TURN_WATCHDOG_BUDGET_FRACTION, TURN_WATCHDOG_FALLBACK_MS);
+    cap = Math.max(cap, TURN_WATCHDOG_MIN_MS);
+  } else {
+    cap = TURN_WATCHDOG_FALLBACK_MS;
+  }
+
+  const controller = new AbortController();
+  const deadline = Date.now() + cap;
+  const timer = setTimeout(() => controller.abort(), cap);
+
+  // unref so the timer never keeps the worker process alive on its own
+  if (typeof (timer as unknown as { unref?: () => void }).unref === 'function') {
+    (timer as unknown as { unref: () => void }).unref();
+  }
+
+  return {
+    signal: controller.signal,
+    clearTimeout: () => clearTimeout(timer),
+    deadlineMs: deadline,
+  };
+}
+
+/**
+ * Mail a WARNING to the lead that this teammate's LLM turn timed out and was
+ * aborted. Also injects a SYSTEM note into the triologue so the next turn
+ * knows the previous turn was interrupted (prevents the LLM from assuming its
+ * last attempt succeeded).
+ */
+function reportStuckTurn(reason: string, elapsedMs: number): void {
+  const secs = Math.round(elapsedMs / 1000);
+  const text = `Teammate "${teammateName}" appears stuck (${reason}) — LLM turn aborted after ${secs}s. ` +
+    `Mail polling has resumed; if you sent mail it will be picked up on the next loop iteration. ` +
+    `If this repeats, consider tm_remove to terminate or extend the ETA via mail_to.`;
+  try {
+    ctx.team.mailTo('lead', `WARNING: ${teammateName} stuck`, text);
+  } catch {
+    // mailTo may fail if ctx not ready — best-effort
+  }
+  try {
+    ctx.core.brief('warn', 'watchdog', text);
+  } catch {
+    // ignore
+  }
+}
 
 /**
  * Create a triologue that persists messages to disk
@@ -206,11 +291,38 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
 
       triologue.setSystemPrompt(buildNormalModePrompt(WORKDIR, { name: teammateName, role: teammateRole }));
 
-      const response = await retryChat({
-        model: MODEL,
-        messages: triologue.getMessages(),
-        tools,
-      });
+      // Per-turn watchdog: abort the LLM call if it blocks past the turn
+      // deadline so mail polling at the top of the loop can resume. Without
+      // this a hung retryChat keeps status 'working' and starves the mail
+      // poll indefinitely (the "stuck teammate" symptom).
+      const watchdog = createTurnWatchdog();
+      const turnStart = Date.now();
+      let response;
+      try {
+        response = await retryChat(
+          {
+            model: MODEL,
+            messages: triologue.getMessages(),
+            tools,
+          },
+          { signal: watchdog.signal, noSpinner: true },
+        );
+      } catch (err) {
+        watchdog.clearTimeout();
+        if (err instanceof StreamAbortedError && watchdog.signal.aborted) {
+          // Watchdog fired: report and let the loop continue (mail poll resumes).
+          const elapsed = Date.now() - turnStart;
+          reportStuckTurn('LLM turn watchdog', elapsed);
+          triologue.note('SYSTEM',
+            `Previous LLM turn was aborted by the stuck-teammate watchdog after ${Math.round(elapsed / 1000)}s ` +
+            `(likely the LLM endpoint hung). No response was received. Continue your task; ` +
+            `check mailbox for any new instructions from lead.`);
+          continue;
+        }
+        // Non-watchdog error: rethrow into the outer try/catch (briefs + 1s pause + retry).
+        throw err;
+      }
+      watchdog.clearTimeout();
 
       const assistantMessage = response.message;
       const reasoningContent = (assistantMessage as unknown as Record<string, unknown>).reasoning_content as string | undefined;
@@ -267,7 +379,29 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
               'Context limit reached. Remaining tool calls in this batch were skipped.',
               'Compacting conversation to continue.'
             );
-            await triologue.compact(undefined);
+            // Compact summarization is itself a retryChat — guard it with the
+            // same turn watchdog so a hung summarization cannot block mail
+            // polling. On watchdog abort we skip compact this round (context
+            // stays over threshold; the next turn will retry compaction).
+            const compactWatchdog = createTurnWatchdog();
+            const compactStart = Date.now();
+            try {
+              await triologue.compact(undefined, compactWatchdog.signal);
+            } catch (err) {
+              if (err instanceof StreamAbortedError && compactWatchdog.signal.aborted) {
+                const elapsed = Date.now() - compactStart;
+                reportStuckTurn('compact summarization watchdog', elapsed);
+                triologue.note('SYSTEM',
+                  `Auto-compact summarization was aborted by the stuck-teammate watchdog after ${Math.round(elapsed / 1000)}s. ` +
+                  `Context remains over the threshold; compaction will be retried next turn.`);
+              } else {
+                // Non-watchdog compact error: surface but don't crash the worker.
+                ctx.core.brief('error', 'compact', `Compact failed: ${(err as Error).message}`);
+                triologue.note('SYSTEM', `Auto-compact failed: ${(err as Error).message}. Continuing without compaction.`);
+              }
+            } finally {
+              compactWatchdog.clearTimeout();
+            }
             ctx.core.resetConfusionIndex();
             recentToolCalls.length = 0;
             break; // Exit the for-loop, let the while-loop continue

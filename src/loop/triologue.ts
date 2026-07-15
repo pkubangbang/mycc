@@ -457,9 +457,12 @@ export class Triologue {
   /**
    * Force auto-compact now
    * @param focus - Optional focus topic to include in summarization
+   * @param signal - Optional AbortSignal to abort the summarization LLM call.
+   *   When aborted, runAutoCompact's retryChat throws StreamAbortedError which
+   *   propagates here — callers should catch it and treat compact as skipped.
    */
-  async compact(focus?: string): Promise<void> {
-    const compacted = await this.runAutoCompact(focus);
+  async compact(focus?: string, signal?: AbortSignal): Promise<void> {
+    const compacted = await this.runAutoCompact(focus, signal);
     this.messages = compacted;
     this.tokenCount = estimateTokensForMessages(this.messages);
     this.pendingToolCalls.clear();
@@ -799,8 +802,11 @@ export class Triologue {
   /**
    * Run auto-compact: save transcript and summarize with LLM
    * @param focus - Optional focus topic to emphasize in summary
+   * @param signal - Optional AbortSignal passed to retryChat so a stuck
+   *   summarization can be aborted (e.g. by the teammate turn watchdog)
+   *   rather than blocking mail polling indefinitely.
    */
-  private async runAutoCompact(focus?: string): Promise<Message[]> {
+  private async runAutoCompact(focus?: string, signal?: AbortSignal): Promise<Message[]> {
     // Ensure transcript directory exists (session dir)
     const sessionId = getSessionContext();
     const transcriptDir = getSessionDir(sessionId);
@@ -845,27 +851,30 @@ export class Triologue {
       ? `\n**User's Last Instruction:** "${this.lastUserQuery}"\nEnsure the summary preserves ALL constraints, pending tasks, and requests from this instruction. The agent should continue working on this after the compact.\n`
       : '';
 
-    const response = await retryChat({
-      model: MODEL,
-      messages: [
-        {
-          role: 'user',
-          content:
-            `Summarize this conversation for continuity. Cover the following sections:\n\n` +
-            `### 1) What Was Accomplished\n` +
-            `Key actions taken, files created/modified, findings made.\n\n` +
-            `### 2) Current State\n` +
-            `What the agent now knows — be specific enough that subsequent turns do NOT need to re-verify findings already made.\n` +
-            `Include any pending or unfinished tasks.\n\n` +
-            `### 3) Key Decisions Made\n` +
-            `Design choices, fix strategies, or workflow decisions.\n\n` +
-            `${knowledgeInstruction}` +
-            `${focusInstruction}` +
-            `${userQueryInstruction}` +
-            `${conversationText}`,
-        },
-      ],
-    });
+    const response = await retryChat(
+      {
+        model: MODEL,
+        messages: [
+          {
+            role: 'user',
+            content:
+              `Summarize this conversation for continuity. Cover the following sections:\n\n` +
+              `### 1) What Was Accomplished\n` +
+              `Key actions taken, files created/modified, findings made.\n\n` +
+              `### 2) Current State\n` +
+              `What the agent now knows — be specific enough that subsequent turns do NOT need to re-verify findings already made.\n` +
+              `Include any pending or unfinished tasks.\n\n` +
+              `### 3) Key Decisions Made\n` +
+              `Design choices, fix strategies, or workflow decisions.\n\n` +
+              `${knowledgeInstruction}` +
+              `${focusInstruction}` +
+              `${userQueryInstruction}` +
+              `${conversationText}`,
+          },
+        ],
+      },
+      { signal, noSpinner: true },
+    );
 
     const summary = response.message.content || '(no summary)';
 
