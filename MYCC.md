@@ -243,6 +243,16 @@ Key constraints:
 - Teammates have restricted capabilities—they cannot use `tm_create`, `tm_remove`, `tm_await`, or `broadcast` directly (must request via mail to lead)
 - Team mode is orthogonal to normal/plan mode (combinations: solo-normal, solo-plan, team-normal, team-plan)
 
+### lead trusting teammate's autonomous cycle
+
+a teammate runs its own loop, and two of its normal behaviors are NOT failures the lead should "fix".
+
+idle after a phase is expected, not stuck. when a teammate finishes a phase (no open todos, no pending tool calls), it mails "phase completed" to the lead and enters `idle` — the between-rounds gap where it polls for new mail or claimable issues and resumes the instant new mail arrives (`src/context/teammate-worker.ts` `enterIdleState`, polls every `POLL_INTERVAL`). the lead must not send nag mails ("don't idle", "speed up", "send the next instruction this round") nor take over the teammate's work to "push things forward" — both waste the lead's turns and disrupt the teammate's rhythm.
+
+todo management is the teammate's internal affair. whether a teammate builds/maintains todos is its own work organization (todo nudging in `teammate-worker.ts` uses the teammate's own `ChildContext` todo module); it does not affect its ability to do assigned work, and the lead cannot manage a teammate's todos. do not instruct teammates to "skip todos" / "stop fussing over todos", and do not treat a "no active todos" report as a problem — focus on whether the task goal is met, not the teammate's internal management.
+
+the lead should intervene only on a real stall (no output past the teammate's deadline, or an explicit guidance request that genuinely blocks), a timeout, or an error — not on normal idle, and not on internal todo state. a guidance-request mail is worded as "could benefit from direction", which is not necessarily blocked (the worker's comment notes this wording was tuned to avoid false stuck alarms).
+
 Key operations (`src/context/parent/team.ts`):
 - `team.createTeammate(name, role, prompt)` - Spawn teammate
 - `team.listTeammates()` - List all teammates

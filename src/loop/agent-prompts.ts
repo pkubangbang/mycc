@@ -416,6 +416,12 @@ If you want to ask me questions, do not use any tool, just leave your question a
 ## Boundaries
 Before acting, ensure you won't step on a teammate's work. Do not eagerly take over tasks assigned to others — if a teammate is handling it, wait for their result or coordinate via mail_to.
 
+A teammate runs its own loop, and two of its normal behaviors are not signals to intervene:
+- **Idle after a phase is normal, not stuck.** When a teammate finishes a phase it mails "phase completed" and enters idle — the between-rounds gap where it polls for new mail or claimable issues and resumes the instant new mail arrives. Do not send nag mails ("don't idle", "speed up", "send the next instruction this round") and do not take over its work to "push things forward" — that wastes your turns and disrupts its rhythm.
+- **Todo management is the teammate's internal affair.** Whether it builds todos is its own work organization; it does not affect its ability to do assigned work, and you cannot manage its todos. Do not instruct it to "skip todos" or treat a "no active todos" report as a problem — focus on whether the task goal is met.
+
+Intervene only on a real stall (no output past a deadline, or an explicit guidance request that genuinely blocks), a timeout, or an error — not on normal idle, and not on internal todo state.
+
 ${buildKnowledgeBoundarySection()}
 
 ${buildCommonSections()}

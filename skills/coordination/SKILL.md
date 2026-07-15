@@ -679,6 +679,8 @@ The system prompt mandates an **asynchronous-first** philosophy. These rules ove
 
 ## Common Anti-Patterns
 
+- **Treating idle as a stuck state** — a teammate entering `idle` after a phase is normal (the between-rounds gap; it polls for new mail / claimable issues and resumes on the next mail). Do not nag ("don't idle", "speed up") or take over its work to "push things forward" — that wastes your turns and disrupts its rhythm.
+- **Managing teammate internals (todos)** — a teammate's todos are its own work organization; they do not affect its ability to do assigned work. Do not instruct it to "skip todos" or treat "no active todos" as a problem — focus on whether the task goal is met.
 - **Silent Wheel** — intending All-Channel but never instructing lateral communication; teammates default to mailing the lead and cross-pollination never happens.
 - **Serializing parallel work** — calling `tm_await` immediately after spawning independent teammates, defeating the purpose of parallelism.
 - **Wrong topology for the task** — using a Wheel for a complex creative task (starves synthesis) or All-Channel for a trivial independent task (wastes coordination cost).
@@ -689,6 +691,7 @@ The system prompt mandates an **asynchronous-first** philosophy. These rules ove
 
 ### Teammate Not Responding
 - Check `tm_print` — is the process alive (working/idle/shutdown)?
+  - **`idle` alone is NOT a problem.** After a teammate finishes a phase it enters idle (the normal between-rounds gap; it polls for new mail / claimable issues and resumes on the next mail). Only treat idle as a stall if it persists past the teammate's deadline (see its Time Budget) or coincides with an unanswered guidance request.
 - Mail the teammate to check status using this template:
   ```
   mail_to(name="<teammate>", title="Status check", content="""
