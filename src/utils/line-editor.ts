@@ -258,7 +258,7 @@ export class LineEditor {
       acc += ch;
       accWidth += w;
     }
-    return acc + '…';
+    return `${acc  }…`;
   }
 
   // Layout: whisper (1 line) + prompt/content (1+ lines) + blank (1 line) + cursor row
