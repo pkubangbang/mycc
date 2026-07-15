@@ -167,6 +167,12 @@ const READY_NAME_REGEX = /^name:\s*(.+)/m;
 function scanReadyEvents(messages: Message[]): ReadyEvent[] {
   const events: ReadyEvent[] = [];
   for (const m of messages) {
+    // Only user-role messages carry genuine [MAIL] notes containing READY
+    // events. Tool results (role='tool') may contain source code that
+    // coincidentally includes the `[READY] triologue file:` literal (e.g.
+    // a read_file of teammate-worker.ts), producing false-positive matches
+    // with garbage paths. Filter by role to eliminate them.
+    if (m.role !== 'user') continue;
     if (typeof m.content !== 'string') continue;
     const pathMatch = m.content.match(READY_PATH_REGEX);
     if (!pathMatch) continue;
@@ -328,8 +334,11 @@ async function summarizeLeadTriologue(messages: Message[]) {
 
   for (const m of messages) {
     // If this message is a ready note, inject the child's narrative summary
-    // ahead of the note itself so the context reads naturally.
-    if (typeof m.content === 'string') {
+    // ahead of the note itself so the context reads naturally. Only
+    // user-role [MAIL] notes are genuine ready events — tool results that
+    // happen to contain the `[READY]` literal (e.g. a read_file of
+    // teammate-worker.ts source) must NOT trigger injection here.
+    if (m.role === 'user' && typeof m.content === 'string') {
       const pathMatch = m.content.match(READY_PATH_REGEX);
       if (pathMatch) {
         const p = pathMatch[1].trim();
