@@ -26,7 +26,9 @@ import { buildPlanModePrompt, buildNormalModePrompt, isInPlanMode } from '../age
 import { agentIO } from '../agent-io.js';
 import { startWrapUp } from '../esc-wrap-up.js';
 import { loader } from '../../context/shared/loader.js';
-import { handleCrossroad } from '../crossroad.js';
+import { handleCrossroad, generateAndSelect, collectTrainingData } from '../crossroad.js';
+import { getCrossroadEncoder } from '../crossroad-encoder.js';
+import { StreamingCrossroadDetector } from '../streaming-crossroad-detector.js';
 
 export async function handleLlm(
   env: MachineEnv,
@@ -67,15 +69,76 @@ export async function handleLlm(
           // Store abort controller for potential external abort
           pass.abortController = abortController;
 
-          return await retryChat(
+          // Create streaming crossroad detector (encoder may be null → regex fallback)
+          //
+          // Fallback contract: when the ONNX encoder is unavailable (null) —
+          // because the model isn't installed, onnxruntime-node is missing,
+          // or the model failed to load — the StreamingCrossroadDetector
+          // returns { detected: false } unconditionally (checkInterval=Infinity
+          // skips all inference). This causes encoderHandledCrossroad (below)
+          // to stay false, so the regex-based detectTurningWord path runs as
+          // the fallback. The same fallthrough happens when the encoder DOES
+          // detect a turn but generateAndSelect() fails to produce a
+          // continuation: content is restored to the full original and the
+          // regex path gets a chance to re-detect. So the regex detector is
+          // always the safety net beneath the encoder.
+          const encoder = await getCrossroadEncoder();
+          if (!encoder) {
+            ctx.core.verbose('llm',
+              'Crossroad encoder unavailable — using regex fallback (detectTurningWord)');
+          }
+          const detector = new StreamingCrossroadDetector(encoder, { signal: abortController.signal });
+
+          const chatResponse = await retryChat(
             {
               model: MODEL,
               messages: triologue.getMessages(),
               tools,
               think: agentIO.isNeglectedMode() || isInPlanMode(ctx),
             },
-            { signal: abortController.signal, neglected: agentIO.isNeglectedMode() },
+            {
+              signal: abortController.signal,
+              neglected: agentIO.isNeglectedMode(),
+              onChunk: (chunk) => {
+                // Chunk shape differs by provider: Ollama uses
+                // chunk.message?.content, DeepSeek uses
+                // chunk.choices?.[0]?.delta?.content. Access both safely.
+                const content =
+                  (chunk as { message?: { content?: string } }).message?.content ||
+                  (chunk as { choices?: Array<{ delta?: { content?: string } }> }).choices?.[0]?.delta?.content ||
+                  '';
+                if (content) detector.onChunk(content);
+              },
+            },
           );
+
+          // After stream completes, check if the encoder detected a turn
+          const streamResult = await detector.finalize();
+          if (streamResult.detected) {
+            ctx.core.verbose('llm',
+              `Streaming crossroad encoder detected turn at index ${streamResult.turnIndex}`);
+            // Truncate at the detected turn index
+            pass.assistantContent = streamResult.fullText.slice(0, streamResult.turnIndex).trim();
+            // Collect training data
+            collectTrainingData(streamResult.fullText, streamResult.turnIndex, 'encoder');
+            // Generate continuation via the shared generation+selection flow
+            const continuation = await generateAndSelect(
+              triologue.getMessages(),
+              tools,
+              pass.assistantContent,
+              abortController.signal,
+            );
+            if (continuation) {
+              pass.crossroadContinuation = continuation;
+              // Discard original tool calls — LLM will regenerate them after crossroad
+              pass.rawToolCalls = [];
+            } else {
+              // Generation failed — restore original content, fall through to regex
+              pass.assistantContent = chatResponse.message?.content || '';
+            }
+          }
+
+          return chatResponse;
         },
         () => {
           // This runs when ESC is pressed DURING the LLM call
@@ -93,65 +156,83 @@ export async function handleLlm(
         return AgentState.PROMPT;
       }
 
-      // Store response data on pass for downstream states
-      const assistantMessage = response.message;
-      pass.rawToolCalls = assistantMessage.tool_calls
-        ? [...(assistantMessage.tool_calls as ToolCall[])]
-        : [];
-      pass.assistantContent = assistantMessage.content || '';
-      pass.assistantReasoningContent = (assistantMessage as unknown as Record<string, unknown>).reasoning_content as string | undefined;
-
       // Release the LLM call's abort controller — it's no longer needed
       pass.abortController = null;
 
-      // =====================================================================
-      // Crossroad: detect turning words, generate alternative continuations
-      // =====================================================================
-      // Only run when tools are available — crossroad needs tool definitions
-      // to preserve prompt cache during forkChat calls.
-      // Wrapped in escAware so ESC during crossroad processing returns null
-      // (transparent skip), using the original LLM output as-is.
-      if (tools.length > 0) {
-        const crossroadResult = await ctx.core.escAware(
-          async (abortController) => {
-            return await handleCrossroad(
-              triologue.getMessages(),
-              pass.assistantContent,
-              pass.rawToolCalls,
-              tools,
-              abortController.signal,
-            );
-          },
-          () => null,
-        );
-        // ESC pressed during crossroad processing - return to PROMPT immediately
-        if (agentIO.isNeglectedMode()) {
-          stopSpinner();
-          return AgentState.PROMPT;
-        }
-        if (crossroadResult) {
-          ctx.core.verbose('llm',
-            `Crossroad: truncated at "${crossroadResult.truncated.slice(0, 80)}..."`,
-            `Continuation: "${crossroadResult.continuation.slice(0, 80)}..."`,
-          );
-          // Replace content with truncated prefix + continuation will be injected in hook.ts
-          pass.assistantContent = crossroadResult.truncated;
-          pass.crossroadContinuation = crossroadResult.continuation;
-          // Discard original tool calls — LLM will regenerate them after crossroad
-          pass.rawToolCalls = [];
+      // Check if the streaming encoder already handled the crossroad
+      // (pass.crossroadContinuation set inside escAware). If so, skip the
+      // regex path — the encoder is an addition on top, and when it detects,
+      // its result takes precedence.
+      const encoderHandledCrossroad = !!pass.crossroadContinuation;
 
-          // Consecutive crossroad = LLM stuck hesitating → count towards hint round
-          if (env.crossroadOccurred) {
-            ctx.core.increaseConfusionIndex(2);
+      if (!encoderHandledCrossroad) {
+        // Store response data on pass for downstream states
+        const assistantMessage = response.message;
+        pass.rawToolCalls = assistantMessage.tool_calls
+          ? [...(assistantMessage.tool_calls as ToolCall[])]
+          : [];
+        pass.assistantContent = assistantMessage.content || '';
+        pass.assistantReasoningContent = (assistantMessage as unknown as Record<string, unknown>).reasoning_content as string | undefined;
+
+        // =====================================================================
+        // Crossroad: regex fallback — detect turning words, generate continuations
+        // =====================================================================
+        // Only run when tools are available — crossroad needs tool definitions
+        // to preserve prompt cache during forkChat calls.
+        // Wrapped in escAware so ESC during crossroad processing returns null
+        // (transparent skip), using the original LLM output as-is.
+        if (tools.length > 0) {
+          const crossroadResult = await ctx.core.escAware(
+            async (abortController) => {
+              return await handleCrossroad(
+                triologue.getMessages(),
+                pass.assistantContent,
+                pass.rawToolCalls,
+                tools,
+                abortController.signal,
+              );
+            },
+            () => null,
+          );
+          // ESC pressed during crossroad processing - return to PROMPT immediately
+          if (agentIO.isNeglectedMode()) {
+            stopSpinner();
+            return AgentState.PROMPT;
           }
-          env.crossroadOccurred = true;
+          if (crossroadResult) {
+            ctx.core.verbose('llm',
+              `Crossroad: truncated at "${crossroadResult.truncated.slice(0, 80)}..."`,
+              `Continuation: "${crossroadResult.continuation.slice(0, 80)}..."`,
+            );
+            // Replace content with truncated prefix + continuation will be injected in hook.ts
+            pass.assistantContent = crossroadResult.truncated;
+            pass.crossroadContinuation = crossroadResult.continuation;
+            // Discard original tool calls — LLM will regenerate them after crossroad
+            pass.rawToolCalls = [];
+
+            // Consecutive crossroad = LLM stuck hesitating → count towards hint round
+            if (env.crossroadOccurred) {
+              ctx.core.increaseConfusionIndex(2);
+            }
+            env.crossroadOccurred = true;
+          } else {
+            // No crossroad this pass — reset the consecutive flag
+            env.crossroadOccurred = false;
+          }
         } else {
-          // No crossroad this pass — reset the consecutive flag
+          // No tools available (e.g. neglected mode) — reset the consecutive flag
           env.crossroadOccurred = false;
         }
       } else {
-        // No tools available (e.g. neglected mode) — reset the consecutive flag
-        env.crossroadOccurred = false;
+        // Encoder detected a turn — set reasoning content from response
+        const assistantMessage = response.message;
+        pass.assistantReasoningContent = (assistantMessage as unknown as Record<string, unknown>).reasoning_content as string | undefined;
+
+        // Consecutive crossroad = LLM stuck hesitating → count towards hint round
+        if (env.crossroadOccurred) {
+          ctx.core.increaseConfusionIndex(2);
+        }
+        env.crossroadOccurred = true;
       }
 
       // Handle edge case where LLM returns empty content AND no tool calls

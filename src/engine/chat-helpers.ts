@@ -232,9 +232,10 @@ export async function collectStream<T>(
     firstTokenTimeoutMs?: number;
     responseTimeoutMs?: number;
     signal?: AbortSignal;
+    onChunk?: (chunk: T) => void;
   },
 ): Promise<T[]> {
-  const { firstTokenTimeoutMs, responseTimeoutMs, signal } = config;
+  const { firstTokenTimeoutMs, responseTimeoutMs, signal, onChunk } = config;
 
   let firstTokenTimeoutId: ReturnType<typeof setTimeout> | null = null;
   let responseTimeoutId: ReturnType<typeof setTimeout> | null = null;
@@ -298,6 +299,7 @@ export async function collectStream<T>(
         }
 
         chunks.push(chunk);
+        onChunk?.(chunk);
 
         if (signal?.aborted) throw new StreamAbortedError();
       }

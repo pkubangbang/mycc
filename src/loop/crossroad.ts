@@ -17,6 +17,9 @@ import { startSpinner, stopSpinner, sleep } from '../engine/chat-helpers.js';
 import { agentIO } from './agent-io.js';
 import { stripInternalMarkup } from '../utils/letter-box.js';
 import chalk from 'chalk';
+import * as os from 'node:os';
+import * as nodePath from 'node:path';
+import * as fs from 'node:fs';
 
 // ============================================================================
 // Turning Words
@@ -80,6 +83,12 @@ const SENTENCE_BOUNDARY_TURNING_WORDS: RegExp[] = [
   /\bThat said\b/i,
   /\bActually\b/i,
   /\bBut\b/i,
+  // Unambiguous turn phrases — these never function as mid-sentence
+  // conjunctions, so they only need the sentence-boundary guard to avoid
+  // matching inside a longer word. Backed by session crossroad data.
+  /\bThen again\b/i,
+  /\bOn second thought\b/i,
+  /\bMind you\b/i,
   // Chinese — match only after sentence-ending punctuation or newline
   /(?<=^|[。！？\n])\s*然而/,
   /(?<=^|[。！？\n])\s*但/,
@@ -389,6 +398,41 @@ export async function selectBestContinuation(
 }
 
 // ============================================================================
+// Data Collection
+// ============================================================================
+
+/**
+ * Append training data to ~/.mycc-store/crossroad-trainer/data/auto-collected.jsonl
+ * for future model fine-tuning. Creates directories if needed.
+ * Handles errors gracefully (verbose log, never throws).
+ */
+export function collectTrainingData(
+  originalContent: string,
+  turnIndex: number,
+  source: 'encoder' | 'regex',
+): void {
+  try {
+    const dataDir = nodePath.join(os.homedir(), '.mycc-store', 'crossroad-trainer', 'data');
+    const dataPath = nodePath.join(dataDir, 'auto-collected.jsonl');
+
+    // Ensure directory exists
+    fs.mkdirSync(dataDir, { recursive: true });
+
+    const entry = {
+      text: originalContent,
+      turnIndex,
+      source,
+      timestamp: new Date().toISOString(),
+    };
+
+    fs.appendFileSync(dataPath, JSON.stringify(entry) + '\n', 'utf-8');
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    agentIO.verbose('crossroad', `collectTrainingData write error: ${msg}`);
+  }
+}
+
+// ============================================================================
 // Orchestrator
 // ============================================================================
 
@@ -400,40 +444,25 @@ export interface CrossroadResult {
 }
 
 /**
- * Handle the crossroad feature:
- * 1. Detect turning word in original content
- * 2. Truncate at turning word
- * 3. Generate multiple continuations
- * 4. Select the best one
+ * Generate multiple continuations from different directions, then select
+ * the best one. Extracted from handleCrossroad so both the regex path and
+ * the encoder path can reuse it.
  *
- * Returns null if no turning word is found or if all generation fails.
+ * Returns the best continuation text, or null if all generation fails.
  * Shows spinner during processing.
  */
-export async function handleCrossroad(
+export async function generateAndSelect(
   messages: Message[],
-  originalContent: string,
-  _originalToolCalls: ToolCall[],
   tools: Tool[],
+  prefix: string,
   signal?: AbortSignal,
-): Promise<CrossroadResult | null> {
-  // Step 1: Detect turning word
-  const match = detectTurningWord(originalContent);
-  if (!match) {
-    return null;
-  }
-
-  agentIO.verbose('crossroad', `Detected turning word "${match.word}" at index ${match.index}`);
-
-  // Step 2: Truncate at turning word
-  const prefix = originalContent.slice(0, match.index).trim();
-
-  // Show spinner during processing
+): Promise<string | null> {
   startSpinner('LLM is at its crossroad...');
-  let result: CrossroadResult | null = null;
   let continuations: string[] = [];
   let selectedIndex = -1;
+  let best: string | null = null;
   try {
-    // Step 3: Generate continuations (with crossroad-level retry)
+    // Step 1: Generate continuations (with crossroad-level retry)
     continuations = await generateContinuations(messages, tools, prefix, signal);
     if (continuations.length === 0) {
       agentIO.verbose('crossroad', 'All continuations failed, retrying once...');
@@ -445,8 +474,8 @@ export async function handleCrossroad(
       return null;
     }
 
-    // Step 4: Select the best one
-    const best = await selectBestContinuation(messages, tools, prefix, continuations, signal);
+    // Step 2: Select the best one
+    best = await selectBestContinuation(messages, tools, prefix, continuations, signal);
     if (!best) {
       agentIO.verbose('crossroad', 'Best continuation is empty, aborting crossroad');
       return null;
@@ -454,12 +483,11 @@ export async function handleCrossroad(
 
     selectedIndex = continuations.indexOf(best);
     agentIO.verbose('crossroad', `Selected continuation #${selectedIndex + 1}: ${best.slice(0, 150)}...`);
-    result = { truncated: prefix, continuation: best };
-    return result;
+    return best;
   } finally {
     stopSpinner();
     // Log all alternatives and which was chosen (after spinner stops for clean output)
-    if (result && continuations.length > 1) {
+    if (best && continuations.length > 1) {
       const boxWidth = 76;
       const sep = chalk.gray('─');
       const header = ` Crossroad (selected ${selectedIndex + 1} of ${continuations.length}) `;
@@ -485,4 +513,44 @@ export async function handleCrossroad(
       agentIO.log(chalk.gray(`└${sep.repeat(boxWidth)}┘`));
     }
   }
+}
+
+/**
+ * Handle the crossroad feature:
+ * 1. Detect turning word in original content
+ * 2. Truncate at turning word
+ * 3. Generate multiple continuations
+ * 4. Select the best one
+ *
+ * Returns null if no turning word is found or if all generation fails.
+ * Uses the shared generateAndSelect() for generation+selection.
+ */
+export async function handleCrossroad(
+  messages: Message[],
+  originalContent: string,
+  _originalToolCalls: ToolCall[],
+  tools: Tool[],
+  signal?: AbortSignal,
+): Promise<CrossroadResult | null> {
+  // Step 1: Detect turning word
+  const match = detectTurningWord(originalContent);
+  if (!match) {
+    return null;
+  }
+
+  agentIO.verbose('crossroad', `Detected turning word "${match.word}" at index ${match.index}`);
+
+  // Step 2: Truncate at turning word
+  const prefix = originalContent.slice(0, match.index).trim();
+
+  // Collect training data for future fine-tuning
+  collectTrainingData(originalContent, match.index, 'regex');
+
+  // Steps 3 & 4: Generate continuations and select the best one
+  const continuation = await generateAndSelect(messages, tools, prefix, signal);
+  if (!continuation) {
+    return null;
+  }
+
+  return { truncated: prefix, continuation };
 }
