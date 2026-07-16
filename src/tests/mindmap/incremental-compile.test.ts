@@ -25,7 +25,6 @@ vi.mock('../../mindmap/explorer-agent.js', () => ({
       };
     }
   ),
-  exploreAndSummarize: vi.fn(),
 }));
 
 function makeMinimalMindmap(mdContent: string, oldHash: string): MindmapJSON {

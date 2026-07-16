@@ -46,7 +46,6 @@ vi.mock('../../mindmap/explorer-agent.js', () => ({
       };
     }
   ),
-  exploreAndSummarize: vi.fn(),
 }));
 
 describe('rotation-based compile_mindmap', () => {

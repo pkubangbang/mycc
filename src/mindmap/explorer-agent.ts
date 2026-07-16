@@ -30,6 +30,7 @@ import { grepSearch } from '../utils/grep-search.js';
 const MAX_ROUNDS_DEFAULT = 50;
 const WEB_TIMEOUT_MS = 30000; // 30 seconds timeout for web operations
 const TOKEN_THRESHOLD = getTokenThreshold();
+const READ_CHUNK_SIZE = 10000; // max chars returned per read_file call
 
 /**
  * Marked item with path/URL and reason
@@ -154,13 +155,19 @@ const EXPLORER_TOOLS: Tool[] = [
     type: 'function',
     function: {
       name: 'read_file',
-      description: 'Read file contents. Use to understand code implementations.',
+      description:
+        `Read file contents. Use to understand code implementations.\n` +
+        `Files larger than ${READ_CHUNK_SIZE} chars are returned in chunks: the output ends with a marker showing the next offset to pass (e.g. "... (truncated at offset 10000; call read_file again with offset=10000 to continue)"). Call again with that offset to read the next chunk until the marker disappears.`,
       parameters: {
         type: 'object',
         properties: {
           path: {
             type: 'string',
             description: 'File path relative to workDir',
+          },
+          offset: {
+            type: 'number',
+            description: 'Character offset to start reading from (default: 0). Use this to continue reading a large file that was truncated, passing the offset shown in the previous truncation marker.',
           },
         },
         required: ['path'],
@@ -329,7 +336,7 @@ async function executeTool(
 ): Promise<string> {
   switch (name) {
     case 'read_file':
-      return readFile(args.path as string, workDir);
+      return readFile(args.path as string, workDir, args.offset as number | undefined);
     case 'ls':
       return ls(args.path as string | undefined, workDir);
     case 'grep':
@@ -367,9 +374,13 @@ async function executeTool(
 }
 
 /**
- * Read file contents (with truncation for large files)
+ * Read file contents (in chunks for large files).
+ * Returns up to READ_CHUNK_SIZE chars starting at `offset`. If more content
+ * remains, appends a continuation marker showing the next offset to pass so
+ * the LLM can paginate through the file instead of hitting a dead-end truncation.
  */
-function readFile(p: string, workDir: string): string {
+function readFile(p: string, workDir: string, offset?: number): string {
+  const start = offset && offset > 0 ? offset : 0;
   const fullPath = path.resolve(workDir, p);
   if (!fullPath.startsWith(workDir)) {
     return 'Error: Path escapes workspace';
@@ -379,11 +390,17 @@ function readFile(p: string, workDir: string): string {
   }
   try {
     const content = fs.readFileSync(fullPath, 'utf-8');
-    // Truncate large files
-    if (content.length > 10000) {
-      return `${content.slice(0, 10000)}\n... (truncated)`;
+    if (start >= content.length) {
+      return start === 0
+        ? '(empty file)'
+        : `(offset ${start} is at or past end of file; file length is ${content.length})`;
     }
-    return content;
+    const chunk = content.slice(start, start + READ_CHUNK_SIZE);
+    if (start + READ_CHUNK_SIZE < content.length) {
+      const nextOffset = start + READ_CHUNK_SIZE;
+      return `${chunk}\n... (truncated at offset ${nextOffset}; call read_file again with offset=${nextOffset} to continue)`;
+    }
+    return chunk;
   } catch (err) {
     return `Error: ${(err as Error).message}`;
   }
@@ -668,27 +685,29 @@ Explore now. When done exploring, write your summary. Produce only the summary, 
 }
 
 /**
- * Core exploration agent loop - shared implementation
- * Returns summary enriched with discovered code context
+ * Summarize a node with exploration (used during compilation)
+ * Runs the exploration agent loop: the LLM explores the codebase using tools
+ * (read_file, ls, grep, mark_file, web_search, web_fetch, mark_url, mark_term)
+ * until it produces a summary or hits the round limit. Context is compacted
+ * when token usage exceeds the threshold.
  *
  * @param nodeTitle - The title of the section being summarized
  * @param nodeText - The text content of the section
  * @param ancestorContext - Combined text from parent sections
  * @param workDir - The working directory for file operations
- * @param maxRounds - Maximum number of LLM rounds
  * @param onProgress - Optional progress callback (round, tool name, tool args)
  * @param existingNode - Optional node from previous compilation for pre-population
  * @returns Exploration result with summary and marked files
  */
-async function runExplorationLoop(
+export async function summarizeWithExplorer(
   nodeTitle: string,
   nodeText: string,
   ancestorContext: string,
   workDir: string,
-  maxRounds: number,
   onProgress?: (round: number, tool: string, args: Record<string, unknown>) => void,
   existingNode?: Node
 ): Promise<ExplorationResult> {
+  const maxRounds = MAX_ROUNDS_DEFAULT;
   const messages: Message[] = [];
   const markedFiles: MarkedItem[] = [];
   const markedUrls: MarkedItem[] = [];
@@ -794,50 +813,4 @@ async function runExplorationLoop(
     markedUrls,
     markedTerms,
   };
-}
-
-/**
- * Run exploration agent loop (without progress reporting)
- * Returns summary enriched with discovered code context
- *
- * @param nodeTitle - The title of the section being summarized
- * @param nodeText - The text content of the section
- * @param ancestorContext - Combined text from parent sections
- * @param workDir - The working directory for file operations
- * @param maxRounds - Maximum number of LLM rounds (default: 10)
- * @param existingNode - Optional node from previous compilation for pre-population
- * @returns Exploration result with summary and marked files
- */
-export async function exploreAndSummarize(
-  nodeTitle: string,
-  nodeText: string,
-  ancestorContext: string,
-  workDir: string,
-  maxRounds: number = MAX_ROUNDS_DEFAULT,
-  existingNode?: Node
-): Promise<ExplorationResult> {
-  return runExplorationLoop(nodeTitle, nodeText, ancestorContext, workDir, maxRounds, undefined, existingNode);
-}
-
-/**
- * Summarize a node with exploration (used during compilation)
- * Wraps exploration loop with progress reporting
- *
- * @param nodeTitle - The title of the section being summarized
- * @param nodeText - The text content of the section
- * @param ancestorContext - Combined text from parent sections
- * @param workDir - The working directory for file operations
- * @param onProgress - Optional progress callback (round, tool name, tool args)
- * @param existingNode - Optional node from previous compilation for pre-population
- * @returns Exploration result with summary and marked files
- */
-export async function summarizeWithExplorer(
-  nodeTitle: string,
-  nodeText: string,
-  ancestorContext: string,
-  workDir: string,
-  onProgress?: (round: number, tool: string, args: Record<string, unknown>) => void,
-  existingNode?: Node
-): Promise<ExplorationResult> {
-  return runExplorationLoop(nodeTitle, nodeText, ancestorContext, workDir, MAX_ROUNDS_DEFAULT, onProgress, existingNode);
 }
