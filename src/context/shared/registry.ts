@@ -13,6 +13,7 @@ import { writeTool } from '../../tools/write.js';
 import { editTool } from '../../tools/edit.js';
 import { todoCreateTool } from '../../tools/todo_create.js';
 import { todoUpdateTool } from '../../tools/todo_update.js';
+import { todoPinningTool } from '../../tools/todo_pinning.js';
 import { skillLoadTool } from '../../tools/skill_load.js';
 import { tmCreateTool } from '../../tools/tm_create.js';
 import { tmRemoveTool } from '../../tools/tm_remove.js';
@@ -65,6 +66,7 @@ export const builtInTools: ToolDefinition[] = [
   editTool,
   todoCreateTool,
   todoUpdateTool,
+  todoPinningTool,
   skillLoadTool,
   tmCreateTool,
   tmRemoveTool,

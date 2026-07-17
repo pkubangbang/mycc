@@ -56,12 +56,14 @@ export class Todo implements TodoModule {
     existing.note = note;
     existing.hash = computeHash(name, done, note);
 
-    // Auto-clear: when every item is done, drop the list so the prompt
-    // stops showing a fully-checked checklist. Keep nextId monotonic
-    // across the session so IDs never collide with prior (now-cleared)
-    // hash references the LLM may still hold in the triologue.
-    if (this.items.length > 0 && this.items.every((i) => i.done)) {
-      this.items = [];
+    // Auto-clear: when every NON-PINNED item is done, drop only the non-pinned
+    // items so the prompt stops showing a fully-checked checklist of ephemeral
+    // work. Pinned items (done or not) always remain — they are long-term
+    // reminders that survive completion. Keep nextId monotonic across the
+    // session so IDs never collide with prior (now-cleared) hash references
+    // the LLM may still hold in the triologue.
+    if (this.items.length > 0 && this.items.filter((i) => !i.pinned).every((i) => i.done)) {
+      this.items = this.items.filter((i) => i.pinned);
     }
 
     return { ...existing };
@@ -78,17 +80,23 @@ export class Todo implements TodoModule {
     const lines = ['Todo list:'];
     for (const item of this.items) {
       const marker = item.done ? '[x]' : '[ ]';
+      const pinTag = item.pinned ? '📌' : '';
+      const reactTag = item.reactivate ? ` [reactivate: ${item.reactivate}]` : '';
       const note = item.note ? ` (${item.note})` : '';
-      lines.push(`  ${marker} ${item.id}. ${item.name}${note} [hash: ${item.hash}]`);
+      lines.push(`  ${marker} ${pinTag} ${item.id}. ${item.name}${note}${reactTag} [hash: ${item.hash}]`);
     }
     return lines.join('\n');
   }
 
   /**
-   * Check if there are incomplete todos
+   * Check if there are incomplete todos, OR completed pinned todos carrying a
+   * reactivation condition (candidates for auto-reactivation). The latter
+   * keeps the nudge/reactivation pass firing for pinned todos that may need
+   * to be reopened.
    */
   hasOpenTodo(): boolean {
-    return this.items.some((item) => !item.done);
+    return this.items.some((item) => !item.done) ||
+           this.items.some((item) => item.pinned && item.done && !!item.reactivate);
   }
 
   /**
@@ -127,5 +135,35 @@ export class Todo implements TodoModule {
       item.done = true;
       item.hash = computeHash(item.name, true, item.note);
     }
+  }
+
+  /**
+   * Pin or unpin a todo item, optionally setting a natural-language
+   * reactivation condition. Requires the current hash (anti-hallusion) —
+   * rejects if id not found or hash mismatch. The hash is NOT recomputed:
+   * pinned/reactivate are not part of the integrity signature.
+   * @returns the updated item (copy), or null on id-not-found / hash mismatch
+   */
+  pinTodo(id: number, hash: string, pinned: boolean, reactivate?: string): TodoItem | null {
+    const existing = this.items.find((i) => i.id === id);
+    if (!existing) return null;
+    if (existing.hash !== hash) return null;
+
+    existing.pinned = pinned;
+    // Clear reactivate when un-pinning; set/overwrite when pinning.
+    existing.reactivate = pinned ? reactivate : undefined;
+    return { ...existing };
+  }
+
+  /**
+   * Completed pinned todos carrying a reactivation condition — candidates
+   * for auto-reactivation. The COLLECT state evaluates each candidate's
+   * condition against the conversation context via `forkChat` and reopens
+   * those whose condition is met.
+   */
+  getReactivationCandidates(): TodoItem[] {
+    return this.items
+      .filter((i) => i.pinned && i.done && !!i.reactivate)
+      .map((i) => ({ ...i }));
   }
 }

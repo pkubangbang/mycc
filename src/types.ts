@@ -152,6 +152,21 @@ export interface TodoItem {
   done: boolean;
   note?: string;
   hash: string; // SHA256(name|done|note), first 8 hex chars — integrity signature
+  /**
+   * Pinned todos are NOT auto-cleared when all (non-pinned) todos are completed.
+   * They persist as long-term reminders. Set via `todo_pinning` tool.
+   * The hash does NOT include this field — pinned/reactivate are managed
+   * through `todo_pinning`, which itself requires the current hash, so the
+   * anti-hallusion guarantee is preserved.
+   */
+  pinned?: boolean;
+  /**
+   * Natural-language reactivation condition for a pinned todo. After each
+   * nudge cycle, the system evaluates completed pinned todos carrying a
+   * reactivation condition against the conversation context via `forkChat`;
+   * if the condition is met, the todo is automatically reopened.
+   */
+  reactivate?: string;
 }
 
 // ============================================================================
@@ -418,6 +433,16 @@ export interface TodoModule {
   findCheckpointTodo(checkpointId: string): TodoItem | null;
   /** Close the todo item auto-created for a checkpoint. Best-effort, no error if not found. */
   closeCheckpointTodo(checkpointId: string): void;
+  /**
+   * Pin or unpin a todo item, optionally setting a natural-language
+   * reactivation condition. Requires the current hash (anti-hallusion).
+   * The hash is NOT recomputed — pinned/reactivate are not part of the
+   * integrity signature.
+   * Returns null if id not found or hash mismatch.
+   */
+  pinTodo(id: number, hash: string, pinned: boolean, reactivate?: string): TodoItem | null;
+  /** Completed pinned todos carrying a reactivation condition — candidates for auto-reactivation. */
+  getReactivationCandidates(): TodoItem[];
 }
 
 /**

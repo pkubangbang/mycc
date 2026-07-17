@@ -157,6 +157,25 @@ function buildPlatformSection(): string {
 }
 
 // ============================================================================
+// Pinned Todo & Reactivation Section (lead-only — teammates never see it)
+// ============================================================================
+
+function buildPinnedTodoSection(): string {
+  return `### Pinned Todos
+Regular todos are auto-cleared when all are completed. Pinned todos persist:
+- Use \`todo_pinning(id, hash, pinned=true)\` to pin a todo after creating it with \`todo_create\`.
+- Pinned todos are NOT removed when all todos are completed.
+- Use pinned todos for persistent reminders (e.g., schema definitions, invariant rules, materialized view refresh tasks).
+
+### Reactivation
+Pinned todos can be automatically reactivated (marked back to not done) when a condition is met:
+- Use \`todo_pinning(id, hash, pinned=true, reactivate="<natural language condition>")\` to set a reactivation condition.
+- After each nudge cycle, the system evaluates completed pinned todos' reactivation conditions against the conversation context via LLM.
+- If the condition is met, the todo is automatically reactivated — you will see a SYSTEM note about the reactivation.
+- Example: \`todo_pinning(id=2, hash="abc12345", pinned=true, reactivate="when the users table or orders table is modified (INSERT/UPDATE/DELETE)")\``;
+}
+
+// ============================================================================
 // Shared Common Sections (used by all normal mode prompts)
 // ============================================================================
 
@@ -369,6 +388,8 @@ function buildSoloNormalPrompt(workDir: string): string {
 ## Task Management
 Use issue_* for complex tasks (divide and conquer), todo_* for simple tracking.
 
+${buildPinnedTodoSection()}
+
 ## Team Mode
 If you see 3+ independent subtasks, consider spawning teammates via tm_create for parallel work.
 
@@ -386,6 +407,11 @@ ${buildContextManagementSection()}`;
 function buildTeamNormalPrompt(workDir: string): string {
   return `You are the lead of a coding agent team at ${workDir}.
 Your role: coordinate teammates, collect results, and ensure task completion.
+
+## Task Management
+Use issue_* for complex tasks (divide and conquer), todo_* for simple tracking.
+
+${buildPinnedTodoSection()}
 
 ## Team Workflow
 1. Create issues with issue_create to define all tasks, including dependencies via the blockedBy parameter (returns full list for visibility)

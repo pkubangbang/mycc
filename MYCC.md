@@ -297,15 +297,17 @@ team mode handles the particular challenges of collaboration by using dedicated 
 
 **Todos** are simple task tracking items with title, status, and blockedBy dependencies. **Issues** are more structured task objects with ID, status, owner, blockedBy/blocks dependencies, and comments. Issues support team coordination—teammates claim issues and close them when done.
 
-Hash integrity: Each todo item has a SHA256-based hash (first 8 hex chars) computed from `name|done|note`. `todo_update` requires matching hash to prevent stale or mangled updates — if the hash doesn't match, the update is rejected.
+Hash integrity: Each todo item has a SHA256-based hash (first 8 hex chars) computed from `name|done|note`. `todo_update` requires matching hash to prevent stale or mangled updates — if the hash doesn't match, the update is rejected. The `pinned` and `reactivate` fields are deliberately NOT part of the hash, so pinning/reactivating a todo does not change its hash — this allows `todo_pinning` to modify those fields without forcing a `todo_update` hash revalidation cycle.
 
 Key types:
 - `Todo` - `{ id, subject, description, status, blockedBy, blocks, owner, activeForm }`
+- `TodoItem` - `{ id, name, done, note, hash, pinned?, reactivate? }` — `pinned` marks the item as protected from auto-clear; `reactivate` holds a natural-language condition for later reactivation
 - `Issue` - `{ id, title, status, owner, content, comments, blockedBy, blocks, createdAt }`
 
 Tools:
 - `todo_create` - Create a todo item with name, optional note; returns id and integrity hash
 - `todo_update` - Update a todo item by id; requires matching hash to prevent stale updates
+- `todo_pinning` - Pin/unpin a todo and set its reactivation condition (lead-only, scope `['main']`); requires id+hash validation; toggles `pinned` and sets `reactivate`
 - `issue_create` - Create issue with dependencies
 - `issue_claim` - Assign issue to teammate
 - `issue_list` - List all issues
@@ -313,10 +315,28 @@ Tools:
 - `issue_comment` - Add comment to issue
 
 Slash commands:
-- `/todos` - View all todos
+- `/todos` - View all todos (pinned items show a 📌 marker)
 - `/issues` - View all issues
 
 Note: `todo_write` is the legacy tool (deprecated) — use `todo_create` and `todo_update` instead.
+
+#### Pinned todos and reactivation
+
+**Pinned todos** are protected from the auto-clear that normally removes completed (`done`) todos at the start of each turn. A pinned done-todo also keeps `hasOpenTodo()` returning false so it does not falsely extend a "still working" state. Pinning is a lead-only capability via the `todo_pinning` tool — teammates never see the tool (scope `['main']`) and never get the pinned-todo section in their system prompt.
+
+**Reactivation** reopens a previously completed pinned todo when its `reactivate` condition becomes true. The lead evaluates candidates with a single `forkChat` call (not `structuredChat`) that sends all done+pinned+reactivate items in one JSON-array prompt with `toolChoice='none'`. `forkChat` is chosen to preserve prompt cache and to retain retry/ESC support that `structuredChat` lacks.
+
+Reactivation flow (`checkReactivation()` in `src/loop/states/collect.ts`):
+1. `getReactivationCandidates()` returns todos that are `done && pinned && reactivate` (empty list = skip this round)
+2. One `forkChat` call asks the LLM to return a JSON array `[{"id": "hash", "reopen": true, "reason": "..."}]`
+3. `parseReactivationResult()` extracts JSON from the raw text (strips markdown fences, finds first `[`/last `]`, validates fields); returns `null` on any failure → caller skips that round
+4. For each `reopen: true` entry, `todo_update` flips `done` back to `false` using the returned hash
+
+Reactivation runs in the COLLECT step's step-4 nudge block, BEFORE the nudge itself, on the same throttle cycle (every 3 turns). Ordering matters: running reactivation before the nudge prevents the nudge from showing "done" and then the reactivation showing "reactivated" in the same turn, which would be a contradiction.
+
+Teammates are unaffected: their loop (`teammate-worker.ts`) has its own separate todo nudge at step 3 with no reactivation logic and no `forkChat` import.
+
+See `docs/pinned-todo-reactivation.md` for the full design.
 
 ### bang command
 
@@ -607,7 +627,7 @@ Feature where idle child processes automatically claim unassigned issues. When a
 | Teammate (child) | Cannot use: tm_create, tm_remove, tm_await, broadcast |
 | Background (bg) | Can only use: bash, read_file, write_file, edit_file |
 
-**Main-only tools**: tm_create, tm_remove, tm_await, broadcast, order, hand_over, plan_on, plan_off
+**Main-only tools**: tm_create, tm_remove, tm_await, broadcast, order, hand_over, plan_on, plan_off, todo_pinning
 
 ## Background Task Tools
 
@@ -892,4 +912,5 @@ This is a Work-In-Progress feature and is not yet merged into main.
 - `docs/agent-tools.md` - Built-in tools reference
 - `docs/child-context.md` - Child process and IPC (Chinese)
 - `docs/dynamic-loading.md` - Tool/skill loading mechanism
+- `docs/pinned-todo-reactivation.md` - Pinned todos and reactivation feature design
 - `docs/database-schema.md` - Data storage schema (Chinese, historical reference — SQLite removed in v0.7.0)
