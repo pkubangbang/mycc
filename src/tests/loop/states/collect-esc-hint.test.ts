@@ -49,7 +49,13 @@ vi.mock('../../../loop/esc-wrap-up.js', () => ({
   clearWrapUp: vi.fn(),
 }));
 
-vi.mock('../../../config.js', () => ({ isVerbose: vi.fn(() => false) }));
+vi.mock('../../../config.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../../config.js')>();
+  return {
+    ...actual,
+    isVerbose: vi.fn(() => false),
+  };
+});
 
 vi.mock('../../../context/shared/loader.js', () => ({
   loader: { getToolsForScope: vi.fn(() => [{ function: { name: 'bash' } }]) },

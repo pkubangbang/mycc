@@ -74,6 +74,7 @@ export async function handlePrompt(
       if (p0Input === null) {
         console.log(chalk.gray('(autonomous iteration)'));
         env.ctx.core.resetConfusionIndex();
+        env.crossroadOccurred = false;  // clear stale cooldown at turn start
         return AgentState.COLLECT;
       }
 
@@ -114,6 +115,7 @@ export async function handlePrompt(
     });
     triologue.note('REMINDER', result);
     env.ctx.core.resetConfusionIndex();
+    env.crossroadOccurred = false;  // clear stale cooldown at turn start
     return AgentState.PROMPT;
   }
 
@@ -141,6 +143,7 @@ export async function handlePrompt(
   triologue.user(query);
   turn.lastUserQuery = query;
   env.ctx.core.resetConfusionIndex();
+  env.crossroadOccurred = false;  // clear stale cooldown at turn start
 
   // Reset sequence to current turn (hooks only see events since last user query)
   env.sequence.markPromptBoundary();

@@ -112,45 +112,55 @@ export async function handleLlm(
       // Wrapped in escAware so ESC during crossroad processing returns null
       // (transparent skip), using the original LLM output as-is.
       if (tools.length > 0) {
-        const crossroadResult = await ctx.core.escAware(
-          async (abortController) => {
-            return await handleCrossroad(
-              triologue.getMessages(),
-              pass.assistantContent,
-              pass.rawToolCalls,
-              tools,
-              abortController.signal,
-            );
-          },
-          () => null,
-        );
-        // ESC pressed during crossroad processing - return to PROMPT immediately
-        if (agentIO.isNeglectedMode()) {
-          stopSpinner();
-          return AgentState.PROMPT;
-        }
-        if (crossroadResult) {
-          ctx.core.verbose('llm',
-            `Crossroad: truncated at "${crossroadResult.truncated.slice(0, 80)}..."`,
-            `Continuation: "${crossroadResult.continuation.slice(0, 80)}..."`,
-          );
-          // Replace content with truncated prefix + continuation will be injected in hook.ts
-          pass.assistantContent = crossroadResult.truncated;
-          pass.crossroadContinuation = crossroadResult.continuation;
-          // Discard original tool calls — LLM will regenerate them after crossroad
-          pass.rawToolCalls = [];
-
-          // Consecutive crossroad = LLM stuck hesitating → count towards hint round
-          if (env.crossroadOccurred) {
-            ctx.core.increaseConfusionIndex(2);
-          }
-          env.crossroadOccurred = true;
-        } else {
-          // No crossroad this pass — reset the consecutive flag
+        // ── COOLDOWN GATE ──
+        // If crossroad fired last pass, skip detection this pass to let the LLM
+        // execute its committed actions. Crossroad can re-fire next pass if
+        // turning words persist. See docs/crossroad-cooldown.md.
+        if (env.crossroadOccurred) {
+          // Consume cooldown: pass through unchanged, reset the flag
           env.crossroadOccurred = false;
+        } else {
+          const crossroadResult = await ctx.core.escAware(
+            async (abortController) => {
+              return await handleCrossroad(
+                triologue.getMessages(),
+                pass.assistantContent,
+                pass.rawToolCalls,
+                tools,
+                abortController.signal,
+              );
+            },
+            () => null,
+          );
+          // ESC pressed during crossroad processing - return to PROMPT immediately
+          if (agentIO.isNeglectedMode()) {
+            stopSpinner();
+            return AgentState.PROMPT;
+          }
+          if (crossroadResult) {
+            ctx.core.verbose('llm',
+              `Crossroad: truncated at "${crossroadResult.truncated.slice(0, 80)}..."`,
+              `Continuation: "${crossroadResult.continuation.slice(0, 80)}..."`,
+            );
+            // Replace content with truncated prefix + continuation will be injected in hook.ts
+            pass.assistantContent = crossroadResult.truncated;
+            pass.crossroadContinuation = crossroadResult.continuation;
+            // Discard original tool calls — LLM will regenerate them after crossroad
+            pass.rawToolCalls = [];
+
+            // Every crossroad fire counts towards the hint round (confusion threshold).
+            // Previously this was conditional on crossroadOccurred (consecutive-only),
+            // but cooldown makes consecutive fires impossible — so the +2 is now
+            // unconditional to keep the hint escape valve functional.
+            ctx.core.increaseConfusionIndex(2);
+            env.crossroadOccurred = true;   // arm cooldown for next pass
+          } else {
+            // No crossroad this pass — reset the flag
+            env.crossroadOccurred = false;
+          }
         }
       } else {
-        // No tools available (e.g. neglected mode) — reset the consecutive flag
+        // No tools available (e.g. neglected mode) — reset the flag
         env.crossroadOccurred = false;
       }
 

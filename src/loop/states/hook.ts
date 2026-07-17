@@ -281,6 +281,7 @@ export async function handleHook(
       // now summarized and accumulated confusion/sequence events are stale.
       env.ctx.core.resetConfusionIndex();
       env.sequence.clear();
+      env.crossroadOccurred = false;  // clear stale cooldown after compaction
 
       return AgentState.COLLECT;
     }

@@ -3,20 +3,22 @@
  *
  * Code path under test (llm.ts:118-150):
  *   if (tools.length > 0) {
- *     const crossroadResult = await ctx.core.escAware(
- *       async (abortController) => {
- *         return await handleCrossroad(...);
- *       },
- *       () => null,             // ESC cleanup returns null → transparent skip
- *     );
- *     // ESC pressed during crossroad processing - return to PROMPT immediately
- *     if (agentIO.isNeglectedMode()) {
- *       stopSpinner();
- *       return AgentState.PROMPT;
+ *     // Cooldown gate: if crossroadOccurred, skip detection, reset flag
+ *     if (env.crossroadOccurred) {
+ *       env.crossroadOccurred = false;
+ *     } else {
+ *       const crossroadResult = await ctx.core.escAware(
+ *         async (abortController) => { return await handleCrossroad(...); },
+ *         () => null,             // ESC cleanup returns null → transparent skip
+ *       );
+ *       if (agentIO.isNeglectedMode()) { stopSpinner(); return PROMPT; }
+ *       if (crossroadResult) {
+ *         ...apply crossroad...
+ *         ctx.core.increaseConfusionIndex(2);  // unconditional +2 (every fire)
+ *         env.crossroadOccurred = true;        // arm cooldown
+ *       } else { env.crossroadOccurred = false; }
  *     }
- *     if (crossroadResult) { ... apply crossroad ... }
- *     else { env.crossroadOccurred = false; }
- *   }
+ *   } else { env.crossroadOccurred = false; }
  *
  * Strategy:
  *  - To simulate ESC DURING crossroad: the 2nd escAware call (crossroad) calls
@@ -186,8 +188,9 @@ describe('handleLlm — ESC during crossroad processing', () => {
 
     const turn = createTurnVars();
     const pass = createPassData();
-    // Pre-set the consecutive flag to true to verify it gets reset
-    env.crossroadOccurred = true;
+    // Flag starts false (normal case) — verify it stays false when no crossroad fires.
+    // Note: pre-setting true would now trigger the cooldown gate (skip detection).
+    env.crossroadOccurred = false;
 
     vi.mocked(retryChat).mockResolvedValueOnce(
       createMockChatResponse({ content: 'plain response' }) as never,
@@ -198,7 +201,7 @@ describe('handleLlm — ESC during crossroad processing', () => {
     const result = await handleLlm(env, turn, pass);
 
     expect(result).toBe(AgentState.HOOK);
-    // Flag must be reset because no crossroad occurred
+    // Flag must remain false because no crossroad occurred
     expect(env.crossroadOccurred).toBe(false);
     // content untouched, no continuation
     expect(pass.assistantContent).toBe('plain response');
