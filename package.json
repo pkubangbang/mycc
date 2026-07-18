@@ -4,7 +4,8 @@
   "description": "Node.js agent implementations using Ollama - harness engineering for AI agents",
   "type": "module",
   "bin": {
-    "mycc": "./bin/mycc.js"
+    "mycc": "./bin/mycc.js",
+    "mdcalc": "./scripts/mdcalc/mdcalc.js"
   },
   "exports": {
     ".": {
