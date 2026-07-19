@@ -584,7 +584,29 @@ VERB OBJECT PARAM PARAM ... TO PURPOSE
 Where VERB is one of: READ, WRITE, EDIT, DELETE, BUILD, TEST, INSTALL, RUN, and OBJECT is one of: SOURCE, CONFIG, DEPENDENCY, ARTIFACT, SYSTEM, DATA, TEMP, USER.
 Example: `READ SOURCE dir=src TO understand dependencies`.
 
-The `hand_over` tool also requires intent language validation with a `justification` parameter.
+Most PARAMs are free-form descriptors (the LLM chooses the key). A few reserved PARAMs change how the bash judge routes the command:
+
+- **`dangerous=i_know`** — escape hatch for destructive/irreversible commands. Some bash commands (e.g. `rm -rf`, force pushes, dropping tables) are blocked by default. If the LLM genuinely intends such a command and understands the risk, it declares `dangerous=i_know` in its intent. The system then **skips its own block AND skips its own LLM safeguard**, and routes the decision directly to the user via a `[y/N]` confirmation — the human's approval is the real authorization; the LLM's declaration only honestly acknowledges the risk.
+  - Only affects `destructive` and `irreversible` categories. The `system` category (e.g. `git commit`, `npm publish`) is a routing nudge, not a danger gate — it stays hard-blocked with no escape hatch (use the dedicated tool, e.g. `git_commit`, instead).
+  - Unavailable in child processes: a child cannot reach the user prompt, so `dangerous=i_know` is rejected there — the child must ask the lead agent to perform the operation instead.
+  - Without this PARAM, a blocked dangerous command returns a Socratic hint that names the *existence* of a PARAM override but withholds the exact key/value; the LLM must consult the intent language PARAM conventions to find it.
+  - Example: `DELETE DATA path=build/ dangerous=i_know TO reclaim disk space before rebuild`
+
+Implementation: `src/context/grant/bash-judge.ts` (`declaresDangerousIKnow`, `dangerousSocraticHint`, and step 1 of `judgeBash`). The full system-prompt wording is emitted by `buildIntentLanguageSection()` in `src/loop/agent-prompts.ts` (the "PARAM Conventions" subsection).
+
+The `hand_over` tool requires an `intent` parameter in the intent language format: `VERB OBJECT TO PURPOSE`. Choose the VERB and OBJECT that best describe needing a human to interact with a terminal popup (e.g. to type a sudo password).
+
+#### hand_over usage
+
+`hand_over` opens a tmux popup terminal and **blocks** until the user finishes interacting with it (pressing Enter to capture output and close, or `k` to keep the session). It is the only way the agent can hand a real interactive prompt (sudo password, y/N confirmation, TUI, SSH session) to the human.
+
+- **Intent rule (spelled out):** the correct VERB/OBJECT for hand_over is `RUN USER TO <purpose>` — you are *running* a *user* (interactive human) session. Any other VERB (READ/WRITE/EDIT/...) or OBJECT (SOURCE/CONFIG/...) is a dimension mismatch; the tool returns a Socratic hint naming which dimension is wrong, never the answer.
+- **Multi-line `command`:** the `command` parameter is a JSON string, so a multi-line shell script must escape newlines as `\n`. Prefer collapsing the script to a single line with `&&` / `;` / `||` so the intent stays readable and the JSON stays on one line. Only fall back to `\n`-separated lines when the script genuinely cannot be one-lined.
+- **tmux nesting self-check:** if the agent is itself running inside a tmux session, hand_over refuses to spawn a nested popup (nested popups break key handling) and tells the agent to either exit tmux first or run the command directly.
+- **Examples:**
+  - `hand_over(command="sudo apt install -y tmux", intent="RUN USER TO install tmux needing sudo password")`
+  - `hand_over(command="ssh root@10.0.0.1", intent="RUN USER TO open interactive SSH session to remote host")`
+  - `hand_over(command="vim /etc/hosts", intent="RUN USER TO let user edit system hosts file in vim")`
 
 Grant flow:
 ```
