@@ -8,11 +8,17 @@ const props = defineProps<{ message: ChatMessage }>();
 // User messages align right (WeChat self-bubble style); everything else left.
 const isUser = computed(() => props.message.type === 'user');
 
-// Render markdown for conversational content (user + assistant result).
-// Tool output / system / prompt / warn / error stay plain-text monospace —
+// Render markdown for conversational content (user + assistant result) and
+// for labeled `log` messages (brief() structured status — e.g. the crossroad
+// alternatives list). Unlabeled `log`/error/warn stay plain-text monospace —
 // they are raw tool results where markdown interpretation would be noise.
+// The labeled/unlabeled split mirrors the visibility rule in main.ts
+// (isMessageVisible): a label marks a message as intentional structured
+// status rather than raw stdout.
 const renderMarkdown = computed(() =>
-  props.message.type === 'user' || props.message.type === 'result',
+  props.message.type === 'user'
+  || props.message.type === 'result'
+  || (props.message.type === 'log' && !!props.message.label),
 );
 
 // markdown-it with html disabled (default) — raw HTML in LLM output is
@@ -30,11 +36,19 @@ const rendered = computed(() =>
 
 // Pre-wrap preserves tool output formatting (newlines, indentation).
 // Monospace for log/result/error so code/output reads cleanly.
-const isMonospace = computed(() =>
-  props.message.type === 'log' ||
-  props.message.type === 'error' ||
-  props.message.type === 'warn',
-);
+// EXCEPTION: a labeled `log` (brief structured status, e.g. crossroad) is
+// rendered as markdown (see renderMarkdown) — it needs normal font + no
+// pre-wrap, otherwise markdown's <p>/<ul>/<h3> would be forced monospace and
+// distorted by white-space:pre-wrap. Unlabeled `log` is raw tool stdout →
+// keep monospace + pre-wrap.
+const isMonospace = computed(() => {
+  if (props.message.type === 'log' && props.message.label) return false;
+  return (
+    props.message.type === 'log' ||
+    props.message.type === 'error' ||
+    props.message.type === 'warn'
+  );
+});
 
 // Terminal-style [HH:MM:SS] [label] header — shown for non-user messages
 // that carry a label (assistant/brief/question/bash/...). Mirrors the

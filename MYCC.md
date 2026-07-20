@@ -267,6 +267,139 @@ See also: **esc-aware wrap-up** (the interrupt mechanism that makes notes
 "stale"), **neglection and esc return** (ESC handling), and the WebUI section
 below. `changelog-todo.md` tracks the open "webui: 允许 steering buffer" item.
 
+### file upload (WebUI chat-box attachments)
+
+**File upload** is a webui-only feature that lets the user attach files to a
+chat submission — either a normal `input` or a `steer` — without interrupting
+the run. It mirrors the **steering** design: the same ephemeral-queue
+architecture, the same two consumption paths (COLLECT in-flight vs PROMPT
+stale), and the same `ServeHub` as the buffer. The key contrast is that file
+uploads are **informational resources to be saved and noted**, never
+synthesized — there is no `forkChat` merge at PROMPT (unlike steering).
+
+The upload queue lives in `ServeHub` (`src/serve/serve-hub.ts`):
+
+- `fileUploadQueue: FileUploadEntry[]` — an **ephemeral, in-memory** buffer.
+  Never persisted, wiped on `stop()` (same lifecycle as `steeringQueue`).
+- `pushFileUpload(entry)` — fire-and-forget; appends to the queue and
+  broadcasts a `file-upload` (carrying the `filename`) to all clients.
+- `drainFileUploads()` — consume-and-clear; returns all queued files and
+  broadcasts `file-flush` so clients can react.
+- `getFileUploads()` — peek without consuming.
+
+`FileUploadEntry` / `FileUploadMeta` shapes (serve-hub.ts):
+
+```ts
+interface FileUploadMeta {      // wire shape (client → server)
+  filename: string;
+  data: string;                 // base64-encoded file bytes
+  mimeType: string;
+}
+interface FileUploadEntry {     // server-side queue entry
+  filename: string;
+  data: string;                 // base64 (decoded only when saved)
+  mimeType: string;
+  text?: string;                // the user's accompanying chat text (optional)
+}
+```
+
+The optional `text` field carries the user's chat text that accompanied the
+upload (passed from `msg.text` at the WS handler). It is surfaced in the
+REMINDER as a truncated preview so the LLM sees the user's framing of the
+file, not just the bytes.
+
+**WebSocket protocol** (`WsMessage.type`):
+
+| Direction | type | meaning |
+|-----------|------|---------|
+| client → server | `input` | user submitted a query; `files?: FileUploadMeta[]` attached |
+| client → server | `steer` | user queued a steering note; `files?: FileUploadMeta[]` attached |
+| server → client | `file-upload` | a file was queued (carries `filename`) |
+| server → client | `file-flush` | queue drained (files saved to disk) |
+
+Files travel inline in the JSON `WsMessage` as base64 — there is **no
+multer / HTTP multipart endpoint**. Both `input` and `steer` carry an
+optional `files` array; the WS handler pushes each file via `pushFileUpload`
+*after* routing the text (`submitInput` for `input`, `pushSteer` for `steer`),
+so a single submission can carry text + files in one round trip.
+
+**Two consumption paths** — identical structure to steering, but with a
+critical difference at PROMPT:
+
+1. **COLLECT — in-flight save + REMINDER** (`src/loop/states/collect.ts`,
+   step 2d). When the LLM naturally reaches COLLECT mid-run with files still
+   queued, the files are *current* uploads for the ongoing work. They are
+   drained and saved to `./.mycc/uploaded/` as `${Date.now()}_${filename}`
+   (base64-decoded via `Buffer.from(file.data, 'base64')`). A `REMINDER` note
+   lists each file:
+
+   ```
+   User uploaded file(s):
+   - <filename> → .mycc/uploaded/<ts>_<filename> (<mimeType>)
+     Text: "<first 200 chars of user text>..."   (only if text was provided)
+   ```
+
+2. **PROMPT — stale save + REMINDER, NO synthesis** (`src/loop/states/prompt.ts`).
+   If the user pressed ESC (or 停止) to interrupt the run, then submitted a
+   fresh query, the queued files are *stale*: the run they were uploaded for
+   is gone. PROMPT drains them and saves them with the same `${Date.now()}_`
+   prefix logic, then injects:
+
+   ```
+   Previously uploaded file(s) (from interrupted run):
+   - <filename> → .mycc/uploaded/<ts>_<filename> (<mimeType>)
+   ```
+
+   **No `forkChat` synthesis** — this is the deliberate contrast with
+   steering. Files are informational resources saved as-is; the REMINDER
+   carries forward into the next turn so the LLM can read them (e.g. via
+   `read_picture` for images, `read_file` for text). The code comment states
+   this explicitly: *"file uploads don't need synthesis — they are
+   informational resources to be saved and noted."*
+
+   The stale-files drain sits **inside the same `hub.isRunning() && query
+   !== null` guard** as steering synthesis — so it only fires for a genuine
+   fresh post-interrupt submission, not for slash commands or restored
+   initial queries. It runs **after** the steering synthesis block, so a
+   submission carrying both a stale steering note and stale files handles
+   the note first (synthesis) and the files second (save).
+
+**Frontend behavior** (`src/web/src/main.ts`):
+
+- `chatApi.sendInput(text, files?)` — echoes a user bubble (`text || '(uploaded
+  files)'`), clears `inputText`/`pendingFiles`, flips `isWaiting`/`isRunning`,
+  sends `{type:'input', text, files}`.
+- `chatApi.sendSteer(text, files?)` — echoes a user bubble, clears state, sends
+  `{type:'steer', text, files}`. Like the text-only steering path, it does
+  **not** flip `isWaiting`/`isRunning` (the LLM is still working).
+- `state.pendingFiles: FileInfo[]` — the staged attachments in the chat box,
+  cleared on send.
+- `file-upload` and `file-flush` echoes are **no-ops** in the WS handler
+  (comments: "could show a transient indicator" / "nothing to clear on the
+  client side"). Unlike steering's `steer-echo`/`steer-flush`, there is no
+  client-side buffer bar for files — the echoes exist for protocol symmetry
+  and future use.
+- The `/history` filter drops `file-upload`/`file-flush` from the visible
+  chat log (they are not chat content).
+
+**Save location & naming**: `./.mycc/uploaded/` is created on demand
+(`fs.mkdirSync(..., { recursive: true })`). Each file is written as
+`${Date.now()}_${filename}` to avoid collisions when the same name is
+uploaded twice. The RELATIVE path from `process.cwd()` is what the REMINDER
+reports, so the LLM can open it directly with `read_file`/`read_picture`.
+
+**Refresh / reconnect survival**: the upload queue is **not** included in
+the `/history` payload (only `steeringBuffer` is peeked there). On a page
+refresh or WS reconnect, queued-but-undrained uploads are invisible to the
+client — but they remain queued server-side and will still be drained by the
+next COLLECT/PROMPT pass. This is consistent with the "no client-side buffer
+bar" decision: uploads have no UI state to restore. Like steering, the queue
+does NOT survive a serve stop/restart (ephemeral by design, wiped in
+`stop()`).
+
+See also: **steering** (the sibling ephemeral-queue feature this mirrors),
+and the WebUI section below.
+
 ### slash commands
 
 User-initiated commands starting with `/` that are handled outside the LLM tool system. They provide meta-operations like viewing help, managing sessions, switching modes, and managing knowledge bases.
@@ -1058,6 +1191,10 @@ browser-based chat interface as an alternative to the terminal REPL:
   see the **steering (WebUI mid-task direction)** chapter above for the full
   data flow, the two consumption paths (COLLECT in-flight REMINDER vs PROMPT
   forkChat synthesis), and the ephemeral vs persistent design.
+- **File upload** — chat-box attachments carried on `input`/`steer` messages,
+  saved to `./.mycc/uploaded/` and surfaced via REMINDER; see the **file
+  upload (WebUI chat-box attachments)** chapter above. Mirrors steering's
+  ephemeral-queue architecture, but with no `forkChat` synthesis at PROMPT.
 
 The WebUI is merged into `main`. For the developer reference (component
 layout, WS protocol, input/card bridges, reconnect replay), see

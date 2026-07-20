@@ -16,7 +16,6 @@ import { forkChat } from '../engine/chat-provider.js';
 import { startSpinner, stopSpinner, sleep } from '../engine/chat-helpers.js';
 import { agentIO } from './agent-io.js';
 import { stripInternalMarkup } from '../utils/letter-box.js';
-import chalk from 'chalk';
 
 // ============================================================================
 // Turning Words
@@ -460,29 +459,26 @@ export async function handleCrossroad(
     stopSpinner();
     // Log all alternatives and which was chosen (after spinner stops for clean output)
     if (result && continuations.length > 1) {
-      const boxWidth = 76;
-      const sep = chalk.gray('─');
-      const header = ` Crossroad (selected ${selectedIndex + 1} of ${continuations.length}) `;
-      const leftPad = Math.floor((boxWidth - header.length) / 2);
-      const rightPad = boxWidth - header.length - leftPad;
-      agentIO.log('');
-      agentIO.log(chalk.gray(`┌${sep.repeat(leftPad)}${chalk.white(header)}${sep.repeat(rightPad)}┐`));
+      // Emit a markdown block so it renders cleanly in BOTH the terminal
+      // (plain text is readable) and the Web UI (markdown rendered for
+      // labeled `log` messages — see MessageItem.vue). Avoid chalk/box-drawing
+      // characters: they leak ANSI codes into the Web UI and the box breaks
+      // on narrow viewports. A markdown list with ✅/⬜ emoji markers keeps
+      // the selected option visually distinct and bolds its direction name.
+      const lines: string[] = [];
+      lines.push('');
+      lines.push(`### 🚦 Crossroad (selected ${selectedIndex + 1} of ${continuations.length})`);
       for (let i = 0; i < continuations.length; i++) {
         const isSelected = i === selectedIndex;
         const directionName = GENERATION_DIRECTIONS[i]?.name ?? `option ${i + 1}`;
-        const bullet = isSelected ? chalk.green('✓') : chalk.gray(' ');
-        const namePart = isSelected ? chalk.green.bold(directionName) : chalk.gray(directionName);
+        const marker = isSelected ? '✅' : '⬜';
         const preview = continuations[i].length > 100
           ? `${continuations[i].slice(0, 100)}…`
           : continuations[i];
-        const previewPart = isSelected ? chalk.white(preview) : chalk.gray(preview);
-        // Indent continuation text to align below direction name
-        agentIO.log(` ${bullet} ${namePart}: ${previewPart}`);
-        if (isSelected) {
-          agentIO.log(chalk.green(` ${chalk.dim('└─')} ${chalk.dim('selected')}`));
-        }
+        const namePart = isSelected ? `**${directionName}**` : directionName;
+        lines.push(`- ${marker} **${namePart}**: ${preview}${isSelected ? '  _(selected)_' : ''}`);
       }
-      agentIO.log(chalk.gray(`└${sep.repeat(boxWidth)}┘`));
+      agentIO.brief('info', 'crossroad', lines.join('\n'));
     }
   }
 }

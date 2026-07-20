@@ -383,17 +383,38 @@ export class ServeHub {
    * message log. The card renders as an input field, confirm dialog, or
    * choice buttons in the web UI (see CardItem.vue). The caller then awaits
    * {@link waitForCardResponse} with the same cardId.
+   *
+   * Card text (`query`, option labels, `initialContent`) often carries chalk
+   * color codes — e.g. an ask() prompt embeds a chalk.cyan.bold(id) for the
+   * checkpoint hash, and confirm-card option labels may be colorized. Strip
+   * every text field at this boundary so no ANSI code ever reaches the Web
+   * UI (consistent with {@link broadcast}, which strips `content`/`detail`).
    */
   broadcastCard(card: CardMessage): void {
-    const entry: LogEntry = { type: 'card', content: card.query, timestamp: Date.now() };
+    const cleanQuery = stripAnsi(card.query);
+    const cleanOptions = card.options?.map((opt) => ({
+      label: stripAnsi(opt.label),
+      value: opt.value,
+    }));
+    const cleanInitialContent = card.initialContent ? stripAnsi(card.initialContent) : card.initialContent;
+    const cleanCard: CardMessage = {
+      type: 'card',
+      cardId: card.cardId,
+      query: cleanQuery,
+      kind: card.kind,
+      options: cleanOptions,
+      initialContent: cleanInitialContent,
+      placeholder: card.placeholder,
+    };
+    const entry: LogEntry = { type: 'card', content: cleanQuery, timestamp: Date.now() };
     // Store the full card payload on the entry so /history can replay it.
     // The LogEntry shape is extended inline — messageLog is internal-only.
-    (entry as LogEntry & { card?: CardMessage }).card = card;
+    (entry as LogEntry & { card?: CardMessage }).card = cleanCard;
     this.messageLog.push(entry);
     if (this.messageLog.length > ServeHub.MAX_LOG_SIZE) {
       this.messageLog.shift();
     }
-    const payload = JSON.stringify(card);
+    const payload = JSON.stringify(cleanCard);
     for (const ws of this.clients) {
       if (ws.readyState === WebSocket.OPEN) {
         try { ws.send(payload); } catch { /* ignore */ }
@@ -588,14 +609,18 @@ export class ServeHub {
    */
   broadcast(type: string, content: string, label?: string, detail?: string): void {
     const cleanContent = stripAnsi(content);
+    // detail (e.g. the `id:` line on a checkpoint brief) also carries chalk
+    // color codes from the caller — strip it too so no field leaks ANSI into
+    // the Web UI. Mirrors the cleanContent treatment above.
+    const cleanDetail = detail ? stripAnsi(detail) : detail;
     const entry: LogEntry = { type, content: cleanContent, timestamp: Date.now() };
     if (label) entry.label = label;
-    if (detail) entry.detail = detail;
+    if (cleanDetail) entry.detail = cleanDetail;
     this.messageLog.push(entry);
     if (this.messageLog.length > ServeHub.MAX_LOG_SIZE) {
       this.messageLog.shift();
     }
-    const payload = JSON.stringify({ type, content: cleanContent, label, timestamp: entry.timestamp, detail: detail || undefined });
+    const payload = JSON.stringify({ type, content: cleanContent, label, timestamp: entry.timestamp, detail: cleanDetail || undefined });
     for (const ws of this.clients) {
       if (ws.readyState === WebSocket.OPEN) {
         try { ws.send(payload); } catch { /* ignore */ }
