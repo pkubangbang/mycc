@@ -131,6 +131,19 @@ function buildIntentLanguageSection(): string {
   lines.push(
     '  - Example: `DELETE DATA path=build/ dangerous=i_know TO reclaim disk space before rebuild`'
   );
+  lines.push('');
+  lines.push(
+    "- `batch=i_know` — **skip the LLM safeguard for batch deletions.** A `DELETE` command that targets multiple files / globs / recursive paths (e.g. `rm -rf node_modules/`, `rm a b c`, `find . -delete`) is normally sent to an LLM classifier (SAFE / DANGEROUS / UNCERTAIN) before possibly asking the user — costing latency and tokens even for obvious-safe cleanup. If you know the deletion is a batch operation, declare `batch=i_know` to **skip the LLM call** and route directly to the user `[y/N]`. The human's approval is the real authorization; your declaration only honestly names the operation type."
+  );
+  lines.push(
+    '  - Only affects the `DELETE` + batch-delete path. It does NOT bypass a hard block (batch deletion is not hard-blocked — it is LLM-judged), and it does NOT cover the catastrophic patterns handled by `dangerous=i_know` (those match the dangerous-command check first and never reach the batch path).'
+  );
+  lines.push(
+    '  - Unavailable in child processes: a child cannot reach the user prompt, so `batch=i_know` is rejected there — ask the lead agent to perform the operation instead.'
+  );
+  lines.push(
+    '  - Example: `DELETE TEMP batch=i_know TO clean build artifacts before rebuild` (for `rm -rf dist/ node_modules/`)'
+  );
 
   return lines.join('\n');
 }

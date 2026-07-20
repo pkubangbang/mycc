@@ -782,3 +782,110 @@ describe('Cluster C — judgeBash dangerous=i_know escape param', () => {
     expect(res.decision).toBe('allow');
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════════
+// Cluster D — batch=i_know escape param (skip LLM safeguard for batch delete)
+// ═══════════════════════════════════════════════════════════════════════
+
+// NOTE: the chat-provider is already mocked at the top of this file
+// (retryChat → resolves with a content object; MODEL → 'test-model'). The
+// batch=i_know path is asserted indirectly: when the escape param is present,
+// askUser is called with the "acknowledged by agent" wording and NO LLM
+// round-trip intervenes. Without the param, the LLM path runs and askUser is
+// NOT called with that short-circuit wording (it may be called via the
+// UNCERTAIN fallthrough, or not at all if the LLM returns SAFE).
+
+describe('Cluster D — judgeBash batch=i_know escape param', () => {
+  // A batch-delete command that is NOT a catastrophic dangerous pattern, so it
+  // passes step 1 (findDangerousCommand → null) and reaches step 4.
+  const batchCmd = 'rm -rf node_modules dist';
+  const batchIntent = 'DELETE TEMP batch=i_know TO clean build artifacts before rebuild';
+  const batchIntentNoEscape = 'DELETE TEMP TO clean build artifacts before rebuild';
+
+  it('D1: with batch=i_know, skips LLM and routes directly to user (allow on "y")', async () => {
+    const askUser = vi.fn(async () => 'y');
+    const res = await judgeBash(batchCmd, batchIntent, 'normal', false, askUser);
+    expect(askUser).toHaveBeenCalledTimes(1);
+    expect(res.decision).toBe('allow');
+    // The user prompt uses the "acknowledged by agent" wording, not "detected".
+    expect(askUser).toHaveBeenCalledWith(
+      expect.stringContaining('acknowledged by agent'),
+      'bash-judge'
+    );
+  });
+
+  it('D1: with batch=i_know, blocks on user "n"', async () => {
+    const askUser = vi.fn(async () => 'n');
+    const res = await judgeBash(batchCmd, batchIntent, 'normal', false, askUser);
+    expect(askUser).toHaveBeenCalledTimes(1);
+    expect(res.decision).toBe('block');
+    expect(res.reason).toContain('User denied');
+  });
+
+  it('D1: with batch=i_know, "yes" also approves', async () => {
+    const askUser = vi.fn(async () => 'yes');
+    const res = await judgeBash(batchCmd, batchIntent, 'normal', false, askUser);
+    expect(res.decision).toBe('allow');
+  });
+
+  it('D1: with batch=i_know, empty answer (ESC) denies', async () => {
+    const askUser = vi.fn(async () => '');
+    const res = await judgeBash(batchCmd, batchIntent, 'normal', false, askUser);
+    expect(res.decision).toBe('block');
+  });
+
+  it('D2: child process: batch=i_know is rejected (cannot reach user prompt)', async () => {
+    const askUser = vi.fn(async () => 'y');
+    const res = await judgeBash(batchCmd, batchIntent, 'normal', true, askUser);
+    expect(askUser).not.toHaveBeenCalled();
+    expect(res.decision).toBe('block');
+    expect(res.reason).toContain('child process');
+  });
+
+  it('D3: without batch=i_know, does NOT short-circuit to user (falls through to LLM path)', async () => {
+    // Without the escape param, the batch path calls analyzeBatchDelete (LLM).
+    // We assert it does NOT call askUser with the "acknowledged by agent"
+    // short-circuit wording. The LLM mock returns a content object; the real
+    // retryMultipleChoice is mocked at module level, so this exercises the LLM
+    // branch. The key assertion: askUser is NOT called with the acknowledged
+    // wording (it may be called via the UNCERTAIN fallthrough, but not the
+    // batch=i_know short-circuit).
+    const askUser = vi.fn(async () => 'y');
+    await judgeBash(batchCmd, batchIntentNoEscape, 'normal', false, askUser);
+    // If the LLM classifier returns SAFE, askUser is not called at all. If it
+    // throws/returns unexpected, it falls to UNCERTAIN → askUser with "detected"
+    // wording. Either way, the "acknowledged by agent" wording must NOT appear.
+    if (askUser.mock.calls.length > 0) {
+      expect(askUser).not.toHaveBeenCalledWith(
+        expect.stringContaining('acknowledged by agent'),
+        'bash-judge'
+      );
+    }
+  });
+
+  it('D4: batch=i_know is a no-op on a non-batch DELETE (single-file rm)', async () => {
+    // rm file.txt is not isBatchDelete, so the DELETE branch is not entered;
+    // the command is allowed outright regardless of batch=i_know.
+    const askUser = vi.fn(async () => 'y');
+    const res = await judgeBash('rm file.txt', batchIntent, 'normal', false, askUser);
+    expect(askUser).not.toHaveBeenCalled();
+    expect(res.decision).toBe('allow');
+  });
+
+  it('D5: batch=i_know does not override the dangerous hard-block (rm -rf / still blocked)', async () => {
+    // rm -rf / matches the destructive dangerous pattern in step 1 and never
+    // reaches the batch path. batch=i_know is irrelevant; without
+    // dangerous=i_know, the Socratic hint is returned.
+    const askUser = vi.fn(async () => 'y');
+    const res = await judgeBash(
+      'rm -rf /',
+      'DELETE SYSTEM batch=i_know TO wipe root',
+      'normal',
+      false,
+      askUser
+    );
+    expect(askUser).not.toHaveBeenCalled();
+    expect(res.decision).toBe('block');
+    expect(res.reason).toContain('Command blocked');
+  });
+});

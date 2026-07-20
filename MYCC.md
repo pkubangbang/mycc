@@ -592,7 +592,12 @@ Most PARAMs are free-form descriptors (the LLM chooses the key). A few reserved 
   - Without this PARAM, a blocked dangerous command returns a Socratic hint that names the *existence* of a PARAM override but withholds the exact key/value; the LLM must consult the intent language PARAM conventions to find it.
   - Example: `DELETE DATA path=build/ dangerous=i_know TO reclaim disk space before rebuild`
 
-Implementation: `src/context/grant/bash-judge.ts` (`declaresDangerousIKnow`, `dangerousSocraticHint`, and step 1 of `judgeBash`). The full system-prompt wording is emitted by `buildIntentLanguageSection()` in `src/loop/agent-prompts.ts` (the "PARAM Conventions" subsection).
+- **`batch=i_know`** — skip the LLM safeguard for batch deletions. A `DELETE` command that targets multiple files / globs / recursive paths (e.g. `rm -rf node_modules/`, `rm a b c`, `find . -delete`) is normally sent to an LLM classifier (SAFE / DANGEROUS / UNCERTAIN) before possibly asking the user — costing latency and tokens even for obvious-safe cleanup. If the LLM knows the deletion is a batch operation, it declares `batch=i_know` to skip the LLM call and route directly to the user `[y/N]`. The human's approval is the real authorization; the declaration only honestly names the operation type.
+  - Only affects the `DELETE` + batch-delete path. It does NOT bypass a hard block (batch deletion is not hard-blocked — it is LLM-judged), and it does NOT cover the catastrophic patterns handled by `dangerous=i_know` (those match the dangerous-command check first and never reach the batch path).
+  - Unavailable in child processes: a child cannot reach the user prompt, so `batch=i_know` is rejected there — the child must ask the lead agent to perform the operation instead.
+  - Example: `DELETE TEMP batch=i_know TO clean build artifacts before rebuild` (for `rm -rf dist/ node_modules/`)
+
+Implementation: `src/context/grant/bash-judge.ts` (`declaresDangerousIKnow`, `dangerousSocraticHint`, `declaresBatchIKnow`, and steps 1 & 4 of `judgeBash`). The full system-prompt wording is emitted by `buildIntentLanguageSection()` in `src/loop/agent-prompts.ts` (the "PARAM Conventions" subsection).
 
 The `hand_over` tool requires an `intent` parameter in the intent language format: `VERB OBJECT TO PURPOSE`. Choose the VERB and OBJECT that best describe needing a human to interact with a terminal popup (e.g. to type a sudo password).
 

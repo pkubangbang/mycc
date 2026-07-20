@@ -8,6 +8,30 @@ import { findDangerousCommand } from './dangerous-commands.js';
 import { MODEL, retryMultipleChoice } from '../../engine/chat-provider.js';
 
 /**
+ * Detect the `batch=i_know` escape-hatch PARAM in a raw intent string.
+ *
+ * Design: batch deletions (DELETE verb + isBatchDelete) are routed through an
+ * LLM safeguard (analyzeBatchDelete) to classify them as SAFE/DANGEROUS/
+ * UNCERTAIN before possibly asking the user. The LLM call costs latency and
+ * tokens even for obvious-safe cleanup like `rm -rf node_modules/`. The Intent
+ * Lang provides a PARAM `batch=i_know` that lets the LLM honestly declare
+ * awareness that the command is a batch deletion; when present, the system
+ * skips the LLM safeguard and routes the decision directly to the user via
+ * [y/N] confirmation. The human's approval is the real authorization.
+ *
+ * Unlike `dangerous=i_know`, this does NOT bypass a hard block (batch deletion
+ * is not hard-blocked — it is LLM-judged), so there is no Socratic-withheld
+ * hint; the agent learns the PARAM from the PARAM Conventions subsection.
+ *
+ * This is a lightweight substring check on the raw intent. Grammar validation
+ * is not repeated here because this is called in step 4, AFTER step 3 has
+ * already validated the intent grammar.
+ */
+function declaresBatchIKnow(intent: string): boolean {
+  return /\bbatch=i_know\b/.test(intent);
+}
+
+/**
  * Detect the `dangerous=i_know` escape-hatch PARAM in a raw intent string.
  *
  * Design: dangerous commands are blocked by default. The Intent Lang provides a
@@ -53,7 +77,9 @@ function dangerousSocraticHint(reason: string): string {
  *    a malformed intent does NOT bypass validation to reach the user.
  * 2. Check missing intent parameter
  * 3. Check intent grammar (fail fast with retry hint)
- * 4. Check mode + verb (local decision)
+ * 4. Check mode + verb (local decision). Batch deletions (DELETE + isBatchDelete)
+ *    are LLM-judged; the `batch=i_know` intent PARAM skips the LLM safeguard and
+ *    routes directly to user confirmation.
  * 5. LLM judging (parent only, for RUN verb)
  * 6. Ask user (parent only, when uncertain)
  *
@@ -178,6 +204,26 @@ export async function judgeBash(
           decision: 'block',
           reason:
             'Batch deletion from child process is not allowed. Ask the lead agent to perform this operation instead.',
+        };
+      }
+
+      // `batch=i_know` escape hatch: the agent honestly declares this is a
+      // batch deletion, so skip the LLM safeguard (analyzeBatchDelete) and
+      // route directly to the user. The human's y/N is the real authorization.
+      // (Intent grammar was already validated in step 3, so no re-validation.)
+      if (declaresBatchIKnow(intent)) {
+        if (!askUser) {
+          return { decision: 'block', reason: 'Batch deletion requires user confirmation' };
+        }
+        const userResponse = await askUser(
+          `Batch deletion acknowledged by agent.\n\nCommand: ${command}\nPurpose: ${parsed!.purpose}\n\nAllow this command? [y/N]`,
+          'bash-judge'
+        );
+        const approved =
+          userResponse.toLowerCase().trim() === 'y' || userResponse.toLowerCase().trim() === 'yes';
+        return {
+          decision: approved ? 'allow' : 'block',
+          reason: approved ? undefined : 'User denied the batch deletion',
         };
       }
 
