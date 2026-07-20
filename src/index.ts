@@ -19,7 +19,7 @@
 import { ChildProcess } from 'child_process';
 import { resolve } from 'path';
 import chalk from 'chalk';
-import { isVerbose, validateEnv, ensureToolTypeImports, shouldRunSetup, loadEnv } from './config.js';
+import { isVerbose, validateEnv, ensureToolTypeImports, shouldRunSetup, loadEnv, shouldServe } from './config.js';
 import { agentIO } from './loop/agent-io.js';
 import { parseKeys, isCtrlC, isEscape } from './utils/key-parser.js';
 import { getProjectRoot, spawnTsx } from './utils/tsx-run.js';
@@ -47,7 +47,8 @@ if (process.stdout.isTTY) {
 type CoordinatorMessage =
   | { type: 'ready' }
   | { type: 'restart'; sessionId: string; cwd: string }
-  | { type: 'exit' };
+  | { type: 'exit' }
+  | { type: 'serve_mode'; active: boolean };
 
 // ---------------------------------------------------------------------------
 // Setup Mode
@@ -98,6 +99,11 @@ function runCoordinator(): void {
   let lead: ChildProcess | null = null;
   let isRestarting = false;
 
+  // Serve mode: when active, Coordinator filters stdin (only ESC and Ctrl+C
+  // are forwarded). Set via IPC from Lead (/serve command) or directly from
+  // the --serve CLI flag at startup.
+  let serveMode = shouldServe();
+
   // Flags to forward to lead processes
   const skipHealthCheck = process.argv.includes('--skip-healthcheck');
 
@@ -147,6 +153,9 @@ function runCoordinator(): void {
       } else if (msg.type === 'exit') {
         // Lead requested exit - exit coordinator cleanly with code 0
         process.exit(0);
+      } else if (msg.type === 'serve_mode') {
+        // Lead toggled serve mode — update stdin filter accordingly
+        serveMode = msg.active;
       }
     });
 
@@ -171,6 +180,10 @@ function runCoordinator(): void {
   async function restart(sessionId: string, cwd: string): Promise<void> {
     isRestarting = true;
     const previousLead = lead;
+
+    // Serve mode does not survive restart — a new Lead process starts
+    // fresh (ServeHub is a Lead-process singleton, closed on process exit).
+    serveMode = false;
 
     // Kill old Lead cleanly
     if (previousLead) {
@@ -240,6 +253,15 @@ function runCoordinator(): void {
       // ESC - send neglection IPC
       if (isEscape(data)) {
         lead?.send({ type: 'neglection' });
+        return;
+      }
+
+      // Serve mode: silently drop all other keys (terminal is read-only).
+      // ESC (above) and Ctrl+C (above) are the only forwarded keys.
+      // The real safety boundary is in Lead: when serve is running,
+      // WebInputProvider does not create a LineEditor, so any leaked
+      // keys have no receiver and are silently dropped.
+      if (serveMode) {
         return;
       }
 

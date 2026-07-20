@@ -1,0 +1,11 @@
+/* Global reset — remove the browser default 8px body margin that appears as
+   a slim white border around the chat. */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html, body, #app {
+  height: 100%;
+}

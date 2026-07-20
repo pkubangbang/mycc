@@ -96,17 +96,17 @@ export function loadEnv(): void {
 
 // Parse CLI args once at startup
 const args = minimist(process.argv.slice(2), {
-  boolean: ['v', 'verbose', 'skip-healthcheck', 'setup', 'debug-eval', 'debug-tp', 'debug-prompt'],
+  boolean: ['v', 'verbose', 'skip-healthcheck', 'setup', 'debug-eval', 'debug-tp', 'debug-prompt', 'serve'],
   string: [
-    'session',
+    'session', 'port',
     'ollama-host', 'ollama-api-key', 'ollama-model', 'ollama-vision-model', 'ollama-embedding-model',
     'deepseek-host', 'deepseek-api-key', 'deepseek-model',
     'api-provider', 'token-threshold', 'editor', 'skill-match-threshold',
   ],
   alias: { v: 'verbose' },
   default: {
-    v: false, session: null,
-    'skip-healthcheck': false, setup: false,
+    v: false, session: null, port: null,
+    'skip-healthcheck': false, setup: false, serve: false,
     'debug-eval': false, 'debug-tp': false, 'debug-prompt': false,
   },
 });
@@ -222,6 +222,22 @@ export function isDebuggingTp(): boolean {
  */
 export function isDebuggingPrompt(): boolean {
   return process.env.MYCC_DEBUG_PROMPT === 'true';
+}
+
+/**
+ * Check if serve mode is requested via --serve CLI flag
+ */
+export function shouldServe(): boolean {
+  return args.serve === true;
+}
+
+/**
+ * Get the serve port (--port flag or default 3173).
+ * Validates port is in range 1–65535; falls back to 3173 otherwise.
+ */
+export function getServePort(): number {
+  const p = parseInt(args.port);
+  return (Number.isFinite(p) && p > 0 && p <= 65535) ? p : 3173;
 }
 
 /**

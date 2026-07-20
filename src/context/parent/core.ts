@@ -12,6 +12,7 @@ import { agentIO } from '../../loop/agent-io.js';
 import { getVisionModel, isVisionEnabled, getImgCacheDir } from '../../config.js';
 import { BaseCore } from '../shared/base-core.js';
 import { evaluateGrant, isPlanModeWritablePath } from '../grant/grant-evaluator.js';
+import { getServeHub } from '../../serve/serve-registry.js';
 
 /**
  * Grant scope for external path access
@@ -124,7 +125,20 @@ export class Core extends BaseCore implements CoreModule {
       throw new Error('Question query must be a non-empty string');
     }
 
-    // Display who is asking, then the query (via agentIO.ask)
+    // In serve (webui) mode, the asker + query render together on a single
+    // interactive card. The dashed '--------------------' separator brief line
+    // is a terminal-only visual divider — emitting it in the webui produces a
+    // redundant `[question] --------------------` log bubble above the card,
+    // which reads as "a message with dashes, then a card". So in serve mode
+    // we fold the asker into the card query and skip the separator brief.
+    if (getServeHub().isRunning()) {
+      const cardQuery = asker && asker !== 'lead'
+        ? `(${asker}) ${query}`
+        : query;
+      return await agentIO.ask(cardQuery, { onEsc: options?.onEsc, onEnter: options?.onEnter });
+    }
+
+    // Terminal mode: display who is asking, then the query (via agentIO.ask)
     this.brief('info', 'question', '--------------------', `${asker} has a question`);
     return await agentIO.ask(query, { onEsc: options?.onEsc, onEnter: options?.onEnter });
   }

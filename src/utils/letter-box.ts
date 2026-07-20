@@ -72,6 +72,17 @@ export function stripInternalMarkup(content: string): string {
 }
 
 /**
+ * Optional callback mirroring the stripped (markup-removed) letter-box
+ * content to the web UI (serve mode). Set via setResultCallback(); pass
+ * null to clear (on serve exit).
+ */
+let resultCallback: ((content: string) => void) | null = null;
+
+export function setResultCallback(cb: ((content: string) => void) | null): void {
+  resultCallback = cb;
+}
+
+/**
  * Display text in a pseudo parenthesis-style box with readable green color.
  * Internal markup tags (e.g. DeepSeek DSML) are stripped before display.
  */
@@ -95,10 +106,16 @@ export function displayLetterBox(content: string): void {
     process.stdout.write(`\n${borderColor(`.${'='.repeat(leftEquals)}${headerText}${'='.repeat(rightEquals)}.`)}\n`);
     process.stdout.write(`${fallback}\n`);
     process.stdout.write(`${borderColor(`'${'='.repeat(boxWidth - 2)}'`)}\n`);
+    if (resultCallback) {
+      resultCallback('(no displayable content — internal markup was stripped)');
+    }
     return;
   }
 
   process.stdout.write(`\n${borderColor(`.${'='.repeat(leftEquals)}${headerText}${'='.repeat(rightEquals)}.`)}\n`);
   process.stdout.write(`${textColor(stripped)}\n`);
   process.stdout.write(`${borderColor(`'${'='.repeat(boxWidth - 2)}'`)}\n`);
+  if (resultCallback) {
+    resultCallback(stripped);
+  }
 }
