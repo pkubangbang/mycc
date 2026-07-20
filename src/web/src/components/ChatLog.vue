@@ -87,7 +87,11 @@ onMounted(() => {
       class="scroll-bottom-btn"
       @click="scrollToBottom"
       title="滚动到底部"
-    >↓</button>
+    >
+      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <polyline points="6 9 12 15 18 9"/>
+      </svg>
+    </button>
   </div>
 </template>
 
@@ -103,22 +107,24 @@ onMounted(() => {
   bottom: 16px;
   left: 50%;
   transform: translateX(-50%);
-  width: 36px;
-  height: 36px;
+  width: 38px;
+  height: 38px;
   border-radius: 50%;
-  background: #fff;
-  border: 1px solid #d9d9d9;
-  color: #595959;
-  font-size: 18px;
+  background: var(--bg-scroll-btn);
+  border: 1px solid var(--border-scroll);
+  color: var(--text-secondary);
   cursor: pointer;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  box-shadow: var(--scroll-shadow);
   display: flex;
   align-items: center;
   justify-content: center;
   margin: 0 auto;
+  transition: background 0.15s, transform 0.15s;
+  backdrop-filter: blur(4px);
 }
 .scroll-bottom-btn:hover {
-  background: #f5f5f5;
+  background: var(--bg-scroll-btn-hover);
+  transform: translateX(-50%) scale(1.08);
 }
 .interrupt-row {
   display: flex;

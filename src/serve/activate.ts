@@ -40,10 +40,11 @@ export async function activateServe(port: number): Promise<void> {
   // Set up output mirroring to WebSocket (log/warn/error)
   // brief() passes its tool tag as the label so the Web UI shows the same
   // [HH:MM:SS] [tool] header as the terminal; plain verbose logs have no
-  // label.
-  agentIO.setOutputCallback((method, args, label) => {
+  // label. The detail parameter carries the tool's intent (e.g. bash command
+  // description) for display in an outlined box inside the bubble.
+  agentIO.setOutputCallback((method, args, label, detail) => {
     const text = args.map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(' ');
-    hub.broadcast(method, text, label);
+    hub.broadcast(method, text, label, detail);
   });
   // Set up result mirroring (final assistant response via letter-box).
   // Labeled 'assistant' so the Web UI renders the [assistant] tag, matching

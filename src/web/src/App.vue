@@ -22,7 +22,7 @@ defineProps<{ state: ChatState }>();
   display: flex;
   flex-direction: column;
   height: 100vh;
-  background: #ededed; /* WeChat background gray */
+  background: var(--bg-app);
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   margin: 0;
 }

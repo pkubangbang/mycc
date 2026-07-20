@@ -29,6 +29,7 @@ const state = reactive<ChatState>({
   showRetry: false,
   verboseLogs: false,
   steeringBuffer: [],
+  darkMode: localStorage.getItem('mycc-theme') === 'dark',
 });
 
 // Monotonic id counter for stable v-for keys (avoids array-index keys that
@@ -260,6 +261,10 @@ void (async () => {
   connectWebSocket();
 })();
 
+// Apply the persisted (or default) theme class on startup so the page
+// renders in the correct theme immediately — no flash of wrong colors.
+document.documentElement.classList.toggle('dark', state.darkMode);
+
 // Expose for components (send messages, exit, retry)
 export const chatApi = {
   sendInput(text: string): void {
@@ -313,6 +318,11 @@ export const chatApi = {
   },
   toggleVerboseLogs(): void {
     state.verboseLogs = !state.verboseLogs;
+  },
+  toggleTheme(): void {
+    state.darkMode = !state.darkMode;
+    document.documentElement.classList.toggle('dark', state.darkMode);
+    localStorage.setItem('mycc-theme', state.darkMode ? 'dark' : 'light');
   },
 };
 

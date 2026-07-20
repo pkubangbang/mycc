@@ -55,6 +55,7 @@ const header = computed(() => {
     <div class="message-col">
       <div v-if="header" class="message-header">{{ header }}</div>
       <div class="bubble" :class="[message.type, { mono: isMonospace }]">
+        <div v-if="message.detail" class="bubble-detail">{{ message.detail }}</div>
         <template v-if="renderMarkdown">
           <!-- eslint-disable-next-line vue/no-v-html -- markdown-it escapes raw HTML (html:false) -->
           <div class="markdown-body" v-html="rendered"></div>
@@ -84,12 +85,10 @@ const header = computed(() => {
 .message-row.is-user .message-col {
   align-items: flex-end;
 }
-/* Terminal-style [HH:MM:SS] [label] header — small grey monospace line
-   above the bubble, mirroring the terminal brief() header. */
 .message-header {
   font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
   font-size: 11px;
-  color: #999;
+  color: var(--md-header-text);
   padding: 0 4px 2px;
   user-select: none;
 }
@@ -101,53 +100,61 @@ const header = computed(() => {
   line-height: 1.5;
   word-break: break-word;
 }
-/* Plain-text bubbles keep pre-wrap for tool output formatting */
 .bubble.mono {
   font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
   font-size: 13px;
   white-space: pre-wrap;
 }
-/* User — WeChat green self-bubble */
 .bubble.user {
-  background: #95ec69;
-  color: #000;
+  background: var(--bubble-user-bg);
+  color: var(--bubble-user-text);
 }
-/* Assistant result (letter-box) — white bubble, dark text, with a soft
-   light-green glow border to distinguish the LLM's final reply. */
 .bubble.result {
-  background: #fff;
-  color: #333;
-  border: 1px solid #b7eb8f;
-  box-shadow: 0 0 6px 1px rgba(122, 200, 100, 0.45);
+  background: var(--bubble-result-bg);
+  color: var(--bubble-result-text);
+  border: 1px solid var(--bubble-result-border);
+  box-shadow: var(--bubble-result-shadow);
 }
-/* General logs — light gray */
 .bubble.log,
 .bubble.system {
-  background: #fff;
-  color: #666;
-  border: 1px solid #e5e5e5;
+  background: var(--bubble-log-bg);
+  color: var(--bubble-log-text);
+  border: 1px solid var(--bubble-log-border);
 }
-/* Warnings — yellow tint */
 .bubble.warn {
-  background: #fffbe6;
-  color: #ad6800;
-  border: 1px solid #ffe58f;
+  background: var(--bubble-warn-bg);
+  color: var(--bubble-warn-text);
+  border: 1px solid var(--bubble-warn-border);
 }
-/* Errors — red tint */
 .bubble.error {
-  background: #fff1f0;
-  color: #cf1322;
-  border: 1px solid #ffa39e;
+  background: var(--bubble-error-bg);
+  color: var(--bubble-error-text);
+  border: 1px solid var(--bubble-error-border);
 }
-/* Prompt — highlighted to draw the user's eye to the input request */
 .bubble.prompt {
-  background: #e6f7ff;
-  color: #003a8c;
-  border: 1px solid #91d5ff;
+  background: var(--bubble-prompt-bg);
+  color: var(--bubble-prompt-text);
+  border: 1px solid var(--bubble-prompt-border);
   font-style: italic;
 }
 
-/* ── Markdown body styling (result + user) ── */
+/* Tool intent box — outlined summary of what the tool was asked to do.
+   Shown above the raw command/output, bordered and slightly inset so it
+   stands out from the surrounding monospace content. */
+.bubble-detail {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-size: 13px;
+  color: var(--text-primary);
+  background: var(--md-code-bg);
+  border: 1px dashed var(--border-input);
+  border-radius: 5px;
+  padding: 6px 10px;
+  margin-bottom: 8px;
+  white-space: normal;
+  word-break: break-word;
+  line-height: 1.4;
+}
+
 .markdown-body :deep(p) {
   margin: 0 0 8px;
 }
@@ -176,14 +183,14 @@ const header = computed(() => {
 .markdown-body :deep(code) {
   font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
   font-size: 13px;
-  background: rgba(0, 0, 0, 0.06);
+  background: var(--md-code-bg);
   padding: 1px 5px;
   border-radius: 4px;
 }
 .markdown-body :deep(pre) {
   margin: 8px 0;
   padding: 10px 12px;
-  background: #f6f8fa;
+  background: var(--md-pre-bg);
   border-radius: 6px;
   overflow-x: auto;
 }
@@ -196,11 +203,11 @@ const header = computed(() => {
 .markdown-body :deep(blockquote) {
   margin: 8px 0;
   padding: 4px 12px;
-  border-left: 3px solid #d0d7de;
-  color: #666;
+  border-left: 3px solid var(--md-blockquote-border);
+  color: var(--md-blockquote-text);
 }
 .markdown-body :deep(a) {
-  color: #0969da;
+  color: var(--md-link);
   text-decoration: none;
 }
 .markdown-body :deep(a:hover) {
@@ -213,12 +220,12 @@ const header = computed(() => {
 }
 .markdown-body :deep(th),
 .markdown-body :deep(td) {
-  border: 1px solid #d0d7de;
+  border: 1px solid var(--md-table-border);
   padding: 6px 10px;
 }
 .markdown-body :deep(hr) {
   border: none;
-  border-top: 1px solid #e5e5e5;
+  border-top: 1px solid var(--md-hr);
   margin: 10px 0;
 }
 </style>

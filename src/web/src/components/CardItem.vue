@@ -83,9 +83,9 @@ function onKeydown(event: KeyboardEvent): void {
   max-width: 80%;
   padding: 12px 16px;
   border-radius: 10px;
-  background: #e6f7ff;
-  color: #003a8c;
-  border: 1px solid #91d5ff;
+  background: var(--bubble-prompt-bg);
+  color: var(--bubble-prompt-text);
+  border: 1px solid var(--bubble-prompt-border);
   transition: opacity 0.2s, filter 0.2s;
 }
 .card-bubble.responded {
@@ -103,35 +103,41 @@ function onKeydown(event: KeyboardEvent): void {
 .card-input {
   width: 100%;
   resize: none;
-  border: 1px solid #d9d9d9;
+  border: 1px solid var(--border-input);
   border-radius: 6px;
   padding: 8px 12px;
   font-size: 14px;
   font-family: inherit;
   line-height: 1.5;
   outline: none;
-  background: #fff;
+  background: var(--bg-input-field);
+  color: var(--text-primary);
   box-sizing: border-box;
 }
 .card-input:focus {
-  border-color: #07c160;
+  border-color: var(--accent);
 }
 .card-input:disabled {
-  background: #f0f0f0;
-  color: #999;
+  background: var(--bg-input-field-disabled);
+  color: var(--text-input-disabled);
 }
 .card-submit {
   margin-top: 8px;
-  background: #07c160;
-  color: #fff;
+  background: var(--accent);
+  color: var(--accent-text);
   border: none;
   padding: 6px 18px;
   border-radius: 6px;
   cursor: pointer;
   font-size: 13px;
+  font-weight: 500;
+  transition: opacity 0.15s;
+}
+.card-submit:not(:disabled):hover {
+  opacity: 0.85;
 }
 .card-submit:disabled {
-  background: #a0d8b6;
+  background: var(--accent-disabled);
   cursor: not-allowed;
 }
 .card-options {
@@ -140,9 +146,9 @@ function onKeydown(event: KeyboardEvent): void {
   gap: 10px;
 }
 .card-option-btn {
-  background: #fff;
-  color: #003a8c;
-  border: 1px solid #91d5ff;
+  background: var(--bg-input-field);
+  color: var(--bubble-prompt-text);
+  border: 1px solid var(--bubble-prompt-border);
   padding: 6px 20px;
   border-radius: 6px;
   cursor: pointer;
@@ -150,7 +156,7 @@ function onKeydown(event: KeyboardEvent): void {
   transition: background 0.15s;
 }
 .card-option-btn:not(:disabled):hover {
-  background: #bae7ff;
+  background: var(--bubble-prompt-bg);
 }
 .card-option-btn:disabled {
   cursor: not-allowed;

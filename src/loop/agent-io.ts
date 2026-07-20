@@ -28,7 +28,7 @@ import { setResultCallback } from '../utils/letter-box.js';
  *               [HH:MM:SS] [tool] header as the terminal. Plain log/warn/error
  *               leave it undefined (treated as a raw verbose log line).
  */
-type OutputCallback = (method: 'log' | 'warn' | 'error', args: unknown[], label?: string) => void;
+type OutputCallback = (method: 'log' | 'warn' | 'error', args: unknown[], label?: string, detail?: string) => void;
 
 /**
  * Subcommand hints for slash commands.
@@ -420,7 +420,7 @@ class AgentIO {
     // [HH:MM:SS] [tool] header as the terminal.
     if (this.outputCallback) {
       const method: 'log' | 'warn' | 'error' = level === 'error' ? 'error' : level === 'warn' ? 'warn' : 'log';
-      this.outputCallback(method, [message], tool);
+      this.outputCallback(method, [message], tool, detail);
     }
   }
 

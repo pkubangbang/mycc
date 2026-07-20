@@ -71,8 +71,8 @@ function onKeydown(event: KeyboardEvent): void {
 .chat-input {
   display: flex;
   padding: 8px 16px 16px;
-  background: #f7f7f7;
-  border-top: 1px solid #e0e0e0;
+  background: var(--bg-input);
+  border-top: 1px solid var(--border-color);
   flex-shrink: 0;
 }
 .input-row {
@@ -84,7 +84,7 @@ function onKeydown(event: KeyboardEvent): void {
 .input-area {
   flex: 1;
   resize: none;
-  border: 1px solid #d9d9d9;
+  border: 1px solid var(--border-input);
   border-radius: 6px;
   padding: 8px 12px;
   font-size: 14px;
@@ -92,27 +92,33 @@ function onKeydown(event: KeyboardEvent): void {
   line-height: 1.5;
   max-height: 120px;
   outline: none;
-  background: #fff;
+  background: var(--bg-input-field);
+  color: var(--text-primary);
 }
 .input-area:focus {
-  border-color: #07c160;
+  border-color: var(--accent);
 }
 .input-area:disabled {
-  background: #f0f0f0;
-  color: #999;
+  background: var(--bg-input-field-disabled);
+  color: var(--text-input-disabled);
 }
 .send-btn {
-  background: #07c160;
-  color: #fff;
+  background: var(--accent);
+  color: var(--accent-text);
   border: none;
   padding: 8px 20px;
   border-radius: 6px;
   cursor: pointer;
   font-size: 14px;
   height: 40px;
+  font-weight: 500;
+  transition: opacity 0.15s;
+}
+.send-btn:not(:disabled):hover {
+  opacity: 0.85;
 }
 .send-btn:disabled {
-  background: #a0d8b6;
+  background: var(--accent-disabled);
   cursor: not-allowed;
 }
 </style>

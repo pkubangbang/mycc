@@ -26,14 +26,14 @@ defineProps<{ notes: string[] }>();
   align-items: center;
   gap: 8px;
   padding: 6px 16px;
-  background: #fff3cd;
-  border-bottom: 1px solid #ffe082;
+  background: var(--bg-steering);
+  border-bottom: 1px solid var(--border-steering);
   flex-shrink: 0;
   overflow-x: auto;
 }
 .sb-label {
   font-size: 12px;
-  color: #856404;
+  color: var(--text-steering);
   white-space: nowrap;
   font-weight: 600;
 }
@@ -43,8 +43,8 @@ defineProps<{ notes: string[] }>();
   overflow-x: auto;
 }
 .sb-chip {
-  background: #ffe082;
-  color: #665500;
+  background: var(--bg-steering-chip);
+  color: var(--text-steering-chip);
   font-size: 12px;
   padding: 2px 8px;
   border-radius: 10px;

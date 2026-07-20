@@ -25,6 +25,9 @@ export interface ChatMessage {
    *  Shown as [HH:MM:SS] [label] header above the content, mirroring the
    *  terminal brief format. Absent for raw verbose logs. */
   label?: string;
+  /** Tool intent/description (e.g. "RUN USER TO list project files" for bash).
+   *  When present, rendered as an outlined box above the bubble content. */
+  detail?: string;
   /** Card payload — present when type === 'card'. Drives CardItem.vue. */
   card?: CardPayload;
 }
@@ -52,6 +55,9 @@ export interface ChatState {
    *  was working). Displayed as chips in the SteeringBuffer bar; cleared when
    *  the backend broadcasts 'steer-flush' (notes consumed at COLLECT/PROMPT). */
   steeringBuffer: string[];
+  /** Dark mode toggle (default light). Persisted in localStorage so the
+   *  preference survives page reloads. */
+  darkMode: boolean;
 }
 
 /** A single option in a choice/confirm card. */

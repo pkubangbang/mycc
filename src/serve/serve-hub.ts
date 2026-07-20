@@ -38,6 +38,8 @@ interface LogEntry {
   /** Optional — omitted for transcript-loaded entries that carry no time. */
   timestamp?: number;
   label?: string;
+  /** Tool intent/description (e.g. "RUN USER TO list files"). Outlined in the bubble. */
+  detail?: string;
 }
 
 interface WsMessage {
@@ -530,16 +532,19 @@ export class ServeHub {
    * @param content - message text (ANSI codes are stripped before send/store)
    * @param label - optional tool/module tag (e.g. 'bash', 'brief', 'question',
    *               'assistant'). Plain verbose logs pass no label.
+   * @param detail - optional tool intent/description (e.g. bash command
+   *                purpose). Rendered as an outlined box inside the bubble.
    */
-  broadcast(type: string, content: string, label?: string): void {
+  broadcast(type: string, content: string, label?: string, detail?: string): void {
     const cleanContent = stripAnsi(content);
     const entry: LogEntry = { type, content: cleanContent, timestamp: Date.now() };
     if (label) entry.label = label;
+    if (detail) entry.detail = detail;
     this.messageLog.push(entry);
     if (this.messageLog.length > ServeHub.MAX_LOG_SIZE) {
       this.messageLog.shift();
     }
-    const payload = JSON.stringify({ type, content: cleanContent, label, timestamp: entry.timestamp });
+    const payload = JSON.stringify({ type, content: cleanContent, label, timestamp: entry.timestamp, detail: detail || undefined });
     for (const ws of this.clients) {
       if (ws.readyState === WebSocket.OPEN) {
         try { ws.send(payload); } catch { /* ignore */ }
