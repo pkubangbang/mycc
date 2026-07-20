@@ -19,6 +19,8 @@
  */
 
 import chalk from 'chalk';
+import * as fs from 'fs';
+import * as path from 'path';
 import { AgentState } from '../state-machine.js';
 import type { MachineEnv, TurnVars, PassData, HandlerResult } from '../state-machine.js';
 import { loader } from '../../context/shared/loader.js';
@@ -239,6 +241,28 @@ export async function handlePrompt(
       // COLLECT to inject again (would double-count).
       hub.drainSteering();
       agentIO.verbose('steer', `Synthesized ${staleNotes.length} stale steering note(s) into fresh query`);
+    }
+
+    // Drain uploaded files (webui-only): if files were queued during the
+    // interrupted run, save them now so the LLM can see them in the next turn.
+    // Unlike steering notes, file uploads don't need synthesis — they are
+    // informational resources to be saved and noted.
+    const staleFiles = hub.drainFileUploads();
+    if (staleFiles.length > 0) {
+      const uploadDir = path.join(process.cwd(), '.mycc', 'uploaded');
+      if (!fs.existsSync(uploadDir)) {
+        fs.mkdirSync(uploadDir, { recursive: true });
+      }
+      const fileInfos: string[] = [];
+      for (const file of staleFiles) {
+        const safeName = `${Date.now()}_${file.filename}`;
+        const filePath = path.join(uploadDir, safeName);
+        fs.writeFileSync(filePath, Buffer.from(file.data, 'base64'));
+        const relPath = path.relative(process.cwd(), filePath);
+        fileInfos.push(`- ${file.filename} → ${relPath} (${file.mimeType})${file.text ? `\n  Text: "${file.text.slice(0, 200)}${file.text.length > 200 ? '...' : ''}"` : ''}`);
+      }
+      triologue.note('REMINDER', `Previously uploaded file(s) (from interrupted run):\n${fileInfos.join('\n')}`);
+      agentIO.verbose('serve', `Saved ${staleFiles.length} stale uploaded file(s) at PROMPT`);
     }
   }
 

@@ -12,7 +12,9 @@ export type MessageType =
   | 'system'
   | 'card'
   | 'steer-echo'
-  | 'steer-flush';
+  | 'steer-flush'
+  | 'file-upload'
+  | 'file-flush';
 
 export interface ChatMessage {
   type: MessageType;
@@ -58,6 +60,14 @@ export interface ChatState {
   /** Dark mode toggle (default light). Persisted in localStorage so the
    *  preference survives page reloads. */
   darkMode: boolean;
+  /** Files selected for upload but not yet sent. Cleared on send. */
+  pendingFiles: FileInfo[];
+}
+
+export interface FileInfo {
+  filename: string;
+  data: string;
+  mimeType: string;
 }
 
 /** A single option in a choice/confirm card. */

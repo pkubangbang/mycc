@@ -16,7 +16,7 @@
 import { createApp, reactive } from 'vue';
 import type { App } from 'vue';
 import App from './App.vue';
-import type { ChatMessage, ChatState, CardOption } from './types';
+import type { ChatMessage, ChatState, CardOption, FileInfo } from './types';
 import './style.css';
 
 // Reactive state — survives HMR (module-level, not in any component)
@@ -29,6 +29,7 @@ const state = reactive<ChatState>({
   showRetry: false,
   verboseLogs: false,
   steeringBuffer: [],
+  pendingFiles: [],
   darkMode: localStorage.getItem('mycc-theme') === 'dark',
 });
 
@@ -118,7 +119,9 @@ async function fetchHistory(): Promise<void> {
     const visible = data.messages.filter(
       m => !(m.type === 'prompt' && !m.content)
         && m.type !== 'steer-echo'
-        && m.type !== 'steer-flush',
+        && m.type !== 'steer-flush'
+        && m.type !== 'file-upload'
+        && m.type !== 'file-flush',
     );
     // Replace, not append — on reconnect we want a clean, authoritative snapshot.
     state.messages.splice(0, state.messages.length, ...visible);
@@ -207,6 +210,12 @@ function connectWebSocket(): void {
       // Backend consumed the queued steering notes (drained at COLLECT or
       // synthesized at PROMPT). Clear the buffer bar.
       state.steeringBuffer.splice(0, state.steeringBuffer.length);
+    } else if (msg.type === 'file-upload') {
+      // Backend echoed a file upload — could show a transient indicator.
+      // The actual processing happens server-side; nothing to do here.
+    } else if (msg.type === 'file-flush') {
+      // Backend drained the file upload queue (files saved to disk).
+      // Nothing to clear on the client side.
     } else {
       state.isWaiting = false;
       state.isRunning = true;
@@ -267,15 +276,16 @@ document.documentElement.classList.toggle('dark', state.darkMode);
 
 // Expose for components (send messages, exit, retry)
 export const chatApi = {
-  sendInput(text: string): void {
-    if (!text.trim()) return;
+  sendInput(text: string, files?: FileInfo[]): void {
+    if (!text.trim() && (!files || files.length === 0)) return;
     // Echo the user's input as a local message for immediate feedback
-    state.messages.push({ type: 'user', content: text, timestamp: Date.now(), id: nextId() });
+    state.messages.push({ type: 'user', content: text || '(uploaded files)', timestamp: Date.now(), id: nextId() });
     state.inputText = '';
+    state.pendingFiles = [];
     state.isWaiting = false;
     state.isRunning = true;
     state.showRetry = false;
-    wsSend({ type: 'input', text });
+    wsSend({ type: 'input', text: text || undefined, files: files && files.length > 0 ? files : undefined });
   },
   /**
    * Send a mid-task steering note while the LLM is running. The note is
@@ -288,11 +298,12 @@ export const chatApi = {
    * Pushing locally would double-count on the originating client. Also DO
    * NOT flip isWaiting/isRunning: the LLM is still working.
    */
-  sendSteer(text: string): void {
-    if (!text.trim()) return;
-    state.messages.push({ type: 'user', content: text, timestamp: Date.now(), id: nextId() });
+  sendSteer(text: string, files?: FileInfo[]): void {
+    if (!text.trim() && (!files || files.length === 0)) return;
+    state.messages.push({ type: 'user', content: text || '(uploaded files)', timestamp: Date.now(), id: nextId() });
     state.inputText = '';
-    wsSend({ type: 'steer', text });
+    state.pendingFiles = [];
+    wsSend({ type: 'steer', text: text || undefined, files: files && files.length > 0 ? files : undefined });
   },
   sendExit(): void {
     wsSend({ type: 'exit' });

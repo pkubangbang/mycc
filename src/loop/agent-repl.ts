@@ -14,7 +14,7 @@ import { healthCheck } from '../engine/chat-provider.js';
 import { ParentContext } from '../context/parent-context.js';
 import { getSessionId } from '../session/index.js';
 import { slashRegistry } from '../slashes/index.js';
-import { getTokenThreshold, isDebuggingEval, shouldServe, getServePort, getEmbeddingModel } from '../config.js';
+import { getTokenThreshold, isDebuggingEval, shouldServe, getServePort, getServeHost, getEmbeddingModel } from '../config.js';
 import { Triologue } from './triologue.js';
 import { agentIO } from './agent-io.js';
 import { shouldSkipHealthCheck } from '../config.js';
@@ -380,7 +380,7 @@ export async function main(): Promise<void> {
   // The /serve slash command path activates serve mid-session instead.
   if (shouldServe()) {
     try {
-      await activateServe(getServePort());
+      await activateServe(getServePort(), getServeHost());
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       console.log(chalk.red(`Failed to start web UI: ${msg}`));

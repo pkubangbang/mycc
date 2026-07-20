@@ -98,7 +98,7 @@ export function loadEnv(): void {
 const args = minimist(process.argv.slice(2), {
   boolean: ['v', 'verbose', 'skip-healthcheck', 'setup', 'debug-eval', 'debug-tp', 'debug-prompt', 'serve'],
   string: [
-    'session', 'port',
+    'session', 'port', 'host',
     'ollama-host', 'ollama-api-key', 'ollama-model', 'ollama-vision-model', 'ollama-embedding-model',
     'deepseek-host', 'deepseek-api-key', 'deepseek-model',
     'api-provider', 'token-threshold', 'editor', 'skill-match-threshold',
@@ -238,6 +238,20 @@ export function shouldServe(): boolean {
 export function getServePort(): number {
   const p = parseInt(args.port);
   return (Number.isFinite(p) && p > 0 && p <= 65535) ? p : 3173;
+}
+
+/**
+ * Get the serve host (--host flag). When --host is passed (even without a
+ * value), the server binds to 0.0.0.0 (all interfaces). When --host is not
+ * passed, returns null — the server binds to localhost only.
+ * If --host is given a specific value (e.g. --host 192.168.1.5), that value
+ * is used instead of 0.0.0.0.
+ */
+export function getServeHost(): string | null {
+  if (args.host === undefined || args.host === null) return null;
+  // --host (empty) or --host 0.0.0.0 → bind all
+  if (args.host === '' || args.host === '0.0.0.0') return '0.0.0.0';
+  return args.host;
 }
 
 /**

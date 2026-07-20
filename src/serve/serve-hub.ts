@@ -42,11 +42,25 @@ interface LogEntry {
   detail?: string;
 }
 
+interface FileUploadMeta {
+  filename: string;
+  data: string;
+  mimeType: string;
+}
+
 interface WsMessage {
   type: 'input' | 'exit' | 'interrupt' | 'card-response' | 'steer';
   text?: string;
   cardId?: string;
   value?: string;
+  files?: FileUploadMeta[];
+}
+
+interface FileUploadEntry {
+  filename: string;
+  data: string;
+  mimeType: string;
+  text?: string;
 }
 
 /** A structured interactive card sent to the web UI (replaces ask() prompt). */
@@ -98,6 +112,9 @@ export class ServeHub {
   private port = 0;
   // Bound upgrade handler ref, so stop() can remove it cleanly.
   private upgradeHandler: ((req: http.IncomingMessage, socket: import('net').Socket, head: Buffer) => void) | null = null;
+  // Host set via --host flag. When set, the server binds to this host;
+  // when null, defaults to localhost. Stored for getUrl() reporting.
+  private host: string | null = null;
 
   // ── Input bridge — single resolver, no AbortController ──
   private inputResolver: ((input: string | null) => void) | null = null;
@@ -113,6 +130,12 @@ export class ServeHub {
   // stop(), never persisted. Drained at PROMPT (synthesize with fresh query
   // via forkChat) or COLLECT (inject as REMINDER note).
   private steeringQueue: string[] = [];
+
+  // ── File upload queue — ephemeral in-memory buffer for webui file uploads ──
+  // Files uploaded from the chat box are buffered here until the agent loop
+  // drains them (COLLECT or PROMPT), saves them to ./.mycc/uploaded/, and
+  // mentions them via triologue.note(). Cleared on stop().
+  private fileUploadQueue: FileUploadEntry[] = [];
 
   // ── Message log for reconnect replay ──
   private messageLog: LogEntry[] = [];
@@ -155,12 +178,14 @@ export class ServeHub {
 
   getUrl(): string | null {
     if (!this.running) return null;
-    return `http://localhost:${this.port}`;
+    const displayHost = this.host && this.host !== '0.0.0.0' ? this.host : 'localhost';
+    return `http://${displayHost}:${this.port}`;
   }
 
-  async start(port: number): Promise<void> {
+  async start(port: number, host?: string | null): Promise<void> {
     if (this.running) return;
     this.port = port;
+    this.host = host ?? null;
 
     this.expressApp = express();
     this.httpServer = http.createServer(this.expressApp);
@@ -242,7 +267,11 @@ export class ServeHub {
     this.httpServer.on('upgrade', this.upgradeHandler);
 
     await new Promise<void>((resolve, reject) => {
-      this.httpServer!.listen(port, () => resolve());
+      if (this.host) {
+        this.httpServer!.listen(port, this.host, () => resolve());
+      } else {
+        this.httpServer!.listen(port, () => resolve());
+      }
       this.httpServer!.once('error', reject);
     });
 
@@ -303,6 +332,7 @@ export class ServeHub {
       this.expressApp = null;
       this.messageLog = [];
       this.steeringQueue = [];
+      this.fileUploadQueue = [];
     } finally {
       this.stopping = false;
     }
@@ -436,6 +466,27 @@ export class ServeHub {
    */
   getSteeringNotes(): string[] {
     return [...this.steeringQueue];
+  }
+
+  // ===========================================================================
+  // File upload queue (webui-only — user uploads files in the chat box)
+  // ===========================================================================
+
+  pushFileUpload(entry: FileUploadEntry): void {
+    this.fileUploadQueue.push(entry);
+    this.broadcast('file-upload', entry.filename);
+  }
+
+  drainFileUploads(): FileUploadEntry[] {
+    if (this.fileUploadQueue.length === 0) return [];
+    const files = this.fileUploadQueue;
+    this.fileUploadQueue = [];
+    this.broadcast('file-flush', '');
+    return files;
+  }
+
+  getFileUploads(): FileUploadEntry[] {
+    return [...this.fileUploadQueue];
   }
 
   // ===========================================================================
@@ -589,6 +640,11 @@ export class ServeHub {
         if (msg.text !== undefined) {
           this.submitInput(msg.text);
         }
+        if (msg.files && msg.files.length > 0) {
+          for (const f of msg.files) {
+            this.pushFileUpload({ filename: f.filename, data: f.data, mimeType: f.mimeType, text: msg.text });
+          }
+        }
         break;
       case 'exit':
         this.gracefulShutdown().catch((err) => {
@@ -612,6 +668,11 @@ export class ServeHub {
         // or PROMPT (forkChat synthesis with fresh query).
         if (msg.text) {
           this.pushSteer(msg.text);
+        }
+        if (msg.files && msg.files.length > 0) {
+          for (const f of msg.files) {
+            this.pushFileUpload({ filename: f.filename, data: f.data, mimeType: f.mimeType, text: msg.text });
+          }
         }
         break;
     }

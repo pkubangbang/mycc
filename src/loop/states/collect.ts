@@ -17,6 +17,8 @@ import type { SequenceEvent } from '../../hook/sequence.js';
 import { getSkillTriologueStatus } from '../../utils/skill-dedup.js';
 import { listWorktrees } from '../../context/worktree-store.js';
 import { getServeHub } from '../../serve/serve-registry.js';
+import * as fs from 'fs';
+import * as path from 'path';
 
 // Confusion threshold for hint generation
 const CONFUSION_THRESHOLD = 10;
@@ -235,6 +237,29 @@ export async function handleCollect(
         const steerContent = steerNotes.map((n, i) => `(${i + 1}) ${n}`).join('\n');
         triologue.note('REMINDER', `Steering notes from the user (mid-task direction):\n${steerContent}`);
         agentIO.verbose('steer', `Drained ${steerNotes.length} steering note(s) at COLLECT`);
+      }
+    }
+
+    // 2d. Drain file upload queue (webui-only): if serve is running, save any
+    //     uploaded files to ./.mycc/uploaded/ and mention them via a REMINDER
+    //     note so the LLM can reference them (e.g. via read_picture).
+    if (getServeHub().isRunning()) {
+      const files = getServeHub().drainFileUploads();
+      if (files.length > 0) {
+        const uploadDir = path.join(process.cwd(), '.mycc', 'uploaded');
+        if (!fs.existsSync(uploadDir)) {
+          fs.mkdirSync(uploadDir, { recursive: true });
+        }
+        const fileInfos: string[] = [];
+        for (const file of files) {
+          const safeName = `${Date.now()}_${file.filename}`;
+          const filePath = path.join(uploadDir, safeName);
+          fs.writeFileSync(filePath, Buffer.from(file.data, 'base64'));
+          const relPath = path.relative(process.cwd(), filePath);
+          fileInfos.push(`- ${file.filename} → ${relPath} (${file.mimeType})${file.text ? `\n  Text: "${file.text.slice(0, 200)}${file.text.length > 200 ? '...' : ''}"` : ''}`);
+        }
+        triologue.note('REMINDER', `User uploaded file(s):\n${fileInfos.join('\n')}`);
+        agentIO.verbose('serve', `Saved ${files.length} uploaded file(s) to ${uploadDir}`);
       }
     }
 

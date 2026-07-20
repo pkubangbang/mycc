@@ -11,7 +11,7 @@ import { agentIO } from '../loop/agent-io.js';
 import { setResultCallback } from '../utils/letter-box.js';
 import chalk from 'chalk';
 
-export async function activateServe(port: number): Promise<void> {
+export async function activateServe(port: number, host?: string | null): Promise<void> {
   const hub = getServeHub();
 
   if (hub.isRunning()) {
@@ -23,7 +23,7 @@ export async function activateServe(port: number): Promise<void> {
   // deps, web dir missing) must NOT crash the process — the terminal REPL
   // should continue so the user can fix the issue and retry /serve.
   try {
-    await hub.start(port);
+    await hub.start(port, host);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.log(chalk.red(`\nFailed to start Web UI: ${msg}`));
