@@ -17,8 +17,11 @@ import { MODEL, retryMultipleChoice } from '../../engine/chat-provider.js';
  * underscore in `i_know` is an informational-exceptional signal to the LLM.
  *
  * This is a lightweight substring check on the raw intent (run BEFORE full
- * intent parsing at step 1) so the escape hatch is honored even when the rest
- * of the intent has not yet been validated.
+ * intent parsing at step 1) so the escape hatch is detected even when the rest
+ * of the intent has not yet been validated. If detected, the full intent is
+ * then parsed and grammar-validated before routing to the user — a malformed
+ * intent with a dangling `dangerous=i_know` substring is rejected with the
+ * grammar error rather than bypassing validation.
  */
 function declaresDangerousIKnow(intent: string): boolean {
   return /\bdangerous=i_know\b/.test(intent);
@@ -45,7 +48,9 @@ function dangerousSocraticHint(reason: string): string {
  * Steps:
  * 1. Check dangerous commands (pattern matching). For destructive/irreversible
  *    categories, the `dangerous=i_know` intent PARAM routes to user confirmation
- *    instead of hard-blocking; the `system` category stays hard-blocked.
+ *    instead of hard-blocking; the `system` category stays hard-blocked. When
+ *    the escape param is present, the full intent is grammar-validated first —
+ *    a malformed intent does NOT bypass validation to reach the user.
  * 2. Check missing intent parameter
  * 3. Check intent grammar (fail fast with retry hint)
  * 4. Check mode + verb (local decision)
@@ -81,6 +86,9 @@ export async function judgeBash(
   // danger gate — it stays hard-blocked with no escape hatch.
   // Without the escape param, the block message is a Socratic hint that names
   // the existence of a PARAM override but withholds the exact key/value.
+  // WITH the escape param, the intent is grammar-validated first (mirroring
+  // step 3): a malformed intent that merely contains the `dangerous=i_know`
+  // substring is rejected with the grammar error and does NOT reach the user.
   const dangerousMatch = findDangerousCommand(command);
   if (dangerousMatch) {
     if (dangerousMatch.category === 'system') {
@@ -91,6 +99,22 @@ export async function judgeBash(
     }
     // destructive | irreversible — offer the escape hatch.
     if (declaresDangerousIKnow(intent)) {
+      // The escape hatch routes the decision to the human, so the human is the
+      // real gate. But it must NOT bypass intent grammar validation: a malformed
+      // intent that merely *contains* the `dangerous=i_know` substring (e.g. a
+      // bare token "dangerous=i_know" with no VERB OBJECT TO PURPOSE) should be
+      // rejected with the grammar error, not routed to the user. An honest
+      // declaration is only meaningful when the rest of the intent is well-formed.
+      // (This mirrors step 3's validation, run here because step 1 returns early
+      // before step 3 is reached.)
+      const parsed = parseIntent(intent);
+      const validation = validateIntent(parsed, intent);
+      if (!validation.valid) {
+        return {
+          decision: 'block',
+          reason: `Error: [Intent] ${validation.error}${validation.hint ? `\nHint: ${validation.hint}` : ''}`,
+        };
+      }
       if (isChildProcess) {
         return {
           decision: 'block',

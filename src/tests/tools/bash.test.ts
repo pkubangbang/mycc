@@ -687,6 +687,42 @@ describe('Cluster C — judgeBash dangerous=i_know escape param', () => {
     expect(res.reason).toContain('child process');
   });
 
+  // ── grammar gate: escape param must NOT bypass intent validation ─
+  it('malformed intent with dangerous=i_know substring is blocked by grammar, not routed to user', async () => {
+    const askUser = vi.fn(async () => 'y');
+    // Bare token, no VERB OBJECT TO PURPOSE — parseIntent returns null and
+    // validateIntent reports the grammar error. The escape param substring is
+    // present but the intent is not well-formed, so it must NOT reach the user.
+    const res = await judgeBash(mkfs, 'dangerous=i_know', 'normal', false, askUser);
+    expect(askUser).not.toHaveBeenCalled();
+    expect(res.decision).toBe('block');
+    expect(res.reason).toContain('Error: [Intent]');
+  });
+
+  it('malformed PARAM with dangerous=i_know is blocked by grammar, not routed to user', async () => {
+    const askUser = vi.fn(async () => 'y');
+    // Has VERB OBJECT TO PURPOSE but a malformed PARAM (uppercase key) AND the
+    // escape substring. Grammar must win — the human is not asked.
+    const res = await judgeBash(
+      mkfs,
+      'WRITE SYSTEM CMD=mkfs dangerous=i_know TO format',
+      'normal',
+      false,
+      askUser
+    );
+    expect(askUser).not.toHaveBeenCalled();
+    expect(res.decision).toBe('block');
+    expect(res.reason).toContain('Error: [Intent]');
+    expect(res.reason).toContain('uppercase');
+  });
+
+  it('well-formed intent with dangerous=i_know still routes to user (grammar gate does not regress happy path)', async () => {
+    const askUser = vi.fn(async () => 'y');
+    const res = await judgeBash(mkfs, planEscapeIntent, 'normal', false, askUser);
+    expect(askUser).toHaveBeenCalledTimes(1);
+    expect(res.decision).toBe('allow');
+  });
+
   // ── EXEC_WRAPPER obfuscation still blocks ────────────────────────
   it('sh -c wrapping mkfs is blocked even with dangerous=i_know (exec wrapper defense)', async () => {
     const askUser = vi.fn(async () => 'y');
