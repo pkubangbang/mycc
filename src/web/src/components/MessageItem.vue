@@ -8,6 +8,19 @@ const props = defineProps<{ message: ChatMessage }>();
 // User messages align right (WeChat self-bubble style); everything else left.
 const isUser = computed(() => props.message.type === 'user');
 
+// Bash tool's pre-execution info log: brief('info', 'bash', command, intent)
+// produces a LogEntry with type:'log', label:'bash', content:<command>,
+// detail:<intent-lang>. The command is a raw shell string, NOT markdown —
+// rendering it through markdown-it would mangle flags (e.g. -rf becoming a
+// list item, --porcelain becoming an em-dash). Detect this case so the
+// bubble renders the command as a monospace terminal block with a dollar
+// prompt prefix, and keeps the intent in the dashed outline box. Warn/error
+// bash logs (rejections) carry label:'bash' too but have type:'warn'/'error'
+// — they keep their existing styling and are NOT treated as command cards.
+const isBashCommand = computed(() =>
+  props.message.type === 'log' && props.message.label === 'bash'
+);
+
 // Render markdown for conversational content (user + assistant result) and
 // for labeled `log` messages (brief() structured status — e.g. the crossroad
 // alternatives list). Unlabeled `log`/error/warn stay plain-text monospace —
@@ -15,10 +28,15 @@ const isUser = computed(() => props.message.type === 'user');
 // The labeled/unlabeled split mirrors the visibility rule in main.ts
 // (isMessageVisible): a label marks a message as intentional structured
 // status rather than raw stdout.
+// EXCEPTION: a bash command log (label:'bash', type:'log') renders the
+// command as a monospace terminal block — never markdown.
 const renderMarkdown = computed(() =>
-  props.message.type === 'user'
-  || props.message.type === 'result'
-  || (props.message.type === 'log' && !!props.message.label),
+  !isBashCommand.value
+  && (
+    props.message.type === 'user'
+    || props.message.type === 'result'
+    || (props.message.type === 'log' && !!props.message.label)
+  )
 );
 
 // markdown-it with html disabled (default) — raw HTML in LLM output is
@@ -68,9 +86,15 @@ const header = computed(() => {
   <div class="message-row" :class="{ 'is-user': isUser }">
     <div class="message-col">
       <div v-if="header" class="message-header">{{ header }}</div>
-      <div class="bubble" :class="[message.type, { mono: isMonospace }]">
+      <div class="bubble" :class="[message.type, { mono: isMonospace, 'bash-card': isBashCommand }]">
         <div v-if="message.detail" class="bubble-detail">{{ message.detail }}</div>
-        <template v-if="renderMarkdown">
+        <template v-if="isBashCommand">
+          <!-- Bash command card: the shell command renders as a monospace
+               terminal block with a dollar prompt prefix. The intent-lang
+               string is already shown above in the .bubble-detail outline box. -->
+          <pre class="bash-command"><span class="bash-prompt">$</span>{{ message.content }}</pre>
+        </template>
+        <template v-else-if="renderMarkdown">
           <!-- eslint-disable-next-line vue/no-v-html -- markdown-it escapes raw HTML (html:false) -->
           <div class="markdown-body" v-html="rendered"></div>
         </template>
@@ -167,6 +191,33 @@ const header = computed(() => {
   white-space: normal;
   word-break: break-word;
   line-height: 1.4;
+}
+
+/* Bash command card — the bash tool's pre-execution info log
+   (label:'bash', type:'log') is recognized and rendered as a reinforced
+   card: the shell command sits in a monospace terminal block with a dollar
+   prompt prefix, distinct from a plain log bubble. The intent-lang string
+   renders above it in the .bubble-detail outline box (unchanged). The bubble
+   itself stays sans-serif so the dashed intent box keeps its normal font;
+   only the command block is monospace. */
+.bubble.bash-card {
+  background: var(--md-pre-bg);
+  border: 1px solid var(--bubble-result-border);
+}
+.bash-command {
+  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-primary);
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.bash-prompt {
+  color: var(--accent);
+  margin-right: 8px;
+  user-select: none;
+  font-weight: 600;
 }
 
 .markdown-body :deep(p) {
