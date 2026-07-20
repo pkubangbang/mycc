@@ -69,7 +69,7 @@ export interface CardMessage {
   cardId: string;
   query: string;
   kind: 'input' | 'confirm' | 'choice';
-  options?: { label: string; value: string }[];
+  options?: { label: string; value: string; isDefault?: boolean }[];
   initialContent?: string;
   placeholder?: string;
 }
@@ -395,6 +395,7 @@ export class ServeHub {
     const cleanOptions = card.options?.map((opt) => ({
       label: stripAnsi(opt.label),
       value: opt.value,
+      isDefault: opt.isDefault,
     }));
     const cleanInitialContent = card.initialContent ? stripAnsi(card.initialContent) : card.initialContent;
     const cleanCard: CardMessage = {

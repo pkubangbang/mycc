@@ -807,10 +807,12 @@ describe('Cluster D — judgeBash batch=i_know escape param', () => {
     const res = await judgeBash(batchCmd, batchIntent, 'normal', false, askUser);
     expect(askUser).toHaveBeenCalledTimes(1);
     expect(res.decision).toBe('allow');
-    // The user prompt uses the "acknowledged by agent" wording, not "detected".
+    // The user prompt uses the "acknowledged by agent" wording, not "…detected",
+    // and passes onEsc:'n' so ESC defaults to denying the batch deletion.
     expect(askUser).toHaveBeenCalledWith(
       expect.stringContaining('acknowledged by agent'),
-      'bash-judge'
+      'bash-judge',
+      { onEsc: 'n' }
     );
   });
 
@@ -858,7 +860,8 @@ describe('Cluster D — judgeBash batch=i_know escape param', () => {
     if (askUser.mock.calls.length > 0) {
       expect(askUser).not.toHaveBeenCalledWith(
         expect.stringContaining('acknowledged by agent'),
-        'bash-judge'
+        'bash-judge',
+        { onEsc: 'n' }
       );
     }
   });

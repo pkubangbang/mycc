@@ -181,9 +181,13 @@ $TMUX=${innerTmux}`;
   ctx.core.brief('info', 'hand_over', `Opened: ${sessionName}`, intent);
 
   // 5. Wait for user confirmation and capture output
+  // The prompt ends with a [y/N] bracket so the serve-mode ask() classifies it
+  // as a choice card (Yes/No buttons + free-text). The trailing CLI prompt
+  // marker "> " is intentionally omitted — the bracket alone drives the card
+  // kind, and broadcastCard() strips ANSI/chalk from the query anyway.
   const answer = await agentIO.ask(
-    chalk.cyan(`Save tmux session? [y/N] > `),
-    { useAsPrompt: true } // use query as prompt (single line format)
+    'Save tmux session? [y/N]',
+    { useAsPrompt: true, onEsc: 'n' } // use query as prompt (single line format)
   );
 
   // Parse response similar to git_commit tool

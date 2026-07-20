@@ -61,7 +61,10 @@ export async function evaluateGrant(
       request.intent || '',
       mode,
       isChildProcess,
-      core.question.bind(core),  // Pass askUser function
+      // Forward options (e.g. onEsc) so bash-judge callers can pass a
+      // default for ESC — dangerous/batch confirmations default to 'n'.
+      (query: string, asker: string, options?: { onEsc?: string }) =>
+        core.question(query, asker, options),
       core.escAware.bind(core)   // Pass escAware function for ESC handling
     );
 

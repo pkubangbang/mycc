@@ -70,11 +70,12 @@ The tool will ask for user permission if allowed_file is specified. User can:
 However, you may want to allow edits to this file:
   ${resolvedPath}
 
-Allow edits to this file during plan mode?
-  - Press Enter or type 'y'/'yes' to allow this file
-  - Type 'n'/'no' to enter strict plan mode (no files allowed)
-  - Or type a different file path to allow that file instead
-    (e.g., "docs/new-plan.md" or "README.md")`;
+  - Yes: allow this file
+  - No: strict plan mode (no files allowed)
+  - Or type a different file path in the text box
+    (e.g. "docs/new-plan.md" or "README.md")
+
+[y/N]`;
 
       const response = await ctx.core.question(prompt, ctx.core.getName(), { onEsc: 'n' });
 

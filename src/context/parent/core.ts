@@ -479,7 +479,8 @@ export class Core extends BaseCore implements CoreModule {
       `  1) Grant access to this folder: ${dirName}/\n` +
       `  2) Grant access to this folder and all subdirectories: ${dirName}/\n` +
       `  3) Grant access to this file only: ${fileName}\n` +
-      `  4) Deny`;
+      `  4) Deny\n\n` +
+      `[1/2/3/4]`;
 
     const response = await this.question(prompt, 'lead', { onEsc: '4' });
     const choice = response.trim();

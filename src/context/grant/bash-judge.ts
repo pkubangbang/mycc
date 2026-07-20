@@ -95,7 +95,7 @@ export async function judgeBash(
   intent: string,
   mode: 'plan' | 'normal',
   isChildProcess: boolean,
-  askUser?: (query: string, asker: string) => Promise<string>,
+  askUser?: (query: string, asker: string, options?: { onEsc?: string }) => Promise<string>,
   escAware?: <T>(
     operation: (abortController: AbortController) => Promise<T>,
     onCleanUp: () => T | Promise<T>
@@ -155,7 +155,8 @@ export async function judgeBash(
       }
       const userResponse = await askUser(
         `Dangerous command acknowledged by agent.\n\nCommand: ${command}\nReason: ${dangerousMatch.reason}\nPurpose: ${intent}\n\nAllow this command? [y/N]`,
-        'bash-judge'
+        'bash-judge',
+        { onEsc: 'n' }
       );
       const approved =
         userResponse.toLowerCase().trim() === 'y' || userResponse.toLowerCase().trim() === 'yes';
@@ -217,7 +218,8 @@ export async function judgeBash(
         }
         const userResponse = await askUser(
           `Batch deletion acknowledged by agent.\n\nCommand: ${command}\nPurpose: ${parsed!.purpose}\n\nAllow this command? [y/N]`,
-          'bash-judge'
+          'bash-judge',
+          { onEsc: 'n' }
         );
         const approved =
           userResponse.toLowerCase().trim() === 'y' || userResponse.toLowerCase().trim() === 'yes';
@@ -244,7 +246,8 @@ export async function judgeBash(
 
       const userResponse = await askUser(
         `Batch deletion detected.\n\nCommand: ${command}\nPurpose: ${parsed!.purpose}\n\nAllow this command? [y/N]`,
-        'bash-judge'
+        'bash-judge',
+        { onEsc: 'n' }
       );
       const approved =
         userResponse.toLowerCase().trim() === 'y' || userResponse.toLowerCase().trim() === 'yes';
@@ -305,7 +308,8 @@ export async function judgeBash(
     // Ask user via core.question (ESC-aware)
     const userResponse = await askUser(
       `The command has ambiguous intent.\n\nCommand: ${command}\nPurpose: ${parsed!.purpose}\n\nAllow this command in plan mode? [y/N]`,
-      'bash-judge'
+      'bash-judge',
+      { onEsc: 'n' }
     );
 
     // If user presses ESC, askUser returns empty string -> treat as "no"

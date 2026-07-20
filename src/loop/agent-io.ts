@@ -633,19 +633,46 @@ class AgentIO {
       const hub = getServeHub();
       const cardId = `card-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
-      // Determine card kind + options from AskOptions:
-      //  - Retry? [Y/n] pattern (query contains "retry" + onEnter set) → choice
-      //  - onEnter set (press-Enter-to-continue style)              → confirm
-      //  - default                                                 → input
+      // Determine card kind + options using the [?/?] trailing-bracket
+      // protocol: only queries ending with a bracket suffix like [y/N], [Y/n],
+      // [1/2/3/4], or [y/N/path] get enhanced button-card rendering. The
+      // bracket encodes the quick-action options; an UPPERCASE token marks the
+      // default (highlighted) button, following the CLI convention.
+      //
+      // A trailing CLI prompt marker ("> " or ">") is stripped before the
+      // match so hand_over's "Save tmux session? [y/N] > " still classifies
+      // as a choice card.
+      //
+      // No bracket → fall back to the historical heuristics:
+      //  - onEnter set (press-Enter-to-continue style) → confirm
+      //  - default                                                → input
       let kind: 'input' | 'confirm' | 'choice' = 'input';
-      let cardOptions: { label: string; value: string }[] | undefined;
+      let cardOptions: { label: string; value: string; isDefault?: boolean }[] | undefined;
 
-      if (/retry/i.test(query) && options?.onEnter !== undefined) {
+      // Strip a trailing CLI prompt marker ("> " or ">").
+      const querySansMarker = query.replace(/\s*>\s*$/, '');
+      // Match a trailing bracket: [a/B/c] or [1/2/3/4] etc.
+      const bracketMatch = querySansMarker.match(/\[([^\]]+)\]$/);
+      if (bracketMatch) {
+        const tokens = bracketMatch[1].split('/');
+        // Map well-known letter tokens to human labels; numeric / other
+        // tokens pass through as their own label.
+        const labelFor = (tok: string): string => {
+          const lower = tok.toLowerCase();
+          if (lower === 'y') return 'Yes';
+          if (lower === 'n') return 'No';
+          if (lower === 'q') return 'Quit';
+          return tok;
+        };
+        cardOptions = tokens.map((tok) => {
+          const isDefault = tok !== tok.toLowerCase(); // contains an uppercase letter
+          return {
+            label: labelFor(tok),
+            value: tok.toLowerCase(),
+            isDefault,
+          };
+        });
         kind = 'choice';
-        cardOptions = [
-          { label: 'Yes', value: 'y' },
-          { label: 'No', value: 'n' },
-        ];
       } else if (options?.onEnter !== undefined) {
         kind = 'confirm';
         cardOptions = [

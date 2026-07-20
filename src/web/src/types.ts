@@ -74,6 +74,11 @@ export interface FileInfo {
 export interface CardOption {
   label: string;
   value: string;
+  /** True if this option is the default (uppercase letter in the bracket
+   *  suffix, e.g. `[y/N]` → the 'N' option is default). Rendered with an
+   *  accent border + bold font in CardItem.vue so the user sees the
+   *  safe/expected choice at a glance. */
+  isDefault?: boolean;
 }
 
 /** Payload for an interactive card (type === 'card'). Rendered by CardItem.vue. */

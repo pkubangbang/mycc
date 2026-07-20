@@ -56,17 +56,34 @@ function onKeydown(event: KeyboardEvent): void {
         >提交</button>
       </template>
 
-      <!-- confirm / choice kind: option buttons -->
+      <!-- confirm / choice kind: option buttons + free-text input -->
       <template v-else>
         <div class="card-options">
           <button
             v-for="opt in card.options"
             :key="opt.value"
             class="card-option-btn"
+            :class="{ 'card-option-default': opt.isDefault }"
             :disabled="responded"
             @click="selectOption(opt.value)"
           >{{ opt.label }}</button>
         </div>
+        <!-- Free-text input: always rendered for choice/confirm cards so the
+             user can type a custom response (e.g. git_commit feedback, a
+             custom file path for plan_on) instead of clicking a button. -->
+        <textarea
+          v-model="inputValue"
+          class="card-input card-input-below"
+          :placeholder="card.placeholder ?? '或输入自定义内容…'"
+          :disabled="responded"
+          rows="2"
+          @keydown="onKeydown"
+        ></textarea>
+        <button
+          class="card-submit"
+          :disabled="responded || !inputValue.trim()"
+          @click="submitInput"
+        >提交</button>
       </template>
     </div>
   </div>
@@ -161,5 +178,16 @@ function onKeydown(event: KeyboardEvent): void {
 .card-option-btn:disabled {
   cursor: not-allowed;
   opacity: 0.6;
+}
+/* Default option (uppercase letter in the bracket suffix, e.g. [y/N] → No):
+   accent border + bold font so the safe/expected choice stands out. */
+.card-option-btn.card-option-default {
+  border-color: var(--accent);
+  font-weight: 600;
+}
+/* Free-text input rendered below the option buttons (choice/confirm cards). */
+.card-input.card-input-below {
+  margin-top: 10px;
+  font-size: 13px;
 }
 </style>
