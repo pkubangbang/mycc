@@ -34,6 +34,8 @@ or the command REQUIRES user interaction (passwords, prompts, SSH sessions).
 When calling this tool, you MUST provide an \`intent\` parameter using the intent language format.
 The OBJECT must indicate that user interaction is required.
 
+See the "hand_over usage" subsection under Grant System in MYCC.md (retrievable via get_node) for the spelled-out RUN USER intent rule, the multi-line command note, and worked examples.
+
 Use ONLY when:
 - User explicitly asks for a terminal/shell/SSH session
 - Command requires interactive input (password prompts, y/n confirmations, menu selections)
@@ -58,7 +60,8 @@ When in doubt, use 'bash' tool with appropriate timeout.`,
       },
       intent: {
         type: 'string',
-        description: 'REQUIRED: Explain why this command is needed. You MUST use the intent language to show your idea.',
+        description:
+          'REQUIRED: Explain why this command is needed. You MUST use the intent language to show your idea.',
       },
     },
     required: ['command', 'intent'],
@@ -74,10 +77,22 @@ async function handleHandOver(ctx: AgentContext, args: Record<string, unknown>):
   const intent = args.intent as string;
   const isWin = process.platform === 'win32';
 
-  // 1. Validate intent: must use USER object to confirm user interaction is needed
+  // 1. Validate intent: must use RUN USER to confirm user interaction is needed.
+  // Socratic hint: name the wrong DIMENSION (object vs verb), withhold the correct
+  // token so the LLM re-reasons from the always-on verb/object tables rather than
+  // copying a spoon-fed answer.
   const parsed = parseIntent(intent);
-  if (!parsed || parsed.object !== 'USER') {
-    return `Your intent suggests this task can be done without user interaction. Is that correct?`;
+  if (!parsed) {
+    return `Intent format is: VERB OBJECT [key=value ...] TO PURPOSE. Re-read the verb/object tables and try again.`;
+  }
+  if (parsed.object !== 'USER') {
+    return (
+      `hand_over opens a terminal popup for a human to type into (e.g. a sudo password). ` +
+      `Your OBJECT "${parsed.object}" doesn't match that. Reconsider which OBJECT in your table means "a human interacting with a terminal," then retry.`
+    );
+  }
+  if (parsed.verb !== 'RUN') {
+    return `hand_over executes the command in that popup. Your OBJECT is right, but your VERB "${parsed.verb}" doesn't mean "execute a command or process." Reconsider which VERB fits, then retry.`;
   }
 
   // 2. Prerequisites
@@ -98,6 +113,40 @@ async function handleHandOver(ctx: AgentContext, args: Record<string, unknown>):
     return `Error: No external terminal. Use bash tool for non-interactive commands.`;
   }
 
+  // 2b. tmux nesting self-check.
+  // If mycc itself runs inside tmux ($TMUX set) and the command tries to attach
+  // to / switch to another tmux session, tmux refuses ("sessions should be nested
+  // with care"). Reject up front with actionable alternatives.
+  // NOTE: only attach/switch-client cause nesting; new-session/kill-session/
+  // send-keys are safe to run from inside tmux and are intentionally NOT blocked.
+  const innerTmux = process.env.TMUX;
+  if (innerTmux) {
+    // Regex covers: tmux [flags] (attach|a|switch-client|switch) ...
+    // including the `tmux -L <socket> attach` form (flags before the subcommand).
+    const nestingMatch =
+      /^\s*tmux\s+(?:-[A-Za-z]+\s+\S+\s+)?(?:attach|a|switch-client|switch)\b/.test(command);
+    if (nestingMatch) {
+      const targetMatch = command.match(/-t\s+(\S+)/);
+      const target = targetMatch ? targetMatch[1] : '<name>';
+      ctx.core.brief(
+        'warn',
+        'hand_over',
+        'tmux nesting detected',
+        `Agent is inside tmux ($TMUX set). \`tmux attach\`/` +
+          `\`tmux switch-client\` would nest sessions and tmux refuses.`
+      );
+      return `Error: Cannot run \`${command.trim()}\` from inside a tmux session (nested sessions are rejected by tmux).
+
+Alternatives:
+1. Ask the user to run \`tmux attach -t ${target}\` in their own terminal (outside mycc).
+2. Use the bash tool to drive the session remotely instead of attaching:
+   - \`tmux send-keys -t ${target} '<cmd>' Enter\`
+   - \`tmux capture-pane -t ${target} -p\`
+
+$TMUX=${innerTmux}`;
+    }
+  }
+
   // 3. Create session
   const cwd = ctx.core.getWorkDir();
   const sessionName = `mycc-${Date.now()}`;
@@ -105,15 +154,14 @@ async function handleHandOver(ctx: AgentContext, args: Record<string, unknown>):
   try {
     if (isWin) {
       await execAsync(
-        `tmux new-session -d -s ${sessionName} -c "${cwd}" -x 120 -y 40 ` +
-        `"cmd /k ${command}"`
+        `tmux new-session -d -s ${sessionName} -c "${cwd}" -x 120 -y 40 ` + `"cmd /k ${command}"`
       );
     } else {
       // Encode command to avoid shell escaping issues
       const encoded = Buffer.from(command).toString('base64');
       await execAsync(
         `tmux new-session -d -s ${sessionName} -c "${cwd}" -x 120 -y 40 ` +
-        `"bash -c 'eval \\$(echo ${encoded} | base64 -d); exec bash'"`
+          `"bash -c 'eval \\$(echo ${encoded} | base64 -d); exec bash'"`
       );
     }
   } catch (e) {
@@ -135,14 +183,16 @@ async function handleHandOver(ctx: AgentContext, args: Record<string, unknown>):
   // 5. Wait for user confirmation and capture output
   const answer = await agentIO.ask(
     chalk.cyan(`Save tmux session? [y/N] > `),
-    { useAsPrompt: true }  // use query as prompt (single line format)
+    { useAsPrompt: true } // use query as prompt (single line format)
   );
 
   // Parse response similar to git_commit tool
   // Strip surrounding quotes (tmux send-keys may add them)
   let normalized = answer.trim().toLowerCase();
-  if ((normalized.startsWith('"') && normalized.endsWith('"')) ||
-      (normalized.startsWith("'") && normalized.endsWith("'"))) {
+  if (
+    (normalized.startsWith('"') && normalized.endsWith('"')) ||
+    (normalized.startsWith("'") && normalized.endsWith("'"))
+  ) {
     normalized = normalized.slice(1, -1).trim();
   }
   const keepSession = normalized === 'y' || normalized === 'yes';
@@ -150,30 +200,33 @@ async function handleHandOver(ctx: AgentContext, args: Record<string, unknown>):
 
   // If user provided feedback (not y/n/enter), return it for LLM to handle
   if (!killSession && !keepSession) {
-    agentIO.log(chalk.yellow(`✓ Session ${sessionName} kept for review. Reattach with: tmux attach -t ${sessionName}`));
-    
+    agentIO.log(
+      chalk.yellow(
+        `✓ Session ${sessionName} kept for review. Reattach with: tmux attach -t ${sessionName}`
+      )
+    );
+
     // Capture output
     let output = '';
     try {
-      const { stdout } = await execAsync(
-        `tmux capture-pane -t ${sessionName} -p -S -3000 -E -1`
-      );
+      const { stdout } = await execAsync(`tmux capture-pane -t ${sessionName} -p -S -3000 -E -1`);
       output = stdout;
     } catch {
       // Session may have been closed by user
     }
 
     const lines = output.split('\n');
-    const result = lines.length > 100
-      ? await summarizeOutput(output, command, 100)
-      : output || '(empty output)';
+    const result =
+      lines.length > 100 ? await summarizeOutput(output, command, 100) : output || '(empty output)';
 
     return `User provided feedback: "${answer}"\n\nSession ${sessionName} is still running. Reattach with: tmux attach -t ${sessionName}\n\nOutput:\n${result}`;
   }
 
   // Show closing notice based on user's choice
   if (keepSession) {
-    agentIO.log(chalk.green(`✓ Session ${sessionName} kept. Reattach with: tmux attach -t ${sessionName}`));
+    agentIO.log(
+      chalk.green(`✓ Session ${sessionName} kept. Reattach with: tmux attach -t ${sessionName}`)
+    );
   } else {
     agentIO.log(chalk.green(`✓ Session closed. Processing output...`));
   }
@@ -183,9 +236,7 @@ async function handleHandOver(ctx: AgentContext, args: Record<string, unknown>):
   let sessionExists = false;
 
   try {
-    const { stdout } = await execAsync(
-      `tmux capture-pane -t ${sessionName} -p -S -3000 -E -1`
-    );
+    const { stdout } = await execAsync(`tmux capture-pane -t ${sessionName} -p -S -3000 -E -1`);
     output = stdout;
     sessionExists = true;
   } catch {
@@ -205,9 +256,10 @@ async function handleHandOver(ctx: AgentContext, args: Record<string, unknown>):
   const maxLines = 100;
   const lines = output.split('\n');
 
-  const result = lines.length > maxLines
-    ? await summarizeOutput(output, command, maxLines)
-    : output || '(empty output)';
+  const result =
+    lines.length > maxLines
+      ? await summarizeOutput(output, command, maxLines)
+      : output || '(empty output)';
 
   // 9. Build and return result
   const header = `User ran: ${command}`;
@@ -226,23 +278,19 @@ async function handleHandOver(ctx: AgentContext, args: Record<string, unknown>):
 /**
  * Summarize long terminal output using LLM
  */
-async function summarizeOutput(
-  output: string,
-  command: string,
-  maxLines: number
-): Promise<string> {
+async function summarizeOutput(output: string, command: string, maxLines: number): Promise<string> {
   const response = await retryChat({
     model: MODEL,
     messages: [
       {
         role: 'system',
-        content: `Summarize terminal output. Keep under ${maxLines} lines. Preserve errors and exit codes.`
+        content: `Summarize terminal output. Keep under ${maxLines} lines. Preserve errors and exit codes.`,
       },
       {
         role: 'user',
-        content: `Command: ${command}\n\n${output}`
-      }
-    ]
+        content: `Command: ${command}\n\n${output}`,
+      },
+    ],
   });
   return response.message.content || '(summarization failed)';
 }
