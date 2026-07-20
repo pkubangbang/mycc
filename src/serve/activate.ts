@@ -28,6 +28,12 @@ export async function activateServe(port: number): Promise<void> {
     const msg = err instanceof Error ? err.message : String(err);
     console.log(chalk.red(`\nFailed to start Web UI: ${msg}`));
     console.log(chalk.gray('Terminal mode continues. Fix the error and try /serve again.'));
+    // Reset serve mode on the Coordinator so the terminal accepts input
+    // again. Critical for the --serve CLI flag path: the Coordinator set
+    // serveMode=true at startup (index.ts), and without this IPC it stays
+    // true — the stdin filter (index.ts) drops all keys except ESC/Ctrl+C,
+    // locking the terminal even though the REPL is alive.
+    if (process.send) process.send({ type: 'serve_mode', active: false });
     return;
   }
 

@@ -362,10 +362,14 @@ export async function main(): Promise<void> {
   });
 
   // ── SIGTERM handler ──
-  // Coordinator sends SIGTERM to process group on Ctrl+C.
-  // Gracefully dismiss all teammates so they don't become orphans.
-  process.on('SIGTERM', () => {
+  // Coordinator sends SIGTERM to the process group on Ctrl+C, and to the
+  // previous Lead on restart() (cwd change via /load). Gracefully dismiss
+  // teammates and stop the ServeHub so the Vite dev-server child and bound
+  // HTTP port are released before the process exits — otherwise restart()
+  // orphans them and the next /serve hits EADDRINUSE.
+  process.on('SIGTERM', async () => {
     ctx.team.dismissTeam(false);
+    await getServeHub().stop();
     process.exit(0);
   });
 
