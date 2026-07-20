@@ -210,14 +210,12 @@ class AgentIO {
         // down serve so the terminal prompt returns. A second ESC (after serve
         // has exited) triggers the standard neglection below.
         if (getServeHub().isRunning()) {
-          const hub = getServeHub();
-          void hub.stop(); // fire-and-forget; stop() sets running=false + abortInput()
-          this.setOutputCallback(null);
-          setResultCallback(null);
-          if (process.send) {
-            process.send({ type: 'serve_mode', active: false });
-          }
-          console.log(chalk.yellow('\nWeb UI stopped. Terminal input restored.'));
+          // gracefulShutdown() awaits hub.stop() internally — the HTTP port
+          // is released and serve_mode:false IPC is sent only after cleanup
+          // completes, so terminal input isn't restored before the port is free.
+          getServeHub().gracefulShutdown().catch((err) => {
+            agentIO.verbose('serve', `ESC shutdown error: ${String(err)}`);
+          });
           return; // skip standard neglection — do NOT set neglectedMode
         }
 
@@ -240,6 +238,21 @@ class AgentIO {
         if (this.onConditionReloadCallback) {
           this.onConditionReloadCallback().catch(() => {});
         }
+      } else if (msg.type === 'serve_shutdown') {
+        // Coordinator asked us to shut down serve before killing us
+        // (Ctrl+C with active serve, or /load restart). This prevents
+        // Vite orphan on Windows where lead.kill('SIGTERM') calls
+        // TerminateProcess — the SIGTERM handler never runs.
+        (async () => {
+          const hub = getServeHub();
+          try { if (hub.isRunning()) await hub.stop(); } catch { /* best effort */ }
+          this.setOutputCallback(null);
+          setResultCallback(null);
+          if (process.send) process.send({ type: 'serve_shutdown_done' });
+        })().catch(() => {
+          // Even if shutdown fails, tell the Coordinator we tried
+          if (process.send) process.send({ type: 'serve_shutdown_done' });
+        });
       }
     });
   }

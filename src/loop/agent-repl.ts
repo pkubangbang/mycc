@@ -369,7 +369,7 @@ export async function main(): Promise<void> {
   // orphans them and the next /serve hits EADDRINUSE.
   process.on('SIGTERM', async () => {
     ctx.team.dismissTeam(false);
-    await getServeHub().stop();
+    try { await getServeHub().stop(); } catch { /* stop() already best-effort internally */ }
     process.exit(0);
   });
 
@@ -430,6 +430,10 @@ export async function main(): Promise<void> {
       // Loop back — machine.run() will be called again
     }
   }
+
+  // Normal exit: shut down the serve hub (Vite dev server + HTTP port)
+  // so no child processes are orphaned when the Lead process exits.
+  await getServeHub().stop();
 
   // Signal Coordinator to exit
   process.send({ type: 'exit' });

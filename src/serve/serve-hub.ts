@@ -129,6 +129,9 @@ export class ServeHub {
 
   // ── Mode state ──
   private running = false;
+  // Re-entrancy guard for stop() — concurrent calls (ESC + exit button +
+  // disconnect timeout + serve_shutdown IPC) must not interleave teardown.
+  private stopping = false;
 
   /**
    * Set the triologue transcript path. When set, /history reads the JSONL
@@ -246,48 +249,61 @@ export class ServeHub {
   }
 
   async stop(): Promise<void> {
-    // 1. Set flag first — isRunning() immediately returns false
-    this.running = false;
+    // Re-entrancy guard: concurrent calls (ESC + exit button + disconnect
+    // timer + serve_shutdown IPC) must not interleave teardown sequences.
+    if (this.stopping) return;
+    this.stopping = true;
+    try {
+      // 1. Set flag first — isRunning() immediately returns false
+      this.running = false;
 
-    // 2. Wake blocked waitForInput() with null (before server cleanup)
-    this.abortInput();
+      // 1b. Notify Coordinator so stdin filtering stops synchronously.
+      //     Any path that calls stop() (ESC, exit button, timeout, restart)
+      //     now automatically restores terminal input — no per-path IPC needed.
+      if (process.send) process.send({ type: 'serve_mode', active: false });
 
-    // 3. Cancel any pending disconnect timer
-    this.cancelDisconnectTimer();
+      // 2. Wake blocked waitForInput() with null (before server cleanup)
+      this.abortInput();
 
-    // 4. Close all WebSocket connections
-    for (const ws of this.clients) {
-      try { ws.close(); } catch { /* ignore */ }
+      // 3. Cancel any pending disconnect timer
+      this.cancelDisconnectTimer();
+
+      // 4. Close all WebSocket connections
+      for (const ws of this.clients) {
+        try { ws.close(); } catch { /* ignore */ }
+      }
+      this.clients.clear();
+
+      // 5. Remove our upgrade handler and close WS server
+      if (this.httpServer && this.upgradeHandler) {
+        this.httpServer.removeListener('upgrade', this.upgradeHandler);
+        this.upgradeHandler = null;
+      }
+      if (this.wsServer) {
+        try { this.wsServer.close(); } catch { /* ignore — server may already be closing */ }
+        this.wsServer = null;
+      }
+
+      // 6. Close Vite
+      if (this.viteServer) {
+        try { await this.viteServer.close(); } catch { /* ignore */ }
+        this.viteServer = null;
+      }
+
+      // 7. Close HTTP server
+      if (this.httpServer) {
+        await new Promise<void>((resolve) => {
+          this.httpServer!.close(() => resolve());
+        });
+        this.httpServer = null;
+      }
+
+      this.expressApp = null;
+      this.messageLog = [];
+      this.steeringQueue = [];
+    } finally {
+      this.stopping = false;
     }
-    this.clients.clear();
-
-    // 5. Remove our upgrade handler and close WS server
-    if (this.httpServer && this.upgradeHandler) {
-      this.httpServer.removeListener('upgrade', this.upgradeHandler);
-      this.upgradeHandler = null;
-    }
-    if (this.wsServer) {
-      this.wsServer.close();
-      this.wsServer = null;
-    }
-
-    // 6. Close Vite
-    if (this.viteServer) {
-      try { await this.viteServer.close(); } catch { /* ignore */ }
-      this.viteServer = null;
-    }
-
-    // 7. Close HTTP server
-    if (this.httpServer) {
-      await new Promise<void>((resolve) => {
-        this.httpServer!.close(() => resolve());
-      });
-      this.httpServer = null;
-    }
-
-    this.expressApp = null;
-    this.messageLog = [];
-    this.steeringQueue = [];
   }
 
   // ===========================================================================
@@ -570,7 +586,9 @@ export class ServeHub {
         }
         break;
       case 'exit':
-        void this.gracefulShutdown();
+        this.gracefulShutdown().catch((err) => {
+          agentIO.verbose('serve', `exit shutdown error: ${String(err)}`);
+        });
         break;
       case 'interrupt':
         // Like ESC — forward to agentIO neglection handler.
@@ -627,7 +645,9 @@ export class ServeHub {
 
   private onDisconnectTimeout(): void {
     // No client reconnected within 30s — graceful shutdown
-    void this.gracefulShutdown();
+    this.gracefulShutdown().catch((err) => {
+      agentIO.verbose('serve', `disconnect shutdown error: ${String(err)}`);
+    });
   }
 
   // ===========================================================================
@@ -635,10 +655,10 @@ export class ServeHub {
   // ===========================================================================
 
   /**
-   * Called by: Exit button ({ type: 'exit' } WS message), disconnect timeout.
-   * ESC uses the same logic but is triggered via agentIO neglection handler.
+   * Called by: Exit button ({ type: 'exit' } WS message), disconnect timeout,
+   * and the ESC neglection handler in agent-io.ts.
    */
-  private async gracefulShutdown(): Promise<void> {
+  async gracefulShutdown(): Promise<void> {
     this.cancelDisconnectTimer();
     await this.stop(); // stop() sets running=false + abortInput() internally
     // clean up output hooks

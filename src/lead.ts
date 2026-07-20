@@ -13,6 +13,7 @@
 import { validateEnv, loadEnv } from './config.js';
 import { main } from './loop/agent-repl.js';
 import { agentIO } from './loop/agent-io.js';
+import { getServeHub } from './serve/serve-registry.js';
 
 // ---------------------------------------------------------------------------
 // Terminal Title
@@ -47,7 +48,8 @@ if (!envResult.valid) {
 // Entry Point
 // ---------------------------------------------------------------------------
 
-main().catch((err: Error) => {
+main().catch(async (err: Error) => {
   console.error('Fatal error:', err);
+  try { await getServeHub().stop(); } catch { /* best effort */ }
   process.exit(1);
 });
