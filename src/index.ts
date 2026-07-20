@@ -19,7 +19,7 @@
 import { ChildProcess } from 'child_process';
 import { resolve } from 'path';
 import chalk from 'chalk';
-import { isVerbose, validateEnv, ensureToolTypeImports, shouldRunSetup, loadEnv } from './config.js';
+import { isVerbose, validateEnv, ensureToolTypeImports, shouldRunSetup, loadEnv, shouldServe } from './config.js';
 import { agentIO } from './loop/agent-io.js';
 import { parseKeys, isCtrlC, isEscape } from './utils/key-parser.js';
 import { getProjectRoot, spawnTsx } from './utils/tsx-run.js';
@@ -47,7 +47,9 @@ if (process.stdout.isTTY) {
 type CoordinatorMessage =
   | { type: 'ready' }
   | { type: 'restart'; sessionId: string; cwd: string }
-  | { type: 'exit' };
+  | { type: 'exit' }
+  | { type: 'serve_mode'; active: boolean }
+  | { type: 'serve_shutdown_done' };
 
 // ---------------------------------------------------------------------------
 // Setup Mode
@@ -98,6 +100,20 @@ function runCoordinator(): void {
   let lead: ChildProcess | null = null;
   let isRestarting = false;
 
+  // Serve mode: when active, Coordinator filters stdin (only ESC and Ctrl+C
+  // are forwarded). Set via IPC from Lead (/serve command) or directly from
+  // the --serve CLI flag at startup.
+  let serveMode = shouldServe();
+
+  // Graceful serve-shutdown state (Ctrl+C while serve is active).
+  // The Coordinator sends a 'serve_shutdown' IPC and waits up to 3 s for
+  // 'serve_shutdown_done' before force-killing the Lead — this gives the
+  // Lead time to close the Vite dev server and HTTP port cleanly instead of
+  // orphaning them on Windows (where lead.kill() → TerminateProcess, no
+  // signal handler runs).
+  let shuttingDownServe = false;
+  let serveShutdownTimer: ReturnType<typeof setTimeout> | null = null;
+
   // Flags to forward to lead processes
   const skipHealthCheck = process.argv.includes('--skip-healthcheck');
 
@@ -147,6 +163,20 @@ function runCoordinator(): void {
       } else if (msg.type === 'exit') {
         // Lead requested exit - exit coordinator cleanly with code 0
         process.exit(0);
+      } else if (msg.type === 'serve_mode') {
+        // Lead toggled serve mode — update stdin filter accordingly
+        serveMode = msg.active;
+      } else if (msg.type === 'serve_shutdown_done') {
+        // Lead finished shutting down Vite after our 'serve_shutdown' IPC.
+        // Now it's safe to kill the Lead — the port is released.
+        if (shuttingDownServe) {
+          if (serveShutdownTimer) { clearTimeout(serveShutdownTimer); serveShutdownTimer = null; }
+          shuttingDownServe = false;
+          serveMode = false;
+          forceKillLead();
+          cleanup();
+          process.exit(130);
+        }
       }
     });
 
@@ -172,8 +202,36 @@ function runCoordinator(): void {
     isRestarting = true;
     const previousLead = lead;
 
-    // Kill old Lead cleanly
+    // Serve mode does not survive restart — a new Lead process starts
+    // fresh (ServeHub is a Lead-process singleton, closed on process exit).
+    const wasServeActive = serveMode;
+    serveMode = false;
+
+    // Kill old Lead. When serve is active, ask the Lead to shut down Vite
+    // via IPC before SIGTERM so the next Lead won't hit EADDRINUSE on
+    // /serve. This is critical on Windows where lead.kill('SIGTERM') calls
+    // TerminateProcess — the SIGTERM handler never runs.
     if (previousLead) {
+      if (wasServeActive) {
+        // Graceful: ask Lead to shut down serve, wait up to 1.5 s
+        let shutdownDone = false;
+        const onShutdownDone = (msg: CoordinatorMessage) => {
+          if (msg.type === 'serve_shutdown_done') shutdownDone = true;
+        };
+        previousLead.on('message', onShutdownDone);
+        previousLead.send({ type: 'serve_shutdown' });
+        await new Promise<void>((resolve) => {
+          const deadline = setTimeout(() => resolve(), 1500);
+          const check = setInterval(() => {
+            if (shutdownDone || previousLead.killed) {
+              clearTimeout(deadline);
+              clearInterval(check);
+              resolve();
+            }
+          }, 50);
+        });
+        previousLead.off('message', onShutdownDone);
+      }
       previousLead.kill('SIGTERM');
       previousLead.unref();
     }
@@ -182,15 +240,28 @@ function runCoordinator(): void {
     const currentLead = startLead(['--session', sessionId], cwd);
     lead = currentLead;
 
-    // Wait for ready signal
+    // Wait for ready signal. If the new Lead exits before sending 'ready',
+    // exit the Coordinator instead of hanging forever.
+    let settled = false;
     await new Promise<void>((resolve) => {
       const onReady = (msg: CoordinatorMessage) => {
-        if (msg.type === 'ready') {
+        if (msg.type === 'ready' && !settled) {
+          settled = true;
           currentLead.off('message', onReady);
+          currentLead.off('exit', onFail);
           resolve();
         }
       };
+      const onFail = (_code: number | null) => {
+        if (!settled) {
+          settled = true;
+          currentLead.off('message', onReady);
+          console.error(chalk.red('New lead process exited unexpectedly during restart.'));
+          process.exit(1);
+        }
+      };
       currentLead.on('message', onReady);
+      currentLead.on('exit', onFail);
     });
 
     isRestarting = false;
@@ -207,32 +278,41 @@ function runCoordinator(): void {
     process.stdin.resume();
 
     process.stdin.on('data', (data: Buffer) => {
-      // Ctrl+C - kill entire process group and exit
-      // Using negative PID sends signal to the whole process group,
-      // which includes Lead and all teammates (grandchildren).
-      // SIGTERM allows graceful shutdown (teammates have SIGHUP/SIGTERM handlers).
-      // Fallback to SIGKILL after 5s if processes haven't exited.
+      // Ctrl+C — exit the process tree.
+      // When serve mode is active we ask the Lead to shut down the Vite
+      // dev server via IPC before killing it, so the HTTP port is released
+      // cleanly (avoids orphaning Vite on Windows where lead.kill() calls
+      // TerminateProcess and no signal handler runs).
       if (isCtrlC(data)) {
         console.log(chalk.yellow('\nCtrl+C - Exiting...'));
-        if (lead) {
-          try {
-            // Send SIGTERM to the entire process group
-            process.kill(-lead.pid!, 'SIGTERM');
-          } catch {
-            // Process group might not exist, fall back to direct kill
-            lead.kill('SIGTERM');
-          }
-          // Fallback: SIGKILL after 5 seconds if still alive
-          const forceKillTimeout = setTimeout(() => {
-            try {
-              process.kill(-lead!.pid!, 'SIGKILL');
-            } catch {
-              lead!.kill('SIGKILL');
-            }
-          }, 5000);
-          // Don't let this timeout keep the process alive
-          if (forceKillTimeout.unref) forceKillTimeout.unref();
+
+        // Second Ctrl+C while already shutting down serve: skip the IPC
+        // round-trip and force-kill immediately.
+        if (shuttingDownServe) {
+          if (serveShutdownTimer) { clearTimeout(serveShutdownTimer); serveShutdownTimer = null; }
+          shuttingDownServe = false;
+          forceKillLead();
+          cleanup();
+          process.exit(130);
         }
+
+        // Serve mode active — give the Lead a chance to shut down Vite.
+        if (lead && serveMode) {
+          shuttingDownServe = true;
+          serveShutdownTimer = setTimeout(() => {
+            serveShutdownTimer = null;
+            shuttingDownServe = false;
+            forceKillLead();
+            cleanup();
+            process.exit(130);
+          }, 3000);
+          if (serveShutdownTimer.unref) serveShutdownTimer.unref();
+          lead.send({ type: 'serve_shutdown' });
+          return;
+        }
+
+        // No serve running — kill immediately.
+        forceKillLead();
         cleanup();
         process.exit(130);
       }
@@ -240,6 +320,15 @@ function runCoordinator(): void {
       // ESC - send neglection IPC
       if (isEscape(data)) {
         lead?.send({ type: 'neglection' });
+        return;
+      }
+
+      // Serve mode: silently drop all other keys (terminal is read-only).
+      // ESC (above) and Ctrl+C (above) are the only forwarded keys.
+      // The real safety boundary is in Lead: when serve is running,
+      // WebInputProvider does not create a LineEditor, so any leaked
+      // keys have no receiver and are silently dropped.
+      if (serveMode) {
         return;
       }
 
@@ -255,6 +344,30 @@ function runCoordinator(): void {
         lead?.send({ type: 'key-batch', keys });
       }
     });
+  }
+
+  /**
+   * Force-kill the current Lead process (SIGTERM, with SIGKILL fallback
+   * after 5 s). Safe to call when lead is null (no-op).
+   *
+   * On Unix the negative-PID kill targets the process group (if the Lead is
+   * a group leader); on Windows it throws and we fall back to direct kill.
+   */
+  function forceKillLead(): void {
+    if (!lead) return;
+    try {
+      process.kill(-lead.pid!, 'SIGTERM');
+    } catch {
+      lead.kill('SIGTERM');
+    }
+    const tk = setTimeout(() => {
+      try {
+        process.kill(-lead!.pid!, 'SIGKILL');
+      } catch {
+        lead!.kill('SIGKILL');
+      }
+    }, 5000);
+    if (tk.unref) tk.unref();
   }
 
   function cleanup(): void {

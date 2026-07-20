@@ -148,6 +148,125 @@ Currently used by:
 - LLM calls use AbortController internally (correct for stream handling)
 - Hint round uses AbortController internally (correct for stream handling)
 
+### steering (WebUI mid-task direction)
+
+**Steering** is a webui-only feature that lets the user queue direction for the
+agent *while the LLM is mid-run*, without interrupting it. The user types into
+the chat input while `isRunning` is true; the note is buffered server-side and
+consumed by the agent at the next natural stopping point. It is the webui
+analogue of talking over the LLM's shoulder, and it deliberately does NOT flip
+the prompt back on (the LLM keeps working — the user is steering, not
+replacing the current turn).
+
+The steering queue lives in `ServeHub` (`src/serve/serve-hub.ts`):
+
+- `steeringQueue: string[]` — an **ephemeral, in-memory** buffer. It is never
+  persisted, and it is wiped on `stop()`. This is the key contrast with the
+  **mail** system, which is file-backed and meant for *inter-agent*
+  communication; steering is *user→agent* direction for the current run only.
+- `pushSteer(text)` — fire-and-forget; appends to the queue and broadcasts a
+  `steer-echo` to all clients so every connected buffer bar shows the note.
+- `drainSteering()` — consume-and-clear; returns all queued notes and
+  broadcasts `steer-flush` so the frontend buffer bars clear.
+- `getSteeringNotes()` — peek without consuming (PROMPT uses this to decide
+  whether to synthesize before draining).
+
+**WebSocket protocol** (`WsMessage.type`):
+
+| Direction | type | meaning |
+|-----------|------|---------|
+| client → server | `steer` | user queued a steering note (`text`) |
+| server → client | `steer-echo` | note echoed to all clients (show in buffer bar) |
+| server → client | `steer-flush` | queue drained; clear all buffer bars |
+
+**Two consumption paths** — this is the central design. Which path fires
+depends on whether the queued notes are still *in-flight* (the run they were
+steering is still going) or *stale* (that run was interrupted and the user
+started a fresh turn):
+
+1. **COLLECT — in-flight REMINDER injection** (`src/loop/states/collect.ts`,
+   step 2c). When the LLM naturally reaches COLLECT mid-run with notes still
+   queued, the notes are *current* direction for the ongoing work. They are
+   drained and injected verbatim as a `REMINDER` note:
+
+   ```
+   Steering notes from the user (mid-task direction):
+   (1) <note 1>
+   (2) <note 2>
+   ```
+
+   No synthesis — the notes are actionable as-is. Reuses the existing
+   `REMINDER` NoteCategory (no new category needed).
+
+2. **PROMPT — stale-note synthesis via forkChat** (`src/loop/states/prompt.ts`).
+   If the user pressed ESC (or hit 停止) to interrupt the run, then submitted a
+   fresh query, the queued notes are *stale*: the run they were steering is
+   gone, so their actionable direction no longer applies, but they may still
+   carry informational value (context, constraints, references). PROMPT peeks
+   via `getSteeringNotes()`; if non-empty, it runs `synthesizeWithSteering()`
+   — a `forkChat` call with a tight `SYNTHESIS_RETRY_CONFIG`
+   (`firstTokenTimeoutMs: 10s`, `responseTimeoutMs: 30s`, `maxRetries: 1`) —
+   that merges the stale notes + fresh query into a single user-voiced prompt.
+   The synthesized text *replaces* the raw fresh query as the user message.
+   The queue is drained after synthesis **regardless of success** (so COLLECT
+   never re-injects the same notes — no double-count). On any failure or empty
+   synthesis, the raw fresh query is used as the fallback. The synthesis call
+   itself is wrapped in `ctx.core.escAware(...)` so a second ESC aborts it
+   cleanly and falls back to the raw query.
+
+   The synthesis path only fires when the query came from the input provider
+   (a genuine fresh post-interrupt submission) — not for slash commands or
+   restored initial queries, which represent automated/restored state rather
+   than a fresh user submission.
+
+**Frontend behavior** (`src/web/src/main.ts`, `ChatInput.vue`,
+`SteeringBuffer.vue`):
+
+- `ChatInput.send()` routes by state: when `isRunning`, `send()` calls
+  `sendSteer(text)` instead of `sendInput(text)`. The placeholder switches to
+  a "等待回复中…" hint so the user knows their typing will steer, not submit.
+- `sendSteer` locally echoes the note as a user chat bubble, then sends
+  `{type:'steer', text}` over the WS. It deliberately does **not** flip
+  `isWaiting`/`isRunning` (the LLM is still working) and does **not** push to
+  `state.steeringBuffer` locally — the buffer bar is populated solely by the
+  server's `steer-echo` broadcast (see "Single source of truth" below).
+- `SteeringBuffer.vue` renders an amber `🧭 转向` chip bar between the
+  StatusBar and the ChatLog, showing `state.steeringBuffer`. It appears only
+  when there are queued notes (`v-if="notes.length > 0"`).
+- On `steer-echo`, the note is pushed to `steeringBuffer` (bar grows). On
+  `steer-flush`, `steeringBuffer` is cleared (bar disappears).
+
+**Refresh / reconnect survival:** the buffer bar is restored on a page
+refresh or WS reconnect. The `/history` endpoint returns
+`{ messages, steeringBuffer }`, where `steeringBuffer` is a **peek** (via
+`getSteeringNotes()`, not a drain) of the current in-memory queue. On load,
+`fetchHistory()` splices the peeked notes into `state.steeringBuffer`, so the
+bar reappears with the still-queued notes; the notes remain queued for
+COLLECT/PROMPT to drain later, and the next `steer-flush` broadcast clears
+the restored bar. This survives any refresh within the same serve session
+(serve stays running across a page refresh — only `stop()` clears the queue).
+It does NOT survive a serve stop/restart — the queue is ephemeral by design.
+
+**Single source of truth for the buffer bar:** the originating client does
+NOT push to `steeringBuffer` locally in `sendSteer` — it only echoes the note
+as a user chat bubble. The buffer bar is populated solely by the server's
+`steer-echo` broadcast, which reaches all clients (including the sender).
+This avoids a double-push that would otherwise show the note twice on the
+originating client.
+
+**Why two paths instead of always injecting at COLLECT?** If the user
+interrupts the run, COLLECT for that run never happens — the notes would be
+stranded. PROMPT synthesis rescues them by folding their informational value
+into the next turn's query, while explicitly discarding the now-stale
+actionable direction. If the run is *not* interrupted, COLLECT drains them as
+live REMINDERs. The two paths are mutually exclusive: PROMPT drains first
+(when it fires), so COLLECT sees an empty queue on the immediately following
+pass.
+
+See also: **esc-aware wrap-up** (the interrupt mechanism that makes notes
+"stale"), **neglection and esc return** (ESC handling), and the WebUI section
+below. `changelog-todo.md` tracks the open "webui: 允许 steering buffer" item.
+
 ### slash commands
 
 User-initiated commands starting with `/` that are handled outside the LLM tool system. They provide meta-operations like viewing help, managing sessions, switching modes, and managing knowledge bases.
@@ -923,14 +1042,26 @@ docker build -t mycc .
 docker run -it mycc
 ```
 
-## WebUI (Experimental)
+## WebUI
 
-An experimental Vue-based WebUI is available in the `feat/serve-webui` branch. It provides a browser-based chat interface for interacting with mycc:
-- Markdown rendering for LLM responses
-- Session management via web interface
-- Built with Vue 3 and modern CSS
+A Vue 3-based WebUI is served by mycc itself via an embedded Express + Vite +
+WebSocket stack (`src/serve/serve-hub.ts`, `src/web/`). It provides a
+browser-based chat interface as an alternative to the terminal REPL:
 
-This is a Work-In-Progress feature and is not yet merged into main.
+- Markdown rendering for LLM responses (letter-box → chat bubbles)
+- Interactive **cards** replacing terminal `ask()` prompts (input / confirm /
+  choice) — see `CardItem.vue`
+- Session history via the `/history` endpoint, backed by the durable
+  triologue JSONL transcript (survives serve stop/restart and page closes)
+- 30s disconnect-reconnect timer with graceful warm shutdown
+- **Steering** — mid-task user direction queued while the LLM is running;
+  see the **steering (WebUI mid-task direction)** chapter above for the full
+  data flow, the two consumption paths (COLLECT in-flight REMINDER vs PROMPT
+  forkChat synthesis), and the ephemeral vs persistent design.
+
+The WebUI is merged into `main`. For the developer reference (component
+layout, WS protocol, input/card bridges, reconnect replay), see
+`src/web/README.md`.
 
 ## Reference Documents
 

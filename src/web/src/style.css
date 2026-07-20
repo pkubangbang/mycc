@@ -1,0 +1,142 @@
+/* Global reset — remove the browser default 8px body margin that appears as
+   a slim white border around the chat. */
+
+*,
+*::before,
+*::after {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html, body, #app {
+  height: 100%;
+}
+
+/* ── Theme: Light (default) ── */
+:root {
+  --bg-app: #ededed;
+  --bg-chat-log: #ededed;
+  --bg-input: #f7f7f7;
+  --bg-input-field: #fff;
+  --bg-input-field-disabled: #f0f0f0;
+  --bg-status: #2e2e2e;
+  --bg-status-btn: #4a4a4a;
+  --bg-status-btn-hover: #5a5a5a;
+  --bg-steering: #fff3cd;
+  --bg-steering-chip: #ffe082;
+  --bg-scroll-btn: #fff;
+  --bg-scroll-btn-hover: #f5f5f5;
+
+  --text-primary: #333;
+  --text-secondary: #666;
+  --text-muted: #999;
+  --text-input-disabled: #999;
+  --text-status: #fff;
+  --text-status-btn: #bbb;
+  --text-steering: #856404;
+  --text-steering-chip: #665500;
+
+  --border-color: #e0e0e0;
+  --border-input: #d9d9d9;
+  --border-scroll: #d9d9d9;
+  --border-steering: #ffe082;
+
+  --bubble-user-bg: #95ec69;
+  --bubble-user-text: #000;
+  --bubble-result-bg: #fff;
+  --bubble-result-text: #333;
+  --bubble-result-border: #b7eb8f;
+  --bubble-result-shadow: 0 0 6px 1px rgba(122, 200, 100, 0.45);
+  --bubble-log-bg: #fff;
+  --bubble-log-text: #666;
+  --bubble-log-border: #e5e5e5;
+  --bubble-warn-bg: #fffbe6;
+  --bubble-warn-text: #ad6800;
+  --bubble-warn-border: #ffe58f;
+  --bubble-error-bg: #fff1f0;
+  --bubble-error-text: #cf1322;
+  --bubble-error-border: #ffa39e;
+  --bubble-prompt-bg: #e6f7ff;
+  --bubble-prompt-text: #003a8c;
+  --bubble-prompt-border: #91d5ff;
+
+  --md-code-bg: rgba(0, 0, 0, 0.06);
+  --md-pre-bg: #f6f8fa;
+  --md-blockquote-border: #d0d7de;
+  --md-blockquote-text: #666;
+  --md-link: #0969da;
+  --md-table-border: #d0d7de;
+  --md-hr: #e5e5e5;
+  --md-header-text: #999;
+
+  --scroll-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+
+  --accent: #07c160;
+  --accent-disabled: #a0d8b6;
+  --accent-text: #fff;
+}
+
+/* ── Theme: Dark ── */
+:root.dark {
+  --bg-app: #1a1a2e;
+  --bg-chat-log: #1a1a2e;
+  --bg-input: #16213e;
+  --bg-input-field: #0f3460;
+  --bg-input-field-disabled: #1a1a2e;
+  --bg-status: #0f3460;
+  --bg-status-btn: #1a1a2e;
+  --bg-status-btn-hover: #16213e;
+  --bg-steering: #2d1f1a;
+  --bg-steering-chip: #5c3a20;
+  --bg-scroll-btn: #16213e;
+  --bg-scroll-btn-hover: #0f3460;
+
+  --text-primary: #e0e0e0;
+  --text-secondary: #b0b0b0;
+  --text-muted: #888;
+  --text-input-disabled: #777;
+  --text-status: #e0e0e0;
+  --text-status-btn: #aaa;
+  --text-steering: #e6a817;
+  --text-steering-chip: #d4a017;
+
+  --border-color: #2a2a4a;
+  --border-input: #3a3a5a;
+  --border-scroll: #3a3a5a;
+  --border-steering: #5c3a20;
+
+  --bubble-user-bg: #1b5e20;
+  --bubble-user-text: #c8e6c9;
+  --bubble-result-bg: #1e2a3a;
+  --bubble-result-text: #d0d8e8;
+  --bubble-result-border: #2e4a3e;
+  --bubble-result-shadow: 0 0 6px 1px rgba(80, 160, 80, 0.25);
+  --bubble-log-bg: #1e2a3a;
+  --bubble-log-text: #b0b0b0;
+  --bubble-log-border: #2a3a4a;
+  --bubble-warn-bg: #2d2410;
+  --bubble-warn-text: #e6a817;
+  --bubble-warn-border: #5c4a10;
+  --bubble-error-bg: #2d1010;
+  --bubble-error-text: #ff8080;
+  --bubble-error-border: #5c2020;
+  --bubble-prompt-bg: #0d2137;
+  --bubble-prompt-text: #7ec8e3;
+  --bubble-prompt-border: #1a4a6a;
+
+  --md-code-bg: rgba(255, 255, 255, 0.08);
+  --md-pre-bg: #0f1923;
+  --md-blockquote-border: #3a5a7a;
+  --md-blockquote-text: #a0b0c0;
+  --md-link: #58a6ff;
+  --md-table-border: #3a4a5a;
+  --md-hr: #2a3a4a;
+  --md-header-text: #888;
+
+  --scroll-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+
+  --accent: #2ea854;
+  --accent-disabled: #2a5a3a;
+  --accent-text: #fff;
+}

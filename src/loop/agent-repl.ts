@@ -14,7 +14,7 @@ import { healthCheck } from '../engine/chat-provider.js';
 import { ParentContext } from '../context/parent-context.js';
 import { getSessionId } from '../session/index.js';
 import { slashRegistry } from '../slashes/index.js';
-import { getTokenThreshold, isDebuggingEval, getEmbeddingModel } from '../config.js';
+import { getTokenThreshold, isDebuggingEval, shouldServe, getServePort, getServeHost, getEmbeddingModel } from '../config.js';
 import { Triologue } from './triologue.js';
 import { agentIO } from './agent-io.js';
 import { shouldSkipHealthCheck } from '../config.js';
@@ -29,6 +29,9 @@ import { AgentStateMachine } from './state-machine.js';
 import { RequestEmbeddingTracker } from './request-embedding.js';
 import type { StateHandler } from './state-machine.js';
 import { UserInputProvider } from './input-provider.js';
+import { WebInputProvider } from '../serve/web-input-provider.js';
+import { getServeHub } from '../serve/serve-registry.js';
+import { activateServe } from '../serve/activate.js';
 import { handlePrompt, setInitialQuery } from './states/prompt.js';
 import { handleSlash } from './states/slash.js';
 import { handleCollect } from './states/collect.js';
@@ -139,6 +142,11 @@ export async function main(): Promise<void> {
   // Initialize session (restore or create new)
   const sessionInit = await initializeSession();
   const { sessionFilePath, triologuePath, restoredPair, initialQuery } = sessionInit;
+
+  // Wire the durable transcript path into ServeHub so the /history endpoint
+  // can read the on-disk triologue JSONL (survives serve stop/restart and
+  // page closes) instead of the ephemeral in-memory messageLog.
+  getServeHub().setTranscriptPath(triologuePath);
 
   // Pass initial query to prompt handler
   setInitialQuery(initialQuery);
@@ -303,7 +311,11 @@ export async function main(): Promise<void> {
   };
 
   // ── Create state machine ──
-  const inputProvider = new UserInputProvider(() => (ctx.core as Core).getMode());
+  // WebInputProvider is the sole InputProvider. It checks hub.isRunning()
+  // internally to route between WebSocket (serve mode) and the terminal
+  // (UserInputProvider). No runtime swap needed.
+  const userInputProvider = new UserInputProvider(() => (ctx.core as Core).getMode());
+  const inputProvider = new WebInputProvider(getServeHub(), userInputProvider);
   const machine = new AgentStateMachine(
     triologue,
     ctx,
@@ -350,15 +362,31 @@ export async function main(): Promise<void> {
   });
 
   // ── SIGTERM handler ──
-  // Coordinator sends SIGTERM to process group on Ctrl+C.
-  // Gracefully dismiss all teammates so they don't become orphans.
-  process.on('SIGTERM', () => {
+  // Coordinator sends SIGTERM to the process group on Ctrl+C, and to the
+  // previous Lead on restart() (cwd change via /load). Gracefully dismiss
+  // teammates and stop the ServeHub so the Vite dev-server child and bound
+  // HTTP port are released before the process exits — otherwise restart()
+  // orphans them and the next /serve hits EADDRINUSE.
+  process.on('SIGTERM', async () => {
     ctx.team.dismissTeam(false);
+    try { await getServeHub().stop(); } catch { /* stop() already best-effort internally */ }
     process.exit(0);
   });
 
   // Ready
   process.send({ type: 'ready' });
+
+  // ── Serve mode (--serve CLI flag): start web UI before the REPL loop ──
+  // The /serve slash command path activates serve mid-session instead.
+  if (shouldServe()) {
+    try {
+      await activateServe(getServePort(), getServeHost());
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.log(chalk.red(`Failed to start web UI: ${msg}`));
+      console.log(chalk.gray('Continuing in terminal mode.'));
+    }
+  }
 
   // ── Run state machine (REPL loop) with resilient retry ──
   // Only Ctrl+C (handled by Coordinator), empty input, 'exit'/'q'/'quit',
@@ -402,6 +430,10 @@ export async function main(): Promise<void> {
       // Loop back — machine.run() will be called again
     }
   }
+
+  // Normal exit: shut down the serve hub (Vite dev server + HTTP port)
+  // so no child processes are orphaned when the Lead process exits.
+  await getServeHub().stop();
 
   // Signal Coordinator to exit
   process.send({ type: 'exit' });

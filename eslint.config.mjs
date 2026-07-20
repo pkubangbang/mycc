@@ -8,6 +8,7 @@ export default tseslint.config(
   {
     ignores: [
       'src/tests/**',
+      'src/web/**',
       'dist/**',
       'node_modules/**',
       '*.config.js',

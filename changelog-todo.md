@@ -68,3 +68,7 @@ When updating the changelog, use the following procedure:
 - [ ] tool loader may have memory leak
 - [ ] subsequent triologue.note() call will not show in the jsonl.
 - [ ] LLM blind-spot: I see a tool/skill that could help me, but I don't load it because I think I already know the domain.
+
+- [ ] webui: 详细日志只保留 brief, assistant, question, 还有letterbox
+- [ ] webui: 退出按钮增加一个modal确认框
+- [ ] webui: 允许steering buffer

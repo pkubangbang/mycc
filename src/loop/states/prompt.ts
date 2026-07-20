@@ -19,6 +19,8 @@
  */
 
 import chalk from 'chalk';
+import * as fs from 'fs';
+import * as path from 'path';
 import { AgentState } from '../state-machine.js';
 import type { MachineEnv, TurnVars, PassData, HandlerResult } from '../state-machine.js';
 import { loader } from '../../context/shared/loader.js';
@@ -28,6 +30,94 @@ import { setSlashQuery } from './slash.js';
 import { evaluateWrapUp, clearWrapUp } from '../esc-wrap-up.js';
 import { extractKeywords } from '../keyword-extractor.js';
 import { isDebuggingPrompt } from '../../config.js';
+import { forkChat } from '../../engine/chat-provider.js';
+import type { RetryConfig } from '../../engine/chat-helpers.js';
+import { getServeHub } from '../../serve/serve-registry.js';
+import { agentIO } from '../agent-io.js';
+
+/**
+ * Tighter retry config for steering synthesis. The synthesized query is a
+ * short text-only merge of stale steering notes + a fresh user query, so the
+ * generous defaults would cause unacceptable delays on network hiccups.
+ */
+const SYNTHESIS_RETRY_CONFIG: Partial<RetryConfig> = {
+  firstTokenTimeoutMs: 10_000,
+  responseTimeoutMs: 30_000,
+  maxRetries: 1,
+  baseDelayMs: 500,
+  maxDelayMs: 3_000,
+};
+
+/**
+ * Synthesize stale steering notes with a fresh user query via forkChat.
+ *
+ * Used when the user interrupted the LLM with ESC and then submitted a new
+ * query: any steering notes they queued during the previous run are now
+ * stale (the run they were steering is gone), but they may still carry
+ * informational value. Rather than discarding them or injecting stale
+ * actionable intent, we ask the LLM to merge the steering notes into a
+ * combined prompt that preserves the informational value while removing
+ * stale direction.
+ *
+ * The synthesized text REPLACES the raw fresh query as the user message.
+ * Steering notes are drained (consumed) after synthesis.
+ *
+ * @param messages - Current triologue messages (caller's copy before mutation)
+ * @param tools - All available tools (for prompt cache preservation)
+ * @param freshQuery - The fresh user query submitted after the interrupt
+ * @param steeringNotes - Stale steering notes queued during the prior run
+ * @returns Synthesized prompt, or the raw freshQuery if synthesis fails
+ */
+async function synthesizeWithSteering(
+  messages: Parameters<typeof forkChat>[0],
+  tools: Parameters<typeof forkChat>[1],
+  freshQuery: string,
+  steeringNotes: string[],
+  signal?: AbortSignal,
+): Promise<string> {
+  const notesBlock = steeringNotes.map((n, i) => `(${i + 1}) ${n}`).join('\n');
+  const synthesisPrompt = `While you were working, the user queued the following steering notes (mid-task direction). The work they were steering has been interrupted, so these notes may be stale as actionable direction, but they may still carry informational value. Your latest fresh query is also given below.
+
+Queued steering notes:
+"""
+${notesBlock}
+"""
+
+Fresh user query:
+"""
+${freshQuery}
+"""
+
+Synthesize a single combined user prompt that:
+1. Preserves the informational value of the steering notes (context, constraints, references, facts).
+2. Drops any stale actionable direction that no longer applies after the interrupt.
+3. Integrates the fresh user query as the primary intent.
+4. Is written in the user's voice, as a natural instruction — NOT a meta-description of the merge.
+
+Output ONLY the synthesized user prompt — no preamble, no sign-off, no quotes.`;
+
+  try {
+    const synthesized = await forkChat(
+      messages,
+      tools,
+      synthesisPrompt,
+      signal,
+      'none',
+      SYNTHESIS_RETRY_CONFIG,
+    );
+    const clean = synthesized.trim();
+    if (clean.length === 0) {
+      agentIO.verbose('steer', 'Synthesis returned empty text; using raw fresh query');
+      return freshQuery;
+    }
+    agentIO.verbose('steer', `Synthesized query: ${clean.slice(0, 120)}${clean.length > 120 ? '...' : ''}`);
+    return clean;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    agentIO.verbose('steer', `Synthesis failed (${msg}); using raw fresh query`);
+    return freshQuery;
+  }
+}
 
 /** Captured once per machine lifetime */
 let bookmarkCaptured = false;
@@ -123,6 +213,57 @@ export async function handlePrompt(
   if (query.trim().startsWith('/')) {
     setSlashQuery(query.trim());
     return AgentState.SLASH;
+  }
+
+  // Steering synthesis (webui-only): if serve is running and the user queued
+  // steering notes during the previous (now-interrupted) run, synthesize them
+  // with the fresh query via forkChat. This preserves informational value
+  // while dropping stale actionable direction. Only applies when the query
+  // came from the input provider (not slash/initial-query), since those paths
+  // represent restored/automated state, not a fresh post-interrupt submission.
+  // At this point query is guaranteed non-null (the input-provider loop sets
+  // it only after the null-check, and the slash/initial paths set non-null),
+  // so we narrow with a const binding for type safety inside the closure.
+  const hub = getServeHub();
+  if (hub.isRunning() && query !== null) {
+    const staleNotes = hub.getSteeringNotes();
+    if (staleNotes.length > 0) {
+      const freshQuery: string = query;
+      const fullMessages = [...triologue.getMessages()];
+      const tools = loader.getToolsForScope(env.scope);
+      const synthesized = await env.ctx.core.escAware(
+        async (ac) => synthesizeWithSteering(fullMessages, tools, freshQuery, staleNotes, ac.signal),
+        () => freshQuery,
+      );
+      query = synthesized;
+      // Drain the steering queue regardless of synthesis success — the notes
+      // were consumed by the synthesis attempt, so they must not linger for
+      // COLLECT to inject again (would double-count).
+      hub.drainSteering();
+      agentIO.verbose('steer', `Synthesized ${staleNotes.length} stale steering note(s) into fresh query`);
+    }
+
+    // Drain uploaded files (webui-only): if files were queued during the
+    // interrupted run, save them now so the LLM can see them in the next turn.
+    // Unlike steering notes, file uploads don't need synthesis — they are
+    // informational resources to be saved and noted.
+    const staleFiles = hub.drainFileUploads();
+    if (staleFiles.length > 0) {
+      const uploadDir = path.join(process.cwd(), '.mycc', 'uploaded');
+      if (!fs.existsSync(uploadDir)) {
+        fs.mkdirSync(uploadDir, { recursive: true });
+      }
+      const fileInfos: string[] = [];
+      for (const file of staleFiles) {
+        const safeName = `${Date.now()}_${file.filename}`;
+        const filePath = path.join(uploadDir, safeName);
+        fs.writeFileSync(filePath, Buffer.from(file.data, 'base64'));
+        const relPath = path.relative(process.cwd(), filePath);
+        fileInfos.push(`- ${file.filename} → ${relPath} (${file.mimeType})${file.text ? `\n  Text: "${file.text.slice(0, 200)}${file.text.length > 200 ? '...' : ''}"` : ''}`);
+      }
+      triologue.note('REMINDER', `Previously uploaded file(s) (from interrupted run):\n${fileInfos.join('\n')}`);
+      agentIO.verbose('serve', `Saved ${staleFiles.length} stale uploaded file(s) at PROMPT`);
+    }
   }
 
   // Quick-return ESC: Handle wrap-up timing logic

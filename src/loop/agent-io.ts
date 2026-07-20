@@ -15,6 +15,20 @@ import chalk from 'chalk';
 import { isVerbose } from '../config.js';
 import { getToolColor } from '../utils/tool-colors.js';
 import { slashRegistry } from '../slashes/index.js';
+import { getServeHub } from '../serve/serve-registry.js';
+import { setResultCallback } from '../utils/letter-box.js';
+
+/**
+ * Output callback type — mirrors console output to the web UI (WebSocket).
+ * Called by log/warn/error/brief when serve mode is active.
+ * @param method - console method ('log' | 'warn' | 'error')
+ * @param args - raw console args (may contain chalk/ANSI codes)
+ * @param label - optional tool/module tag (e.g. 'bash', 'brief', 'question').
+ *               brief() passes its `tool` arg so the web UI can show the same
+ *               [HH:MM:SS] [tool] header as the terminal. Plain log/warn/error
+ *               leave it undefined (treated as a raw verbose log line).
+ */
+type OutputCallback = (method: 'log' | 'warn' | 'error', args: unknown[], label?: string, detail?: string) => void;
 
 /**
  * Subcommand hints for slash commands.
@@ -133,6 +147,15 @@ class AgentIO {
     args: unknown[];
   }> = [];
 
+  // Output callback — mirrors console output to the web UI (WebSocket).
+  // Set when serve mode is active, cleared on exit.
+  private outputCallback: OutputCallback | null = null;
+
+  // Flag set while brief() is executing. When true, log/warn/error suppress
+  // their own outputCallback call so brief() can fire it once with the
+  // clean (non-chalk-formatted) message.
+  private inBrief = false;
+
   // ESC-during-ask() cancellation support
   private askResolver: ((value: string) => void) | null = null;
   private askOnEsc: string | null = null;
@@ -149,8 +172,6 @@ class AgentIO {
   // askResolver, so the first ask()'s Promise never resolves — the first
   // teammate is permanently blocked.
   private askQueue: Array<() => void> = [];
-
-
 
   // Lifecycle
 
@@ -184,32 +205,24 @@ class AgentIO {
           return;
         }
 
-        // ESC pressed - set neglected mode and abort LLM call if running
-        // Only process if not already in neglected mode (avoid duplicate messages)
+        // Serve mode: ESC → warm exit (stop serve, NO neglection, NO LLM abort).
+        // The user pressed ESC while the Web UI was active. We gracefully shut
+        // down serve so the terminal prompt returns. A second ESC (after serve
+        // has exited) triggers the standard neglection below.
+        if (getServeHub().isRunning()) {
+          // gracefulShutdown() awaits hub.stop() internally — the HTTP port
+          // is released and serve_mode:false IPC is sent only after cleanup
+          // completes, so terminal input isn't restored before the port is free.
+          getServeHub().gracefulShutdown().catch((err) => {
+            agentIO.verbose('serve', `ESC shutdown error: ${String(err)}`);
+          });
+          return; // skip standard neglection — do NOT set neglectedMode
+        }
+
+        // ESC pressed - set neglected mode and abort LLM call if running.
+        // Only process if not already in neglected mode (avoid duplicate messages).
         if (!this.isNeglectedMode()) {
-          // Now set neglected mode (subsequent logs will be buffered)
-          this.setNeglectedMode(true);
-          
-          const controller = this.getLlmAbortController();
-          if (controller) {
-            controller.abort();
-          }
-          // Notify all neglected listeners (e.g., exec to skip subprocess wait)
-          for (const cb of this.onNeglectedCallbacks) {
-            // Wrap each callback to prevent unhandled rejections from
-            // async callbacks (e.g., escAware's onNeglectedHandler) and
-            // sync throws from any listener.
-            try {
-              const maybePromise: unknown = cb();
-              // Check for thenable (promise-like) to avoid any type dependency
-              if (maybePromise && typeof (maybePromise as { catch?: unknown }).catch === 'function') {
-                (maybePromise as Promise<unknown>).catch(() => {});
-              }
-            } catch {
-              // Sync errors from neglected callbacks are swallowed
-            }
-          }
-          this.onNeglectedCallbacks.clear();
+          this.triggerNeglection();
         }
       } else if (msg.type === 'key' && msg.key) {
         // Forward key event to active LineEditor
@@ -225,11 +238,24 @@ class AgentIO {
         if (this.onConditionReloadCallback) {
           this.onConditionReloadCallback().catch(() => {});
         }
+      } else if (msg.type === 'serve_shutdown') {
+        // Coordinator asked us to shut down serve before killing us
+        // (Ctrl+C with active serve, or /load restart). This prevents
+        // Vite orphan on Windows where lead.kill('SIGTERM') calls
+        // TerminateProcess — the SIGTERM handler never runs.
+        (async () => {
+          const hub = getServeHub();
+          try { if (hub.isRunning()) await hub.stop(); } catch { /* best effort */ }
+          this.setOutputCallback(null);
+          setResultCallback(null);
+          if (process.send) process.send({ type: 'serve_shutdown_done' });
+        })().catch(() => {
+          // Even if shutdown fails, tell the Coordinator we tried
+          if (process.send) process.send({ type: 'serve_shutdown_done' });
+        });
       }
     });
   }
-
-  /**
 
   // Type check
 
@@ -254,6 +280,41 @@ class AgentIO {
    */
   setNeglectedMode(value: boolean): void {
     this.neglectedModeFlag = value;
+  }
+
+  /**
+   * Trigger neglection: set neglected mode, abort LLM call, fire callbacks.
+   * Encapsulates the standard ESC-neglection logic so both the Coordinator
+   * IPC 'neglection' handler and ServeHub's WS 'interrupt' message can use it.
+   * No-op if already in neglected mode (caller must guard, or this method
+   * silently returns when already neglected to avoid duplicate processing).
+   */
+  triggerNeglection(): void {
+    if (this.isNeglectedMode()) {
+      return; // already neglecting — avoid duplicate aborts/callbacks
+    }
+    // Set neglected mode (subsequent logs will be buffered)
+    this.setNeglectedMode(true);
+
+    const controller = this.getLlmAbortController();
+    if (controller) {
+      controller.abort();
+    }
+    // Notify all neglected listeners (e.g., exec to skip subprocess wait)
+    for (const cb of this.onNeglectedCallbacks) {
+      // Wrap each callback to prevent unhandled rejections from
+      // async callbacks (e.g., escAware's onNeglectedHandler) and
+      // sync throws from any listener.
+      try {
+        const maybePromise: unknown = cb();
+        if (maybePromise && typeof (maybePromise as { catch?: unknown }).catch === 'function') {
+          (maybePromise as Promise<unknown>).catch(() => {});
+        }
+      } catch {
+        // Sync errors from neglected callbacks are swallowed
+      }
+    }
+    this.onNeglectedCallbacks.clear();
   }
 
   /**
@@ -288,6 +349,9 @@ class AgentIO {
     } else {
       console.log(...args);
     }
+    if (this.outputCallback && !this.inBrief) {
+      this.outputCallback('log', args, undefined);
+    }
   }
 
   /**
@@ -299,6 +363,9 @@ class AgentIO {
     } else {
       console.warn(...args);
     }
+    if (this.outputCallback && !this.inBrief) {
+      this.outputCallback('warn', args, undefined);
+    }
   }
 
   /**
@@ -309,6 +376,9 @@ class AgentIO {
       this.outputBuffer.push({ method: 'error', args });
     } else {
       console.error(...args);
+    }
+    if (this.outputCallback && !this.inBrief) {
+      this.outputCallback('error', args, undefined);
     }
   }
 
@@ -329,6 +399,10 @@ class AgentIO {
     const detailPart = detail ? ` ${chalk.gray(detail)}` : '';
     const header = `${prefix}${detailPart}`;
 
+    // Suppress outputCallback inside log/warn/error during brief() — the
+    // chalk-formatted header would render as garbled ANSI codes in the WebUI.
+    // Instead, brief() fires outputCallback once below with the clean message.
+    this.inBrief = true;
     switch (level) {
       case 'error':
         this.error(`${header}\n${chalk.red(message)}`);
@@ -338,6 +412,15 @@ class AgentIO {
         break;
       default:
         this.log(`${header}\n${message}`);
+    }
+    this.inBrief = false;
+
+    // Mirror to web UI (serve mode) — send the clean message text once,
+    // carrying the tool label so the web UI can render the same
+    // [HH:MM:SS] [tool] header as the terminal.
+    if (this.outputCallback) {
+      const method: 'log' | 'warn' | 'error' = level === 'error' ? 'error' : level === 'warn' ? 'warn' : 'log';
+      this.outputCallback(method, [message], tool, detail);
     }
   }
 
@@ -400,6 +483,15 @@ class AgentIO {
    */
   setConditionReloadCallback(callback: (() => Promise<void>) | null): void {
     this.onConditionReloadCallback = callback;
+  }
+
+  /**
+   * Set the output callback for serve mode (web UI mirroring).
+   * When set, log/warn/error/brief also forward to this callback (WebSocket).
+   * Pass null to clear (on serve exit).
+   */
+  setOutputCallback(cb: OutputCallback | null): void {
+    this.outputCallback = cb;
   }
 
   /**
@@ -525,6 +617,62 @@ class AgentIO {
   async ask(query: string, options?: AskOptions): Promise<string> {
     if (!this.isMainProcessFlag) {
       throw new Error('question() only available in main process');
+    }
+
+    // Serve mode: route input via an interactive card over the WebSocket,
+    // bypassing LineEditor entirely. The card renders as a text input, a
+    // confirm dialog, or a choice button set in the web UI depending on the
+    // AskOptions, so onEsc/onEnter/initialContent are honored — no behavioral
+    // divergence from the terminal path.
+    //
+    // Serve cards use a unique cardId with their own per-card resolver
+    // (waitForCardResponse), so concurrent serve asks are inherently safe and
+    // do NOT need the askQueue re-entrancy guard below (which only protects
+    // the singleton askResolver path of the terminal LineEditor).
+    if (getServeHub().isRunning()) {
+      const hub = getServeHub();
+      const cardId = `card-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+      // Determine card kind + options from AskOptions:
+      //  - Retry? [Y/n] pattern (query contains "retry" + onEnter set) → choice
+      //  - onEnter set (press-Enter-to-continue style)              → confirm
+      //  - default                                                 → input
+      let kind: 'input' | 'confirm' | 'choice' = 'input';
+      let cardOptions: { label: string; value: string }[] | undefined;
+
+      if (/retry/i.test(query) && options?.onEnter !== undefined) {
+        kind = 'choice';
+        cardOptions = [
+          { label: 'Yes', value: 'y' },
+          { label: 'No', value: 'n' },
+        ];
+      } else if (options?.onEnter !== undefined) {
+        kind = 'confirm';
+        cardOptions = [
+          { label: 'Continue', value: options.onEnter },
+          { label: 'Cancel', value: options.onEsc ?? '' },
+        ];
+      }
+
+      hub.broadcastCard({
+        type: 'card',
+        cardId,
+        query,
+        kind,
+        options: cardOptions,
+        initialContent: options?.initialContent,
+      });
+
+      const result = await hub.waitForCardResponse(cardId);
+
+      // If serve stopped mid-card (ESC/exit/timeout), the resolver returns
+      // null. Fall back to onEsc if provided, else '' (same as terminal
+      // returning empty). We do NOT throw — the caller (state machine)
+      // expects a string.
+      if (result === null) {
+        return options?.onEsc ?? '';
+      }
+      return result;
     }
 
     // Re-entrancy guard: if another ask() is already active (askResolver set),
@@ -733,8 +881,6 @@ class AgentIO {
   getLlmAbortController(): AbortController | null {
     return this.llmAbortController;
   }
-
-  /**
 
   /**
    * Execute a shell command with strict timeout enforcement.
