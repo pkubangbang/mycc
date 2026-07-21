@@ -151,6 +151,24 @@ export class ServeHub {
   // ── Disconnect-reconnect ──
   private disconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private static readonly RECONNECT_TIMEOUT_MS = 30_000;
+  // Baseline captured when the disconnect timer starts, so the timeout handler
+  // can distinguish a genuine user disconnect (tab closed) from a system
+  // suspend/hibernate. During suspend the process is frozen: wall-clock
+  // advances but CPU time does not. So if the timer fires after a wall-elapsed
+  // much larger than the 30s budget AND cpu-elapsed near zero, the process was
+  // suspended — we must NOT tear down the server (the user intends to keep
+  // using the WebUI on resume; the browser will auto-reconnect).
+  private disconnectTimerWallBaseline: bigint | null = null;
+  private disconnectTimerCpuBaseline: { user: number; system: number } | null = null;
+  // Tolerance for detecting a system suspend/hibernate. A normal 30s
+  // disconnect timer fires within 30s + a few ms of jitter. If the timer
+  // fires with wall-elapsed exceeding the 30s budget by more than this
+  // margin, the process was frozen during the wait (suspend/hibernate) —
+  // because setTimeout does not advance while the process is suspended, the
+  // callback simply fires late on resume, inflating wall-elapsed by the
+  // suspend duration. The CPU check (near-zero delta) corroborates that the
+  // process was genuinely idle/frozen rather than busy.
+  private static readonly SUSPEND_EXCESS_MS = 5_000; // 5s beyond the 30s budget ⇒ suspend
 
   // ── Mode state ──
   private running = false;
@@ -722,6 +740,11 @@ export class ServeHub {
 
   private startDisconnectTimer(): void {
     if (this.disconnectTimer) return; // already counting
+    // Capture wall-clock + CPU baselines so the timeout handler can detect a
+    // system suspend/hibernate that froze this process during the wait. See
+    // onDisconnectTimeout for the detection logic.
+    this.disconnectTimerWallBaseline = process.hrtime.bigint();
+    this.disconnectTimerCpuBaseline = process.cpuUsage();
     this.disconnectTimer = setTimeout(() => {
       this.disconnectTimer = null;
       this.onDisconnectTimeout();
@@ -733,9 +756,47 @@ export class ServeHub {
       clearTimeout(this.disconnectTimer);
       this.disconnectTimer = null;
     }
+    this.disconnectTimerWallBaseline = null;
+    this.disconnectTimerCpuBaseline = null;
   }
 
   private onDisconnectTimeout(): void {
+    // Detect a system suspend/hibernate that froze this process during the
+    // 30s wait. During suspend, wall-clock advances but the process is frozen
+    // (CPU time barely moves). If the timer fired wall-elapsed that exceeds
+    // the 30s budget by SUSPEND_EXCESS_MS, we treat it as a resume from
+    // suspend — NOT a genuine user disconnect — and keep the server alive so
+    // the browser can auto-reconnect on resume.
+    const wallBaseline = this.disconnectTimerWallBaseline;
+    const cpuBaseline = this.disconnectTimerCpuBaseline;
+    this.disconnectTimerWallBaseline = null;
+    this.disconnectTimerCpuBaseline = null;
+
+    if (wallBaseline !== null && cpuBaseline !== null) {
+      const wallElapsedMs = Number(process.hrtime.bigint() - wallBaseline) / 1e6;
+      const cpuElapsed = process.cpuUsage(cpuBaseline);
+      const cpuElapsedMs = (cpuElapsed.user + cpuElapsed.system) / 1000; // µs → ms
+      const expectedWallMs = ServeHub.RECONNECT_TIMEOUT_MS;
+      const excessMs = wallElapsedMs - expectedWallMs;
+      // Suspend signature: wall ran far longer than the budget (the timer
+      // fired late because the process was frozen), and CPU usage during the
+      // whole interval is negligible (process was not actually running).
+      if (excessMs > ServeHub.SUSPEND_EXCESS_MS && cpuElapsedMs < 5_000) {
+        agentIO.verbose('serve', `suspend/resume detected (wall+${Math.round(excessMs / 1000)}s, cpu ${Math.round(cpuElapsedMs)}ms) — keeping Web UI alive for reconnect`);
+        // The existing WS clients are dead from the suspend; drop them so the
+        // browser's fresh reconnect is the only one tracked. Do NOT call
+        // gracefulShutdown — the user intends to keep using the WebUI.
+        for (const ws of this.clients) {
+          try { ws.close(); } catch { /* ignore */ }
+        }
+        this.clients.clear();
+        // Restart the disconnect timer so a *genuine* later disconnect (user
+        // actually closes the tab and stays away) still tears down the server.
+        this.startDisconnectTimer();
+        return;
+      }
+    }
+
     // No client reconnected within 30s — graceful shutdown
     this.gracefulShutdown().catch((err) => {
       agentIO.verbose('serve', `disconnect shutdown error: ${String(err)}`);
