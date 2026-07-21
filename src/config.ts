@@ -98,7 +98,7 @@ export function loadEnv(): void {
 const args = minimist(process.argv.slice(2), {
   boolean: ['v', 'verbose', 'skip-healthcheck', 'setup', 'debug-eval', 'debug-tp', 'debug-prompt', 'serve'],
   string: [
-    'from', 'port', 'host',
+    'from', 'port', 'host', 'max-upload-mb',
     'ollama-host', 'ollama-api-key', 'ollama-model', 'ollama-vision-model', 'ollama-embedding-model',
     'deepseek-host', 'deepseek-api-key', 'deepseek-model',
     'api-provider', 'token-threshold', 'editor', 'skill-match-threshold',
@@ -256,6 +256,22 @@ export function getServeHost(): string | null {
   // --host (empty) or --host 0.0.0.0 → bind all
   if (args.host === '' || args.host === '0.0.0.0') return '0.0.0.0';
   return args.host;
+}
+
+/**
+ * Max single-file upload size (MB) for the /serve Web UI chat input.
+ *
+ * Priority (highest first): --max-upload-mb CLI flag → MYCC_MAX_UPLOAD_MB
+ * env var → default 50. The value is validated: non-finite or <=0 falls back
+ * to the default. Used both as a client-side guard (exposed via /config) and
+ * a server-side guard on pushFileUpload (defense in depth — a malicious or
+ * stale client could bypass the JS check).
+ */
+const DEFAULT_MAX_UPLOAD_MB = 50;
+export function getMaxUploadMb(): number {
+  const raw = args['max-upload-mb'] ?? process.env.MYCC_MAX_UPLOAD_MB;
+  const p = Number(raw);
+  return Number.isFinite(p) && p > 0 ? p : DEFAULT_MAX_UPLOAD_MB;
 }
 
 /**

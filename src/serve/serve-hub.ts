@@ -27,6 +27,7 @@ import vue from '@vitejs/plugin-vue';
 import chalk from 'chalk';
 import { agentIO } from '../loop/agent-io.js';
 import { setResultCallback } from '../utils/letter-box.js';
+import { getMaxUploadMb } from '../config.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -263,6 +264,17 @@ export class ServeHub {
         steeringBuffer: this.getSteeringNotes(),
       });
       res.status(200).set({ 'Content-Type': 'application/json' }).end(payload);
+    });
+
+    // GET /config → return client-facing runtime config as JSON. The Web UI
+    // fetches this at load to learn server-imposed limits (currently just the
+    // per-file upload cap, controlled by --max-upload-mb / MYCC_MAX_UPLOAD_MB).
+    // Kept separate from /history so a config change doesn't invalidate the
+    // chat cache, and so future flags can be added without touching history.
+    this.expressApp.get('/config', (_req, res) => {
+      res.status(200).set({ 'Content-Type': 'application/json' }).end(
+        JSON.stringify({ maxUploadMb: getMaxUploadMb() }),
+      );
     });
 
     // Chat WebSocket on /ws. We use noServer mode and route the http server's
@@ -513,6 +525,20 @@ export class ServeHub {
   // ===========================================================================
 
   pushFileUpload(entry: FileUploadEntry): void {
+    // Defense-in-depth size guard. The client checks file.size against
+    // /config.maxUploadMb before sending, but a stale/malicious client could
+    // bypass it. Reject oversized payloads here too — drop silently rather
+    // than crash, since this runs inside the WS message handler.
+    const maxBytes = getMaxUploadMb() * 1024 * 1024;
+    // base64 length → decoded bytes (ignore padding '=' chars). Each base64
+    // char encodes 6 bits, so bytes ≈ len * 3/4; subtract padding count.
+    const b64 = entry.data ?? '';
+    const padding = b64.endsWith('==') ? 2 : b64.endsWith('=') ? 1 : 0;
+    const approxBytes = Math.floor((b64.length * 3) / 4) - padding;
+    if (approxBytes > maxBytes) {
+      this.broadcast('error', `上传被拒绝：「${entry.filename}」超过 ${getMaxUploadMb()}MB 限制`, 'serve');
+      return;
+    }
     this.fileUploadQueue.push(entry);
     this.broadcast('file-upload', entry.filename);
   }

@@ -11,6 +11,29 @@ const localFiles = ref<FileInfo[]>([]);
 const dragOver = ref(false);
 let dragCounter = 0;
 
+// Per-file upload size cap (MB), fetched from the server's /config endpoint
+// (driven by --max-upload-mb / MYCC_MAX_UPLOAD_MB, default 50). Falls back to
+// 50 if the fetch fails so the UI is still usable when /config is unreachable.
+const maxUploadMb = ref(50);
+const uploadError = ref('');
+
+// Fetch the server-imposed upload cap once. /config is served on the same
+// origin as the Web UI, so a relative URL works and reuses the live socket's
+// host/port. A failure is non-fatal — the default cap still applies.
+void (async () => {
+  try {
+    const res = await fetch('/config');
+    if (res.ok) {
+      const data = await res.json() as { maxUploadMb?: number };
+      if (Number.isFinite(data.maxUploadMb) && (data.maxUploadMb as number) > 0) {
+        maxUploadMb.value = data.maxUploadMb as number;
+      }
+    }
+  } catch {
+    // /config unreachable — keep default cap
+  }
+})();
+
 watch(
   () => props.state.inputText,
   (val) => {
@@ -33,9 +56,45 @@ function openFilePicker(): void {
   fileInput.value?.click();
 }
 
+// Format a byte count as a human-readable size string (e.g. "1.2 MB").
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 function readFiles(rawFiles: FileList): void {
+  const maxBytes = maxUploadMb.value * 1024 * 1024;
   for (let i = 0; i < rawFiles.length; i++) {
     const file = rawFiles[i];
+    // Reject folders. When a folder is dropped, the browser exposes it as a
+    // File whose .type is '' and .size is 0; reading it yields nothing useful.
+    // webkitGetAsEntry (when available) gives a definitive answer — a dropped
+    // directory is a FileSystemDirectoryEntry, not a File-backed entry.
+    const item = (rawFiles as FileList & { item?(i: number): File & { webkitGetAsEntry?: () => unknown } }).item?.(i);
+    const entry = item?.webkitGetAsEntry?.();
+    if ((entry && typeof entry === 'object' && (entry as { isDirectory?: boolean }).isDirectory)
+        || (file.type === '' && file.size === 0)) {
+      // Note: the size===0 && type==='' fallback may also match a genuine
+      // 0-byte file, but that only triggers when webkitGetAsEntry is unavailable
+      // (rare in modern browsers); a 0-byte upload is useless anyway, so the
+      // misclassification is acceptable.
+      uploadError.value = '不支持文件夹上传，请添加文件';
+      setTimeout(() => { uploadError.value = ''; }, 4000);
+      continue;
+    }
+    // Size guard (client-side; the server re-checks for defense in depth).
+    // Reject oversized files rather than letting the upload silently fail
+    // server-side. Show a per-file error so the user knows which file was
+    // rejected and why.
+    if (file.size > maxBytes) {
+      uploadError.value = `「${file.name}」(${formatBytes(file.size)})超过 ${maxUploadMb.value}MB 上传限制，已跳过`;
+      // Auto-clear the error after 4s
+      setTimeout(() => {
+        if (uploadError.value.startsWith(`「${file.name}」`)) uploadError.value = '';
+      }, 4000);
+      continue;
+    }
     const reader = new FileReader();
     reader.onload = () => {
       const dataUrl = reader.result as string;
@@ -105,6 +164,22 @@ function onDragLeave(event: DragEvent): void {
   if (dragCounter === 0) {
     dragOver.value = false;
   }
+}
+
+// Handle a drop onto the input area. Previously this handler was missing
+// (the template bound @drop="onDrop" but no function existed), so drops did
+// nothing useful and the browser's default "open file" behaviour could even
+// navigate the page away. Now we read the dropped files into the upload
+// queue — any file type is accepted (the old accept="image/*" only constrained
+// the file picker, not the dataTransfer). Size is checked per-file in
+// readFiles against maxUploadMb.
+function onDrop(event: DragEvent): void {
+  event.preventDefault();
+  dragCounter = 0;
+  dragOver.value = false;
+  const rawFiles = event.dataTransfer?.files;
+  if (!rawFiles || rawFiles.length === 0) return;
+  readFiles(rawFiles);
 }
 
 // ── Draggable input-box height ──
@@ -196,7 +271,6 @@ const inputAreaStyle = computed(() =>
       <input
         ref="fileInput"
         type="file"
-        accept="image/*"
         multiple
         class="file-input-hidden"
         @change="onFilesSelected"
@@ -207,6 +281,7 @@ const inputAreaStyle = computed(() =>
         @click="send"
       >发送</button>
     </div>
+    <div v-if="uploadError" class="upload-error">{{ uploadError }}</div>
     <div v-if="localFiles.length > 0" class="file-chips">
       <span
         v-for="(f, i) in localFiles"
@@ -333,6 +408,15 @@ const inputAreaStyle = computed(() =>
 .send-btn:disabled {
   background: var(--accent-disabled);
   cursor: not-allowed;
+}
+.upload-error {
+  margin-top: 8px;
+  padding: 4px 10px;
+  border-radius: 4px;
+  font-size: 12px;
+  background: color-mix(in srgb, #ef4444 12%, var(--bg-input));
+  color: #ef4444;
+  border: 1px solid color-mix(in srgb, #ef4444 30%, transparent);
 }
 .file-chips {
   display: flex;

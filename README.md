@@ -198,6 +198,7 @@ All environment variables can be overridden via CLI flags. These take highest pr
 | `--token-threshold` | `TOKEN_THRESHOLD` | Context limit threshold (default: 50000) |
 | `--editor` | `EDITOR` | Text editor for file editing |
 | `--skill-match-threshold` | `SKILL_MATCH_THRESHOLD` | Skill similarity threshold 0-1 (default: 0.5) |
+| `--max-upload-mb` | `MYCC_MAX_UPLOAD_MB` | Max single-file upload size (MB) for the `/serve` Web UI (default: 50) |
 
 Example usage:
 ```bash
