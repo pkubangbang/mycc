@@ -6,8 +6,10 @@ The `/fork` slash command gives mycc a way to `run a new version of itself` in p
 
 1. In a mycc instance, after the code changes, the user enters `/fork` in the prompt and submit
 2. It is interpreted as a slash command.
-3. Mycc will get the current session id, open up the terminal, and simulate a `mycc --session <session-id>` inside
-that terminal (with cwd equal the current cwd), to start a new mycc from current chat history.
+3. Mycc will get the current session id, open up the terminal, and simulate a `mycc --from <session-id>` inside
+that terminal (with cwd equal the current cwd). `--from <id>` reads the old session read-only, re-understands
+it via the LLM, and starts a BRAND NEW session pre-filled with that context — the old session is sealed and
+never written to. So the forked instance runs in parallel with its own session id and triologue file.
 4. The old mycc instance is kept as-is, so two versions of mycc can run in parallel.
 
 ## Special notice

@@ -419,6 +419,10 @@ Built-in commands:
 
 Sessions are persisted conversation states stored as JSON files. **Project sessions** are stored in `.mycc/sessions/` and are project-specific. **User sessions** are stored in `~/.mycc-store/sessions/` and can be shared across projects.
 
+**Sealed-session principle:** A session is NEVER shared. Once the mycc process for a session exits, that session's files (session JSON + triologue JSONL) are **sealed** — read-only archives that are never written to again. Two parallel mycc instances never write the same session file.
+
+`/load <id>` (mid-session, empty-current-session only) or `mycc --from <id>` (cold start, also used by `/fork`) does NOT resume the old session in place. It **reads the old session read-only**, uses the LLM to **re-understand** the transcript into a fresh context (the DOSQ + first-query flow), and **continues inside a BRAND NEW session** (new id, new triologue file, new session json). The old session stays sealed. Loading the same id multiple times yields DIFFERENT new sessions (variation by re-understanding) — the basis for branching/exploring alternatives.
+
 Session structure (`src/session/types.ts`):
 - `id` - Unique identifier
 - `create_time` - Creation timestamp
@@ -428,15 +432,15 @@ Session structure (`src/session/types.ts`):
 - `teammates` - Active teammate information
 - `first_query` - First user query (used as bookmark title)
 
-Use `/save` to copy a project session to user directory and `/load` to restore any session.
+Use `/save` to copy a project session to user directory and `/load` to branch a new session from any sealed one.
 
 ### session file vs triologue JSONL
 
 The system uses two distinct file types for persistence:
 
-- **Session file** (`.mycc/sessions/{uuid}.json`): Metadata only — session ID, creation time, lead/teammate triologue paths, teammates list, and first query. Written once at session creation, never updated after that. Used for session discovery and restoration routing.
+- **Session file** (`.mycc/sessions/{uuid}/session-{uuid}.json`): Metadata only — session ID, creation time, lead/teammate triologue paths, teammates list, and first query. Created once at session creation; updated in place only by the session's own running process (e.g. to set `first_query` or register teammates/child triologues). Sealed read-only once that process exits. Used for session discovery and restoration routing.
 
-- **Triologue JSONL** (`.mycc/transcripts/lead-{ts}-triologue.jsonl`): The append-only conversation log. Every message (user, assistant, tool call/result) is appended via the `onMessage` callback registered in `agent-repl.ts` using `fs.appendFileSync`. This is the authoritative record of agent activity. Each line is a JSON-encoded `Message` object.
+- **Triologue JSONL** (`.mycc/sessions/{uuid}/triologue-lead-{ts}.jsonl`): The append-only conversation log. Every message (user, assistant, tool call/result) is appended via the `onMessage` callback registered in `agent-repl.ts` using `fs.appendFileSync`. This is the authoritative record of agent activity. Each line is a JSON-encoded `Message` object.
 
 Key distinction: the session file tells you *what sessions exist and where their logs live*; the triologue JSONL contains *what actually happened* during a session.
 

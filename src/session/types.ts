@@ -44,4 +44,19 @@ export interface SessionInit {
   triologuePath: string;
   restoredPair: import('./restoration.js').SummaryPair | null;
   initialQuery: string | null;
+  /**
+   * The session id this one was derived from, if any.
+   *
+   * - Set when the session was branched via `--from <id>` / `/fork` (the
+   *   `restoreSession` path): the value is the SOURCE session's id (the old,
+   *   now-sealed session). Surfaces like the startup banner use it to show
+   *   "Session: <newId> (forked from <sourceId>)".
+   * - null for a genuinely fresh session (`createNewSession`): there is no
+   *   source, so the banner shows just "Session: <newId>".
+   *
+   * Note: this is metadata for display only — the new session is fully
+   * independent (new id, new triologue file, new session json). The source
+   * session's files stay read-only and are never written to.
+   */
+  sourceSessionId?: string | null;
 }

@@ -18,7 +18,7 @@ A CLI coding agent using Ollama-cloud for LLM inference, written in nodejs.
 
 - **extensibility**: you can bring your own tools/skills into mycc, at project-level, or at the user-level that shared across projects.
 
-- **session storage**: a new session is created at each start. You can `/load` a previous session to continue your work, or to expect variant responses thanks to LLM randomness.
+- **session storage**: a new session is created at each start. Sessions are **sealed** once the process exits — they become read-only archives and are never written to again. `/load <id>` (or `mycc --from <id>`) derives a **brand new** session from the old one: the LLM re-understands the old transcript and generates a fresh starting context. Loading the same id multiple times yields different new sessions (variation by re-understanding) — use this to branch and explore alternatives.
 
 
 ## Installation

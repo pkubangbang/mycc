@@ -95,7 +95,7 @@ function buildMyccShellCommand(sessionId: string): string {
   const projectRoot = getProjectRoot();
   const coordinatorScript = resolve(projectRoot, 'src', 'index.ts');
 
-  const flags = [`--session ${sessionId}`];
+  const flags = [`--from ${sessionId}`];
   if (shouldSkipHealthCheck()) {
     flags.push('--skip-healthcheck');
   }
@@ -130,9 +130,9 @@ function printManualInstructions(sessionId: string, workDir: string): void {
     const projectRoot = getProjectRoot();
     const esc = (s: string) => s.replace(/'/g, "''");
     const myccBin = resolve(projectRoot, 'bin', 'mycc.js');
-    console.log(chalk.white(`  & '${esc(process.execPath)}' '${esc(myccBin)}' --session ${sessionId}${skipFlag}`));
+    console.log(chalk.white(`  & '${esc(process.execPath)}' '${esc(myccBin)}' --from ${sessionId}${skipFlag}`));
   } else {
-    console.log(chalk.white(`  mycc --session ${sessionId}${skipFlag}`));
+    console.log(chalk.white(`  mycc --from ${sessionId}${skipFlag}`));
   }
 }
 

@@ -141,7 +141,7 @@ export async function main(): Promise<void> {
 
   // Initialize session (restore or create new)
   const sessionInit = await initializeSession();
-  const { sessionFilePath, triologuePath, restoredPair, initialQuery } = sessionInit;
+  const { sessionFilePath, triologuePath, restoredPair, initialQuery, sourceSessionId } = sessionInit;
 
   // Wire the durable transcript path into ServeHub so the /history endpoint
   // can read the on-disk triologue JSONL (survives serve stop/restart and
@@ -153,7 +153,15 @@ export async function main(): Promise<void> {
 
   // Display session info
   const sessionId = getSessionId(sessionFilePath);
-  console.log(chalk.gray(`${alignLabel('Session:')}${sessionId.slice(0, 7)}`));
+  // When this session was branched from a sealed source (--from / /fork), show
+  // the lineage so the user understands "Session: <new> (forked from <old>)"
+  // — the source's files are read-only; this instance writes only to its own
+  // new files. For a genuinely fresh session, sourceSessionId is null and we
+  // show just the id.
+  const sessionLabel = sourceSessionId
+    ? `${sessionId.slice(0, 7)} (forked from ${sourceSessionId.slice(0, 7)})`
+    : sessionId.slice(0, 7);
+  console.log(chalk.gray(`${alignLabel('Session:')}${sessionLabel}`));
 
   console.log(chalk.redBright(`${alignLabel('WorkDir:')}${process.cwd()}`));
 

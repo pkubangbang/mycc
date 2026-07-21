@@ -98,14 +98,14 @@ export function loadEnv(): void {
 const args = minimist(process.argv.slice(2), {
   boolean: ['v', 'verbose', 'skip-healthcheck', 'setup', 'debug-eval', 'debug-tp', 'debug-prompt', 'serve'],
   string: [
-    'session', 'port', 'host',
+    'from', 'port', 'host',
     'ollama-host', 'ollama-api-key', 'ollama-model', 'ollama-vision-model', 'ollama-embedding-model',
     'deepseek-host', 'deepseek-api-key', 'deepseek-model',
     'api-provider', 'token-threshold', 'editor', 'skill-match-threshold',
   ],
   alias: { v: 'verbose' },
   default: {
-    v: false, session: null, port: null,
+    v: false, from: null, port: null,
     'skip-healthcheck': false, setup: false, serve: false,
     'debug-eval': false, 'debug-tp': false, 'debug-prompt': false,
   },
@@ -119,7 +119,7 @@ function buildCmdArgsEnv(parsed: typeof args): Record<string, string> {
   const env: Record<string, string> = {};
   const map: Record<string, string> = {
     'verbose': 'MYCC_VERBOSE',
-    'session': 'MYCC_SESSION',
+    'from': 'MYCC_FROM_SESSION',
     'skip-healthcheck': 'MYCC_SKIP_HEALTHCHECK',
     'setup': 'MYCC_SETUP',
     'debug-eval': 'MYCC_DEBUG_EVAL',
@@ -168,12 +168,16 @@ class GlobalConfig {
 const globalConfig = new GlobalConfig();
 
 /**
- * Get session ID from CLI args (--session flag).
- * Reads from parsed minimist args directly (not process.env) to avoid
- * inheriting a stale MYCC_SESSION env var from a parent process.
+ * Get the source session id from CLI args (--from flag).
+ *
+ * `--from <id>` means "branch a NEW session pre-filled from the old session
+ * <id>". The old session's files are read-only; a brand-new session (new id,
+ * new triologue) is created and continued. Reads from parsed minimist args
+ * directly (not process.env) to avoid inheriting a stale MYCC_FROM_SESSION
+ * env var from a parent process.
  */
 export function getSessionArg(): string | null {
-  return args.session || null;
+  return args.from || null;
 }
 
 /**

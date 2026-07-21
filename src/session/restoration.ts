@@ -379,7 +379,7 @@ async function summarizeLeadTriologue(messages: Message[]) {
 function generateDosq(session: Session, pair: SummaryPair): string {
   const lines: string[] = [
     '<!--',
-    `# Session: ${session.id.slice(0, 7)}`,
+    `# Source Session: ${session.id.slice(0, 7)}`,
     '',
     `**Created:** ${session.create_time}`,
     `**Project:** ${session.project_dir}`,
@@ -400,6 +400,17 @@ function generateDosq(session: Session, pair: SummaryPair): string {
     'It will be included when the session is restored.',
     'Edit it if you need to add or modify context.',
     'Write your first query below (after the HTML comment ends).',
+    '',
+    '---',
+    '',
+    'NOTE: This is a NEW session derived from the source above.',
+    'The source session is SEALED (read-only) — it will never be written to again.',
+    'Your new work is saved under a fresh session id shown in the startup banner.',
+    'Loading the same source id again would produce a DIFFERENT new session',
+    '(the LLM re-understands the transcript; results vary) — use this to branch',
+    'and explore alternatives.',
+    'Teammates from the source appear only as context narratives below; they do',
+    'NOT carry over as live processes in this new session.',
     '-->',
     '',
   ];

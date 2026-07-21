@@ -237,7 +237,7 @@ function runCoordinator(): void {
     }
 
     // Start new Lead (stdin forwarding continues automatically via data handler)
-    const currentLead = startLead(['--session', sessionId], cwd);
+    const currentLead = startLead(['--from', sessionId], cwd);
     lead = currentLead;
 
     // Wait for ready signal. If the new Lead exits before sending 'ready',

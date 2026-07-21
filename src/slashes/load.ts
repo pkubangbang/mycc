@@ -17,7 +17,7 @@ import { getSessionContext } from '../config.js';
 
 export const loadCommand: SlashCommand = {
   name: 'load',
-  description: 'List or load sessions (/load [id])',
+  description: 'List sessions or branch a new context from a sealed session (/load [id])',
   handler: async (context) => {
     const triologue = context.triologue as Triologue;
 
@@ -71,18 +71,22 @@ export const loadCommand: SlashCommand = {
           await new Promise(() => {});
         } else {
           console.log(chalk.red(`Not running under Coordinator. Please restart manually:`));
-          console.log(chalk.gray(`  cd "${session.project_dir}" && mycc --session ${session.id}`));
+          console.log(chalk.gray(`  cd "${session.project_dir}" && mycc --from ${session.id}`));
           return;
         }
       }
 
-      // Working directory matches - load session normally
-      console.log(chalk.cyan(`Loading session ${sessionId}...`));
+      // Working directory matches - branch context from the sealed source session
+      // into the CURRENT (empty) session. Note: /load does NOT create a new
+      // session file — it re-understands the source and injects the summary
+      // into the current session's triologue. (Only --from / /fork create a
+      // brand-new session.) To load mid-session, first clear with double Ctrl+L.
+      console.log(chalk.cyan(`Branching context from session ${sessionId}...`));
 
       // Prepare restoration
       const { pair, dosqPath } = await prepareRestoration(session);
 
-      console.log(chalk.cyan('Session restored. DOSQ generated at:'));
+      console.log(chalk.cyan('Context generated. DOSQ at:'));
       console.log(chalk.gray(`  ${dosqPath}`));
 
       // Try to open DOSQ in editor (will fail if $EDITOR not set, but user was warned at startup)
@@ -102,7 +106,7 @@ export const loadCommand: SlashCommand = {
       const dosqContent = readDosq(dosqPath);
       const firstQuery = extractFirstQuery(dosqContent);
 
-      console.log(chalk.gray('Starting restored session...\n'));
+      console.log(chalk.gray('Starting with branched context...\n'));
 
       // Load triologue with summary pairs (does not trigger onMessage)
       triologue.loadRestoration(pair);

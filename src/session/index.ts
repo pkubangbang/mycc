@@ -476,13 +476,36 @@ export function cleanupEmptySessions(currentSessionId: string): number {
 
 /**
  * Restore an existing session by ID
+ *
+ * SEMANTICS (per the "a session is never shared" principle):
+ *   `--from <id>` does NOT reopen and continue writing into the old session.
+ *   It READS the old session's files read-only, uses the LLM to re-understand
+ *   them into a fresh context (the DOSQ + first-query flow), and then
+ *   CONTINUES inside a BRAND NEW session (new id, new triologue file, new
+ *   session json). The old session's files are sealed — never written to
+ *   again.
+ *
+ *   Consequence: loading the same source id multiple times yields DIFFERENT
+ *   new sessions, because the LLM re-understanding is non-deterministic. This
+ *   "variation by re-understanding" is intentional — it is the basis for a
+ *   genetic-algorithm-style branching of contexts.
+ *
+ * The old `session` object is used only as INPUT:
+ *   - `prepareRestoration(session)` reads its triologue + child triologues and
+ *     regenerates the summary pair + DOSQ.
+ *   - `session.project_dir` is checked against `process.cwd()` (a session can
+ *     only be branched from within its own project dir).
+ *
+ * Teammates from the source do NOT carry over as live processes. Their
+ * narratives are recovered (via the READY-event scan inside
+ * `prepareRestoration`) and injected into the new session as context text.
  */
 export async function restoreSession(sessionArg: string): Promise<SessionInit> {
-  console.log(chalk.cyan(`Loading session: ${sessionArg}`));
+  console.log(chalk.cyan(`Branching new session from ${sessionArg}...`));
 
-  let session: Session;
+  let sourceSession: Session;
   try {
-    session = loadSessionById(sessionArg);
+    sourceSession = loadSessionById(sessionArg);
   } catch (err) {
     if (err instanceof SessionNotFoundError) {
       console.error(chalk.red(`Session not found: ${sessionArg}`));
@@ -499,13 +522,15 @@ export async function restoreSession(sessionArg: string): Promise<SessionInit> {
     throw err;
   }
 
-  // Verify working directory matches session's project_dir
+  // Verify working directory matches the SOURCE session's project_dir. The
+  // new session inherits the current cwd as its project_dir, so they must
+  // match (you can only branch a session from within its own project).
   const currentDir = process.cwd();
-  if (currentDir !== session.project_dir) {
+  if (currentDir !== sourceSession.project_dir) {
     console.error(chalk.red('Working directory mismatch.'));
     console.error(chalk.yellow(`Current: ${currentDir}`));
-    console.error(chalk.yellow(`Session expects: ${session.project_dir}`));
-    console.error(chalk.gray(`Run: cd "${session.project_dir}" && mycc --session ${session.id}`));
+    console.error(chalk.yellow(`Source session expects: ${sourceSession.project_dir}`));
+    console.error(chalk.gray(`Run: cd "${sourceSession.project_dir}" && mycc --from ${sourceSession.id}`));
     process.exit(1);
   }
 
@@ -514,19 +539,19 @@ export async function restoreSession(sessionArg: string): Promise<SessionInit> {
   // → placeholder narratives via the READY-event scan). Hard-exiting here
   // would prevent the user from continuing a partially-recorded session.
   const missingFiles = [
-    session.lead_triologue,
-    ...session.child_triologues,
+    sourceSession.lead_triologue,
+    ...sourceSession.child_triologues,
   ].filter(p => !fs.existsSync(p));
 
   if (missingFiles.length > 0) {
-    console.warn(chalk.yellow(`[restore] Session files missing (will degrade gracefully): ${missingFiles.join(', ')}`));
+    console.warn(chalk.yellow(`[restore] Source session files missing (will degrade gracefully): ${missingFiles.join(', ')}`));
   }
 
-  console.log(chalk.cyan('Restoring session...'));
+  console.log(chalk.cyan('Re-understanding source transcript (LLM summarization)...'));
 
-  const { pair, dosqPath } = await prepareRestoration(session);
+  const { pair, dosqPath } = await prepareRestoration(sourceSession);
 
-  console.log(chalk.cyan('Session restored. DOSQ generated at:'));
+  console.log(chalk.cyan('New session context generated. DOSQ at:'));
   console.log(chalk.gray(`  ${dosqPath}`));
 
   // Open DOSQ in editor for user review
@@ -542,20 +567,29 @@ export async function restoreSession(sessionArg: string): Promise<SessionInit> {
 
   const dosqContent = readDosq(dosqPath);
   const initialQuery = extractFirstQuery(dosqContent);
-  const triologuePath = session.lead_triologue;
-  const sessionFilePath = getSessionPathById(session.id)
-    || path.join(getSessionsDir(), session.id, `session-${session.id}.json`);
 
-  console.log(chalk.gray(`Restored session: ${session.id.slice(0, 7)}`));
+  // Create a BRAND NEW session (new id, new triologue file, new session json).
+  // The old session's files are never written to again — they are sealed.
+  const { sessionFilePath, triologuePath } = writeFreshSessionFiles();
 
-  return { sessionFilePath, triologuePath, restoredPair: pair, initialQuery };
+  console.log(chalk.gray(`Branched new session ${getSessionId(sessionFilePath).slice(0, 7)} (from ${sourceSession.id.slice(0, 7)})`));
+
+  return { sessionFilePath, triologuePath, restoredPair: pair, initialQuery, sourceSessionId: sourceSession.id };
 }
 
 /**
- * Create a new session with fresh triologue and session files
+ * Create the on-disk files for a fresh, empty session: a new id, a new session
+ * directory, an empty lead triologue JSONL, and a session-{id}.json pointing
+ * at it (child_triologues=[], teammates=[]).
+ *
+ * Shared by `createNewSession` (genuinely fresh start) and `restoreSession`
+ * (branch from a source). Neither caller writes into any pre-existing file —
+ * both produce brand-new paths, enforcing the "a session is never shared"
+ * invariant at the file level.
+ *
+ * @returns the new session file path and triologue path.
  */
-export function createNewSession(): SessionInit {
-  // Generate session ID first so we can create the session directory
+function writeFreshSessionFiles(): { sessionFilePath: string; triologuePath: string } {
   const id = randomUUID();
   const sessionDir = path.join(getSessionsDir(), id);
   ensureDir(sessionDir);
@@ -564,8 +598,17 @@ export function createNewSession(): SessionInit {
   const triologuePath = path.join(sessionDir, `triologue-lead-${timestamp}.jsonl`);
   fs.writeFileSync(triologuePath, '', 'utf-8');
 
-  // Pass the same id so session file goes in the same directory as triologue
+  // Pass the same id so the session file lives in the same dir as the triologue
   const sessionFilePath = createSessionFile(triologuePath, id);
+
+  return { sessionFilePath, triologuePath };
+}
+
+/**
+ * Create a new session with fresh triologue and session files
+ */
+export function createNewSession(): SessionInit {
+  const { sessionFilePath, triologuePath } = writeFreshSessionFiles();
 
   // Clean up empty sessions from previous runs
   const currentSessionId = getSessionId(sessionFilePath);
@@ -574,7 +617,7 @@ export function createNewSession(): SessionInit {
     console.log(chalk.gray(`Cleaned up ${removed} empty session(s)`));
   }
 
-  return { sessionFilePath, triologuePath, restoredPair: null, initialQuery: null };
+  return { sessionFilePath, triologuePath, restoredPair: null, initialQuery: null, sourceSessionId: null };
 }
 
 /**
