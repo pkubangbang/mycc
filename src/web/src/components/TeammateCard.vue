@@ -26,6 +26,9 @@ interface TeammateSummary {
   name: string;
   count: number;
   currentTool: string;
+  /** True when this teammate's last message is the exit notice (toolTag
+   *  'exit') — i.e. it has "retired". See TeammateDrawer's `done` field. */
+  done: boolean;
 }
 
 /**
@@ -53,47 +56,87 @@ function toolTag(label: string | undefined): string | null {
 /** Group teammate messages by teammate name, preserving first-seen order. */
 const teammates = computed<TeammateSummary[]>(() => {
   const order: string[] = [];
-  const counts = new Map<string, number>();
+  const messagesMap = new Map<string, ChatMessage[]>();
   const lastTool = new Map<string, string>();
   for (const m of props.teammateMessages) {
     const name = teammateName(m.label);
     if (!name) continue;
-    if (!counts.has(name)) {
+    if (!messagesMap.has(name)) {
       order.push(name);
-      counts.set(name, 0);
+      messagesMap.set(name, []);
     }
-    counts.set(name, (counts.get(name) ?? 0) + 1);
-    // The most recent message (array order is chronological) wins.
+    messagesMap.get(name)!.push(m);
     const tool = toolTag(m.label);
     lastTool.set(name, tool ?? '—');
   }
-  return order.map(name => ({
-    name,
-    count: counts.get(name) ?? 0,
-    currentTool: lastTool.get(name) ?? '—',
-  }));
+  return order.map(name => {
+    const msgs = messagesMap.get(name) ?? [];
+    const last = msgs.length > 0 ? msgs[msgs.length - 1] : null;
+    return {
+      name,
+      count: msgs.length,
+      currentTool: lastTool.get(name) ?? '—',
+      done: last !== null && toolTag(last.label) === 'exit',
+    };
+  });
 });
+
+/**
+ * Whether every teammate has "retired" — each one's last message is the exit
+ * notice. When true, the card collapses into a thin, semi-transparent trigger
+ * at the top-right (just a narrow handle that still opens the drawer on
+ * click). The moment any teammate re-activates (a newer non-exit message
+ * arrives) or a brand-new teammate appears, `allDone` flips false and the
+ * full card restores. With zero teammates, allDone is false (nothing to do).
+ */
+const allDone = computed(() =>
+  teammates.value.length > 0 && teammates.value.every(t => t.done),
+);
 
 function onClick(name: string): void {
   emit('open-teammate', name);
 }
+
+// When collapsed (allDone), the thin trigger opens the drawer on the first
+// teammate — the drawer itself shows every teammate, so the choice is just
+// which accordion starts expanded.
+function onCollapsedClick(): void {
+  const first = teammates.value[0]?.name;
+  if (first) emit('open-teammate', first);
+}
 </script>
 
 <template>
-  <div class="teammate-card" v-if="teammates.length > 0">
+  <!-- Collapsed: every teammate has retired. Render only a thin, dimmed
+       trigger at the top-right edge — a narrow pill that still opens the
+       drawer on click. Restores the full card the moment any teammate
+       re-activates or a new one appears (allDone flips false). -->
+  <button
+    v-if="allDone"
+    class="teammate-card collapsed"
+    type="button"
+    title="所有 teammate 已完成 — 点击展开"
+    @click="onCollapsedClick"
+  >
+    <span class="collapsed-label">Team · 已完成</span>
+  </button>
+  <!-- Full card: at least one teammate is NOT retired. -->
+  <div class="teammate-card" v-else-if="teammates.length > 0">
     <div class="card-title">Team</div>
     <button
       v-for="t in teammates"
       :key="t.name"
       class="teammate-row"
+      :class="{ retired: t.done }"
       type="button"
-      :title="`Open ${t.name}'s message timeline`"
+      :title="t.done ? `${t.name} 已完成 — Open ${t.name}'s message timeline` : `Open ${t.name}'s message timeline`"
       @click="onClick(t.name)"
     >
       <span class="row-name">@{{ t.name }}</span>
       <span class="row-count">({{ t.count }})</span>
       <span class="row-sep">:</span>
       <span class="row-tool">{{ t.currentTool }}</span>
+      <span v-if="t.done" class="row-done">✓</span>
     </button>
   </div>
 </template>
@@ -160,5 +203,37 @@ function onClick(name: string): void {
 .row-tool {
   color: #ffd666;
   margin-left: 2px;
+}
+/* Per-row retired marker: a small check after a teammate whose last message
+   is the exit notice. Subtle so the row still reads as a clickable summary. */
+.row-done {
+  margin-left: auto;
+  color: #5cdbd3;
+  font-weight: 700;
+}
+.teammate-row.retired {
+  opacity: 0.6;
+}
+/* Collapsed card: every teammate has retired. The card becomes a thin,
+   semi-transparent pill hugging the top-right edge — just enough of a
+   trigger to reopen the drawer. It stays clickable (button element) and
+   restores to the full card once a teammate re-activates or a new one
+   appears (allDone flips false). */
+.teammate-card.collapsed {
+  width: auto;
+  padding: 4px 10px;
+  opacity: 0.45;
+  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+  font-size: 11px;
+  border: none;
+  cursor: pointer;
+  transition: opacity 0.18s;
+}
+.teammate-card.collapsed:hover {
+  opacity: 0.8;
+}
+.collapsed-label {
+  color: var(--text-status-btn);
+  white-space: nowrap;
 }
 </style>

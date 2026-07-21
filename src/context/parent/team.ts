@@ -160,7 +160,13 @@ export class TeamManager implements TeamModule {
       this.statuses.set(name, 'shutdown');
       MemoryStore.updateTeammateStatus(name, 'shutdown');
       this.processes.delete(name);
-      this.context.core.brief('info', name, `Process exited (code ${code})`);
+      // Route the exit notice into the teammate's own drawer (not the main
+      // chat log) by using the @name/tool label convention. The `exit` tool
+      // tag doubles as a sentinel: the WebUI treats a teammate whose LAST
+      // message has toolTag==='exit' as "retired" (已完成). This lets the
+      // TeammateCard collapse to a thin trigger once every teammate is done.
+      // (Re-activation appends a newer non-exit message, clearing the state.)
+      this.context.core.brief('info', `@${name}/exit`, `Process exited (code ${code})`);
     });
 
     // Handle errors

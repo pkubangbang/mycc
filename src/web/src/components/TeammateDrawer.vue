@@ -33,6 +33,11 @@ interface TeammateGroup {
   count: number;
   currentTool: string;
   messages: ChatMessage[];
+  /** True when this teammate's last message is the exit notice (toolTag
+   *  'exit'), i.e. the teammate has "retired". A newer non-exit message
+   *  (re-activation) flips this back to false. Drives the "已完成" badge in
+   *  the accordion header and the TeammateCard collapse logic. */
+  done: boolean;
 }
 
 function teammateName(label: string | undefined): string | null {
@@ -65,12 +70,17 @@ const groups = computed<TeammateGroup[]>(() => {
     const tool = toolTag(m.label);
     lastTool.set(name, tool ?? '—');
   }
-  return order.map(name => ({
-    name,
-    count: messagesMap.get(name)?.length ?? 0,
-    currentTool: lastTool.get(name) ?? '—',
-    messages: messagesMap.get(name) ?? [],
-  }));
+  return order.map(name => {
+    const msgs = messagesMap.get(name) ?? [];
+    const last = msgs.length > 0 ? msgs[msgs.length - 1] : null;
+    return {
+      name,
+      count: msgs.length,
+      currentTool: lastTool.get(name) ?? '—',
+      messages: msgs,
+      done: last !== null && toolTag(last.label) === 'exit',
+    };
+  });
 });
 
 // Expanded accordions — a Set of teammate names. Initialized from
@@ -268,7 +278,7 @@ const drawerStyle = computed(() =>
         <button
           class="accordion-header"
           type="button"
-          :class="{ expanded: expanded.has(g.name) }"
+          :class="{ expanded: expanded.has(g.name), done: g.done }"
           @click="toggle(g.name)"
         >
           <!-- Static caret (no rotation animation per user request); just
@@ -278,6 +288,7 @@ const drawerStyle = computed(() =>
           <span class="acc-count">({{ g.count }})</span>
           <span class="acc-sep">:</span>
           <span class="acc-tool">{{ g.currentTool }}</span>
+          <span v-if="g.done" class="acc-done" title="该 teammate 已退出">已完成</span>
         </button>
         <!-- Expanded body: the accordion grows via flex to share the
              drawer's remaining height equally with other expanded
@@ -462,6 +473,23 @@ const drawerStyle = computed(() =>
 .acc-tool {
   color: #ffd666;
   margin-left: 2px;
+}
+/* "已完成" badge shown when a teammate's last message is the exit notice.
+   Pushed to the right edge of the header via margin-left:auto so it reads as
+   a status pill, not part of the tool line. */
+.acc-done {
+  margin-left: auto;
+  padding: 1px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--accent-text);
+  background: color-mix(in srgb, var(--accent) 70%, transparent);
+}
+/* Dim a retired teammate's header slightly so the done state is scannable
+   at a glance without obscuring the tool line. */
+.accordion-header.done {
+  opacity: 0.78;
 }
 /* Expanded accordion body: fills the accordion's flex-grown height and
    scrolls internally. min-height:0 lets the flex item shrink so the body
