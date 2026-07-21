@@ -43,8 +43,75 @@ const NEGLECTED_SPINNER_TEXT = 'Hold on';
 
 // ─── Ollama-specific: reconstructResponse ──────────────────────────────
 
+/**
+ * Strip inline "thinking" tags from content.
+ *
+ * The Ollama API moved thinking into a dedicated `message.thinking` field,
+ * but some server versions / models still emit legacy inline
+ * `<think>...</think>` (or `<think_>...</think_>`) tags directly into
+ * `content`. To stay robust against both delivery forms, we strip any
+ * inline think blocks from the assembled content and (if no dedicated
+ * `thinking` field was sent) recover the stripped text as reasoning.
+ *
+ * Also removes a stray trailing closing tag (e.g. content that is all
+ * reasoning with no opening tag, ending in `</think>`), which is the
+ * symptom some models produce when `think` is unexpectedly on.
+ */
+function stripInlineThinking(content: string): { content: string; thinking: string | undefined } {
+  if (!content) return { content, thinking: undefined };
+
+  let recovered = '';
+  let working = content;
+
+  // Match <think...>...</think...> blocks (tolerant of tag-name suffixes
+  // like <think>, <think_>, </think_>, </think>, etc.). Non-greedy, global.
+  const blockRe = /<think[^>]*>[\s\S]*?<\/think[^>]*>/gi;
+  let match: RegExpExecArray | null;
+  while ((match = blockRe.exec(working)) !== null) {
+    const inner = match[0].replace(/^<think[^>]*>/i, '').replace(/<\/think[^>]*>$/i, '');
+    if (inner) recovered += inner;
+  }
+  working = working.replace(blockRe, '');
+
+  // Stray closing tag with NO matching opening (the reported symptom:
+  // content is all reasoning text ending in `</think>` / `</think_>`).
+  // When a model emits a closing think tag without an opening one, the
+  // text before it is almost certainly leaked thinking — models don't
+  // append `</think>` after real content. Recover that text as thinking
+  // rather than leaving it as visible content (which was the bug).
+  // Only recover when no opening tag was ever seen (so we don't clobber
+  // real content that happens to contain a stray closer), and only when
+  // nothing else was already recovered as thinking.
+  const strayCloseRe = /<\/think[^>]*>/gi;
+  const hasStrayClose = strayCloseRe.test(working);
+  strayCloseRe.lastIndex = 0;
+  const hasOpening = /<think[^>]*>/i.test(working);
+  if (hasStrayClose && !hasOpening && !recovered) {
+    const before = working.replace(strayCloseRe, '').trim();
+    if (before) {
+      recovered = before;
+      working = '';
+    } else {
+      working = working.replace(strayCloseRe, '');
+    }
+  } else {
+    working = working.replace(strayCloseRe, '');
+  }
+  // Strip any orphan opening tag that survived (no closer).
+  working = working.replace(/<think[^>]*>/gi, '');
+
+  const trimmed = working.trim();
+  // If everything was stripped (pure thinking block with no real content),
+  // the recovered text is the reasoning; content becomes empty.
+  return {
+    content: trimmed,
+    thinking: recovered.trim() || undefined,
+  };
+}
+
 function reconstructResponse(chunks: ChatResponse[], model: string): ChatResponse {
   const contentParts: string[] = [];
+  const thinkingParts: string[] = [];
   let toolCalls = undefined;
   let doneReason = '';
   let totalDuration = 0;
@@ -56,6 +123,10 @@ function reconstructResponse(chunks: ChatResponse[], model: string): ChatRespons
     if (chunk.message?.content) {
       contentParts.push(chunk.message.content);
     }
+    // New API: thinking delivered as a dedicated field (separate from content).
+    if (chunk.message?.thinking) {
+      thinkingParts.push(chunk.message.thinking as string);
+    }
     if (chunk.message?.tool_calls && chunk.message.tool_calls.length > 0) {
       if (!toolCalls) toolCalls = chunk.message.tool_calls;
     }
@@ -66,10 +137,27 @@ function reconstructResponse(chunks: ChatResponse[], model: string): ChatRespons
     if (chunk.eval_count) evalCount = chunk.eval_count;
   }
 
+  // Defensive: handle both delivery forms.
+  // (1) New API → dedicated `thinking` field (collected above).
+  // (2) Legacy/inline → `<think>...</think>` tags inside content; strip them
+  //     and recover as thinking if the dedicated field was empty.
+  let content = contentParts.join('');
+  let thinking = thinkingParts.length > 0 ? thinkingParts.join('') : undefined;
+  const stripped = stripInlineThinking(content);
+  content = stripped.content;
+  if (!thinking && stripped.thinking) {
+    thinking = stripped.thinking;
+  }
+
   return {
     model,
     created_at: new Date(),
-    message: { role: 'assistant' as const, content: contentParts.join(''), ...(toolCalls ? { tool_calls: toolCalls } : {}) },
+    message: {
+      role: 'assistant' as const,
+      content,
+      ...(toolCalls ? { tool_calls: toolCalls } : {}),
+      ...(thinking ? { thinking } : {}),
+    },
     done: true,
     done_reason: doneReason,
     total_duration: totalDuration,
