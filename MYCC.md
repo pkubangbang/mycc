@@ -1196,6 +1196,80 @@ browser-based chat interface as an alternative to the terminal REPL:
   upload (WebUI chat-box attachments)** chapter above. Mirrors steering's
   ephemeral-queue architecture, but with no `forkChat` synthesis at PROMPT.
 
+### @-prefix teammate label convention
+
+Teammate tool output (`bash`, `read_file`, etc.) and teammate status messages
+are routed to a **separate `state.teammateMessages`** array in the WebUI
+rather than the main `state.messages` chat log. Routing is decided purely
+by a string convention on the existing `label` field — no new WS message
+types, no new backend registry, no `sender` field on `ChatMessage`. This
+keeps the wire format unchanged and lets the existing `messageLog` /
+`/history` replay mechanism carry teammate messages for free (approximate
+persistence — survives page refresh / WS reconnect; lost on serve
+stop/restart, same as every other `messageLog` entry).
+
+**Encoding:** the label is `@<teammate>/<tool>` (e.g. `@coder/bash`,
+`@reviewer/write_file`). The `@` prefix marks a message as a teammate
+message; the `/` splits teammate name (left) from tool name (right). If a
+teammate message carries no tool tag, the label is just `@<teammate>`.
+
+**Data flow** — the tool tag was historically dropped at the IPC boundary, so
+two files must cooperate to forward it:
+
+1. **Child process** (`src/context/child/core.ts`, `ChildCore.brief()`): the
+   `brief(level, tool, message, detail)` call forwards `tool` in the `log`
+   IPC notification payload (`{ message, detail, tool }`). The `error`
+   notification already included `tool`; `log` did not, so it dropped the
+   tag. (Plain `verbose` notifications already carry `tool`.)
+2. **Parent process** (`src/context/parent/team.ts`,
+   `handleChildMessage()`): the `log` and `error` handlers build the label as
+   `@${sender}/${tool}` (falling back to `@${sender}` when `tool` is absent)
+   and pass it as the `tool` argument to `core.brief()`, so the output
+   callback broadcasts it as the WS `label`.
+
+   Other `handleChildMessage` paths (`teammate_ready`, `eta_update`,
+   `status`, `condition_replace`, process `exit`/`error` events) are
+   **intentionally NOT prefixed** — they are lifecycle/coordination events
+   that belong in the lead's main chat log, not in a teammate's timeline.
+
+**Frontend routing** (`src/web/src/main.ts`): in `ws.onmessage` and
+`fetchHistory()`, any message whose `label` starts with `@` is pushed into
+`state.teammateMessages`; everything else goes into `state.messages` as
+before. `/history` returns a flat `messages` array (no split on the wire) —
+the client splits it after fetching.
+
+**Approximate persistence:** teammate messages flow through the same
+`ServeHub.broadcast()` → `messageLog` path as every other message, so the
+existing `/history` endpoint replays them on reconnect. The cap
+(`MAX_LOG_SIZE = 1000`) applies to the combined log. A serve stop/restart
+wipes `messageLog` (ephemeral by design) — teammate messages are lost there,
+which is the accepted "near-persistence" trade-off (the triologue transcript
+records teammate *turns* but not their intermediate brief/log output, so the
+transcript is not a recovery source for these).
+
+### Teammate accordion UI
+
+Teammate messages are grouped by teammate name and rendered in an accordion
+UI rather than mixed into the main chat:
+
+- **`TeammateCard.vue`** — a floating card at the top-right of the chat area.
+  One row per active teammate, format `@name(count): currentTool`. `count` is
+  the message count for that teammate; `currentTool` is extracted from the
+  most recent message's label. Clicking a row opens the drawer with that
+  teammate's accordion expanded. The card hides when the drawer is open and
+  when there are no teammate messages.
+- **`TeammateDrawer.vue`** — a panel occupying the right half of the middle
+  section. Vertically stacked accordions, one per teammate. Each accordion
+  header is `@name(count): current_tool`; the body is a flat chronological
+  timeline of that teammate's messages (each with a `[tool]` prefix tag
+  extracted from the label). Each body scrolls independently. The first
+  accordion is expanded by default; multiple may be expanded simultaneously.
+  A close button (✕) dismisses the drawer.
+
+Both components group `state.teammateMessages` by parsing the teammate name
+out of the `@name/tool` label. The grouping is a frontend computed property —
+no backend per-teammate state is maintained.
+
 The WebUI is merged into `main`. For the developer reference (component
 layout, WS protocol, input/card bridges, reconnect replay), see
 `src/web/README.md`.

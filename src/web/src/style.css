@@ -51,6 +51,21 @@ html, body, #app {
   --bubble-log-bg: #fff;
   --bubble-log-text: #666;
   --bubble-log-border: #e5e5e5;
+
+  /* Accordion header in the teammate drawer — a MILD, subtle band distinct
+     from the surrounding chat-log background. In light mode it's a faint
+     grey (not the dark --bg-status-btn, which is too prominent); in dark
+     mode it's a slightly lighter navy than --bg-chat-log (which is the same
+     as --bg-app, so the header was invisible before).
+     --text-acc-header is the main name color; --text-acc-meta is for the
+     secondary decorations (count, sep, caret) — kept darker than the
+     generic --text-muted so they stay readable against the mild header
+     background in both themes. */
+  --bg-acc-header: #e4e4e4;
+  --bg-acc-header-hover: #d8d8d8;
+  --bg-acc-header-expanded: #dadada;
+  --text-acc-header: #333;
+  --text-acc-meta: #555;
   --bubble-warn-bg: #fffbe6;
   --bubble-warn-text: #ad6800;
   --bubble-warn-border: #ffe58f;
@@ -115,6 +130,15 @@ html, body, #app {
   --bubble-log-bg: #1e2a3a;
   --bubble-log-text: #b0b0b0;
   --bubble-log-border: #2a3a4a;
+
+  /* Dark-mode accordion header — a slightly LIGHTER navy than --bg-chat-log
+     (#1a1a2e) so the header is distinguishable from the list/body background
+     without being a glaring light band. */
+  --bg-acc-header: #232341;
+  --bg-acc-header-hover: #2a2a4f;
+  --bg-acc-header-expanded: #2a2a4f;
+  --text-acc-header: #d0d0e0;
+  --text-acc-meta: #9090b0;
   --bubble-warn-bg: #2d2410;
   --bubble-warn-text: #e6a817;
   --bubble-warn-border: #5c4a10;

@@ -28,7 +28,12 @@ export class ChildCore extends BaseCore implements CoreModule {
     if (level === 'error') {
       ipc.sendNotification('error', { error: message, detail, tool });
     } else {
-      ipc.sendNotification('log', { message, detail });
+      // Forward `tool` so the parent can build the @-prefix teammate label
+      // (@sender/tool) for the WebUI teammate timeline. Without this, the
+      // tool tag is lost at the IPC boundary and all teammate messages end
+      // up labeled only with the sender name in the main chat log. See the
+      // "@-prefix teammate label convention" section in MYCC.md.
+      ipc.sendNotification('log', { message, detail, tool });
     }
   }
 

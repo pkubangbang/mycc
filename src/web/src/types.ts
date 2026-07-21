@@ -62,6 +62,13 @@ export interface ChatState {
   darkMode: boolean;
   /** Files selected for upload but not yet sent. Cleared on send. */
   pendingFiles: FileInfo[];
+  /** Teammate messages routed by the @-prefix label convention — any
+   *  message whose `label` starts with `@` is a teammate message and goes
+   *  here instead of `messages`. Grouped by teammate name in the accordion
+   *  UI (TeammateCard / TeammateDrawer). Survives page refresh / WS
+   *  reconnect via the /history replay (approximate persistence — lost on
+   *  serve stop/restart, same as the main messageLog). */
+  teammateMessages: ChatMessage[];
 }
 
 export interface FileInfo {

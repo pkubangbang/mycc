@@ -272,14 +272,24 @@ export class TeamManager implements TeamModule {
     if (msg.type === 'log') {
       const message = msg.message as string;
       const detail = msg.detail as string | undefined;
-      this.context.core.brief('info', sender, message, detail);
+      const tool = msg.tool as string | undefined;
+      // Build the @-prefix teammate label for the WebUI teammate timeline.
+      // @sender/tool routes the message into state.teammateMessages instead
+      // of the main chat log. Without a tool tag (rare), fall back to
+      // @sender. See the "@-prefix teammate label convention" in MYCC.md.
+      const label = tool ? `@${sender}/${tool}` : `@${sender}`;
+      this.context.core.brief('info', label, message, detail);
       return;
     }
 
     if (msg.type === 'error') {
       const error = msg.error as string;
       const detail = msg.detail as string | undefined;
-      this.context.core.brief('error', sender, error, detail);
+      const tool = msg.tool as string | undefined;
+      // Same @-prefix routing as the log handler above — teammate errors go
+      // to the teammate timeline, not the main chat log.
+      const label = tool ? `@${sender}/${tool}` : `@${sender}`;
+      this.context.core.brief('error', label, error, detail);
       return;
     }
 

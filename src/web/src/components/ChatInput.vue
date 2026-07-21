@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue';
+import { ref, watch, computed } from 'vue';
 import type { ChatState, FileInfo } from '../types';
 import { chatApi } from '../main';
 
@@ -107,14 +107,47 @@ function onDragLeave(event: DragEvent): void {
   }
 }
 
-function onDrop(event: DragEvent): void {
-  event.preventDefault();
-  dragCounter = 0;
-  dragOver.value = false;
-  if (event.dataTransfer?.files && event.dataTransfer.files.length > 0) {
-    readFiles(event.dataTransfer.files);
+// ── Draggable input-box height ──
+//
+// A horizontal resize handle above the input box lets the user drag upward
+// to grow the textarea (and downward to shrink it). Height is tracked in px,
+// clamped to [MIN_HEIGHT, MAX_HEIGHT]. Pointer events drive the drag; the
+// textarea itself stays `resize:none` so the native browser gripper doesn't
+// conflict. The handle uses row-resize cursor.
+const MIN_INPUT_HEIGHT = 40;   // px — roughly the 2-row default
+const MAX_INPUT_HEIGHT = 320;  // px — keep the chat log usable
+const inputHeight = ref(0);    // 0 = unset → textarea uses its default rows
+
+let inputDragging = false;
+function onInputHandleDown(e: PointerEvent): void {
+  inputDragging = true;
+  (e.target as HTMLElement).setPointerCapture(e.pointerId);
+  e.preventDefault();
+}
+function onInputHandleMove(e: PointerEvent): void {
+  if (!inputDragging) return;
+  // The handle sits at the TOP of the input box. Dragging the pointer up
+  // increases the box height; dragging down decreases it. We measure from
+  // the handle element's position so the math is stable regardless of where
+  // the drag started.
+  const handleEl = e.target as HTMLElement;
+  const box = handleEl.parentElement?.getBoundingClientRect();
+  if (!box) return;
+  // New height = distance from pointer Y to the box's BOTTOM edge.
+  const h = box.bottom - e.clientY;
+  inputHeight.value = Math.max(MIN_INPUT_HEIGHT, Math.min(h, MAX_INPUT_HEIGHT));
+}
+function onInputHandleUp(e: PointerEvent): void {
+  inputDragging = false;
+  try {
+    (e.target as HTMLElement).releasePointerCapture(e.pointerId);
+  } catch {
+    /* already released */
   }
 }
+const inputAreaStyle = computed(() =>
+  inputHeight.value > 0 ? { height: `${inputHeight.value}px` } : {},
+);
 </script>
 
 <template>
@@ -126,11 +159,22 @@ function onDrop(event: DragEvent): void {
     @dragleave="onDragLeave"
     @drop="onDrop"
   >
+    <!-- Horizontal resize handle at the top of the input box. Drag up to
+         grow the textarea, down to shrink it. -->
+    <div
+      class="input-resize-handle"
+      @pointerdown="onInputHandleDown"
+      @pointermove="onInputHandleMove"
+      @pointerup="onInputHandleUp"
+      @pointercancel="onInputHandleUp"
+      title="拖拽调整输入框高度"
+    ></div>
     <div class="input-row">
       <div class="input-area-wrapper">
         <textarea
           v-model="text"
           class="input-area"
+          :style="inputAreaStyle"
           :placeholder="state.isWaiting ? '输入消息…' : '等待回复中…'"
           :disabled="(!state.isWaiting && !state.isRunning) || state.connectionStatus !== 'connected'"
           rows="2"
@@ -185,9 +229,29 @@ function onDrop(event: DragEvent): void {
   border-top: 1px solid var(--border-color);
   flex-shrink: 0;
   transition: background 0.15s;
+  position: relative;
 }
 .chat-input.drag-over {
   background: color-mix(in srgb, var(--accent) 8%, var(--bg-input));
+}
+/* Horizontal resize handle at the top edge of the input box. A thin bar
+   with a wider transparent hit area; row-resize cursor. Highlights on
+   hover/active to signal it's draggable. */
+.input-resize-handle {
+  position: absolute;
+  top: -4px;
+  left: 0;
+  right: 0;
+  height: 3px;
+  padding: 4px 0;
+  cursor: row-resize;
+  background: var(--border-color);
+  z-index: 5;
+  transition: background 0.15s;
+}
+.input-resize-handle:hover,
+.input-resize-handle:active {
+  background: var(--accent);
 }
 .input-row {
   display: flex;
@@ -209,7 +273,9 @@ function onDrop(event: DragEvent): void {
   font-size: 14px;
   font-family: inherit;
   line-height: 1.5;
-  max-height: 120px;
+  /* No max-height: the draggable handle controls height via inline style.
+     The textarea's own scrolling kicks in once content exceeds the set
+     height (overflow-y is auto by default for textarea). */
   outline: none;
   background: var(--bg-input-field);
   color: var(--text-primary);

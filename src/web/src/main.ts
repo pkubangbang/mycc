@@ -30,6 +30,7 @@ const state = reactive<ChatState>({
   verboseLogs: false,
   steeringBuffer: [],
   pendingFiles: [],
+  teammateMessages: [],
   darkMode: localStorage.getItem('mycc-theme') === 'dark',
 });
 
@@ -123,8 +124,15 @@ async function fetchHistory(): Promise<void> {
         && m.type !== 'file-upload'
         && m.type !== 'file-flush',
     );
+    // Split teammate messages from the main chat log by the @-prefix label
+    // convention. Teammate messages (@name/tool) go to teammateMessages for
+    // the accordion UI; everything else stays in messages. See the
+    // "@-prefix teammate label convention" section in MYCC.md.
+    const teammateMsgs = visible.filter(m => m.label?.startsWith('@'));
+    const mainMsgs = visible.filter(m => !m.label?.startsWith('@'));
     // Replace, not append — on reconnect we want a clean, authoritative snapshot.
-    state.messages.splice(0, state.messages.length, ...visible);
+    state.messages.splice(0, state.messages.length, ...mainMsgs);
+    state.teammateMessages.splice(0, state.teammateMessages.length, ...teammateMsgs);
     // Restore the steering buffer bar from the server's current queue (peek,
     // not consume). Survives a page refresh within the same serve session.
     const queued = data.steeringBuffer ?? [];
@@ -219,7 +227,15 @@ function connectWebSocket(): void {
     } else {
       state.isWaiting = false;
       state.isRunning = true;
-      state.messages.push(msg);
+      // Route by the @-prefix label convention: teammate messages go to a
+      // separate teammateMessages array for the accordion UI, keeping the
+      // main chat log focused on the lead's conversation. See the
+      // "@-prefix teammate label convention" section in MYCC.md.
+      if (msg.label?.startsWith('@')) {
+        state.teammateMessages.push(msg);
+      } else {
+        state.messages.push(msg);
+      }
     }
   };
 
