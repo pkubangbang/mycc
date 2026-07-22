@@ -7,6 +7,7 @@ import ChatLog from './components/ChatLog.vue';
 import ChatInput from './components/ChatInput.vue';
 import TeammateCard from './components/TeammateCard.vue';
 import TeammateDrawer from './components/TeammateDrawer.vue';
+import TodoCard from './components/TodoCard.vue';
 
 defineProps<{ state: ChatState }>();
 
@@ -36,6 +37,7 @@ function closeDrawer(): void {
         :messages="state.messages"
         :state="state"
       />
+      <TodoCard :messages="state.messages" />
       <TeammateCard
         v-if="!drawerOpen && state.teammateMessages.length > 0"
         :teammate-messages="state.teammateMessages"

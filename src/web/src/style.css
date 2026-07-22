@@ -76,6 +76,12 @@ html, body, #app {
   --bubble-prompt-text: #003a8c;
   --bubble-prompt-border: #91d5ff;
 
+  /* Floating TodoCard — light yellow panel so it stands apart from the
+     near-white chat background. Border is a stronger amber for definition. */
+  --todo-card-bg: #fff8d6;
+  --todo-card-border: #e8c44f;
+  --todo-card-text: #5a4500;
+
   --md-code-bg: rgba(0, 0, 0, 0.06);
   --md-pre-bg: #f6f8fa;
   --md-blockquote-border: #d0d7de;
@@ -148,6 +154,12 @@ html, body, #app {
   --bubble-prompt-bg: #0d2137;
   --bubble-prompt-text: #7ec8e3;
   --bubble-prompt-border: #1a4a6a;
+
+  /* Floating TodoCard — deep green panel so it stands apart from the
+     near-black chat background. Border is a brighter green for definition. */
+  --todo-card-bg: #0f3d2a;
+  --todo-card-border: #1f7a4f;
+  --todo-card-text: #c8e6c9;
 
   --md-code-bg: rgba(255, 255, 255, 0.08);
   --md-pre-bg: #0f1923;

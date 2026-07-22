@@ -21,6 +21,17 @@ const isBashCommand = computed(() =>
   props.message.type === 'log' && props.message.label === 'bash'
 );
 
+// Todo tool logs (todo_create / todo_update / todo_pinning) carry the full
+// printTodoList() snapshot as `content`. The list is "extracted" from these
+// bubbles and shown in the floating TodoCard (App.vue) instead, so the
+// inline bubble hides the list body entirely. Only the header
+// ([HH:MM:SS] [label]) and the `detail` summary (e.g. "Created #1: Name")
+// above render — all three todo tools always pass a detail string.
+const TODO_LABELS = new Set(['todo_create', 'todo_update', 'todo_pinning']);
+const isTodoCard = computed(() =>
+  props.message.type === 'log' && !!props.message.label && TODO_LABELS.has(props.message.label)
+);
+
 // Render markdown for conversational content (user + assistant result) and
 // for labeled `log` messages (brief() structured status — e.g. the crossroad
 // alternatives list). Unlabeled `log`/error/warn stay plain-text monospace —
@@ -93,6 +104,11 @@ const header = computed(() => {
                terminal block with a dollar prompt prefix. The intent-lang
                string is already shown above in the .bubble-detail outline box. -->
           <pre class="bash-command"><span class="bash-prompt">$</span>{{ message.content }}</pre>
+        </template>
+        <template v-else-if="isTodoCard">
+          <!-- Todo tool log: the full todoList snapshot is "extracted" into
+               the floating TodoCard, so the inline bubble hides the list
+               body entirely. Only the header + detail summary above render. -->
         </template>
         <template v-else-if="renderMarkdown">
           <!-- eslint-disable-next-line vue/no-v-html -- markdown-it escapes raw HTML (html:false) -->
