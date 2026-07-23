@@ -96,7 +96,15 @@ export function loadEnv(): void {
 
 // Parse CLI args once at startup
 const args = minimist(process.argv.slice(2), {
-  boolean: ['v', 'verbose', 'skip-healthcheck', 'setup', 'debug-eval', 'debug-tp', 'debug-prompt', 'serve'],
+  // NOTE: 'serve' is intentionally NOT declared in `boolean` or `string`,
+  // and has no default, so minimist auto-detects it:
+  //   `--serve`        -> true      (bare flag -> serve mode ON, default port)
+  //   `--serve 9000`   -> 9000      (serve mode ON, port 9000)
+  //   `--serve=9000`   -> 9000      (serve mode ON, port 9000)
+  //   (absent)           -> undefined (serve mode OFF)
+  // Putting it in `string` would break bare `--serve` (yields "" not true);
+  // putting it in `boolean` would swallow `--serve 9000` (port ignored).
+  boolean: ['v', 'verbose', 'skip-healthcheck', 'setup', 'debug-eval', 'debug-tp', 'debug-prompt'],
   string: [
     'from', 'port', 'host', 'max-upload-mb',
     'ollama-host', 'ollama-api-key', 'ollama-model', 'ollama-vision-model', 'ollama-embedding-model',
@@ -106,7 +114,7 @@ const args = minimist(process.argv.slice(2), {
   alias: { v: 'verbose' },
   default: {
     v: false, from: null, port: null,
-    'skip-healthcheck': false, setup: false, serve: false,
+    'skip-healthcheck': false, setup: false,
     'debug-eval': false, 'debug-tp': false, 'debug-prompt': false,
   },
 });
@@ -229,19 +237,32 @@ export function isDebuggingPrompt(): boolean {
 }
 
 /**
- * Check if serve mode is requested via --serve CLI flag
+ * Check if serve mode is requested via --serve CLI flag.
+ *
+ * `--serve` may be passed bare (→ true) or with a port value
+ * (`--serve 9000`, `--serve=9000` → number/string). All truthy forms enable
+ * serve mode; only an absent flag (undefined) or an empty value disables it.
  */
 export function shouldServe(): boolean {
-  return args.serve === true;
+  return args.serve === true || (typeof args.serve === 'number' && Number.isFinite(args.serve))
+    || (typeof args.serve === 'string' && args.serve.length > 0);
 }
 
 /**
- * Get the serve port (--port flag or default 3173).
- * Validates port is in range 1–65535; falls back to 3173 otherwise.
+ * Get the serve port. Priority (first valid wins):
+ *   1. A numeric value attached to --serve (e.g. `--serve 9000`, `--serve=9000`)
+ *   2. The --port flag
+ *   3. Default 3173
+ * Validates port is in range 1–65535; falls back to default otherwise.
  */
 export function getServePort(): number {
-  const p = parseInt(args.port);
-  return (Number.isFinite(p) && p > 0 && p <= 65535) ? p : 3173;
+  const candidates: unknown[] = [args.serve, args.port];
+  for (const c of candidates) {
+    if (typeof c !== 'string' && typeof c !== 'number') continue;
+    const p = parseInt(String(c), 10);
+    if (Number.isFinite(p) && p > 0 && p <= 65535) return p;
+  }
+  return 3173;
 }
 
 /**
