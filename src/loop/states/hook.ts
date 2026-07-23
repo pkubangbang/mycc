@@ -109,6 +109,15 @@ async function handleRecapCall(
     return AgentState.COLLECT;
   }
 
+  // comment is REQUIRED: it determines the direction of the next turn.
+  // (abandon path is exempt — it discards the checkpoint, no steering needed.)
+  if (!abandon && !comment) {
+    triologue.agent(pass.assistantContent, pass.rawToolCalls as ToolCall[] | undefined, pass.assistantReasoningContent);
+    triologue.tool('recap', 'Error: comment is required (it determines the direction of the next turn). Provide a clear, actionable directive stating what should happen next.', call.id);
+    turn.isFirstRound = false;
+    return AgentState.COLLECT;
+  }
+
   const checkpoint = triologue.findCheckpointById(checkpointId);
   if (!checkpoint) {
     triologue.agent(pass.assistantContent, pass.rawToolCalls as ToolCall[] | undefined, pass.assistantReasoningContent);
@@ -129,10 +138,20 @@ async function handleRecapCall(
 
     // Inject artificial assistant + tool result instead of note(),
     // so the triologue maintains natural tool-call flow.
-    const abandonNote = `[RECAP] Abandoned checkpoint "${checkpoint.description}".${comment ? ` Comment: ${comment}` : ''}`;
-    const noteContent = turn.lastUserQuery
-      ? `${abandonNote}\n\nNote: the checkpoint todo item was auto-created with this checkpoint's ID as its note. Use todo_update to mark it as done.\n\nUser's last query: ${turn.lastUserQuery}`
-      : `${abandonNote}\n\nNote: the checkpoint todo item was auto-created with this checkpoint's ID as its note. Use todo_update to mark it as done.`;
+    // Order: desc → todo note → LUQ (context) → comment (steering, last).
+    const abandonParts: string[] = [];
+    abandonParts.push(`[RECAP] Abandoned checkpoint "${checkpoint.description}".`);
+    abandonParts.push('');
+    abandonParts.push('Note: the checkpoint todo item was auto-created with this checkpoint\'s ID as its note. Use todo_update to mark it as done.');
+    if (turn.lastUserQuery) {
+      abandonParts.push('');
+      abandonParts.push(`**User's last query (context):** ${turn.lastUserQuery}`);
+    }
+    if (comment) {
+      abandonParts.push('');
+      abandonParts.push(`**Next direction (recap comment — follow this):** ${comment}`);
+    }
+    const noteContent = abandonParts.join('\n');
 
     triologue.agent('', [{
       id: call.id,
@@ -200,9 +219,10 @@ async function handleRecapCall(
   // Inject artificial assistant + tool result instead of note(),
   // so the triologue maintains natural tool-call flow.
   // The recap's own assistant message and tool result are persisted.
-  const noteContent = turn.lastUserQuery
-    ? `${summary}\n\nUser's last query: ${turn.lastUserQuery}`
-    : summary;
+  // NOTE: handleRecap already assembles the full note in the correct order
+  // (checkpoint-desc → recap-summary → last-user-query → recap-comment).
+  // Do NOT append LUQ here — it is embedded inside the summary note.
+  const noteContent = summary;
 
   triologue.agent('', [{
     id: call.id,

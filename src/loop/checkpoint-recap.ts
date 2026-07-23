@@ -225,7 +225,7 @@ What the agent now knows that it did NOT know before the checkpoint. This MUST b
 
 ### Next Steps
 What still needs to be done, ordered by priority.${topicLine}
-${comment ? `\n**LLM Comment:** "${comment}" — incorporate this insight into the summary.` : ''}
+${comment ? `\n**Direction comment (provided, will be placed last as the steering directive):** "${comment}" — make the Next Steps consistent with this direction.` : ''}
 ${beforeStateSection}
 **CRITICAL RULES:**
 - The Exploration Coverage section is a "do not re-read" list — include every file
@@ -249,8 +249,11 @@ ${beforeStateSection}
  * @param allTools - All tools for prompt cache preservation
  * @param description - Checkpoint description (focus for summarization)
  * @param escAware - Optional ESC-aware wrapper for lead agent
- * @param comment - Optional LLM comment to incorporate
- * @param lastUserQuery - The user's most recent query, used to detect topic change
+ * @param comment - REQUIRED for non-abandon recaps. The agent's directive that
+ *                   determines the direction of the next turn; placed LAST in the
+ *                   assembled note so it is the final steering instruction.
+ * @param lastUserQuery - The user's most recent query, embedded as context
+ *                         (not a steering directive) between summary and comment.
  * @param checkpointResult - The original checkpoint tool result (for "before state" context)
  */
 export async function handleRecap(
@@ -292,16 +295,29 @@ export async function handleRecap(
 
   summary = summary || '(no summary)';
 
-  // Build the compact note that replaces the entire checkpoint span
+  // Build the compact note that replaces the entire checkpoint span.
+  // ORDERING (matters for LLM direction-following):
+  //   1. checkpoint-desc  — which checkpoint closed (anchor)
+  //   2. recap-summary    — the structured summary body (what was found)
+  //   3. last-user-query  — context note: the user's most recent instruction
+  //                         (background, not the steering directive)
+  //   4. recap-comment    — the agent's directive, placed LAST so it is the
+  //                         final thing the conversation sees before continuing.
+  //                         This is the most important field: it decides the
+  //                         direction of the next turn.
   const parts: string[] = [];
   parts.push(`[RECAP] Checkpoint "${description}" closed.`);
   parts.push('');
   parts.push('Some actions have been performed before this recap but the details have been omitted. Here is the summary:');
   parts.push('');
   parts.push(summary);
+  if (lastUserQuery) {
+    parts.push('');
+    parts.push(`**User's last query (context):** ${lastUserQuery}`);
+  }
   if (comment) {
     parts.push('');
-    parts.push(`**LLM Comment:** ${comment}`);
+    parts.push(`**Next direction (recap comment — follow this):** ${comment}`);
   }
 
   return parts.join('\n');

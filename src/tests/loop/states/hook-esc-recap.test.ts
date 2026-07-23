@@ -104,6 +104,7 @@ describe('handleHook — ESC during recap (recap cancellation)', () => {
   function makeRecapEnv() {
     const recapCall = createMockAugmentedToolCall('recap', {
       checkpoint_id: 'abc12345',
+      comment: 'Next: implement the fix in parser.ts',
     });
     const env = createMockMachineEnv({ triologue });
     // processToolCalls returns a hookResult containing the recap call

@@ -17,7 +17,9 @@ import type { ToolDefinition } from '../types.js';
 
 export const recapTool: ToolDefinition = {
   name: 'recap',
-  description: `Close a checkpoint and compress its messages into a summary. Set abandon=true to discard without summarizing. Must be called alone (no other tools in same turn).`,
+  description: `Close a checkpoint and compress its messages into a summary. Set abandon=true to discard without summarizing. Must be called alone (no other tools in same turn).
+
+The 'comment' field is REQUIRED and is the most important part of the recap: it determines the direction of the next turn. Write it as a clear, actionable directive stating what should happen next based on what was discovered during this checkpoint. The comment is placed at the END of the recap note, so it is the last thing the conversation sees before continuing — treat it as the steering instruction for subsequent work.`,
   input_schema: {
     type: 'object',
     properties: {
@@ -31,10 +33,10 @@ export const recapTool: ToolDefinition = {
       },
       comment: {
         type: 'string',
-        description: 'Optional comment from the LLM about the findings, decisions, or key takeaways from this checkpoint. Included in the recap log for user visibility.',
+        description: 'REQUIRED. A directive that determines the direction of the next turn. State what was concluded and what should happen next. This is placed last in the recap note and steers subsequent work, so be specific and actionable — not a vague log entry.',
       },
     },
-    required: ['checkpoint_id'],
+    required: ['checkpoint_id', 'comment'],
   },
   scope: ['main'],
   handler: () => {
