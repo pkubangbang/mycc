@@ -403,7 +403,7 @@ export async function retryChat(
         if (!isLastAttempt) {
           const delay = calculateDelay(attempt, cfg);
           agentIO.verbose('deepseek', `Attempt ${attempt}/${cfg.maxRetries + 1} failed: ${lastError.message}. Retrying in ${delay}ms...`);
-          await sleep(delay);
+          await sleep(delay, signal);
         }
       }
     }

@@ -48,6 +48,17 @@ const TRANSIENT_ERROR_PATTERNS = [
   'http2 session',
   'frame',
   'destroy',
+  // Windows TCP errors (wsarecv) — the socket layer surfaces these when a
+  // remote host hangs during connect/read (e.g. Ollama cloud endpoint
+  // unreachable). Without these, the error message "A connection attempt
+  // failed because the connected party did not properly respond..." would
+  // fall through to 'fatal' and skip retry, yet the outer teammate loop
+  // would still blindly retry the same hung endpoint. Classifying as
+  // transient makes the retry count explicit (4× with backoff).
+  'wsarecv',
+  'connection attempt failed',
+  'did not properly respond',
+  'established connection failed',
 ];
 
 /**
@@ -126,8 +137,31 @@ export type RetryChatConfig = Partial<RetryConfig> & {
 // Utilities
 // ============================================================================
 
-export function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+/**
+ * Signal-aware sleep. Resolves after `ms` milliseconds, OR rejects with
+ * StreamAbortedError if the optional `signal` fires first.
+ *
+ * Used by retryChat's backoff between attempts so a watchdog abort can
+ * interrupt the backoff immediately (without this, a hung endpoint keeps
+ * the teammate stuck for the full backoff delay even after the watchdog
+ * fires). Existing callers pass only `ms` and are unaffected (the signal
+ * param is optional).
+ */
+export function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new StreamAbortedError());
+      return;
+    }
+    const timeoutId = setTimeout(resolve, ms);
+    if (signal) {
+      const onAbort = () => {
+        clearTimeout(timeoutId);
+        reject(new StreamAbortedError());
+      };
+      signal.addEventListener('abort', onAbort, { once: true });
+    }
+  });
 }
 
 export function calculateDelay(attempt: number, config: RetryConfig): number {

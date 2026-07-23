@@ -196,10 +196,55 @@ export async function retryChat(
       }
 
       try {
-        const stream = await ollama.chat({
+        // The ollama library creates its OWN internal AbortController for the
+        // fetch() POST (browser.mjs processStreamableRequest) — our `signal`
+        // cannot reach it. So if the TCP connect hangs (Windows wsarecv,
+        // ~21s OS timeout), `ollama.chat()` blocks with no way for the
+        // watchdog/turn signal to abort it. Race the POST against a per-
+        // attempt timeout keyed off firstTokenTimeoutMs; also reject if our
+        // signal fires during the POST. On race loss the underlying
+        // ollama.chat() promise is still pending — when it eventually
+        // resolves we call stream.abort() to release the library's internal
+        // socket (prevents socket accumulation across 4× retries), and
+        // suppress its rejection to avoid unhandledRejection.
+        const chatPromise = ollama.chat({
           ...request,
           stream: true,
         } as ChatRequest & { stream: true });
+
+        const postTimeoutMs = cfg.firstTokenTimeoutMs ?? 20000;
+        let postTimeoutId: ReturnType<typeof setTimeout> | undefined;
+        const postRacePromise = new Promise<never>((_, reject) => {
+          postTimeoutId = setTimeout(() => {
+            reject(new StreamTimeoutError(
+              `Ollama POST timed out after ${postTimeoutMs}ms (connection hang)`,
+              'first-token',
+            ));
+          }, postTimeoutMs);
+          if (signal) {
+            signal.addEventListener('abort', () => {
+              if (postTimeoutId) clearTimeout(postTimeoutId);
+              reject(new StreamAbortedError());
+            }, { once: true });
+          }
+        });
+
+        let stream;
+        try {
+          stream = await Promise.race([chatPromise, postRacePromise]);
+        } catch (raceErr) {
+          // Race lost — chatPromise still pending. Attach cleanup so that
+          // when it eventually settles we release the library's socket
+          // (stream.abort()) or swallow the rejection. Without this the
+          // orphaned fetch could hold a socket for the OS TCP timeout and,
+          // across 4× retries, accumulate leaked sockets.
+          chatPromise
+            .then((s) => { try { s.abort(); } catch { /* already gone */ } })
+            .catch(() => { /* suppress orphaned rejection */ });
+          throw raceErr;
+        } finally {
+          if (postTimeoutId) clearTimeout(postTimeoutId);
+        }
 
         const chunks = await collectStream<ChatResponse>(
           stream,
@@ -228,7 +273,7 @@ export async function retryChat(
         if (!isLastAttempt) {
           const delay = calculateDelay(attempt, cfg);
           agentIO.verbose('ollama', `Attempt ${attempt}/${cfg.maxRetries + 1} failed: ${lastError.message}. Retrying in ${delay}ms...`);
-          await sleep(delay);
+          await sleep(delay, signal);
         }
       }
     }

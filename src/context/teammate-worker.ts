@@ -218,6 +218,19 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
   // Track recent tool calls for repetition detection
   const recentToolCalls: string[] = [];
 
+  // === Loop-level failure backoff + circuit breaker ===
+  // When retryChat exhausts its 4× retries on a hung endpoint (e.g. Ollama
+  // cloud wsarecv timeout), the error propagates here. Without this counter
+  // the loop would wait a flat 1s and immediately retry the SAME iteration
+  // against the same hung endpoint — another ~87s stuck cycle, repeating
+  // until the network recovers. Instead: exponential backoff between loop
+  // retries, and after MAX_CONSECUTIVE_FAILURES transition to idle (resumes
+  // mail polling so the lead can intervene / the worker isn't "working" but
+  // unreachable). Reset to 0 on any successful LLM turn.
+  let consecutiveFailures = 0;
+  const MAX_CONSECUTIVE_FAILURES = 3;
+  const MAX_LOOP_BACKOFF_MS = 10_000;
+
   // Check if tool result indicates error
   function isErrorResult(result: string): boolean {
     if (!result) return false;
@@ -323,6 +336,9 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
         throw err;
       }
       watchdog.clearTimeout();
+
+      // LLM turn succeeded — reset the loop-level failure counter.
+      consecutiveFailures = 0;
 
       const assistantMessage = response.message;
       const reasoningContent = (assistantMessage as unknown as Record<string, unknown>).reasoning_content as string | undefined;
@@ -517,8 +533,43 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
       // Add error to triologue so LLM knows what happened
       triologue.note('SYSTEM', `An error occurred: ${errorMsg}. Please continue with your task.`);
 
-      // Brief pause before retrying
-      await new Promise((resolve) => setTimeout(resolve, 1000));
+      consecutiveFailures++;
+
+      // Circuit breaker: after MAX_CONSECUTIVE_FAILURES, enter idle to resume
+      // mail polling. This prevents an endless stuck-cycling loop when the
+      // LLM endpoint is down (each retryChat completes in ~87s < the 180s
+      // watchdog cap, so the watchdog never fires and the loop just keeps
+      // hammering the hung endpoint). Idling lets the lead's mail get
+      // picked up and surfaces the problem instead of silent spinning.
+      if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+        ctx.core.brief('warn', 'loop',
+          `${consecutiveFailures} consecutive failures. Entering idle to resume mail polling.`);
+        triologue.note('SYSTEM',
+          `Experienced ${consecutiveFailures} consecutive network failures. ` +
+          `Entering idle state to resume mail polling. Lead will be notified.`);
+        try {
+          ctx.team.mailTo('lead', `WARNING: ${teammateName} network failures`,
+            `Teammate "${teammateName}" hit ${consecutiveFailures} consecutive LLM/network failures ` +
+            `and is entering idle to resume mail polling. The endpoint may be down. ` +
+            `Consider tm_remove or send mail with instructions.`);
+        } catch {
+          // best-effort
+        }
+        consecutiveFailures = 0; // reset on entering idle
+        const result = await enterIdleState(triologue);
+        if (result === 'shutdown') {
+          process.exit(0);
+        }
+        // resumed from idle (new mail arrived) — continue the work loop
+        continue;
+      }
+
+      // Exponential backoff: 1s, 2s, 4s, ... capped at MAX_LOOP_BACKOFF_MS.
+      const backoffMs = Math.min(
+        1000 * Math.pow(2, consecutiveFailures - 1),
+        MAX_LOOP_BACKOFF_MS,
+      );
+      await new Promise((resolve) => setTimeout(resolve, backoffMs));
     }
   }
 
