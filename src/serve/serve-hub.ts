@@ -149,6 +149,16 @@ export class ServeHub {
   // the transcript file persists for the whole session.
   private transcriptPath: string | null = null;
 
+  // ── User log path (durable real-user-submission source) ──
+  // When set, real user submissions (prompt queries + steering notes) are
+  // appended to this JSONL file via appendUserLog(). The /history endpoint
+  // reads it to reconstruct right-side user bubbles on refresh, instead of
+  // mapping every role:'user' from the triologue (which also contains
+  // injected system notes like [REMINDER]/[HINT]). This avoids fragile
+  // prefix-based filtering and preserves steering bubbles (which never enter
+  // the triologue as real user messages).
+  private userLogPath: string | null = null;
+
   // ── Disconnect-reconnect ──
   private disconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private static readonly RECONNECT_TIMEOUT_MS = 30_000;
@@ -185,6 +195,47 @@ export class ServeHub {
    */
   setTranscriptPath(p: string | null): void {
     this.transcriptPath = p;
+  }
+
+  /**
+   * Set the user-log path. When set, real user submissions (prompt queries +
+   * steering notes) are appended here via {@link appendUserLog}, and
+   * {@link readHistory} reads it to reconstruct right-side user bubbles on
+   * refresh. Lives in the same session directory as the triologue JSONL.
+   * Called from agent-repl.ts alongside setTranscriptPath().
+   */
+  setUserLogPath(p: string | null): void {
+    this.userLogPath = p;
+  }
+
+  /**
+   * Append a real user submission to the user-log JSONL.
+   *
+   * Real user submissions are: (1) prompt queries — the user's input at the
+   * PROMPT state, and (2) steering notes — mid-task direction sent via the
+   * chat box while the LLM is working. Both are genuine user-authored text
+   * that should render as right-side bubbles on refresh.
+   *
+   * This is separate from the triologue JSONL because the triologue's
+   * role:'user' entries are polluted with injected system notes
+   * ([REMINDER]/[HINT]/[WRAP_UP] etc.) that must NOT render as user bubbles.
+   * The user log contains ONLY real user text, so no filtering is needed.
+   *
+   * Each entry carries a `timestamp` so readHistory can merge it with the
+   * triologue's assistant/tool entries (which also carry timestamps) into
+   * the correct chronological order.
+   *
+   * @param text - The user's submission text
+   * @param kind - 'prompt' for PROMPT-state queries, 'steer' for mid-task notes
+   */
+  appendUserLog(text: string, kind: 'prompt' | 'steer'): void {
+    if (!this.userLogPath) return;
+    const entry = JSON.stringify({ type: 'user', content: text, kind, timestamp: Date.now() });
+    try {
+      fs.appendFileSync(this.userLogPath, `${entry}\n`, 'utf-8');
+    } catch {
+      // Ignore write errors (e.g. path not yet set during early init)
+    }
   }
 
   // ===========================================================================
@@ -490,6 +541,12 @@ export class ServeHub {
    */
   pushSteer(text: string): void {
     this.steeringQueue.push(text);
+    // Persist the steering note to the user log so it survives a page
+    // refresh and re-renders as a right-side user bubble. The triologue
+    // never receives the raw steering text as a real user message (it is
+    // drained and injected as a [REMINDER] note at COLLECT/PROMPT), so
+    // without this persistence the steering bubble is lost on refresh.
+    this.appendUserLog(text, 'steer');
     // Echo to all clients so the buffer bar shows the queued note.
     // Using broadcast() (not a raw ws.send) ensures the echo is also logged
     // for reconnect replay consistency, though steering echoes are
@@ -562,17 +619,27 @@ export class ServeHub {
   /**
    * Read the chat history for the /history endpoint.
    *
-   * Prefers the durable triologue JSONL transcript (when transcriptPath is
-   * set and the file exists), mapping each `Message` line to a `LogEntry`
-   * (role → type). The transcript records user/assistant/tool turns but NOT
-   * intermediate brief/log/warn/error output, so the in-memory messageLog is
-   * appended after the transcript entries to fill the gap — entries that
-   * arrived during a WS disconnect (not yet flushed to the transcript) are
-   * recovered on reconnect this way. Falls back to messageLog alone when no
-   * transcript is available.
+   * History is reconstructed from TWO durable sources, merged by timestamp:
    *
-   * Role → type mapping:
-   *   user      → 'user'      (user queries + injected notes)
+   * 1. The triologue JSONL transcript (transcriptPath) — assistant/tool/system
+   *    turns. role:'user' entries are SKIPPED here because they are polluted
+   *    with injected system notes ([REMINDER]/[HINT]/[WRAP_UP] etc.) that must
+   *    NOT render as right-side user bubbles.
+   *
+   * 2. The user-log JSONL (userLogPath) — real user submissions only (prompt
+   *    queries + steering notes), written via appendUserLog(). These are the
+   *    genuine right-side user bubbles.
+   *
+   * Both sources carry a `timestamp` field, so they are merged by timestamp
+   * into the correct chronological order. The in-memory messageLog (intermediate
+   * brief/log/warn/error + cards) is appended after — it already carries
+   * timestamps, so it sorts into the merged sequence too.
+   *
+   * Falls back to messageLog alone when no transcript is available (e.g. serve
+   * started before session init).
+   *
+   * Role → type mapping (triologue side):
+   *   user      → (skipped — user bubbles come from the user log)
    *   assistant → 'result'    (LLM responses)
    *   tool      → 'log'       (tool results)
    *   system    → 'system'    (system messages)
@@ -585,27 +652,44 @@ export class ServeHub {
         for (const line of raw.split('\n')) {
           const trimmed = line.trim();
           if (!trimmed) continue;
-          let msg: { role?: string; content?: string };
+          let msg: { role?: string; content?: string; timestamp?: number };
           try {
             msg = JSON.parse(trimmed);
           } catch {
             continue; // skip malformed lines
           }
           if (msg.content === undefined || msg.content === null || msg.content === '') continue;
+          // Skip role:'user' from the triologue — these are injected system
+          // notes ([REMINDER]/[HINT]/[WRAP_UP] etc.), NOT real user input.
+          // Real user bubbles come from the user log (read below).
+          if (msg.role === 'user') continue;
           const type = this.roleToType(msg.role);
           const label = this.roleToLabel(msg.role);
-          // The triologue Message carries no timestamp, so omit it rather
-          // than emitting a bogus 0 that the UI would render as epoch time.
           const entry: LogEntry = { type, content: stripAnsi(String(msg.content)) };
           if (label) entry.label = label;
+          // The triologue Message now carries a timestamp (written by the
+          // onMessage callback in agent-repl.ts). Use it for chronological
+          // merge with the user log. Older transcripts (pre-timestamp) have
+          // no field; omit it rather than emitting a bogus 0.
+          if (typeof msg.timestamp === 'number') entry.timestamp = msg.timestamp;
           entries.push(entry);
         }
-        // The transcript only captures turn-level messages (user/assistant/
-        // tool results). Intermediate brief/log/warn/error output lives only
-        // in the in-memory messageLog — append it so reconnect recovers
-        // output that arrived during the disconnect window. The messageLog
-        // also holds cards (type 'card'), which the transcript never stores.
-        const combined = entries.concat(this.messageLog);
+
+        // Read the user log (real user submissions) and merge by timestamp.
+        // The user log contains ONLY genuine user text (prompt queries +
+        // steering notes), so every entry maps to type:'user' (right-side
+        // bubble) with no filtering needed.
+        const userEntries = this.readUserLog();
+
+        // Merge triologue entries + user entries + in-memory messageLog by
+        // timestamp. The messageLog holds intermediate brief/log/warn/error
+        // output and cards (which the transcript never stores); it already
+        // carries timestamps so it sorts into the merged sequence. Entries
+        // without a timestamp (legacy transcript lines) sort first via the
+        // `?? 0` fallback so they stay at their natural position.
+        const combined = entries.concat(userEntries).concat(this.messageLog);
+        combined.sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0));
+
         // Cap at MAX_LOG_SIZE (keep the most recent entries)
         if (combined.length > ServeHub.MAX_LOG_SIZE) {
           return combined.slice(combined.length - ServeHub.MAX_LOG_SIZE);
@@ -616,6 +700,40 @@ export class ServeHub {
       }
     }
     return this.messageLog;
+  }
+
+  /**
+   * Read the user-log JSONL (real user submissions) and map each entry to a
+   * 'user'-type LogEntry (right-side bubble). Returns an empty array if the
+   * user log path is unset or the file is missing/unreadable.
+   *
+   * Each user-log line is `{ type: 'user', content, kind, timestamp }`. The
+   * `kind` field ('prompt' | 'steer') is informational only — both kinds
+   * render identically as right-side user bubbles.
+   */
+  private readUserLog(): LogEntry[] {
+    if (!this.userLogPath) return [];
+    try {
+      const raw = fs.readFileSync(this.userLogPath, 'utf-8');
+      const entries: LogEntry[] = [];
+      for (const line of raw.split('\n')) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        let entry: { content?: string; timestamp?: number };
+        try {
+          entry = JSON.parse(trimmed);
+        } catch {
+          continue; // skip malformed lines
+        }
+        if (entry.content === undefined || entry.content === null || entry.content === '') continue;
+        const logEntry: LogEntry = { type: 'user', content: stripAnsi(String(entry.content)) };
+        if (typeof entry.timestamp === 'number') logEntry.timestamp = entry.timestamp;
+        entries.push(logEntry);
+      }
+      return entries;
+    } catch {
+      return [];
+    }
   }
 
   /** Map a triologue Message role to a WebUI LogEntry type. */

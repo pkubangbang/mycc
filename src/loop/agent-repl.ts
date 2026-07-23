@@ -147,6 +147,11 @@ export async function main(): Promise<void> {
   // can read the on-disk triologue JSONL (survives serve stop/restart and
   // page closes) instead of the ephemeral in-memory messageLog.
   getServeHub().setTranscriptPath(triologuePath);
+  // Wire the user-log path (same session directory) so real user submissions
+  // (prompt queries + steering notes) are persisted and reconstructed as
+  // right-side bubbles on refresh, instead of mapping every role:'user'
+  // from the triologue (which includes injected system notes).
+  getServeHub().setUserLogPath(path.join(path.dirname(triologuePath), 'user.jsonl'));
 
   // Pass initial query to prompt handler
   setInitialQuery(initialQuery);
@@ -223,7 +228,13 @@ export async function main(): Promise<void> {
     onMessage: (messages) => {
       const lastMsg = messages[messages.length - 1];
       try {
-        fs.appendFileSync(triologuePath, `${JSON.stringify(lastMsg)}\n`, 'utf-8');
+        // Attach a timestamp so readHistory() can merge triologue entries
+        // with user-log entries chronologically. The timestamp is a
+        // display-only field; readTriologue() (restoration.ts) strips it
+        // when loading messages back into Message objects so it never
+        // leaks into LLM summarization (messagesToText → JSON.stringify).
+        const entry = { ...lastMsg, timestamp: Date.now() };
+        fs.appendFileSync(triologuePath, `${JSON.stringify(entry)}\n`, 'utf-8');
       } catch {
         // Ignore write errors
       }

@@ -24,7 +24,15 @@ import { estimateTokens } from '../utils/token.js';
 export type SummaryPair = [Message, Message];
 
 /**
- * Read messages from a JSONL triologue file
+ * Read messages from a JSONL triologue file.
+ *
+ * Only extracts the Message-defined fields (role, content, tool_calls,
+ * tool_name, reasoning_content, tool_call_id, hook_name) — extra fields
+ * written to the JSONL for display purposes (e.g. `timestamp` for the
+ * webui's chronological merge) are dropped here so they never leak into
+ * in-memory Message objects. This prevents the display-only `timestamp`
+ * from reaching messagesToText() → JSON.stringify() in the LLM
+ * summarization path.
  */
 function readTriologue(filePath: string): Message[] {
   const content = fs.readFileSync(filePath, 'utf-8');
@@ -33,7 +41,16 @@ function readTriologue(filePath: string): Message[] {
   for (const line of content.trim().split('\n')) {
     if (line.trim()) {
       try {
-        messages.push(JSON.parse(line) as Message);
+        const raw = JSON.parse(line) as Record<string, unknown>;
+        // Whitelist Message-defined fields only — drop display-only extras
+        // (e.g. timestamp) so they don't leak into LLM summarization.
+        const msg: Message = { role: raw.role as Message['role'], content: raw.content as Message['content'] };
+        if (raw.tool_calls !== undefined) msg.tool_calls = raw.tool_calls as Message['tool_calls'];
+        if (raw.tool_name !== undefined) (msg as Message & { tool_name?: string }).tool_name = raw.tool_name as string;
+        if (raw.reasoning_content !== undefined) msg.reasoning_content = raw.reasoning_content as string;
+        if (raw.tool_call_id !== undefined) msg.tool_call_id = raw.tool_call_id as string;
+        if (raw.hook_name !== undefined) msg.hook_name = raw.hook_name as string;
+        messages.push(msg);
       } catch {
         // Skip malformed lines
       }
