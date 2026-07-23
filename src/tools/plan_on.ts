@@ -66,12 +66,12 @@ However, you may want to allow edits to this file:
         normalized = normalized.slice(1, -1).trim();
       }
       
-      // Empty response (Enter key) means approve the suggested file
-      const approved = normalized === '' || normalized === 'y' || normalized === 'yes';
-      const denied = normalized === 'n' || normalized === 'no';
+      // Default is deny (strict plan mode): [y/N] convention means Enter = No
+      const approved = normalized === 'y' || normalized === 'yes';
+      const denied = normalized === '' || normalized === 'n' || normalized === 'no';
 
       if (denied) {
-        // Outcome 2: n/no - enter strict plan mode
+        // Outcome 2: empty/n/no - enter strict plan mode
         ctx.core.brief('info', 'plan_on', 'Strict plan mode activated');
         const core = ctx.core as Core;
         core.setMode('plan');
