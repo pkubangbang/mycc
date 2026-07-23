@@ -147,14 +147,13 @@ function onCollapsedClick(): void {
       :title="t.done ? `${t.name} 已完成 — Open ${t.name}'s message timeline` : `Open ${t.name}'s message timeline`"
       @click="onClick(t.name)"
     >
-      <span class="row-identity">
-        <span class="row-name">@{{ t.name }}</span>
-        <span class="row-count">({{ t.count }})</span>
+      <span class="row-name">@{{ t.name }}</span>
+      <span class="row-count-pill" :class="{ 'is-done': t.done }">
+        <template v-if="t.done">✓ {{ t.count }}</template>
+        <template v-else>{{ t.count }}</template>
       </span>
-      <span class="row-tool" v-if="!t.done">{{ t.currentTool }}</span>
-      <span class="row-spacer"></span>
-      <span v-if="t.done" class="row-done">✓ done</span>
-      <span class="row-time" v-else-if="t.lastTime">{{ t.lastTime }}</span>
+      <span class="row-tool">{{ t.done ? 'done' : t.currentTool }}</span>
+      <span class="row-time" v-if="t.lastTime">{{ t.lastTime }}</span>
     </button>
   </div>
 </template>
@@ -171,11 +170,11 @@ function onCollapsedClick(): void {
   color: var(--text-status);
   border-radius: 8px;
   padding: 6px 8px;
-  /* Fixed outer width — the card does not grow/shrink with content. Long
-     teammate names or tool tags truncate (ellipsis) inside their row so the
-     card stays a stable anchor at the top-right corner. Widened from 200px
-     to 220px to fit the added last-message time column. */
-  width: 220px;
+  /* Fixed outer width — the card does not grow/shrink with content. The
+     four-corner row layout keeps each field on its own cell so long tool
+     names truncate within their cell rather than overflowing. Narrowed
+     from 200px to 180px since content now splits across two lines. */
+  width: 180px;
   box-shadow: var(--scroll-shadow);
   font-size: 13px;
   display: flex;
@@ -192,65 +191,80 @@ function onCollapsedClick(): void {
   border-bottom: 1px solid var(--border-color);
 }
 .teammate-row {
-  display: flex;
+  /* Four-corner layout via a 2×2 grid:
+       top-left: name     | top-right: count pill
+       bottom-left: tool  | bottom-right: time */
+  display: grid;
+  grid-template-columns: 1fr auto;
+  grid-template-rows: auto auto;
+  column-gap: 8px;
+  row-gap: 2px;
   align-items: center;
-  gap: 6px;
+  /* Fixed height so every teammate row occupies the same vertical space
+     regardless of whether the time cell is present — keeps the card a
+     stable anchor and avoids jitter as messages arrive. */
+  height: 44px;
+  box-sizing: border-box;
   background: transparent;
   color: var(--text-status);
   border: none;
   border-radius: 5px;
-  padding: 5px 8px;
+  padding: 4px 8px;
   cursor: pointer;
   font-size: 13px;
   text-align: left;
   font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
   transition: background 0.12s;
+  overflow: hidden;
 }
 .teammate-row:hover {
   background: var(--bg-status-btn-hover);
 }
-/* name + count grouped together as the identity column; the count is
-   dimmer so the @name reads as the primary label. */
-.row-identity {
-  display: flex;
-  align-items: baseline;
-  gap: 2px;
-  white-space: nowrap;
-  flex-shrink: 0;
-}
+/* Top-left: teammate name. Occupies grid cell (1,1) naturally by source order. */
 .row-name {
   font-weight: 600;
   color: #5cdbd3;
-}
-.row-count {
-  color: var(--text-status-btn);
-}
-.row-tool {
-  color: #ffd666;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  min-width: 0;
 }
-/* Spacer pushes the time / done marker to the right edge of the row. */
-.row-spacer {
-  flex: 1 1 auto;
+/* Top-right: message-count pill. A compact rounded badge so the count reads
+   as a secondary metric rather than inline prose. Turns teal when the
+   teammate has retired (prefixes the count with ✓). */
+.row-count-pill {
+  justify-self: end;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-status-btn);
+  background: var(--bg-status-btn-hover);
+  border-radius: 999px;
+  padding: 0 7px;
+  line-height: 1.6;
+  white-space: nowrap;
 }
+.row-count-pill.is-done {
+  color: #5cdbd3;
+}
+/* Bottom-left: tool tag from the most recent message. Dims to 11px as a
+   sub-detail under the name line. */
+.row-tool {
+  color: #ffd666;
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* Bottom-right: last-message time (HH:mm:ss). Dims to 11px to match the
+   tool line. */
 .row-time {
+  justify-self: end;
   color: var(--text-status-btn);
   font-size: 11px;
   white-space: nowrap;
-  flex-shrink: 0;
   opacity: 0.75;
-}
-/* Per-row retired marker: a small "✓ done" after a teammate whose last
-   message is the exit notice. Subtle so the row still reads as a clickable
-   summary. */
-.row-done {
-  color: #5cdbd3;
-  font-weight: 700;
-  white-space: nowrap;
-  flex-shrink: 0;
 }
 .teammate-row.retired {
   opacity: 0.6;
