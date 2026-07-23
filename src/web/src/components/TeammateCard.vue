@@ -29,6 +29,9 @@ interface TeammateSummary {
   /** True when this teammate's last message is the exit notice (toolTag
    *  'exit') — i.e. it has "retired". See TeammateDrawer's `done` field. */
   done: boolean;
+  /** Last message time formatted as HH:mm:ss (en-GB, 24h), or '' when the
+   *  last message carries no timestamp. */
+  lastTime: string;
 }
 
 /**
@@ -51,6 +54,17 @@ function toolTag(label: string | undefined): string | null {
   const rest = label.slice(1);
   const slashIdx = rest.indexOf('/');
   return slashIdx >= 0 ? rest.slice(slashIdx + 1) : null;
+}
+
+/**
+ * Format a message timestamp as HH:mm:ss (en-GB, 24h). Returns '' when the
+ * message carries no timestamp. Mirrors the format used by TeammateDrawer's
+ * timeStr() helper so the card and drawer render times consistently.
+ */
+function timeStr(m: ChatMessage): string {
+  return m.timestamp
+    ? new Date(m.timestamp).toLocaleTimeString('en-GB', { hour12: false })
+    : '';
 }
 
 /** Group teammate messages by teammate name, preserving first-seen order. */
@@ -77,6 +91,7 @@ const teammates = computed<TeammateSummary[]>(() => {
       count: msgs.length,
       currentTool: lastTool.get(name) ?? '—',
       done: last !== null && toolTag(last.label) === 'exit',
+      lastTime: last ? timeStr(last) : '',
     };
   });
 });
@@ -132,11 +147,14 @@ function onCollapsedClick(): void {
       :title="t.done ? `${t.name} 已完成 — Open ${t.name}'s message timeline` : `Open ${t.name}'s message timeline`"
       @click="onClick(t.name)"
     >
-      <span class="row-name">@{{ t.name }}</span>
-      <span class="row-count">({{ t.count }})</span>
-      <span class="row-sep">:</span>
-      <span class="row-tool">{{ t.currentTool }}</span>
-      <span v-if="t.done" class="row-done">✓</span>
+      <span class="row-identity">
+        <span class="row-name">@{{ t.name }}</span>
+        <span class="row-count">({{ t.count }})</span>
+      </span>
+      <span class="row-tool" v-if="!t.done">{{ t.currentTool }}</span>
+      <span class="row-spacer"></span>
+      <span v-if="t.done" class="row-done">✓ done</span>
+      <span class="row-time" v-else-if="t.lastTime">{{ t.lastTime }}</span>
     </button>
   </div>
 </template>
@@ -155,8 +173,9 @@ function onCollapsedClick(): void {
   padding: 6px 8px;
   /* Fixed outer width — the card does not grow/shrink with content. Long
      teammate names or tool tags truncate (ellipsis) inside their row so the
-     card stays a stable anchor at the top-right corner. */
-  width: 200px;
+     card stays a stable anchor at the top-right corner. Widened from 200px
+     to 220px to fit the added last-message time column. */
+  width: 220px;
   box-shadow: var(--scroll-shadow);
   font-size: 13px;
   display: flex;
@@ -175,7 +194,7 @@ function onCollapsedClick(): void {
 .teammate-row {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
   background: transparent;
   color: var(--text-status);
   border: none;
@@ -190,6 +209,15 @@ function onCollapsedClick(): void {
 .teammate-row:hover {
   background: var(--bg-status-btn-hover);
 }
+/* name + count grouped together as the identity column; the count is
+   dimmer so the @name reads as the primary label. */
+.row-identity {
+  display: flex;
+  align-items: baseline;
+  gap: 2px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
 .row-name {
   font-weight: 600;
   color: #5cdbd3;
@@ -197,19 +225,32 @@ function onCollapsedClick(): void {
 .row-count {
   color: var(--text-status-btn);
 }
-.row-sep {
-  color: var(--text-status-btn);
-}
 .row-tool {
   color: #ffd666;
-  margin-left: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
 }
-/* Per-row retired marker: a small check after a teammate whose last message
-   is the exit notice. Subtle so the row still reads as a clickable summary. */
+/* Spacer pushes the time / done marker to the right edge of the row. */
+.row-spacer {
+  flex: 1 1 auto;
+}
+.row-time {
+  color: var(--text-status-btn);
+  font-size: 11px;
+  white-space: nowrap;
+  flex-shrink: 0;
+  opacity: 0.75;
+}
+/* Per-row retired marker: a small "✓ done" after a teammate whose last
+   message is the exit notice. Subtle so the row still reads as a clickable
+   summary. */
 .row-done {
-  margin-left: auto;
   color: #5cdbd3;
   font-weight: 700;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 .teammate-row.retired {
   opacity: 0.6;
