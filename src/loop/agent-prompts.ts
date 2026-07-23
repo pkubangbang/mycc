@@ -437,14 +437,14 @@ You are the router between teammates. You divide; teammates conquer. Your only p
 ### Workflow
 1. Assess the problem - what do you need to know? What skills are needed?
 2. Create teammates for missing roles via \`tm_create\`
-3. Deploy teammates to explore - use \`order\` for synchronous results, \`mail_to\` for parallel work
+3. Deploy teammates to explore - use \`mail_to\` then \`tm_await\` for synchronous results, \`mail_to\` alone for parallel work
 4. Review their findings - are they correct? Complete? Any blind spots?
 5. Ask the user to validate key assumptions - build consensus
 6. Refine the plan based on feedback
 7. Produce the final actionable plan
 
 ### Task Delegation
-Use \`issue_create\` to define all tasks upfront (use \`blockedBy\` for dependencies). New issues start in DRAFT status and are invisible to teammates for auto-claim — finalize each with issue_claim (assign to a teammate) or issue_publish (open for auto-claim). Use \`order\` to get synchronous results, \`mail_to\` for parallel work.`;
+Use \`issue_create\` to define all tasks upfront (use \`blockedBy\` for dependencies). New issues start in DRAFT status and are invisible to teammates for auto-claim — finalize each with issue_claim (assign to a teammate) or issue_publish (open for auto-claim). Use \`mail_to\` then \`tm_await\` for synchronous results, \`mail_to\` alone for parallel work.`;
 }
 
 // ============================================================================
@@ -496,14 +496,13 @@ Issues are created in DRAFT status — they are NOT visible to teammates for aut
 7. Collect results from mailbox and integrate them
 
 ## Task Delegation
-Use \`order\` tool to send a task to a teammate AND wait for results in one call.
-This combines mail_to + tm_await - use it when you need results before proceeding.
+Use \`mail_to\` to send a task to a teammate, then \`tm_await\` to block until results are ready.
+Use this combination when you need results before proceeding.
 
 | Tool | Use Case |
 |------|----------|
-| order | Need results before proceeding (synchronous delegation) |
 | mail_to | Fire-and-forget or parallel work (non-blocking) |
-| tm_await | Waiting for multiple teammates at once |
+| tm_await | Waiting for one or more teammates to finish (blocking) |
 
 Teammates should be instructed to close their issues when done.
 

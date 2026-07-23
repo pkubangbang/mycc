@@ -44,7 +44,6 @@ import { readPictureTool } from '../../tools/read-picture.js';
 import { wikiPrepareTool } from '../../tools/wiki_prepare.js';
 import { wikiPutTool } from '../../tools/wiki_put.js';
 import { wikiGetTool } from '../../tools/wiki_get.js';
-import { orderTool } from '../../tools/order.js';
 import { handOverTool } from '../../tools/hand_over.js';
 import { gitCommitTool } from '../../tools/git_commit.js';
 import { grepTool } from '../../tools/grep.js';
@@ -98,7 +97,6 @@ export const builtInTools: ToolDefinition[] = [
   wikiPrepareTool,
   wikiPutTool,
   wikiGetTool,
-  orderTool,
   handOverTool,
   gitCommitTool,
   grepTool,

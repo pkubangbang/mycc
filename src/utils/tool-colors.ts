@@ -53,7 +53,6 @@ const TOOL_COLORS: Record<string, (text: string) => string> = {
   tm_print: chalk.blueBright,
   mail_to: chalk.cyanBright,
   broadcast: chalk.cyanBright,
-  order: chalk.blueBright,
 
   // Background tasks
   bg: chalk.gray,
