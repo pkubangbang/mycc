@@ -17,13 +17,7 @@ import type { ToolDefinition } from '../types.js';
 
 export const checkpointTool: ToolDefinition = {
   name: 'checkpoint',
-  description: `Create a marker in the chat history for context management.
-Use before exploration, investigation, or any task that will generate many messages.
-
-IMPORTANT: This tool MUST be called alone. No other tools can be used in the same turn.
-
-After completing the subtask, call recap({ checkpoint_id: "..." }) to compress
-the messages into a summary and keep your context clean.`,
+  description: `Create a checkpoint marker for context management. Use before exploration or investigation tasks that generate many messages. Must be called alone (no other tools in same turn).`,
   input_schema: {
     type: 'object',
     properties: {

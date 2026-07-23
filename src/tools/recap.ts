@@ -17,26 +17,7 @@ import type { ToolDefinition } from '../types.js';
 
 export const recapTool: ToolDefinition = {
   name: 'recap',
-  description: `Close a checkpoint. Use after completing or abandoning a subtask.
-
-Usage:
-1. First create a checkpoint with checkpoint({ description: "..." })
-2. Perform your subtask (read files, explore, investigate)
-3. Call recap to close the checkpoint:
-   - recap({ checkpoint_id: "..." }) - Summarize and close (subtask completed)
-   - recap({ checkpoint_id: "...", abandon: true }) - Discard and close (subtask abandoned)
-
-IMPORTANT: This tool MUST be called alone. No other tools can be used in the same turn.
-
-The tool replaces all messages from checkpoint onwards with a summary pair,
-keeping your context clean and focused.
-
-Output format (when not abandoning):
-The recap generates a structured summary with these sections:
-- Exploration Coverage: Files examined, what was found in each, what was ruled out
-- Key Discoveries: Concrete findings with specificity (names, locations, line numbers)
-- Current State: What the agent now knows that enables resumption without re-exploration or re-verification
-- Next Steps: Recommended continuation actions, noting if the user's latest query steers in a different direction`,
+  description: `Close a checkpoint and compress its messages into a summary. Set abandon=true to discard without summarizing. Must be called alone (no other tools in same turn).`,
   input_schema: {
     type: 'object',
     properties: {

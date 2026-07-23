@@ -27,27 +27,7 @@ import { spawn } from 'child_process';
 
 export const gitCommitTool: ToolDefinition = {
   name: 'git_commit',
-  description: `Execute git commit with mandatory user permission check.
-This tool ALWAYS asks for user permission before committing.
-
-Use this tool for ALL git commits. Never use 'bash' with 'git commit' - that is blocked.
-
-Parameters:
-- message: The commit message (required)
-- amend: Set to true to amend the previous commit (optional, default false)
-- cwd: Working directory for the git commit (optional). Use this to commit inside a specific git worktree (e.g., ".worktrees/feat"). If omitted, uses the agent's current working directory.
-
-The tool will:
-1. Show the commit message to the user
-2. Ask for permission with [y/N] prompt
-3. If user types 'y' or 'yes': execute the commit
-4. If user types 'n' or 'no': cancel the commit
-5. Otherwise: return the user's response for LLM to iterate (e.g., user feedback on message)
-
-After a successful commit, the tool detects:
-- Full commit (working directory clean): tells the LLM to reply concisely.
-- Partial commit (uncommitted changes remain): tells the LLM to continue working.
-- Empty commit (no staged files): returns error asking to stage changes first.`,
+  description: `Execute git commit with mandatory user permission check. Always use this tool instead of 'bash' for git commits — bash git commit is blocked. The cwd parameter supports committing inside a specific git worktree.`,
   input_schema: {
     type: 'object',
     properties: {

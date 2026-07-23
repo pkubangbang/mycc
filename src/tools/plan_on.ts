@@ -23,27 +23,7 @@ import path from 'path';
 
 export const planOnTool: ToolDefinition = {
   name: 'plan_on',
-  description: `Switch to plan mode where code changes are prohibited, or — if already in plan mode — enable editing for one specific file while staying in plan mode.
-
-Use this tool when you want to plan without making code changes. In plan mode:
-- File write/edit operations are blocked
-- Bash commands are blocked
-- You can still read files and search the web
-
-The allowed_file parameter works in BOTH directions:
-- When NOT in plan mode: pass allowed_file to enter plan mode with that one file editable.
-- When ALREADY in plan mode (even strict): pass allowed_file to re-prompt the user and
-  enable editing for that file. You stay in plan mode — all other files remain blocked.
-  This is the ONLY way to start editing a file once you are in strict plan mode.
-
-Parameters:
-- allowed_file: Optional path to a file that can be edited during plan mode (e.g., a doc file).
-  If specified, the user will be asked for permission to allow edits to this file.
-
-The tool will ask for user permission if allowed_file is specified. User can:
-1. Press Enter or type 'y'/'yes' to allow the suggested file
-2. Type 'n'/'no' to enter strict plan mode (no files allowed)
-3. Type a different file path to allow that file instead`,
+  description: `Switch to plan mode (code changes prohibited), or if already in plan mode, enable editing for one specific file via allowed_file. The allowed_file parameter works in both directions: entering plan mode with an editable file, or re-enabling editing while already in plan mode. User permission is required when allowed_file is specified.`,
   input_schema: {
     type: 'object',
     properties: {

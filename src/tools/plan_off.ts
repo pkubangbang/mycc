@@ -15,18 +15,7 @@ import type { TeamManager } from '../context/parent/team.js';
 
 export const planOffTool: ToolDefinition = {
   name: 'plan_off',
-  description: `Switch back to normal mode where code changes are allowed.
-
-Use this tool when you're done planning and want to start making code changes.
-In normal mode:
-- File write/edit operations are allowed
-- Bash commands are allowed
-- All tools are fully functional
-
-IMPORTANT: When in plan mode, this tool requires user confirmation before exiting.
-The tool will ask the user [y/N] and only proceed if the user confirms.
-
-Idempotent: If already in normal mode, returns success without prompting.`,
+  description: `Switch back to normal mode (code changes allowed). Requires user confirmation. Idempotent if already in normal mode.`,
   input_schema: {
     type: 'object',
     properties: {},

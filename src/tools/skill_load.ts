@@ -18,21 +18,13 @@ import { getSkillAbsolutePath } from '../utils/skill-path-resolver.js';
 
 export const skillLoadTool: ToolDefinition = {
   name: 'skill_load',
-  description: `Load a skill by exact name. Returns the full skill content.
-
-IMPORTANT: You MUST provide the 'name' parameter with the exact skill name. This tool does NOT do fuzzy search.
-If you don't know the exact name, use skill_search with keywords to find relevant skills first.
-Note: minor variations (case, hyphens vs underscores) are auto-corrected.`,
+  description: `Load a skill by exact name. Returns the full skill content. Minor variations (case, hyphens vs underscores) are auto-corrected. If you don't know the exact name, use skill_search first.`,
   input_schema: {
     type: 'object',
     properties: {
       name: {
         type: 'string',
         description: 'REQUIRED: The exact name of the skill to load. Must match exactly (case-sensitive).',
-      },
-      search: {
-        type: 'string',
-        description: 'Deprecated - has no effect on exact name matching. Use skill_search tool for searching.',
       },
     },
     required: ['name'],

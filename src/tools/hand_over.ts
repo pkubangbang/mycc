@@ -26,31 +26,7 @@ const execAsync = promisify(exec);
 
 export const handOverTool: ToolDefinition = {
   name: 'hand_over',
-  description: `⚠️ INTERRUPTS USER - Opens a popup terminal and BLOCKS until user interaction.
-
-DO NOT USE THIS TOOL unless the user EXPLICITLY requests an interactive terminal,
-or the command REQUIRES user interaction (passwords, prompts, SSH sessions).
-
-When calling this tool, you MUST provide an \`intent\` parameter using the intent language format.
-The OBJECT must indicate that user interaction is required.
-
-See the "hand_over usage" subsection under Grant System in MYCC.md (retrievable via get_node) for the spelled-out RUN USER intent rule, the multi-line command note, and worked examples.
-
-Use ONLY when:
-- User explicitly asks for a terminal/shell/SSH session
-- Command requires interactive input (password prompts, y/n confirmations, menu selections)
-- Interactive programs: vim, htop, watch, tmux, screen, mc, ranger
-- SSH sessions with password authentication
-- Interactive git operations (rebase -i, add -p, commit with editor)
-
-NEVER use for:
-- Running tests, builds, npm commands
-- File operations (ls, cat, cp, mv, rm)
-- Git automation (status, log, push, pull, clone)
-- Package management (npm install, pip install)
-- Any command that CAN run non-interactively
-
-When in doubt, use 'bash' tool with appropriate timeout.`,
+  description: `Opens a popup terminal and BLOCKS until user interaction. Use ONLY for commands that require interactive input (passwords, prompts, SSH, vim, htop) or when the user explicitly requests a terminal. For all non-interactive commands, use the bash tool instead.`,
   input_schema: {
     type: 'object',
     properties: {
@@ -61,7 +37,7 @@ When in doubt, use 'bash' tool with appropriate timeout.`,
       intent: {
         type: 'string',
         description:
-          'REQUIRED: Explain why this command is needed. You MUST use the intent language to show your idea.',
+          'REQUIRED: Explain why this command is needed (use intent language). The OBJECT must be USER.',
       },
     },
     required: ['command', 'intent'],

@@ -19,19 +19,7 @@ import { ConditionRegistry } from '../hook/conditions.js';
 
 export const skillCompileTool: ToolDefinition = {
   name: 'skill_compile',
-  description: `Compile a skill's "when" condition into a structured hook.
-
-Use this when:
-- A skill has a "when" field but no compiled condition
-- You need to update a hook condition based on user feedback
-- You want to see the current compiled condition for a skill
-
-The compilation asks the LLM to translate natural language "when" into:
-- trigger: which tool fires the hook
-- condition: executable expression using seq.X functions
-- action: what to do (inject_before, inject_after, block, replace, message)
-
-Returns the compiled condition with version history.`,
+  description: `Compile a skill's "when" condition into a structured hook. Use when a skill has a "when" field but no compiled condition, or to update a hook based on user feedback.`,
   input_schema: {
     type: 'object',
     properties: {

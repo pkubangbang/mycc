@@ -29,7 +29,7 @@ export const bashTool: ToolDefinition = {
       },
       intent: {
         type: 'string',
-        description: 'REQUIRED: Explain why this command is needed. You MUST use the intent language to show your idea.',
+        description: 'REQUIRED: Explain why this command is needed (use intent language).',
       },
       timeout: {
         type: 'number',

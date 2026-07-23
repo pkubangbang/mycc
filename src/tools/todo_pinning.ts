@@ -17,7 +17,7 @@ export const todoPinningTool: ToolDefinition = {
     'set a reactivation condition (natural language): after each nudge cycle ' +
     'the system evaluates completed pinned todos against the conversation ' +
     'context and automatically reactivates (marks back to not done) those ' +
-    'whose condition is met. Requires the current hash (anti-hallusion).',
+    'whose condition is met. Requires the current hash (anti-staleness).',
   input_schema: {
     type: 'object',
     properties: {

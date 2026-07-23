@@ -80,15 +80,7 @@ function detectFileType(filePath: string, buffer: Buffer): { isText: boolean; mi
 
 export const readTool: ToolDefinition = {
   name: 'read_file',
-  description: `Read file contents from the workspace or external paths. Paths use forward slashes and can be relative to workspace root, absolute, or use ~ for home directory.
-
-Limits: reads first 1000 lines or half the token threshold (~1/8 of context window), whichever is smaller. Shows progress info (chars read / total chars, lines read / total lines) to help you decide next steps.
-
-Reading files outside the workspace requires user grant (session-scoped).
-
-Useful follow-ups for large files:
-- Use the 'grep' tool to find lines matching a pattern (it auto-excludes node_modules and respects .gitignore)
-- Use 'read_read' tool to summarize content with a focus topic (if file is in .mycc/longtext/)`,
+  description: `Read file contents from the workspace or external paths. Paths use forward slashes and can be relative to workspace root, absolute, or use ~ for home directory. Limits: reads first 1000 lines or ~1/8 of context window, whichever is smaller. Reading files outside the workspace requires user grant (session-scoped).`,
   input_schema: {
     type: 'object',
     properties: {
