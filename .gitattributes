@@ -1,0 +1,26 @@
+# Normalize line endings to LF for all text files.
+# Combined with core.autocrlf=input + core.eol=lf (set in local config),
+# this guarantees: commits are always LF, and checkouts stay LF (no CRLF
+# leaks back into the working tree on any platform).
+* text=auto eol=lf
+
+# Executable scripts — keep LF endings WITHOUT stripping the executable
+# mode bit. Listing these after the `*` rule overrides the blanket
+# text=auto so git preserves their 100755 mode on renormalize/checkout.
+bin/mycc.js              text eol=lf
+scripts/clear-sessions.sh text eol=lf
+src/utils/test-backspace-middle.sh text eol=lf
+src/utils/test-cursor-movement.sh  text eol=lf
+src/utils/test-line-editor.sh      text eol=lf
+src/utils/test-resize.sh           text eol=lf
+
+# Binary files — never touch their content.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.zip binary
+*.gz binary
+*.lock binary
