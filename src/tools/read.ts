@@ -87,10 +87,8 @@ Limits: reads first 1000 lines or half the token threshold (~1/8 of context wind
 Reading files outside the workspace requires user grant (session-scoped).
 
 Useful follow-ups for large files:
-- Use 'bash' with 'sed -n "start,end p"' to read specific line ranges
-- Use 'bash' with 'tail -n N' to read last N lines
-- Use 'bash' with 'grep -n "pattern"' to find lines matching a pattern
-- Use 'read_read' tool to summarize content with focus topic`,
+- Use the 'grep' tool to find lines matching a pattern (it auto-excludes node_modules and respects .gitignore)
+- Use 'read_read' tool to summarize content with a focus topic (if file is in .mycc/longtext/)`,
   input_schema: {
     type: 'object',
     properties: {
@@ -189,17 +187,11 @@ ${typeInfo.extension === '.png' || typeInfo.extension === '.jpg' || typeInfo.ext
           }
         }
 
-        const header = `File: ${filePath}
-Chars: ${totalChars.toLocaleString()} | Lines: ${totalLines}${encodingWarning}
-${'─'.repeat(60)}`;
+        const header = `File: ${filePath} | Chars: ${totalChars.toLocaleString()} | Lines: ${totalLines}${encodingWarning}`;
 
         const suggestions = `
-${'─'.repeat(60)}
-⚠ This file has extremely long lines (likely minified). Shown: first + last ${PREVIEW_CHARS.toLocaleString()} chars of each long line.
-To read the full content, try:
-  bash: npx prettier --write ${filePath}          # De-minify JS/TS/JSON/CSS
-  bash: fold -w 120 ${filePath} | head -500       # Word-wrap to 120-char lines
-  bash: head -c 8000 ${filePath}                  # Raw first 8K chars`;
+⚠ Extremely long lines (likely minified). Shown: first + last ${PREVIEW_CHARS.toLocaleString()} chars of each long line.
+To de-minify, run in bash: npx prettier --write ${filePath}  (for JS/TS/JSON/CSS)`;
 
         return `${header}\n${previewParts.join('\n')}${suggestions}`;
       }
@@ -211,20 +203,13 @@ To read the full content, try:
         const remainingLines = totalLines - LINE_LIMIT;
 
         // Build progress header
-        const header = `File: ${filePath}
-Read: ${readChars.toLocaleString()} / ${totalChars.toLocaleString()} chars (${((readChars / totalChars) * 100).toFixed(1)}%)
-Lines: ${LINE_LIMIT} / ${totalLines} (${remainingLines} more lines below)${encodingWarning}
-${'─'.repeat(60)}`;
+        const header = `File: ${filePath} | Read: ${readChars.toLocaleString()}/${totalChars.toLocaleString()} chars (${((readChars / totalChars) * 100).toFixed(1)}%) | Lines: ${LINE_LIMIT}/${totalLines} (${remainingLines} more below)${encodingWarning}`;
 
         // Build suggestions
         const suggestions = `
-${'─'.repeat(60)}
-${remainingLines} more lines not shown. Options to continue:
-  • sed -n "${LINE_LIMIT + 1},${LINE_LIMIT + 100} p" ${filePath}  # Read next 100 lines
-  • sed -n "2000,3000 p" ${filePath}              # Read specific range
-  • tail -n 100 ${filePath}                      # Read last 100 lines
-  • grep -n "pattern" ${filePath}                # Find pattern with line numbers
-  • read_read (if file in .mycc/longtext/)       # Summarize with focus`;
+${remainingLines} more lines not shown. To continue:
+  • grep tool — find "pattern" with line numbers (auto-excludes node_modules, respects .gitignore)
+  • read_read — summarize with a focus topic (if file in .mycc/longtext/)`;
 
         return `${header}\n${limitedLines.join('\n')}${suggestions}`;
       }
@@ -234,18 +219,13 @@ ${remainingLines} more lines not shown. Options to continue:
       if (totalChars > charLimit) {
         // Truncate by chars as safety net
         const truncated = content.slice(0, charLimit);
-        const header = `File: ${filePath}
-Read: ${charLimit.toLocaleString()} / ${totalChars.toLocaleString()} chars (${((charLimit / totalChars) * 100).toFixed(1)}%)
-Lines: ${totalLines} total${encodingWarning}
-${'─'.repeat(60)}`;
+        const header = `File: ${filePath} | Read: ${charLimit.toLocaleString()}/${totalChars.toLocaleString()} chars (${((charLimit / totalChars) * 100).toFixed(1)}%) | Lines: ${totalLines} total${encodingWarning}`;
 
         return `${header}\n${truncated}\n... (${(totalChars - charLimit).toLocaleString()} more chars)`;
       }
 
       // Show full file with stats
-      const header = `File: ${filePath}
-Chars: ${totalChars.toLocaleString()} | Lines: ${totalLines}${encodingWarning}
-${'─'.repeat(60)}`;
+      const header = `File: ${filePath} | Chars: ${totalChars.toLocaleString()} | Lines: ${totalLines}${encodingWarning}`;
 
       // Verbose logging: show first 50 lines in verbose mode
       if (isVerbose()) {
