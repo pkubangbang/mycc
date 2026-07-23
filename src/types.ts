@@ -175,8 +175,17 @@ export interface TodoItem {
 
 /**
  * Issue status
+ *
+ * Lifecycle: draft → (pending | in_progress) → completed/failed/abandoned
+ *
+ * `draft` is the initial state after issue_create. A draft issue is NOT
+ * visible to teammates for auto-claim (enterIdleState only claims `pending`).
+ * The lead finalizes the issue during the draft phase (optionally adding
+ * comments, blockages) and then either:
+ *   - issue_claim(id, owner) → transitions directly to in_progress (assigned)
+ *   - issue_publish(id)      → transitions to pending (open for auto-claim)
  */
-export type IssueStatus = 'pending' | 'in_progress' | 'completed' | 'failed' | 'abandoned';
+export type IssueStatus = 'draft' | 'pending' | 'in_progress' | 'completed' | 'failed' | 'abandoned';
 
 /**
  * Comment on an issue
@@ -507,6 +516,12 @@ export interface IssueModule {
   printIssues(): Promise<string>;
   printIssue(id: number): Promise<string>;
   claimIssue(id: number, owner: string): Promise<boolean>;
+  /**
+   * Publish a draft issue — transitions status from 'draft' to 'pending',
+   * making it visible to idle teammates for auto-claim. Returns false if the
+   * issue does not exist or is not in 'draft' status.
+   */
+  publishIssue(id: number): Promise<boolean>;
   closeIssue(id: number, status: 'completed' | 'failed' | 'abandoned', comment?: string, poster?: string): Promise<void>;
   addComment(id: number, comment: string, poster?: string): Promise<void>;
   createBlockage(blocker: number, blocked: number): Promise<void>;

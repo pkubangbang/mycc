@@ -444,7 +444,7 @@ You are the router between teammates. You divide; teammates conquer. Your only p
 7. Produce the final actionable plan
 
 ### Task Delegation
-Use \`issue_create\` to define all tasks upfront (use \`blockedBy\` for dependencies). Teammates will claim them. Use \`order\` to get synchronous results, \`mail_to\` for parallel work.`;
+Use \`issue_create\` to define all tasks upfront (use \`blockedBy\` for dependencies). New issues start in DRAFT status and are invisible to teammates for auto-claim — finalize each with issue_claim (assign to a teammate) or issue_publish (open for auto-claim). Use \`order\` to get synchronous results, \`mail_to\` for parallel work.`;
 }
 
 // ============================================================================
@@ -483,12 +483,17 @@ Use issue_* for complex tasks (divide and conquer), todo_* for simple tracking.
 ${buildPinnedTodoSection()}
 
 ## Team Workflow
-1. Create issues with issue_create to define all tasks, including dependencies via the blockedBy parameter (returns full list for visibility)
-2. Create teammates with tm_create (each gets a role and instructions)
-3. Assign issues to teammates with issue_claim, then notify via mail_to
-4. Monitor progress with issue_list, wait for completion with tm_await
-5. Close issues with issue_close when work is done (unblocks dependents) — a non-empty comment is REQUIRED explaining the resolution or reason for closure
-6. Collect results from mailbox and integrate them
+Issues are created in DRAFT status — they are NOT visible to teammates for auto-claim until finalized. This prevents teammates from grabbing a task before you finish setting it up (adding comments, dependencies, or an owner).
+
+1. Create issues with issue_create to define all tasks (created in draft, including dependencies via the blockedBy parameter)
+2. While in draft, optionally enrich: add comments (issue_comment), set dependencies (blockage_create)
+3. Finalize each issue with ONE of:
+   - issue_claim(id, owner) — assign to a specific teammate (draft → in_progress), then notify via mail_to
+   - issue_publish(id) — open for any idle teammate to auto-claim (draft → pending)
+4. Create teammates with tm_create (each gets a role and instructions)
+5. Monitor progress with issue_list, wait for completion with tm_await
+6. Close issues with issue_close when work is done (unblocks dependents) — a non-empty comment is REQUIRED explaining the resolution or reason for closure
+7. Collect results from mailbox and integrate them
 
 ## Task Delegation
 Use \`order\` tool to send a task to a teammate AND wait for results in one call.

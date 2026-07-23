@@ -20,6 +20,7 @@ export function formatIssueList(issues: Issue[]): string {
   const lines = ['Issues:'];
   for (const issue of issues) {
     const status: Record<string, string> = {
+      draft: '[~]',
       pending: '[ ]',
       in_progress: '[>]',
       completed: '[x]',
@@ -42,6 +43,7 @@ export function formatIssueList(issues: Issue[]): string {
  */
 export function formatIssueDetail(issue: Issue): string {
   const status: Record<string, string> = {
+    draft: '[~]',
     pending: '[ ]',
     in_progress: '[>]',
     completed: '[x]',

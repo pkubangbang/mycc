@@ -51,6 +51,13 @@ export class ChildIssue implements IssueModule {
     return result.claimed;
   }
 
+  async publishIssue(id: number): Promise<boolean> {
+    const result = await ipc.sendRequest<{ published: boolean }>('db_issue_publish', {
+      id,
+    });
+    return result.published;
+  }
+
   async closeIssue(
     id: number,
     status: 'completed' | 'failed' | 'abandoned',

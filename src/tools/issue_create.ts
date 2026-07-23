@@ -46,7 +46,17 @@ export const issueCreateTool: ToolDefinition = {
     const id = await ctx.issue.createIssue(title, content, blockedBy);
     ctx.core.brief('info', 'issue_create', `Created issue #${id}: ${title}`);
 
-    // Return full issue list for visibility (like todo_create)
-    return await ctx.issue.printIssues();
+    // Return full issue list for visibility (like todo_create), plus a draft
+    // status hint so the lead knows the issue is not yet visible to teammates
+    // for auto-claim and must be finalized via issue_claim (assign) or
+    // issue_publish (open for auto-claim).
+    const issueList = await ctx.issue.printIssues();
+    const draftHint =
+      `\n\n⚠ Issue #${id} is in DRAFT status — it is NOT visible to teammates for auto-claim yet.\n` +
+      `To make it available, choose ONE:\n` +
+      `  • issue_claim(id=${id}, owner="<teammate>") — assign to a specific teammate (draft → in_progress)\n` +
+      `  • issue_publish(id=${id}) — open for any idle teammate to claim (draft → pending)\n` +
+      `You may also add comments (issue_comment) or dependencies (blockage_create) while it is in draft.`;
+    return issueList + draftHint;
   },
 };

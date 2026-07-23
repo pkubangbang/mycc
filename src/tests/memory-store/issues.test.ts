@@ -41,7 +41,7 @@ describe('memory-store', () => {
         expect(issue).toBeDefined();
         expect(issue?.title).toBe('Test Issue');
         expect(issue?.content).toBe('Test content');
-        expect(issue?.status).toBe('pending');
+        expect(issue?.status).toBe('draft');
         expect(issue?.blockedBy).toEqual([]);
         expect(issue?.blocks).toEqual([]);
         expect(issue?.comments).toHaveLength(1);

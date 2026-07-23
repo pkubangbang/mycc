@@ -52,16 +52,40 @@ export class IssueManager implements IssueModule {
 
   /**
    * Claim an issue (atomic operation)
+   *
+   * Accepts both 'draft' and 'pending' statuses:
+   * - draft: lead assigns a specific teammate during the initialization
+   *   phase (issue_claim transitions draft → in_progress directly, skipping
+   *   the publish step). This is the "assign to a specific teammate" flow.
+   * - pending: a published issue open for anyone; claiming transitions it
+   *   to in_progress. This covers both lead's explicit claim and teammates'
+   *   auto-claim in enterIdleState.
    */
   async claimIssue(id: number, owner: string): Promise<boolean> {
     const issue = MemoryStore.getIssue(id);
-    if (!issue || issue.status !== 'pending') {
+    if (!issue || (issue.status !== 'draft' && issue.status !== 'pending')) {
       return false;
     }
 
     // Update status and owner
     MemoryStore.updateIssue(id, { status: 'in_progress', owner });
     MemoryStore.addIssueComment(id, `Claimed by @${owner}`, 'system');
+    return true;
+  }
+
+  /**
+   * Publish a draft issue — transitions status from 'draft' to 'pending',
+   * making it visible to idle teammates for auto-claim.
+   * Returns false if the issue does not exist or is not in 'draft' status.
+   */
+  async publishIssue(id: number): Promise<boolean> {
+    const issue = MemoryStore.getIssue(id);
+    if (!issue || issue.status !== 'draft') {
+      return false;
+    }
+
+    MemoryStore.updateIssue(id, { status: 'pending' });
+    MemoryStore.addIssueComment(id, `Published (draft → pending)`, 'system');
     return true;
   }
 

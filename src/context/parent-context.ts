@@ -101,6 +101,15 @@ export class ParentContext implements AgentContext {
         },
       },
       {
+        messageType: 'db_issue_publish',
+        module: 'issue',
+        handler: async (_sender, payload, ctx, sendResponse) => {
+          const { id } = payload as { id: number };
+          const published = await ctx.issue.publishIssue(id);
+          sendResponse('db_result', true, { published });
+        },
+      },
+      {
         messageType: 'db_issue_close',
         module: 'issue',
         handler: async (_sender, payload, ctx, sendResponse) => {

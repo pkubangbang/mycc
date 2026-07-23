@@ -1,4 +1,4 @@
-﻿/**
+/**
  * issue-create.test.ts - Tests for the issue_create tool
  */
 
@@ -19,6 +19,7 @@ function createMockIssueModule(): IssueModule {
     addComment: vi.fn().mockResolvedValue(undefined),
     createBlockage: vi.fn().mockResolvedValue(undefined),
     removeBlockage: vi.fn().mockResolvedValue(undefined),
+    publishIssue: vi.fn().mockResolvedValue(true),
   };
 }
 
@@ -78,7 +79,8 @@ describe('issueCreateTool', () => {
       'This is a test issue description',
       []
     );
-    expect(result).toBe('No issues.');
+    expect(result).toContain('No issues.');
+    expect(result).toContain('Issue #1 is in DRAFT status');
     expect(ctx.core.brief).toHaveBeenCalledWith('info', 'issue_create', 'Created issue #1: Test Issue');
   });
 
@@ -94,7 +96,7 @@ describe('issueCreateTool', () => {
       'This depends on other issues',
       [1, 2, 3]
     );
-    expect(result).toBe('No issues.');
+    expect(result).toContain('No issues.');
   });
 
   it('should return the issue list from printIssues', async () => {
@@ -106,7 +108,8 @@ describe('issueCreateTool', () => {
       content: 'Description',
     });
 
-    expect(result).toBe('Issue #42: Test');
+    expect(result).toContain('Issue #42: Test');
+    expect(result).toContain('Issue #42 is in DRAFT status');
   });
 
   // ========== Error Case Tests ==========
@@ -187,7 +190,7 @@ describe('issueCreateTool', () => {
       'Description',
       []
     );
-    expect(result).toBe('No issues.');
+    expect(result).toContain('No issues.');
   });
 
   it('should handle undefined blockedBy as empty array', async () => {
@@ -202,7 +205,7 @@ describe('issueCreateTool', () => {
       'Description',
       []
     );
-    expect(result).toBe('No issues.');
+    expect(result).toContain('No issues.');
   });
 
   // ========== Tool Metadata Tests ==========

@@ -32,7 +32,7 @@ export function createIssue(title: string, content: string, blockedBy: number[])
     id,
     title,
     content,
-    status: 'pending',
+    status: 'draft',
     blockedBy: [],
     blocks: [],
     comments: [

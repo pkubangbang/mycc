@@ -1,4 +1,4 @@
-﻿/**
+/**
  * blockage-create.test.ts - Tests for the blockage_create tool
  */
 
@@ -19,6 +19,7 @@ function createMockIssueModule(): IssueModule {
     addComment: vi.fn().mockResolvedValue(undefined),
     createBlockage: vi.fn().mockResolvedValue(undefined),
     removeBlockage: vi.fn().mockResolvedValue(undefined),
+    publishIssue: vi.fn().mockResolvedValue(true),
   };
 }
 

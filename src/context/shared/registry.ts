@@ -28,6 +28,7 @@ import { issueCreateTool } from '../../tools/issue_create.js';
 import { issueCloseTool } from '../../tools/issue_close.js';
 import { issueCommentTool } from '../../tools/issue_comment.js';
 import { issueClaimTool } from '../../tools/issue_claim.js';
+import { issuePublishTool } from '../../tools/issue_publish.js';
 import { issueListTool } from '../../tools/issue_list.js';
 import { blockageCreateTool } from '../../tools/blockage_create.js';
 import { blockageRemoveTool } from '../../tools/blockage_remove.js';
@@ -81,6 +82,7 @@ export const builtInTools: ToolDefinition[] = [
   issueCloseTool,
   issueCommentTool,
   issueClaimTool,
+  issuePublishTool,
   issueListTool,
   blockageCreateTool,
   blockageRemoveTool,

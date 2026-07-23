@@ -101,8 +101,8 @@ describe('formatIssueList', () => {
   });
 
   it('should handle all status types', () => {
-    const statuses: Array<Issue['status']> = ['pending', 'in_progress', 'completed', 'failed', 'abandoned'];
-    const markers = ['[ ]', '[>]', '[x]', '[!]', '[-]'];
+    const statuses: Array<Issue['status']> = ['draft', 'pending', 'in_progress', 'completed', 'failed', 'abandoned'];
+    const markers = ['[~]', '[ ]', '[>]', '[x]', '[!]', '[-]'];
 
     statuses.forEach((status, index) => {
       const issues: Issue[] = [
@@ -281,8 +281,8 @@ describe('formatIssueDetail', () => {
   });
 
   it('should handle all status types', () => {
-    const statuses: Array<Issue['status']> = ['pending', 'in_progress', 'completed', 'failed', 'abandoned'];
-    const markers = ['[ ]', '[>]', '[x]', '[!]', '[-]'];
+    const statuses: Array<Issue['status']> = ['draft', 'pending', 'in_progress', 'completed', 'failed', 'abandoned'];
+    const markers = ['[~]', '[ ]', '[>]', '[x]', '[!]', '[-]'];
 
     statuses.forEach((status, index) => {
       const issue: Issue = {
