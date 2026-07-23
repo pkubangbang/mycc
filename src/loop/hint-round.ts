@@ -34,7 +34,7 @@ const HINT_SCHEMA = {
     },
     wiki_query: {
       type: 'string',
-      description: 'Search query for the wiki. REQUIRED when wiki_domain is set. Describe what knowledge is needed.',
+      description: 'Search query for the wiki knowledge base. Use 3-8 keywords describing the specific knowledge gap, NOT a full sentence. Base the query on the actual error messages, tool names, or concepts visible in the conversation. Examples: "intent language verb object table", "ollama retry timeout configuration", "worktree branch switching git". Guessing is encouraged — a rough keyword query is far better than leaving this empty. Never output null or an empty string.',
     },
   },
   required: ['blocker', 'next_step', 'focus_on', 'wiki_domain', 'wiki_query'],
@@ -46,9 +46,25 @@ CRITICAL INSTRUCTIONS:
 1. If there are NO REAL blockers preventing progress, set blocker to exactly: "no blockers"
 2. Do NOT fabricate blockers. "no blockers" means the agent should simply continue with the current task.
 3. When the blocker involves errors, unfamiliar tools, or missing knowledge, ALWAYS suggest a wiki search by setting wiki_domain and wiki_query. The available domains are listed below. Only leave both empty if the blocker is purely about code logic or syntax.
-4. In the conversation context, tool calls tagged as ti[hook-name]|tool-name|args were injected by a hookish skill, NOT chosen by the agent. When diagnosing confusion, consider whether a hook is misbehaving — injecting the wrong tool, blocking spuriously, replacing incorrectly, or firing when it shouldn't. If a hook is the blocker, name the hook skill in the blocker field and describe what it is doing wrong.
-5. Reply with ONLY a JSON object. No commentary, no markdown fences. The schema is:
-${JSON.stringify(HINT_SCHEMA, null, 2)}`;
+4. wiki_query construction:
+   - Use 3-8 keywords extracted from the error message, tool name, or concept causing the blocker.
+   - Format as space-separated keywords, NOT a full sentence. Example: "ollama timeout retry backoff" not "How does ollama handle timeout retries?"
+   - GUESSING IS CORRECT BEHAVIOR. You do not need to know the exact answer — your job is to describe what knowledge is missing so a semantic search can find it. A rough but relevant query is always better than an empty string.
+   - Even when there are no blockers, fill wiki_query with keywords describing the current task so the search can surface relevant how-to knowledge.
+5. In the conversation context, tool calls tagged as ti[hook-name]|tool-name|args were injected by a hookish skill, NOT chosen by the agent. When diagnosing confusion, consider whether a hook is misbehaving — injecting the wrong tool, blocking spuriously, replacing incorrectly, or firing when it shouldn't. If a hook is the blocker, name the hook skill in the blocker field and describe what it is doing wrong.
+6. Reply with ONLY a JSON object. No commentary, no markdown fences.
+
+The schema is:
+${JSON.stringify(HINT_SCHEMA, null, 2)}
+
+EXAMPLE A — blocker involves an unfamiliar tool error:
+{"blocker":"Agent repeatedly gets 'Error: [Intent]' when calling bash","next_step":"Review the intent-language VERB/OBJECT vocabulary and reformat the bash intent","focus_on":"intent-language syntax for bash tool","wiki_domain":"project","wiki_query":"intent language verb object bash tool"}
+
+EXAMPLE B — blocker is a missing API pattern:
+{"blocker":"Agent doesn't know how to register a new wiki domain programmatically","next_step":"Search wiki for domain registration API and follow the documented pattern","focus_on":"wiki domain registration API","wiki_domain":"api","wiki_query":"wiki domain register create API"}
+
+EXAMPLE C — no real blocker (agent should continue, query still non-empty):
+{"blocker":"no blockers","next_step":"Continue implementing the remaining test cases","focus_on":"completing test coverage","wiki_domain":"project","wiki_query":"test coverage remaining cases"}`;
 
 /** Minimal triologue surface needed by hint round generation */
 export interface HintRoundContext {
