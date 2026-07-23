@@ -344,8 +344,11 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
       const reasoningContent = (assistantMessage as unknown as Record<string, unknown>).reasoning_content as string | undefined;
       const toolCalls = assistantMessage.tool_calls as ToolCall[] | undefined;
 
-      // Confusion scoring: +1 per assistant turn (agent spinning without progress)
-      ctx.core.increaseConfusionIndex(1);
+      // No per-turn confusion increment: the main process scores confusion
+      // only on tool execution (repetition/errors), not per LLM turn. A
+      // blanket +1 per turn made normal multi-step work (read→grep→edit…)
+      // accumulate to the threshold (~10 turns) and fire spurious guidance
+      // requests. Scoring now happens per-tool below, aligned with tool.ts.
 
       // ---- No tools: re-prompt or enter idle ----
       if (!toolCalls || toolCalls.length === 0) {
