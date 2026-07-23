@@ -6,4 +6,11 @@ sigma/
 .worktrees/
 
 
+/.mycc/*
+# Exception: keep skill docs under git management. Using /* (not a
+# trailing-slash directory ignore) so that sub-paths CAN be re-included —
+# git cannot re-include a path if its parent directory is ignored, so we
+# ignore .mycc's contents rather than the directory itself.
+!/.mycc/skills/
+
 /.mycc/
