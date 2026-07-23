@@ -1,4 +1,4 @@
-﻿/**
+/**
  * issue-close.test.ts - Tests for the issue_close tool
  */
 
@@ -116,12 +116,13 @@ describe('issueCloseTool', () => {
     const result = await issueCloseTool.handler(ctx, {
       id: 1,
       status: 'completed',
+      comment: 'Resolved',
     });
 
     expect(mockIssue.getIssue).toHaveBeenCalledWith(1);
-    expect(mockIssue.closeIssue).toHaveBeenCalledWith(1, 'completed', undefined, undefined);
+    expect(mockIssue.closeIssue).toHaveBeenCalledWith(1, 'completed', 'Resolved', undefined);
     expect(result).toBe('No issues.');
-    expect(ctx.core.brief).toHaveBeenCalledWith('info', 'issue_close', 'Closed #1 as completed');
+    expect(ctx.core.brief).toHaveBeenCalledWith('info', 'issue_close', 'Closed #1 as completed: "Resolved"');
   });
 
   it('should close an issue as failed', async () => {
@@ -130,11 +131,12 @@ describe('issueCloseTool', () => {
     const result = await issueCloseTool.handler(ctx, {
       id: 1,
       status: 'failed',
+      comment: 'Blocked by dependency',
     });
 
-    expect(mockIssue.closeIssue).toHaveBeenCalledWith(1, 'failed', undefined, undefined);
+    expect(mockIssue.closeIssue).toHaveBeenCalledWith(1, 'failed', 'Blocked by dependency', undefined);
     expect(result).toBe('No issues.');
-    expect(ctx.core.brief).toHaveBeenCalledWith('info', 'issue_close', 'Closed #1 as failed');
+    expect(ctx.core.brief).toHaveBeenCalledWith('info', 'issue_close', 'Closed #1 as failed: "Blocked by dependency"');
   });
 
   it('should close an issue as abandoned', async () => {
@@ -143,11 +145,12 @@ describe('issueCloseTool', () => {
     const result = await issueCloseTool.handler(ctx, {
       id: 1,
       status: 'abandoned',
+      comment: 'Out of scope',
     });
 
-    expect(mockIssue.closeIssue).toHaveBeenCalledWith(1, 'abandoned', undefined, undefined);
+    expect(mockIssue.closeIssue).toHaveBeenCalledWith(1, 'abandoned', 'Out of scope', undefined);
     expect(result).toBe('No issues.');
-    expect(ctx.core.brief).toHaveBeenCalledWith('info', 'issue_close', 'Closed #1 as abandoned');
+    expect(ctx.core.brief).toHaveBeenCalledWith('info', 'issue_close', 'Closed #1 as abandoned: "Out of scope"');
   });
 
   it('should close an issue with a comment', async () => {
@@ -264,10 +267,69 @@ describe('issueCloseTool', () => {
     const result = await issueCloseTool.handler(ctx, {
       id: 999,
       status: 'completed',
+      comment: 'Closing',
     });
 
     expect(result).toBe('Error: Issue #999 not found');
     expect(ctx.core.brief).toHaveBeenCalledWith('error', 'issue_close', 'Issue #999 not found');
+    expect(mockIssue.closeIssue).not.toHaveBeenCalled();
+  });
+
+  // ========== Comment Requirement Tests ==========
+
+  it('should reject missing comment', async () => {
+    mockIssue.getIssue = vi.fn().mockResolvedValue(createInProgressIssue());
+
+    const result = await issueCloseTool.handler(ctx, {
+      id: 1,
+      status: 'completed',
+    });
+
+    expect(result).toBe('Error: comment is required to explain the resolution or reason for closure. Provide a non-empty comment.');
+    expect(ctx.core.brief).toHaveBeenCalledWith('error', 'issue_close', 'Missing or empty comment');
+    expect(mockIssue.getIssue).not.toHaveBeenCalled();
+    expect(mockIssue.closeIssue).not.toHaveBeenCalled();
+  });
+
+  it('should reject empty string comment', async () => {
+    mockIssue.getIssue = vi.fn().mockResolvedValue(createInProgressIssue());
+
+    const result = await issueCloseTool.handler(ctx, {
+      id: 1,
+      status: 'completed',
+      comment: '',
+    });
+
+    expect(result).toBe('Error: comment is required to explain the resolution or reason for closure. Provide a non-empty comment.');
+    expect(ctx.core.brief).toHaveBeenCalledWith('error', 'issue_close', 'Missing or empty comment');
+    expect(mockIssue.closeIssue).not.toHaveBeenCalled();
+  });
+
+  it('should reject whitespace-only comment', async () => {
+    mockIssue.getIssue = vi.fn().mockResolvedValue(createInProgressIssue());
+
+    const result = await issueCloseTool.handler(ctx, {
+      id: 1,
+      status: 'completed',
+      comment: '   ',
+    });
+
+    expect(result).toBe('Error: comment is required to explain the resolution or reason for closure. Provide a non-empty comment.');
+    expect(ctx.core.brief).toHaveBeenCalledWith('error', 'issue_close', 'Missing or empty comment');
+    expect(mockIssue.closeIssue).not.toHaveBeenCalled();
+  });
+
+  it('should reject non-string comment', async () => {
+    mockIssue.getIssue = vi.fn().mockResolvedValue(createInProgressIssue());
+
+    const result = await issueCloseTool.handler(ctx, {
+      id: 1,
+      status: 'completed',
+      comment: 42,
+    });
+
+    expect(result).toBe('Error: comment is required to explain the resolution or reason for closure. Provide a non-empty comment.');
+    expect(ctx.core.brief).toHaveBeenCalledWith('error', 'issue_close', 'Missing or empty comment');
     expect(mockIssue.closeIssue).not.toHaveBeenCalled();
   });
 
@@ -279,6 +341,7 @@ describe('issueCloseTool', () => {
     const result = await issueCloseTool.handler(ctx, {
       id: 1,
       status: 'completed',
+      comment: 'Done',
     });
 
     expect(mockIssue.closeIssue).toHaveBeenCalled();
@@ -291,6 +354,7 @@ describe('issueCloseTool', () => {
     const result = await issueCloseTool.handler(ctx, {
       id: 2,
       status: 'failed',
+      comment: 'Could not reproduce',
     });
 
     expect(mockIssue.closeIssue).toHaveBeenCalled();
@@ -306,10 +370,11 @@ describe('issueCloseTool', () => {
     const result = await issueCloseTool.handler(ctx, {
       id: 3,
       status: 'completed',
+      comment: 'Blocker resolved',
     });
 
     // The handler calls closeIssue which should handle blockage removal
-    expect(mockIssue.closeIssue).toHaveBeenCalledWith(3, 'completed', undefined, undefined);
+    expect(mockIssue.closeIssue).toHaveBeenCalledWith(3, 'completed', 'Blocker resolved', undefined);
     expect(result).toBe('No issues.');
   });
 
@@ -326,9 +391,10 @@ describe('issueCloseTool', () => {
   it('should have required parameters', () => {
     expect(issueCloseTool.input_schema.required).toContain('id');
     expect(issueCloseTool.input_schema.required).toContain('status');
+    expect(issueCloseTool.input_schema.required).toContain('comment');
   });
 
-  it('should have optional comment and poster parameters', () => {
+  it('should have optional poster parameter', () => {
     const props = issueCloseTool.input_schema.properties;
     expect(props).toHaveProperty('id');
     expect(props).toHaveProperty('status');

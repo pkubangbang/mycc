@@ -487,7 +487,7 @@ ${buildPinnedTodoSection()}
 2. Create teammates with tm_create (each gets a role and instructions)
 3. Assign issues to teammates with issue_claim, then notify via mail_to
 4. Monitor progress with issue_list, wait for completion with tm_await
-5. Close issues with issue_close when work is done (unblocks dependents)
+5. Close issues with issue_close when work is done (unblocks dependents) — a non-empty comment is REQUIRED explaining the resolution or reason for closure
 6. Collect results from mailbox and integrate them
 
 ## Task Delegation

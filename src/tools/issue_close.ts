@@ -8,7 +8,7 @@ import type { ToolDefinition, AgentContext } from '../types.js';
 
 export const issueCloseTool: ToolDefinition = {
   name: 'issue_close',
-  description: 'Close a shared team issue with final status: completed, failed, or abandoned. Unlike private todos, issues are visible to all agents. Returns full issue list. Closing a blocker unblocks dependent issues.',
+  description: 'Close a shared team issue with final status: completed, failed, or abandoned. A non-empty comment is REQUIRED to explain the resolution or reason for closure. Unlike private todos, issues are visible to all agents. Returns full issue list. Closing a blocker unblocks dependent issues.',
   input_schema: {
     type: 'object',
     properties: {
@@ -23,14 +23,14 @@ export const issueCloseTool: ToolDefinition = {
       },
       comment: {
         type: 'string',
-        description: 'Final comment explaining the resolution or reason for closure.',
+        description: 'REQUIRED. A non-empty final comment explaining the resolution or reason for closure. Closing an issue without a comment is rejected.',
       },
       poster: {
         type: 'string',
         description: 'Name of the person or agent closing the issue. Defaults to anonymous if omitted.',
       },
     },
-    required: ['id', 'status'],
+    required: ['id', 'status', 'comment'],
   },
   scope: ['main', 'child'],
   handler: async (ctx: AgentContext, args: Record<string, unknown>): Promise<string> => {
@@ -50,6 +50,12 @@ export const issueCloseTool: ToolDefinition = {
       return `Error: status must be one of: ${validStatuses.join(', ')}`;
     }
 
+    // comment is required and must be a non-empty, non-whitespace string
+    if (typeof comment !== 'string' || comment.trim() === '') {
+      ctx.core.brief('error', 'issue_close', 'Missing or empty comment');
+      return 'Error: comment is required to explain the resolution or reason for closure. Provide a non-empty comment.';
+    }
+
     const issue = await ctx.issue.getIssue(id);
     if (!issue) {
       ctx.core.brief('error', 'issue_close', `Issue #${id} not found`);
@@ -57,9 +63,7 @@ export const issueCloseTool: ToolDefinition = {
     }
 
     await ctx.issue.closeIssue(id, status, comment, poster);
-    const logMsg = comment
-      ? `Closed #${id} as ${status}: "${comment}"`
-      : `Closed #${id} as ${status}`;
+    const logMsg = `Closed #${id} as ${status}: "${comment}"`;
     ctx.core.brief('info', 'issue_close', logMsg);
 
     // Return full issue list for visibility
