@@ -23,12 +23,25 @@ import { isVerbose, validateEnv, ensureToolTypeImports, shouldRunSetup, loadEnv,
 import { agentIO } from './loop/agent-io.js';
 import { parseKeys, isCtrlC, isEscape } from './utils/key-parser.js';
 import { getProjectRoot, spawnTsx } from './utils/tsx-run.js';
+import { printHelp } from './help.js';
 
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 
 const PROJECT_ROOT = getProjectRoot();
+
+// ---------------------------------------------------------------------------
+// Help / Version (handled before anything else, no side effects)
+// ---------------------------------------------------------------------------
+
+// --help / -h: print usage and exit 0 (before setting process title, raw mode,
+// or spawning any child). Minimist would also pick these up, but we intercept
+// them here to avoid the cost of loading config / spawning the lead process.
+if (process.argv.slice(2).some(a => a === '--help' || a === '-h')) {
+  printHelp();
+  process.exit(0);
+}
 
 // Set process title so it shows as 'mycc' in process list (ps, top, etc.)
 process.title = 'mycc';
