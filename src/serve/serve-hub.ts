@@ -10,10 +10,15 @@
  *
  * Lifecycle:
  *   start(port) → running = true
- *   stop()      → running = false (FIRST) → abortInput() → cleanup servers
+ *   stop(skipAbortInput?) → running = false (FIRST) → abortInput() (unless
+ *                          skipped) → cleanup servers
  *
  * The running flag is set BEFORE abortInput() in stop(), so WebInputProvider
- * checks hub.isRunning() = false and falls back to terminal — no race.
+ * checks hub.isRunning() = false and falls back to terminal. gracefulShutdown()
+ * passes skipAbortInput=true and calls abortInput() as its FINAL step —
+ * after the "Web UI stopped. Terminal input restored." message — so the
+ * fallback `agent >>` prompt is drawn AFTER (not before) that message and
+ * is not clobbered by it (the "ESC quit serve" prompt race).
  */
 
 import express from 'express';
@@ -360,7 +365,23 @@ export class ServeHub {
     this.running = true;
   }
 
-  async stop(): Promise<void> {
+  /**
+   * Tear down the serve stack.
+   *
+   * @param skipAbortInput - when true, do NOT call abortInput() inside
+   *   stop(). Used by {@link gracefulShutdown}, which must print the
+   *   "Web UI stopped. Terminal input restored." message BEFORE unblocking
+   *   the fallback terminal prompt. Calling abortInput() here would resolve
+   *   WebInputProvider's waitForInput() immediately, letting it draw
+   *   `agent >>` before gracefulShutdown() prints the restore line —
+   *   the console.log then clobbers the freshly-drawn prompt, leaving the
+   *   user with no visible prompt (the "ESC quit serve" bug). gracefulShutdown
+   *   instead calls abortInput() as its very last step, so the message
+   *   prints first and the fallback prompt draws cleanly on top. Other
+   *   callers (lead exit, serve_shutdown IPC, restart paths) pass no
+   *   argument and keep the original early-abort behavior.
+   */
+  async stop(skipAbortInput = false): Promise<void> {
     // Re-entrancy guard: concurrent calls (ESC + exit button + disconnect
     // timer + serve_shutdown IPC) must not interleave teardown sequences.
     if (this.stopping) return;
@@ -374,8 +395,12 @@ export class ServeHub {
       //     now automatically restores terminal input — no per-path IPC needed.
       if (process.send) process.send({ type: 'serve_mode', active: false });
 
-      // 2. Wake blocked waitForInput() with null (before server cleanup)
-      this.abortInput();
+      // 2. Wake blocked waitForInput() with null (before server cleanup).
+      //    Skipped when gracefulShutdown defers the unblock to its tail so
+      //    the terminal-restore message prints first (see skipAbortInput doc).
+      if (!skipAbortInput) {
+        this.abortInput();
+      }
 
       // 3. Cancel any pending disconnect timer
       this.cancelDisconnectTimer();
@@ -957,7 +982,16 @@ export class ServeHub {
    */
   async gracefulShutdown(): Promise<void> {
     this.cancelDisconnectTimer();
-    await this.stop(); // stop() sets running=false + abortInput() internally
+    // stop() with skipAbortInput=true: tear down servers + set running=false,
+    // but do NOT yet resolve the blocked waitForInput(). The input unblock is
+    // deferred to the end of this method so the restore message below prints
+    // BEFORE WebInputProvider draws the fallback `agent >>` prompt. Calling
+    // abortInput() inside stop() (the old behavior) would let WebInputProvider
+    // draw the prompt first, then this console.log would print over it —
+    // clobbering the prompt and leaving the user with no visible prompt line
+    // (the "ESC quit serve" bug). By deferring the unblock, the message
+    // prints first and the fallback prompt renders cleanly on top of it.
+    await this.stop(true);
     // clean up output hooks
     agentIO.setOutputCallback(null);
     setResultCallback(null);
@@ -966,5 +1000,9 @@ export class ServeHub {
       process.send({ type: 'serve_mode', active: false });
     }
     console.log(chalk.yellow('\nWeb UI stopped. Terminal input restored.'));
+    // Now — after the restore message is printed — unblock the fallback
+    // terminal prompt. WebInputProvider sees isRunning()=false and draws
+    // `agent >>` cleanly on the line below the message we just printed.
+    this.abortInput();
   }
 }
