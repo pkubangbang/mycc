@@ -43,6 +43,19 @@ function onScroll(): void {
   }
 }
 
+// Quote-into-input: invoked by MessageItem's 引用 button. Appends the quoted
+// markdown block to the chat input box (state.inputText). If there's already
+// text, a separator newline keeps the quote distinct from existing content.
+// The watch in ChatInput.vue syncs state.inputText → its local textarea ref,
+// so the inserted text appears immediately in the input box without needing
+// to touch the textarea element directly.
+function onQuote(quotedText: string): void {
+  const existing = props.state.inputText;
+  props.state.inputText = existing
+    ? `${existing}\n${quotedText}`
+    : quotedText;
+}
+
 // Watch for new messages — auto-scroll only if user is already at bottom
 watch(
   () => visibleMessages.value.length,
@@ -65,7 +78,7 @@ onMounted(() => {
       :key="msg.id ?? index"
     >
       <CardItem v-if="msg.type === 'card' && msg.card" :card="msg.card" />
-      <MessageItem v-else :message="msg" />
+      <MessageItem v-else :message="msg" :on-quote="onQuote" />
     </template>
     <!-- ESC / interrupt button — at the bottom of the chat history
          (document-relative, scrolls with content), shown only while the

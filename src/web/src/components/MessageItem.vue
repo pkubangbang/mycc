@@ -1,9 +1,16 @@
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, ref } from 'vue';
 import MarkdownIt from 'markdown-it';
 import type { ChatMessage } from '../types';
 
-const props = defineProps<{ message: ChatMessage }>();
+const props = defineProps<{
+  message: ChatMessage;
+  /** Quote-into-input callback. When the user clicks the 引用 (quote) button
+   *  on a result bubble, the content is converted to a markdown blockquote
+   *  and passed to this callback so the parent can append it to the chat
+   *  input box. Optional — only the toolbar's quote button uses it. */
+  onQuote?: (quotedText: string) => void;
+}>();
 
 // User messages align right (WeChat self-bubble style); everything else left.
 const isUser = computed(() => props.message.type === 'user');
@@ -91,6 +98,92 @@ const header = computed(() => {
     : '';
   return ts ? `[${ts}] [${label}]` : `[${label}]`;
 });
+
+// ── Action toolbar (download / copy / quote) ──
+//
+// Only agent markdown replies (type:'result') get the toolbar. User messages
+// and every other message type (log/warn/error/system/prompt) never show it.
+// The toolbar lives INSIDE the result bubble, below the markdown body,
+// separated by a hairline divider, right-aligned. It is always visible (no
+// auto-hide) so the actions are discoverable without hovering.
+const showToolbar = computed(() => props.message.type === 'result');
+
+// Transient "已复制" feedback flag. Set true after a successful clipboard
+// write, auto-reset after 1.5s so the button label swaps back. Using a ref
+// (not part of the message object) keeps this UI-only state ephemeral and
+// per-card — it never leaks into the persisted messageLog / transcript.
+const copied = ref(false);
+let copyResetTimer: ReturnType<typeof setTimeout> | null = null;
+
+// Download the raw markdown source of the reply as a .md file. Uses a Blob
+// + a transient <a download> element (the standard programmatic-download
+// pattern). The filename embeds the message timestamp when available so
+// repeated downloads from different bubbles don't collide.
+function downloadMarkdown(): void {
+  const content = props.message.content ?? '';
+  const ts = props.message.timestamp
+    ? new Date(props.message.timestamp).toISOString().replace(/[:.]/g, '-').slice(0, 19)
+    : Date.now().toString();
+  const filename = `reply-${ts}.md`;
+  const blob = new Blob([content], { type: 'text/markdown;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  // Revoke on the next tick so the download has a chance to start.
+  setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+
+// Copy the raw markdown source to the system clipboard. Uses the async
+// Clipboard API (navigator.clipboard.writeText), available in all modern
+// browsers over http(s) + localhost. A 1.5s "已复制" label confirms success.
+async function copyContent(): Promise<void> {
+  try {
+    await navigator.clipboard.writeText(props.message.content ?? '');
+    copied.value = true;
+    if (copyResetTimer) clearTimeout(copyResetTimer);
+    copyResetTimer = setTimeout(() => { copied.value = false; }, 1500);
+  } catch {
+    // Clipboard API can reject in non-secure contexts (plain http on a
+    // remote host) or when permissions are denied. Fall back to a hidden
+    // textarea + execCommand('copy') so the feature still works there.
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = props.message.content ?? '';
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+      copied.value = true;
+      if (copyResetTimer) clearTimeout(copyResetTimer);
+      copyResetTimer = setTimeout(() => { copied.value = false; }, 1500);
+    } catch {
+      /* clipboard unavailable — silently ignore; the button just no-ops */
+    }
+  }
+}
+
+// Quote the reply into the chat input box as a markdown blockquote.
+// Each line of the source is prefixed with "> " so the whole reply becomes
+// a single quote block when the user later sends it. A leading blank quote
+// line + a trailing blank line leave a clean separation from any text the
+// user types before/after. Invokes the onQuote prop callback; if no
+// callback is wired, the button no-ops (graceful degradation).
+function quoteContent(): void {
+  if (!props.onQuote) return;
+  const content = props.message.content ?? '';
+  const quoted = content
+    .split('\n')
+    .map(line => `> ${line}`)
+    .join('\n');
+  // Blank quote line above + blank line below for readability.
+  props.onQuote(`> \n${quoted}\n\n`);
+}
 </script>
 
 <template>
@@ -117,6 +210,50 @@ const header = computed(() => {
         <template v-else>
           {{ message.content }}
         </template>
+        <!-- Action toolbar — only on agent markdown replies (type:'result').
+             Lives inside the bubble, below the markdown body, right-aligned,
+             separated by a hairline divider. Download the raw markdown,
+             copy it to the clipboard (with "已复制" feedback), or quote it
+             into the chat input as a markdown blockquote. -->
+        <div v-if="showToolbar" class="bubble-toolbar">
+          <button
+            class="toolbar-btn"
+            title="下载 Markdown 文件"
+            @click="downloadMarkdown"
+          >
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+              <polyline points="7 10 12 15 17 10"/>
+              <line x1="12" y1="15" x2="12" y2="3"/>
+            </svg>
+            <span>下载</span>
+          </button>
+          <button
+            class="toolbar-btn"
+            :title="copied ? '已复制' : '复制内容'"
+            @click="copyContent"
+          >
+            <svg v-if="!copied" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+            </svg>
+            <svg v-else viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <polyline points="20 6 9 17 4 12"/>
+            </svg>
+            <span>{{ copied ? '已复制' : '复制' }}</span>
+          </button>
+          <button
+            class="toolbar-btn"
+            title="引用内容到输入框"
+            @click="quoteContent"
+          >
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M3 21c3 0 7-1 7-8V5c0-1.25-.756-2.017-2-2H4c-1.25 0-2 .75-2 1.972V11c0 1.25.75 2 2 2 1 0 1 0 1 1v1c0 1-1 2-2 2s-1 .008-1 1.031V20c0 1 0 1 1 1z"/>
+              <path d="M15 21c3 0 7-1 7-8V5c0-1.25-.757-2.017-2-2h-4c-1.25 0-2 .75-2 1.972V11c0 1.25.75 2 2 2h.75c0 2.25.25 4-1.25 5v1c0 1 0 1 1 1z"/>
+            </svg>
+            <span>引用</span>
+          </button>
+        </div>
       </div>
     </div>
   </div>
@@ -308,5 +445,47 @@ const header = computed(() => {
   border: none;
   border-top: 1px solid var(--md-hr);
   margin: 10px 0;
+}
+
+/* ── Action toolbar (download / copy / quote) ──
+   Lives INSIDE the result bubble, below the markdown body. A hairline
+   divider sits above it; the button row is right-aligned. Buttons are
+   subtle text+icon chips — no strong background, just a hover tint — so
+   they read as a quiet utility row rather than competing with the reply.
+   Both light and dark themes are covered by using CSS variable tokens. */
+.bubble-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  gap: 4px;
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--md-hr);
+}
+.toolbar-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 12px;
+  font-family: inherit;
+  line-height: 1;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: color 0.15s, background 0.15s, border-color 0.15s;
+  user-select: none;
+}
+.toolbar-btn svg {
+  flex-shrink: 0;
+}
+.toolbar-btn:hover {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 30%, transparent);
+}
+.toolbar-btn:active {
+  background: color-mix(in srgb, var(--accent) 20%, transparent);
 }
 </style>
