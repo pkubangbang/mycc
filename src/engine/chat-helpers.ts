@@ -171,6 +171,36 @@ export function calculateDelay(attempt: number, config: RetryConfig): number {
   return Math.max(0, Math.round(cappedDelay + jitter));
 }
 
+/**
+ * Compute an escalated first-token timeout for the current retry attempt.
+ *
+ * When the previous attempt failed with a first-token timeout, double the
+ * base timeout for the next attempt, capped at responseTimeoutMs. This
+ * prevents a slow model from hitting the same 20s wall on every retry —
+ * without it, all 4 attempts fail at the identical timeout and the call
+ * can never make out (infinite retry loop reported by users).
+ *
+ * Non-timeout errors (e.g. ECONNRESET) keep the base timeout — more time
+ * won't help a connectivity issue, so we don't waste wall-clock escalating
+ * for errors that are independent of first-token latency.
+ *
+ * @param baseMs - The base first-token timeout (attempt 1 value).
+ * @param attempt - 1-based attempt number in the retry loop.
+ * @param capMs - Upper bound (typically responseTimeoutMs).
+ * @param previousWasTimeout - Whether the previous attempt threw StreamTimeoutError.
+ * @returns The timeout to use for this attempt's first-token wait.
+ */
+export function escalateFirstTokenTimeout(
+  baseMs: number,
+  attempt: number,
+  capMs: number,
+  previousWasTimeout: boolean,
+): number {
+  if (!previousWasTimeout) return baseMs;
+  const multiplier = Math.pow(2, attempt - 1);
+  return Math.min(baseMs * multiplier, capMs);
+}
+
 export async function retryWithBackoff<T>(
   operation: () => Promise<T>,
   config?: Partial<RetryConfig> & { timeoutMs?: number }

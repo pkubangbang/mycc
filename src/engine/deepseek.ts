@@ -16,6 +16,7 @@ import {
   collectStream,
   isTransientError,
   calculateDelay,
+  escalateFirstTokenTimeout,
   sleep,
   startSpinner,
   stopSpinner,
@@ -330,6 +331,22 @@ export async function retryChat(
         agentIO.verbose('deepseek', `Retry attempt ${attempt}/${cfg.maxRetries + 1}`);
       }
 
+      // Escalate the first-token timeout when the previous attempt failed with
+      // a first-token timeout. Doubling per attempt (20→40→80→120s) lets a slow
+      // model eventually make out instead of hitting the same wall 4× in a row.
+      // Non-timeout transient errors (ECONNRESET, etc.) keep the base — more
+      // time won't help a connectivity issue.
+      const previousWasTimeout = lastError instanceof StreamTimeoutError;
+      const attemptTimeoutMs = escalateFirstTokenTimeout(
+        cfg.firstTokenTimeoutMs ?? 20000,
+        attempt,
+        cfg.responseTimeoutMs ?? 120000,
+        previousWasTimeout,
+      );
+      if (previousWasTimeout && attempt > 1) {
+        agentIO.verbose('deepseek', `Escalating first-token timeout to ${attemptTimeoutMs}ms for attempt ${attempt}`);
+      }
+
       try {
         // Normalize messages from Ollama format to DeepSeek format.
         // Filter out any undefined / null / non-object entries defensively —
@@ -380,7 +397,7 @@ export async function retryChat(
           stream,
           () => stream.abort(),
           {
-            firstTokenTimeoutMs: cfg.firstTokenTimeoutMs,
+            firstTokenTimeoutMs: attemptTimeoutMs,
             responseTimeoutMs: cfg.responseTimeoutMs,
             signal,
           },
