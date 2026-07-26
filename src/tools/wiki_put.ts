@@ -67,8 +67,8 @@ export const wikiPutTool: ToolDefinition = {
     const result = await ctx.wiki.put(hash, document);
 
     if (result.success) {
-      if (result.error) {
-        // Document already existed
+      if (result.alreadyExisted) {
+        // Document already exists (exact match — same hash AND references)
         ctx.core.brief('info', 'wiki_put', `Document "${document.title}" (${document.domain}) already exists (hash: ${result.hash})`);
         return `OK: Document already exists with hash ${result.hash}`;
       }

@@ -642,11 +642,23 @@ export interface PrepareResult {
 
 /**
  * Result from wiki_put
+ *
+ * `alreadyExisted` is set to true ONLY when put() found an exact copy of the
+ * document already in the store — the full document matches: domain, title,
+ * content, AND references. The wiki hash (sha256 of domain:title:content,
+ * truncated to 16 hex) is only a fast lookup key; it does not cover references
+ * and can in principle collide, so the full-document comparison is what
+ * decides "already present". A hash collision between two genuinely
+ * different documents does NOT set this flag — the distinct document is
+ * stored as a new record instead. When alreadyExisted is true, put() wrote
+ * nothing (no LanceDB row, no WAL line) — the import summary counts these
+ * separately from newly-stored docs.
  */
 export interface PutResult {
   success: boolean;
   hash: string;
   error?: string;
+  alreadyExisted?: boolean;
 }
 
 /**
@@ -706,7 +718,7 @@ export interface WikiModule {
   /**
    * Batch-insert pre-embedded documents in a single table.add() call.
    * Each entry pairs a document with its precomputed embedding vector,
-   * skipping the per-record hashExists scan and embedding generation that
+   * skipping the per-record findRecordByHash scan and embedding generation that
    * {@link put} performs. Callers must compute hashes via the same scheme
    * as prepare()/put() (sha256 of `${domain}:${title}:${content}`, first 16 hex).
    */

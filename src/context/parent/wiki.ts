@@ -130,24 +130,63 @@ export class WikiManager implements WikiModule {
   }
 
   /**
-   * Check if hash already exists in database
+   * Fetch the stored record for a given hash, or null if absent.
+   * Used by put() to decide whether an incoming document is an exact copy
+   * (full document match: domain + title + content + references) of one
+   * already in the store — only an exact copy is a true no-op eligible for
+   * the alreadyExisted short-circuit. The hash is a fast lookup; the
+   * full-document comparison (sameDocument) is what actually decides.
    */
-  private async hashExists(hash: string): Promise<boolean> {
+  private async findRecordByHash(hash: string): Promise<Record<string, unknown> | null> {
     await this.initDb();
-    if (!this.table) return false;
+    if (!this.table) return null;
 
     try {
       const records = await this.table.query().toArray();
       for (const record of records) {
         const r = record as Record<string, unknown>;
         if (r.hash === hash) {
-          return true;
+          return r;
         }
       }
     } catch {
       // Table might be empty
     }
-    return false;
+    return null;
+  }
+
+  /**
+   * Compare an incoming WikiDocument against a stored LanceDB record for full
+   * equality across all fields: domain, title, content, AND references.
+   *
+   * Why full equality, not just the hash: the wiki hash is sha256 of
+   * `${domain}:${title}:${content}` truncated to 16 hex chars. It does not
+   * cover `references`, and a 64-bit truncated hash can in principle collide
+   * between two genuinely different documents. Only a full-document match is
+   * a true "already present" no-op; a hash collision between different
+   * documents must NOT be falsely reported as already-existed (it would
+   * silently drop a distinct document). References are compared
+   * order-insensitively — they are a set, and the WAL/export round-trip may
+   * reorder them.
+   */
+  private sameDocument(stored: Record<string, unknown>, incoming: WikiDocument): boolean {
+    if ((stored.domain as string) !== incoming.domain) return false;
+    if ((stored.title as string) !== incoming.title) return false;
+    if ((stored.content as string) !== incoming.content) return false;
+    // references: stored as a JSON string (or occasionally a native array)
+    const parseStored = (): string[] => {
+      const raw = stored.references;
+      if (raw === null || raw === undefined) return [];
+      if (Array.isArray(raw)) return raw as string[];
+      if (typeof raw === 'string') {
+        try { return JSON.parse(raw || '[]') as string[]; } catch { return []; }
+      }
+      return [];
+    };
+    const a = parseStored().slice().sort();
+    const b = (incoming.references || []).slice().sort();
+    if (a.length !== b.length) return false;
+    return a.every((v, i) => v === b[i]);
   }
 
   /**
@@ -222,10 +261,24 @@ export class WikiManager implements WikiModule {
       return { success: false, hash, error: `Unknown domain "${document.domain}". Register it first with /wiki domains add ${document.domain} <description>.` };
     }
 
-    // Short circuit: check if hash already exists
-    if (await this.hashExists(hash)) {
-      this.core.verbose('wiki', `Document already exists: ${hash}`);
-      return { success: true, hash };
+    // Short circuit: if an exact copy already exists, report it. "Exact" means
+    // the full document matches — domain, title, content, AND references. The
+    // hash (sha256 of domain:title:content, 16 hex) is only a fast lookup key;
+    // it does not cover references and can in principle collide, so the
+    // full-document comparison is what actually decides "already present". A
+    // hash collision between two genuinely different documents falls through
+    // to be stored as a new record (the store represents distinct documents
+    // that collide on hash as separate LanceDB rows).
+    const existing = await this.findRecordByHash(hash);
+    if (existing) {
+      if (this.sameDocument(existing, document)) {
+        this.core.verbose('wiki', `Document already exists (exact match): ${hash}`);
+        return { success: true, hash, alreadyExisted: true };
+      }
+      // Hash matches but the document differs (collision on the 16-hex
+      // prefix, or references differ) — NOT an exact copy. Store as a new
+      // record rather than silently dropping a distinct document.
+      this.core.verbose('wiki', `Hash ${hash} exists but document differs — storing as new record`);
     }
 
     try {
@@ -369,13 +422,14 @@ export class WikiManager implements WikiModule {
 
   /**
    * Batch-insert pre-embedded documents in a single table.add() call.
-   * Skips the per-record hashExists scan and embedding generation that put()
+   * Skips the per-record findRecordByHash scan and embedding generation that put()
    * performs. Callers must compute hashes via generateHash() (same scheme as
    * prepare()/put()). WAL entries are appended in a single write.
    *
    * Returns one PutResult per input entry (same order). Entries whose hash
    * already exists in the table are skipped (success: true) to preserve the
-   * idempotency guarantee of put().
+   * idempotency guarantee of put(). Note: batchPut skips on hash match only
+   * (it does not compare references, unlike put()'s exact-match check).
    */
   async batchPut(entries: Array<{ document: WikiDocument; embedding: number[] }>): Promise<PutResult[]> {
     if (entries.length === 0) return [];

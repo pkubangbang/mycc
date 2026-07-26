@@ -13,10 +13,11 @@
  *   /wiki import <file>        - Import wiki entries from JSON
  */
 
-import type { SlashCommand, WikiModule, WALEntry, WikiDomain } from '../types.js';
+import type { SlashCommand, WikiModule, WALEntry, WikiDocument, WikiDomain } from '../types.js';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+import * as crypto from 'crypto';
 import chalk from 'chalk';
 import { getWikiLogsDir, getWikiDomainsFile, ensureDirs } from '../config.js';
 import { openEditor } from '../utils/open-editor.js';
@@ -273,12 +274,62 @@ async function removeDomain(name: string): Promise<void> {
 // Export / Import
 // ============================================================================
 
+/**
+ * Manifest tying the bytes of an export file to its content, so transit
+ * corruption (truncation, tampering, bit-flips) is detectable on import.
+ *
+ * `content_sha256` is the SHA-256 hex digest of the canonical JSON of
+ * `{domains, entries}` (deterministic key ordering via JSON.stringify of a
+ * rebuilt object, NOT the raw file bytes — so re-serialization that only
+ * changes whitespace still passes). A v1.1 export always carries a manifest;
+ * a v1.0 file (pre-manifest) imports with a warning that integrity is
+ * unverified.
+ */
+interface WikiExportManifest {
+  entry_count: number;
+  content_sha256: string;
+}
+
 interface WikiExportData {
-  version: '1.0';
+  version: '1.0' | '1.1';
   exported_at: string;
   project_dir: string;
   domains: WikiDomain[];
   entries: WALEntry[];
+  manifest?: WikiExportManifest;
+}
+
+/**
+ * Compute the content hash for a wiki document, mirroring the scheme used by
+ * WikiManager.generateHash (sha256 of `${domain}:${title}:${content}`, first
+ * 16 hex chars). Used on import to verify each entry's stored `hash` field
+ * matches its `document` content, so tampered content is rejected before it
+ * reaches put(). Lives here (not in wiki.ts) so the import slash command can
+ * validate without touching the database layer.
+ */
+export function computeWikiHash(document: WikiDocument): string {
+  const content = `${document.domain}:${document.title}:${document.content}`;
+  return crypto.createHash('sha256').update(content).digest('hex').slice(0, 16);
+}
+
+/**
+ * Compute the manifest hash over the canonical JSON of the exportable content.
+ * Deterministic: rebuilds the object with stable key order so re-serialization
+ * (whitespace-only changes) still matches.
+ */
+export function computeManifestHash(domains: WikiDomain[], entries: WALEntry[]): string {
+  const canonical = JSON.stringify({ domains, entries });
+  return crypto.createHash('sha256').update(canonical).digest('hex');
+}
+
+/**
+ * Verify an entry's stored hash against its document content.
+ * Returns true iff the hash matches; false on mismatch or malformed entry.
+ */
+export function verifyEntryHash(entry: WALEntry): boolean {
+  if (!entry.hash || !entry.document) return false;
+  if (!entry.document.domain || !entry.document.title || !entry.document.content) return false;
+  return computeWikiHash(entry.document) === entry.hash;
 }
 
 function parseExportArgs(rawArgs: string[]): {
@@ -377,11 +428,15 @@ async function handleExport(wiki: WikiModule, rawArgs: string[]): Promise<void> 
 
   // Build export data
   const exportData: WikiExportData = {
-    version: '1.0',
+    version: '1.1',
     exported_at: new Date().toISOString(),
     project_dir: process.cwd(),
     domains,
     entries: allEntries,
+    manifest: {
+      entry_count: allEntries.length,
+      content_sha256: computeManifestHash(domains, allEntries),
+    },
   };
 
   // Resolve file path (relative to cwd)
@@ -434,13 +489,46 @@ async function handleImport(wiki: WikiModule, rawArgs: string[]): Promise<void> 
     return;
   }
 
-  // Validate
+  // Validate shape
   if (!data.version || !Array.isArray(data.entries)) {
     console.log(chalk.red('Invalid export file: missing "version" or "entries" array.'));
     return;
   }
   if (!Array.isArray(data.domains)) {
     data.domains = [];
+  }
+
+  // --- Layer A: file-level manifest verification ---------------------------
+  // A v1.1 export carries a manifest whose content_sha256 ties the file's
+  // bytes to {domains, entries}. A mismatch means transit corruption
+  // (truncation, tampering, bit-flips) — abort before touching the DB so a
+  // corrupted file can never silently pollute the wiki.
+  let manifestVerified = false;
+  if (data.version === '1.1') {
+    if (!data.manifest || typeof data.manifest.content_sha256 !== 'string') {
+      console.log(chalk.red('Invalid v1.1 export file: missing "manifest" with content_sha256.'));
+      console.log(chalk.gray('Refusing to import — integrity cannot be verified.'));
+      return;
+    }
+    const actual = computeManifestHash(data.domains, data.entries);
+    if (actual !== data.manifest.content_sha256) {
+      console.log(chalk.red('Manifest mismatch — export file is corrupted or was tampered with.'));
+      console.log(chalk.gray(`  expected: ${data.manifest.content_sha256}`));
+      console.log(chalk.gray(`  actual:   ${actual}`));
+      console.log(chalk.gray('Refusing to import — no entries were written to the wiki.'));
+      return;
+    }
+    if (data.manifest.entry_count !== data.entries.length) {
+      console.log(chalk.red(`Manifest entry_count mismatch: manifest claims ${data.manifest.entry_count} but file has ${data.entries.length}.`));
+      console.log(chalk.gray('Refusing to import — no entries were written to the wiki.'));
+      return;
+    }
+    manifestVerified = true;
+  } else {
+    // v1.0 file (pre-manifest): import proceeds, but warn that integrity is
+    // unverified. Per-entry hash verification (Layer B) still runs and will
+    // skip tampered entries, but file-level corruption is undetectable.
+    console.log(chalk.yellow(`Warning: importing v${data.version} file without manifest — file-level integrity cannot be verified.`));
   }
 
   // Register domains
@@ -457,10 +545,22 @@ async function handleImport(wiki: WikiModule, rawArgs: string[]): Promise<void> 
     }
   }
 
-  // Import entries
+  // --- Layer B: per-entry hash verification + Layer C: honest put results --
+  // For each entry: verify its stored hash matches its document content
+  // (Layer B — reject tampered content before reaching put), then call put()
+  // and READ its return value (Layer C — put returns {success:false} rather
+  // than throwing on hash mismatch / unknown domain / length violations, so
+  // the old loop that only caught throws silently miscounted failures as
+  // imported). Surface a honest breakdown at the end.
   let imported = 0;
   let skipped = 0;
   let deletedSkipped = 0;
+  let hashMismatch = 0;
+  const hashMismatchHashes: string[] = [];
+  let putFailed = 0;
+  const putErrors: Array<{ hash: string; error: string }> = [];
+  let alreadyPresent = 0;
+
   for (const entry of data.entries) {
     if (!entry.hash || !entry.document) continue;
 
@@ -469,18 +569,73 @@ async function handleImport(wiki: WikiModule, rawArgs: string[]): Promise<void> 
     if (entry.deleted) { deletedSkipped++; continue; }
     if (entry.approved === false) { skipped++; continue; }
 
+    // Layer B: verify the entry's hash matches its content. A mismatch means
+    // the document was altered after export (or the hash field was corrupted)
+    // — skip it rather than letting put() silently reject it and inflate the
+    // imported counter.
+    if (!verifyEntryHash(entry)) {
+      hashMismatch++;
+      hashMismatchHashes.push(entry.hash);
+      continue;
+    }
+
+    // Layer C: read the PutResult. put() returns {success:false, error} for
+    // hash mismatch (already caught above, but defensive), unknown domain,
+    // content-length violations, or DB errors — it does NOT throw. Only
+    // count as imported when put() actually stored the document.
+    // put() also sets alreadyExisted:true when an exact copy (same hash AND
+    // same references) is already in the store — count those separately so a
+    // re-import on the same machine doesn't report misleading "imported" counts.
     try {
-      await wiki.put(entry.hash, entry.document);
-      imported++;
-    } catch {
-      skipped++;
+      const result = await wiki.put(entry.hash, entry.document);
+      if (result.success) {
+        if (result.alreadyExisted) {
+          alreadyPresent++;
+        } else {
+          imported++;
+        }
+      } else {
+        putFailed++;
+        putErrors.push({ hash: entry.hash, error: result.error || 'unknown error' });
+      }
+    } catch (err) {
+      // put() is not expected to throw (it catches internally), but defend
+      // against unexpected DB/embedding failures so one bad entry doesn't
+      // abort the whole import.
+      putFailed++;
+      putErrors.push({ hash: entry.hash, error: (err as Error).message });
     }
   }
 
-  const skippedMsg = skipped > 0 ? `, ${skipped} skipped` : '';
-  const deletedMsg = deletedSkipped > 0 ? `, ${deletedSkipped} deleted entries ignored` : '';
-  const domainsMsg = domainsAdded > 0 ? `, ${domainsAdded} domains added` : '';
+  // --- Honest summary ------------------------------------------------------
+  // Report exactly what happened, including skipped/failed counts that the
+  // old loop silently folded into "imported". A corrupted file must never
+  // report clean success. "already present" is reported separately so a
+  // re-import on the same machine is honest: nothing new was written.
+  const parts: string[] = [`${imported} entries imported`];
+  if (alreadyPresent > 0) parts.push(`${alreadyPresent} already present`);
+  if (skipped > 0) parts.push(`${skipped} unapproved skipped`);
+  if (deletedSkipped > 0) parts.push(`${deletedSkipped} deleted entries ignored`);
+  if (hashMismatch > 0) parts.push(chalk.yellow(`${hashMismatch} hash mismatch (skipped)`));
+  if (putFailed > 0) parts.push(chalk.red(`${putFailed} put failed`));
+  if (domainsAdded > 0) parts.push(`${domainsAdded} domains added`);
+  const integrityNote = manifestVerified
+    ? ' (integrity verified)'
+    : ' (integrity UNVERIFIED — v1.0 file)';
   console.log(
-    chalk.green(`Import complete: ${imported} entries imported${skippedMsg}${deletedMsg}${domainsMsg}`),
+    chalk.green(`Import complete${integrityNote}: ${parts.join(', ')}`),
   );
+
+  if (hashMismatchHashes.length > 0) {
+    console.log(chalk.yellow('\nHash mismatch entries (skipped — content did not match its hash):'));
+    for (const h of hashMismatchHashes) {
+      console.log(chalk.yellow(`  - ${h}`));
+    }
+  }
+  if (putErrors.length > 0) {
+    console.log(chalk.red('\nPut failures (entry was not written to the wiki):'));
+    for (const e of putErrors) {
+      console.log(chalk.red(`  - ${e.hash}: ${e.error}`));
+    }
+  }
 }
