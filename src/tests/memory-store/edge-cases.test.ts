@@ -275,9 +275,12 @@ describe('memory-store edge cases', () => {
       }
     });
 
-    it('should default to pending status for new issues', () => {
+    it('should default to draft status for new issues', () => {
       const id = createIssue('Test', 'Content', []);
-      expect(getIssue(id)?.status).toBe('pending');
+      // Issues are created as 'draft' and transition to 'pending' via
+      // issue_publish (see src/context/parent/issue.ts). The default is
+      // 'draft', not 'pending'.
+      expect(getIssue(id)?.status).toBe('draft');
     });
 
     it('should default to working status for new teammates', () => {
@@ -408,7 +411,9 @@ describe('memory-store edge cases', () => {
       const issue = getIssue(id);
       expect(issue?.title).toBe('Original');
       expect(issue?.content).toBe('Content');
-      expect(issue?.status).toBe('pending');
+      // Issues are created as 'draft' (not 'pending'); an empty update must
+      // not change the status. See src/context/memory-store.ts:35.
+      expect(issue?.status).toBe('draft');
     });
   });
 

@@ -106,7 +106,8 @@ describe('readTool', () => {
 
     // Should show a preview with head + tail of the long line, not an error
     expect(result).toContain('File: large.txt');
-    expect(result).toContain('extremely long lines');
+    // Source emits "Extremely long lines (likely minified)" — capital E.
+    expect(result).toContain('Extremely long lines');
     expect(result).toContain('minified');
     // Should still contain actual file content (the x's)
     expect(result).toContain('x');

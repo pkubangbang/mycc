@@ -348,7 +348,9 @@ describe('memory-store integration tests', () => {
 
       updateIssue(issue1, { status: 'completed' as IssueStatus, owner: 'agent' });
 
-      expect(getIssue(issue2)?.status).toBe('pending');
+      // Issues are created as 'draft' (not 'pending'); updating issue1 must
+      // not affect issue2's default 'draft' status. See memory-store.ts:35.
+      expect(getIssue(issue2)?.status).toBe('draft');
       expect(getIssue(issue2)?.owner).toBeUndefined();
       expect(getTeammate('worker')?.status).toBe('working');
     });

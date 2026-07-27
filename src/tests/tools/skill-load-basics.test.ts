@@ -63,7 +63,9 @@ describe('skillLoadTool - Basics', () => {
     expect(skillLoadTool.scope).toEqual(['main', 'child']);
     expect(skillLoadTool.input_schema.required).toContain('name');
     expect(skillLoadTool.input_schema.properties).toHaveProperty('name');
-    expect(skillLoadTool.input_schema.properties).toHaveProperty('search');
+    // skill_load takes only 'name'; the 'search' parameter belongs to the
+    // separate skill_search tool, not skill_load.
+    expect(skillLoadTool.input_schema.properties).not.toHaveProperty('search');
   });
 
   // =========================================================================
