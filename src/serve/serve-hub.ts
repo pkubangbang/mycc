@@ -25,6 +25,7 @@ import express from 'express';
 import http from 'http';
 import * as fs from 'fs';
 import * as path from 'path';
+import * as os from 'os';
 import { fileURLToPath } from 'url';
 import { WebSocketServer, WebSocket } from 'ws';
 import { createServer as createViteServer, type ViteDevServer } from 'vite';
@@ -78,6 +79,32 @@ export interface CardMessage {
   options?: { label: string; value: string; isDefault?: boolean }[];
   initialContent?: string;
   placeholder?: string;
+}
+
+/**
+ * Detect the machine's primary LAN IPv4 address for display when the server
+ * is bound to 0.0.0.0 (all interfaces). Walks os.networkInterfaces() and
+ * returns the first non-internal IPv4 address (skips loopback 127.x and
+ * link-local 169.254.x). Returns null if no suitable address is found —
+ * the caller then falls back to 'localhost'.
+ *
+ * Used only for the startup message / getUrl() reporting; the actual bind
+ * is still 0.0.0.0 so the server accepts connections on every interface.
+ */
+function detectLanIpv4(): string | null {
+  const interfaces = os.networkInterfaces();
+  for (const name of Object.keys(interfaces)) {
+    const addrs = interfaces[name];
+    if (!addrs) continue;
+    for (const a of addrs) {
+      // IPv4, not internal (loopback), not link-local (169.254.x — APIPA)
+      if (a.family === 'IPv4' && !a.internal) {
+        if (a.address.startsWith('169.254.')) continue;
+        return a.address;
+      }
+    }
+  }
+  return null;
 }
 
 /**
@@ -253,7 +280,19 @@ export class ServeHub {
 
   getUrl(): string | null {
     if (!this.running) return null;
-    const displayHost = this.host && this.host !== '0.0.0.0' ? this.host : 'localhost';
+    let displayHost: string;
+    if (this.host && this.host !== '0.0.0.0') {
+      // Explicit --host value (e.g. 192.168.1.5) — show it verbatim.
+      displayHost = this.host;
+    } else if (this.host === '0.0.0.0') {
+      // Bound to all interfaces — show the machine's LAN IP so the user
+      // (and other machines on the network) know which address to open.
+      // Falls back to 'localhost' if no non-internal IPv4 is found.
+      displayHost = detectLanIpv4() ?? 'localhost';
+    } else {
+      // No --host flag — localhost-only bind.
+      displayHost = 'localhost';
+    }
     return `http://${displayHost}:${this.port}`;
   }
 
