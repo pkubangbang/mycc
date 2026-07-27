@@ -246,31 +246,6 @@ Pinned todos can be automatically reactivated (marked back to not done) when a c
 }
 
 // ============================================================================
-// Parallel Tool Calls Section (shared across all prompts)
-// ============================================================================
-
-function buildParallelToolCallsSection(): string {
-  return `## Parallel Tool Calls
-The runtime executes ALL tool calls you emit in a single response — batching independent calls saves round-trips and latency. You SHOULD emit multiple tool calls in ONE response whenever they have no data dependency on each other.
-
-**Batch when there is NO dependency** — i.e. the arguments of one call do not depend on the return value of another. Examples:
-- Reading several files at once: emit all \`read_file\` calls together.
-- Creating/pinning several todos: emit \`todo_create\` x N, or \`todo_pinning\` x N, in one response.
-- Creating several issues: emit \`issue_create\` x N in one response.
-- Searching/grepping multiple patterns, listing multiple directories, etc.
-
-**Do NOT batch when a dependency exists** — i.e. one call's arguments depend on another's result. Examples:
-- Creating a todo then pinning it by id — pinning needs the id from \`todo_create\`, so do them in separate turns.
-- Creating an issue then blocking another on its id — the second needs the first's id.
-- Reading a file then editing it — editing depends on the read content/location.
-
-**Hard constraint: never batch these tools** — they MUST be the only tool call in their turn:
-- \`checkpoint\` and \`recap\` (enforced by the runtime; combining them with other calls is an error).
-
-When in doubt about whether two calls are independent, prefer batching — the runtime handles a wrong batch gracefully, while excessive one-at-a-time calls waste your turns.`;
-}
-
-// ============================================================================
 // Shared Common Sections (used by all normal mode prompts)
 // ============================================================================
 
@@ -281,8 +256,6 @@ function buildCommonSections(): string {
     buildPlatformSection(),
     '',
     buildIntentLanguageSection(),
-    '',
-    buildParallelToolCallsSection(),
     '',
     buildCalendarSection(),
     '',
@@ -422,8 +395,6 @@ But your FINAL plan must be:
 ${buildVerificationSection()}
 
 ${buildPlatformSection()}
-
-${buildParallelToolCallsSection()}
 
 ${buildKnowledgeBoundarySection()}
 
