@@ -22,7 +22,7 @@ const HINT_SCHEMA = {
     },
     next_step: {
       type: 'string',
-      description: 'Concrete, actionable next step. If no blockers, suggest continuing current work.',
+      description: 'Concrete, actionable next step. If no blockers, suggest continuing current work. May also carry efficiency guidance (e.g. batch independent tool calls) when the agent is making cautious single-tool turns.',
     },
     focus_on: {
       type: 'string',
@@ -52,7 +52,8 @@ CRITICAL INSTRUCTIONS:
    - GUESSING IS CORRECT BEHAVIOR. You do not need to know the exact answer — your job is to describe what knowledge is missing so a semantic search can find it. A rough but relevant query is always better than an empty string.
    - Even when there are no blockers, fill wiki_query with keywords describing the current task so the search can surface relevant how-to knowledge.
 5. In the conversation context, tool calls tagged as ti[hook-name]|tool-name|args were injected by a hookish skill, NOT chosen by the agent. When diagnosing confusion, consider whether a hook is misbehaving — injecting the wrong tool, blocking spuriously, replacing incorrectly, or firing when it shouldn't. If a hook is the blocker, name the hook skill in the blocker field and describe what it is doing wrong.
-6. Reply with ONLY a JSON object. No commentary, no markdown fences.
+6. Cautious moves: if you notice the agent is making repeated single-tool-call turns where it could have batched independent calls (e.g. reading files one at a time, pinning todos one by one, creating issues one per turn), this is not a blocker but an efficiency gap. In that case set blocker to "no blockers" and put a concrete batch encouragement in next_step — tell the agent to emit all independent, dependency-free tool calls in a single response. Do NOT encourage batching when one call's arguments depend on another's result (e.g. creating a todo then pinning it by id, reading a file then editing it) or for checkpoint/recap which must be called alone.
+7. Reply with ONLY a JSON object. No commentary, no markdown fences.
 
 The schema is:
 ${JSON.stringify(HINT_SCHEMA, null, 2)}
@@ -64,7 +65,10 @@ EXAMPLE B — blocker is a missing API pattern:
 {"blocker":"Agent doesn't know how to register a new wiki domain programmatically","next_step":"Search wiki for domain registration API and follow the documented pattern","focus_on":"wiki domain registration API","wiki_domain":"api","wiki_query":"wiki domain register create API"}
 
 EXAMPLE C — no real blocker (agent should continue, query still non-empty):
-{"blocker":"no blockers","next_step":"Continue implementing the remaining test cases","focus_on":"completing test coverage","wiki_domain":"project","wiki_query":"test coverage remaining cases"}`;
+{"blocker":"no blockers","next_step":"Continue implementing the remaining test cases","focus_on":"completing test coverage","wiki_domain":"project","wiki_query":"test coverage remaining cases"}
+
+EXAMPLE D — cautious moves (single-tool turns, encourage batching):
+{"blocker":"no blockers","next_step":"You are making one tool call per turn. Batch independent calls — emit all the read_file / todo_pinning / issue_create calls with no data dependency on each other in a single response to save round-trips. Do not batch calls where one needs another's result, and keep checkpoint/recap alone.","focus_on":"batching independent tool calls","wiki_domain":"project","wiki_query":"parallel tool calls batch independent"}`;
 
 /** Minimal triologue surface needed by hint round generation */
 export interface HintRoundContext {
