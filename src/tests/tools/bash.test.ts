@@ -253,7 +253,206 @@ describe('bashTool', () => {
     expect(bashTool.scope).toEqual(['main', 'child']);
     expect(bashTool.input_schema.required).toContain('command');
     expect(bashTool.input_schema.required).toContain('intent');
-    expect(bashTool.input_schema.required).toContain('timeout');
+    // timeout is optional — coerced to a safe default (30) when omitted, so it
+    // is intentionally NOT in `required`. This prevents the guaranteed
+    // first-call failure when the LLM omits timeout.
+    expect(bashTool.input_schema.required).not.toContain('timeout');
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+// Timeout coercion — the bash tool must normalize args.timeout into [1,60]
+// before calling agentIO.exec(), which enforces a strict 1-60 integer
+// invariant. The LLM frequently omits timeout (undefined) or sends
+// out-of-range values (90/120); without coercion the FIRST bash call of
+// nearly every session fails with "timeout must be an integer between 1
+// and 60". These tests pin the coercion contract.
+// ═══════════════════════════════════════════════════════════════════════
+describe('bashTool timeout coercion', () => {
+  let tempDir: string;
+  let ctx: AgentContext;
+
+  beforeEach(() => {
+    tempDir = createTempDir();
+    ctx = createMockContext(tempDir);
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    removeTempDir(tempDir);
+  });
+
+  // Helper: run the handler with a given timeout and return the timeout value
+  // that agentIO.exec was called with. Clears the mock first so multiple calls
+  // within a single test do not accumulate.
+  async function execTimeoutFor(args: Record<string, unknown>): Promise<number> {
+    const mockExec = vi.mocked(agentIO.exec);
+    mockExec.mockClear();
+    mockExec.mockResolvedValue({
+      stdout: '',
+      stderr: '',
+      interrupted: false,
+      exitCode: 0,
+      timedOut: false,
+    });
+    await bashTool.handler(ctx, {
+      command: 'echo hi',
+      intent: 'test coercion',
+      ...args,
+    });
+    expect(mockExec).toHaveBeenCalledTimes(1);
+    return mockExec.mock.calls[0][0].timeout;
+  }
+
+  it('defaults to 30 when timeout is undefined (the common first-call case)', async () => {
+    expect(await execTimeoutFor({})).toBe(30);
+  });
+
+  it('defaults to 30 when timeout is omitted entirely', async () => {
+    expect(await execTimeoutFor({ timeout: undefined })).toBe(30);
+  });
+
+  it('clamps 90 down to 60', async () => {
+    expect(await execTimeoutFor({ timeout: 90 })).toBe(60);
+  });
+
+  it('clamps 120 down to 60', async () => {
+    expect(await execTimeoutFor({ timeout: 120 })).toBe(60);
+  });
+
+  it('clamps 0 up to 1', async () => {
+    expect(await execTimeoutFor({ timeout: 0 })).toBe(1);
+  });
+
+  it('clamps negative up to 1', async () => {
+    expect(await execTimeoutFor({ timeout: -5 })).toBe(1);
+  });
+
+  it('floors non-integer values (5.9 -> 5)', async () => {
+    expect(await execTimeoutFor({ timeout: 5.9 })).toBe(5);
+  });
+
+  it('passes through a valid in-range integer unchanged', async () => {
+    expect(await execTimeoutFor({ timeout: 30 })).toBe(30);
+    expect(await execTimeoutFor({ timeout: 1 })).toBe(1);
+    expect(await execTimeoutFor({ timeout: 60 })).toBe(60);
+  });
+
+  it('treats NaN as the default (30)', async () => {
+    expect(await execTimeoutFor({ timeout: NaN })).toBe(30);
+  });
+
+  it('treats Infinity as the max (60)', async () => {
+    expect(await execTimeoutFor({ timeout: Infinity })).toBe(60);
+  });
+
+  it('treats a non-number string as the default (30)', async () => {
+    expect(await execTimeoutFor({ timeout: '30' })).toBe(30);
+  });
+
+  // ── Pushback warning: the tool result must tell the LLM its timeout was
+  // invalid, so it learns the contract instead of repeating the mistake.
+  describe('pushback warning in result', () => {
+    async function runAndGetResult(args: Record<string, unknown>): Promise<string> {
+      const mockExec = vi.mocked(agentIO.exec);
+      mockExec.mockClear();
+      mockExec.mockResolvedValue({
+        stdout: 'ok',
+        stderr: '',
+        interrupted: false,
+        exitCode: 0,
+        timedOut: false,
+      });
+      return bashTool.handler(ctx, {
+        command: 'echo hi',
+        intent: 'test warning',
+        ...args,
+      });
+    }
+
+    it('includes a warning when timeout is undefined', async () => {
+      const result = await runAndGetResult({});
+      expect(result).toContain('[Warning: bash timeout]');
+      expect(result).toContain('no timeout (undefined)');
+      expect(result).toContain('default 30');
+      expect(result).toContain('timeout=30');
+    });
+
+    it('includes a warning when timeout is out of range (90)', async () => {
+      const result = await runAndGetResult({ timeout: 90 });
+      expect(result).toContain('[Warning: bash timeout]');
+      expect(result).toContain('90');
+      expect(result).toContain('clamped to 60');
+    });
+
+    it('includes a warning when timeout is out of range (120)', async () => {
+      const result = await runAndGetResult({ timeout: 120 });
+      expect(result).toContain('[Warning: bash timeout]');
+      expect(result).toContain('120');
+      expect(result).toContain('clamped to 60');
+    });
+
+    it('includes a warning when timeout is 0', async () => {
+      const result = await runAndGetResult({ timeout: 0 });
+      expect(result).toContain('[Warning: bash timeout]');
+      expect(result).toContain('clamped to 1');
+    });
+
+    it('includes a warning when timeout is a non-integer (5.9)', async () => {
+      const result = await runAndGetResult({ timeout: 5.9 });
+      expect(result).toContain('[Warning: bash timeout]');
+      expect(result).toContain('floored to 5');
+    });
+
+    it('does NOT include a warning for a valid in-range integer', async () => {
+      const result = await runAndGetResult({ timeout: 30 });
+      expect(result).not.toContain('[Warning: bash timeout]');
+    });
+
+    it('does NOT include a warning for boundary values 1 and 60', async () => {
+      expect(await runAndGetResult({ timeout: 1 })).not.toContain('[Warning: bash timeout]');
+      // reset mock for second call
+      const r60 = await runAndGetResult({ timeout: 60 });
+      expect(r60).not.toContain('[Warning: bash timeout]');
+    });
+
+    it('surfaces the warning even on the timeout (timedOut) path', async () => {
+      const mockExec = vi.mocked(agentIO.exec);
+      mockExec.mockClear();
+      mockExec.mockResolvedValue({
+        stdout: '',
+        stderr: '',
+        interrupted: false,
+        exitCode: 137,
+        timedOut: true,
+      });
+      const result = await bashTool.handler(ctx, {
+        command: 'sleep 100',
+        intent: 'test',
+        timeout: 120,
+      });
+      expect(result).toContain('[Warning: bash timeout]');
+      expect(result).toContain('Command timeout after 60 seconds');
+    });
+
+    it('surfaces the warning on the interrupted path', async () => {
+      const mockExec = vi.mocked(agentIO.exec);
+      mockExec.mockClear();
+      mockExec.mockResolvedValue({
+        stdout: '',
+        stderr: '',
+        interrupted: true,
+        exitCode: -1,
+        timedOut: false,
+      });
+      const result = await bashTool.handler(ctx, {
+        command: 'long cmd',
+        intent: 'test',
+        timeout: 90,
+      });
+      expect(result).toContain('[Warning: bash timeout]');
+      expect(result).toContain('Command interrupted by user.');
+    });
   });
 });
 
