@@ -20,7 +20,7 @@ const MESSAGE_OVERHEAD = 4; // Role + formatting tokens
 /**
  * Estimate tokens in text using language-aware approximation
  */
-function estimateTextTokens(text: string): number {
+export function estimateTextTokens(text: string): number {
   if (!text) return 0;
 
   let westernTokens = 0;

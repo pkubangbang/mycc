@@ -16,7 +16,8 @@ import { retryChat, MODEL } from '../engine/chat-provider.js';
 import type { Message } from '../types.js';
 import type { Session } from './types.js';
 import { getTokenThreshold } from '../config.js';
-import { estimateTokens } from '../utils/token.js';
+import { estimateTextTokens } from '../utils/token.js';
+import { minifyMessages } from '../utils/llm-chat-minifier.js';
 
 /**
  * A summary pair: [user_message, assistant_message]
@@ -31,8 +32,7 @@ export type SummaryPair = [Message, Message];
  * written to the JSONL for display purposes (e.g. `timestamp` for the
  * webui's chronological merge) are dropped here so they never leak into
  * in-memory Message objects. This prevents the display-only `timestamp`
- * from reaching messagesToText() → JSON.stringify() in the LLM
- * summarization path.
+ * from reaching the LLM summarization path (minifyMessages).
  */
 function readTriologue(filePath: string): Message[] {
   const content = fs.readFileSync(filePath, 'utf-8');
@@ -202,116 +202,220 @@ function scanReadyEvents(messages: Message[]): ReadyEvent[] {
 }
 
 /**
- * Convert messages to text for LLM summarization
+ * Convert messages to compact text for LLM summarization.
+ *
+ * Uses the pipe-delimited minifyMessages format (ux/ax/ti/to) instead of
+ * JSON.stringify — far more token-efficient, consistent with auto-compact
+ * (triologue.ts) and hint-round.ts. Child summaries woven into the buffer
+ * by summarizeLeadTriologue are user-role Messages, so they render as
+ * `ux|[name summary]...` lines, naturally interleaved with lead messages.
+ *
+ * Restoration summarizes potentially long conversations, so we raise the
+ * content/args caps above the minifier defaults (500/200) to preserve more
+ * detail for the summarizer, while still being far cheaper than JSON.
  */
 function messagesToText(messages: Message[]): string {
-  return messages
-    .map((msg) => JSON.stringify(msg))
-    .join('\n\n');
+  return minifyMessages(messages, {
+    maxContentLength: 1000,
+    maxArgsLength: 300,
+    truncateToolOutput: true,
+  });
+}
+
+const SUMMARY_PROMPT_PREFIX =
+  `Summarize this conversation for continuity. Include:\n` +
+  `1) What was discussed or accomplished\n` +
+  `2) Key decisions or findings\n` +
+  `3) Current state and next steps\n\n` +
+  `Be concise but preserve critical details.\n\n`;
+
+/**
+ * Summarize a single text chunk into a summary string via LLM.
+ *
+ * Optionally prepended with prior-context (the previous batch's summary,
+ * for iterative fold-forward).
+ */
+async function summarizeText(
+  chunkText: string,
+  priorContext?: string,
+): Promise<string> {
+  const text = priorContext
+    ? `${priorContext}\n\n--- Continued ---\n\n${chunkText}`
+    : chunkText;
+  const response = await retryChat({
+    model: MODEL,
+    messages: [{ role: 'user', content: `${SUMMARY_PROMPT_PREFIX}${text}` }],
+  });
+  return response.message.content || '(no summary)';
 }
 
 /**
- * Summarize messages into a single pair using LLM.
+ * Iteratively summarize minified text with fold-forward.
+ *
+ * Splits at `ux|` boundaries into self-contained batches. Each batch is
+ * summarized; its summary seeds the next batch as prior context. The final
+ * summary is wrapped into a (ux, ax) pair.
+ *
+ * Cutting at ux| ensures every batch starts with a user turn (the natural
+ * conversational unit boundary) — no batch begins with an orphaned tool
+ * result (to|) or tool call (ti|). Child narratives (ux|[name summary]...)
+ * and their ready-notes (ux|[MAIL] [READY]...) are both ux-prefixed, so the
+ * splitter keeps each as the start of a new batch, preserving their pairing.
+ *
+ * Token estimation operates on the already-minified text, so the chunker
+ * sees exactly what the LLM will receive — no overflow risk.
  */
-async function summarizeMessages(messages: Message[]): Promise<SummaryPair> {
-  if (messages.length === 0) {
+async function summarizeTextIterative(text: string): Promise<SummaryPair> {
+  if (!text.trim()) {
     return [
       { role: 'user', content: '[Empty conversation]' },
       { role: 'assistant', content: 'Understood.' },
     ];
   }
 
-  const text = messagesToText(messages);
+  const totalTokens = estimateTextTokens(text);
+  if (totalTokens <= getTokenThreshold()) {
+    const summary = await summarizeText(text);
+    return [
+      { role: 'user', content: `[Context from previous conversation]\n\n${summary}` },
+      { role: 'assistant', content: 'Understood. I have the context from the summary.' },
+    ];
+  }
 
-  const response = await retryChat({
-    model: MODEL,
-    messages: [
-      {
-        role: 'user',
-        content:
-          `Summarize this conversation for continuity. Include:\n` +
-          `1) What was discussed or accomplished\n` +
-          `2) Key decisions or findings\n` +
-          `3) Current state and next steps\n\n` +
-          `Be concise but preserve critical details.\n\n${text}`,
-      },
-    ],
-  });
+  // Split body at ux| boundaries, respecting token limit per batch.
+  const lines = text.split('\n');
+  const headerLines = lines.filter(l => l.startsWith('>'));
+  const bodyLines = lines.filter(l => !l.startsWith('>'));
+  const headerStr = headerLines.join('\n');
+  const threshold = getTokenThreshold();
 
-  const summary = response.message.content || '(no summary)';
+  const batches: string[] = [];
+  let current: string[] = [];
+  let currentTokens = 0;
+  for (const line of bodyLines) {
+    const lineTokens = estimateTextTokens(line);
+    if (line.startsWith('ux|') && current.length > 0 &&
+        currentTokens + lineTokens > threshold) {
+      batches.push(current.join('\n'));
+      current = [line];
+      currentTokens = lineTokens;
+    } else {
+      current.push(line);
+      currentTokens += lineTokens;
+    }
+  }
+  if (current.length > 0) batches.push(current.join('\n'));
+
+  // Iterative fold-forward: each summary seeds the next batch.
+  let priorSummary: string | undefined;
+  for (let i = 0; i < batches.length; i++) {
+    const batchText = `${i === 0 ? `${headerStr}\n` : ''}${batches[i]}`;
+    priorSummary = await summarizeText(batchText, priorSummary);
+  }
 
   return [
-    { role: 'user', content: `[Context from previous conversation]\n\n${summary}` },
+    { role: 'user', content: `[Context from previous conversation]\n\n${priorSummary}` },
     { role: 'assistant', content: 'Understood. I have the context from the summary.' },
   ];
 }
 
-async function summarizeChildTriologue(messages: Message[]): Promise<SummaryPair> {
-  if (messages.length === 0) {
-    return [
-      { role: 'user', content: '[Empty conversation]' },
-      { role: 'assistant', content: 'OK' },
-    ];
-  }
-
-  // Buffer holds only Message[] — never pairs mixed in
-  let buffer: Message[] = [];
-  let tokens = 0;
-  for (const m of messages) {
-    buffer.push(m);
-    tokens += estimateTokens(m);
-    if (tokens > getTokenThreshold()) {
-      buffer = await summarizeMessages(buffer);
-    }
-  }
-
-  // Final: summarize remaining buffer
-  return summarizeMessages(buffer);
+/**
+ * Summarize a child triologue into a summary string.
+ *
+ * Minifies the child's messages to text, then iteratively summarizes with
+ * fold-forward. Returns just the summary string (no ax stub) — the caller
+ * weaves it into the lead's minified text.
+ */
+async function summarizeChildTriologue(messages: Message[]): Promise<string> {
+  if (messages.length === 0) return '[Empty conversation]';
+  const minified = messagesToText(messages);
+  const pair = await summarizeTextIterative(minified);
+  // Strip the "[Context from previous conversation]\n\n" prefix — the weave
+  // function adds its own `ux|` prefix and the [name summary] label is
+  // applied by summarizeChildByPath.
+  return pair[0].content.replace(/^\[Context from previous conversation\]\n\n/, '');
 }
 
 /**
  * Summarize a single child triologue by path, with graceful degradation.
+ * Returns the labeled summary string for weaving into the lead text.
  *
  * - Missing file → placeholder summary (warn, don't throw).
  * - Empty/unreadable file → empty-conversation summary.
  *
  * @param name - Teammate name (for the narrative label).
  * @param triologuePath - Path to the child's triologue JSONL.
- * @returns A SummaryPair whose first element is the narrative-ready user message.
+ * @returns Labeled summary string: `[name summary]\n<summary>`.
  */
-async function summarizeChildByPath(name: string, triologuePath: string): Promise<SummaryPair> {
+async function summarizeChildByPath(name: string, triologuePath: string): Promise<string> {
   if (!fs.existsSync(triologuePath)) {
     console.warn(chalk.yellow(`[restoration] Child triologue not found for ${name}, injecting placeholder: ${triologuePath}`));
-    return [
-      { role: 'user', content: `[${name} summary]\n[Teammate triologue file was missing or unreadable. No conversation summary available.]` },
-      { role: 'assistant', content: 'OK' },
-    ];
+    return `[${name} summary]\n[Teammate triologue file was missing or unreadable. No conversation summary available.]`;
   }
   const triologue = readTriologue(triologuePath);
   const fixedTriologue = fixOrphanedToolCalls(triologue);
-  const pair = await summarizeChildTriologue(fixedTriologue);
+  const summary = await summarizeChildTriologue(fixedTriologue);
   // Re-label the narrative with the teammate name so the lead can attribute it.
-  return [
-    { role: 'user', content: `[${name} summary]\n${pair[0].content}` },
-    pair[1],
-  ];
+  return `[${name} summary]\n${summary}`;
 }
 
 /**
- * Summarize the lead triologue, injecting child summaries at "ready" events.
+ * Weave child summary strings into the lead's minified text.
  *
- * Child summaries are NO LONGER pegged to tm_create tool results. Instead the
- * lead transcript is scanned for `[READY] triologue file: <path>` mail notes
- * (emitted by each teammate right after it becomes ready). At each ready note
- * the corresponding child triologue is read, summarized, and its narrative is
- * injected into the buffer — decoupled from tm_create positional alignment.
+ * Walks the lead's minified lines. At each `ux|` line containing a
+ * `[READY] triologue file: <path>` marker, inserts the corresponding child
+ * summary as a `ux|<summary>` line BEFORE the marker line. Only `ux|`
+ * lines are checked — tool results (to|) or assistant text (ax|) that
+ * happen to contain the [READY] literal are skipped (same filter as
+ * scanReadyEvents: only user-role [MAIL] notes carry genuine ready events).
  *
- * tm_create tool results are now treated as ordinary messages: no positional
- * queue, no "missing summary" throw. A missing/empty child triologue degrades
- * to a placeholder for that one teammate only.
+ * @param leadMinified - The lead triologue's minified text.
+ * @param summaryByPath - Map from triologue file path to child summary string.
+ * @returns Woven minified text with child summaries interleaved.
+ */
+function weave(leadMinified: string, summaryByPath: Map<string, string>): string {
+  const lines = leadMinified.split('\n');
+  const woven: string[] = [];
+  for (const line of lines) {
+    if (line.startsWith('ux|')) {
+      const pathMatch = line.match(READY_PATH_REGEX);
+      if (pathMatch) {
+        const p = pathMatch[1].trim();
+        const summary = summaryByPath.get(p);
+        if (summary) {
+          woven.push(`ux|${summary}`);
+        }
+      }
+    }
+    woven.push(line);
+  }
+  return woven.join('\n');
+}
+
+/**
+ * Summarize the lead triologue, weaving child summaries into the minified
+ * lead text at "ready" event positions.
  *
- * Sessions recorded before the ready-mail mechanism existed will have no ready
- * events and therefore no child summaries injected — by design.
+ * Child summaries are discovered via `[READY] triologue file: <path>` mail
+ * notes (emitted by each teammate right after it becomes ready). The
+ * pipeline is:
+ *
+ * 1. Pre-summarize each child triologue: minify → summarize → summary string
+ *    (the child's messages are minified first, then summarized; only the
+ *    summary string is kept — no ax stub).
+ * 2. Minify the full lead triologue to text.
+ * 3. weave() inserts each child summary as a `ux|<summary>` line BEFORE its
+ *    `[READY]` marker line in the lead's minified text — text-level weaving,
+ *    not Message[]-level.
+ * 4. summarizeTextIterative() folds the woven text into a final (ux, ax)
+ *    pair: splits at `ux|` boundaries, each batch's summary seeds the next
+ *    as prior context (iterative fold-forward).
+ *
+ * tm_create tool results are treated as ordinary messages: no positional
+ * queue, no "missing summary" throw. A missing/empty child triologue
+ * degrades to a placeholder for that one teammate only. Sessions recorded
+ * before the ready-mail mechanism existed have no ready events and thus no
+ * child summaries injected — by design.
  */
 async function summarizeLeadTriologue(messages: Message[]) {
   if (messages.length === 0) {
@@ -321,62 +425,30 @@ async function summarizeLeadTriologue(messages: Message[]) {
     ] as SummaryPair;
   }
 
-  // Pre-scan ready events so we can summarize children in parallel-ish order
-  // and report progress. Summaries are keyed by the ready event index.
+  // Pre-scan ready events so we can summarize children up front and report
+  // progress. Re-spawns of the same name produce one entry per ready event.
   const readyEvents = scanReadyEvents(messages);
   if (readyEvents.length > 0) {
     console.log(chalk.gray(`  Found ${readyEvents.length} teammate ready event(s) in lead transcript`));
   }
 
-  // Summarize each child triologue up front (preserving order). Re-spawns of
-  // the same name produce one entry per ready event.
-  const childNarratives: Message[] = [];
+  // 1. Pre-summarize each child triologue → summary string, keyed by path.
+  //    The child's messages are minified first, then summarized to a string
+  //    (no ax stub) — ready to weave into the lead's minified text.
+  const summaryByPath = new Map<string, string>();
   for (const ev of readyEvents) {
-    const pair = await summarizeChildByPath(ev.name, ev.triologuePath);
-    childNarratives.push(pair[0]);
+    const summary = await summarizeChildByPath(ev.name, ev.triologuePath);
+    summaryByPath.set(ev.triologuePath, summary);
   }
 
-  // Build a quick lookup from the ready note's source message content to its
-  // narrative, so we can inject the narrative right where the note appeared.
-  // We match on the `[READY] triologue file: <path>` substring, which uniquely
-  // identifies a ready event within the transcript.
-  const narrativeByPath = new Map<string, Message>();
-  for (let i = 0; i < readyEvents.length; i++) {
-    narrativeByPath.set(readyEvents[i].triologuePath, childNarratives[i]);
-  }
+  // 2. Minify the full lead triologue to text.
+  const leadMinified = messagesToText(messages);
 
-  // Buffer holds only Message[] — never pairs mixed in
-  let buffer: Message[] = [];
-  let tokens = 0;
+  // 3. Weave child summaries into lead text at [READY] positions.
+  const woven = weave(leadMinified, summaryByPath);
 
-  for (const m of messages) {
-    // If this message is a ready note, inject the child's narrative summary
-    // ahead of the note itself so the context reads naturally. Only
-    // user-role [MAIL] notes are genuine ready events — tool results that
-    // happen to contain the `[READY]` literal (e.g. a read_file of
-    // teammate-worker.ts source) must NOT trigger injection here.
-    if (m.role === 'user' && typeof m.content === 'string') {
-      const pathMatch = m.content.match(READY_PATH_REGEX);
-      if (pathMatch) {
-        const p = pathMatch[1].trim();
-        const narrative = narrativeByPath.get(p);
-        if (narrative) {
-          buffer.push(narrative);
-          tokens += estimateTokens(narrative);
-        }
-      }
-    }
-
-    buffer.push(m);
-    tokens += estimateTokens(m);
-
-    if (tokens > getTokenThreshold()) {
-      buffer = await summarizeMessages(buffer);
-    }
-  }
-
-  // Final: summarize remaining buffer
-  return summarizeMessages(buffer);
+  // 4. Iteratively summarize the woven text with fold-forward.
+  return summarizeTextIterative(woven);
 }
 
 

@@ -232,7 +232,7 @@ export async function main(): Promise<void> {
         // with user-log entries chronologically. The timestamp is a
         // display-only field; readTriologue() (restoration.ts) strips it
         // when loading messages back into Message objects so it never
-        // leaks into LLM summarization (messagesToText → JSON.stringify).
+        // leaks into LLM summarization (minifyMessages).
         const entry = { ...lastMsg, timestamp: Date.now() };
         fs.appendFileSync(triologuePath, `${JSON.stringify(entry)}\n`, 'utf-8');
       } catch {
