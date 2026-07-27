@@ -227,6 +227,46 @@ async function deepseekChat(
 // Chunk Reconstruction (DeepSeek-specific)
 // ============================================================================
 
+/**
+ * Parse accumulated tool-call argument fragments into an object.
+ *
+ * DeepSeek streams tool-call `function.arguments` as incremental string
+ * fragments that are concatenated across chunks. If the stream ends
+ * prematurely (connection drop, or `finish_reason='length'` due to the
+ * max_tokens cap), the accumulated string is incomplete JSON and
+ * `JSON.parse` throws `SyntaxError: Unterminated string in JSON ...`.
+ *
+ * Left unguarded, that SyntaxError is NOT matched by `isTransientError()`
+ * (the message contains neither "premature" nor any network pattern), so
+ * `retryChat` treats it as fatal and re-throws immediately — the user sees
+ * the raw `Retry? [Y/n]` prompt instead of an automatic retry.
+ *
+ * We wrap the parse and, on failure, throw an error whose message includes
+ * "premature close" so `isTransientError()` classifies it as transient and
+ * `retryChat` auto-retries (a fresh stream usually completes successfully).
+ */
+// ollama's ToolCall.function.arguments is typed as { [key: string]: any },
+// so the parsed object must match that shape. We cast JSON.parse's result
+// rather than annotating the return type, to avoid the no-explicit-any rule.
+type ToolCallArgs = ChatResponse['message']['tool_calls'] extends Array<infer T>
+  ? T extends { function: { arguments: infer A } }
+    ? A
+    : never
+  : never;
+
+function safeParseToolArgs(args: string): ToolCallArgs {
+  try {
+    return JSON.parse(args) as ToolCallArgs;
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    throw new Error(
+      `DeepSeek stream truncated: tool call arguments are incomplete JSON (${detail}). ` +
+      `Likely finish_reason='length' or connection drop (premature close).`,
+      { cause: err },
+    );
+  }
+}
+
 function reconstructResponse(chunks: DeepSeekChunk[], model: string): ChatResponse {
   const contentParts: string[] = [];
   const reasoningParts: string[] = [];
@@ -272,13 +312,27 @@ function reconstructResponse(chunks: DeepSeekChunk[], model: string): ChatRespon
     .sort(([a], [b]) => a - b)
     .map(([, b]) => b);
 
+  // Detect max_tokens truncation BEFORE attempting to parse tool-call
+  // arguments. When finish_reason='length', the stream was cut off mid-
+  // generation and the accumulated tool-call argument fragments are almost
+  // certainly incomplete JSON. Surfacing this as a transient error (the
+  // message includes "premature close" so isTransientError() matches) lets
+  // retryChat auto-retry with a fresh stream instead of failing inside
+  // safeParseToolArgs or — worse — silently returning truncated arguments.
+  if (finishReason === 'length') {
+    throw new Error(
+      `DeepSeek response truncated (finish_reason='length'): max_tokens limit ` +
+      `hit mid-generation (premature close). Tool call arguments may be incomplete.`,
+    );
+  }
+
   const toolCalls: ChatResponse['message']['tool_calls'] = sortedBuilders.length > 0
     ? sortedBuilders.map((b) => ({
         id: b.id,
         type: b.type as 'function',
         function: {
           name: b.functionName,
-          arguments: b.functionArgs ? JSON.parse(b.functionArgs) : {},
+          arguments: b.functionArgs ? safeParseToolArgs(b.functionArgs) : {},
         },
       }))
     : undefined;
@@ -364,6 +418,19 @@ export async function retryChat(
           stream: true,
           thinking: { type: 'enabled' },
           reasoning_effort: 'high',
+          // Set an explicit max_tokens to avoid the API's undocumented
+          // default (inherited from legacy deepseek-chat, ~4096) silently
+          // truncating large tool calls — e.g. write_file with a 35K-token
+          // file. finish_reason='length' truncation produces incomplete
+          // tool-call argument JSON, which surfaces as
+          // "Unterminated string in JSON" errors.
+          //
+          // 65536 comfortably covers large file writes while staying well
+          // within the V4 384K output ceiling; mycc keeps the prompt under
+          // TOKEN_THRESHOLD (default 50K), so there is ample context budget.
+          // max_tokens is an upper bound, not a forced length — the model
+          // still stops naturally (finish_reason='stop') when done.
+          max_tokens: 65536,
         };
 
         // Convert Ollama `think` param to DeepSeek thinking toggle
