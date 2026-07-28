@@ -27,6 +27,7 @@ const state = reactive<ChatState>({
   isRunning: false,
   connectionStatus: 'disconnected',
   showRetry: false,
+  hasPendingCard: false,
   verboseLogs: false,
   steeringBuffer: [],
   pendingFiles: [],
@@ -195,6 +196,11 @@ function connectWebSocket(): void {
       state.isWaiting = true;
       state.isRunning = false;
       state.showRetry = false;
+      // A card is now pending — disable the main chat input so the user
+      // replies on the card itself. Dialog input during a card is silently
+      // dropped by the backend (the agent is in TOOL state awaiting the card
+      // resolver, not PROMPT state), so we gate the input box here.
+      state.hasPendingCard = true;
       const cardId = (msg as { cardId?: string }).cardId;
       const query = (msg as { query?: string }).query ?? msg.content;
       const kind = (msg as { kind?: 'input' | 'confirm' | 'choice' }).kind ?? 'input';
@@ -227,6 +233,11 @@ function connectWebSocket(): void {
     } else {
       state.isWaiting = false;
       state.isRunning = true;
+      // Any non-card, non-prompt message means the agent has moved past the
+      // card (or there was none) — clear the pending-card flag so the chat
+      // input box re-enables. This covers the normal flow where the card is
+      // answered and the agent proceeds.
+      state.hasPendingCard = false;
       // Route by the @-prefix label convention: teammate messages go to a
       // separate teammateMessages array for the accordion UI, keeping the
       // main chat log focused on the lead's conversation. See the
@@ -248,6 +259,7 @@ function connectWebSocket(): void {
     state.isWaiting = false;
     state.isRunning = false;
     state.showRetry = false;
+    state.hasPendingCard = false;
     // Don't reconnect if the page is being unloaded (navigated away/closed).
     // Also guard against stacking multiple reconnect timers.
     if (reconnectTimer) return;
@@ -341,6 +353,8 @@ export const chatApi = {
   sendCardResponse(cardId: string, value: string): void {
     state.isWaiting = false;
     state.isRunning = true;
+    // The card has been answered — re-enable the main chat input box.
+    state.hasPendingCard = false;
     wsSend({ type: 'card-response', cardId, value });
   },
   toggleVerboseLogs(): void {

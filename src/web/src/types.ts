@@ -46,6 +46,11 @@ export interface ChatState {
   connectionStatus: ConnectionStatus;
   /** true when a retry prompt is pending (network failure / error recovery) */
   showRetry: boolean;
+  /** true when an interactive card (ask()) is pending a response. While true,
+   *  the main chat input box is disabled so the user replies on the card
+   *  itself — otherwise dialog input would be silently dropped (the agent is
+   *  blocked in TOOL state awaiting the card resolver, not PROMPT state). */
+  hasPendingCard: boolean;
   /** 详细日志 toggle (default off). When off, only user-facing lines are shown
    *  (user, result/assistant, brief, question, prompt). When on, all logs
    *  (verbose tool output, warnings, errors) are shown too. */

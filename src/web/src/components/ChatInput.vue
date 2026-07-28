@@ -250,14 +250,14 @@ const inputAreaStyle = computed(() =>
           v-model="text"
           class="input-area"
           :style="inputAreaStyle"
-          :placeholder="state.isWaiting ? '输入消息…' : '等待回复中…'"
-          :disabled="(!state.isWaiting && !state.isRunning) || state.connectionStatus !== 'connected'"
+          :placeholder="state.hasPendingCard ? '请在卡片上回复…' : (state.isWaiting ? '输入消息…' : '等待回复中…')"
+          :disabled="state.hasPendingCard || (!state.isWaiting && !state.isRunning) || state.connectionStatus !== 'connected'"
           rows="2"
           @keydown="onKeydown"
         ></textarea>
         <button
           class="attach-btn"
-          :disabled="(!state.isWaiting && !state.isRunning) || state.connectionStatus !== 'connected'"
+          :disabled="state.hasPendingCard || (!state.isWaiting && !state.isRunning) || state.connectionStatus !== 'connected'"
           title="附加文件"
           @click="openFilePicker"
         >
@@ -277,9 +277,17 @@ const inputAreaStyle = computed(() =>
       />
       <button
         class="send-btn"
-        :disabled="(!text.trim() && localFiles.length === 0) || (!state.isWaiting && !state.showRetry && !state.isRunning) || state.connectionStatus !== 'connected'"
+        :disabled="state.hasPendingCard || (!text.trim() && localFiles.length === 0) || (!state.isWaiting && !state.showRetry && !state.isRunning) || state.connectionStatus !== 'connected'"
         @click="send"
       >发送</button>
+    </div>
+    <div v-if="state.hasPendingCard" class="card-pending-hint">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="10" />
+        <line x1="12" y1="8" x2="12" y2="12" />
+        <line x1="12" y1="16" x2="12.01" y2="16" />
+      </svg>
+      <span>请在上方卡片上回复</span>
     </div>
     <div v-if="uploadError" class="upload-error">{{ uploadError }}</div>
     <div v-if="localFiles.length > 0" class="file-chips">
@@ -417,6 +425,20 @@ const inputAreaStyle = computed(() =>
   background: color-mix(in srgb, #ef4444 12%, var(--bg-input));
   color: #ef4444;
   border: 1px solid color-mix(in srgb, #ef4444 30%, transparent);
+}
+/* Hint shown when an interactive card is pending — tells the user to reply
+   on the card itself instead of in the (now-disabled) chat input box. */
+.card-pending-hint {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 4px 10px;
+  border-radius: 4px;
+  font-size: 12px;
+  background: color-mix(in srgb, var(--accent) 12%, var(--bg-input));
+  color: var(--accent);
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
 }
 .file-chips {
   display: flex;

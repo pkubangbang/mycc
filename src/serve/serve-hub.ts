@@ -504,7 +504,21 @@ export class ServeHub {
   submitInput(text: string): void {
     if (this.inputResolver) {
       this.inputResolver(text);
+    } else if (this.cardResolvers.size > 0) {
+      // No PROMPT-state waiter, but a card is pending — the user typed in the
+      // chat box instead of responding on the card. The agent is blocked in
+      // TOOL state awaiting the card resolver; dialog input cannot reach it
+      // and would be silently dropped. Surface a warning so the user knows
+      // their message wasn't delivered and which card to answer.
+      this.broadcast(
+        'warn',
+        '当前有卡片等待回复，请在卡片上操作（对话框输入未送达）',
+        'serve',
+      );
     }
+    // else: neither a prompt nor a card is pending — silently drop (the
+    // frontend normally gates the input box to prevent this, but a race or
+    // a stale client could still send; dropping is the safe default).
   }
 
   /** Resolve blocked waitForInput() with null. Called by stop(). */
