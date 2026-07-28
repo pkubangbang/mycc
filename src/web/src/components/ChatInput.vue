@@ -63,8 +63,36 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-function readFiles(rawFiles: FileList): void {
+// Process a single file: size guard + FileReader → base64 → pendingFiles.
+// Shared by drag/drop, file picker, and clipboard paste so the validation
+// and reading logic stays DRY.
+function processFile(file: File): void {
   const maxBytes = maxUploadMb.value * 1024 * 1024;
+  // Size guard (client-side; the server re-checks for defense in depth).
+  if (file.size > maxBytes) {
+    uploadError.value = `「${file.name}」(${formatBytes(file.size)})超过 ${maxUploadMb.value}MB 上传限制，已跳过`;
+    // Auto-clear the error after 4s
+    setTimeout(() => {
+      if (uploadError.value.startsWith(`「${file.name}」`)) uploadError.value = '';
+    }, 4000);
+    return;
+  }
+  const reader = new FileReader();
+  reader.onload = () => {
+    const dataUrl = reader.result as string;
+    const base64 = dataUrl.split(',')[1] || '';
+    const info: FileInfo = {
+      filename: file.name,
+      data: base64,
+      mimeType: file.type || 'application/octet-stream',
+    };
+    localFiles.value = [...localFiles.value, info];
+    props.state.pendingFiles = localFiles.value;
+  };
+  reader.readAsDataURL(file);
+}
+
+function readFiles(rawFiles: FileList): void {
   for (let i = 0; i < rawFiles.length; i++) {
     const file = rawFiles[i];
     // Reject folders. When a folder is dropped, the browser exposes it as a
@@ -83,31 +111,7 @@ function readFiles(rawFiles: FileList): void {
       setTimeout(() => { uploadError.value = ''; }, 4000);
       continue;
     }
-    // Size guard (client-side; the server re-checks for defense in depth).
-    // Reject oversized files rather than letting the upload silently fail
-    // server-side. Show a per-file error so the user knows which file was
-    // rejected and why.
-    if (file.size > maxBytes) {
-      uploadError.value = `「${file.name}」(${formatBytes(file.size)})超过 ${maxUploadMb.value}MB 上传限制，已跳过`;
-      // Auto-clear the error after 4s
-      setTimeout(() => {
-        if (uploadError.value.startsWith(`「${file.name}」`)) uploadError.value = '';
-      }, 4000);
-      continue;
-    }
-    const reader = new FileReader();
-    reader.onload = () => {
-      const dataUrl = reader.result as string;
-      const base64 = dataUrl.split(',')[1] || '';
-      const info: FileInfo = {
-        filename: file.name,
-        data: base64,
-        mimeType: file.type || 'application/octet-stream',
-      };
-      localFiles.value = [...localFiles.value, info];
-      props.state.pendingFiles = localFiles.value;
-    };
-    reader.readAsDataURL(file);
+    processFile(file);
   }
 }
 
@@ -142,6 +146,47 @@ function onKeydown(event: KeyboardEvent): void {
   if (event.key === 'Enter' && !event.shiftKey) {
     event.preventDefault();
     send();
+  }
+}
+
+// Handle clipboard paste (Ctrl/Cmd+V) into the textarea. Scans the clipboard
+// for file/image items (e.g. a screenshot copied to clipboard, or a file
+// copied in the OS file manager) and routes each through processFile so they
+// join the pendingFiles queue just like a drag/drop or picker selection.
+// Text pastes are left to the textarea's native behavior (no preventDefault)
+// so the user can still paste text normally. Only file-typed items are taken;
+// image blobs are given a synthesized filename (image-<ts>.<ext>) since the
+// clipboard carries no original name for them.
+function onPaste(event: ClipboardEvent): void {
+  const items = event.clipboardData?.items;
+  if (!items) return;
+  let hasFile = false;
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i];
+    // kind:'file' covers both copied image blobs (image/png etc.) and files
+    // copied in the OS file manager (which expose their real name). kind:
+    // 'string'/'text' is plain text — let the textarea handle it natively.
+    if (item.kind !== 'file') continue;
+    const file = item.getAsFile();
+    if (!file) continue;
+    hasFile = true;
+    // Synthesize a filename for image blobs from the clipboard (screenshots
+    // etc.) since they carry no original name. Use the MIME subtype as the
+    // extension when available; fall back to 'bin'.
+    let name = file.name;
+    if (!name || name.startsWith('image.') || /^[0-9a-f]{8}-/i.test(name)) {
+      const sub = file.type.split('/')[1] || 'bin';
+      name = `image-${Date.now()}.${sub}`;
+    }
+    // Wrap in a new File to attach the synthesized name (the original File
+    // from getAsFile may carry a browser-generated placeholder name).
+    const named = new File([file], name, { type: file.type });
+    processFile(named);
+  }
+  // Only prevent default when we actually consumed file items — otherwise
+  // a plain text paste would be swallowed.
+  if (hasFile) {
+    event.preventDefault();
   }
 }
 
@@ -254,6 +299,7 @@ const inputAreaStyle = computed(() =>
           :disabled="state.hasPendingCard || (!state.isWaiting && !state.isRunning) || state.connectionStatus !== 'connected'"
           rows="2"
           @keydown="onKeydown"
+          @paste="onPaste"
         ></textarea>
         <button
           class="attach-btn"
