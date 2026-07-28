@@ -44,7 +44,9 @@ export const planOffTool: ToolDefinition = {
       normalized = normalized.slice(1, -1).trim();
     }
     const granted = normalized === 'y' || normalized === 'yes';
-    const denied = normalized === 'n' || normalized === 'no';
+    // [y/N] convention means Enter = No (decline). Empty/whitespace response stays in plan mode,
+    // consistent with plan_on.ts's strict-mode default-on-Enter behavior.
+    const denied = normalized === '' || normalized === 'n' || normalized === 'no';
 
     if (denied) {
       ctx.core.brief('info', 'plan_off', 'User declined - staying in plan mode');
