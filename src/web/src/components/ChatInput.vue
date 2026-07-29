@@ -239,22 +239,37 @@ const MAX_INPUT_HEIGHT = 320;  // px — keep the chat log usable
 const inputHeight = ref(0);    // 0 = unset → textarea uses its default rows
 
 let inputDragging = false;
+// Anchor captured on pointerdown: the pointer's starting Y and the box's
+// starting height. The new height on each move is startHeight + (startY -
+// clientY) — dragging UP (clientY decreases) grows the box. Anchoring to a
+// snapshot taken once at drag start keeps the math stable: it does not
+// depend on a rect that itself changes as the box resizes, which is what
+// caused the "jump" on the first move (the parent rect measured the whole
+// .chat-input container, not the textarea, so the first computed height
+// differed from the textarea's real height by ~the container chrome).
+let dragStartY = 0;
+let dragStartHeight = 0;
 function onInputHandleDown(e: PointerEvent): void {
   inputDragging = true;
   (e.target as HTMLElement).setPointerCapture(e.pointerId);
   e.preventDefault();
+  dragStartY = e.clientY;
+  // Snapshot the textarea's current rendered height. If inputHeight is
+  // unset (0), measure the actual element so the first drag continues from
+  // the visible size instead of jumping.
+  const ta = (e.currentTarget as HTMLElement)
+    .parentElement?.querySelector<HTMLTextAreaElement>('.input-area');
+  dragStartHeight = inputHeight.value > 0
+    ? inputHeight.value
+    : (ta ? ta.getBoundingClientRect().height : MIN_INPUT_HEIGHT);
 }
 function onInputHandleMove(e: PointerEvent): void {
   if (!inputDragging) return;
   // The handle sits at the TOP of the input box. Dragging the pointer up
-  // increases the box height; dragging down decreases it. We measure from
-  // the handle element's position so the math is stable regardless of where
-  // the drag started.
-  const handleEl = e.target as HTMLElement;
-  const box = handleEl.parentElement?.getBoundingClientRect();
-  if (!box) return;
-  // New height = distance from pointer Y to the box's BOTTOM edge.
-  const h = box.bottom - e.clientY;
+  // (clientY shrinks) increases the box height; dragging down decreases it.
+  // Using the pointer-down anchor avoids re-measuring a rect that shifts as
+  // the box resizes.
+  const h = dragStartHeight + (dragStartY - e.clientY);
   inputHeight.value = Math.max(MIN_INPUT_HEIGHT, Math.min(h, MAX_INPUT_HEIGHT));
 }
 function onInputHandleUp(e: PointerEvent): void {
