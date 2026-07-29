@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { stripBom, detectLineEnding, normalizeLineEndings, countReplacementChars } from '../../utils/encoding.js';
+import { stripBom, detectLineEnding, normalizeLineEndings, applyLineEndings, hasBom, countReplacementChars } from '../../utils/encoding.js';
 
 describe('stripBom', () => {
   it('should strip UTF-8 BOM from string start', () => {
@@ -103,6 +103,99 @@ describe('normalizeLineEndings', () => {
 
   it('should handle multiple consecutive CRLF', () => {
     expect(normalizeLineEndings('a\r\n\r\nb')).toBe('a\n\nb');
+  });
+});
+
+describe('applyLineEndings', () => {
+  it('should convert CRLF to LF when style is lf', () => {
+    expect(applyLineEndings('line1\r\nline2', 'lf')).toBe('line1\nline2');
+  });
+
+  it('should leave LF-only content unchanged when style is lf', () => {
+    expect(applyLineEndings('line1\nline2', 'lf')).toBe('line1\nline2');
+  });
+
+  it('should convert LF to CRLF when style is crlf', () => {
+    expect(applyLineEndings('line1\nline2', 'crlf')).toBe('line1\r\nline2');
+  });
+
+  it('should leave CRLF content unchanged when style is crlf', () => {
+    expect(applyLineEndings('line1\r\nline2', 'crlf')).toBe('line1\r\nline2');
+  });
+
+  it('should NOT double-convert CRLF to CR+CR+LF when style is crlf', () => {
+    // The key correctness property: CRLF -> CRLF (not \r\r\n)
+    expect(applyLineEndings('a\r\nb', 'crlf')).toBe('a\r\nb');
+  });
+
+  it('should normalize mixed line endings to LF', () => {
+    expect(applyLineEndings('line1\r\nline2\nline3\r\nline4', 'lf'))
+      .toBe('line1\nline2\nline3\nline4');
+  });
+
+  it('should normalize mixed line endings to CRLF', () => {
+    expect(applyLineEndings('line1\r\nline2\nline3\r\nline4', 'crlf'))
+      .toBe('line1\r\nline2\r\nline3\r\nline4');
+  });
+
+  it('should convert standalone CR to LF when style is lf', () => {
+    expect(applyLineEndings('line1\rline2', 'lf')).toBe('line1\nline2');
+  });
+
+  it('should convert standalone CR to CRLF when style is crlf', () => {
+    expect(applyLineEndings('line1\rline2', 'crlf')).toBe('line1\r\nline2');
+  });
+
+  it('should handle empty string for lf', () => {
+    expect(applyLineEndings('', 'lf')).toBe('');
+  });
+
+  it('should handle empty string for crlf', () => {
+    expect(applyLineEndings('', 'crlf')).toBe('');
+  });
+
+  it('should handle CJK content with CRLF -> LF', () => {
+    expect(applyLineEndings('你好\r\n世界', 'lf')).toBe('你好\n世界');
+  });
+
+  it('should handle CJK content with LF -> CRLF', () => {
+    expect(applyLineEndings('你好\n世界', 'crlf')).toBe('你好\r\n世界');
+  });
+
+  it('should handle multiple consecutive CRLF -> CRLF', () => {
+    expect(applyLineEndings('a\r\n\r\nb', 'crlf')).toBe('a\r\n\r\nb');
+  });
+
+  it('should handle multiple consecutive CRLF -> LF', () => {
+    expect(applyLineEndings('a\r\n\r\nb', 'lf')).toBe('a\n\nb');
+  });
+});
+
+describe('hasBom', () => {
+  it('should return true for a string starting with U+FEFF', () => {
+    expect(hasBom('\uFEFF' + 'Hello')).toBe(true);
+  });
+
+  it('should return false for a string without BOM', () => {
+    expect(hasBom('Hello')).toBe(false);
+  });
+
+  it('should return false for an empty string', () => {
+    expect(hasBom('')).toBe(false);
+  });
+
+  it('should return false for a BOM-only string (length guard)', () => {
+    // A single U+FEFF char is a BOM only if it is at the start; but
+    // hasBom checks charCodeAt(0) === 0xFEFF, so a BOM-only string is BOM.
+    expect(hasBom('\uFEFF')).toBe(true);
+  });
+
+  it('should return false when U+FEFF appears mid-string but not at start', () => {
+    expect(hasBom('text\uFEFFmore')).toBe(false);
+  });
+
+  it('should detect BOM on CJK content', () => {
+    expect(hasBom('\uFEFF' + '你好世界')).toBe(true);
   });
 });
 

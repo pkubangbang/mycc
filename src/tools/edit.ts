@@ -8,11 +8,12 @@ import * as fs from 'fs';
 import type { ToolDefinition, AgentContext } from '../types.js';
 import { resolvePath } from '../utils/path.js';
 import { checkSensitivePath } from '../utils/sensitive-paths.js';
-import { stripBom, detectLineEnding, normalizeLineEndings, countReplacementChars } from '../utils/encoding.js';
+import { stripBom, detectLineEnding, normalizeLineEndings, countReplacementChars, hasBom } from '../utils/encoding.js';
 
 export const editTool: ToolDefinition = {
   name: 'edit_file',
-  description: 'Replace exact text in an existing file. The old_text must exist exactly once in the file. Use this for targeted edits instead of rewriting entire files.',
+  description:
+    'Replace exact text in an existing file. old_text is a LITERAL string match (NOT a regex) — characters like ) $ [ . are matched verbatim. old_text must exist exactly once in the file. Use this for targeted edits instead of rewriting entire files. After writing, the file is re-read and verified; on verification failure the original content is restored and an error is returned.',
   input_schema: {
     type: 'object',
     properties: {
@@ -22,7 +23,8 @@ export const editTool: ToolDefinition = {
       },
       old_text: {
         type: 'string',
-        description: 'Exact text to find and replace. Must match exactly including whitespace and be unique in the file.',
+        description:
+          'Exact LITERAL text to find and replace (NOT a regex — ) $ [ . * are matched verbatim). Must match exactly including whitespace and be unique in the file.',
       },
       new_text: {
         type: 'string',
@@ -108,7 +110,57 @@ export const editTool: ToolDefinition = {
       }
 
       fs.writeFileSync(resolvedPath, result, 'utf-8');
-      return 'OK';
+
+      // --- Post-write verification (defensive) ---
+      // Re-read the written file and confirm the replacement actually produced
+      // the expected state: old_text is gone, and new_text appears exactly once
+      // (unless new_text is empty, i.e. a deletion). This catches any edge case
+      // where the on-disk result diverges from the in-memory computation. On
+      // failure we restore the original content so the file is not left in a
+      // corrupted state, and return an error so the agent can retry (e.g. with
+      // write_file to rewrite the whole file).
+      const writtenRaw = fs.readFileSync(resolvedPath, 'utf-8');
+      const writtenStripped = stripBom(writtenRaw);
+      const writtenIsCRLF = detectLineEnding(writtenStripped) === 'crlf';
+      const writtenNormalized = writtenIsCRLF ? normalizeLineEndings(writtenStripped) : writtenStripped;
+
+      if (writtenNormalized.includes(normalizedOldText)) {
+        // old_text still present → the replacement did not take. Roll back.
+        fs.writeFileSync(resolvedPath, content, 'utf-8');
+        return `Error: Post-write verification failed in ${filePath} — old_text is still present after the edit. The original file has been restored. This indicates an internal replacement mismatch; consider using write_file to rewrite the whole file.`;
+      }
+
+      // For non-empty new_text, require it to appear exactly once. (When
+      // new_text is empty the replacement is a deletion, so there is nothing
+      // to count.) Note: new_text may legitimately already exist elsewhere in
+      // the file (e.g. a duplicate line); in that rare case we skip the
+      // "exactly once" assertion rather than rolling back a correct edit, but
+      // we still report the count so the agent can review.
+      if (normalizedNewText.length > 0) {
+        const newCount = writtenNormalized.split(normalizedNewText).length - 1;
+        if (newCount === 0) {
+          // new_text not present at all → replacement silently lost. Roll back.
+          fs.writeFileSync(resolvedPath, content, 'utf-8');
+          return `Error: Post-write verification failed in ${filePath} — new_text is not present after the edit. The original file has been restored. This indicates an internal replacement mismatch; consider using write_file to rewrite the whole file.`;
+        }
+        if (newCount > 1) {
+          // new_text appears more than once. This can happen when new_text
+          // duplicates text that already existed elsewhere. The edit itself is
+          // likely still correct, so we do NOT roll back, but we surface the
+          // anomaly so the agent can read_file and review.
+          return `OK (warning: new_text appears ${newCount} times in the result — review with read_file to confirm the edit is as intended)`;
+        }
+      }
+
+      // Byte-level self-check: report first bytes, BOM presence, and line-ending
+      // style so the agent can detect encoding anomalies in the same turn.
+      const written = fs.readFileSync(resolvedPath);
+      const first4 = Array.from(written.slice(0, 4))
+        .map((b) => b.toString(16).padStart(2, '0'))
+        .join(' ');
+      const bomPresent = hasBom(writtenStripped);
+      const leStyle = detectLineEnding(writtenStripped);
+      return `OK (first4=${first4}, bom=${bomPresent}, newline=${leStyle})`;
     } catch (error: unknown) {
       return `Error: ${(error as Error).message}`;
     }

@@ -199,7 +199,7 @@ function buildPlatformSection(): string {
   const isWin = info.platform === 'Windows';
 
   const shellCommands = isWin
-    ? '- Use PowerShell syntax: `Get-Content file`, `Copy-Item src dest`\n- The bash tool executes commands via PowerShell (not cmd). Note that multiple commands should be concatenated using ";", not "&&".\n- **File encoding (avoid mojibake):** `Get-Content`/`Set-Content` default to the system ANSI codepage on Windows PowerShell 5.1, garbling UTF-8 files with non-ASCII chars. ALWAYS pass `-Encoding UTF8` when reading/writing source files (e.g. `Get-Content file -Encoding UTF8`). Prefer the built-in `read_file`/`edit_file` tools which handle UTF-8 automatically.'
+    ? '- Use PowerShell syntax: `Get-Content file`, `Copy-Item src dest`\n- The bash tool executes commands via PowerShell (not cmd). Note that multiple commands should be concatenated using ";", not "&&".\n- **File encoding (avoid mojibake):** `Get-Content`/`Set-Content` default to the system ANSI codepage on Windows PowerShell 5.1, garbling UTF-8 files with non-ASCII chars. ALWAYS pass `-Encoding UTF8` when reading/writing source files (e.g. `Get-Content file -Encoding UTF8`). Prefer the built-in `read_file`/`edit_file` tools which handle UTF-8 automatically.\n- **BOM trap (PowerShell 5.1):** `Set-Content -Encoding UTF8` prepends a UTF-8 BOM (EF BB BF) that corrupts formats needing pure ASCII headers (e.g. `jar cfm` fails with `invalid header field name`). For no-BOM writes use `[IO.File]::WriteAllText($path, $content, [Text.UTF8Encoding]::new($false))`. The `write_file` tool already writes UTF-8 without a BOM (pass `bom: true` only when needed).'
     : '- Use bash/zsh syntax: `cat file`, `cp src dest`';
 
   const escaping = isWin

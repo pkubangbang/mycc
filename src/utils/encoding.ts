@@ -34,6 +34,30 @@ export function normalizeLineEndings(s: string): string {
 }
 
 /**
+ * Apply a target line-ending style to a string, converting all existing
+ * line endings (CRLF, standalone CR, LF, or mixed) to the requested style.
+ *
+ * - 'lf'   → all line endings become \\n
+ * - 'crlf' → all line endings become \\r\\n
+ *
+ * The conversion first normalizes everything to LF, then expands to CRLF if
+ * requested. This avoids double-converting CRLF (\\r\\n → \\r\\r\\n) and
+ * handles mixed-ending inputs cleanly.
+ */
+export function applyLineEndings(s: string, style: 'lf' | 'crlf'): string {
+  const lf = normalizeLineEndings(s);
+  return style === 'crlf' ? lf.replace(/\n/g, '\r\n') : lf;
+}
+
+/**
+ * Detect whether a string starts with a UTF-8 BOM (U+FEFF).
+ * Used by write/edit tools to report BOM presence in their self-check output.
+ */
+export function hasBom(s: string): boolean {
+  return s.length > 0 && s.charCodeAt(0) === 0xfeff;
+}
+
+/**
  * Count U+FFFD (REPLACEMENT CHARACTER) occurrences in a string.
  *
  * U+FFFD appears when bytes are decoded as UTF-8 but were originally encoded

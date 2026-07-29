@@ -32,7 +32,7 @@ describe('editTool', () => {
       new_text: 'Universe',
     });
 
-    expect(result).toBe('OK');
+    expect(result).toMatch(/^OK/);
 
     const edited = fs.readFileSync(testFile, 'utf-8');
     expect(edited).toBe('Hello, Universe!');
@@ -48,7 +48,7 @@ describe('editTool', () => {
       new_text: 'replaced',
     });
 
-    expect(result).toBe('OK');
+    expect(result).toMatch(/^OK/);
 
     const edited = fs.readFileSync(testFile, 'utf-8');
     expect(edited).toBe('replaced\nline3');
@@ -64,7 +64,7 @@ describe('editTool', () => {
       new_text: '',
     });
 
-    expect(result).toBe('OK');
+    expect(result).toMatch(/^OK/);
 
     const edited = fs.readFileSync(testFile, 'utf-8');
     expect(edited).toBe('Hello!');
@@ -109,7 +109,7 @@ describe('editTool', () => {
       new_text: 'replaced',
     });
 
-    expect(result).toBe('OK');
+    expect(result).toMatch(/^OK/);
 
     const edited = fs.readFileSync(testFile, 'utf-8');
     expect(edited).toBe('foo replaced baz foo');
@@ -146,7 +146,7 @@ describe('editTool', () => {
       new_text: 'Line1\nLine2\tTabbed\nUnicode: \u4e2d\u6587',
     });
 
-    expect(result).toBe('OK');
+    expect(result).toMatch(/^OK/);
 
     const edited = fs.readFileSync(testFile, 'utf-8');
     expect(edited).toBe('Line1\nLine2\tTabbed\nUnicode: \u4e2d\u6587');
@@ -163,7 +163,7 @@ describe('editTool', () => {
       new_text: 'replaced',
     });
 
-    expect(result).toBe('OK');
+    expect(result).toMatch(/^OK/);
 
     const edited = fs.readFileSync(testFile, 'utf-8');
     expect(edited).toBe('replaced\n\ttabbed\n  more');
@@ -180,7 +180,7 @@ describe('editTool', () => {
       new_text: 'Universe',
     });
 
-    expect(result).toBe('OK');
+    expect(result).toMatch(/^OK/);
 
     const edited = fs.readFileSync(testFile, 'utf-8');
     expect(edited).toBe('HelloUniverse');
@@ -212,7 +212,7 @@ describe('editTool', () => {
       new_text: 'edited',
     });
 
-    expect(result).toBe('OK');
+    expect(result).toMatch(/^OK/);
 
     const edited = fs.readFileSync(testFile, 'utf-8');
     expect(edited).toBe('edited');
@@ -229,7 +229,7 @@ describe('editTool', () => {
       new_text: 'replaced',
     });
 
-    expect(result).toBe('OK');
+    expect(result).toMatch(/^OK/);
 
     const edited = fs.readFileSync(testFile, 'utf-8');
     expect(edited).toBe('replaced\r\nline3');
@@ -245,7 +245,7 @@ describe('editTool', () => {
       new_text: 'modified',
     });
 
-    expect(result).toBe('OK');
+    expect(result).toMatch(/^OK/);
 
     const edited = fs.readFileSync(testFile, 'utf-8');
     // File should still use CRLF after edit
@@ -263,7 +263,7 @@ describe('editTool', () => {
       new_text: 'replaced',
     });
 
-    expect(result).toBe('OK');
+    expect(result).toMatch(/^OK/);
 
     const edited = fs.readFileSync(testFile, 'utf-8');
     expect(edited).toBe('replaced\nc');
@@ -280,7 +280,7 @@ describe('editTool', () => {
       new_text: 'Bonjour',
     });
 
-    expect(result).toBe('OK');
+    expect(result).toMatch(/^OK/);
 
     const edited = fs.readFileSync(testFile, 'utf-8');
     // BOM should be stripped; content should be replaced
@@ -297,7 +297,7 @@ describe('editTool', () => {
       new_text: 'replaced',
     });
 
-    expect(result).toBe('OK');
+    expect(result).toMatch(/^OK/);
 
     const edited = fs.readFileSync(testFile, 'utf-8');
     // BOM stripped, CRLF preserved
@@ -314,7 +314,7 @@ describe('editTool', () => {
       new_text: '헬로\n월드',
     });
 
-    expect(result).toBe('OK');
+    expect(result).toMatch(/^OK/);
 
     const edited = fs.readFileSync(testFile, 'utf-8');
     expect(edited).toBe('헬로\r\n월드\r\n中文');
