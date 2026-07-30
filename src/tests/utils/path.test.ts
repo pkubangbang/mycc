@@ -46,4 +46,26 @@ describe('resolvePath', () => {
     const result = resolvePath('..', workdir);
     expect(result).toBe(path.resolve(workdir, '..'));
   });
+
+  it('should throw a clear error when path is undefined', () => {
+    const workdir = '/home/user/project';
+    expect(() => resolvePath(undefined as unknown as string, workdir)).toThrow(
+      /path argument is required/
+    );
+  });
+
+  it('should throw a clear error when path is a non-string value', () => {
+    const workdir = '/home/user/project';
+    expect(() => resolvePath(42 as unknown as string, workdir)).toThrow(
+      /path argument is required/
+    );
+    expect(() => resolvePath(null as unknown as string, workdir)).toThrow(
+      /path argument is required/
+    );
+  });
+
+  it('should throw a clear error when path is an empty string', () => {
+    const workdir = '/home/user/project';
+    expect(() => resolvePath('', workdir)).toThrow(/path argument is required/);
+  });
 });

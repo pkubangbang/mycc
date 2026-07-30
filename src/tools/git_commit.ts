@@ -140,7 +140,11 @@ export const gitCommitTool: ToolDefinition = {
       normalized = normalized.slice(1, -1).trim();
     }
     const granted = normalized === 'y' || normalized === 'yes';
-    const denied = normalized === 'n' || normalized === 'no';
+    // [y/N] convention means Enter = No (decline). Empty/whitespace response
+    // cancels the commit, consistent with plan_off.ts's default-on-Enter
+    // behavior. Without this, an empty response falls through to the
+    // "partial feedback" branch and reports a confusing 'User responded: ""'.
+    const denied = normalized === '' || normalized === 'n' || normalized === 'no';
 
     // If explicitly denied, cancel the commit
     if (denied) {

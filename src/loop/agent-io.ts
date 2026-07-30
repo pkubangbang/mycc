@@ -114,6 +114,39 @@ export interface AskOptions {
   onEsc?: string;
   /** Value to resolve with when Enter pressed on empty input. If not set, returns ''. */
   onEnter?: string;
+
+}
+
+/**
+ * Parse the default token from a trailing [?/?] bracket suffix in a query,
+ * following the CLI convention that the UPPERCASE token marks the default
+ * (e.g. [y/N] -> 'n', [Y/n] -> 'y', [1/2/3/4] -> '4'). Returns the lowercase
+ * default token, or undefined if the query has no such bracket or no
+ * uppercase (default-marked) token.
+ *
+ * This mirrors the serve-mode card classification logic in ask() so that the
+ * terminal path honors the same Enter-on-empty convention: when the user
+ * presses Enter on an empty input, the question resolves to the bracket's
+ * default rather than a bare '' - keeping terminal and serve behavior in
+ * sync and removing the need for every caller to patch its own "empty
+ * means default" check (the bug that caused git_commit's "User responded:
+ * "" when Enter meant No").
+ *
+ * A trailing CLI prompt marker ("> " or ">") is stripped before matching,
+ * so hand_over's "Save tmux session? [y/N] > " still yields 'n'.
+ */
+function parseBracketDefault(query: string): string | undefined {
+  const querySansMarker = query.replace(/\s*>\s*$/, '');
+  const bracketMatch = querySansMarker.match(/\[([^\]]+)\]$/);
+  if (!bracketMatch) return undefined;
+  const tokens = bracketMatch[1].split('/');
+  for (const tok of tokens) {
+    // An uppercase letter marks the default token (tok !== tok.toLowerCase()).
+    if (tok !== tok.toLowerCase()) {
+      return tok.toLowerCase();
+    }
+  }
+  return undefined;
 }
 
 /**
@@ -790,10 +823,22 @@ class AgentIO {
             // Flush buffered output (after clearing activeLineEditor)
             this.flushOutput();
 
-            // If onEnter is set and value is empty, use onEnter value
-            const finalValue = (value === '' && options?.onEnter !== undefined)
-              ? options.onEnter
-              : value;
+            // On empty input (Enter with no text), resolve to a sensible
+            // default so the bracket convention is honored even in the
+            // terminal path: 1) explicit onEnter option (caller-provided
+            // default), else 2) the [?/?] bracket default token parsed from
+            // the query (e.g. [y/N]->'n', [Y/n]->'y', [1/2/3/4]->'4'),
+            // else 3) the bare empty string. This keeps terminal behavior in
+            // sync with the serve-mode card classification above and removes
+            // the need for every caller to patch its own "empty means default"
+            // check (the bug that caused git_commit's "User responded: "" when
+            // Enter meant No).
+            let finalValue = value;
+            if (value === '') {
+              finalValue = options?.onEnter !== undefined
+                ? options.onEnter
+                : (parseBracketDefault(query) ?? value);
+            }
             resolve(finalValue);
 
             // Wake the next queued ask() so it can proceed
@@ -1049,3 +1094,7 @@ class AgentIO {
 
 // Simple singleton - just export a new instance
 export const agentIO = new AgentIO();
+
+
+
+
