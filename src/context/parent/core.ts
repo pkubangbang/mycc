@@ -461,13 +461,41 @@ export class Core extends BaseCore implements CoreModule {
    * @returns Result with approval, resolvedPath, and optional reason
    */
   async requestExternalPathAccess(
-    tool: 'read_file' | 'write_file' | 'edit_file',
+    tool: 'read_file' | 'write_file' | 'edit_file' | 'grep',
     requestedPath: string,
   ): Promise<{ approved: boolean; resolvedPath: string; reason?: string }> {
     // Check if already granted
     const existingGrant = this.findExistingGrant(requestedPath, tool);
     if (existingGrant) {
       return { approved: true, resolvedPath: requestedPath };
+    }
+
+    // grep searches a directory, not a single file — the prompt is
+    // directory-aware (no "this file only" option). The other tools target a
+    // file and offer the full 1/2/3/4 set.
+    if (tool === 'grep') {
+      const dirName = requestedPath; // already a resolved directory path
+      const prompt = `${tool} wants to search a directory outside the workspace:\n` +
+        `  ${dirName}\n\n` +
+        `Choose:\n` +
+        `  1) Grant access to this folder: ${dirName}/\n` +
+        `  2) Grant access to this folder and all subdirectories: ${dirName}/\n` +
+        `  3) Deny\n\n` +
+        `[1/2/3]`;
+
+      const response = await this.question(prompt, 'lead', { onEsc: '3' });
+      const choice = response.trim();
+
+      if (choice === '1') {
+        this.externalGrants.set(dirName, 'folder');
+        return { approved: true, resolvedPath: requestedPath };
+      } else if (choice === '2') {
+        this.externalGrants.set(dirName, 'folder_recursive');
+        return { approved: true, resolvedPath: requestedPath };
+      } else {
+        // 3 or any other response → deny
+        return { approved: false, resolvedPath: requestedPath, reason: 'Access denied by user' };
+      }
     }
 
     // Build the grant prompt
@@ -517,7 +545,7 @@ export class Core extends BaseCore implements CoreModule {
    * @param tool - The tool requesting access (read-only grants reject write tools)
    * @returns The matching GrantScope, or undefined if no grant covers this path
    */
-  private findExistingGrant(requestedPath: string, tool?: 'read_file' | 'write_file' | 'edit_file'): GrantScope | undefined {
+  private findExistingGrant(requestedPath: string, tool?: 'read_file' | 'write_file' | 'edit_file' | 'grep'): GrantScope | undefined {
     // Check exact file grant
     if (this.externalGrants.get(requestedPath) === 'file') {
       return 'file';
@@ -525,8 +553,8 @@ export class Core extends BaseCore implements CoreModule {
 
     // Check folder grants
     for (const [grantedPath, scope] of this.externalGrants) {
-      // Read-only grants only allow read_file
-      if (scope === 'folder_recursive_readonly' && tool !== 'read_file') {
+      // Read-only grants only allow read_file and grep (both read-only tools)
+      if (scope === 'folder_recursive_readonly' && tool !== 'read_file' && tool !== 'grep') {
         continue;
       }
       if (scope === 'folder_recursive_readonly' && requestedPath.startsWith(grantedPath + path.sep)) {

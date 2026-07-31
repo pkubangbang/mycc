@@ -385,7 +385,7 @@ export interface CoreModule {
    * @returns Result with approval status, resolved path, and optional reason
    */
   requestExternalPathAccess(
-    tool: 'read_file' | 'write_file' | 'edit_file',
+    tool: 'read_file' | 'write_file' | 'edit_file' | 'grep',
     requestedPath: string,
   ): Promise<{ approved: boolean; resolvedPath: string; reason?: string }>;
   /**

@@ -335,7 +335,7 @@ export class ParentContext implements AgentContext {
         module: 'grant',
         handler: async (_sender, payload, ctx, sendResponse) => {
           const { tool, requestedPath } = payload as {
-            tool: 'read_file' | 'write_file' | 'edit_file';
+            tool: 'read_file' | 'write_file' | 'edit_file' | 'grep';
             requestedPath: string;
           };
           // Cast to Core to access requestExternalPathAccess

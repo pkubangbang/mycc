@@ -125,7 +125,7 @@ export class ChildCore extends BaseCore implements CoreModule {
    * @returns Result with approval, resolvedPath, and optional reason
    */
   async requestExternalPathAccess(
-    tool: 'read_file' | 'write_file' | 'edit_file',
+    tool: 'read_file' | 'write_file' | 'edit_file' | 'grep',
     requestedPath: string,
   ): Promise<{ approved: boolean; resolvedPath: string; reason?: string }> {
     const response = await ipc.sendRequest<{ approved: boolean; resolvedPath: string; reason?: string }>(

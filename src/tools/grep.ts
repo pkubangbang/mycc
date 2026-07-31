@@ -43,7 +43,7 @@ function buildFallbackError(): string {
 export const grepTool: ToolDefinition = {
   name: 'grep',
   description:
-    'Search for a pattern in files. Use this instead of "bash grep" — it automatically excludes node_modules and respects .gitignore when using ripgrep.',
+    'Search for a pattern in files. Use this instead of "bash grep" — it automatically excludes node_modules and respects .gitignore when using ripgrep. Searching a directory outside the workspace requires user grant (session-scoped).',
   input_schema: {
     type: 'object',
     properties: {
@@ -81,10 +81,18 @@ export const grepTool: ToolDefinition = {
     const workDir = ctx.core.getWorkDir();
     const resolvedDir = path.resolve(workDir, searchPath);
 
+    // If the search path is outside the workspace, request a session-scoped
+    // grant from the user (same flow as read_file/edit_file/write_file). grep
+    // is read-only, so readonly grants (e.g. from a prior read_file) also
+    // cover it. Previously this hard-blocked with "escapes workspace", leaving
+    // no way to search external directories.
     if (!resolvedDir.startsWith(workDir)) {
-      const msg = `Error: search path "${searchPath}" escapes workspace`;
-      ctx.core.brief('error', 'grep', msg);
-      return msg;
+      const access = await ctx.core.requestExternalPathAccess('grep', resolvedDir);
+      if (!access.approved) {
+        const msg = `Error: ${access.reason || 'Access denied'}`;
+        ctx.core.brief('error', 'grep', msg);
+        return msg;
+      }
     }
 
     const { output, method } = await grepSearch(pattern, resolvedDir, include, maxResults, exclude);
