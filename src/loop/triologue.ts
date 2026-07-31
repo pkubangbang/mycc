@@ -916,16 +916,24 @@ export class Triologue {
   /**
    * Check if a message is a checkpoint by its [CHECKPOINT] content prefix
    * or legacy regex for backwards compatibility
+   *
+   * Parses the `if_abandoned` direction from the "Original direction:" line.
+   * Legacy checkpoints (pre-if_abandoned) yield `if_abandoned: undefined`.
    */
-  private isCheckpointMessage(msg: Message): { id: string; description: string } | null {
+  private isCheckpointMessage(msg: Message): { id: string; description: string; if_abandoned?: string } | null {
     // Checkpoint tool responses have role='tool' and tool_name='checkpoint'
     if (msg.role !== 'tool' || (msg as unknown as Record<string, unknown>).tool_name !== 'checkpoint' || !msg.content) return null;
 
-    // Content format: "Checkpoint created: abc12345\n\nDescription: ..."
+    // Content format: "Checkpoint created: abc12345\n\nDescription: ...\nOriginal direction: ..."
     const idMatch = msg.content.match(/^Checkpoint created: ([a-z0-9]{8})/m);
     const descMatch = msg.content.match(/^Description: (.+)$/m);
+    const dirMatch = msg.content.match(/^Original direction: (.+)$/m);
     if (idMatch) {
-      return { id: idMatch[1], description: descMatch?.[1] || '' };
+      return {
+        id: idMatch[1],
+        description: descMatch?.[1] || '',
+        if_abandoned: dirMatch?.[1],
+      };
     }
 
     return null;
@@ -935,7 +943,7 @@ export class Triologue {
    * Find the last open checkpoint in message history
    * @returns Checkpoint info if found, null otherwise
    */
-  findOpenCheckpoint(): { id: string; description: string } | null {
+  findOpenCheckpoint(): { id: string; description: string; if_abandoned?: string } | null {
     for (let i = this.messages.length - 1; i >= 0; i--) {
       const result = this.isCheckpointMessage(this.messages[i]);
       if (result) return result;
@@ -947,8 +955,8 @@ export class Triologue {
    * Find all checkpoints in message history
    * @returns Array of checkpoint info
    */
-  findAllCheckpoints(): Array<{ id: string; description: string }> {
-    const checkpoints: Array<{ id: string; description: string }> = [];
+  findAllCheckpoints(): Array<{ id: string; description: string; if_abandoned?: string }> {
+    const checkpoints: Array<{ id: string; description: string; if_abandoned?: string }> = [];
     for (const msg of this.messages) {
       const result = this.isCheckpointMessage(msg);
       if (result) checkpoints.push(result);
@@ -965,7 +973,7 @@ export class Triologue {
    * @param id - The checkpoint ID to find
    * @returns Checkpoint info with assistant message index if found, null otherwise
    */
-  findCheckpointById(id: string): { id: string; description: string; index: number } | null {
+  findCheckpointById(id: string): { id: string; description: string; if_abandoned?: string; index: number } | null {
     for (let i = 0; i < this.messages.length; i++) {
       const msg = this.messages[i];
       const result = this.isCheckpointMessage(msg);
@@ -979,13 +987,13 @@ export class Triologue {
               (tc: { function: { name: string } }) => tc.function.name === 'checkpoint'
             );
             if (hasCheckpointCall) {
-              return { id, description: result.description, index: j };
+              return { id, description: result.description, if_abandoned: result.if_abandoned, index: j };
             }
           }
         }
         // Fallback: if no assistant found (shouldn't happen in normal flow),
         // return index after the checkpoint tool message.
-        return { id, description: result.description, index: i + 1 };
+        return { id, description: result.description, if_abandoned: result.if_abandoned, index: i + 1 };
       }
     }
     return null;

@@ -34,6 +34,7 @@ export interface CheckpointResult {
   result: string;
   id: string;
   description: string;
+  ifAbandoned: string;
 }
 
 /**
@@ -85,13 +86,25 @@ export function handleCheckpoint(
 ): CheckpointResult {
   const triologue = ctx.triologue;
   const description = args.description as string;
+  const ifAbandoned = args.if_abandoned as string;
 
   if (!description || typeof description !== 'string' || description.trim() === '') {
     return { 
       success: false, 
       result: 'Error: description is required and must be a non-empty string.', 
       id: '', 
-      description: '' 
+      description: '',
+      ifAbandoned: '',
+    };
+  }
+
+  if (!ifAbandoned || typeof ifAbandoned !== 'string' || ifAbandoned.trim() === '') {
+    return {
+      success: false,
+      result: 'Error: if_abandoned is required and must be a non-empty string. Declare your original direction so recap-abandon has continuity context.',
+      id: '',
+      description: '',
+      ifAbandoned: '',
     };
   }
 
@@ -102,7 +115,8 @@ export function handleCheckpoint(
       success: false,
       result: `Error: Checkpoint already exists: ${existingCheckpoint.id} "${existingCheckpoint.description}". Call recap first to close it, or remove it if abandoned.`, 
       id: '', 
-      description: '' 
+      description: '',
+      ifAbandoned: '',
     };
   }
 
@@ -161,6 +175,7 @@ export function handleCheckpoint(
     result: `Checkpoint created: ${id}
 
 Description: ${description}
+Original direction: ${ifAbandoned}
 Context: ${tokenCount} / ${tokenThreshold} tokens (${usagePercent}%)
 
 ${beforeStateSection}
@@ -170,6 +185,7 @@ Next steps:
 2. When done, call recap({ checkpoint_id: "${id}" }) to compress messages into a summary`,
     id,
     description,
+    ifAbandoned,
   };
 }
 

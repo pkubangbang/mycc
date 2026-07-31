@@ -17,7 +17,7 @@ import type { ToolDefinition } from '../types.js';
 
 export const recapTool: ToolDefinition = {
   name: 'recap',
-  description: `Close a checkpoint and compress its messages into a summary. Set abandon=true to discard without summarizing. Must be called alone (no other tools in same turn).
+  description: `Close a checkpoint and compress its messages into a summary. Set abandon=true to discard without summarizing. The checkpoint's required \`if_abandoned\` direction is injected heuristically into the abandon note: "the original direction was X; compare it with the current context and find your path." Must be called alone (no other tools in same turn).
 
 The 'comment' field is REQUIRED and is the most important part of the recap: it determines the direction of the next turn. Write it as a clear, actionable directive stating what should happen next based on what was discovered during this checkpoint. The comment is placed at the END of the recap note, so it is the last thing the conversation sees before continuing — treat it as the steering instruction for subsequent work.`,
   input_schema: {

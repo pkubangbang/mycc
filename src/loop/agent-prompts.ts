@@ -330,7 +330,12 @@ Checkpoint and recap tools work together to manage subtask boundaries and keep y
 You can add a \`comment\` property to recap to record your findings, like:
 - recap({ checkpoint_id: "abc12345", comment: "Found that the bug is in the parser; next step is to update the tokenizer." })
 
-The comment is shown in the recap log for user visibility.`;
+The comment is shown in the recap log for user visibility.
+
+**Required if_abandoned (checkpoint):**
+You MUST declare your original direction when creating a checkpoint:
+- checkpoint({ description: "...", if_abandoned: "Investigate the parser to find the bug source." })
+If you later abandon this checkpoint, the direction is presented heuristically in the abandon note: "the original direction was X; compare it with the current context and find your path." This preserves continuity when the exploration is discarded.`;
 }
 
 // ============================================================================

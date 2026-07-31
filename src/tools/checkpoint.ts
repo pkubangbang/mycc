@@ -25,8 +25,12 @@ export const checkpointTool: ToolDefinition = {
         type: 'string',
         description: 'What the subtask will accomplish. Be specific and concise.',
       },
+      if_abandoned: {
+        type: 'string',
+        description: 'Declare your original direction at checkpoint creation. If this checkpoint is later abandoned (recap with abandon=true), this direction is presented heuristically in the abandon note: "the original direction was X; compare it with the current context and find your path." Required — ensures recap-abandon always has continuity context.',
+      },
     },
-    required: ['description'],
+    required: ['description', 'if_abandoned'],
   },
   scope: ['main'],
   handler: () => {

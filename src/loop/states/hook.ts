@@ -138,11 +138,16 @@ async function handleRecapCall(
 
     // Inject artificial assistant + tool result instead of note(),
     // so the triologue maintains natural tool-call flow.
-    // Order: desc → todo note → LUQ (context) → comment (steering, last).
+    // Order: desc → todo note → original direction (heuristic) → LUQ (context) → comment (steering, last).
     const abandonParts: string[] = [];
     abandonParts.push(`[RECAP] Abandoned checkpoint "${checkpoint.description}".`);
     abandonParts.push('');
     abandonParts.push('Note: the checkpoint todo item was auto-created with this checkpoint\'s ID as its note. Use todo_update to mark it as done.');
+    if (checkpoint.if_abandoned) {
+      abandonParts.push('');
+      abandonParts.push(`**Original direction (from checkpoint creation):** ${checkpoint.if_abandoned}`);
+      abandonParts.push('Compare the original direction with the context below and find your path.');
+    }
     if (turn.lastUserQuery) {
       abandonParts.push('');
       abandonParts.push(`**User's last query (context):** ${turn.lastUserQuery}`);
