@@ -355,7 +355,7 @@ function tryPowerShellSelectString(
       `ForEach-Object { "$($_.Path):$($_.LineNumber):$($_.Line)" }`;
 
     // Base64-encode as UTF-16LE for -EncodedCommand (matching agent-io.ts pattern)
-    const fullCmd = `try { chcp 65001 > $null } catch {}; $OutputEncoding = [System.Text.Encoding]::UTF8; [Console]::OutputEncoding = [System.Text.Encoding]::UTF8; ${psCmd}`;
+    const fullCmd = `try { chcp 65001 > $null } catch {}; $ProgressPreference = 'SilentlyContinue'; $OutputEncoding = [System.Text.Encoding]::UTF8; [Console]::OutputEncoding = [System.Text.Encoding]::UTF8; ${psCmd}`;
     const base64Cmd = Buffer.from(fullCmd, 'utf16le').toString('base64');
 
     const stdout = execSync(

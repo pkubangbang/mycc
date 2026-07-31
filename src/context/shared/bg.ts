@@ -35,7 +35,7 @@ export class BackgroundTasks implements BgModule {
           '-NonInteractive',
           '-EncodedCommand',
           Buffer.from(
-            `try { chcp 65001 > $null } catch {}; $OutputEncoding = [System.Text.Encoding]::UTF8; [Console]::OutputEncoding = [System.Text.Encoding]::UTF8; ${cmd}`,
+            `try { chcp 65001 > $null } catch {}; $ProgressPreference = 'SilentlyContinue'; $OutputEncoding = [System.Text.Encoding]::UTF8; [Console]::OutputEncoding = [System.Text.Encoding]::UTF8; ${cmd}`,
             'utf16le'
           ).toString('base64'),
         ], {

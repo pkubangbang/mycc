@@ -136,6 +136,7 @@ function captureScreenshot(
   if (env.platform === 'win32') {
     const winPath = screenshotPath.replace(/\//g, '\\');
     const psScript = `
+$ProgressPreference = 'SilentlyContinue';
 Add-Type -AssemblyName System.Windows.Forms;
 Add-Type -AssemblyName System.Drawing;
 $bitmap = New-Object System.Drawing.Bitmap([System.Windows.Forms.Screen]::PrimaryScreen.Bounds.Width, [System.Windows.Forms.Screen]::PrimaryScreen.Bounds.Height);

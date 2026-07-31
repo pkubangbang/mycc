@@ -49,6 +49,38 @@ const COMMAND_SUBCOMMANDS: Record<string, string[]> = {
 };
 
 /**
+ * Filter PowerShell CLIXML noise from a stderr chunk.
+ *
+ * When PowerShell runs non-interactively without a TTY (exactly the spawn
+ * pattern used here: `-NonInteractive -EncodedCommand`), it serializes its
+ * progress / warning / error records as CLIXML on stderr. The output starts
+ * with a `#< CLIXML` marker followed by `<Objs ...>...</Objs>` XML blocks.
+ * This is by-design per PowerShell#16678 (closed "won't fix").
+ *
+ * $ProgressPreference='SilentlyContinue' (set in the command preamble)
+ * suppresses the progress records at the source, but other records (e.g.
+ * module-loading warnings) can still slip through as CLIXML. This filter
+ * strips any `#< CLIXML\n<Objs ...>...</Objs>` block from the chunk so the
+ * tool result stays clean. Real stderr text outside CLIXML blocks is kept.
+ *
+ * Pattern adapted from open-science PR#421 and midscene PR#2756.
+ */
+function filterCliXml(chunk: Buffer): Buffer {
+  const text = chunk.toString('utf-8');
+  // Fast path: no CLIXML marker → return untouched.
+  if (!text.includes('#< CLIXML') && !text.includes('<Objs')) {
+    return chunk;
+  }
+  // Strip a `#< CLIXML` prefix (may appear at the very start of the stream)
+  // and any `<Objs ...>...</Objs>` blocks (greedy across the whole chunk).
+  const cleaned = text
+    .replace(/#<\s*CLIXML\s*\r?\n?/g, '')
+    .replace(/<Objs[\s\S]*?<\/Objs>/g, '')
+    .replace(/<Objs[^>]*>[\s\S]*$/g, ''); // unterminated trailing <Objs fragment
+  return Buffer.from(cleaned, 'utf-8');
+}
+
+/**
  * ReplayBuffer - Buffer for collecting stdout/stderr bytes
  * Supports both string and base64 output formats.
  */
@@ -990,7 +1022,7 @@ class AgentIO {
     //   chcp is wrapped in try/catch for resilience on restricted systems
     const isWin = process.platform === 'win32';
     const effectiveCommand = isWin
-      ? `try { chcp 65001 > $null } catch {}; $OutputEncoding = [System.Text.Encoding]::UTF8; [Console]::OutputEncoding = [System.Text.Encoding]::UTF8; ${command}`
+      ? `try { chcp 65001 > $null } catch {}; $ProgressPreference = 'SilentlyContinue'; $OutputEncoding = [System.Text.Encoding]::UTF8; [Console]::OutputEncoding = [System.Text.Encoding]::UTF8; ${command}`
       : command;
     const proc = isWin
       ? spawn('powershell', [
@@ -1006,7 +1038,7 @@ class AgentIO {
       stdoutBuffer.write(chunk);
     });
     proc.stderr?.on('data', (chunk: Buffer) => {
-      stderrBuffer.write(chunk);
+      stderrBuffer.write(filterCliXml(chunk));
     });
 
     // 4. Set up timer and race with subprocess
