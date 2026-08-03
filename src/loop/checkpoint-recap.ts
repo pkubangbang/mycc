@@ -382,7 +382,7 @@ function generateTreeOutline(node: Node): string {
     const marker = n.is_mycc ? '[M]' : '[P]';
     lines.push(`${indent}${marker} ${n.id}`);
     for (const child of n.children) {
-      walk(child, indent + '  ');
+      walk(child, `${indent}  `);
     }
   }
   walk(node, '');

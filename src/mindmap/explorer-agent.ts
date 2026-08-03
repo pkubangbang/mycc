@@ -27,7 +27,9 @@ import { grepSearch } from '../utils/grep-search.js';
 /**
  * Configuration constants
  */
-const MAX_ROUNDS_DEFAULT = 50;
+const MAX_ROUNDS_DEFAULT = 30;
+/** When remaining rounds drops to this threshold, inject a force-stop steering note. */
+const FORCE_STOP_THRESHOLD = 3;
 const WEB_TIMEOUT_MS = 30000; // 30 seconds timeout for web operations
 const TOKEN_THRESHOLD = getTokenThreshold();
 const READ_CHUNK_SIZE = 10000; // max chars returned per read_file call
@@ -631,8 +633,10 @@ function buildExplorationPrompt(
   nodeTitle: string,
   nodeText: string,
   ancestorContext: string,
-  existingNode?: Node
+  existingNode?: Node,
+  maxRounds?: number,
 ): string {
+  const budget = maxRounds ?? MAX_ROUNDS_DEFAULT;
   let existingContextSection = '';
   if (existingNode) {
     const existingLinks = existingNode.links || [];
@@ -669,19 +673,23 @@ ${nodeText}
 ${ancestorContext || '(root level - no parent context)'}
 ${existingContextSection}
 ## Your Task
-1. Use tools (read_file, ls, grep, mark_file, web_search, web_fetch, mark_url) to explore code and web resources relevant to this section
-2. Use mark_file to mark local files that are directly relevant to this topic
-3. Use mark_url to mark web URLs that contain important information
-4. Use mark_term to mark project-specific terms or concepts that are defined or central to this section (these will be hoisted to the mindmap root for quick discovery)
-5. Discover implementation details, file locations, and code patterns
-6. Write a concise summary that includes:
-   - What this section covers
-   - Relevant files/modules (use mark_file)
-   - Relevant URLs (use mark_url)
-   - Key terms (use mark_term)
-   - Key technical details
+Use tools (read_file, ls, grep, mark_file, web_search, web_fetch, mark_url, mark_term) to explore code and web resources relevant to this section, then write a concise summary.
 
-Explore now. When done exploring, write your summary. Produce only the summary, without any additional explanations or commentary.`;
+## Round Budget — IMPORTANT
+You have at most **${budget} rounds** of LLM calls total. Each round is one assistant turn (which may contain multiple tool calls). When you have gathered enough information, STOP calling tools and output your summary as plain text (no tool calls). You will be told your remaining rounds each turn; when few remain, you MUST stop exploring and write the summary immediately.
+
+## Efficiency: Batch Tool Calls
+**Call multiple tools in a single round** whenever the calls are independent. For example, if you need to read three files, issue all three read_file calls in one round — not three separate rounds. This conserves your round budget. Only serialize calls when one depends on another's result (e.g. grep first, then read_file a path found by grep).
+
+## Summary Content
+Your final summary (plain text, no tool calls) should include:
+- What this section covers
+- Relevant files/modules (mark them with mark_file)
+- Relevant URLs (mark them with mark_url)
+- Key terms (mark them with mark_term)
+- Key technical details
+
+Explore now, batching independent tool calls. When done, output only the summary, without any additional explanations or commentary.`;
 }
 
 /**
@@ -713,7 +721,7 @@ export async function summarizeWithExplorer(
   const markedUrls: MarkedItem[] = [];
   const markedTerms: MarkedTerm[] = [];
 
-  const prompt = buildExplorationPrompt(nodeTitle, nodeText, ancestorContext, existingNode);
+  const prompt = buildExplorationPrompt(nodeTitle, nodeText, ancestorContext, existingNode, maxRounds);
   messages.push({ role: 'user', content: prompt });
 
   let rounds = 0;
@@ -766,8 +774,20 @@ export async function summarizeWithExplorer(
       };
     }
 
+    // ── Steering: append round-budget hint to the LAST tool result ──
+    // The budget info is appended to tool-result content (not a standalone
+    // user message) so the tool-call sequence stays legal
+    // (assistant→tool→assistant). The LLM sees remaining rounds alongside
+    // the tool output it just requested.
+    const remaining = maxRounds - rounds;
+    const budgetHint = remaining <= FORCE_STOP_THRESHOLD
+      ? `\n\n[STEERING] ${remaining} round${remaining === 1 ? '' : 's'} left. STOP calling tools now and write your summary as plain text (no tool calls). You have enough information.`
+      : `\n\n[STEERING] ${remaining} round${remaining === 1 ? '' : 's'} left. Batch independent tool calls to conserve rounds; stop and output your summary when ready.`;
+
     // Execute tool calls (each individually guarded)
-    for (const tc of assistantMsg.tool_calls as ToolCall[]) {
+    const calls = assistantMsg.tool_calls as ToolCall[];
+    for (let i = 0; i < calls.length; i++) {
+      const tc = calls[i];
       const toolName = tc.function.name;
       if (onProgress) {
         onProgress(rounds, toolName, tc.function.arguments as Record<string, unknown>);
@@ -785,6 +805,11 @@ export async function summarizeWithExplorer(
       } catch (err) {
         output = `Tool execution error [${toolName}]: ${(err as Error).message}`;
         agentIO.brief('warn', 'explorer', `Tool ${toolName} failed for "${nodeTitle}": ${(err as Error).message}`);
+      }
+      // Append the steering hint only to the last tool result of this round,
+      // so it appears once per round (not duplicated across parallel calls).
+      if (i === calls.length - 1) {
+        output = `${output}${budgetHint}`;
       }
       messages.push({
         role: 'tool',
