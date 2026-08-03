@@ -29,7 +29,7 @@ const MIN_MESSAGES_FOR_HINT = 6;
  * Generate a human-readable breakdown of confusion factors
  */
 function generateBreakdown(
-  confusionIndex: number,
+  _confusionIndex: number,
   events: SequenceEvent[]
 ): string {
   const parts: string[] = [];

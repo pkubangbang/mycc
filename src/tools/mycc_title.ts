@@ -97,7 +97,7 @@ export const myccTitleTool: ToolDefinition = {
     required: ['title'],
   },
   scope: ['main', 'child'],
-  handler: (ctx: AgentContext, args: Record<string, unknown>): string => {
+  handler: (_ctx: AgentContext, args: Record<string, unknown>): string => {
     const rawTitle = args.title as string;
 
     if (!rawTitle || typeof rawTitle !== 'string') {

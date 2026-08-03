@@ -71,11 +71,19 @@ export const mindmapCommand: SlashCommand = {
 };
 
 async function handleCompile(context: { ctx: import('../types.js').AgentContext; args: string[] }, remaining: string | undefined): Promise<void> {
-  // Parse: /mindmap compile [source.md] [output.json]
+  // Parse: /mindmap compile [--force] [source.md] [output.json]
   const parts = (remaining || '').trim().split(/\s+/).filter(Boolean);
 
-  const sourceFile = parts[0] || 'MYCC.md';
-  const outputFile = parts[1] || undefined;  // undefined = default .mycc/mindmap.json
+  // Detect --force flag (must be first positional token)
+  let force = false;
+  let positional = parts;
+  if (parts.length > 0 && parts[0] === '--force') {
+    force = true;
+    positional = parts.slice(1);
+  }
+
+  const sourceFile = positional[0] || 'MYCC.md';
+  const outputFile = positional[1] || undefined;  // undefined = default .mycc/mindmap.json
 
   const workDir = context.ctx.core.getWorkDir();
   const fullPath = path.resolve(workDir, sourceFile);
@@ -86,8 +94,8 @@ async function handleCompile(context: { ctx: import('../types.js').AgentContext;
   }
 
   try {
-    console.log(chalk.cyan(`Compiling ${sourceFile}...`));
-    const mindmap = await compile_mindmap(sourceFile, workDir, outputFile);
+    console.log(chalk.cyan(`Compiling ${sourceFile}...${force ? ' (force)' : ''}`));
+    const mindmap = await compile_mindmap(sourceFile, workDir, outputFile, force);
 
     const outPath = outputFile || '.mycc/mindmap.json';
 
@@ -264,16 +272,17 @@ async function handleRebuildPatches(context: { ctx: import('../types.js').AgentC
 function showHelp(): void {
   console.log(chalk.cyan('\n/mindmap - Manage agent memory mindmap\n'));
   console.log('Usage:');
-  console.log(chalk.white('  /mindmap compile [file] [output]') + chalk.gray(' - Compile markdown to mindmap'));
+  console.log(chalk.white('  /mindmap compile [--force] [file] [output]') + chalk.gray(' - Compile markdown to mindmap'));
   console.log(chalk.white('  /mindmap get <path>') + chalk.gray('           - Get node info'));
   console.log(chalk.white('  /mindmap patch <path> <text>') + chalk.gray('   - Update node text'));
   console.log(chalk.white('  /mindmap validate') + chalk.gray('                 - Check mindmap validity'));
   console.log(chalk.white('  /mindmap rebuild-patches') + chalk.gray('       - Rebuild patch jsonl from in-memory tree'));
   console.log();
   console.log(chalk.gray('Examples:'));
-  console.log(chalk.gray('  /mindmap compile                  # MYCC.md → .mycc/mindmap.json'));
-  console.log(chalk.gray('  /mindmap compile README.md        # README.md → .mycc/mindmap.json'));
-  console.log(chalk.gray('  /mindmap compile PLAN.md plan.json # PLAN.md → plan.json'));
+  console.log(chalk.gray('  /mindmap compile                    # MYCC.md → .mycc/mindmap.json'));
+  console.log(chalk.gray('  /mindmap compile --force            # Force recompile from scratch'));
+  console.log(chalk.gray('  /mindmap compile README.md          # README.md → .mycc/mindmap.json'));
+  console.log(chalk.gray('  /mindmap compile PLAN.md plan.json  # PLAN.md → plan.json'));
   console.log();
   console.log(chalk.gray('Note: Use underscores for spaces in paths (e.g., /MYCC_md/Setup/Unit_Test)'));
 }

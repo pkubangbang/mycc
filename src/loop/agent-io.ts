@@ -224,10 +224,9 @@ class AgentIO {
   // ESC-during-ask() cancellation support
   private askResolver: ((value: string) => void) | null = null;
   private askOnEsc: string | null = null;
-  private askOnEnter: string | null = null;
 
   // Re-entrancy guard: queue concurrent ask() calls so the singleton
-  // askResolver/askOnEsc/askOnEnter/activeLineEditor fields are never
+  // askResolver/askOnEsc/activeLineEditor fields are never
   // overwritten while a previous ask() is still pending.
   //
   // Without this guard, two IPC handlers that both call ask() (e.g.
@@ -256,7 +255,6 @@ class AgentIO {
           const onEscValue = this.askOnEsc;
           this.askResolver = null;
           this.askOnEsc = null;
-          this.askOnEnter = null;
           if (onEscValue !== null) {
             // ESC cancels the question with the specified value
             this.activeLineEditor.close();
@@ -803,7 +801,6 @@ class AgentIO {
       // Store resolver and ESC/Enter options for cancellation support
       this.askResolver = resolve;
       this.askOnEsc = options?.onEsc ?? null;
-      this.askOnEnter = options?.onEnter ?? null;
 
       // Wrap-up polling timer
       let wrapUpPollTimer: ReturnType<typeof setInterval> | null = null;
@@ -850,7 +847,6 @@ class AgentIO {
             // Clear ask cancellation state
             this.askResolver = null;
             this.askOnEsc = null;
-            this.askOnEnter = null;
 
             // Flush buffered output (after clearing activeLineEditor)
             this.flushOutput();
@@ -951,7 +947,6 @@ class AgentIO {
         stopPolling();
         this.askResolver = null;
         this.askOnEsc = null;
-        this.askOnEnter = null;
         // Wake the next queued ask() so it can proceed
         this.drainAskQueue();
         throw e;
