@@ -27,48 +27,11 @@ When updating the changelog, use the following procedure:
 
 # Change Log
 
-> **Archive**: For changelog entries before July 2026, see `changelog-202606.md`. For May 2026, see `changelog-202605.md`. For April 2026, see `changelog-202604.md`.
+> **Archive**: For changelog entries before August 2026, see `changelog-202607.md`. For June 2026, see `changelog-202606.md`. For May 2026, see `changelog-202605.md`. For April 2026, see `changelog-202604.md`.
 
-## 2026-07-01
-### Features
-- **Duplication Detection**: Embedding-based duplication detection for the hint round.
-- **Gitignore**: Auto-add `.mycc/` to `.gitignore` when project is git-managed.
-### Refactoring & Chores
-- **Refactor**: Review fixes for embedding-based duplication detection.
-- **Chore**: Simplify `.gitignore` rule for `.mycc` directory.
-
-## 2026-07-02
-### Features & Fixes
-- **Repetition Detection**: Map delta from 2 to 3 for high similarity (reduces false positives).
-- **Bash Timeout**: Update bash timeout max from 30 to 60 across all layers.
-- **Agent Prompts**: Update agent prompts and tool descriptions for clarity.
-
-## 2026-07-03
-### Release
-- **v0.9.4**: Auto-mail teammate's no-tool-call message to lead.
-### Features
-- **Wiki**: Improve wiki slash command hints and subcommand descriptions.
-### Fixes
-- **ESC**: Consolidate `ask()` options, add `onEsc` to all grant prompts, fix state handler ESC returns.
-- **ESC Deadlock**: Fix deadlock when ESC pressed while lead awaits teammates.
-- **Line Editor**: Truncate whisper line to terminal width.
-- **Windows Spawn**: DEP0190-safe spawn pattern for Windows `.cmd` files.
-### Refactoring & Chores
-- **Prompts**: Improve `agent-prompts.ts` clarity and conciseness.
-- **Chore**: Suppress "Document already exists" message on startup.
-### Tests
-- **grep Tool**: Thoroughly test grep tool with 72 tests covering all functions, edge cases, and failure modes.
+<!-- July 2026 entries rotated to changelog-202607.md on 2026-08-03. -->
+<!-- Add new (August 2026 onward) entries below this line. -->
 
 # Todo
 
 - [ ] add e2e test using tmux, with meaningful test cases, written as a skill
-- [ ] racing condition: submittion without showing "mycc is wrapping up" will not show the spinner.
-- [ ] In the plan mode, the produced plan will have self-debating.
-- [ ] In the plan mode, the plan may well have many options but mycc does not break them down and discuss with the user.
-- [ ] tool loader may have memory leak
-- [ ] subsequent triologue.note() call will not show in the jsonl.
-- [ ] LLM blind-spot: I see a tool/skill that could help me, but I don't load it because I think I already know the domain.
-
-- [ ] webui: 详细日志只保留 brief, assistant, question, 还有letterbox
-- [ ] webui: 退出按钮增加一个modal确认框
-- [ ] webui: 允许steering buffer
