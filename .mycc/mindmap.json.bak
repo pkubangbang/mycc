@@ -1,0 +1,646 @@
+{
+  "dir": "C:\\Proj\\mycc",
+  "source_file": "MYCC.md",
+  "hash": "e737311d931b87f0ff18746dd4da1fc4fa558d3f08755cb2408b3e628a4f9739",
+  "compiled_at": "2026-06-16T06:51:19.631Z",
+  "updated_at": "2026-08-03T02:57:28.166Z",
+  "root": {
+    "id": "/",
+    "text": "",
+    "title": "MYCC",
+    "summary": "## MYCC (Mindmap Knowledge System)\n\nThe MYCC section describes the project's self-description document (`MYCC.md`) and the autonomous knowledge discovery system that transforms it into a structured, LLM-enriched knowledge tree called the **mindmap**. The mindmap serves as the primary memory and discovery mechanism for agents operating within the repository.\n\n### Architecture & Data Model\nThe mindmap is a tree of **Nodes** stored in `.mycc/mindmap.json`.\n- **Node**: Contains a unique `id` (slash-separated path from root), original markdown `text`, a generated `summary`, `title`, `level`, `children`, and `links`. Two in-memory-only flags (`is_mycc`, `is_patch`) — never serialized — track node origin (MYCC.md-sourced vs patch-added) and modification state.\n- **Link**: Directional connections to other nodes (`target_type: 'node'`), local files (`'file'`), external URLs (`'url'`), or project-specific terms (`'term'`). Each has a `comment` describing the relationship.\n- **Terms**: Key project concepts (e.g., \"STAR principle\") marked during exploration and hoisted to the root for fast agent discovery via `recall(path=\"/\")`.\n- **Mindmap**: Top-level structure with `dir`, `source_file`, `hash` (of source markdown), `compiled_at`, `updated_at`, and `root` node.\n\n### Two Independent On-Disk Lines (Redesigned Architecture)\nThe system maintains two separate on-disk artifacts that merge only in memory at load time:\n1. **mindmap.json** — compiled from MYCC.md (foreground, synchronous). Contains MYCC.md-sourced nodes with LLM-generated summaries. Never modified by patches.\n2. **mindmap-patch.jsonl** — append-only JSONL log at `.mycc/mindmap-patch.jsonl` recording structural changes (`add`/`update`/`delete`) from recap sessions. Hash-gated: only actions matching the current mindmap hash are replayed.\n\nAt runtime: load mindmap.json → replay patches → in-memory merged model. The `recall` tool reads this merged tree, displaying `[M]` (MYCC.md-sourced) or `[P]` (patch-added) markers on child nodes.\n\n### Compilation Pipeline\nThe compilation process (`src/mindmap/compile.ts`) is a rotation-based pipeline:\n\n1. **Parsing**: `MYCC.md` is parsed into a hierarchy of sections based on heading levels (code-block-aware — headings inside `` ``` `` are ignored). `src/mindmap/compile-utils.ts` handles parsing, node building, and link extraction.\n2. **Autonomous Exploration**: For each node, an **Explorer Agent** (`src/mindmap/explorer-agent.ts`) is spawned. The agent uses a toolset (`read_file`, `ls`, `grep`, `mark_file`, `web_search`, `web_fetch`, `mark_url`, `mark_term`) to investigate the codebase and external docs. It runs up to 15 rounds, with steering hints when rounds are low, and context compaction (via LLM summarization + transcript save) when token usage exceeds threshold.\n3. **Bottom-Up Summarization**: Summaries are generated from leaves up to the root using the **A-N-C-E context algorithm** (**A**ncestor texts, **N**ode text, **C**hildren summaries, and **E**nvironment guidance), allowing parents to incorporate the summaries of their children. Dependency-aware parallelism with a semaphore (max 3 concurrent LLM calls) ensures children complete before parents.\n4. **Pre-population**: If an old mindmap exists, matching nodes are pre-populated with existing summary/links context to accelerate re-exploration.\n5. **Atomic Rotation**: To prevent data corruption during concurrent access, the system uses a rotation-based save strategy: interim progress saves to `mindmap.json.new`, and on completion: `mindmap.json` → `.bak` and `mindmap.json.new` → `mindmap.json`.\n6. **Lock-Based Resumption**: A lock file (`mindmap.json.lock`) allows the pipeline to resume from the `.new` temp file if interrupted, within a 4-hour freshness window. Stale or hash-mismatched locks are cleaned up automatically.\n7. **Patch Rebuild**: After compile, `/mindmap compile` performs a BFS traversal of the in-memory merged tree to produce a minimal, consistent patch set: one `add` per surviving patch-added node, one `update` per modified MYCC.md node, and one `add` per MYCC.md-deleted node (preserving trimmed content as patch-added knowledge rather than discarding it).\n\n### Patching & Cascading Updates\n- **`patch_mindmap`** (`src/mindmap/patch.ts`): Updates a node's text, then regenerates summaries for all descendants (bottom-up), the target node itself, and all ancestors (from deepest to root) — each via a fresh explorer agent call.\n- **`applyPatchAction`**: Pure in-memory application of a single patch action (no LLM). Sets `is_mycc=false, is_patch=true` for adds; `is_patch=true` for updates (preserving `is_mycc`); removes node for deletes.\n- **`add_child_node`**, **`remove_node`**, **`move_node`**: Structural operations with cascading summary updates.\n\n### Agent Integration & Tooling\n- **`recall` tool** (`src/tools/recall.ts`): The primary interface for agents to query the mindmap by path. At root (`/`), it collects and displays all hoisted terms from descendant nodes. Available to both lead and teammates (scope: `['main', 'child']`).\n- **`/mindmap` slash command** (`src/slashes/mindmap.ts`): Administrative controls — `compile` (with patch rebuild), `get` (query node), `patch` (update text with cascading summaries), `validate` (hash check), `rebuild-patches` (standalone patch dedup).\n- **Validation** (`src/mindmap/validate.ts`): SHA-256 hash comparison between mindmap.json and source markdown; recursive structural validation of nodes and links.\n- **Process Isolation**: Each agent process maintains its own mindmap instance (`.mycc/mindmap.json` for lead, `.mycc/mindmap-{name}.json` for teammates) to avoid race conditions. Cross-process knowledge sharing uses the Wiki (RAG) or mail system, not the mindmap.\n\n### Key Files\n- `MYCC.md`: The authoritative source of truth and project self-description.\n- `src/mindmap/types.ts`: Core type definitions for Node, Link, Mindmap, ANCEContext, MindmapPatchAction.\n- `src/mindmap/compile.ts`: Main compilation orchestration (rotation, lock resumption, parallel summarization).\n- `src/mindmap/compile-utils.ts`: Markdown parsing, node building, link extraction, lock management, ProgressTracker.\n- `src/mindmap/explorer-agent.ts`: Autonomous explorer agent loop with 8 tools, round budget, context compaction.\n- `src/mindmap/load.ts`: Load from JSON, set/strip in-memory flags (`is_mycc`/`is_patch`).\n- `src/mindmap/patch.ts`: Node patching with cascading summary regeneration; `applyPatchAction` for replay.\n- `src/mindmap/patch-jsonl.ts`: Append-only JSONL log for patch actions; `rebuildPatches` BFS dedup.\n- `src/mindmap/get-node.ts`: Tree traversal utilities (get_node, get_ancestors, get_descendants).\n- `src/mindmap/validate.ts`: Hash-based and structural validation.\n- `src/mindmap/diff-mindmap.ts`: Deprecated incremental compile via diff (superseded by rotation-based compile).\n- `src/mindmap/index.ts`: Public API barrel exports.\n- `src/tools/recall.ts`: Agent-facing tool for querying the mindmap knowledge tree.\n- `src/slashes/mindmap.ts`: Slash command interface for mindmap management.\n- `docs/mindmap-design.md`: Original design document (type declarations, A-N-C-E, link stubs, compilation flow).\n- `docs/mindmap-redesign.md`: Redesign document (two on-disk lines, in-memory flags, patch rebuild, recap-to-patch flow).\n- `docs/mindmap-usage.md`: User-facing usage guide (slash commands, recall tool, startup behavior, wiki vs mindmap).",
+    "level": 0,
+    "children": [
+      {
+        "id": "/mycc.md",
+        "text": "This file provides guidance for Claude Code (claude.ai/code) when working with code in this repository.",
+        "title": "MYCC.md",
+        "summary": "(exploration timeout)",
+        "level": 1,
+        "children": [
+          {
+            "id": "/mycc.md/project-overview",
+            "text": "This project builds a tool called \"mycc\" -- A node.js coding agent implementation using Ollama (default) or DeepSeek API for LLM inference. The architecture follows a modular design with AgentContext as the central state container. Two API providers are supported: Ollama (full features including web_search, screen, read_picture) and DeepSeek (cloud-based, no web/screen tools but with prompt caching). Embedding for wiki/RAG always uses Ollama regardless of provider.",
+            "title": "Project Overview",
+            "summary": "(exploration timeout)",
+            "level": 2,
+            "children": [],
+            "links": [
+              {
+                "target_type": "file",
+                "file_path": "MYCC.md",
+                "comment": "Project guidance file (CLAUDE.md equivalent) containing the Project Overview section and all key terminology/architecture documentation for the mycc coding agent"
+              },
+              {
+                "target_type": "file",
+                "file_path": "src/types.ts",
+                "comment": "Defines AgentContext interface (central state container) with all module interfaces: CoreModule, TodoModule, MailModule, SkillModule, IssueModule, BgModule, TeamModule, WikiModule. Also defines ToolDefinition, ToolScope, Message types."
+              },
+              {
+                "target_type": "file",
+                "file_path": "src/engine/chat-provider.ts",
+                "comment": "Single facade for all LLM functionality - selects between Ollama and DeepSeek providers based on API_PROVIDER env var, re-exports active provider's chat/search/vision functions. Also contains forkChat for prompt-cache-preserving side chats."
+              },
+              {
+                "target_type": "file",
+                "file_path": "src/engine/ollama.ts",
+                "comment": "Ollama provider implementation - full feature support including webSearch, webFetch, imgDescribe (vision), structuredChat, and healthCheck. Uses Ollama JS library for streaming chat with retry logic."
+              },
+              {
+                "target_type": "file",
+                "file_path": "src/engine/deepseek.ts",
+                "comment": "DeepSeek provider implementation - cloud-based API via raw fetch with SSE streaming. webSearch/webFetch/imgDescribe throw \"not supported\" errors. Supports thinking mode and prompt caching. Normalizes Ollama message format to DeepSeek format."
+              },
+              {
+                "target_type": "file",
+                "file_path": "src/engine/rag-provider.ts",
+                "comment": "RAG embedding facade - always uses Ollama regardless of chat provider. Auto-infers provider from OLLAMA_EMBEDDING_MODEL: \"embeddinggemma\" prefix → gemma provider, otherwise → nomic provider. Exports getEmbedding, EMBEDDING_DIM, NAMESPACE."
+              },
+              {
+                "target_type": "file",
+                "file_path": "src/config.ts",
+                "comment": "Global configuration - getApiProvider() returns 'ollama' or 'deepseek' based on API_PROVIDER env var. Also configures OLLAMA_EMBEDDING_MODEL (always Ollama), vision model, token threshold, and all env loading from .env files."
+              },
+              {
+                "target_type": "file",
+                "file_path": "src/context/parent-context.ts",
+                "comment": "ParentContext (AgentContext for main/lead process) - direct module access with IPC handler registration for child process communication. Implements all AgentContext modules."
+              },
+              {
+                "target_type": "file",
+                "file_path": "src/context/child-context.ts",
+                "comment": "ChildContext (AgentContext for teammate/child process) - IPC wrappers for write operations, local modules for todo/mail/bg. Implements AgentContext for child processes spawned by the lead."
+              },
+              {
+                "target_type": "file",
+                "file_path": "src/loop/state-machine.ts",
+                "comment": "Agent state machine - defines explicit states (PROMPT, SLASH, COLLECT, LLM, HOOK, TOOL, STOP) replacing a while(true) loop. Shows the core agent loop architecture with MachineEnv, TurnVars, and PassData tiers."
+              },
+              {
+                "target_type": "file",
+                "file_path": "src/index.ts",
+                "comment": "Main entry point (Coordinator process) - manages Lead process, forwards I/O, handles directory-change restarts. Architecture: Terminal → Coordinator → Lead → Teammates."
+              },
+              {
+                "target_type": "file",
+                "file_path": "README.md",
+                "comment": "Project README documenting both API providers (Ollama default with full features, DeepSeek cloud-based without web/screen tools), setup wizard, configuration flags, and feature overview."
+              },
+              {
+                "target_type": "file",
+                "file_path": "package.json",
+                "comment": "Project manifest - name \"mycc\", version 0.9.8, description \"Node.js agent implementations using Ollama\". Key deps: ollama, @lancedb/lancedb (vector store), sharp (image processing), express (serve mode), ws (websockets)."
+              }
+            ]
+          },
+          {
+            "id": "/mycc.md/setup",
+            "text": "Refer to `README.md` for instructions. Prefer pnpm instead of npm. The only exception is `npm link` to install the mycc globally.\r\n\r\n**Cross-Platform Notes (Windows / PowerShell):** mycc runs on Windows, Linux, and macOS. On Windows, all `bash` tool commands execute via **PowerShell** (not cmd) — use `Get-Content file`, `Copy-Item src dest`, concatenate with `;` not `&&`, escape with backtick `` ` ``. Set `PYTHONIOENCODING=utf-8` for Python subprocesses; write operations use explicit `utf-8` encoding; the bash tool prepends `[Console]::OutputEncoding = [System.Text.Encoding]::UTF8` for CJK display. Always use forward slashes `/` in tool file paths (`normalizePathSeparators` handles `\\` → `/` before regex matching). `/fork` uses `PowerShell -EncodedCommand` to spawn terminals (avoids `wt.exe` semicolon bugs; `shell:true` removed, paths single-quoted). `psmux` replaces `tmux` on Windows (`winget install psmux`). Binary detection uses `Where.exe`/`Get-Command` instead of `which`. GUI editor spawn does not use `windowsHide` (prevents freezing).",
+            "title": "Setup",
+            "summary": "(exploration timeout)",
+            "level": 2,
+            "children": [],
+            "links": [
+              {
+                "target_type": "file",
+                "file_path": "README.md",
+                "comment": "Primary documentation for installation, prerequisites, setup wizard, configuration flags, and cross-platform notes"
+              },
+              {
+                "target_type": "file",
+                "file_path": "src/setup/index.ts",
+                "comment": "Setup orchestrator: displays current settings, runs wizard, writes .env, pulls models"
+              },
+              {
+                "target_type": "file",
+                "file_path": "src/setup/wizard.ts",
+                "comment": "Interactive readline wizard: provider selection, config location, prompt flow"
+              },
+              {
+                "target_type": "file",
+                "file_path": "src/setup/prompts.ts",
+                "comment": "Prompt definitions, defaults, and validation for all environment variables"
+              },
+              {
+                "target_type": "file",
+                "file_path": "src/setup/models.ts",
+                "comment": "Model pulling via ollama pull after configuration"
+              },
+              {
+                "target_type": "file",
+                "file_path": "src/setup/paths.ts",
+                "comment": "Cross-platform path resolution for user-level and project-level config directories"
+              },
+              {
+                "target_type": "file",
+                "file_path": "src/setup/ollama-setup.ts",
+                "comment": "Cross-platform Ollama binary detection (Windows filesystem + Where.exe fallback)"
+              },
+              {
+                "target_type": "file",
+                "file_path": "src/config.ts",
+                "comment": "Runtime config loading: .env parsing, CLI arg mapping, env priority order"
+              },
+              {
+                "target_type": "file",
+                "file_path": "bin/mycc.js",
+                "comment": "CLI wrapper with cross-platform tsx execution (Unix: tsx binary, Windows: node --import tsx/esm)"
+              },
+              {
+                "target_type": "file",
+                "file_path": "src/utils/tsx-run.ts",
+                "comment": "Cross-platform TypeScript execution via tsx without build step"
+              },
+              {
+                "target_type": "file",
+                "file_path": "src/loop/agent-io.ts",
+                "comment": "Bash tool execution: Windows uses PowerShell -EncodedCommand with UTF-8 preamble, CLIXML filtering"
+              },
+              {
+                "target_type": "file",
+                "file_path": "src/slashes/fork.ts",
+                "comment": "/fork command uses PowerShell -EncodedCommand on Windows to avoid wt.exe semicolon bugs"
+              }
+            ]
+          },
+          {
+            "id": "/mycc.md/terminology",
+            "text": "This section captures the terms specific to this project.\r\n\r\n**tools/skills/hooks/routine:** tools are callable functions using the AgentContext, loaded by the \"loader\" and called by the LLM. skills are markdown files with yaml-front-matter metadata providing extra knowledge. hooks are skills with a `when` property compiled into a trigger condition (targets a timing in the agent loop; condition decides whether to apply the knowledge). routine is another name for the agent loop's ordered steps.\r\n\r\n**project / user / built-in tools & skills:** project tools/skills are in `./.mycc/tools` / `./.mycc/skills` (loaded only in this project). user tools/skills are in `~/.mycc-store/tools` / `~/.mycc-store/skills` (loaded for every project). built-in tools are in `src/tools`, built-in skills in `skills/` (loaded unconditionally). The first two are extension points; on name conflicts, built-in always wins and project shadows user.\r\n\r\n**session / turn / move:** **session** = full conversation history from agent start to exit (`Sequence.totalEventsCount`, `seq.totalCount()`). **turn** = from one user query to the next (begins at prompt submit, ends when agent returns to PROMPT; `Sequence.events` and most `seq.*` functions operate here, cleared at each `markPromptBoundary()` in PROMPT). **move** = a single LLM response including all tool calls in its delta (tool calls batched; hooks evaluate against prior moves in the same turn, not sibling tools in the same delta).\r\n\r\n**prompt line / whisper line / letter box:** The **prompt line** is where the user types/submits queries: `agent >> ` (normal), `plan >> ` (plan), `run cmd ! ` (bang). The **whisper line** is a subtle hint above the prompt for transient UI feedback (e.g., \"Mycc is wrapping up...\" during ESC wrap-up; \"Press Ctrl+L again to clear history\" for the double-press window). The **letter box** is the LLM's formal reply — the last message before leaving the agent loop, a green block with a timestamp header. With DeepSeek, the letter-box strips internal DSML markup (`<ds_safety>`, `<ds_thinking>`, etc.) via regex; if stripping removes all content, a friendly fallback is shown.\r\n\r\n**prompt N (p0, p1):** **p0** = the main `agent >> ` prompt line (`UserInputProvider.getInput()`). **p1** = the secondary `Press Enter to submit (r to return) > ` prompt after the editor closes (`openMultilineEditor()`). Flow: p0 → user types `\\` + Enter → editor → p1. Enter submits; `r` + Enter reloads content back to p0 without submitting. See `docs/archived/multiline-input-case-study.md`.\r\n\r\n**bang command:** `!<command>` opens an external tmux popup for interactive command execution (bypasses the LLM; prompt switches to magenta `run cmd ! `). Press Enter to capture output and kill session, or 'k' to keep it (persistent sessions like `npm run dev`, `ssh` can be reattached). See `docs/bang-command-design.md`.\r\n\r\n**checkpoint and recap:** meta-tools for context management. **Checkpoint** creates a marker before a focused subtask (must be called ALONE, only ONE open at a time, creates a tracking todo, returns an 8-char hash ID). **Recap** compresses all messages from a checkpoint into a summary (requires valid checkpoint ID, uses LLM, replaces those messages, marks the todo done). Main agent only; implementation is in the state machine (`hook.ts`), not the tool handler, because it requires `triologue` outside `AgentContext`.",
+            "title": "Terminology",
+            "summary": "(exploration timeout)",
+            "level": 2,
+            "children": [],
+            "links": []
+          },
+          {
+            "id": "/mycc.md/architecture-core-concepts",
+            "text": "**AgentContext** — the modular state container and central interface through which tools interact with the system. Modules: `core` (work dir, logging, user questions), `todo`, `mail` (async inter-agent mailbox), `team`, `issue`, `skill`, `bg`, `wt` (git worktree), `wiki`. Two implementations: `ParentContext` (main, direct access) and `ChildContext` (child, IPC wrappers).\r\n\r\n**Triologue** — the conversation state manager: tracks message history, manages `microCompact()`/`autoCompact()` for token management, tracks the `Sequence` for hookish skill conditions, supports hint round generation for confusion recovery.\r\n\r\n**AgentIO Singleton** (`src/loop/agent-io.ts`) — manages I/O state: the LineEditor (prompt input), ESC/neglected mode, process type detection. Key: `isMainProcess()` (true in lead, false in child/teammate), `isNeglectedMode()`/`setNeglectedMode(value)`, `onNeglected(callback)`, `ask(prompt)` (main-only), `exec(cmd)` (main-only), `execEditor(args)`. Bang mode: typing `!` at prompt start switches to `run cmd ! ` (`BANG_PROMPT`). **Child processes cannot use `ask()`/`exec()` — they throw.** Use `ctx.core.question()` (IPC) for user questions and `ctx.core.brief()` for logging.\r\n\r\n**IPC and IOC** — IPC enables main↔child communication via Node.js `child_process.fork()` and message passing. IOC: `TeamManager` acts as a dispatcher — modules register handlers for specific message types (Open-Closed Principle). Key: `IpcRegistry` (dispatcher), `sendRequest`/`sendNotification` (primitives), Request-Response pattern for operations requiring results.\r\n\r\n**Loader** — unified loading of tools and skills with hot-reload for dynamic content. Priority (highest wins): (1) built-in (`src/tools/`, `skills/`), (2) project (`.mycc/tools/`, `.mycc/skills/`), (3) user (`~/.mycc-store/`). Methods: `loadAll()`, `watchDirectories()` (hot-reload), `getToolsForScope(scope)`.\r\n\r\n**State Machine** — the agent loop uses explicit states instead of a single `while(true)`: **prompt** (get user input, handle slash/bang/exit), **collect** (pre-LLM pipeline: questions, mail, hint round, todo nudge), **llm** (build system prompt, call LLM with retry), **hook** (augment tool calls, evaluate hook conditions), **tool** (execute tool calls sequentially), **stop** (handle no-tool-call case, await teammates).\r\n\r\n**Sequence** — a wrapper around Triologue providing query methods for hookish skill conditions to inspect conversation history (`seq.has('edit_file')`, `seq.count('bash')`, `seq.since('git_commit')`).\r\n\r\n**Confusion Index** — a metric quantifying how \"stuck\" an agent is, triggering hint rounds. Scoring: `+1` per assistant response, `+0` for exploration tools, `-1` for action tools, `+2` for tool errors, `+1` for repetition. When score >= threshold (default 10): main triggers hint round (LLM self-analysis); child sends mail to lead requesting guidance.\r\n\r\n**mindmap** — a tree-structured knowledge system compiling markdown files (like `MYCC.md`) into a navigable JSON structure. Each node has an ID (slash-separated path), text, title, summary (LLM-generated), level, children, links. The agent queries nodes via `get_node`/`recall` for efficient context retrieval. Compilation is one-way: `MYCC.md --> [compile_mindmap] --> mindmap.json`. Each agent has an independent mindmap instance (process isolation). **Patch line**: agent-discovered knowledge is recorded as append-only patches in `.mycc/mindmap-patch.jsonl` (add/update/delete), replayed into the in-memory tree at load time. `/mindmap compile` rebuilds patches (BFS dedup/stale-removal) and **preserves MYCC.md-deleted nodes as `add` patches** so trimmed content survives as patch-added knowledge. See `docs/mindmap-design.md` and `docs/mindmap-redesign.md`.\r\n\r\n**wiki, vector store** — a persistent knowledge base using LanceDB for vector similarity search, with WAL (Write-Ahead Log) files for audit and rebuild. Each document has hash, domain, title, content, references, embedding vector. Components (`src/context/parent/wiki.ts`): `wiki.get/put/rebuild/listDomains`. Tools: `wiki_get`, `wiki_put`, `wiki_prepare`. Config: embedding model `nomic-embed-text` (`OLLAMA_EMBEDDING_MODEL`), duplicate threshold 0.95, content limits 50-1000 chars. WAL stored in `~/.mycc-store/wiki/logs/YYYY-MM-DD.wal`; rebuild via `/wiki rebuild`.\r\n\r\n**Auto-Claim** — idle child processes automatically claim unassigned issues. When a child enters IDLE state (no tool calls), it polls for new mail and scans issues for `pending` + no owner + no blockers, then atomically claims the first match.\r\n\r\n**health-check** — runs at startup to validate Ollama connectivity and model availability: (1) server reachable, (2) model exists and can process requests, (3) `TOKEN_THRESHOLD` ≤ 80% of model's context length. Implementation `src/setup/ollama-health-check.ts` (`checkHealth` → `HealthCheckResult`). CLI flag `--skip-healthcheck` bypasses; on failure, prompts retry or exit.",
+            "title": "Architecture & Core Concepts",
+            "summary": "Now let me look at the agentIO ask/exec methods:",
+            "level": 2,
+            "children": [
+              {
+                "id": "/mycc.md/architecture-core-concepts/hookish-skills",
+                "text": "Skills that actively trigger based on patterns in the conversation sequence (vs. passive skills loaded on explicit request). Defined with a `when:` field in YAML frontmatter. Condition language queries conversation history: `seq.has(toolName)`, `seq.hasAny([tool1, tool2])`, `seq.lastIndexOf(pattern)` (supports `\"bash#pattern\"`), `seq.lastError()`, `seq.sinceEdit()`, `seq.totalCount(toolName?)`, `seq.isPlanMode()`. Actions: `inject_before`, `inject_after`, `block`, `replace`, `message`, `compact`.\r\n\r\n**Condition Compiler Principles** — translates natural-language `when` into structured `{ trigger, condition, action }` via a safety-first pipeline: (1) **Lazy Compilation** — conditions are NOT compiled eagerly; a skill with `when` is \"pending\" until `skill_compile` is invoked (pending hooks are injected into LLM context at startup). (2) **LLM Translation with Structured Output** — `when` is sent to the LLM with all tools and a JSON schema enforcing the output shape. (3) **Expression Safety via jsep AST** — conditions are parsed with jsep and walked recursively (NOT `eval`/`new Function`); only `seq`/`call` root identifiers, only known `seq.*` functions, no dangerous identifiers, only safe string/array methods on results. (4) **Retry with Error Feedback** — up to 3 retries. (5) **Smoke Test** — evaluate against an empty mock sequence before persisting. (6) **Atomic Persistence** — temp file + rename, with backup. (7) **Source File Tracking & Orphan Cleanup** — `sourceFile` as `\"{layer}:{path}\"`; orphans auto-removed. (8) **Version History** — every compilation creates a new version in the `history` array (full audit trail). Key files: `src/hook/conditions.ts`, `src/hook/condition-validator.ts`, `src/hook/evaluator.ts`, `src/tools/skill_compile.ts`.",
+                "title": "Hookish Skills",
+                "summary": "(exploration timeout)",
+                "level": 3,
+                "children": [],
+                "links": [
+                  {
+                    "target_type": "file",
+                    "file_path": "src/hook/conditions.ts",
+                    "comment": "Core ConditionRegistry: manages compiled conditions, lazy compilation pipeline, LLM translation with structured output, atomic persistence, orphan cleanup, version history. Central to hookish skills."
+                  },
+                  {
+                    "target_type": "file",
+                    "file_path": "src/hook/condition-validator.ts",
+                    "comment": "Validation pipeline: jsep AST parsing and recursive walking for expression safety, smoke testing against mock sequence, compileCondition() function that orchestrates the full compilation gate."
+                  },
+                  {
+                    "target_type": "file",
+                    "file_path": "src/hook/evaluator.ts",
+                    "comment": "AST-based expression evaluator using jsep. Walks the tree without eval/Function. Handles seq.* calls, call.metadata/call.args access, string/array methods, binary/logical/unary operators."
+                  },
+                  {
+                    "target_type": "file",
+                    "file_path": "src/hook/sequence.ts",
+                    "comment": "Sequence class: wraps Triologue to provide query methods (has, hasAny, lastIndexOf, count, totalCount, sinceEdit, isPlanMode, etc.) for hook condition evaluation. Tracks turn-level and session-level tool events."
+                  },
+                  {
+                    "target_type": "file",
+                    "file_path": "src/hook/hook-executor.ts",
+                    "comment": "HookExecutor: evaluates conditions and executes actions (inject_before, inject_after, block, replace, message, compact). Priority ordering, per-move dedup, processToolCalls for batch handling."
+                  },
+                  {
+                    "target_type": "file",
+                    "file_path": "src/hook/hook-preprocessor.ts",
+                    "comment": "Augments tool calls with metadata (filePath, LOC, isDestructive) for hook condition evaluation. Used by the HOOK state before condition evaluation."
+                  },
+                  {
+                    "target_type": "file",
+                    "file_path": "src/tools/skill_compile.ts",
+                    "comment": "skill_compile tool: the entry point for compiling a skill's when condition. Delegates to ctx.skill.compileCondition() (Loader), which owns the runtime ConditionRegistry in lead and uses disk+IPC for children."
+                  },
+                  {
+                    "target_type": "file",
+                    "file_path": "src/loop/states/hook.ts",
+                    "comment": "HOOK state handler: augments tool calls, runs hook evaluation via HookExecutor.processToolCalls, handles compact requests, meta-tools (checkpoint/recap), and branches to TOOL or STOP."
+                  },
+                  {
+                    "target_type": "file",
+                    "file_path": "src/utils/skill-path-resolver.ts",
+                    "comment": "Resolves skill file paths to/from sourceFile notation ({layer}:{path}). Used for orphan detection in ConditionRegistry.load() and source tracking during compilation."
+                  },
+                  {
+                    "target_type": "file",
+                    "file_path": "skills/compact-on-intent-trap/SKILL.md",
+                    "comment": "Real-world example of a hookish skill with when field, compact action. Demonstrates countResult + totalCount conditions."
+                  }
+                ]
+              },
+              {
+                "id": "/mycc.md/architecture-core-concepts/grant-system",
+                "text": "A permission system for child processes to request approval before performing sensitive operations.\r\n\r\n**Intent Language**: The `bash` tool requires an `intent` parameter in the format `VERB OBJECT PARAM PARAM ... TO PURPOSE`, where VERB is one of READ/WRITE/EDIT/DELETE/BUILD/TEST/INSTALL/RUN and OBJECT is one of SOURCE/CONFIG/DEPENDENCY/ARTIFACT/SYSTEM/DATA/TEMP/USER. Example: `READ SOURCE dir=src TO understand dependencies`. Most PARAMs are free-form; a few reserved PARAMs change routing:\r\n\r\n- **`dangerous=i_know`** — escape hatch for destructive/irreversible commands (e.g., `rm -rf`, force pushes). Declaring it skips the block AND the LLM safeguard, routing directly to the user `[y/N]` — the human's approval is the real authorization. Only affects `destructive`/`irreversible` categories (the `system` category like `git commit` stays hard-blocked — use `git_commit` instead). Unavailable in child processes. Without it, a blocked command returns a Socratic hint naming the *existence* of a PARAM override but withholding the exact key/value. Example: `DELETE DATA path=build/ dangerous=i_know TO reclaim disk space`.\r\n- **`batch=i_know`** — skip the LLM safeguard for batch deletions (multiple files/globs/recursive paths). Routes directly to user `[y/N]`. Only affects the DELETE + batch-delete path (does NOT bypass a hard block, does NOT cover `dangerous=i_know` patterns). Unavailable in child processes. Example: `DELETE TEMP batch=i_know TO clean build artifacts` (for `rm -rf dist/ node_modules/`).\r\n\r\nImplementation: `src/context/grant/bash-judge.ts`. The full system-prompt wording is emitted by `buildIntentLanguageSection()` in `src/loop/agent-prompts.ts`. The `hand_over` tool requires `intent` as `VERB OBJECT TO PURPOSE`; the correct VERB/OBJECT is `RUN USER TO <purpose>` (running an interactive human session) — any other dimension returns a Socratic hint. `command` is a JSON string (multi-line scripts escape newlines as `\\n`, but prefer one-lining with `&&`/`;`/`||`). It refuses to spawn a nested popup if the agent is itself inside tmux. Grant flow: `Child → requestGrant → IPC → Parent → check mode → check worktree → grant/deny`. In `plan` mode: all code changes blocked. In `normal` mode: auto-grant for owned worktree, reject otherwise.",
+                "title": "Grant System",
+                "summary": "(exploration timeout)",
+                "level": 3,
+                "children": [],
+                "links": [
+                  {
+                    "target_type": "file",
+                    "file_path": "src/context/grant/bash-judge.ts",
+                    "comment": "Core 5-step bash command judging logic: dangerous command check, intent validation, mode+verb check, LLM analysis, user confirmation. Implements dangerous=i_know and batch=i_know escape hatches."
+                  },
+                  {
+                    "target_type": "file",
+                    "file_path": "src/context/grant/intent-parser.ts",
+                    "comment": "Parses and validates intent language (VERB OBJECT [PARAM...] TO PURPOSE). Defines VALID_VERBS, VALID_OBJECTS, read-only/mutation verb classification, and single-pass PARAM tokenizer for malformed PARAM detection."
+                  },
+                  {
+                    "target_type": "file",
+                    "file_path": "src/context/grant/dangerous-commands.ts",
+                    "comment": "Pattern-based dangerous command detection with three categories: destructive, irreversible, system. Includes indirect-observation wrapper bypass (tmux capture-pane) and execution-wrapper detection (sh -c, eval, $()) to prevent obfuscation."
+                  },
+                  {
+                    "target_type": "file",
+                    "file_path": "src/context/grant/grant-evaluator.ts",
+                    "comment": "Main grant evaluator dispatching bash to judgeBash and file ops to mode/worktree ownership checks. Handles plan-mode writable directories and worktree-based auto-grant for child processes."
+                  },
+                  {
+                    "target_type": "file",
+                    "file_path": "src/context/grant/types.ts",
+                    "comment": "Type definitions for the grant system: ParsedIntent, IntentValidation, BashJudgeResult, DangerousCommand, GrantRequest, GrantTool."
+                  },
+                  {
+                    "target_type": "file",
+                    "file_path": "src/context/grant/index.ts",
+                    "comment": "Barrel export for the grant module — re-exports types, intent parser, dangerous commands, bash judge, and grant evaluator."
+                  },
+                  {
+                    "target_type": "file",
+                    "file_path": "src/loop/agent-prompts.ts",
+                    "comment": "Contains buildIntentLanguageSection() which generates the full system-prompt wording for the Intent Lang: VERB/OBJECT tables, PARAM syntax rules, examples, and reserved PARAM conventions (dangerous=i_know, batch=i_know)."
+                  },
+                  {
+                    "target_type": "file",
+                    "file_path": "src/tools/hand_over.ts",
+                    "comment": "Interactive terminal popup tool requiring intent as RUN USER TO PURPOSE. Validates verb=RUN and object=USER with Socratic hints, refuses nested tmux, creates tmux session for human interaction."
+                  },
+                  {
+                    "target_type": "file",
+                    "file_path": "src/tools/bash.ts",
+                    "comment": "Bash tool implementation that calls ctx.core.requestGrant('bash', {command, intent}) before execution. Enforces timeout 1-60s, blocks direct git commit, truncates large output."
+                  },
+                  {
+                    "target_type": "file",
+                    "file_path": "src/context/parent-context.ts",
+                    "comment": "Registers IPC handler for 'grant_request' message type — parent receives grant requests from child processes, calls evaluateGrant with the sender name and Core instance."
+                  }
+                ]
+              }
+            ],
+            "links": []
+          },
+          {
+            "id": "/mycc.md/modes-team",
+            "text": "**normal mode / plan mode:** mycc starts in normal mode (explore + make changes). plan mode is enabled by `/mode plan` or the `plan_on` tool; in plan mode only explorational tools are allowed and the system prompt differs.\r\n\r\n**team mode:** not actually a mode, but a state where teammates are spawned to help the lead. Orthogonal to normal/plan (solo-normal, solo-plan, team-normal, team-plan). Uses a dedicated system prompt for collaboration challenges.\r\n\r\n**lead and teammates:** the **Lead** is the main agent process (user interaction, spawns teammates, coordinates). **Teammates** are child processes executing assigned tasks. Architecture: `Terminal -> Coordinator -> Lead -> Teammates`. Teammates cannot use `tm_create`, `tm_remove`, `tm_await`, or `broadcast` directly (must request via mail to lead). Key operations (`src/context/parent/team.ts`): `createTeammate`, `listTeammates`, `awaitTeam`, `mailTo`, `broadcast` (lead only).\r\n\r\n**lead trusting teammate's autonomous cycle:** A teammate runs its own loop; two normal behaviors are NOT failures the lead should \"fix\": (1) **idle after a phase is expected, not stuck** — when a teammate finishes a phase (no open todos, no pending tool calls) it mails \"phase completed\" and enters `idle` (polls for mail/claimable issues every `POLL_INTERVAL`, `src/context/teammate-worker.ts` `enterIdleState`); the lead must not send nag mails nor take over the work. (2) **todo management is the teammate's internal affair** — it does not affect its ability to do assigned work, and the lead cannot manage a teammate's todos; do not instruct teammates to \"skip todos\" and do not treat a \"no active todos\" report as a problem. The lead should intervene only on a real stall (no output past the deadline, or a guidance request that genuinely blocks), a timeout, or an error — not on normal idle or internal todo state. A guidance-request mail is worded \"could benefit from direction\" (not necessarily blocked).\r\n\r\n**todo and issue:** **Todos** are simple task tracking items (title, status, blockedBy dependencies). **Issues** are more structured (ID, status, owner, blockedBy/blocks, comments) supporting team coordination. Hash integrity: each todo has a SHA256-based hash (first 8 hex chars) from `name|done|note`; `todo_update` requires matching hash. `pinned`/`reactivate` are deliberately NOT part of the hash, so `todo_pinning` can modify them without a `todo_update` revalidation cycle. Tools: `todo_create`, `todo_update`, `todo_pinning` (lead-only, scope `['main']`), `issue_create`, `issue_claim`, `issue_list`, `issue_close`, `issue_comment`. Slash: `/todos` (pinned show 📌), `/issues`. `todo_write` is the legacy deprecated tool.\r\n\r\n**Pinned todos and reactivation:** pinned todos are protected from the auto-clear that removes completed (`done`) todos at the start of each turn; a pinned done-todo also keeps `hasOpenTodo()` false. Pinning is lead-only (`todo_pinning`, scope `['main']`). **Reactivation** reopens a completed pinned todo when its `reactivate` condition becomes true — the lead evaluates candidates with a single `forkChat` call (not `structuredChat`, to preserve prompt cache and retry/ESC support) sending all done+pinned+reactivate items in one JSON-array prompt with `toolChoice='none'`. Flow (`checkReactivation()` in `src/loop/states/collect.ts`): `getReactivationCandidates()` → `forkChat` returning `[{\"id\":\"hash\",\"reopen\":true,\"reason\":\"...\"}]` → `parseReactivationResult()` → for each `reopen:true`, `todo_update` flips `done` to `false`. Runs in COLLECT step-4 nudge block BEFORE the nudge, on the same throttle (every 3 turns). Teammates are unaffected. See `docs/pinned-todo-reactivation.md`.\r\n\r\n**user session / project session:** sessions are persisted conversation states as JSON. **Project sessions** in `.mycc/sessions/` (project-specific); **user sessions** in `~/.mycc-store/sessions/` (shared across projects). **Sealed-session principle:** a session is NEVER shared; once its mycc process exits, its files (session JSON + triologue JSONL) are sealed read-only. `/load <id>` (mid-session, empty-current-session only) or `mycc --from <id>` (cold start, also `/fork`) does NOT resume the old session — it reads it read-only, LLM re-understands the transcript into a fresh context, and continues in a BRAND NEW session. Loading the same id multiple times yields DIFFERENT new sessions (variation by re-understanding) — the basis for branching. Session structure (`src/session/types.ts`): `id`, `create_time`, `project_dir`, `lead_triologue`, `child_triologues`, `teammates`, `first_query` (bookmark title). Use `/save` to copy a project session to user dir and `/load` to branch from any sealed one.\r\n\r\n**session file vs triologue JSONL:** the **session file** (`.mycc/sessions/{uuid}/session-{uuid}.json`) holds metadata only (ID, creation time, triologue paths, teammates, first query) — created once, updated in place only by the session's own running process, sealed after exit. The **triologue JSONL** (`.mycc/sessions/{uuid}/triologue-lead-{ts}.jsonl`) is the append-only conversation log — every message appended via `onMessage` in `agent-repl.ts` with `fs.appendFileSync`; the authoritative record of agent activity. The session file tells *what sessions exist and where their logs live*; the triologue JSONL contains *what actually happened*.\r\n\r\n**slash commands:** user-initiated `/`-commands handled outside the LLM tool system (meta-operations: help, sessions, modes, knowledge bases). Registry pattern (`src/slashes/index.ts`): `slashRegistry.register`/`execute`. Built-in: `/team`, `/todos`, `/skills`, `/issues`, `/save`, `/load`, `/clear`, `/wiki`, `/domain`, `/mindmap`, `/compact`, `/mode`, `/plan`, `/help`.",
+            "title": "Modes & Team",
+            "summary": "(exploration timeout)",
+            "level": 2,
+            "children": [
+              {
+                "id": "/mycc.md/modes-team/tool-scope-constraints",
+                "text": "| Agent Type | Available Tools |\r\n|------------|-----------------|\r\n| Lead (main) | All tools |\r\n| Teammate (child) | Cannot use: tm_create, tm_remove, tm_await, broadcast |\r\n| Background (bg) | Can only use: bash, read_file, write_file, edit_file |\r\n\r\n**Main-only tools**: tm_create, tm_remove, tm_await, broadcast, order, hand_over, plan_on, plan_off, todo_pinning\r\n\r\n**Background Task Tools:** the bg module (`bg_create`, `bg_print`, `bg_await`, `bg_remove`) provides non-blocking command execution. `bg_create` spawns async (returns PID); `bg_print` lists tasks or shows output for a PID; `bg_await` blocks until done (optional timeout); `bg_remove` terminates by PID. Uses `spawn()` on all platforms (Windows removes `detached:true` to capture stdout/stderr); output capped ~100KB (tail-capped); killed tracked separately from failed.\r\n\r\n**Interactive Shell / /fork Command:** `/fork` spawns a new mycc instance in a separate terminal. `/fork` (current project) or `/fork --env KEY=VALUE` (forward env vars). Linux: `gnome-terminal`/`x-terminal-emulator` with bash. Windows: `PowerShell -EncodedCommand` via `wt.exe` (`shell:true` disabled, single-quoted paths).",
+                "title": "Tool Scope Constraints",
+                "summary": "(exploration timeout)",
+                "level": 3,
+                "children": [],
+                "links": [
+                  {
+                    "target_type": "file",
+                    "file_path": "src/types.ts",
+                    "comment": "Defines ToolDefinition interface with scope field, and ToolScope type ('main' | 'child')"
+                  },
+                  {
+                    "target_type": "file",
+                    "file_path": "src/context/shared/loader.ts",
+                    "comment": "getToolsForScope() method filters tools by scope — core mechanism for tool availability per agent type"
+                  },
+                  {
+                    "target_type": "file",
+                    "file_path": "src/context/shared/registry.ts",
+                    "comment": "Central registry of all built-in tools — the master list of available tools"
+                  },
+                  {
+                    "target_type": "file",
+                    "file_path": "src/context/shared/bg.ts",
+                    "comment": "BackgroundTasks implementation — spawn-based async command execution with output capping, platform-specific spawn options"
+                  },
+                  {
+                    "target_type": "file",
+                    "file_path": "src/slashes/fork.ts",
+                    "comment": "/fork slash command implementation — spawns new mycc instance in separate terminal with --from session flag"
+                  },
+                  {
+                    "target_type": "file",
+                    "file_path": "src/utils/open-terminal.ts",
+                    "comment": "Terminal detection and spawning for /fork — platform-specific terminal configs (gnome-terminal, wt.exe, PowerShell), detached spawn, PATH inheritance"
+                  },
+                  {
+                    "target_type": "file",
+                    "file_path": "src/context/child/team.ts",
+                    "comment": "ChildTeam implementation — restricted team operations for teammates; broadcast/createTeammate delegate to lead via mail, forbidden methods throw"
+                  },
+                  {
+                    "target_type": "file",
+                    "file_path": "src/context/teammate-worker.ts",
+                    "comment": "Teammate worker loop — calls silentLoader.getToolsForScope('child') to get restricted tool set"
+                  },
+                  {
+                    "target_type": "file",
+                    "file_path": "src/tools/bg_create.ts",
+                    "comment": "bg_create tool — scope ['main', 'child'], explicitly NOT 'bg' to avoid recursive background tasks; goes through same bash grant system"
+                  }
+                ]
+              }
+            ],
+            "links": []
+          },
+          {
+            "id": "/mycc.md/webui-features",
+            "text": "A Vue 3-based WebUI is served by mycc itself via an embedded Express + Vite + WebSocket stack (`src/serve/serve-hub.ts`, `src/web/`). It provides a browser-based chat interface as an alternative to the terminal REPL: Markdown rendering (letter-box → chat bubbles); interactive **cards** replacing terminal `ask()` prompts (input/confirm/choice) — `CardItem.vue`; session history via `/history` (backed by the durable triologue JSONL transcript, survives serve stop/restart and page closes); 30s disconnect-reconnect timer with graceful warm shutdown. For the developer reference (component layout, WS protocol, input/card bridges, reconnect replay), see `src/web/README.md`.\r\n\r\n**steering (WebUI mid-task direction):** lets the user queue direction for the agent *while the LLM is mid-run* without interrupting it. The steering queue lives in `ServeHub` as an **ephemeral, in-memory** buffer (`steeringQueue`, wiped on `stop()`), distinct from the file-backed **mail** system. `pushSteer`/`drainSteering`/`getSteeringNotes` are append/consume/peek. **Two consumption paths**: (1) **COLLECT** (`src/loop/states/collect.ts`, step 2c) — in-flight notes drained and injected verbatim as a `REMINDER` (no synthesis); (2) **PROMPT** (`src/loop/states/prompt.ts`) — if the run was interrupted (ESC/停止) and the user submits a fresh query, stale notes are merged with the query via a `forkChat` synthesis call (`synthesizeWithSteering()`), replacing the raw query; the queue is drained regardless of success and raw query is the fallback. The two paths are mutually exclusive (PROMPT drains first). Frontend (`src/web/src/main.ts`, `ChatInput.vue`, `SteeringBuffer.vue`): when `isRunning`, `send()` routes to `sendSteer`; the buffer bar is populated solely by the server's `steer-echo` broadcast (single source of truth — no local push); `steer-flush` clears it. `/history` returns `{ messages, steeringBuffer }` where `steeringBuffer` is a peek (survives refresh/reconnect within the same serve session; not a serve stop/restart).\r\n\r\n**file upload (WebUI chat-box attachments):** mirrors the steering design — same ephemeral-queue architecture in `ServeHub` (`fileUploadQueue`), same two consumption paths (COLLECT in-flight vs PROMPT stale). Key contrast: file uploads are **informational resources saved and noted, never synthesized** — no `forkChat` merge at PROMPT. Files travel inline in the JSON `WsMessage` as base64 (no multer/multipart); both `input` and `steer` carry an optional `files` array. COLLECT (step 2d) drains and saves to `./.mycc/uploaded/` as `${Date.now()}_${filename}` (base64-decoded), injecting a `REMINDER` listing each file (with truncated user-text preview if provided). PROMPT drains stale files with the same save logic and a `REMINDER` — no synthesis (files are read via `read_picture`/`read_file` in the next turn). No client-side buffer bar for files (`file-upload`/`file-flush` echoes are no-ops). The upload queue is not in `/history` and does not survive a serve stop/restart.\r\n\r\n**neglection and esc return:** neglection is triggered when the user presses ESC during LLM inference — signals the agent to quickly wrap up without further tool calls. \"Neglected mode\" aborts ongoing LLM calls, buffers subsequent output, forces a text-only response. Key: `agentIO.isNeglectedMode()`, `setNeglectedMode(value)`, `onNeglected(callback)`; IPC message `{ type: 'neglection' }` (coordinator → lead on ESC).\r\n\r\n**esc-aware wrap-up:** on ESC during LLM inference the system enters **wrap-up mode** — the LLM call is aborted via AbortController, a quick \"wrap-up\" LLM call runs in background to produce a concise text-only response, the prompt line reappears immediately, and the wrap-up result is displayed when ready (with commit/rollback logic). Grace period: if the user starts typing before wrap-up completes, the result is discarded. See `docs/esc-wrap-up-redesign.md`. `ctx.core.escAware(operation, onCleanUp)` wraps slow operations for ESC-aware quick return — on ESC the original promise continues in background, `onCleanUp` is invoked immediately, its result returned to the caller. `Core.escAware()` (parent) uses `agentIO.onNeglected()`; `ChildCore.escAware()` is a placeholder (TODO: IPC). Use `escAware` for high-level operations (tool execution, file ops, network requests); use a manual `AbortController` for low-level stream handling (`retryChat()`, hint round). Currently used by tool execution (`src/loop/states/tool.ts`).\r\n\r\n**crossroad:** improves LLM response quality by detecting \"turning words\" (e.g., \"However\", \"Wait\", \"但\", \"但是\") in the draft response, generating alternative continuations via parallel `forkChat` calls, selecting the best path while preserving prompt cache. Implementation: `src/hook/crossroad.ts` (runs in the HOOK state before tool execution; debug with `--debug-tp`). Consecutive crossroads contribute to the hint round confusion index.\r\n\r\n**@-prefix teammate label convention:** teammate tool output and status messages are routed to a separate `state.teammateMessages` array rather than the main chat log. Routing is decided by a string convention on the existing `label` field — no new WS message types, no `sender` field. The label is `@<teammate>/<tool>` (e.g., `@coder/bash`); `@` marks a teammate message, `/` splits teammate name from tool name. No tool tag → `@<teammate>`. Data flow: the tool tag was historically dropped at the IPC boundary, so **child** (`src/context/child/core.ts`, `ChildCore.brief()`) forwards `tool` in the `log` IPC payload, and **parent** (`src/context/parent/team.ts`, `handleChildMessage()`) builds `@${sender}/${tool}` (falls back to `@${sender}`). Other lifecycle paths (`teammate_ready`, `eta_update`, `status`, `exit`/`error`) are intentionally NOT prefixed. Frontend (`src/web/src/main.ts`): messages whose `label` starts with `@` go into `teammateMessages`; `/history` returns a flat array the client splits. Approximate persistence: teammate messages flow through the same `messageLog` (`MAX_LOG_SIZE = 1000`), replayed on reconnect, but lost on serve stop/restart (the transcript records teammate turns, not their brief/log output).\r\n\r\n**Teammate accordion UI:** teammate messages grouped by name and rendered in an accordion UI rather than mixed into the main chat. **`TeammateCard.vue`** — floating top-right card, one row per active teammate (`@name(count): currentTool`), click to open the drawer; hides when the drawer is open or no teammate messages. **`TeammateDrawer.vue`** — right-half panel with stacked accordions per teammate; header `@name(count): current_tool`, body is a flat chronological timeline with `[tool]` prefix tags; first accordion expanded by default; multiple may be open; ✕ closes. Grouping is a frontend computed property — no backend per-teammate state.",
+            "title": "WebUI Features",
+            "summary": "Now let me check the esc-wrap-up.ts implementation:",
+            "level": 2,
+            "children": [],
+            "links": []
+          },
+          {
+            "id": "/mycc.md/development",
+            "text": "**How to add a tool/skill:** to add a tool — (1) refer to existing code in `src/tools/` for the pattern; (2) create a file in `.mycc/tools` (hot-reloadable); (3) let the user test it manually and iterate from feedback; (4) once qualified, migrate it into `src/tools` and update the loader to make it built-in. See `skills/add-tool/SKILL.md`. To add a skill — same flow with `skills/` as the reference and `.mycc/skills` as the hot-reloadable folder, migrating into `skills/` to make it built-in.\r\n\r\n**Tool Development Guidelines:** **Fail Early** — tools should fail early and explicitly rather than silently degrading. **No Direct Console Output in Tools** — tools MUST NOT use `console.log`/`console.error`; use `ctx.core.brief()` for all user-facing output.\r\n\r\n**How to test this app** — use tmux to simulate interactive terminal sessions:\r\n\r\n```bash\r\ntmux new-session -s mycc-test -d -x 80 -y 24\r\ntmux send-keys -t mycc-test \"/help\" Enter\r\ntmux capture-pane -t mycc-test -p\r\ntmux kill-session -t mycc-test\r\n```\r\n\r\n**Unit Tests** — uses **vitest**; tests in `src/tests/`. `pnpm test` (all) or `pnpm test src/tests/tools/` (specific directory).\r\n\r\n**Output Behavior Principles:** **High-Contrast Explanations** — (1) lead with the conclusion (state what changed in ONE line); (2) use tables for comparison (before/after); (3) use diff notation (`+` added, `-` removed, `→` renamed/moved); (4) one change = one line (3 changes = 3 bullets, not a story); (5) avoid filler narration. **Ponytail (Simplicity First) Principle** — in plan mode, responses should be concise and avoid over-explaining; state the conclusion, provide reasoning only if requested (documented in the plan-mode system prompt).\r\n\r\n**Code Cleanup** — use TypeScript's strict checks: `pnpm typecheck --noUnusedLocals --noUnusedParameters`. Use ESLint (MUST do before commit); the project uses `typescript-eslint` with a custom `no-console-in-tools` rule (disallows `console.log`/`console.error` in `src/tools/` — use `ctx.core.brief()`). Use prettier after significant changes. `pnpm lint` (all), `pnpm lint src/tools/screen.ts` (specific), `pnpm format`.\r\n\r\n**中文顿号 Multi-line Edit:** the `edit_file` tool supports multi-line mode triggered by Chinese enumeration punctuation. When `old_text` ends with `、` (顿号), the tool auto-detects that multiple matching blocks may exist and adjusts its matching strategy — handles the common case of Chinese code comments using 顿号 as separators.\r\n\r\n**Debug Flags:**\r\n\r\n| Flag | Effect |\r\n|------|--------|\r\n| `--debug-tp` | **Triologue Parity** — on a role transition violation, throw with stack trace instead of auto-recovering. For developing the auto-fixer or debugging `triologue.ts`. |\r\n| `--debug-suggest` | **SUGGEST Background Task** — logs the LLM response/feedback of the background suggest task via `ctx.core.brief()`. Runs after each turn to discover relevant tools/skills. |\r\n| `--debug-eval` | **Expression Evaluation** — prints the parsed AST tree for each hook condition expression during evaluation. For developing hookish skills with custom `when` conditions. |\r\n| `--debug-prompt` | **Prompt Debug** — shows the full system prompt sent to the LLM (tool descriptions, skill content). Also shows the 'Parsing...' spinner during keyword extraction. |\r\n\r\nCombine with `-v` (verbose) for maximum detail.\r\n\r\n**Docker Support:** a Dockerfile is provided at project root. The Docker setup builds mycc in a Node.js container, supports auto-input/output via JSONL files, and is useful for CI/CD pipelines and automated testing. `docker build -t mycc .` then `docker run -it mycc`.",
+            "title": "Development",
+            "summary": "The `--debug-suggest` flag is documented in help.ts but not yet wired into config.ts. It's a planned/partially implemented feature. Now let me check the tsconfig for the typecheck command:",
+            "level": 2,
+            "children": [
+              {
+                "id": "/mycc.md/development/built-in-skills-reference",
+                "text": "mycc ships with the following built-in skills (in `skills/` directory):\r\n\r\n| Skill | Description |\r\n|-------|-------------|\r\n| `self-learning` | Bloom's 2-Sigma tutor — guides the LLM to teach the user, with `todo_create`/`todo_update` integration for progress tracking |\r\n| `mycc-self-awareness` | Meta-knowledge about mycc itself — capabilities, architecture, and how to interact with the system |\r\n| `coordination` | Human-in-the-loop guidance for lead-teammate collaboration workflow |\r\n| `hint-round` | Encourages wiki search when stuck on errors or missing knowledge |\r\n| `environment-detection` | Multi-platform directory detection with PowerShell/Bash/CMD cheatsheets |\r\n| `add-tool` | Step-by-step guide for adding custom tools to the project |\r\n| `create-skill` | Meta-skill for creating new skills with templates (process, reference, lesson, hookish) |\r\n| `pdf` | PDF text extraction via unpdf and OCR via tesseract.js |\r\n| `tech-doc-writing` | Technical documentation writing guide covering wire format, API docs, READMEs |\r\n| `clear-sessions` | Session cleanup and management |\r\n| `compact-on-intent-trap` | Automatic compaction when agent is stuck in intent loops |\r\n| `set-title` | Terminal title management |\r\n| `mycc-online-hotfix` | Live debugging and hotfix workflow using bash + tmux for tool bugs |\r\n\r\nSkills are loaded from three layers: built-in (`skills/`), project (`.mycc/skills/`), and user (`~/.mycc-store/skills/`). Built-in skills have the highest priority.",
+                "title": "Built-in Skills Reference",
+                "summary": "(exploration timeout)",
+                "level": 3,
+                "children": [],
+                "links": [
+                  {
+                    "target_type": "file",
+                    "file_path": "src/context/shared/loader.ts",
+                    "comment": "Core loader implementation — loads skills from three layers (user → project → built-in), implements shadowing logic where built-in skills cannot be overridden, hot-reload watching for project skills"
+                  },
+                  {
+                    "target_type": "file",
+                    "file_path": "src/config.ts",
+                    "comment": "Defines skill directory paths: getSkillsDir() → .mycc/skills/ (project), getUserSkillsDir() → ~/.mycc-store/skills/ (user), built-in skills loaded from packageRoot/skills/"
+                  },
+                  {
+                    "target_type": "file",
+                    "file_path": "skills/self-learning/SKILL.md",
+                    "comment": "Bloom's 2-Sigma tutor skill — Socratic questioning, mastery gates, todo_create/todo_update integration for progress tracking"
+                  },
+                  {
+                    "target_type": "file",
+                    "file_path": "skills/mycc-self-awareness/SKILL.md",
+                    "comment": "Meta-knowledge skill documenting mycc's architecture, tools, state machine, triologue, and skill/tool loading system"
+                  },
+                  {
+                    "target_type": "file",
+                    "file_path": "skills/coordination/SKILL.md",
+                    "comment": "Multi-agent coordination skill with workflow patterns (Divide-and-Conquer, Pipeline, Round-Robin, etc.) and communication topology guidance"
+                  },
+                  {
+                    "target_type": "file",
+                    "file_path": "skills/environment-detection/SKILL.md",
+                    "comment": "Multi-platform directory detection skill with PowerShell/Bash/CMD cheatsheets and mycc tool/skill layer detection"
+                  },
+                  {
+                    "target_type": "file",
+                    "file_path": "skills/add-tool/SKILL.md",
+                    "comment": "Step-by-step guide for adding custom tools — covers ToolDefinition structure, input_schema, scope, handler patterns, and ctx.core.brief() logging requirement"
+                  },
+                  {
+                    "target_type": "file",
+                    "file_path": "skills/create-skill/SKILL.md",
+                    "comment": "Meta-skill for creating new skills with four templates (process, reference, lesson, hookish) and frontmatter best practices for RAG discoverability"
+                  },
+                  {
+                    "target_type": "file",
+                    "file_path": "skills/pdf/SKILL.md",
+                    "comment": "PDF processing skill — text extraction via unpdf, OCR via pdf-to-img + tesseract.js with multi-language support"
+                  }
+                ]
+              }
+            ],
+            "links": []
+          },
+          {
+            "id": "/mycc.md/pitfalls",
+            "text": "**Tool descriptions are for LLM awareness, not user-facing:** the `description` field is read by the LLM to understand what a tool does. It should NOT be user-facing documentation with verbose parameter explanations or step-by-step workflows. The description is about **what** the tool does, not **how** it does it internally. Implementation details (confirmation prompts, mail notifications) belong in code comments, not the description field. Keep it concise and LLM-oriented.\r\n\r\n**DeepSeek API pitfalls:** when using DeepSeek (API_PROVIDER=deepseek): no web/screen tools (`web_search`, `web_fetch`, `screen`, `read_picture` unavailable); DSML stripping (the letter-box strips internal DSML markup like `<ds_safety>`/`<ds_thinking>`); prompt caching (automatic for repeated prefixes); embedding still uses Ollama (wiki/RAG requires a local Ollama with `nomic-embed-text`); `tool_choice=\"none\"` for wrap-up mode (prevents raw XML tool calls). Detailed reference: `docs/deepseek-api-reference.md`.\r\n\r\n**agentIO singleton works differently in child processes:** `agentIO` (`src/loop/agent-io.ts`) is imported by both main and child, but `initMain()` is only called in the main process. `isMainProcess()` returns `true` in main (lead), `false` in child (teammates) — `isMainProcessFlag` defaults to `false` and only becomes `true` after `initMain()`. **Important**: only use `isMainProcess()` to distinguish lead vs teammate context. Other methods (`ask()`, `exec()`) throw in child processes. For code working in both contexts: use `agentIO.isMainProcess()` to check, `ctx.core.question()` for user questions (IPC), `ctx.core.brief()` for logging (IPC in child).\r\n\r\n**Loop Notation (LN):** a compact notation for message role rotation in the agent loop. Each comma-separated unit is one message. Units: `system` (system prompt), `user` (user query), `[tool1, tool2]?` (assistant's batched tool call, `?` = called by LLM), `tool1!` (tool result, one at a time), `agent` (assistant text reply), `_tool1_` (tool call replaced with placeholder after compaction). Example single-turn: `system, user, [tool1]?, tool1!, agent`. Example with batching + compaction: `system, user, [tool1]?, tool1!, [tool2, tool3]?, tool2!, _tool3_, agent, user, agent` (system → user → tool1 call → result → tool2+tool3 batched → tool2 result → tool3 compacted → agent reply → user → agent reply). Conventions: `[]?` groups batched calls from the same delta; `!` marks a result; `_` wraps a compacted call; bare units (system/user/agent) are pure text.",
+            "title": "Pitfalls",
+            "summary": "(exploration timeout)",
+            "level": 2,
+            "children": [],
+            "links": [
+              {
+                "target_type": "file",
+                "file_path": "src/loop/agent-io.ts",
+                "comment": "Core singleton for I/O state management; isMainProcess() distinguishes lead vs teammate; ask() and exec() throw in child processes"
+              },
+              {
+                "target_type": "file",
+                "file_path": "src/engine/deepseek.ts",
+                "comment": "DeepSeek API provider implementation; normalizeMessage() handles argument serialization, tool type injection, reasoning_content echoing, and thinking/reasoning_effort conflicts"
+              }
+            ]
+          },
+          {
+            "id": "/mycc.md/reference-documents",
+            "text": "- `docs/agent-context.md` - AgentContext module (Chinese)\r\n- `docs/agent-loop.md` - Agent loop (Chinese)\r\n- `docs/agent-tools.md` - Built-in tools reference\r\n- `docs/child-context.md` - Child process and IPC (Chinese)\r\n- `docs/dynamic-loading.md` - Tool/skill loading mechanism\r\n- `docs/pinned-todo-reactivation.md` - Pinned todos and reactivation feature design\r\n- `docs/database-schema.md` - Data storage schema (Chinese, historical reference — SQLite removed in v0.7.0)",
+            "title": "Reference Documents",
+            "summary": "(exploration timeout)",
+            "level": 2,
+            "children": [],
+            "links": []
+          }
+        ],
+        "links": [
+          {
+            "target_type": "file",
+            "file_path": "MYCC.md",
+            "comment": "The primary guidance document for Claude Code when working in this repository — covers project architecture, terminology, all major subsystems, and development guidelines."
+          },
+          {
+            "target_type": "file",
+            "file_path": "src/loop/state-machine.ts",
+            "comment": "Core state machine for the agent loop — defines states (PROMPT, COLLECT, LLM, HOOK, TOOL, STOP), data tiers (MachineEnv, TurnVars, PassData), and the main run() loop."
+          },
+          {
+            "target_type": "file",
+            "file_path": "src/loop/agent-io.ts",
+            "comment": "I/O state management singleton — manages LineEditor, ESC/neglected mode, ask()/exec() for main process, bang mode, and output buffering. Key for understanding main vs child process behavior."
+          },
+          {
+            "target_type": "file",
+            "file_path": "src/loop/crossroad.ts",
+            "comment": "Crossroad feature implementation — detects turning words in LLM output, generates alternative continuations via forkChat, selects best path. Improves response quality."
+          },
+          {
+            "target_type": "file",
+            "file_path": "src/context/parent/core.ts",
+            "comment": "Core module for parent (lead) process — implements escAware(), question(), brief(), imgDescribe(), mode management, external path grants, and image caching."
+          },
+          {
+            "target_type": "file",
+            "file_path": "src/serve/serve-hub.ts",
+            "comment": "WebUI hub — manages WebSocket connections, steering queue (mid-task direction), file upload queue, session history, and letter-box rendering for the browser interface."
+          },
+          {
+            "target_type": "file",
+            "file_path": "src/hook/conditions.ts",
+            "comment": "Condition registry for hookish skills — manages lazy compilation of natural-language 'when' fields into structured trigger/condition/action, with atomic persistence and orphan cleanup."
+          },
+          {
+            "target_type": "file",
+            "file_path": "src/hook/condition-validator.ts",
+            "comment": "Validates and compiles hookish skill conditions using jsep AST parsing for expression safety — prevents eval/Function usage, only allows known seq.* functions."
+          },
+          {
+            "target_type": "file",
+            "file_path": "src/context/grant/bash-judge.ts",
+            "comment": "Grant system implementation — judges bash tool intents (VERB OBJECT PARAM... TO PURPOSE), handles dangerous/batch escape hatches, routes to user approval or hard blocks."
+          },
+          {
+            "target_type": "file",
+            "file_path": "src/context/parent/team.ts",
+            "comment": "Team management for lead process — createTeammate, listTeammates, awaitTeam, mailTo, broadcast, handleChildMessage with @-prefix teammate label routing."
+          }
+        ]
+      }
+    ],
+    "links": [
+      {
+        "target_type": "file",
+        "file_path": "MYCC.md",
+        "comment": "The authoritative source of truth and project self-description, compiled into the mindmap."
+      },
+      {
+        "target_type": "file",
+        "file_path": "src/mindmap/types.ts",
+        "comment": "Core type definitions for Node, Link, Mindmap, ANCEContext, MindmapPatchAction, and CompileOptions."
+      },
+      {
+        "target_type": "file",
+        "file_path": "src/mindmap/compile.ts",
+        "comment": "Main compilation orchestration: rotation-based save, lock-based resumption, dependency-aware parallel summarization with semaphore, and pre-population from old tree."
+      },
+      {
+        "target_type": "file",
+        "file_path": "src/mindmap/explorer-agent.ts",
+        "comment": "Autonomous explorer agent loop with tool calls (read_file, ls, grep, mark_file, web_search, web_fetch, mark_url, mark_term), context compaction, round budget steering, and token threshold management."
+      },
+      {
+        "target_type": "file",
+        "file_path": "src/mindmap/compile-utils.ts",
+        "comment": "Utility functions: markdown parsing, node building, link extraction, bottom-up collection, lock management (4h freshness), ProgressTracker for concurrent node display."
+      },
+      {
+        "target_type": "file",
+        "file_path": "src/mindmap/load.ts",
+        "comment": "Load mindmap from JSON, set in-memory flags (is_mycc/is_patch), strip flags before serialization, default path resolution."
+      },
+      {
+        "target_type": "file",
+        "file_path": "src/mindmap/patch.ts",
+        "comment": "Node patching with cascading summary regeneration (descendants bottom-up, then ancestors), add/remove/move node operations, and applyPatchAction for in-memory patch replay."
+      },
+      {
+        "target_type": "file",
+        "file_path": "src/mindmap/patch-jsonl.ts",
+        "comment": "Append-only JSONL log for mindmap patch actions: append, read, write (full rewrite), clear, and rebuildPatches (BFS dedup with MYCC.md-deleted node preservation)."
+      },
+      {
+        "target_type": "file",
+        "file_path": "src/mindmap/validate.ts",
+        "comment": "Hash-based validation between mindmap.json and source markdown, structural validation of nodes/links, parse_mindmap_json utility."
+      },
+      {
+        "target_type": "file",
+        "file_path": "src/mindmap/get-node.ts",
+        "comment": "Tree traversal utilities: get_node by path, get_node_result with path details, get_ancestors, get_descendants, get_descendants_at_depth."
+      },
+      {
+        "target_type": "file",
+        "file_path": "src/mindmap/diff-mindmap.ts",
+        "comment": "Incremental compilation via diff (deprecated, replaced by rotation-based compile.ts): diff_nodes, incremental_compile, save_mindmap_atomic."
+      },
+      {
+        "target_type": "file",
+        "file_path": "src/mindmap/index.ts",
+        "comment": "Public API barrel file exporting all mindmap types, functions, and modules."
+      },
+      {
+        "target_type": "file",
+        "file_path": "src/tools/recall.ts",
+        "comment": "Agent-facing recall tool for querying the mindmap knowledge tree by path, with hoisted term collection at root and [M]/[P] markers for MYCC vs patch-sourced nodes."
+      },
+      {
+        "target_type": "file",
+        "file_path": "src/slashes/mindmap.ts",
+        "comment": "Slash command interface for mindmap management: compile (with patch rebuild), get, patch, validate, rebuild-patches."
+      },
+      {
+        "target_type": "file",
+        "file_path": "docs/mindmap-design.md",
+        "comment": "Original design document for the mindmap system: type declarations, A-N-C-E algorithm, link stub design, compilation flow, process isolation."
+      },
+      {
+        "target_type": "file",
+        "file_path": "docs/mindmap-redesign.md",
+        "comment": "Redesign document: two independent on-disk lines (mindmap.json + mindmap-patch.jsonl), in-memory merge, is_mycc/is_patch flags, patch rebuild algorithm, recap-to-patch flow."
+      },
+      {
+        "target_type": "file",
+        "file_path": "docs/mindmap-usage.md",
+        "comment": "User-facing usage guide for the mindmap: slash commands, recall/get_node tool usage, startup behavior, process isolation, wiki vs mindmap comparison."
+      },
+      {
+        "target_type": "term",
+        "term_name": "A-N-C-E",
+        "comment": "Context algorithm for generating mindmap node summaries: A (Ancestor texts providing upward hierarchy context), N (Node text being summarized), C (Children/descendant summaries providing downward context), E (Environment/agent behavior guidance for summarization style)."
+      },
+      {
+        "target_type": "term",
+        "term_name": "is_mycc / is_patch flags",
+        "comment": "Two in-memory-only flags on Node (never serialized to mindmap.json). is_mycc=true for nodes sourced from MYCC.md via mindmap.json; is_patch=true for nodes created or modified by patch actions. Drive compile (only is_mycc nodes get summaries) and patch rebuild (is_patch on is_mycc node → emit 'update' to preserve patched text)."
+      },
+      {
+        "target_type": "term",
+        "term_name": "mindmap-patch.jsonl",
+        "comment": "Append-only JSONL file at .mycc/mindmap-patch.jsonl recording structural changes (add/update/delete) from recap sessions. Replayed at load time to rebuild the in-memory merged tree. Hash-gated: only hash-matching actions are replayed. Rebuilt during /mindmap compile via BFS dedup."
+      },
+      {
+        "target_type": "term",
+        "term_name": "atomic rotation",
+        "comment": "File rotation strategy during mindmap compilation to prevent data corruption: mindmap.json → mindmap.json.bak (backup), mindmap.json.new → mindmap.json (atomic rename). Interim progress is saved to the .new file, not the main file."
+      },
+      {
+        "target_type": "term",
+        "term_name": "lock-based resumption",
+        "comment": "Lock-based mechanism allowing interrupted mindmap compilations to resume from the temp file (.new) within a 4-hour freshness window. The lock file records start time, source file, source hash, and output path."
+      },
+      {
+        "target_type": "term",
+        "term_name": "patch rebuild",
+        "comment": "BFS traversal of the in-memory merged tree during /mindmap compile that produces a minimal, consistent patch set: one 'add' per surviving patch-added node, one 'update' per modified MYCC.md node, and one 'add' per MYCC.md-deleted node (preserving trimmed content as patch-added knowledge)."
+      }
+    ]
+  }
+}
