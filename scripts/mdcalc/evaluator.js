@@ -72,10 +72,53 @@ export function evaluateFile(filePath) {
     const opName = op.op, area = op.area, values = op.values;
     try {
       if (opName === 'clear') {
-        // `clear` is the only op allowed to target a 2D block (parseArea2D),
-        // so a whole rectangle can be wiped in one action. All other ops stay 1D.
+        // `clear` targets a 2D block (parseArea2D), wiping a whole rectangle in
+        // one action. `grid` is the other op allowed to target a 2D block (below).
         const a = parseArea2D(area, maxRow);
         for (const c of a.cells) grid.delete(c);
+      } else if (opName === 'grid') {
+        // `grid` — sparse 2D data fill. `area` is a 2D block (e.g. `D2:P33`) and
+        // `values` is a 2D array (array of rows, each an array of cells). Each
+        // inner cell maps to the block's cells in row-major order. `null`/
+        // `undefined` mean "skip this cell" (leave it untouched); a number =>
+        // {type:'num'}; a string => {type:'text'} — identical inference to the
+        // `data` op. One op can fill an entire sparse table block that would
+        // otherwise require one `data` op per non-empty cell.
+        //   {op:'grid', area:'D2:P33', values:[
+        //     [null,null,null,600000, null,...],  // row 2: only G2 filled
+        //     [null,null,null,null,    null,...],  // row 3: nothing here
+        //     ...
+        //   ]}
+        if (!Array.isArray(values)) throw new Error('values must be a 2D array (array of rows)');
+        const a = parseArea2D(area, maxRow);
+        // recover block row/col counts from the area string (parseArea2D returns
+        // a flat row-major list but not the dimensions, so re-derive them).
+        const colon = area.indexOf(':');
+        if (colon < 0) throw new Error('grid: area must be a 2D block like "D2:P33" (single cell not allowed)');
+        const [startStr, endStr] = area.split(':');
+        const s = parseCellId(startStr), e = parseCellId(endStr);
+        if (!s || !e) throw new Error(`grid: unparseable area "${area}"`);
+        const cols = Math.abs(e.col - s.col) + 1;
+        const rows = Math.abs(e.row - s.row) + 1;
+        if (values.length !== rows)
+          throw new Error(`grid: expected ${rows} rows, got ${values.length}`);
+        let idx = 0;
+        for (let r = 0; r < rows; r++) {
+          const row = values[r];
+          if (!Array.isArray(row))
+            throw new Error(`grid row ${r} is not an array (got ${row === null ? 'null' : typeof row})`);
+          if (row.length !== cols)
+            throw new Error(`grid row ${r}: expected ${cols} cols, got ${row.length}`);
+          for (let c = 0; c < cols; c++) {
+            const v = row[c];
+            if (v === null || v === undefined) { idx++; continue; } // skip cell
+            const cell = a.cells[idx];
+            if (typeof v === 'number') grid.set(cell, { type: 'num', value: v });
+            else if (typeof v === 'string') grid.set(cell, { type: 'text', value: v });
+            else throw new Error(`grid cell ${cell}: value is ${v === null ? 'null' : typeof v} (expected number, string, or null)`);
+            idx++;
+          }
+        }
       } else if (opName === 'data') {
         if (!Array.isArray(values)) throw new Error('values must be an array');
         const a = parseArea(area, maxRow);
@@ -241,7 +284,7 @@ export function evaluateFile(filePath) {
           }
         }
       } else {
-        throw new Error(`unknown op "${opName}" (expected data|func|clear|date|time|datetime|seq|copy)`);
+        throw new Error(`unknown op "${opName}" (expected data|func|grid|clear|date|time|datetime|seq|copy)`);
       }
     } catch (e) {
       // L2 error: record and skip this op

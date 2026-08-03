@@ -5,13 +5,13 @@ description: >
   DETERMINISTICALLY — so the LLM never computes arithmetic itself. A .mdcalc.md
   file has three sections: "# 计算器规则" (rules), "# 操作记录" (an append-only
   action log inside a ```js block starting with "const ops = ["), and "# 结果"
-  (result table). You append action objects (data/func/clear/date/time/datetime/seq/copy)
+  (result table). You append action objects (data/grid/func/clear/date/time/datetime/seq/copy)
   to the ops array with edit_file, then run the `mdcalc` CLI via the bash tool
   (`mdcalc <file>`) to evaluate it, then read the result table back with read_file.
   The evaluator (jsep-based, no eval) does ALL the math; you only compose actions
   and read results. Use for sums, averages, formulas, loan schedules, VLOOKUP,
   date differences, any calculation where LLM arithmetic would be unreliable.
-keywords: [mdcalc, calculator, arithmetic, formula, sum, average, date, loan, schedule, jsep, deterministic, seq, copy, table, init, check, clear]
+keywords: [mdcalc, calculator, arithmetic, formula, sum, average, date, loan, schedule, jsep, deterministic, seq, copy, grid, table, init, check, clear, sparse, batch]
 ---
 
 # Markdown Calculator (mdcalc)
@@ -53,8 +53,8 @@ You do NOT need to know where the evaluator script lives — just call `mdcalc`.
 
 - **Columns A–Z only** (26 columns); rows are unbounded.
 - **1D ranges** for `data`/`func`/`date`/`time`/`datetime`/`seq`/`copy`.
-  `clear` is the sole exception: it accepts a **2D block** (e.g. `A1:B10`) and
-  wipes every cell in it in one action.
+  Two ops accept a **2D block** (e.g. `A1:B10`): `clear` (wipes every cell) and
+  `grid` (sparse fill — `null` skips a cell, see below).
 - **No `NOW()`/`TODAY()`** — results must be deterministic; pass dates via ops.
 
 ## The three-step workflow
@@ -70,6 +70,27 @@ You do NOT need to know where the evaluator script lives — just call `mdcalc`.
 Drive it with `write_file` / `edit_file` (ordinary file tools) + `bash` running
 `mdcalc <file>` (evaluate) + `read_file` (read results). The CLI resolves
 portably from PATH; do not call the evaluator by a relative script path.
+
+## Compact data entry — keep the ops log short
+
+A verbose ops log (one op per cell) is the #1 mistake. Use these three
+techniques so a whole table takes a handful of ops, not one op per cell:
+
+1. **Header row in ONE op** — a row range fills left-to-right:
+   `{op:'data', area:'A1:P1', values:['id','type',...,'备注']}` instead of 16
+   single-cell ops.
+2. **Sequence columns in ONE op** — `seq` fills an arithmetic/date series:
+   `{op:'seq', area:'A2:A33', from:121, to:152, step:1}` instead of 32 ops.
+   Repeated-metadata columns use a 1D `data` range or `seq value:...`:
+   `{op:'data', area:'B2:B5', values:['日清','日清','内部结算','内部结算']}`.
+3. **Sparse 2D amount block in ONE op** — `grid` fills a whole rectangle where
+   each row's value lives in a different column; `null` skips empty cells (see
+   `grid` below). This is the key op for ledger/sparse-table data.
+
+**Before/after** for a 32-row × 16-col ledger (the three-layer pattern):
+- BEFORE: ~200 ops (one `data` op per non-empty cell).
+- AFTER: ~12 ops — 1 header `data` + 3 metadata `data`/`seq` + 1 `grid` for all
+  amounts + the `func`/report ops.
 
 ## File template
 
@@ -91,11 +112,13 @@ portably from PATH; do not call the evaluator by a relative script path.
 
 ```js
 const ops = [
-  {op:'data', area:'A1', values:['期次']},
-  {op:'data', area:'B1', values:['期初本金']},
-  // ...more header cells in row 1...
+  // header row in ONE op (1D row range, left-to-right)
+  {op:'data', area:'A1:C1', values:['期次','期初本金','利息']},
+  // sequence column in ONE op
   {op:'seq',  area:'A2:A13', from:1, to:12, step:1},
+  // a dense 1D data column in ONE op
   {op:'data', area:'B2:B13', values:[...]},
+  // one formula + copy it down (avoids writing every formula)
   {op:'func', area:'C2',     values:['ROUND(B2 * 0.0035, 2)']},
   {op:'copy', from:'C2',     to:'C3:C13'}
 ]
@@ -116,16 +139,45 @@ row number 1..N.
 
 Each op has `op`, `area` (or `from`+`to` for `copy`), and (except `clear`,
 `seq`, `copy`) `values`. **`values` is always an array whose length must equal
-the number of cells in `area` — a mismatch is a hard error.**
+the number of cells in `area` — a mismatch is a hard error.** (For `grid`,
+`values` is a 2D array: outer length = block rows, each inner length = block
+cols; `null`/`undefined` slots are skipped, not counted toward the fill.)
 
 | op | fields | meaning |
 |----|--------|---------|
-| `data` | `area`, `values` (number[]/string[]) | raw numbers or text |
+| `data` | `area`, `values` (number[]/string[]) | raw numbers or text (1D range or single cell) |
+| `grid` | `area` (2D block), `values` (Array<Array<number\|string\|null>>) | **sparse 2D fill** (see below) — one op for a whole sparse block |
 | `func` | `area`, `values` (string[] of formulas) | formulas, evaluated on eval |
-| `clear` | `area` | clear cells to empty (the only op that accepts a 2D block like `A1:B10`) |
+| `clear` | `area` (1D, single, or 2D block) | clear cells to empty |
 | `date` / `time` / `datetime` | `area`, `values` (string[] `YYYY-MM-DD` / `HH:mm:ss` / `YYYY-MM-DDTHH:mm:ss`) | typed date cells |
 | `seq` | `area`, `from`/`to`/`step`/`unit`/`value` | **sequence fill** (see below) |
 | `copy` | `from` (single cell), `to` (range) | **relative range copy / fill** (see below) |
+
+### `grid` — sparse 2D fill (avoids one op per cell)
+
+Fills a 2D block where each row's value may sit in a different column (e.g. a
+ledger: each journal entry touches one account column, the rest stay empty).
+`area` is a 2D block like `D2:P33`; `values` is a 2D array — one inner array per
+block row, one element per block column, in **row-major** order. `null` /
+`undefined` means "skip this cell" (leave it untouched); a number → `num`; a
+string → `text` (same per-cell inference as `data`). Outer length must equal the
+block's row count and each inner length must equal the block's column count
+(hard error otherwise).
+
+```js
+// a 4-row × 3-col block at A2:C5; only a few cells are non-empty
+{op:'grid', area:'A2:C5', values:[
+  [121, '合同签订', null ],   // row 2: A2=121, B2='合同签订', C2 empty
+  [122, '合同签订', null ],   // row 3
+  [123, '出账',     600000],  // row 4: C4=600000
+  [null,null,       -180000]  // row 5: only C5=-180000
+]}
+```
+
+For a wide sparse table (e.g. 32 rows × 13 amount columns, one value per row),
+`grid` turns ~33 `data` ops into **one** op. Pair it with a header `data` range
+and metadata `seq`/`data` columns for the most compact entry (see the worked
+example `examples/17-grid-sparse-2d.mdcalc.md`).
 
 ### `seq` — sequence fill (avoids writing every value)
 
@@ -201,7 +253,7 @@ L2/L3 are collected (not abort-on-first), so fix them in one pass and re-run.
 
 ## Worked examples
 
-Sixteen ready-to-run `.mdcalc.md` examples live in `skills/mdcalc/examples/`. Each
+Seventeen ready-to-run `.mdcalc.md` examples live in `skills/mdcalc/examples/`. Each
 is a self-contained file (rules + ops log + populated result table) demonstrating a
 distinct op/function combination. Re-run any with `mdcalc <file>` via bash, then
 `read_file` its `# 结果` section.
@@ -222,8 +274,9 @@ distinct op/function combination. Re-run any with `mdcalc <file>` via bash, then
 | `examples/12-count-vs-countnum.mdcalc.md` | `COUNT` (any non-empty) vs `COUNTNUM` (num only); why `SUM` can't cross text |
 | `examples/13-mod-gcd-lcm.mdcalc.md` | `MOD/GCD/LCM` integer math |
 | `examples/14-time-workhours.mdcalc.md` | `time`/`datetime` ops, `DATEDIF(..., "s")` → hours |
-| `examples/15-clear-2d-block.mdcalc.md` | `clear` with a 2D block (`B2:C3`) — the only 2D op |
+| `examples/15-clear-2d-block.mdcalc.md` | `clear` with a 2D block (`B2:C3`) |
 | `examples/16-loan-plan.mdcalc.md` | large-scale 12-period equal-principal loan: `seq` + `func`+`copy` across 6 columns, `ROUND` everywhere |
+| `examples/17-grid-sparse-2d.mdcalc.md` | **`grid` sparse 2D fill** — header `data` range + `seq` id column + `grid` sparse amount block, all in a handful of ops |
 
 ## Reference
 

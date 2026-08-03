@@ -31,9 +31,10 @@ A single `.mdcalc.md` file with three top-level H1 sections, in fixed order:
 3. 用 read_file 读取"# 结果"部分的表格
 
 ## 可用动作
-- data     : 写入数字或文本
+- data     : 写入数字或文本（1D 范围批量录入）
+- grid     : 稀疏 2D 批量录入（一个 op 填整个稀疏块，null 跳过单元格）
 - func     : 写入公式（1D 填充）
-- clear    : 清空区域
+- clear    : 清空区域（可清 2D 块）
 - date     : 写入日期（YYYY-MM-DD）
 - time     : 写入时间（HH:mm:ss）
 - datetime : 写入日期时间（YYYY-MM-DDTHH:mm:ss）
@@ -99,7 +100,7 @@ Empty cells render as blank (no value between the pipes).
 
 ## 3. Action schema (append-only log)
 
-Each entry in `ops` is an object with an `op` field and an `area` field. All ops (except `clear`) carry a `values` field that is **always a 1D array**.
+Each entry in `ops` is an object with an `op` field and an `area` field. All ops (except `clear`) carry a `values` field that is **always an array** — 1D for `data`/`func`/`date`/`time`/`datetime`, or 2D (array of rows) for `grid`.
 
 ### 3.1 Core rule: `values` is always an array, length must match area
 
@@ -112,29 +113,43 @@ This rule is rigid by design. No ambiguity, no silent padding.
 | op | area | values | cell type | meaning |
 |----|------|--------|-----------|---------|
 | `data` | 1D range or single cell | `number[]` or `string[]` | `num` or `text` | Write raw numbers or text |
+| `grid` | 2D block (e.g. `A2:D10`) | `Array<Array<number\|string\|null>>` (2D, row-major) | `num` or `text` | Sparse 2D fill: each inner cell maps to the block in row-major order; `null`/`undefined` skips that cell (leaves it untouched). One op replaces many `data` ops for sparse tables. |
 | `func` | 1D range or single cell | `string[]` (formulas) | result type depends on formula | Write formula(s); evaluated on `eval` |
-| `clear`| 1D range or single cell | (omitted) | — | Clear cells to empty |
+| `clear`| 1D range, single cell, or 2D block | (omitted) | — | Clear cells to empty |
 | `date` | 1D range or single cell | `string[]` (`YYYY-MM-DD`) | `date` | Write date values |
 | `time` | 1D range or single cell | `string[]` (`HH:mm:ss`) | `time` | Write time values |
 | `datetime` | 1D range or single cell | `string[]` (`YYYY-MM-DDTHH:mm:ss`) | `datetime` | Write datetime values |
 
-### 3.3 Area notation (1D by default; 2D allowed for `clear`)
+### 3.3 Area notation (1D by default; 2D allowed for `clear` and `grid`)
 
 - **Single cell**: `A1`, `B3`
 - **Column range** (vertical): `A1:A10` — rows 1–10 of column A. Array maps **top-to-bottom**.
 - **Row range** (horizontal): `A1:J1` — columns A–J of row 1. Array maps **left-to-right**.
+- **2D block**: `A1:D10` — a rectangle (both row and col differ across endpoints). Only `clear` (wipe every cell) and `grid` (sparse fill, see below) may target a 2D block; for every other op it is a hard error.
 - **Whole column**: `A:A` — all currently non-empty rows of column A.
 
 Column letters are limited to **A–Z (26 columns)** in v0.1; multi-letter columns (`AA`, `AB`, …) are rejected. Rows are unbounded.
 
-**Determining direction**: a range is a row range if start row == end row (`A1:J1`); a column range if start col == end col (`A1:A10`). A range where both row and col differ (e.g. `A1:B10`) is **2D** — it is a **hard error** for every op **except `clear`**, which may target a 2D block and wipes every cell in it in one action.
+**Determining direction**: a range is a row range if start row == end row (`A1:J1`); a column range if start col == end col (`A1:A10`). A range where both row and col differ (e.g. `A1:B10`) is **2D** — it is a **hard error** for every op **except `clear`** (wipes every cell) and **`grid`** (sparse fill, `null` skips a cell), which may both target a 2D block in one action.
+
+**`grid` — sparse 2D fill.** `values` is a 2D array (one inner array per block row, each inner array one cell per block column, row-major). `null`/`undefined` in any slot means "skip this cell" (leave it untouched); a number → `num`; a string → `text` — the same per-cell inference as `data`. The outer length must equal the block's row count and each inner length must equal the block's column count (hard error otherwise). This lets one op fill a whole sparse table block that would otherwise need one `data` op per non-empty cell:
+
+```js
+// fill a 4-row × 3-col block starting at A2; only a few cells are non-empty
+{op:'grid', area:'A2:C5', values:[
+  [1,    null, 100  ],   // row 2: A2=1, C2=100
+  [null, 'x',  null ],   // row 3: B3='x'
+  [3,    null, 300  ],   // row 4: A4=3, C4=300
+  [null, null, null ]    // row 5: all empty (skip)
+]}
+```
 
 ### 3.4 Validation (hard errors)
 
 The evaluator aborts on any of these, printing a message to stderr and **not modifying the file**:
 
-- `values` length ≠ area cell count
-- 2D area (both row and col differ across endpoints)
+- `values` length ≠ area cell count (for `data`/`func`/`date`/`time`/`datetime`), or `grid` row/col count ≠ block dimensions
+- 2D area (both row and col differ across endpoints) for any op other than `clear`/`grid`
 - Unparseable area string
 - `data` with a value that is neither number nor string
 - `date`/`time`/`datetime` with a value that fails format validation
@@ -290,7 +305,7 @@ node scripts/mdcalc/mdcalc.js <subcommand> <path-to-mdcalc-file>
 `eval` (default):
 - Reads the file
 - Parses the `ops` array from the ```js fenced block (identified by `const ops = [`)
-- **Pass 1 (data pass)**: apply `data`/`date`/`time`/`datetime`/`clear` ops in order, writing typed values into the grid (`clear` may target a 2D block)
+- **Pass 1 (data pass)**: apply `data`/`grid`/`date`/`time`/`datetime`/`clear` ops in order, writing typed values into the grid (`clear` may wipe a 2D block; `grid` may fill a 2D block sparsely, with `null` skipping cells)
 - **Pass 2 (formula pass)**: collect all `func` ops, build dependency graph from cell references inside each formula, topologically sort, evaluate each formula with jsep + function table, write results back with correct type
 - Rewrites the `# 结果` table in-place
 - Writes the updated file back atomically (temp + rename)
@@ -306,7 +321,7 @@ Exit codes: `0` = OK, `1` = any L1/L2/L3 error, `2` = usage error.
 
 In-memory grid: `Map<string, CellValue>` keyed by cell id `A1`, `B3`, etc., where `CellValue` is the tagged union from §4. Two passes:
 
-1. **Data pass** — apply all `data`/`date`/`time`/`datetime`/`clear` ops in order, writing typed values with format validation.
+1. **Data pass** — apply all `data`/`grid`/`date`/`time`/`datetime`/`clear` ops in order, writing typed values with format validation (`grid` fills a 2D block sparsely; `clear` may wipe a 2D block).
 2. **Formula pass** — collect all `func` ops, build dependency graph from cell references inside each formula, topologically sort, evaluate each formula with jsep + function table, write results back with correct type tag.
 
 Circular references → error to stderr, file not modified.
@@ -478,7 +493,7 @@ The evaluator is split into small ES modules under `scripts/mdcalc/` (see §10.1
 
 ### 10.4 What is NOT in scope (v0.1)
 
-- No 2D ranges for data/func/date/time/datetime/seq/copy — 1D only (`clear` is the sole exception: it may wipe a 2D block)
+- No 2D ranges for data/func/date/time/datetime/seq/copy — 1D only (`clear` may wipe a 2D block; `grid` may fill a 2D block sparsely with `null` skips — the two 2D-capable ops)
 - Columns limited to A–Z (26); no multi-letter columns
 - No `NOW()`/`TODAY()` — results must be deterministic; pass dates explicitly
 - No multi-sheet support (single table per file)
