@@ -4,6 +4,23 @@
  */
 
 import type { Mindmap, Node, GetNodeResult } from './types.js';
+import { safeNodeId } from '../utils/sanitize.js';
+
+/**
+ * Resolve a path segment to a child node.
+ *
+ * Node ids are built from `safeNodeId(title)` during compile (compile-utils.ts)
+ * and patch replay (patch.ts `add` branch), so the canonical addressing scheme
+ * is the normalized id, NOT the raw title. Matching against the raw title
+ * breaks when a title contains spaces or special chars (e.g. "Code Cleanup"
+ * → id "code-cleanup"): a path segment "code-cleanup" would never equal
+ * "Code Cleanup". This helper normalizes each child's title the same way ids
+ * are constructed and compares against the segment, keeping traversal
+ * consistent with id construction.
+ */
+function findChild(parent: Node, segment: string): Node | undefined {
+  return parent.children.find(c => safeNodeId(c.title) === segment);
+}
 
 /**
  * Get a node from the mindmap by its path (id)
@@ -24,10 +41,8 @@ export function get_node(mindmap: Mindmap, id: string): Node | null {
   let current: Node = mindmap.root;
   
   for (const segment of segments) {
-    // Find child with matching title (case-insensitive comparison)
-    const child = current.children.find(
-      c => c.title.toLowerCase() === segment.toLowerCase()
-    );
+    // Match by normalized id (safeNodeId of the child's title)
+    const child = findChild(current, segment);
     
     if (!child) {
       return null; // Path not found
@@ -64,9 +79,7 @@ export function get_node_result(mindmap: Mindmap, id: string): GetNodeResult {
   path.push('/');
   
   for (const segment of segments) {
-    const child = current.children.find(
-      c => c.title.toLowerCase() === segment.toLowerCase()
-    );
+    const child = findChild(current, segment);
     
     if (!child) {
       return {
@@ -105,9 +118,7 @@ export function get_ancestors(mindmap: Mindmap, id: string): Node[] {
   
   for (let i = 0; i < segments.length - 1; i++) {
     const segment = segments[i];
-    const child = current.children.find(
-      c => c.title.toLowerCase() === segment.toLowerCase()
-    );
+    const child = findChild(current, segment);
     
     if (!child) {
       return []; // Path not found

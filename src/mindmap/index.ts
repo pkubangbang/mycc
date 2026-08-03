@@ -52,5 +52,5 @@ export type { ExplorationResult } from './explorer-agent.js';
 export { patch_mindmap, summarize_node, add_child_node, remove_node, move_node, applyPatchAction } from './patch.js';
 export { diff_nodes, save_mindmap_atomic } from './diff-mindmap.js';
 export type { DiffResult } from './diff-mindmap.js';
-export { getPatchPath, appendPatch, readAllPatches, writePatches, clearPatches, rebuildPatches } from './patch-jsonl.js';
+export { getPatchPath, appendPatch, readAllPatches, writePatches, clearPatches, rebuildPatches, validatePatchAction } from './patch-jsonl.js';
 export type { MindmapPatchAction } from './types.js';

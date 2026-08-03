@@ -19,6 +19,64 @@ import * as path from 'path';
 import type { MindmapPatchAction, Node } from './types.js';
 
 /**
+ * Validate a patch action's structural integrity before it enters the jsonl.
+ *
+ * This is the "orphan-prevention" gate. The two causes of an `add` patch being
+ * silently skipped at replay time are:
+ *   1. empty `title` or empty `text` — `applyPatchAction` returns false on
+ *      `!action.title || !action.text`, so the parent never enters the tree
+ *      and every later child under it becomes an orphan;
+ *   2. an `add` whose `path` is not "/" and is not a chain of non-empty
+ *      segments — a malformed/relative parent path can never resolve.
+ *
+ * Rejecting such actions at the append boundary keeps the log clean: a bad
+ * parent never lands in the file, so it can never orphan its descendants.
+ * `update`/`delete` are also sanity-checked (non-root, non-empty path).
+ *
+ * @param action - The patch action to validate
+ * @returns true if the action is structurally sound and safe to persist
+ */
+export function validatePatchAction(action: MindmapPatchAction): boolean {
+  if (!action || typeof action.action !== 'string') return false;
+  if (typeof action.path !== 'string' || action.path.length === 0) return false;
+
+  switch (action.action) {
+    case 'add':
+      // 'add' needs a non-empty title and non-empty text, plus a valid parent path.
+      if (!action.title || action.title.trim().length === 0) return false;
+      if (!action.text || action.text.trim().length === 0) return false;
+      // Parent path must be "/" or a "/a/b/..." chain of non-empty segments.
+      return action.path === '/' || isWellFormedPath(action.path);
+
+    case 'update':
+      // Cannot update root; needs non-empty text and a non-root path.
+      if (action.path === '/' || action.path === '') return false;
+      if (!action.text || action.text.trim().length === 0) return false;
+      return isWellFormedPath(action.path);
+
+    case 'delete':
+      // Cannot delete root; needs a non-root, well-formed path.
+      if (action.path === '/' || action.path === '') return false;
+      return isWellFormedPath(action.path);
+
+    default:
+      return false;
+  }
+}
+
+/**
+ * A well-formed node path is "/" or "/seg1/seg2/..." with non-empty segments
+ * and no double slashes. Used to reject malformed parent paths on 'add'.
+ */
+function isWellFormedPath(p: string): boolean {
+  if (!p.startsWith('/')) return false;
+  if (p.length === 1) return true; // "/"
+  if (p.endsWith('/')) return false; // no trailing slash (except root)
+  if (p.includes('//')) return false; // no double slashes
+  return p.slice(1).split('/').every(s => s.length > 0);
+}
+
+/**
  * Get the default patch JSONL path for a project
  * @param projectDir - The project directory (default: current working directory)
  * @returns Path to .mycc/mindmap-patch.jsonl
@@ -32,15 +90,26 @@ export function getPatchPath(projectDir?: string): string {
  * Append a single patch action to the JSONL file (append-only).
  * Creates the file if it does not exist.
  *
+ * Sanitizes the action through `validatePatchAction` first: structurally
+ * invalid actions (empty title/text for 'add', malformed paths, root
+ * update/delete) are rejected before they touch the log. This prevents
+ * orphan-creating parents from ever entering the append-only file — a bad
+ * parent skipped at write time cannot later orphan its descendants.
+ *
  * @param action - The patch action to append
  * @param patchPath - Path to the JSONL file
+ * @returns true if appended, false if rejected by validation
  */
-export function appendPatch(action: MindmapPatchAction, patchPath: string): void {
+export function appendPatch(action: MindmapPatchAction, patchPath: string): boolean {
+  if (!validatePatchAction(action)) {
+    return false;
+  }
   const dir = path.dirname(patchPath);
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
   }
   fs.appendFileSync(patchPath, `${JSON.stringify(action)}\n`, 'utf-8');
+  return true;
 }
 
 /**
@@ -63,7 +132,10 @@ export function readAllPatches(patchPath: string): MindmapPatchAction[] {
     if (trimmed === '') continue;
     try {
       const parsed = JSON.parse(trimmed) as MindmapPatchAction;
-      if (parsed && typeof parsed.action === 'string' && typeof parsed.path === 'string') {
+      // Accept only structurally valid actions so legacy/malformed entries
+      // (e.g. an 'add' with empty text from an older writer) are dropped at
+      // read time rather than replayed as doomed-to-skip orphans.
+      if (parsed && validatePatchAction(parsed)) {
         actions.push(parsed);
       }
     } catch {
@@ -77,6 +149,11 @@ export function readAllPatches(patchPath: string): MindmapPatchAction[] {
  * Write a complete set of patch actions to the JSONL file, replacing the old content.
  * Used during patch rebuild to produce a clean, minimal patch set.
  *
+ * Filters out structurally invalid actions via `validatePatchAction` so a
+ * rebuild (which BFS-walks the in-memory tree and may encounter a node with
+ * empty text) cannot re-introduce orphan-creating 'add' actions back into the
+ * log. This is the rebuild-path counterpart to `appendPatch`'s runtime gate.
+ *
  * @param actions - The patch actions to write (in order)
  * @param patchPath - Path to the JSONL file
  */
@@ -85,7 +162,8 @@ export function writePatches(actions: MindmapPatchAction[], patchPath: string): 
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
   }
-  const content = actions.map((a) => JSON.stringify(a)).join('\n');
+  const valid = actions.filter(a => validatePatchAction(a));
+  const content = valid.map((a) => JSON.stringify(a)).join('\n');
   // Trailing newline if non-empty
   const output = content.length > 0 ? `${content}\n` : '';
   fs.writeFileSync(patchPath, output, 'utf-8');

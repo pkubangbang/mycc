@@ -273,11 +273,22 @@ async function handleRecapCall(
       const applied = applyPatchAction(mindmapForPatch, patch);
       if (applied) {
         const patchPath = getPatchPath(ctx.core.getWorkDir());
-        appendPatch(patch, patchPath);
-        ctx.core.brief('info', 'mindmap-patch',
-          `${patch.action}: ${patch.path}${patch.title ? `/${patch.title}` : ''}`,
-          patch.reason || undefined,
-        );
+        // appendPatch now returns false if the action fails structural
+        // validation (orphan-prevention gate). Since applyPatchAction above
+        // already accepted it, a false here signals logic drift between the
+        // two validators — log it so the in-memory/jsonl divergence is visible.
+        const persisted = appendPatch(patch, patchPath);
+        if (persisted) {
+          ctx.core.brief('info', 'mindmap-patch',
+            `${patch.action}: ${patch.path}${patch.title ? `/${patch.title}` : ''}`,
+            patch.reason || undefined,
+          );
+        } else {
+          ctx.core.brief('warn', 'mindmap-patch',
+            `rejected by validation (not persisted): ${patch.action} ${patch.path}${patch.title ? `/${patch.title}` : ''}`,
+            patch.reason || undefined,
+          );
+        }
       }
     }
   }
