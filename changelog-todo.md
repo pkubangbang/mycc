@@ -34,5 +34,12 @@ When updating the changelog, use the following procedure:
 
 # Todo
 
-- [ ] add e2e test using tmux, with meaningful test cases, written as a skill
+> Todo - Or never?
+> The below todo items have inherit gap with mycc's current implementation.
+> With the existing archetecture, these todos may not be easily completed.
+> Let's write them down to admit our limitation.
+
+- [ ] add e2e test using tmux, with meaningful test cases, written as a skill.
 - [ ] enable "boostrap install" mode via Docker. 
+- [ ] make `/save` generate a "rich" session backup in addition to the original "slim" one.
+- [ ] enable "remote shell" -- make local mycc able to control remote codebase.
