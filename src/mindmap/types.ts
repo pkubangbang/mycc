@@ -43,6 +43,21 @@ export interface Node {
   children: Node[];
   /** Outward links to other resources */
   links: Link[];
+  /**
+   * IN-MEMORY ONLY — never serialized to mindmap.json.
+   * True if this node originates from mindmap.json (= MYCC.md isomorph).
+   * Set to true by load_mindmap; set to false for patch-added nodes.
+   * Drives compile (only is_mycc nodes get summaries) and rebuild logic.
+   */
+  is_mycc?: boolean;
+  /**
+   * IN-MEMORY ONLY — never serialized to mindmap.json.
+   * True if this node was created or modified by a patch.
+   * For 'add' patches: is_patch=true on the new node.
+   * For 'update' patches: is_patch=true on the target (is_mycc preserved).
+   * Drives rebuild: is_patch on an is_mycc node → emit 'update' to preserve patched text.
+   */
+  is_patch?: boolean;
 }
 
 /**
@@ -106,6 +121,30 @@ export interface CompileOptions {
 export interface PatchOptions {
   /** Optional feedback to incorporate into the summary */
   feedback?: string;
+}
+
+/**
+ * A single patch action recorded in mindmap-patch.jsonl.
+ * Each recap produces at most one patch action (add / update / delete).
+ * Actions are replayed at startup to rebuild the in-memory merged tree.
+ */
+export interface MindmapPatchAction {
+  /** Action type — exactly one per recap */
+  action: 'add' | 'update' | 'delete';
+  /** Target node path: parent for 'add', target for 'update'/'delete' */
+  path: string;
+  /** For 'add': the new child node's title */
+  title?: string;
+  /** For 'add'/'update': the new text content */
+  text?: string;
+  /** ISO timestamp of when the patch was created */
+  timestamp: string;
+  /** Checkpoint ID that triggered this patch */
+  checkpoint_id: string;
+  /** Brief reason for the change (from LLM) */
+  reason: string;
+  /** Hash of mindmap.json at the time of patch creation (for invalidation) */
+  mindmap_hash: string;
 }
 
 /**

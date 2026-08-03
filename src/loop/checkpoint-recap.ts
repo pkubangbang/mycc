@@ -7,6 +7,8 @@
 
 import chalk from 'chalk';
 import type { Message, TodoModule, Tool } from '../types.js';
+import type { Mindmap, MindmapPatchAction, Node } from '../mindmap/types.js';
+import { get_node } from '../mindmap/get-node.js';
 import { Triologue } from './triologue.js';
 import { forkChat } from '../engine/chat-provider.js';
 
@@ -341,4 +343,351 @@ export async function handleRecap(
 
 // addCheckpointMarker removed — checkpoint is now identified via tool message
 // (see isCheckpointMessage in triologue.ts)
+
+// ============================================================================
+// MINDMAP PATCH: forkChat #2 — concurrent patch decision
+//
+// Each recap launches TWO concurrent forkChat calls via Promise.all (see
+// handleRecapWithPatch). forkChat #1 (handleRecap, unchanged) produces the
+// recap summary. forkChat #2 (generatePatchAction, below) independently
+// decides whether ONE mindmap node should be added/updated/deleted.
+//
+// Both calls fork from the SAME triologue messages → same prompt-cache prefix.
+// Neither depends on the other's output. See docs/mindmap-redesign.md Part 2.
+// ============================================================================
+
+/** Maximum retry attempts for an invalid patch response (beyond the first try). */
+const PATCH_MAX_RETRIES = 2;
+
+/**
+ * Generate a compact path-only outline of the mindmap tree for the patch prompt.
+ * Marks each node [M] (MYCC.md-sourced, is_mycc=true) or [P] (patch-added).
+ * Truncated to first 3 levels if the tree is large (> 200 nodes) to keep the
+ * prompt size bounded.
+ *
+ * @param node - The root node to outline from
+ * @returns Indented tree outline string with [M]/[P] markers and node ids
+ */
+function generateTreeOutline(node: Node): string {
+  // Count total nodes; if large, truncate to first 3 levels
+  function countNodes(n: Node): number {
+    return 1 + n.children.reduce((acc, c) => acc + countNodes(c), 0);
+  }
+  const total = countNodes(node);
+  const maxLevel = total > 200 ? 3 : Infinity;
+
+  const lines: string[] = [];
+  function walk(n: Node, indent: string) {
+    if (n.level > maxLevel) return;
+    const marker = n.is_mycc ? '[M]' : '[P]';
+    lines.push(`${indent}${marker} ${n.id}`);
+    for (const child of n.children) {
+      walk(child, indent + '  ');
+    }
+  }
+  walk(node, '');
+
+  if (total > 200) {
+    // Append a count of deeper nodes omitted
+    let deeper = 0;
+    function countDeeper(n: Node) {
+      if (n.level > maxLevel) {
+        deeper += countNodes(n);
+        return;
+      }
+      for (const child of n.children) countDeeper(child);
+    }
+    countDeeper(node);
+    if (deeper > 0) {
+      lines.push(`  ... (${deeper} deeper nodes omitted)`);
+    }
+  }
+
+  return lines.join('\n');
+}
+
+/**
+ * Build the patch-decision prompt for forkChat #2.
+ *
+ * This prompt is focused on a SINGLE objective: decide if ONE mindmap node
+ * should be changed. It does NOT mix in summarization (that's forkChat #1's
+ * job). Output is either "none" or a single JSON object.
+ *
+ * @param description - The checkpoint description (focus context)
+ * @param treeOutline - The path-only tree outline (from generateTreeOutline)
+ * @param feedback - Optional validation error feedback from a prior invalid response
+ * @returns The assembled prompt string
+ */
+function buildPatchPrompt(description: string, treeOutline: string, feedback: string): string {
+  return `[MINDMAP PATCH] You just completed a checkpoint: "${description}".
+Review the conversation history from when the checkpoint was created up to now.
+
+Here is the current mindmap tree (paths only, [M] = MYCC.md-sourced, [P] = patch-added):
+${treeOutline}
+
+Based on what was learned during this checkpoint, decide if ONE mindmap node should be changed.
+You may choose ONE of:
+- ADD: add a child node to an existing parent (provide path=parent_path, title, text)
+- UPDATE: update an existing node's text (provide path=target_path, text)
+- DELETE: delete an existing non-root node (provide path=target_path)
+
+Rules:
+- For ADD: path MUST be an existing node (the parent)
+- For UPDATE/DELETE: path MUST be an existing node (the target), not root
+- Only make a change if genuinely warranted by new discoveries
+- Be conservative — the mindmap is shared knowledge
+
+If no change is warranted, respond exactly: none
+
+Otherwise, respond with ONE JSON object (no other text):
+{"action":"add|update|delete","path":"/...","title":"...","text":"...","reason":"..."}
+${feedback}
+Output TEXT ONLY — do NOT use any tools.`;
+}
+
+/**
+ * Parsed result of a patch response.
+ */
+interface ParsedPatchResponse {
+  /** The validated patch action, or null if "none" / no patch warranted */
+  patch: MindmapPatchAction | null;
+  /** Validation error message (for retry feedback); undefined when valid */
+  error?: string;
+}
+
+/**
+ * Parse and validate the forkChat #2 patch response against the current mindmap.
+ *
+ * Validation rules:
+ * - "none" or empty → no patch (valid, patch=null)
+ * - Must be valid JSON with action in {add, update, delete}
+ * - 'add': path must be an existing node (parent), title + text required
+ * - 'update': path must be an existing non-root node, text required
+ * - 'delete': path must be an existing non-root node
+ *
+ * @param response - The raw LLM response text
+ * @param mindmap - The current mindmap (for path validation)
+ * @param checkpointId - The checkpoint id to record in the patch
+ * @returns ParsedPatchResponse with either a valid patch, null (none), or an error
+ */
+function parsePatchResponse(
+  response: string,
+  mindmap: Mindmap,
+  checkpointId: string,
+): ParsedPatchResponse {
+  const trimmed = response.trim();
+
+  // 1. "none" case
+  if (trimmed.toLowerCase() === 'none' || trimmed === '') {
+    return { patch: null };
+  }
+
+  // 2. Parse JSON
+  let parsed: Record<string, unknown>;
+  try {
+    parsed = JSON.parse(trimmed);
+  } catch {
+    return { patch: null, error: `Response is not valid JSON: "${trimmed.slice(0, 100)}"` };
+  }
+
+  // 3. Validate action type
+  const action = parsed.action;
+  if (action !== 'add' && action !== 'update' && action !== 'delete') {
+    return { patch: null, error: `Invalid action "${String(action)}". Must be add, update, or delete.` };
+  }
+
+  // 4. Validate path
+  const path = parsed.path;
+  if (typeof path !== 'string' || path.length === 0) {
+    return { patch: null, error: 'Missing or invalid "path" field.' };
+  }
+
+  const targetNode = get_node(mindmap, path);
+
+  if (action === 'add') {
+    if (!targetNode) {
+      return { patch: null, error: `Parent node not found: "${path}"` };
+    }
+    const title = parsed.title;
+    if (typeof title !== 'string' || title.length === 0) {
+      return { patch: null, error: 'ADD requires a non-empty "title" field.' };
+    }
+    const text = parsed.text;
+    if (typeof text !== 'string') {
+      return { patch: null, error: 'ADD requires a "text" field.' };
+    }
+    const reason = typeof parsed.reason === 'string' ? parsed.reason : '';
+    return {
+      patch: {
+        action: 'add',
+        path,
+        title,
+        text,
+        timestamp: new Date().toISOString(),
+        checkpoint_id: checkpointId,
+        reason,
+        mindmap_hash: mindmap.hash,
+      },
+    };
+  }
+
+  // action === 'update' or 'delete'
+  if (!targetNode) {
+    return { patch: null, error: `Target node not found: "${path}"` };
+  }
+  if (path === '/' || path === '') {
+    return { patch: null, error: 'Cannot update or delete root node.' };
+  }
+
+  if (action === 'update') {
+    const text = parsed.text;
+    if (typeof text !== 'string') {
+      return { patch: null, error: 'UPDATE requires a "text" field.' };
+    }
+    const reason = typeof parsed.reason === 'string' ? parsed.reason : '';
+    return {
+      patch: {
+        action: 'update',
+        path,
+        text,
+        timestamp: new Date().toISOString(),
+        checkpoint_id: checkpointId,
+        reason,
+        mindmap_hash: mindmap.hash,
+      },
+    };
+  }
+
+  // action === 'delete'
+  const reason = typeof parsed.reason === 'string' ? parsed.reason : '';
+  return {
+    patch: {
+      action: 'delete',
+      path,
+      timestamp: new Date().toISOString(),
+      checkpoint_id: checkpointId,
+      reason,
+      mindmap_hash: mindmap.hash,
+    },
+  };
+}
+
+/**
+ * forkChat #2 — generate a patch decision concurrently with the recap summary.
+ *
+ * Forks from the same triologue messages as forkChat #1. Has its own retry
+ * loop (up to PATCH_MAX_RETRIES additional attempts) for invalid responses.
+ * If ESC is pressed (lead agent), returns null immediately (skip patch).
+ *
+ * CACHE: same rationale as handleRecap — fullMessages + allTools must be the
+ * un-minified, full-tools array so the fork hits the cached prefix. toolChoice
+ * 'none' constrains output to text-only without invalidating the cache.
+ *
+ * @param fullMessages - Full triologue messages before truncation (shared with #1)
+ * @param allTools - All tools for prompt cache preservation (shared with #1)
+ * @param description - Checkpoint description (focus context)
+ * @param mindmap - Current mindmap (for tree outline + path validation)
+ * @param checkpointId - The checkpoint id being closed
+ * @param escAware - Optional ESC-aware wrapper (lead agent); teammates omit it
+ * @returns A validated MindmapPatchAction, or null if none/invalid/ESC
+ */
+export async function generatePatchAction(
+  fullMessages: Message[],
+  allTools: Tool[],
+  description: string,
+  mindmap: Mindmap,
+  checkpointId: string,
+  escAware?: <T>(fn: (ac: AbortController) => Promise<T>, cleanup: () => T) => Promise<T>,
+): Promise<MindmapPatchAction | null> {
+  let feedback = '';
+
+  for (let attempt = 0; attempt <= PATCH_MAX_RETRIES; attempt++) {
+    const treeOutline = generateTreeOutline(mindmap.root);
+    const prompt = buildPatchPrompt(description, treeOutline, feedback);
+
+    let response: string;
+    if (escAware) {
+      const result = await escAware(
+        async (ac) => forkChat(fullMessages, allTools, prompt, ac.signal, 'none'),
+        () => null as string | null,
+      );
+      if (result === null) return null;  // ESC pressed — skip patch
+      response = result;
+    } else {
+      response = await forkChat(fullMessages, allTools, prompt, undefined, 'none');
+    }
+
+    const parsed = parsePatchResponse(response, mindmap, checkpointId);
+    if (!parsed.error) {
+      return parsed.patch;  // valid (including null = "none")
+    }
+
+    // Invalid — prepare feedback for next retry
+    feedback = `\n\n**Your previous response was invalid:**\n${parsed.error}\nPlease fix and respond again with either "none" or a valid JSON object.`;
+  }
+
+  // All retries exhausted — no patch
+  return null;
+}
+
+/**
+ * Result of handleRecapWithPatch: the recap summary + optional patch action.
+ */
+export interface RecapWithPatchResult {
+  /** The structured recap summary note (from forkChat #1) */
+  summary: string;
+  /** A validated patch action, or null if none was produced (from forkChat #2) */
+  patch: MindmapPatchAction | null;
+}
+
+/**
+ * Run both forkChat calls concurrently via Promise.all.
+ *
+ * - forkChat #1 (handleRecap): recap summary — unchanged from existing behavior.
+ * - forkChat #2 (generatePatchAction): patch decision — independent, concurrent.
+ *
+ * Both fork from the same triologue messages (shared prompt-cache prefix).
+ * Neither receives the other's output. If mindmap is null/undefined, forkChat
+ * #2 is skipped (returns null) and only the summary runs.
+ *
+ * Note on retries: if forkChat #2's first response is invalid, its retry loop
+ * runs after Promise.all resolves the first attempt — by then forkChat #1 has
+ * already completed. This is acceptable because retries are rare (the patch
+ * prompt is simple) and the summary is already available for the caller.
+ *
+ * @param fullMessages - Full triologue messages before truncation
+ * @param allTools - All tools for prompt cache preservation
+ * @param description - Checkpoint description
+ * @param mindmap - Current mindmap (for patch decision); if absent, skip patch
+ * @param checkpointId - The checkpoint id being closed
+ * @param escAware - Optional ESC-aware wrapper (lead agent)
+ * @param comment - REQUIRED for non-abandon recaps (steering directive)
+ * @param lastUserQuery - The user's most recent query (context, not directive)
+ * @param checkpointResult - The original checkpoint tool result (before-state)
+ * @returns { summary, patch } — summary always present, patch may be null
+ */
+export async function handleRecapWithPatch(
+  fullMessages: Message[],
+  allTools: Tool[],
+  description: string,
+  mindmap: Mindmap | null | undefined,
+  checkpointId: string,
+  escAware?: <T>(fn: (ac: AbortController) => Promise<T>, cleanup: () => T) => Promise<T>,
+  comment?: string,
+  lastUserQuery?: string,
+  checkpointResult?: string,
+): Promise<RecapWithPatchResult> {
+  // ── Launch both forkChats concurrently via Promise.all ──
+  // Both fork from the same triologue messages — neither depends on the other's output.
+  const [summary, patch] = await Promise.all([
+    // forkChat #1: Recap Summary (unchanged from current handleRecap)
+    handleRecap(fullMessages, allTools, description, escAware, comment, lastUserQuery, checkpointResult),
+    // forkChat #2: Patch Decision (independent, concurrent) — skip if no mindmap
+    mindmap
+      ? generatePatchAction(fullMessages, allTools, description, mindmap, checkpointId, escAware)
+      : Promise.resolve(null),
+  ]);
+
+  return { summary, patch };
+}
 

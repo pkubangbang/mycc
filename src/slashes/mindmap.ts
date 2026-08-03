@@ -18,6 +18,11 @@ import {
   save_mindmap,
   load_mindmap,
   get_default_mindmap_path,
+  rebuildPatches,
+  writePatches,
+  getPatchPath,
+  applyPatchAction,
+  readAllPatches,
 } from '../mindmap/index.js';
 import chalk from 'chalk';
 import * as fs from 'fs';
@@ -57,6 +62,8 @@ export const mindmapCommand: SlashCommand = {
       }
     } else if (subCommand === 'validate') {
       await handleValidate(context);
+    } else if (subCommand === 'rebuild-patches') {
+      await handleRebuildPatches(context);
     } else {
       showHelp();
     }
@@ -83,7 +90,29 @@ async function handleCompile(context: { ctx: import('../types.js').AgentContext;
     const mindmap = await compile_mindmap(sourceFile, workDir, outputFile);
 
     const outPath = outputFile || '.mycc/mindmap.json';
-    console.log(chalk.green(`\n✓ Compiled: ${countNodes(mindmap.root)} nodes`));
+
+    // ── Patch rebuild: BFS in-memory tree → clean jsonl ──
+    // Takes the current in-memory merged tree (if any, with patches applied)
+    // and emits a minimal, consistent patch set against the freshly compiled
+    // mindmap.json. Eliminates duplicate/stale patches. See docs/mindmap-redesign.md Part 1.
+    const currentMerged = context.ctx.core.getMindmap();
+    const patchPath = getPatchPath(workDir);
+    const cleanPatches = rebuildPatches(
+      currentMerged ? currentMerged.root : mindmap.root,
+      mindmap.root,
+      mindmap.hash,
+    );
+    writePatches(cleanPatches, patchPath);
+
+    // Reload: fresh mindmap.json + clean patches → new in-memory tree
+    const reloaded = load_mindmap(get_default_mindmap_path(workDir));
+    // Replay clean patches (hash now matches)
+    for (const p of cleanPatches) {
+      applyPatchAction(reloaded, p);
+    }
+    context.ctx.core.setMindmap(reloaded);
+
+    console.log(chalk.green(`\n✓ Compiled: ${countNodes(mindmap.root)} nodes, ${cleanPatches.length} patches rebuilt`));
     console.log(chalk.gray(`  Source: ${sourceFile}`));
     console.log(chalk.gray(`  Output: ${outPath}`));
     console.log(chalk.gray(`  Hash: ${mindmap.hash}`));
@@ -201,6 +230,37 @@ async function handleValidate(context: { ctx: import('../types.js').AgentContext
   }
 }
 
+/**
+ * /mindmap rebuild-patches — standalone patch rebuild without recompiling.
+ * Takes the current in-memory merged tree, does BFS, rewrites mindmap-patch.jsonl.
+ * Useful if the jsonl has grown large or is suspected stale.
+ */
+async function handleRebuildPatches(context: { ctx: import('../types.js').AgentContext }): Promise<void> {
+  const mindmap = context.ctx.core.getMindmap();
+  if (!mindmap) {
+    console.log(chalk.yellow('No mindmap loaded. Use /mindmap compile first.'));
+    return;
+  }
+
+  const workDir = context.ctx.core.getWorkDir();
+  const patchPath = getPatchPath(workDir);
+
+  // Load a fresh base tree (mindmap.json) for the rebuild comparison
+  const mindmapPath = get_default_mindmap_path(workDir);
+  if (!fs.existsSync(mindmapPath)) {
+    console.log(chalk.yellow('No mindmap.json found. Use /mindmap compile first.'));
+    return;
+  }
+  const baseTree = load_mindmap(mindmapPath);
+
+  const beforeCount = readAllPatches(patchPath).length;
+  const cleanPatches = rebuildPatches(mindmap.root, baseTree.root, baseTree.hash);
+  writePatches(cleanPatches, patchPath);
+
+  console.log(chalk.green(`\n✓ Rebuilt patches: ${beforeCount} → ${cleanPatches.length} actions`));
+  console.log(chalk.gray(`  Path: ${patchPath}`));
+}
+
 function showHelp(): void {
   console.log(chalk.cyan('\n/mindmap - Manage agent memory mindmap\n'));
   console.log('Usage:');
@@ -208,6 +268,7 @@ function showHelp(): void {
   console.log(chalk.white('  /mindmap get <path>') + chalk.gray('           - Get node info'));
   console.log(chalk.white('  /mindmap patch <path> <text>') + chalk.gray('   - Update node text'));
   console.log(chalk.white('  /mindmap validate') + chalk.gray('                 - Check mindmap validity'));
+  console.log(chalk.white('  /mindmap rebuild-patches') + chalk.gray('       - Rebuild patch jsonl from in-memory tree'));
   console.log();
   console.log(chalk.gray('Examples:'));
   console.log(chalk.gray('  /mindmap compile                  # MYCC.md → .mycc/mindmap.json'));

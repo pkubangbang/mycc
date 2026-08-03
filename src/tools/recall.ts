@@ -111,7 +111,7 @@ function formatNode(
   // Text content (truncated if too long)
   if (node.text) {
     lines.push('## Content');
-    const maxText = 2000;
+    const maxText = 4000;
     if (node.text.length > maxText) {
       lines.push(node.text.slice(0, maxText));
       lines.push(`\n... (${node.text.length - maxText} more characters)`);
@@ -121,13 +121,15 @@ function formatNode(
     lines.push('');
   }
 
-  // Children
+  // Children — mark [M] (MYCC.md-sourced) or [P] (patch-added) so the agent
+  // can distinguish base knowledge from agent-discovered knowledge.
   if (node.children.length > 0) {
     lines.push('## Children');
-    lines.push('_Drill down by using recall with any child path (slash-separated)._');
+    lines.push('_Drill down by using recall with any child path (slash-separated). [M]=MYCC.md-sourced, [P]=patch-added._');
     lines.push('');
     for (const child of node.children) {
-      lines.push(`- ${child.title} → recall(path="${child.id}")`);
+      const marker = child.is_mycc ? '[M]' : '[P]';
+      lines.push(`- ${marker} ${child.title} → recall(path="${child.id}")`);
     }
     lines.push('');
   }

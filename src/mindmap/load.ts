@@ -5,7 +5,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import type { Mindmap, MindmapJSON } from './types.js';
+import type { Mindmap, MindmapJSON, Node } from './types.js';
 import { validate_mindmap_structure } from './validate.js';
 
 /**
@@ -40,6 +40,11 @@ export function load_mindmap_from_json(json: unknown): Mindmap {
 
   const mindmapJson = json as MindmapJSON;
 
+  // Set in-memory flags on every node: is_mycc=true (from mindmap.json = MYCC.md
+  // isomorph), is_patch=false (unmodified until patches are replayed).
+  // These flags are never serialized — they exist only in the in-memory model.
+  set_in_memory_flags(mindmapJson.root);
+
   // Return mindmap with all fields
   return {
     dir: mindmapJson.dir,
@@ -49,6 +54,19 @@ export function load_mindmap_from_json(json: unknown): Mindmap {
     updated_at: mindmapJson.updated_at,
     root: mindmapJson.root,
   };
+}
+
+/**
+ * Set in-memory flags (is_mycc=true, is_patch=false) recursively on all nodes.
+ * Called when loading nodes from mindmap.json — they are by definition MYCC.md-sourced.
+ * Patches replayed later will flip is_patch and/or set is_mycc=false on added nodes.
+ */
+function set_in_memory_flags(node: Node): void {
+  node.is_mycc = true;
+  node.is_patch = false;
+  for (const child of node.children) {
+    set_in_memory_flags(child);
+  }
 }
 
 /**
@@ -101,13 +119,16 @@ export function save_mindmap(mindmap: Mindmap, jsonPath?: string, projectDir?: s
     fs.mkdirSync(dir, { recursive: true });
   }
 
+  // Strip in-memory flags before serialization (is_mycc/is_patch are not in JSON)
+  const root = strip_in_memory_flags(mindmap.root);
+
   const json: MindmapJSON = {
     dir: mindmap.dir,
     source_file: mindmap.source_file,
     hash: mindmap.hash,
     compiled_at: mindmap.compiled_at,
     updated_at: mindmap.updated_at,
-    root: mindmap.root,
+    root,
   };
 
   fs.writeFileSync(outputPath, JSON.stringify(json, null, 2), 'utf-8');
@@ -119,14 +140,33 @@ export function save_mindmap(mindmap: Mindmap, jsonPath?: string, projectDir?: s
  * @returns JSON string
  */
 export function serialize_mindmap(mindmap: Mindmap): string {
+  // Strip in-memory flags before serialization (is_mycc/is_patch are not in JSON)
+  const root = strip_in_memory_flags(mindmap.root);
+
   const json: MindmapJSON = {
     dir: mindmap.dir,
     source_file: mindmap.source_file,
     hash: mindmap.hash,
     compiled_at: mindmap.compiled_at,
     updated_at: mindmap.updated_at,
-    root: mindmap.root,
+    root,
   };
 
   return JSON.stringify(json, null, 2);
+}
+
+/**
+ * Deep-clone a node tree with in-memory flags (is_mycc/is_patch) removed.
+ * Ensures these runtime-only flags never leak into mindmap.json on disk.
+ */
+function strip_in_memory_flags(node: Node): Node {
+  return {
+    id: node.id,
+    text: node.text,
+    title: node.title,
+    summary: node.summary,
+    level: node.level,
+    children: node.children.map((c) => strip_in_memory_flags(c)),
+    links: node.links,
+  };
 }

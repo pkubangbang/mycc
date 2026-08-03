@@ -26,9 +26,11 @@ import {
   validateCheckpointIsolation,
   validateRecapIsolation,
   handleCheckpoint,
-  handleRecap,
+  handleRecapWithPatch,
   type CheckpointContext
 } from '../checkpoint-recap.js';
+import { applyPatchAction } from '../../mindmap/patch.js';
+import { appendPatch, getPatchPath } from '../../mindmap/patch-jsonl.js';
 
 /**
  * Create checkpoint context from machine environment
@@ -202,7 +204,21 @@ async function handleRecapCall(
   };
   const lastQueryForRecap = turn.lastUserQuery || undefined;
 
-  const summary = await handleRecap(fullMessages, allTools, checkpoint.description, escAware, comment, lastQueryForRecap, checkpointResult);
+  // ── Concurrent recap + patch via Promise.all ──
+  // forkChat #1 (summary) and forkChat #2 (patch) fork from the same triologue
+  // messages and run concurrently. See handleRecapWithPatch in checkpoint-recap.ts.
+  const mindmap = ctx.core.getMindmap();
+  const { summary, patch } = await handleRecapWithPatch(
+    fullMessages,
+    allTools,
+    checkpoint.description,
+    mindmap,
+    checkpointId,
+    escAware,
+    comment,
+    lastQueryForRecap,
+    checkpointResult,
+  );
 
   // Check for ESC cancellation
   if (summary.startsWith('[RECAP] Cancelled:')) {
@@ -246,6 +262,25 @@ async function handleRecapCall(
 
   // Close the auto-created checkpoint todo
   ctx.todo.closeCheckpointTodo(checkpointId);
+
+  // ── Apply mindmap patch (if produced by forkChat #2) ──
+  // Both the in-memory tree and the jsonl are updated simultaneously.
+  // jsonl is the source of truth; in-memory is ephemeral (rebuilt from jsonl
+  // at next startup). See docs/mindmap-redesign.md Part 2.6.
+  if (patch) {
+    const mindmapForPatch = ctx.core.getMindmap();
+    if (mindmapForPatch) {
+      const applied = applyPatchAction(mindmapForPatch, patch);
+      if (applied) {
+        const patchPath = getPatchPath(ctx.core.getWorkDir());
+        appendPatch(patch, patchPath);
+        ctx.core.brief('info', 'mindmap-patch',
+          `${patch.action}: ${patch.path}${patch.title ? `/${patch.title}` : ''}`,
+          patch.reason || undefined,
+        );
+      }
+    }
+  }
 
   turn.isFirstRound = false;
   return AgentState.COLLECT;

@@ -11,7 +11,9 @@
  */
 
 import type { Mindmap, Node } from './types.js';
+import type { MindmapPatchAction } from './types.js';
 import { get_node, get_ancestors, get_descendants } from './get-node.js';
+import { safeNodeId } from '../utils/sanitize.js';
 import { summarizeWithExplorer } from './explorer-agent.js';
 
 /**
@@ -329,4 +331,85 @@ async function update_summaries_after_move(
     workDir
   );
   node.summary = result.summary;
+}
+
+/**
+ * Apply a single patch action to the in-memory mindmap tree (pure, no LLM).
+ *
+ * Sets in-memory flags:
+ * - add: new node gets is_mycc=false, is_patch=true
+ * - update: target node gets is_patch=true (is_mycc preserved), summary cleared
+ * - delete: node removed from parent's children
+ *
+ * @param mindmap - The in-memory mindmap to modify
+ * @param action - The patch action to apply
+ * @returns true if applied successfully, false if target not found or invalid
+ */
+export function applyPatchAction(mindmap: Mindmap, action: MindmapPatchAction): boolean {
+  switch (action.action) {
+    case 'add': {
+      const parent = get_node(mindmap, action.path);
+      if (!parent) return false;
+      if (!action.title || !action.text) return false;
+
+      const id = parent.id === '/'
+        ? `/${safeNodeId(action.title)}`
+        : `${parent.id}/${safeNodeId(action.title)}`;
+
+      const newNode: Node = {
+        id,
+        title: action.title,
+        text: action.text,
+        summary: '',
+        level: parent.level + 1,
+        children: [],
+        links: [],
+        is_mycc: false,  // patch-added, not from MYCC.md
+        is_patch: true,  // marked as patch-touched
+      };
+
+      parent.children.push(newNode);
+      mindmap.updated_at = new Date().toISOString();
+      return true;
+    }
+
+    case 'update': {
+      const node = get_node(mindmap, action.path);
+      if (!node) return false;
+      if (action.path === '/' || action.path === '') return false;  // cannot update root
+      if (!action.text) return false;
+
+      node.text = action.text;
+      node.summary = '';  // clear — re-summarized on next compile if is_mycc
+      node.is_patch = true;  // mark as patch-modified
+      // is_mycc is preserved — an is_mycc node that's patched is still is_mycc
+      mindmap.updated_at = new Date().toISOString();
+      return true;
+    }
+
+    case 'delete': {
+      if (action.path === '/' || action.path === '') return false;  // cannot delete root
+
+      const segments = action.path.split('/').filter((s) => s.length > 0);
+      if (segments.length === 0) return false;
+
+      const parentPath = `/${segments.slice(0, -1).join('/')}`;
+      const nodeTitle = segments[segments.length - 1];
+
+      const parent = get_node(mindmap, parentPath);
+      if (!parent) return false;
+
+      const index = parent.children.findIndex(
+        (c) => c.title.toLowerCase() === nodeTitle.toLowerCase()
+      );
+      if (index === -1) return false;
+
+      parent.children.splice(index, 1);
+      mindmap.updated_at = new Date().toISOString();
+      return true;
+    }
+
+    default:
+      return false;
+  }
 }

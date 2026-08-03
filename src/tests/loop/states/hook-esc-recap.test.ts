@@ -47,6 +47,16 @@ vi.mock('../../../loop/checkpoint-recap.js', () => ({
   validateRecapIsolation: vi.fn(() => ({ valid: true })),
   handleCheckpoint: vi.fn(() => ({ result: 'ok' })),
   handleRecap: vi.fn(),
+  handleRecapWithPatch: vi.fn(),
+}));
+
+vi.mock('../../../mindmap/patch.js', () => ({
+  applyPatchAction: vi.fn(() => true),
+}));
+
+vi.mock('../../../mindmap/patch-jsonl.js', () => ({
+  appendPatch: vi.fn(),
+  getPatchPath: vi.fn(() => '/tmp/.mycc/mindmap-patch.jsonl'),
 }));
 
 vi.mock('../../../loop/triologue.js', () => {
@@ -76,7 +86,7 @@ vi.mock('../../../loop/triologue.js', () => {
 import { handleHook } from '../../../loop/states/hook.js';
 import { AgentState } from '../../../loop/state-machine.js';
 import { agentIO } from '../../../loop/agent-io.js';
-import { handleRecap } from '../../../loop/checkpoint-recap.js';
+import { handleRecapWithPatch } from '../../../loop/checkpoint-recap.js';
 import { loader } from '../../../context/shared/loader.js';
 import { Triologue } from '../../../loop/triologue.js';
 import {
@@ -119,10 +129,12 @@ describe('handleHook — ESC during recap (recap cancellation)', () => {
     const turn = createTurnVars();
     const pass = createPassData({ assistantContent: 'summarizing now' });
 
-    // handleRecap returns the cancelled string (ESC during recap LLM call)
-    vi.mocked(handleRecap).mockResolvedValueOnce(
-      '[RECAP] Cancelled: ESC pressed during recap.' as never,
-    );
+    // handleRecapWithPatch returns the cancelled summary (ESC during recap LLM call)
+    // patch is null because getMindmap() returns null (no mindmap in mock env)
+    vi.mocked(handleRecapWithPatch).mockResolvedValueOnce({
+      summary: '[RECAP] Cancelled: ESC pressed during recap.',
+      patch: null,
+    } as never);
     // ESC set neglected mode
     agentIO.setNeglectedMode(true);
 
@@ -144,9 +156,10 @@ describe('handleHook — ESC during recap (recap cancellation)', () => {
     const turn = createTurnVars();
     const pass = createPassData({ assistantContent: 'summarizing now' });
 
-    vi.mocked(handleRecap).mockResolvedValueOnce(
-      '[RECAP] Cancelled: ESC pressed during recap.' as never,
-    );
+    vi.mocked(handleRecapWithPatch).mockResolvedValueOnce({
+      summary: '[RECAP] Cancelled: ESC pressed during recap.',
+      patch: null,
+    } as never);
     // NOT in neglected mode — the cancelled-but-not-neglected path
     agentIO.setNeglectedMode(false);
 
@@ -163,26 +176,30 @@ describe('handleHook — ESC during recap (recap cancellation)', () => {
     expect(turn.isFirstRound).toBe(false);
   });
 
-  it('should call handleRecap with full messages, tools, and escAware wrapper', async () => {
+  it('should call handleRecapWithPatch with full messages, tools, and escAware wrapper', async () => {
     const { env } = makeRecapEnv();
     const turn = createTurnVars({ lastUserQuery: 'finish the task' });
     const pass = createPassData({ assistantContent: 'let me recap' });
 
-    // Normal (non-cancelled) recap completion
-    vi.mocked(handleRecap).mockResolvedValueOnce('[RECAP] Summary text here.' as never);
+    // Normal (non-cancelled) recap completion — no patch (getMindmap returns null)
+    vi.mocked(handleRecapWithPatch).mockResolvedValueOnce({
+      summary: '[RECAP] Summary text here.',
+      patch: null,
+    } as never);
     // Make getMessages return identifiable content so we can assert it was passed
     const fakeMessages = [{ role: 'user', content: 'msg1' }];
     vi.mocked(triologue.getMessages).mockReturnValue(fakeMessages as never);
 
     await handleHook(env, turn, pass);
 
-    expect(handleRecap).toHaveBeenCalledTimes(1);
-    const callArgs = vi.mocked(handleRecap).mock.calls[0];
-    // fullMessages (copy of getMessages), allTools, description, escAware fn, comment, lastUserQuery
+    expect(handleRecapWithPatch).toHaveBeenCalledTimes(1);
+    const callArgs = vi.mocked(handleRecapWithPatch).mock.calls[0];
+    // fullMessages (copy of getMessages), allTools, description, mindmap, checkpointId, escAware fn, comment, lastUserQuery
     expect(callArgs[0]).toEqual(fakeMessages); // fullMessages
     expect(callArgs[1]).toEqual([{ function: { name: 'bash' } }]); // allTools from loader
     expect(callArgs[2]).toBe('test checkpoint'); // checkpoint.description
-    expect(typeof callArgs[3]).toBe('function'); // escAware wrapper
-    expect(callArgs[5]).toBe('finish the task'); // lastUserQuery
+    expect(callArgs[4]).toBe('abc12345'); // checkpointId
+    expect(typeof callArgs[5]).toBe('function'); // escAware wrapper
+    expect(callArgs[7]).toBe('finish the task'); // lastUserQuery
   });
 });
