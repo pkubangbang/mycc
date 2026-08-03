@@ -35,3 +35,4 @@ When updating the changelog, use the following procedure:
 # Todo
 
 - [ ] add e2e test using tmux, with meaningful test cases, written as a skill
+- [ ] enable "boostrap install" mode via Docker. 
