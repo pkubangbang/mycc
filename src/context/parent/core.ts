@@ -44,6 +44,17 @@ export class Core extends BaseCore implements CoreModule {
   private allowedFile?: string;
 
   /**
+   * Autonomous ("auto") mode flag — orthogonal to plan/normal mode.
+   *
+   * When true, the lead agent loop replaces the PROMPT stage with a WAIT
+   * stage (block for events, no user prompt) and every question() call
+   * auto-replies with its onEsc default so the loop never blocks on the
+   * user. Plan/normal mode is preserved while auto is on — auto only
+   * governs prompting, not grant behavior.
+   */
+  private autoFlag = false;
+
+  /**
    * Session-scoped grants for external path access.
    * Maps resolved path → granted scope.
    * One-way open: grants are never revoked during the session.
@@ -86,6 +97,22 @@ export class Core extends BaseCore implements CoreModule {
   }
 
   /**
+   * Whether the lead is in autonomous (auto) mode. Orthogonal to plan/normal.
+   * @returns true if auto mode is on
+   */
+  getAuto(): boolean {
+    return this.autoFlag;
+  }
+
+  /**
+   * Enable or disable auto mode (lead only).
+   * @param value - true to enter auto mode, false to exit
+   */
+  setAuto(value: boolean): void {
+    this.autoFlag = value;
+  }
+
+  /**
    * Get agent name (main process is always 'lead')
    */
   getName(): string {
@@ -123,6 +150,18 @@ export class Core extends BaseCore implements CoreModule {
     // Validate query
     if (!query || typeof query !== 'string') {
       throw new Error('Question query must be a non-empty string');
+    }
+
+    // Auto mode: never block on the user. Resolve immediately with the
+    // onEsc default (the conservative/safe option) so the loop stays
+    // non-interactive. Concrete effects:
+    //  - git_commit (onEsc:'n')        → never succeeds
+    //  - plan_on/plan_off with file    → strict plan mode / no switch
+    //  - external path access (onEsc:'4') → deny (edits stay in workdir)
+    //  - bash grant (evaluates via question) → auto-denied
+    // Where onEsc is unset, default to '' (empty = no answer / deny).
+    if (this.autoFlag) {
+      return options?.onEsc ?? '';
     }
 
     // In serve (webui) mode, the asker + query render together on a single

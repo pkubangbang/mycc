@@ -17,7 +17,7 @@ import type { RequestEmbeddingTracker } from '../../loop/request-embedding.js';
 // ============================================================================
 
 describe('AgentState', () => {
-  it('should have all 7 states', () => {
+  it('should have all 8 states', () => {
     expect(AgentState.PROMPT).toBe('prompt');
     expect(AgentState.SLASH).toBe('slash');
     expect(AgentState.COLLECT).toBe('collect');
@@ -25,6 +25,7 @@ describe('AgentState', () => {
     expect(AgentState.HOOK).toBe('hook');
     expect(AgentState.TOOL).toBe('tool');
     expect(AgentState.STOP).toBe('stop');
+    expect(AgentState.WAIT).toBe('wait');
   });
 });
 
@@ -56,6 +57,8 @@ describe('AgentStateMachine', () => {
         resetConfusionIndex: vi.fn(),
         increaseConfusionIndex: vi.fn(),
         getMode: vi.fn(() => 'normal'),
+        getAuto: vi.fn(() => false),
+        setAuto: vi.fn(),
         brief: vi.fn(),
         verbose: vi.fn(),
         escAware: vi.fn((fn: any) => fn(new AbortController())),

@@ -56,6 +56,11 @@ export class UserInputProvider implements InputProvider {
   }
 
   async promptRetry(errorMessage: string): Promise<boolean> {
+    // Auto mode: never block on the user — always retry so autonomous
+    // operation continues past transient LLM errors.
+    if (agentIO.getAuto()) {
+      return true;
+    }
     console.error();
     console.error(chalk.red(`Error: ${errorMessage}`));
     console.log(chalk.gray('─'.repeat(40)));

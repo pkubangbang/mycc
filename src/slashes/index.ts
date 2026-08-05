@@ -97,6 +97,7 @@ import { planCommand } from './plan.js';
 import { forkCommand } from './fork.js';
 import { mailCommand } from './mail.js';
 import { serveCommand } from './serve.js';
+import { autoCommand } from './auto.js';
 
 slashRegistry.register(teamCommand);
 slashRegistry.register(todosCommand);
@@ -115,3 +116,4 @@ slashRegistry.register(planCommand);
 slashRegistry.register(forkCommand);
 slashRegistry.register(mailCommand);
 slashRegistry.register(serveCommand);
+slashRegistry.register(autoCommand);

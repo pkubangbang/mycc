@@ -403,6 +403,26 @@ export interface CoreModule {
    */
   getMode(): 'plan' | 'normal';
   /**
+   * Whether the lead agent is in autonomous ("auto") mode.
+   *
+   * Auto mode is orthogonal to plan/normal: it changes the agent loop so
+   * the PROMPT stage is replaced by a WAIT stage (block for mail/teammate/
+   * steering events instead of prompting the user), and every interactive
+   * question() auto-replies with its onEsc default so the loop never blocks.
+   *
+   * Plan/normal mode is preserved while auto is on — auto only controls
+   * prompting, not grant behavior. Teammates never use auto mode (the
+   * child-process Core.getAuto() always returns false).
+   *
+   * @returns true if the lead is in auto mode
+   */
+  getAuto(): boolean;
+  /**
+   * Enable or disable autonomous mode (lead only).
+   * @param value - true to enter auto mode, false to exit
+   */
+  setAuto(value: boolean): void;
+  /**
    * Get the loaded mindmap data
    * @returns Mindmap data or null if not loaded
    */

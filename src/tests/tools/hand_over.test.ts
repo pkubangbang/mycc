@@ -23,6 +23,7 @@ vi.mock('../../loop/agent-io.js', () => ({
   agentIO: {
     ask: vi.fn(async () => 'n'),
     log: vi.fn(),
+    getAuto: vi.fn(() => false),
   },
 }));
 

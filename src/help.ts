@@ -55,6 +55,7 @@ const STARTUP_FLAGS: FlagRow[] = [
   { flag: '--host [addr]', desc: 'Bind host for the Web UI (bare = 0.0.0.0; --host 1.2.3.4 = specific)' },
   { flag: '--from <session-id>', desc: 'Branch a NEW session pre-filled from an old session' },
   { flag: '--skip-healthcheck', desc: 'Skip the startup health check (faster startup)' },
+  { flag: '--auto', desc: 'Start in autonomous mode (no prompt; auto-reply questions; press esc to exit)' },
   { flag: '-v, --verbose', desc: 'Show detailed debug output' },
   { flag: '-h, --help', desc: 'Show this help message and exit' },
 ];
@@ -95,6 +96,7 @@ export function printHelp(): void {
   out.push('  mycc --setup             # configure environment, then exit');
   out.push('  mycc --serve [port]      # start the Web UI');
   out.push('  mycc --from <session-id> # branch a session from an old one');
+  out.push('  mycc --auto               # start in autonomous mode');
   out.push('  mycc --help | -h         # show this help and exit');
   out.push('');
 

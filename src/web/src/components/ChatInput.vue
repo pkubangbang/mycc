@@ -128,13 +128,36 @@ function removeFile(index: number): void {
   props.state.pendingFiles = localFiles.value;
 }
 
+// Lightning-bolt "enter auto mode" button. One-way: clicking enters auto
+// mode; if already in auto mode, surface a transient "已经是自动模式了"
+// toast locally instead of sending. The toast auto-clears after 2.5s.
+const autoToast = ref('');
+let autoToastTimer: ReturnType<typeof setTimeout> | null = null;
+function onAutoClick(): void {
+  if (props.state.isAutoMode) {
+    autoToast.value = '已经是自动模式了';
+    if (autoToastTimer) clearTimeout(autoToastTimer);
+    autoToastTimer = setTimeout(() => { autoToast.value = ''; }, 2500);
+    return;
+  }
+  chatApi.sendAuto();
+}
+
 function send(): void {
   const value = text.value;
   const files = localFiles.value.length > 0 ? [...localFiles.value] : undefined;
   if (!value.trim() && !files) return;
-  if (props.state.isWaiting || props.state.showRetry) {
+  if (props.state.isWaiting) {
+    // A prompt is pending — this is a fresh user query.
     chatApi.sendInput(value, files);
-  } else if (props.state.isRunning) {
+  } else if (props.state.isRunning || props.state.isAutoMode) {
+    // The agent is actively working OR it is in auto mode (idle in the WAIT
+    // state). In both cases there is no PROMPT waiting for a fresh query, so
+    // the input is a mid-task steering note — buffered in the backend queue
+    // and consumed at the next COLLECT (injected as a REMINDER) or PROMPT
+    // (synthesized via forkChat after an interrupt). Auto mode keeps this
+    // branch reachable even from the idle WAIT state, where isRunning is
+    // false but isAutoMode is true.
     chatApi.sendSteer(value, files);
   }
   text.value = '';
@@ -310,15 +333,15 @@ const inputAreaStyle = computed(() =>
           v-model="text"
           class="input-area"
           :style="inputAreaStyle"
-          :placeholder="state.hasPendingCard ? '请在卡片上回复…' : (state.isWaiting ? '输入消息…' : '等待回复中…')"
-          :disabled="state.hasPendingCard || (!state.isWaiting && !state.isRunning) || state.connectionStatus !== 'connected'"
+          :placeholder="state.hasPendingCard ? '请在卡片上回复…' : (state.isWaiting ? '输入消息…' : (state.isAutoMode ? '给自动模式发指引…' : '等待回复中…'))"
+          :disabled="state.hasPendingCard || (!state.isWaiting && !state.isRunning && !state.isAutoMode) || state.connectionStatus !== 'connected'"
           rows="2"
           @keydown="onKeydown"
           @paste="onPaste"
         ></textarea>
         <button
           class="attach-btn"
-          :disabled="state.hasPendingCard || (!state.isWaiting && !state.isRunning) || state.connectionStatus !== 'connected'"
+          :disabled="state.hasPendingCard || (!state.isWaiting && !state.isRunning && !state.isAutoMode) || state.connectionStatus !== 'connected'"
           title="附加文件"
           @click="openFilePicker"
         >
@@ -328,6 +351,24 @@ const inputAreaStyle = computed(() =>
             <line x1="12" y1="3" x2="12" y2="15" />
           </svg>
         </button>
+        <!-- Lightning bolt: one-way "enter auto mode" button. Sits to the
+             LEFT of the attach button. If already in auto mode, surface a
+             transient "已经是自动模式了" toast locally (no round-trip);
+             otherwise send the 'auto' WS message to enter auto mode. -->
+        <button
+          class="auto-btn"
+          :class="{ 'auto-btn--on': state.isAutoMode }"
+          :disabled="state.connectionStatus !== 'connected'"
+          :title="state.isAutoMode ? '已经是自动模式了' : '进入自动模式'"
+          @click="onAutoClick"
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
+          </svg>
+        </button>
+        <transition name="auto-toast">
+          <div v-if="autoToast" class="auto-toast">{{ autoToast }}</div>
+        </transition>
       </div>
       <input
         ref="fileInput"
@@ -338,7 +379,7 @@ const inputAreaStyle = computed(() =>
       />
       <button
         class="send-btn"
-        :disabled="state.hasPendingCard || (!text.trim() && localFiles.length === 0) || (!state.isWaiting && !state.showRetry && !state.isRunning) || state.connectionStatus !== 'connected'"
+        :disabled="state.hasPendingCard || (!text.trim() && localFiles.length === 0) || (!state.isWaiting && !state.showRetry && !state.isRunning && !state.isAutoMode) || state.connectionStatus !== 'connected'"
         @click="send"
       >发送</button>
     </div>
@@ -413,7 +454,9 @@ const inputAreaStyle = computed(() =>
   resize: none;
   border: 1px solid var(--border-input);
   border-radius: 6px;
-  padding: 8px 34px 8px 12px;
+  /* Right padding clears the attach + lightning-bolt button toolbar at the
+     bottom-right of the textarea (two 28px buttons + gaps). */
+  padding: 8px 66px 8px 12px;
   font-size: 14px;
   font-family: inherit;
   line-height: 1.5;
@@ -455,6 +498,64 @@ const inputAreaStyle = computed(() =>
 .attach-btn:disabled {
   opacity: 0.3;
   cursor: not-allowed;
+}
+/* Lightning-bolt "enter auto mode" button — sits to the LEFT of the attach
+   button at the bottom of the textarea. Same size/shape as the attach
+   button so the pair reads as a toolbar. Highlights amber when auto mode
+   is already on (a live state cue). */
+.auto-btn {
+  position: absolute;
+  right: 34px;
+  bottom: 2px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-input-field);
+  color: var(--text-muted);
+  border: none;
+  border-radius: 4px;
+  padding: 4px;
+  width: 28px;
+  height: 28px;
+  cursor: pointer;
+  transition: color 0.15s, background 0.15s;
+}
+.auto-btn:hover:not(:disabled) {
+  color: #f59e0b;
+  background: color-mix(in srgb, #f59e0b 12%, var(--bg-input-field));
+}
+.auto-btn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+.auto-btn--on {
+  color: #f59e0b;
+}
+/* Transient toast shown when the user clicks the lightning bolt while
+   already in auto mode. Floats above the input box, auto-clears in 2.5s. */
+.auto-toast {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  right: 12px;
+  background: color-mix(in srgb, #f59e0b 16%, var(--bg-input));
+  color: #b45309;
+  border: 1px solid color-mix(in srgb, #f59e0b 40%, transparent);
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 12px;
+  white-space: nowrap;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+  z-index: 6;
+  pointer-events: none;
+}
+.auto-toast-enter-active,
+.auto-toast-leave-active {
+  transition: opacity 0.2s, transform 0.2s;
+}
+.auto-toast-enter-from,
+.auto-toast-leave-to {
+  opacity: 0;
+  transform: translateY(4px);
 }
 .file-input-hidden {
   display: none;

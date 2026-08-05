@@ -31,6 +31,8 @@ export function createMockCore(overrides: Partial<CoreModule> = {}): CoreModule 
     requestExternalPathAccess: vi.fn(async (tool, path) => ({ approved: true, resolvedPath: path })),
     addExternalAutoGrant: vi.fn(),
     getMode: vi.fn(() => 'normal' as const),
+    getAuto: vi.fn(() => false),
+    setAuto: vi.fn(),
     getMindmap: vi.fn(() => null),
     setMindmap: vi.fn(),
     getConfusionIndex: vi.fn(() => 0),

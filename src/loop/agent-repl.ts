@@ -14,7 +14,7 @@ import { healthCheck } from '../engine/chat-provider.js';
 import { ParentContext } from '../context/parent-context.js';
 import { getSessionId } from '../session/index.js';
 import { slashRegistry } from '../slashes/index.js';
-import { getTokenThreshold, isDebuggingEval, shouldServe, getServePort, getServeHost, getEmbeddingModel } from '../config.js';
+import { getTokenThreshold, isDebuggingEval, shouldServe, getServePort, getServeHost, getEmbeddingModel, shouldAuto } from '../config.js';
 import { Triologue } from './triologue.js';
 import { agentIO } from './agent-io.js';
 import { shouldSkipHealthCheck } from '../config.js';
@@ -39,6 +39,7 @@ import { handleLlm } from './states/llm.js';
 import { handleHook } from './states/hook.js';
 import { handleTool } from './states/tool.js';
 import { handleStop } from './states/stop.js';
+import { handleWait } from './states/wait.js';
 import { clearWrapUp } from './esc-wrap-up.js';
 import pkg from '../../package.json';
 import { get_default_mindmap_path, load_mindmap, validate_mindmap, applyPatchAction, readAllPatches, getPatchPath } from '../mindmap/index.js';
@@ -102,7 +103,7 @@ export async function main(): Promise<void> {
       }
       console.log();
 
-      const answer = await agentIO.ask(chalk.cyan('Retry health check? [Y/n] > '), { useAsPrompt: true, onEsc: 'n', onEnter: 'y' });
+      const answer = agentIO.getAuto() ? 'y' : await agentIO.ask(chalk.cyan('Retry health check? [Y/n] > '), { useAsPrompt: true, onEsc: 'n', onEnter: 'y' });
       if (answer.toLowerCase() === 'n' || answer.toLowerCase() === 'no') {
         console.log(chalk.yellow('Exiting at user request.'));
         process.exit(1);
@@ -318,6 +319,31 @@ export async function main(): Promise<void> {
   const sequence = new Sequence(triologue, () => core.getMode());
   const hookExecutor = new HookExecutor(conditions, sequence);
 
+  // ── --auto CLI flag: enter autonomous mode at startup ──
+  // Auto mode is orthogonal to plan/normal. Setting the flag here means the
+  // state machine's initial PROMPT hits the auto safety-net guard and jumps
+  // straight to WAIT (block for mail/teammate/steering events, no user
+  // prompt). The user can exit by pressing ESC, same as /auto mid-session.
+  if (shouldAuto()) {
+    core.setAuto(true);
+    agentIO.setAuto(true);
+    console.log(chalk.cyan('auto mode is on (--auto). Mails will be auto-replied. Press esc to exit.'));
+  }
+
+  // Register the combined auto-mode ENTRY callback for the webui. The
+  // /serve "enter auto" lightning-bolt button sends an 'auto' WS message;
+  // ServeHub calls this provider to flip BOTH core.setAuto(true) (state
+  // machine PROMPT→WAIT) and agentIO.setAuto(true) (IO flag + webui
+  // broadcast) together — exactly the /auto slash path. Returns false when
+  // already in auto mode so the hub can surface "已经是自动模式了".
+  getServeHub().setEnterAutoProvider(() => {
+    if (core.getAuto()) return false;
+    core.setAuto(true);
+    agentIO.setAuto(true);
+    console.log(chalk.cyan('auto mode is on (webui). Mails will be auto-replied. Press esc to exit.'));
+    return true;
+  });
+
   // ── Build state handlers ──
   const handlers: Record<string, StateHandler> = {
     prompt: handlePrompt as StateHandler,
@@ -327,6 +353,7 @@ export async function main(): Promise<void> {
     hook: handleHook as StateHandler,
     tool: handleTool as StateHandler,
     stop: handleStop as StateHandler,
+    wait: handleWait as StateHandler,
   };
 
   // ── Create state machine ──
@@ -436,9 +463,10 @@ export async function main(): Promise<void> {
         console.error(chalk.yellow('Check TOKEN_THRESHOLD in ~/.mycc-store/.env file.'));
       }
 
-      // Always prompt for retry — only 'n'/'no' exits
+      // Always prompt for retry — only 'n'/'no' exits. In auto mode, skip
+      // the prompt and always retry (autonomous operation never blocks).
       console.log(chalk.gray('─'.repeat(40)));
-      const answer = await agentIO.ask(chalk.cyan('Retry? [Y/n] > '), { useAsPrompt: true, onEsc: 'n', onEnter: 'y' });
+      const answer = agentIO.getAuto() ? 'y' : await agentIO.ask(chalk.cyan('Retry? [Y/n] > '), { useAsPrompt: true, onEsc: 'n', onEnter: 'y' });
       if (answer.toLowerCase() === 'n' || answer.toLowerCase() === 'no') {
         console.log(chalk.yellow('Exiting at user request.'));
         break;

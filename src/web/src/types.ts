@@ -43,6 +43,14 @@ export interface ChatState {
   isWaiting: boolean;
   /** true while the agent is actively working (between submit and next prompt) */
   isRunning: boolean;
+  /** true while the lead is in autonomous (auto) mode. The PROMPT stage is
+   *  replaced by a WAIT stage that blocks for mail/teammate/steering events
+   *  instead of prompting, so the chat input box stays ENABLED for steering
+   *  even when neither isWaiting nor isRunning is true (the steady WAIT
+   *  state broadcasts neither). Input in auto mode is always a steering
+   *  note (queued, consumed at the next COLLECT) — never a fresh prompt.
+   *  Set by a backend 'auto' broadcast on every flag flip + on WS connect. */
+  isAutoMode: boolean;
   connectionStatus: ConnectionStatus;
   /** true when a retry prompt is pending (network failure / error recovery) */
   showRetry: boolean;

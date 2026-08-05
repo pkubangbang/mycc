@@ -29,6 +29,8 @@ vi.mock('../../../loop/agent-io.js', () => {
     agentIO: {
       isNeglectedMode: vi.fn(() => neglected),
       setNeglectedMode: vi.fn((v: boolean) => { neglected = v; }),
+      setAuto: vi.fn(),
+      getAuto: vi.fn(() => false),
       log: vi.fn(),
       flushOutput: vi.fn(),
     },
@@ -43,6 +45,7 @@ vi.mock('../../../loop/state-machine.js', () => ({
     HOOK: 'hook',
     TOOL: 'tool',
     STOP: 'stop',
+    WAIT: 'wait',
   },
   presentResult: vi.fn(),
 }));

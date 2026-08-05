@@ -23,6 +23,15 @@ export async function handleStop(
     if (agentIO.isNeglectedMode()) {
       agentIO.setNeglectedMode(false); // Clear FIRST for isInteractionMode()
 
+      // ESC always means "give me control back". If we were in auto mode,
+      // exit it now — auto is orthogonal to plan/normal, so plan/normal is
+      // preserved; we only stop the autonomous loop and return to PROMPT.
+      if (ctx.core.getAuto()) {
+        ctx.core.setAuto(false);
+        agentIO.setAuto(false);
+        console.log(chalk.gray('auto mode is off. Prompt resumed.'));
+      }
+
       const teammates = ctx.team.listTeammates();
       if (teammates.some((t) => t.status === 'working')) {
         agentIO.log(chalk.yellow('teammates still working (use /team to check status)'));
@@ -52,6 +61,13 @@ export async function handleStop(
 
     // 'all done' or 'no teammates'
     presentResult(triologue);
+
+    // Auto mode: instead of prompting the user, block in WAIT for the next
+    // mail / teammate state change / steering note, then re-enter COLLECT.
+    // Plan/normal mode is preserved — auto only replaces the PROMPT stage.
+    if (ctx.core.getAuto()) {
+      return AgentState.WAIT;
+    }
     return AgentState.PROMPT;
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : String(err);

@@ -56,7 +56,7 @@ interface FileUploadMeta {
 }
 
 interface WsMessage {
-  type: 'input' | 'exit' | 'interrupt' | 'card-response' | 'steer';
+  type: 'input' | 'exit' | 'interrupt' | 'card-response' | 'steer' | 'auto';
   text?: string;
   cardId?: string;
   value?: string;
@@ -212,6 +212,24 @@ export class ServeHub {
   // suspend duration. The CPU check (near-zero delta) corroborates that the
   // process was genuinely idle/frozen rather than busy.
   private static readonly SUSPEND_EXCESS_MS = 5_000; // 5s beyond the 30s budget ⇒ suspend
+
+  // ── Auto-mode state provider (avoids a module-load cycle) ──
+  // agent-io.ts imports getServeHub from this module, so this module cannot
+  // import agentIO directly (would create a cycle). Instead agentIO.initMain()
+  // registers a getter here that returns the current auto flag, and the hub
+  // calls it on a new WS connection to send the current state to late joiners.
+  private autoStateProvider: (() => boolean) | null = null;
+
+  // ── Auto-mode ENTRY provider (set from agent-repl.ts where core is in scope) ──
+  // Entering auto mode requires BOTH core.setAuto(true) (flips the state
+  // machine PROMPT→WAIT) and agentIO.setAuto(true) (IO-layer flag + webui
+  // broadcast). The hub has agentIO but not core, so agent-repl registers a
+  // callback here that performs the combined entry — mirroring the /auto
+  // slash command. The webui "enter auto" button calls this via the 'auto'
+  // WS message. Returns true if auto was actually entered, false if it was
+  // already on (the client guards this too, but the server re-checks for
+  // races across multiple clients).
+  private enterAutoProvider: (() => boolean) | null = null;
 
   // ── Mode state ──
   private running = false;
@@ -691,6 +709,61 @@ export class ServeHub {
   }
 
   // ===========================================================================
+  // Auto-mode signal (session-level, mirrors agentIO.getAuto())
+  // ===========================================================================
+
+  /**
+   * Broadcast the current autonomous ("auto") mode state to all connected
+   * clients. The webui uses this to keep the chat input box ENABLED for
+   * steering while the lead is blocking in the WAIT state — without it, the
+   * box would be disabled because the WAIT handler never broadcasts a
+   * 'prompt' (isWaiting) or work message (isRunning), so both flags stay
+   * false and ChatInput.vue disables the box.
+   *
+   * Called from agentIO.setAuto() on every actual flag flip (the IO layer
+   * owns webui mirroring and is kept in lockstep with core.setAuto() at
+   * every call site). Also sent once on a new WS connection so a late-joining
+   * or reconnecting client picks up the current mode without waiting for the
+   * next flip.
+   *
+   * @param value - true when auto mode is on, false when off
+   */
+  broadcastAuto(value: boolean): void {
+    // Not logged — auto mode is a persistent mode flag, not a transient
+    // message. Broadcasting it here would pollute /history on every flip.
+    // The on-connect send below restores it for late joiners; refreshes
+    // reconstruct the flag from the (durable) startup config + live flips.
+    const payload = JSON.stringify({ type: 'auto', content: value ? 'on' : 'off' });
+    for (const ws of this.clients) {
+      if (ws.readyState === WebSocket.OPEN) {
+        try { ws.send(payload); } catch { /* ignore */ }
+      }
+    }
+  }
+
+  /**
+   * Register a getter that returns the current auto-mode flag. Called once
+   * from agentIO.initMain(); used on new WS connections to send the current
+   * state to late-joining/reconnecting clients. Kept as a callback (not a
+   * direct agentIO import) to avoid a module-load cycle (this module is
+   * imported by agent-io.ts).
+   */
+  setAutoStateProvider(provider: (() => boolean) | null): void {
+    this.autoStateProvider = provider;
+  }
+
+  /**
+   * Register the combined auto-mode ENTRY callback. Called from agent-repl.ts
+   * (where both `core` and `agentIO` are in scope) so the webui "enter auto"
+   * button can flip the state machine (PROMPT→WAIT) and the IO flag together,
+   * exactly like the /auto slash command. The callback returns true if auto
+   * was entered, false if it was already on.
+   */
+  setEnterAutoProvider(provider: (() => boolean) | null): void {
+    this.enterAutoProvider = provider;
+  }
+
+  // ===========================================================================
   // Output bridge (called by agentIO output callback)
   // ===========================================================================
 
@@ -888,6 +961,22 @@ export class ServeHub {
       try { ws.send(JSON.stringify({ type: 'prompt', content: '' })); } catch { /* ignore */ }
     }
 
+    // Send the current auto-mode state so a late-joining or reconnecting
+    // client enables the chat input box for steering if the lead is already
+    // in auto mode (broadcastAuto otherwise only fires on a flag flip). The
+    // auto-state provider is registered by agentIO.initMain() — kept as a
+    // callback getter (not a direct agentIO import) to avoid a module-load
+    // cycle (agent-io.ts imports getServeHub from this module).
+    if (this.autoStateProvider) {
+      try {
+        if (this.autoStateProvider()) {
+          ws.send(JSON.stringify({ type: 'auto', content: 'on' }));
+        }
+      } catch {
+        /* provider threw — no auto state to send */
+      }
+    }
+
     ws.on('message', (data) => this.onWsMessage(ws, data.toString()));
     ws.on('close', () => this.onWsClose(ws));
     ws.on('error', (err) => this.onWsError(ws, err));
@@ -939,6 +1028,21 @@ export class ServeHub {
           for (const f of msg.files) {
             this.pushFileUpload({ filename: f.filename, data: f.data, mimeType: f.mimeType, text: msg.text });
           }
+        }
+        break;
+      case 'auto':
+        // One-way "enter auto mode" request from the webui lightning bolt
+        // button. If already in auto mode, tell the client so it can surface
+        // "已经是自动模式了"; otherwise run the combined entry (core.setAuto
+        // + agentIO.setAuto) registered by agent-repl. Falls back to the
+        // IO-only setAuto when no provider is registered (e.g. serve started
+        // before the agent loop wired the callback) so the flag still flips.
+        if (this.autoStateProvider && this.autoStateProvider()) {
+          this.broadcast('warn', '已经是自动模式了', 'serve');
+        } else if (this.enterAutoProvider) {
+          this.enterAutoProvider();
+        } else {
+          agentIO.setAuto(true);
         }
         break;
     }

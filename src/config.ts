@@ -104,7 +104,7 @@ const args = minimist(process.argv.slice(2), {
   //   (absent)           -> undefined (serve mode OFF)
   // Putting it in `string` would break bare `--serve` (yields "" not true);
   // putting it in `boolean` would swallow `--serve 9000` (port ignored).
-  boolean: ['v', 'verbose', 'skip-healthcheck', 'setup', 'debug-eval', 'debug-tp', 'debug-prompt'],
+  boolean: ['v', 'verbose', 'skip-healthcheck', 'setup', 'debug-eval', 'debug-tp', 'debug-prompt', 'auto'],
   string: [
     'from', 'port', 'host', 'max-upload-mb',
     'ollama-host', 'ollama-api-key', 'ollama-model', 'ollama-vision-model', 'ollama-embedding-model',
@@ -234,6 +234,22 @@ export function isDebuggingTp(): boolean {
  */
 export function isDebuggingPrompt(): boolean {
   return process.env.MYCC_DEBUG_PROMPT === 'true';
+}
+
+/**
+ * Check if autonomous (auto) mode is requested via the --auto CLI flag.
+ *
+ * When true, the lead starts in auto mode: the PROMPT stage is replaced by
+ * a WAIT stage (block for mail/teammate/steering events) and every
+ * interactive question() auto-replies with its onEsc default. Plan/normal
+ * mode is preserved — auto only governs prompting. The user can exit auto
+ * mode at any time by pressing ESC.
+ *
+ * Reads the parsed CLI args directly (not process.env) to avoid inheriting a
+ * stale MYCC_AUTO env var from a parent process.
+ */
+export function shouldAuto(): boolean {
+  return args.auto === true;
 }
 
 /**

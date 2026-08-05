@@ -25,6 +25,7 @@ const state = reactive<ChatState>({
   inputText: '',
   isWaiting: false,
   isRunning: false,
+  isAutoMode: false,
   connectionStatus: 'disconnected',
   showRetry: false,
   hasPendingCard: false,
@@ -230,6 +231,16 @@ function connectWebSocket(): void {
     } else if (msg.type === 'file-flush') {
       // Backend drained the file upload queue (files saved to disk).
       // Nothing to clear on the client side.
+    } else if (msg.type === 'auto') {
+      // Backend signaled the lead's autonomous (auto) mode state. Set by
+      // agentIO.setAuto() on every flag flip, plus sent once on WS connect
+      // for late joiners. 'on' → the lead blocks in the WAIT state instead of
+      // prompting, so the chat input box stays ENABLED for steering even when
+      // neither isWaiting nor isRunning is true, and the 停止 button stays
+      // visible+spinning so the user can exit auto mode anytime. We do NOT
+      // touch isWaiting/isRunning here — auto mode is orthogonal to the
+      // waiting/working flags and the WAIT handler broadcasts neither.
+      state.isAutoMode = msg.content === 'on';
     } else {
       state.isWaiting = false;
       state.isRunning = true;
@@ -260,6 +271,11 @@ function connectWebSocket(): void {
     state.isRunning = false;
     state.showRetry = false;
     state.hasPendingCard = false;
+    // Do NOT reset isAutoMode here: it is a durable session-level flag the
+    // server resends on reconnect (see the on-connect broadcast in
+    // serve-hub.ts). Clearing it would flicker the chat input box disabled
+    // and the 停止 button off for the gap between close and reconnect,
+    // then back on — worse than a brief stale-but-correct display.
     // Don't reconnect if the page is being unloaded (navigated away/closed).
     // Also guard against stacking multiple reconnect timers.
     if (reconnectTimer) return;
@@ -338,6 +354,17 @@ export const chatApi = {
   },
   sendInterrupt(): void {
     wsSend({ type: 'interrupt' });
+  },
+  /**
+   * One-way "enter auto mode" request from the webui lightning-bolt button.
+   * The backend 'auto' handler runs the combined entry (core.setAuto +
+   * agentIO.setAuto) when not already in auto mode, or broadcasts a
+   * "已经是自动模式了" warning when it is. The client also guards locally
+   * (see ChatInput.vue) so the toast shows without a round-trip in the
+   * common case, but the server re-checks for multi-client races.
+   */
+  sendAuto(): void {
+    wsSend({ type: 'auto' });
   },
   sendRetry(answer: string): void {
     // Echo the chosen retry answer as a user bubble so the user sees their

@@ -136,6 +136,17 @@ export async function handlePrompt(
 ): Promise<HandlerResult> {
   const { triologue, inputProvider, sessionFilePath } = env;
 
+  // ── Auto-mode safety net ──
+  // In auto mode the loop should never reach PROMPT — STOP routes to WAIT and
+  // WAIT blocks for events. But if we ever arrive here while auto is on
+  // (e.g. /auto was entered via SLASH→PROMPT, or a future state transitions
+  // here), jump straight to WAIT and discard any pending input rather than
+  // prompting the user — guarantees no hang. Plan/normal mode is untouched.
+  if (env.ctx.core.getAuto()) {
+    agentIO.setAuto(true); // keep IO singleton in sync (idempotent)
+    return AgentState.WAIT;
+  }
+
   // Reset brief nudge when entering PROMPT state (start of new turn)
   turn.nextBriefNudge = 5;
 

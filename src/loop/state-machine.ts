@@ -43,6 +43,7 @@ export enum AgentState {
   HOOK = 'hook',
   TOOL = 'tool',
   STOP = 'stop',
+  WAIT = 'wait',
 }
 
 // ============================================================================
@@ -162,14 +163,20 @@ export class AgentStateMachine {
   async run(): Promise<void> {
     let turn: TurnVars = { isFirstRound: true, nextTodoNudge: 3, lastTodoState: '', nextBriefNudge: 5, lastUserQuery: '', extractedKeywords: [] };
     let pass: PassData = { abortController: null, rawToolCalls: [], assistantContent: '', augmentedCalls: [], hookResult: null };
-    let state: AgentState = AgentState.PROMPT;
+    // Auto mode (orthogonal to plan/normal) replaces the PROMPT stage with
+    // WAIT: the loop blocks for mail/teammate/steering events instead of
+    // prompting the user. Re-checked only at startup; mid-session mode
+    // changes are handled by the state handlers (STOP→WAIT, prompt guard).
+    let state: AgentState = this.env.ctx.core.getAuto() ? AgentState.WAIT : AgentState.PROMPT;
     let prevState: AgentState | null = null;
 
     while (true) {
       // ── Lifetime boundaries ──
       // PROMPT = new conversational turn — but only when coming from STOP or startup.
       // When coming from SLASH we preserve TurnVars (same turn, slash was a side trip).
-      if (state === AgentState.PROMPT && prevState !== AgentState.SLASH) {
+      // WAIT is also a turn boundary in auto mode: each autonomous cycle starts a
+      // fresh turn (fresh nudges, lastUserQuery cleared). WAIT never follows SLASH.
+      if ((state === AgentState.PROMPT || state === AgentState.WAIT) && prevState !== AgentState.SLASH) {
         turn = { isFirstRound: true, nextTodoNudge: 3, lastTodoState: '', nextBriefNudge: 5, lastUserQuery: '', extractedKeywords: [] };
       }
       // COLLECT = fresh pipeline pass — always reset.

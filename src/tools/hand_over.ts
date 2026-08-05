@@ -53,6 +53,13 @@ async function handleHandOver(ctx: AgentContext, args: Record<string, unknown>):
   const intent = args.intent as string;
   const isWin = process.platform === 'win32';
 
+  // Auto mode: hand_over opens an interactive terminal popup and blocks on
+  // the user — incompatible with autonomous operation. Reject up front so
+  // the loop stays non-blocking; the LLM should use the bash tool instead.
+  if (agentIO.getAuto()) {
+    return 'Error: hand_over is disabled in auto mode (no interactive terminal available). Use the bash tool for non-interactive commands, or ask the user to exit auto mode.';
+  }
+
   // 1. Validate intent: must use RUN USER to confirm user interaction is needed.
   // Socratic hint: name the wrong DIMENSION (object vs verb), withhold the correct
   // token so the LLM re-reasons from the always-on verb/object tables rather than

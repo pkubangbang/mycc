@@ -81,17 +81,55 @@ onMounted(() => {
       <MessageItem v-else :message="msg" :on-quote="onQuote" />
     </template>
     <!-- ESC / interrupt button — at the bottom of the chat history
-         (document-relative, scrolls with content), shown only while the
-         agent is actively working. Distinct from the viewport-sticky
+         (document-relative, scrolls with content). Two variants share the
+         same interrupt handler but differ in look:
+           • RUNNING (not auto): the classic red button + spinning circle,
+             signalling an in-progress task the user can stop.
+           • AUTO mode (idle in WAIT): a sky-blue button with a line-art
+             rocket whose exhaust streams fall like a streamline, signalling
+             the lead is autonomously waiting and can be taken back over.
+         Both stop a running task / exit auto mode (the interrupt triggers
+         neglection, which the WAIT/STOP handlers catch to clear auto and
+         resume the prompt). Distinct from the viewport-sticky
          scroll-to-bottom button below. -->
-    <div v-if="state.isRunning" class="interrupt-row">
+    <div v-if="state.isRunning && !state.isAutoMode" class="interrupt-row">
       <button
-        class="interrupt-btn"
+        class="interrupt-btn interrupt-btn--running"
         :disabled="state.connectionStatus !== 'connected'"
         title="停止当前任务 (相当于按 ESC)"
         @click="chatApi.sendInterrupt"
       >
         <span class="interrupt-spinner" aria-hidden="true"></span>
+        停止
+      </button>
+    </div>
+    <div v-else-if="state.isAutoMode" class="interrupt-row">
+      <button
+        class="interrupt-btn interrupt-btn--auto"
+        :disabled="state.connectionStatus !== 'connected'"
+        :title="state.isRunning ? '停止当前任务 (相当于按 ESC)' : '退出自动模式 (相当于按 ESC)'"
+        @click="chatApi.sendInterrupt"
+      >
+        <svg class="interrupt-rocket" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <!-- Whole scene rotated 45° for delivery. Drawn upright first:
+               1) U-shaped body, 2) window, 3) two fins, 4) three vertical
+               line-shaped exhaust streams, 5) streams animate falling,
+               6) rotate the entire group 45°. -->
+          <g class="rocket-frame" transform="rotate(45 12 12)">
+            <!-- 1. U-shaped rocket body with a rounded top (open at the bottom) -->
+            <path d="M8 14 V7 A4 4 0 0 1 16 7 V14 Z"/>
+            <!-- 2. Round window in the center, sized to the larger body -->
+            <circle cx="12" cy="9" r="1.8"/>
+            <!-- 3. Two fins on the sides, attached at the wider body corners -->
+            <path d="M8 14 L5 17 L8 17"/>
+            <path d="M16 14 L19 17 L16 17"/>
+            <!-- 4. Three vertical line-shaped exhaust streams (animated),
+                 spread across the wider bottom opening -->
+            <line class="rocket-flame flame-a" x1="10" y1="14" x2="10" y2="18"/>
+            <line class="rocket-flame flame-b" x1="12" y1="14" x2="12" y2="19"/>
+            <line class="rocket-flame flame-c" x1="14" y1="14" x2="14" y2="18"/>
+          </g>
+        </svg>
         停止
       </button>
     </div>
@@ -145,7 +183,6 @@ onMounted(() => {
   padding: 12px 16px 8px;
 }
 .interrupt-btn {
-  background: #ff7875;
   color: #fff;
   border: none;
   padding: 6px 20px;
@@ -157,16 +194,18 @@ onMounted(() => {
   align-items: center;
   gap: 6px;
 }
-.interrupt-btn:hover {
-  background: #ff4d4f;
-}
 .interrupt-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }
-/* Spinning indicator inside the 停止 button — animates continuously
-   while the button is visible (i.e., while the agent is running),
-   signalling that work is in progress and can be interrupted. */
+/* RUNNING variant — classic red button + spinning circle, signalling an
+   in-progress task the user can stop. */
+.interrupt-btn--running {
+  background: #ff7875;
+}
+.interrupt-btn--running:hover:not(:disabled) {
+  background: #ff4d4f;
+}
 .interrupt-spinner {
   width: 12px;
   height: 12px;
@@ -179,6 +218,56 @@ onMounted(() => {
 @keyframes interrupt-spin {
   to {
     transform: rotate(360deg);
+  }
+}
+/* AUTO variant — sky-blue button with a line-art rocket whose exhaust
+   streams fall like a streamline, signalling the lead is autonomously
+   waiting and can be taken back over. */
+.interrupt-btn--auto {
+  background: #38bde8;
+}
+.interrupt-btn--auto:hover:not(:disabled) {
+  background: #0ea5e9;
+}
+/* Line-art rocket (SVG) inside the auto-mode 停止 button. The whole scene
+   is rotated 45°: a U-shaped body, a round window, two fins, and three
+   vertical line-shaped exhaust streams that fall straight down like a
+   streamline, one after another, looping continuously while the button is
+   visible. */
+.interrupt-rocket {
+  flex-shrink: 0;
+  display: inline-block;
+}
+.rocket-flame {
+  transform-origin: top center;
+  opacity: 0;
+}
+.flame-a {
+  animation: rocket-burst 0.9s ease-in infinite;
+  animation-delay: 0s;
+}
+.flame-b {
+  animation: rocket-burst 0.9s ease-in infinite;
+  animation-delay: 0.3s;
+}
+.flame-c {
+  animation: rocket-burst 0.9s ease-in infinite;
+  animation-delay: 0.6s;
+}
+@keyframes rocket-burst {
+  0% {
+    transform: translateY(0);
+    opacity: 0;
+  }
+  20% {
+    opacity: 1;
+  }
+  80% {
+    opacity: 0.9;
+  }
+  100% {
+    transform: translateY(4px);
+    opacity: 0;
   }
 }
 </style>

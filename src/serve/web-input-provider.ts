@@ -52,6 +52,12 @@ export class WebInputProvider implements InputProvider {
   }
 
   async promptRetry(errorMessage: string): Promise<boolean> {
+    // Auto mode: never block on the user — always retry so autonomous
+    // operation continues past transient LLM errors. Applies to both the
+    // terminal and serve (card) paths.
+    if (agentIO.getAuto()) {
+      return true;
+    }
     if (!this.hub.isRunning()) {
       return this.userProvider.promptRetry(errorMessage);
     }

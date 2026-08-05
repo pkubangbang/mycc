@@ -156,6 +156,20 @@ export class ChildCore extends BaseCore implements CoreModule {
   }
 
   /**
+   * Teammates never use autonomous mode — it is a lead-only loop behavior
+   * (replaces the PROMPT stage with WAIT and auto-replies question()).
+   * Always returns false for child processes.
+   */
+  getAuto(): boolean {
+    return false;
+  }
+
+  /** No-op: auto mode is lead-only. Kept for CoreModule interface conformance. */
+  setAuto(_value: boolean): void {
+    // No-op: auto mode is managed by the parent process
+  }
+
+  /**
    * Wrap a slow operation with ESC-aware quick return
    * 
    * In child processes, ESC handling is not yet implemented.
