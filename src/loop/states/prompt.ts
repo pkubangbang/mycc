@@ -152,6 +152,11 @@ export async function handlePrompt(
 
   let query: string | null;
 
+  // Serve-mode flag, hoisted to function scope so both the Priority 3 input
+  // loop (multi-line editor guard) and the downstream steering/file/user-log
+  // logic can reference it without a redundant accessor call.
+  const hub = getServeHub();
+
   // Priority 1: pending slash query (from /load)
   if (env.pendingSlashQuery !== null) {
     query = env.pendingSlashQuery;
@@ -184,8 +189,12 @@ export async function handlePrompt(
         return null; // signal machine exit
       }
 
-      // Multi-line input: trailing backslash or Chinese enumeration comma opens editor
-      if ((p0Input.endsWith('\\') && p0Input.trim() !== '\\') || p0Input.endsWith('、')) {
+      // Multi-line input: trailing backslash or Chinese enumeration comma opens editor.
+      // Never triggered in serve/webui mode — the terminal-based editor makes no
+      // sense there; webui queries are always single-line submissions.
+      const isMultiline = !hub.isRunning()
+        && (p0Input.endsWith('、') || (p0Input.endsWith('\\') && p0Input.trim() !== '\\'));
+      if (isMultiline) {
         const result = await openMultilineEditor(p0Input.slice(0, -1));
         if (result.action === 'submit' && !result.content) {
           console.log(chalk.gray('Multi-line input cancelled.'));
@@ -235,7 +244,6 @@ export async function handlePrompt(
   // At this point query is guaranteed non-null (the input-provider loop sets
   // it only after the null-check, and the slash/initial paths set non-null),
   // so we narrow with a const binding for type safety inside the closure.
-  const hub = getServeHub();
   if (hub.isRunning() && query !== null) {
     const staleNotes = hub.getSteeringNotes();
     if (staleNotes.length > 0) {
