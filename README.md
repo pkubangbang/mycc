@@ -206,6 +206,25 @@ Example usage:
 mycc --ollama-model gemma4:31b-cloud --token-threshold 80000
 ```
 
+#### Understanding `--token-threshold` / `TOKEN_THRESHOLD`
+
+`TOKEN_THRESHOLD` is the **context budget** mycc manages for the conversation history (system prompt + project context + all user/assistant/tool messages). It is **not** the model's maximum context window — it is a soft limit mycc enforces *below* that window via **auto-compaction**.
+
+- As the conversation grows, mycc estimates the running token count. When it exceeds `TOKEN_THRESHOLD`, an **auto-compact** runs: the history is summarized (preserving accomplishments, current state, key decisions, and recent working memory) and replaced with a short summary pair, freeing the budget for new turns.
+- This keeps the agent's attention on the active task instead of letting stale, verbose tool results accumulate until the model truncates or errors out.
+
+**Why it must be less than the model's max context:**
+
+The model's maximum context (e.g. 128k for `glm-5:cloud`, 131k for `deepseek-chat`) is the hard ceiling the provider enforces — requests beyond it are rejected or silently truncated. `TOKEN_THRESHOLD` should sit comfortably *below* that ceiling because:
+
+1. **Headroom for the current turn** — the threshold is checked *before* the next LLM call. The agent's reply (which can be long, including tool-call definitions and reasoning) plus any tool results generated this turn are appended *after* the check, so they need to fit inside the remaining gap between `TOKEN_THRESHOLD` and the model's max context.
+2. **Headroom for tools and overhead** — the full tool schema (30+ tool definitions), system prompt, and project context (README, mindmap instructions) are sent on every call and consume tokens not fully captured by the running estimate. Leaving a buffer prevents edge-case overflow.
+3. **Avoid provider-side truncation** — if `TOKEN_THRESHOLD` were set at or above the model's max context, auto-compact would never trigger in time, and the provider would reject the oversized request (a hard failure) rather than mycc summarizing gracefully (a soft recovery).
+
+**Rule of thumb:** set `TOKEN_THRESHOLD` to roughly **70–80% of the model's max context**. For example, with a 128k-context model, `--token-threshold 80000`–`100000` leaves ample headroom for the current turn, tool schemas, and overhead while still maximizing the usable history before compaction kicks in.
+
+> **See also:** [`docs/compact-working-memory.md`](docs/compact-working-memory.md) — details the auto-compact mechanism, the LLM-stage compaction, and the working-memory focus extraction that preserves recent focus across compaction.
+
 ### Debug Flags
 
 mycc provides several `--debug-*` flags for investigating specific subsystems:
