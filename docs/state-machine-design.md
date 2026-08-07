@@ -6,38 +6,19 @@ The current agent loop (`src/loop/agent-loop.ts`) is a ~280-line imperative `whi
 
 Refactoring into a state machine isolates each step into an independent handler connected by explicit transitions. The user prompt becomes a first-class state, enabling autonomous operation by swapping the input provider.
 
-## The 6 States
+## The 7 States
 
-```
-                    TurnVars reset here
-                         │
-                    ┌────┴────┐
-                    │  PROMPT │◄──────────────────────────────┐
-                    └────┬────┘                               │
-                         │                                    │
-                    PassData reset here                       │
-                         │                                    │
-                    ┌────┴────┐      ┌──────┐    ┌──────┐    │
-                    │ COLLECT │◄─────┤ TOOL │    │ STOP │────┘
-                    └────┬────┘      └──┬───┘    └──┬───┘
-                         │              ▲           ▲
-                         ▼              │           │
-                    ┌────────┐    ┌─────┴───────────┴──┐
-                    │  LLM   │───>│        HOOK        │
-                    └────────┘    └─────────┬──────────┘
-                                            │
-                                   has calls │  no calls
-                                   ──────────┘  ────────┘
-```
+![MYCC state machine](assets/state-machine-diagram.png)
 
 | State | Responsibility |
 |-------|---------------|
-| **prompt** | Get user input (or skip in autonomous mode). Handle `/slash`, `!bang`, multi-line, exit. Display letter box on turn completion. |
+| **prompt** | Get user input (or skip in autonomous mode). Handle `/slash`, `!bang`, multi-line, exit. Display letter box on turn completion. **Auto-mode engagement gate**: redirect to `wait` when (1) auto mode is already on, or (2) the immutable `--debug-autofly` flag is set and the streak of consecutive successful LLM stages exceeds the threshold (`--autofly=N`, default 3). In case 2, `setAuto(true)` is called first so subsequent loops take path 1. |
 | **collect** | Pre-LLM pipeline: child questions, mail collection, hint round, todo nudging, role sequence validation. |
-| **llm** | Build system prompt, call `retryChat` with internal retry loop, handle abort. |
+| **llm** | Build system prompt, call `retryChat` with internal retry loop, handle abort. Records a successful LLM stage (`recordLlmSuccess()` increments the streak — a pure counter; it does NOT engage auto mode). |
 | **hook** | Augment tool calls with metadata. Evaluate hook conditions. Inject, replace, or block tool calls. Branch to `tool` or `stop`. |
 | **tool** | Execute tool calls sequentially. Handle ESC interruption, hook blocking, sequence tracking, ResultTooLargeError. |
-| **stop** | Handle the no-tool-call case. Await teammates (if any). Branch: continue working or complete turn. |
+| **stop** | Handle the no-tool-call case. Await teammates (if any). Always transitions to `prompt` — it no longer branches to `wait` directly. PROMPT is the single decision point for the auto-redirect, so STOP defers to it. |
+| **wait** | Autonomous-mode block. Replaces prompting when auto mode is on (or just engaged via the autofly trigger). Blocks for an external event — new mail, a teammate state change, or a webui steering note — then transitions to `collect`. ESC (or a programmatic `setAuto(false)`) exits auto mode and returns to `prompt`. |
 
 ## Data Tiers
 
@@ -46,7 +27,7 @@ Three tiers with distinct lifetimes:
 | Tier | Reset on | Contains |
 |------|----------|----------|
 | `MachineEnv` | never | `triologue`, `ctx` (AgentContext), `scope`, `conditions`, `sequence`, `hookExecutor`, `inputProvider` |
-| `TurnVars` | entering **prompt** | `isFirstRound`, `nextTodoNudge`, `lastTodoState` |
+| `TurnVars` | entering **prompt** or **wait** | `isFirstRound`, `nextTodoNudge`, `lastTodoState` |
 | `PassData` | entering **collect** | `abortController`, `rawToolCalls`, `augmentedCalls`, `hookResult` |
 
 Handler signature:
@@ -63,6 +44,9 @@ type StateHandler = (
 
 | From | Condition | To |
 |------|-----------|-----|
+| startup | always | prompt (initial state; PROMPT redirects to `wait` if auto is on) |
+| prompt | auto mode on | wait |
+| prompt | `--debug-autofly` on && streak > threshold | wait (after `setAuto(true)`) |
 | prompt | got input | collect |
 | prompt | user typed exit/quit | (machine returns) |
 | collect | preflight done | llm |
@@ -75,7 +59,9 @@ type StateHandler = (
 | tool | all executed | collect |
 | tool | ESC interrupt | collect |
 | stop | got question / new mail / timeout | collect |
-| stop | all done / no work | prompt |
+| stop | all done / no work | prompt (always — PROMPT decides the auto-redirect) |
+| wait | event arrived (mail / teammate / steering) | collect |
+| wait | ESC / programmatic auto-off | prompt |
 
 ## Error Handling
 
@@ -117,12 +103,14 @@ interface InputProvider {
 ```
 src/loop/state-machine.ts       — AgentState enum, MachineEnv/TurnVars/PassData, AgentStateMachine runner
 src/loop/input-provider.ts      — InputProvider interface + UserInputProvider
-src/loop/states/prompt.ts       — handlePrompt
+src/loop/auto-state.ts          — AutoState singleton (auto flag, streak counter, autofly threshold)
+src/loop/states/prompt.ts       — handlePrompt (incl. auto-mode engagement gate)
 src/loop/states/collect.ts      — handleCollect
 src/loop/states/llm.ts          — handleLlm
 src/loop/states/hook.ts         — handleHook
 src/loop/states/tool.ts         — handleTool
-src/loop/states/stop.ts         — handleStop
+src/loop/states/stop.ts         — handleStop (always → PROMPT)
+src/loop/states/wait.ts         — handleWait (autonomous-mode block)
 ```
 
 **Modified files:**
