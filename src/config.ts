@@ -104,7 +104,7 @@ const args = minimist(process.argv.slice(2), {
   //   (absent)           -> undefined (serve mode OFF)
   // Putting it in `string` would break bare `--serve` (yields "" not true);
   // putting it in `boolean` would swallow `--serve 9000` (port ignored).
-  boolean: ['v', 'verbose', 'skip-healthcheck', 'setup', 'debug-eval', 'debug-tp', 'debug-prompt', 'auto', 'debug-autofly'],
+  boolean: ['v', 'verbose', 'skip-healthcheck', 'setup', 'debug-eval', 'debug-tp', 'debug-prompt', 'auto', 'debug-autofly', 'allow-plan-off'],
   string: [
     'from', 'port', 'host', 'max-upload-mb', 'autofly',
     'ollama-host', 'ollama-api-key', 'ollama-model', 'ollama-vision-model', 'ollama-embedding-model',
@@ -116,6 +116,7 @@ const args = minimist(process.argv.slice(2), {
     v: false, from: null, port: null,
     'skip-healthcheck': false, setup: false,
     'debug-eval': false, 'debug-tp': false, 'debug-prompt': false, 'debug-autofly': false,
+    'allow-plan-off': false,
   },
 });
 
@@ -134,6 +135,7 @@ function buildCmdArgsEnv(parsed: typeof args): Record<string, string> {
     'debug-tp': 'MYCC_DEBUG_TP',
     'debug-prompt': 'MYCC_DEBUG_PROMPT',
     'debug-autofly': 'MYCC_DEBUG_AUTOfLY',
+    'allow-plan-off': 'MYCC_ALLOW_PLAN_OFF',
     // Env-configurable vars (override .env files)
     'ollama-host': 'OLLAMA_HOST',
     'ollama-api-key': 'OLLAMA_API_KEY',
@@ -251,6 +253,25 @@ export function isDebuggingPrompt(): boolean {
  */
 export function shouldAuto(): boolean {
   return args.auto === true;
+}
+
+/**
+ * Check if auto-mode plan_off should auto-approve (skip user confirmation).
+ *
+ * When true AND the lead is in auto mode, plan_off bypasses the user
+ * confirmation question() and directly switches back to normal mode.
+ * This prevents an unattended peer (started with --auto) from being
+ * permanently locked in plan mode after the agent self-enters it via
+ * plan_on (plan_on is a one-way entry: agent can self-lock, but plan_off
+ * normally requires user confirmation that auto-mode auto-denies).
+ *
+ * Immutable: set only via CLI arg, no slash-command toggle, cannot be
+ * flipped mid-session. Reads parsed CLI args directly (not process.env)
+ * to avoid inheriting a stale MYCC_ALLOW_PLAN_OFF env var from a parent
+ * process.
+ */
+export function shouldAllowPlanOff(): boolean {
+  return args['allow-plan-off'] === true;
 }
 
 /**

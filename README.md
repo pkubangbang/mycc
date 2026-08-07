@@ -199,6 +199,7 @@ All environment variables can be overridden via CLI flags. These take highest pr
 | `--editor` | `EDITOR` | Text editor for file editing |
 | `--skill-match-threshold` | `SKILL_MATCH_THRESHOLD` | Skill similarity threshold 0-1 (default: 0.5) |
 | `--max-upload-mb` | `MYCC_MAX_UPLOAD_MB` | Max single-file upload size (MB) for the `/serve` Web UI (default: 50) |
+| `--allow-plan-off` | `MYCC_ALLOW_PLAN_OFF` | In auto mode, auto-approve `plan_off` to exit plan mode without confirmation |
 
 Example usage:
 ```bash

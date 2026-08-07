@@ -12,6 +12,7 @@
 import type { ToolDefinition, AgentContext } from '../types.js';
 import type { Core } from '../context/parent/core.js';
 import type { TeamManager } from '../context/parent/team.js';
+import { shouldAllowPlanOff } from '../config.js';
 
 export const planOffTool: ToolDefinition = {
   name: 'plan_off',
@@ -30,6 +31,19 @@ export const planOffTool: ToolDefinition = {
     if (currentMode === 'normal') {
       ctx.core.brief('info', 'plan_off', 'Already in normal mode');
       return `Already in normal mode.\n\nCode changes are allowed. All tools are fully functional.`;
+    }
+
+    // Auto-mode auto-approve: when the --allow-plan-off CLI flag is set AND
+    // the lead is in auto mode, skip the user confirmation and directly
+    // exit plan mode. This lets an unattended peer (started with --auto)
+    // recover from a self-triggered plan_on instead of being permanently
+    // locked (auto-mode question() auto-replies with onEsc:'n' → denied).
+    if (shouldAllowPlanOff() && core.getAuto()) {
+      core.setMode('normal');
+      const team = ctx.team as TeamManager;
+      team.broadcastModeChange('normal');
+      ctx.core.brief('info', 'plan_off', 'Auto-approved plan_off (auto mode + --allow-plan-off flag)');
+      return `Normal mode activated (auto-approved via --allow-plan-off).\n\nCode changes are now allowed. All tools are fully functional.`;
     }
 
     // Transitioning from plan mode -> require user confirmation

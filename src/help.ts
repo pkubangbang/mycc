@@ -56,6 +56,7 @@ const STARTUP_FLAGS: FlagRow[] = [
   { flag: '--from <session-id>', desc: 'Branch a NEW session pre-filled from an old session' },
   { flag: '--skip-healthcheck', desc: 'Skip the startup health check (faster startup)' },
   { flag: '--auto', desc: 'Start in autonomous mode (no prompt; auto-reply questions; press esc to exit)' },
+  { flag: '--allow-plan-off', desc: 'In auto mode, auto-approve plan_off (skip confirmation; lets unattended peers escape plan mode)' },
   { flag: '-v, --verbose', desc: 'Show detailed debug output' },
   { flag: '-h, --help', desc: 'Show this help message and exit' },
 ];
