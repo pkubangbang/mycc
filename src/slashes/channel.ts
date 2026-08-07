@@ -3,15 +3,13 @@
  *
  * Usage:
  *   /channel list                      - List channels owned by this instance
- *   /channel connect <channelId>       - Join a channel (engages auto mode so the
- *                                        loop runs autonomously and replies via
- *                                        ctx.peer.sendMail). Channel file must
- *                                        already exist (created by a mediator).
  *   /channel disconnect <channelId>    - Leave a channel (sets joined=false).
  *
  * Channels are file pairs in ~/.mycc-store/discovery/channels/. Channel file
- * creation is the mediator's responsibility (out of scope); this command only
- * joins/leaves/displays channels that already exist.
+ * creation is the mediator's responsibility (out of scope). Channels are
+ * auto-joined by the peer module's 5s poll sweep the moment a channel file
+ * appears, so there is no explicit "connect" action here — this command only
+ * lists and leaves channels.
  */
 
 import type { SlashCommand } from '../types.js';
@@ -22,7 +20,7 @@ import { getChannelFile } from '../config.js';
 
 export const channelCommand: SlashCommand = {
   name: 'channel',
-  description: 'Manage peer channels: /channel list|connect <id>|disconnect <id>',
+  description: 'Manage peer channels: /channel list|disconnect <id>',
   aliases: ['channels'],
   handler: (context) => {
     const { ctx } = context;
@@ -44,31 +42,6 @@ export const channelCommand: SlashCommand = {
           ? (ch.peerSessionId ? (fresh ? chalk.green('active') : chalk.yellow('joined (peer stale)')) : chalk.yellow('joined (no peer)'))
           : chalk.gray('not joined');
         console.log(`  ${chalk.bold(ch.channelId)}  peer=${ch.peerSessionId ?? '—'}  ${state}  title="${ch.title}"`);
-      }
-      return;
-    }
-
-    if (sub === 'connect') {
-      const channelId = args[2];
-      if (!channelId) {
-        console.log(chalk.yellow('Usage: /channel connect <channelId>'));
-        return;
-      }
-      try {
-        const result = ctx.peer.joinChannel(channelId);
-        // Engage auto mode so the loop runs autonomously and replies via
-        // ctx.peer.sendMail. Reset the streak so this manual join doesn't
-        // immediately count toward a re-autofly trigger.
-        autoState.resetStreak();
-        autoState.setAuto(true);
-        console.log(chalk.green(`Joined channel ${channelId}.`));
-        if (result.firstQuery) {
-          console.log(chalk.gray(`First query: ${result.firstQuery}`));
-        }
-        console.log(chalk.cyan('auto mode is on. Reply via ctx.peer.sendMail(channelId, peerSessionId, topic, content). Press esc to exit.'));
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        console.log(chalk.red(`Could not join channel ${channelId}: ${message}`));
       }
       return;
     }
@@ -117,6 +90,6 @@ export const channelCommand: SlashCommand = {
     }
 
     console.log(chalk.yellow(`Unknown sub-command: ${sub}`));
-    console.log(chalk.gray('Usage: /channel list|connect <id>|disconnect <id>'));
+    console.log(chalk.gray('Usage: /channel list|disconnect <id>'));
   },
 };
