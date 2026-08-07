@@ -184,6 +184,88 @@ who is still online.
 > ongoing traffic is peer mail. So the `channelId`/`title` mostly matter for
 > the initial `firstQuery` framing.
 
+## Two Ways to Connect
+
+The mediator model above assumes a **pure outside orchestrator** that wires up
+two *other* instances. There is a second, equally valid mode: **you yourself
+are one end of the channel.** The current mycc instance (the one you are
+talking to) is one participant, and a *peer* instance is the other.
+
+### Mode 1 — Outside mediator (third party wires A and B)
+You are neither A nor B. You author **both** channel files of the pair from
+the outside, then step away. This is the workflow described in "The Mediator
+Workflow" above and applies when a script/operator composes instances it does
+not belong to.
+
+### Mode 2 — You are one endpoint (self + peer)
+You (the current instance) want to connect to a peer instance directly. Here
+you author the channel files from inside your own session — but the split of
+`firstQuery` is asymmetric and intentional:
+
+- **The peer's channel file** carries **your message to the peer** — the
+  kickoff/instruction you want the peer to act on. When the peer's 5s poll
+  auto-joins its file, this `firstQuery` is delivered to the **peer's** mailbox,
+  starting the peer's role.
+- **Your own channel file** carries a **self-kickoff** — a generated message
+  telling you whom you connected to and to reply via `mail_to`. When your own
+  poll auto-joins your file, this `firstQuery` is delivered to **your** mailbox,
+  starting your side.
+
+Both files share the same `channelId` and `title`; they differ only in
+`ownerSessionId`/`peerSessionId` (mirrored) and in `firstQuery` (peer's file =
+your instruction to the peer; your file = the self-kickoff). The key point:
+**`firstQuery` is always delivered to the mailbox of the file's *owner***, so
+put the peer's instruction on the peer's file and your self-kickoff on yours.
+
+Concretely, to connect yourself (`<selfSession>`) to a peer (`<peerSession>`)
+on topic `feature-x`:
+
+File 1 (the peer's file — carries your instruction to the peer):
+`~/.mycc-store/discovery/channels/<peerSession>-feature-x.json`
+```json
+{
+  "channelId": "feature-x",
+  "ownerSessionId": "<peerSession>",
+  "peerSessionId": "<selfSession>",
+  "title": "feature-x",
+  "firstQuery": "<YOUR instruction to the peer — its role + the mail_to(<selfSession>/lead, ...) reply contract>",
+  "joined": false,
+  "firstQuerySent": false,
+  "createdAt": <Date.now()>
+}
+```
+
+File 2 (your own file — carries your self-kickoff):
+`~/.mycc-store/discovery/channels/<selfSession>-feature-x.json`
+```json
+{
+  "channelId": "feature-x",
+  "ownerSessionId": "<selfSession>",
+  "peerSessionId": "<peerSession>",
+  "title": "feature-x",
+  "firstQuery": "Connected to peer <peerSession> on channel feature-x (topic: \"feature-x\"). Reply to this peer via mail_to(name=\"<peerSession>/lead\", title=\"feature-x:<subject>\", content=\"...\"). Do NOT reply by writing prose in the conversation.",
+  "joined": false,
+  "firstQuerySent": false,
+  "createdAt": <Date.now()>
+}
+```
+
+Within ~5s your own poll joins your file (delivering the self-kickoff to your
+mailbox) and the peer's poll joins its file (delivering your instruction to the
+peer's mailbox). From there, both sides reply peer-to-peer via `mail_to`.
+
+> **Why a self-kickoff?** Without it, joining your own channel file delivers
+> nothing to your mailbox, so your instance sits idle waiting for the peer to
+> speak first. The self-kickoff primes your loop with the peer's identity and
+> the reply contract, so you can act immediately (e.g. send the first real
+> `mail_to` to the peer). The peer, meanwhile, gets its role from *your*
+> message on the peer's file.
+
+Use Mode 2 when you want to **reach out to a peer from your own running
+instance** without an external mediator — e.g. ad-hoc collaboration, asking a
+peer in another workdir to review your change, or starting a two-instance
+pipeline where you are the first stage.
+
 ## Workflow Patterns (Cross-Instance)
 
 These mirror the `coordination` skill's patterns but at instance granularity.
@@ -279,12 +361,18 @@ is the cross-instance analogue of Divide-and-Conquer.
 1. A mediator wires **separate mycc instances** (not child teammates) by
    writing **channel file pairs**; the instances' existing peer-discovery +
    mail machinery does the rest.
-2. **Discover** online instances + session-ids with the `peers` tool.
-3. **Author two channel files** (one per participant), mirrored, with
+2. **Two connection modes**: (a) **outside mediator** — a third party authors
+   both files for two other instances; (b) **you are one endpoint** — you
+   author the pair from your own session, with the peer's file carrying your
+   instruction to the peer and your own file carrying a self-kickoff.
+3. **Discover** online instances + session-ids with the `peers` tool.
+4. **Author two channel files** (one per participant), mirrored, with
    `joined:false`/`firstQuerySent:false` and a per-instance `firstQuery`.
-4. Each `firstQuery` defines the instance's **role**, its **peer's session-id**,
-   and the **`mail_to(name="<peer>/lead", ...)` reply contract**.
-5. After kickoff, instances communicate **peer-to-peer via `mail_to`**
+5. Each `firstQuery` defines the instance's **role**, its **peer's session-id**,
+   and the **`mail_to(name="<peer>/lead", ...)` reply contract**. A file's
+   `firstQuery` is delivered to that file **owner's** mailbox — so in Mode 2,
+   put the peer's instruction on the peer's file and your self-kickoff on yours.
+6. After kickoff, instances communicate **peer-to-peer via `mail_to`**
    (freshness-gated direct mailbox append) — the mediator does not relay.
-6. Use the **coordination** skill for in-process lead+teammate teams; use THIS
-   skill only for multi-instance orchestration from the outside.
+7. Use the **coordination** skill for in-process lead+teammate teams; use THIS
+   skill only for multi-instance orchestration.
