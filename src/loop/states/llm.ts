@@ -49,6 +49,14 @@ export async function handleLlm(
   triologue.setSystemPrompt(systemPrompt);
 
   // Retry loop: internal backoff (via retryChat) + user-prompted retry
+  //
+  // emptyRetries counts consecutive empty LLM responses within THIS handleLlm
+  // invocation. Reset to 0 each time the loop produces usable output (it is
+  // scoped to the handler, so a later non-empty pass naturally resets the
+  // streak because the loop returns to HOOK). See the empty-output handler
+  // below for why this backstop is needed.
+  const MAX_EMPTY_RETRIES = 3;
+  let emptyRetries = 0;
   while (true) {
     // Determine tools (empty in neglected mode = text-only response)
     const tools = agentIO.isNeglectedMode() ? [] : loader.getToolsForScope(scope);
@@ -171,25 +179,52 @@ export async function handleLlm(
         env.crossroadOccurred = false;
       }
 
-      // Handle edge case where LLM returns empty content AND no tool calls
+      // Handle edge case where LLM returns empty content AND no tool calls.
+      //
+      // Previously this only injected a synthetic brief() when the last triologue
+      // role was NOT 'tool' (i.e. the guard `getLastRole() !== 'tool'`). After a
+      // tool result — e.g. screen/img_describe returns a long description — the
+      // last role IS 'tool', so the injection was SKIPPED and the loop `continue`d
+      // calling retryChat with the IDENTICAL message array. Near the context
+      // boundary the LLM keeps returning empty, producing a TIGHT INFINITE LOOP:
+      // the process stays alive (spinner spinning, no output) and only ESC
+      // (which aborts retryChat via escAware and returns PROMPT) recovers it.
+      //
+      // Fix: ALWAYS inject a synthetic brief() on empty output regardless of
+      // lastRole. triologue.agent()/tool() call attemptAutoFix, which safely
+      // bridges tool → assistant for both providers (ollama/deepseek even allow
+      // tool → user natively), so injecting after a 'tool' role is safe. This
+      // guarantees every empty iteration adds NEW content to context, breaking
+      // the identical-input loop. As a backstop against an LLM that keeps
+      // returning empty even after the prompt, bail to PROMPT after
+      // MAX_EMPTY_RETRIES consecutive empties so the agent never spins forever.
       if (!pass.assistantContent && pass.rawToolCalls.length === 0) {
-        ctx.core.verbose('llm', 'LLM returned empty response (no content, no tool calls). Injecting synthetic brief() to prompt re-engagement.');
-        if (triologue.getLastRole() !== 'tool') {
-          // Inject a synthetic brief tool call so the LLM sees its own
-          // "Let me see what to do next." thought in the conversation,
-          // rather than a passive [REMINDER] note. Confidence 7 means
-          // slightly uncertain, nudging confusion index toward hint threshold.
-          const briefCallId = Math.random().toString(36).slice(2, 10);
-          triologue.agent('', [{
-            id: briefCallId,
-            function: {
-              name: 'brief',
-              arguments: { message: 'Let me see what to do next.', confidence: 7 },
-            },
-          }]);
-          triologue.tool('brief', 'OK', briefCallId);
+        emptyRetries++;
+        ctx.core.verbose('llm', `LLM returned empty response (no content, no tool calls). Injecting synthetic brief() to prompt re-engagement. (empty retry ${emptyRetries}/${MAX_EMPTY_RETRIES})`);
+
+        if (emptyRetries > MAX_EMPTY_RETRIES) {
+          // Context is likely unrecoverable on its own — give control back to
+          // the user. A subsequent COLLECT/PROMPT may also drain any queued
+          // steering note that was stuck while the loop was spinning.
+          ctx.core.verbose('llm', `Empty-output retries exhausted (${MAX_EMPTY_RETRIES}). Returning to PROMPT to avoid infinite loop.`);
+          stopSpinner();
+          return AgentState.PROMPT;
         }
-        continue; // Re-run the while loop and call LLM again
+
+        // Inject a synthetic brief tool call so the LLM sees its own
+        // "Let me see what to do next." thought in the conversation,
+        // rather than a passive [REMINDER] note. Confidence 7 means
+        // slightly uncertain, nudging confusion index toward hint threshold.
+        const briefCallId = Math.random().toString(36).slice(2, 10);
+        triologue.agent('', [{
+          id: briefCallId,
+          function: {
+            name: 'brief',
+            arguments: { message: 'Let me see what to do next.', confidence: 7 },
+          },
+        }]);
+        triologue.tool('brief', 'OK', briefCallId);
+        continue; // Re-run the while loop and call LLM again with new context
       }
 
       // Record a successful LLM stage for the autofly streak counter. This is
