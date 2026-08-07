@@ -253,4 +253,48 @@ describe('handlePrompt — auto-mode engagement gate', () => {
       expect(autoState.getAutoflyThreshold).not.toHaveBeenCalled();
     });
   });
+
+  describe('case 2 (channel trigger): an active peer channel engages auto mode', () => {
+    // The autofly gate is (isDebugAutofly() || ctx.peer.hasActiveChannel()) && streak > threshold.
+    // An active channel is equivalent to --debug-autofly: it arms the trigger
+    // even when the CLI flag is off.
+
+    it('engages auto mode when a channel is active and streak > threshold (flag off)', async () => {
+      const { env } = makeEnv();
+      vi.mocked(isDebugAutofly).mockReturnValue(false);
+      (env.ctx.peer.hasActiveChannel as ReturnType<typeof vi.fn>).mockReturnValue(true);
+      vi.mocked(autoState.getAutoflyThreshold).mockReturnValue(3);
+      vi.mocked(autoState.getStreak).mockReturnValue(4);
+
+      const result = await handlePrompt(env, createTurnVars(), createPassData());
+
+      expect(result).toBe(AgentState.WAIT);
+      expect(autoState.setAuto).toHaveBeenCalledWith(true);
+    });
+
+    it('does NOT engage when a channel is active but streak <= threshold', async () => {
+      const { env } = makeEnv();
+      vi.mocked(isDebugAutofly).mockReturnValue(false);
+      (env.ctx.peer.hasActiveChannel as ReturnType<typeof vi.fn>).mockReturnValue(true);
+      vi.mocked(autoState.getAutoflyThreshold).mockReturnValue(3);
+      vi.mocked(autoState.getStreak).mockReturnValue(3); // 3 > 3 is false
+
+      const result = await handlePrompt(env, createTurnVars(), createPassData());
+
+      expect(result).toBe(AgentState.COLLECT);
+      expect(autoState.setAuto).not.toHaveBeenCalledWith(true);
+    });
+
+    it('does NOT engage when no channel is active and the flag is off', async () => {
+      const { env } = makeEnv();
+      vi.mocked(isDebugAutofly).mockReturnValue(false);
+      (env.ctx.peer.hasActiveChannel as ReturnType<typeof vi.fn>).mockReturnValue(false);
+      vi.mocked(autoState.getStreak).mockReturnValue(99);
+
+      const result = await handlePrompt(env, createTurnVars(), createPassData());
+
+      expect(result).toBe(AgentState.COLLECT);
+      expect(autoState.setAuto).not.toHaveBeenCalledWith(true);
+    });
+  });
 });

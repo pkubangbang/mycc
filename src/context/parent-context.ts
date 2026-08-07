@@ -2,7 +2,7 @@
  * parent-context.ts - ParentContext for main/lead process
  */
 
-import type { AgentContext, IpcHandlerRegistration, WikiModule } from '../types.js';
+import type { AgentContext, IpcHandlerRegistration, WikiModule, PeerModule } from '../types.js';
 import { Core } from './parent/core.js';
 import { Todo } from './shared/todo.js';
 import { MailBox } from './shared/mail.js';
@@ -10,8 +10,12 @@ import { IssueManager } from './parent/issue.js';
 import { BackgroundTasks } from './shared/bg.js';
 import { TeamManager } from './parent/team.js';
 import { WikiManager } from './parent/wiki.js';
+import { PeerManager } from '../peer/peer.js';
 import { loader } from './shared/loader.js';
 import { evaluateGrant } from './grant/index.js';
+import { getSessionDir } from '../config.js';
+import { getSessionId } from '../session/index.js';
+import * as path from 'path';
 import type { CoreModule, TodoModule, MailModule, SkillModule, IssueModule, BgModule, TeamModule } from '../types.js';
 
 // Re-export loader for convenience
@@ -30,6 +34,7 @@ export class ParentContext implements AgentContext {
   private bgModule: BackgroundTasks;
   private teamModule: TeamManager;
   private wikiModule: WikiManager;
+  private peerModule: PeerManager;
 
   constructor(sessionFilePath: string) {
     this.coreModule = new Core(); // Uses process.cwd() by default
@@ -41,6 +46,13 @@ export class ParentContext implements AgentContext {
     // Pass 'this' to TeamManager - context is used lazily so this is safe
     this.teamModule = new TeamManager(this, sessionFilePath);
     this.wikiModule = new WikiManager(this.coreModule);
+    // Peer discovery: wire sessionId, workDir, and absolute mailbox path.
+    // The mailbox path is the absolute form of unread-lead.jsonl so remote
+    // instances can append cross-instance mail directly (see D5 in the plan).
+    const peerSessionId = getSessionId(sessionFilePath);
+    const peerWorkDir = process.cwd();
+    const peerMailboxPath = path.resolve(getSessionDir(peerSessionId), 'unread-lead.jsonl');
+    this.peerModule = new PeerManager(peerSessionId, peerWorkDir, peerMailboxPath);
   }
 
   // Getters for each module
@@ -52,6 +64,7 @@ export class ParentContext implements AgentContext {
   get bg(): BgModule { return this.bgModule; }
   get team(): TeamModule { return this.teamModule; }
   get wiki(): WikiModule { return this.wikiModule; }
+  get peer(): PeerModule { return this.peerModule; }
 
   /**
    * Initialize IPC handlers for child process communication

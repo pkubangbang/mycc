@@ -190,6 +190,9 @@ export async function main(): Promise<void> {
   ctx.core.addExternalAutoGrant(getLayerBaseDir('built-in'));
   ctx.core.addExternalAutoGrant(getLayerBaseDir('user'));
 
+  // Start peer discovery protocol: register identity + begin heartbeat + channel poll
+  ctx.peer.start();
+
   await loader.indexAllSkillsToWiki(ctx.wiki);
 
   // Load mindmap (mindmap.json + replay patches from mindmap-patch.jsonl)
@@ -431,6 +434,7 @@ export async function main(): Promise<void> {
     }
     console.log(chalk.yellow('\nShutting down...'));
     ctx.team.dismissTeam(false); // Graceful shutdown of all teammates
+    ctx.peer.stop(); // Stop heartbeat + channel poll + unregister identity
     process.send!({ type: 'exit' });
   });
 
@@ -442,6 +446,7 @@ export async function main(): Promise<void> {
   // orphans them and the next /serve hits EADDRINUSE.
   process.on('SIGTERM', async () => {
     ctx.team.dismissTeam(false);
+    ctx.peer.stop(); // Stop heartbeat + channel poll + unregister identity
     try { await getServeHub().stop(); } catch { /* stop() already best-effort internally */ }
     process.exit(0);
   });
@@ -508,6 +513,7 @@ export async function main(): Promise<void> {
   // Normal exit: shut down the serve hub (Vite dev server + HTTP port)
   // so no child processes are orphaned when the Lead process exits.
   await getServeHub().stop();
+  ctx.peer.stop(); // Stop heartbeat + channel poll + unregister identity
 
   // Signal Coordinator to exit
   process.send({ type: 'exit' });

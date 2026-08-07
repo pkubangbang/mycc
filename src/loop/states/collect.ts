@@ -302,12 +302,23 @@ export async function handleCollect(
       ctx.core.resetConfusionIndex();
     }
 
-    // 4. Todo nudging with state tracking
-    if (ctx.todo.hasOpenTodo()) {
+    // 4. Todo nudging with state tracking.
+    //    The guard fires when there are open todos OR an active peer channel
+    //    (a joined channel with a fresh peer). Channel state is appended to
+    //    the same nudge so the LLM sees peer context without a separate
+    //    mechanism (keeps todo.ts pure — channel info comes from ctx.peer).
+    const activeChannels = ctx.peer.listChannels().filter(
+      ch => ch.joined && ch.peerSessionId && ctx.peer.isFresh(ch.peerSessionId)
+    );
+    if (ctx.todo.hasOpenTodo() || activeChannels.length > 0) {
       const currentTodoState = ctx.todo.printTodoList();
-      if (currentTodoState !== turn.lastTodoState) {
+      const channelState = activeChannels.length > 0
+        ? activeChannels.map(ch => `  [channel ${ch.channelId}] peer=${ch.peerSessionId} fresh=${ctx.peer.isFresh(ch.peerSessionId!)} title="${ch.title}"`).join('\n')
+        : '';
+      const compositeState = `${currentTodoState}\n${channelState}`;
+      if (compositeState !== turn.lastTodoState) {
         turn.nextTodoNudge = 3;
-        turn.lastTodoState = currentTodoState;
+        turn.lastTodoState = compositeState;
       }
       turn.nextTodoNudge--;
       if (turn.nextTodoNudge === 0) {
@@ -315,8 +326,15 @@ export async function handleCollect(
         // Runs on the same throttle cycle as the nudge so the nudge below
         // prints the already-updated list (no "closed then reopened" flicker).
         await checkReactivation(env);
-        // (4b) Nudge SECOND — prints the now-up-to-date todo list.
-        triologue.note('REMINDER', `Update your todos. ${ctx.todo.printTodoList()}`);
+        // (4b) Nudge SECOND — prints the now-up-to-date todo list + channels.
+        const nudgeParts = [`Update your todos. ${ctx.todo.printTodoList()}`];
+        if (activeChannels.length > 0) {
+          const lines = activeChannels.map(
+            ch => `  [channel ${ch.channelId}] peer=${ch.peerSessionId} fresh=true title="${ch.title}"`
+          );
+          nudgeParts.push(`Active peer channels (${activeChannels.length}). Reply via ctx.peer.sendMail(channelId, peerSessionId, topic, content). Channels:\n${lines.join('\n')}`);
+        }
+        triologue.note('REMINDER', nudgeParts.join('\n'));
         turn.nextTodoNudge = 3;
       }
     }

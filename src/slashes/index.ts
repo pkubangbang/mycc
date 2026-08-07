@@ -98,6 +98,7 @@ import { forkCommand } from './fork.js';
 import { mailCommand } from './mail.js';
 import { serveCommand } from './serve.js';
 import { autoCommand } from './auto.js';
+import { channelCommand } from './channel.js';
 
 slashRegistry.register(teamCommand);
 slashRegistry.register(todosCommand);
@@ -117,3 +118,4 @@ slashRegistry.register(forkCommand);
 slashRegistry.register(mailCommand);
 slashRegistry.register(serveCommand);
 slashRegistry.register(autoCommand);
+slashRegistry.register(channelCommand);

@@ -2,7 +2,7 @@
  * child-context.ts - ChildContext for child process (teammate)
  */
 
-import type { AgentContext, SkillModule, CoreModule, TodoModule, MailModule, IssueModule, BgModule, TeamModule, WikiModule } from '../types.js';
+import type { AgentContext, SkillModule, CoreModule, TodoModule, MailModule, IssueModule, BgModule, TeamModule, WikiModule, PeerModule } from '../types.js';
 import { Todo } from './shared/todo.js';
 import { MailBox } from './shared/mail.js';
 import { Loader } from './shared/loader.js';
@@ -11,6 +11,7 @@ import { ChildIssue } from './child/issue.js';
 import { ChildTeam } from './child/team.js';
 import { ChildWiki } from './child/wiki.js';
 import { BackgroundTasks } from './shared/bg.js';
+import { NoopPeerModule } from '../peer/peer.js';
 
 /** Child process loader singleton (silent mode) */
 export const silentLoader = new Loader(true);
@@ -31,6 +32,7 @@ export class ChildContext implements AgentContext {
   private bgModule: BackgroundTasks;
   private teamModule: ChildTeam;
   private wikiModule: ChildWiki;
+  private peerModule: PeerModule;
 
   constructor(name: string, workDir: string) {
     this.coreModule = new ChildCore(name, workDir);
@@ -41,6 +43,8 @@ export class ChildContext implements AgentContext {
     this.bgModule = new BackgroundTasks(this.coreModule);
     this.teamModule = new ChildTeam(name); // Pass owner name for mailTo
     this.wikiModule = new ChildWiki();
+    // Teammates are child processes — peer discovery runs only in the lead.
+    this.peerModule = new NoopPeerModule();
   }
 
   // Getters for each module
@@ -52,4 +56,5 @@ export class ChildContext implements AgentContext {
   get bg(): BgModule { return this.bgModule; }
   get team(): TeamModule { return this.teamModule; }
   get wiki(): WikiModule { return this.wikiModule; }
+  get peer(): PeerModule { return this.peerModule; }
 }

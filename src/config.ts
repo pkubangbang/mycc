@@ -595,6 +595,34 @@ export function getWikiDomainsFile(): string {
 }
 
 // ============================================================================
+// Discovery Protocol (myccdp)
+// ============================================================================
+
+export function getDiscoveryDir(): string {
+  return path.join(os.homedir(), '.mycc-store', 'discovery');
+}
+
+export function getIdentityFile(): string {
+  return path.join(getDiscoveryDir(), 'identity.json');
+}
+
+export function getHeartbeatDir(): string {
+  return path.join(getDiscoveryDir(), 'heartbeat');
+}
+
+export function getHeartbeatFile(sessionId: string): string {
+  return path.join(getHeartbeatDir(), `${sessionId}.json`);
+}
+
+export function getChannelsDir(): string {
+  return path.join(getDiscoveryDir(), 'channels');
+}
+
+export function getChannelFile(sessionId: string, channelId: string): string {
+  return path.join(getChannelsDir(), `${sessionId}-${channelId}.json`);
+}
+
+// ============================================================================
 // Directory Initialization
 // ============================================================================
 
@@ -665,6 +693,14 @@ export function ensureDirs(): void {
   // Wiki directories are in ~/.mycc-store, not project .mycc
   const wikiDirs = [getWikiDir(), getWikiLogsDir(), getWikiDbDir()];
   for (const dir of wikiDirs) {
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+  }
+
+  // Discovery protocol directories (in ~/.mycc-store, not project .mycc)
+  const discoveryDirs = [getDiscoveryDir(), getHeartbeatDir(), getChannelsDir()];
+  for (const dir of discoveryDirs) {
     if (!fs.existsSync(dir)) {
       fs.mkdirSync(dir, { recursive: true });
     }

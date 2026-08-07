@@ -485,6 +485,62 @@ export interface MailModule {
   clearUnread(): void;
 }
 
+// ============================================================================
+// Peer Discovery (myccdp)
+// ============================================================================
+
+/**
+ * Identity entry stored in ~/.mycc-store/discovery/identity.json
+ */
+export interface IdentityEntry {
+  sessionId: string;
+  workDir: string;
+  mailbox: string;
+  startedAt: number;
+}
+
+/**
+ * Channel file stored at ~/.mycc-store/discovery/channels/[session-id]-[channel-id].json
+ */
+export interface ChannelFile {
+  channelId: string;
+  ownerSessionId: string;
+  peerSessionId: string | null;
+  title: string;
+  firstQuery: string | null;
+  joined: boolean;
+  firstQuerySent: boolean;
+  createdAt: number;
+}
+
+/**
+ * Peer module interface — cross-instance discovery and messaging
+ */
+export interface PeerModule {
+  /** Get all registered identities */
+  listIdentities(): IdentityEntry[];
+  /** Check freshness of a remote session (heartbeat within 90s window) */
+  isFresh(sessionId: string): boolean;
+  /** List all channels owned by this instance (with peer info populated) */
+  listChannels(): ChannelFile[];
+  /** Join a channel (sets joined=true, injects title+firstQuery as local mail).
+   *  Does NOT read the peer's file — peer discovery is listChannels()'s job.
+   *  Throws if channel file does not exist. */
+  joinChannel(channelId: string): { joined: boolean; firstQuery?: string };
+  /** Send mail to a remote session via its mailbox (gated by freshness).
+   *  `topic` is an ad-hoc subject per message (distinct from the channel's static `title` theme). */
+  sendMail(channelId: string, sessionId: string, topic: string, content: string): boolean;
+  /** True if this instance has at least one joined channel whose peer is fresh.
+   *  Used by the PROMPT autofly gate: an active channel is equivalent to
+   *  --debug-autofly for engaging auto mode. */
+  hasActiveChannel(): boolean;
+  /** Start the peer subsystem: register identity + begin heartbeat + start channel poll.
+   *  Only the lead process calls this; the child (NoopPeerModule) is a no-op. */
+  start(): void;
+  /** Stop the peer subsystem: stop heartbeat + stop channel poll + unregister identity. */
+  stop(): void;
+}
+
 /**
  * Skill module interface
  */
@@ -767,6 +823,7 @@ export interface AgentContext {
   bg: BgModule;
   team: TeamModule;
   wiki: WikiModule;
+  peer: PeerModule;
 }
 
 // ============================================================================

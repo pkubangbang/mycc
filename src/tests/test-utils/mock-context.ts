@@ -6,7 +6,7 @@
  */
 
 import { vi } from 'vitest';
-import type { AgentContext, CoreModule, TodoModule, MailModule, SkillModule, IssueModule, BgModule, TeamModule, WikiModule } from '../../types.js';
+import type { AgentContext, CoreModule, TodoModule, MailModule, SkillModule, IssueModule, BgModule, TeamModule, WikiModule, PeerModule } from '../../types.js';
 
 // ============================================================================
 // Mock Factories
@@ -161,6 +161,27 @@ export function createMockWiki(overrides: Partial<WikiModule> = {}): WikiModule 
   };
 }
 
+/**
+ * Create a mock PeerModule with optional overrides.
+ *
+ * Defaults mirror the NoopPeerModule: no identities, no channels, never fresh,
+ * no active channel. Tests that exercise peer-driven behavior (autofly gate,
+ * todo nudge, /channel) override hasActiveChannel / listChannels / etc.
+ */
+export function createMockPeer(overrides: Partial<PeerModule> = {}): PeerModule {
+  return {
+    listIdentities: vi.fn(() => []),
+    isFresh: vi.fn(() => false),
+    listChannels: vi.fn(() => []),
+    joinChannel: vi.fn(() => ({ joined: false })),
+    sendMail: vi.fn(() => false),
+    hasActiveChannel: vi.fn(() => false),
+    start: vi.fn(),
+    stop: vi.fn(),
+    ...overrides,
+  };
+}
+
 // ============================================================================
 // Full Context Mocks
 // ============================================================================
@@ -178,6 +199,7 @@ export interface MockContextOptions {
   bg?: Partial<BgModule>;
   team?: Partial<TeamModule>;
   wiki?: Partial<WikiModule>;
+  peer?: Partial<PeerModule>;
 }
 
 /**
@@ -217,6 +239,7 @@ export function createMockContext(options: MockContextOptions = {}): AgentContex
     bg: createMockBg(options.bg),
     team: createMockTeam(options.team),
     wiki: createMockWiki(options.wiki),
+    peer: createMockPeer(options.peer),
   };
 }
 
@@ -234,5 +257,6 @@ export function createMinimalMockContext(workdir?: string): AgentContext {
     bg: {} as BgModule,
     team: {} as TeamModule,
     wiki: {} as WikiModule,
+    peer: createMockPeer(),
   };
 }

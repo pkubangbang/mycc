@@ -136,6 +136,7 @@ export async function handlePrompt(
   _pass: PassData,
 ): Promise<HandlerResult> {
   const { triologue, inputProvider, sessionFilePath } = env;
+  const { ctx } = env;
 
   // ── Auto-mode engagement gate ──
   // PROMPT is the single decision point for whether the loop should skip
@@ -145,11 +146,14 @@ export async function handlePrompt(
   //   1. Auto mode is already on (e.g. engaged via /auto or a prior autofly
   //      trigger). Just jump to WAIT — the loop keeps running.
   //
-  //   2. Auto mode is off, but the immutable --debug-autofly CLI flag is set
-  //      AND the streak of consecutive successful LLM stages exceeds the
-  //      threshold N. This is the "autofly" trigger: we engage auto mode now
-  //      (setAuto(true)) so that subsequent PROMPT entries take path 1, then
-  //      jump to WAIT.
+  //   2. Auto mode is off, but one of the autofly triggers is armed AND the
+  //      streak of consecutive successful LLM stages exceeds the threshold N.
+  //      Triggers: the immutable --debug-autofly CLI flag, OR an active peer
+  //      channel (a joined channel with a fresh peer — see hasActiveChannel()).
+  //      Having an active channel is equivalent to --debug-autofly: it engages
+  //      auto mode now (setAuto(true)) so subsequent PROMPT entries take path 1,
+  //      then jumps to WAIT. ESC gives the user N turns (default 3) before the
+  //      streak re-arms and auto re-engages.
   //
   // The threshold lives in the AutoState singleton — agent-repl seeds it once
   // at startup from --autofly=N (falling back to the built-in default), so
@@ -161,7 +165,7 @@ export async function handlePrompt(
     autoState.setAuto(true); // idempotent re-sync (no-op, keeps onAutoChange calm)
     return AgentState.WAIT;
   }
-  if (isDebugAutofly() && autoState.getStreak() > autoState.getAutoflyThreshold()) {
+  if ((isDebugAutofly() || ctx.peer.hasActiveChannel()) && autoState.getStreak() > autoState.getAutoflyThreshold()) {
     autoState.setAuto(true); // engage auto mode so subsequent loops take path 1
     return AgentState.WAIT;
   }
