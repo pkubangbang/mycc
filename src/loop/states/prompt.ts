@@ -33,7 +33,7 @@ import { isDebuggingPrompt, isDebugAutofly } from '../../config.js';
 import { forkChat } from '../../engine/chat-provider.js';
 import type { RetryConfig } from '../../engine/chat-helpers.js';
 import { getServeHub } from '../../serve/serve-registry.js';
-import { agentIO } from '../agent-io.js';
+import { agentIO, PromptAbortError } from '../agent-io.js';
 import { autoState } from '../auto-state.js';
 
 /**
@@ -165,6 +165,30 @@ export async function handlePrompt(
     autoState.setAuto(true); // idempotent re-sync (no-op, keeps onAutoChange calm)
     return AgentState.WAIT;
   }
+  // ── Autofly engagement gate (shared streak gate for both triggers) ──
+  // Both --debug-autofly and an active peer channel share the SAME streak >
+  // threshold gate. The streak IS the breathing room: ESC flips auto off and
+  // resets streak to 0 (auto-state.ts setAuto(false)), so neither trigger
+  // re-engages auto until N consecutive LLM successes accumulate (streak >
+  // threshold, default 3). That window is when the user intervenes — e.g.
+  // saying "try again" after a by-design git_commit rejection. Removing the
+  // streak gate from either trigger would re-engage auto immediately after
+  // ESC and reject the commit again with no breathing room.
+  //
+  // The || short-circuits hasActiveChannel() away when isDebugAutofly() is
+  // true, so the channel path's side effects (listChannels readdirSync + a
+  // writeChannelFile write to persist a discovered peerSessionId) never run
+  // on a --debug-autofly-only session. The && short-circuits the whole
+  // expression when streak <= threshold, so the gate is cheap on the common
+  // post-ESC path.
+  //
+  // This gate covers channels joined BEFORE the loop reached PROMPT. A channel
+  // joining MID-PROMPT (after this gate fell through but while ask()/
+  // waitForInput() is blocked) is handled by Layer B — the try/catch around
+  // getInput() below, which catches a PromptAbortError rejection and returns
+  // WAIT. Layer B engages auto unconditionally because a channel DID just join
+  // (the event itself is the signal); the next PROMPT then re-applies this
+  // streak gate.
   if ((isDebugAutofly() || ctx.peer.hasActiveChannel()) && autoState.getStreak() > autoState.getAutoflyThreshold()) {
     autoState.setAuto(true); // engage auto mode so subsequent loops take path 1
     return AgentState.WAIT;
@@ -197,7 +221,24 @@ export async function handlePrompt(
     let p0Input: string | null = null;
 
     while (true) {
-      p0Input = await inputProvider.getInput(p0Input ?? undefined);
+      // Layer B — catch a peer channel joining MID-PROMPT (after the Layer A
+      // gate above was checked but while ask()/waitForInput() is blocked here).
+      // The channel-join event rejects the blocked Promise with a
+      // PromptAbortError (terminal via AgentIO.abortAsk, serve via
+      // ServeHub.rejectInput); that rejection propagates as a thrown exception
+      // through UserInputProvider.getInput() / WebInputProvider.getInput() to
+      // here. We catch it and redirect to WAIT — the channel is now active, so
+      // the next PROMPT entry takes the Layer A hasActiveChannel() path. Any
+      // other thrown error is a genuine failure: re-throw so it surfaces.
+      try {
+        p0Input = await inputProvider.getInput(p0Input ?? undefined);
+      } catch (e) {
+        if (e instanceof PromptAbortError) {
+          autoState.setAuto(true); // engage auto; channel is active now
+          return AgentState.WAIT;
+        }
+        throw e;
+      }
 
       // null = autonomous skip or EOF → proceed without user message
       if (p0Input === null) {

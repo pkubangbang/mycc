@@ -179,6 +179,8 @@ export function createMockPeer(overrides: Partial<PeerModule> = {}): PeerModule 
     hasActiveChannel: vi.fn(() => false),
     start: vi.fn(),
     stop: vi.fn(),
+    getSelfSessionId: vi.fn(() => ''),
+    setOnChannelJoin: vi.fn(),
     ...overrides,
   };
 }

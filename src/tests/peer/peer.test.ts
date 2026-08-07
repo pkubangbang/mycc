@@ -316,6 +316,75 @@ describe('ChannelManager', () => {
     expect(fs.existsSync(mailboxB) ? fs.readFileSync(mailboxB, 'utf-8') : '').toBe('');
   });
 
+  it('joinChannel() fires the onChannelJoin callback after joining (mid-PROMPT wake)', () => {
+    const cid = 'chan-join-cb';
+    const mailbox = makeMailboxPath(SID_A);
+    writeChannelRaw(SID_A, cid, {
+      channelId: cid, ownerSessionId: SID_A, peerSessionId: SID_B,
+      title: 't', firstQuery: 'hi', joined: false, firstQuerySent: false, createdAt: 1,
+    });
+    const idA = new IdentityManager(SID_A, '/work/a', mailbox);
+    const ch = new ChannelManager(SID_A, idA, mailbox);
+
+    const calls: string[] = [];
+    ch.setOnChannelJoin(() => { calls.push('joined'); });
+
+    ch.joinChannel(cid);
+    expect(calls).toEqual(['joined']);
+  });
+
+  it('joinChannel() does not throw if no onChannelJoin callback is set', () => {
+    const cid = 'chan-join-nocb';
+    const mailbox = makeMailboxPath(SID_A);
+    writeChannelRaw(SID_A, cid, {
+      channelId: cid, ownerSessionId: SID_A, peerSessionId: SID_B,
+      title: 't', firstQuery: null, joined: false, firstQuerySent: false, createdAt: 1,
+    });
+    const idA = new IdentityManager(SID_A, '/work/a', mailbox);
+    const ch = new ChannelManager(SID_A, idA, mailbox);
+    // No setOnChannelJoin call — joinChannel must still succeed.
+    expect(() => ch.joinChannel(cid)).not.toThrow();
+  });
+
+  it('joinChannel() swallows a throwing onChannelJoin callback (channel state stays committed)', () => {
+    const cid = 'chan-join-throw';
+    const mailbox = makeMailboxPath(SID_A);
+    writeChannelRaw(SID_A, cid, {
+      channelId: cid, ownerSessionId: SID_A, peerSessionId: SID_B,
+      title: 't', firstQuery: null, joined: false, firstQuerySent: false, createdAt: 1,
+    });
+    const idA = new IdentityManager(SID_A, '/work/a', mailbox);
+    const ch = new ChannelManager(SID_A, idA, mailbox);
+    ch.setOnChannelJoin(() => { throw new Error('callback exploded'); });
+
+    // joinChannel must not propagate the callback error.
+    const result = ch.joinChannel(cid);
+    expect(result.joined).toBe(true);
+    // joined flag persisted despite the callback throw.
+    const persisted = JSON.parse(fs.readFileSync(channelFile(SID_A, cid), 'utf-8'));
+    expect(persisted.joined).toBe(true);
+  });
+
+  it('setOnChannelJoin overwrites a previously registered callback (single listener)', () => {
+    const cid = 'chan-join-overwrite';
+    const mailbox = makeMailboxPath(SID_A);
+    writeChannelRaw(SID_A, cid, {
+      channelId: cid, ownerSessionId: SID_A, peerSessionId: SID_B,
+      title: 't', firstQuery: null, joined: false, firstQuerySent: false, createdAt: 1,
+    });
+    const idA = new IdentityManager(SID_A, '/work/a', mailbox);
+    const ch = new ChannelManager(SID_A, idA, mailbox);
+
+    const first: string[] = [];
+    const second: string[] = [];
+    ch.setOnChannelJoin(() => { first.push('a'); });
+    ch.setOnChannelJoin(() => { second.push('b'); });
+
+    ch.joinChannel(cid);
+    expect(first).toEqual([]);      // overwritten — not called
+    expect(second).toEqual(['b']);  // only the latest listener fires
+  });
+
   it('sendPeerMail() returns false for an unregistered session', () => {
     const mailboxA = makeMailboxPath(SID_A);
     const idA = new IdentityManager(SID_A, '/work/a', mailboxA);
@@ -383,5 +452,24 @@ describe('PeerManager facade', () => {
     expect(peer.hasActiveChannel()).toBe(false);
     peer.stop();
     peerB.stop();
+  });
+
+  it('setOnChannelJoin() delegates to ChannelManager and fires on joinChannel()', () => {
+    const cid = 'chan-delegate';
+    const mailbox = makeMailboxPath(SID_A);
+    writeChannelRaw(SID_A, cid, {
+      channelId: cid, ownerSessionId: SID_A, peerSessionId: SID_B,
+      title: 't', firstQuery: null, joined: false, firstQuerySent: false, createdAt: 1,
+    });
+    const peer = new PeerManager(SID_A, '/work/a', mailbox);
+    peer.start();
+    const idA = new IdentityManager(SID_A, '/work/a', mailbox);
+    idA.register();
+
+    const calls: string[] = [];
+    peer.setOnChannelJoin(() => { calls.push('fired'); });
+    peer.joinChannel(cid);
+    expect(calls).toEqual(['fired']);
+    peer.stop();
   });
 });

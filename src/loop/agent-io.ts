@@ -20,6 +20,29 @@ import { autoState } from './auto-state.js';
 import { setResultCallback } from '../utils/letter-box.js';
 
 /**
+ * Error used to reject a blocked {@link AgentIO.ask} (terminal) or
+ * {@link ServeHub.waitForInput} (serve) Promise when an external event —
+ * currently a peer channel joining — must abort the PROMPT wait and
+ * redirect the loop to WAIT without prompting the user.
+ *
+ * Throwing (rejecting) rather than resolving with a sentinel keeps the
+ * PROMPT state handler's listener as a plain `catch` block: it catches
+ * this typed error and returns `AgentState.WAIT`, re-throwing anything
+ * else so genuine failures still surface. The class is exported so prompt.ts
+ * can do an `instanceof` check.
+ *
+ * Named for its purpose (aborting the PROMPT wait) rather than its sole
+ * current trigger (channel join), so future wake events can reuse it
+ * without a misnamed error.
+ */
+export class PromptAbortError extends Error {
+  constructor(message = 'PROMPT wait aborted by an external event') {
+    super(message);
+    this.name = 'PromptAbortError';
+  }
+}
+
+/**
  * Output callback type — mirrors console output to the web UI (WebSocket).
  * Called by log/warn/error/brief when serve mode is active.
  * @param method - console method ('log' | 'warn' | 'error')
@@ -225,6 +248,13 @@ class AgentIO {
   // ESC-during-ask() cancellation support
   private askResolver: ((value: string) => void) | null = null;
   private askOnEsc: string | null = null;
+  // Rejecter for the currently-blocked ask() Promise. Paired with askResolver
+  // so an external wake event (e.g. a peer channel join) can REJECT the
+  // blocked ask() with a PromptAbortError instead of resolving it with a
+  // sentinel value — the rejection propagates as a thrown exception through
+  // getInput() to a catch block in prompt.ts. Nulled alongside askResolver
+  // on every completion path (onDone, ESC cancel, catch, abortAsk).
+  private askRejecter: ((reason: unknown) => void) | null = null;
 
   // Re-entrancy guard: queue concurrent ask() calls so the singleton
   // askResolver/askOnEsc/activeLineEditor fields are never
@@ -264,6 +294,7 @@ class AgentIO {
           const onEscValue = this.askOnEsc;
           this.askResolver = null;
           this.askOnEsc = null;
+          this.askRejecter = null;
           if (onEscValue !== null) {
             // ESC cancels the question with the specified value
             this.activeLineEditor.close();
@@ -693,11 +724,48 @@ class AgentIO {
   /**
    * Wake the next queued ask() call (if any) so it can proceed now that
    * the current ask() has resolved. Called from every ask() completion
-   * path (onDone, ESC cancel, catch).
+   * path (onDone, ESC cancel, catch, abortAsk).
    */
   private drainAskQueue(): void {
     const next = this.askQueue.shift();
     if (next) next();
+  }
+
+  /**
+   * Reject a blocked terminal `ask()` when an external event (currently a
+   * peer channel joining) must abort the PROMPT wait and redirect the loop
+   * to WAIT. Rejects the pending ask() Promise with a {@link PromptAbortError}
+   * so the rejection propagates as a thrown exception through
+   * `UserInputProvider.getInput()` to a `catch` block in prompt.ts, which
+   * returns `AgentState.WAIT`.
+   *
+   * Mirrors the ESC-during-ask() cancel path (agent-io.ts neglection handler):
+   * capture the rejecter, close the LineEditor, null the singleton fields,
+   * flush buffered output, reject, then wake the next queued ask(). No-op
+   * when no ask() is blocked (askRejecter null) — e.g. not in PROMPT, or in
+   * serve mode (which uses per-card resolvers and is handled by
+   * ServeHub.rejectInput). Safe to call unconditionally from the channel-join
+   * callback.
+   */
+  abortAsk(): void {
+    const rejecter = this.askRejecter;
+    const lineEditor = this.activeLineEditor;
+    if (rejecter === null || lineEditor === null) {
+      // No blocked terminal ask() to wake (not in PROMPT, or serve mode which
+      // uses per-card resolvers). Nothing to do.
+      return;
+    }
+    // Clear the singleton cancellation state first so a concurrent key event
+    // can't double-resolve/reject.
+    this.askResolver = null;
+    this.askOnEsc = null;
+    this.askRejecter = null;
+    lineEditor.close();
+    this.activeLineEditor = null; // clear FIRST so isInteractionMode() returns false
+    this.flushOutput();
+    rejecter(new PromptAbortError());
+    // Wake the next queued ask() so it can proceed.
+    this.drainAskQueue();
   }
 
   /**
@@ -830,9 +898,12 @@ class AgentIO {
       console.log(query);
     }
 
-    return new Promise((resolve) => {
-      // Store resolver and ESC/Enter options for cancellation support
+    return new Promise((resolve, reject) => {
+      // Store resolver/rejecter and ESC/Enter options for cancellation support.
+      // The rejecter lets abortAsk() reject this Promise with a PromptAbortError
+      // when an external event (channel join) aborts the PROMPT wait.
       this.askResolver = resolve;
+      this.askRejecter = reject;
       this.askOnEsc = options?.onEsc ?? null;
 
       // Wrap-up polling timer
@@ -880,6 +951,7 @@ class AgentIO {
             // Clear ask cancellation state
             this.askResolver = null;
             this.askOnEsc = null;
+            this.askRejecter = null;
 
             // Flush buffered output (after clearing activeLineEditor)
             this.flushOutput();
@@ -980,6 +1052,7 @@ class AgentIO {
         stopPolling();
         this.askResolver = null;
         this.askOnEsc = null;
+        this.askRejecter = null;
         // Wake the next queued ask() so it can proceed
         this.drainAskQueue();
         throw e;

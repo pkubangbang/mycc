@@ -80,6 +80,15 @@ export class PeerManager implements PeerModule {
   getSelfSessionId(): string {
     return this.identity.getSelfSessionId();
   }
+
+  /**
+   * Delegate the channel-join callback to the ChannelManager. Wired once at
+   * startup by agent-repl.ts so a channel joining mid-PROMPT aborts the
+   * blocked PROMPT wait and redirects the loop to WAIT.
+   */
+  setOnChannelJoin(callback: () => void): void {
+    this.channel.setOnChannelJoin(callback);
+  }
 }
 
 /**
@@ -101,4 +110,5 @@ export class NoopPeerModule implements PeerModule {
   start(): void { /* no-op */ }
   stop(): void { /* no-op */ }
   getSelfSessionId(): string { return ''; }
+  setOnChannelJoin(_callback: () => void): void { /* no-op: children don't participate in peer discovery */ }
 }

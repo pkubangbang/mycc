@@ -361,6 +361,31 @@ export async function main(): Promise<void> {
     }
   };
 
+  // Wire the channel-join event into the agent loop. When a peer channel
+  // joins (the 5s poll sweep calls joinChannel, or /channel does directly),
+  // ChannelManager fires the onChannelJoin callback registered here. This
+  // covers the mid-PROMPT case: a channel joining AFTER the Layer A gate was
+  // checked but WHILE ask()/waitForInput() is blocked. The callback:
+  //   1. Engages auto mode (setAuto(true)) — the channel is a live automation
+  //      feed; the loop should run autonomously now. Subsequent PROMPT entries
+  //      take the Layer A hasActiveChannel() path.
+  //   2. Aborts a blocked terminal PROMPT wait (agentIO.abortAsk) — rejects the
+  //      blocked ask() Promise with a PromptAbortError, which propagates as a
+  //      thrown exception through getInput() to the try/catch in prompt.ts
+  //      (Layer B), returning AgentState.WAIT. No-op if no ask() is blocked.
+  //   3. Aborts a blocked serve PROMPT wait (getServeHub().rejectInput) — same
+  //      rejection path for the webui's waitForInput(). No-op if not blocked.
+  // Both aborts are unconditional no-ops when nothing is blocked, so calling
+  // both is safe regardless of which mode is active. Registered here (where
+  // agentIO + ServeHub are in scope) to keep the peer module a pure file+mail
+  // layer with no loop/autoState imports. Best-effort: each call swallows its
+  // own errors so a failure in one path doesn't block the other.
+  ctx.peer.setOnChannelJoin(() => {
+    autoState.setAuto(true);
+    try { agentIO.abortAsk(); } catch { /* best-effort */ }
+    try { getServeHub().rejectInput(); } catch { /* best-effort */ }
+  });
+
   // Register the combined auto-mode ENTRY callback for the webui. The
   // /serve "enter auto" lightning-bolt button sends an 'auto' WS message;
   // ServeHub calls this provider to flip autoState (which both Core and

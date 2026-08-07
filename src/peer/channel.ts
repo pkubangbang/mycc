@@ -96,11 +96,26 @@ export class ChannelManager {
   private identityManager: IdentityManager;
   private mailboxPath: string;
   private pollHandle: ReturnType<typeof setInterval> | null = null;
+  // Callback fired after a channel is joined (joinChannel sets joined=true and
+  // injects the firstQuery). Set externally via setOnChannelJoin() so the peer
+  // module stays a pure file+mail layer with no loop/autoState imports. The
+  // agent loop wires a callback that aborts a blocked PROMPT wait so a channel
+  // joining mid-PROMPT redirects the loop to WAIT. Single listener (overwrite).
+  private onChannelJoin: (() => void) | null = null;
 
   constructor(sessionId: string, identityManager: IdentityManager, mailboxPath: string) {
     this.sessionId = sessionId;
     this.identityManager = identityManager;
     this.mailboxPath = mailboxPath;
+  }
+
+  /**
+   * Register the channel-join callback (see field comment). Overwrites any
+   * previously registered callback. The agent loop (agent-repl.ts) wires this
+   * once at startup to abort a blocked PROMPT wait on a mid-flight join.
+   */
+  setOnChannelJoin(callback: () => void): void {
+    this.onChannelJoin = callback;
   }
 
   /**
@@ -224,6 +239,18 @@ export class ChannelManager {
       appendMailToPath(this.mailboxPath, 'system', `[${channelId}] channel-init`, content);
       ownChannel.firstQuerySent = true;
       writeChannelFile(ownChannelFile, ownChannel);
+    }
+
+    // 3. Surface the join event so the agent loop can abort a blocked PROMPT
+    //    wait (mid-flight join). Channels that joined before PROMPT is reached
+    //    are caught by the Layer A hasActiveChannel() gate; this callback covers
+    //    the mid-PROMPT case. Guarded so a throw in the callback can't corrupt
+    //    channel state (joined/firstQuery already persisted above).
+    try {
+      this.onChannelJoin?.();
+    } catch {
+      // Callback failure must not break the join — channel state is already
+      // committed. Swallow so the poll sweep and future joins stay healthy.
     }
 
     return {

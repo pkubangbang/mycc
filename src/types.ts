@@ -540,6 +540,21 @@ export interface PeerModule {
    *  Used by the PROMPT autofly gate: an active channel is equivalent to
    *  --debug-autofly for engaging auto mode. */
   hasActiveChannel(): boolean;
+  /**
+   * Register a callback fired when a channel is joined (joinChannel sets
+   * joined=true and injects the firstQuery). The callback lets the agent loop
+   * react to a channel joining MID-PROMPT — i.e. after the Layer A gate was
+   * checked but while ask()/waitForInput() is blocked — by aborting the
+   * blocked PROMPT wait so the loop redirects to WAIT (see prompt.ts Layer B).
+   *
+   * Channels that joined before PROMPT is reached are caught by the Layer A
+   * hasActiveChannel() gate; this callback covers the mid-flight case. The
+   * peer module stays a pure file+mail layer — it owns no loop/autoState
+   * imports; the callback is wired externally (agent-repl.ts) and is a no-op
+   * on the child (NoopPeerModule). Overwrites any previously registered
+   * callback (single listener).
+   */
+  setOnChannelJoin(callback: () => void): void;
   /** Start the peer subsystem: register identity + begin heartbeat + start channel poll.
    *  Only the lead process calls this; the child (NoopPeerModule) is a no-op. */
   start(): void;

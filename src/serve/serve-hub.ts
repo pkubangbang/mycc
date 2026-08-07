@@ -33,6 +33,7 @@ import vue from '@vitejs/plugin-vue';
 import chalk from 'chalk';
 import { agentIO } from '../loop/agent-io.js';
 import { autoState } from '../loop/auto-state.js';
+import { PromptAbortError } from '../loop/agent-io.js';
 import { setResultCallback } from '../utils/letter-box.js';
 import { getMaxUploadMb } from '../config.js';
 
@@ -152,6 +153,13 @@ export class ServeHub {
 
   // ── Input bridge — single resolver, no AbortController ──
   private inputResolver: ((input: string | null) => void) | null = null;
+  // Rejecter paired with inputResolver so an external wake event (e.g. a peer
+  // channel joining) can REJECT the blocked waitForInput() with a
+  // PromptAbortError instead of resolving it with null — the rejection
+  // propagates as a thrown exception through WebInputProvider.getInput() to a
+  // catch block in prompt.ts. Nulled alongside inputResolver on every
+  // completion path (submitInput, abortInput, rejectInput).
+  private inputRejecter: ((reason: unknown) => void) | null = null;
 
   // ── Card bridge — keyed resolvers for interactive cards ──
   // Each ask() serve-mode call gets a unique cardId; the resolver map lets
@@ -507,15 +515,20 @@ export class ServeHub {
   // ===========================================================================
 
   /**
-   * Blocks until: a WS message arrives (submitInput), OR stop() calls abortInput().
-   * Returns the input string, or null if aborted (serve stopped).
+   * Blocks until: a WS message arrives (submitInput), OR stop() calls abortInput(),
+   * OR an external wake event calls rejectInput() (e.g. a peer channel joining).
+   * Returns the input string, or null if aborted (serve stopped). Throws a
+   * {@link PromptAbortError} if rejected by rejectInput() — the caller's catch
+   * block (prompt.ts) converts that to AgentState.WAIT.
    */
   waitForInput(): Promise<string | null> {
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
       this.inputResolver = (input: string | null) => {
         this.inputResolver = null;
+        this.inputRejecter = null;
         resolve(input);
       };
+      this.inputRejecter = reject;
     });
   }
 
@@ -550,6 +563,29 @@ export class ServeHub {
       resolver(null);
     }
     this.cardResolvers.clear();
+  }
+
+  /**
+   * Reject a blocked `waitForInput()` with a {@link PromptAbortError} when an
+   * external event (currently a peer channel joining) must abort the PROMPT
+   * wait and redirect the loop to WAIT. The rejection propagates as a thrown
+   * exception through `WebInputProvider.getInput()` to a `catch` block in
+   * prompt.ts, which returns `AgentState.WAIT`.
+   *
+   * Distinct from {@link abortInput} (which RESOLVES with null for serve
+   * shutdown / stop()): rejectInput REJECTS so the caller distinguishes
+   * "serve stopped → fall back to terminal" (null) from "external wake → go
+   * to WAIT" (thrown PromptAbortError). Card resolvers are NOT rejected here
+   * — a channel join mid-card is not a PROMPT wait; the card stays pending
+   * for its own response path. No-op when no waitForInput() is blocked.
+   */
+  rejectInput(): void {
+    const rejecter = this.inputRejecter;
+    if (rejecter) {
+      this.inputResolver = null;
+      this.inputRejecter = null;
+      rejecter(new PromptAbortError());
+    }
   }
 
   // ===========================================================================
