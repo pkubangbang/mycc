@@ -645,7 +645,10 @@ function sanitizeId(id: string, label: string): string {
     throw new Error(`Invalid ${label}: must be a non-empty string`);
   }
   // Reject path separators, parent-directory traversal, and control chars.
-  if (/[\/\\]|\.\.|[\x00-\x1f]/.test(id)) {
+  // Avoid regex character classes to keep eslint's no-control-regex and
+  // no-useless-escape rules satisfied; check each condition explicitly.
+  if (id.includes('/') || id.includes('\\') || id.includes('..') ||
+      [...id].some(c => c.codePointAt(0)! < 0x20)) {
     throw new Error(`Invalid ${label}: contains path separators, "..", or control characters: ${JSON.stringify(id)}`);
   }
   return id;
