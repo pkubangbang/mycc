@@ -588,6 +588,17 @@ export class ServeHub {
     }
   }
 
+  /**
+   * Whether a serve-mode PROMPT wait (waitForInput) is currently blocked.
+   * Used by agentIO.isPromptBlocked() to guard the channel-join callback so
+   * setAuto(true)/rejectInput only fire when the loop is actually blocked in
+   * PROMPT, not unconditionally mid-pass. Per-card resolvers (ask() serve
+   * path) are NOT a PROMPT wait and are intentionally excluded.
+   */
+  isInputBlocked(): boolean {
+    return this.inputRejecter !== null;
+  }
+
   // ===========================================================================
   // Card bridge (called by agent-io ask() serve-mode path)
   // ===========================================================================

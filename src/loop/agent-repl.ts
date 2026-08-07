@@ -375,12 +375,20 @@ export async function main(): Promise<void> {
   //      (Layer B), returning AgentState.WAIT. No-op if no ask() is blocked.
   //   3. Aborts a blocked serve PROMPT wait (getServeHub().rejectInput) — same
   //      rejection path for the webui's waitForInput(). No-op if not blocked.
-  // Both aborts are unconditional no-ops when nothing is blocked, so calling
-  // both is safe regardless of which mode is active. Registered here (where
-  // agentIO + ServeHub are in scope) to keep the peer module a pure file+mail
-  // layer with no loop/autoState imports. Best-effort: each call swallows its
-  // own errors so a failure in one path doesn't block the other.
+  // GUARD: all three actions fire ONLY when a PROMPT wait is actually blocked
+  //   (agentIO.isPromptBlocked()). Without this guard, a channel joining while
+  //   the loop is in COLLECT/LLM/HOOK/TOOL would flip auto mode mid-pass — a
+  //   subtle coupling. When not blocked, the join is caught by the Layer A
+  //   hasActiveChannel() gate on the next PROMPT entry. abortAsk/rejectInput
+  //   are already self-guarded no-ops, but setAuto(true) is not, so the
+  //   isPromptBlocked() check is the real gate. Best-effort: each call swallows
+  //   its own errors so a failure in one path doesn't block the other.
   ctx.peer.setOnChannelJoin(() => {
+    if (!agentIO.isPromptBlocked()) {
+      // Not blocked in PROMPT — the Layer A gate will catch this channel on
+      // the next PROMPT entry. Do not flip auto mid-pass.
+      return;
+    }
     autoState.setAuto(true);
     try { agentIO.abortAsk(); } catch { /* best-effort */ }
     try { getServeHub().rejectInput(); } catch { /* best-effort */ }

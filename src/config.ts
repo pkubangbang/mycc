@@ -627,12 +627,36 @@ export function getIdentityFile(): string {
   return path.join(getDiscoveryDir(), 'identity.json');
 }
 
+/**
+ * Sanitize a session-id or channel-id for use in a filesystem path.
+ *
+ * Rejects IDs containing path separators (/, \), the parent-directory
+ * sequence (..), or control characters — preventing path traversal escapes
+ * from the discovery/heartbeat/channels directories. Throws on an unsafe ID
+ * so callers fail loudly rather than silently writing outside the sandbox.
+ *
+ * Used by getHeartbeatFile() and getChannelFile() at the config layer (the
+ * single origin point for discovery paths), so all downstream consumers
+ * (identity.ts, channel.ts, peer.ts) inherit the guard without per-call
+ * duplication.
+ */
+function sanitizeId(id: string, label: string): string {
+  if (!id || typeof id !== 'string') {
+    throw new Error(`Invalid ${label}: must be a non-empty string`);
+  }
+  // Reject path separators, parent-directory traversal, and control chars.
+  if (/[\/\\]|\.\.|[\x00-\x1f]/.test(id)) {
+    throw new Error(`Invalid ${label}: contains path separators, "..", or control characters: ${JSON.stringify(id)}`);
+  }
+  return id;
+}
+
 export function getHeartbeatDir(): string {
   return path.join(getDiscoveryDir(), 'heartbeat');
 }
 
 export function getHeartbeatFile(sessionId: string): string {
-  return path.join(getHeartbeatDir(), `${sessionId}.json`);
+  return path.join(getHeartbeatDir(), `${sanitizeId(sessionId, 'sessionId')}.json`);
 }
 
 export function getChannelsDir(): string {
@@ -640,7 +664,9 @@ export function getChannelsDir(): string {
 }
 
 export function getChannelFile(sessionId: string, channelId: string): string {
-  return path.join(getChannelsDir(), `${sessionId}-${channelId}.json`);
+  const sid = sanitizeId(sessionId, 'sessionId');
+  const cid = sanitizeId(channelId, 'channelId');
+  return path.join(getChannelsDir(), `${sid}-${cid}.json`);
 }
 
 // ============================================================================

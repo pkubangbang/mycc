@@ -130,8 +130,15 @@ export class MailBox implements MailModule {
   }
 
   /**
-   * Collect all mails and move them to the readmail backlog
-   * Atomic: read unread file, append to readmail, then truncate unread
+   * Collect all mails and move them to the readmail backlog.
+   *
+   * Race-safe via rename-then-read: atomically rename the unread file to a
+   * unique temp name, then read from that temp name. A concurrent appendMail
+   * (appendFileSync to the ORIGINAL path) that lands between our read and the
+   * old truncateSync(0) was silently lost. With rename-then-read, the rename
+   * is atomic — the original path ceases to exist (or is recreated by a
+   * concurrent append) the instant we rename, so any concurrent append goes
+   * to a fresh file that the NEXT collectMails picks up. No mail is lost.
    */
   collectMails(): MailType[] {
     const unreadPath = this.getUnreadPath();
@@ -140,18 +147,34 @@ export class MailBox implements MailModule {
       return [];
     }
 
-    // Read entire file
-    const content = fs.readFileSync(unreadPath, 'utf-8');
+    // Atomically rename unread → unique temp name. After this, the original
+    // unreadPath either no longer exists or is a fresh file created by a
+    // concurrent appendMail — either way, concurrent appends are NOT lost.
+    const tempPath = `${unreadPath}.collect.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2, 8)}`;
+    try {
+      fs.renameSync(unreadPath, tempPath);
+    } catch {
+      // rename fails if the file was removed between existsSync and rename
+      // (e.g. another concurrent collectMails). Nothing to collect.
+      return [];
+    }
+
+    // Read the renamed temp file
+    let content: string;
+    try {
+      content = fs.readFileSync(tempPath, 'utf-8');
+    } finally {
+      // Clean up the temp file regardless of read success
+      try { fs.unlinkSync(tempPath); } catch { /* best-effort */ }
+    }
+
     if (!content.trim()) {
       return [];
     }
 
-    // Append to readmail backlog before clearing unread
+    // Append to readmail backlog
     const readmailPath = this.getReadmailPath();
     fs.appendFileSync(readmailPath, content, 'utf-8');
-
-    // Truncate unread file (clear it)
-    fs.truncateSync(unreadPath, 0);
 
     // Parse lines
     const lines = content.trim().split('\n');

@@ -732,6 +732,31 @@ class AgentIO {
   }
 
   /**
+   * Whether a PROMPT wait is currently blocked — i.e. the loop is in the
+   * PROMPT state waiting for user input, either via a terminal ask() or a
+   * serve waitForInput(). Used by the channel-join callback (agent-repl.ts)
+   * to guard setAuto(true)/abortAsk/rejectInput so they only fire when a
+   * PROMPT wait is actually blocked, not unconditionally mid-pass (which
+   * would flip auto mode while the loop is in COLLECT/LLM/HOOK/TOOL).
+   *
+   * Terminal path: a blocked ask() has askRejecter set.
+   * Serve path: ServeHub.waitForInput has inputRejecter set.
+   * Returns false in all other states (COLLECT, LLM, HOOK, TOOL, STOP, WAIT).
+   */
+  isPromptBlocked(): boolean {
+    // Terminal: askRejecter is set only while a terminal ask() is blocked.
+    if (this.askRejecter !== null) return true;
+    // Serve: delegate to ServeHub (per-card resolvers are NOT a PROMPT wait;
+    // only the top-level waitForInput rejecter counts).
+    try {
+      if (getServeHub().isInputBlocked()) return true;
+    } catch {
+      // ServeHub may not be initialized — ignore.
+    }
+    return false;
+  }
+
+  /**
    * Reject a blocked terminal `ask()` when an external event (currently a
    * peer channel joining) must abort the PROMPT wait and redirect the loop
    * to WAIT. Rejects the pending ask() Promise with a {@link PromptAbortError}

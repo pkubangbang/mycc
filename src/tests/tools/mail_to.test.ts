@@ -17,7 +17,8 @@ import { mailToTool } from '../../tools/mail_to.js';
 import { createFullMockContext } from './test-utils.js';
 import type { AgentContext } from '../../types.js';
 
-const PEER_SID = '3b1b83d-aaaa-bbbb-cccc-dddddddddddd';
+// Valid UUID (8-4-4-4-12 hex) — used by the UUID-validation routing tests.
+const PEER_SID = '3b1b83d0-aaaa-bbbb-cccc-dddddddddddd';
 
 describe('mailToTool — cross-instance peer routing', () => {
   let ctx: AgentContext;
@@ -111,6 +112,80 @@ describe('mailToTool — cross-instance peer routing', () => {
     expect(ctx.peer.sendPeerMail).not.toHaveBeenCalled();
     expect(ctx.team.mailTo).toHaveBeenCalledWith('a/lead', 't', 'b');
     expect(result).toBe('OK');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Fix #4: UUID format validation (not just "contains dash")
+// ---------------------------------------------------------------------------
+
+describe('mailToTool — UUID session-id validation (Fix #4)', () => {
+  let ctx: AgentContext;
+
+  beforeEach(() => {
+    ctx = createFullMockContext();
+    (ctx.core.getName as ReturnType<typeof vi.fn>).mockReturnValue('lead');
+    vi.clearAllMocks();
+  });
+
+  it('a valid <uuid>/lead IS routed to sendPeerMail', async () => {
+    (ctx.peer.sendPeerMail as ReturnType<typeof vi.fn>).mockReturnValue(true);
+    const result = await mailToTool.handler(ctx, {
+      name: `${PEER_SID}/lead`,
+      title: 'hello',
+      content: 'world',
+    });
+    expect(ctx.peer.sendPeerMail).toHaveBeenCalledWith(PEER_SID, 'hello', 'world');
+    expect(ctx.team.mailTo).not.toHaveBeenCalled();
+    expect(result).toBe(`OK. Peer mail sent to ${PEER_SID}/lead.`);
+  });
+
+  it('a teammate name like "review-peer-1/lead" must NOT be misrouted to sendPeerMail (no valid UUID)', async () => {
+    // "review-peer-1" has dashes but is NOT a UUID (wrong segment lengths /
+    // non-hex). AFTER FIX the handler validates UUID format (8-4-4-4-12 hex)
+    // and falls through to local IPC.
+    const result = await mailToTool.handler(ctx, {
+      name: 'review-peer-1/lead',
+      title: 't',
+      content: 'b',
+    });
+    expect(ctx.peer.sendPeerMail).not.toHaveBeenCalled();
+    expect(ctx.team.mailTo).toHaveBeenCalledWith('review-peer-1/lead', 't', 'b');
+    expect(result).toBe('OK');
+  });
+
+  it('a dashed but non-UUID session part like "ab-cd-ef/lead" is NOT routed to peer', async () => {
+    const result = await mailToTool.handler(ctx, {
+      name: 'ab-cd-ef/lead',
+      title: 't',
+      content: 'b',
+    });
+    expect(ctx.peer.sendPeerMail).not.toHaveBeenCalled();
+    expect(ctx.team.mailTo).toHaveBeenCalled();
+  });
+
+  it('a UUID with wrong segment lengths is NOT routed to peer', async () => {
+    // 7-4-4-4-12 — first segment too short (must be 8 hex chars).
+    const bad = '1234567-1234-1234-1234-123456789012';
+    const result = await mailToTool.handler(ctx, {
+      name: `${bad}/lead`,
+      title: 't',
+      content: 'b',
+    });
+    expect(ctx.peer.sendPeerMail).not.toHaveBeenCalled();
+    expect(ctx.team.mailTo).toHaveBeenCalled();
+  });
+
+  it('a UUID with non-hex characters is NOT routed to peer', async () => {
+    // 8-4-4-4-12 but contains 'g' (non-hex).
+    const bad = 'gggg0000-0000-0000-0000-000000000000';
+    const result = await mailToTool.handler(ctx, {
+      name: `${bad}/lead`,
+      title: 't',
+      content: 'b',
+    });
+    expect(ctx.peer.sendPeerMail).not.toHaveBeenCalled();
+    expect(ctx.team.mailTo).toHaveBeenCalled();
   });
 });
 

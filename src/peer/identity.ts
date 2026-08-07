@@ -17,6 +17,13 @@ import { getIdentityFile, getHeartbeatFile } from '../config.js';
 
 const HEARTBEAT_INTERVAL_MS = 30_000;
 const MAX_HEARTBEATS = 3;
+/**
+ * Absolute freshness window: a remote is fresh only if its latest heartbeat
+ * is within this many ms of now. Without this, a dead instance whose last
+ * beat was hours ago stays "fresh" forever (the relative remoteLatest >
+ * localOldest check passes as long as it beat after the local oldest).
+ */
+const FRESHNESS_WINDOW_MS = 90_000;
 
 /**
  * Atomic file write: write to temp file then rename.
@@ -93,16 +100,35 @@ export class IdentityManager {
 
   /**
    * Register (upsert) this instance into identity.json.
+   *
+   * Uses a read-merge-write loop with retries to avoid clobbering a concurrent
+   * registration from another instance. Each iteration re-reads the current
+   * map, merges this instance's entry, and atomically writes. If another
+   * instance wrote between our read and write, our atomic rename overwrites
+   * theirs — but the loop re-reads on the next iteration so we eventually
+   * converge. The retry cap bounds worst-case contention.
    */
   register(): void {
-    const map = readIdentityMap();
-    map[this.sessionId] = {
-      sessionId: this.sessionId,
-      workDir: this.workDir,
-      mailbox: this.mailboxPath,
-      startedAt: Date.now(),
-    };
-    writeIdentityMap(map);
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const map = readIdentityMap();
+      map[this.sessionId] = {
+        sessionId: this.sessionId,
+        workDir: this.workDir,
+        mailbox: this.mailboxPath,
+        startedAt: Date.now(),
+      };
+      writeIdentityMap(map);
+      // Re-read to verify our entry survived (no clobber by a concurrent write).
+      // If another instance wrote after us but before this verify, their entry
+      // is missing from what we just wrote — re-loop to merge both.
+      const after = readIdentityMap();
+      if (this.sessionId in after) {
+        return; // our entry is present — done
+      }
+    }
+    // After 5 attempts, give up (extreme contention). Last write still has our
+    // entry; a concurrent writer may have lost theirs, but they will retry on
+    // their own register() call.
   }
 
   /**
@@ -166,12 +192,16 @@ export class IdentityManager {
   /**
    * Check freshness of a remote session.
    *
-   * fresh ⟺ remoteLatest > localOldest
+   * fresh ⟺ (remoteLatest > localOldest) AND (now - remoteLatest < FRESHNESS_WINDOW_MS)
    *
    * - localOldest = local.timestamps[0] || -Infinity
-   *   (if local has 0 beats, no baseline → everything is fresh)
-   * - remoteLatest = remote.timestamps[last] || (Date.now() - 30000)
+   *   (if local has 0 beats, no baseline → everything passes the relative check)
+   * - remoteLatest = remote.timestamps[last] || (Date.now() - 30_000)
    *   (if remote has 0 beats but is registered, assume it just started 30s ago)
+   * - Absolute window: even if the relative check passes, a remote whose
+   *   latest heartbeat is older than FRESHNESS_WINDOW_MS (90s) is NOT fresh.
+   *   This prevents a dead/crashed instance from appearing fresh forever
+   *   (its last beat stays "after local oldest" indefinitely).
    */
   isFresh(sessionId: string): boolean {
     // 1. Check identity.json has an entry for sessionId
@@ -184,13 +214,19 @@ export class IdentityManager {
       ? remoteTimestamps[remoteTimestamps.length - 1]
       : Date.now() - 30_000;
 
-    // 3. Compute localOldest
+    // 3. Absolute freshness window: a remote whose latest heartbeat is older
+    //    than FRESHNESS_WINDOW_MS is stale, regardless of the relative check.
+    if (Date.now() - remoteLatest > FRESHNESS_WINDOW_MS) {
+      return false;
+    }
+
+    // 4. Compute localOldest
     const localTimestamps = this.getOwnHeartbeat();
     const localOldest = localTimestamps.length > 0
       ? localTimestamps[0]
       : -Infinity;
 
-    // 4. Compare
+    // 5. Relative check
     return remoteLatest > localOldest;
   }
 

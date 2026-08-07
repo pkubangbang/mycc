@@ -66,13 +66,17 @@ export const mailToTool: ToolDefinition = {
     // <session-id>/<agent-name> (agent-name is currently only "lead"), route
     // the message through ctx.peer to the remote peer's mailbox instead of
     // local teammate IPC. This makes mail_to work across mycc instances.
-    // The session-id part must be non-empty and contain a dash (UUID format),
-    // and the agent-name part must be "lead".
+    // The session-id part must be a valid UUID (8-4-4-4-12 hex format), and
+    // the agent-name part must be "lead". Validating the UUID format (not just
+    // "contains a dash") prevents misrouting teammate names that happen to
+    // contain a dash + "/lead" (e.g. "review-peer-1/lead") to the peer path.
     const peerSlashIdx = name.indexOf('/');
     if (peerSlashIdx > 0) {
       const peerSid = name.slice(0, peerSlashIdx);
       const peerAgent = name.slice(peerSlashIdx + 1);
-      if (peerAgent === 'lead' && peerSid.includes('-')) {
+      // UUID format: 8 hex - 4 hex - 4 hex - 4 hex - 12 hex (case-insensitive)
+      const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      if (peerAgent === 'lead' && UUID_RE.test(peerSid)) {
         const ok = ctx.peer.sendPeerMail(peerSid, title, content);
         if (ok) {
           ctx.core.brief('info', 'mail_to', `(peer→${name}) ${title}\n${chalk.gray(content)}`);

@@ -108,8 +108,11 @@ describe('IdentityManager', () => {
     idB.register();
 
     // Local oldest = 1000 (A), remote latest = 5000 (B) → 5000 > 1000 → fresh.
-    writeHeartbeatRaw(SID_A, [1000, 1100, 1200]);
-    writeHeartbeatRaw(SID_B, [4800, 4900, 5000]);
+    // Timestamps are Date.now()-relative so they fall within the 90s absolute
+    // freshness window (fixed epoch values like 1000 are decades old → stale).
+    const now = Date.now();
+    writeHeartbeatRaw(SID_A, [now - 4000, now - 3000, now - 2000]);
+    writeHeartbeatRaw(SID_B, [now - 200, now - 100, now]);
     expect(id.isFresh(SID_B)).toBe(true);
   });
 
@@ -118,9 +121,10 @@ describe('IdentityManager', () => {
     id.register();
     const idB = new IdentityManager(SID_B, '/work/b', makeMailboxPath(SID_B));
     idB.register();
-    // Local oldest = 5000, remote latest = 1000 → 1000 > 5000 is false.
-    writeHeartbeatRaw(SID_A, [5000, 5100, 5200]);
-    writeHeartbeatRaw(SID_B, [800, 900, 1000]);
+    // Both within the 90s window, but remote latest < local oldest.
+    const now = Date.now();
+    writeHeartbeatRaw(SID_A, [now - 10_000, now - 8_000, now - 5_000]);
+    writeHeartbeatRaw(SID_B, [now - 80_000, now - 70_000, now - 60_000]);
     expect(id.isFresh(SID_B)).toBe(false);
   });
 
@@ -130,7 +134,10 @@ describe('IdentityManager', () => {
     const idB = new IdentityManager(SID_B, '/work/b', makeMailboxPath(SID_B));
     idB.register();
     // No local heartbeat file for A; remote has a recent beat.
-    writeHeartbeatRaw(SID_B, [10, 20, 30]);
+    // Timestamp is Date.now()-relative so it falls within the 90s absolute
+    // freshness window (fixed epoch values are decades old → stale).
+    const now = Date.now();
+    writeHeartbeatRaw(SID_B, [now - 20, now - 10, now]);
     expect(id.isFresh(SID_B)).toBe(true);
   });
 
@@ -209,8 +216,9 @@ describe('ChannelManager', () => {
     const idB = new IdentityManager(SID_B, '/work/b', makeMailboxPath(SID_B));
     idB.register();
     // Make B fresh so later sendMail tests can use it.
-    writeHeartbeatRaw(SID_A, [1000]);
-    writeHeartbeatRaw(SID_B, [5000]);
+    const now = Date.now();
+    writeHeartbeatRaw(SID_A, [now - 4000]);
+    writeHeartbeatRaw(SID_B, [now]);
 
     const ch = new ChannelManager(SID_A, idA, mailbox);
     const result = ch.joinChannel(cid);
@@ -243,9 +251,10 @@ describe('ChannelManager', () => {
     idA.register();
     const idB = new IdentityManager(SID_B, '/work/b', makeMailboxPath(SID_B));
     idB.register();
-    // B is stale: local oldest 5000, remote latest 1000.
-    writeHeartbeatRaw(SID_A, [5000, 5100, 5200]);
-    writeHeartbeatRaw(SID_B, [800, 900, 1000]);
+    // B is stale: remote latest older than local oldest (both within window).
+    const now = Date.now();
+    writeHeartbeatRaw(SID_A, [now - 5_000, now - 3_000, now - 1_000]);
+    writeHeartbeatRaw(SID_B, [now - 80_000, now - 70_000, now - 60_000]);
 
     const ch = new ChannelManager(SID_A, idA, mailbox);
     expect(ch.sendMail(cid, SID_B, 'topic', 'body')).toBe(false);
@@ -263,8 +272,9 @@ describe('ChannelManager', () => {
     idA.register();
     const idB = new IdentityManager(SID_B, '/work/b', mailboxB);
     idB.register();
-    writeHeartbeatRaw(SID_A, [1000, 1100, 1200]);
-    writeHeartbeatRaw(SID_B, [4800, 4900, 5000]);
+    const now = Date.now();
+    writeHeartbeatRaw(SID_A, [now - 4000, now - 3000, now - 2000]);
+    writeHeartbeatRaw(SID_B, [now - 200, now - 100, now]);
 
     const ch = new ChannelManager(SID_A, idA, mailboxA);
     expect(ch.sendMail(cid, SID_B, 'ping', 'hello-body')).toBe(true);
@@ -284,8 +294,9 @@ describe('ChannelManager', () => {
     idA.register();
     const idB = new IdentityManager(SID_B, '/work/b', mailboxB);
     idB.register();
-    writeHeartbeatRaw(SID_A, [1000, 1100, 1200]);
-    writeHeartbeatRaw(SID_B, [4800, 4900, 5000]);
+    const now = Date.now();
+    writeHeartbeatRaw(SID_A, [now - 4000, now - 3000, now - 2000]);
+    writeHeartbeatRaw(SID_B, [now - 200, now - 100, now]);
 
     const ch = new ChannelManager(SID_A, idA, mailboxA);
     expect(ch.sendPeerMail(SID_B, 'direct-topic', 'direct-body')).toBe(true);
@@ -306,9 +317,10 @@ describe('ChannelManager', () => {
     idA.register();
     const idB = new IdentityManager(SID_B, '/work/b', mailboxB);
     idB.register();
-    // Stale: local oldest 5000 > remote latest 1000.
-    writeHeartbeatRaw(SID_A, [5000, 5100, 5200]);
-    writeHeartbeatRaw(SID_B, [800, 900, 1000]);
+    // Stale: remote latest older than local oldest (both within window).
+    const now = Date.now();
+    writeHeartbeatRaw(SID_A, [now - 5_000, now - 3_000, now - 1_000]);
+    writeHeartbeatRaw(SID_B, [now - 80_000, now - 70_000, now - 60_000]);
 
     const ch = new ChannelManager(SID_A, idA, mailboxA);
     expect(ch.sendPeerMail(SID_B, 't', 'b')).toBe(false);
@@ -428,8 +440,9 @@ describe('PeerManager facade', () => {
     // Register B and make it fresh.
     const peerB = new PeerManager(SID_B, '/work/b', makeMailboxPath(SID_B));
     peerB.start();
-    writeHeartbeatRaw(SID_A, [1000]);
-    writeHeartbeatRaw(SID_B, [5000]);
+    const now = Date.now();
+    writeHeartbeatRaw(SID_A, [now - 4000]);
+    writeHeartbeatRaw(SID_B, [now]);
     expect(peer.hasActiveChannel()).toBe(true);
     peer.stop();
     peerB.stop();
@@ -446,9 +459,10 @@ describe('PeerManager facade', () => {
     peer.start();
     const peerB = new PeerManager(SID_B, '/work/b', makeMailboxPath(SID_B));
     peerB.start();
-    // Stale: local oldest 5000 > remote latest 1000.
-    writeHeartbeatRaw(SID_A, [5000, 5100, 5200]);
-    writeHeartbeatRaw(SID_B, [800, 900, 1000]);
+    // Stale: remote latest older than local oldest (both within window).
+    const now2 = Date.now();
+    writeHeartbeatRaw(SID_A, [now2 - 5_000, now2 - 3_000, now2 - 1_000]);
+    writeHeartbeatRaw(SID_B, [now2 - 80_000, now2 - 70_000, now2 - 60_000]);
     expect(peer.hasActiveChannel()).toBe(false);
     peer.stop();
     peerB.stop();
