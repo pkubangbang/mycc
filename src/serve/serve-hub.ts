@@ -32,6 +32,7 @@ import { createServer as createViteServer, type ViteDevServer } from 'vite';
 import vue from '@vitejs/plugin-vue';
 import chalk from 'chalk';
 import { agentIO } from '../loop/agent-io.js';
+import { autoState } from '../loop/auto-state.js';
 import { setResultCallback } from '../utils/letter-box.js';
 import { getMaxUploadMb } from '../config.js';
 
@@ -220,15 +221,15 @@ export class ServeHub {
   // calls it on a new WS connection to send the current state to late joiners.
   private autoStateProvider: (() => boolean) | null = null;
 
-  // ── Auto-mode ENTRY provider (set from agent-repl.ts where core is in scope) ──
-  // Entering auto mode requires BOTH core.setAuto(true) (flips the state
-  // machine PROMPT→WAIT) and agentIO.setAuto(true) (IO-layer flag + webui
-  // broadcast). The hub has agentIO but not core, so agent-repl registers a
-  // callback here that performs the combined entry — mirroring the /auto
-  // slash command. The webui "enter auto" button calls this via the 'auto'
-  // WS message. Returns true if auto was actually entered, false if it was
-  // already on (the client guards this too, but the server re-checks for
-  // races across multiple clients).
+  // ── Auto-mode ENTRY provider (set from agent-repl.ts where the singleton is wired) ──
+  // Entering auto mode flips the shared `autoState` singleton (which both
+  // Core and AgentIO delegate to, and which fires onAutoChange to mirror to
+  // the webui). The hub has no direct dependency on the singleton's callers,
+  // so agent-repl registers a callback here that performs the entry —
+  // mirroring the /auto slash command. The webui "enter auto" button calls
+  // this via the 'auto' WS message. Returns true if auto was actually
+  // entered, false if it was already on (the client guards this too, but the
+  // server re-checks for races across multiple clients).
   private enterAutoProvider: (() => boolean) | null = null;
 
   // ── Mode state ──
@@ -720,11 +721,11 @@ export class ServeHub {
    * 'prompt' (isWaiting) or work message (isRunning), so both flags stay
    * false and ChatInput.vue disables the box.
    *
-   * Called from agentIO.setAuto() on every actual flag flip (the IO layer
-   * owns webui mirroring and is kept in lockstep with core.setAuto() at
-   * every call site). Also sent once on a new WS connection so a late-joining
-   * or reconnecting client picks up the current mode without waiting for the
-   * next flip.
+   * Fired by the `autoState` singleton's onAutoChange callback (registered in
+   * agent-repl) on every actual flag flip — the singleton is the single source
+   * of truth, shared by Core and AgentIO. Also sent once on a new WS
+   * connection so a late-joining or reconnecting client picks up the current
+   * mode without waiting for the next flip.
    *
    * @param value - true when auto mode is on, false when off
    */
@@ -1033,16 +1034,19 @@ export class ServeHub {
       case 'auto':
         // One-way "enter auto mode" request from the webui lightning bolt
         // button. If already in auto mode, tell the client so it can surface
-        // "已经是自动模式了"; otherwise run the combined entry (core.setAuto
-        // + agentIO.setAuto) registered by agent-repl. Falls back to the
-        // IO-only setAuto when no provider is registered (e.g. serve started
-        // before the agent loop wired the callback) so the flag still flips.
+        // "已经是自动模式了"; otherwise run the combined entry (autoState
+        // singleton, which both Core and AgentIO delegate to) registered by
+        // agent-repl. Falls back to flipping autoState directly when no
+        // provider is registered (e.g. serve started before the agent loop
+        // wired the callback) so the flag still flips. The streak is reset
+        // so this manual entry doesn't immediately count toward a re-autofly.
         if (this.autoStateProvider && this.autoStateProvider()) {
           this.broadcast('warn', '已经是自动模式了', 'serve');
         } else if (this.enterAutoProvider) {
           this.enterAutoProvider();
         } else {
-          agentIO.setAuto(true);
+          autoState.resetStreak();
+          autoState.setAuto(true);
         }
         break;
     }

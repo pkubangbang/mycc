@@ -20,24 +20,26 @@
  */
 
 import type { SlashCommand } from '../types.js';
-import type { Core } from '../context/parent/core.js';
 import chalk from 'chalk';
-import { agentIO } from '../loop/agent-io.js';
+import { autoState } from '../loop/auto-state.js';
 
 export const autoCommand: SlashCommand = {
   name: 'auto',
   description: 'Enter autonomous mode (auto-reply, no prompt; press esc to exit)',
   handler: (context) => {
     const { ctx } = context;
-    const core = ctx.core as Core;
 
-    if (core.getAuto()) {
+    if (ctx.core.getAuto()) {
       console.log(chalk.gray('Already in auto mode. Press esc to exit.'));
       return;
     }
 
-    core.setAuto(true);
-    agentIO.setAuto(true);
+    // Single source of truth: autoState owns the flag (and streak). Core and
+    // AgentIO both delegate to it, so one call flips both and mirrors to webui
+    // via the onAutoChange callback. The /auto command resets the streak so
+    // this manual entry doesn't immediately count toward a re-autofly.
+    autoState.resetStreak();
+    autoState.setAuto(true);
     console.log(chalk.cyan('auto mode is on. Mails will be auto-replied. Press esc to exit.'));
   },
 };

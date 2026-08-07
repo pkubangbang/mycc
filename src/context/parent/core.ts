@@ -9,6 +9,7 @@ import sharp from 'sharp';
 import type { CoreModule, PictureResult } from '../../types.js';
 import { imgDescribe } from '../../engine/chat-provider.js';
 import { agentIO } from '../../loop/agent-io.js';
+import { autoState } from '../../loop/auto-state.js';
 import { getVisionModel, isVisionEnabled, getImgCacheDir } from '../../config.js';
 import { BaseCore } from '../shared/base-core.js';
 import { evaluateGrant, isPlanModeWritablePath } from '../grant/grant-evaluator.js';
@@ -42,17 +43,6 @@ interface PictureCacheEntry {
 export class Core extends BaseCore implements CoreModule {
   private modeState: 'plan' | 'normal' = 'normal';
   private allowedFile?: string;
-
-  /**
-   * Autonomous ("auto") mode flag — orthogonal to plan/normal mode.
-   *
-   * When true, the lead agent loop replaces the PROMPT stage with a WAIT
-   * stage (block for events, no user prompt) and every question() call
-   * auto-replies with its onEsc default so the loop never blocks on the
-   * user. Plan/normal mode is preserved while auto is on — auto only
-   * governs prompting, not grant behavior.
-   */
-  private autoFlag = false;
 
   /**
    * Session-scoped grants for external path access.
@@ -98,18 +88,22 @@ export class Core extends BaseCore implements CoreModule {
 
   /**
    * Whether the lead is in autonomous (auto) mode. Orthogonal to plan/normal.
+   * Delegates to the shared `autoState` singleton (single source of truth,
+   * shared with AgentIO).
    * @returns true if auto mode is on
    */
   getAuto(): boolean {
-    return this.autoFlag;
+    return autoState.getAuto();
   }
 
   /**
-   * Enable or disable auto mode (lead only).
+   * Enable or disable auto mode (lead only). Delegates to the `autoState`
+   * singleton, which is idempotent, resets the streak when leaving auto mode,
+   * and fires `onAutoChange` to mirror the change to the webui.
    * @param value - true to enter auto mode, false to exit
    */
   setAuto(value: boolean): void {
-    this.autoFlag = value;
+    autoState.setAuto(value);
   }
 
   /**
@@ -160,7 +154,7 @@ export class Core extends BaseCore implements CoreModule {
     //  - external path access (onEsc:'4') → deny (edits stay in workdir)
     //  - bash grant (evaluates via question) → auto-denied
     // Where onEsc is unset, default to '' (empty = no answer / deny).
-    if (this.autoFlag) {
+    if (autoState.getAuto()) {
       return options?.onEsc ?? '';
     }
 

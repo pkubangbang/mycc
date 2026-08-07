@@ -9,6 +9,7 @@ import chalk from 'chalk';
 import { AgentState, presentResult } from '../state-machine.js';
 import type { MachineEnv, TurnVars, PassData, HandlerResult } from '../state-machine.js';
 import { agentIO } from '../agent-io.js';
+import { autoState } from '../auto-state.js';
 
 export async function handleStop(
   env: MachineEnv,
@@ -26,9 +27,8 @@ export async function handleStop(
       // ESC always means "give me control back". If we were in auto mode,
       // exit it now — auto is orthogonal to plan/normal, so plan/normal is
       // preserved; we only stop the autonomous loop and return to PROMPT.
-      if (ctx.core.getAuto()) {
-        ctx.core.setAuto(false);
-        agentIO.setAuto(false);
+      if (autoState.getAuto()) {
+        autoState.setAuto(false);
         console.log(chalk.gray('auto mode is off. Prompt resumed.'));
       }
 

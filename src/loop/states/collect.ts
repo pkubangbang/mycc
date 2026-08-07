@@ -9,6 +9,7 @@
 import { AgentState } from '../state-machine.js';
 import type { MachineEnv, TurnVars, PassData, HandlerResult } from '../state-machine.js';
 import { agentIO } from '../agent-io.js';
+import { autoState } from '../auto-state.js';
 import { startWrapUp } from '../esc-wrap-up.js';
 import { isVerbose } from '../../config.js';
 import { loader } from '../../context/shared/loader.js';
@@ -237,6 +238,11 @@ export async function handleCollect(
         const steerContent = steerNotes.map((n, i) => `(${i + 1}) ${n}`).join('\n');
         triologue.note('REMINDER', `Steering notes from the user (mid-task direction):\n${steerContent}`);
         agentIO.verbose('steer', `Drained ${steerNotes.length} steering note(s) at COLLECT`);
+        // Mid-task user direction is a user intervention — reset the autofly
+        // streak so the LLM stages that follow aren't counted as "consecutive
+        // successful since last user input". An empty drain (no notes) is NOT
+        // user input, so the reset stays inside this guard.
+        autoState.resetStreak();
       }
     }
 

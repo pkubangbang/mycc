@@ -34,6 +34,7 @@ import { forkChat } from '../../engine/chat-provider.js';
 import type { RetryConfig } from '../../engine/chat-helpers.js';
 import { getServeHub } from '../../serve/serve-registry.js';
 import { agentIO } from '../agent-io.js';
+import { autoState } from '../auto-state.js';
 
 /**
  * Tighter retry config for steering synthesis. The synthesized query is a
@@ -142,8 +143,8 @@ export async function handlePrompt(
   // (e.g. /auto was entered via SLASH→PROMPT, or a future state transitions
   // here), jump straight to WAIT and discard any pending input rather than
   // prompting the user — guarantees no hang. Plan/normal mode is untouched.
-  if (env.ctx.core.getAuto()) {
-    agentIO.setAuto(true); // keep IO singleton in sync (idempotent)
+  if (autoState.getAuto()) {
+    autoState.setAuto(true); // idempotent re-sync (no-op, keeps onAutoChange calm)
     return AgentState.WAIT;
   }
 
@@ -214,6 +215,14 @@ export async function handlePrompt(
       query = p0Input;
       break;
     }
+
+    // Fresh user input just arrived (normal query, slash typed at the prompt,
+    // or a bang command) — reset the autofly streak. A user-directed turn
+    // means the prior autonomous streak no longer counts toward autofly.
+    // The restored pendingSlashQuery / initialQuery paths above are NOT fresh
+    // user input (they're /load or session-restore state) and skip this block,
+    // so they don't reset. The autonomous null-skip path returns early above.
+    autoState.resetStreak();
   }
 
   // Bang commands: execute via hand_over tool

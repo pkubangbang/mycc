@@ -17,6 +17,7 @@ import { slashRegistry } from '../slashes/index.js';
 import { getTokenThreshold, isDebuggingEval, shouldServe, getServePort, getServeHost, getEmbeddingModel, shouldAuto } from '../config.js';
 import { Triologue } from './triologue.js';
 import { agentIO } from './agent-io.js';
+import { autoState } from './auto-state.js';
 import { shouldSkipHealthCheck } from '../config.js';
 import { loader } from '../context/shared/loader.js';
 import { getLayerBaseDir } from '../utils/skill-path-resolver.js';
@@ -325,21 +326,36 @@ export async function main(): Promise<void> {
   // straight to WAIT (block for mail/teammate/steering events, no user
   // prompt). The user can exit by pressing ESC, same as /auto mid-session.
   if (shouldAuto()) {
-    core.setAuto(true);
-    agentIO.setAuto(true);
+    autoState.resetStreak();
+    autoState.setAuto(true);
     console.log(chalk.cyan('auto mode is on (--auto). Mails will be auto-replied. Press esc to exit.'));
   }
 
+  // Wire the webui mirror into the autoState singleton's onAutoChange
+  // callback. Previously agentIO.setAuto() called getServeHub().broadcastAuto
+  // directly; now the singleton owns the flag and fires this callback on a
+  // real flip, so the webui chat input box stays enabled for steering and the
+  // 停止 button stays visible+spinning while the lead is in WAIT. Registered
+  // here (where ServeHub is in scope) to keep AutoState free of any
+  // serve-hub import and avoid the module-load cycle. Best-effort: broadcastAuto
+  // is a no-op when serve isn't running.
+  autoState.onAutoChange = (value: boolean) => {
+    try {
+      getServeHub().broadcastAuto(value);
+    } catch {
+      // serve-hub import cycle or serve not running — best-effort, no throw
+    }
+  };
+
   // Register the combined auto-mode ENTRY callback for the webui. The
   // /serve "enter auto" lightning-bolt button sends an 'auto' WS message;
-  // ServeHub calls this provider to flip BOTH core.setAuto(true) (state
-  // machine PROMPT→WAIT) and agentIO.setAuto(true) (IO flag + webui
-  // broadcast) together — exactly the /auto slash path. Returns false when
+  // ServeHub calls this provider to flip autoState (which both Core and
+  // AgentIO delegate to) — exactly the /auto slash path. Returns false when
   // already in auto mode so the hub can surface "已经是自动模式了".
   getServeHub().setEnterAutoProvider(() => {
-    if (core.getAuto()) return false;
-    core.setAuto(true);
-    agentIO.setAuto(true);
+    if (autoState.getAuto()) return false;
+    autoState.resetStreak();
+    autoState.setAuto(true);
     console.log(chalk.cyan('auto mode is on (webui). Mails will be auto-replied. Press esc to exit.'));
     return true;
   });

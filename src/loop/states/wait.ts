@@ -26,6 +26,7 @@ import chalk from 'chalk';
 import { AgentState } from '../state-machine.js';
 import type { MachineEnv, TurnVars, PassData, HandlerResult } from '../state-machine.js';
 import { agentIO } from '../agent-io.js';
+import { autoState } from '../auto-state.js';
 import { getServeHub } from '../../serve/serve-registry.js';
 
 /** Poll interval for the WAIT blocking loop (ms). */
@@ -80,8 +81,7 @@ export async function handleWait(
   while (true) {
     // ESC pressed → exit auto mode (orthogonal: plan/normal preserved).
     if (agentIO.isNeglectedMode()) {
-      ctx.core.setAuto(false);
-      agentIO.setAuto(false);
+      autoState.setAuto(false);
       agentIO.setNeglectedMode(false);
       agentIO.flushOutput();
       console.log(chalk.gray('auto mode is off. Prompt resumed.'));
@@ -89,8 +89,7 @@ export async function handleWait(
     }
 
     // Programmatic auto-off (e.g. a tool cleared the flag).
-    if (!ctx.core.getAuto()) {
-      agentIO.setAuto(false);
+    if (!autoState.getAuto()) {
       return AgentState.PROMPT;
     }
 

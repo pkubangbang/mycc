@@ -16,6 +16,7 @@ import { isVerbose } from '../config.js';
 import { getToolColor } from '../utils/tool-colors.js';
 import { slashRegistry } from '../slashes/index.js';
 import { getServeHub } from '../serve/serve-registry.js';
+import { autoState } from './auto-state.js';
 import { setResultCallback } from '../utils/letter-box.js';
 
 /**
@@ -191,12 +192,6 @@ class AgentIO {
   // Neglected mode tracking (ESC was pressed this round)
   private neglectedModeFlag = false;
 
-  // Autonomous ("auto") mode flag — set by /auto, cleared by ESC.
-  // Orthogonal to plan/normal mode. When true, tools that bypass
-  // core.question() and call agentIO.ask() directly (e.g. hand_over)
-  // must reject instead of blocking on the user.
-  private autoModeFlag = false;
-
   // Neglected callbacks - called when ESC is pressed
   private onNeglectedCallbacks: Set<() => void> = new Set();
 
@@ -258,7 +253,7 @@ class AgentIO {
     // agentIO keeps its getServeHub import, breaking the cycle at the
     // callback boundary). Safe to call even when serve isn't running yet:
     // the provider is simply stored and consulted on the next connect.
-    getServeHub().setAutoStateProvider(() => this.getAuto());
+    getServeHub().setAutoStateProvider(() => autoState.getAuto());
 
     // Handle IPC messages from coordinator
     process.on('message', (msg: { type: string; key?: KeyInfo; keys?: KeyInfo[]; columns?: number }) => {
@@ -364,29 +359,23 @@ class AgentIO {
    * Set by the /auto slash command; cleared when ESC exits auto mode.
    * Tools that call agentIO.ask() directly (bypassing core.question()) check
    * this to avoid blocking on the user during autonomous operation.
+   *
+   * Delegates to the shared `autoState` singleton — the single source of
+   * truth shared with Core (ctx.core). The webui mirror is handled by the
+   * singleton's `onAutoChange` callback (registered in agent-repl), not here.
    */
   getAuto(): boolean {
-    return this.autoModeFlag;
+    return autoState.getAuto();
   }
 
   /**
-   * Enable or disable auto mode on the IO singleton.
+   * Enable or disable auto mode. Delegates to the `autoState` singleton,
+   * which is idempotent (no-op on unchanged value), resets the streak when
+   * leaving auto mode, and fires `onAutoChange` to broadcast to the webui.
    * @param value - true to enter auto mode, false to exit
    */
   setAuto(value: boolean): void {
-    // No-op if the flag is unchanged — keeps the redundant idempotent
-    // re-sync call in prompt.ts's auto-mode safety net from re-broadcasting
-    // an 'auto' message (and avoids spurious work on every STOP→WAIT cycle).
-    if (value === this.autoModeFlag) return;
-    this.autoModeFlag = value;
-    // Notify the webui so the chat input box stays enabled for steering and
-    // the 停止 button stays visible+spinning while the lead is in the WAIT
-    // state. Mirrored through the serve hub (no-op when serve isn't running).
-    try {
-      getServeHub().broadcastAuto(value);
-    } catch {
-      // serve-hub import cycle or serve not running — best-effort, no throw
-    }
+    autoState.setAuto(value);
   }
 
   /**

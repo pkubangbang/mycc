@@ -24,6 +24,7 @@ import { retryChat, MODEL } from '../../engine/chat-provider.js';
 import { stopSpinner } from '../../engine/chat-helpers.js';
 import { buildPlanModePrompt, buildNormalModePrompt, isInPlanMode } from '../agent-prompts.js';
 import { agentIO } from '../agent-io.js';
+import { autoState } from '../auto-state.js';
 import { startWrapUp } from '../esc-wrap-up.js';
 import { loader } from '../../context/shared/loader.js';
 import { handleCrossroad } from '../crossroad.js';
@@ -190,6 +191,15 @@ export async function handleLlm(
         }
         continue; // Re-run the while loop and call LLM again
       }
+
+      // Record a successful LLM stage for the autofly streak counter. This is
+      // the single success cutpoint — the LLM produced usable output (content
+      // and/or tool calls) and is about to exit to HOOK. The empty-response
+      // `continue` retry path and the ESC/aborted `return PROMPT` paths above
+      // do NOT count: only a clean, completed stage advances the streak. When
+      // the streak reaches the autofly threshold (default 3), autoState engages
+      // auto mode automatically and resets the streak for the next cycle.
+      autoState.recordLlmSuccess();
 
       return AgentState.HOOK;
     } catch (err) {
