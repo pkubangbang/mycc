@@ -8,7 +8,10 @@
  * core of "autonomous mycc": multiple instances can chain by writing to
  * each other's mailbox, each blocking in WAIT until roused.
  *
- * Entry: STOP returns WAIT when `ctx.core.getAuto()` is true.
+ * Entry: PROMPT redirects to WAIT when auto mode is on (or when the
+ *        --debug-autofly autofly trigger engages it). STOP always routes
+ *        to PROMPT, which is the single decision point for the WAIT
+ *        redirect.
  * Exit:
  *   - COLLECT — an event arrived (mail / teammate / steering).
  *   - PROMPT  — the user pressed ESC to leave auto mode (neglected mode

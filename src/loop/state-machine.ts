@@ -163,11 +163,13 @@ export class AgentStateMachine {
   async run(): Promise<void> {
     let turn: TurnVars = { isFirstRound: true, nextTodoNudge: 3, lastTodoState: '', nextBriefNudge: 5, lastUserQuery: '', extractedKeywords: [] };
     let pass: PassData = { abortController: null, rawToolCalls: [], assistantContent: '', augmentedCalls: [], hookResult: null };
-    // Auto mode (orthogonal to plan/normal) replaces the PROMPT stage with
-    // WAIT: the loop blocks for mail/teammate/steering events instead of
-    // prompting the user. Re-checked only at startup; mid-session mode
-    // changes are handled by the state handlers (STOP→WAIT, prompt guard).
-    let state: AgentState = this.env.ctx.core.getAuto() ? AgentState.WAIT : AgentState.PROMPT;
+    // Initial state is always PROMPT. PROMPT is the single decision point for
+    // whether to run autonomously: it redirects to WAIT when auto mode is on
+    // (e.g. started via --auto, which calls autoState.setAuto(true)) or when
+    // the --debug-autofly autofly trigger fires. Starting at PROMPT (instead
+    // of branching on getAuto() here) keeps the engagement policy in one
+    // place and avoids duplicating the WAIT-vs-PROMPT choice at startup.
+    let state: AgentState = AgentState.PROMPT;
     let prevState: AgentState | null = null;
 
     while (true) {

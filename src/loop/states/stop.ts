@@ -62,12 +62,6 @@ export async function handleStop(
     // 'all done' or 'no teammates'
     presentResult(triologue);
 
-    // Auto mode: instead of prompting the user, block in WAIT for the next
-    // mail / teammate state change / steering note, then re-enter COLLECT.
-    // Plan/normal mode is preserved — auto only replaces the PROMPT stage.
-    if (ctx.core.getAuto()) {
-      return AgentState.WAIT;
-    }
     return AgentState.PROMPT;
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : String(err);

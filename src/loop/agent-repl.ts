@@ -14,7 +14,7 @@ import { healthCheck } from '../engine/chat-provider.js';
 import { ParentContext } from '../context/parent-context.js';
 import { getSessionId } from '../session/index.js';
 import { slashRegistry } from '../slashes/index.js';
-import { getTokenThreshold, isDebuggingEval, shouldServe, getServePort, getServeHost, getEmbeddingModel, shouldAuto } from '../config.js';
+import { getTokenThreshold, isDebuggingEval, shouldServe, getServePort, getServeHost, getEmbeddingModel, shouldAuto, getAutoflyThresholdArg } from '../config.js';
 import { Triologue } from './triologue.js';
 import { agentIO } from './agent-io.js';
 import { autoState } from './auto-state.js';
@@ -329,6 +329,17 @@ export async function main(): Promise<void> {
     autoState.resetStreak();
     autoState.setAuto(true);
     console.log(chalk.cyan('auto mode is on (--auto). Mails will be auto-replied. Press esc to exit.'));
+  }
+
+  // ── --autofly=N CLI arg: seed the autofly threshold into the singleton ──
+  // When --autofly=N is provided (a positive integer), override the singleton's
+  // default threshold so the PROMPT autofly trigger (gated by --debug-autofly)
+  // compares streak > N. When the arg is absent, the singleton keeps its
+  // built-in default (currently 3). Seeded once at startup; the threshold is
+  // not meant to change mid-session.
+  const autoflyThresholdArg = getAutoflyThresholdArg();
+  if (autoflyThresholdArg !== null) {
+    autoState.setAutoflyThreshold(autoflyThresholdArg);
   }
 
   // Wire the webui mirror into the autoState singleton's onAutoChange

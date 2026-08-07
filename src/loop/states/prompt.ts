@@ -29,7 +29,7 @@ import { readSession, writeSession } from '../../session/index.js';
 import { setSlashQuery } from './slash.js';
 import { evaluateWrapUp, clearWrapUp } from '../esc-wrap-up.js';
 import { extractKeywords } from '../keyword-extractor.js';
-import { isDebuggingPrompt } from '../../config.js';
+import { isDebuggingPrompt, isDebugAutofly } from '../../config.js';
 import { forkChat } from '../../engine/chat-provider.js';
 import type { RetryConfig } from '../../engine/chat-helpers.js';
 import { getServeHub } from '../../serve/serve-registry.js';
@@ -137,14 +137,32 @@ export async function handlePrompt(
 ): Promise<HandlerResult> {
   const { triologue, inputProvider, sessionFilePath } = env;
 
-  // ── Auto-mode safety net ──
-  // In auto mode the loop should never reach PROMPT — STOP routes to WAIT and
-  // WAIT blocks for events. But if we ever arrive here while auto is on
-  // (e.g. /auto was entered via SLASH→PROMPT, or a future state transitions
-  // here), jump straight to WAIT and discard any pending input rather than
-  // prompting the user — guarantees no hang. Plan/normal mode is untouched.
+  // ── Auto-mode engagement gate ──
+  // PROMPT is the single decision point for whether the loop should skip
+  // prompting the user and run autonomously. Two conditions, checked in
+  // order, redirect to WAIT instead of asking for input:
+  //
+  //   1. Auto mode is already on (e.g. engaged via /auto or a prior autofly
+  //      trigger). Just jump to WAIT — the loop keeps running.
+  //
+  //   2. Auto mode is off, but the immutable --debug-autofly CLI flag is set
+  //      AND the streak of consecutive successful LLM stages exceeds the
+  //      threshold N. This is the "autofly" trigger: we engage auto mode now
+  //      (setAuto(true)) so that subsequent PROMPT entries take path 1, then
+  //      jump to WAIT.
+  //
+  // The threshold lives in the AutoState singleton — agent-repl seeds it once
+  // at startup from --autofly=N (falling back to the built-in default), so
+  // PROMPT reads a single source of truth instead of re-parsing the CLI arg.
+  //
+  // If neither condition holds, fall through to normal prompting. Plan/normal
+  // mode is untouched by this gate (auto is orthogonal to plan/normal).
   if (autoState.getAuto()) {
     autoState.setAuto(true); // idempotent re-sync (no-op, keeps onAutoChange calm)
+    return AgentState.WAIT;
+  }
+  if (isDebugAutofly() && autoState.getStreak() > autoState.getAutoflyThreshold()) {
+    autoState.setAuto(true); // engage auto mode so subsequent loops take path 1
     return AgentState.WAIT;
   }
 

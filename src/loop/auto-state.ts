@@ -3,9 +3,12 @@
  *
  * Owns the `auto` flag (orthogonal to plan/normal mode), a `streak` counter
  * of consecutive successful LLM stages since the last user input, and the
- * `autoflyThreshold` that powers the "autofly" feature: when the streak
- * reaches the threshold (default 3), auto mode engages automatically so the
- * loop keeps running without prompting the user.
+ * `autoflyThreshold` that powers the "autofly" feature: when auto mode is off
+ * but the immutable `--debug-autofly` CLI flag is set and the streak exceeds
+ * the threshold (default 3), the PROMPT state handler engages auto mode
+ * automatically so the loop keeps running without prompting the user. The
+ * engagement decision lives in PROMPT — this singleton only owns the counter
+ * and threshold; it never triggers auto mode itself.
  *
  * Previously the `auto` flag lived in TWO places kept in lockstep:
  * `agentIO.autoModeFlag` (IO singleton) and `Core.autoFlag` (ctx.core).
@@ -29,8 +32,10 @@
 export type OnAutoChangeCallback = (value: boolean) => void;
 
 /**
- * Default streak threshold for autofly. When the streak of consecutive
- * successful LLM stages reaches this many, auto mode engages automatically.
+ * Default streak threshold for autofly. When auto mode is off, the
+ * `--debug-autofly` CLI flag is set, and the streak of consecutive successful
+ * LLM stages exceeds this many, the PROMPT state handler engages auto mode
+ * automatically.
  */
 export const DEFAULT_AUTOfLY_THRESHOLD = 3;
 
@@ -103,19 +108,18 @@ export class AutoState {
 
   /**
    * Record a successful LLM stage (called right before the LLM state returns
-   * HOOK). Increments the streak, then — if not already in auto mode and the
-   * streak has reached the autofly threshold — engages auto mode automatically
-   * (the "autofly" feature). Entering auto this way also resets the streak so
-   * the next autofly cycle starts from a clean slate.
+   * HOOK). Increments the streak of consecutive successful LLM stages since
+   * the last user input.
+   *
+   * NOTE: This method only increments — it does NOT engage auto mode. The
+   * autofly decision (whether to auto-enable auto mode when the streak
+   * exceeds a threshold) lives in the PROMPT state handler, gated by the
+   * immutable --debug-autofly CLI flag. Keeping the counter pure lets PROMPT
+   * own the engagement policy (including the streak > N comparison) in one
+   * place, instead of firing mid-LLM-stage.
    */
   recordLlmSuccess(): void {
     this.streak++;
-    if (!this.auto && this.streak >= this.autoflyThreshold) {
-      this.setAuto(true);
-      // setAuto(true) does NOT reset streak; reset explicitly so the next
-      // autofly window opens fresh after a user input breaks the cycle.
-      this.streak = 0;
-    }
   }
 
   /**

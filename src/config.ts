@@ -104,9 +104,9 @@ const args = minimist(process.argv.slice(2), {
   //   (absent)           -> undefined (serve mode OFF)
   // Putting it in `string` would break bare `--serve` (yields "" not true);
   // putting it in `boolean` would swallow `--serve 9000` (port ignored).
-  boolean: ['v', 'verbose', 'skip-healthcheck', 'setup', 'debug-eval', 'debug-tp', 'debug-prompt', 'auto'],
+  boolean: ['v', 'verbose', 'skip-healthcheck', 'setup', 'debug-eval', 'debug-tp', 'debug-prompt', 'auto', 'debug-autofly'],
   string: [
-    'from', 'port', 'host', 'max-upload-mb',
+    'from', 'port', 'host', 'max-upload-mb', 'autofly',
     'ollama-host', 'ollama-api-key', 'ollama-model', 'ollama-vision-model', 'ollama-embedding-model',
     'deepseek-host', 'deepseek-api-key', 'deepseek-model',
     'api-provider', 'token-threshold', 'editor', 'skill-match-threshold',
@@ -115,7 +115,7 @@ const args = minimist(process.argv.slice(2), {
   default: {
     v: false, from: null, port: null,
     'skip-healthcheck': false, setup: false,
-    'debug-eval': false, 'debug-tp': false, 'debug-prompt': false,
+    'debug-eval': false, 'debug-tp': false, 'debug-prompt': false, 'debug-autofly': false,
   },
 });
 
@@ -133,6 +133,7 @@ function buildCmdArgsEnv(parsed: typeof args): Record<string, string> {
     'debug-eval': 'MYCC_DEBUG_EVAL',
     'debug-tp': 'MYCC_DEBUG_TP',
     'debug-prompt': 'MYCC_DEBUG_PROMPT',
+    'debug-autofly': 'MYCC_DEBUG_AUTOfLY',
     // Env-configurable vars (override .env files)
     'ollama-host': 'OLLAMA_HOST',
     'ollama-api-key': 'OLLAMA_API_KEY',
@@ -250,6 +251,37 @@ export function isDebuggingPrompt(): boolean {
  */
 export function shouldAuto(): boolean {
   return args.auto === true;
+}
+
+/**
+ * Check if autofly debug mode is enabled (--debug-autofly CLI flag).
+ *
+ * When enabled, the PROMPT state will automatically engage auto mode once the
+ * streak of consecutive successful LLM stages exceeds the autofly threshold
+ * (--autofly=N, default from the AutoState singleton). This flag is immutable:
+ * it is set only via the CLI arg and has no slash-command toggle, so it cannot
+ * be flipped mid-session.
+ *
+ * Reads the parsed CLI args directly (not process.env) to avoid inheriting a
+ * stale MYCC_DEBUG_AUTOfLY env var from a parent process.
+ */
+export function isDebugAutofly(): boolean {
+  return args['debug-autofly'] === true;
+}
+
+/**
+ * Get the autofly streak threshold from the --autofly=N CLI arg.
+ *
+ * Returns the parsed integer when --autofly is a valid positive number,
+ * otherwise null (the caller falls back to the AutoState singleton's default
+ * threshold, currently 3). Reads the parsed CLI args directly so a stale env
+ * var never overrides the explicit CLI value.
+ */
+export function getAutoflyThresholdArg(): number | null {
+  const raw = args.autofly;
+  if (raw === undefined || raw === null) return null;
+  const n = parseInt(String(raw), 10);
+  return Number.isFinite(n) && n > 0 ? n : null;
 }
 
 /**
