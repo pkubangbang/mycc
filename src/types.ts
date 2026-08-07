@@ -545,6 +545,12 @@ export interface PeerModule {
   start(): void;
   /** Stop the peer subsystem: stop heartbeat + stop channel poll + unregister identity. */
   stop(): void;
+  /**
+   * Get the local instance's session id, so a tool can mark "self" when
+   * listing online peers (the `peers` tool). Returns '' on the child
+   * (NoopPeerModule), which never participates in peer discovery.
+   */
+  getSelfSessionId(): string;
 }
 
 /**

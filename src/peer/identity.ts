@@ -202,6 +202,13 @@ export class IdentityManager {
   }
 
   /**
+   * Get the local session id (so a tool can mark "self" in a peer listing).
+   */
+  getSelfSessionId(): string {
+    return this.sessionId;
+  }
+
+  /**
    * Get the mailbox path for a remote session.
    * Returns null if session not found in identity.json.
    */

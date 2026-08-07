@@ -76,6 +76,10 @@ export class PeerManager implements PeerModule {
     this.channel.stopChannelPoll();
     this.identity.unregister();
   }
+
+  getSelfSessionId(): string {
+    return this.identity.getSelfSessionId();
+  }
 }
 
 /**
@@ -96,4 +100,5 @@ export class NoopPeerModule implements PeerModule {
   hasActiveChannel(): boolean { return false; }
   start(): void { /* no-op */ }
   stop(): void { /* no-op */ }
+  getSelfSessionId(): string { return ''; }
 }
