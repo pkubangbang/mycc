@@ -19,7 +19,7 @@ export const mailToTool: ToolDefinition = {
     properties: {
       name: {
         type: 'string',
-        description: 'Target name to receive the message (teammate name or "lead")',
+        description: 'Target name to receive the message. A teammate name or "lead" for local instance IPC, OR a cross-instance peer identity "<session-id>/lead" (e.g. "3b1b83d.../lead") to route through the peer discovery module to a remote mycc instance mailbox.',
       },
       title: {
         type: 'string',
@@ -61,6 +61,27 @@ export const mailToTool: ToolDefinition = {
 
     const senderName = ctx.core.getName();
     const isTeammateToLead = name === 'lead' && senderName !== 'lead';
+
+    // Cross-instance peer routing: if `name` matches the identity pattern
+    // <session-id>/<agent-name> (agent-name is currently only "lead"), route
+    // the message through ctx.peer to the remote peer's mailbox instead of
+    // local teammate IPC. This makes mail_to work across mycc instances.
+    // The session-id part must be non-empty and contain a dash (UUID format),
+    // and the agent-name part must be "lead".
+    const peerSlashIdx = name.indexOf('/');
+    if (peerSlashIdx > 0) {
+      const peerSid = name.slice(0, peerSlashIdx);
+      const peerAgent = name.slice(peerSlashIdx + 1);
+      if (peerAgent === 'lead' && peerSid.includes('-')) {
+        const ok = ctx.peer.sendPeerMail(peerSid, title, content);
+        if (ok) {
+          ctx.core.brief('info', 'mail_to', `(peer→${name}) ${title}\n${chalk.gray(content)}`);
+          return `OK. Peer mail sent to ${name}.`;
+        }
+        ctx.core.brief('error', 'mail_to', `Peer ${peerSid} is stale or not registered — mail not delivered.`);
+        return `Error: peer ${peerSid} is stale or not registered. The remote mycc instance may have exited, or its heartbeat is older than the freshness window. Verify the peer is running with myccdp enabled.`;
+      }
+    }
 
     // Conditional enforcement: child→lead requires eta (seconds from now)
     if (isTeammateToLead) {

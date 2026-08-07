@@ -38,6 +38,10 @@ export class PeerManager implements PeerModule {
     return this.channel.sendMail(channelId, sessionId, topic, content);
   }
 
+  sendPeerMail(sessionId: string, title: string, content: string): boolean {
+    return this.channel.sendPeerMail(sessionId, title, content);
+  }
+
   /**
    * True if there is at least one joined channel whose peer is fresh.
    * A channel is "active" when it is joined AND its peerSessionId is known
@@ -88,6 +92,7 @@ export class NoopPeerModule implements PeerModule {
   listChannels(): ChannelFile[] { return []; }
   joinChannel(_channelId: string): { joined: boolean; firstQuery?: string } { return { joined: false }; }
   sendMail(_channelId: string, _sessionId: string, _topic: string, _content: string): boolean { return false; }
+  sendPeerMail(_sessionId: string, _title: string, _content: string): boolean { return false; }
   hasActiveChannel(): boolean { return false; }
   start(): void { /* no-op */ }
   stop(): void { /* no-op */ }

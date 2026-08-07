@@ -530,6 +530,12 @@ export interface PeerModule {
   /** Send mail to a remote session via its mailbox (gated by freshness).
    *  `topic` is an ad-hoc subject per message (distinct from the channel's static `title` theme). */
   sendMail(channelId: string, sessionId: string, topic: string, content: string): boolean;
+  /** Send a channel-independent peer mail to a remote session by session-id.
+   *  Freshness-gated; appends a JSONL line to the remote mailbox with from =
+   *  the local identity string (sessionId/lead). Returns false if the peer is
+   *  stale or not registered. Used by mail_to when `name` matches the
+   *  session-id/lead identity pattern. */
+  sendPeerMail(sessionId: string, title: string, content: string): boolean;
   /** True if this instance has at least one joined channel whose peer is fresh.
    *  Used by the PROMPT autofly gate: an active channel is equivalent to
    *  --debug-autofly for engaging auto mode. */

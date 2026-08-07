@@ -258,4 +258,25 @@ export class ChannelManager {
 
     return true;
   }
+
+  /**
+   * Channel-independent peer mail: append a JSONL line to the remote mailbox
+   * with the local identity string (sessionId/lead) as `from`. Freshness-gated.
+   *
+   * Unlike sendMail(), this does not require a channelId — it is the routing
+   * path used by mail_to when the target name matches the session-id/lead
+   * identity pattern. The title is used verbatim (no channel prefix).
+   */
+  sendPeerMail(sessionId: string, title: string, content: string): boolean {
+    if (!this.identityManager.isFresh(sessionId)) {
+      return false;
+    }
+    const remoteMailbox = this.identityManager.getRemoteMailbox(sessionId);
+    if (!remoteMailbox) {
+      return false;
+    }
+    const from = this.identityManager.getIdentityString();
+    appendMailToPath(remoteMailbox, from, title, content);
+    return true;
+  }
 }

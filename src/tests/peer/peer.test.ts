@@ -276,6 +276,53 @@ describe('ChannelManager', () => {
     expect(mail.content).toBe('hello-body');
     expect(mail.from).toBe(`${SID_A}/lead`);
   });
+
+  it('sendPeerMail() appends to the remote mailbox with no channel prefix and from=sessionId/lead', () => {
+    const mailboxA = makeMailboxPath(SID_A);
+    const mailboxB = makeMailboxPath(SID_B);
+    const idA = new IdentityManager(SID_A, '/work/a', mailboxA);
+    idA.register();
+    const idB = new IdentityManager(SID_B, '/work/b', mailboxB);
+    idB.register();
+    writeHeartbeatRaw(SID_A, [1000, 1100, 1200]);
+    writeHeartbeatRaw(SID_B, [4800, 4900, 5000]);
+
+    const ch = new ChannelManager(SID_A, idA, mailboxA);
+    expect(ch.sendPeerMail(SID_B, 'direct-topic', 'direct-body')).toBe(true);
+
+    const lines = fs.readFileSync(mailboxB, 'utf-8').trim().split('\n');
+    expect(lines).toHaveLength(1);
+    const mail = JSON.parse(lines[0]);
+    // No channel prefix — title used verbatim (channel-independent path).
+    expect(mail.title).toBe('direct-topic');
+    expect(mail.content).toBe('direct-body');
+    expect(mail.from).toBe(`${SID_A}/lead`);
+  });
+
+  it('sendPeerMail() returns false when the peer is stale', () => {
+    const mailboxA = makeMailboxPath(SID_A);
+    const mailboxB = makeMailboxPath(SID_B);
+    const idA = new IdentityManager(SID_A, '/work/a', mailboxA);
+    idA.register();
+    const idB = new IdentityManager(SID_B, '/work/b', mailboxB);
+    idB.register();
+    // Stale: local oldest 5000 > remote latest 1000.
+    writeHeartbeatRaw(SID_A, [5000, 5100, 5200]);
+    writeHeartbeatRaw(SID_B, [800, 900, 1000]);
+
+    const ch = new ChannelManager(SID_A, idA, mailboxA);
+    expect(ch.sendPeerMail(SID_B, 't', 'b')).toBe(false);
+    // Nothing appended to the remote mailbox.
+    expect(fs.existsSync(mailboxB) ? fs.readFileSync(mailboxB, 'utf-8') : '').toBe('');
+  });
+
+  it('sendPeerMail() returns false for an unregistered session', () => {
+    const mailboxA = makeMailboxPath(SID_A);
+    const idA = new IdentityManager(SID_A, '/work/a', mailboxA);
+    idA.register();
+    const ch = new ChannelManager(SID_A, idA, mailboxA);
+    expect(ch.sendPeerMail('not-registered-sid', 't', 'b')).toBe(false);
+  });
 });
 
 describe('PeerManager facade', () => {
