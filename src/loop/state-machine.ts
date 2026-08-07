@@ -98,6 +98,14 @@ export interface PassData {
   hookResult: ProcessToolCallsResult | null;
   /** If crossroad was triggered, the best continuation text (injected in hook.ts) */
   crossroadContinuation?: string;
+  /**
+   * Set by HOOK when a hook requests compaction (e.g. compact-on-intent-trap).
+   * Consumed and cleared by the LLM stage, which performs the compact there
+   * (where tools are available for a cache-friendly forkChat) rather than
+   * inside the HOOK state. Deferring avoids compacting mid-tool-execution
+   * where the tool list is not in scope.
+   */
+  deferredCompact: boolean;
 }
 
 // ============================================================================
@@ -162,7 +170,7 @@ export class AgentStateMachine {
    */
   async run(): Promise<void> {
     let turn: TurnVars = { isFirstRound: true, nextTodoNudge: 3, lastTodoState: '', nextBriefNudge: 5, lastUserQuery: '', extractedKeywords: [] };
-    let pass: PassData = { abortController: null, rawToolCalls: [], assistantContent: '', augmentedCalls: [], hookResult: null };
+    let pass: PassData = { abortController: null, rawToolCalls: [], assistantContent: '', augmentedCalls: [], hookResult: null, deferredCompact: false };
     // Initial state is always PROMPT. PROMPT is the single decision point for
     // whether to run autonomously: it redirects to WAIT when auto mode is on
     // (e.g. started via --auto, which calls autoState.setAuto(true)) or when
@@ -183,7 +191,7 @@ export class AgentStateMachine {
       }
       // COLLECT = fresh pipeline pass — always reset.
       if (state === AgentState.COLLECT) {
-        pass = { abortController: null, rawToolCalls: [], assistantContent: '', augmentedCalls: [], hookResult: null };
+        pass = { abortController: null, rawToolCalls: [], assistantContent: '', augmentedCalls: [], hookResult: null, deferredCompact: false };
       }
 
       // ── Execute ──

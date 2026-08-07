@@ -62,6 +62,7 @@ vi.mock('../../../loop/triologue.js', () => {
     agent = vi.fn();
     tool = vi.fn();
     getMessages = vi.fn(() => []);
+    needsCompact = vi.fn(() => false);
   }
   return { Triologue: TriologueStub };
 });

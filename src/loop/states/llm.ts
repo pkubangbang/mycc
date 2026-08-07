@@ -31,10 +31,44 @@ import { handleCrossroad } from '../crossroad.js';
 
 export async function handleLlm(
   env: MachineEnv,
-  _turn: TurnVars,
+  turn: TurnVars,
   pass: PassData,
 ): Promise<HandlerResult> {
   const { triologue, ctx, scope, inputProvider } = env;
+
+  // =====================================================================
+  // Auto-compact at the top of the LLM stage
+  // =====================================================================
+  // Two sources trigger compaction, both handled HERE (not in TOOL/HOOK):
+  //
+  // 1. Proactive — triologue.needsCompact(): a prior tool result pushed the
+  //    token count over the threshold. Previously this fired mid-tool-execution
+  //    (tool.ts), where no tool list was available; now it fires here, where
+  //    loader.getToolsForScope(scope) is in scope and triologue.getMessages()
+  //    is the EXACT cache prefix the next retryChat will use — so the forkChat
+  //    inside compact() is a guaranteed cache hit.
+  //
+  // 2. Deferred — pass.deferredCompact: a hook (e.g. compact-on-intent-trap)
+  //    requested compaction during the HOOK state. Rather than compacting
+  //    mid-HOOK (no tools in scope), the HOOK set this flag and we consume it
+  //    here for the same cache-friendliness reason.
+  //
+  // Both reset the stale stat counts (confusion, sequence, crossroad cooldown)
+  // because the old context is summarized away.
+  if (triologue.needsCompact() || pass.deferredCompact) {
+    const compactTools = loader.getToolsForScope(scope);
+    const reason = pass.deferredCompact
+      ? 'Compacting context (hook-deferred)...'
+      : 'Context threshold exceeded, compacting...';
+    ctx.core.brief('info', 'autoCompact', reason);
+    await triologue.compact(turn.lastUserQuery || undefined, undefined, compactTools);
+    pass.deferredCompact = false;
+    // Reset stat counts — old context is summarized away.
+    ctx.core.resetConfusionIndex();
+    env.requestEmbeddingTracker.clear();
+    env.sequence.clear();
+    env.crossroadOccurred = false;
+  }
 
   // Build system prompt based on mode
   const workDir = ctx.core.getWorkDir();

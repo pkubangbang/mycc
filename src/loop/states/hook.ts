@@ -344,12 +344,19 @@ export async function handleHook(
     pass.hookResult = hookResult;
 
     // 3.5. Handle compact request (highest priority — short-circuits all processing)
+    //    DEFERRED: the actual compact runs at the LLM stage (see llm.ts), where
+    //    `loader.getToolsForScope(scope)` is in scope and triologue.getMessages()
+    //    is the exact cache prefix the next LLM call will use — so the forkChat
+    //    inside compact() is a guaranteed cache hit. Compacting here (mid-HOOK)
+    //    would have no tool list available, forcing a summary-only fallback and
+    //    losing the working-memory benefit. We set a flag and reset the stale
+    //    stat counts now; the LLM stage consumes the flag.
     if (hookResult.compactRequested) {
-      ctx.core.brief('info', 'compact', 'Compacting context due to intent language confusion...');
-      await triologue.compact(turn.lastUserQuery || undefined);
+      ctx.core.brief('info', 'compact', 'Compacting context (deferred to LLM stage)...');
+      pass.deferredCompact = true;
 
-      // Reset stat counts after hook-requested compaction — old context is
-      // now summarized and accumulated confusion/sequence events are stale.
+      // Reset stat counts now — the confusion that triggered the compact is
+      // stale regardless of when the compact itself runs.
       env.ctx.core.resetConfusionIndex();
       env.sequence.clear();
       env.crossroadOccurred = false;  // clear stale cooldown after compaction

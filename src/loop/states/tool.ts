@@ -113,26 +113,14 @@ export async function handleTool(
       // Track this tool call for semantic duplication detection
       await env.requestEmbeddingTracker.addEntry(toolName, toolCall.function.arguments as Record<string, unknown>);
 
-      // Check for context overflow - if exceeded, abandon remaining tools and compact
-      if (triologue.needsCompact()) {
-        // Skip remaining pending tools with placeholder messages
-        triologue.skipPendingTools(
-          'Tool skipped due to context overflow - auto-compacting.',
-          'Tool skipped due to context overflow.'
-        );
-
-        // Run compact immediately with focus on the current task
-        await triologue.compact(turn.lastUserQuery || undefined);
-
-        // Reset stat counts: confusion index and sequence events are stale
-        // after compaction — the old context has been summarized away.
-        ctx.core.resetConfusionIndex();
-        env.requestEmbeddingTracker.clear();
-        sequence.clear();
-
-        // Return to COLLECT - agent will continue with fresh context
-        return AgentState.COLLECT;
-      }
+      // NOTE: Context-overflow auto-compact no longer runs here. It has been
+      // relocated to the top of the LLM stage (llm.ts), where
+      // loader.getToolsForScope(scope) is in scope and triologue.getMessages()
+      // is the exact cache prefix the next LLM call will use — so the forkChat
+      // inside compact() is a guaranteed cache hit. If a tool result pushes us
+      // over the threshold here, the next LLM stage entry catches it (at most
+      // one extra tool result over threshold, which is harmless: the model's
+      // context window is larger than TOKEN_THRESHOLD).
 
       // Semantic duplication detection via embedding similarity.
       // Replaces the old "same tool name in last 5 calls" heuristic.
@@ -167,21 +155,9 @@ export async function handleTool(
           `--- Preview (first 1000 chars) ---\n${err.preview}`;
         triologue.tool(toolName, truncatedOutput, toolCallId);
 
-        // Check for context overflow after truncated result
-        if (triologue.needsCompact()) {
-          triologue.skipPendingTools(
-            'Tool skipped due to context overflow - auto-compacting.',
-            'Tool skipped due to context overflow.'
-          );
-          await triologue.compact(turn.lastUserQuery || undefined);
-
-          // Reset stat counts after compaction
-          ctx.core.resetConfusionIndex();
-          env.requestEmbeddingTracker.clear();
-          sequence.clear();
-
-          return AgentState.COLLECT;
-        }
+        // NOTE: Context-overflow auto-compact no longer runs here (relocated
+        // to the LLM stage — see the note above). The next LLM stage entry
+        // will catch any threshold breach.
 
         // Error increases confusion
         ctx.core.increaseConfusionIndex(2);

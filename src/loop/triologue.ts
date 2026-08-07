@@ -9,8 +9,8 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { retryChat, MODEL } from '../engine/chat-provider.js';
-import type { Message, ToolCall, WikiModule, NoteCategory, Skill } from '../types.js';
+import { retryChat, MODEL, forkChat } from '../engine/chat-provider.js';
+import type { Message, ToolCall, Tool, WikiModule, NoteCategory, Skill } from '../types.js';
 import { minifyMessages } from '../utils/llm-chat-minifier.js';
 import { estimateTokens, estimateTokensForMessages } from '../utils/token.js';
 import { ResultTooLargeError } from '../types.js';
@@ -460,9 +460,17 @@ export class Triologue {
    * @param signal - Optional AbortSignal to abort the summarization LLM call.
    *   When aborted, runAutoCompact's retryChat throws StreamAbortedError which
    *   propagates here — callers should catch it and treat compact as skipped.
+   * @param tools - Optional full tool list for forkChat-based working-memory
+   *   extraction. When provided (and non-empty), a concurrent forkChat forks
+   *   from the full un-minified messages (with this tools schema, preserving
+   *   the prompt cache) and extracts recent working memory, which is appended
+   *   to the summary as a `### Recent Working Memory` section. When omitted or
+   *   empty, falls back to summary-only (the historical behavior). Callers at
+   *   the LLM stage pass `loader.getToolsForScope(scope)` so the fork hits the
+   *   exact cache prefix the next LLM call will use.
    */
-  async compact(focus?: string, signal?: AbortSignal): Promise<void> {
-    const compacted = await this.runAutoCompact(focus, signal);
+  async compact(focus?: string, signal?: AbortSignal, tools?: Tool[]): Promise<void> {
+    const compacted = await this.runAutoCompact(focus, signal, tools);
     this.messages = compacted;
     this.tokenCount = estimateTokensForMessages(this.messages);
     this.pendingToolCalls.clear();
@@ -805,8 +813,16 @@ export class Triologue {
    * @param signal - Optional AbortSignal passed to retryChat so a stuck
    *   summarization can be aborted (e.g. by the teammate turn watchdog)
    *   rather than blocking mail polling indefinitely.
+   * @param tools - Optional full tool list for forkChat-based working-memory
+   *   extraction. When provided (and non-empty), a concurrent forkChat forks
+   *   from the full un-minified messages (with this tools schema) and extracts
+   *   recent working memory, appended to the summary as a
+   *   `### Recent Working Memory` section. The fork reuses the cached prefix
+   *   the main agent loop already paid for (system + projectContext +
+   *   conversation + full tools schema), so it is cache-hot when called from
+   *   the LLM stage. When omitted/empty, falls back to summary-only.
    */
-  private async runAutoCompact(focus?: string, signal?: AbortSignal): Promise<Message[]> {
+  private async runAutoCompact(focus?: string, signal?: AbortSignal, tools?: Tool[]): Promise<Message[]> {
     // Ensure transcript directory exists (session dir)
     const sessionId = getSessionContext();
     const transcriptDir = getSessionDir(sessionId);
@@ -851,37 +867,67 @@ export class Triologue {
       ? `\n**User's Last Instruction:** "${this.lastUserQuery}"\nEnsure the summary preserves ALL constraints, pending tasks, and requests from this instruction. The agent should continue working on this after the compact.\n`
       : '';
 
-    const response = await retryChat(
-      {
-        model: MODEL,
-        messages: [
-          {
-            role: 'user',
-            content:
-              `Summarize this conversation for continuity. Cover the following sections:\n\n` +
-              `### 1) What Was Accomplished\n` +
-              `Key actions taken, files created/modified, findings made.\n\n` +
-              `### 2) Current State\n` +
-              `What the agent now knows — be specific enough that subsequent turns do NOT need to re-verify findings already made.\n` +
-              `Include any pending or unfinished tasks.\n\n` +
-              `### 3) Key Decisions Made\n` +
-              `Design choices, fix strategies, or workflow decisions.\n\n` +
-              `${knowledgeInstruction}` +
-              `${focusInstruction}` +
-              `${userQueryInstruction}` +
-              `${conversationText}`,
-          },
-        ],
-      },
-      { signal, noSpinner: true },
-    );
+    const summaryPrompt =
+      `Summarize this conversation for continuity. Cover the following sections:\n\n` +
+      `### 1) What Was Accomplished\n` +
+      `Key actions taken, files created/modified, findings made.\n\n` +
+      `### 2) Current State\n` +
+      `What the agent now knows — be specific enough that subsequent turns do NOT need to re-verify findings already made.\n` +
+      `Include any pending or unfinished tasks.\n\n` +
+      `### 3) Key Decisions Made\n` +
+      `Design choices, fix strategies, or workflow decisions.\n\n` +
+      `${knowledgeInstruction}` +
+      `${focusInstruction}` +
+      `${userQueryInstruction}` +
+      `${conversationText}`;
 
-    const summary = response.message.content || '(no summary)';
+    // Working-memory focus prompt — runs concurrently with the summary via
+    // forkChat on the FULL un-minified messages (with the complete tools schema
+    // so the fork hits the prompt cache the main loop already paid for).
+    // toolChoice:'none' constrains output to text-only without invalidating the
+    // cached prefix (it's a sampling parameter, not part of the cached tokens).
+    // The two calls are independent: the summary sees minified text; the focus
+    // sees the real conversation. Neither sees the other's output.
+    const focusExtractionPrompt =
+      `Extract the current working memory from the conversation above. Focus on:\n` +
+      `- The immediate task the agent is working on\n` +
+      `- Recent tool results that are still relevant (file contents, command outputs, search results)\n` +
+      `- Current file(s) being edited or examined\n` +
+      `- In-progress decisions or next steps\n\n` +
+      `Be concise but preserve specific details (function names, line numbers, file paths, exact values).\n` +
+      `This working memory will be combined with a broader summary to maintain continuity after compaction.\n` +
+      `Output TEXT ONLY — do NOT use any tools.`;
 
-    // Build a compact summary pair that includes user intent preservation
+    // Run summary + focus concurrently. The summary uses a fresh retryChat
+    // (no cache — minified text differs from the cached prefix by design). The
+    // focus uses forkChat on the full messages with tools (cache hit when
+    // called from the LLM stage). When tools is omitted/empty, skip the focus
+    // call and fall back to summary-only (historical behavior).
+    const useFocus = !!(tools && tools.length > 0);
+    const fullMessages = useFocus ? this.getMessages() : [];
+
+    const [summaryResponse, focusText] = await Promise.all([
+      retryChat(
+        { model: MODEL, messages: [{ role: 'user', content: summaryPrompt }] },
+        { signal, noSpinner: true },
+      ),
+      useFocus
+        ? forkChat(fullMessages, tools!, focusExtractionPrompt, signal, 'none')
+        : Promise.resolve(''),
+    ]);
+
+    const summary = summaryResponse.message.content || '(no summary)';
+
+    // Build a compact summary pair that includes user intent preservation.
+    // The focus (when extracted) is appended as a `### Recent Working Memory`
+    // section inside the SAME user message — the post-compact shape stays two
+    // messages, preserving the historical contract.
     const focusPrefix = focus ? `Focus: ${focus}. ` : '';
     const userQueryNote = this.lastUserQuery
       ? `\n\n**Previous user instruction:** ${this.lastUserQuery}`
+      : '';
+    const focusSection = focusText
+      ? `\n\n### Recent Working Memory\n${focusText}`
       : '';
 
     const summaryPrefix = `[Conversation compressed. ${focusPrefix}Transcript: ${transcriptPath}]\n\n`;
@@ -889,7 +935,7 @@ export class Triologue {
     return [
       {
         role: 'user',
-        content: `${summaryPrefix}${summary}${userQueryNote}`,
+        content: `${summaryPrefix}${summary}${focusSection}${userQueryNote}`,
       },
       {
         role: 'assistant',

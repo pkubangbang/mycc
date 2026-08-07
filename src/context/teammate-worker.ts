@@ -304,6 +304,39 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
 
       triologue.setSystemPrompt(buildNormalModePrompt(WORKDIR, { name: teammateName, role: teammateRole }));
 
+      // === Auto-compact at the top of the LLM stage (before retryChat) ===
+      // Relocated from inside the tool execution loop. Running it here means
+      // `tools` (computed once at line 177) is in scope and triologue.getMessages()
+      // is the EXACT cache prefix the retryChat below will use — so the forkChat
+      // inside compact() is a guaranteed cache hit. When a prior tool result
+      // pushed us over the threshold, this catches it before the next LLM call.
+      // Guarded by the same turn watchdog as retryChat so a hung summarization
+      // cannot block mail polling.
+      if (triologue.needsCompact()) {
+        const compactWatchdog = createTurnWatchdog();
+        const compactStart = Date.now();
+        try {
+          await triologue.compact(undefined, compactWatchdog.signal, tools);
+        } catch (err) {
+          if (err instanceof StreamAbortedError && compactWatchdog.signal.aborted) {
+            const elapsed = Date.now() - compactStart;
+            reportStuckTurn('compact summarization watchdog', elapsed);
+            triologue.note('SYSTEM',
+              `Auto-compact summarization was aborted by the stuck-teammate watchdog after ${Math.round(elapsed / 1000)}s. ` +
+              `Context remains over the threshold; compaction will be retried next turn.`);
+          } else {
+            // Non-watchdog compact error: surface but don't crash the worker.
+            ctx.core.brief('error', 'compact', `Compact failed: ${(err as Error).message}`);
+            triologue.note('SYSTEM', `Auto-compact failed: ${(err as Error).message}. Continuing without compaction.`);
+          }
+        } finally {
+          compactWatchdog.clearTimeout();
+        }
+        ctx.core.resetConfusionIndex();
+        recentToolCalls.length = 0;
+        // Fall through to retryChat with the fresh (compacted) context.
+      }
+
       // Per-turn watchdog: abort the LLM call if it blocks past the turn
       // deadline so mail polling at the top of the loop can resume. Without
       // this a hung retryChat keeps status 'working' and starves the mail
@@ -388,43 +421,14 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
           const output = await silentLoader.execute(toolName, ctx, args);
           triologue.tool(toolName, output, tc.id);
 
-          // === Auto-compact: check after each tool result (mirrors lead's tool.ts) ===
-          // Without this, large write_file/edit_file outputs bloat the context
-          // indefinitely until retryChat() fails and the worker stalls in a
-          // retry loop (see session aecf9aea root cause).
-          if (triologue.needsCompact()) {
-            // Skip any remaining pending tools in this batch
-            triologue.skipPendingTools(
-              'Context limit reached. Remaining tool calls in this batch were skipped.',
-              'Compacting conversation to continue.'
-            );
-            // Compact summarization is itself a retryChat — guard it with the
-            // same turn watchdog so a hung summarization cannot block mail
-            // polling. On watchdog abort we skip compact this round (context
-            // stays over threshold; the next turn will retry compaction).
-            const compactWatchdog = createTurnWatchdog();
-            const compactStart = Date.now();
-            try {
-              await triologue.compact(undefined, compactWatchdog.signal);
-            } catch (err) {
-              if (err instanceof StreamAbortedError && compactWatchdog.signal.aborted) {
-                const elapsed = Date.now() - compactStart;
-                reportStuckTurn('compact summarization watchdog', elapsed);
-                triologue.note('SYSTEM',
-                  `Auto-compact summarization was aborted by the stuck-teammate watchdog after ${Math.round(elapsed / 1000)}s. ` +
-                  `Context remains over the threshold; compaction will be retried next turn.`);
-              } else {
-                // Non-watchdog compact error: surface but don't crash the worker.
-                ctx.core.brief('error', 'compact', `Compact failed: ${(err as Error).message}`);
-                triologue.note('SYSTEM', `Auto-compact failed: ${(err as Error).message}. Continuing without compaction.`);
-              }
-            } finally {
-              compactWatchdog.clearTimeout();
-            }
-            ctx.core.resetConfusionIndex();
-            recentToolCalls.length = 0;
-            break; // Exit the for-loop, let the while-loop continue
-          }
+          // NOTE: Auto-compact no longer runs inside the tool loop. It has
+          // been relocated to the top of the LLM stage (before retryChat),
+          // where `tools` is in scope and triologue.getMessages() is the
+          // exact cache prefix the next LLM call will use — so the forkChat
+          // inside compact() is a guaranteed cache hit. If a tool result
+          // pushes us over the threshold here, the next loop iteration's
+          // LLM-stage check catches it (at most one extra tool result over
+          // threshold, harmless: the model context window > TOKEN_THRESHOLD).
 
           // Track budget from mail_to call
           if (toolName === 'mail_to' && !budgetSent) {

@@ -44,6 +44,7 @@ export function createPassData(overrides: Partial<PassData> = {}): PassData {
     assistantContent: '',
     augmentedCalls: [],
     hookResult: null,
+    deferredCompact: false,
     ...overrides,
   };
 }
