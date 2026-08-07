@@ -21,6 +21,7 @@ import { MailBox } from '../shared/mail.js';
 import { IpcRegistry } from '../ipc-registry.js';
 import { readSession, writeSession, getSessionId } from '../../session/index.js';
 import { agentIO } from '../../loop/agent-io.js';
+import { stopSpinner } from '../../engine/chat-helpers.js';
 
 // Project root for resolving paths
 const PROJECT_ROOT = getProjectRoot();
@@ -345,6 +346,21 @@ export class TeamManager implements TeamModule {
           query: msg.query as string,
           options: msg.options as { onEsc?: string; onEnter?: string } | undefined,
         });
+        // Immediately notify the user that a question is queued. Without this,
+        // the thinking spinner (if active during an LLM call) silently covers
+        // the fact that a teammate is blocked and waiting for an answer. The
+        // spinner is stopped here so the notification is visible; we do NOT
+        // restart it — team.ts must not couple to the LLM provider's spinner
+        // state. retryChat's finally-block stopSpinner() is idempotent (no-op
+        // when the interval is already null), so there are no side effects.
+        // The actual blocking Q&A still happens in handlePendingQuestions()
+        // at the start of the next COLLECT state.
+        stopSpinner();
+        this.context.core.brief(
+          'warn', 'question',
+          `${sender} has a question waiting (will be asked when current task finishes)`,
+          msg.query as string,
+        );
         return;
       }
 
