@@ -147,7 +147,7 @@ describe('Cluster A — hand_over intent validation', () => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════
-// Cluster B — P1-1 tmux nesting self-check
+// Cluster B — P1-1 tmux nesting self-check (UNCONDITIONAL leading-tmux reject)
 // ═══════════════════════════════════════════════════════════════════════
 
 describe('Cluster B — P1-1 tmux nesting self-check', () => {
@@ -177,79 +177,146 @@ describe('Cluster B — P1-1 tmux nesting self-check', () => {
     delete process.env.TMUX;
   }
 
-  it('inside tmux: rejects `tmux attach -t foo` with alternatives 1 & 2, no `unset TMUX`', async () => {
+  it('rejects `tmux attach -t foo` with the contract message, regardless of $TMUX (inside)', async () => {
     insideTmux();
     const result = await handOverTool.handler(ctx, {
       command: 'tmux attach -t foo',
       intent: 'RUN USER TO reattach to foo',
     });
-    expect(result).toContain('Cannot run');
-    expect(result).toContain('tmux attach -t foo');
-    // Alternative 1: user runs attach outside mycc.
-    expect(result).toContain('tmux attach -t foo');
-    expect(result).toMatch(/own terminal/i);
-    // Alternative 2: drive remotely via send-keys / capture-pane.
-    expect(result).toContain('tmux send-keys');
-    expect(result).toContain('tmux capture-pane');
+    // Rejects with the unconditional leading-tmux contract message.
+    expect(result).toContain('Error:');
+    expect(result).toContain('starts with `tmux`');
+    expect(result).toContain('its own tmux session');
+    expect(result).toContain('INNER interactive command');
+    expect(result).toContain('use `bash` instead');
     // The escape hatch is deliberately NOT offered.
-    expect(result).not.toContain('unset TMUX');
     expect(result).not.toMatch(/unset\s+TMUX/);
   });
 
-  it('inside tmux: rejects `tmux -L sock attach -t foo` (covers -L socket form)', async () => {
+  it('rejects `tmux -L sock attach -t foo` (covers -L socket form)', async () => {
     insideTmux();
     const result = await handOverTool.handler(ctx, {
       command: 'tmux -L sock attach -t foo',
       intent: 'RUN USER TO reattach via named socket',
     });
-    expect(result).toContain('Cannot run');
+    expect(result).toContain('Error:');
+    expect(result).toContain('starts with `tmux`');
     expect(result).toContain('tmux -L sock attach -t foo');
   });
 
-  it('inside tmux: rejects `tmux switch-client -t foo`', async () => {
+  it('rejects `tmux switch-client -t foo`', async () => {
     insideTmux();
     const result = await handOverTool.handler(ctx, {
       command: 'tmux switch-client -t foo',
       intent: 'RUN USER TO switch client',
     });
-    expect(result).toContain('Cannot run');
+    expect(result).toContain('Error:');
+    expect(result).toContain('starts with `tmux`');
     expect(result).toContain('switch-client');
   });
 
-  it('inside tmux: does NOT reject `tmux send-keys -t foo "x" Enter` (safe from inside tmux)', async () => {
+  it('rejects `tmux new-session ...` — the nesting hole (now closed)', async () => {
+    insideTmux();
+    const result = await handOverTool.handler(ctx, {
+      command: 'tmux new-session -d -s bar',
+      intent: 'RUN USER TO spawn a detached session',
+    });
+    expect(result).toContain('Error:');
+    expect(result).toContain('starts with `tmux`');
+    expect(result).toContain('new-session');
+  });
+
+  it('rejects `tmux send-keys ...` — the nesting hole (now closed)', async () => {
     insideTmux();
     const result = await handOverTool.handler(ctx, {
       command: "tmux send-keys -t foo 'x' Enter",
       intent: 'RUN USER TO send a key to foo',
     });
-    // send-keys is not an attach/switch-client → not a nesting command.
-    // It proceeds past the nesting check (no "Cannot run" rejection).
-    expect(result).not.toContain('Cannot run');
-    expect(result).not.toContain('nested sessions');
+    expect(result).toContain('Error:');
+    expect(result).toContain('starts with `tmux`');
+    expect(result).toContain('send-keys');
   });
 
-  it('inside tmux: does NOT reject `tmux new-session` / `kill-session` (safe from inside tmux)', async () => {
+  it('rejects `tmux kill-session -t bar` — the nesting hole (now closed)', async () => {
     insideTmux();
-    const r1 = await handOverTool.handler(ctx, {
-      command: 'tmux new-session -d -s bar',
-      intent: 'RUN USER TO spawn a detached session',
-    });
-    expect(r1).not.toContain('Cannot run');
-    const r2 = await handOverTool.handler(ctx, {
+    const result = await handOverTool.handler(ctx, {
       command: 'tmux kill-session -t bar',
       intent: 'RUN USER TO kill a session',
     });
-    expect(r2).not.toContain('Cannot run');
+    expect(result).toContain('Error:');
+    expect(result).toContain('starts with `tmux`');
+    expect(result).toContain('kill-session');
   });
 
-  it('outside tmux: does NOT reject `tmux attach -t foo` ($TMUX unset)', async () => {
+  // (i) $TMUX-unset + `tmux attach` now rejected (previously the $TMUX-unset hole).
+  it('outside tmux: rejects `tmux attach -t foo` ($TMUX unset — no longer a hole)', async () => {
     outsideTmux();
     const result = await handOverTool.handler(ctx, {
       command: 'tmux attach -t foo',
       intent: 'RUN USER TO reattach to foo',
     });
-    expect(result).not.toContain('Cannot run');
-    expect(result).not.toContain('nested sessions');
+    expect(result).toContain('Error:');
+    expect(result).toContain('starts with `tmux`');
+    expect(result).toContain('its own tmux session');
+  });
+
+  // (ii) $TMUX-unset + `tmux new-session ...` now rejected (the hole, outside tmux).
+  it('outside tmux: rejects `tmux new-session -d -s bar` ($TMUX unset — no longer a hole)', async () => {
+    outsideTmux();
+    const result = await handOverTool.handler(ctx, {
+      command: 'tmux new-session -d -s bar',
+      intent: 'RUN USER TO spawn a detached session',
+    });
+    expect(result).toContain('Error:');
+    expect(result).toContain('starts with `tmux`');
+  });
+
+  // (iii) a plain foreground interactive command still passes (no nesting reject).
+  // We assert the nesting self-check does NOT fire (its signatures absent) rather
+  // than session-creation success: the child_process mock stubs execAsync, so the
+  // downstream `tmux new-session ...` path is not what we're verifying here.
+  it('inside tmux: does NOT reject a plain `ssh` (foreground interactive payload)', async () => {
+    insideTmux();
+    const result = await handOverTool.handler(ctx, {
+      command: 'ssh user@host',
+      intent: 'RUN USER TO ssh into host',
+    });
+    expect(result).not.toContain('starts with `tmux`');
+    expect(result).not.toContain('INNER interactive command');
+    expect(result).not.toContain('use `bash` instead');
+  });
+
+  it('inside tmux: does NOT reject a plain `vim file` (foreground interactive payload)', async () => {
+    insideTmux();
+    const result = await handOverTool.handler(ctx, {
+      command: 'vim notes.txt',
+      intent: 'RUN USER TO edit notes',
+    });
+    expect(result).not.toContain('starts with `tmux`');
+    expect(result).not.toContain('INNER interactive command');
+    expect(result).not.toContain('use `bash` instead');
+  });
+
+  it('inside tmux: does NOT reject a plain `sudo apt install -y tmux`', async () => {
+    insideTmux();
+    const result = await handOverTool.handler(ctx, {
+      command: 'sudo apt install -y tmux',
+      intent: 'RUN USER TO enter sudo password',
+    });
+    expect(result).not.toContain('starts with `tmux`');
+    expect(result).not.toContain('INNER interactive command');
+    expect(result).not.toContain('use `bash` instead');
+  });
+
+  it('outside tmux: does NOT reject a plain `sudo apt install -y tmux` ($TMUX unset)', async () => {
+    outsideTmux();
+    const result = await handOverTool.handler(ctx, {
+      command: 'sudo apt install -y tmux',
+      intent: 'RUN USER TO enter sudo password',
+    });
+    expect(result).not.toContain('starts with `tmux`');
+    expect(result).not.toContain('INNER interactive command');
+    expect(result).not.toContain('use `bash` instead');
   });
 });
 

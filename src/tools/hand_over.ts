@@ -26,13 +26,14 @@ const execAsync = promisify(exec);
 
 export const handOverTool: ToolDefinition = {
   name: 'hand_over',
-  description: `Opens a popup terminal and BLOCKS until user interaction. Use ONLY for commands that require interactive input (passwords, prompts, SSH, vim, htop) or when the user explicitly requests a terminal. For all non-interactive commands, use the bash tool instead.`,
+  description: `Opens a popup terminal and BLOCKS until user interaction. Use ONLY for commands that require interactive input (passwords, prompts, SSH, vim, htop) or when the user explicitly requests a terminal. For all non-interactive commands, use the bash tool instead. hand_over owns the tmux framing — pass the INNER interactive command (e.g. \`ssh\`, \`vim\`, \`sudo\`), NOT a \`tmux ...\` command (which would nest a tmux client inside hand_over's own session); use the bash tool for any \`tmux ...\` invocation instead.`,
   input_schema: {
     type: 'object',
     properties: {
       command: {
         type: 'string',
-        description: 'Initial command to run in the terminal.',
+        description:
+          'The foreground interactive command to hand to the user (e.g. `ssh host`, `vim file`, `sudo apt install ...`). hand_over wraps this in its own tmux session, so do NOT prefix it with `tmux` — pass the inner command only.',
       },
       intent: {
         type: 'string',
@@ -96,38 +97,28 @@ async function handleHandOver(ctx: AgentContext, args: Record<string, unknown>):
     return `Error: No external terminal. Use bash tool for non-interactive commands.`;
   }
 
-  // 2b. tmux nesting self-check.
-  // If mycc itself runs inside tmux ($TMUX set) and the command tries to attach
-  // to / switch to another tmux session, tmux refuses ("sessions should be nested
-  // with care"). Reject up front with actionable alternatives.
-  // NOTE: only attach/switch-client cause nesting; new-session/kill-session/
-  // send-keys are safe to run from inside tmux and are intentionally NOT blocked.
-  const innerTmux = process.env.TMUX;
-  if (innerTmux) {
-    // Regex covers: tmux [flags] (attach|a|switch-client|switch) ...
-    // including the `tmux -L <socket> attach` form (flags before the subcommand).
-    const nestingMatch =
-      /^\s*tmux\s+(?:-[A-Za-z]+\s+\S+\s+)?(?:attach|a|switch-client|switch)\b/.test(command);
-    if (nestingMatch) {
-      const targetMatch = command.match(/-t\s+(\S+)/);
-      const target = targetMatch ? targetMatch[1] : '<name>';
-      ctx.core.brief(
-        'warn',
-        'hand_over',
-        'tmux nesting detected',
-        `Agent is inside tmux ($TMUX set). \`tmux attach\`/` +
-          `\`tmux switch-client\` would nest sessions and tmux refuses.`
-      );
-      return `Error: Cannot run \`${command.trim()}\` from inside a tmux session (nested sessions are rejected by tmux).
-
-Alternatives:
-1. Ask the user to run \`tmux attach -t ${target}\` in their own terminal (outside mycc).
-2. Use the bash tool to drive the session remotely instead of attaching:
-   - \`tmux send-keys -t ${target} '<cmd>' Enter\`
-   - \`tmux capture-pane -t ${target} -p\`
-
-$TMUX=${innerTmux}`;
-    }
+  // 2b. tmux nesting self-check (UNCONDITIONAL).
+  // hand_over wraps `command` as the INNER shell command of its own fresh tmux
+  // session (see the `tmux new-session ... "<command>"` call below). If `command`
+  // itself starts with `tmux`, it nests a tmux client inside hand_over's session:
+  //   - `tmux attach`/`switch-client` → tmux refuses ("sessions should be nested
+  //     with care, unset $TMUX to force") and the popup sits dead at a shell
+  //     prompt with no error reaching the agent;
+  //   - `tmux new-session`/`send-keys`/etc. → a genuine nested session is
+  //     created, which is never what the agent wants from hand_over.
+  // Reject ANY leading `tmux` regardless of $TMUX (the old check was
+  // $TMUX-gated AND only matched attach/switch, leaving two holes: $TMUX-unset
+  // rejected nothing, and new-session/send-keys slipped through). Tell the agent
+  // the contract (hand_over owns the tmux framing; pass the inner command) and
+  // point it at the bash tool for tmux management.
+  if (/^\s*tmux\s+/.test(command)) {
+    ctx.core.brief(
+      'warn',
+      'hand_over',
+      'tmux command rejected (would nest)',
+      `hand_over wraps command in its own tmux session; a leading \`tmux\` would nest. Pass the inner command, or use bash for tmux.`
+    );
+    return `Error: \`${command.trim()}\` starts with \`tmux\`, but hand_over already runs the command inside its own tmux session; pass the INNER interactive command (e.g. the ssh/vim/sudo), not \`tmux ...\`. To run a nested tmux session use \`bash\` instead (e.g. bash \`tmux new-session -d -s name ...\` or \`tmux send-keys\`).`;
   }
 
   // 3. Create session
