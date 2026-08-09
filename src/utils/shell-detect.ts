@@ -26,7 +26,7 @@
  * threading from Coordinator → Lead → child is needed.
  */
 
-import { existsSync, statSync } from 'fs';
+import { accessSync, constants, statSync } from 'fs';
 import { join, delimiter } from 'path';
 
 /** The four first-class shell outcomes mycc commits to at startup. */
@@ -46,10 +46,21 @@ export interface ShellInfo {
 
 let cached: ShellInfo | null = null;
 
-/** Lightweight existsSync that never throws on inaccessible paths. */
+/**
+ * Lightweight existence check that never throws on inaccessible paths.
+ *
+ * Uses accessSync (access(2)) rather than existsSync/statSync (stat(2)).
+ * stat(2) returns ENOENT/EACCES on Microsoft Store app execution aliases
+ * — the 0-byte reparse-point stubs under %LOCALAPPDATA%\Microsoft\WindowsApps
+ * (e.g. pwsh.exe when PowerShell 7 is installed via the Store). access(2)
+ * follows the reparse point to the real target, so it correctly reports the
+ * alias as existing. Using existsSync here made a Store-installed pwsh 7
+ * invisible to detection, causing mycc to wrongly fall back to PS 5.1.
+ */
 function fileExists(p: string): boolean {
   try {
-    return existsSync(p);
+    accessSync(p, constants.F_OK);
+    return true;
   } catch {
     return false;
   }
@@ -68,12 +79,23 @@ function onPath(name: string): string | null {
     const candidates = [name, ...exts.map((ext) => name + ext)];
     for (const cand of candidates) {
       const full = join(dir, cand);
+      if (!fileExists(full)) continue;
       try {
-        if (existsSync(full) && statSync(full).isFile()) {
+        // Regular file — accept.
+        if (statSync(full).isFile()) {
           return full;
         }
       } catch {
-        // ignore inaccessible dirs
+        // statSync throws on some reparse points — notably the Microsoft
+        // Store app execution aliases under
+        // %LOCALAPPDATA%\Microsoft\WindowsApps (e.g. pwsh.exe when pwsh 7 is
+        // installed via the Store). These are 0-byte reparse-point stubs
+        // that resolve to the real binary at spawn time; EACCES/EIO on
+        // statSync does NOT mean the target is unusable. existsSync already
+        // confirmed the entry exists, so accept it and let exec() validate
+        // by spawning. Without this, a Store-installed pwsh 7 is invisible
+        // to detection and mycc wrongly falls back to PowerShell 5.1.
+        return full;
       }
     }
   }
