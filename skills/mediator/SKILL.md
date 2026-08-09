@@ -14,7 +14,7 @@ description: >
   "<session-id>/lead", NOT by writing prose). Use when the user asks to
   "connect two mycc instances", "make these two agents talk", "set up a
   multi-instance pipeline/workflow", or "act as a mediator".
-keywords: [mediator, "multi window", "multi instance", peer, discovery, channel, "cross-instance", workflow, orchestrate, identity, heartbeat, session-id, mail_to, IPC]
+keywords: ["cross-instance", "multi-instance", "channel files", "channel file pair", firstQuery, "wire instances", "connect mycc instances", "two mycc instances", "peer discovery", mediator, "mail_to peer", "session-id routing", "headless peer", identity, heartbeat]
 ---
 
 # Mediator: Composing Multiple mycc Instances into a Workflow
@@ -321,12 +321,200 @@ is the cross-instance analogue of Divide-and-Conquer.
   prefer letting the instances use `mail_to` (which reads the mailbox path from
   `identity.json`) rather than hand-appending.
 
+## Launching a Headless Peer for Mediation
+
+When you need to bring up a **second** mycc instance purely to wire it into a
+cross-instance workflow (no human at its terminal), just launch it the normal
+way from its working directory:
+
+```bash
+cd /c/Proj/other-workdir   # or: cd C:\Proj\other-workdir  (adapt to your shell)
+mycc
+```
+
+That is all. A plain `mycc` registers identity, writes heartbeats, and runs
+the 5s channel poll **regardless of mode** — `--serve` and `--auto` are NOT
+required for channel creation. The peer's `firstQuery` is delivered to its
+mailbox by the channel poll, not by any special flag.
+
+> **Do NOT launch a peer via raw `node bin/mycc.js`** (or any direct spawn of
+> the engine entry with non-TTY stdio). The Lead refuses to start outside the
+> Coordinator — `main()` in `src/loop/agent-repl.ts` checks `process.send` and
+> exits if the Coordinator IPC is absent — so a raw `node` spawn either errors
+> out or hangs before identity registration, and the instance never appears
+> in `peers()`. Always use the `mycc` command (the Coordinator wrapper) for
+> peers. (`--serve` is for the WebUI, not for headless mediation.)
+
+**Order of operations when wiring a headless peer:**
+
+1. Launch the peer in its working directory: `mycc`.
+2. **Verify it is online** before authoring anything:
+   ```text
+   peers()
+   ```
+   Confirm the peer's `session-id` appears and its heartbeat is **fresh**.
+   Do NOT proceed to step 3 until you see it online — mail to a stale peer
+   is silently dropped (freshness gate), and a peer that never registered
+   will never join its channel file.
+3. **Only then** author the channel file pair (see "The Mediator Workflow"
+   and "Two Ways to Connect") using the verified session-ids.
+4. Within ~5s the peer's channel poll auto-joins its file and delivers the
+   `firstQuery` to its mailbox; both instances begin their roles.
+
+> **`--auto` is not needed** for channel creation: the `firstQuery` is
+> delivered by the channel poll, not by auto-prompting. `--auto` only changes
+> the lead's own prompt loop (PROMPT→WAIT + auto-replies); it does not affect
+> identity/heartbeat/channel-poll. Use it only if you want the peer to run
+> its agent loop autonomously without a human at the terminal — but for the
+> wiring itself, plain `mycc` suffices.
+
+## Authoring Channel Files Reliably (Hand-Rolled JSON Is a Trap)
+
+The JSON templates above assume "write a file." Hand-rolling the JSON in any
+shell is a **trap**: multi-line `firstQuery` strings are easy to mis-escape,
+and the wrong encoding/write flag prepends a BOM that corrupts the JSON for
+strict parsers (e.g. PowerShell 5.1's `Set-Content -Encoding UTF8` prepends a
+UTF-8 BOM `EF BB BF`; bash `>` is fine but you must still get the escaping
+right). This is the real blocker when wiring peers from a shell.
+
+**Preferred: use a structured file-write tool** (`write_file` / `edit_file`)
+where one is available. It handles UTF-8 (no BOM) and all escaping/atomic
+write for you — bypassing shell JSON serialization entirely. If you are
+a mycc agent, this is always the right choice.
+
+**When a shell script is unavoidable**, here is the verified pattern in bash
+(let the JSON contain REAL newlines in `firstQuery`; a JSON-aware writer like
+`jq` escapes them to `\n` for you — do NOT pre-escape as literal `"\n"`, that
+double-escapes to `\\n`):
+
+```bash
+chanDir="$HOME/.mycc-store/discovery/channels"
+mkdir -p "$chanDir"
+
+# Build the channel file with jq. REAL newlines in firstQuery are fine —
+# jq escapes them to \n in the output. Do NOT pre-escape as literal "\n".
+firstQuery='You are the backend instance.
+The frontend instance will mail you API requirements via this channel.
+Reply to mail using mail_to(name="<sessionB>/lead", ...). Do NOT write prose.'
+
+tmp=$(mktemp)
+jq -n \
+  --arg channelId      'feature-x' \
+  --arg ownerSessionId '<sessionA>' \
+  --arg peerSessionId  '<sessionB>' \
+  --arg title          'Build feature X' \
+  --arg firstQuery     "$firstQuery" \
+  --argjson joined         false \
+  --argjson firstQuerySent false \
+  --argjson createdAt      "$(date +%s)000" \
+  '{channelId:$channelId, ownerSessionId:$ownerSessionId, peerSessionId:$peerSessionId,
+    title:$title, firstQuery:$firstQuery, joined:$joined, firstQuerySent:$firstQuerySent,
+    createdAt:$createdAt}' > "$tmp"
+
+# Atomic move into place (no half-written file picked up by the 5s poll).
+mv "$tmp" "$chanDir/<sessionA>-feature-x.json"
+
+# --- VERIFY: read back and validate before declaring it wired ---
+f="$chanDir/<sessionA>-feature-x.json"
+jq -e '.joined == false and .firstQuerySent == false' "$f" >/dev/null \
+  && echo "OK: $f written + verified" \
+  || { echo "FAIL: joined/firstQuerySent must be false" >&2; exit 1; }
+```
+
+Key points:
+- Use a JSON-aware tool (`jq` in bash; the PowerShell/`ConvertTo-Json`
+  equivalent on Windows) so multi-line `firstQuery` with real newlines is
+  serialized correctly. You do **not** need to pre-escape newlines yourself.
+- Write **UTF-8 with NO BOM**. In bash `>` / `mv` from a temp file is clean; if
+  you are on PowerShell, use `[IO.File]::WriteAllText($path, $json,
+  [Text.UTF8Encoding]::new($false))` and **never** `Set-Content -Encoding
+  UTF8` (it prepends a BOM on Windows PowerShell 5.1). Adapt the write step
+  to your detected shell — the structure (build JSON with a real tool →
+  write atomically → read back and validate) is the same.
+- The `joined`/`firstQuerySent` values are JSON `false` (lowercase) — exactly
+  what the lead's channel poll expects.
+- **Write atomically** (temp file + `mv`/rename) so a half-written file is
+  never picked up by the 5s poll mid-write.
+- Write the **peer's** file the same way, with `ownerSessionId`/`peerSessionId`
+  mirrored and the peer's `firstQuery`. Then run the VERIFY block on both.
+
+## Waiting for Peer Replies (You Don't Need To Poll)
+
+A common mistake when mediating is to **busy-wait for the peer's reply** —
+e.g. a shell loop of `sleep N; cat unread-lead.jsonl` (PowerShell:
+`Start-Sleep -Seconds N; Get-Content unread-lead.jsonl`) to "see when the
+reply arrives." **This is unnecessary and wrong.** mycc's mail is
+**event-driven and pushed into your context automatically**; you do not
+pull it.
+
+### The mechanism (verified in source)
+
+- **Appending mail (the sender's side):** when a peer (or you) calls
+  `mail_to(name="<session-id>/lead", ...)`, or when a channel's `firstQuery`
+  is delivered on join, a single JSONL line is appended to the recipient's
+  unread mailbox (`unread-lead.jsonl`) — `src/peer/channel.ts:83`
+  (`fs.appendFileSync(mailboxPath, ...)`) via `appendMailToPath`. The
+  `mail_to` peer-routing path is `sendPeerMail` (`src/peer/channel.ts:280-294`).
+- **Injecting mail (the recipient's side):** on the recipient lead's **next
+  COLLECT state**, the unread mailbox is drained and each mail is injected
+  into the triologue as a `[MAIL]` note automatically:
+  - `src/loop/states/collect.ts:137` — `const mails = ctx.mail.collectMails();`
+  - `src/loop/states/collect.ts:147` — `triologue.note('MAIL', mailContent);`
+  - The drain is race-safe and truncating: `src/context/shared/mail.ts:133-178`
+    `collectMails()` atomically renames `unread-lead.jsonl` → temp, reads it,
+    appends to the `readmail-*` backlog, and returns the mails. So mail is
+    consumed exactly once — the next COLLECT picks up whatever was appended
+    since the last COLLECT.
+- Corroborated by `src/context/teammate-worker.ts:185`: mail "lands in the
+  lead's triologue as a `[MAIL]` note at the next COLLECT."
+
+### The correct pattern: fire-and-forget
+
+After you wire the channel pair (or after you send a `mail_to` to a peer),
+**do not poll the mailbox.** Just **yield your turn** — finish your current
+tool calls and return to PROMPT (or continue with other work). The peer's
+reply will arrive as a `[MAIL]` note in a future round, automatically, the
+moment your agent loop next reaches COLLECT. There is nothing for you to read
+or wait for.
+
+### Why busy-polling is the wrong mental model
+
+The triologue / agent loop **already has a mail-injection step** (COLLECT step
+2). Polling the mailbox with a `sleep` + `cat unread-lead.jsonl` loop
+(PowerShell: `Start-Sleep` + `Get-Content`) duplicates that step incorrectly
+and breaks in several ways:
+
+- **It blocks your turn** — a `sleep` loop holds the agent in a single
+  tool call, preventing the state machine from reaching COLLECT (where mail
+  would actually be injected). You can busy-wait forever and never see the
+  mail, because the mail only surfaces *at COLLECT*, which your loop is
+  blocking from running.
+- **It races the COLLECT injection** — if you read `unread-lead.jsonl` you may
+  see the line before COLLECT consumes it, but reading it does NOT inject it
+  into your context (only `triologue.note('MAIL', ...)` does). You'd see raw
+  JSONL in a tool result, not a `[MAIL]` note — and then COLLECT may rename
+  the file out from under you (`collectMails` does an atomic rename).
+- **It wastes cycles** — the peer may take seconds or minutes; a tight poll
+  burns tokens and attention on nothing.
+
+In short: **the agent loop is the mail consumer. Step out of its way.**
+Fire the kickoff / `mail_to`, then end your turn. The reply comes to you.
+
 ## Sanity Checklist Before Declaring the Workflow Wired
 
+- [ ] Peer instance launched via the `mycc` command (not raw `node
+      bin/mycc.js`), verified online via `peers()` before writing channel
+      files. (`--serve`/`--auto` are not required — identity + heartbeat +
+      channel poll run regardless of mode.)
 - [ ] Both target instances are **online** (verified with `peers()` or a fresh
       heartbeat in `~/.mycc-store/discovery/heartbeat/<sid>.json`).
 - [ ] **Both** channel files of the pair exist, each with the correct
       `ownerSessionId` and `peerSessionId`.
+- [ ] Each channel file was **read back and validated** with a JSON-aware
+      reader (e.g. `jq -e '.joined == false and .firstQuerySent == false' "$f"`
+      in bash) — it parses, and `joined`/`firstQuerySent` are exactly `false`
+      (not `true`, not missing). This catches the hand-rolled-JSON trap
+      (mis-escaped newlines, a BOM, wrong booleans) before the poll ever runs.
 - [ ] `joined` and `firstQuerySent` are `false` in both files.
 - [ ] Each `firstQuery` states the instance's role, its peer's session-id, and
       the `mail_to(name="<peer>/lead", ...)` reply contract.
@@ -335,6 +523,12 @@ is the cross-instance analogue of Divide-and-Conquer.
 - [ ] Within ~5s, each instance's COLLECT state injects its `[MAIL]` firstQuery
       and begins its role. (If not, the instance may not be running or its poll
       is stalled — check the heartbeat.)
+- [ ] Peer mail_to uses `name="<session-id>/lead"` (not a bare session-id) and
+      the peer is online (`peers()` shows it fresh) — mail_to now FAILS FAST:
+      it rejects any recipient that isn't `lead`, a valid `<session-id>/lead`
+      with an ONLINE peer, or a live teammate in the roster, instead of
+      silently dropping the mail. A bare session-id (no `/lead`) is rejected
+      up front with an error naming the unrecognized recipient.
 
 ## Pitfalls
 
@@ -355,6 +549,24 @@ is the cross-instance analogue of Divide-and-Conquer.
   instance may answer mail by writing in its conversation (the letterbox) and
   the peer never receives it. The todo/peer-channels nudge mitigates this, but
   baking the contract into the firstQuery is the reliable fix.
+- **Hand-rolled JSON in any shell** — hand-writing the channel JSON is a trap
+  in every shell: mis-escaped multi-line `firstQuery`, wrong booleans, or an
+  accidental BOM (e.g. PowerShell 5.1 `Set-Content -Encoding UTF8` prepends a
+  UTF-8 BOM that breaks strict parsers; bash `>` is BOM-free but still needs
+  correct escaping). Use a file-write tool, or a JSON-aware writer + atomic
+  move + read-back validate (the bash pattern above uses `jq` + `mktemp` +
+  `mv`; adapt the write step to your detected shell — the structure is
+  identical). Never hand-concatenate the JSON string.
+- **Bare session-id / unknown recipient in mail_to** — mail_to now FAILS
+  FAST: it rejects any recipient that isn't `lead`, a valid
+  `<session-id>/lead` with an ONLINE peer (`isFresh`), or a live teammate in
+  the roster. Using `mail_to(name="<session-id>", ...)` WITHOUT the `/lead`
+  suffix, or mailing a stale/offline peer or a non-existent teammate, is
+  rejected up front with an error naming the unrecognized recipient — it no
+  longer silently routes to a nonexistent teammate and returns a misleading
+  `OK`. Cross-instance peer mail MUST use `name="<session-id>/lead"` and the
+  peer must be online (verify with `peers()` first); for local mail use `lead`
+  or a live teammate name (no `/`).
 
 ## Summary
 
