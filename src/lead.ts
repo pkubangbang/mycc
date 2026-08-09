@@ -14,6 +14,7 @@ import { validateEnv, loadEnv } from './config.js';
 import { main } from './loop/agent-repl.js';
 import { agentIO } from './loop/agent-io.js';
 import { getServeHub } from './serve/serve-registry.js';
+import { detectShell } from './utils/shell-detect.js';
 
 // ---------------------------------------------------------------------------
 // Terminal Title
@@ -31,6 +32,21 @@ if (process.stdout.isTTY) {
 // ---------------------------------------------------------------------------
 
 loadEnv();
+
+// ---------------------------------------------------------------------------
+// Windows Shell Detection (single source of truth)
+// ---------------------------------------------------------------------------
+// Detected ONCE here in the Lead process (where both the system prompt in
+// agent-prompts.ts and exec() in agent-io.ts live). PowerShell 7 (pwsh) is
+// required on Windows — 5.1 is NOT a compatible fallback, so if pwsh 7 is
+// missing we warn loudly and exec() will throw a clear error rather than
+// silently running commands through an incompatible shell. See
+// shell-detect.ts and the windows-shell-strategy skill.
+const shellInfo = detectShell();
+if (shellInfo.isWin && shellInfo.shell === 'powershell5') {
+  agentIO.brief('warn', 'config',
+    'pwsh 7 not found (using Windows PowerShell 5.1). Install for best bash-tool reliability: winget install --id Microsoft.PowerShell --scope user');
+}
 
 // ---------------------------------------------------------------------------
 // Validation

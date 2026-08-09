@@ -9,7 +9,6 @@
 
 import { LineEditor } from '../utils/line-editor.js';
 import type { KeyInfo } from '../utils/key-parser.js';
-import { spawn, execSync } from 'child_process';
 import { getWrapUpState, tryDisplayWrapUp } from './esc-wrap-up.js';
 import chalk from 'chalk';
 import { isVerbose } from '../config.js';
@@ -18,6 +17,8 @@ import { slashRegistry } from '../slashes/index.js';
 import { getServeHub } from '../serve/serve-registry.js';
 import { autoState } from './auto-state.js';
 import { setResultCallback } from '../utils/letter-box.js';
+import { runExec } from './agent-exec.js';
+import type { ExecOptions, ExecResult } from './agent-exec.js';
 
 /**
  * Error used to reject a blocked {@link AgentIO.ask} (terminal) or
@@ -73,89 +74,11 @@ const COMMAND_SUBCOMMANDS: Record<string, string[]> = {
 };
 
 /**
- * Filter PowerShell CLIXML noise from a stderr chunk.
- *
- * When PowerShell runs non-interactively without a TTY (exactly the spawn
- * pattern used here: `-NonInteractive -EncodedCommand`), it serializes its
- * progress / warning / error records as CLIXML on stderr. The output starts
- * with a `#< CLIXML` marker followed by `<Objs ...>...</Objs>` XML blocks.
- * This is by-design per PowerShell#16678 (closed "won't fix").
- *
- * $ProgressPreference='SilentlyContinue' (set in the command preamble)
- * suppresses the progress records at the source, but other records (e.g.
- * module-loading warnings) can still slip through as CLIXML. This filter
- * strips any `#< CLIXML\n<Objs ...>...</Objs>` block from the chunk so the
- * tool result stays clean. Real stderr text outside CLIXML blocks is kept.
- *
- * Pattern adapted from open-science PR#421 and midscene PR#2756.
+ * Subprocess execution (filterCliXml, ReplayBuffer, ExecOptions/ExecResult,
+ * and the spawn+timeout+kill logic) lives in `agent-exec.ts`. exec() below
+ * delegates to runExec() there. The shell is selected once at startup by
+ * `shell-detect.ts` — see the windows-shell-strategy skill for the rationale.
  */
-function filterCliXml(chunk: Buffer): Buffer {
-  const text = chunk.toString('utf-8');
-  // Fast path: no CLIXML marker → return untouched.
-  if (!text.includes('#< CLIXML') && !text.includes('<Objs')) {
-    return chunk;
-  }
-  // Strip a `#< CLIXML` prefix (may appear at the very start of the stream)
-  // and any `<Objs ...>...</Objs>` blocks (greedy across the whole chunk).
-  const cleaned = text
-    .replace(/#<\s*CLIXML\s*\r?\n?/g, '')
-    .replace(/<Objs[\s\S]*?<\/Objs>/g, '')
-    .replace(/<Objs[^>]*>[\s\S]*$/g, ''); // unterminated trailing <Objs fragment
-  return Buffer.from(cleaned, 'utf-8');
-}
-
-/**
- * ReplayBuffer - Buffer for collecting stdout/stderr bytes
- * Supports both string and base64 output formats.
- */
-class ReplayBuffer {
-  private chunks: Buffer[] = [];
-
-  /**
-   * Write bytes into buffer
-   */
-  write(data: Buffer | string): void {
-    if (typeof data === 'string') {
-      this.chunks.push(Buffer.from(data));
-    } else {
-      this.chunks.push(data);
-    }
-  }
-
-  /**
-   * Get content as string (for ctx.core.brief())
-   */
-  getString(): string {
-    return Buffer.concat(this.chunks).toString('utf-8');
-  }
-
-  /**
-   * Get content as base64 (for IPC transmission)
-   */
-  getBase64(): string {
-    return Buffer.concat(this.chunks).toString('base64');
-  }
-}
-
-/**
- * Options for exec command
- */
-export interface ExecOptions {
-  cwd: string;
-  command: string;
-  timeout: number;
-}
-
-/**
- * Result of exec command
- */
-export interface ExecResult {
-  stdout: string;
-  stderr: string;
-  interrupted: boolean;
-  exitCode: number;
-  timedOut: boolean;
-}
 
 /**
  * Options for ask()
@@ -1119,134 +1042,19 @@ class AgentIO {
    * @returns Result with stdout, stderr, interrupted flag, exit code, and timedOut flag
    * @throws Error if timeout is invalid (not integer between 1-60)
    */
+  /**
+   * Execute a command in a subprocess (the bash tool). Delegates the spawn +
+   * timeout + process-kill logic to runExec() in agent-exec.ts; the only
+   * state coupling is the ESC (neglected) callback, which lets an ESC press
+   * resolve the wait early with the partial output collected so far (the
+   * subprocess keeps running in the background).
+   *
+   * The shell is selected once at startup by shell-detect.ts; runExec()
+   * commits to that choice and does not fall back. See agent-exec.ts and the
+   * windows-shell-strategy skill.
+   */
   async exec(options: ExecOptions): Promise<ExecResult> {
-    const { cwd, command, timeout } = options;
-
-    // 1. Validate timeout: must be positive integer between 1 and 60
-    if (!Number.isInteger(timeout) || timeout < 1 || timeout > 60) {
-      throw new Error(`timeout must be an integer between 1 and 60, got: ${timeout}`);
-    }
-
-    const timeoutMs = timeout * 1000;
-
-    // 2. Create stdout/stderr buffers using ReplayBuffer
-    const stdoutBuffer = new ReplayBuffer();
-    const stderrBuffer = new ReplayBuffer();
-
-    // 3. Create subprocess with platform-appropriate shell
-    // Unix: bash -c with detached:true runs in its own process group without
-    //   a controlling terminal (same isolation as setsid, but proc.pid is the
-    //   bash PID directly, enabling process-group kill on timeout).
-    // Windows: powershell -EncodedCommand avoids cmd's quoting/escaping issues.
-    //   The command is base64-encoded as UTF-16LE, so it's passed verbatim —
-    //   echo "hello" outputs hello (no quotes), just like typing in PowerShell.
-    //   On Windows, prepend UTF8 encoding fix for CJK character support:
-    //   - chcp 65001 switches the console codepage to UTF-8 so native commands
-    //     (find, type, dir, etc.) output correctly
-    //   - $OutputEncoding fixes stdout pipe encoding (default: US-ASCII)
-    //   - [Console]::OutputEncoding fixes .NET console output (default: GB2312)
-    //   chcp is wrapped in try/catch for resilience on restricted systems
-    const isWin = process.platform === 'win32';
-    const effectiveCommand = isWin
-      ? `try { chcp 65001 > $null } catch {}; $ProgressPreference = 'SilentlyContinue'; $OutputEncoding = [System.Text.Encoding]::UTF8; [Console]::OutputEncoding = [System.Text.Encoding]::UTF8; ${command}`
-      : command;
-    const proc = isWin
-      ? spawn('powershell', [
-          '-NoProfile',
-          '-NonInteractive',
-          '-EncodedCommand',
-          Buffer.from(effectiveCommand, 'utf16le').toString('base64'),
-        ], { cwd, windowsHide: true })
-      : spawn('bash', ['-c', command], { cwd, detached: true });
-
-    // Collect stdout and stderr
-    proc.stdout?.on('data', (chunk: Buffer) => {
-      stdoutBuffer.write(chunk);
-    });
-    proc.stderr?.on('data', (chunk: Buffer) => {
-      stderrBuffer.write(filterCliXml(chunk));
-    });
-
-    // 4. Set up timer and race with subprocess
-    return new Promise((resolve) => {
-      let completed = false;
-
-      const timer = setTimeout(() => {
-        if (!completed) {
-          completed = true;
-          // Kill the entire process tree reliably, not just the top-level
-          // process. proc.kill('SIGKILL') is insufficient:
-          //   - Unix: setsid/bashed children survive in a different session
-          //   - Windows: TerminateProcess doesn't kill child processes
-          try {
-            if (proc.pid) {
-              if (isWin) {
-                execSync(`taskkill /F /T /PID ${proc.pid}`, { stdio: 'ignore' });
-              } else {
-                // Negative PID = kill entire process group (bash is group leader
-                // because of detached:true)
-                process.kill(-proc.pid, 'SIGKILL');
-              }
-            }
-          } catch {
-            // Process may have already exited — ignore
-          }
-          resolve({
-            stdout: '',
-            stderr: '',
-            interrupted: false,
-            exitCode: 137,
-            timedOut: true,
-          });
-        }
-      }, timeoutMs);
-
-      // Register callback for ESC (neglected) - skip subprocess wait
-      this.onNeglected(() => {
-        if (!completed) {
-          completed = true;
-          clearTimeout(timer);
-          // Return premature output, let subprocess continue in background
-          resolve({
-            stdout: stdoutBuffer.getString(),
-            stderr: stderrBuffer.getString(),
-            interrupted: true,
-            exitCode: -1, // Unknown - subprocess still running
-            timedOut: false,
-          });
-        }
-      });
-
-      // Handle subprocess completion
-      proc.on('close', (code) => {
-        if (!completed) {
-          completed = true;
-          clearTimeout(timer);
-          resolve({
-            stdout: stdoutBuffer.getString(),
-            stderr: stderrBuffer.getString(),
-            interrupted: false,
-            exitCode: code ?? 1,
-            timedOut: false,
-          });
-        }
-      });
-
-      // Handle spawn errors
-      proc.on('error', (err) => {
-        if (!completed) {
-          completed = true;
-          clearTimeout(timer);
-          resolve({
-            stdout: '',
-            stderr: err.message,
-            interrupted: false,
-            exitCode: 1,
-            timedOut: false,
-          });
-        }
-      });
-    });
+    return runExec(options, (cb) => this.onNeglected(cb));
   }
 }
 

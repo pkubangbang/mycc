@@ -12,6 +12,7 @@ import {
   VERB_MEANINGS,
   OBJECT_MEANINGS,
 } from '../context/grant/intent-parser.js';
+import { getShellInfo, type ShellKind } from '../utils/shell-detect.js';
 
 // ============================================================================
 // Platform Detection
@@ -23,17 +24,34 @@ function getPlatformInfo(): {
   pathSep: string;
   home: string;
   escapeChar: string;
+  /** The detected shell kind, for per-shell prompt tailoring. */
+  shellKind: ShellKind;
 } {
-  const platform = os.platform();
-  const isWin = platform === 'win32';
-  const isMac = platform === 'darwin';
+  const info = getShellInfo();
+
+  // Exhaustive per-shell labels — no catch-all default. If a new ShellKind is
+  // added without a branch here, this throws loudly instead of silently
+  // emitting a wrong/generic label.
+  let shellLabel: string;
+  if (info.shell === 'pwsh7') {
+    shellLabel = 'PowerShell 7 (pwsh)';
+  } else if (info.shell === 'powershell5') {
+    shellLabel = 'PowerShell 5.1 (powershell)';
+  } else if (info.shell === 'zsh') {
+    shellLabel = 'zsh';
+  } else if (info.shell === 'bash') {
+    shellLabel = 'bash';
+  } else {
+    throw new Error(`getPlatformInfo: unknown shell kind '${info.shell as string}'`);
+  }
 
   return {
-    platform: isWin ? 'Windows' : isMac ? 'macOS' : 'Linux',
-    shell: isWin ? 'PowerShell' : 'bash/zsh',
-    pathSep: isWin ? 'backslash (\\)' : 'forward slash (/)',
+    platform: info.platform,
+    shell: shellLabel,
+    pathSep: info.isWin ? 'backslash (\\)' : 'forward slash (/)',
     home: os.homedir(),
-    escapeChar: isWin ? 'backtick (`)' : 'backslash (\\)',
+    escapeChar: info.isWin ? 'backtick (`)' : 'backslash (\\)',
+    shellKind: info.shell,
   };
 }
 
@@ -196,15 +214,29 @@ function buildVerificationSection(): string {
 
 function buildPlatformSection(): string {
   const info = getPlatformInfo();
-  const isWin = info.platform === 'Windows';
 
-  const shellCommands = isWin
-    ? '- Use PowerShell syntax: `Get-Content file`, `Copy-Item src dest`\n- The bash tool executes commands via PowerShell (not cmd). Note that multiple commands should be concatenated using ";", not "&&".\n- **File encoding (avoid mojibake):** `Get-Content`/`Set-Content` default to the system ANSI codepage on Windows PowerShell 5.1, garbling UTF-8 files with non-ASCII chars. ALWAYS pass `-Encoding UTF8` when reading/writing source files (e.g. `Get-Content file -Encoding UTF8`). Prefer the built-in `read_file`/`edit_file` tools which handle UTF-8 automatically.\n- **BOM trap (PowerShell 5.1):** `Set-Content -Encoding UTF8` prepends a UTF-8 BOM (EF BB BF) that corrupts formats needing pure ASCII headers (e.g. `jar cfm` fails with `invalid header field name`). For no-BOM writes use `[IO.File]::WriteAllText($path, $content, [Text.UTF8Encoding]::new($false))`. The `write_file` tool already writes UTF-8 without a BOM (pass `bom: true` only when needed).'
-    : '- Use bash/zsh syntax: `cat file`, `cp src dest`';
+  // Exhaustive per-shell guidance — no catch-all default. Each known ShellKind
+  // gets its own branch; an unknown kind throws so a new shell added without a
+  // prompt branch fails loudly instead of emitting generic/wrong guidance.
+  let shellCommands: string;
+  if (info.shellKind === 'pwsh7') {
+    shellCommands = '- Use PowerShell 7 (pwsh) syntax: `Get-Content file`, `Copy-Item src dest`\n- The bash tool executes commands via pwsh (not cmd). Multiple commands should be concatenated using ";"; `&&`/`||` chaining also works in pwsh 7.\n- pwsh 7 defaults to UTF-8 without BOM for both file reads and writes, so `Get-Content`/`Set-Content`/`Out-File` are UTF-8-safe by default (no mojibake, no BOM). Prefer the built-in `read_file`/`edit_file` tools which handle UTF-8 automatically.';
+  } else if (info.shellKind === 'powershell5') {
+    shellCommands = '- Use Windows PowerShell 5.1 syntax: `Get-Content file`, `Copy-Item src dest`\n- The bash tool executes commands via Windows PowerShell 5.1 (not cmd). Note that multiple commands should be concatenated using ";", not "&&" (5.1 lacks `&&`/`||` pipeline operators).\n- **File encoding (avoid mojibake):** `Get-Content`/`Set-Content` default to the system ANSI codepage on Windows PowerShell 5.1, garbling UTF-8 files with non-ASCII chars. ALWAYS pass `-Encoding UTF8` when reading/writing source files (e.g. `Get-Content file -Encoding UTF8`). Prefer the built-in `read_file`/`edit_file` tools which handle UTF-8 automatically.\n- **BOM trap (PowerShell 5.1):** `Set-Content -Encoding UTF8` prepends a UTF-8 BOM (EF BB BF) that corrupts formats needing pure ASCII headers (e.g. `jar cfm` fails with `invalid header field name`). For no-BOM writes use `[IO.File]::WriteAllText($path, $content, [Text.UTF8Encoding]::new($false))`. The `write_file` tool already writes UTF-8 without a BOM (pass `bom: true` only when needed).\n- Note: the bash tool already sets the default write encoding of `Set-Content`/`Add-Content`/`Out-File` to no-BOM UTF-8 via `$PSDefaultParameterValues`; an explicit `-Encoding UTF8` still writes a BOM, so prefer `[IO.File]::WriteAllText` or the built-in tools for no-BOM writes.';
+  } else if (info.shellKind === 'zsh' || info.shellKind === 'bash') {
+    shellCommands = '- Use bash/zsh syntax: `cat file`, `cp src dest`';
+  } else {
+    throw new Error(`buildPlatformSection: unknown shell kind '${info.shellKind as string}'`);
+  }
 
-  const escaping = isWin
-    ? '- In PowerShell: use backtick ` to escape special chars (e.g., `$ for literal $)'
-    : '- In bash/zsh: use backslash \\ to escape (e.g., \\$ for $)';
+  let escaping: string;
+  if (info.shellKind === 'pwsh7' || info.shellKind === 'powershell5') {
+    escaping = '- In PowerShell: use backtick ` to escape special chars (e.g., `$ for literal $)';
+  } else if (info.shellKind === 'zsh' || info.shellKind === 'bash') {
+    escaping = '- In bash/zsh: use backslash \\ to escape (e.g., \\$ for $)';
+  } else {
+    throw new Error(`buildPlatformSection: unknown shell kind '${info.shellKind as string}'`);
+  }
 
   return [
     '## Platform',
