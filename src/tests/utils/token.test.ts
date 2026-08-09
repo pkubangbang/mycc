@@ -2,7 +2,7 @@
  * Tests for token.ts - Token estimation utility
  */
 import { describe, it, expect } from 'vitest';
-import { estimateTokens, estimateTokensForMessages } from '../../utils/token.js';
+import { estimateTokens, estimateTokensForMessages, estimateTextTokens, truncateToTokens } from '../../utils/token.js';
 
 describe('estimateTokens', () => {
   it('should return 0 for empty content', () => {
@@ -92,5 +92,38 @@ describe('estimateTokensForMessages', () => {
       { role: 'tool', content: 'file content', tool_name: 'read_file', tool_call_id: 'call_1' },
     ]);
     expect(tokens).toBeGreaterThan(0);
+  });
+});
+
+describe('truncateToTokens', () => {
+  it('returns text unchanged when it already fits the budget', () => {
+    const text = 'hello world this is short';
+    expect(truncateToTokens(text, 200)).toBe(text);
+  });
+
+  it('returns empty string for empty/non-positive budget', () => {
+    expect(truncateToTokens('hello', 0)).toBe('');
+    expect(truncateToTokens('hello', -1)).toBe('');
+    expect(truncateToTokens('', 200)).toBe('');
+  });
+
+  it('trims trailing words until the estimate fits the budget', () => {
+    // ~500 words is well over 200 tokens.
+    const longText = 'word '.repeat(500).trim();
+    expect(estimateTextTokens(longText)).toBeGreaterThan(200);
+    const truncated = truncateToTokens(longText, 200);
+    expect(estimateTextTokens(truncated)).toBeLessThanOrEqual(200);
+    // The result is a prefix (leading words preserved; trailing dropped).
+    expect(longText.startsWith(truncated)).toBe(true);
+  });
+
+  it('never exceeds the budget and keeps whole words only', () => {
+    const longText = 'alpha beta gamma delta epsilon zeta eta theta iota kappa';
+    const truncated = truncateToTokens(longText, 8);
+    expect(estimateTextTokens(truncated)).toBeLessThanOrEqual(8);
+    // No partial words — every kept token is a whole original word.
+    for (const w of truncated.split(/\s+/)) {
+      expect(longText).toContain(w);
+    }
   });
 });

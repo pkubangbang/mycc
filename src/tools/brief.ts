@@ -46,6 +46,16 @@ export const briefTool: ToolDefinition = {
     const deltaConfusion = 8 - confidence;
     ctx.core.increaseConfusionIndex(deltaConfusion);
 
+    // Record this brief into the peer heartbeat file so the `peers` tool can
+    // surface the instance's recent progress. No-op for child processes
+    // (NoopPeerModule.recordBrief). Content is truncated to 200 estimated tokens
+    // inside the writer. Best-effort — must never break the brief tool path.
+    try {
+      ctx.peer.recordBrief(message, confidence);
+    } catch {
+      // Swallow — heartbeat recording is best-effort.
+    }
+
     // Use core.brief to send the message via IPC to parent
     ctx.core.brief('info', 'brief', message, `confidence: ${confidence * 10}%`);
     return 'OK';

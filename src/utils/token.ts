@@ -104,3 +104,27 @@ export function estimateTokens(message: Message): number {
 export function estimateTokensForMessages(messages: Message[]): number {
   return messages.reduce((sum, msg) => sum + estimateTokens(msg), 0);
 }
+
+/**
+ * Truncate `text` so its estimated token count is at most `maxTokens`.
+ *
+ * Uses {@link estimateTextTokens} to measure. Trims trailing whitespace-delimited
+ * tokens one at a time until the estimate fits, then strips a trailing space.
+ * Returns the original text unchanged if it already fits. Never throws: on any
+ * unexpected shape, returns the original text.
+ *
+ * This is a soft, estimate-based cap (not an exact tokenizer) — good enough
+ * for bounding how much a brief/summary contributes to the context budget
+ * without pulling in a real tokenizer dependency.
+ */
+export function truncateToTokens(text: string, maxTokens: number): string {
+  if (!text || maxTokens <= 0) return '';
+  if (estimateTextTokens(text) <= maxTokens) return text;
+
+  const words = text.split(/\s+/).filter((w) => w.length > 0);
+  // Remove trailing words until the remaining estimate fits.
+  while (words.length > 0 && estimateTextTokens(words.join(' ')) > maxTokens) {
+    words.pop();
+  }
+  return words.join(' ');
+}

@@ -15,11 +15,19 @@
 
 import type { ToolDefinition, AgentContext } from '../types.js';
 
+/**
+ * Hard cutoff for the peers listing: a peer whose latest heartbeat is older
+ * than this is omitted entirely (even with all=true), so the listing doesn't
+ * grow unbounded with long-dead instances' briefs. 1 hour.
+ */
+const PEER_LISTING_CUTOFF_MS = 60 * 60 * 1000;
+
 export const peersTool: ToolDefinition = {
   name: 'peers',
   description:
     'List online mycc instances (cross-instance peer discovery). Returns each instance\'s session-id, workDir, and whether it is the local ("self") instance. ' +
-    'Use this to discover peer session-ids so you can (a) send cross-instance mail via mail_to(name="<session-id>/lead", ...) or (b) create channel files under ~/.mycc-store/discovery/channels/ to wire multiple instances into a mediated workflow. Only the lead can run this; teammates have no peer discovery.',
+    'Use this to discover peer session-ids so you can (a) send cross-instance mail via mail_to(name="<session-id>/lead", ...) or (b) create channel files under ~/.mycc-store/discovery/channels/ to wire multiple instances into a mediated workflow. Only the lead can run this; teammates have no peer discovery. ' +
+    'Peers whose latest heartbeat is older than 1 hour are omitted entirely (even with all=true) so the listing does not grow unbounded with dead instances\' briefs; the count of omitted peers is noted in the summary.',
   input_schema: {
     type: 'object',
     properties: {
@@ -49,10 +57,20 @@ export const peersTool: ToolDefinition = {
 
     const rows: string[] = [];
     let online = 0;
+    let omitted = 0;
+    const now = Date.now();
 
     for (const id of identities) {
       const isSelf = id.sessionId === selfId;
       if (isSelf && !includeSelf) continue;
+
+      // Hard cutoff: skip peers whose latest heartbeat is older than 1h, even
+      // with all=true, so dead instances' briefs don't bloat the listing.
+      const latest = ctx.peer.getLatestHeartbeat(id.sessionId);
+      if (latest !== null && (now - latest) > PEER_LISTING_CUTOFF_MS) {
+        omitted++;
+        continue;
+      }
 
       const fresh = ctx.peer.isFresh(id.sessionId);
       if (!all && !fresh) continue; // default: skip stale/offline
@@ -62,21 +80,35 @@ export const peersTool: ToolDefinition = {
       const started = new Date(id.startedAt).toISOString().replace('T', ' ').slice(0, 19);
       const tag = isSelf ? ' (self)' : '';
       const state = fresh ? 'online' : 'offline';
+      // Surface recent briefs so the lead can monitor peer progress.
+      const briefs = ctx.peer.getBriefs(id.sessionId);
+      const briefLine = briefs.length > 0
+        ? `\n    briefs:\n` + briefs.map((b) => {
+            const t = new Date(b.time).toISOString().replace('T', ' ').slice(0, 19);
+            return `      - [${t}] (conf ${b.confidence}) ${b.content}`;
+          }).join('\n')
+        : '';
       rows.push(
         `- session=${id.sessionId}${tag}\n` +
         `    workDir: ${id.workDir}\n` +
         `    status: ${state}\n` +
-        `    started: ${started}`,
+        `    started: ${started}` +
+        briefLine,
       );
     }
 
     if (rows.length === 0) {
+      if (omitted > 0) {
+        return all
+          ? `No mycc instances listed; ${omitted} registered peer${omitted === 1 ? ' is' : 's are'} older than 1h and omitted.`
+          : `No online mycc instances found; ${omitted} older than 1h omitted. (Use peers(all=true) to include recent offline/stale instances.)`;
+      }
       return all
         ? 'No mycc instances registered for peer discovery.'
         : 'No other online mycc instances found. (Use peers(all=true) to include offline/stale instances.)';
     }
 
-    const summary = `${online} online, ${rows.length} listed${includeSelf ? ' (incl. self)' : ''}`;
+    const summary = `${online} online, ${rows.length} listed${includeSelf ? ' (incl. self)' : ''}${omitted > 0 ? `, ${omitted} older than 1h omitted` : ''}`;
     ctx.core.brief('info', 'peers', `${summary}`);
     return `Online mycc instances (${summary}):\n${rows.join('\n')}`;
   },

@@ -58,6 +58,22 @@ export function createMockContext(workdir: string): AgentContext {
     wt: {} as never,
     team: {} as never,
     wiki: {} as never,
+    peer: {
+      listIdentities: vi.fn(() => []),
+      isFresh: vi.fn(() => false),
+      listChannels: vi.fn(() => []),
+      joinChannel: vi.fn(() => ({ joined: false })),
+      sendMail: vi.fn(() => false),
+      sendPeerMail: vi.fn(() => false),
+      hasActiveChannel: vi.fn(() => false),
+      start: vi.fn(),
+      stop: vi.fn(),
+      getSelfSessionId: vi.fn(() => ''),
+      recordBrief: vi.fn(),
+      getBriefs: vi.fn(() => []),
+      getLatestHeartbeat: vi.fn(() => null),
+      setOnChannelJoin: vi.fn(),
+    } as never,
   };
 }
 

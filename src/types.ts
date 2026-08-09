@@ -566,6 +566,28 @@ export interface PeerModule {
    * (NoopPeerModule), which never participates in peer discovery.
    */
   getSelfSessionId(): string;
+  /**
+   * Record a brief (status update) into THIS instance's heartbeat file so the
+   * `peers` tool can surface what this instance is doing — not just that it
+   * is alive. Called by the `brief` tool. No-op on the child
+   * (NoopPeerModule). Content is truncated to 200 estimated tokens; only the last 3
+   * briefs are kept. Best-effort — never throws.
+   */
+  recordBrief(message: string, confidence: number): void;
+  /**
+   * Read a remote session's recent brief entries (for the `peers` tool
+   * display). Returns [] if the session has no heartbeat file or no briefs.
+   * On the child (NoopPeerModule) returns [].
+   */
+  getBriefs(sessionId: string): Array<{ time: number; content: string; confidence: number }>;
+  /**
+   * Read a remote session's latest heartbeat timestamp (ms since epoch), or
+   * null if it has no heartbeat file / no recorded beats. Used by the `peers`
+   * tool to filter out long-stale peers (older than the listing cutoff) so the
+   * listing doesn't grow unbounded with dead instances' briefs. On the child
+   * (NoopPeerModule) returns null.
+   */
+  getLatestHeartbeat(sessionId: string): number | null;
 }
 
 /**

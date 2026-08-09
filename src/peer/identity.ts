@@ -14,9 +14,13 @@ import * as fs from 'fs';
 import * as path from 'path';
 import type { IdentityEntry } from '../types.js';
 import { getIdentityFile, getHeartbeatFile } from '../config.js';
+import { truncateToTokens } from '../utils/token.js';
 
 const HEARTBEAT_INTERVAL_MS = 30_000;
 const MAX_HEARTBEATS = 3;
+const MAX_BRIEFS = 3;
+/** Hard cap on brief content stored in the heartbeat file (estimated tokens, for brevity). */
+const MAX_BRIEF_TOKENS = 200;
 /**
  * Absolute freshness window: a remote is fresh only if its latest heartbeat
  * is within this many ms of now. Without this, a dead instance whose last
@@ -37,6 +41,29 @@ function atomicWrite(filePath: string, data: string): void {
   const tmp = `${filePath}.tmp.${process.pid}`;
   fs.writeFileSync(tmp, data, 'utf-8');
   fs.renameSync(tmp, filePath);
+}
+
+/**
+ * A recorded brief entry, stored alongside heartbeats in the heartbeat file.
+ * Surfaces an instance's recent progress to peers via the `peers` tool.
+ */
+export interface BriefEntry {
+  time: number;
+  content: string;
+  confidence: number;
+}
+
+/**
+ * On-disk heartbeat schema.
+ *
+ * Evolution: the original schema was `{ timestamps: [ts1, ts2, ts3] }`. The
+ * current schema adds a `briefs` array (last {@link MAX_BRIEFS} briefs) and
+ * renames `timestamps` → `heartbeats`. `readHeartbeatData` accepts BOTH
+ * shapes for backward-compat with files written by older instances.
+ */
+interface HeartbeatData {
+  heartbeats: number[];
+  briefs: BriefEntry[];
 }
 
 /**
@@ -62,25 +89,79 @@ function writeIdentityMap(map: Record<string, IdentityEntry>): void {
 }
 
 /**
- * Read a heartbeat file. Returns [] if missing or malformed.
+ * Read the full heartbeat file (heartbeats + briefs). Accepts BOTH the
+ * current schema `{ heartbeats: [...], briefs: [...] }` and the legacy
+ * schema `{ timestamps: [...] }` (from older instances), migrating the
+ * latter on read. Returns empty arrays if missing/malformed.
  */
-function readHeartbeats(sessionId: string): number[] {
+function readHeartbeatData(sessionId: string): HeartbeatData {
   const hbFile = getHeartbeatFile(sessionId);
-  if (!fs.existsSync(hbFile)) return [];
+  if (!fs.existsSync(hbFile)) return { heartbeats: [], briefs: [] };
   try {
     const content = fs.readFileSync(hbFile, 'utf-8');
-    const parsed = JSON.parse(content) as { timestamps: number[] };
-    return Array.isArray(parsed.timestamps) ? parsed.timestamps : [];
+    const parsed = JSON.parse(content) as Record<string, unknown>;
+    // Legacy schema: { timestamps: number[] }
+    const ts = parsed.timestamps;
+    if (Array.isArray(ts)) {
+      return {
+        heartbeats: ts as number[],
+        briefs: Array.isArray(parsed.briefs) ? (parsed.briefs as BriefEntry[]) : [],
+      };
+    }
+    // Current schema: { heartbeats: number[], briefs: BriefEntry[] }
+    const hb = parsed.heartbeats;
+    return {
+      heartbeats: Array.isArray(hb) ? (hb as number[]) : [],
+      briefs: Array.isArray(parsed.briefs) ? (parsed.briefs as BriefEntry[]) : [],
+    };
   } catch {
-    return [];
+    return { heartbeats: [], briefs: [] };
   }
 }
 
 /**
- * Write a heartbeat file atomically.
+ * Read a heartbeat file's heartbeat timestamps. Backward-compat: returns
+ * the timestamps regardless of whether the file uses the legacy
+ * `{timestamps}` or current `{heartbeats}` key. Returns [] if missing/malformed.
  */
-function writeHeartbeats(sessionId: string, timestamps: number[]): void {
-  atomicWrite(getHeartbeatFile(sessionId), JSON.stringify({ timestamps }, null, 2));
+function readHeartbeats(sessionId: string): number[] {
+  return readHeartbeatData(sessionId).heartbeats;
+}
+
+/**
+ * Read a heartbeat file's briefs array. Returns [] if missing/malformed.
+ */
+function readBriefs(sessionId: string): BriefEntry[] {
+  return readHeartbeatData(sessionId).briefs;
+}
+
+/**
+ * Write a heartbeat file atomically with the current schema
+ * `{ heartbeats: [...], briefs: [...] }`. Preserves existing briefs.
+ */
+function writeHeartbeats(sessionId: string, heartbeats: number[]): void {
+  const data: HeartbeatData = {
+    heartbeats,
+    briefs: readBriefs(sessionId),
+  };
+  atomicWrite(getHeartbeatFile(sessionId), JSON.stringify(data, null, 2));
+}
+
+/**
+ * Append a brief entry to a heartbeat file, preserving existing heartbeats.
+ * Truncates content to {@link MAX_BRIEF_TOKENS} estimated tokens (via
+ * {@link truncateToTokens}) and trims to last {@link MAX_BRIEFS} entries.
+ */
+function writeBrief(sessionId: string, entry: BriefEntry): void {
+  const data = readHeartbeatData(sessionId);
+  const truncated: BriefEntry = {
+    time: entry.time,
+    content: truncateToTokens(entry.content, MAX_BRIEF_TOKENS),
+    confidence: entry.confidence,
+  };
+  data.briefs.push(truncated);
+  data.briefs = data.briefs.slice(-MAX_BRIEFS);
+  atomicWrite(getHeartbeatFile(sessionId), JSON.stringify(data, null, 2));
 }
 
 /**
@@ -187,6 +268,47 @@ export class IdentityManager {
    */
   getOwnHeartbeat(): number[] {
     return readHeartbeats(this.sessionId);
+  }
+
+  /**
+   * Record a brief (status update) into this instance's heartbeat file.
+   * Used by the `brief` tool so the heartbeat surfaces what the instance is
+   * doing — not just that it is alive. Truncates content to MAX_BRIEF_TOKENS
+   * estimated tokens and keeps only the last MAX_BRIEFS entries. Preserves existing heartbeats.
+   *
+   * Best-effort: failures are swallowed (a brief must never break the agent
+   * loop or the heartbeat subsystem).
+   */
+  recordBrief(message: string, confidence: number): void {
+    try {
+      writeBrief(this.sessionId, {
+        time: Date.now(),
+        content: message,
+        confidence,
+      });
+    } catch {
+      // Swallow — heartbeat/brief is best-effort.
+    }
+  }
+
+  /**
+   * Read a remote session's recent briefs (for the `peers` tool display).
+   * Returns [] if the session has no heartbeat file or no briefs recorded.
+   */
+  getBriefs(sessionId: string): BriefEntry[] {
+    return readBriefs(sessionId);
+  }
+
+  /**
+   * Read a remote session's latest heartbeat timestamp (ms since epoch), or
+   * null if it has no heartbeat file / no recorded beats. Used by the `peers`
+   * tool to filter out long-stale peers (older than the listing cutoff) so the
+   * listing doesn't grow unbounded with dead instances' briefs. Backward-compat:
+   * reads both the legacy {timestamps} and current {heartbeats} shapes.
+   */
+  getLatestHeartbeat(sessionId: string): number | null {
+    const ts = readHeartbeats(sessionId);
+    return ts.length > 0 ? ts[ts.length - 1] : null;
   }
 
   /**

@@ -29,6 +29,18 @@ describe('briefTool', () => {
       expect(ctx.core.brief).toHaveBeenCalledWith('info', 'brief', 'Task completed', 'confidence: 100%');
     });
 
+    it('should record the brief into the peer heartbeat via recordBrief', () => {
+      briefTool.handler(ctx, { message: 'Task completed', confidence: 10 });
+      // The brief tool must forward message + confidence to the peer heartbeat
+      // so the `peers` tool can surface this instance's progress.
+      expect(ctx.peer.recordBrief).toHaveBeenCalledWith('Task completed', 10);
+    });
+
+    it('should not call recordBrief before validating inputs (empty message)', () => {
+      briefTool.handler(ctx, { message: '', confidence: 10 });
+      expect(ctx.peer.recordBrief).not.toHaveBeenCalled();
+    });
+
     it('should send message with details', () => {
       briefTool.handler(ctx, { message: 'Processed 5 files', confidence: 9 });
 

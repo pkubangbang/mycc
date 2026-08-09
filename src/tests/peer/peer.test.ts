@@ -40,6 +40,7 @@ vi.mock('../../config.js', () => ({
 import { IdentityManager } from '../../peer/identity.js';
 import { ChannelManager } from '../../peer/channel.js';
 import { PeerManager } from '../../peer/peer.js';
+import { estimateTextTokens } from '../../utils/token.js';
 import type { ChannelFile } from '../../types.js';
 
 const SID_A = 'aaaa0000-0000-0000-0000-000000000000';
@@ -167,6 +168,80 @@ describe('IdentityManager', () => {
     expect(beats[0]).toBe(4);
     expect(beats[1]).toBe(5);
     id2.stopHeartbeat();
+  });
+
+  it('readHeartbeats() reads the legacy {timestamps} schema (backward-compat)', () => {
+    writeHeartbeatRaw(SID_A, [100, 200, 300]);
+    const id = new IdentityManager(SID_A, '/work/a', makeMailboxPath(SID_A));
+    expect(id.getOwnHeartbeat()).toEqual([100, 200, 300]);
+  });
+
+  it('recordBrief() writes a brief entry and getBriefs() reads it back', () => {
+    const id = new IdentityManager(SID_A, '/work/a', makeMailboxPath(SID_A));
+    id.recordBrief('working on heartbeat', 8);
+    const briefs = id.getBriefs(SID_A);
+    expect(briefs).toHaveLength(1);
+    expect(briefs[0].content).toBe('working on heartbeat');
+    expect(briefs[0].confidence).toBe(8);
+    expect(briefs[0].time).toBeTypeOf('number');
+  });
+
+  it('recordBrief() truncates content to at most 200 estimated tokens', () => {
+    const id = new IdentityManager(SID_A, '/work/a', makeMailboxPath(SID_A));
+    // A short message fits and is stored verbatim.
+    id.recordBrief('short message', 5);
+    expect(id.getBriefs(SID_A)[0].content).toBe('short message');
+
+    // A long message (well over 200 tokens) is truncated so the stored
+    // content estimates to <= 200 tokens, and confidence is preserved.
+    const longMsg = 'word '.repeat(500); // ~500 words -> well over 200 tokens
+    expect(estimateTextTokens(longMsg)).toBeGreaterThan(200);
+    id.recordBrief(longMsg, 6);
+    const stored = id.getBriefs(SID_A)[1].content;
+    expect(estimateTextTokens(stored)).toBeLessThanOrEqual(200);
+    expect(id.getBriefs(SID_A)[1].confidence).toBe(6);
+  });
+
+  it('recordBrief() keeps only the last 3 briefs', () => {
+    const id = new IdentityManager(SID_A, '/work/a', makeMailboxPath(SID_A));
+    id.recordBrief('b1', 1);
+    id.recordBrief('b2', 2);
+    id.recordBrief('b3', 3);
+    id.recordBrief('b4', 4);
+    id.recordBrief('b5', 5);
+    const briefs = id.getBriefs(SID_A);
+    expect(briefs).toHaveLength(3);
+    expect(briefs[0].content).toBe('b3');
+    expect(briefs[1].content).toBe('b4');
+    expect(briefs[2].content).toBe('b5');
+    // Confidence preserved alongside content.
+    expect(briefs[2].confidence).toBe(5);
+  });
+
+  it('recordBrief() preserves existing heartbeats and getOwnHeartbeat still works', () => {
+    // Start with a legacy {timestamps} heartbeat file.
+    writeHeartbeatRaw(SID_A, [100, 200, 300]);
+    const id = new IdentityManager(SID_A, '/work/a', makeMailboxPath(SID_A));
+    id.recordBrief('added a brief', 7);
+    // Heartbeats must survive the brief write (not be wiped).
+    expect(id.getOwnHeartbeat()).toEqual([100, 200, 300]);
+    expect(id.getBriefs(SID_A)).toHaveLength(1);
+  });
+
+  it('beat() preserves existing briefs (does not wipe the briefs array)', () => {
+    const id = new IdentityManager(SID_A, '/work/a', makeMailboxPath(SID_A));
+    id.recordBrief('survive-the-beat', 9);
+    // A beat must keep the brief entry.
+    id.startHeartbeat();
+    id.stopHeartbeat();
+    const briefs = id.getBriefs(SID_A);
+    expect(briefs).toHaveLength(1);
+    expect(briefs[0].content).toBe('survive-the-beat');
+  });
+
+  it('getBriefs() returns [] for a session with no heartbeat file', () => {
+    const id = new IdentityManager(SID_A, '/work/a', makeMailboxPath(SID_A));
+    expect(id.getBriefs(SID_B)).toEqual([]);
   });
 });
 

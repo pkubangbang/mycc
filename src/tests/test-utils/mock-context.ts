@@ -180,6 +180,9 @@ export function createMockPeer(overrides: Partial<PeerModule> = {}): PeerModule 
     start: vi.fn(),
     stop: vi.fn(),
     getSelfSessionId: vi.fn(() => ''),
+    recordBrief: vi.fn(),
+    getBriefs: vi.fn(() => []),
+    getLatestHeartbeat: vi.fn(() => null),
     setOnChannelJoin: vi.fn(),
     ...overrides,
   };
