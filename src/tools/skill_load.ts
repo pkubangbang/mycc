@@ -12,6 +12,7 @@
  * If you are unsure of the exact name, use skill_search first to find it.
  */
 
+import * as path from 'path';
 import type { ToolDefinition, AgentContext } from '../types.js';
 import { loader } from '../context/shared/loader.js';
 import { getSkillAbsolutePath } from '../utils/skill-path-resolver.js';
@@ -81,11 +82,19 @@ Once you find the correct name, load it with:
       // Ignore indexing errors - skill content is still valid
     }
 
+    // Skill folder directory (for progressive-disclosure skills, so the agent
+    // can read_file sibling sub-files by absolute path). Resolved from the
+    // skill's sourceFile via getSkillAbsolutePath, so it is portable across
+    // machines (built-in skills resolve to <packageRoot>/skills/<name>/,
+    // project skills to .mycc/skills/<name>/, etc.) — never hardcoded.
+    const skillDir = absPath !== 'unknown' ? path.dirname(absPath) : '';
+
     // Return the full skill content
     const header = `# Skill: ${skill.name}\n`;
     const description = skill.description ? `Description: ${skill.description}\n\n` : '';
     const keywords = skill.keywords.length > 0 ? `Keywords: ${skill.keywords.join(', ')}\n\n` : '';
     const when = skill.when ? `When: ${skill.when}\n\n` : '';
-    return `${header}${description}${keywords}${when}---\n\n${skill.content}`;
+    const location = skillDir ? `Location: ${skillDir}\n\n` : '';
+    return `${header}${description}${keywords}${when}${location}---\n\n${skill.content}`;
   },
 };
