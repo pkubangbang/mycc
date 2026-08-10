@@ -34,6 +34,11 @@ export function createMockContext(workdir: string): AgentContext {
     requestExternalPathAccess: vi.fn(async () => ({ approved: false, resolvedPath: '', reason: 'Path escapes workspace' })),
     addExternalAutoGrant: vi.fn(),
     getMode: vi.fn(() => 'normal' as const),
+    // Auto mode is lead-only; default false so existing tests that hit the
+    // denied branch keep returning "Commit cancelled by user". Individual
+    // tests override getAuto via vi.mocked(ctx.core.getAuto).mockReturnValue(true).
+    getAuto: vi.fn(() => false),
+    setAuto: vi.fn(),
     getMindmap: vi.fn(() => null),
     setMindmap: vi.fn(),
     getConfusionIndex: vi.fn(() => 0),

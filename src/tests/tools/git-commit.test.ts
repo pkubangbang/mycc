@@ -102,6 +102,37 @@ describe('gitCommitTool', () => {
     });
   });
 
+  describe('auto-mode rejection', () => {
+    it('should report auto mode is on (not "cancelled by user") when denied in auto mode', async () => {
+      vi.mocked(ctx.core.question).mockResolvedValueOnce('n');
+      vi.mocked(ctx.core.getAuto).mockReturnValue(true);
+      const result = await gitCommitTool.handler(ctx, { message: 'test commit' });
+      expect(result).toContain('auto mode is ON');
+      expect(result).toContain('exit auto mode');
+      expect(result).toContain('ESC');
+      // Must NOT surface the plain user-denial message
+      expect(result).not.toContain('Commit cancelled by user');
+    });
+
+    it('should report auto mode is on when empty (Enter) response in auto mode', async () => {
+      // In auto mode question() returns the onEsc default ('n' for git_commit),
+      // which normalizes to '' -> denied. The handler must still detect auto mode.
+      vi.mocked(ctx.core.question).mockResolvedValueOnce('');
+      vi.mocked(ctx.core.getAuto).mockReturnValue(true);
+      const result = await gitCommitTool.handler(ctx, { message: 'test commit' });
+      expect(result).toContain('auto mode is ON');
+      expect(result).not.toContain('Commit cancelled by user');
+    });
+
+    it('should still return "cancelled by user" when denied outside auto mode', async () => {
+      vi.mocked(ctx.core.question).mockResolvedValueOnce('n');
+      vi.mocked(ctx.core.getAuto).mockReturnValue(false);
+      const result = await gitCommitTool.handler(ctx, { message: 'test commit' });
+      expect(result).toContain('Commit cancelled by user');
+      expect(result).not.toContain('auto mode is ON');
+    });
+  });
+
   describe('ambiguous non-empty response', () => {
     it('should ask for clarification when user types something other than y/n', async () => {
       vi.mocked(ctx.core.question).mockResolvedValueOnce('maybe');
