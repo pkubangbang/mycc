@@ -306,6 +306,17 @@ is the cross-instance analogue of Divide-and-Conquer.
 - **`joined` and `firstQuerySent` MUST be `false`** when the mediator creates
   the files. The lead sets them to `true` itself on join. If you pre-set them,
   the instance skips its own join and the firstQuery is never delivered.
+- **Reading the file back and finding `joined`/`firstQuerySent` already `true`
+  is NOT an error — it is the success signal.** The 5s channel poll can fire
+  *within seconds* of you writing the file, auto-join it, flip both flags to
+  `true`, and deliver the `firstQuery` to the owner's mailbox. So a read-back
+  that shows `true` means the poll already picked the file up — the wiring
+  worked, the instances have begun their roles. Do NOT treat this as "I wrote
+  the wrong booleans" or "the file got corrupted"; the only thing that would
+  be wrong is if YOU authored the file with `true` (the poll would then skip
+  the join). To disambiguate: you wrote `false` (use a structured file-write
+  tool so you know the exact bytes) → a later read shows `true` → the poll did
+  it → success. Distinguish "what I authored" from "what the poll mutated."
 - **`peerSessionId` must point to the OTHER instance** (the one this file's
   owner will talk to). If left `null`, the 5s poll will try to discover it from a
   sibling file with the same `channelId` suffix — so as long as you create both
@@ -515,6 +526,14 @@ Fire the kickoff / `mail_to`, then end your turn. The reply comes to you.
       in bash) — it parses, and `joined`/`firstQuerySent` are exactly `false`
       (not `true`, not missing). This catches the hand-rolled-JSON trap
       (mis-escaped newlines, a BOM, wrong booleans) before the poll ever runs.
+      **Caveat:** read back *immediately* after the atomic write. The 5s poll
+      can join the file in the interim and flip `joined`/`firstQuerySent` to
+      `true` — if your read-back shows `true`, that is the poll having already
+      joined (success), NOT a write error. The way to tell: you authored
+      `false` with a structured file-write tool (you know the exact bytes), so
+      a later `true` must be the poll's mutation. Re-read the file content /
+      structure (channelId, ownerSessionId, peerSessionId, firstQuery) to
+      confirm it is otherwise intact; if it is, the wiring succeeded.
 - [ ] `joined` and `firstQuerySent` are `false` in both files.
 - [ ] Each `firstQuery` states the instance's role, its peer's session-id, and
       the `mail_to(name="<peer>/lead", ...)` reply contract.
