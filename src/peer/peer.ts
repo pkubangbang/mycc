@@ -101,7 +101,7 @@ export class PeerManager implements PeerModule {
    * startup by agent-repl.ts so a channel joining mid-PROMPT aborts the
    * blocked PROMPT wait and redirects the loop to WAIT.
    */
-  setOnChannelJoin(callback: () => void): void {
+  setOnChannelJoin(callback: (channelId: string) => void): void {
     this.channel.setOnChannelJoin(callback);
   }
 }
@@ -128,5 +128,5 @@ export class NoopPeerModule implements PeerModule {
   recordBrief(_message: string, _confidence: number): void { /* no-op: children don't maintain a heartbeat */ }
   getBriefs(_sessionId: string): Array<{ time: number; content: string; confidence: number }> { return []; }
   getLatestHeartbeat(_sessionId: string): number | null { return null; }
-  setOnChannelJoin(_callback: () => void): void { /* no-op: children don't participate in peer discovery */ }
+  setOnChannelJoin(_callback: (channelId: string) => void): void { /* no-op: children don't participate in peer discovery */ }
 }

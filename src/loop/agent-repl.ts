@@ -391,7 +391,21 @@ export async function main(): Promise<void> {
   //   are already self-guarded no-ops, but setAuto(true) is not, so the
   //   isPromptBlocked() check is the real gate. Best-effort: each call swallows
   //   its own errors so a failure in one path doesn't block the other.
-  ctx.peer.setOnChannelJoin(() => {
+  ctx.peer.setOnChannelJoin((channelId: string) => {
+    // Grant read-only access to the just-joined channel's peer workDir. The
+    // peer's workDir is read from identity.json (keyed by peerSessionId). This
+    // lets the LLM read the peer's project files (read_file/grep) without
+    // per-access user prompts, but never write to them (folder_recursive_
+    // readonly). Idempotent — addExternalAutoGrant overwrites the Map entry.
+    // Teammates inherit via the IPC external_path_access handler.
+    const ch = ctx.peer.listChannels().find(c => c.channelId === channelId);
+    if (ch?.joined && ch.peerSessionId) {
+      const peer = ctx.peer.listIdentities().find(e => e.sessionId === ch.peerSessionId);
+      if (peer?.workDir) {
+        ctx.core.addExternalAutoGrant(peer.workDir, false); // false = read-only
+      }
+    }
+
     if (!agentIO.isPromptBlocked()) {
       // Not blocked in PROMPT — the Layer A gate will catch this channel on
       // the next PROMPT entry. Do not flip auto mid-pass.

@@ -558,7 +558,7 @@ export interface PeerModule {
    * on the child (NoopPeerModule). Overwrites any previously registered
    * callback (single listener).
    */
-  setOnChannelJoin(callback: () => void): void;
+  setOnChannelJoin(callback: (channelId: string) => void): void;
   /** Start the peer subsystem: register identity + begin heartbeat + start channel poll.
    *  Only the lead process calls this; the child (NoopPeerModule) is a no-op. */
   start(): void;

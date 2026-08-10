@@ -101,7 +101,7 @@ export class ChannelManager {
   // module stays a pure file+mail layer with no loop/autoState imports. The
   // agent loop wires a callback that aborts a blocked PROMPT wait so a channel
   // joining mid-PROMPT redirects the loop to WAIT. Single listener (overwrite).
-  private onChannelJoin: (() => void) | null = null;
+  private onChannelJoin: ((channelId: string) => void) | null = null;
 
   constructor(sessionId: string, identityManager: IdentityManager, mailboxPath: string) {
     this.sessionId = sessionId;
@@ -114,7 +114,7 @@ export class ChannelManager {
    * previously registered callback. The agent loop (agent-repl.ts) wires this
    * once at startup to abort a blocked PROMPT wait on a mid-flight join.
    */
-  setOnChannelJoin(callback: () => void): void {
+  setOnChannelJoin(callback: (channelId: string) => void): void {
     this.onChannelJoin = callback;
   }
 
@@ -247,7 +247,7 @@ export class ChannelManager {
     //    the mid-PROMPT case. Guarded so a throw in the callback can't corrupt
     //    channel state (joined/firstQuery already persisted above).
     try {
-      this.onChannelJoin?.();
+      this.onChannelJoin?.(channelId);
     } catch {
       // Callback failure must not break the join — channel state is already
       // committed. Swallow so the poll sweep and future joins stay healthy.
