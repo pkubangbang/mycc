@@ -14,7 +14,7 @@ import { healthCheck } from '../engine/chat-provider.js';
 import { ParentContext } from '../context/parent-context.js';
 import { getSessionId } from '../session/index.js';
 import { slashRegistry } from '../slashes/index.js';
-import { getTokenThreshold, isDebuggingEval, shouldServe, getServePort, getServeHost, getEmbeddingModel, shouldAuto, getAutoflyThresholdArg } from '../config.js';
+import { getTokenThreshold, isDebuggingEval, shouldServe, getServePort, getServeHost, getEmbeddingModel, shouldAuto, getAutoflyThresholdArg, getDiscoveryDir } from '../config.js';
 import { Triologue } from './triologue.js';
 import { agentIO } from './agent-io.js';
 import { autoState } from './auto-state.js';
@@ -189,6 +189,14 @@ export async function main(): Promise<void> {
   // Project skills (.mycc/skills/) are already inside the workspace — no grant needed.
   ctx.core.addExternalAutoGrant(getLayerBaseDir('built-in'));
   ctx.core.addExternalAutoGrant(getLayerBaseDir('user'));
+
+  // Auto-grant read+write access to the peer-discovery directory
+  // (~/.mycc-store/discovery) so every mycc instance can freely read and
+  // write identity.json, heartbeats, and channel files to coordinate
+  // cross-instance discovery and messaging — no per-access user prompts.
+  // Teammates (child processes) inherit this via the IPC external_path_access
+  // handler, which checks the parent's session-scoped grants.
+  ctx.core.addExternalAutoGrant(getDiscoveryDir(), true);
 
   // Start peer discovery protocol: register identity + begin heartbeat + channel poll
   ctx.peer.start();

@@ -567,9 +567,15 @@ export class Core extends BaseCore implements CoreModule {
    * Session-scoped — no user prompt is shown for paths under this directory.
    *
    * @param dir - Absolute directory path to auto-grant
+   * @param writable - When true, grant read+write (folder_recursive) instead
+   *   of the default read-only (folder_recursive_readonly). Used for shared
+   *   cross-instance directories (e.g. the peer-discovery store
+   *   ~/.mycc-store/discovery) that every mycc instance must freely read and
+   *   write. Defaults to false so the default callers (skill directories)
+   *   keep their read-only protection.
    */
-  addExternalAutoGrant(dir: string): void {
-    this.externalGrants.set(dir, 'folder_recursive_readonly');
+  addExternalAutoGrant(dir: string, writable = false): void {
+    this.externalGrants.set(dir, writable ? 'folder_recursive' : 'folder_recursive_readonly');
   }
 
   /**

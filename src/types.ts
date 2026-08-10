@@ -394,8 +394,12 @@ export interface CoreModule {
    * when requestExternalPathAccess is called.
    *
    * @param dir - Absolute path of the directory to auto-grant
+   * @param writable - When true, grant read+write (folder_recursive) instead of
+   *   the default read-only (folder_recursive_readonly). Used for shared
+   *   cross-instance directories that every mycc instance must freely read and
+   *   write (e.g. the peer-discovery store ~/.mycc-store/discovery).
    */
-  addExternalAutoGrant(dir: string): void;
+  addExternalAutoGrant(dir: string, writable?: boolean): void;
   /**
    * Get current agent mode ('plan' or 'normal')
    * Used by hooks to prevent false positives during planning

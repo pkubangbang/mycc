@@ -140,8 +140,13 @@ export class ChildCore extends BaseCore implements CoreModule {
    * Pre-grant external path access for a directory (no-op in child process).
    * Child processes send external path requests to parent via IPC;
    * the parent's Core handles the actual grant check.
+   *
+   * @param _dir - Absolute directory path (unused in child)
+   * @param _writable - When true, grant read+write (no-op in child; handled
+   *   by the parent's grant check, so parent-side read+write grants cover
+   *   teammates too).
    */
-  addExternalAutoGrant(_dir: string): void {
+  addExternalAutoGrant(_dir: string, _writable = false): void {
     // No-op: grants are managed by the parent process
   }
 
