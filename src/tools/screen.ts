@@ -122,12 +122,43 @@ interface CaptureError {
 }
 
 /**
+ * On Windows, enumerate monitors via .NET and return a human-readable list
+ * with 1-based indices and bounds. Used to (a) validate the requested
+ * monitor index before capture and (b) produce an actionable error when
+ * the index is out of range. Returns null if enumeration fails.
+ */
+function listWindowsMonitors(): string[] | null {
+  const psScript =
+    "$ProgressPreference='SilentlyContinue'; Add-Type -AssemblyName System.Windows.Forms; $s=[System.Windows.Forms.Screen]::AllScreens; $i=1; foreach($m in $s){ $b=$m.Bounds; Write-Output ('monitor[' + $i + '] primary=' + $m.Primary + ' bounds=' + $b.X + ',' + $b.Y + ',' + $b.Width + ',' + $b.Height); $i++ }";
+  try {
+    const out = execSync(`powershell -NoProfile -Command "${psScript}"`, {
+      encoding: 'utf-8',
+      timeout: 5000,
+      stdio: 'pipe',
+      shell: 'cmd.exe',
+    });
+    return out
+      .split(/\r?\n/)
+      .map(l => l.trim())
+      .filter(l => l.length > 0);
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Attempt to capture a screenshot, trying the best tool for the detected
  * environment first, then falling back through alternatives.
+ *
+ * @param monitorIndex 0-based array index into the OS monitor list
+ *   (0 = primary). The handler converts the 1-based `desktop` input to
+ *   this 0-based index. Out-of-range values are handled per-platform;
+ *   on Windows an out-of-range index returns an error listing monitors.
  */
 function captureScreenshot(
   env: DetectedEnv,
   screenshotPath: string,
+  monitorIndex = 0,
 ): CaptureResult | CaptureError {
   // Build an ordered list of (command, description) to try
   const attempts: Array<{ cmd: string; desc: string }> = [];
@@ -135,21 +166,36 @@ function captureScreenshot(
   // --- Windows ---
   if (env.platform === 'win32') {
     const winPath = screenshotPath.replace(/\//g, '\\');
+    // Use AllScreens indexing so a specific monitor can be captured on
+    // multi-monitor setups. The source point must be the monitor's Bounds
+    // origin (NOT Point.Empty), because a non-primary monitor's origin is
+    // offset (e.g. 1920,0) in the virtual desktop coordinate space.
     const psScript = `
 $ProgressPreference = 'SilentlyContinue';
 Add-Type -AssemblyName System.Windows.Forms;
 Add-Type -AssemblyName System.Drawing;
-$bitmap = New-Object System.Drawing.Bitmap([System.Windows.Forms.Screen]::PrimaryScreen.Bounds.Width, [System.Windows.Forms.Screen]::PrimaryScreen.Bounds.Height);
+$screens = [System.Windows.Forms.Screen]::AllScreens;
+$idx = ${monitorIndex};
+if ($idx -lt 0 -or $idx -ge $screens.Length) {
+  $list = ($screens | ForEach-Object { $b = $_.Bounds; $n = [Array]::IndexOf($screens,$_) + 1; 'monitor[' + $n + '] primary=' + $_.Primary + ' bounds=' + $b.X + ',' + $b.Y + ',' + $b.Width + ',' + $b.Height }) -join ' | ';
+  [Console]::Error.Write('monitor index ' + ($idx + 1) + ' out of range (1..' + $screens.Length + '). ' + $list);
+  exit 1;
+}
+$bounds = $screens[$idx].Bounds;
+$bitmap = New-Object System.Drawing.Bitmap($bounds.Width, $bounds.Height);
 $graphics = [System.Drawing.Graphics]::FromImage($bitmap);
-$graphics.CopyFromScreen([System.Drawing.Point]::Empty, [System.Drawing.Point]::Empty, $bitmap.Size);
+$graphics.CopyFromScreen($bounds.X, $bounds.Y, 0, 0, $bitmap.Size);
 $bitmap.Save('${winPath}')
 `.trim().replace(/\n/g, ' ');
-    attempts.push({ cmd: `powershell -NoProfile -Command "${psScript}"`, desc: 'PowerShell/.NET (Windows built-in)' });
+    attempts.push({ cmd: `powershell -NoProfile -Command "${psScript}"`, desc: `PowerShell/.NET (Windows built-in, monitor ${monitorIndex + 1})` });
   }
 
   // --- macOS ---
   if (env.platform === 'darwin') {
-    attempts.push({ cmd: `screencapture -x "${screenshotPath}"`, desc: 'screencapture (macOS built-in)' });
+    // screencapture -D <display> is 1-based; monitorIndex is 0-based, so
+    // monitorIndex + 1 == the 1-based desktop number the user passed in.
+    const displayNum = monitorIndex + 1;
+    attempts.push({ cmd: `screencapture -x -D ${displayNum} "${screenshotPath}"`, desc: `screencapture (macOS built-in, display ${displayNum})` });
   }
 
   // --- Linux + Wayland ---
@@ -208,7 +254,10 @@ $bitmap.Save('${winPath}')
       }
       failures.push(`${attempt.desc}: command ran but produced no output file`);
     } catch (err) {
-      const msg = (err as Error).message.split('\n')[0];
+      const e = err as Error & { stderr?: string };
+      // Prefer stderr (PowerShell writes diagnostics there), then message.
+      const detail = (e.stderr && e.stderr.trim()) || e.message;
+      const msg = detail.split('\n')[0];
       failures.push(`${attempt.desc}: ${msg}`);
     }
   }
@@ -275,7 +324,8 @@ function buildDiagnostics(env: DetectedEnv, failures: string[]): string {
 
 export const screenTool: ToolDefinition = {
   name: 'screen',
-  description: 'Capture a screenshot and use vision model to read/describe screen content. Use prompt parameter to ask specific questions about what is visible.',
+  description:
+    'Capture a screenshot and use vision model to read/describe screen content. Use prompt parameter to ask specific questions about what is visible. On multi-monitor setups, use the desktop parameter to capture a SPECIFIC monitor (1-based: 1 = primary, 2 = second monitor, etc.); omit it to capture the primary monitor.',
   input_schema: {
     type: 'object',
     properties: {
@@ -283,6 +333,11 @@ export const screenTool: ToolDefinition = {
         type: 'string',
         description:
           'Custom prompt for the vision model. Use this to ask specific questions about the screen content (e.g., "What error message is shown?" or "Read the text in the terminal window").',
+      },
+      desktop: {
+        type: 'number',
+        description:
+          'Which monitor to capture on a multi-monitor setup, given as a 1-based index (1 = primary monitor, 2 = second monitor, 3 = third, etc.). Omit or set to 1 to capture the primary monitor. On Windows this selects among [System.Windows.Forms.Screen]::AllScreens (internally converted to a 0-based array index); on macOS it maps directly to `screencapture -D <index>` (display number is 1-based). If the index is out of range, the tool lists the available monitors and their bounds so you can pick a valid one.',
       },
     },
     required: [],
@@ -292,18 +347,45 @@ export const screenTool: ToolDefinition = {
   handler: async (ctx: AgentContext, args: Record<string, unknown>): Promise<string> => {
     const customPrompt = (args.prompt as string) || DEFAULT_PROMPT;
 
+    // Monitor selection (1-based; 1 = primary). Coerce to a positive
+    // integer; invalid/non-numeric input falls back to the primary monitor.
+    // `monitorIndex` below is the 0-based array index into AllScreens.
+    let desktopNum = 1;
+    if (args.desktop !== undefined && args.desktop !== null) {
+      const n = Number(args.desktop);
+      if (Number.isInteger(n) && n >= 1) {
+        desktopNum = n;
+      } else {
+        ctx.core.brief('warn', 'screen', `Invalid desktop value "${args.desktop}" (expected positive integer, 1-based); falling back to primary monitor (1).`);
+      }
+    }
+    const monitorIndex = desktopNum - 1; // 0-based for AllScreens indexing
+
     // Detect environment
     const env = detectEnvironment();
-    ctx.core.brief('info', 'screen', `Environment: OS=${env.platform}, display=${env.displayServer}, desktop=${env.desktop}`);
+    ctx.core.brief('info', 'screen', `Environment: OS=${env.platform}, display=${env.displayServer}, desktop=${env.desktop}, monitor=${desktopNum}`);
+
+    // On Windows, validate the monitor index up front so an out-of-range
+    // value yields an actionable error listing the available monitors,
+    // rather than a generic capture failure.
+    if (env.platform === 'win32' && desktopNum > 1) {
+      const monitors = listWindowsMonitors();
+      if (monitors && desktopNum > monitors.length) {
+        const list = monitors.join('\n');
+        const msg = `Monitor index ${desktopNum} is out of range. ${monitors.length} monitor(s) detected:\n${list}\nUse a desktop value in 1..${monitors.length}.`;
+        ctx.core.brief('error', 'screen', msg);
+        return `## ❌ Invalid Monitor Index\n\n${msg}`;
+      }
+    }
 
     const tmpDir = os.tmpdir();
     const screenshotPath = path.join(tmpDir, `mycc_screen_${Date.now()}.png`);
 
     try {
       // Capture screenshot
-      ctx.core.brief('info', 'screen', 'Capturing screenshot');
+      ctx.core.brief('info', 'screen', `Capturing screenshot (monitor ${desktopNum})`);
 
-      const capture = captureScreenshot(env, screenshotPath);
+      const capture = captureScreenshot(env, screenshotPath, monitorIndex);
 
       if (!capture.ok) {
         ctx.core.brief('error', 'screen', capture.error);
