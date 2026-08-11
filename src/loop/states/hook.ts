@@ -31,6 +31,7 @@ import {
 } from '../checkpoint-recap.js';
 import { applyPatchAction } from '../../mindmap/patch.js';
 import { appendPatch, getPatchPath } from '../../mindmap/patch-jsonl.js';
+import { loopEvents } from '../loop-events.js';
 
 /**
  * Create checkpoint context from machine environment
@@ -342,6 +343,12 @@ export async function handleHook(
       ctx.skill.getSkill.bind(ctx.skill),
     );
     pass.hookResult = hookResult;
+
+    // Observability: emit hook_result (silent when no listeners)
+    loopEvents.emit('hook_result', {
+      blocked: hookResult.blockedCalls.size > 0,
+      compactRequested: !!hookResult.compactRequested,
+    });
 
     // 3.5. Handle compact request (highest priority — short-circuits all processing)
     //    DEFERRED: the actual compact runs at the LLM stage (see llm.ts), where

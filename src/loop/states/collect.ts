@@ -20,6 +20,7 @@ import { listWorktrees } from '../../context/worktree-store.js';
 import { getServeHub } from '../../serve/serve-registry.js';
 import * as fs from 'fs';
 import * as path from 'path';
+import { loopEvents } from '../loop-events.js';
 
 // Confusion threshold for hint generation
 const CONFUSION_THRESHOLD = 10;
@@ -199,6 +200,12 @@ export async function handleCollect(
   try {
     // 1. Handle pending questions from children
     await ctx.team.handlePendingQuestions();
+
+    // Observability: emit confusion_score at COLLECT entry (silent when no listeners)
+    const confusionScoreEntry = ctx.core.getConfusionIndex();
+    if (confusionScoreEntry > 0) {
+      loopEvents.emit('confusion_score', { score: confusionScoreEntry });
+    }
 
     // 2. Collect mails — relies on auto-fix for TP-safe injection
     //    The MAIL note carries pure mail content only. Reply guidance (who to

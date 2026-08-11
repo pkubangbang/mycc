@@ -30,6 +30,7 @@ import type { HookExecutor, AugmentedToolCall, ProcessToolCallsResult } from '..
 import type { InputProvider } from './input-provider.js';
 import type { RequestEmbeddingTracker } from './request-embedding.js';
 import { displayLetterBox } from '../utils/letter-box.js';
+import { loopEvents } from './loop-events.js';
 
 // ============================================================================
 // States
@@ -200,6 +201,9 @@ export class AgentStateMachine {
 
       // null = exit signal (from PROMPT handler)
       if (result === null) return;
+
+      // Observability: emit state transition (silent when no listeners)
+      loopEvents.emit('state_transition', { from: state, to: result });
 
       prevState = state;
       state = result;

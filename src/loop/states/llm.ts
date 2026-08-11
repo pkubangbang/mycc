@@ -28,6 +28,7 @@ import { autoState } from '../auto-state.js';
 import { startWrapUp } from '../esc-wrap-up.js';
 import { loader } from '../../context/shared/loader.js';
 import { handleCrossroad } from '../crossroad.js';
+import { loopEvents } from '../loop-events.js';
 
 export async function handleLlm(
   env: MachineEnv,
@@ -61,6 +62,8 @@ export async function handleLlm(
       ? 'Compacting context (hook-deferred)...'
       : 'Context threshold exceeded, compacting...';
     ctx.core.brief('info', 'autoCompact', reason);
+    // Observability: emit compact_triggered (silent when no listeners)
+    loopEvents.emit('compact_triggered', { reason: pass.deferredCompact ? 'deferred' : 'proactive' });
     await triologue.compact(turn.lastUserQuery || undefined, undefined, compactTools);
     pass.deferredCompact = false;
     // Reset stat counts — old context is summarized away.
@@ -99,6 +102,8 @@ export async function handleLlm(
       // If ESC was already pressed before entering escAware, start wrap-up and return early
       if (agentIO.isNeglectedMode()) {
         ctx.core.verbose('llm', 'ESC pressed before LLM call - starting wrap-up');
+        // Observability: emit esc_interrupt (silent when no listeners)
+        loopEvents.emit('esc_interrupt', { state: 'llm' });
         stopSpinner(); // Ensure spinner is stopped before returning to PROMPT
         startWrapUp(triologue, tools);
         agentIO.setNeglectedMode(false);
@@ -109,6 +114,9 @@ export async function handleLlm(
         async (abortController) => {
           // Store abort controller for potential external abort
           pass.abortController = abortController;
+
+          // Observability: emit llm_call (silent when no listeners)
+          loopEvents.emit('llm_call', { model: MODEL, toolCount: tools.length });
 
           return await retryChat(
             {
@@ -131,6 +139,8 @@ export async function handleLlm(
       // Check if ESC was pressed (null response from cleanup)
       if (!response) {
         ctx.core.verbose('llm', 'LLM response discarded due to ESC interruption');
+        // Observability: emit esc_interrupt (silent when no listeners)
+        loopEvents.emit('esc_interrupt', { state: 'llm' });
         stopSpinner(); // Ensure spinner is stopped before returning to PROMPT
         agentIO.setNeglectedMode(false);
         return AgentState.PROMPT;
@@ -234,6 +244,8 @@ export async function handleLlm(
       // MAX_EMPTY_RETRIES consecutive empties so the agent never spins forever.
       if (!pass.assistantContent && pass.rawToolCalls.length === 0) {
         emptyRetries++;
+        // Observability: emit llm_empty (silent when no listeners)
+        loopEvents.emit('llm_empty', { retry: emptyRetries, maxRetries: MAX_EMPTY_RETRIES });
         ctx.core.verbose('llm', `LLM returned empty response (no content, no tool calls). Injecting synthetic brief() to prompt re-engagement. (empty retry ${emptyRetries}/${MAX_EMPTY_RETRIES})`);
 
         if (emptyRetries > MAX_EMPTY_RETRIES) {

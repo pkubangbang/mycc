@@ -17,6 +17,7 @@ import { ResultTooLargeError } from '../types.js';
 import { getLongtextDir, ensureDirs, getTokenThreshold, isDebuggingTp, getSessionContext, getSessionDir } from '../config.js';
 import { agentIO } from './agent-io.js';
 import { attemptAutoFix } from './tp-auto-fixer.js';
+import { loopEvents } from './loop-events.js';
 
 type Role = 'system' | 'user' | 'assistant' | 'tool';
 
@@ -946,14 +947,29 @@ export class Triologue {
   // === Default Callbacks ===
 
   private defaultOnMisorder(warning: MisorderWarning): void {
+    // Observability: emit triologue_event (silent when no listeners)
+    loopEvents.emit('triologue_event', {
+      kind: 'misorder',
+      detail: `${warning.from} → ${warning.to} (gap: ${warning.gap})`,
+    });
     agentIO.brief('warn', 'triologue', `Misordered transition: ${warning.from} → ${warning.to}`, `gap: ${warning.gap}`);
   }
 
   private defaultOnToolMisalign(warning: ToolAlignmentWarning): void {
+    // Observability: emit triologue_event (silent when no listeners)
+    loopEvents.emit('triologue_event', {
+      kind: 'tool_misalign',
+      detail: `${warning.functionName} (issue: ${warning.issue})`,
+    });
     agentIO.brief('warn', 'triologue', `Tool alignment issue: ${warning.functionName}`, `issue: ${warning.issue}`);
   }
 
   private defaultOnCompact(transcriptPath: string): void {
+    // Observability: emit triologue_event (silent when no listeners)
+    loopEvents.emit('triologue_event', {
+      kind: 'compact',
+      detail: `Transcript saved: ${transcriptPath}`,
+    });
     agentIO.brief('info', 'autoCompact', `Transcript saved: ${transcriptPath}`);
   }
 

@@ -13,6 +13,7 @@ import { ResultTooLargeError } from '../../types.js';
 import { loader } from '../../context/shared/loader.js';
 import { isVerbose } from '../../config.js';
 import { extractKeywords } from '../keyword-extractor.js';
+import { loopEvents } from '../loop-events.js';
 
 // Tools that are purely exploratory (information gathering)
 const EXPLORATION_TOOLS = new Set([
@@ -59,6 +60,8 @@ export async function handleTool(
   for (const toolCall of hookResult.calls) {
     // ESC: abort current tool and return to PROMPT immediately
     if (agentIO.isNeglectedMode()) {
+      // Observability: emit esc_interrupt (silent when no listeners)
+      loopEvents.emit('esc_interrupt', { state: 'tool' });
       agentIO.setNeglectedMode(false); // Clear neglected mode before returning to PROMPT
       // Skip any remaining pending tool calls to maintain triologue parity
       // (tool responses must follow assistant tool_calls)
@@ -101,6 +104,9 @@ export async function handleTool(
       if (isVerbose()) {
         agentIO.verbose('tool', `Result: ${toolName}`, { outputLength: output.length });
       }
+
+      // Observability: emit tool_executed (silent when no listeners)
+      loopEvents.emit('tool_executed', { tool: toolName, outputLength: output.length });
 
       sequence.add({
         tool: toolName,
@@ -186,6 +192,9 @@ export async function handleTool(
           `--- Preview (first 1000 chars) ---\n${err.preview}`;
         triologue.tool(toolName, truncatedOutput, toolCallId);
 
+        // Observability: emit tool_error (silent when no listeners)
+        loopEvents.emit('tool_error', { tool: toolName, error: err.message, kind: 'result_too_large' });
+
         // NOTE: Context-overflow auto-compact no longer runs here (relocated
         // to the LLM stage — see the note above). The next LLM stage entry
         // will catch any threshold breach.
@@ -198,6 +207,10 @@ export async function handleTool(
         const errorMsg = err instanceof Error ? err.message : String(err);
         triologue.tool(toolName, `Error: ${errorMsg}`, toolCallId);
         agentIO.brief('error', 'tool', `${toolName} failed: ${errorMsg}`);
+
+        // Observability: emit tool_error (silent when no listeners)
+        loopEvents.emit('tool_error', { tool: toolName, error: errorMsg, kind: 'generic' });
+
         ctx.core.increaseConfusionIndex(2);
         // Continue to next tool call in the loop
       }
