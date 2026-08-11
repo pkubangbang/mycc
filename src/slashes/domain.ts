@@ -6,7 +6,7 @@
  *   /domain add <name> - Add a new domain (prompts for description)
  */
 
-import type { SlashCommand, WikiDomain } from '../types.js';
+import type { SlashCommand, WikiDomain, AskResult } from '../types.js';
 import * as fs from 'fs';
 import chalk from 'chalk';
 import { getWikiDomainsFile, ensureDirs } from '../config.js';
@@ -68,7 +68,7 @@ async function handleList(): Promise<void> {
   console.log();
 }
 
-async function handleAdd(question: (query: string, asker: string) => Promise<string>, name: string): Promise<void> {
+async function handleAdd(question: (query: string, asker: string) => Promise<AskResult>, name: string): Promise<void> {
   ensureDirs();
   const domainsFile = getWikiDomainsFile();
 
@@ -89,7 +89,7 @@ async function handleAdd(question: (query: string, asker: string) => Promise<str
   }
 
   // Prompt for description
-  const description = await question(
+  const { answer: description } = await question(
     `Add a description for "${name}" (optional, press Enter to skip): `,
     'domain'
   );

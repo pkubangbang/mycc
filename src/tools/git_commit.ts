@@ -130,7 +130,7 @@ export const gitCommitTool: ToolDefinition = {
       ? `Amend commit with message:\n\n  "${message}"\n\nProceed? [y/N]`
       : `Commit with message:\n\n  "${message}"\n\nProceed? [y/N]`;
 
-    const response = await ctx.core.question(prompt, ctx.core.getName(), { onEsc: 'n' });
+    const { answer: response, source } = await ctx.core.question(prompt, ctx.core.getName(), { onEsc: 'n' });
 
     // Parse response - only 'y' or 'yes' (case-insensitive) grants permission
     // Strip surrounding quotes (tmux send-keys may add them)
@@ -150,9 +150,10 @@ export const gitCommitTool: ToolDefinition = {
     if (denied) {
       // Auto mode: question() returns the onEsc default ('n') without user
       // input, so "denied" here is an auto-rejection, not a real user "No".
-      // getAuto() is false for child processes, so teammates (which route via
-      // mail above) are unaffected — this only triggers for the lead in auto mode.
-      if (ctx.core.getAuto()) {
+      // source === 'auto' is false for child processes, so teammates (which
+      // route via mail above) are unaffected — this only triggers for the
+      // lead in auto mode.
+      if (source === 'auto') {
         ctx.core.brief('info', 'git_commit', 'Commit auto-rejected (auto mode is on)');
         return 'Commit was auto-rejected because auto mode is ON — the user was not asked. '
           + 'To proceed with the commit, ask the user to exit auto mode (press ESC) and then retry the git_commit.';

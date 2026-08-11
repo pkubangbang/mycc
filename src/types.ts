@@ -72,6 +72,26 @@ export interface Message extends OllamaMessage {
 // ============================================================================
 
 /**
+ * Result of asking the user (or auto-replying) a question.
+ *
+ * `question` is the original query (self-describing), `answer` is the
+ * resolved string (what callers used to get directly), `reason` explains
+ * why this answer was given (e.g. "Auto mode: answered with onEsc default
+ * ('n')"), and `source` is who produced the answer — currently `'user'`
+ * (a human typed it) or `'auto'` (auto mode short-circuited the prompt).
+ *
+ * Consumers that need to distinguish a by-design auto-rejection from a real
+ * user "No" check `source === 'auto'` instead of calling `ctx.core.getAuto()`,
+ * so the detection travels with the answer itself.
+ */
+export interface AskResult {
+  question: string;
+  answer: string;
+  reason: string;
+  source: 'user' | 'auto';
+}
+
+/**
  * Tool definition format - tools export this interface
  * @see src/tools/bash.ts for example
  */
@@ -317,13 +337,19 @@ export interface CoreModule {
    */
   verbose(tool: string, message: string, data?: unknown): void;
   /**
-   * Ask user a question and wait for response
-   * Used by tools to get user input during execution
+   * Ask user a question and wait for response.
+   * Used by tools to get user input during execution.
+   *
+   * Returns an {@link AskResult} object whose `answer` is the resolved string
+   * (what callers previously got directly) and whose `source` is `'auto'`
+   * when auto mode short-circuited the prompt (so consumers can detect a
+   * by-design auto-rejection without calling `getAuto()`).
+   *
    * @param query - The question to ask
    * @param asker - Optional name of who is asking (e.g., 'lead' or teammate name)
    * @param options - Optional: onEsc (value to resolve on ESC press), onEnter (value on empty Enter)
    */
-  question(query: string, asker: string, options?: { onEsc?: string; onEnter?: string }): Promise<string>;
+  question(query: string, asker: string, options?: { onEsc?: string; onEnter?: string }): Promise<AskResult>;
   /**
    * Search the web for information
    * @param query - The search query

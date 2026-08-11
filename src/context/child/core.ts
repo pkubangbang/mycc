@@ -2,7 +2,7 @@
  * core.ts - ChildCore implementation for IPC-based core operations
  */
 
-import type { CoreModule, PictureResult } from '../../types.js';
+import type { CoreModule, PictureResult, AskResult } from '../../types.js';
 import { ipc, sendStatus } from './ipc-helpers.js';
 import { isVerbose } from '../../config.js';
 import { BaseCore } from '../shared/base-core.js';
@@ -46,18 +46,21 @@ export class ChildCore extends BaseCore implements CoreModule {
     ipc.sendNotification('verbose', { tool, message, data });
   }
 
-  async question(query: string, asker: string, options?: { onEsc?: string; onEnter?: string }): Promise<string> {
+  async question(query: string, asker: string, options?: { onEsc?: string; onEnter?: string }): Promise<AskResult> {
     // Transition to holding while waiting for answer
     sendStatus('holding');
 
     try {
       // Use no timeout for user questions - user can take arbitrary time to respond
-      const response = await ipc.sendRequest<{ response: string }>('question', {
+      // The parent's Core.question() builds the full AskResult (including the
+      // auto-mode short-circuit with source:'auto'), so the IPC response carries
+      // the whole object — return it verbatim rather than re-deriving it here.
+      const response = await ipc.sendRequest<AskResult>('question', {
         query,
         asker,
         options,
       }, 0);
-      return response.response;
+      return response;
     } finally {
       // Transition back to working after getting answer
       sendStatus('working');

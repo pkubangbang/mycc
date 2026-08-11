@@ -38,6 +38,11 @@ export const planOffTool: ToolDefinition = {
     // exit plan mode. This lets an unattended peer (started with --auto)
     // recover from a self-triggered plan_on instead of being permanently
     // locked (auto-mode question() auto-replies with onEsc:'n' → denied).
+    //
+    // NOTE: this getAuto() check is intentionally NOT converted to the
+    // `source === 'auto'` pattern used in git_commit.ts. Unlike git_commit,
+    // this check runs BEFORE question() is called (it decides whether to
+    // skip the prompt entirely), so there is no AskResult.source to read.
     if (shouldAllowPlanOff() && core.getAuto()) {
       core.setMode('normal');
       const team = ctx.team as TeamManager;
@@ -49,7 +54,7 @@ export const planOffTool: ToolDefinition = {
     // Transitioning from plan mode -> require user confirmation
     const prompt = `Exit plan mode and allow code changes? [y/N]`;
 
-    const response = await ctx.core.question(prompt, ctx.core.getName(), { onEsc: 'n' });
+    const { answer: response } = await ctx.core.question(prompt, ctx.core.getName(), { onEsc: 'n' });
 
     // Parse response - only 'y' or 'yes' (case-insensitive) grants permission
     let normalized = response.trim().toLowerCase();

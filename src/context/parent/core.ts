@@ -6,7 +6,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { createHash } from 'crypto';
 import sharp from 'sharp';
-import type { CoreModule, PictureResult } from '../../types.js';
+import type { CoreModule, PictureResult, AskResult } from '../../types.js';
 import { imgDescribe } from '../../engine/chat-provider.js';
 import { agentIO } from '../../loop/agent-io.js';
 import { autoState } from '../../loop/auto-state.js';
@@ -140,7 +140,7 @@ export class Core extends BaseCore implements CoreModule {
    * @param query - The question to ask
    * @param asker - Name of who is asking (required)
    */
-  async question(query: string, asker: string, options?: { onEsc?: string; onEnter?: string }): Promise<string> {
+  async question(query: string, asker: string, options?: { onEsc?: string; onEnter?: string }): Promise<AskResult> {
     // Validate query
     if (!query || typeof query !== 'string') {
       throw new Error('Question query must be a non-empty string');
@@ -148,14 +148,25 @@ export class Core extends BaseCore implements CoreModule {
 
     // Auto mode: never block on the user. Resolve immediately with the
     // onEsc default (the conservative/safe option) so the loop stays
-    // non-interactive. Concrete effects:
-    //  - git_commit (onEsc:'n')        → never succeeds
+    // non-interactive. The returned AskResult carries `source: 'auto'` so
+    // consumers (e.g. git_commit) can distinguish a by-design auto-rejection
+    // from a real user "No" WITHOUT calling getAuto() — the detection
+    // travels with the answer. Concrete effects:
+    //  - git_commit (onEsc:'n')        → never succeeds (auto-rejected)
     //  - plan_on/plan_off with file    → strict plan mode / no switch
     //  - external path access (onEsc:'4') → deny (edits stay in workdir)
     //  - bash grant (evaluates via question) → auto-denied
     // Where onEsc is unset, default to '' (empty = no answer / deny).
     if (autoState.getAuto()) {
-      return options?.onEsc ?? '';
+      const onEscValue = options?.onEsc ?? '';
+      return {
+        question: query,
+        answer: onEscValue,
+        reason: onEscValue === ''
+          ? 'Auto mode: no onEsc default provided, answered with empty string'
+          : `Auto mode: answered with onEsc default ('${onEscValue}')`,
+        source: 'auto',
+      };
     }
 
     // In serve (webui) mode, the asker + query render together on a single
@@ -168,12 +179,14 @@ export class Core extends BaseCore implements CoreModule {
       const cardQuery = asker && asker !== 'lead'
         ? `(${asker}) ${query}`
         : query;
-      return await agentIO.ask(cardQuery, { onEsc: options?.onEsc, onEnter: options?.onEnter });
+      const answer = await agentIO.ask(cardQuery, { onEsc: options?.onEsc, onEnter: options?.onEnter });
+      return { question: query, answer, reason: '', source: 'user' };
     }
 
     // Terminal mode: display who is asking, then the query (via agentIO.ask)
     this.brief('info', 'question', '--------------------', `${asker} has a question`);
-    return await agentIO.ask(query, { onEsc: options?.onEsc, onEnter: options?.onEnter });
+    const answer = await agentIO.ask(query, { onEsc: options?.onEsc, onEnter: options?.onEnter });
+    return { question: query, answer, reason: '', source: 'user' };
   }
 
   /**
@@ -516,7 +529,7 @@ export class Core extends BaseCore implements CoreModule {
         `  3) Deny\n\n` +
         `[1/2/3]`;
 
-      const response = await this.question(prompt, 'lead', { onEsc: '3' });
+      const { answer: response } = await this.question(prompt, 'lead', { onEsc: '3' });
       const choice = response.trim();
 
       if (choice === '1') {
@@ -543,7 +556,7 @@ export class Core extends BaseCore implements CoreModule {
       `  4) Deny\n\n` +
       `[1/2/3/4]`;
 
-    const response = await this.question(prompt, 'lead', { onEsc: '4' });
+    const { answer: response } = await this.question(prompt, 'lead', { onEsc: '4' });
     const choice = response.trim();
 
     // Parse user response

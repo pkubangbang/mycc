@@ -663,15 +663,15 @@ export class TeamManager implements TeamModule {
     while (this.pendingQuestions.length > 0) {
       const q = this.pendingQuestions.shift()!;
       try {
-        const response = await this.context.core.question(q.query, q.sender, q.options);
-        this.sendResponse(q.sender, q.reqId, 'question_result', true, { response });
+        const result = await this.context.core.question(q.query, q.sender, q.options);
+        this.sendResponse(q.sender, q.reqId, 'question_result', true, result);
         // Add Q&A to lead's mailbox as system reminder (FYI, no action needed)
         this.context.mail.appendMail(
           'lead',
           `Q&A from ${q.sender}`,
           `<system-reminder>
-${q.sender} asked: ${q.query}
-Answer: ${response}
+${q.sender} asked: ${result.question}
+Answer: ${result.answer}
 (Answer already sent to ${q.sender} - no forwarding needed)
 </system-reminder>`
         );

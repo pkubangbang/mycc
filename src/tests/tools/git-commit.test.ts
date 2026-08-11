@@ -15,7 +15,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { gitCommitTool } from '../../tools/git_commit.js';
 import { agentIO } from '../../loop/agent-io.js';
-import { createMockContext, createTempDir, removeTempDir } from './test-utils.js';
+import { createMockContext, createTempDir, removeTempDir, askResult } from './test-utils.js';
 import type { AgentContext } from '../../types.js';
 
 // Mock agentIO: exec (git status check) + isMainProcess (teammate gate)
@@ -51,7 +51,7 @@ describe('gitCommitTool', () => {
       timedOut: false,
     });
     // Default: empty question response (Enter = No)
-    vi.mocked(ctx.core.question).mockResolvedValue('');
+    vi.mocked(ctx.core.question).mockResolvedValue(askResult(''));
   });
 
   afterEach(() => {
@@ -60,7 +60,7 @@ describe('gitCommitTool', () => {
 
   describe('[y/N] confirmation convention', () => {
     it('should treat empty response (Enter) as No and cancel the commit', async () => {
-      vi.mocked(ctx.core.question).mockResolvedValueOnce('');
+      vi.mocked(ctx.core.question).mockResolvedValueOnce(askResult(''));
       const result = await gitCommitTool.handler(ctx, { message: 'test commit' });
       expect(result).toContain('Commit cancelled by user');
       // Must NOT surface the confusing ambiguous-feedback message
@@ -69,26 +69,26 @@ describe('gitCommitTool', () => {
     });
 
     it('should treat whitespace-only response as No', async () => {
-      vi.mocked(ctx.core.question).mockResolvedValueOnce('   ');
+      vi.mocked(ctx.core.question).mockResolvedValueOnce(askResult('   '));
       const result = await gitCommitTool.handler(ctx, { message: 'test commit' });
       expect(result).toContain('Commit cancelled by user');
       expect(result).not.toContain('User responded: ""');
     });
 
     it('should treat "n" as No and cancel the commit', async () => {
-      vi.mocked(ctx.core.question).mockResolvedValueOnce('n');
+      vi.mocked(ctx.core.question).mockResolvedValueOnce(askResult('n'));
       const result = await gitCommitTool.handler(ctx, { message: 'test commit' });
       expect(result).toContain('Commit cancelled by user');
     });
 
     it('should treat "no" as No and cancel the commit', async () => {
-      vi.mocked(ctx.core.question).mockResolvedValueOnce('no');
+      vi.mocked(ctx.core.question).mockResolvedValueOnce(askResult('no'));
       const result = await gitCommitTool.handler(ctx, { message: 'test commit' });
       expect(result).toContain('Commit cancelled by user');
     });
 
     it('should treat quoted empty as No (not a stray User responded "")', async () => {
-      vi.mocked(ctx.core.question).mockResolvedValueOnce('""');
+      vi.mocked(ctx.core.question).mockResolvedValueOnce(askResult('""'));
       const result = await gitCommitTool.handler(ctx, { message: 'test commit' });
       // Quoted empty normalizes to '' -> denied branch, not the ambiguous branch
       expect(result).toContain('Commit cancelled by user');
@@ -96,7 +96,7 @@ describe('gitCommitTool', () => {
     });
 
     it('should treat quoted "n" as No', async () => {
-      vi.mocked(ctx.core.question).mockResolvedValueOnce('"n"');
+      vi.mocked(ctx.core.question).mockResolvedValueOnce(askResult('"n"'));
       const result = await gitCommitTool.handler(ctx, { message: 'test commit' });
       expect(result).toContain('Commit cancelled by user');
     });
@@ -104,8 +104,7 @@ describe('gitCommitTool', () => {
 
   describe('auto-mode rejection', () => {
     it('should report auto mode is on (not "cancelled by user") when denied in auto mode', async () => {
-      vi.mocked(ctx.core.question).mockResolvedValueOnce('n');
-      vi.mocked(ctx.core.getAuto).mockReturnValue(true);
+      vi.mocked(ctx.core.question).mockResolvedValueOnce(askResult('n', 'auto'));
       const result = await gitCommitTool.handler(ctx, { message: 'test commit' });
       expect(result).toContain('auto mode is ON');
       expect(result).toContain('exit auto mode');
@@ -116,17 +115,16 @@ describe('gitCommitTool', () => {
 
     it('should report auto mode is on when empty (Enter) response in auto mode', async () => {
       // In auto mode question() returns the onEsc default ('n' for git_commit),
-      // which normalizes to '' -> denied. The handler must still detect auto mode.
-      vi.mocked(ctx.core.question).mockResolvedValueOnce('');
-      vi.mocked(ctx.core.getAuto).mockReturnValue(true);
+      // which normalizes to '' -> denied. The handler must still detect auto mode
+      // via source === 'auto' (no longer via getAuto()).
+      vi.mocked(ctx.core.question).mockResolvedValueOnce(askResult('', 'auto'));
       const result = await gitCommitTool.handler(ctx, { message: 'test commit' });
       expect(result).toContain('auto mode is ON');
       expect(result).not.toContain('Commit cancelled by user');
     });
 
     it('should still return "cancelled by user" when denied outside auto mode', async () => {
-      vi.mocked(ctx.core.question).mockResolvedValueOnce('n');
-      vi.mocked(ctx.core.getAuto).mockReturnValue(false);
+      vi.mocked(ctx.core.question).mockResolvedValueOnce(askResult('n'));
       const result = await gitCommitTool.handler(ctx, { message: 'test commit' });
       expect(result).toContain('Commit cancelled by user');
       expect(result).not.toContain('auto mode is ON');
@@ -135,14 +133,14 @@ describe('gitCommitTool', () => {
 
   describe('ambiguous non-empty response', () => {
     it('should ask for clarification when user types something other than y/n', async () => {
-      vi.mocked(ctx.core.question).mockResolvedValueOnce('maybe');
+      vi.mocked(ctx.core.question).mockResolvedValueOnce(askResult('maybe'));
       const result = await gitCommitTool.handler(ctx, { message: 'test commit' });
       expect(result).toContain('did not confirm');
       expect(result).toContain('maybe');
     });
 
     it('should surface the feedback text in the response for the agent to iterate', async () => {
-      vi.mocked(ctx.core.question).mockResolvedValueOnce('change the message');
+      vi.mocked(ctx.core.question).mockResolvedValueOnce(askResult('change the message'));
       const result = await gitCommitTool.handler(ctx, { message: 'test commit' });
       expect(result).toContain('change the message');
       expect(result).toContain('did not confirm');

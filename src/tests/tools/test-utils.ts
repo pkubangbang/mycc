@@ -9,10 +9,27 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { vi } from 'vitest';
-import type { AgentContext, CoreModule } from '../../types.js';
+import type { AgentContext, CoreModule, AskResult } from '../../types.js';
 
 // Re-export comprehensive mock utilities
 export { createMockContext as createFullMockContext, createMinimalMockContext } from '../test-utils/mock-context.js';
+
+/**
+ * Wrap a plain answer string into an AskResult (the shape Core.question()
+ * now returns). Use this in tool tests to mock ctx.core.question:
+ *   vi.mocked(ctx.core.question).mockResolvedValue(askResult('y'));
+ *
+ * @param answer - the user's answer string
+ * @param source - 'user' (default) or 'auto'
+ */
+export function askResult(answer: string, source: 'user' | 'auto' = 'user'): AskResult {
+  return {
+    question: '',
+    answer,
+    reason: source === 'auto' ? 'auto mode: question auto-replied with onEsc default' : '',
+    source,
+  };
+}
 
 /**
  * Create a minimal mock AgentContext with a temporary work directory

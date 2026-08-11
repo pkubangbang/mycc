@@ -63,8 +63,11 @@ export async function evaluateGrant(
       isChildProcess,
       // Forward options (e.g. onEsc) so bash-judge callers can pass a
       // default for ESC — dangerous/batch confirmations default to 'n'.
+      // core.question() now returns an AskResult object; judgeBash expects
+      // a plain string (Promise<string>), so unwrap .answer here to keep
+      // the bash-judge interface unchanged.
       (query: string, asker: string, options?: { onEsc?: string }) =>
-        core.question(query, asker, options),
+        core.question(query, asker, options).then(r => r.answer),
       core.escAware.bind(core)   // Pass escAware function for ESC handling
     );
 

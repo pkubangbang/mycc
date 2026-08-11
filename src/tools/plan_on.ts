@@ -57,7 +57,7 @@ However, you may want to allow edits to this file:
 
 [y/N]`;
 
-      const response = await ctx.core.question(prompt, ctx.core.getName(), { onEsc: 'n' });
+      const { answer: response } = await ctx.core.question(prompt, ctx.core.getName(), { onEsc: 'n' });
 
       // Parse response
       let normalized = response.trim().toLowerCase();
