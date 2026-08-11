@@ -426,6 +426,17 @@ export async function main(): Promise<void> {
     autoState.resetStreak();
     autoState.setAuto(true);
     console.log(chalk.cyan('auto mode is on (webui). Mails will be auto-replied. Press esc to exit.'));
+
+    // Wake a blocked PROMPT wait so the loop immediately redirects to WAIT
+    // (where mail/event polling happens). Same pattern as the channel-join
+    // callback above. Without this, when the lead is blocked in PROMPT
+    // (e.g. mail was written to unread-lead.jsonl while idle), the loop
+    // stays stuck until a user message arrives — so auto mode appears
+    // unresponsive to pending mail. Both calls are self-guarded no-ops
+    // when not blocked.
+    try { agentIO.abortAsk(); } catch { /* best-effort */ }
+    try { getServeHub().rejectInput(); } catch { /* best-effort */ }
+
     return true;
   });
 
