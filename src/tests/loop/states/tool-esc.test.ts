@@ -52,6 +52,20 @@ vi.mock('../../../context/shared/loader.js', () => ({
 
 vi.mock('../../../config.js', () => ({ isVerbose: vi.fn(() => false) }));
 
+// keyword-extractor.js: stub extractKeywords so the real module (which imports
+// chat-provider.ts → config chain) never loads.
+vi.mock('../../../loop/keyword-extractor.js', () => ({
+  extractKeywords: vi.fn(async () => []),
+}));
+
+// engine/chat-provider.js: stub to prevent the config chain from loading.
+vi.mock('../../../engine/chat-provider.js', () => ({
+  forkChat: vi.fn(),
+  MODEL: 'test-model',
+  retryChat: vi.fn(),
+  stopSpinner: vi.fn(),
+}));
+
 // Minimal Triologue stub — tool.ts needs triologue.tool/skipPendingTools/etc.
 vi.mock('../../../loop/triologue.js', () => {
   class TriologueStub {
