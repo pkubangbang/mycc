@@ -14,7 +14,7 @@
  */
 
 import { createApp, reactive } from 'vue';
-import type { App } from 'vue';
+import type { App as VueApp } from 'vue';
 import App from './App.vue';
 import type { ChatMessage, ChatState, CardOption, FileInfo } from './types';
 import './style.css';
@@ -75,7 +75,7 @@ export function isMessageVisible(msg: ChatMessage, verboseLogs: boolean): boolea
 // WebSocket — survives HMR (module-level)
 let ws: WebSocket | null = null;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-let mountedApp: App | null = null;
+let mountedApp: VueApp | null = null;
 
 /**
  * Send a JSON object over the WebSocket, guarding against a non-OPEN

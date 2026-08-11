@@ -1,11 +1,21 @@
 ---
 name: mycc-online-hotfix
 description: >
-  Hotfix workflow for debugging and fixing mycc's own tools using bash + tmux.
-  Use when mycc's tools have bugs and need live testing without restarting the app.
-  Covers the iterative process: edit source, test with bash + tmux (non-interruptive), debug via capture-pane, commit.
-  Platform-agnostic - works on Windows, Linux, macOS.
-keywords: [hotfix, debug, bash, tmux, live-testing, fix, tool-bug]
+  Live-test and hotfix mycc's own code by running the app in a detached tmux session
+  driven non-interactively via the bash tool (send-keys + capture-pane), so fixes and
+  changes can be verified WITHOUT restarting the app and WITHOUT interrupting the user.
+  Use whenever the task involves booting, running, smoke-testing, or verifying mycc
+  itself — e.g. "test the new deps by launching mycc", "start mycc and check /serve",
+  "verify the fix by running mycc", "boot mycc and test a tool", "run mycc in a
+  controllable session", or live-debugging a mycc tool bug. Covers the full iterative
+  workflow: edit source, test with bash + tmux (non-interruptive), debug via
+  capture-pane, commit. Also covers the critical disciplines that hand_over gets wrong:
+  (1) use bash + tmux, NOT hand_over (which opens a popup that interrupts the user);
+  (2) the Enter throttle — send input text and Enter as two separate tmux commands with
+  a ~2s pause between them, or mycc rejects the submit; (3) send single-char answers
+  (y/n) WITHOUT quotes; (4) ESC (not Ctrl-C) to interrupt an in-flight LLM stream —
+  Ctrl-C kills the whole pnpm/node batch. Platform-agnostic - Windows, Linux, macOS.
+keywords: [hotfix, debug, bash, tmux, live-testing, live-test, smoke-test, verify, verification, boot, run, launch, start mycc, run mycc, restart, capture-pane, send-keys, detached session, controllable, non-interactive, serve, webui, test, fix, tool-bug, mycc]
 when: after the bash tool fails with an error AND the user has explicitly mentioned "tmux" or "hotfix" in this session, to load the hotfix workflow; do NOT fire on skill_load, read_file, grep, or any non-bash tool result, and do NOT fire if a bash error has already been handled by a prior inject
 ---
 

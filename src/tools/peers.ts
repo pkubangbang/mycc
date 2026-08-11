@@ -83,17 +83,13 @@ export const peersTool: ToolDefinition = {
       // Surface recent briefs so the lead can monitor peer progress.
       const briefs = ctx.peer.getBriefs(id.sessionId);
       const briefLine = briefs.length > 0
-        ? `\n    briefs:\n` + briefs.map((b) => {
+        ? `\n    briefs:\n${briefs.map((b) => {
             const t = new Date(b.time).toISOString().replace('T', ' ').slice(0, 19);
             return `      - [${t}] (conf ${b.confidence}) ${b.content}`;
-          }).join('\n')
+          }).join('\n')}`
         : '';
       rows.push(
-        `- session=${id.sessionId}${tag}\n` +
-        `    workDir: ${id.workDir}\n` +
-        `    status: ${state}\n` +
-        `    started: ${started}` +
-        briefLine,
+        `- session=${id.sessionId}${tag}\n    workDir: ${id.workDir}\n    status: ${state}\n    started: ${started}${briefLine}`,
       );
     }
 
