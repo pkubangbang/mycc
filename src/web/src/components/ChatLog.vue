@@ -1,9 +1,11 @@
 <script setup lang="ts">
-import { ref, watch, nextTick, onMounted, onBeforeUnmount, computed } from 'vue';
+import { ref, watch, nextTick, onMounted, computed } from 'vue';
 import type { ChatMessage, ChatState } from '../types';
 import { chatApi, isMessageVisible } from '../main';
 import MessageItem from './MessageItem.vue';
 import CardItem from './CardItem.vue';
+import RocketIcon from './RocketIcon.vue';
+import MeteorField from './MeteorField.vue';
 
 const props = defineProps<{ messages: ChatMessage[]; state: ChatState }>();
 
@@ -11,30 +13,13 @@ const scrollContainer = ref<HTMLElement | null>(null);
 const showScrollButton = ref(false);
 let userScrolledUp = false;
 
-// Warp-field element (the meteor starfield container). An animationiteration
-// listener on it re-randomizes each meteor's birth position (CSS custom
-// props --mx/--my) every loop, so streaks don't reuse the same start spot.
-const warpFieldEl = ref<HTMLElement | null>(null);
-function randomizeMeteors(): void {
-  const field = warpFieldEl.value;
-  if (!field) return;
-  // The button interior the field fills (inset:0 of the button). Meteors
-  // travel top-right → bottom-left, so births are seeded across the top and
-  // right "incoming" edge band. --mx/--my are percentages of the field box.
-  const meteors = field.querySelectorAll<HTMLElement>('.meteor');
-  for (const m of meteors) {
-    // Horizontal: bias toward the right/center two-thirds (incoming edge),
-    // but allow some left births so streaks can cross the whole frame.
-    const mx = 35 + Math.random() * 60;        // 35%..95%
-    // Vertical: spread across the full height; bias slightly up.
-    const my = Math.random() * 55;             // 0%..55%
-    m.style.setProperty('--mx', `${mx}%`);
-    m.style.setProperty('--my', `${my}%`);
-  }
-}
-function onWarpIter(): void {
-  randomizeMeteors();
-}
+// The auto-mode stop button's "hyperspace jump" visuals (rocket + meteor
+// starfield) now live in two dedicated components — RocketIcon and
+// MeteorField — imported above. ChatLog only passes the `warping` prop
+// (= state.isRunning) down; the animation-iteration listener, meteor
+// randomization, and animation-play-state gating are encapsulated there
+// (and paused when not warping), so ChatLog no longer holds warp-field
+// refs or lifecycle hooks for them.
 
 // Visible messages: filtered by the 详细日志 toggle. When off, only
 // user-facing lines (user/result/assistant/brief/question/prompt) show;
@@ -42,6 +27,34 @@ function onWarpIter(): void {
 const visibleMessages = computed(() =>
   props.messages.filter(m => isMessageVisible(m, props.state.verboseLogs)),
 );
+
+// v-for key for each visible message: "<raw-timestamp> <label>"
+// (e.g. "1723391724123 assistant"). The raw millisecond timestamp encodes
+// the time and the label is the tool name — together they form a readable,
+// time+tool key as requested.
+//
+// UNIQUENESS: the raw ms timestamp is far more unique than second-granularity
+// HH:MM:SS — two same-label messages would need to share the exact same
+// millisecond to collide, which is extremely rare. No index suffix is needed
+// in the common case.
+//
+// FALLBACK: timestamp and label are both optional. When either is absent
+// (raw verbose logs, history-loaded messages predating the timestamp/label
+// scheme), the key falls back to the index to guarantee uniqueness.
+function messageKey(msg: ChatMessage, index: number): string {
+  const ts = msg.timestamp;
+  const label = msg.label ?? '';
+  if (ts && label) {
+    return `${ts} ${label}`;
+  }
+  if (ts) {
+    return String(ts);
+  }
+  if (label) {
+    return `${label}-${index}`;
+  }
+  return String(index);
+}
 
 function isAtBottom(): boolean {
   const el = scrollContainer.value;
@@ -114,24 +127,9 @@ watch(
 
 onMounted(() => {
   scrollToBottom();
-  // Seed meteor birth positions once, then re-randomize on every animation
-  // loop via animationiteration (each meteor's meteor-flight animation fires
-  // the event; the handler re-rolls --mx/--my for all of them so streaks
-  // appear from fresh spots each pass). animationiteration only fires while
-  // the starfield is actually animating (is-warping), so there's no cost in
-  // WAIT.
-  randomizeMeteors();
-  const field = warpFieldEl.value;
-  if (field) {
-    field.addEventListener('animationiteration', onWarpIter);
-  }
-});
-
-onBeforeUnmount(() => {
-  const field = warpFieldEl.value;
-  if (field) {
-    field.removeEventListener('animationiteration', onWarpIter);
-  }
+  // The meteor starfield's animationiteration listener + birth-position
+  // seeding now live inside MeteorField.vue (self-managed, gated on its
+  // `warping` prop), so there is nothing warp-related to wire up here.
 });
 </script>
 
@@ -139,7 +137,7 @@ onBeforeUnmount(() => {
   <div class="chat-log" ref="scrollContainer" @scroll="onScroll">
     <template
       v-for="(msg, index) in visibleMessages"
-      :key="msg.id ?? index"
+      :key="messageKey(msg, index)"
     >
       <CardItem v-if="msg.type === 'card' && msg.card" :card="msg.card" />
       <MessageItem v-else :message="msg" :on-quote="onQuote" />
@@ -178,83 +176,29 @@ onBeforeUnmount(() => {
         :title="state.isRunning ? '停止当前任务 (相当于按 ESC)' : '退出自动模式 (相当于按 ESC)'"
         @click="chatApi.sendInterrupt"
       >
-        <!-- A small "warp jump" scene clipped inside the button, split into
-             three visual layers so the effect is a clipped dynamic scene,
-             not a button-surface texture:
+        <!-- The "warp jump" scene is now split into two dedicated
+             components, both driven by the `warping` prop (= isRunning):
+               • <MeteorField> — the clipped meteor starfield. It pauses its
+                 CSS animations + detaches its animationiteration listener
+                 when not warping, so WAIT (idle auto) costs nothing.
+               • <RocketIcon> — the line-art rocket + exhaust. The
+                 high-energy (faster) exhaust variant is gated on warping.
+             The button itself stays the clip frame (overflow:hidden).
 
-               button (overflow:hidden, the clip frame)
-               ├── .warp-field  ← meteor starfield (independent moving .meteor
-               │                  elements, top-right → bottom-left, opposite
-               │                  the rocket's bottom-left → top-right flight)
-               ├── .rocket-stage ← the rocket SVG (slight bob when warping)
-               └── exhaust       ← three rocket-flame streams (always firing;
-                                  faster when warping)
-
-             isRunning toggles the starfield (on) + speeds up the exhaust;
-             it does NOT stop the exhaust. The rocket always fires. -->
-        <span ref="warpFieldEl" class="warp-field" aria-hidden="true">
-          <span class="meteor meteor-a"></span>
-          <span class="meteor meteor-b"></span>
-          <span class="meteor meteor-c"></span>
-          <span class="meteor meteor-d"></span>
-          <span class="meteor meteor-e"></span>
+             GEOMETRY NOTE: <MeteorField> is a child component, so its root
+             <span> is a flex item of this inline-flex button — unlike the
+             original bare <span class="warp-field"> which was a direct,
+             position:absolute child taken out of flex flow. To preserve
+             the original full-button width we wrap <MeteorField> in a
+             .warp-stage span that is positioned:absolute;inset:0 HERE (in
+             ChatLog's own scoped tree, where the rule is guaranteed to
+             apply), taking the component root out of flex flow. MeteorField
+             itself then fills this stage (position:static; inset:auto) —
+             see MeteorField.vue. -->
+        <span class="warp-stage" aria-hidden="true">
+          <MeteorField :warping="state.isRunning" />
         </span>
-        <svg class="interrupt-rocket rocket-stage" :class="{ 'rocket--active': state.isRunning }" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <!-- Whole scene rotated 45° for delivery. Drawn upright first:
-               1) U-shaped body, 2) window, 3) two fins, 4) exhaust = hot
-               outer plume + bright inner core + mach diamonds (shock rings)
-               that propagate downward from the nozzle — a real jet/spray. -->
-          <g class="rocket-frame" transform="rotate(45 12 12)">
-            <!-- 1. U-shaped rocket body with a rounded top (open at the bottom) -->
-            <path d="M8 14 V7 A4 4 0 0 1 16 7 V14 Z"/>
-            <!-- 2. Round window in the center, sized to the larger body -->
-            <circle cx="12" cy="9" r="1.8"/>
-            <!-- 3. Two fins on the sides, attached at the wider body corners -->
-            <path d="M8 14 L5 17 L8 17"/>
-            <path d="M16 14 L19 17 L16 17"/>
-            <!-- 4. Exhaust — drawn in the un-rotated frame (rotated as a whole
-                 by the parent rocket-frame rotate(45 12 12)). A hot outer plume
-                 + bright inner core + mach diamonds (shock rings) that
-                 propagate downward from the nozzle, giving a real jet/spray
-                 feel rather than伸缩线条. -->
-            <g class="rocket-exhaust">
-              <!-- Outer high-temperature plume -->
-              <path
-                class="exhaust-flame exhaust-flame--outer"
-                d="M8.8 14
-                   C9.0 16.0 9.4 18.2 12 21
-                   C14.6 18.2 15.0 16.0 15.2 14
-                   C14.3 15.0 13.5 15.5 12 15.5
-                   C10.5 15.5 9.7 15.0 8.8 14Z"
-              />
-              <!-- Inner bright core -->
-              <path
-                class="exhaust-flame exhaust-flame--core"
-                d="M10.2 14
-                   C10.5 15.7 10.8 17.0 12 18.8
-                   C13.2 17.0 13.5 15.7 13.8 14
-                   C13.2 14.7 12.7 15.0 12 15
-                   C11.3 15.0 10.8 14.7 10.2 14Z"
-              />
-              <!-- Mach diamonds / shock rings (diamonds read clearer than
-                   circles at this 22x22 size; match the line-art rocket). -->
-              <g class="mach-rings">
-                <path
-                  class="mach-ring mach-ring--1"
-                  d="M10.0 16.2 L12 17.0 L14.0 16.2 L12 15.5 Z"
-                />
-                <path
-                  class="mach-ring mach-ring--2"
-                  d="M10.4 18.2 L12 19.0 L13.6 18.2 L12 17.4 Z"
-                />
-                <path
-                  class="mach-ring mach-ring--3"
-                  d="M10.8 20.0 L12 20.6 L13.2 20.0 L12 19.4 Z"
-                />
-              </g>
-            </g>
-          </g>
-        </svg>
+        <RocketIcon :warping="state.isRunning" />
         停止
       </button>
     </div>
@@ -347,18 +291,19 @@ onBeforeUnmount(() => {
 }
 /* AUTO variant — sky-blue button framing a small "warp jump" scene clipped
    inside it. The button itself is just the clip frame (overflow:hidden); the
-   actual effect lives in two child layers:
-     • .warp-field — a meteor starfield (independent .meteor elements moving
-       top-right → bottom-left, opposite the rocket's flight direction)
-     • .rocket-stage — the rocket SVG, with a slight bob when warping
-   The exhaust streams (.rocket-flame) live inside the SVG and always fire;
-   isRunning only speeds them up and reveals the starfield. The button never
-   uses a background-image texture for the effect. */
+   actual effect now lives in two child components:
+     • <MeteorField> — the meteor starfield (moves top-right → bottom-left,
+       opposite the rocket's flight direction); pauses + detaches its
+       listener when not warping.
+     • <RocketIcon> — the rocket SVG + exhaust; high-energy exhaust is gated
+       on the `warping` prop.
+   The button never uses a background-image texture for the effect. */
 .interrupt-btn--auto {
   background-color: #38bde8;
   position: relative;
-  /* overflow:hidden turns the button into the clip frame for the warp-field
-     and any rocket bob, so meteors/streaks never bleed outside the pill. */
+  /* overflow:hidden turns the button into the clip frame for the
+     MeteorField and any rocket bob, so meteors/streaks never bleed outside
+     the pill. */
   overflow: hidden;
   transition: background-color 0.4s ease;
 }
@@ -368,270 +313,16 @@ onBeforeUnmount(() => {
 .interrupt-btn--auto.is-warping {
   background-color: #1e8ab5;
 }
-
-/* ── Warp field: the clipped meteor starfield ── */
-/* Absolutely fills the button interior; sits BEHIND the rocket. Meteors are
-   children that move independently. opacity is driven by is-warping so the
-   starfield only shows while the agent is actively processing. */
-.warp-field {
+/* The absolute-positioned stage that carries <MeteorField>. This lives in
+   ChatLog's own scoped tree (not MeteorField's) so the position:absolute;
+   inset:0 is guaranteed to apply to this direct child of the button —
+   reproducing the original geometry where .warp-field was a bare,
+   out-of-flow span filling the whole button. z-index:0 keeps it behind the
+   rocket (z-index:1, set in RocketIcon.vue). */
+.warp-stage {
   position: absolute;
   inset: 0;
-  overflow: hidden;
-  pointer-events: none;
   z-index: 0;
-  opacity: 0;
-  transition: opacity 0.25s ease;
-}
-.is-warping .warp-field {
-  opacity: 1;
-}
-
-/* Each meteor is a short streak flying top-right → bottom-left (the rocket
-   flies bottom-left → top-right, so the streaks rush past it in reverse).
-   The streak's bright HEAD leads at the bottom-left (the travel direction)
-   and the faint TAIL trails toward the top-right (behind). rotate(-45deg)
-   sets the streak's SHAPE orientation; translate(-X, +Y) sets the actual
-   MOTION direction. Different meteors get distinct starts, lengths, speeds,
-   and delays so the field reads as a star array, not a moving texture. */
-.meteor {
-  position: absolute;
-  display: block;
-  width: 14px;
-  height: 2.2px;
-  border-radius: 1.2px;
-  /* Head (bright) at the LEFT edge of the un-rotated bar → after rotate
-     (-45deg) it sits at the bottom-left = the direction of travel (the
-     meteor flies right-top → left-bottom). Tail (faint) at the RIGHT edge
-     → top-right, pointing back where the meteor came from (trailing).
-     rotate(-45deg) maps local-left → bottom-left, local-right → top-right. */
-  background: linear-gradient(
-    to right,
-    rgba(255, 255, 255, 0.76),
-    rgba(180, 230, 255, 0.12)
-  );
-  transform: translate(0, 0) rotate(-45deg);
-  opacity: 0;
-}
-/* Five meteors spread across the button interior so the starfield fills the
-   frame around the rocket rather than bunching on one side. Each enters near
-   the top/right edge (the "incoming" edge for top-right→bottom-left travel)
-   and exits toward the bottom-left. Starts are staggered across the width
-   and height; lengths/speeds/delays differ so they never move in lockstep. */
-/* Each meteor's BIRTH position is set via CSS custom props --mx (left) and
-   --my (top), expressed as % of the warp-field box. A JS animationiteration
-   listener (see script setup) re-rolls them every loop, so streaks appear
-   from fresh spots each pass — true randomness, not a fixed pattern. The
-   fixed per-meteor width/duration/delay still differ so they never move in
-   lockstep. */
-.meteor-a {
-  left: var(--mx, 50%);
-  top: var(--my, 10%);
-  width: 16px;
-  animation: meteor-flight 0.54s linear infinite;
-  animation-delay: 0s;
-}
-.meteor-b {
-  left: var(--mx, 60%);
-  top: var(--my, 20%);
-  width: 22px;
-  animation: meteor-flight 0.72s linear infinite;
-  animation-delay: 0.18s;
-}
-.meteor-c {
-  left: var(--mx, 45%);
-  top: var(--my, 5%);
-  width: 13px;
-  animation: meteor-flight 0.48s linear infinite;
-  animation-delay: 0.36s;
-}
-.meteor-d {
-  left: var(--mx, 70%);
-  top: var(--my, 50%);
-  width: 19px;
-  animation: meteor-flight 0.84s linear infinite;
-  animation-delay: 0.12s;
-}
-.meteor-e {
-  left: var(--mx, 80%);
-  top: var(--my, 35%);
-  width: 24px;
-  animation: meteor-flight 0.66s linear infinite;
-  animation-delay: 0.48s;
-  opacity: 0.44;
-}
-/* The motion: meteors start at a top-right offset (translate(45px, -45px))
-   and travel to the bottom-left (translate(-45px, 45px)) — opposite the
-   rocket's bottom-left→top-right flight. They fade in, hold, then fade out
-   as they exit. */
-@keyframes meteor-flight {
-  from {
-    transform: translate(45px, -45px) rotate(-45deg);
-    opacity: 0;
-  }
-
-  15% {
-    opacity: 1;
-  }
-
-  70% {
-    opacity: 1;
-  }
-
-  to {
-    transform: translate(-45px, 45px) rotate(-45deg);
-    opacity: 0;
-  }
-}
-
-/* ── Rocket SVG ── */
-/* z-index lifts the rocket above the warp-field. A gentle bob when warping
-   (small translateX + scale pulse) gives a light "jump" feel without large
-   lateral motion — the speed sensation is carried by the meteors + exhaust,
-   not by moving the rocket across the button. */
-.interrupt-rocket {
-  flex-shrink: 0;
-  display: inline-block;
-  position: relative;
-  z-index: 1;
-}
-.rocket-stage {
-  transition: transform 0.3s ease;
-}
-
-/* ── Rocket exhaust ── */
-/* A hot outer plume + bright inner core + mach diamonds (shock rings) that
-   propagate downward from the nozzle. The plume continuously disturbs
-   (scaleY/scaleX breathing) and the mach rings travel outward + fade,
-   giving a real jet/spray feel rather than伸缩线条. WAIT keeps a gentle
-   idle thrust; is-warping (RUNNING) boosts opacity + speeds every part. */
-.rocket-exhaust {
-  transform-origin: 12px 14px;
-  transform-box: view-box;
-  /* WAIT: gentle idle thrust */
-  opacity: 0.7;
-}
-/* RUNNING: high-energy propulsion */
-.interrupt-btn--auto.is-warping .rocket-exhaust {
-  opacity: 1;
-}
-
-/* Outer hot exhaust */
-.exhaust-flame--outer {
-  fill: currentColor;
-  opacity: 0.38;
-  transform-origin: 12px 14px;
-  animation: exhaust-flame 0.72s ease-in-out infinite;
-}
-/* Bright inner core */
-.exhaust-flame--core {
-  fill: currentColor;
-  opacity: 0.9;
-  transform-origin: 12px 14px;
-  animation: exhaust-core 0.48s ease-in-out infinite;
-}
-
-/* ── Mach diamonds / shock rings ── */
-.mach-rings {
-  transform-origin: 12px 14px;
-}
-.mach-ring {
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 0.65;
-  stroke-linejoin: round;
-  opacity: 0;
-  transform-origin: 12px 14px;
-}
-.mach-ring--1 {
-  stroke-width: 0.8;
-  animation: mach-ring 0.72s linear infinite;
-}
-.mach-ring--2 {
-  stroke-width: 0.6;
-  animation: mach-ring 0.72s linear infinite;
-  animation-delay: 0.18s;
-}
-.mach-ring--3 {
-  stroke-width: 0.45;
-  animation: mach-ring 0.72s linear infinite;
-  animation-delay: 0.36s;
-}
-
-/* ── Flame motion ── */
-@keyframes exhaust-flame {
-  0% {
-    transform: scaleY(0.65) scaleX(0.85);
-    opacity: 0.28;
-  }
-  35% {
-    transform: scaleY(1.05) scaleX(1);
-    opacity: 0.42;
-  }
-  70% {
-    transform: scaleY(1.25) scaleX(0.92);
-    opacity: 0.34;
-  }
-  100% {
-    transform: scaleY(0.7) scaleX(0.82);
-    opacity: 0.24;
-  }
-}
-@keyframes exhaust-core {
-  0% {
-    transform: scaleY(0.65);
-    opacity: 0.65;
-  }
-  25% {
-    transform: scaleY(1.1);
-    opacity: 1;
-  }
-  55% {
-    transform: scaleY(0.85);
-    opacity: 0.82;
-  }
-  100% {
-    transform: scaleY(0.6);
-    opacity: 0.6;
-  }
-}
-
-/* ── Shock diamond propagation ── */
-@keyframes mach-ring {
-  0% {
-    transform: translateY(0) scale(0.55);
-    opacity: 0;
-  }
-  15% {
-    opacity: 0.65;
-  }
-  45% {
-    transform: translateY(1.5px) scale(0.9);
-    opacity: 0.4;
-  }
-  75% {
-    transform: translateY(3px) scale(1.15);
-    opacity: 0.15;
-  }
-  100% {
-    transform: translateY(4.5px) scale(1.3);
-    opacity: 0;
-  }
-}
-
-/* ── RUNNING (is-warping): faster, higher-energy exhaust ── */
-.interrupt-btn--auto.is-warping .exhaust-flame--outer {
-  animation-duration: 0.48s;
-}
-.interrupt-btn--auto.is-warping .exhaust-flame--core {
-  animation-duration: 0.32s;
-}
-.interrupt-btn--auto.is-warping .mach-ring--1 {
-  animation-duration: 0.48s;
-}
-.interrupt-btn--auto.is-warping .mach-ring--2 {
-  animation-duration: 0.48s;
-}
-.interrupt-btn--auto.is-warping .mach-ring--3 {
-  animation-duration: 0.48s;
+  pointer-events: none;
 }
 </style>

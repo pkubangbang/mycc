@@ -38,13 +38,21 @@ function mockGuiProcess() {
 /**
  * Build the expected command string as the code does on Windows.
  * On Windows (isWin=true), the code constructs:
- *   [binary, ...args.map(a => a.includes(' ') ? `"${a}"` : a)].join(' ')
+ *   [binary, ...args.map(a => a.includes(' ') ? `"${a}"` : a)].join(' )
  */
 function winCmd(binary: string, ...args: string[]): string {
   return [binary, ...args.map(a => a.includes(' ') ? `"${a}"` : a)].join(' ');
 }
 
-describe('openEditor - GUI editors', () => {
+// These tests assert the Windows-specific spawn shape — spawn(cmdString, [],
+// { shell: true }) via winCmd() — which only holds on win32 (see the file
+// header NOTE). On non-Windows the code uses spawn(binary, args, options)
+// without shell:true, so every assertion here would fail. Skip the whole
+// suite off-Windows.
+const isWin = process.platform === 'win32';
+const describePlatform = isWin ? describe : describe.skip;
+
+describePlatform('openEditor - GUI editors', () => {
   let mockSpawn: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
@@ -237,7 +245,7 @@ describe('openEditor - GUI editors', () => {
   });
 });
 
-describe('openEditor - unknown editors (GUI)', () => {
+describePlatform('openEditor - unknown editors (GUI)', () => {
   let mockSpawn: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
@@ -302,7 +310,7 @@ describe('openEditor - unknown editors (GUI)', () => {
   });
 });
 
-describe('openEditor - default editor', () => {
+describePlatform('openEditor - default editor', () => {
   let mockSpawn: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
