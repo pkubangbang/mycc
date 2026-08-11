@@ -108,21 +108,33 @@ const SPECIAL_TURNING_PATTERNS: RegExp[] = [
 
 interface GenerationDirection {
   name: string;
-  prompt: string;
+  /** Build the direction prompt, injecting the anchor sentence to repeat. */
+  buildPrompt: (wordsBeforeTurn: string) => string;
 }
+
+/**
+ * Core instruction appended to every direction. The anchor sentence
+ * (wordsBeforeTurn) is the last sentence of the prefix — the LLM MUST
+ * start by repeating it verbatim, so the continuation dovetails with
+ * the prefix and no earlier prefix content is restated. The post-
+ * processing in stripAndValidate then removes the anchor, leaving only
+ * the genuinely new content.
+ */
+const ANCHOR_INSTRUCTION = (wordsBeforeTurn: string): string =>
+  `\n\nYou MUST start your continuation by repeating this exact sentence from the prefix verbatim:\n"""\n${wordsBeforeTurn}\n"""\nAfter that sentence, provide your new direction. Do not restate any other content from the prefix — the user has already seen it. Keep your continuation brief — at most 2-3 concise sentences after the anchor. Do not start a new complex reasoning chain; just provide a short, clear direction pivot.`;
 
 const GENERATION_DIRECTIONS: GenerationDirection[] = [
   {
     name: 'go forward',
-    prompt: `You are generating a continuation for a response that was cut off. Continue in a proactive, action-oriented direction. Focus on what to do next, taking decisive steps. Output ONLY the continuation text — no preamble, no sign-off, no tool calls. Start directly from where the prefix left off, maintaining the same tone and voice. Keep your continuation brief — at most 2-3 concise sentences. Do not start a new complex reasoning chain; just provide a short, clear direction pivot.`,
+    buildPrompt: (w) => `You are generating a continuation for a response that was cut off. Continue in a proactive, action-oriented direction. Focus on what to do next, taking decisive steps. Output ONLY the continuation text — no preamble, no sign-off, no tool calls. Start directly from where the prefix left off, maintaining the same tone and voice.${ANCHOR_INSTRUCTION(w)}`,
   },
   {
     name: 'go backward',
-    prompt: `You are generating a continuation for a response that was cut off. Reconsider the basic assumptions and be cautious. Question whether the current direction is correct, and suggest re-examining foundations before proceeding. Output ONLY the continuation text — no preamble, no sign-off, no tool calls. Start directly from where the prefix left off, maintaining the same tone and voice. Keep your continuation brief — at most 2-3 concise sentences. Do not start a new complex reasoning chain; just provide a short, clear direction pivot.`,
+    buildPrompt: (w) => `You are generating a continuation for a response that was cut off. Reconsider the basic assumptions and be cautious. Question whether the current direction is correct, and suggest re-examining foundations before proceeding. Output ONLY the continuation text — no preamble, no sign-off, no tool calls. Start directly from where the prefix left off, maintaining the same tone and voice.${ANCHOR_INSTRUCTION(w)}`,
   },
   {
     name: 'synthesize at a high level',
-    prompt: `You are generating a continuation for a response that was cut off. Step back and provide a higher-level abstraction. Synthesize the situation, identify the core question or principle at play, and reframe the problem in broader terms. Output ONLY the continuation text — no preamble, no sign-off, no tool calls. Start directly from where the prefix left off, maintaining the same tone and voice. Keep your continuation brief — at most 2-3 concise sentences. Do not start a new complex reasoning chain; just provide a short, clear direction pivot.`,
+    buildPrompt: (w) => `You are generating a continuation for a response that was cut off. Step back and provide a higher-level abstraction. Synthesize the situation, identify the core question or principle at play, and reframe the problem in broader terms. Output ONLY the continuation text — no preamble, no sign-off, no tool calls. Start directly from where the prefix left off, maintaining the same tone and voice.${ANCHOR_INSTRUCTION(w)}`,
   },
 ];
 
@@ -244,17 +256,70 @@ export function detectTurningWord(content: string): TurningWordMatch | null {
 // ============================================================================
 
 /**
+ * Validate that a continuation starts with the anchor sentence (wordsBeforeTurn)
+ * and strip the anchor, leaving only the new content.
+ *
+ * The generation prompt forces the LLM to begin by repeating wordsBeforeTurn
+ * verbatim. This function checks that requirement:
+ *  - If the continuation starts with wordsBeforeTurn → strip it, return the rest.
+ *  - If the continuation does NOT start with wordsBeforeTurn → return null
+ *    (validation failed — caller should retry, then give up).
+ *  - If wordsBeforeTurn is empty → return the continuation unchanged (no anchor
+ *    to enforce; e.g. prefix was empty or had no sentence boundary).
+ *  - If stripping leaves nothing → return null (continuation was ONLY the anchor).
+ *
+ * @param wordsBeforeTurn - The anchor sentence (last sentence of the prefix)
+ * @param continuation - The raw continuation text (already stripInternalMarkup'd)
+ * @returns The continuation with the anchor removed, or null if validation failed
+ */
+export function stripAndValidate(wordsBeforeTurn: string, continuation: string): string | null {
+  if (!wordsBeforeTurn) return continuation;
+  if (continuation.startsWith(wordsBeforeTurn)) {
+    const stripped = continuation.slice(wordsBeforeTurn.length).trim();
+    return stripped.length > 0 ? stripped : null;
+  }
+  return null;
+}
+
+/**
+ * Extract the last sentence of the prefix — the anchor that continuations
+ * must repeat verbatim before pivoting. Splits on English/Chinese sentence
+ * boundaries and newlines.
+ *
+ * Split strategy: English sentences end with .!? followed by whitespace,
+ * so the lookbehind requires the punctuation + \s+. Chinese sentences end
+ * with 。！？ with NO following whitespace, so those are split directly
+ * (keeping the punctuation with the preceding sentence). Newlines also
+ * act as boundaries.
+ */
+export function extractWordsBeforeTurn(prefix: string): string {
+  const sentences = prefix
+    .split(/(?<=[.!?])\s+|(?<=[。！？])|\n+/)
+    .map(s => s.trim())
+    .filter(s => s.length > 0);
+  return sentences.length > 0 ? sentences[sentences.length - 1] : '';
+}
+
+/**
  * Generate continuations from multiple directions using forkChat.
  * Runs all directions in parallel via Promise.allSettled.
  * Passes full tools + toolChoice: 'none' to preserve prompt cache
  * while constraining text-only output.
- * Returns array of continuation strings (or empty array if all failed).
+ *
+ * Each continuation MUST start with the anchor sentence (wordsBeforeTurn).
+ * stripAndValidate checks this and strips the anchor. If validation fails,
+ * that direction is retried once with the same prompt. If the retry also
+ * fails validation, the direction is skipped (not included in results).
+ *
+ * Returns array of continuation strings (anchor stripped), or empty array
+ * if all directions failed (including retries).
  */
 export async function generateContinuations(
   messages: Message[],
   tools: Tool[],
   prefix: string,
   signal?: AbortSignal,
+  wordsBeforeTurn: string = '',
 ): Promise<string[]> {
   // Inject the prefix into each direction prompt so the LLM sees what was
   // already said and continues from it rather than regenerating it from
@@ -262,32 +327,55 @@ export async function generateContinuations(
   // direction instruction, so it restates the prefix before pivoting —
   // producing duplicated content in the final assembled output.
   const prefixBlock = `A response was cut off at a turning word. The prefix (before the turning word, already written and shown to the user) is:\n\n"""\n${prefix}\n"""\n\n`;
+
+  /**
+   * Run one direction: forkChat → stripInternalMarkup → stripAndValidate.
+   * On validation failure, retry once. Returns the validated continuation
+   * (anchor stripped) or null if both attempts fail.
+   */
+  const runDirection = async (direction: GenerationDirection): Promise<{ name: string; text: string } | null> => {
+    const fullPrompt = prefixBlock + direction.buildPrompt(wordsBeforeTurn);
+
+    // First attempt
+    let raw = await forkChat(messages, tools, fullPrompt, signal, 'none', CROSSROAD_RETRY_CONFIG);
+    let cleanText = stripInternalMarkup((raw || '').trim());
+    let validated = stripAndValidate(wordsBeforeTurn, cleanText);
+    if (validated !== null) {
+      return { name: direction.name, text: validated };
+    }
+
+    // Retry once — validation failed (continuation didn't start with anchor)
+    agentIO.verbose('crossroad',
+      `Direction "${direction.name}" failed anchor validation, retrying...`);
+    await sleep(300);
+    raw = await forkChat(messages, tools, fullPrompt, signal, 'none', CROSSROAD_RETRY_CONFIG);
+    cleanText = stripInternalMarkup((raw || '').trim());
+    validated = stripAndValidate(wordsBeforeTurn, cleanText);
+    if (validated !== null) {
+      return { name: direction.name, text: validated };
+    }
+
+    // Both attempts failed — skip this direction
+    agentIO.verbose('crossroad',
+      `Direction "${direction.name}" failed anchor validation after retry, skipping.`);
+    return null;
+  };
+
   const results = await Promise.allSettled(
-    GENERATION_DIRECTIONS.map((direction) =>
-      forkChat(
-        messages,
-        tools,
-        prefixBlock + direction.prompt,
-        signal,
-        'none',
-        CROSSROAD_RETRY_CONFIG,
-      ).then((text) => ({ directionName: direction.name, text: text.trim() })),
-    ),
+    GENERATION_DIRECTIONS.map((direction) => runDirection(direction)),
   );
 
   const continuations: string[] = [];
   for (const result of results) {
-    if (result.status === 'fulfilled' && result.value.text) {
-      const cleanText = stripInternalMarkup(result.value.text);
-      agentIO.verbose(
-        'crossroad',
-        `Direction "${result.value.directionName}" produced: ${cleanText.slice(0, 100)}...`,
-      );
-      continuations.push(cleanText);
+    if (result.status === 'fulfilled' && result.value) {
+      agentIO.verbose('crossroad',
+        `Direction "${result.value.name}" produced: ${result.value.text.slice(0, 100)}...`);
+      continuations.push(result.value.text);
     } else if (result.status === 'rejected') {
       const msg = result.reason instanceof Error ? result.reason.message : String(result.reason);
       agentIO.verbose('crossroad', `Direction failed: ${msg}`);
     }
+    // else: fulfilled with null → already logged in runDirection
   }
 
   return continuations;
@@ -425,6 +513,11 @@ export async function handleCrossroad(
 
   // Step 2: Truncate at turning word
   const prefix = originalContent.slice(0, match.index).trim();
+  // Extract the last sentence of the prefix — the anchor that continuations
+  // must repeat verbatim. This enforces a clean dovetail: the continuation
+  // starts by echoing the prefix's final sentence, then pivots. After
+  // stripAndValidate removes the anchor, only genuinely new content remains.
+  const wordsBeforeTurn = extractWordsBeforeTurn(prefix);
 
   // Show spinner during processing
   startSpinner('LLM is at its crossroad...');
@@ -433,11 +526,11 @@ export async function handleCrossroad(
   let selectedIndex = -1;
   try {
     // Step 3: Generate continuations (with crossroad-level retry)
-    continuations = await generateContinuations(messages, tools, prefix, signal);
+    continuations = await generateContinuations(messages, tools, prefix, signal, wordsBeforeTurn);
     if (continuations.length === 0) {
       agentIO.verbose('crossroad', 'All continuations failed, retrying once...');
       await sleep(500);
-      continuations = await generateContinuations(messages, tools, prefix, signal);
+      continuations = await generateContinuations(messages, tools, prefix, signal, wordsBeforeTurn);
     }
     if (continuations.length === 0) {
       agentIO.verbose('crossroad', 'No continuations generated after retry, aborting crossroad');

@@ -384,7 +384,11 @@ export async function handleHook(
     //    not carried forward — crossroad's purpose is to have the LLM regenerate
     //    tool calls after resolving its direction.
     if (pass.crossroadContinuation) {
-      const finalContent = `${pass.assistantContent || ''}\n${pass.crossroadContinuation}`;
+      // Join with a space: the continuation is the genuinely new content that
+      // follows the prefix's last sentence (the anchor was stripped during
+      // generation). A space reads as natural prose continuation, whereas a
+      // newline would create a visual paragraph break mid-sentence.
+      const finalContent = `${pass.assistantContent || ''} ${pass.crossroadContinuation}`;
       const briefCallId = Math.random().toString(36).slice(2, 10);
       triologue.agent(finalContent, [{
         id: briefCallId,
@@ -395,7 +399,10 @@ export async function handleHook(
       }] as ToolCall[], pass.assistantReasoningContent);
       triologue.tool('brief', 'OK', briefCallId);
 
-      ctx.core.brief('info', 'crossroad', `Resolved: ${pass.assistantContent}\n${pass.crossroadContinuation}`);
+      // Show only the continuation (the new direction) — the prefix is
+      // already in pass.assistantContent and registered via triologue.agent()
+      // above. Repeating it in the brief duplicates content the user saw.
+      ctx.core.brief('info', 'crossroad', `Resolved: ${pass.crossroadContinuation}`);
 
       // Inject deferred hook messages so the LLM sees them in the next round.
       // Each deferred message carries its originating hook name for attribution.
