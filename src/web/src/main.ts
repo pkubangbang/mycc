@@ -114,7 +114,7 @@ async function fetchHistory(): Promise<void> {
   try {
     const res = await fetch('/history');
     if (!res.ok) return;
-    const data = await res.json() as { messages: ChatMessage[]; steeringBuffer?: string[] };
+    const data = await res.json() as { messages: ChatMessage[]; steeringBuffer?: string[]; isRunning?: boolean };
     // Empty-content prompts are "waiting for input" signals, not chat content.
     // Drop them from the visible record; non-empty prompts (e.g. 'Retry? [Y/n]')
     // remain visible. Also drop steer-echo/steer-flush entries — those belong
@@ -139,6 +139,11 @@ async function fetchHistory(): Promise<void> {
     // not consume). Survives a page refresh within the same serve session.
     const queued = data.steeringBuffer ?? [];
     state.steeringBuffer.splice(0, state.steeringBuffer.length, ...queued);
+    // Restore the agent running state from the server. The backend owns the
+    // single source of truth — we never set isRunning locally.
+    if (typeof data.isRunning === 'boolean') {
+      state.isRunning = data.isRunning;
+    }
   } catch {
     // Network failure — leave existing messages; WS reconnect will retry.
   }
@@ -234,16 +239,16 @@ function connectWebSocket(): void {
     } else if (msg.type === 'auto') {
       // Backend signaled the lead's autonomous (auto) mode state. Set by
       // agentIO.setAuto() on every flag flip, plus sent once on WS connect
-      // for late joiners. 'on' → the lead blocks in the WAIT state instead of
-      // prompting, so the chat input box stays ENABLED for steering even when
-      // neither isWaiting nor isRunning is true, and the 停止 button stays
-      // visible+spinning so the user can exit auto mode anytime. We do NOT
-      // touch isWaiting/isRunning here — auto mode is orthogonal to the
-      // waiting/working flags and the WAIT handler broadcasts neither.
+      // for late joiners.
       state.isAutoMode = msg.content === 'on';
+    } else if (msg.type === 'running') {
+      // Backend signaled agent processing state. Idle states (PROMPT/WAIT)
+      // → 'off'; processing states (COLLECT/LLM/HOOK/TOOL/STOP/SLASH) → 'on'.
+      // The backend is the single source of truth — we never set isRunning
+      // locally. Sent on every state transition + on WS connect for late joiners.
+      state.isRunning = msg.content === 'on';
     } else {
       state.isWaiting = false;
-      state.isRunning = true;
       // Any non-card, non-prompt message means the agent has moved past the
       // card (or there was none) — clear the pending-card flag so the chat
       // input box re-enables. This covers the normal flow where the card is
@@ -327,7 +332,6 @@ export const chatApi = {
     state.inputText = '';
     state.pendingFiles = [];
     state.isWaiting = false;
-    state.isRunning = true;
     state.showRetry = false;
     wsSend({ type: 'input', text: text || undefined, files: files && files.length > 0 ? files : undefined });
   },
@@ -373,14 +377,11 @@ export const chatApi = {
     state.showRetry = false;
     state.inputText = '';
     state.isWaiting = false;
-    state.isRunning = true;
     wsSend({ type: 'input', text: answer });
   },
   /** Respond to an interactive card. Called by CardItem.vue. */
   sendCardResponse(cardId: string, value: string): void {
     state.isWaiting = false;
-    state.isRunning = true;
-    // The card has been answered — re-enable the main chat input box.
     state.hasPendingCard = false;
     wsSend({ type: 'card-response', cardId, value });
   },

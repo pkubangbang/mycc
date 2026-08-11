@@ -32,6 +32,8 @@ import type { StateHandler } from './state-machine.js';
 import { UserInputProvider } from './input-provider.js';
 import { WebInputProvider } from '../serve/web-input-provider.js';
 import { getServeHub } from '../serve/serve-registry.js';
+import { loopEvents } from './loop-events.js';
+import type { StateTransitionPayload } from './loop-events.js';
 import { activateServe } from '../serve/activate.js';
 import { handlePrompt, setInitialQuery } from './states/prompt.js';
 import { handleSlash } from './states/slash.js';
@@ -531,6 +533,22 @@ export async function main(): Promise<void> {
       console.log(chalk.gray('Continuing in terminal mode.'));
     }
   }
+
+  // ── Wire running state to web UI ──
+  // The state machine emits state_transition on every state change. Idle
+  // states (PROMPT/WAIT) mean the agent is waiting for input/events;
+  // everything else means the agent is actively processing. The web UI
+  // mirrors this as `isRunning` so the rocket button's warp background
+  // appears only during actual work, not during auto-mode WAIT idle.
+  loopEvents.on('state_transition', (payload) => {
+    const { to } = payload as StateTransitionPayload;
+    const running = to !== 'prompt' && to !== 'wait';
+    try {
+      getServeHub().setAgentRunning(running);
+    } catch {
+      // serve not running — best-effort
+    }
+  });
 
   // ── Run state machine (REPL loop) with resilient retry ──
   // Only Ctrl+C (handled by Coordinator), empty input, 'exit'/'q'/'quit',

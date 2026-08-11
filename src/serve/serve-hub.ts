@@ -242,6 +242,14 @@ export class ServeHub {
 
   // ── Mode state ──
   private running = false;
+
+  // ── Agent running state (state-machine driven, distinct from serve hub running) ──
+  // The state machine broadcasts this via loopEvents.state_transition; the hub
+  // sends it to all WS clients and includes it in /history so the frontend's
+  // isRunning is always a mirror of the backend's actual processing state,
+  // regardless of auto/non-auto mode. Idle states (PROMPT/WAIT) → false;
+  // processing states (COLLECT/LLM/HOOK/TOOL/STOP/SLASH) → true.
+  private agentRunning = false;
   // Re-entrancy guard for stop() — concurrent calls (ESC + exit button +
   // disconnect timeout + serve_shutdown IPC) must not interleave teardown.
   private stopping = false;
@@ -377,13 +385,10 @@ export class ServeHub {
     // available (e.g. serve started before session init).
     this.expressApp.get('/history', (_req, res) => {
       const history = this.readHistory();
-      // Return both the message log and the current steering queue so a
-      // refreshing/reconnecting client can restore its buffer bar. We peek
-      // (getSteeringNotes) rather than drain — the notes stay queued for
-      // COLLECT/PROMPT to consume; only the UI copy is restored.
       const payload = JSON.stringify({
         messages: history,
         steeringBuffer: this.getSteeringNotes(),
+        isRunning: this.agentRunning,
       });
       res.status(200).set({ 'Content-Type': 'application/json' }).end(payload);
     });
@@ -455,6 +460,7 @@ export class ServeHub {
     try {
       // 1. Set flag first — isRunning() immediately returns false
       this.running = false;
+      this.agentRunning = false;
 
       // 1b. Notify Coordinator so stdin filtering stops synchronously.
       //     Any path that calls stop() (ESC, exit button, timeout, restart)
@@ -790,6 +796,30 @@ export class ServeHub {
   }
 
   /**
+   * Broadcast the agent's running state to all connected clients.
+   *
+   * Fired by the state-machine via loopEvents.state_transition listener
+   * (registered in agent-repl). Idle states (PROMPT/WAIT) → false;
+   * processing states (COLLECT/LLM/HOOK/TOOL/STOP/SLASH) → true.
+   * Also sent once on a new WS connection so a late-joining or reconnecting
+   * client picks up the current state.
+   *
+   * Not logged to messageLog (same pattern as broadcastAuto) — running state
+   * is a transient flag, not content. The /history endpoint includes it as a
+   * top-level field so page refreshes restore the correct state.
+   */
+  setAgentRunning(value: boolean): void {
+    if (value === this.agentRunning) return;
+    this.agentRunning = value;
+    const payload = JSON.stringify({ type: 'running', content: value ? 'on' : 'off' });
+    for (const ws of this.clients) {
+      if (ws.readyState === WebSocket.OPEN) {
+        try { ws.send(payload); } catch { /* ignore */ }
+      }
+    }
+  }
+
+  /**
    * Register a getter that returns the current auto-mode flag. Called once
    * from agentIO.initMain(); used on new WS connections to send the current
    * state to late-joining/reconnecting clients. Kept as a callback (not a
@@ -1024,6 +1054,11 @@ export class ServeHub {
         /* provider threw — no auto state to send */
       }
     }
+
+    // Send the current agent running state so a late-joining or reconnecting
+    // client always has the correct state, regardless of timing between the
+    // /history fetch and the WS connect.
+    try { ws.send(JSON.stringify({ type: 'running', content: this.agentRunning ? 'on' : 'off' })); } catch { /* ignore */ }
 
     ws.on('message', (data) => this.onWsMessage(ws, data.toString()));
     ws.on('close', () => this.onWsClose(ws));

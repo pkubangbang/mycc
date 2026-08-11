@@ -18,6 +18,7 @@
  * See the "@-prefix teammate label convention" section in MYCC.md.
  */
 import { ref, computed, watch, nextTick } from 'vue';
+import type { ComponentPublicInstance } from 'vue';
 import MarkdownIt from 'markdown-it';
 import type { ChatMessage } from '../types';
 
@@ -78,7 +79,7 @@ const groups = computed<TeammateGroup[]>(() => {
       count: msgs.length,
       currentTool: lastTool.get(name) ?? '—',
       messages: msgs,
-      done: last !== null && toolTag(last.label) === 'exit',
+      done: last !== null ? toolTag(last.label) === 'exit' : false,
     };
   });
 });
@@ -148,7 +149,7 @@ function renderMarkdown(m: ChatMessage): boolean {
 /** Bash tool's pre-exec info log: @name/bash with type 'log'. Render the
  *  command (content) as a monospace terminal block with a $ prompt. */
 function isBashCommand(m: ChatMessage): boolean {
-  return m.type === 'log' && m.label?.endsWith('/bash');
+  return m.type === 'log' && !!m.label && m.label.endsWith('/bash');
 }
 
 function rendered(m: ChatMessage): string {
@@ -177,8 +178,8 @@ function timeStr(m: ChatMessage): string {
 // a per-teammate ref map.
 const bodyRefs = new Map<string, HTMLElement | null>();
 
-function setBodyRef(name: string, el: Element | null): void {
-  bodyRefs.set(name, el as HTMLElement | null);
+function setBodyRef(name: string, el: Element | ComponentPublicInstance | null): void {
+  bodyRefs.set(name, (el instanceof HTMLElement) ? el : null);
 }
 
 function scrollToBottom(name: string): void {

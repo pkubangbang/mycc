@@ -99,7 +99,8 @@ function readFiles(rawFiles: FileList): void {
     // File whose .type is '' and .size is 0; reading it yields nothing useful.
     // webkitGetAsEntry (when available) gives a definitive answer — a dropped
     // directory is a FileSystemDirectoryEntry, not a File-backed entry.
-    const item = (rawFiles as FileList & { item?(i: number): File & { webkitGetAsEntry?: () => unknown } }).item?.(i);
+    type FileWithEntry = File & { webkitGetAsEntry?: () => unknown };
+    const item = (rawFiles as FileList & { item?(i: number): FileWithEntry }).item?.(i) as FileWithEntry | undefined;
     const entry = item?.webkitGetAsEntry?.();
     if ((entry && typeof entry === 'object' && (entry as { isDirectory?: boolean }).isDirectory)
         || (file.type === '' && file.size === 0)) {

@@ -14,7 +14,9 @@ export type MessageType =
   | 'steer-echo'
   | 'steer-flush'
   | 'file-upload'
-  | 'file-flush';
+  | 'file-flush'
+  | 'auto'
+  | 'running';
 
 export interface ChatMessage {
   type: MessageType;
