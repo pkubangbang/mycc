@@ -299,9 +299,16 @@ export class ParentContext implements AgentContext {
         messageType: 'core_img_describe',
         module: 'core',
         handler: async (_sender, payload, ctx, sendResponse) => {
-          const { image, prompt } = payload as { image: string; prompt?: string };
+          const { image, prompt, aborted } = payload as { image: string; prompt?: string; aborted?: boolean };
           try {
-            const result = await ctx.core.imgDescribe(image, prompt);
+            // A child can request an abort by passing aborted:true (from its
+            // imgDescribe signal). When set, create a pre-aborted signal so
+            // the engine's retryChat rejects immediately via StreamAbortedError
+            // rather than issuing a vision call that will be thrown away.
+            const signal: AbortSignal | undefined = aborted
+              ? AbortSignal.abort()
+              : undefined;
+            const result = await ctx.core.imgDescribe(image, prompt, signal);
             sendResponse('core_result', true, { description: result });
           } catch (err) {
             sendResponse('core_result', false, undefined, (err as Error).message);
@@ -312,13 +319,21 @@ export class ParentContext implements AgentContext {
         messageType: 'core_read_picture_cached',
         module: 'core',
         handler: async (_sender, payload, ctx, sendResponse) => {
-          const { imagePath, prompt, cacheToken } = payload as {
+          const { imagePath, prompt, cacheToken, aborted } = payload as {
             imagePath: string;
             prompt?: string;
             cacheToken?: string;
+            aborted?: boolean;
           };
           try {
-            const result = await ctx.core.readPictureCached(imagePath, prompt, cacheToken);
+            // A child can request an abort by passing aborted:true (from its
+            // readPictureCached signal). Pre-abort the signal so the engine's
+            // retryChat rejects via StreamAbortedError instead of issuing a
+            // vision call that will be thrown away.
+            const signal: AbortSignal | undefined = aborted
+              ? AbortSignal.abort()
+              : undefined;
+            const result = await ctx.core.readPictureCached(imagePath, prompt, cacheToken, signal);
             sendResponse('core_result', true, result);
           } catch (err) {
             sendResponse('core_result', false, undefined, (err as Error).message);

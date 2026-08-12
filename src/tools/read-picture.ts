@@ -64,7 +64,7 @@ export const readPictureTool: ToolDefinition = {
     required: ['path'],
   },
   scope: ['main', 'child'],
-  handler: async (ctx: AgentContext, args: Record<string, unknown>): Promise<string> => {
+  handler: async (ctx: AgentContext, args: Record<string, unknown>, signal?: AbortSignal): Promise<string> => {
     const imagePath = args.path as string;
     const prompt = args.prompt as string | undefined;
     const cacheToken = args.cache as string | undefined;
@@ -87,8 +87,10 @@ export const readPictureTool: ToolDefinition = {
         return `Warning: File extension "${ext}" may not be a supported image format. Supported formats: ${validExtensions.join(', ')}`;
       }
 
-      // Delegate to core.readPictureCached (handles caching, vision call, M token)
-      const result = await ctx.core.readPictureCached(safe, prompt, cacheToken);
+      // Delegate to core.readPictureCached (handles caching, vision call, M token).
+      // Thread the handler's signal so ESC can interrupt the vision call on a
+      // cache miss / new focus (the latent twin of the screen tool bug).
+      const result = await ctx.core.readPictureCached(safe, prompt, cacheToken, signal);
 
       return formatResult(imagePath, result.pairs, result.cacheToken);
     } catch (error: unknown) {

@@ -344,7 +344,7 @@ export const screenTool: ToolDefinition = {
   },
   scope: ['main', 'child'],
 
-  handler: async (ctx: AgentContext, args: Record<string, unknown>): Promise<string> => {
+  handler: async (ctx: AgentContext, args: Record<string, unknown>, signal?: AbortSignal): Promise<string> => {
     const customPrompt = (args.prompt as string) || DEFAULT_PROMPT;
 
     // Monitor selection (1-based; 1 = primary). Coerce to a positive
@@ -394,8 +394,11 @@ export const screenTool: ToolDefinition = {
 
       ctx.core.brief('info', 'screen', `Captured via ${capture.method}`);
 
-      // Describe via imgDescribe (handles resizing)
-      const description = await ctx.core.imgDescribe(screenshotPath, customPrompt);
+      // Describe via imgDescribe (handles resizing). Thread the handler's
+      // signal so ESC / the escAware abortController can interrupt a slow
+      // cloud vision model — retryChat honors it via the POST-race +
+      // collectStream watchdog (previously this hung indefinitely).
+      const description = await ctx.core.imgDescribe(screenshotPath, customPrompt, signal);
       return `## Screen Content\n\n${description}`;
     } catch (error: unknown) {
       const err = error as Error;

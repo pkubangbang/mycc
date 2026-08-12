@@ -364,9 +364,12 @@ export interface CoreModule {
    * Describe an image using the vision model
    * @param image - Base64-encoded image string or file path
    * @param prompt - Optional custom prompt for the vision model
+   * @param signal - Optional AbortSignal for ESC handling, threaded into the
+   *   engine's imgDescribe (which routes through retryChat so a slow cloud
+   *   vision model can neither hang the call nor escape ESC interrupt).
    * @returns Description of the image
    */
-  imgDescribe(image: string, prompt?: string): Promise<string>;
+  imgDescribe(image: string, prompt?: string, signal?: AbortSignal): Promise<string>;
   /**
    * Read an image with multi-focus caching. Returns accumulated [focus, description]
    * pairs and a cache token (M). Pass the token back to add a new focus.
@@ -380,7 +383,7 @@ export interface CoreModule {
    *                     Without it, a cache hit returns cached pairs with no vision call.
    * @returns PictureResult with accumulated pairs and the current cache token
    */
-  readPictureCached(imagePath: string, prompt?: string, cacheToken?: string): Promise<PictureResult>;
+  readPictureCached(imagePath: string, prompt?: string, cacheToken?: string, signal?: AbortSignal): Promise<PictureResult>;
   /**
    * Request grant for sensitive operations (write_file, edit_file, bash)
    * Parent's Core checks mode and worktree ownership internally.

@@ -193,9 +193,12 @@ export class Core extends BaseCore implements CoreModule {
    * Describe an image using the vision model
    * @param image - Base64-encoded image string or file path
    * @param prompt - Optional custom prompt for the vision model
+   * @param signal - Optional AbortSignal for ESC handling, threaded into the
+   *   engine's imgDescribe (which routes through retryChat). Without it a slow
+   *   cloud vision model hangs the call and ESC cannot interrupt it.
    * @returns Description of the image
    */
-  async imgDescribe(image: string, prompt?: string): Promise<string> {
+  async imgDescribe(image: string, prompt?: string, signal?: AbortSignal): Promise<string> {
     // Check if vision is enabled first
     if (!isVisionEnabled()) {
       throw new Error('Vision features are disabled. Set OLLAMA_VISION_MODEL to a vision model (e.g., gemma4:31b-cloud) to enable screen and read_picture tools.');
@@ -227,7 +230,7 @@ export class Core extends BaseCore implements CoreModule {
     base64Image = resizedBase64;
 
     try {
-      const description = await imgDescribe(base64Image, customPrompt);
+      const description = await imgDescribe(base64Image, customPrompt, signal);
       this.brief('info', 'img_describe', `Image description complete (${description.length} chars)`);
       return description;
     } catch (err) {
@@ -390,6 +393,7 @@ export class Core extends BaseCore implements CoreModule {
     imagePath: string,
     prompt?: string,
     cacheToken?: string,
+    signal?: AbortSignal,
   ): Promise<PictureResult> {
     const focus = (prompt || 'general description').trim();
     const stat = fs.statSync(imagePath);
@@ -402,7 +406,7 @@ export class Core extends BaseCore implements CoreModule {
     // Cache miss: vision call, write fresh entry
     if (!cacheHit) {
       this.brief('info', 'read_picture_cached', `cache miss: ${imagePath}`);
-      const description = await this.imgDescribe(imagePath, prompt);
+      const description = await this.imgDescribe(imagePath, prompt, signal);
       const newEntry: PictureCacheEntry = { statKey, pairs: [{ focus, description }] };
       this.writeCacheFile(cacheFile, newEntry);
       const token = this.computeCacheToken(imagePath, [focus]);
@@ -434,7 +438,7 @@ export class Core extends BaseCore implements CoreModule {
 
     // New focus: vision call, add pair, return all pairs + new token
     this.brief('info', 'read_picture_cached', `cache merge (new focus): ${imagePath}`);
-    const description = await this.imgDescribe(imagePath, prompt);
+    const description = await this.imgDescribe(imagePath, prompt, signal);
     const updatedEntry: PictureCacheEntry = { statKey, pairs: [...entry!.pairs, { focus, description }] };
     this.writeCacheFile(cacheFile, updatedEntry);
     const newToken = this.computeCacheToken(imagePath, [...currentFocuses, focus]);

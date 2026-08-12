@@ -72,12 +72,18 @@ export class ChildCore extends BaseCore implements CoreModule {
    * Uses IPC to call parent's core.imgDescribe()
    * @param image - Base64-encoded image string or file path
    * @param prompt - Optional custom prompt for the vision model
+   * @param signal - Optional AbortSignal for ESC handling. Forwarded to the
+   *   parent over IPC as an aborted flag (the parent's handler does not yet
+   *   consume a signal across the IPC boundary, but the field is plumbed so a
+   *   future change can honor it; today the parent's escAware wrapper still
+   *   governs abort for the lead process).
    * @returns Description of the image
    */
-  async imgDescribe(image: string, prompt?: string): Promise<string> {
+  async imgDescribe(image: string, prompt?: string, signal?: AbortSignal): Promise<string> {
     const response = await ipc.sendRequest<{ description: string }>('core_img_describe', {
       image,
       prompt,
+      aborted: signal?.aborted ?? false,
     });
     return response.description;
   }
@@ -90,11 +96,12 @@ export class ChildCore extends BaseCore implements CoreModule {
    * @param cacheToken - Optional M token from a previous read
    * @returns PictureResult with accumulated pairs and the current cache token
    */
-  async readPictureCached(imagePath: string, prompt?: string, cacheToken?: string): Promise<PictureResult> {
+  async readPictureCached(imagePath: string, prompt?: string, cacheToken?: string, signal?: AbortSignal): Promise<PictureResult> {
     const response = await ipc.sendRequest<PictureResult>('core_read_picture_cached', {
       imagePath,
       prompt,
       cacheToken,
+      aborted: signal?.aborted ?? false,
     });
     return response;
   }

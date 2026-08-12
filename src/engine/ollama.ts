@@ -369,21 +369,44 @@ export async function webFetch(url: string): Promise<WebFetchResponse> {
 }
 
 /**
- * Image description via Ollama vision model.
+ * Image description via the Ollama vision model.
+ *
+ * This used to be a bare non-streaming `ollama.chat()` with no signal, no
+ * timeout, and no retry — which meant a slow cloud vision model could hang
+ * the call indefinitely and ESC could not interrupt it (the ollama library
+ * creates its OWN internal AbortController for the fetch POST that our
+ * signal cannot reach; documented in the retryChat code comment). The
+ * `screen` tool would therefore "time out" with no way to recover.
+ *
+ * The fix: route through `retryChat` (stream:true) so imgDescribe inherits
+ * the same robustness the main chat loop enjoys — the per-attempt POST-race
+ * timeout (escalateFirstTokenTimeout), the `collectStream` watchdog
+ * (first-token + response timeouts), ESC-abort via the threaded signal, and
+ * retry-with-backoff on transient errors. This also fixes the latent
+ * read_picture cache-miss path, which calls core.imgDescribe → here.
+ *
  * @param image - Base64-encoded image string
  * @param prompt - Custom prompt for the vision model
+ * @param signal - Optional AbortSignal for ESC handling (threaded from the
+ *   tool handler's signal via core.imgDescribe)
+ * @returns The vision model's text description of the image
  */
-export async function imgDescribe(image: string, prompt?: string): Promise<string> {
-  const response = await ollama.chat({
-    model: getVisionModel(),
-    messages: [
-      {
-        role: 'user',
-        content: prompt || 'Describe this image in detail.',
-        images: [image],
-      },
-    ],
-  });
+export async function imgDescribe(image: string, prompt?: string, signal?: AbortSignal): Promise<string> {
+  // noSpinner: the tool handler / core wrapper already briefs progress; a
+  // second spinner would visually conflict with the parent "Thinking" one.
+  const response = await retryChat(
+    {
+      model: getVisionModel(),
+      messages: [
+        {
+          role: 'user',
+          content: prompt || 'Describe this image in detail.',
+          images: [image],
+        },
+      ],
+    },
+    { signal, noSpinner: true },
+  );
 
   return response.message?.content || 'No description returned from vision model.';
 }
