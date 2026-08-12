@@ -476,6 +476,15 @@ export class Triologue {
     this.tokenCount = estimateTokensForMessages(this.messages);
     this.pendingToolCalls.clear();
     this.pendingToolCallOrder = [];
+    // Compaction replaces the entire conversation with a 2-message summary,
+    // invalidating any active wrap-up turn: the context the wrap-up was part
+    // of no longer exists. Without this reset, a stale wrapUpMark (still
+    // pointing at the pre-compact length, e.g. 50) would let a later
+    // rollbackWrapUp() do `this.messages.length = 50` on the now-2-element
+    // array, stretching it with undefined sparse holes that crash the next
+    // raw reader (minifyMessages in runAutoCompact, or checkpoint iteration)
+    // with "Cannot read properties of undefined (reading 'role')".
+    this.wrapUpMark = -1;
   }
 
   /**
@@ -565,7 +574,18 @@ export class Triologue {
    */
   rollbackWrapUp(): void {
     if (this.wrapUpMark === -1) return; // nothing to roll back
-    this.messages.length = this.wrapUpMark;
+    // Guard: never STRETCH the array. Normally wrapUpMark <= messages.length
+    // (it was set to the length before the wrap-up messages were appended).
+    // But if the array was replaced/shortened between beginWrapUp and this
+    // call (e.g. compact() swapped in a 2-message summary), wrapUpMark could
+    // exceed the current length — assigning it would fill the gap with
+    // undefined sparse holes. Truncate only; if the mark is stale and past
+    // the end, the array is already shorter, so clearing it fully (length=0
+    // would lose the compacted summary) is wrong — instead, leave the array
+    // as-is (the wrap-up messages are already gone) and just reset the mark.
+    if (this.wrapUpMark < this.messages.length) {
+      this.messages.length = this.wrapUpMark;
+    }
     this.tokenCount = estimateTokensForMessages(this.messages);
     this.pendingToolCalls.clear();
     this.pendingToolCallOrder = [];

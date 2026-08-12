@@ -571,6 +571,48 @@ export async function main(): Promise<void> {
       console.error();
       console.error(chalk.red(`Error: ${errorMessage}`));
 
+      // ── Enhanced diagnostics for the recurring "reading 'role'" crash ──
+      // The error "Cannot read properties of undefined (reading 'role')"
+      // surfaces intermittently after /compact under both Ollama and DeepSeek,
+      // but its call site was never identified (the retry loop swallows the
+      // stack trace). When the message matches, dump the full stack trace
+      // (pinpoints the exact file:line) plus a structural scan of the current
+      // triologue messages array — flagging any entry that is undefined,
+      // null, non-object, or missing a `role` field — so the real crash site
+      // can be identified from one reproduction instead of code-guessing.
+      const isRoleReadCrash = /reading ['"]role['"]/.test(errorMessage);
+      if (isRoleReadCrash) {
+        if (err instanceof Error && err.stack) {
+          console.error(chalk.gray('── stack trace ──'));
+          console.error(chalk.gray(err.stack));
+          console.error(chalk.gray('────────────────'));
+        }
+        try {
+          const raw = (triologue as unknown as {
+            messages?: unknown[];
+            getMessagesRaw?: () => unknown[];
+          });
+          const arr = raw.messages ?? [];
+          const issues: string[] = [];
+          for (let i = 0; i < arr.length; i++) {
+            const m = (arr as unknown[])[i];
+            if (m === undefined) issues.push(`[${i}] undefined`);
+            else if (m === null) issues.push(`[${i}] null`);
+            else if (typeof m !== 'object') issues.push(`[${i}] non-object: ${typeof m}`);
+            else if (!(m as { role?: unknown }).role) issues.push(`[${i}] object missing .role: ${JSON.stringify(Object.keys(m as object))}`);
+          }
+          console.error(chalk.gray(`messages array: length=${arr.length}`));
+          if (issues.length > 0) {
+            console.error(chalk.yellow(`malformed entries (${issues.length}):`));
+            for (const it of issues) console.error(chalk.yellow(`  ${it}`));
+          } else {
+            console.error(chalk.gray('no malformed entries found in this.messages (crash may be in a derived/copied array)'));
+          }
+        } catch (diagErr) {
+          console.error(chalk.gray(`(diagnostic scan failed: ${diagErr instanceof Error ? diagErr.message : String(diagErr)})`));
+        }
+      }
+
       if (errorType === 'auth') {
         console.error(chalk.yellow('Check OLLAMA_API_KEY in ~/.mycc-store/.env file.'));
       } else if (errorType === 'model') {

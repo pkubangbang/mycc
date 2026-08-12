@@ -1,15 +1,23 @@
 ﻿/**
  * compact-undefined-role.test.ts
  *
- * Regression test for the DeepSeek-specific /compact crash:
+ * Regression test for the /compact "reading 'role'" crash:
  *   "Error: Cannot read properties of undefined (reading 'role')"
  *
  * Root cause: after /compact (or any path that mutates `this.messages` via
  * length-manipulation / wrap-up rollback / TP auto-fixer injection / session
  * restoration), an `undefined`, `null`, or non-object entry can slip into the
- * messages array. The DeepSeek provider's `normalizeMessage` reads
- * `extended.role` directly and crashes. The Ollama native binding never reads
- * `.role` from JS, so this class of bug is DeepSeek-only.
+ * messages array. Any raw reader of the messages array (a provider's
+ * `normalizeMessage`, `minifyMessages` in `runAutoCompact`, checkpoint
+ * iteration) that reads `msg.role` directly then crashes. This class of bug
+ * is NOT provider-specific — it reproduces under BOTH Ollama and DeepSeek;
+ * the original "Ollama native binding never reads .role from JS" assumption
+ * was wrong (minifyMessages reads .role from JS regardless of provider).
+ *
+ * The companion regression test `compact-wrapup-stale-mark.test.ts` covers
+ * the specific trigger chain (ESC → /compact → stale wrapUpMark → sparse
+ * holes) that was the actual production root cause. This file guards the
+ * filtered-accessor chokepoints that were hardened as defense-in-depth.
  *
  * The "unrecoverable" symptom comes from agent-repl.ts's retry loop: the same
  * undefined message persists across retries, so every retry crashes identically.
@@ -77,7 +85,7 @@ function internals(t: Triologue): TriologueInternals {
   return t as unknown as TriologueInternals;
 }
 
-describe('Triologue — /compact undefined-role regression (DeepSeek)', () => {
+describe('Triologue — /compact undefined-role regression (defense-in-depth)', () => {
   let t: Triologue;
 
   beforeEach(() => {
