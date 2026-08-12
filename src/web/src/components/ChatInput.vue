@@ -144,6 +144,30 @@ function onAutoClick(): void {
   chatApi.sendAuto();
 }
 
+// "压缩上下文" (compact context) button — sits to the LEFT of the
+// lightning-bolt button. Clicking sends the "/compact" slash command via
+// the normal input path (chatApi.sendInput), so it reuses the entire
+// existing slash-command pipeline (no new WS type, no backend changes).
+//
+// The button is only enabled when ALL of these hold:
+//   - not in auto mode (state.isAutoMode === false) — the lightning bolt
+//     being on disables compact, per the user's requirement;
+//   - at the PROMPT stage (state.isWaiting === true) — a fresh prompt is
+//     pending and the loop is idle, so the slash command can run;
+//   - no interactive card is pending (state.hasPendingCard === false);
+//   - connected to the server (connectionStatus === 'connected').
+const canCompact = computed(() =>
+  !props.state.isAutoMode &&
+  props.state.isWaiting &&
+  !props.state.hasPendingCard &&
+  props.state.connectionStatus === 'connected',
+);
+
+function onCompactClick(): void {
+  if (!canCompact.value) return;
+  chatApi.sendInput('/compact');
+}
+
 function send(): void {
   const value = text.value;
   const files = localFiles.value.length > 0 ? [...localFiles.value] : undefined;
@@ -352,6 +376,22 @@ const inputAreaStyle = computed(() =>
             <line x1="12" y1="3" x2="12" y2="15" />
           </svg>
         </button>
+        <!-- "压缩上下文" button — sits to the LEFT of the lightning-bolt
+             button. Sends the "/compact" slash command via the normal input
+             path. Only enabled in normal mode at the PROMPT stage; disabled
+             when auto mode is on or the loop is busy. -->
+        <button
+          class="compact-btn"
+          :disabled="!canCompact"
+          title="压缩上下文"
+          @click="onCompactClick"
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M3 5 Q6 12 3 19" />
+            <path d="M21 5 Q18 12 21 19" />
+            <path d="M9 3 L14 3 L16 5 L15 21 L8 21 Z" />
+          </svg>
+        </button>
         <!-- Lightning bolt: one-way "enter auto mode" button. Sits to the
              LEFT of the attach button. If already in auto mode, surface a
              transient "已经是自动模式了" toast locally (no round-trip);
@@ -455,9 +495,9 @@ const inputAreaStyle = computed(() =>
   resize: none;
   border: 1px solid var(--border-input);
   border-radius: 6px;
-  /* Right padding clears the attach + lightning-bolt button toolbar at the
-     bottom-right of the textarea (two 28px buttons + gaps). */
-  padding: 8px 66px 8px 12px;
+  /* Right padding clears the attach + lightning-bolt + compact buttons at
+     the bottom-right of the textarea (three 28px buttons + gaps). */
+  padding: 8px 98px 8px 12px;
   font-size: 14px;
   font-family: inherit;
   line-height: 1.5;
@@ -497,6 +537,35 @@ const inputAreaStyle = computed(() =>
   background: color-mix(in srgb, var(--accent) 10%, var(--bg-input-field));
 }
 .attach-btn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+/* "压缩上下文" button — sits to the LEFT of the lightning-bolt button
+   (right:66px vs the lightning bolt's right:34px). Same size/shape as the
+   attach and auto buttons so the trio reads as a toolbar. Disabled state
+   dims the icon (opacity 0.3) and shows a not-allowed cursor. */
+.compact-btn {
+  position: absolute;
+  right: 66px;
+  bottom: 2px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-input-field);
+  color: var(--text-muted);
+  border: none;
+  border-radius: 4px;
+  padding: 4px;
+  width: 28px;
+  height: 28px;
+  cursor: pointer;
+  transition: color 0.15s, background 0.15s;
+}
+.compact-btn:hover:not(:disabled) {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, var(--bg-input-field));
+}
+.compact-btn:disabled {
   opacity: 0.3;
   cursor: not-allowed;
 }
