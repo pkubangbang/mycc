@@ -77,7 +77,7 @@ describe('AutoState', () => {
   describe('autofly', () => {
     // NOTE: The autofly engagement decision no longer lives in the singleton.
     // recordLlmSuccess() only increments the streak; the PROMPT state handler
-    // checks (--debug-autofly && streak > threshold) and calls setAuto(true).
+    // checks (--debug-autofly && streak >= threshold) and calls setAuto(true).
     // These tests verify the singleton's counter/threshold behavior only;
     // the PROMPT-level engagement is tested in the prompt state tests.
 
@@ -153,9 +153,9 @@ describe('AutoState', () => {
       expect(s.getStreak()).toBe(0);
       s.recordLlmSuccess();  // streak 1
       s.recordLlmSuccess();  // streak 2
-      s.recordLlmSuccess();  // streak 3 — PROMPT would compare streak(3) > threshold(3) → false
+      s.recordLlmSuccess();  // streak 3 — PROMPT would compare streak(3) >= threshold(3) → engage
       expect(s.getStreak()).toBe(3);
-      expect(s.getAuto()).toBe(false);
+      expect(s.getAuto()).toBe(false); // engagement is PROMPT's job, not the singleton's
     });
   });
 

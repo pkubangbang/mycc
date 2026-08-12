@@ -166,21 +166,29 @@ export async function handlePrompt(
     return AgentState.WAIT;
   }
   // ── Autofly engagement gate (shared streak gate for both triggers) ──
-  // Both --debug-autofly and an active peer channel share the SAME streak >
-  // threshold gate. The streak IS the breathing room: ESC flips auto off and
-  // resets streak to 0 (auto-state.ts setAuto(false)), so neither trigger
-  // re-engages auto until N consecutive LLM successes accumulate (streak >
-  // threshold, default 3). That window is when the user intervenes — e.g.
+  // Both --debug-autofly and an active peer channel share the SAME streak >=
+  // threshold gate. The streak counts LLM stages WITHIN THE CURRENT TURN
+  // (autofly "momentum"): it starts at 0 at PROMPT entry (resetStreak below)
+  // and climbs 1 per LLM stage (llm.ts recordLlmSuccess). So this gate, which
+  // runs at the NEXT PROMPT entry (end of the just-finished turn), sees the
+  // count of LLM stages that turn: a turn with >= threshold (default 3) LLM
+  // stages engages auto mode; a turn with fewer does not. The PROMPT-entry
+  // reset makes the count strictly per-turn, so prior turns never carry over.
+  //
+  // ESC flips auto off and resets streak to 0 (auto-state.ts setAuto(false)),
+  // so neither trigger re-engages auto until a turn again accumulates >=
+  // threshold LLM stages. That window is when the user intervenes — e.g.
   // saying "try again" after a by-design git_commit rejection. Removing the
   // streak gate from either trigger would re-engage auto immediately after
   // ESC and reject the commit again with no breathing room.
   //
-  // The || short-circuits hasActiveChannel() away when isDebugAutofly() is
-  // true, so the channel path's side effects (listChannels readdirSync + a
-  // writeChannelFile write to persist a discovered peerSessionId) never run
-  // on a --debug-autofly-only session. The && short-circuits the whole
-  // expression when streak <= threshold, so the gate is cheap on the common
-  // post-ESC path.
+  // The comparison is `>=` (not `>`), so with the default threshold 3 the
+  // streak needs to reach exactly 3 to engage. The || short-circuits
+  // hasActiveChannel() away when isDebugAutofly() is true, so the channel
+  // path's side effects (listChannels readdirSync + a writeChannelFile write
+  // to persist a discovered peerSessionId) never run on a --debug-autofly-only
+  // session. The && short-circuits the whole expression when streak <
+  // threshold, so the gate is cheap on the common post-ESC path.
   //
   // This gate covers channels joined BEFORE the loop reached PROMPT. A channel
   // joining MID-PROMPT (after this gate fell through but while ask()/
@@ -189,10 +197,24 @@ export async function handlePrompt(
   // WAIT. Layer B engages auto unconditionally because a channel DID just join
   // (the event itself is the signal); the next PROMPT then re-applies this
   // streak gate.
-  if ((isDebugAutofly() || ctx.peer.hasActiveChannel()) && autoState.getStreak() > autoState.getAutoflyThreshold()) {
+  if ((isDebugAutofly() || ctx.peer.hasActiveChannel()) && autoState.getStreak() >= autoState.getAutoflyThreshold()) {
     autoState.setAuto(true); // engage auto mode so subsequent loops take path 1
+    console.log(chalk.gray('auto mode is on.'));
     return AgentState.WAIT;
   }
+
+  // ── Per-turn streak reset ──
+  // The autofly streak counts LLM stages WITHIN THE CURRENT TURN. Reset it to
+  // 0 at the start of every turn (every PROMPT entry that falls through the
+  // auto/autofly gates above) so prior turns never carry over. This subsumes
+  // the old fresh-input resetStreak() (which only covered the Priority-3
+  // input-provider path and missed the slash-query and initial-query paths):
+  // resetting here covers all turn-start paths uniformly. The two early
+  // returns above (auto already on; autofly gate engaged) intentionally skip
+  // this reset — in the auto-on case the streak is irrelevant (the loop is
+  // already autonomous), and in the gate-engaged case setAuto(true) just
+  // happened, which itself resets the streak.
+  autoState.resetStreak();
 
   // Reset brief nudge when entering PROMPT state (start of new turn)
   turn.nextBriefNudge = 5;
@@ -280,12 +302,12 @@ export async function handlePrompt(
     }
 
     // Fresh user input just arrived (normal query, slash typed at the prompt,
-    // or a bang command) — reset the autofly streak. A user-directed turn
-    // means the prior autonomous streak no longer counts toward autofly.
-    // The restored pendingSlashQuery / initialQuery paths above are NOT fresh
-    // user input (they're /load or session-restore state) and skip this block,
-    // so they don't reset. The autonomous null-skip path returns early above.
-    autoState.resetStreak();
+    // or a bang command). The autofly streak was already reset to 0 at the top
+    // of this PROMPT entry (the per-turn reset, which covers all turn-start
+    // paths uniformly), so no reset is needed here. The restored
+    // pendingSlashQuery / initialQuery paths above and this input-provider
+    // path all share that single reset. The autonomous null-skip path returns
+    // early above (also after the per-turn reset).
   }
 
   // Bang commands: execute via hand_over tool

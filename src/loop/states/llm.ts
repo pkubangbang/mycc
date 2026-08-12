@@ -277,9 +277,15 @@ export async function handleLlm(
       // the single success cutpoint — the LLM produced usable output (content
       // and/or tool calls) and is about to exit to HOOK. The empty-response
       // `continue` retry path and the ESC/aborted `return PROMPT` paths above
-      // do NOT count: only a clean, completed stage advances the streak. When
-      // the streak reaches the autofly threshold (default 3), autoState engages
-      // auto mode automatically and resets the streak for the next cycle.
+      // do NOT count: only a clean, completed stage advances the streak.
+      //
+      // The streak counts LLM stages WITHIN THE CURRENT TURN (autofly
+      // "momentum"): it starts at 0 at PROMPT entry (resetStreak in prompt.ts)
+      // and climbs 1 per LLM stage. The autofly gate at the NEXT PROMPT entry
+      // evaluates streak >= threshold — so a turn with 3+ LLM stages engages
+      // auto mode (→ WAIT + "auto mode is on" note), while a turn with fewer
+      // does not. The PROMPT-entry reset makes the count per-turn, so prior
+      // turns never carry over.
       autoState.recordLlmSuccess();
 
       return AgentState.HOOK;
