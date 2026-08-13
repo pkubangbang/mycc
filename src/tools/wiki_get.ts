@@ -6,8 +6,8 @@ import type { ToolDefinition, GetOptions } from '../types.js';
 
 export const wikiGetTool: ToolDefinition = {
   name: 'wiki_get',
-  description: `Search knowledge base for relevant documents. Returns documents sorted by similarity to query.
-Only when you are informed of the domain list should you use this tool to search.`,
+  description: `Search knowledge base for relevant wiki. Returns documents sorted by similarity to query.
+The domain param is unknown at start, but you will find it during chat.`,
   input_schema: {
     type: 'object',
     properties: {
@@ -39,28 +39,39 @@ Only when you are informed of the domain list should you use this tool to search
     if (args.topK !== undefined) options.topK = args.topK as number;
     if (args.threshold !== undefined) options.threshold = args.threshold as number;
 
-    const results = await ctx.wiki.get(query, options);
+    ctx.core.brief('info', 'wiki_get', `Searching: "${query}" in domain "${options.domain ?? 'all'}"`);
 
-    if (results.length === 0) {
-      return 'No documents found matching your query.';
-    }
+    try {
+      const results = await ctx.wiki.get(query, options);
 
-    const lines: string[] = [];
-    lines.push(`Found ${results.length} document(s):\n`);
-
-    for (let i = 0; i < results.length; i++) {
-      const result = results[i];
-      lines.push(`[${i + 1}] ${result.document.title}`);
-      lines.push(`    Domain: ${result.document.domain}`);
-      lines.push(`    Similarity: ${(result.similarity * 100).toFixed(1)}%`);
-      lines.push(`    Hash: ${result.hash}`);
-      lines.push(`    Content: ${result.document.content}`);
-      if (result.document.references.length > 0) {
-        lines.push(`    References: ${result.document.references.join(', ')}`);
+      if (results.length === 0) {
+        ctx.core.brief('info', 'wiki_get', 'No documents found');
+        return 'No documents found matching your query.';
       }
-      lines.push('');
-    }
 
-    return lines.join('\n');
+      ctx.core.brief('info', 'wiki_get', `Found ${results.length} document${results.length === 1 ? '' : 's'}`);
+
+      const lines: string[] = [];
+      lines.push(`Found ${results.length} document(s):\n`);
+
+      for (let i = 0; i < results.length; i++) {
+        const result = results[i];
+        lines.push(`[${i + 1}] ${result.document.title}`);
+        lines.push(`    Domain: ${result.document.domain}`);
+        lines.push(`    Similarity: ${(result.similarity * 100).toFixed(1)}%`);
+        lines.push(`    Hash: ${result.hash}`);
+        lines.push(`    Content: ${result.document.content}`);
+        if (result.document.references.length > 0) {
+          lines.push(`    References: ${result.document.references.join(', ')}`);
+        }
+        lines.push('');
+      }
+
+      return lines.join('\n');
+    } catch (error: unknown) {
+      const err = error as Error;
+      ctx.core.brief('error', 'wiki_get', `Failed: ${err.message}`);
+      return `Error: ${err.message}`;
+    }
   },
 };
