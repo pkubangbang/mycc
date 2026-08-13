@@ -34,6 +34,9 @@ function createMockContextWithSkills(
     loadSkills: vi.fn().mockResolvedValue(undefined),
     listSkills: vi.fn().mockReturnValue(skills),
     getSkill: vi.fn().mockImplementation((name: string) => skills.find(s => s.name === name)),
+    listAllTools: vi.fn().mockReturnValue([]),
+    compileCondition: vi.fn().mockResolvedValue({}),
+    replaceCondition: vi.fn().mockResolvedValue({ success: true }),
   };
 
   // Mock wiki with configurable return values
@@ -43,6 +46,15 @@ function createMockContextWithSkills(
     prepare: vi.fn().mockResolvedValue({ accepted: true, hash: 'mock-hash' }),
     put: vi.fn().mockResolvedValue(undefined),
     delete: vi.fn().mockResolvedValue(undefined),
+    getByDomain: vi.fn().mockResolvedValue([]),
+    batchPut: vi.fn().mockResolvedValue([]),
+    getWAL: vi.fn().mockResolvedValue([]),
+    parseWAL: vi.fn().mockReturnValue([]),
+    formatWAL: vi.fn().mockReturnValue(''),
+    appendWAL: vi.fn().mockResolvedValue(undefined),
+    rebuild: vi.fn().mockResolvedValue({ success: true, documentsProcessed: 0, errors: [] }),
+    listDomains: vi.fn().mockResolvedValue([]),
+    getDomain: vi.fn().mockResolvedValue(undefined),
   };
 
   const ctx = createMockContext(workdir);
@@ -154,6 +166,9 @@ describe('skillSearchTool - Basics', () => {
       loadSkills: vi.fn().mockResolvedValue(undefined),
       listSkills: vi.fn().mockReturnValue(skills),
       getSkill: vi.fn().mockImplementation((name: string) => skills.find(s => s.name === name)),
+      listAllTools: vi.fn().mockReturnValue([]),
+      compileCondition: vi.fn().mockResolvedValue({}),
+      replaceCondition: vi.fn().mockResolvedValue({ success: true }),
     };
     const wikiModule: WikiModule = {
       get: vi.fn().mockRejectedValue(new Error('Embedding model not available')),
@@ -161,6 +176,15 @@ describe('skillSearchTool - Basics', () => {
       prepare: vi.fn().mockResolvedValue({ accepted: true, hash: 'mock-hash' }),
       put: vi.fn().mockResolvedValue(undefined),
       delete: vi.fn().mockResolvedValue(undefined),
+      getByDomain: vi.fn().mockResolvedValue([]),
+      batchPut: vi.fn().mockResolvedValue([]),
+      getWAL: vi.fn().mockResolvedValue([]),
+      parseWAL: vi.fn().mockReturnValue([]),
+      formatWAL: vi.fn().mockReturnValue(''),
+      appendWAL: vi.fn().mockResolvedValue(undefined),
+      rebuild: vi.fn().mockResolvedValue({ success: true, documentsProcessed: 0, errors: [] }),
+      listDomains: vi.fn().mockResolvedValue([]),
+      getDomain: vi.fn().mockResolvedValue(undefined),
     };
     const ctx2 = createMockContext('/tmp/test');
     ctx2.skill = skillModule;

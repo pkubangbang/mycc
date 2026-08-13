@@ -34,6 +34,17 @@ function createMockCore(): CoreModule {
     imgDescribe: vi.fn(),
     readPictureCached: vi.fn(),
     requestGrant: vi.fn(async () => ({ approved: true })),
+    requestExternalPathAccess: vi.fn(async (_tool, path) => ({ approved: true, resolvedPath: path })),
+    addExternalAutoGrant: vi.fn(),
+    getMode: vi.fn(() => 'normal' as const),
+    getAuto: vi.fn(() => false),
+    setAuto: vi.fn(),
+    getMindmap: vi.fn(() => null),
+    setMindmap: vi.fn(),
+    getConfusionIndex: vi.fn(() => 0),
+    increaseConfusionIndex: vi.fn(),
+    resetConfusionIndex: vi.fn(),
+    escAware: (vi.fn() as unknown) as CoreModule['escAware'],
   };
 }
 
@@ -45,9 +56,9 @@ function createMockContext(): AgentContext {
     skill: {} as AgentContext['skill'],
     issue: {} as AgentContext['issue'],
     bg: {} as AgentContext['bg'],
-    wt: {} as AgentContext['wt'],
     team: {} as AgentContext['team'],
     wiki: {} as AgentContext['wiki'],
+    peer: {} as AgentContext['peer'],
   };
 }
 

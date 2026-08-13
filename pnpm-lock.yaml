@@ -63,6 +63,9 @@ importers:
       '@eslint/js':
         specifier: ^10.0.1
         version: 10.0.1(eslint@10.8.1)
+      '@types/chai':
+        specifier: ^5.2.3
+        version: 5.2.3
       '@types/express':
         specifier: ^5.0.0
         version: 5.0.6

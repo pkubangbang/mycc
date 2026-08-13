@@ -84,7 +84,7 @@ describe('ESC wrap-up lifecycle (esc-wrap-up.ts state management)', () => {
       done: true,
     } as never);
 
-    startWrapUp(triologue, [{ function: { name: 'bash' } }]);
+    startWrapUp(triologue, [{ type: 'function', function: { name: 'bash' } }]);
 
     expect(triologue.beginWrapUp).toHaveBeenCalledTimes(1);
     const state = getWrapUpState();

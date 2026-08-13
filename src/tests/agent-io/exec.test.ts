@@ -13,7 +13,8 @@ vi.mock('../../utils/line-editor.js', () => {
 });
 
 // Import after mocking
-import { agentIO, type ExecOptions } from '../../loop/agent-io.js';
+import { agentIO } from '../../loop/agent-io.js';
+import type { ExecOptions } from '../../loop/agent-exec.js';
 
 describe('agent-io', () => {
   beforeEach(() => {

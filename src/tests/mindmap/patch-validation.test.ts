@@ -174,7 +174,7 @@ describe('get_node (Fix B — normalized-id matching)', () => {
     };
     expect(applyPatchAction(mindmap, add)).toBe(true);
 
-    const expectedId = `${parent!.id}/${safeNodeId(add.title)}`;
+    const expectedId = `${parent!.id}/${safeNodeId(add.title!)}`;
     expect(get_node(mindmap, expectedId)).not.toBeNull();
     expect(get_node(mindmap, expectedId)!.title).toBe('中文顿号 Multi-line Edit');
   });

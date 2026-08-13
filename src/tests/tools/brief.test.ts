@@ -187,7 +187,7 @@ describe('briefTool', () => {
 
     it('should have message property in input schema as string', () => {
       const properties = briefTool.input_schema.properties;
-      expect(properties.message).toBeDefined();
+      expect(properties?.message).toBeDefined();
       if (properties && typeof properties === 'object' && 'message' in properties) {
         const message = properties.message;
         if (message && typeof message === 'object' && 'type' in message) {
@@ -198,7 +198,7 @@ describe('briefTool', () => {
 
     it('should have confidence property in input schema as number', () => {
       const properties = briefTool.input_schema.properties;
-      expect(properties.confidence).toBeDefined();
+      expect(properties?.confidence).toBeDefined();
       if (properties && typeof properties === 'object' && 'confidence' in properties) {
         const confidence = properties.confidence;
         if (confidence && typeof confidence === 'object' && 'type' in confidence) {

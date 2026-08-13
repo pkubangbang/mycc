@@ -348,11 +348,11 @@ async function withTimeout<T>(
  * @param pathId      - Path identifier for the error message
  */
 export function assertTransitionCount(
-  trace: Array<{ type: string }>,
+  trace: Array<{ type?: string; event?: string }>,
   expectedMax: number,
   pathId: string,
 ): void {
-  const transitionCount = trace.filter((e) => e.type === 'state_transition').length;
+  const transitionCount = trace.filter((e) => (e.type ?? e.event) === 'state_transition').length;
   if (transitionCount > expectedMax) {
     throw new Error(
       `Hang detected in path ${pathId}: ${transitionCount} state transitions ` +

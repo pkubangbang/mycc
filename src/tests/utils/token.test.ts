@@ -38,7 +38,7 @@ describe('estimateTokens', () => {
       tool_calls: [{
         id: 'call_123',
         function: { name: 'read_file', arguments: { path: 'test.ts' } },
-      }],
+      } as any],
     });
     expect(tokens).toBeGreaterThan(0);
   });
@@ -87,7 +87,7 @@ describe('estimateTokensForMessages', () => {
         tool_calls: [{
           id: 'call_1',
           function: { name: 'read_file', arguments: { path: 'test.ts' } },
-        }],
+        } as any],
       },
       { role: 'tool', content: 'file content', tool_name: 'read_file', tool_call_id: 'call_1' },
     ]);

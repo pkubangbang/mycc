@@ -22,7 +22,7 @@ export function createMockCore(overrides: Partial<CoreModule> = {}): CoreModule 
     getName: vi.fn(() => 'test-agent'),
     brief: vi.fn(),
     verbose: vi.fn(),
-    question: vi.fn(async () => 'test response'),
+    question: vi.fn(async () => ({ question: '', answer: 'test response', reason: '', source: 'user' as const })),
     webSearch: vi.fn(async () => []),
     webFetch: vi.fn(async () => ({ title: '', url: '', content: '', links: [] })),
     imgDescribe: vi.fn(async () => 'image description'),
@@ -56,6 +56,8 @@ export function createMockTodo(overrides: Partial<TodoModule> = {}): TodoModule 
     closeCheckpointTodo: vi.fn(),
     clear: vi.fn(),
     getItems: vi.fn(() => []),
+    pinTodo: vi.fn(() => null),
+    getReactivationCandidates: vi.fn(() => []),
     ...overrides,
   };
 }
@@ -83,6 +85,8 @@ export function createMockSkill(overrides: Partial<SkillModule> = {}): SkillModu
     listSkills: vi.fn(() => []),
     getSkill: vi.fn(() => undefined),
     listAllTools: vi.fn(() => []),
+    compileCondition: vi.fn(async () => ({})),
+    replaceCondition: vi.fn(async () => ({ success: true })),
     ...overrides,
   };
 }
@@ -102,6 +106,8 @@ export function createMockIssue(overrides: Partial<IssueModule> = {}): IssueModu
     addComment: vi.fn(async () => {}),
     createBlockage: vi.fn(async () => {}),
     removeBlockage: vi.fn(async () => {}),
+    publishIssue: vi.fn(async () => true),
+    clearAll: vi.fn(),
     ...overrides,
   };
 }
@@ -148,6 +154,8 @@ export function createMockWiki(overrides: Partial<WikiModule> = {}): WikiModule 
     prepare: vi.fn(async () => ({ accepted: true, hash: 'test-hash' })),
     put: vi.fn(async () => ({ success: true, hash: 'test-hash' })),
     get: vi.fn(async () => []),
+    getByDomain: vi.fn(async () => []),
+    batchPut: vi.fn(async () => []),
     delete: vi.fn(async () => true),
     getWAL: vi.fn(async () => []),
     parseWAL: vi.fn(() => []),

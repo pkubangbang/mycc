@@ -140,6 +140,7 @@ describe('AgentStateMachine', () => {
       [AgentState.HOOK]: vi.fn(),
       [AgentState.TOOL]: vi.fn(),
       [AgentState.STOP]: vi.fn(),
+      [AgentState.WAIT]: vi.fn(),
     };
 
     const machine = new AgentStateMachine(
@@ -167,6 +168,7 @@ describe('AgentStateMachine', () => {
       [AgentState.HOOK]: vi.fn(async () => AgentState.TOOL),
       [AgentState.TOOL]: vi.fn(async () => AgentState.STOP),
       [AgentState.STOP]: vi.fn(async () => AgentState.PROMPT),
+      [AgentState.WAIT]: vi.fn(),
     };
 
     const machine = new AgentStateMachine(
@@ -196,6 +198,7 @@ describe('AgentStateMachine', () => {
       [AgentState.HOOK]: vi.fn(),
       [AgentState.TOOL]: vi.fn(),
       [AgentState.STOP]: vi.fn(),
+      [AgentState.WAIT]: vi.fn(),
     };
 
     const machine = new AgentStateMachine(
@@ -226,6 +229,7 @@ describe('AgentStateMachine', () => {
       [AgentState.HOOK]: vi.fn(async () => AgentState.TOOL),
       [AgentState.TOOL]: vi.fn(async () => AgentState.STOP),
       [AgentState.STOP]: vi.fn(async () => AgentState.PROMPT),
+      [AgentState.WAIT]: vi.fn(),
     };
 
     const machine = new AgentStateMachine(
@@ -265,6 +269,7 @@ describe('AgentStateMachine', () => {
       [AgentState.HOOK]: vi.fn(),
       [AgentState.TOOL]: vi.fn(),
       [AgentState.STOP]: vi.fn(),
+      [AgentState.WAIT]: vi.fn(),
     };
 
     const machine = new AgentStateMachine(
@@ -296,6 +301,7 @@ describe('AgentStateMachine', () => {
       [AgentState.HOOK]: vi.fn(),
       [AgentState.TOOL]: vi.fn(),
       [AgentState.STOP]: vi.fn(),
+      [AgentState.WAIT]: vi.fn(),
     };
 
     const machine = new AgentStateMachine(
@@ -329,6 +335,7 @@ describe('AgentStateMachine', () => {
       [AgentState.HOOK]: vi.fn(),
       [AgentState.TOOL]: vi.fn(),
       [AgentState.STOP]: vi.fn(),
+      [AgentState.WAIT]: vi.fn(),
     };
 
     const machine = new AgentStateMachine(
@@ -364,6 +371,7 @@ describe('AgentStateMachine', () => {
       [AgentState.HOOK]: vi.fn(),
       [AgentState.TOOL]: vi.fn(),
       [AgentState.STOP]: vi.fn(),
+      [AgentState.WAIT]: vi.fn(),
     };
 
     const machine = new AgentStateMachine(

@@ -82,7 +82,6 @@ function createMockTriologue(): Triologue {
     findCheckpointById: vi.fn(() => null),
     getMessagesFrom: vi.fn(() => []),
     getWiki: vi.fn(() => undefined),
-    getMessagesRaw: vi.fn(() => []),
   } as unknown as Triologue;
 }
 

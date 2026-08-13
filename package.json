@@ -18,8 +18,9 @@
   },
   "scripts": {
     "start": "tsx src/index.ts",
-    "test": "vitest run && npm run typecheck && npm run typecheck:web",
+    "test": "vitest run && npm run typecheck && npm run typecheck:test && npm run typecheck:web",
     "typecheck": "tsc --noEmit",
+    "typecheck:test": "tsc --noEmit -p tsconfig.test.json",
     "typecheck:web": "vue-tsc --noEmit -p src/web/tsconfig.json",
     "lint": "eslint src/",
     "format": "prettier --write \"src/**/*.ts\"",
@@ -51,6 +52,7 @@
     "@types/minimist": "^1.2.5",
     "@types/node": "^24.13.0",
     "@types/ws": "^8.5.13",
+    "@types/chai": "^5.2.3",
     "@typescript-eslint/eslint-plugin": "^8.66.0",
     "@typescript-eslint/parser": "^8.66.0",
     "chai": "^6.2.2",

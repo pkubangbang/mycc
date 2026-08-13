@@ -10,14 +10,14 @@
  */
 import { vi } from 'vitest';
 import { createMockContext, type MockContextOptions } from '../test-utils/mock-context.js';
-import type { MachineEnv, TurnVars, PassData } from '../../../loop/state-machine.js';
-import type { ToolCall, ToolScope } from '../../../types.js';
-import type { ConditionRegistry } from '../../../hook/conditions.js';
-import type { Sequence } from '../../../hook/sequence.js';
-import type { HookExecutor, AugmentedToolCall, ProcessToolCallsResult } from '../../../hook/hook-executor.js';
-import type { InputProvider } from '../../../loop/input-provider.js';
-import type { RequestEmbeddingTracker } from '../../../loop/request-embedding.js';
-import type { Triologue } from '../../../loop/triologue.js';
+import type { MachineEnv, TurnVars, PassData } from '../../loop/state-machine.js';
+import type { ToolCall, ToolScope } from '../../types.js';
+import type { ConditionRegistry } from '../../hook/conditions.js';
+import type { Sequence } from '../../hook/sequence.js';
+import type { HookExecutor, AugmentedToolCall, ProcessToolCallsResult } from '../../hook/hook-executor.js';
+import type { InputProvider } from '../../loop/input-provider.js';
+import type { RequestEmbeddingTracker } from '../../loop/request-embedding.js';
+import type { Triologue } from '../../loop/triologue.js';
 
 // ============================================================================
 // Data factories
@@ -68,7 +68,12 @@ export function createMockChatResponse(options: {
   done_reason: string;
   eval_count: number;
   model: string;
-  created_at: string;
+  created_at: Date;
+  total_duration: number;
+  load_duration: number;
+  prompt_eval_count: number;
+  prompt_eval_duration: number;
+  eval_duration: number;
 } {
   return {
     message: {
@@ -83,7 +88,12 @@ export function createMockChatResponse(options: {
     done_reason: 'stop',
     eval_count: 100,
     model: 'test-model',
-    created_at: new Date().toISOString(),
+    created_at: new Date(),
+    total_duration: 0,
+    load_duration: 0,
+    prompt_eval_count: 0,
+    prompt_eval_duration: 0,
+    eval_duration: 0,
   };
 }
 

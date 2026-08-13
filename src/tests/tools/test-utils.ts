@@ -79,7 +79,6 @@ export function createMockContext(workdir: string): AgentContext {
       remove: vi.fn(),
       awaitExit: vi.fn(),
     } as never,
-    wt: {} as never,
     team: {} as never,
     wiki: {} as never,
     peer: {

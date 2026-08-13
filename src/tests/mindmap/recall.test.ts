@@ -69,7 +69,7 @@ function get_node(mindmap: Mindmap, id: string): Node | null {
     if (segment.length === 0) return null; // Empty segment (from double slash)
     
     // Build expected child id
-    const childId = current.id === '/' 
+    const childId: string = current.id === '/' 
       ? `/${segment}` 
       : `${current.id}/${segment}`;
     

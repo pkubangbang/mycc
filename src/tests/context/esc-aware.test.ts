@@ -21,9 +21,9 @@ describe('escAware', () => {
       skill: {} as any,
       issue: {} as any,
       bg: {} as any,
-      wt: {} as any,
       team: {} as any,
       wiki: {} as any,
+      peer: {} as any,
     };
 
     // Initialize agentIO for main process
@@ -39,8 +39,8 @@ describe('escAware', () => {
     const result = await ctx.core.escAware(
       async (abortController) => {
         // Verify abort controller is provided
-        expect(abortController).toBeDefined();
-        expect(abortController.signal).toBeDefined();
+        expect(abortController).to.not.be.undefined;
+        expect(abortController.signal).to.not.be.undefined;
         // Simulate a slow operation that completes
         await new Promise(resolve => setTimeout(resolve, 100));
         return 'operation-result';
@@ -100,7 +100,7 @@ describe('escAware', () => {
     expect(result).to.equal('cleanup-result');
     
     // AbortController should have been provided
-    expect(abortControllerReceived).toBeDefined();
+    expect(abortControllerReceived).to.not.be.undefined;
     
     // Operation should NOT have completed (we returned early)
     expect(operationCompleted).to.be.false;

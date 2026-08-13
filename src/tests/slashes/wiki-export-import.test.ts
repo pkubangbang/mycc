@@ -160,7 +160,7 @@ async function runCommand(args: string[], wiki: WikiModule): Promise<string[]> {
   const ctx: SlashCommandContext = {
     query: `/wiki ${args.join(' ')}`,
     args: ['/wiki', ...args],
-    ctx: { core: {} as any, todo: {} as any, mail: {} as any, skill: {} as any, issue: {} as any, bg: {} as any, team: {} as any, wiki },
+    ctx: { core: {} as any, todo: {} as any, mail: {} as any, skill: {} as any, issue: {} as any, bg: {} as any, team: {} as any, wiki, peer: {} as any },
     triologue: {},
     sessionFilePath: '',
   };

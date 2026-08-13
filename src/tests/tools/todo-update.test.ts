@@ -18,6 +18,10 @@ function createMockTodoContext(): { ctx: AgentContext; mockTodo: TodoModule } {
       { id: 1, name: 'Task A', done: false, hash: 'abc12345' },
       { id: 2, name: 'Task B', done: true, hash: 'def67890' },
     ]),
+    findCheckpointTodo: vi.fn(() => null),
+    closeCheckpointTodo: vi.fn(),
+    pinTodo: vi.fn(() => null),
+    getReactivationCandidates: vi.fn(() => []),
   };
   const ctx = createMockContext('/tmp/test');
   ctx.todo = mockTodo;

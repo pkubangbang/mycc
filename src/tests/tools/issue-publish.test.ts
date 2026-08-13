@@ -23,6 +23,7 @@ function createMockIssueModule(): IssueModule {
     addComment: vi.fn().mockResolvedValue(undefined),
     createBlockage: vi.fn().mockResolvedValue(undefined),
     removeBlockage: vi.fn().mockResolvedValue(undefined),
+    clearAll: vi.fn(),
   };
 }
 
@@ -40,6 +41,17 @@ function createMockContext(issueModule: IssueModule): AgentContext {
     imgDescribe: vi.fn(),
     readPictureCached: vi.fn(),
     requestGrant: vi.fn(async () => ({ approved: true })),
+    requestExternalPathAccess: vi.fn(async (_tool, path) => ({ approved: true, resolvedPath: path })),
+    addExternalAutoGrant: vi.fn(),
+    getMode: vi.fn(() => 'normal' as const),
+    getAuto: vi.fn(() => false),
+    setAuto: vi.fn(),
+    getMindmap: vi.fn(() => null),
+    setMindmap: vi.fn(),
+    getConfusionIndex: vi.fn(() => 0),
+    increaseConfusionIndex: vi.fn(),
+    resetConfusionIndex: vi.fn(),
+    escAware: (vi.fn() as unknown) as CoreModule['escAware'],
   };
 
   return {
@@ -51,6 +63,7 @@ function createMockContext(issueModule: IssueModule): AgentContext {
     bg: {} as never,
     team: {} as never,
     wiki: {} as never,
+    peer: {} as never,
   };
 }
 
