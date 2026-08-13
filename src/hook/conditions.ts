@@ -529,6 +529,8 @@ Available condition functions (use seq.X syntax):
 - seq.sinceEdit(): Events after last file edit
 - seq.isPlanMode(): Check if agent is in plan mode (prevents hooks during planning)
 
+IMPORTANT: Use == (not ===) for equality comparisons in conditions. All seq functions return primitives (numbers, booleans), so == is sufficient — never use ===.
+
 Available call metadata (use call.metadata.X syntax for current call):
 - call.metadata.filePath: Target file path (for file operations)
 - call.metadata.newLoc: Lines of code in the new content
