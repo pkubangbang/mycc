@@ -329,6 +329,30 @@ export async function handlePrompt(
     return AgentState.SLASH;
   }
 
+  // Quick-return ESC: Handle wrap-up timing logic
+  // The wrap-up turn is already in the triologue (from beginWrapUp + finishWrapUp).
+  // We just need to commit or rollback based on timing.
+  //
+  // IMPORTANT: this MUST run BEFORE the steering/file-drain block below.
+  // During the interrupted run the file uploads / steering notes were drained
+  // into the triologue as a [REMINDER] note that got COMBINED into the
+  // [WRAP_UP] user message (triologue.note() merges into the last user message).
+  // If the wrap-up then rolls back (e.g. the wrap-up LLM returned empty or did
+  // not complete before this PROMPT), rollbackWrapUp() truncates the whole
+  // merged message — silently dropping the uploaded-file reminder the model
+  // needed to see. Resolving the wrap-up FIRST means any reminder injected
+  // afterwards lands past the rollback point and survives.
+  if (triologue.hasActiveWrapUp()) {
+    const action = evaluateWrapUp();
+    if (action === 'commit') {
+      triologue.commitWrapUp();  // keep user_wrap + agent_wrap permanently
+    } else {
+      triologue.rollbackWrapUp();  // remove user_wrap (and agent_wrap if present)
+    }
+  }
+
+  clearWrapUp();
+
   // Steering synthesis (webui-only): if serve is running and the user queued
   // steering notes during the previous (now-interrupted) run, synthesize them
   // with the fresh query via forkChat. This preserves informational value
@@ -378,20 +402,6 @@ export async function handlePrompt(
       agentIO.verbose('serve', `Saved ${staleFiles.length} stale uploaded file(s) at PROMPT`);
     }
   }
-
-  // Quick-return ESC: Handle wrap-up timing logic
-  // The wrap-up turn is already in the triologue (from beginWrapUp + finishWrapUp).
-  // We just need to commit or rollback based on timing.
-  if (triologue.hasActiveWrapUp()) {
-    const action = evaluateWrapUp();
-    if (action === 'commit') {
-      triologue.commitWrapUp();  // keep user_wrap + agent_wrap permanently
-    } else {
-      triologue.rollbackWrapUp();  // remove user_wrap (and agent_wrap if present)
-    }
-  }
-
-  clearWrapUp();
 
   // Add user message to triologue
   triologue.user(query);
