@@ -30,6 +30,15 @@ export class Sequence {
   private totalEventsCount: number = 0; // session-level total, never cleared at turn boundary
   /** Session-level tally table: tool name → total call count across all turns */
   private toolCallTally: Map<string, number> = new Map();
+  /**
+   * Session-level log of (tool, searchKey) pairs for #pattern counting.
+   * Never cleared at turn boundaries (unlike `events`), so totalCount('tool#pattern')
+   * can count matching calls across the entire session.
+   * Each entry is { tool, key } where `key` is the arg value searched by the pattern:
+   *   - bash → args.command (the substring the pattern matches against)
+   *   - other tools (e.g. skill_load) → args.name
+   */
+  private sessionPatternLog: Array<{ tool: string; key: string }> = [];
   private triologue?: Triologue;
   private getMode: () => 'plan' | 'normal';
 
@@ -46,6 +55,12 @@ export class Sequence {
     this.totalEventsCount++;
     // Update session-level tally for totalCount lookups
     this.toolCallTally.set(event.tool, (this.toolCallTally.get(event.tool) || 0) + 1);
+    // Update session-level pattern log for totalCount('tool#pattern') lookups.
+    // Only record tools that carry a searchable arg (bash→command, others→name).
+    const key = extractSearchKey(event);
+    if (key !== undefined) {
+      this.sessionPatternLog.push({ tool: event.tool, key });
+    }
   }
 
   /**
@@ -64,6 +79,7 @@ export class Sequence {
     this.events = [];
     this.totalEventsCount = 0;
     this.toolCallTally.clear();
+    this.sessionPatternLog = [];
   }
 
   /**
@@ -88,27 +104,37 @@ export class Sequence {
   }
 
   /**
-   * Get the index (position) of the last occurrence of a tool or bash command pattern.
-   * Pattern syntax: "toolName" for simple tool match, "bash#pattern" for bash command substring.
+   * Get the index (position) of the last occurrence of a tool or a tool#argPattern.
+   * Pattern syntax:
+   *   "toolName"            — simple tool match (returns last index of that tool)
+   *   "toolName#substring"  — tool match AND a searchable arg contains `substring`.
+   *                           The searchable arg is `args.command` for bash (matches a
+   *                           command substring, e.g. 'bash#lint'), and falls back to
+   *                           `args.name` for other tools (e.g. 'skill_load#plan_quality'
+   *                           matches a skill_load call whose `name` arg contains
+   *                           'plan_quality'). If neither arg is a string, the event is
+   *                           skipped.
    * Returns -1 if not found. Higher index = more recent.
-   * 
+   *
    * Example: seq.lastIndexOf('edit_file') >= seq.lastIndexOf('bash#lint')
    *   → true if the last edit happened after (or at same position as) the last lint run
+   * Example: seq.lastIndexOf('skill_load#plan_quality') == -1
+   *   → true if the plan-quality skill has not been loaded this turn
    */
   lastIndexOf(pattern: string): number {
-    // Handle bash#pattern syntax
+    // Handle tool#pattern syntax
     if (pattern.includes('#')) {
-      const [tool, cmdPattern] = pattern.split('#');
+      const [tool, argPattern] = pattern.split('#');
       for (let i = this.events.length - 1; i >= 0; i--) {
         const e = this.events[i];
         if (e.tool !== tool) continue;
-        const cmd = e.args?.command;
-        if (typeof cmd !== 'string') continue;
-        if (cmd.includes(cmdPattern)) return i;
+        const key = extractSearchKey(e);
+        if (typeof key !== 'string') continue;
+        if (key.includes(argPattern)) return i;
       }
       return -1;
     }
-    
+
     // Regular tool name match
     return this.events.map(e => e.tool).lastIndexOf(pattern);
   }
@@ -178,10 +204,24 @@ export class Sequence {
    * Unlike count(), this is never reset at turn boundaries.
    * Uses an internal tally table maintained by add() for reliable per-tool counts
    * without depending on the triologue or external data sources.
+   *
+   * Supports the `tool#pattern` syntax for session-wide arg-pattern counts:
+   *   totalCount('skill_load#plan_quality') → number of skill_load calls this
+   *   session whose `name` arg contains 'plan_quality' (0 if none). The pattern
+   *   matches `args.command` for bash and `args.name` for other tools, mirroring
+   *   lastIndexOf(). This enables session-level dedup guards such as
+   *   "only fire if this skill hasn't been loaded this session".
    */
   totalCount(toolName?: string): number {
     if (!toolName) {
       return this.totalEventsCount;
+    }
+    // tool#pattern: session-wide count of calls whose searchable arg matches
+    if (toolName.includes('#')) {
+      const [tool, argPattern] = toolName.split('#');
+      return this.sessionPatternLog.filter(
+        e => e.tool === tool && e.key.includes(argPattern)
+      ).length;
     }
     return this.toolCallTally.get(toolName) || 0;
   }
@@ -279,4 +319,26 @@ export class Sequence {
 
     return evaluateExpression(expression, ctx);
   }
+}
+
+/**
+ * Extract the searchable arg value from an event for `tool#pattern` matching.
+ *
+ * The `#pattern` substring is matched against this key:
+ *   - `args.command` for bash (matches a command substring, e.g. 'bash#lint')
+ *   - `args.name` for other tools (e.g. 'skill_load#plan_quality' matches a
+ *     skill_load call whose `name` arg contains 'plan_quality')
+ *   - if `args.command` is a string it wins (bash); otherwise `args.name` is
+ *     used if it is a string; otherwise the event has no searchable key and
+ *     undefined is returned (the event is skipped by pattern matchers).
+ *
+ * Shared by Sequence (runtime) and MockSequence (validation/testing) so both
+ * paths apply identical matching semantics.
+ */
+export function extractSearchKey(event: { args?: Record<string, unknown> }): string | undefined {
+  const cmd = event.args?.command;
+  if (typeof cmd === 'string') return cmd;
+  const name = event.args?.name;
+  if (typeof name === 'string') return name;
+  return undefined;
 }

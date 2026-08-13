@@ -15,6 +15,7 @@ import type { Condition, HookAction } from './conditions.js';
 import jsep from 'jsep';
 import { evaluateExpression } from './evaluator.js';
 import { parseIntent, validateIntent } from '../context/grant/intent-parser.js';
+import { extractSearchKey } from './sequence.js';
 
 /**
  * Minimal sequence interface for testing
@@ -586,34 +587,56 @@ export function testScenarios(
 
 /**
  * MockSequence - a minimal sequence implementation for testing
+ *
+ * Mirrors Sequence's pattern-matching semantics so validation/testing and
+ * runtime agree: `tool#pattern` matches `args.command` (bash) or `args.name`
+ * (other tools), and totalCount('tool#pattern') counts across the whole
+ * (mock) session via a never-reset pattern log.
  */
 export class MockSequence {
   private events: Array<{ tool: string; args: Record<string, unknown>; result: string }> = [];
+  /** Session-level (never-reset) log mirroring Sequence.sessionPatternLog */
+  private sessionPatternLog: Array<{ tool: string; key: string }> = [];
 
   constructor(initialEvents: Array<{ tool: string; args: Record<string, unknown>; result: string }> = []) {
     this.events = initialEvents;
+    for (const e of initialEvents) {
+      const key = extractSearchKey(e);
+      if (key !== undefined) this.sessionPatternLog.push({ tool: e.tool, key });
+    }
   }
 
   has(toolName: string): boolean { return this.events.some(e => e.tool === toolName); }
   hasAny(tools: string[]): boolean { return tools.some(t => this.has(t)); }
-  
+
   lastIndexOf(pattern: string): number {
     if (pattern.includes('#')) {
-      const [tool, cmdPattern] = pattern.split('#');
+      const [tool, argPattern] = pattern.split('#');
       for (let i = this.events.length - 1; i >= 0; i--) {
         const e = this.events[i];
         if (e.tool !== tool) continue;
-        if (typeof e.args?.command === 'string' && e.args.command.includes(cmdPattern)) return i;
+        const key = extractSearchKey(e);
+        if (typeof key !== 'string') continue;
+        if (key.includes(argPattern)) return i;
       }
       return -1;
     }
     return this.events.map(e => e.tool).lastIndexOf(pattern);
   }
-  
+
   last(): unknown { return this.events.length === 0 ? undefined : this.events[this.events.length - 1]; }
   lastError(): undefined { return undefined; }
   count(toolName?: string): number { return toolName ? this.events.filter(e => e.tool === toolName).length : this.events.length; }
-  totalCount(toolName?: string): number { return toolName ? this.events.filter(e => e.tool === toolName).length : this.events.length; }
+  totalCount(toolName?: string): number {
+    if (!toolName) return this.events.length;
+    if (toolName.includes('#')) {
+      const [tool, argPattern] = toolName.split('#');
+      return this.sessionPatternLog.filter(
+        e => e.tool === tool && e.key.includes(argPattern)
+      ).length;
+    }
+    return this.events.filter(e => e.tool === toolName).length;
+  }
   countResult(tool: string, pattern: string, maxChars?: number): number {
     return this.events.filter(e => {
       if (tool !== '*' && e.tool !== tool) return false;
@@ -624,9 +647,12 @@ export class MockSequence {
   since(): unknown[] { return []; }
   sinceEdit(): unknown[] { return []; }
   isPlanMode(): boolean { return false; }
-  
+
   addEvent(tool: string, args: Record<string, unknown> = {}, result = ''): void {
-    this.events.push({ tool, args, result });
+    const event = { tool, args, result };
+    this.events.push(event);
+    const key = extractSearchKey(event);
+    if (key !== undefined) this.sessionPatternLog.push({ tool, key });
   }
 }
 

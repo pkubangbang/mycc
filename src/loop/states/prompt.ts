@@ -420,6 +420,8 @@ export async function handlePrompt(
 
   // Reset sequence to current turn (hooks only see events since last user query)
   env.sequence.markPromptBoundary();
+  // Reset per-turn hook state (stop+block/replace hooks may act once per turn)
+  env.hookExecutor.resetTurn();
 
   // Capture first query as bookmark title
   if (!bookmarkCaptured) {

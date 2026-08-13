@@ -103,10 +103,35 @@ export class HookExecutor {
   private conditions: ConditionRegistry;
   private sequence: Sequence;
   private injectedThisMove: Set<string> = new Set();
+  /**
+   * Per-turn dedup: skill names whose stop+block/replace hook has already
+   * ACTED this turn. Caps each such hook at once per turn (PROMPT→PROMPT).
+   *
+   * Lifetime: cleared by resetTurn(), which the agent loop calls at the turn
+   * boundary (PROMPT state) alongside sequence.markPromptBoundary() — NOT in
+   * processToolCalls (that would reset it every batch and defeat the cap).
+   *
+   * Scope: only stop+block/replace. inject_before/inject_after may fire on
+   * every batch (e.g. lint-before-each-bash); message is weak/idempotent —
+   * neither is capped. Without this, a stop+replace hook would re-fire each
+   * batch and repeatedly swap stop for a tool call, so the agent never stops.
+   * Different hooks each get their own one-per-turn allowance (keyed by name).
+   */
+  private stopDisturbance: Set<string> = new Set();
 
   constructor(conditions: ConditionRegistry, sequence: Sequence) {
     this.conditions = conditions;
     this.sequence = sequence;
+  }
+
+  /**
+   * Reset per-turn hook state. Called by the agent loop at the PROMPT turn
+   * boundary (same place as sequence.markPromptBoundary()). Do NOT call this
+   * from processToolCalls — that runs once per HOOK batch and would reset the
+   * per-turn cap mid-turn.
+   */
+  resetTurn(): void {
+    this.stopDisturbance.clear();
   }
 
   /**
@@ -302,11 +327,44 @@ export class HookExecutor {
     _skillContent: string,
     cond?: Condition
   ): Promise<HookResult> {
-    const firstCall = pendingCalls[0];
-    const originalTool = firstCall.function.name;
     const whenText = cond?.when ?? 'unknown condition';
     const conditionExpr = cond?.condition ?? 'unknown';
     const argsPreview = formatArgsPreview(action.args);
+
+    // Stop-trigger safe path: when pendingCalls is empty (the 'stop' trigger,
+    // i.e. no pending tool calls), there is nothing to replace in-place.
+    // Dereferencing pendingCalls[0] would crash. Instead, realize "replace the
+    // stop with this tool call" by injecting the replacement call as the sole
+    // call in the delta — the agent does not stop; it runs the replacement.
+    if (pendingCalls.length === 0) {
+      const replacementCall: ToolCall = {
+        id: `hook-${skillName}-${Date.now()}`,
+        function: {
+          name: action.tool,
+          arguments: action.args,
+        },
+      };
+
+      ctx.core.brief('info', 'hook',
+        `REPLACED stop → ${action.tool}${argsPreview}`,
+        `stop → ${skillName}`
+      );
+      ctx.core.verbose('hook',
+        `When: "${whenText}"\nExpr: ${conditionExpr}`
+      );
+
+      const customMsg = cond?.action && 'message' in cond.action ? (cond.action as { message?: string }).message : undefined;
+      const displayMsg = customMsg || `A hookish skill named "${skillName}" has been triggered (action: replace on stop). You can view the detail if curious by using skill_load(name="${skillName}", search="what hook just intervened")`;
+
+      return {
+        action: 'injected',
+        message: displayMsg,
+        newCalls: [replacementCall],
+      };
+    }
+
+    const firstCall = pendingCalls[0];
+    const originalTool = firstCall.function.name;
 
     // Replace the tool call
     firstCall.function.name = action.tool;
@@ -462,7 +520,27 @@ export class HookExecutor {
         const skill = getSkill(hookName);
         if (!skill) continue;
 
+        // Per-turn cap: a stop+block/replace hook acts at most ONCE per turn.
+        // Without this, such a hook would re-fire on every HOOK batch
+        // (processToolCalls clears injectedThisMove each call) and, for replace,
+        // repeatedly swap the stop for a tool call so the agent never stops to
+        // give its plan. inject_before/inject_after/message are intentionally
+        // NOT capped (they may legitimately fire per-batch). The set is cleared
+        // at the turn boundary by resetTurn() (called from the PROMPT state).
+        // Different hooks each get their own one-per-turn allowance (keyed by
+        // hook name), so multiple distinct stop hooks may each act once.
+        const isStopIntercept = cond.action.type === 'block' || cond.action.type === 'replace';
+        if (isStopIntercept && this.stopDisturbance.has(hookName)) {
+          // Already acted this turn — let the stop proceed (no further action).
+          continue;
+        }
+
         const result = await this.execute(hookName, cond.action, ctx, [], skill.content || '', cond);
+
+        // Record the action so it is not repeated this turn.
+        if (isStopIntercept) {
+          this.stopDisturbance.add(hookName);
+        }
 
         if (result.action === 'blocked') {
           // Blocking a stop trigger doesn't make sense - treat as message instead

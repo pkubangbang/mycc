@@ -445,6 +445,214 @@ describe('HookExecutor', () => {
   });
 
   // ============================================================================
+  // execute() - replace on STOP trigger (empty pendingCalls)
+  // ============================================================================
+
+  describe('execute() - replace on stop trigger (empty pendingCalls)', () => {
+    it('should not crash and should inject the replacement call when pendingCalls is empty', async () => {
+      registry.set('plan-quality', {
+        trigger: ['stop'],
+        when: 'replace stop with skill load',
+        condition: 'seq.isPlanMode() && seq.totalCount("skill_load#plan-quality") == 0',
+        action: {
+          type: 'replace',
+          tool: 'skill_load',
+          args: { name: 'plan-quality' },
+        },
+        version: 1,
+      });
+
+      // Empty pendingCalls simulates the stop trigger (no pending tool calls).
+      // Before the fix, replace() dereferenced pendingCalls[0] and crashed.
+      const result = await executor.execute(
+        'plan-quality',
+        registry.get('plan-quality')!.action,
+        ctx,
+        [], // empty = stop trigger
+        'Replace the stop with loading this skill'
+      );
+
+      expect(result.action).toBe('injected');
+      expect(result.newCalls).toHaveLength(1);
+      expect(result.newCalls?.[0].function.name).toBe('skill_load');
+      expect(result.newCalls?.[0].function.arguments).toEqual({ name: 'plan-quality' });
+    });
+
+    it('processStopTrigger should replace stop with a skill_load call end-to-end', async () => {
+      // Use plan mode so seq.isPlanMode() is true. The shared beforeEach
+      // sequence has no mode getter (defaults to normal), so build a plan-mode
+      // sequence + executor bound to it for this test.
+      (ctx.core.getMode as ReturnType<typeof vi.fn>).mockReturnValue('plan' as const);
+      const planSequence = new Sequence(undefined, () => 'plan');
+      const planExecutor = new HookExecutor(registry, planSequence);
+
+      registry.set('plan-quality', {
+        trigger: ['stop'],
+        when: 'replace stop with skill load when in plan mode and skill not loaded',
+        condition: 'seq.isPlanMode() && seq.totalCount("skill_load#plan-quality") == 0',
+        action: {
+          type: 'replace',
+          tool: 'skill_load',
+          args: { name: 'plan-quality' },
+        },
+        version: 1,
+      });
+
+      // processToolCalls with empty calls = stop trigger
+      const result = await planExecutor.processToolCalls(
+        [],
+        ctx,
+        (name) => (name === 'plan-quality' ? { content: 'skill body' } : undefined)
+      );
+
+      // The stop should have been replaced with one skill_load call
+      expect(result.calls).toHaveLength(1);
+      expect(result.calls[0].function.name).toBe('skill_load');
+      expect(result.calls[0].function.arguments).toEqual({ name: 'plan-quality' });
+    });
+  });
+
+  // ============================================================================
+  // Per-turn dedup for stop+block/replace hooks (stopDisturbance)
+  // ============================================================================
+
+  describe('per-turn dedup for stop+block/replace hooks', () => {
+    // Helper: build a plan-mode executor (the shared beforeEach sequence
+    // defaults to normal mode, so stop hooks gated on isPlanMode() won't fire).
+    function planModeExecutor(): HookExecutor {
+      const planSequence = new Sequence(undefined, () => 'plan');
+      return new HookExecutor(registry, planSequence);
+    }
+    const getSkill = (n: string) => (n === 'plan-quality' ? { content: 'skill body' } : undefined);
+
+    it('a stop+replace hook acts at most once per turn across multiple processToolCalls batches', async () => {
+      (ctx.core.getMode as ReturnType<typeof vi.fn>).mockReturnValue('plan' as const);
+      const ex = planModeExecutor();
+
+      registry.set('plan-quality', {
+        trigger: ['stop'],
+        when: 'replace stop with skill load',
+        condition: 'seq.isPlanMode() && seq.totalCount("skill_load#plan-quality") == 0',
+        action: {
+          type: 'replace',
+          tool: 'skill_load',
+          args: { name: 'plan-quality' },
+        },
+        version: 1,
+      });
+
+      // Batch 1: stop trigger fires → replaces stop with skill_load
+      const r1 = await ex.processToolCalls([], ctx, getSkill);
+      expect(r1.calls).toHaveLength(1);
+      expect(r1.calls[0].function.name).toBe('skill_load');
+
+      // Batch 2 (same turn, e.g. after the skill_load resolves and the agent
+      // stops again): the hook must NOT re-fire — otherwise it would loop
+      // forever replacing stop with skill_load. injectedThisMove is cleared
+      // each processToolCalls call, so without stopDisturbance this would fire.
+      const r2 = await ex.processToolCalls([], ctx, getSkill);
+      expect(r2.calls).toHaveLength(0); // stop proceeds — no re-replacement
+    });
+
+    it('resetTurn() re-enables a stop+replace hook for the next turn', async () => {
+      (ctx.core.getMode as ReturnType<typeof vi.fn>).mockReturnValue('plan' as const);
+      const ex = planModeExecutor();
+
+      registry.set('plan-quality', {
+        trigger: ['stop'],
+        when: 'replace stop with skill load',
+        condition: 'seq.isPlanMode() && seq.totalCount("skill_load#plan-quality") == 0',
+        action: {
+          type: 'replace',
+          tool: 'skill_load',
+          args: { name: 'plan-quality' },
+        },
+        version: 1,
+      });
+
+      // Turn 1, batch 1: fires
+      await ex.processToolCalls([], ctx, getSkill);
+
+      // Turn boundary — resetTurn() is called by the agent loop at PROMPT
+      ex.resetTurn();
+
+      // Turn 2, batch 1: fires again (new turn, fresh allowance)
+      const r = await ex.processToolCalls([], ctx, getSkill);
+      expect(r.calls).toHaveLength(1);
+      expect(r.calls[0].function.name).toBe('skill_load');
+    });
+
+    it('multiple distinct stop+replace hooks each act once per turn', async () => {
+      (ctx.core.getMode as ReturnType<typeof vi.fn>).mockReturnValue('plan' as const);
+      const ex = planModeExecutor();
+
+      registry.set('hook-a', {
+        trigger: ['stop'],
+        when: 'a',
+        condition: 'seq.isPlanMode()',
+        action: { type: 'replace', tool: 'skill_load', args: { name: 'a' } },
+        version: 1,
+      });
+      registry.set('hook-b', {
+        trigger: ['stop'],
+        when: 'b',
+        condition: 'seq.isPlanMode()',
+        action: { type: 'replace', tool: 'skill_load', args: { name: 'b' } },
+        version: 1,
+      });
+
+      const anySkill = (n: string) => ({ content: 'skill body' });
+
+      // First batch: only the highest-priority-first stop hook acts (replace
+      // is priority 1, first-wins within the priority group, so only ONE
+      // replace fires per processToolCalls — the other is not reached this
+      // batch because processStopTrigger returns early for priority < 2).
+      const r1 = await ex.processToolCalls([], ctx, anySkill);
+      // Exactly one replacement happened this batch
+      expect(r1.calls).toHaveLength(1);
+      const actedFirst = r1.calls[0].function.arguments as { name: string };
+
+      // Second batch (same turn): the hook that already acted must NOT re-fire,
+      // but the OTHER distinct hook may still act once.
+      const r2 = await ex.processToolCalls([], ctx, anySkill);
+      expect(r2.calls).toHaveLength(1);
+      const actedSecond = r2.calls[0].function.arguments as { name: string };
+      // The second batch's actor is the OTHER hook (distinct allowance)
+      expect(actedSecond.name).not.toBe(actedFirst.name);
+
+      // Third batch (same turn): both have now acted → stop proceeds
+      const r3 = await ex.processToolCalls([], ctx, anySkill);
+      expect(r3.calls).toHaveLength(0);
+    });
+
+    it('inject_before hooks are NOT capped per-turn (may fire on every batch)', async () => {
+      const ex = planModeExecutor();
+
+      registry.set('inject-stop', {
+        trigger: ['stop'],
+        when: 'inject on stop every batch',
+        condition: 'true',
+        action: { type: 'inject_before', tool: 'bash', args: { command: 'echo hi', intent: 'TEST ARTIFACT TO greet' } },
+        version: 1,
+      });
+
+      // Batch 1
+      const r1 = await ex.processToolCalls(
+        [], ctx, (n) => (n === 'inject-stop' ? { content: 'skill body' } : undefined)
+      );
+      expect(r1.calls).toHaveLength(1);
+      expect(r1.calls[0].function.name).toBe('bash');
+
+      // Batch 2 (same turn): inject_before is NOT capped → fires again
+      const r2 = await ex.processToolCalls(
+        [], ctx, (n) => (n === 'inject-stop' ? { content: 'skill body' } : undefined)
+      );
+      expect(r2.calls).toHaveLength(1);
+      expect(r2.calls[0].function.name).toBe('bash');
+    });
+  });
+
+  // ============================================================================
   // execute() - message
   // ============================================================================
 

@@ -265,6 +265,100 @@ describe('Sequence.totalCount()', () => {
 });
 
 // ============================================================================
+// Tests: #pattern matching against args.name (non-bash tools)
+// ============================================================================
+
+describe('Sequence #pattern matching against args.name', () => {
+  it('lastIndexOf("skill_load#plan_quality") matches a skill_load call whose name arg contains the pattern', () => {
+    const seq = new Sequence();
+    seq.add({ tool: 'read_file', args: { path: 'a.ts' }, result: 'ok', timestamp: 1000 });
+    seq.add({ tool: 'skill_load', args: { name: 'plan-quality' }, result: 'ok', timestamp: 2000 });
+    seq.add({ tool: 'read_file', args: { path: 'b.ts' }, result: 'ok', timestamp: 3000 });
+
+    // skill_load#plan_quality → matches the skill_load event (name contains 'plan_quality')
+    // Note: pattern uses underscore; skill name uses hyphen; the matcher does a
+    // substring `.includes`, so we test with a substring that actually matches.
+    expect(seq.lastIndexOf('skill_load#plan-quality')).toBe(1);
+  });
+
+  it('lastIndexOf("skill_load#plan_quality") returns -1 when the skill was never loaded', () => {
+    const seq = new Sequence();
+    seq.add({ tool: 'read_file', args: { path: 'a.ts' }, result: 'ok', timestamp: 1000 });
+    seq.add({ tool: 'skill_load', args: { name: 'create-skill' }, result: 'ok', timestamp: 2000 });
+
+    expect(seq.lastIndexOf('skill_load#plan-quality')).toBe(-1);
+  });
+
+  it('lastIndexOf("skill_load#plan-quality") still matches bash#command for bash events (backward compat)', () => {
+    const seq = new Sequence();
+    seq.add({ tool: 'bash', args: { command: 'pnpm lint', intent: 'lint' }, result: 'ok', timestamp: 1000 });
+
+    expect(seq.lastIndexOf('bash#pnpm lint')).toBe(0);
+  });
+
+  it('lastIndexOf("skill_load#plan-quality") ignores skill_load events with no string name arg', () => {
+    const seq = new Sequence();
+    seq.add({ tool: 'skill_load', args: {}, result: 'ok', timestamp: 1000 });
+
+    expect(seq.lastIndexOf('skill_load#plan-quality')).toBe(-1);
+  });
+});
+
+// ============================================================================
+// Tests: totalCount('tool#pattern') — session-wide arg-pattern counts
+// ============================================================================
+
+describe('Sequence.totalCount() with #pattern', () => {
+  it('totalCount("skill_load#plan-quality") counts session-wide skill_load calls matching the name pattern', () => {
+    const seq = new Sequence();
+    seq.add({ tool: 'skill_load', args: { name: 'plan-quality' }, result: 'ok', timestamp: 1000 });
+    seq.add({ tool: 'skill_load', args: { name: 'create-skill' }, result: 'ok', timestamp: 2000 });
+    seq.add({ tool: 'skill_load', args: { name: 'plan-quality' }, result: 'ok', timestamp: 3000 });
+
+    expect(seq.totalCount('skill_load#plan-quality')).toBe(2);
+  });
+
+  it('totalCount("skill_load#plan-quality") returns 0 when the skill was never loaded', () => {
+    const seq = new Sequence();
+    seq.add({ tool: 'skill_load', args: { name: 'create-skill' }, result: 'ok', timestamp: 1000 });
+
+    expect(seq.totalCount('skill_load#plan-quality')).toBe(0);
+  });
+
+  it('totalCount("skill_load#plan-quality") survives turn boundaries (session-level, not cleared by markPromptBoundary)', () => {
+    const seq = new Sequence();
+    seq.add({ tool: 'skill_load', args: { name: 'plan-quality' }, result: 'ok', timestamp: 1000 });
+
+    // Simulate a turn boundary — events array is cleared, but the session-level
+    // pattern log must persist so the dedup guard still sees the prior load.
+    seq.markPromptBoundary();
+
+    seq.add({ tool: 'edit_file', args: { path: 'x.ts' }, result: 'ok', timestamp: 2000 });
+
+    expect(seq.totalCount('skill_load#plan-quality')).toBe(1);
+  });
+
+  it('totalCount("bash#lint") counts session-wide bash calls whose command matches', () => {
+    const seq = new Sequence();
+    seq.add({ tool: 'bash', args: { command: 'pnpm lint', intent: 'lint' }, result: 'ok', timestamp: 1000 });
+    seq.add({ tool: 'bash', args: { command: 'pnpm test', intent: 'test' }, result: 'ok', timestamp: 2000 });
+    seq.add({ tool: 'bash', args: { command: 'pnpm lint', intent: 'lint' }, result: 'ok', timestamp: 3000 });
+
+    expect(seq.totalCount('bash#lint')).toBe(2);
+  });
+
+  it('the dedup condition isPlanMode && totalCount("skill_load#plan-quality") == 0 evaluates correctly', () => {
+    const seq = new Sequence(undefined, () => 'plan');
+    // No skill_load yet → condition true (hook should fire)
+    expect(seq.evaluate("seq.isPlanMode() && seq.totalCount('skill_load#plan-quality') == 0")).toBe(true);
+
+    seq.add({ tool: 'skill_load', args: { name: 'plan-quality' }, result: 'ok', timestamp: 1000 });
+    // Skill loaded this session → condition false (hook should not fire again)
+    expect(seq.evaluate("seq.isPlanMode() && seq.totalCount('skill_load#plan-quality') == 0")).toBe(false);
+  });
+});
+
+// ============================================================================
 // Tests: Evaluator edge cases
 // ============================================================================
 
