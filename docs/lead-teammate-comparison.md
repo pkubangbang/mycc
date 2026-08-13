@@ -23,10 +23,13 @@ These tools are exclusively available to the lead agent:
 | `tm_remove` | Terminate teammate processes |
 | `tm_await` | Block until teammates finish |
 | `broadcast` | Send message to all teammates at once |
-| `order` | Send task and block for results (mail_to + tm_await) |
 | `hand_over` | Interactive terminal handover to user |
 | `plan_on` | Switch to plan mode (block code changes) |
 | `plan_off` | Exit plan mode |
+| `checkpoint` | Create context checkpoint for exploration |
+| `recap` | Summarize/abandon a checkpoint |
+| `peers` | Peer discovery / cross-instance routing |
+| `todo_pinning` | Pin todos and set reactivation conditions |
 
 ### Teammate-Only Tools (scope: `['child']`)
 
@@ -40,15 +43,16 @@ Both lead and teammate agents can use these:
 
 | Category | Tools |
 |----------|-------|
-| **Communication** | `mail_to`, `tm_print` |
-| **File Operations** | `read_file`, `write_file`, `edit_file` |
-| **Issue Management** | `issue_create`, `issue_close`, `issue_claim`, `issue_list`, `issue_comment`, `blockage_create`, `blockage_remove` |
+| **Communication** | `mail_to`, `tm_print`, `mycc_title` |
+| **File Operations** | `read_file`, `write_file`, `edit_file`, `grep`, `bash`, `screen` |
+| **Issue Management** | `issue_create`, `issue_close`, `issue_claim`, `issue_list`, `issue_publish`, `issue_comment`, `blockage_create`, `blockage_remove` |
 | **Background Tasks** | `bg_create`, `bg_print`, `bg_remove`, `bg_await` |
-| **Worktree** | `wt_create`, `wt_remove`, `wt_enter`, `wt_leave`, `wt_print` |
-| **Information** | `time`, `bash`, `screen`, `read_picture`, `read_read` |
-| **Knowledge** | `recall`, `skill_load`, `wiki_prepare`, `wiki_put`, `wiki_get`, `web_search`, `web_fetch` |
-| **Status** | `todo_write`, `brief` |
+| **Information** | `read_picture`, `read_read` |
+| **Knowledge** | `recall`, `skill_load`, `skill_search`, `skill_compile`, `wiki_prepare`, `wiki_put`, `wiki_get`, `web_search`, `web_fetch` |
+| **Status & Todos** | `todo_create`, `todo_update`, `brief` |
 | **Git** | `git_commit` |
+
+> **注**：不存在独立的 worktree 工具（无 `wt_create`/`wt_remove`/`wt_enter`/`wt_leave`/`wt_print`）。Worktree 通过 bash `git worktree` 命令操作，沙箱隔离由 spawn 的 `cwd` 参数 + 授权系统实现。
 
 ## Architecture Details
 
@@ -72,7 +76,7 @@ Both lead and teammate agents can use these:
 ┌─────────────────────────────────────────────────────────────┐
 │                     Lead Agent (Main)                        │
 │  ┌─────────┐  ┌─────────┐  ┌─────────┐  ┌─────────┐         │
-│  │tm_create│  │broadcast│  │ order   │  │mail_to  │         │
+│  │tm_create│  │broadcast│  │tm_await │  │mail_to  │         │
 │  └────┬────┘  └────┬────┘  └────┬────┘  └────┬────┘         │
 └───────┼────────────┼────────────┼────────────┼───────────────┘
         │            │            │            │
@@ -92,45 +96,50 @@ Both lead and teammate agents can use these:
 |--------|-----------|----------|----------|
 | `mail_to` | Bidirectional | No | Async task assignment, notifications |
 | `broadcast` | Lead → All | No | Announcements, coordinated actions |
-| `order` | Lead → Teammate | Yes | Sequential workflows requiring results |
+| `tm_await` | Lead → Teammate(s) | Yes | Block until teammate(s) finish |
 
 ### Teammate Status Machine
 
+状态类型：`TeammateStatus = 'working' | 'idle' | 'holding' | 'shutdown'`（见 `src/types.ts`）
+
 ```
   ┌─────────┐
-  │ working │ ←──────────────────┐
-  └────┬────┘                    │
-       │ (task complete)         │ (new task via mail_to)
-       ▼                         │
-  ┌─────────┐                    │
-  │  idle   │ ←──────────────┐   │
-  └────┬────┘                │   │
-       │ (shutdown request) │   │
-       ▼                     │   │
-  ┌─────────┐                │   │
-  │ holding │ ───────────────┘   │
-  └────┬────┘                    │
-       │ (removed)              │
-       ▼                         │
-  ┌─────────┐                    │
-  │shutdown │ ──────────────────┘
+  │ working │◄──────────────────┐
+  └────┬────┘                   │
+       │ (no tools + no todos)  │ (new mail / auto-claim)
+       ▼                        │
+  ┌─────────┐                   │
+  │  idle   │───────────────────┘
+  └────┬────┘
+       │ (shutdown/disconnect/SIGTERM)
+       ▼
+  ┌─────────┐
+  │shutdown │
   └─────────┘
+
+  working ──(question())──► holding ──(answer received)──► working
 ```
+
+- **working → idle**：LLM 返回无工具调用且无未完成 todo
+- **idle → working**：收到新邮件或自动认领成功
+- **working → holding**：调用 `question()` 等待用户回答
+- **holding → working**：收到用户回答后恢复
+- **idle/shutdown**：收到 shutdown 消息、进程断开、或终止信号
 
 ## Worktree Isolation
 
 Teammates are restricted to their assigned worktree:
 
-1. Lead creates worktree: `wt_create(name="feature", branch="feat-x")`
-2. Lead spawns teammate with worktree assignment
+1. Lead creates worktree via bash: `git worktree add .worktrees/feature feat-x`
+2. Lead spawns teammate with worktree assignment (`tm_create` `cwd` parameter)
 3. Teammate's file operations are sandboxed to that worktree
 4. Lead uses Grant system to validate all write requests from children
 
 ### Grant System
 
 When a teammate requests to write a file:
-1. Request sent via IPC to main process
-2. Grant handler validates path is within assigned worktree
+1. Request sent via IPC (`grant_request`) to main process
+2. Grant handler (`src/context/grant/grant-evaluator.ts`) validates path is within assigned worktree (queries `worktree-store.ts`)
 3. If valid, operation proceeds; otherwise, error returned
 
 ## Key Differences Summary
@@ -140,14 +149,13 @@ When a teammate requests to write a file:
 | Spawn teammates | ✅ | ❌ |
 | Remove teammates | ✅ | ❌ |
 | Broadcast messages | ✅ | ❌ |
-| Block for results (order) | ✅ | ❌ |
+| Block for results (tm_await) | ✅ | ❌ |
 | Ask user (question) | ❌ | ✅ |
 | Full project access | ✅ | ❌ (worktree only) |
 | Direct tool access | ✅ | ❌ (IPC wrappers) |
 | Use git_commit | ✅ | ✅ |
 | File operations | ✅ | ✅ (sandboxed) |
 | Use mail_to | ✅ | ✅ |
-| Worktree operations | ✅ | ✅ |
 | Wiki operations | ✅ | ✅ |
 
 ## Best Practices
@@ -169,6 +177,5 @@ When a teammate requests to write a file:
 ### Communication Tips
 - Use `broadcast` for team-wide announcements
 - Use `mail_to` for async task assignment
-- Use `order` when you need results before proceeding
-- Use `tm_await` to wait for multiple teammates
+- Use `tm_await` to wait for one or more teammates to finish
 - Teammates use `mail_to` to communicate with each other

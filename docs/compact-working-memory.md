@@ -1,6 +1,6 @@
 # Auto-Compact Working Memory Preservation
 
-> **Status:** Implemented (code-complete, all 2170 tests passing)
+> **Status:** Implemented (code-complete, all tests passing)
 > **Date:** 2026-08-07
 > **Scope:** `src/loop/triologue.ts`, `src/loop/states/llm.ts`, `src/loop/states/tool.ts`, `src/loop/states/hook.ts`, `src/context/teammate-worker.ts`, `src/slashes/compact.ts`
 
@@ -10,7 +10,7 @@ Two issues with the current auto-compact:
 
 ### 1.1 Lost recent focus
 
-`Triologue.runAutoCompact` (triologue.ts:803-921) minifies ALL messages via `minifyMessages()` (truncating content to 500 chars, args to 200), feeds the lossy text to a fresh `retryChat` (no tools, no prompt cache), and replaces the entire history with `[summary, ack]`. The agent loses its *recent focus* — actual tool results it just produced, the file it was editing, the decision it was about to make. After compact, the agent must re-orient from the summary alone, often re-reading files or re-running commands it just touched.
+`Triologue.runAutoCompact` (in `src/loop/triologue.ts`) minifies ALL messages via `minifyMessages()` (truncating content to 500 chars, args to 200), feeds the lossy text to a fresh `retryChat` (no tools, no prompt cache), and replaces the entire history with `[summary, ack]`. The agent loses its *recent focus* — actual tool results it just produced, the file it was editing, the decision it was about to make. After compact, the agent must re-orient from the summary alone, often re-reading files or re-running commands it just touched.
 
 ### 1.2 Compact can happen anywhere — no tools available
 
@@ -18,16 +18,16 @@ Auto-compact currently fires from three call sites with three different tool-ava
 
 | Caller | Location | Tools available? |
 |--------|----------|-----------------|
-| Tool state (context overflow) | `tool.ts:125` | ❌ No — inside tool execution loop |
-| Hook state (hook-requested) | `hook.ts:349` | ❌ No — hooks processed before tool execution |
-| Teammate worker | `teammate-worker.ts:408` | ❌ No — inside tool execution loop |
+| Tool state (context overflow) | `src/loop/states/tool.ts` | ❌ No — inside tool execution loop |
+| Hook state (hook-requested) | `src/loop/states/hook.ts` | ❌ No — hooks processed before tool execution |
+| Teammate worker | `src/context/teammate-worker.ts` | ❌ No — inside tool execution loop |
 
 Because compact can fire mid-tool-execution, the `toolsProvider` callback needed for a cache-friendly `forkChat` would have to be wired into the Triologue constructor — an awkward indirection. Worse, even with a callback, the fork would fork from `getMessages()` which may not be the exact prefix the *next* LLM call will use (tools may have changed via hot-reload, scope may differ).
 
 ## 2. Solution
 
 **Move auto-compact to the top of the LLM stage**, where:
-- `tools = loader.getToolsForScope(scope)` is already a local variable (llm.ts:54, teammate-worker.ts:177)
+- `tools = loader.getToolsForScope(scope)` is already a local variable (in `src/loop/states/llm.ts` and `src/context/teammate-worker.ts`)
 - `triologue.getMessages()` is the exact prefix the LLM is about to use
 - A `forkChat` from that prefix with those tools is a **guaranteed cache hit**
 
@@ -48,9 +48,9 @@ COLLECT → LLM → HOOK → TOOL                                   COLLECT → 
 HOOK: compactRequested? → compact()                            HOOK: compactRequested? → set flag, defer to LLM
 ```
 
-**Lead** (`src/loop/states/llm.ts`): Insert the compact check at the very top of `handleLlm`, before the system prompt is built and before `retryChat` is called. `tools` is already computed (line 54) and `triologue.getMessages()` is the exact array about to be sent.
+**Lead** (`src/loop/states/llm.ts`): Insert the compact check at the very top of `handleLlm`, before the system prompt is built and before `retryChat` is called. `tools` is already computed and `triologue.getMessages()` is the exact array about to be sent.
 
-**Teammate** (`src/context/teammate-worker.ts`): Insert the compact check at the top of the main loop body, right after mail collection and before `retryChat`. `tools` is already computed (line 177) and `triologue.getMessages()` is the exact array about to be sent.
+**Teammate** (`src/context/teammate-worker.ts`): Insert the compact check at the top of the main loop body, right after mail collection and before `retryChat`. `tools` is already computed and `triologue.getMessages()` is the exact array about to be sent.
 
 ### 3.2 Post-compact message shape (unchanged)
 
@@ -151,7 +151,7 @@ Unlike the previous design, there are **zero changes** to `agent-repl.ts` or `te
 
 **Imports**: Add `forkChat` to the chat-provider import; add `Tool` to the types import.
 
-**`compact()` method** (line 464): Add `tools?: Tool[]` parameter, pass through to `runAutoCompact`:
+**`compact()` method** (in `src/loop/triologue.ts`): Add `tools?: Tool[]` parameter, pass through to `runAutoCompact`:
 ```ts
 async compact(focus?: string, signal?: AbortSignal, tools?: Tool[]): Promise<void> {
   const compacted = await this.runAutoCompact(focus, signal, tools);
@@ -160,7 +160,7 @@ async compact(focus?: string, signal?: AbortSignal, tools?: Tool[]): Promise<voi
 }
 ```
 
-**`runAutoCompact()` method** (line 803): Add `tools?: Tool[]` parameter. After the transcript save + wiki domains (unchanged), restructure the LLM call section:
+**`runAutoCompact()` method** (in `src/loop/triologue.ts`): Add `tools?: Tool[]` parameter. After the transcript save + wiki domains (unchanged), restructure the LLM call section:
 
 ```
 1-5. Save transcript, get wiki domains, build summary prompt  # unchanged
@@ -216,7 +216,7 @@ export async function handleLlm(env, turn, pass): Promise<HandlerResult> {
 
 ### 5.3 `src/loop/states/tool.ts` — remove compact check
 
-Remove the `needsCompact()` check and `triologue.compact()` call (lines 116-128 and 173-178). These are now handled at the LLM stage. The tool execution loop no longer needs to worry about context overflow — by the time we reach TOOL, the LLM stage has already ensured we're under threshold.
+Remove the `needsCompact()` check and `triologue.compact()` calls in `src/loop/states/tool.ts`. These are now handled at the LLM stage. The tool execution loop no longer needs to worry about context overflow — by the time we reach TOOL, the LLM stage has already ensured we're under threshold.
 
 **Keep** the `skipPendingTools` calls only if they serve ESC interruption (not compact). The compact-related `skipPendingTools` calls are removed.
 
@@ -224,7 +224,7 @@ Remove the `needsCompact()` check and `triologue.compact()` call (lines 116-128 
 
 ### 5.4 `src/loop/states/hook.ts` — defer compact to LLM stage
 
-Change the hook-requested compact (lines 346-355) to **set a flag instead of compacting immediately**:
+Change the hook-requested compact in `src/loop/states/hook.ts` to **set a flag instead of compacting immediately**:
 
 ```ts
 // BEFORE (hook.ts:346-355)
@@ -268,7 +268,7 @@ if (state === AgentState.COLLECT) {
 
 ### 5.5 `src/context/teammate-worker.ts` — compact relocation (teammate)
 
-Move the compact check from inside the tool execution loop (lines 391-422) to the top of the main loop body, before the `retryChat` call:
+Move the compact check from inside the tool execution loop to the top of the main loop body in `src/context/teammate-worker.ts`, before the `retryChat` call:
 
 ```ts
 // ── NEW: Auto-compact at the top of the loop (before LLM call) ──
@@ -296,7 +296,7 @@ if (triologue.needsCompact()) {
 
 `tools` is already in scope (line 177: `const tools = silentLoader.getToolsForScope('child')`), so it's passed directly — no callback needed.
 
-**Remove** the compact check from inside the tool execution loop (lines 391-422). The tool loop no longer needs `needsCompact()` or `skipPendingTools` for compact purposes.
+**Remove** the compact check from inside the tool execution loop. The tool loop no longer needs `needsCompact()` or `skipPendingTools` for compact purposes.
 
 ### 5.6 `src/slashes/compact.ts` — no changes
 
@@ -383,7 +383,7 @@ Because the compact check moved to the **top** of `handleLlm` (before the existi
 
 ### 9.2 Verification result
 
-`pnpm test` — 122 files, **2170 passed**, 10 skipped, **0 failures**. `pnpm typecheck` — exit 0.
+`pnpm test` — all tests passing. `pnpm typecheck` — exit 0.
 
 ### 9.3 Future test coverage
 

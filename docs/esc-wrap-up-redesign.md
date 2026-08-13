@@ -1,5 +1,7 @@
 # ESC Wrap-Up Redesign: Inline Triologue with Rollback
 
+> **Status:** Implemented. The Triologue wrap-up API (`beginWrapUp`/`finishWrapUp`/`commitWrapUp`/`rollbackWrapUp`/`hasActiveWrapUp`) is in `src/loop/triologue.ts`. The `startWrapUp(triologue, tools?)` function is in `src/loop/esc-wrap-up.ts`. The commit/rollback decision is in `src/loop/states/prompt.ts` via `evaluateWrapUp()`. Note: `startWrapUp` gained an optional `tools` parameter (used for the wrap-up LLM call); `beginWrapUp()` also flushes stale pending tool calls via `skipPendingTools()`.
+
 ## Problem
 
 The current `esc-wrap-up.ts` has a triologue parity issue. When ESC interrupts

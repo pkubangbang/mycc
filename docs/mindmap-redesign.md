@@ -1,5 +1,7 @@
 # Mindmap Module Redesign
 
+> **Status**: Implemented. This plan shipped in full — both the compile+patch-rebuild flow (Part 1) and the recap→patch concurrent forkChat flow (Part 2). The sections below describe the shipped design. File paths and function names reference the actual implementation in `src/mindmap/`.
+
 ## Overview
 
 Two independent on-disk lines that merge only in memory at load time:
@@ -195,23 +197,23 @@ At startup in `agent-repl.ts`, the existing hash-check logic is preserved:
 
 No file watch. No automatic compile. Same as current behavior.
 
-### 1.5 Files to Modify
+### 1.5 Files (as shipped)
 
-| File | Change |
-|------|--------|
-| `src/mindmap/types.ts` | Add `is_mycc: boolean` and `is_patch: boolean` to `Node` (in-memory only, not serialized). Document that these are runtime flags. |
-| `src/mindmap/compile-utils.ts` | No change needed — `is_mycc`/`is_patch` are set at load time, not compile time |
-| `src/mindmap/validate.ts` | No change — `is_mycc`/`is_patch` not in mindmap.json, so validation unchanged |
-| `src/mindmap/compile.ts` | After `compile_mindmap()`, call `rebuildPatches()` and rewrite jsonl. |
-| `src/slashes/mindmap.ts` | `/mindmap compile` calls compile + patch rebuild; add `/mindmap rebuild-patches` |
-| `src/loop/agent-repl.ts` | Replace mindmap loading with `loadMindmapWithPatches()` (load + replay, set `is_mycc=true, is_patch=false` on load). Keep existing hash-check logic. |
-| `src/mindmap/load.ts` | Set `is_mycc = true, is_patch = false` on every node during `load_mindmap` (these are in-memory defaults for nodes from mindmap.json) |
+| File | Role |
+|------|------|
+| `src/mindmap/types.ts` | `is_mycc: boolean` and `is_patch: boolean` on `Node` (in-memory only, not serialized). `MindmapPatchAction` interface. |
+| `src/mindmap/compile-utils.ts` | No change for flags — `is_mycc`/`is_patch` are set at load time. Provides `parse_markdown`, `build_node`, `extract_links`, lock management (4h freshness), `ProgressTracker`. |
+| `src/mindmap/validate.ts` | No change — `is_mycc`/`is_patch` not in mindmap.json, validation unchanged. |
+| `src/mindmap/compile.ts` | Rotation-based compile (`.new`/`.bak`), lock-based resumption, semaphore (max 3 concurrent). `/mindmap compile` calls `rebuildPatches()` and rewrites jsonl. |
+| `src/slashes/mindmap.ts` | `/mindmap compile` does compile + patch rebuild; `/mindmap rebuild-patches` standalone. |
+| `src/loop/agent-repl.ts` | Mindmap loading with patch replay. Keeps existing hash-check logic. |
+| `src/mindmap/load.ts` | Sets `is_mycc = true, is_patch = false` on every node during `load_mindmap`. Strips flags before serialization. |
 
-### 1.6 New Files
+### 1.6 New File (shipped)
 
 | File | Purpose |
 |------|---------|
-| `src/mindmap/patch-jsonl.ts` | `appendPatch()`, `readAllPatches()`, `writePatches()` (full rewrite for rebuild), `rebuildPatches()`, `getPatchPath()` |
+| `src/mindmap/patch-jsonl.ts` | `validatePatchAction()`, `appendPatch()`, `readAllPatches()`, `writePatches()` (full rewrite for rebuild), `rebuildPatches()`, `clearPatches()`, `getPatchPath()` |
 
 ---
 
@@ -505,13 +507,14 @@ function generateTreeOutline(node: Node, indent: string = ''): string {
 
 Truncate if tree is large (> 200 nodes): show first 3 levels + count of deeper nodes.
 
-### 2.9 Files to Modify
+### 2.9 Files (as shipped)
 
-| File | Change |
-|------|--------|
-| `src/loop/checkpoint-recap.ts` | Keep `handleRecap` (forkChat #1, unchanged). Add `generatePatchAction` (forkChat #2, independent, concurrent). Add `handleRecapWithPatch` that launches both via `Promise.all`. Caller applies patch (in-memory + jsonl). |
-| `src/mindmap/patch.ts` | Add `applyPatchAction()` (pure in-memory) |
-| `src/mindmap/types.ts` | Add `MindmapPatchAction` interface |
+| File | Role |
+|------|------|
+| `src/loop/checkpoint-recap.ts` | `handleRecap` (forkChat #1, unchanged). `generatePatchAction` (forkChat #2, independent, concurrent, with validation + retry). `handleRecapWithPatch` wrapper launching both via `Promise.all`. Returns patch to caller. |
+| `src/mindmap/patch.ts` | `applyPatchAction()` (pure in-memory, no LLM). Also has `patch_mindmap()`, `summarize_node()`, `add_child_node()`, `remove_node()`, `move_node()`. |
+| `src/mindmap/types.ts` | `MindmapPatchAction` interface |
+| `src/loop/states/hook.ts` | Calls `handleRecapWithPatch`, applies patch (in-memory + jsonl simultaneously) |
 
 ---
 
@@ -619,11 +622,11 @@ Each patch records `mindmap_hash` = the hash of mindmap.json at the time the pat
 
 After `/mindmap compile`, mindmap.json gets a new hash. The patch rebuild step generates new patches with the new hash, so they're valid for the new version.
 
-### 3.5 Files to Modify
+### 3.5 Files (as shipped)
 
-| File | Change |
-|------|--------|
-| `src/loop/agent-repl.ts` | Replace mindmap loading with `loadMindmapWithPatches()`. Keep existing hash-check. |
+| File | Role |
+|------|------|
+| `src/loop/agent-repl.ts` | Mindmap loading with patch replay (`loadMindmapWithPatches`). Keeps existing hash-check. |
 | `src/mindmap/patch-jsonl.ts` | `appendPatch()`, `readAllPatches()`, `writePatches()` (full rewrite), `rebuildPatches()`, `getPatchPath()` |
 
 ---
@@ -720,19 +723,21 @@ Takes current in-memory tree, does BFS, rewrites jsonl. Useful if jsonl has grow
 
 ---
 
-## Implementation Order
+## Implementation (shipped)
 
-1. **`src/mindmap/types.ts`** — Add `is_mycc: boolean` and `is_patch: boolean` to `Node` (in-memory only, documented as runtime flags); add `MindmapPatchAction` interface
-2. **`src/mindmap/load.ts`** — Set `is_mycc = true, is_patch = false` on every node during `load_mindmap` / `load_mindmap_from_json` (in-memory defaults for nodes from mindmap.json)
-3. **`src/mindmap/patch-jsonl.ts`** (new) — `appendPatch()`, `readAllPatches()`, `writePatches()` (full rewrite for rebuild), `rebuildPatches()`, `getPatchPath()`
-4. **`src/mindmap/patch.ts`** — Add `applyPatchAction()` (pure in-memory, no LLM, sets `is_mycc`/`is_patch` flags)
-5. **`src/loop/checkpoint-recap.ts`** — Keep `handleRecap` (forkChat #1, unchanged). Add `generatePatchAction` (forkChat #2, independent, concurrent, with validation + retry). Add `handleRecapWithPatch` wrapper that launches both via `Promise.all`. Return patch to caller.
-6. **`src/loop/states/hook.ts`** (or wherever recap is called for lead) — After `handleRecapWithPatch`, apply patch (in-memory + jsonl simultaneously)
-7. **`src/context/teammate-worker.ts`** (or wherever recap is called for teammates) — Same patch application
-8. **`src/loop/agent-repl.ts`** — Replace mindmap loading with `loadMindmapWithPatches()`. Keep existing hash-check.
-9. **`src/tools/recall.ts`** — Increase `maxText` limit; show `[M]`/`[P]` marker in output
-10. **`src/slashes/mindmap.ts`** — `/mindmap compile` adds patch rebuild; add `/mindmap rebuild-patches`
-11. **`src/mindmap/index.ts`** — Export new functions
+The implementation was completed in this order, all files now exist in `src/`:
+
+1. **`src/mindmap/types.ts`** — `is_mycc: boolean` and `is_patch: boolean` on `Node` (in-memory only); `MindmapPatchAction` interface
+2. **`src/mindmap/load.ts`** — Sets `is_mycc = true, is_patch = false` on every node during `load_mindmap` / `load_mindmap_from_json`; strips flags before serialization
+3. **`src/mindmap/patch-jsonl.ts`** — `validatePatchAction()`, `appendPatch()`, `readAllPatches()`, `writePatches()`, `rebuildPatches()`, `clearPatches()`, `getPatchPath()`
+4. **`src/mindmap/patch.ts`** — `applyPatchAction()` (pure in-memory, no LLM, sets `is_mycc`/`is_patch` flags)
+5. **`src/loop/checkpoint-recap.ts`** — `handleRecap` (forkChat #1, unchanged). `generatePatchAction` (forkChat #2, concurrent, with validation + retry). `handleRecapWithPatch` wrapper.
+6. **`src/loop/states/hook.ts`** — After `handleRecapWithPatch`, applies patch (in-memory + jsonl simultaneously)
+7. **`src/loop/agent-repl.ts`** — Mindmap loading with patch replay. Keeps existing hash-check.
+8. **`src/tools/recall.ts`** — Shows `[M]`/`[P]` marker in output, hoisted term collection at root
+9. **`src/slashes/mindmap.ts`** — `/mindmap compile` does patch rebuild; `/mindmap rebuild-patches` standalone
+10. **`src/mindmap/index.ts`** — Exports all functions
+11. **`src/context/teammate-worker.ts`** — Teammate recap also applies patches
 
 ---
 
@@ -758,11 +763,11 @@ Takes current in-memory tree, does BFS, rewrites jsonl. Useful if jsonl has grow
 
 ---
 
-## Migration & Backward Compatibility
+## Backward Compatibility
 
 - **Existing mindmap.json**: no change needed — `is_mycc`/`is_patch` are in-memory only, never in the JSON. `load_mindmap` sets them as defaults.
 - **No mindmap-patch.jsonl**: first startup = just load mindmap.json normally (no patches to replay)
 - **`/mindmap compile`**: still works, now also does patch rebuild
-- **`/mindmap patch`**: still works for manual patching (can be extended to write to jsonl too)
-- **Existing tests**: no `is_mycc`/`is_patch` in JSON serialization. If tests check `Node` fields, add the in-memory flags with defaults. `compile_mindmap_from_content` unchanged (JSON output has no flags).
+- **`/mindmap patch`**: still works for manual patching
+- **Existing tests**: no `is_mycc`/`is_patch` in JSON serialization. `compile_mindmap_from_content` unchanged (JSON output has no flags).
 - **Hash check at startup**: unchanged — if MYCC.md hash ≠ stored hash, shows warning (user can `/mindmap compile`)

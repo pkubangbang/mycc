@@ -1,6 +1,8 @@
 # Docker 引导安装方案（浏览器触发本地安装）
 
-> **状态**：设计完成，待实现 | **日期**：2026-08-03
+> **状态**：设计完成，未实现 | **日期**：2026-08-03
+>
+> **HISTORICAL**: This plan was not implemented. No `Dockerfile`, `docker-compose.yml`, or `docker/` directory exists in the repository as of the current codebase. The design content below is kept for reference only. The `--serve` architecture (referenced as the foundation) does exist in `src/serve/` and `src/web/`.
 
 ## 核心思路
 

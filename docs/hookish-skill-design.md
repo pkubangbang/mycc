@@ -121,7 +121,8 @@ type HookAction =
   | { type: 'inject_after'; tool: string; args: Record<string, unknown>; timeout?: number }
   | { type: 'block'; reason?: string }
   | { type: 'replace'; tool: string; args: Record<string, unknown>; timeout?: number }
-  | { type: 'message' }
+  | { type: 'message'; message?: string }
+  | { type: 'compact' }
 ```
 
 | Action | Effect | Use Case |
@@ -131,6 +132,7 @@ type HookAction =
 | `block` | Prevent trigger from executing | Block dangerous operations |
 | `replace` | Replace trigger with different tool | Redirect to safer alternative |
 | `message` | Inject text into conversation | Reminder/warning only |
+| `compact` | Trigger context compaction (highest priority) | Compact on repeated intent failures |
 
 ## Trigger Types
 
@@ -166,6 +168,7 @@ Hook conditions are JavaScript-like boolean expressions evaluated safely via **j
 | `seq.lastError()` | `(SequenceEvent & {message})\|undefined` | Get the last event whose result contains "error" or "failed". Has an extra `.message` field |
 | `seq.count(toolName?)` | `number` | Count tool occurrences since the last user query (current turn) |
 | `seq.totalCount(toolName?)` | `number` | Count tool occurrences since session start (entire conversation) |
+| `seq.countResult(tool, pattern, maxChars?)` | `number` | Count tool results matching a substring. `tool='*'` for all tools. `maxChars` limits search to first N chars (prevents false positives from file content) |
 | `seq.since(toolName)` | `SequenceEvent[]` | Events that occurred after the last occurrence of `toolName` |
 | `seq.sinceEdit()` | `SequenceEvent[]` | Events after the last `edit_file` or `write_file` |
 | `seq.isPlanMode()` | `boolean` | Whether the agent is in plan mode |
@@ -236,7 +239,7 @@ Expressions are stored with `seq.X` syntax in `conditions.json`, but at evaluati
 
 The evaluation context binds:
 ```
-has, hasAny, last, lastError, count, totalCount, since, sinceEdit, lastIndexOf, isPlanMode, call
+has, hasAny, last, lastError, count, totalCount, countResult, since, sinceEdit, lastIndexOf, isPlanMode, call
 ```
 
 ## Sequence Tracking
@@ -348,7 +351,7 @@ The compilation process includes:
 3. **Schema Validation** (`condition-validator.ts`): Checks `trigger` is a non-empty array of strings, `when`/`condition` are strings, `action` has valid `type`, etc.
 
 4. **Expression Validation**: Parses the expression with jsep and walks the AST to verify:
-   - Only allowed `seq.X` functions are used (`has`, `hasAny`, `last`, `lastError`, `count`, `totalCount`, `since`, `sinceEdit`, `lastIndexOf`, `isPlanMode`)
+   - Only allowed `seq.X` functions are used (`has`, `hasAny`, `last`, `lastError`, `count`, `totalCount`, `countResult`, `since`, `sinceEdit`, `lastIndexOf`, `isPlanMode`)
    - No dangerous identifiers (`eval`, `Function`, `require`, `process`, etc.)
    - No direct function calls (only method-call syntax)
    - Only `seq` and `call` as root objects
@@ -383,7 +386,7 @@ See `src/utils/skill-path-resolver.ts` for implementation details.
 The hook system integrates via `HookExecutor.processToolCalls()`, which replaces the old imperative for-loop approach:
 
 ```typescript
-// In agent-loop (TOOL state)
+// In hook state (src/loop/states/hook.ts)
 
 // 1. Preprocessor: augment tool calls with metadata
 const augmented = augmentToolCalls(toolCalls);
@@ -415,7 +418,7 @@ When multiple hooks match a single tool call, they are evaluated in priority ord
 
 | Priority | Action Type | Rationale |
 |----------|-------------|-----------|
-| 0 (first) | `block` | Safety first — block danger before anything else |
+| 0 (first) | `compact`, `block` | Safety/compaction first — compact stops processing, block prevents danger |
 | 1 | `replace` | Modify the trigger before injection |
 | 2 | `inject_before`, `inject_after` | Add tool calls around the trigger |
 | 3 (last) | `message` | Weak action, only provides guidance |

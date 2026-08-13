@@ -1,5 +1,9 @@
 # Plan: Thoroughly Test ESC-Neglection Features from Within the Loop
 
+> **Status:** Implemented. All planned test files exist in `src/tests/loop/states/` (llm-esc-precheck, llm-esc-midcall, llm-esc-crossroad, tool-esc, stop-esc, hook-esc-recap, esc-full-loop, esc-wrap-up-lifecycle). The shared helpers live in `src/tests/loop/esc-test-helpers.ts`.
+>
+> **Note:** The mock import paths in the code examples below have been updated to reference `../../../engine/chat-provider.js` (the LLM facade was refactored from `src/ollama.ts` to `src/engine/chat-provider.ts`).
+
 ## Goal
 
 Test all 7 ESC-neglection branches across state handlers + the wrap-up commit/rollback lifecycle — exercising real handler logic (not fake handlers) while mocking only the LLM streaming seam (`retryChat`) and IO-level modules.
@@ -72,6 +76,7 @@ interface PassData {
   augmentedCalls: AugmentedToolCall[];
   hookResult: ProcessToolCallsResult | null;
   crossroadContinuation?: string;
+  deferredCompact: boolean;
 }
 ```
 
@@ -165,6 +170,7 @@ export function createPassData(overrides: Partial<PassData> = {}): PassData {
     assistantContent: '',
     augmentedCalls: [],
     hookResult: null,
+    deferredCompact: false,
     ...overrides,
   };
 }
@@ -326,7 +332,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { Triologue } from '../../loop/triologue.js';
 
 // Mock all external dependencies — agentIO.isNeglectedMode() returns true
-vi.mock('../../engine/ollama.js', () => ({
+vi.mock('../../../engine/chat-provider.js', () => ({
   retryChat: vi.fn(),
   MODEL: 'test-model',
 }));
@@ -354,7 +360,7 @@ import { AgentState } from '../../loop/state-machine.js';
 import { agentIO } from '../../loop/agent-io.js';
 import { startWrapUp } from '../esc-wrap-up.js';
 import { stopSpinner } from '../../engine/chat-helpers.js';
-import { retryChat } from '../../engine/ollama.js';
+import { retryChat } from '../../../engine/chat-provider.js';
 import { createTurnVars, createPassData, createMockMachineEnv } from '../esc-test-helpers.js';
 ```
 
@@ -1339,7 +1345,7 @@ it('should register agent message and recap tool result before returning on ESC'
 #### `src/tests/loop/esc-full-loop.test.ts`
 
 Wire all real handlers into `AgentStateMachine`. Mock only:
-- `retryChat` (from `../../engine/ollama.js`)
+- `retryChat` (from `../../../engine/chat-provider.js`)
 - `agentIO` (use real `agentIO.initMain()` so `escAware` works; manually trigger ESC via `setNeglectedMode` + `onNeglectedCallbacks`)
 - `session I/O` (`../../session/index.js`)
 - `handleCrossroad` (mock to return null = no crossroad)
@@ -1352,7 +1358,7 @@ Wire all real handlers into `AgentStateMachine`. Mock only:
 
 **Mock setup**:
 ```typescript
-vi.mock('../../engine/ollama.js', () => ({
+vi.mock('../../../engine/chat-provider.js', () => ({
   retryChat: vi.fn(),
   MODEL: 'test-model',
   retryMultipleChoice: vi.fn(),
@@ -1407,7 +1413,7 @@ import { handleHook } from '../../loop/states/hook.js';
 import { handleTool } from '../../loop/states/tool.js';
 import { handleStop } from '../../loop/states/stop.js';
 import { Triologue } from '../../loop/triologue.js';
-import { retryChat } from '../../engine/ollama.js';
+import { retryChat } from '../../../engine/chat-provider.js';
 import { agentIO } from '../../loop/agent-io.js';
 ```
 
@@ -1621,7 +1627,7 @@ Test `startWrapUp` + `evaluateWrapUp` + `commitWrapUp`/`rollbackWrapUp` with con
 
 **Mock setup**:
 ```typescript
-vi.mock('../../engine/ollama.js', () => ({
+vi.mock('../../../engine/chat-provider.js', () => ({
   retryChat: vi.fn(),
   MODEL: 'test-model',
 }));
@@ -1639,7 +1645,7 @@ import {
   hasPendingWrapUp,
   markWrapUpShown,
 } from '../../loop/esc-wrap-up.js';
-import { retryChat } from '../../engine/ollama.js';
+import { retryChat } from '../../../engine/chat-provider.js';
 import { Triologue } from '../../loop/triologue.js';
 ```
 
@@ -1858,7 +1864,7 @@ it('should replace previous wrap-up state when startWrapUp called again', async 
 ## Key Design Decisions
 
 - **Mock `agentIO` with internal flag**: Most Layer A tests use a mock `agentIO` with a mutable `neglected` flag that can be toggled mid-test. This allows simulating "ESC already pressed" (flag starts true) or "ESC during operation" (flag set to true at a specific point).
-- **Mock `retryChat` at `ollama.js` level**: Mocking `../../engine/ollama.js` ensures both `chat-provider.ts` re-exports and `forkChat` internal calls hit the stub (same-module binding, proven in `compact-undefined-role.test.ts`).
+- **Mock `retryChat` at `chat-provider.js` level**: Mocking `../../../engine/chat-provider.js` ensures both `chat-provider.ts` re-exports and `forkChat` internal calls hit the stub (same-module binding, proven in `compact-undefined-role.test.ts`).
 - **Mock `startWrapUp` in handler tests**: To avoid testing wrap-up lifecycle in handler isolation tests. Wrap-up lifecycle is tested separately in Layer C.
 - **Fake timers for wrap-up timing**: Layer C uses `vi.useFakeTimers()` to deterministically test the 3s grace period without real delays.
 - **Spy on Triologue methods**: For verifying `skipPendingTools`, `agent`, `tool`, `beginWrapUp`, `finishWrapUp`, `commitWrapUp`, `rollbackWrapUp` calls, use `vi.spyOn(triologue, 'methodName')`.

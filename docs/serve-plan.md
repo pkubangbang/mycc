@@ -1,5 +1,7 @@
 # Implementation Plan: `/serve` — Web Chat UI for mycc
 
+> **Status**: Implemented. The `/serve` web UI ships as `src/serve/` (4 .ts files) + `src/web/` (Vue 3 SFCs). The architecture below describes the shipped design. Key additions beyond the original plan: interactive card bridge (replacing `ask()` serve path), steering queue, file upload queue, auto-mode signaling, disconnect timer with suspend/hibernate detection, `rejectInput()` for peer-channel wake, transcript + user-log durable history, `/history` and `/config` HTTP endpoints, `--host` flag support, `noServer` WebSocket mode (URL-routed upgrades), and teammate drawer UI. See `docs/serve-bugfix-plan.md` for the follow-up card system design.
+
 ## Architecture Overview
 
 ```

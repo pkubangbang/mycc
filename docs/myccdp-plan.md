@@ -1,5 +1,13 @@
 # mycc Discovery Protocol (myccdp) — Complete Implementation Plan
 
+> **Status**: Implemented. The 3 files (`src/peer/identity.ts`, `src/peer/channel.ts`, `src/peer/peer.ts`) and edits to `src/types.ts`, `src/config.ts`, `src/context/parent-context.ts`, `src/loop/agent-repl.ts` all shipped as described. Significant additions beyond the original plan:
+> - **Heartbeat schema changed**: `{ timestamps: [...] }` → `{ heartbeats: [...], briefs: [...] }`. Briefs record the agent's recent status updates (via `recordBrief()`).
+> - **Absolute freshness window**: `FRESHNESS_WINDOW_MS = 90_000` added to `isFresh()` — a remote whose latest heartbeat is older than 90s is stale regardless of the relative check.
+> - **`PeerModule` interface extended**: `sendPeerMail()` (channel-independent peer mail), `hasActiveChannel()` (autofly gate), `getSelfSessionId()`, `recordBrief()`, `getBriefs()`, `getLatestHeartbeat()`, `setOnChannelJoin()`.
+> - **`NoopPeerModule`** added for child processes (teammates) that don't participate in peer discovery.
+> - **Channel join callback**: `setOnChannelJoin()` lets the agent loop abort a blocked PROMPT wait when a channel joins mid-flight.
+> - **`register()` retry loop**: 5-attempt read-merge-write loop to handle concurrent registration from multiple instances.
+
 ## Overview
 
 Two subsystems: **identity** (registration + heartbeat freshness) and **channel** (topic-based messaging). Implementation creates 3 new files in `src/peer/`, plus small edits to 4 existing files. The design follows the existing module pattern: interface in `types.ts` → manager class → wired into `ParentContext` → started/stopped in `agent-repl.ts`.
@@ -10,10 +18,11 @@ Two subsystems: **identity** (registration + heartbeat freshness) and **channel*
 
 **Core intent**: "the peer should be no later than 90s, even during system hibernation."
 
-**Comparison**: `fresh ⟺ remoteLatest > localOldest`
+**Comparison**: `fresh ⟺ (remoteLatest > localOldest) AND (now - remoteLatest < FRESHNESS_WINDOW_MS)`
 
-- `localOldest = local.timestamps[0] || -Infinity` — if local has 0 beats (just started, no baseline), everything is fresh.
-- `remoteLatest = remote.timestamps[remote.timestamps.length - 1] || (Date.now() - 30000)` — if remote has 0 beats (file missing/empty, but registered), assume it beat 30s ago (benefit of the doubt for a just-started peer that hasn't written its first heartbeat yet).
+- `localOldest = local.heartbeats[0] || -Infinity` — if local has 0 beats (just started, no baseline), everything passes the relative check.
+- `remoteLatest = remote.heartbeats[remote.heartbeats.length - 1] || (Date.now() - 30000)` — if remote has 0 beats (file missing/empty, but registered), assume it beat 30s ago (benefit of the doubt for a just-started peer that hasn't written its first heartbeat yet).
+- **Absolute window** (`FRESHNESS_WINDOW_MS = 90_000`): even if the relative check passes, a remote whose latest heartbeat is older than 90s is NOT fresh. This prevents a dead/crashed instance from appearing fresh forever.
 - Edge case: remote session-id not in `identity.json` → `false`.
 - `start()` fires the first beat immediately, so a freshly started instance has at least 1 beat right away.
 
@@ -73,10 +82,11 @@ A JSON object keyed by session-id. No `agentName` — only leads participate.
 ### `~/.mycc-store/discovery/heartbeat/[session-id].json`
 
 ```json
-{ "timestamps": [t1, t2, t3] }
+{ "heartbeats": [t1, t2, t3], "briefs": [{ "time": 1722890000000, "content": "Working on X", "confidence": 7 }] }
 ```
 
-Rolling array, max 3. Each `t` is `Date.now()` (ms epoch). Trim to last 3 on each beat.
+Rolling array, max 3 heartbeats. Each `t` is `Date.now()` (ms epoch). Trim to last 3 on each beat.
+The `briefs` array (max 3) stores recent agent status updates recorded via `recordBrief()`, each truncated to ~200 tokens. Backward-compat: the reader accepts both the legacy `{ timestamps: [...] }` schema and the current `{ heartbeats: [...], briefs: [...] }` schema.
 
 ### `~/.mycc-store/discovery/channels/[session-id]-[channel-id].json`
 

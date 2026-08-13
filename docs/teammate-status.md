@@ -110,9 +110,8 @@ When the teammate process exits (gracefully or via signal), status becomes `shut
 export type TeammateStatus = 'working' | 'idle' | 'holding' | 'shutdown';
 ```
 
-### Status Updates (`src/context/team.ts`)
+### Status Updates (`src/context/parent/team.ts`)
 
-The `handleChildMessage` function handles status updates:
 The `handleChildMessage` function handles status updates:
 ```typescript
 if (status === 'working') {
@@ -122,43 +121,45 @@ if (status === 'working') {
 }
 ```
 
-### Question Handling (`src/context/child/`)
+### Question Handling (`src/context/child/core.ts`)
 
 When asking a question:
-When asking a question:
 ```typescript
-async question(query: string, asker: string): Promise<string> {
+async question(query: string, asker: string, options?: { onEsc?: string; onEnter?: string }): Promise<AskResult> {
   sendStatus('holding');  // Transition to holding
   try {
-    return await ipc.sendRequest(...);
+    return await ipc.sendRequest<AskResult>('question', { query, asker, options }, 0);
   } finally {
     sendStatus('working');  // Resume working
   }
 }
 ```
 
-### awaitTeam Logic (`src/context/team.ts`)
+### awaitTeam Logic (`src/context/parent/team.ts`)
 ```typescript
-async awaitTeam(timeout: number): Promise<{ result: string }> {
+async awaitTeam(_timeout?: number): Promise<{ result: string }> {
   // 1. If no teammates or all shutdown → "no teammates"
-  // 2. Watch for 'holding' every 1s → "got question"
-  // 3. Wait 5s for teammates to enter working
-  // 4. After 5s, if all idle/shutdown → "no workload"
-  // 5. Watch for completion (idle/shutdown/holding) with timeout
-  // 6. If all finish in time → "all done", else → "timeout"
+  // 2. If any holding → "got question" (immediate)
+  // 3. If nobody working → "all done"
+  // 4. Wait for each working teammate via awaitTeammate (respects ETA deadlines)
+  // 5. After all resolve, check for holding → "got question", else → "all done"
 }
 ```
 
-### awaitTeammate Logic (`src/context/team.ts`)
+### awaitTeammate Logic (`src/context/parent/team.ts`)
 ```typescript
-async awaitTeammate(name: string, timeout: number): Promise<{ waited: boolean }> {
+async awaitTeammate(name: string, defaultTimeout: number = 300000): Promise<{ waited: boolean }> {
   const status = this.statuses.get(name);
 
-  // Already settled (not actively working)
-  if (status === 'idle' || status === 'shutdown' || status === 'holding') {
-    return { waited: false };
-  }
-  // ... wait for working → idle/holding/shutdown transition
+  // Subscribe to phase 2 (working → non-working transition)
+  // - holding → resolve immediately
+  // - working → subscribe to phase 2
+  // - idle/shutdown/undefined → subscribe to phase 1 (will move to phase 2 when working starts)
+
+  // Dynamic timeout: uses teammate ETA deadline (from mail_to eta_update)
+  // Polls every 1s; also resolves if lead has new mail or ESC pressed
+  await Promise.race([promise, timeoutPromise]);
+  return { waited: true };
 }
 ```
 

@@ -1,3 +1,5 @@
+> **Status:** Implemented. All 4 fixes verified against current code.
+
 # ESC Single-Press Return-to-Prompt Audit & Fix Plan
 
 ## Requirement

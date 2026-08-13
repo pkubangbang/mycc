@@ -2,7 +2,7 @@
 
 > Branch: `feat/serve-webui`
 > Date: 2026-07-05
-> Status: Plan (awaiting approval)
+> **Status**: Implemented. Phase 1 (ws.send guards, UI state reset, startup failure handling) and Phase 2 (interactive card system with `CardMessage`, `broadcastCard`, `waitForCardResponse`, `CardItem.vue`) are both shipped. Phase 3 polish items are implemented where noted. The `ServeHub` class in `src/serve/serve-hub.ts` includes the card bridge, steering queue, file uploads, and auto-mode support.
 
 ---
 

@@ -1,5 +1,7 @@
 # Embedding-Based Duplication Detection for Hint Round
 
+> **Status**: Implemented. Ships as `src/loop/request-embedding.ts`. The `RequestEmbeddingTracker` class is wired into `MachineEnv` and used in `src/loop/states/tool.ts`.
+
 ## Problem
 
 The current hint round system uses a simple **confusion index** (0-20) based on:
@@ -56,9 +58,9 @@ class RequestEmbeddingTracker {
 
   /**
    * Map a similarity score (0.0–1.0) to a confusion delta (0–2).
-   *   < 0.7  → 0 (no significant similarity)
-   *   0.7–0.85 → +1 (moderate similarity)
-   *   > 0.85 → +2 (high similarity — likely stuck in a loop)
+   *   < 0.7   → 0  (no significant similarity)
+   *   0.7–0.85 → +1 (moderate similarity — possible loop)
+   *   > 0.85  → +3 (high similarity — likely stuck)
    */
   similarityToDelta(similarity: number): number
 
@@ -185,27 +187,29 @@ Initialize in `AgentStateMachine` constructor.
 - **After auto-compact**: The tracker IS cleared (via `clear()`) since the conversation context has been summarized and the confusion index is reset.
 - **On new user query (PROMPT state)**: The tracker is NOT cleared — we want to detect duplication across turns.
 
-## Files Changed
+## Files (as shipped)
 
-| File | Change |
-|------|--------|
-| `src/loop/request-embedding.ts` | **NEW** — `RequestEmbeddingTracker` class (~100 lines) |
-| `src/loop/state-machine.ts` | Add `requestEmbeddingTracker` to `MachineEnv` |
-| `src/loop/states/tool.ts` | Replace old repetition heuristic with embedding-based scoring; add `addEntry()` call |
-| `src/loop/hint-round.ts` | Include duplication report in hint context |
-| `src/loop/agent-repl.ts` | Instantiate tracker and pass to state machine |
+| File | Role |
+|------|------|
+| `src/loop/request-embedding.ts` | `RequestEmbeddingTracker` class with `addEntry()`, `getMaxSimilarity()`, `similarityToDelta()`, `getDuplicationReport()`, `clear()` |
+| `src/loop/state-machine.ts` | `requestEmbeddingTracker` in `MachineEnv` |
+| `src/loop/states/tool.ts` | Embedding-based scoring replaces old repetition heuristic; `addEntry()` call before scoring |
+| `src/loop/states/llm.ts` | `requestEmbeddingTracker.clear()` on auto-compact |
+| `src/loop/agent-repl.ts` | Instantiates tracker and passes to state machine; `getDuplicationReport` wired into env |
+| `src/loop/hint-round.ts` | Duplication report included in hint context |
 
 ## Dependencies
 
-- `src/engine/ollama-embedding.ts` — already exists, provides `getEmbedding()`
+- `src/engine/rag-provider.js` — provides `getEmbedding()` (facade that delegates to `rag-nomic.js` or `rag-embeddinggemma.js` based on configured model)
 - Cosine similarity — implemented inline in the tracker (simple math, no external dep)
 
 ## Assumptions
 
-1. **Ollama is always available for embeddings** — The project already requires Ollama for embeddings (even with DeepSeek provider). This is a safe assumption.
+1. **Ollama is always available for embeddings** — The project always uses Ollama for embeddings (even with DeepSeek provider). This is a safe assumption.
 2. **Embedding generation is fast** — `getEmbedding()` is a single API call to local Ollama. The overhead per tool call is acceptable (typically <100ms).
-3. **nomic-embed-text dimension (768)** — The embedding dimension is consistent. The cosine similarity implementation works with any dimension.
+3. **Embedding dimension (768)** — Both nomic-embed-text and embeddinggemma default to 768 dimensions. The cosine similarity implementation works with any dimension.
 4. **In-memory only** — No persistence to disk. The buffer is lost on restart, which is fine since it's a rolling window of recent activity.
+5. **Document mode** — `getEmbedding(text, 'document')` is used for all tool calls since the tracker does symmetric comparison (no query/document distinction needed).
 
 ## What Gets Removed from `src/loop/states/tool.ts`
 

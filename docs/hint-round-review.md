@@ -33,10 +33,10 @@ PROMPT ──► COLLECT ──► LLM ──► HOOK ──► TOOL ──► S
               │                          │
               │                   [Tool Exec]
               │                    confusion scoring:
-              │                     - action tool: -1
-              │                     - repeated tool: +1
+              │                     - non-exploration, low sim: -1
+              │                     - non-exploration, sim 0.7-0.85: +1
+              │                     - non-exploration, sim >0.85: +3
               │                     - tool error: +2
-              │                     - read-only: 0
               │                          │
               ▼                          ▼
          [Check confusion]
@@ -59,14 +59,14 @@ lastRole === 'assistant'      // TP-safe: assistant → user via note
 | Event | Delta |
 |-------|-------|
 | Exploration tool (read_file, recall, etc.) | 0 |
-| Action tool, first use | -1 |
-| Action tool, repeated (in last 5 calls) | +1 |
-| `mail_to` repeated | +2 |
+| Non-exploration tool, max embedding similarity < 0.7 | -1 |
+| Non-exploration tool, max embedding similarity 0.7–0.85 | +1 |
+| Non-exploration tool, max embedding similarity > 0.85 | +3 |
 | Tool result indicates error | +2 |
 | Bash read-only (ls, cat, grep, git status) | 0 |
-| Bash action, first use | -1 |
-| Bash action, repeated | +1 |
 | Assistant turn in plan mode (`hook.ts`) | +1 |
+
+> **Note**: The old "same tool name in last 5 calls" repetition heuristic has been replaced by embedding-based semantic duplication detection (`RequestEmbeddingTracker` in `src/loop/request-embedding.ts`). See `docs/hint-round-embedding-design.md`.
 
 ### Reset Points
 
@@ -162,10 +162,11 @@ The analysis prompt includes available wiki domains, so the LLM can suggest targ
 
 **Risk**: In edge cases, this could cause **hint looping** — rapid-fire hint rounds without meaningful progress. Consider adding a cooldown (e.g., "don't fire another hint within N turns of the last one") or a max-hints-per-turn limit.
 
-### 5.4 Repetition Detection is Tool-Level Only
-**Observation**: Repetition is detected as "same tool name in last 5 calls" (from `sequence.getEvents()`). This doesn't detect semantic repetition (e.g., calling `read_file` 4 times on different files while looking for the same information).
+### 5.4 Semantic Repetition Detection (resolved)
 
-**Risk**: Legitimate repeated tool usage (e.g., writing 5 files with `write_file`, testing with `bash` multiple times) gets penalized as +1 per repeated call. This could inflate confusion in scenarios where repetition is expected and productive.
+**Update**: The original tool-name-based repetition detection ("same tool name in last 5 calls") has been replaced by **embedding-based semantic duplication detection** via `RequestEmbeddingTracker` (`src/loop/request-embedding.ts`). The tracker maintains a rolling buffer of the last 20 tool calls, embeds each via Ollama, and computes cosine similarity. The max similarity maps to a confusion delta (+0/+1/+3). See `docs/hint-round-embedding-design.md` for the full design.
+
+This resolves the original concern: semantic repetition (e.g., calling `read_file` 4 times on different files for the same purpose) is now detected.
 
 ### 5.5 Context Extraction Format Inconsistency
 **Observation**: `minifyForHint()` uses direct `truncate()` on content, producing plain text. But `minifyMessages()` (used for auto-compact) uses a compact pipe-delimited format (`ux|...`, `ax|...`, `ti|...`, `to|...`). These are inconsistent.
@@ -228,7 +229,7 @@ if (confusionIndex >= 10 && messageCount >= 6) {
 The lead receives this mail in its COLLECT state and injects it as a `[MAIL]` note.
 
 ### Child-Specific Scoring (teammate-worker.ts)
-- Uses same scoring as main (action -1, error +2, repetition +1, etc.)
+- Uses same embedding-based scoring as main (similarity delta, error +2)
 - Additional +1 per LLM turn (in the worker's LLM callback)
 
 ---
@@ -256,133 +257,18 @@ The lead receives this mail in its COLLECT state and injects it as a `[MAIL]` no
 
 ---
 
-## 8. Action Plan: COLLECT Injection Rework
+## 8. COLLECT Injection Rework (shipped)
 
 > **Date**: 2026-05-22
-> **Status**: Planned
-> **Scope**: Two concrete changes to `src/loop/states/collect.ts`
+> **Status**: Implemented
+> **Scope**: Changes to `src/loop/states/collect.ts`
 
-### Problem Summary
+### What shipped
 
-**Issue A — Stale `lastRole`**: `collect.ts` captures `const lastRole = triologue.getLastRole()` once at function start, then uses it for guards across all injection steps (mails, hints, nudges). After mail injection changes the actual role, subsequent step guards are checking a stale value.
+1. **Stale `lastRole` removed**: The `const lastRole = triologue.getLastRole()` capture at function start was removed. Mails, hints, and nudges are no longer guarded by a stale role check. Mails are collected unconditionally (`const mails = ctx.mail.collectMails()` with no role guard).
 
-**Issue B — Missing bridge for 'tool' role**: In multi-move sequences (`TOOL → COLLECT → LLM → HOOK → TOOL → ...`), COLLECT is entered with `lastRole='tool'`. The `lastRole !== 'tool'` guards silently skip ALL injections — mails, hints, and nudges are lost during these passes. Compare:
+2. **`generateBreakdown()` error detection fixed**: The function now uses `startsWith('error:')`, `startsWith('error ')`, `startsWith('fatal:')`, `startsWith('failed:')`, `startsWith('failed ')` for error detection, keeping `includes` only for OS error codes (`enoent`, `eacces`, `eperm`, `permission denied`). This prevents false positives from normal file content containing the word "error".
 
-| Guard | Stale check | Behavior with stale 'tool' |
-|-------|-------------|---------------------------|
-| `lastRole !== 'tool'` (mails) | false | ❌ Mail skipped |
-| `lastRole === 'assistant'` (hint) | false | ❌ Hint skipped |
-| `lastRole !== 'tool'` (todo nudge) | false | ❌ Nudge skipped |
-| `lastRole !== 'tool'` (brief nudge) | false | ❌ Nudge skipped |
+3. **Hint trigger no longer gated on `lastRole === 'assistant'`**: The confusion check (`confusionIndex >= 10 && messageCount >= 6`) proceeds directly to hint generation without a role guard.
 
-### Change 1: `ensureAssistant()` bridge helper
-
-Replace stale `lastRole` guards with an on-demand bridge that transitions `'tool' → 'assistant'` only when something actually needs to be injected.
-
-**New helper function:**
-```typescript
-function ensureAssistant(tri: Triologue): void {
-  if (tri.getLastRole() === 'tool') {
-    tri.agent('Continuing.');
-  }
-}
-```
-
-**`ensureAssistant()` is called inline before each injection** (mails, hints, nudges). It uses a fresh `getLastRole()` check, so if the previous step already bridged, subsequent calls are no-ops.
-
-### Change 2: Remove stale `lastRole` and restructure steps
-
-**At the top of `handleCollect()`:** Remove the stale capture `const lastRole = triologue.getLastRole()`.
-
-**Step 2 (Mails)** — Before: silently skipped if `lastRole !== 'tool'` is false.
-```typescript
-// BEFORE
-if (lastRole !== 'tool') {
-  const mails = ctx.mail.collectMails();
-  if (mails.length > 0) { ... }
-}
-
-// AFTER
-const mails = ctx.mail.collectMails();
-if (mails.length > 0) {
-  ensureAssistant(triologue);
-  // ... inject mail content via note()
-}
-```
-
-**Step 3 (Hint)** — Before: blocked by `lastRole === 'assistant'` stale guard.
-```typescript
-// BEFORE
-if (confusionIndex >= 10 && messageCount >= 6) {
-  if (lastRole === 'assistant') { ... hint generation ... }
-}
-
-// AFTER
-if (confusionIndex >= 10 && messageCount >= 6) {
-  ensureAssistant(triologue);
-  // ... hint generation (LLM call, then note('HINT', ...))
-}
-```
-
-**Step 4 (Todo nudge)** — Before: silently skipped if stale role is 'tool'.
-```typescript
-// BEFORE
-if (turn.nextTodoNudge === 0 && lastRole !== 'tool') {
-  triologue.note('REMINDER', `Update your todos. ${ctx.todo.printTodoList()}`);
-}
-
-// AFTER
-if (turn.nextTodoNudge === 0) {
-  ensureAssistant(triologue);
-  triologue.note('REMINDER', `Update your todos. ${ctx.todo.printTodoList()}`);
-}
-```
-
-**Step 5 (Brief nudge)** — Same pattern as step 4.
-
-**Step 6 (CONTINUE)** — **Removed entirely.** The note `'Continue with your task.'` is noise — the LLM was already going to continue.
-
-### Change 3: Fix `generateBreakdown()` error detection
-
-The function currently uses `result.includes('error')` which matches the word "error" **anywhere** in text — including inside normal file content read by the agent.
-
-**Before:**
-```typescript
-const errors = events.filter(e => {
-    const result = e.result?.toLowerCase() || '';
-    return result.includes('error') || result.includes('failed') ||
-           result.includes('fatal') || result.includes('enoent') ||
-           result.includes('eacces') || result.includes('eperm');
-});
-```
-
-**After:**
-```typescript
-const errors = events.filter(e => {
-    const result = e.result?.toLowerCase() || '';
-    return result.startsWith('error:') || result.startsWith('error ') ||
-           result.startsWith('fatal:') || result.startsWith('failed:') ||
-           result.startsWith('failed ') ||
-           result.includes('enoent') || result.includes('eacces') ||
-           result.includes('eperm') || result.includes('permission denied');
-});
-```
-
-(Keep `includes` for OS error codes like `ENOENT`/`EACCES` — those won't appear in normal file content. Change `error`, `failed`, `fatal` to use `startsWith`.)
-
-### Files Changed
-
-| File | Change | Risk |
-|------|--------|------|
-| `src/loop/states/collect.ts` | Add `ensureAssistant()` helper | Low — simple role check |
-| `src/loop/states/collect.ts` | Remove stale `lastRole` capture | Low — no longer referenced |
-| `src/loop/states/collect.ts` | Restructure steps 2–5 with fresh guards | Medium — changes injection timing for multi-move sequences |
-| `src/loop/states/collect.ts` | Remove step 6 (CONTINUE note) | Low — noise removal |
-| `src/loop/states/collect.ts` | Fix `generateBreakdown()` error detection | Low — only affects hint breakdown string |
-
-### Verification
-
-1. `pnpm lint` — no new warnings
-2. `npx tsc --noEmit` — no type errors
-3. `pnpm test` — all 1425+ tests pass
-4. Manual reasoning: trace TOOL → COLLECT → LLM (multi-move) to verify mails/nudges/hints now inject instead of being skipped
+4. **CONTINUE note removed**: The step 6 `'Continue with your task.'` note was removed as noise.

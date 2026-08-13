@@ -46,9 +46,11 @@ export const bashTool: ToolDefinition = {
 
 ### Custom Tools
 
-Custom tools are stored in `.mycc/tools/` (relative to where `mycc` command starts). They are:
-- Loaded dynamically at startup
-- Hot-reloaded when files change
+Custom tools come from two layers:
+- **User tools** (`~/.mycc-store/tools/`) — loaded at startup, not watched for changes
+- **Project tools** (`.mycc/tools/` relative to cwd) — loaded dynamically at startup and hot-reloaded when files change
+
+User tools cannot shadow project or built-in tools; project tools cannot shadow built-in tools.
 
 ### Tool Scope
 
@@ -62,7 +64,7 @@ Tools can be available in different contexts:
 
 Skills are loaded from three sources in priority order (later can shadow earlier):
 
-1. **User skills** (`~/.mycc/skills/`)
+1. **User skills** (`~/.mycc-store/skills/`)
    - Loaded at startup
    - Not watched for changes
    - Lowest priority (can be shadowed)
@@ -107,6 +109,8 @@ interface Skill {
   description: string; // Short description
   keywords: string[];  // Keywords for matching
   content: string;     // Full skill content (markdown)
+  when?: string;       // Natural language hook condition (optional)
+  sourceFile?: string; // Source file path (format: "layer:path")
 }
 ```
 
@@ -114,9 +118,9 @@ interface Skill {
 
 Only project directories are watched:
 - `.mycc/tools/` - Project tools
-- `.mycc/skills/` - Project skills
+- `.mycc/skills/` - Project skills (recursive, including subdirectories)
 
-User tools/skills and built-in content are static and not watched.
+User tools/skills and built-in content are static and not watched. File watches are debounced (300ms) to handle multiple events per save.
 
 ## Usage in AgentContext
 
@@ -132,16 +136,20 @@ const ctx = createAgentContext(process.cwd(), loader);
 
 The `Loader` instance provides:
 - `getToolsForScope(scope)` - Get tools formatted for LLM API
-- `execute(name, ctx, args)` - Execute a tool
-- `loadSkills()` - Load all skills
+- `execute(name, ctx, args, signal?)` - Execute a tool
+- `loadSkills()` - Load all skills (deprecated — use loadAll() instead)
 - `getSkill(name)` - Get a skill by name
-- `listSkills()` - List skills without content
+- `listSkills()` - List all skills (without content)
+- `getSkillKeywords()` - Get deduplicated, sorted list of all skill keywords
+- `compileCondition(skillName, feedback?)` - Compile a skill's "when" condition into a hook
+- `indexAllSkillsToWiki(wiki)` - Index all skills into wiki for semantic search
+
+A singleton instance is exported as `loader` from `src/context/shared/loader.ts`.
 
 ## Skill Discovery
 
-Skills are discovered by the LLM through the `skill_load` tool:
-- `skill_load(name="list", intent="...")` - List all available skills
-- `skill_load(name="<name>", intent="...")` - Load a specific skill
-- Partial names trigger semantic search using the `intent` parameter
+Skills are discovered by the LLM through two tools:
+- `skill_search(search="<keywords>")` — Search skills by keywords (semantic + name/keyword matching). Use when you don't know the exact skill name.
+- `skill_load(name="<exact_name>")` — Load a skill by exact name and return its full content. If the skill is not found, lists available skills.
 
 The system prompt includes a "Knowledge Boundary" section that teaches the LLM to recognize knowledge gaps and actively seek skills when needed.

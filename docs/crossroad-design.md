@@ -1,188 +1,215 @@
-# Crossroad Feature — Implementation Plan
+# Crossroad Feature
+
+> **Status:** Implemented in `src/loop/crossroad.ts` (~577 lines). Cooldown added later (see `docs/crossroad-cooldown.md`).
 
 ## Overview
 
-The "crossroad" feature intercepts LLM responses that contain "turning words" (indicators that the LLM is changing its mind mid-response). When detected, it:
+The "crossroad" feature intercepts LLM responses that contain "turning words" — indicators that the LLM is changing its mind mid-response. When detected, it:
 
-1. **Truncates** the LLM output at the turning word
-2. **Generates multiple alternative continuations** (forking in different "directions")
-3. **Selects the best continuation** via a second LLM call
-4. **Reconstructs the triologue** with the chosen continuation
+1. **Truncates** the LLM output at the turning word (keeps prefix A)
+2. **Generates 3 alternative continuations** via `forkChat` in different directions (forward / backward / synthesize)
+3. **Selects the best continuation** via a second `forkChat` call
+4. **Merges** the continuation into the assistant message in the HOOK state, discarding original tool calls — the LLM regenerates them in the next COLLECT round
 
-**Key clarification from user:**
-- Tool calls are NOT a precondition to skip crossroad. If LLM outputs turning words WITH tool calls, discard the tool calls and only keep the text before the turning word.
-- After crossroad reconstruction, the LLM is told "continue with your work" — it will naturally generate new tool calls.
-- Show spinner "LLM is at its crossroad..." during crossroad processing.
-- After crossroad completes, output the chosen text to the terminal (via `presentResult`)
+Tool calls are NOT a precondition to skip crossroad. If the LLM outputs turning words WITH tool calls, the tool calls are discarded and only the prefix text is kept. After crossroad, the LLM naturally generates new tool calls based on the prefix + continuation.
 
-## Data Flow
+## Turning Word Detection
 
-```
-LLM produces raw: "Let me check file X. However, I realize Y" + [tool_calls...]
-                                    ↓
-detectTurningWord() → found "However" at position 19
-                                    ↓
-truncate: A = "Let me check file X."  
-(discard text after turning word AND all tool calls)
-                                    ↓
-Show spinner: "LLM is at its crossroad..."
-                                    ↓
-forkChat(direction="forward")  → "I'll read file X and address Y"
-forkChat(direction="backward") → "Let me re-examine my assumptions first"  
-forkChat(direction="synthesize") → "The core question is whether X is correct"
-                                    ↓
-selectBestContinuation() → picks C_best
-                                    ↓
-Reconstruct triologue:
-  triologue.agent(A + "\n" + C_best)  // no tool_calls
-  triologue.note('CONTINUE', 'continue with your work')
-                                    ↓
-Output chosen text to terminal via presentResult-like display
-                                    ↓
-Next LLM round: naturally generates new tool calls based on A + C_best
-```
+### Tiered approach
 
-## Implementation Steps
+Detection uses three tiers to reduce false positives. A genuine "turning word" means the LLM is reversing course mid-response — distinct from ordinary conjunctions used for balanced analysis.
 
-### Step 1: Create `src/loop/crossroad.ts` (NEW, ~150 lines)
+**Tier 1 — Strong turning signals** (`STRONG_TURNING_WORDS`):
+Always flagged, subject only to position checks.
+- `Having said that`, `That being said`, `On the other hand`
+- `话说回来`, `等一下`
 
-#### 1a. Declare turning words
-```typescript
-const TURNING_WORDS = [
-  /\bHowever\b/i, /\bActually\b/i, /\bWait\b/i, /\bBut\b/i,
-  /\bNevertheless\b/i, /\bNonetheless\b/i, /\bOn the other hand\b/i,
-  /\bThat said\b/i, /\bThat being said\b/i,
-  /等等/, /但/, /不过/, /然而/, /其实/, /等一下/,
-];
-```
+**Tier 2 — Sentence-boundary conjunctions** (`SENTENCE_BOUNDARY_TURNING_WORDS`):
+Only flagged when at a sentence/paragraph start (not mid-sentence).
+- `However`, `Nevertheless`, `Nonetheless`, `That said`, `Actually`, `But`
+- `然而`, `但`, `不过`, `其实` (Chinese — only after sentence-ending punctuation `。！？` or newline)
 
-#### 1b. `detectTurningWord(content: string): { word: string; index: number } | null`
-- Scan content for the earliest match
-- Return the matched word and its position
+**Tier 3 — Special patterns** (`SPECIAL_TURNING_PATTERNS`):
+Disambiguation encoded directly in the regex.
+- `Wait` as interjection (followed by punctuation, NOT "wait for/until/to")
+- `等等` as interjection (followed by punctuation, NOT "etc." list terminator)
 
-#### 1c. `generateContinuations(messages: Message[], prefix: string, signal?: AbortSignal): Promise<string[]>`
-- Define direction prompts:
-  - "Go forward": Continue in a proactive, action-oriented direction
-  - "Go backward": Reconsider the basic assumptions and be cautious
-  - "Synthesize at a high level": Step back and provide a higher-level abstraction
-- For each direction, call `forkChat(messages, [], directionPrompt, signal)`
-  - Pass `tools=[]` to constrain text-only output (no tool calls)
-  - The generated text is just the continuation (post-prefix), each starting with the same foreword as the prefix ends
-- Use `Promise.all` for parallelism
-- Filter out empty/failed results
+### Position guards
 
-#### 1d. `selectBestContinuation(messages: Message[], prefix: string, continuations: string[], signal?: AbortSignal): Promise<string>`
-- Build a selection prompt listing all continuations with inline numbering
-- Call `retryChat` with `tools=[]` (text-only, no tool choice)
-- The LLM outputs which one is best (and optionally why)
-- Return the selected continuation text
+All matches must pass:
+- `MIN_PREFIX_LENGTH = 30` — enough content before the turn (LLM committed to a direction). Exception: position 0 is always allowed (the LLM's commitment was in conversation history, not the current response).
+- `MIN_SUFFIX_LENGTH = 15` — enough content after the turn (not just trailing rhetoric).
 
-#### 1e. `handleCrossroad(triologue: Triologue, originalContent: string, originalToolCalls: ToolCall[], signal?: AbortSignal): Promise<{ truncated: string; continuation: string } | null>`
-- Call `detectTurningWord(originalContent)` → if null, return null
-- Compute `prefix = originalContent.slice(0, turningWordIndex)`
-- Call `generateContinuations(messages, prefix, signal)` → get `continuations[]`
-- Call `selectBestContinuation(messages, prefix, continuations, signal)` → get `best`
-- Return `{ truncated: prefix, continuation: best }`
+### `detectTurningWord(content: string): { word: string; index: number } | null`
 
-### Step 2: Modify `src/loop/states/llm.ts`
+Scans all three tiers, returns the earliest valid match. Uses `isAtSentenceBoundary()` to check whether a tier-2 match starts a new sentence/paragraph.
 
-**After** `pass.assistantContent` and `pass.rawToolCalls` are set (around line 92-93), add:
+## Continuation Generation
+
+### `generateContinuations(messages, tools, prefix, signal, wordsBeforeTurn): Promise<string[]>`
+
+Three directions, run in parallel via `Promise.allSettled`:
+
+| Direction | Description |
+|-----------|-------------|
+| `go forward` | Continue proactively, action-oriented, decisive steps |
+| `go backward` | Reconsider assumptions, be cautious, re-examine foundations |
+| `synthesize at a high level` | Step back, higher-level abstraction, reframe the problem |
+
+Each direction uses `forkChat(messages, tools, fullPrompt, signal, 'none', CROSSROAD_RETRY_CONFIG)`:
+- `tools` are passed (NOT empty `[]`) to preserve the prompt cache prefix.
+- `toolChoice: 'none'` constrains output to text-only.
+- `CROSSROAD_RETRY_CONFIG`: 10s first-token timeout, 30s response timeout, 1 retry.
+
+### Anchor-based validation
+
+Each continuation MUST start by repeating the anchor sentence (the last sentence of the prefix) verbatim. This enforces a clean dovetail: the continuation picks up exactly where the prefix left off.
+
+- `extractWordsBeforeTurn(prefix)` — splits on English/Chinese sentence boundaries and newlines, returns the last sentence.
+- `stripAndValidate(wordsBeforeTurn, continuation)` — checks the continuation starts with the anchor; strips it, returning only the new content. Returns `null` if validation fails (continuation didn't start with anchor, or was only the anchor).
+- On validation failure, the direction is retried once. If the retry also fails, the direction is skipped.
+
+### `stripInternalMarkup`
+
+All raw continuation text is passed through `stripInternalMarkup()` (from `letter-box.ts`) before validation, removing any letter-box formatting artifacts.
+
+## Continuation Selection
+
+### `selectBestContinuation(messages, tools, prefix, continuations, signal): Promise<string>`
+
+- If 0 continuations: returns `''`
+- If 1 continuation: returns it directly (no LLM call needed)
+- If 2+: builds a selection prompt listing all options, calls `forkChat` with `toolChoice: 'none'`. Parses the response for an option number. Falls back to first continuation if parsing fails.
+
+Uses `forkChat` (not `retryChat`) with `tools` for cache preservation.
+
+## Orchestrator
+
+### `handleCrossroad(messages, originalContent, _originalToolCalls, tools, signal): Promise<CrossroadResult | null>`
 
 ```typescript
-// Crossroad detection: check for turning words in LLM output
-const crossroadResult = await handleCrossroad(
-  triologue,
-  pass.assistantContent,
-  pass.rawToolCalls,
-  pass.abortController?.signal,
-);
-if (crossroadResult) {
-  // Replace content with truncated version + selected continuation
-  pass.assistantContent = crossroadResult.truncated;
-  pass.crossroadContinuation = crossroadResult.continuation;
-  // Discard tool calls — LLM will re-generate them after crossroad
-  pass.rawToolCalls = [];
+interface CrossroadResult {
+  truncated: string;    // prefix (text before the turning word)
+  continuation: string; // best continuation text (anchor stripped)
 }
 ```
 
-**Also**: Show spinner "LLM is at its crossroad..." (use `startSpinner('LLM is at its crossroad...')` and `stopSpinner()`)
+Flow:
+1. `detectTurningWord(originalContent)` → if null, return null
+2. `prefix = originalContent.slice(0, match.index).trim()`
+3. `wordsBeforeTurn = extractWordsBeforeTurn(prefix)`
+4. `startSpinner('LLM is at its crossroad...')`
+5. `generateContinuations(messages, tools, prefix, signal, wordsBeforeTurn)` → if empty, retry once with 500ms delay. If still empty, return null.
+6. `selectBestContinuation(messages, tools, prefix, continuations, signal)` → best
+7. `stopSpinner()` (in `finally` block)
+8. Log all alternatives with selected marker via `agentIO.brief('info', 'crossroad', ...)` (markdown format for terminal + web UI)
+9. Return `{ truncated: prefix, continuation: best }`
 
-**Imports to add**: `handleCrossroad` from `./crossroad.js`, `startSpinner`/`stopSpinner` from `../../engine/chat-helpers.js`
+## Integration with the State Machine
 
-### Step 3: Modify `src/loop/state-machine.ts`
+### LLM state (`src/loop/states/llm.ts`)
 
-Add field to `PassData`:
+After the LLM response is stored on `pass`, crossroad runs BEFORE the empty-output check:
 
 ```typescript
+if (tools.length > 0) {
+  // Cooldown gate: if crossroad fired last pass, skip this pass
+  if (env.crossroadOccurred) {
+    env.crossroadOccurred = false;  // consume cooldown
+  } else {
+    const crossroadResult = await ctx.core.escAware(
+      async (abortController) => {
+        return await handleCrossroad(
+          triologue.getMessages(),
+          pass.assistantContent,
+          pass.rawToolCalls,
+          tools,
+          abortController.signal,
+        );
+      },
+      () => null,  // ESC during crossroad → return null (transparent skip)
+    );
+    // ESC pressed during crossroad → return to PROMPT
+    if (agentIO.isNeglectedMode()) {
+      stopSpinner();
+      return AgentState.PROMPT;
+    }
+    if (crossroadResult) {
+      pass.assistantContent = crossroadResult.truncated;
+      pass.crossroadContinuation = crossroadResult.continuation;
+      pass.rawToolCalls = [];  // discard original tool calls
+      ctx.core.increaseConfusionIndex(2);  // unconditional +2
+      env.crossroadOccurred = true;  // arm cooldown for next pass
+    } else {
+      env.crossroadOccurred = false;
+    }
+  }
+}
+```
+
+Key points:
+- Crossroad only runs when `tools.length > 0` (needs tool definitions for `forkChat` cache preservation).
+- Wrapped in `escAware` so ESC during crossroad processing returns null (transparent skip, uses original output as-is).
+- ESC during crossroad → immediate return to PROMPT.
+- Cooldown gate (`crossroadOccurred` flag): crossroad skips detection for one pass after firing.
+- Confusion index +2 is unconditional (not conditional on consecutive fires, since cooldown makes consecutive fires impossible).
+
+### HOOK state (`src/loop/states/hook.ts`)
+
+Crossroad is a first-class branch handled BEFORE normal agent registration:
+
+```typescript
+if (pass.crossroadContinuation) {
+  const finalContent = `${pass.assistantContent || ''} ${pass.crossroadContinuation}`;
+  const briefCallId = Math.random().toString(36).slice(2, 10);
+  triologue.agent(finalContent, [{
+    id: briefCallId,
+    function: {
+      name: 'brief',
+      arguments: { message: 'Resolved my direction. Let me continue with the tools.', confidence: 7 },
+    },
+  }], pass.assistantReasoningContent);
+  triologue.tool('brief', 'OK', briefCallId);
+
+  // Inject deferred hook messages
+  for (const dm of hookResult.deferredMessages) {
+    triologue.note('REMINDER', dm.message, dm.hookName);
+  }
+
+  pass.crossroadContinuation = undefined;
+  return AgentState.COLLECT;
+}
+```
+
+Key points:
+- Continuation is joined with a space (natural prose continuation, not a paragraph break).
+- A synthetic `brief()` tool call is injected (NOT a `note('CONTINUE', ...)`) to give the LLM a thinking trace and actively engage it.
+- Deferred hook messages are injected so the LLM sees them in the next round.
+- Flow goes to `COLLECT` (not `STOP`) so the LLM regenerates tool calls.
+- Stop-trigger hooks on the empty `rawToolCalls` are intentionally NOT carried forward.
+
+### PassData field
+
+```typescript
+// In src/loop/state-machine.ts
 export interface PassData {
-  // ... existing fields ...
-  /** If crossroad was triggered, the best continuation text */
+  // ... other fields ...
   crossroadContinuation?: string;
 }
 ```
 
-### Step 4: Modify `src/loop/states/hook.ts`
-
-**Before** `triologue.agent(pass.assistantContent, ...)` call (around line 200), add crossroad handling:
-
-```typescript
-// Crossroad: if a continuation was selected, inject it into the assistant message
-// and add a CONTINUE note so the LLM picks up from here
-if (pass.crossroadContinuation) {
-  // Display the chosen output to terminal
-  ctx.core.brief('info', 'crossroad', pass.assistantContent + '\n' + pass.crossroadContinuation);
-  
-  // The agent message will still be registered below in step 5,
-  // but we inject the continuation + continue note after agent()
-}
-```
-
-**After** `triologue.agent(pass.assistantContent, ...)` call (around line 223), add:
-
-```typescript
-// Crossroad continuation injection
-if (pass.crossroadContinuation) {
-  // Append continuation to the last assistant message
-  const lastMsg = triologue.getMessagesRaw().at(-1);
-  if (lastMsg?.role === 'assistant') {
-    lastMsg.content += '\n' + pass.crossroadContinuation;
-    // Recalculate token count after modification
-    // (Token count will be corrected by next needsCompact check)
-  }
-  // Tell LLM to continue — it will generate tool calls naturally
-  triologue.note('CONTINUE', 'continue with your work');
-  
-  // Clear the flag to prevent double-injection
-  pass.crossroadContinuation = undefined;
-}
-```
-
-**NOTE**: After crossroad, since `pass.rawToolCalls = []` and the registered agent message has no tool calls, the flow goes HOOK → STOP (normal text-only response). The `triologue.note('CONTINUE', ...)` ensures that in the next COLLECT → LLM round, the LLM sees the continuation and generates fresh tool calls.
-
-**BUT**: We need to ensure the flow goes to COLLECT instead of STOP. So after the crossroad injection, we should return `AgentState.COLLECT` directly (before the normal "No tool calls → STOP" path).
-
-### Step 5: Handle the display of chosen output
-
-After crossroad selects a continuation, display the complete result (prefix + continuation) to the terminal so the user sees what the LLM will proceed with. We can use `agentIO.log()` or `ctx.core.brief()` to output it.
-
-Looking at how `presentResult` works in `stop.ts` — it uses `displayLetterBox`. For crossroad, we can use a similar approach but simpler: just log the reconstructed output with a clear marker.
-
-### Step 6: Edge Cases
+## Edge Cases
 
 | Scenario | Handling |
 |---|---|
 | No turning word found | Return null, normal flow |
-| Turning word at position 0 | `prefix` is empty string, continuations generated fresh |
-| ESC pressed during crossroad | AbortSignal propagated; catch and fall back to original content |
-| forkChat fails for some/all directions | Silently catch failures; use only successful continuations; if none, fall back to original |
-| selection fails | Fall back to first successful continuation |
-| Crossroad but no continuations generated | Return null, use original content as-is |
+| Turning word at position 0 | Allowed (LLM's commitment was in conversation history) |
+| ESC pressed during crossroad | `escAware` returns null → transparent skip, uses original output. If `isNeglectedMode()`, returns PROMPT immediately. |
+| forkChat fails for some/all directions | Silently caught via `Promise.allSettled`; only successful directions included. If none, retried once. If still none, return null. |
+| Selection fails | Falls back to first successful continuation |
+| All continuations fail anchor validation | Direction skipped; if all fail, retry once; if still empty, return null |
+| No tools available (neglected mode) | Crossroad skipped entirely (`tools.length > 0` gate) |
 
-## Summary
+## Cooldown
 
-| Step | File | Action |
-|---|---|---|
-| 1 | `src/loop/crossroad.ts` | CREATE — turning words, detection, generation, selection, orchestration |
-| 2 | `src/loop/states/llm.ts` | EDIT — add crossroad detection after LLM response |
-| 3 | `src/loop/state-machine.ts` | EDIT — add `crossroadContinuation` to `PassData` |
-| 4 | `src/loop/states/hook.ts` | EDIT — inject continuation + note; return COLLECT instead of STOP |
+See `docs/crossroad-cooldown.md` for the cooldown mechanism: after crossroad fires, the `crossroadOccurred` flag is set, causing the next LLM pass to skip crossroad detection. This lets the LLM execute its committed actions without immediate re-triggering.

@@ -19,14 +19,14 @@ The original hook implementation had several issues:
 
 ```
 LLM response → ToolCall[]
-           → augmentToolCalls() (add metadata)
-           → processToolCalls() (array-level hook processing)
+           → augmentToolCalls() (add metadata, hook-preprocessor.ts)
+           → processToolCalls() (array-level hook processing, hook-executor.ts)
            → Execute resulting calls
 ```
 
-### Augmentation Step (agent-loop.ts)
+### Augmentation Step (hook-preprocessor.ts)
 
-Before hooks process tool calls, each call is augmented with metadata:
+Before hooks process tool calls, each call is augmented with metadata in `augmentToolCalls()` (`src/hook/hook-preprocessor.ts`):
 
 ```typescript
 interface AugmentedToolCall extends ToolCall {
@@ -54,7 +54,8 @@ interface AugmentedToolCall extends ToolCall {
 interface ProcessToolCallsResult {
   calls: AugmentedToolCall[];       // Modified array
   blockedCalls: Map<string, string>; // toolCall.id → rejection message
-  deferredMessages: string[];        // Messages to inject after execution
+  deferredMessages: Array<{ hookName: string; message: string }>; // Messages to inject after execution, attributed to their originating hook
+  compactRequested: boolean;         // Hook requested context compaction
 }
 ```
 
@@ -68,13 +69,14 @@ interface ProcessToolCallsResult {
 
 | Action | Effect | Priority |
 |--------|--------|----------|
+| `compact` | Trigger context compaction (highest priority, stops processing) | 0 |
 | `block` | Keep call in array, return rejection message when executed | 0 |
 | `replace` | Replace call with modified version | 1 |
 | `inject_before` | Insert call before target | 2 |
 | `inject_after` | Insert call after target | 2 |
 | `message` | Collect message for deferred injection | 3 |
 
-**Important**: Blocked calls are NOT removed from the array. They stay visible so the LLM sees what was attempted and learns from the rejection.
+**Important**: Blocked calls are NOT removed from the array. They stay visible so the LLM sees what was attempted and learns from the rejection. Compact has highest priority — when triggered, processing stops immediately.
 
 ## Condition Syntax
 
@@ -131,10 +133,12 @@ Test files should be focused and concise. Large test files are harder to maintai
 
 | File | Purpose |
 |------|---------|
-| `src/context/shared/hooks.ts` | `HookExecutor` class with `processToolCalls()` |
-| `src/context/shared/conditions.ts` | Condition compilation with `call.metadata.*` support |
-| `src/context/shared/condition-validator.ts` | Expression validation for `call.*` syntax |
-| `src/loop/agent-loop.ts` | `augmentToolCalls()` and caller logic |
+| `src/hook/hook-executor.ts` | `HookExecutor` class with `processToolCalls()` |
+| `src/hook/conditions.ts` | Condition compilation with `call.metadata.*` support |
+| `src/hook/condition-validator.ts` | Expression validation for `call.*` syntax |
+| `src/hook/hook-preprocessor.ts` | `augmentToolCalls()` — adds metadata to tool calls |
+| `src/hook/sequence.ts` | Sequence tracker for `seq.*` condition functions |
+| `src/loop/states/hook.ts` | Caller logic — invokes augment + processToolCalls |
 
 ## Safety
 

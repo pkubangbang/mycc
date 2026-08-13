@@ -1,7 +1,6 @@
 # Crossroad Cooldown Design Doc
 
-> **Status:** Approved (2026-07-17)
-> **Supersedes:** N/A — this is a bugfix for the crossroad stuck-loop, first identified during the pinned-todo-reactivation work.
+> **Status:** Implemented (2026-07-17). Cooldown gate in `src/loop/states/llm.ts`, turn-boundary resets in `src/loop/states/prompt.ts`, compact reset in `src/loop/states/hook.ts`. Test file: `src/tests/loop/states/llm-crossroad-cooldown.test.ts`.
 
 ## 1. Problem
 

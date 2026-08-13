@@ -1,5 +1,9 @@
 # Final Plan: Disk-Based Multi-Focus Image Cache with M Token
 
+> **Status**: Implemented. The `readPictureCached` method is in `src/context/parent/core.ts` (parent) and `src/context/child/core.ts` (child IPC delegate). The `read_picture` tool (`src/tools/read-picture.ts`) is a thin wrapper with a `cache` parameter. `PictureResult` type and `readPictureCached` are in `src/types.ts`. Cache files live in `.mycc/imgcache/`.
+>
+> **Minor deviation**: The actual implementation adds an optional `signal?: AbortSignal` parameter to `readPictureCached` (for ESC-aware abort) that this plan did not specify.
+
 > Refined by team review + user specification.
 
 ## Problem

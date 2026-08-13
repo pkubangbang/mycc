@@ -1,5 +1,7 @@
 # hand_over Improvement Plan — Final (Revised)
 
+> **Status**: Implemented. All LOCKED items (A1 Socratic hints, P1-1 tmux nesting self-check, C1 `dangerous=i_know` escape param, C2 Socratic hint, C3 `INDIRECT_WRAPPERS`, C4 `EXEC_WRAPPERS`, C5 PARAM docs) are in the codebase. The tmux nesting check is in `src/tools/hand_over.ts` (unconditional, not `$TMUX`-gated — rejects ANY leading `tmux` command). The `dangerous=i_know` routing is in `src/context/grant/bash-judge.ts`. `INDIRECT_WRAPPERS`/`EXEC_WRAPPERS` are in `src/context/grant/dangerous-commands.ts`.
+
 Source: `~/proj/feedback/hand_over-improvement-feedback.md` (6 issues: P0-1, P0-2, P1-1, P1-2, P2-1, P2-2)
 Analysis: 3 analyst teammates (analyst-a/b/c), lead-integrated. User-reviewed design decisions marked **[LOCKED]**.
 

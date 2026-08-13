@@ -1,5 +1,8 @@
 # Plan: Fix Teammate Termination Without Results
 
+> **状态：已实施。** 所有 Fix（1-7）均已落地于当前代码。保留为历史记录。
+> **关键偏差：** 计划中 `eta` 描述为"绝对 Unix 时间戳"，实际实现采用"相对秒数（seconds from now）"，由 `ChildTeam.mailTo` 转换为绝对时间戳（`Math.floor(Date.now() / 1000) + eta`）后通过 IPC `eta_update` 发送。计划中 handler 直接 `require` ipc-helpers 的设计也未采用——实际通过 `ctx.team.mailTo()` 委托给 `ChildTeam` 处理 IPC。`eta=0` 在实际实现中被允许（表示非预算邮件），计划中描述为 `eta <= 0` 被拒绝。
+
 ## Problem
 
 When mycc spawns teammates to collaborate, most of the time the teammates

@@ -1,8 +1,10 @@
-# Bang Command & Tmux Tool Design
+# Bang Command & hand_over Tool Design
+
+> **Note**: This tool was originally planned as `tmux` but shipped as `hand_over`. The tool name, parameters, and implementation differ from the original plan. This document describes the actual implementation.
 
 ## Overview
 
-The `tmux` tool opens an external terminal popup for interactive command execution. The bang command (`!<command>`) is a UI shortcut that calls this tool.
+The `hand_over` tool (`src/tools/hand_over.ts`) opens an external terminal popup for interactive command execution. The bang command (`!<command>`) is a UI shortcut that calls this tool.
 
 ## Two Terminals
 
@@ -18,20 +20,19 @@ The `tmux` tool opens an external terminal popup for interactive command executi
 │ MYCC TERMINAL                                                    │
 ├─────────────────────────────────────────────────────────────────┤
 │ agent >> !pnpm build                                            │
-│ run cmd ! pnpm build     ← (magenta prompt after typing !)      │
 │                                                                 │
-│ [popup opens in cwd]                                            │
+│ [popup opens in cwd, command typed into pane via send-keys]     │
 │                                                                 │
 │ Popup opened.                                                   │
-│ Reason: Run build with possible prompts                         │
-│ Work in popup, then return here.                                │
-│ Press Enter to capture & kill, or 'k' to keep session > _       │
+│ Save tmux session? [y/N]                                        │
 │                                                                 │
-│ [user presses Enter]                                            │
+│ [user presses Enter (n) or y]                                   │
 │                                                                 │
 │ ─────────────────────────────────────                           │
 │ User ran: pnpm build                                            │
-│ Session: mycc-1703123456 (killed)                               │
+│ Status: session closed (output captured below)                  │
+│ Session name: mycc-1703123456                                   │
+│ Next action: the session is closed; read the captured output... │
 │ Output: ...                                                     │
 │                                                                 │
 │ agent >> _                                                      │
@@ -39,34 +40,36 @@ The `tmux` tool opens an external terminal popup for interactive command executi
 
 For persistent sessions (npm run dev, ssh):
 
-│ Press Enter to capture & kill, or 'k' to keep session > k      │
+│ Save tmux session? [y/N] y                                      │
 │                                                                 │
 │ ─────────────────────────────────────                           │
 │ User ran: npm run dev                                           │
-│ Session: mycc-1703123456 (kept)                                  │
-│ To reattach: tmux attach -t mycc-1703123456                     │
-│ Output: ...                                                     │
+│ Status: session still open (kept)                                │
+│ Session name: mycc-1703123456                                   │
+│ Next action: continue this interactive session with bash —      │
+│   tmux send-keys -t mycc-1703123456 '<command>' Enter           │
+│   tmux capture-pane -t mycc-1703123456 -p                       │
 ```
 
 ## Tool Composition
 
-The `tmux` tool is a **workflow lock** combining:
+The `hand_over` tool is a **workflow lock** combining:
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│  1. todo: track session name                                 │
-│  2. bash: tmux new-session -d -s <name> -c <cwd>            │
-│  3. bash: <terminal> -- tmux attach -t <name>               │
-│           ↓ (popup opens)                                    │
-│  4. question: "Press Enter to capture & kill, or 'k'..."    │
-│           ↓ (user confirms)                                  │
-│  5. bash: tmux capture-pane -t <name> -p -S -3000          │
-│  6. LLM: summarize if too long                               │
-│  7. bash: kill-session (if not kept)                         │
-│  8. todo: mark done (note: kept/killed)                      │
-│           ↓                                                  │
-│  9. Return result string                                    │
-└─────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│  1. todo: track session name (createTodo)                        │
+│  2. bash(spawn): tmux new-session -d -s <name> -c <cwd> <shell> │
+│  3. bash(spawn): tmux send-keys -t <name> " <command>" Enter    │
+│  4. spawn: <terminal> -- tmux attach -t <name>                  │
+│           ↓ (popup opens, detached)                              │
+│  5. question: "Save tmux session? [y/N]"                        │
+│           ↓ (user confirms)                                      │
+│  6. bash: tmux capture-pane -t <name> -p -S -3000 -E -1        │
+│  7. LLM: summarize if > 100 lines                               │
+│  8. bash: kill-session (if not kept)                             │
+│           ↓                                                      │
+│  9. Return result string with status + next-action guidance     │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
 **Why track session in todo:**
@@ -77,235 +80,47 @@ The `tmux` tool is a **workflow lock** combining:
 ## Tool Definition
 
 ```typescript
-/**
- * tmux.ts - Interactive terminal popup
- *
- * Scope: ['main'] - Lead agent only (requires GUI terminal)
- *
- * Composes: todo + bash(tmux) + question + LLM summarize
- */
+// src/tools/hand_over.ts
 
-import type { ToolDefinition, AgentContext } from '../types.js';
-import { exec, execSync } from 'child_process';
-import { promisify } from 'util';
-import chalk from 'chalk';
-import { agentIO } from '../loop/agent-io.js';
-import { retryChat, MODEL } from '../ollama.js';
-
-const execAsync = promisify(exec);
-
-export const tmuxTool: ToolDefinition = {
-  name: 'tmux',
-  description: `Open an interactive terminal popup for user work.
-
-User can run commands, SSH to servers, use interactive programs (vim, htop).
-When done, user returns to mycc and presses Enter to capture result.
-
-Use when:
-- Commands need user interaction (prompts, passwords)
-- SSH sessions to remote servers
-- Interactive programs (vim, htop, watch)
-- Any task needing direct terminal access`,
+export const handOverTool: ToolDefinition = {
+  name: 'hand_over',
+  description: `Opens a popup terminal and BLOCKS until the user finishes interacting, then captures and returns the terminal output. Use this when the task REQUIRES a human at the terminal — e.g. entering a password (sudo, SSH passphrase, 2FA), an interactive TUI (vim, htop, less), an SSH session, or anything that reads from a TTY.`,
   input_schema: {
     type: 'object',
     properties: {
       command: {
         type: 'string',
-        description: 'Initial command (optional). Opens shell if not provided.',
+        description: 'The single foreground command to hand to the user (e.g. sudo apt install X, ssh user@host, vim notes.txt). Do NOT prefix with tmux.',
       },
-      reason: {
+      intent: {
         type: 'string',
-        description: 'REQUIRED: Why open terminal? Helps user understand expectations.',
+        description: 'REQUIRED: Explain why this command is needed (use intent language). OBJECT must be USER and VERB must be RUN.',
       },
     },
-    required: ['reason'],
+    required: ['command', 'intent'],
   },
   scope: ['main'],
-  handler: (ctx: AgentContext, args: Record<string, unknown>): Promise<string> => {
-    return handleTmux(ctx, args);
-  },
+  handler: (ctx, args) => handleHandOver(ctx, args),
 };
-
-async function handleTmux(ctx: AgentContext, args: Record<string, unknown>): Promise<string> {
-  const command = args.command as string | undefined;
-  const reason = args.reason as string;
-  
-  // 1. Prerequisites
-  if (!hasTmux()) {
-    return `Error: tmux not installed.
-  Ubuntu/Debian: sudo apt install tmux
-  macOS: brew install tmux`;
-  }
-  
-  const terminalLauncher = detectTerminalLauncher();
-  if (!terminalLauncher) {
-    return `Error: No external terminal. Use bash tool for non-interactive commands.`;
-  }
-  
-  // 2. Create session
-  const cwd = ctx.core.getWorkDir();
-  const sessionName = `mycc-${Date.now()}`;
-  
-  try {
-    if (command) {
-      const encoded = Buffer.from(command).toString('base64');
-      await execAsync(`tmux new-session -d -s ${sessionName} -c "${cwd}" -x 120 -y 40 "bash -c 'eval \$(echo ${encoded} | base64 -d); exec bash'"`);
-    } else {
-      await execAsync(`tmux new-session -d -s ${sessionName} -c "${cwd}" -x 120 -y 40`);
-    }
-  } catch (e) {
-    return `Error: Failed to create session: ${e}`;
-  }
-  
-  // 3. Track session in todo
-  ctx.todo.patchTodoList([{
-    id: 0,  // New item
-    name: `tmux: ${sessionName}`,
-    done: false,
-    note: command || '(shell)',
-  }]);
-  
-  // 4. Open popup
-  try {
-    await execAsync(`${terminalLauncher} -- tmux attach -t ${sessionName}`);
-  } catch {
-    // Terminal may exit immediately
-  }
-  
-  ctx.core.brief('info', 'tmux', `Opened: ${sessionName}`, reason);
-  
-  // 5. Wait for user
-  console.log(chalk.cyan('\nPopup opened.'));
-  console.log(chalk.gray(`Reason: ${reason}`));
-  console.log(chalk.gray('Work in popup, then return here.'));
-  
-  await agentIO.ask(chalk.cyan('Press Enter to capture result > '));
-  
-  // 6. Capture output
-  let output = '';
-  let sessionExists = false;
-  
-  try {
-    const { stdout } = await execAsync(`tmux capture-pane -t ${sessionName} -p -S -3000 -E -1 2>/dev/null`);
-    output = stdout;
-    sessionExists = true;
-  } catch {
-    // Session closed
-  }
-  
-  // 7. Ask about cleanup
-  let keepSession = false;
-  if (sessionExists) {
-    const answer = await agentIO.ask(chalk.yellow(`Keep tmux session '${sessionName}'? [y/N] > `));
-    keepSession = answer.toLowerCase() === 'y' || answer.toLowerCase() === 'yes';
-    
-    if (!keepSession) {
-      try { await execAsync(`tmux kill-session -t ${sessionName}`); } catch {}
-      sessionExists = false;
-    }
-  }
-  
-  // 8. Update todo
-  ctx.todo.patchTodoList([{
-    name: `tmux: ${sessionName}`,
-    done: true,
-    note: keepSession ? 'kept' : 'killed',
-  }]);
-  
-  // 7. Ask about cleanup
-  let keepSession = false;
-  if (sessionExists) {
-    const answer = await agentIO.ask(chalk.yellow(`Keep tmux session '${sessionName}'? [y/N] > `));
-    keepSession = answer.toLowerCase() === 'y' || answer.toLowerCase() === 'yes';
-    
-    if (!keepSession) {
-      try { await execAsync(`tmux kill-session -t ${sessionName}`); } catch {}
-    }
-  }
-  
-  // 8. Update todo
-  ctx.todo.patchTodoList([{
-    name: `tmux: ${sessionName}`,
-    done: true,
-    note: keepSession ? 'kept' : 'killed',
-  }]);
-  
-  // 9. Summarize if needed
-  const maxLines = 100;
-  const lines = output.split('\n');
-  const result = lines.length > maxLines
-    ? await summarizeOutput(output, command, maxLines)
-    : output || '(empty output)';
-  
-  // 10. Return
-  const header = command ? `User ran: ${command}` : `User worked in terminal`;
-  const status = keepSession 
-    ? `Session: ${sessionName} (kept)\nTo reattach: tmux attach -t ${sessionName}`
-    : `Session: ${sessionName} (killed)`;
-  return `${header}\n${status}\nOutput (${lines.length} lines):\n\n${result}`;
-}
-
-async function summarizeOutput(output: string, command: string | undefined, maxLines: number): Promise<string> {
-  const response = await retryChat({
-    model: MODEL,
-    messages: [{
-      role: 'system',
-      content: `Summarize terminal output. Keep under ${maxLines} lines. Preserve errors and exit codes.`
-    }, {
-      role: 'user',
-      content: `${command ? `Command: ${command}\n\n` : ''}${output}`
-    }]
-  });
-  return response.message.content || '(summarization failed)';
-}
-
-// Utilities
-function detectTerminalLauncher(): string | null {
-  if (process.platform === 'darwin') return 'open -a Terminal.app --args';
-  const terminals = ['gnome-terminal', 'konsole', 'xfce4-terminal', 'xterm'];
-  for (const t of terminals) if (whichSync(t)) return t;
-  if (process.platform === 'win32' && whichSync('wt')) return 'wt';
-  return null;
-}
-
-function hasTmux(): boolean { return whichSync('tmux'); }
-function whichSync(cmd: string): boolean {
-  try { execSync(`which ${cmd}`, { stdio: 'ignore' }); return true; } catch { return false; }
-}
 ```
+
+**Key differences from the original `tmux` plan:**
+- Tool name is `hand_over`, not `tmux`
+- Parameters are `command` + `intent` (not `command` + `reason`)
+- Intent must use `RUN USER` verb/object (validated by `parseIntent`)
+- Command is sent to pane via `tmux send-keys` (spawn arg array), not passed as session shell-command
+- Session is created with the detected shell (`getShellInfo().shell_cmd`)
+- tmux nesting self-check: rejects any command starting with `tmux`
+- Auto mode rejection: hand_over is disabled in auto mode
+- User feedback path: if user types something other than y/n, it's returned as feedback
 
 ## Bang Command UI
 
-The bang command (`!`) is a UI shortcut that calls the tmux tool directly.
+The bang command (`!`) is a UI shortcut that calls the `hand_over` tool directly.
 
-### LineEditor Prompt Change
+### Bang Detection
 
-```typescript
-// In agentIO.ask()
-const query = await agentIO.ask(
-  chalk.bgYellow.black('agent >> '),
-  true,
-  (content) => content.startsWith('!')
-    ? chalk.bgMagenta.black('run cmd ! ')
-    : chalk.bgYellow.black('agent >> ')
-);
-```
-
-### Bang Detection in main()
-
-```typescript
-// After getting query
-if (query.startsWith('!')) {
-  const command = query.slice(1).trim();
-  const result = await tmuxTool.handler(ctx, {
-    command: command || undefined,
-    reason: command ? `Run: ${command}` : 'Open terminal',
-  });
-  triologue.user(`[FYI] ${result}`);
-  triologue.resetHint();
-  continue;
-}
-```
+When user input starts with `!`, the command is extracted and `hand_over` is invoked with `command` set to the text after `!` and an appropriate intent.
 
 ## Use Cases
 
@@ -325,9 +140,9 @@ By default, sessions are **killed** after capture to prevent accumulation. But f
 | `n` (default) | Killed | `pnpm build`, `git push` |
 | `y` | Kept | `npm run dev`, `ssh host` |
 
-**Kept sessions are tracked in todo:**
-```json
-{ "name": "tmux: mycc-1703123456", "done": true, "note": "kept" }
+**Kept sessions are tracked in todo** via `ctx.todo.createTodo()`:
+```
+hand_over: [sessionName: mycc-1703123456]
 ```
 
 **User can reattach manually:**
@@ -335,42 +150,23 @@ By default, sessions are **killed** after capture to prevent accumulation. But f
 tmux attach -t mycc-1703123456
 ```
 
-**To list all mycc sessions:**
-```
-tmux list-sessions | grep mycc
-```
-
 ## Edge Cases
 
 | Scenario | Handling |
 |----------|----------|
-| User closes popup early | Capture partial output, ask about cleanup |
-| No tmux installed | Show install instructions |
+| User types feedback (not y/n) | Session kept, feedback returned to LLM |
+| No tmux installed | Show platform-specific install instructions |
 | No terminal launcher | Error, suggest bash tool |
-| Long output | Summarize to 100 lines |
-| Ctrl+C during question | Session remains, todo shows "kept" |
-| Kept session orphaned | User can `tmux list-sessions` and kill manually |
+| Long output (>100 lines) | Summarized via LLM |
+| Command starts with `tmux` | Rejected (would nest tmux inside hand_over's session) |
+| Auto mode | Rejected up front (hand_over needs interactive terminal) |
+| Intent validation fails | Socratic hint (names wrong dimension, withholds correct token) |
 
-## Implementation Checklist
+## Key Source Files
 
-- [ ] Create `src/tools/tmux.ts`
-- [ ] Register in loader
-- [ ] Add `onPromptChange` to LineEditor
-- [ ] Update `agentIO.ask()` for prompt callback
-- [ ] Add bang handling in `main()`
-- [ ] Delete `skills/tmux/SKILL.md` (replaced by tool)
-- [ ] Update `/help`
-
-## Migration Note
-
-The `skills/tmux/SKILL.md` is **deleted** after implementation. The tool replaces the skill:
-
-| Feature | Skill | Tool |
-|---------|-------|------|
-| Create session | Manual bash commands | Automated |
-| Track session | Manual todo_write | Automatic todo tracking |
-| User confirmation | User remembers | Explicit question prompt |
-| Capture output | Manual capture-pane | Automatic on confirm |
-| Cleanup | Manual kill-session | Automatic cleanup |
-
-The tool provides a locked workflow that the skill couldn't enforce.
+| File | Purpose |
+|------|---------|
+| `src/tools/hand_over.ts` | `hand_over` tool implementation |
+| `src/utils/shell-detect.ts` | Shell detection (`getShellInfo()`) |
+| `src/context/grant/intent-parser.ts` | Intent validation (`parseIntent`) |
+| `src/engine/chat-provider.ts` | LLM summarization (`retryChat`, `MODEL`) |

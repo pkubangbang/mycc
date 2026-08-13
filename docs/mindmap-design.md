@@ -52,27 +52,34 @@ interface Node {
     children: Node[]
     /** outward links to other resources */
     links: Link[]
+    /** IN-MEMORY ONLY: true if node originates from mindmap.json (= MYCC.md isomorph) */
+    is_mycc?: boolean
+    /** IN-MEMORY ONLY: true if node was created or modified by a patch */
+    is_patch?: boolean
 }
 
 interface Mindmap {
     /** the backed resource folder */
     dir: string
+    /** original markdown file path (relative to workDir) */
+    source_file: string
     /** hash of the original markdown */
     hash: string
-    /** time of compilation */
-    compiled_at: Date
-    /** time of modification */
-    updated_at: Date
+    /** time of compilation (ISO string) */
+    compiled_at: string
+    /** time of modification (ISO string) */
+    updated_at: string
     /** root node */
     root: Node
 }
 
 interface Link {
-    // NOTE: consider using union types
-    target_type: 'node' | 'file' | 'url'
+    target_type: 'node' | 'file' | 'url' | 'term'
     node_id?: string
     file_path?: string
     url?: string
+    /** the term name (when target_type is 'term'), e.g. "STAR principle" */
+    term_name?: string
     /** the comment of this relationship */
     comment: string
 }
@@ -214,38 +221,20 @@ Summarize this node for an LLM agent's context retrieval.
 - Omit boilerplate and redundant explanations
 ```
 
-## Link Stub Design
+## Link Design
 
-Links are designed as **stubs for extensibility** - the basic structure is defined but full resolution is not yet implemented.
+Links are populated during compilation by the **Explorer Agent** (`explorer-agent.ts`). The agent explores the codebase using 9 tools (`read_file`, `ls`, `grep`, `mark_file`, `web_search`, `web_fetch`, `mark_url`, `mark_term`, `final`) and calls `mark_file`, `mark_url`, and `mark_term` to record relevant resources. These are collected into node links at the end of exploration.
 
-### Current State
+### Link Types
 
-Links are stored in the `Link` interface with:
-- `target_type`: 'node' | 'file' | 'url'
-- Target reference fields (`node_id`, `file_path`, `url`)
-- `comment`: Description of the relationship
+- `target_type: 'node'` — cross-reference to another node in the same mindmap (via `node_id`)
+- `target_type: 'file'` — reference to a source file (via `file_path`)
+- `target_type: 'url'` — reference to an external URL (via `url`)
+- `target_type: 'term'` — reference to a project-specific term (via `term_name`), hoisted to root-level discovery
 
-### Intended Behavior
+### Markdown Link Parsing
 
-Links allow nodes to reference external resources or other nodes:
-
-```
-[Node A] --link--> [Node B]     (node-to-node cross-reference)
-[Node A] --link--> [file.rs]    (node-to-file reference)
-[Node A] --link--> [URL]        (node-to-external reference)
-```
-
-### Future Extensions
-
-The stub design allows for:
-1. **Link resolution**: Following links to get referenced content
-2. **Link validation**: Checking if targets exist
-3. **Link traversal**: Walking the link graph
-4. **Bidirectional links**: Tracking which nodes link to a given node
-
-### Note on Markdown Parsing
-
-Links in markdown (both inline and reference-style) would be parsed during compilation:
+Links in markdown (both inline and reference-style) are also parsed during compilation via `extract_links()` in `compile-utils.ts`:
 ```markdown
 See [related concept](./other.md) for more details.
 ```
@@ -282,24 +271,41 @@ If knowledge sharing is needed between agents:
 | Aspect | Wiki | Mindmap |
 |--------|------|---------|
 | Scope | Project-level, shared | Process-level, isolated |
-| Storage | Vector database | JSON file |
+| Storage | LanceDB (vector database) | JSON file + JSONL patches |
 | Query | Semantic search | Path traversal (get_node) |
 | Use case | General knowledge retrieval | MYCC.md navigation |
-| Updates | Manual (wiki_put) | Compilation from markdown |
+| Updates | Manual (wiki_put) | Compilation from markdown + patch replay |
 
 ## Compilation Flow
 
-The mindmap compilation is **uni-directional**:
+The mindmap compilation is **uni-directional** and uses a **rotation-based** approach:
 
 ```
-MYCC.md --> [compile_mindmap] --> mindmap.json
+MYCC.md --> [compile_mindmap] --> mindmap.json.new --> rotate --> mindmap.json
+                                                                --> mindmap.json.bak
 ```
+
+### Rotation-Based Compile
+
+`compile_mindmap()` (`compile.ts`) creates a new tree from scratch in `mindmap.json.new`. On successful completion, files are rotated: `mindmap.json → mindmap.json.bak`, `mindmap.json.new → mindmap.json`. This ensures concurrent readers always see valid data.
 
 ### Key Points
 
 1. **Source of Truth**: `MYCC.md` is the authoritative source
 2. **Derived Artifact**: `mindmap.json` is generated, not manually edited
 3. **Re-compilation**: When MYCC.md changes, re-run `/mindmap compile`
+
+### Lock-Based Resumption
+
+Compilation creates a lock file. If compilation is interrupted, a fresh lock (within 4 hours) allows resuming from the `.new` temp file — nodes with non-empty summaries are skipped. Stale locks (older than 4h) are discarded.
+
+### Parallel Summarization
+
+Summaries are generated by the Explorer Agent (`explorer-agent.ts`) using a dependency-aware parallel approach with a semaphore limiting concurrency to **max 3 concurrent** LLM calls. Nodes are processed bottom-up (children before parents), with each node exploring the codebase using 9 tools (`read_file`, `ls`, `grep`, `mark_file`, `web_search`, `web_fetch`, `mark_url`, `mark_term`, `final`).
+
+### Patch Rebuild
+
+After compilation, `/mindmap compile` also performs a **patch rebuild**: the in-memory merged tree (mindmap.json + patches) is traversed BFS to produce a clean, minimal `mindmap-patch.jsonl` (dedup, stale-removal). MYCC.md-deleted nodes are preserved as `add` patches so trimmed content survives as patch-added knowledge.
 
 ### Startup Behavior
 
@@ -354,43 +360,24 @@ it be updated (and re-compiled).
 
 When the LLM calls `recall("/")`, only direct children (level-1 nodes) are shown. Deep project-specific terms like **STAR principle**, **microCompact**, **triologue**, **neglected mode** are buried 2+ levels deep. The LLM has no signposts from the root, causing it to bail out of mindmap discovery.
 
-### GlossaryEntry Type
+### Implementation: mark_term Tool
+
+During compilation, the Explorer Agent (`explorer-agent.ts`) has a `mark_term` tool. When the agent discovers a project-specific term (e.g. "STAR principle", "microCompact"), it calls `mark_term` with the term name and a brief context. These marked terms are collected as `term`-type links on the node being summarized:
 
 ```typescript
-interface GlossaryEntry {
-  /** The terminology term (e.g. "STAR principle") */
-  term: string;
-  /** Node path where the term is defined/used */
-  path: string;
-  /** Brief context snippet (< 100 chars) from the source text */
-  context: string;
+// In compile.ts summarize_with_explorer():
+for (const item of result.markedTerms) {
+  node.links.push({
+    target_type: 'term',
+    term_name: item.term,
+    comment: item.context || 'Project-specific term',
+  });
 }
 ```
-
-The `Mindmap` interface gets a new field:
-```typescript
-interface Mindmap {
-  // ... existing fields ...
-  terms: GlossaryEntry[];  // Hoisted glossary for root-level discovery
-}
-```
-
-### Extraction Algorithm
-
-During compilation, after the tree is built, a post-processing pass extracts terms:
-
-1. **Bold text scan**: Regex `\*\*(.+?)\*\*` matches **term** patterns in each node's `text`
-2. **Node title check**: If a term from bold text matches (or closely relates to) a node's title, prefer that node's path (the dedicated section is the authoritative source)
-3. **Deduplication**: By `term.toLowerCase()`. Keep the entry whose node has the term as its own title (deepest definition), or the first occurrence
-4. **Context**: Extract the first sentence or ~80 chars surrounding the term occurrence as context
-
-### Extraction is Deterministic
-
-No LLM calls are needed for term extraction. Pure regex-based, making it cheap and suitable for re-running on every incremental compile.
 
 ### Recall Output
 
-When `recall("/")` is called, the output includes a "## Key Terms" section:
+The `recall` tool (`src/tools/recall.ts`) collects all `term`-type links recursively from the tree and displays them in a "## Key Terms" section at the root level:
 
 ```
 # root
@@ -416,23 +403,20 @@ _Project-specific terminology defined in this codebase:_
 ...
 ```
 
-This gives the LLM immediate, actionable drill-down paths for any important term.
-
-### Incremental Compatibility
-
-Since extraction is cheap (no LLM), the entire glossary is regenerated after every incremental compile — no need to diff the `terms` field.
+This gives the LLM immediate, actionable drill-down paths for any important term. The term's `comment` field provides the context snippet, and the `term_name` links to the node where the term was discovered.
 
 ## Implementation Status
 
 | Feature | Status | Notes |
 |---------|--------|-------|
-| Node structure | ✅ Defined | Type declarations ready |
-| Mindmap JSON | ✅ Defined | Storage format specified |
-| compile_mindmap | 🚧 Planned | Core compilation logic |
-| get_node tool | 🚧 Planned | Agent tool for navigation |
-| patch_mindmap | 🚧 Planned | Node update with cascade |
-| Link resolution | 📋 Future | Stub design complete |
-| /mindmap commands | 🚧 Planned | User-facing slash commands |
-| **Terminology Hoisting** | 📋 Planned | Glossary extraction + recall display |
+| Node structure | ✅ Complete | Type declarations in `types.ts`, includes `is_mycc`/`is_patch` in-memory flags |
+| Mindmap JSON | ✅ Complete | Storage format with `source_file`, ISO-string dates |
+| compile_mindmap | ✅ Complete | Rotation-based compile with lock-based resumption, explorer agent for summaries (`compile.ts`) |
+| get_node tool | ✅ Complete | Agent tool for navigation (`recall` tool in `src/tools/recall.ts`) |
+| patch_mindmap | ✅ Complete | Node update with cascading summaries (`patch.ts`) |
+| Link population | ✅ Complete | Explorer agent marks files/URLs/terms during compilation |
+| /mindmap commands | ✅ Complete | compile, get, patch, validate, rebuild-patches (`src/slashes/mindmap.ts`) |
+| **Terminology Hoisting** | ✅ Complete | `mark_term` tool in explorer agent, `term`-type links, recall displays Key Terms |
+| Patch system (JSONL) | ✅ Complete | Append-only `mindmap-patch.jsonl`, replay at load, BFS rebuild on compile (`patch-jsonl.ts`) |
 
-Legend: ✅ Complete | 🚧 In Progress | 📋 Planned
+Legend: ✅ Complete

@@ -69,20 +69,20 @@ The hook system is the right layer for this. It already inspects tool calls befo
 
 The hint-round approach is simpler to implement but puts the detection logic at the wrong layer. By the time confusion reaches 10, the LLM has already been degrading for several turns — producing not just bad intents but potentially bad file paths, bad logic, bad edits. The hook catches the first unambiguous signal and acts immediately.
 
-## Implementation
+## Implementation (Completed)
 
-See the plan file: `~/.claude/plans/i-found-that-due-logical-church.md`
+All planned changes have been implemented:
 
 ### Files Changed
 
-| File | Change |
-|------|--------|
-| `src/context/grant/intent-parser.ts` | Prefix error messages with `Error: [Intent] ` |
-| `src/hook/sequence.ts` | Add `countResult(pattern)` method |
-| `src/hook/conditions.ts` | Add `compact` to `HookAction` type and `CONDITION_SCHEMA` |
-| `src/hook/condition-validator.ts` | Add `'compact'` to `VALID_ACTION_TYPES` |
-| `src/hook/hook-executor.ts` | Add compact handler, update `HookResult` and `ProcessToolCallsResult` |
-| `src/loop/states/hook.ts` | Handle `compactRequested` from hook result |
+| File | Change | Status |
+|------|--------|--------|
+| `src/context/grant/bash-judge.ts` | Intent error messages prefixed with `Error: [Intent] ` | ✅ |
+| `src/hook/sequence.ts` | Added `countResult(tool, pattern, maxChars?)` method | ✅ |
+| `src/hook/conditions.ts` | Added `compact` to `HookAction` type and `CONDITION_SCHEMA` | ✅ |
+| `src/hook/condition-validator.ts` | Added `'compact'` to valid action types, `countResult` to SEQ_FUNCTIONS | ✅ |
+| `src/hook/hook-executor.ts` | Added compact handler, `compactRequested` in `ProcessToolCallsResult` | ✅ |
+| `src/loop/states/hook.ts` | Handles `compactRequested` from hook result | ✅ |
 
 ### New Files
 

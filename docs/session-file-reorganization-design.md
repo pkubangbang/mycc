@@ -1,5 +1,8 @@
 # Session File Reorganization
 
+> **状态：已实施。** 会话文件重组已落地。保留为设计文档。
+> **关键偏差：** 邮箱文件名未使用时间戳——实际为 `unread-{owner}.jsonl` / `readmail-{owner}.jsonl`（无 `-{yyyyMMddTHHmmssZ}` 后缀），简化了文件管理。
+
 ## Current State
 
 ```
@@ -21,12 +24,12 @@
 ```
 .mycc/sessions/{session-id}/
   session-{sessionid}.json                          ← session metadata
-  unread-lead-{yyyyMMddTHHmmssZ}.jsonl              ← lead's inbox
-  readmail-lead-{yyyyMMddTHHmmssZ}.jsonl             ← lead's backlog
+  unread-lead.jsonl                                ← lead's inbox
+  readmail-lead.jsonl                               ← lead's backlog
   triologue-lead-{yyyyMMddTHHmmssZ}.jsonl            ← lead's triologue
   transcript-lead-{yyyyMMddTHHmmssZ}.jsonl            ← lead's auto-compact transcripts
-  unread-dev-{yyyyMMddTHHmmssZ}.jsonl                ← teammate dev's inbox
-  readmail-dev-{yyyyMMddTHHmmssZ}.jsonl              ← teammate dev's backlog
+  unread-dev.jsonl                                  ← teammate dev's inbox
+  readmail-dev.jsonl                                ← teammate dev's backlog
   triologue-dev-{yyyyMMddTHHmmssZ}.jsonl             ← teammate dev's triologue
   transcript-dev-{yyyyMMddTHHmmssZ}.jsonl             ← teammate dev's transcripts
 ```
@@ -165,8 +168,8 @@ Instead of `mail/` + `sessions/` + `transcripts/` folders, now we only have `ses
 ### 20. Tests (`src/tests/tp-violation/tp-auto-fixer.test.ts`)
 - Update mock values for `getMailDir`/`getSessionsDir`
 
-### 21. Worktree System (`src/context/parent/wt.ts`, `src/context/worktree-store.ts`)
-- **No change** — uses `.worktrees/` directory and `worktrees.json`, not session/mail/transcript paths
+### 21. Worktree System (`src/context/worktree-store.ts`)
+- **No change** — uses `.worktrees/` directory (queried live from git), not session/mail/transcript paths. No `parent/wt.ts` exists.
 
 ### 22. In-Memory Store (`src/context/memory-store.ts`)
 - **No change** — in-memory only, no file paths

@@ -1,5 +1,8 @@
 # Refactor Plan: Child-Context Parallel to Parent-Context
 
+> **状态：已实施。** 目标结构已落地，对应 `src/context/` 当前布局。本文档保留为历史记录。
+> **注意：** 计划中的 `wt.ts`/`WorktreeManager`/`ChildWt` 从未实现——worktree 功能由 `worktree-store.ts`（查询工具）和 `grant/` 授权系统提供，不作为独立上下文模块。
+
 ## Goal Definition
 
 Restructure the context architecture so that `ChildContext` and `ParentContext` are parallel implementations of `AgentContext`, rather than having `ChildContext` nested inside a subdirectory. This improves code organization, makes the relationship between the two contexts clearer, and simplifies imports.
@@ -14,7 +17,6 @@ src/context/
 ├── core.ts               # Core (parent implementation)
 ├── issue.ts              # IssueManager (parent implementation)
 ├── bg.ts                 # BackgroundTasks (shared - both use)
-├── wt.ts                 # WorktreeManager (parent implementation)
 ├── team.ts               # TeamManager (parent implementation)
 ├── wiki.ts               # WikiManager (parent implementation)
 ├── todo.ts               # Todo (shared - both use)
@@ -27,7 +29,6 @@ src/context/
     ├── index.ts          # ChildContext
     ├── core.ts           # ChildCore (IPC wrapper)
     ├── issue.ts          # ChildIssue (IPC wrapper)
-    ├── wt.ts             # ChildWt (IPC wrapper)
     ├── team.ts           # ChildTeam (IPC wrapper)
     ├── wiki.ts           # ChildWiki (IPC wrapper)
     ├── ipc-helpers.ts    # IPC primitives
@@ -52,13 +53,11 @@ src/context/
 ├── parent/                     # Parent implementations
 │   ├── core.ts                 # Core
 │   ├── issue.ts                # IssueManager
-│   ├── wt.ts                   # WorktreeManager
 │   ├── team.ts                 # TeamManager
 │   └── wiki.ts                 # WikiManager
 ├── child/                      # Child implementations (IPC wrappers)
 │   ├── core.ts                 # ChildCore
 │   ├── issue.ts                # ChildIssue
-│   ├── wt.ts                   # ChildWt
 │   ├── team.ts                 # ChildTeam
 │   ├── wiki.ts                 # ChildWiki
 │   └── ipc-helpers.ts          # IPC primitives
@@ -108,7 +107,6 @@ src/context/
 **Task 2.1: Move parent implementations**
 - Move `core.ts` → `parent/core.ts`
 - Move `issue.ts` → `parent/issue.ts`
-- Move `wt.ts` → `parent/wt.ts`
 - Move `team.ts` → `parent/team.ts`
 - Move `wiki.ts` → `parent/wiki.ts`
 
@@ -123,7 +121,6 @@ src/context/
 - Move `child-context/index.ts` → `child-context.ts`
 - Move `child-context/core.ts` → `child/core.ts`
 - Move `child-context/issue.ts` → `child/issue.ts`
-- Move `child-context/wt.ts` → `child/wt.ts`
 - Move `child-context/team.ts` → `child/team.ts`
 - Move `child-context/wiki.ts` → `child/wiki.ts`
 - Move `child-context/ipc-helpers.ts` → `child/ipc-helpers.ts`

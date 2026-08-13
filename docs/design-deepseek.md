@@ -82,114 +82,67 @@ DeepSeek requires `reasoning_content` to be echoed back on all subsequent assist
 4. `reasoning_content` must be echoed in subsequent requests → store and echo
 5. Mode switch leaves message with tool_calls but no `reasoning_content` → set empty string
 
-## 4. What Needs to Change — Setup Process
+## 4. Setup Process — DeepSeek Support (Shipped)
 
-### 4.1 Problem
+The setup wizard (`mycc --setup`) now supports both Ollama and DeepSeek providers. The provider selection is the first step in the wizard flow, and subsequent prompts adapt based on the choice.
 
-The setup wizard (`mycc --setup`) is **Ollama-only**. It has no awareness of DeepSeek as an alternative provider:
+### 4.1 What Shipped
 
-- **`src/setup/prompts.ts`**: `getPrompts()` and `ENV_REQUIREMENTS` only define Ollama variables
-- **`src/setup/wizard.ts`**: `displaySetupHelp()` only shows Ollama env vars
-- **`src/setup/models.ts`**: `pullConfiguredModels()` only runs `ollama pull`
-- **`src/setup/display.ts`**: Uses `ENV_REQUIREMENTS` which lacks DeepSeek vars
-- **`README.md`**: No mention of DeepSeek as an alternative
+#### A. `src/setup/prompts.ts` — Provider selection + conditional prompts
 
-### 4.2 Required Changes
+- `getPrompts(provider)` accepts `'ollama' | 'deepseek'` and returns the appropriate prompt set
+- `getOllamaConnectionPrompts()` — common prompts (OLLAMA_HOST, OLLAMA_EMBEDDING_MODEL) always asked (embeddings always use Ollama)
+- `getOllamaPrompts()` — Ollama-specific: OLLAMA_API_KEY, OLLAMA_MODEL, OLLAMA_VISION_MODEL
+- `getDeepSeekPrompts()` — DeepSeek-specific: DEEPSEEK_HOST (default `https://api.deepseek.com`), DEEPSEEK_API_KEY (sensitive), DEEPSEEK_MODEL (default `deepseek-chat`)
+- `getSharedPrompts()` — TOKEN_THRESHOLD, EDITOR (always asked)
+- `ENV_REQUIREMENTS` includes all DeepSeek vars + `API_PROVIDER`
 
-#### A. `src/setup/prompts.ts` — Add DeepSeek vars + provider selection
+#### B. `src/setup/wizard.ts` — Provider choice + conditional branching
 
-- Add `API_PROVIDER` to `getPrompts()` as a **choice prompt** (1=Ollama, 2=DeepSeek)
-- Add conditional prompts: when DeepSeek selected, ask for `DEEPSEEK_HOST`, `DEEPSEEK_API_KEY`, `DEEPSEEK_MODEL`
-- When Ollama selected, ask the existing Ollama vars
-- Update `ENV_REQUIREMENTS` to include DeepSeek vars
-
-**Design Decision**: The provider selection should be **first** in the wizard flow. Based on the choice, subsequent prompts adapt.
-
-#### B. `src/setup/wizard.ts` — Conditional prompting
-
-- `displaySetupHelp()` should show both Ollama and DeepSeek options
-- `runWizard()` should branch on provider choice
-- Add a `promptChoice()` helper for the provider selection
+- `promptProviderChoice()` — choice prompt (1=Ollama, 2=DeepSeek), returns `'ollama' | 'deepseek'`
+- `runWizard()` branches on provider choice, calls `getPrompts(provider)` for the appropriate prompts
+- `displaySetupHelp()` shows both Ollama and DeepSeek env vars
+- Always prompts for OLLAMA_HOST and OLLAMA_EMBEDDING_MODEL (embeddings require local Ollama even with DeepSeek)
 
 #### C. `src/setup/models.ts` — Skip pulling for DeepSeek
 
-- When provider is DeepSeek, skip `ollama pull` entirely
-- Show informational message: "DeepSeek models are cloud-based; no local pull needed"
-- When provider is Ollama, keep existing pull logic
+- `pullConfiguredModels(provider?)` accepts optional provider parameter
+- When provider is `'deepseek'`, skips `ollama pull` entirely and shows informational message about cloud-based models
+- When provider is Ollama (or undefined), keeps existing pull logic
 
-#### D. `src/setup/display.ts` — Show DeepSeek settings
+#### D. `src/setup/display.ts` — DeepSeek settings in display
 
-- Include DeepSeek vars in `ENV_REQUIREMENTS` so they show in `displayCurrentSettings()`
-- Mark `DEEPSEEK_API_KEY` as sensitive (like `OLLAMA_API_KEY`)
+- `DEEPSEEK_API_KEY` marked as sensitive (redacted like `OLLAMA_API_KEY`)
+- DeepSeek vars included in `ENV_REQUIREMENTS` so they show in `displayCurrentSettings()`
 
-#### E. `src/setup/index.ts` — Orchestrator update
+#### E. `src/setup/index.ts` — Orchestrator
 
-- Pass provider choice through to `pullConfiguredModels()` so it can skip
-- Ensure the wizard flow feels natural with the branching
+- Reads `API_PROVIDER` from config, passes provider to `pullConfiguredModels()`
+- Success message reflects the selected provider
 
-#### F. `README.md` — Document DeepSeek provider
+#### F. `README.md` — DeepSeek documentation
 
-- Add a "DeepSeek as LLM Provider" section under Quick Start
-- Explain the `API_PROVIDER` env var
-- List required env vars for DeepSeek
-- Note that `web_search`, `web_fetch`, and `screen/read_picture` are not supported by DeepSeek
+- Documents `API_PROVIDER` env var and DeepSeek as alternative provider
+- Notes that `web_search`, `web_fetch`, `screen`, and `read_picture` are not supported with DeepSeek
 
 #### G. `src/loop/agent-repl.ts` — Startup display
 
-- Show `API_PROVIDER` in startup info
-- Show provider-specific host info (DeepSeek host or Ollama host)
+- Shows `API_PROVIDER` in startup info
+- Shows provider-specific host info
 
-## 5. Implementation Plan
+## 5. Implementation Status
 
-### Step 1: Update `src/setup/prompts.ts`
+All items in the original implementation plan have been shipped. The changes are described in §4 above. See the following source files for the current implementation:
 
-- Add `API_PROVIDER` prompting (choice-based)
-- Define `getOllamaPrompts()` and `getDeepSeekPrompts()` groupings
-- Update `ENV_REQUIREMENTS` with DeepSeek entries
-
-### Step 2: Update `src/setup/wizard.ts`
-
-- Add provider choice prompt first
-- Branch to Ollama-specific or DeepSeek-specific prompts
-- Update `displaySetupHelp()` with both providers
-
-### Step 3: Update `src/setup/display.ts`
-
-- Add DeepSeek vars to display
-- Handle provider-conditional display (hide Ollama vars when DeepSeek is active, or show all)
-
-### Step 4: Update `src/setup/models.ts`
-
-- Accept provider parameter
-- Skip `ollama pull` when provider is DeepSeek
-- Show informational message for DeepSeek
-
-### Step 5: Update `src/setup/index.ts`
-
-- Pass provider info through to models stage
-- Update success message to reflect provider
-
-### Step 6: Update `README.md`
-
-- Add DeepSeek documentation section
-- Update configuration table
-
-### Step 7: Update `src/loop/agent-repl.ts`
-
-- Show `API_PROVIDER` in startup banner
-- Show appropriate host URL
-
-## 6. Files to Change
-
-| File | Change Scope |
-|------|-------------|
-| `src/setup/prompts.ts` | Add provider choice + conditional prompts + ENV_REQUIREMENTS update |
-| `src/setup/wizard.ts` | Add provider choice logic + conditional branching |
-| `src/setup/display.ts` | Add DeepSeek vars to display/redaction |
-| `src/setup/models.ts` | Accept provider param, skip pulling for DeepSeek |
-| `src/setup/index.ts` | Pass provider info, update success messages |
-| `src/loop/agent-repl.ts` | Show provider in startup banner |
-| `README.md` | Document DeepSeek as alternative provider |
+| File | Status |
+|------|--------|
+| `src/setup/prompts.ts` | ✅ Provider choice + conditional prompts + ENV_REQUIREMENTS |
+| `src/setup/wizard.ts` | ✅ Provider choice logic + conditional branching |
+| `src/setup/display.ts` | ✅ DeepSeek vars in display/redaction |
+| `src/setup/models.ts` | ✅ Provider param, skip pulling for DeepSeek |
+| `src/setup/index.ts` | ✅ Pass provider info, provider-aware success message |
+| `src/loop/agent-repl.ts` | ✅ Show provider in startup banner |
+| `README.md` | ✅ Document DeepSeek as alternative provider |
 
 ## 7. Assumptions & Dependencies
 

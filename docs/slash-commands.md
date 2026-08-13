@@ -1,15 +1,16 @@
 ---
-updated_at: 2026-05-03
+updated_at: 2026-08-13
 changelog:
-  - "2026-05-03: Added missing commands: /mindmap, /mode, /plan, /index"
-  - "2026-05-03: Updated command count from 11 to 15 commands"
+  - "2026-08-13: Updated command count from 15 to 20, version from v0.7.0 to v0.10.1"
+  - "2026-08-13: Removed nonexistent /index command"
+  - "2026-08-13: Added missing commands: /fork, /mail, /serve, /auto, /channel, /peer"
 ---
 
 # Slash Commands Reference
 
 Slash commands are special commands that start with `/` and are handled directly by the agent's REPL interface, bypassing the LLM. They provide quick access to system functions like session management, team coordination, issue tracking, and more.
 
-**Current command count**: 15 commands (as of v0.7.0)
+**Current command count**: 20 commands (as of v0.10.1)
 
 ## How Slash Commands Work
 
@@ -26,7 +27,7 @@ No todos.
 
 agent >> /unknown
 Unknown command: /unknown
-Available commands: /team, /todos, /skills, /issues, /save, /load, /clear, /wiki, /compact, /domain, /help
+Available commands: /team, /todos, /skills, /issues, /save, /load, /clear, /wiki, /compact, /domain, /help, /mode, /mindmap, /plan, /fork, /mail, /serve, /auto, /channel, /peer
 ```
 
 ## Command Aliases
@@ -251,22 +252,6 @@ These commands accept additional arguments.
 
 ---
 
-### /index
-
-**Description**: Manage wiki domain indices.
-
-**Usage**:
-```
-/index                - Show all domain indices
-/index rebuild        - Rebuild all domain indices
-```
-
-**Output**:
-- Lists domains and document counts
-- Shows rebuild progress
-
----
-
 ### /issues
 
 **Aliases**: `/issue`
@@ -393,6 +378,105 @@ Restored query: "Read the project structure"
 
 ---
 
+## Peer & Communication Commands
+
+### /fork
+
+**Description**: Run a new mycc instance in parallel from the current session.
+
+**Usage**:
+```
+/fork                                - Start a new mycc instance
+/fork --env KEY=VALUE                - Forward an env var to the instance
+/fork --env KEY1=V1 --env KEY2=V2    - Forward multiple env vars
+```
+
+**Behavior**:
+- Opens a new native terminal window running a fresh mycc instance
+- Old instance keeps running; both run in parallel
+- Forked instance reads its own config from .env files
+
+---
+
+### /mail
+
+**Description**: Show unread mails and recent read mails.
+
+**Usage**:
+```
+/mail
+```
+
+**Output**:
+- Unread mails: peeked from mailbox (not yet consumed by COLLECT state)
+- Read mails: scanned from recent [MAIL] notes in triologue
+
+---
+
+### /serve
+
+**Description**: Start the web chat UI.
+
+**Usage**:
+```
+/serve            - Start web UI on default port (3173)
+/serve [port]     - Start web UI on the specified port
+```
+
+**Behavior**:
+- Runs Express + Vite + WebSocket on a single port
+- While active, terminal input is disabled (only ESC and Ctrl+C forwarded)
+- Exit via ESC, in-UI exit button, or 30s disconnect timeout
+
+---
+
+### /auto
+
+**Description**: Enter autonomous (auto) mode for the lead process.
+
+**Usage**:
+```
+/auto
+```
+
+**Behavior**:
+- Replaces PROMPT stage with WAIT stage (block for mail/teammate/steering events)
+- Every interactive question() auto-replies with its onEsc default
+- Plan/normal mode stays active — auto only governs prompting
+- Exit auto mode by pressing ESC
+
+---
+
+### /channel
+
+**Description**: Manage peer discovery channels (myccdp).
+
+**Usage**:
+```
+/channel list                      - List channels owned by this instance
+/channel disconnect <channelId>    - Leave a channel (sets joined=false)
+```
+
+**Behavior**:
+- Channels are file pairs in `~/.mycc-store/discovery/channels/`
+- Channels are auto-joined by the peer module's poll sweep
+- This command only lists and leaves channels
+
+---
+
+### /peer
+
+**Description**: List recently-registered mycc peers with online status.
+
+**Usage**:
+```
+/peer                - List peers registered in the last 1 hour
+/peer --all          - Include peers registered at any time
+/peer --self         - Include the local instance in the list
+```
+
+---
+
 ## Bang Command (!)
 
 The bang command provides access to an interactive terminal.
@@ -454,7 +538,12 @@ Slash commands are implemented in `src/slashes/`:
 | `mindmap.ts` | `/mindmap` |
 | `mode.ts` | `/mode` |
 | `plan.ts` | `/plan` |
-| `index.ts` | `/index` |
+| `fork.ts` | `/fork` |
+| `mail.ts` | `/mail` |
+| `serve.ts` | `/serve` |
+| `auto.ts` | `/auto` |
+| `channel.ts` | `/channel` |
+| `peer.ts` | `/peer` |
 
 ### Registry
 

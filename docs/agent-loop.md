@@ -9,237 +9,164 @@ agent loop是一个按照STAR原则设计的循环：
 如果不使用工具，那就结束本次循环，等待用户指令
 4. result：收集执行的结果，进入下一次循环。
 
-## 核心机制
+## 状态机架构
 
-### microCompact - 工具结果压缩
+agent loop 已从早期的 `while(true)` 命令式循环重构为**显式状态机**（`src/loop/state-machine.ts`）。状态之间通过显式转移连接，每个状态有独立的 handler：
 
-`microCompact()` 将连续的 tool 消息合并为单个 user 消息，减少消息历史长度：
-
-```ts
-// Before microCompact:
-// [user, assistant, tool, tool, tool, assistant, tool, ...]
-
-// After microCompact:
-// [user, assistant, user("Previous tool results: ..."), assistant, user("Previous tool results: ...")]
+```
+        ┌────────────────────────────────────────┐
+        │                                        │
+   ┌─── PROMPT ◄────────────────────┐           │
+   │    │   ▲                       │           │
+   │    ▼   │                       │           │
+   │  SLASH─┘                       │           │
+   │                                │           │
+   │    ▼                           │           │
+   │  COLLECT ◄─────── TOOL ─────┐ │           │
+   │    │              ▲         │ │           │
+   │    ▼              │         │ │           │
+   │  LLM ────► HOOK ──┘       STOP ──────────┘
+   │                │              │
+   │          has calls        no calls
+   └── (pendingSlashQuery set by SLASH)
 ```
 
-每次循环开始时调用，避免历史消息过长。
+状态枚举（`AgentState`）：
+
+| 状态 | 说明 | 源文件 |
+|------|------|--------|
+| `PROMPT` | 等待用户输入，新对话轮的起点 | `src/loop/states/prompt.ts` |
+| `SLASH` | 处理 `/` 斜杠命令 | `src/loop/states/slash.ts` |
+| `COLLECT` | LLM 前的预收集：子进程问题、邮件、hint round、todo nudge、brief nudge、worktree nudge、技能发现 | `src/loop/states/collect.ts` |
+| `LLM` | 构建 system prompt、调用 LLM、auto-compact、crossroad 检测 | `src/loop/states/llm.ts` |
+| `HOOK` | 执行 hook，处理 hook 对 tool call 的拦截/增强 | `src/loop/states/hook.ts` |
+| `TOOL` | 顺序执行 tool calls，记录 sequence，语义重复检测 | `src/loop/states/tool.ts` |
+| `STOP` | 无 tool call 时的收尾：neglected mode wrap-up 或 team awaiting | `src/loop/states/stop.ts` |
+| `WAIT` | auto 模式下的自主循环等待 | `src/loop/states/wait.ts` |
+
+### 数据分层
+
+状态机使用三层数据生命周期（`src/loop/state-machine.ts`）：
+
+- **MachineEnv**（机器生命周期）：构造一次，不重置。包含 `triologue`、`ctx`、`scope`、`conditions`、`sequence`、`hookExecutor`、`inputProvider`、`sessionFilePath`、`pendingSlashQuery`、`crossroadOccurred`、`requestEmbeddingTracker`、`nextWtNudge`。
+- **TurnVars**（轮生命周期）：从 STOP/startup 进入 PROMPT 时刷新，跨 COLLECT→LLM→HOOK 迭代保持。包含 `isFirstRound`、`nextTodoNudge`(初始 3)、`lastTodoState`、`nextBriefNudge`(初始 5)、`lastUserQuery`、`extractedKeywords`。
+- **PassData**（pass 生命周期）：每次进入 COLLECT 时刷新，流经 LLM→HOOK→{TOOL|STOP}。包含 `abortController`、`rawToolCalls`、`assistantContent`、`assistantReasoningContent`、`augmentedCalls`、`hookResult`、`crossroadContinuation`、`deferredCompact`。
+
+### 转移规则
+
+- **会话轮**：PROMPT → ... → STOP → PROMPT（重置 TurnVars）
+- **管线 pass**：COLLECT → LLM → HOOK → {TOOL → COLLECT | STOP}
+- **Slash**：PROMPT → SLASH → PROMPT（不重置 TurnVars）
+- **Auto 模式**：PROMPT 在 auto 开启时转到 WAIT；WAIT 完成一个自主循环后回到 PROMPT（重置 TurnVars）
+
+## 核心机制
 
 ### autoCompact - LLM 智能压缩
 
-当 token 估计值超过 `TOKEN_THRESHOLD` (50000) 时触发：
+当 token 估计值超过阈值时触发。阈值默认 50000（`src/loop/triologue.ts` 中 `tokenThreshold ?? 50000`）。
+
+**关键：auto-compact 现在在 LLM 状态顶部执行**（`src/loop/states/llm.ts`），不再在循环顶部或 TOOL 状态执行。原因：LLM 状态中 `loader.getToolsForScope(scope)` 在作用域内，且 `triologue.getMessages()` 是下一次 `retryChat` 的精确缓存前缀，使 `compact()` 内部的 `forkChat` 是缓存命中。
+
+两个触发源（均在 LLM 状态处理）：
+
+1. **Proactive** — `triologue.needsCompact()`：之前的 tool 结果将 token 数推过阈值。
+2. **Deferred** — `pass.deferredCompact`：hook（如 compact-on-intent-trap）在 HOOK 状态请求压缩，延迟到 LLM 状态执行。
+
+压缩流程（`triologue.compact()`）：
 
 1. 保存完整历史到 `.mycc/transcripts/transcript_{timestamp}.jsonl`
-2. 让 LLM 生成摘要，包含：
-   - 已完成的工作
-   - 当前状态
-   - 关键决策
+2. 让 LLM 生成摘要，包含已完成的工作、当前状态、关键决策，并保留 `lastUserQuery`（用户最后指令）
 3. 用摘要替换历史消息
-
-```ts
-if (estimateTokens(messages) > TOKEN_THRESHOLD) {
-  console.log(chalk.blue('[auto-compact triggered]'));
-  const compacted = await autoCompact(messages);
-  messages.splice(0, messages.length, ...compacted);
-}
-```
+4. 重置 confusion index、sequence、crossroad cooldown（旧上下文已被摘要化）
 
 ### Todo Nudging - 任务提醒
 
-每 3 次循环检查一次 open todos，提醒 agent 更新进度：
+在 COLLECT 状态执行（`src/loop/states/collect.ts`）。每 3 次 pass 检查一次 open todos，提醒 agent 更新进度：
 
 ```ts
-let nextTodoNudge = 3;
-// ...
-if (ctx.todo.hasOpenTodo()) {
-  nextTodoNudge--;
-  if (nextTodoNudge === 0) {
-    messages.push({
-      role: 'user',
-      content: `<reminder>Update your todos. ${ctx.todo.printTodoList()}</reminder>`,
-    });
-    nextTodoNudge = 3;
+if (ctx.todo.hasOpenTodo() || activeChannels.length > 0) {
+  // 状态变化时重置计数器
+  if (compositeState !== turn.lastTodoState) {
+    turn.nextTodoNudge = 3;
+    turn.lastTodoState = compositeState;
+  }
+  turn.nextTodoNudge--;
+  if (turn.nextTodoNudge === 0) {
+    // 先检查 pinned todo 重激活，再推送 nudge
+    await checkReactivation(env);
+    triologue.note('REMINDER', `Update your todos. ${ctx.todo.printTodoList()}`);
+    turn.nextTodoNudge = 3;
   }
 }
 ```
+
+注意：nudge 通过 `triologue.note('REMINDER', ...)` 注入，不再直接 push user 消息。当 todo 状态发生变化时计数器重置（避免在列表未变时重复 nudge）。同时检查 peer channel 状态并附加到同一 nudge。
+
+### Brief Nudging - 进度报告提醒
+
+COLLECT 状态中每 5 次 pass 提醒一次使用 brief 工具（`turn.nextBriefNudge` 初始为 5）。使用 brief 工具后重置为 5（在 `src/loop/states/tool.ts` 中）。
 
 ### Team Awaiting - 等待队友完成
 
-当 agent 没有工具调用时，检查 team 状态：
+在 STOP 状态处理（`src/loop/states/stop.ts`）。当 agent 没有工具调用时：
 
 ```ts
-if (!assistantMessage.tool_calls || assistantMessage.tool_calls.length === 0) {
-  if (ctx.team) {
-    const result = await ctx.team.awaitTeam(30000);
-    if (result.allSettled) {
-      return;
-    }
-    messages.push({
-      role: 'user',
-      content: `Timeout waiting for teammates. ${ctx.team.printTeam()}`,
-    });
-    continue;
-  }
-  return;  // No team, single agent - just return
+const { result } = await ctx.team.awaitTeam();
+
+if (result === 'got question' || ctx.mail.hasNewMails()) {
+  return AgentState.COLLECT;  // 有新输入，继续工作
 }
+if (result === 'timeout') {
+  triologue.note('SYSTEM', `Timeout waiting for teammates.\n${teamInfo}...`);
+  return AgentState.COLLECT;  // 超时，继续
+}
+// 'all done' or 'no teammates'
+presentResult(triologue);
+return AgentState.PROMPT;  // 轮完成，回到提示
 ```
 
-## 代码描述
+## COLLECT 状态详情
 
-```ts
-async function agentLoop(
-  messages: Message[],
-  ctx: AgentContext,
-  toolLoader: ToolLoaderImpl,
-  scope: ToolScope = 'main'
-): Promise<void> {
-  let nextTodoNudge = 3;
+COLLECT（`src/loop/states/collect.ts`）在每次 LLM 调用前执行预收集管线：
 
-  while (true) {
-    // 1. Micro-compact old tool results
-    microCompact(messages);
-
-    // 2. Collect mails
-    const mails = ctx.mail.collectMails();
-    for (const mail of mails) {
-      messages.push({
-        role: 'user',
-        content: `Mail from ${mail.from}: ${mail.title}\n${mail.content}`,
-      });
-      messages.push({ role: 'assistant', content: 'Noted.' });
-    }
-
-    // 3. Todo nudging
-    if (ctx.todo.hasOpenTodo()) {
-      nextTodoNudge--;
-      if (nextTodoNudge === 0) {
-        messages.push({
-          role: 'user',
-          content: `<reminder>Update your todos. ${ctx.todo.printTodoList()}</reminder>`,
-        });
-        nextTodoNudge = 3;
-      }
-    }
-
-    // 4. Auto-compact when tokens exceed threshold
-    if (estimateTokens(messages) > TOKEN_THRESHOLD) {
-      console.log(chalk.blue('[auto-compact triggered]'));
-      const compacted = await autoCompact(messages);
-      messages.splice(0, messages.length, ...compacted);
-    }
-
-    // 5. Build system prompt
-    const SYSTEM = buildSystemPrompt(ctx);
-
-    // 6. Call LLM
-    const response = await ollama.chat({
-      model: MODEL,
-      messages: [{ role: 'system', content: SYSTEM }, ...messages],
-      tools: toolLoader.getToolsForScope(scope),
-    });
-
-    // 7. Handle response
-    const assistantMessage = response.message;
-    messages.push({
-      role: 'assistant',
-      content: assistantMessage.content || '',
-      tool_calls: assistantMessage.tool_calls,
-    });
-
-    // 8. No tool calls = check team status
-    if (!assistantMessage.tool_calls || assistantMessage.tool_calls.length === 0) {
-      if (ctx.team) {
-        const result = await ctx.team.awaitTeam(30000);
-        if (result.allSettled) {
-          return;
-        }
-        messages.push({
-          role: 'user',
-          content: `Timeout waiting for teammates. ${ctx.team.printTeam()}`,
-        });
-        continue;
-      }
-      return;  // No team means single agent - just return
-    }
-
-    // 9. Execute tools
-    for (const toolCall of assistantMessage.tool_calls) {
-      const args = toolCall.function.arguments as Record<string, unknown>;
-      const toolName = toolCall.function.name;
-
-      const output = await toolLoader.execute(toolName, ctx, args);
-
-      messages.push({
-        role: 'tool',
-        content: `tool call ${toolName} finished.\n${output}`,
-      });
-    }
-  }
-}
-```
+1. **处理子进程问题** — `ctx.team.handlePendingQuestions()`
+2. **收集邮件** — `ctx.mail.collectMails()`，通过 `triologue.note('MAIL', ...)` 注入。neglected mode 下标记为 URGENT。
+3. **注入团队状态** — `ctx.team.printTeam()`，非空时作为 SYSTEM note 注入。
+4. **Steering 队列**（webui）— `getServeHub().drainSteering()`，作为 REMINDER note 注入。
+5. **文件上传队列**（webui）— 保存到 `.mycc/uploaded/`，作为 REMINDER note 注入。
+6. **Hint round** — confusion index ≥ 10 且消息数 ≥ 6 时生成 hint（`CONFUSION_THRESHOLD = 10`，`MIN_MESSAGES_FOR_HINT = 6`）。
+7. **Todo nudging** — 见上文。
+8. **Brief nudging** — 见上文。
+9. **Worktree cleanup nudge** — `env.nextWtNudge` 为 0 时检查 worktree 列表，有则提醒清理。
+10. **技能发现** — 消费 `turn.extractedKeywords`，匹配已加载技能名称/关键词，作为 HINT note 注入。
+11. **详细日志** — verbose 模式下输出消息数和 token 利用率。
 
 ## System Prompt
 
-系统提示根据上下文动态构建：
+系统提示根据模式动态构建（`src/loop/agent-prompts.ts`）：
 
-### Lead Agent (有 team)
+- **Plan 模式** — `buildPlanModePrompt(workDir, hasTeam)`：Solo plan / Team plan
+- **Normal 模式** — `buildNormalModePrompt(workDir, identity?, hasTeam)`：
+  - **Solo normal**（无 team）：`"You are a coding agent at ${workDir}."` + 任务管理 + pinned todo + 知识边界 + 公共部分 + checkpoint/recap
+  - **Team normal (Lead)**：`"You are the lead of a coding agent team at ${workDir}."` + team workflow + issue 管理 + 通信规则 + 边界规则
+  - **Teammate (Child)**：`"You are ${name}, a specialized agent working as part of a team, created by the \"lead\"."` + 三种通信方式 + 时间预算协议 + worktree 用法
 
-```ts
-`You are the lead of a coding agent team at ${workDir}.
-You spawn teammates, create issues and collect results.
-Use tools to finish tasks. Use skills to access specialized knowledge.
-Report proactively using the brief tool.
-Read README.md or MYCC.md first if you feel lost about the context.
-You must ask for grant BEFORE "git commit" with no exception.
-Skills: ${skills}`
-```
-
-### Single Agent (无 team)
-
-```ts
-`You are a coding agent at ${workDir}.
-Use tools to finish tasks. Use skills to access specialized knowledge.
-Consider using issue_* to divide and conquor complex tasks, using todo_* for simple task tracking.
-You must ask for grant BEFORE "git commit" with no exception.
-Skills: ${skills}`
-```
-
-### Child Agent (teammate)
-
-```ts
-`You are a specialized agent working as part of a team.
-Use skills to access specialized knowledge.
-Use question tools to ask question to the user,
-use brief tools to report your progress,
-use mail_to tools to communicate with other teammates.
-Prefer concise and frank communication style.
-When you feel lost about the context, send mail to "lead".
-
-[IDENTITY]
-Name: ${name}
-Role: ${role}
-Working Directory: ${workDir}
-[/IDENTITY]
-
-Skills: ${skills}`
-```
+所有提示共享公共部分：Verification、Platform、Intent Language、Calendar、Output Behavior。Normal 模式还包含 Knowledge Boundary 和 Checkpoint/Recap 部分。
 
 ## 工具执行
 
-工具执行后，结果直接作为 `tool` 角色消息添加到历史：
+工具在 TOOL 状态（`src/loop/states/tool.ts`）顺序执行。结果通过 `triologue.tool(toolName, output, toolCallId)` 添加到历史：
 
 ```ts
-for (const toolCall of assistantMessage.tool_calls) {
-  const args = toolCall.function.arguments as Record<string, unknown>;
-  const toolName = toolCall.function.name;
-
-  const output = await toolLoader.execute(toolName, ctx, args);
-
-  messages.push({
-    role: 'tool',
-    content: `tool call ${toolName} finished.\n${output}`,
-  });
+for (const toolCall of hookResult.calls) {
+  const output = await ctx.core.escAware(
+    async (abortController) => {
+      return await loader.execute(toolName, ctx, args, abortController.signal);
+    },
+    () => 'Tool interrupted by user.'
+  );
+  triologue.tool(toolName, output, toolCallId);
 }
 ```
 
-注意：工具结果是逐条添加，不是合并为一条消息。`microCompact()` 会在下次循环时处理连续的 tool 消息。
+注意：工具结果通过 triologue 的 `tool()` 方法添加，triologue 内部处理消息角色验证和 auto-fix。执行后返回 COLLECT 状态继续下一轮 pass。tool 结果中的错误会增加 confusion index（+2），语义重复通过 embedding 相似度检测（`requestEmbeddingTracker`）。

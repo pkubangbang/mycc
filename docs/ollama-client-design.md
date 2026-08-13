@@ -12,13 +12,13 @@ The Ollama client serves as the primary interface between the agent system and t
 
 The integration is split into three main areas:
 
-1.  **`src/ollama.ts` (The Wrapper)**: The central utility that initializes the client and provides robust execution patterns (retries, timeouts, and stream collection).
+1.  **`src/engine/ollama.ts` (The Wrapper)**: The central utility that initializes the client and provides robust execution patterns (retries, timeouts, and stream collection).
 2.  **`src/setup/ollama-setup.ts` (Environment Discovery)**: Handles cross-platform detection of the Ollama binary and service connectivity checks.
-3.  **`src/setup/ollama-health-check.ts` (Validation)**: A startup sequence that ensures the server is reachable, the model is available, and the system configuration (like `TOKEN_THRESHOLD`) is compatible with the model's context window.
+3.  **`src/engine/health-check.ts` (Validation)**: A startup sequence that ensures the server is reachable, the model is available, and the system configuration (like `TOKEN_THRESHOLD`) is compatible with the model's context window.
 
 ### Client Initialization
 
-The client is initialized as a singleton exported from `src/ollama.ts`:
+The client is initialized as a singleton exported from `src/engine/ollama.ts`:
 
 ```typescript
 export const ollama = new Ollama({
@@ -27,7 +27,7 @@ export const ollama = new Ollama({
 });
 ```
 
-Configuration is dynamically resolved via `src/config.js` to allow flexible environment-based overrides.
+Configuration is dynamically resolved via `src/config.ts` to allow flexible environment-based overrides.
 
 ## Implementation Details
 

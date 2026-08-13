@@ -4,6 +4,11 @@
 **Participants**: dev-aggressive, architect-conservative, harness-specialist
 **Scope**: Review of BaseCore → Core/ChildCore inheritance and AgentContext architecture
 
+> **Post-review update**: Several recommended actions from this review have been implemented:
+> - **P1 — `getMode()` added to `CoreModule` interface** (`src/types.ts`): `getMode(): 'plan' | 'normal'` is now part of the interface, fixing the "implementation-only" inconsistency flagged by the harness specialist.
+> - **P1 — Issue formatting extracted to shared module**: `src/context/shared/format-issue.ts` exports `formatIssueList()` and `formatIssueDetail()`, used by both `src/context/parent/issue.ts` and `src/context/child/issue.ts`. The ~120 lines of duplication are eliminated. Tests in `src/tests/context/format-issue.test.ts`.
+> - **P0 — Date serialization**: Deserialization helpers added in `src/context/shared/mail.ts` (converts `mail.timestamp` back to `Date` after IPC). See `new Date(mail.timestamp)` calls in that file.
+
 ---
 
 ## Executive Summary
@@ -20,10 +25,10 @@ The team reviewed the agent-context architecture with three different lenses:
 4. **Composition in contexts is clean** - modules implement interfaces, good for testing
 
 ### Critical Issues Found 🚨
-1. **Date serialization bug** - IPC converts Date → string, breaks child processes
-2. **~120 lines duplicated** - formatting logic in IssueManager and ChildIssue
+1. **Date serialization bug** - IPC converts Date → string, breaks child processes — **fixed** (deserialization in `src/context/shared/mail.ts`)
+2. **~120 lines duplicated** - formatting logic in IssueManager and ChildIssue — **fixed** (extracted to `src/context/shared/format-issue.ts`)
 3. **No IPC testing** - 4 child modules untested, integration paths never exercised
-4. **Implicit behavior** - Loader silent mode is hidden, Core.getMode() not in interface
+4. **Implicit behavior** - Loader silent mode is hidden, Core.getMode() not in interface — **fixed** (`getMode()` now in `CoreModule` interface)
 
 ---
 
@@ -35,10 +40,10 @@ The team reviewed the agent-context architecture with three different lenses:
 > ✅ **Appropriate design**. BaseCore holds truly shared state (workDir, mindmap, webSearch/webFetch). Subclasses genuinely have different implementations. This is NOT gratuitous inheritance.
 
 **Dev's View** (Aggressive):
-> ⚠️ **Questionable but acceptable**. BaseCore only holds 3 properties - thin for inheritance. Core has `getMode()`/`setMode()` that ChildCore stubs with hardcoded `'normal'` - violates Liskov. However, migration cost is higher than benefit.
+> ⚠️ **Questionable but acceptable**. BaseCore only holds 3 properties - thin for inheritance. Core has `getMode()`/`setMode()` that ChildCore stubs with hardcoded `'normal'` - violates Liskov. However, migration cost is higher than benefit. *(Post-review: `getMode()` was added to the `CoreModule` interface, partially addressing the interface-consistency concern.)*
 
 **Harness View** (Specialist):
-> ⚠️ **Testing impact**. `Core.getMode()` is implementation-only (not in `CoreModule` interface). Makes mocking inconsistent. `requestGrant()` behaves completely differently (local vs IPC), so unit tests don't match integration.
+> ⚠️ **Testing impact**. ~~`Core.getMode()` is implementation-only (not in `CoreModule` interface).~~ *(Fixed: `getMode()` is now in the `CoreModule` interface.)* Makes mocking inconsistent. `requestGrant()` behaves completely differently (local vs IPC), so unit tests don't match integration.
 
 **Decision**: Keep inheritance, but add `getMode()` to interface for consistency.
 
@@ -66,7 +71,7 @@ The team reviewed the agent-context architecture with three different lenses:
 
 ### 3. Duplication Analysis
 
-#### Critical Duplication (Fix Now)
+#### Critical Duplication (Resolved ✅)
 
 **Issue formatting** - ~120 lines duplicated:
 ```
@@ -76,11 +81,7 @@ src/context/child/issue.ts:47-109     (IDENTICAL code)
 
 **All three specialists flagged this**. Tests don't catch it because they mock the interface.
 
-**Solution**: Create `src/context/shared/format-issue.ts`:
-```typescript
-export function formatIssueList(issues: Issue[]): string { ... }
-export function formatIssueDetail(issue: Issue): string { ... }
-```
+**Solution (Implemented)**: `src/context/shared/format-issue.ts` created with `formatIssueList()` and `formatIssueDetail()`. Both `src/context/parent/issue.ts` and `src/context/child/issue.ts` now import and use these shared functions. Tests in `src/tests/context/format-issue.test.ts`.
 
 #### IPC Boilerplate (Consider for Future)
 
@@ -104,7 +105,7 @@ function createIpcProxy<T>(prefix: string): T {
 
 ### 4. IPC Boundary Issues
 
-#### Critical Bug: Date Serialization 🚨
+#### Critical Bug: Date Serialization — Fixed ✅
 
 **Problem**: `Issue.createdAt` is `Date`, but IPC serialization converts to string:
 ```typescript
@@ -123,20 +124,7 @@ result.createdAt.getTime() // RUNTIME ERROR
 **Harness's Finding**:
 > Affects 3 Date fields: `Issue.createdAt`, `IssueComment.timestamp`, `WALEntry.timestamp`. No round-trip tests exist.
 
-**Solution**: Add deserialization helpers in `ipc-helpers.ts`:
-```typescript
-function deserializeIssue(data: unknown): Issue {
-  const issue = data as Issue;
-  return {
-    ...issue,
-    createdAt: new Date(issue.createdAt),
-    comments: issue.comments.map(c => ({
-      ...c,
-      timestamp: new Date(c.timestamp)
-    }))
-  };
-}
-```
+**Solution (Implemented)**: Deserialization helpers added in `src/context/shared/mail.ts`, which converts `mail.timestamp` back to `Date` after IPC round-trip (`new Date(mail.timestamp)` calls at lines 122 and 187).
 
 #### IPC Handler Count
 
@@ -219,12 +207,12 @@ export function createMockContext(options: MockContextOptions = {}): AgentContex
 
 ### Phase 1: Critical Fixes (Low Risk, High Value)
 
-| Priority | Action | File | Impact |
-|----------|--------|------|--------|
-| **P0** | Fix Date serialization | `src/context/child/ipc-helpers.ts` | Prevents runtime errors |
-| **P0** | Add round-trip tests | `src/tests/context/serialization.test.ts` | Verifies fix |
-| **P1** | Extract issue formatters | `src/context/shared/format-issue.ts` | Eliminates 120 lines duplication |
-| **P1** | Add CoreModule.getMode() | `src/types.ts` | Interface consistency |
+| Priority | Action | File | Impact | Status |
+|----------|--------|------|--------|--------|
+| **P0** | Fix Date serialization | `src/context/shared/mail.ts` | Prevents runtime errors | ✅ Done |
+| **P0** | Add round-trip tests | `src/tests/context/serialization.test.ts` | Verifies fix | AMBIGUOUS |
+| **P1** | Extract issue formatters | `src/context/shared/format-issue.ts` | Eliminates 120 lines duplication | ✅ Done |
+| **P1** | Add CoreModule.getMode() | `src/types.ts` | Interface consistency | ✅ Done |
 
 ### Phase 2: Testing Infrastructure (Medium Risk)
 
@@ -255,11 +243,11 @@ export function createMockContext(options: MockContextOptions = {}): AgentContex
 
 ## Implementation Order
 
-### Sprint 1: Critical Fixes
-1. Add Date deserialization to `ipc-helpers.ts`
-2. Create `format-issue.ts` in shared/
-3. Update IssueManager and ChildIssue to use shared formatter
-4. Add `getMode()` to CoreModule interface
+### Sprint 1: Critical Fixes ✅
+1. ✅ Add Date deserialization to `src/context/shared/mail.ts`
+2. ✅ Create `format-issue.ts` in shared/
+3. ✅ Update IssueManager and ChildIssue to use shared formatter
+4. ✅ Add `getMode()` to CoreModule interface (`src/types.ts`)
 
 ### Sprint 2: Testing
 1. Create `ipc-harness.ts` test utility
@@ -276,18 +264,18 @@ export function createMockContext(options: MockContextOptions = {}): AgentContex
 
 ## Files Analyzed
 
-| File | Lines | Issues Found |
-|------|-------|--------------|
-| `context/shared/base-core.ts` | 116 | Thin but acceptable |
-| `context/parent/core.ts` | 279 | Implementation-only getMode() |
-| `context/child/core.ts` | 106 | Missing Date deserialization |
-| `context/parent/issue.ts` | 160 | **120 lines duplicated formatting** |
-| `context/child/issue.ts` | 120 | **Duplicate + IPC bug risk** |
-| `context/parent/wiki.ts` | 733 | Too complex, needs split |
-| `context/child/wiki.ts` | 165 | Missing Date deserialization |
-| `context/parent-context.ts` | 329 | 200+ lines IPC handlers |
-| `context/child-context.ts` | 64 | Clean composition root |
-| `tests/test-utils/mock-context.ts` | 238 | No IPC support, needs deep partial |
+| File | Lines | Issues Found | Status |
+|------|-------|--------------|--------|
+| `context/shared/base-core.ts` | 116 | Thin but acceptable | — |
+| `context/parent/core.ts` | 279 | ~~Implementation-only getMode()~~ | ✅ Fixed (getMode in interface) |
+| `context/child/core.ts` | 106 | ~~Missing Date deserialization~~ | ✅ Fixed (mail.ts) |
+| `context/parent/issue.ts` | 160 | ~~120 lines duplicated formatting~~ | ✅ Fixed (shared formatter) |
+| `context/child/issue.ts` | 120 | ~~Duplicate + IPC bug risk~~ | ✅ Fixed (shared formatter) |
+| `context/parent/wiki.ts` | 733 | Too complex, needs split | — |
+| `context/child/wiki.ts` | 165 | Missing Date deserialization | AMBIGUOUS |
+| `context/parent-context.ts` | 329 | 200+ lines IPC handlers | — |
+| `context/child-context.ts` | 64 | Clean composition root | — |
+| `tests/test-utils/mock-context.ts` | 238 | No IPC support, needs deep partial | — |
 
 ---
 

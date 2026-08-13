@@ -1,50 +1,73 @@
 # Ctrl+L Double-Press to Clear Chat History
 
-## Feature Request
+> **Status:** Implemented
 
-When the user presses Ctrl+L twice within 3 seconds at the prompt, clear the chat history (same effect as `/clear` slash command).
+## Feature
 
-## Current Behavior
+When the user presses Ctrl+L twice within 3 seconds at the prompt, the conversation history is cleared (same effect as `/clear` slash command, plus additional state resets).
 
-- **Ctrl+L once**: Clears the terminal screen (existing behavior in LineEditor)
-- **Ctrl+L twice**: Currently just clears screen twice
+## Behavior
 
-## Proposed Behavior
+- **Ctrl+L once**: Clears the terminal screen and shows a whisper line: "Press Ctrl+L again to clear history" (auto-clears after 3s).
+- **Ctrl+L twice within 3s**: Clears the terminal screen, clears all conversation state (triologue, sequence, wrap-up, todos, issues), and shows "Conversation cleared. Starting fresh." as a whisper line.
 
-- **Ctrl+L once**: Clears the terminal screen (unchanged)
-- **Ctrl+L twice within 3s**: Clears the terminal screen AND clears chat history (same as `/clear`)
+## Implementation
 
-## Architecture Analysis
+### Where the logic lives
 
-### Key Components
+The double-press detection is in **`AgentIO.handleKeyEvent()`** (`src/loop/agent-io.ts`), NOT in `LineEditor`. This is the key architectural decision: `AgentIO` already intercepts all key events forwarded via IPC from the Coordinator, so it can track timing state across presses without modifying `LineEditor`.
 
-1. **Coordinator** (`src/index.ts`):
-   - Handles raw stdin in TTY raw mode
-   - Parses keys using `parseKeys()` from `key-parser.ts`
-   - Forwards `KeyInfo` to Lead via IPC: `{ type: 'key', key }`
+`LineEditor` (`src/utils/line-editor.ts`) provides two primitive methods used by the feature:
+- `clearScreen()` — writes `\x1b[2J\x1b[H`, resets `screenStartRow`, re-renders.
+- `setWhisper(text, duration?)` — shows a hint line below the prompt; auto-clears after `duration` ms if provided.
 
-2. **AgentIO** (`src/loop/agent-io.ts`):
-   - Receives key IPC messages
-   - Forwards to active `LineEditor` via `handleKeyEvent()`
-   - Manages `LineEditor` lifecycle
+### AgentIO fields and constants
 
-3. **LineEditor** (`src/utils/line-editor.ts`):
-   - Handles key events in `handleKey()` method
-   - Ctrl+L handling at line ~580:
-     ```typescript
-     if (key.ctrl && key.name === 'l') {
-       this.stdout.write('\x1b[2J\x1b[H');
-       this.screenStartRow = 0;
-       this.render();
-       return;
-     }
-     ```
+```typescript
+// In AgentIO class (src/loop/agent-io.ts)
+private static readonly CTRL_L_DOUBLE_PRESS_MS = 3000;  // 3 seconds for double press
+private lastCtrlLTime: number | null = null;
+private onDoubleCtrlLCallback: (() => void) | null = null;
+private whisperTimeout: ReturnType<typeof setTimeout> | null = null;
+```
 
-4. **/clear command** (`src/slashes/clear.ts`):
-   - Calls `triologue.clear()` and `clearWrapUp()`
-   - Prints "Conversation cleared. Starting fresh."
+### handleKeyEvent() — Ctrl+L interception
 
-### Data Flow for Ctrl+L
+When a Ctrl+L key event arrives via IPC, `handleKeyEvent()` intercepts it BEFORE forwarding to `LineEditor.handleKey()`:
+
+1. **First press**: Records `lastCtrlLTime = now`, calls `activeLineEditor.clearScreen()`, shows whisper "Press Ctrl+L again to clear history" with a 3s auto-clear. Sets a `whisperTimeout` to reset `lastCtrlLTime` after 3s.
+2. **Second press within 3s** (and callback is set): Calls `clearCtrlLState()` (resets `lastCtrlLTime`, clears `whisperTimeout`), calls `activeLineEditor.clearScreen()`, invokes `onDoubleCtrlLCallback()`, then sets whisper to "Conversation cleared. Starting fresh."
+3. **Non-Ctrl+L keys**: Forwarded to `activeLineEditor.handleKey(key)` as normal.
+
+`clearCtrlLState()` is a private helper that resets `lastCtrlLTime` to null and clears the whisper timeout + whisper line.
+
+### Callback registration — agent-repl.ts
+
+The callback is set in `agent-repl.ts` (the main entry point), NOT in `prompt.ts`. This is because `agent-repl.ts` has access to all the objects that need clearing (triologue, sequence, ctx.todo, ctx.issue) at startup time:
+
+```typescript
+// In agent-repl.ts main()
+agentIO.setDoubleCtrlLCallback(() => {
+  triologue.clear();
+  sequence.clear();
+  clearWrapUp();
+  ctx.todo.clear();
+  ctx.issue.clearAll();
+});
+```
+
+This clears more state than the original `/clear` slash command: in addition to triologue and wrap-up, it also clears the hook sequence and all todos/issues.
+
+### setDoubleCtrlLCallback()
+
+```typescript
+// In AgentIO class
+setDoubleCtrlLCallback(callback: (() => void) | null): void {
+  this.onDoubleCtrlLCallback = callback;
+}
+```
+
+### Data flow
 
 ```
 User presses Ctrl+L
@@ -53,184 +76,28 @@ User presses Ctrl+L
   → parseKeys() creates KeyInfo: { name: 'l', ctrl: true, ... }
   → Coordinator sends IPC: { type: 'key', key }
   → Lead process receives IPC
-  → AgentIO.handleKeyEvent() 
-  → LineEditor.handleKey()
-  → Clears screen: '\x1b[2J\x1b[H'
+  → AgentIO.handleKeyEvent()
+  → Intercepts Ctrl+L:
+      First press:  clearScreen() + whisper "Press Ctrl+L again..."
+      Second press: clearScreen() + onDoubleCtrlLCallback() + whisper "Conversation cleared."
+  → (Other keys forwarded to LineEditor.handleKey())
 ```
 
-### Problem
+### Edge cases
 
-The `LineEditor` has no access to:
-- `Triologue` (conversation history)
-- `/clear` slash command handler
-- `clearWrapUp()` function
+1. **Ctrl+L during LLM call**: `LineEditor` is not active (only active during `ask()`). `handleKeyEvent()` returns early when `activeLineEditor` is null, so double-press detection only works during the PROMPT state.
 
-These are only available in the main Lead process context, not in the LineEditor.
+2. **Teammate processes**: Teammates don't use `LineEditor` (no direct user input). Ctrl+L handling only affects the Lead process.
 
-## Solution Design
+3. **Callback errors**: Wrapped in try-catch in `handleKeyEvent()` to prevent crashing the key handler.
 
-### Option 1: IPC Message to Coordinator (Complex)
+4. **Whisper auto-clear**: After the first Ctrl+L, if the user doesn't press again within 3s, the whisper line auto-clears and `lastCtrlLTime` resets to null — the next Ctrl+L is treated as a fresh first press.
 
-Send IPC message from LineEditor to Coordinator requesting clear. This requires:
-- LineEditor → AgentIO → Lead → Coordinator → Lead → /clear
-- Too complex, adds latency
+## Test coverage
 
-### Option 2: Callback in LineEditor (Clean)
-
-Add an optional `onDoubleCtrlL` callback to LineEditor options. AgentIO can set this callback to trigger `/clear`.
-
-**This is the recommended approach.**
-
-### Option 3: New IPC Message Type (Medium)
-
-Add a new IPC message type `'clear_conversation'` that the Coordinator sends to Lead, similar to `'neglection'`.
-
-## Recommended Implementation (Option 2)
-
-### Files to Modify
-
-1. **`src/utils/line-editor.ts`**:
-   - Add `lastCtrlLTime: number | null` field to track last Ctrl+L press
-   - Add `onDoubleCtrlL?: () => void` to options
-   - Modify Ctrl+L handler:
-     - If < 3s since last Ctrl+L AND `onDoubleCtrlL` provided → call callback
-     - Otherwise → clear screen and update timestamp
-
-2. **`src/loop/agent-io.ts`**:
-   - Pass `onDoubleCtrlL` callback to LineEditor in `ask()` method
-   - Callback should trigger `/clear`-like behavior
-
-3. **`src/slashes/clear.ts`**:
-   - Extract clear logic into a reusable function that can be called from both slash command and callback
-
-4. **`src/loop/states/prompt.ts`** or relevant state:
-   - Need access to `Triologue` to call `clear()`
-
-### Implementation Details
-
-#### Step 1: Modify LineEditor
-
-```typescript
-interface LineEditorOptions {
-  prompt: string;
-  stdout: NodeJS.WriteStream;
-  onDone: (value: string) => void;
-  history?: string[];
-  onDoubleCtrlL?: () => void;  // NEW: Optional callback for double Ctrl+L
-}
-
-// In class:
-private lastCtrlLTime: number | null = null;
-private static readonly CTRL_L_DOUBLE_PRESS_MS = 3000;
-
-// In handleKey():
-if (key.ctrl && key.name === 'l') {
-  const now = Date.now();
-  const timeSinceLast = this.lastCtrlLTime ? now - this.lastCtrlLTime : Infinity;
-  
-  if (timeSinceLast < LineEditor.CTRL_L_DOUBLE_PRESS_MS && this.onDoubleCtrlL) {
-    // Double Ctrl+L within 3s - call callback
-    this.lastCtrlLTime = null;
-    this.onDoubleCtrlL();
-    // Also clear screen
-    this.stdout.write('\x1b[2J\x1b[H');
-    this.screenStartRow = 0;
-    this.render();
-  } else {
-    // Single Ctrl+L - just clear screen
-    this.lastCtrlLTime = now;
-    this.stdout.write('\x1b[2J\x1b[H');
-    this.screenStartRow = 0;
-    this.render();
-  }
-  return;
-}
-```
-
-#### Step 2: AgentIO Integration
-
-The challenge is that `AgentIO.ask()` creates the LineEditor, but doesn't have direct access to `Triologue`. The clear operation needs to:
-1. Clear triologue
-2. Clear wrap-up state  
-3. Print confirmation message
-
-We need to either:
-- Pass a callback from the state machine (where Triologue is available)
-- Or create an event that the state machine can listen to
-
-**Recommended: Pass callback from AgentIO**
-
-```typescript
-// In agent-io.ts
-class AgentIO {
-  private onDoubleCtrlLCallback: (() => void) | null = null;
-
-  setDoubleCtrlLCallback(callback: (() => void) | null): void {
-    this.onDoubleCtrlLCallback = callback;
-  }
-
-  async ask(query: string, useAsPrompt: boolean = false): Promise<string> {
-    // ...existing code...
-    
-    this.activeLineEditor = new LineEditor({
-      prompt,
-      stdout: process.stdout,
-      onDone: (value: string) => { /* ... */ },
-      history: this.lineHistory,
-      onDoubleCtrlL: this.onDoubleCtrlLCallback || undefined,
-    });
-    
-    // ...rest of code...
-  }
-}
-```
-
-#### Step 3: State Machine Integration
-
-In the prompt state handler, set up the callback:
-
-```typescript
-// In prompt.ts or wherever PROMPT state is handled
-agentIO.setDoubleCtrlLCallback(() => {
-  triologue.clear();
-  clearWrapUp();
-  console.log(chalk.green('Conversation cleared. Starting fresh.'));
-});
-```
-
-### Alternative: Simpler Approach Using AgentIO
-
-Since `AgentIO` has access to the clear callback, and the callback is set from the state machine, we can keep it simple:
-
-1. AgentIO stores a `clearConversation` callback
-2. State machine sets this callback when it has Triologue
-3. LineEditor calls the callback on double Ctrl+L
-4. Callback clears triologue and prints message
-
-### Edge Cases
-
-1. **What if user presses Ctrl+L during LLM call?**
-   - LineEditor is not active (only active during `ask()`)
-   - Key events still flow through IPC but LineEditor doesn't process them
-   - Double-press detection only works during prompt
-   
-2. **What about teammate processes?**
-   - Teammates don't use LineEditor (they don't have direct user input)
-   - Ctrl+L handling only affects Lead process
-   
-3. **What if callback throws?**
-   - Wrap in try-catch to prevent crashing the LineEditor
-
-## Summary
-
-The implementation involves:
-1. Adding `onDoubleCtrlL` callback to `LineEditorOptions`
-2. Modifying `LineEditor.handleKey()` to detect double Ctrl+L
-3. Adding `setDoubleCtrlLCallback()` to `AgentIO`
-4. Setting up the callback in the prompt state handler
-5. Callback clears triologue, clears wrap-up, prints confirmation
-
-This approach keeps the concerns separated:
-- LineEditor handles input detection
-- AgentIO connects components
-- State machine has access to Triologue for clearing
+Tests are in `src/tests/agent-io/ctrl-l.test.ts`, covering:
+- Single Ctrl+L clears screen and shows whisper
+- Double Ctrl+L within 3s triggers callback
+- Double Ctrl+L after 3s timeout does NOT trigger callback
+- `setDoubleCtrlLCallback(null)` disables the feature
+- Callback errors are caught

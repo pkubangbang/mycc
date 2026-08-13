@@ -23,7 +23,7 @@
 
 ### What is mycc?
 
-mycc is a Node.js coding agent that uses Ollama for LLM (Large Language Model) inference. It acts as an intelligent assistant that can help you with various coding tasks - from file operations and code generation to managing complex multi-agent workflows.
+mycc is a Node.js coding agent that uses Ollama (default) or DeepSeek API for LLM (Large Language Model) inference. It acts as an intelligent assistant that can help you with various coding tasks - from file operations and code generation to managing complex multi-agent workflows. The provider is selected via the `API_PROVIDER` environment variable (`ollama` or `deepseek`).
 
 ### Why Use mycc?
 
@@ -32,7 +32,7 @@ mycc is a Node.js coding agent that uses Ollama for LLM (Large Language Model) i
 - **Persistent Task Management**: Track issues and todos across sessions
 - **Git Integration**: Manage multiple worktrees for parallel development
 - **Extensible**: Add custom tools and skills for your specific needs
-- **Privacy-Focused**: Run locally with Ollama - no data sent to external servers
+- **Privacy-Focused**: Run locally with Ollama - no data sent to external servers. DeepSeek (cloud) is available as an alternative provider via `API_PROVIDER=deepseek`.
 
 ### Who Should Use This?
 
@@ -231,11 +231,21 @@ WAL files are stored in `~/.mycc-store/wiki/logs/YYYY-MM-DD.wal` as JSON lines.
 
 Configure `.env` file with:
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `OLLAMA_HOST` | Ollama server URL | `http://127.0.0.1:11434` |
-| `OLLAMA_MODEL` | Model name to use | `glm-5:cloud` |
-| `OLLAMA_API_KEY` | API key for cloud models | (optional) |
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `API_PROVIDER` | No | `ollama` | LLM provider: `ollama` or `deepseek` |
+| `OLLAMA_HOST` | No | `http://127.0.0.1:11434` | Ollama server URL (always used for embeddings) |
+| `OLLAMA_MODEL` | No | `glm-5:cloud` | General/chat model (Ollama provider) |
+| `OLLAMA_VISION_MODEL` | No | `none` | Vision model (set to "none" to disable; Ollama provider) |
+| `OLLAMA_EMBEDDING_MODEL` | No | `nomic-embed-text` | Embedding model for semantic search/RAG (always Ollama) |
+| `OLLAMA_API_KEY` | No | (empty) | API key for cloud features (sensitive; Ollama provider) |
+| `DEEPSEEK_HOST` | No | `https://api.deepseek.com` | DeepSeek API endpoint (DeepSeek provider) |
+| `DEEPSEEK_API_KEY` | No | (empty) | DeepSeek API key (sensitive; DeepSeek provider) |
+| `DEEPSEEK_MODEL` | No | `deepseek-chat` | DeepSeek model name (DeepSeek provider) |
+| `TOKEN_THRESHOLD` | No | `50000` | Context limit threshold |
+| `EDITOR` | No | Platform default | Text editor for file editing |
+
+> **Note**: When `API_PROVIDER=deepseek`, `web_search`, `web_fetch`, `screen`, and `read_picture` tools are not available. Embeddings (wiki/RAG) always use Ollama regardless of the chat provider.
 
 ### Directory Structure
 

@@ -81,3 +81,17 @@ tmux kill-session -t mycc-test
 **Fix:** In `normalizeMessage()`, for assistant messages with tool_calls that lack reasoning_content, set it to empty string `""`. DeepSeek accepts this for messages generated without thinking mode.
 
 **File:** `src/engine/deepseek.ts` — `normalizeMessage()`.
+
+### 6. DSML tags (fullwidth vertical lines U+FF5C) leak into content stream
+
+**Symptom:** DeepSeek sometimes emits internal markup tags directly into the text content stream. These tags use fullwidth vertical lines (U+FF5C) instead of ASCII pipes, appearing as `<||DSML||tagname>...</||DSML||tagname>` where `||` is two U+FF5C characters.
+
+**Cause:** DeepSeek's API occasionally injects DeepSeek Markup Language (DSML) tags (e.g. `<||DSML||tool_calls>`, `<||DSML||safety>`, `<||DSML||thinking>`) into the `content` field of assistant messages. If not stripped, these raw tags appear in the user-facing display.
+
+**Fix:** The letter-box (`src/utils/letter-box.ts`) strips all DSML markup before display. The `stripInternalMarkup()` function handles four patterns:
+- Full paired tags: `<||DSML||tagname>...</||DSML||tagname>`
+- Self-closing tags: `<||DSML||tagname />`
+- Opening-only tags: `<||DSML||tagname>`
+- Closing-only tags: `</||DSML||tagname>`
+
+**File:** `src/utils/letter-box.ts` — `stripInternalMarkup()`. Tests in `src/tests/letter-box.test.ts`.

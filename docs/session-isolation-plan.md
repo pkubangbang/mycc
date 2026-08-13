@@ -1,5 +1,12 @@
 # Session Isolation Implementation
 
+> **HISTORICAL: This plan describes a SQLite-based session isolation approach that is no longer in use.**
+> The SQLite database (`state.db` / `src/context/db.ts`) has been **completely removed**. State management now uses **in-memory storage** (`src/context/memory-store.ts`), which is inherently process-scoped — each mycc process has its own in-memory state, eliminating the cross-session corruption problem this plan was designed to solve.
+>
+> Session isolation for file-based data (mail, triologue, transcripts) is now achieved through **session-scoped subdirectories** (`.mycc/sessions/{session-id}/`), managed by `getSessionDir()` in `src/config.ts`. The `setSessionContext()`/`getSessionContext()` functions still exist but now live in `src/config.ts` (not `db.ts`) and serve as the global session ID for file-path scoping, not SQLite query filtering.
+>
+> Kept for reference only — the implementation details below describe a system that no longer exists.
+
 ## Problem Statement
 
 The SQLite database (`state.db`) was shared globally across all sessions. When multiple `mycc` processes started in the same project directory, they would corrupt each other's state:

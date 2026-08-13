@@ -1,32 +1,31 @@
 ---
-updated_at: 2026-05-03
+updated_at: 2026-08-13
 changelog:
-  - "2026-05-03: Updated tool count from 24 to 45, added missing tools (recall, plan_on, plan_off, tm_print, hand_over, web_*, wiki_*, skill_compile, wt_*)"
-  - "2026-05-03: Fixed issue_create behavior - now uses in-memory storage, not SQLite"
-  - "2026-05-03: Fixed tm_create behavior - now uses in-memory storage, not SQLite"
+  - "2026-08-13: Updated tool count from 45 to 48, version from v0.7.0 to v0.10.1"
+  - "2026-08-13: Removed nonexistent tools: wt_create, wt_remove, wt_enter, wt_leave, wt_print, todo_write, order, time"
+  - "2026-08-13: Added missing tools: grep, read_read, todo_create, todo_update, todo_pinning, issue_publish, issue_list, peers, checkpoint, recap, mycc_title, skill_search"
+  - "2026-08-13: Fixed scopes: question (child-only), git_commit (main+child), skill_compile (main+child), tm_print (main+child)"
+  - "2026-08-13: Fixed bash params (added intent, timeout), ToolDefinition interface (JSONSchema7, signal), summary table"
+  - "2026-08-13: Updated loader path from src/context/loader.ts to src/context/shared/registry.ts"
 ---
 
 # Built-in Tools Reference
 
-This document describes the built-in tools available to the coding agent. Tools are implemented in `src/tools/` and loaded at startup.
+This document describes the built-in tools available to the coding agent. Tools are implemented in `src/tools/` and registered in `src/context/shared/registry.ts`, loaded at startup via `src/context/shared/loader.ts`.
 
-**Current tool count**: 45 tools (as of v0.7.0)
+**Current tool count**: 48 tools (as of v0.10.1)
 
 ## Tool Interface
 
-All tools conform to `ToolDefinition`:
+All tools conform to `ToolDefinition` (defined in `src/types.ts`):
 
 ```typescript
 interface ToolDefinition {
-  name: string;           // Unique identifier
-  description: string;    // Description for LLM
-  input_schema: {         // JSON Schema for parameters
-    type: 'object';
-    properties: Record<string, { type: string; description?: string }>;
-    required?: string[];
-  };
-  scope: string[];       // Contexts: ['main', 'child']
-  handler: (ctx: AgentContext, args: Record<string, unknown>) => string | Promise<string>;
+  name: string;
+  description: string;
+  input_schema: JSONSchema7;      // JSON Schema for parameters
+  scope: string[];                // Contexts: ['main', 'child']
+  handler: (ctx: AgentContext, args: Record<string, unknown>, signal?: AbortSignal) => string | Promise<string>;
 }
 ```
 
@@ -42,10 +41,11 @@ interface ToolDefinition {
 **Tool Scope Constraints:**
 - Tools with `['main']` only available to lead agent
 - Tools with `['main', 'child']` available to lead and teammates
+- Tools with `['child']` only available to teammate agents (e.g., `question`)
 
 **Summary:**
-- **Lead (main)**: All 45 tools
-- **Teammate (child)**: Cannot use `broadcast`, `tm_create`, `tm_remove`, `tm_await`, `tm_print`
+- **Lead (main)**: All 48 tools except `question` (child-only)
+- **Teammate (child)**: Cannot use `broadcast`, `tm_create`, `tm_remove`, `tm_await`, `hand_over`, `plan_on`, `plan_off`, `checkpoint`, `recap`, `peers`, `todo_pinning`, `git_commit` (main+child). `question` is child-only.
 
 ---
 
@@ -57,22 +57,26 @@ interface ToolDefinition {
 
 **Scope**: `['main', 'child']`
 
-**Description**: Run a shell command (blocking).
+**Description**: Run a command in the platform shell.
 
 **Parameters**:
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
 | command | string | yes | The shell command to execute |
+| intent | string | yes | Explain why this command is needed (use intent language) |
+| timeout | number | yes | Seconds before killing the process (SIGKILL). Integer 1-60. Defaults to 30 |
 
 **Behavior**:
 - Executes command in the current working directory
-- Blocks until completion (timeout: 120s)
-- Output truncated to 50,000 characters
-- Blocks dangerous commands: `rm -rf /`, `sudo`, `shutdown`, `reboot`
+- Blocks until completion or timeout
+- Output truncated to 20,000 characters (head+tail with summary line)
+- Enforces grant system: respects plan mode and intent validation
+- Blocks direct `git commit` — must use `git_commit` tool instead
+- On timeout, suggests using `bg_create` for long-running commands
 
 **Example**:
 ```json
-{ "command": "ls -la" }
+{ "command": "ls -la", "intent": "check directory contents", "timeout": 10 }
 ```
 
 ---
@@ -83,22 +87,23 @@ interface ToolDefinition {
 
 **Scope**: `['main', 'child']`
 
-**Description**: Read file contents from the workspace.
+**Description**: Read file contents from the workspace or external paths. Paths use forward slashes and can be relative to workspace root, absolute, or use `~` for home directory. Limits: reads first 1000 lines or ~1/8 of context window, whichever is smaller. Reading files outside the workspace requires user grant (session-scoped).
 
 **Parameters**:
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
-| path | string | yes | File path relative to workspace |
-| limit | integer | no | Maximum number of lines to read |
+| path | string | yes | File path relative to workspace root |
 
 **Behavior**:
-- Validates path doesn't escape workspace
-- Returns content truncated to 50,000 characters
-- If `limit` specified, shows first N lines with "... (X more lines)" suffix
+- Detects file type (text vs binary); binary files return a description with size
+- For files with extremely long lines (e.g., minified JS): shows head+tail preview
+- Hard-coded limit of 1000 lines
+- Reading files outside workspace requires session-scoped grant via `requestExternalPathAccess`
+- Strips BOM if present; warns on encoding corruption (U+FFFD replacement chars)
 
 **Example**:
 ```json
-{ "path": "src/index.ts", "limit": 100 }
+{ "path": "src/index.ts" }
 ```
 
 ---
@@ -109,19 +114,19 @@ interface ToolDefinition {
 
 **Scope**: `['main', 'child']`
 
-**Description**: Write content to a file in the workspace.
+**Description**: Create or completely replace a file. Parent directories are created automatically.
 
 **Parameters**:
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
-| path | string | yes | File path relative to workspace |
+| path | string | yes | File path relative to workspace root |
 | content | string | yes | Content to write to the file |
 
 **Behavior**:
 - Creates parent directories if they don't exist
-- Validates path doesn't escape workspace
+- Validates path doesn't escape workspace (unless external grant given)
 - Overwrites existing file if present
-- Returns bytes written
+- Supports `newline` and `bom` options for line-ending/BOM control
 
 **Example**:
 ```json
@@ -136,20 +141,21 @@ interface ToolDefinition {
 
 **Scope**: `['main', 'child']`
 
-**Description**: Replace exact text in a file. Use this for making targeted edits.
+**Description**: Replace exact text in an existing file. Use for targeted edits instead of rewriting entire files.
 
 **Parameters**:
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
-| path | string | yes | File path relative to workspace |
-| old_text | string | yes | The exact text to replace (must exist in file) |
+| path | string | yes | File path relative to workspace root |
+| old_text | string | yes | The exact text to replace (literal string match, NOT regex) |
 | new_text | string | yes | The replacement text |
 
 **Behavior**:
-- Validates path doesn't escape workspace
+- `old_text` is a LITERAL string match (characters like `) $ [ .` matched verbatim)
 - Fails if `old_text` not found in file
-- Fails if `old_text` appears multiple times (need more context)
-- Only replaces first occurrence
+- Fails if `old_text` appears multiple times (need more context for uniqueness)
+- Replaces the single occurrence; file re-read and verified after write
+- On verification failure, original content is restored
 
 **Example**:
 ```json
@@ -162,6 +168,35 @@ interface ToolDefinition {
 
 ---
 
+### grep
+
+**File**: `src/tools/grep.ts`
+
+**Scope**: `['main', 'child']`
+
+**Description**: Search for a pattern in files. Automatically excludes `node_modules` and respects `.gitignore` when using ripgrep. Searching a directory outside the workspace requires user grant (session-scoped).
+
+**Parameters**:
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| pattern | string | yes | The search pattern (regex compatible) |
+| path | string | no | Directory to search (default: workspace root) |
+| include | string | no | File glob pattern to include (e.g., `*.ts`) |
+| exclude | string | no | File glob pattern to exclude (e.g., `*.min.js`) |
+| maxResults | number | no | Maximum results to return (default: 200, max: 500) |
+
+**Behavior**:
+- Hierarchical fallback: native `rg` → ripgrep WASM → system grep/PowerShell
+- If output exceeds 20,000 chars, summarizes via LLM
+- External directory search requires session-scoped grant
+
+**Example**:
+```json
+{ "pattern": "ToolDefinition", "include": "*.ts" }
+```
+
+---
+
 ## Communication Tools
 
 ### brief
@@ -170,21 +205,22 @@ interface ToolDefinition {
 
 **Scope**: `['main', 'child']`
 
-**Description**: Send a status update message to the user. Use this to report progress, share information, or provide updates during task execution. The message will be displayed in the terminal.
+**Description**: Talk to yourself and let the user know. Use to report progress or findings during task execution. Always include a confidence parameter (0-10).
 
 **Parameters**:
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
 | message | string | yes | The status message to display to the user |
+| confidence | number | yes | Confidence level (0-10) |
 
 **Behavior**:
 - Displays message prominently in terminal
-- Logs to transcript if available
 - Used for progress reporting during long tasks
+- Also recorded into the peer discovery heartbeat (lead only) so other instances can see progress
 
 **Example**:
 ```json
-{ "message": "Processing 3 of 10 files..." }
+{ "message": "Processing 3 of 10 files...", "confidence": 8 }
 ```
 
 ---
@@ -193,9 +229,9 @@ interface ToolDefinition {
 
 **File**: `src/tools/question.ts`
 
-**Scope**: `['main', 'child']`
+**Scope**: `['child']` (teammate only)
 
-**Description**: Ask the user a question and wait for their response. Use this to get clarification or additional information during task execution.
+**Description**: Ask the user a question and wait for response. Blocks until user answers. Only available in child process (scope: child). Use for clarification during work.
 
 **Parameters**:
 | Name | Type | Required | Description |
@@ -204,9 +240,8 @@ interface ToolDefinition {
 
 **Behavior**:
 - Displays question in a formatted box
-- Waits for user input (no timeout)
-- Returns the user's response
 - For child processes, routes through lead agent via IPC
+- Returns the user's response
 
 **Example**:
 ```json
@@ -221,19 +256,21 @@ interface ToolDefinition {
 
 **Scope**: `['main', 'child']`
 
-**Description**: Send an async message to a specific teammate or lead. Use this for inter-agent communication. Use "lead" to message the lead agent.
+**Description**: Send an async message to a teammate or "lead". Non-blocking. Use for task assignment and inter-agent communication. Also supports cross-instance peer routing via `"<session-id>/lead"` identity.
 
 **Parameters**:
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
-| name | string | yes | Target name to receive the message (teammate name or "lead") |
+| name | string | yes | Target name (teammate name, "lead", or cross-instance `"<session-id>/lead"`) |
 | title | string | yes | Message title/subject |
 | content | string | yes | Message body content |
+| eta | number | no | Estimate duration in seconds (mandatory on first mail to lead) |
 
 **Behavior**:
 - Appends message to target's mailbox file (`.mycc/mail/<name>.jsonl`)
 - Messages are async - recipient collects at next iteration
-- Use "lead" to send message to the lead agent
+- Cross-instance peer mail routed through peer discovery module
+- `eta` converted to absolute deadline when set
 
 **Example**:
 ```json
@@ -248,7 +285,7 @@ interface ToolDefinition {
 
 **Scope**: `['main']` (lead agent only)
 
-**Description**: Send a message to all teammates at once. Use this for announcements or coordinating team-wide updates.
+**Description**: Send a message to all teammates at once. Use for announcements or coordinating team-wide updates.
 
 **Parameters**:
 | Name | Type | Required | Description |
@@ -259,11 +296,35 @@ interface ToolDefinition {
 **Behavior**:
 - Delivers message to all active teammates
 - Lead agent only tool
-- Useful for coordination announcements
 
 **Example**:
 ```json
 { "title": "Code Freeze", "content": "Please commit your current changes." }
+```
+
+---
+
+### mycc_title
+
+**File**: `src/tools/mycc_title.ts`
+
+**Scope**: `['main', 'child']`
+
+**Description**: Add a notification banner among the chat, to mark the change of topic in discussion.
+
+**Parameters**:
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| title | string | yes | The new title. Keep it concise and descriptive. |
+
+**Behavior**:
+- Sets terminal window/tab title via ANSI OSC escape sequences
+- Prints a prominent bright-yellow banner to stdout
+- Normalizes any "mycc" prefix to canonical `mycc: ` form
+
+**Example**:
+```json
+{ "title": "Refactoring auth module" }
 ```
 
 ---
@@ -276,18 +337,18 @@ interface ToolDefinition {
 
 **Scope**: `['main', 'child']`
 
-**Description**: Create a new issue with an optional list of blocking issues. Returns the issue ID.
+**Description**: Create a new shared issue to track team work. Returns the issue ID. Draft issues are not visible to teammates for auto-claim — use `issue_publish` to make them claimable.
 
 **Parameters**:
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
-| title | string | yes | Short title for the issue |
+| title | string | yes | Concise summary of the issue (1-10 words recommended) |
 | content | string | yes | Detailed description of the issue |
-| blockedBy | array[integer] | no | Optional array of issue IDs that block this issue |
+| blockedBy | array[integer] | no | Optional list of issue IDs that must be completed before this issue |
 
 **Behavior**:
-- Creates issue with status "pending"
-- Returns the new issue ID
+- Creates issue with status "draft"
+- Returns the new issue ID and full issue list
 - If `blockedBy` provided, creates blocking relationships
 - Issues are stored in-memory (session-scoped, lost on exit)
 
@@ -304,19 +365,19 @@ interface ToolDefinition {
 
 **Scope**: `['main', 'child']`
 
-**Description**: Claim an issue to start working on it. Sets status to in_progress and assigns an owner. Only works on pending issues.
+**Description**: Claim a pending shared issue to start work. Sets status to in_progress and assigns owner.
 
 **Parameters**:
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
-| id | integer | yes | ID of the issue to claim |
-| owner | string | yes | Name or identifier of the owner claiming the issue |
+| id | integer | yes | Issue ID number to claim |
+| owner | string | yes | Name or identifier of who is claiming the issue |
 
 **Behavior**:
 - Changes status from "pending" to "in_progress"
 - Sets owner field
 - Fails if issue is already claimed or not in "pending" status
-- Returns success/failure message
+- Returns full issue list
 
 **Example**:
 ```json
@@ -331,20 +392,21 @@ interface ToolDefinition {
 
 **Scope**: `['main', 'child']`
 
-**Description**: Close an issue with a final status (completed, failed, or abandoned). Optionally add a closing comment.
+**Description**: Close a shared issue with final status: completed, failed, or abandoned. A non-empty comment is REQUIRED.
 
 **Parameters**:
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
-| id | integer | yes | ID of the issue to close |
+| id | integer | yes | Issue ID number to close |
 | status | string | yes | Final status: "completed", "failed", or "abandoned" |
-| comment | string | no | Optional closing comment |
-| poster | string | no | Name of the person closing the issue (optional) |
+| comment | string | yes | Non-empty comment explaining the resolution or reason for closure |
+| poster | string | no | Name of the person or agent closing the issue |
 
 **Behavior**:
 - Updates issue status
-- Optionally adds closing comment
-- May unblock other issues waiting on this issue
+- Adds closing comment (required, non-empty)
+- Closing a blocker unblocks dependent issues
+- Returns full issue list
 
 **Example**:
 ```json
@@ -359,23 +421,60 @@ interface ToolDefinition {
 
 **Scope**: `['main', 'child']`
 
-**Description**: Add a comment to an existing issue. The poster is automatically recorded.
+**Description**: Add a comment to a shared issue for progress updates or discussion visible to all agents.
 
 **Parameters**:
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
-| id | integer | yes | ID of the issue to comment on |
-| comment | string | yes | Comment text to add |
-| poster | string | no | Name of the commenter (optional, defaults to anonymous) |
+| id | integer | yes | Issue ID number to add a comment to |
+| comment | string | yes | Comment text |
+| poster | string | no | Name of the commenter (defaults to anonymous) |
 
 **Behavior**:
 - Appends comment to issue's comment history
-- Comments stored in memory (session-scoped)
+- Returns full issue list
 
 **Example**:
 ```json
 { "id": 1, "comment": "Started investigating the root cause" }
 ```
+
+---
+
+### issue_publish
+
+**File**: `src/tools/issue_publish.ts`
+
+**Scope**: `['main', 'child']`
+
+**Description**: Publish a draft issue, transitioning it from draft to pending so it becomes visible to idle teammates for auto-claim. Use when you want any available teammate to pick up the issue.
+
+**Parameters**:
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| id | integer | yes | Issue ID number to publish (must be in draft status) |
+
+**Behavior**:
+- Transitions status from "draft" to "pending"
+- Only pending issues are auto-claimed by idle teammates
+- Returns full issue list
+
+**Example**:
+```json
+{ "id": 1 }
+```
+
+---
+
+### issue_list
+
+**File**: `src/tools/issue_list.ts`
+
+**Scope**: `['main', 'child']`
+
+**Description**: List all shared issues with status, owner, and blocking relationships.
+
+**Parameters**: None
 
 ---
 
@@ -385,7 +484,7 @@ interface ToolDefinition {
 
 **Scope**: `['main', 'child']`
 
-**Description**: Create a blocking relationship: the blocker issue blocks the blocked issue. The blocked issue cannot be worked on until the blocker is resolved.
+**Description**: Declare that one issue blocks another. The blocked issue cannot be claimed until the blocker is resolved.
 
 **Parameters**:
 | Name | Type | Required | Description |
@@ -396,7 +495,7 @@ interface ToolDefinition {
 **Behavior**:
 - Creates relationship in memory blockages map
 - Blocked issue cannot be claimed until blocker is resolved
-- Prevents circular dependencies
+- Creates blocking relationships automatically
 
 **Example**:
 ```json
@@ -411,17 +510,13 @@ interface ToolDefinition {
 
 **Scope**: `['main', 'child']`
 
-**Description**: Remove a blocking relationship between two issues. The blocked issue will no longer be blocked by the blocker.
+**Description**: Remove a blocking relationship between two issues. The blocked issue becomes claimable if it has no other blockers.
 
 **Parameters**:
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
 | blocker | integer | yes | ID of the issue that was blocking |
-| blocked | integer | yes | ID of the issue that was blocked |
-
-**Behavior**:
-- Removes relationship from memory blockages map
-- If all blockers removed, issue becomes claimable
+| blocked | integer | yes | ID of the issue that was being blocked |
 
 **Example**:
 ```json
@@ -438,20 +533,20 @@ interface ToolDefinition {
 
 **Scope**: `['main']` (lead agent only)
 
-**Description**: Create a teammate as a child process agent. Use this to spawn a new agent that can work on tasks asynchronously.
+**Description**: Spawn a new teammate agent with a specific role. Assign work via mail_to after creation.
 
 **Parameters**:
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
-| name | string | yes | Unique identifier for the teammate (used for referencing in other commands) |
-| role | string | yes | Role description for the teammate (e.g., "coder", "reviewer", "tester") |
-| prompt | string | yes | Initial instructions and context for the teammate to follow |
+| name | string | yes | Unique identifier for the teammate |
+| role | string | yes | Role description for the teammate |
+| prompt | string | yes | Initial instructions and context for the teammate |
 
 **Behavior**:
 - Spawns a child process using `fork()`
 - Creates mailbox at `.mycc/mail/<name>.jsonl`
 - Stores teammate info in memory (session-scoped)
-- Teammate starts in "working" status
+- Optional `cwd` parameter (worktree path) assigned at spawn time
 - Returns success message with teammate name
 
 **Example**:
@@ -467,19 +562,18 @@ interface ToolDefinition {
 
 **Scope**: `['main']` (lead agent only)
 
-**Description**: Remove a teammate by terminating their child process. Use this when a teammate is no longer needed.
+**Description**: Remove a teammate by terminating their child process.
 
 **Parameters**:
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
 | name | string | yes | Name of the teammate to remove |
-| force | boolean | no | If true, forcefully kill the process; otherwise send soft shutdown (default: false) |
+| force | boolean | no | If true, forcefully kill the process (default: false) |
 
 **Behavior**:
 - Sends shutdown message to child process
 - If `force` is true, kills process immediately
-- Updates teammate status to "shutdown" in memory
-- Returns confirmation message
+- Updates teammate status to "shutdown"
 
 **Example**:
 ```json
@@ -494,24 +588,34 @@ interface ToolDefinition {
 
 **Scope**: `['main']` (lead agent only)
 
-**Description**: Wait for a teammate or all teammates to finish their current task. Use this instead of polling with bash sleep. Returns when the teammate(s) reach idle/shutdown state or timeout.
+**Description**: Wait for a teammate or all teammates to finish their current task.
 
 **Parameters**:
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
-| name | string | no | Teammate name to wait for. If omitted, waits for all teammates |
+| name | string | no | Teammate name to wait for. If omitted, waits for all |
 | timeout | integer | no | Timeout in milliseconds (default: 60000) |
 
 **Behavior**:
 - Blocks until teammate reaches "idle" or "shutdown" state
-- If no name provided, waits for all teammates
 - Returns after timeout even if not idle
-- Returns status for each teammate
 
 **Example**:
 ```json
 { "name": "coder", "timeout": 30000 }
 ```
+
+---
+
+### tm_print
+
+**File**: `src/tools/tm_print.ts`
+
+**Scope**: `['main', 'child']`
+
+**Description**: List all teammates with roles and status. Shows deadline and remaining time for working teammates.
+
+**Parameters**: None
 
 ---
 
@@ -523,22 +627,22 @@ interface ToolDefinition {
 
 **Scope**: `['main', 'child']`
 
-**Description**: Run a bash command in the background. Returns the process ID for tracking.
+**Description**: Run a bash command asynchronously (non-blocking). Returns pid for use with bg_await/bg_print/bg_remove.
 
 **Parameters**:
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
-| command | string | yes | The bash command to run in background |
+| command | string | yes | Bash command to run in background |
+| intent | string | yes | Explain why this command is needed |
 
 **Behavior**:
-- Spawns a background process using `spawn()` with shell mode
+- Spawns a background process
 - Returns immediately with process ID (PID)
-- Process output is logged with `bg:<pid>` prefix
 - Use `bg_print` to check status, `bg_await` to wait for completion
 
 **Example**:
 ```json
-{ "command": "npm run build" }
+{ "command": "npm run build", "intent": "build the project" }
 ```
 
 ---
@@ -549,22 +653,16 @@ interface ToolDefinition {
 
 **Scope**: `['main', 'child']`
 
-**Description**: List all background tasks with their status (running/completed/failed).
+**Description**: List all background tasks with status, or show accumulated output for a specific task by pid.
 
 **Parameters**:
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
-| (none) | | | |
+| pid | number | no | Process ID. Omit to list all tasks; provide to see task detail |
 
 **Behavior**:
-- Lists all background tasks started by `bg_create`
-- Shows PID, command, and status for each task
-- Status can be: `running`, `completed`, or `failed`
-
-**Example**:
-```json
-{}
-```
+- Without pid: compact status list (running/completed/failed/killed)
+- With pid: detailed view including accumulated output (tail-capped ~100KB)
 
 ---
 
@@ -574,22 +672,12 @@ interface ToolDefinition {
 
 **Scope**: `['main', 'child']`
 
-**Description**: Kill a background task by its process ID. Use this to terminate running background tasks.
+**Description**: Terminate a background task by pid.
 
 **Parameters**:
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
 | pid | integer | yes | Process ID of the background task to kill |
-
-**Behavior**:
-- Sends SIGTERM to the process
-- Updates task status to "failed"
-- Returns confirmation message
-
-**Example**:
-```json
-{ "pid": 12345 }
-```
 
 ---
 
@@ -599,27 +687,21 @@ interface ToolDefinition {
 
 **Scope**: `['main', 'child']`
 
-**Description**: Wait for background tasks to complete. Use this to block until all background tasks finish or timeout.
+**Description**: Block until background tasks complete.
 
 **Parameters**:
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
-| pid | integer | no | Optional process ID to wait for specific task. If omitted, waits for all tasks |
+| pid | number | no | Process ID to wait for. Omit to wait for all tasks |
 | timeout | integer | no | Timeout in milliseconds (default: 60000) |
 
 **Behavior**:
-- Polls background tasks until all complete or timeout
-- If `pid` specified, waits only for that specific task
-- Returns status message on completion or timeout
-
-**Example**:
-```json
-{ "timeout": 30000 }
-```
+- With pid: returns accumulated task output on completion
+- Without pid: returns OK when all tasks complete (use bg_print to inspect)
 
 ---
 
-## Screen Reader Tool
+## Screen & Image Tools
 
 ### screen
 
@@ -627,36 +709,23 @@ interface ToolDefinition {
 
 **Scope**: `['main', 'child']`
 
-**Description**: Capture a screenshot of the current screen and use a vision model to read and describe the content. Returns a detailed text description of everything visible on screen. Auto-detects OS, display server (Wayland/X11), and available screenshot tools.
+**Description**: Capture a screenshot and use vision model to read/describe screen content.
 
 **Parameters**:
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
-| prompt | string | no | Custom prompt for the vision model. Use this to ask specific questions about the screen content (e.g., "What error message is shown?" or "Read the text in the terminal window"). |
-| region | string | no | Crop region as WxH+X+Y (e.g., "800x600+100+200"). If omitted, captures the full screen. |
+| prompt | string | no | Custom prompt for the vision model |
+| desktop | number | no | Monitor to capture on multi-monitor setups (1-based index) |
 
 **Behavior**:
-- Detects the OS, display server (Wayland/X11), and desktop environment (GNOME/KDE/Sway/Hyprland)
-- Selects the best screenshot tool for the environment:
-  - macOS → `screencapture`
-  - Linux + Wayland + GNOME → `gnome-screenshot`
-  - Linux + Wayland + wlroots → `grim`
-  - Linux + X11 → `gnome-screenshot`, `scrot`, or `import` (ImageMagick)
-- Falls back through available tools if the primary method fails
+- Auto-detects OS, display server (Wayland/X11), and available screenshot tools
+- Selects the best tool for the environment (screencapture, gnome-screenshot, grim, scrot, import)
 - Auto-resizes large screenshots (>1280px wide) using ImageMagick if available
-- Sends the base64-encoded image to the configured vision model (`gemma4:31b-cloud`)
-- On failure, returns detailed diagnostics with:
-  - Environment info (OS, display server, desktop, available tools)
-  - Specific failure reasons for each attempted method
-  - Platform-specific installation suggestions
-  - Manual alternatives for the user
+- Sends base64-encoded image to configured vision model
 
 **Example**:
 ```json
 { "prompt": "What error message is shown in the terminal?" }
-```
-```json
-{ "region": "800x600+100+200" }
 ```
 
 ---
@@ -667,72 +736,139 @@ interface ToolDefinition {
 
 **Scope**: `['main', 'child']`
 
-**Description**: Read and describe an image file using the vision model. Returns a detailed description of the image content including text, objects, colors, layout, and other relevant details. Useful for analyzing screenshots, diagrams, UI mockups, or any image file.
+**Description**: Read and describe an image file using the vision model. Returns accumulated [focus, description] pairs and a cache token (M).
 
 **Parameters**:
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
-| path | string | yes | Path to the image file. Supports common image formats (PNG, JPG, GIF, WebP, BMP). Use forward slashes (e.g., "screenshots/image.png"). |
-| prompt | string | no | Custom prompt for the vision model. Use this to ask specific questions about the image (e.g., "What text is visible?" or "Describe the UI elements"). |
+| path | string | yes | Path to the image file (supports PNG, JPG, GIF, etc.) |
+| prompt | string | no | Custom prompt for the vision model (becomes the focus label) |
+| cache | string | no | Cache token (M) from a previous read to add a new focus |
 
 **Behavior**:
-- Validates the file path is within the workspace
-- Checks that the file exists and has a supported image extension
-- Uses the configured vision model (set via `OLLAMA_VISION_MODEL` or falls back to `OLLAMA_MODEL`)
-- Sends the image to the vision model for analysis
-- Returns a detailed description of the image content
+- Multi-focus caching: persists to `.mycc/imgcache/` on disk
+- Returns `PictureResult` with accumulated [focus, description] pairs and cache token
+- Pass cache token back with a new prompt to add a focus without re-reading
+- Parent process touches cache files; child processes delegate via IPC
 
 **Example**:
 ```json
 { "path": "screenshots/error-dialog.png" }
 ```
-```json
-{ "path": "designs/mockup.png", "prompt": "Describe the UI layout and any visible text" }
-```
 
 ---
 
-## Task Management Tools
+### read_read
 
-### todo_write
-
-**File**: `src/tools/todo_write.ts`
+**File**: `src/tools/read-read.ts`
 
 **Scope**: `['main', 'child']`
 
-**Description**: Update the todo list with new items or modify existing items. Merges changes into the current todo list.
+**Description**: Summarize long content from `.mycc/longtext/` files. Use when tool results are too large for context.
 
 **Parameters**:
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
-| items | array | yes | Array of todo items to add or update |
-
-**Item Properties**:
-| Name | Type | Required | Description |
-|------|------|----------|-------------|
-| id | integer | no | Item ID (0 or undefined for new items, existing ID to update) |
-| name | string | yes | Todo item name/description |
-| done | boolean | no | Whether the item is completed (default: false) |
-| note | string | no | Optional note for the item |
+| file | string | yes | Path to file in `.mycc/longtext/` to summarize |
+| focus | string | yes | What to focus on during summarization |
 
 **Behavior**:
-- Merges provided items into the existing todo list
-- If `id` matches existing item, updates it
-- If `id` is 0 or undefined, creates new item with auto-assigned ID
-- Returns the current todo list after merge
-- Logs action to console with colored prefix
+- Uses two-turn rolling summary: first turn summarizes each chunk, second turn refines
+- Chunks content based on token threshold (60% of threshold per chunk)
+- ESC-aware: checks abort signal between chunks
 
 **Example**:
 ```json
-{
-  "items": [
-    { "name": "Review PR", "done": false },
-    { "id": 1, "name": "Setup project", "done": true, "note": "Completed yesterday" }
-  ]
-}
+{ "file": ".mycc/longtext/large-output.txt", "focus": "error messages" }
 ```
 
 ---
+
+## Task Management (Todo) Tools
+
+### todo_create
+
+**File**: `src/tools/todo_create.ts`
+
+**Scope**: `['main', 'child']`
+
+**Description**: Create a new todo item. Returns the item with its id and hash — save these to reference the item later with todo_update.
+
+**Parameters**:
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| name | string | yes | Todo item name/description |
+| note | string | no | Optional note for the item |
+
+**Behavior**:
+- Creates a new todo with auto-assigned ID and integrity hash
+- Returns the created item with id, name, done (false), and hash
+- Returns the full todo list after creation
+
+**Example**:
+```json
+{ "name": "Review PR" }
+```
+
+---
+
+### todo_update
+
+**File**: `src/tools/todo_update.ts`
+
+**Scope**: `['main', 'child']`
+
+**Description**: Update an existing todo item by id. Must provide the item's current hash (anti-staleness protection).
+
+**Parameters**:
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| id | integer | yes | Item ID to update |
+| hash | string | yes | Current hash of the item (must match stored hash) |
+| name | string | yes | Todo item name/description |
+| done | boolean | yes | Whether the item is completed |
+| note | string | no | Optional note for the item |
+
+**Behavior**:
+- Hash mismatch rejected (prevents stale updates)
+- Returns updated item and full todo list
+
+**Example**:
+```json
+{ "id": 1, "hash": "abc12345", "name": "Setup project", "done": true }
+```
+
+---
+
+### todo_pinning
+
+**File**: `src/tools/todo_pinning.ts`
+
+**Scope**: `['main']` (lead agent only)
+
+**Description**: Pin or unpin a todo item. Pinned todos are NOT auto-cleared when all todos are completed. Optionally set a reactivation condition.
+
+**Parameters**:
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| id | integer | yes | Todo item ID to pin/unpin |
+| hash | string | yes | Current hash of the item |
+| pinned | boolean | yes | true to pin, false to unpin |
+| reactivate | string | no | Natural-language reactivation condition (only when pinned=true) |
+
+**Behavior**:
+- Pinned todos persist as long-term reminders
+- Reactivation condition: system evaluates completed pinned todos against conversation context and auto-reactivates when condition is met
+- Requires current hash (anti-staleness)
+
+**Example**:
+```json
+{ "id": 1, "hash": "abc12345", "pinned": true, "reactivate": "when the users table is modified" }
+```
+
+---
+
+## Skill Tools
 
 ### skill_load
 
@@ -740,22 +876,72 @@ interface ToolDefinition {
 
 **Scope**: `['main', 'child']`
 
-**Description**: Load a skill by name and return its content. Skills contain specialized knowledge and instructions for specific tasks.
+**Description**: Load a skill by exact name. Returns the full skill content.
 
 **Parameters**:
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
-| name | string | yes | The name of the skill to load |
+| name | string | yes | The exact name of the skill to load |
 
 **Behavior**:
-- Looks up skill by name from loaded skills (`.mycc/skills/*.md` and `skills/*.md`)
+- Looks up skill by name from loaded skills
 - Returns full skill content including description and keywords
 - If skill not found, lists available skills
-- Skills are loaded from markdown files with YAML frontmatter
 
 **Example**:
 ```json
 { "name": "typescript" }
+```
+
+---
+
+### skill_search
+
+**File**: `src/tools/skill_search.ts`
+
+**Scope**: `['main', 'child']`
+
+**Description**: Search skills by keywords. Returns matching skill names and descriptions using semantic similarity and name/keyword matching.
+
+**Parameters**:
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| search | string | yes | Short keywords/phrases (2-5 words) describing the skill |
+
+**Behavior**:
+- Combines semantic search (via wiki embeddings) with name/keyword fuzzy matching
+- Returns matched skills with match type (semantic % or name/keyword)
+- Use skill_load with the exact name to load full content
+
+**Example**:
+```json
+{ "search": "typescript testing" }
+```
+
+---
+
+### skill_compile
+
+**File**: `src/tools/skill_compile.ts`
+
+**Scope**: `['main', 'child']`
+
+**Description**: Compile a skill's "when" condition into a structured hook. Use when a skill has a "when" field but no compiled condition.
+
+**Parameters**:
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| name | string | yes | Skill name to compile |
+| feedback | string | no | Optional feedback for refining condition |
+
+**Behavior**:
+- Lead process: compiles directly on runtime ConditionRegistry (in-memory + disk persist)
+- Child process: compiles to disk, then sends 'condition_replace' IPC so lead reloads
+- Updates runtime condition registry immediately (no restart needed)
+
+**Example**:
+```json
+{ "name": "environment-detection" }
 ```
 
 ---
@@ -768,12 +954,12 @@ interface ToolDefinition {
 
 **Scope**: `['main', 'child']`
 
-**Description**: Explore the mindmap knowledge tree to understand project structure, available skills, and context. Use `recall(path="/")` to discover available knowledge.
+**Description**: Explore the mindmap knowledge tree for project structure, available skills, and context.
 
 **Parameters**:
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
-| path | string | yes | Node path (e.g., "/skill/example" or "/" for root) |
+| path | string | yes | Node path (e.g., "/" for root, "/skill/example") |
 
 **Example**:
 ```json
@@ -797,11 +983,6 @@ interface ToolDefinition {
 |------|------|----------|-------------|
 | query | string | yes | The search query to execute |
 
-**Example**:
-```json
-{ "query": "TypeScript best practices" }
-```
-
 ---
 
 ### web_fetch
@@ -816,11 +997,6 @@ interface ToolDefinition {
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
 | url | string | yes | The URL to fetch content from |
-
-**Example**:
-```json
-{ "url": "https://example.com/doc" }
-```
 
 ---
 
@@ -866,7 +1042,7 @@ interface ToolDefinition {
 
 **Scope**: `['main', 'child']`
 
-**Description**: Search knowledge base for relevant documents.
+**Description**: Search knowledge base for relevant documents sorted by similarity.
 
 **Parameters**:
 | Name | Type | Required | Description |
@@ -874,6 +1050,7 @@ interface ToolDefinition {
 | query | string | yes | The search query |
 | domain | string | yes | The domain to search within |
 | topK | number | no | Number of results (default: 5) |
+| threshold | number | no | Minimum similarity threshold (0-1, default: 0) |
 
 ---
 
@@ -906,75 +1083,65 @@ interface ToolDefinition {
 
 ---
 
-## Git Worktree Tools
+## Checkpoint & Recap Tools
 
-### wt_create
+### checkpoint
 
-**File**: `src/tools/wt_create.ts`
+**File**: `src/tools/checkpoint.ts`
 
 **Scope**: `['main']`
 
-**Description**: Create a new git worktree with a new branch.
+**Description**: Create a checkpoint marker for context management. Use before exploration or investigation tasks that generate many messages. Must be called alone (no other tools in same turn).
 
 **Parameters**:
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
-| name | string | yes | Name for the worktree |
-| branch | string | yes | Name of the new branch |
+| description | string | yes | What the subtask will accomplish |
+| if_abandoned | string | yes | Declare original direction; injected into abandon note if later abandoned |
+
+**Note**: Meta-tool — actual execution happens in the state machine (`hook.ts`), not the handler.
 
 ---
 
-### wt_remove
+### recap
 
-**File**: `src/tools/wt_remove.ts`
+**File**: `src/tools/recap.ts`
 
 **Scope**: `['main']`
 
-**Description**: Remove a git worktree by name.
+**Description**: Close a checkpoint and compress its messages into a summary. Must be called alone.
 
 **Parameters**:
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
-| name | string | yes | Name of the worktree to remove |
+| checkpoint_id | string | yes | The checkpoint ID (8-character hash) |
+| abandon | boolean | no | If true, discard without summarizing |
+| comment | string | yes | REQUIRED. Directive determining the direction of the next turn |
+
+**Note**: Meta-tool — actual execution happens in the state machine (`hook.ts`), not the handler.
 
 ---
 
-### wt_enter
+## Peer Discovery Tool
 
-**File**: `src/tools/wt_enter.ts`
+### peers
 
-**Scope**: `['main']`
+**File**: `src/tools/peers.ts`
 
-**Description**: Switch to a git worktree. Changes working directory.
+**Scope**: `['main']` (lead only — child uses NoopPeerModule)
+
+**Description**: List online mycc instances (cross-instance peer discovery). Returns each instance's session-id, workDir, and status.
 
 **Parameters**:
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
-| name | string | yes | Name of the worktree to enter |
+| include_self | boolean | no | If true, include local instance (marked self=true). Default false |
+| all | boolean | no | If true, list all registered identities regardless of freshness. Default false |
 
----
-
-### wt_leave
-
-**File**: `src/tools/wt_leave.ts`
-
-**Scope**: `['main']`
-
-**Description**: Exit current worktree and return to project root.
-
-**Parameters**: None
-
----
-
-### wt_print
-
-**File**: `src/tools/wt_print.ts`
-
-**Scope**: `['main']`
-
-**Description**: List all git worktrees with names, branches, and paths.
-
-**Parameters**: None
+**Behavior**:
+- Reads peer discovery registry (`~/.mycc-store/discovery/`)
+- Peers older than 1 hour omitted entirely (even with all=true)
+- Surfaces recent briefs from each peer
 
 ---
 
@@ -986,7 +1153,7 @@ interface ToolDefinition {
 
 **Scope**: `['main']`
 
-**Description**: Opens an interactive terminal popup. Use ONLY when user explicitly requests interactive terminal or command requires user interaction (passwords, prompts, SSH sessions, vim, htop, etc.).
+**Description**: Opens an interactive terminal popup. Use ONLY when user explicitly requests interactive terminal or command requires user interaction.
 
 **Parameters**:
 | Name | Type | Required | Description |
@@ -1002,90 +1169,16 @@ interface ToolDefinition {
 
 **File**: `src/tools/git_commit.ts`
 
-**Scope**: `['main']`
+**Scope**: `['main', 'child']`
 
-**Description**: Execute git commit with mandatory user permission check. Always asks for permission before committing.
+**Description**: Execute git commit with mandatory user permission check. Always use this tool instead of 'bash' for git commits — bash git commit is blocked.
 
 **Parameters**:
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
 | message | string | yes | The commit message |
-| amend | boolean | no | Set to true to amend previous commit |
-
----
-
-## Utility Tools
-
-### time
-
-**File**: `src/tools/time.ts`
-
-**Scope**: `['main', 'child']`
-
-**Description**: Get the current date and time.
-
-**Parameters**:
-| Name | Type | Required | Description |
-|------|------|----------|-------------|
-| format | string | no | Format: "iso", "date", "time", or "full" |
-
----
-
-### tm_print
-
-**File**: `src/tools/tm_print.ts`
-
-**Scope**: `['main']`
-
-**Description**: List all teammates with roles and status.
-
-**Parameters**: None
-
----
-
-### skill_compile
-
-**File**: `src/tools/skill_compile.ts`
-
-**Scope**: `['main']`
-
-**Description**: Compile a skill's "when" condition into a structured hook.
-
-**Parameters**:
-| Name | Type | Required | Description |
-|------|------|----------|-------------|
-| name | string | yes | Skill name to compile |
-| feedback | string | no | Optional feedback for refining condition |
-
----
-
-### order
-
-**File**: `src/tools/order.ts`
-
-**Scope**: `['main', 'child']`
-
-**Description**: Send an order (task) to a teammate and wait for completion. Combines mail_to + tm_await.
-
-**Parameters**:
-| Name | Type | Required | Description |
-|------|------|----------|-------------|
-| name | string | yes | Teammate name to send order to |
-| title | string | yes | Order title |
-| content | string | yes | Detailed task description |
-| timeout | number | no | Timeout in milliseconds (default: 60000) |
-
----
-
-### issue_list
-
-**File**: `src/tools/issue_list.ts`
-
-**Scope**: `['main', 'child']`
-
-**Description**: List all issues with status, owner, and blocking relationships.
-
-**Parameters**: None
+| amend | boolean | no | Set to true to amend the previous commit |
+| cwd | string | no | Working directory for the git commit (e.g., a worktree path) |
 
 ---
 
@@ -1093,52 +1186,54 @@ interface ToolDefinition {
 
 | Tool | Scope | Category |
 |------|-------|----------|
-| bash | main, child, bg | File Operations |
+| bash | main, child | File Operations |
 | read_file | main, child | File Operations |
 | write_file | main, child | File Operations |
 | edit_file | main, child | File Operations |
+| grep | main, child | File Operations |
 | brief | main, child | Communication |
-| question | main, child | Communication |
+| question | child | Communication |
 | mail_to | main, child | Communication |
 | broadcast | main | Communication |
+| mycc_title | main, child | Communication |
 | issue_create | main, child | Issue Management |
 | issue_claim | main, child | Issue Management |
 | issue_close | main, child | Issue Management |
 | issue_comment | main, child | Issue Management |
+| issue_publish | main, child | Issue Management |
 | issue_list | main, child | Issue Management |
 | blockage_create | main, child | Issue Management |
 | blockage_remove | main, child | Issue Management |
 | tm_create | main | Team Management |
 | tm_remove | main | Team Management |
 | tm_await | main | Team Management |
-| tm_print | main | Team Management |
+| tm_print | main, child | Team Management |
 | bg_create | main, child | Background Tasks |
 | bg_print | main, child | Background Tasks |
 | bg_remove | main, child | Background Tasks |
 | bg_await | main, child | Background Tasks |
-| screen | main, child | Screen Reader |
-| read_picture | main, child | Screen Reader |
+| screen | main, child | Screen & Image |
+| read_picture | main, child | Screen & Image |
 | read_read | main, child | Content Summarization |
-| todo_write | main, child | Task Management |
-| skill_load | main, child | Task Management |
-| skill_compile | main | Task Management |
+| todo_create | main, child | Task Management |
+| todo_update | main, child | Task Management |
+| todo_pinning | main | Task Management |
+| skill_load | main, child | Skill Tools |
+| skill_search | main, child | Skill Tools |
+| skill_compile | main, child | Skill Tools |
 | hand_over | main | Interactive Shell |
-| git_commit | main | Git Operations |
+| git_commit | main, child | Git Operations |
 | plan_on | main | Mode Control |
 | plan_off | main | Mode Control |
+| checkpoint | main | Checkpoint & Recap |
+| recap | main | Checkpoint & Recap |
 | recall | main, child | Knowledge Discovery |
 | web_search | main, child | Web Access |
 | web_fetch | main, child | Web Access |
 | wiki_prepare | main, child | Knowledge Base |
 | wiki_put | main, child | Knowledge Base |
 | wiki_get | main, child | Knowledge Base |
-| wt_create | main | Git Worktree |
-| wt_remove | main | Git Worktree |
-| wt_enter | main | Git Worktree |
-| wt_leave | main | Git Worktree |
-| wt_print | main | Git Worktree |
-| time | main, child | Utility |
-| order | main, child | Team Coordination |
+| peers | main | Peer Discovery |
 
 ---
 
@@ -1167,6 +1262,6 @@ export const myTool: ToolDefinition = {
 };
 ```
 
-2. Import and add to `builtInTools` array in `src/context/loader.ts`
+2. Import and add to `builtInTools` array in `src/context/shared/registry.ts`
 
 3. Update this document (`docs/agent-tools.md`) with the new tool's reference

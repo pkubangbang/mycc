@@ -1,5 +1,7 @@
 # Plan: Inject Dynamic Skill Keywords into System Prompt
 
+> **Status**: Implemented. `getSkillKeywords()` is in `src/context/shared/loader.ts` (field is `skillKeywords`, not `_skillKeywords`). The Skill Keywords section is appended in `buildKnowledgeBoundarySection()` in `src/loop/agent-prompts.ts`, which is called from 4 prompt variants (solo/team, plan/normal, teammate).
+
 ## Goal
 
 Make the LLM **proactively** use `skill_search` when its current task matches a skill's keywords, by injecting the deduplicated keyword list into the system prompt.

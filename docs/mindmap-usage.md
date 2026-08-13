@@ -249,7 +249,7 @@ These are **separate concerns** with different purposes:
 |--------|------|---------|
 | **Purpose** | General knowledge storage | MYCC.md navigation |
 | **Content** | User-curated facts/rules | Compiled from markdown |
-| **Storage** | Vector database (RAG) | JSON file |
+| **Storage** | LanceDB (vector database) | JSON file + JSONL patches |
 | **Query** | Semantic search (similarity) | Path traversal |
 | **Scope** | Project-level, shared | Process-level, isolated |
 | **Tools** | wiki_put, wiki_get, wiki_prepare | get_node |

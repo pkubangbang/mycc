@@ -1,5 +1,7 @@
 # Wiki Database Transfer — Integrity Analysis (Path B)
 
+> **Status**: The integrity fixes proposed in this analysis have been implemented in `src/slashes/wiki.ts`. Layer A (file-level manifest with `content_sha256`), Layer B (per-entry hash verification via `verifyEntryHash()`), and Layer C (surfacing `put()` results) are all shipped. The export format version was bumped to `1.1` to carry the manifest.
+
 ## 1. The Integrity Gap (current state)
 
 The export/import path (`/wiki export`, `/wiki import`) has **no integrity verification** at any of three layers where corruption could enter. A corrupted or tampered export JSON will silently pollute the target wiki database, and the import summary will *report success* for entries that were actually rejected.
@@ -129,13 +131,13 @@ Currently import calls `put` (hash-equality only), bypassing `prepare()`'s embed
 
 ---
 
-## 4. Files to Change
+## 4. Files Changed (shipped)
 
-| File | Change |
-|---|---|
-| `src/slashes/wiki.ts` | `handleExport`: add `manifest` to `WikiExportData`; `handleImport`: verify manifest (abort on mismatch), verify per-entry hash (skip + count), read `put()` return value, print honest breakdown |
-| `src/types.ts` | Add `manifest` field to the export shape (or a local interface in wiki.ts — it's not a public type) |
-| No change to `src/context/parent/wiki.ts` | `put()` already returns `PutResult` correctly — the bug is purely in the caller |
+| File | Change | Status |
+|---|---|---|
+| `src/slashes/wiki.ts` | `handleExport`: add `manifest` to `WikiExportData`; `handleImport`: verify manifest (abort on mismatch), verify per-entry hash (`verifyEntryHash()`), read `put()` return value, print honest breakdown | ✅ Implemented |
+| `src/slashes/wiki.ts` | `WikiExportManifest` interface, `computeManifestHash()`, `verifyEntryHash()` functions | ✅ Implemented |
+| No change to `src/context/parent/wiki.ts` | `put()` already returns `PutResult` correctly — the bug was purely in the caller | ✅ Confirmed |
 
 No changes to the database layer, WAL format, or LanceDB. The fix is localized to the import/export slash command.
 
@@ -155,6 +157,6 @@ No changes to the database layer, WAL format, or LanceDB. The fix is localized t
 
 The manifest hash is computed over the canonical JSON of `{domains, entries}`. "Canonical" means deterministic key ordering — `JSON.stringify` of a rebuilt object (not the raw file bytes, which would be fragile to whitespace). This means a re-serialized but content-identical file still passes verification. This is the right tradeoff: we want to detect *content* corruption, not formatting drift.
 
-## 7. Open Decision
+## 7. Open Decision (resolved)
 
-Layer D (restore duplicate detection via `prepare()`) adds an embedding cost per entry and changes import semantics (strict vs permissive). I recommend including it behind a `--allow-duplicates` flag (default strict). Confirm whether you want Layer D included or scoped out of this change.
+Layer D (restore duplicate detection via `prepare()`) was **not implemented**. Import calls `put()` directly (hash-equality only), bypassing `prepare()`'s embedding-similarity duplicate check. This remains a known limitation: an export from machine A could contain a near-duplicate of one already on machine B, and import would insert it. A future `--allow-duplicates` flag could add `prepare()` pre-checking if needed.

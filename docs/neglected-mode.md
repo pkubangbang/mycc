@@ -2,6 +2,8 @@
 
 **Neglected Mode** (also called "neglection" in the codebase) is an interrupt mechanism that allows users to press **ESC** at any time to stop the agent's current operation and force it to wrap up quickly.
 
+> **Note:** The agent loop has been refactored from `src/loop/agent-loop.ts` (removed) into a state machine (`src/loop/state-machine.ts`) with handlers in `src/loop/states/*.ts`. The Ollama client (`src/ollama.ts`, removed) was refactored into `src/engine/chat-provider.ts` + `src/engine/chat-helpers.ts`. Wrap-up is now managed by `src/loop/esc-wrap-up.ts` (`startWrapUp`, `evaluateWrapUp`, `commitWrapUp`/`rollbackWrapUp`). The sections below reflect the current codebase.
+
 ## Why It Exists
 
 When an LLM agent is:
@@ -55,7 +57,7 @@ AgentIO manages the neglected state as a singleton:
 
 ```typescript
 private neglectedModeFlag = false;
-private onNeglectedCallbacks: Array<() => void> = [];
+private onNeglectedCallbacks: Set<() => void> = new Set();
 
 isNeglectedMode(): boolean {
   return this.neglectedModeFlag;
@@ -68,87 +70,102 @@ setNeglectedMode(value: boolean): void {
 
 Key features:
 - **Flag tracking**: `neglectedModeFlag` indicates if ESC was pressed this round
-- **Callback system**: `onNeglected()` registers callbacks for ESC events
+- **Callback system**: `onNeglected()` registers callbacks for ESC events (stored in a `Set`)
 - **IPC handler**: Receives `{ type: 'neglection' }` messages from Coordinator
+- **Trigger method**: `triggerNeglection()` encapsulates the standard ESC logic (set flag, abort LLM, fire callbacks) — used by both Coordinator IPC and ServeHub WS interrupt
 
-When neglection is triggered:
+When neglection is triggered (via `triggerNeglection()`):
 ```typescript
-if (msg.type === 'neglection') {
-  if (!this.isNeglectedMode()) {
-    this.setNeglectedMode(true);
-    const controller = this.getLlmAbortController();
-    if (controller) {
-      controller.abort();
-      console.log('\n[ESC] Interrupting LLM call...');
-    } else {
-      console.log('\n[ESC] Interrupt requested - will skip remaining work');
-    }
-    // Notify all neglected listeners
-    for (const cb of this.onNeglectedCallbacks) {
-      cb();
-    }
-    this.onNeglectedCallbacks = [];
+triggerNeglection(): void {
+  if (this.isNeglectedMode()) return;  // avoid duplicate processing
+  this.setNeglectedMode(true);
+  const controller = this.getLlmAbortController();
+  if (controller) {
+    controller.abort();
   }
+  for (const cb of this.onNeglectedCallbacks) {
+    try {
+      const maybePromise = cb();
+      if (maybePromise && typeof (maybePromise as { catch?: unknown }).catch === 'function') {
+        (maybePromise as Promise<unknown>).catch(() => {});
+      }
+    } catch { /* swallow sync errors */ }
+  }
+  this.onNeglectedCallbacks.clear();
 }
 ```
 
-#### 3. Agent Loop (`src/loop/agent-loop.ts`)
+#### 3. State Machine Handlers (`src/loop/states/*.ts`)
 
-The agent loop handles neglected mode at three key points:
+The state machine handles neglected mode at key points across state handlers:
 
-**a) Before LLM call - empty tools array:**
+**a) LLM state (`states/llm.ts`) - empty tools array + pre-check:**
 ```typescript
 // In neglected mode, provide no tools so LLM can only respond with text
 const tools = agentIO.isNeglectedMode() ? [] : loader.getToolsForScope(scope);
-```
 
-**b) After LLM call - check for abort:**
-```typescript
-// Check if ESC was pressed DURING this LLM call
-if (abortController.signal.aborted) {
-  console.log(chalk.yellow('[ESC] LLM response discarded due to interruption'));
-  triologue.user('LLM call interrupted. Please wrap up and ask user for next steps.');
-  continue;
+// Pre-check: if ESC was already pressed before the LLM call
+if (agentIO.isNeglectedMode()) {
+  stopSpinner();
+  startWrapUp(triologue, tools);
+  agentIO.setNeglectedMode(false);
+  return AgentState.PROMPT;
 }
 ```
 
-**c) During tool execution - skip remaining tools:**
+**b) LLM state - ESC during LLM call:**
 ```typescript
-for (const toolCall of assistantMessage.tool_calls) {
+const response = await ctx.core.escAware(
+  async (abortController) => {
+    return await retryChat({ model: MODEL, messages, tools, ... }, { signal: abortController.signal, ... });
+  },
+  () => {
+    startWrapUp(triologue, tools);  // ESC cleanup starts wrap-up
+    return null;                      // returns null → response is null
+  }
+);
+if (!response) {
+  stopSpinner();
+  agentIO.setNeglectedMode(false);
+  return AgentState.PROMPT;
+}
+```
+
+**c) TOOL state (`states/tool.ts`) - skip remaining tools:**
+```typescript
+for (const toolCall of hookResult.calls) {
   if (agentIO.isNeglectedMode()) {
-    console.log(chalk.yellow('\n[ESC] Tool execution interrupted - skipping remaining tools'));
+    agentIO.setNeglectedMode(false);
     triologue.skipPendingTools(
       'Tool use interrupted - user pressed ESC.',
       'Tool use skipped due to ESC interruption.'
     );
-    triologue.user('The user pressed ESC to interrupt. Please wrap up and wait for next instruction.');
-    break;
+    return AgentState.PROMPT;
   }
-  // ... execute tool
+  // ... execute tool via escAware
 }
 ```
 
-**d) After wrap-up - clear flag:**
+**d) STOP state (`states/stop.ts`) - wrap-up completion:**
 ```typescript
-// No tool calls = wrap-up complete
-if (!assistantMessage.tool_calls || assistantMessage.tool_calls.length === 0) {
-  if (agentIO.isNeglectedMode()) {
-    agentIO.setNeglectedMode(false);
+if (agentIO.isNeglectedMode()) {
+  agentIO.setNeglectedMode(false); // Clear FIRST
+  if (autoState.getAuto()) {
+    autoState.setAuto(false); // ESC exits auto mode too
   }
-  // ... handle team await
+  const teammates = ctx.team.listTeammates();
+  if (teammates.some((t) => t.status === 'working')) {
+    agentIO.log(chalk.yellow('teammates still working (use /team to check status)'));
+  }
+  agentIO.flushOutput();
+  presentResult(triologue);
+  return AgentState.PROMPT;
 }
 ```
 
-#### 4. Ollama Client (`src/ollama.ts`)
+#### 4. Chat Engine (`src/engine/chat-helpers.ts`)
 
-The Ollama client shows a different spinner during neglected mode:
-
-```typescript
-const NEGLECTED_SPINNER_TEXT = 'Wrapping up...';
-
-const neglected = config?.neglected ?? false;
-startSpinner(neglected ? NEGLECTED_SPINNER_TEXT : 'Thinking');
-```
+The chat engine passes a `neglected` flag in the retry config, which can be used to adjust spinner behavior during neglected mode. The spinner is managed via `startSpinner()` / `stopSpinner()` from `src/engine/chat-helpers.ts`.
 
 #### 5. Triologue (`src/loop/triologue.ts`)
 
@@ -197,7 +214,7 @@ skipPendingTools(firstMessage: string, subsequentMessage?: string): void {
 
 ### During Bash Command (exec)
 
-The `exec()` function in `agent-io.ts` registers a neglection callback:
+The `exec()` method in `agent-io.ts` delegates to `runExec()` in `src/loop/agent-exec.ts`, which registers a neglection callback:
 
 ```typescript
 // Register callback for ESC (neglected) - skip subprocess wait
@@ -237,9 +254,12 @@ this.onNeglected(() => {
 ```typescript
 // From Coordinator to Lead
 type CoordinatorToLeadMessage =
-  | { type: 'neglection' }      // ESC pressed
-  | { type: 'key'; key: KeyInfo }
-  | { type: 'resize'; columns: number };
+  | { type: 'neglection' }          // ESC pressed
+  | { type: 'key'; key: KeyInfo }   // Single key event
+  | { type: 'key-batch'; keys: KeyInfo[] }  // Batch key events (paste)
+  | { type: 'resize'; columns: number }     // Terminal resize
+  | { type: 'condition_reload' }    // skill_compile updated conditions.json
+  | { type: 'serve_shutdown' };     // Coordinator asked to shut down serve
 ```
 
 ## Usage Example

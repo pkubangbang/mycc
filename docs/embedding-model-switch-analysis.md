@@ -2,6 +2,7 @@
 
 > 生成时间：2026-07-10
 > 研究团队：wiki-researcher、skill-researcher、slash-cmd-researcher、consistency-researcher
+> **状态**：RAG Provider 兼容层已实现（见文末"RAG Provider 兼容层设计方案"）。`src/engine/ollama-embedding.ts` 已删除，被 `src/engine/rag-provider.ts` 门面 + `rag-nomic.ts` + `rag-embeddinggemma.ts` 替代。`WALEntry` 已增加 `namespace?` 字段，LanceDB 表名已改为 `wiki_${NAMESPACE}`。
 
 ---
 
@@ -63,9 +64,9 @@ embeddinggemma 训练时使用了 task-specific 前缀，不加前缀会导致�
 
 ### 需要改码的位置
 
-1. `src/engine/ollama-embedding.ts` — 增加 query/document 模式参数或拆分为两个函数
-2. `src/context/parent/wiki.ts` — prepare/put/rebuild 传 document 前缀，get 传 query 前缀
-3. `src/context/shared/loader.ts` — `indexSkillToWiki()` 的 skill 内容嵌入也需 document 前缀
+1. ~~`src/engine/ollama-embedding.ts`~~ — **已删除**，被 `src/engine/rag-provider.ts` 门面替代。`getEmbedding(text, mode)` 现支持 `'query'|'document'` 模式参数，按 embeddinggemma 规范添加前缀。
+2. `src/context/parent/wiki.ts` — prepare/put/rebuild 传 `'document'` 模式，get 传 `'query'` 模式（已实现）
+3. `src/context/shared/loader.ts` — `indexSkillToWiki()` 的 skill 内容嵌入也用 `'document'` 模式（通过 wiki.prepare/put 间接调用，已实现）
 
 ---
 
@@ -247,9 +248,10 @@ Keywords: {kw1, kw2, ...}
 
 ---
 
-# RAG Provider 兼容层设计方案
+# RAG Provider 兼容层设计方案（已实现）
 
 > 目标：仿照 api-provider 模式，建立 rag-provider 兼容层，支持 nomic-embed-text 和 embeddinggemma 两种嵌入模型，并通过 namespace 将不同模型的向量分开存放。
+> **状态**：已实现。文件变更见文末"C. 文件变更清单"（已全部完成）。
 
 ## A. 现有 api-provider 模式（参考）
 
@@ -392,17 +394,17 @@ export async function getEmbedding(text: string, mode: EmbedMode = 'document'): 
 3. 重启 mycc 进程
 4. 运行 `/wiki rebuild`
 
-## C. 文件变更清单
+## C. 文件变更清单（已全部完成）
 
-| 文件 | 操作 |
-|------|------|
-| `src/engine/rag-provider.ts` | **新建** — 门面 |
-| `src/engine/rag-nomic.ts` | **新建** — nomic 实现 |
-| `src/engine/rag-embeddinggemma.ts` | **新建** — embeddinggemma 实现（带前缀） |
-| `src/engine/ollama-embedding.ts` | **删除** — 被 rag-provider 替代 |
-| `src/config.ts` | **编辑** — 新增 `getRagProvider()`, `RagProvider` 类型 |
-| `src/context/parent/wiki.ts` | **编辑** — namespace 表名 + 动态维度 + mode 参数 |
-| `src/loop/request-embedding.ts` | **编辑** — import 改为 rag-provider |
-| `src/engine/chat-provider.ts` | **编辑** — embedding 重导出改为 rag-provider |
-| `src/types.ts` | **编辑** — WALEntry 增加 `namespace?` 字段 |
-| `src/setup/prompts.ts` | **编辑** — 嵌入模型选择提示更新 |
+| 文件 | 操作 | 状态 |
+|------|------|------|
+| `src/engine/rag-provider.ts` | **已创建** — 门面，导出 `getEmbedding`, `getEmbeddings`, `EMBEDDING_DIM`, `NAMESPACE`, `EmbedMode` | ✅ |
+| `src/engine/rag-nomic.ts` | **已创建** — nomic 实现（mode 参数被忽略） | ✅ |
+| `src/engine/rag-embeddinggemma.ts` | **已创建** — embeddinggemma 实现（带前缀） | ✅ |
+| `src/engine/ollama-embedding.ts` | **已删除** — 被 rag-provider 替代 | ✅ |
+| `src/config.ts` | **已编辑** — `getRagProvider()`, `RagProvider` 类型 | ✅ |
+| `src/context/parent/wiki.ts` | **已编辑** — namespace 表名 `wiki_${NAMESPACE}` + 动态维度 `EMBEDDING_DIM` + mode 参数 | ✅ |
+| `src/loop/request-embedding.ts` | **已编辑** — import 改为 rag-provider，`getEmbedding(text, 'document')` | ✅ |
+| `src/engine/chat-provider.ts` | **已编辑** — embedding 重导出改为 rag-provider | ✅ |
+| `src/types.ts` | **已编辑** — WALEntry 增加 `namespace?: string` 字段 | ✅ |
+| `src/setup/prompts.ts` | **已编辑** — 嵌入模型选择提示更新 | ✅ |

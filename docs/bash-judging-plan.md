@@ -7,10 +7,10 @@ Improve the bash tool behavior to ensure no unintended changes are made in plan 
 ## Intent Language Specification
 
 ```
-VERB OBJECT TO PURPOSE
+VERB OBJECT [PARAM PARAM ...] TO PURPOSE
 ```
 
-**Note:** OBJECT is NOT wrapped in brackets - only VERB is.
+**Note:** Neither VERB nor OBJECT is wrapped in brackets. PARAMs are optional `key=value` pairs.
 
 ### VERB (Action Category)
 
@@ -37,6 +37,7 @@ VERB OBJECT TO PURPOSE
 | `SYSTEM` | System operations (processes, network, environment) |
 | `DATA` | Data files, databases, logs (*.json, *.db, *.log) |
 | `TEMP` | Temporary/ephemeral files (/tmp/*, .cache/) |
+| `USER` | User interaction and terminal sessions |
 
 ### PURPOSE (Required)
 
@@ -45,15 +46,17 @@ A brief explanation of why this action is needed. Forces explicit reasoning.
 ### Examples
 
 ```
-[READ] SOURCE path=package.json TO check available scripts
-[READ] CONFIG TO understand the codebase structure before planning
-[WRITE] SOURCE path=src/utils.ts TO create utility functions
-[EDIT] SOURCE path=src/index.ts TO add new feature implementation
-[DELETE] ARTIFACT path=dist/ TO clean build outputs
-[BUILD] ARTIFACT TO compile TypeScript to JavaScript
-[TEST] SOURCE TO verify the implementation works correctly
-[INSTALL] DEPENDENCY name=express TO add web framework
-[RUN] SYSTEM command=ps aux TO check running processes
+READ SOURCE path=package.json TO check available scripts
+READ CONFIG TO understand the codebase structure before planning
+WRITE SOURCE path=src/utils.ts TO create utility functions
+EDIT SOURCE path=src/index.ts TO add new feature implementation
+DELETE ARTIFACT path=dist/ TO clean build outputs
+BUILD ARTIFACT TO compile TypeScript to JavaScript
+TEST SOURCE TO verify the implementation works correctly
+INSTALL DEPENDENCY name=express TO add web framework
+RUN SYSTEM command=ps aux TO check running processes
+DELETE DATA path=build/ dangerous=i_know TO reclaim disk space before rebuild
+DELETE TEMP batch=i_know TO clean build artifacts before rebuild
 ```
 
 ## 5-Step Bash Judging Logic
@@ -156,10 +159,12 @@ export interface DangerousCommand {
 
 ### Intent Parser (`intent-parser.ts`)
 
-- Parse intent using regex: `/^\[([A-Z]+)\]\s+\[([A-Z]+)\](?:\s+([a-z_]+=[^\s]+))*\s+TO\s+(.+)$/i`
+- Parse intent using a rigid single-pass tokenizer: `VERB OBJECT [PARAM...] TO PURPOSE`
 - Validate verb against known list: `['READ', 'FIND', 'WRITE', 'EDIT', 'DELETE', 'BUILD', 'TEST', 'INSTALL', 'RUN']`
-- Validate object against known list: `['SOURCE', 'CONFIG', 'DEPENDENCY', 'ARTIFACT', 'SYSTEM', 'DATA', 'TEMP']`
-- Return structured error with hint on failure
+- Validate object against known list: `['SOURCE', 'CONFIG', 'DEPENDENCY', 'ARTIFACT', 'SYSTEM', 'DATA', 'TEMP', 'USER']`
+- Each PARAM is `key=value` (one `=`, no spaces). Repeated keys enumerate multiple values.
+- Two reserved PARAMs alter routing: `dangerous=i_know` (escape hatch for destructive/irreversible) and `batch=i_know` (skip LLM safeguard for batch deletions)
+- Return structured error with Socratic hint on failure
 
 ### Dangerous Commands (`dangerous-commands.ts`)
 
@@ -179,7 +184,7 @@ Implements the 5-step process:
 5. User prompt for uncertain cases (parent only)
 
 **Step 4: LLM Judge**
-- Uses `retryMultipleChoice()` from `ollama.ts` for structured LLM responses
+- Uses structured chat from `src/engine/chat-provider.ts` for structured LLM responses
 - Validates response matches exactly one of: READ, WRITE, UNCERTAIN
 - On invalid response, retries with hint (max 2 retries)
 - Wrapped in `escAware()` for ESC handling during LLM call
@@ -213,25 +218,23 @@ Example: [READ] SOURCE TO check dependencies
 - If LLM call fails, be conservative: return `uncertain`
 - Fall through to Step 5 (ask user)
 
-## Files to Modify
+## Implementation Status
 
-| File | Action | Description |
+This plan has been fully implemented. All files exist in `src/context/grant/`:
+
+| File | Status | Description |
 |------|--------|-------------|
-| `src/context/grant/types.ts` | Create | Type interfaces |
-| `src/context/grant/intent-parser.ts` | Create | Parse and validate intent |
-| `src/context/grant/dangerous-commands.ts` | Create | Pattern-based blocking |
-| `src/context/grant/bash-judge.ts` | Create | 5-step judging logic |
-| `src/context/grant/grant-evaluator.ts` | Create | Main evaluator |
-| `src/context/grant/index.ts` | Create | Barrel export |
-| `src/ollama.ts` | Modify | Add retryMultipleChoice function |
-| `src/tools/bash.ts` | Modify | Add requestGrant call |
-| `src/types.ts` | Modify | Update requestGrant signature |
-| `src/context/parent/core.ts` | Modify | Implement requestGrant for bash |
-| `src/context/child/core.ts` | Modify | Pass intent in requestGrant IPC |
-| `src/context/parent-context.ts` | Modify | Pass intent in IPC handler |
-| `src/loop/agent-prompts.ts` | Modify | Add intent language section |
-| `src/tests/context/grant.test.ts` | Modify | Add comprehensive tests |
-| `src/tests/tools/bash.test.ts` | Modify | Update tests for grant system |
+| `src/context/grant/types.ts` | ✅ Implemented | Type interfaces |
+| `src/context/grant/intent-parser.ts` | ✅ Implemented | Parse and validate intent |
+| `src/context/grant/dangerous-commands.ts` | ✅ Implemented | Pattern-based blocking |
+| `src/context/grant/bash-judge.ts` | ✅ Implemented | 5-step judging logic |
+| `src/context/grant/grant-evaluator.ts` | ✅ Implemented | Main evaluator |
+| `src/context/grant/index.ts` | ✅ Implemented | Barrel export |
+| `src/engine/chat-provider.ts` | ✅ Implemented | Structured chat (replaces `ollama.ts`) |
+| `src/tools/bash.ts` | ✅ Implemented | Uses requestGrant call |
+| `src/context/parent-context.ts` | ✅ Implemented | requestGrant for bash |
+| `src/context/child-context.ts` | ✅ Implemented | Pass intent in requestGrant IPC |
+| `src/loop/agent-prompts.ts` | ✅ Implemented | Intent language section via `buildIntentLanguageSection()` |
 
 ## Testing Strategy
 

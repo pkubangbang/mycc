@@ -1,5 +1,14 @@
 # Plan: Mode and Grant System for Child Processes
 
+> **状态：已实施。** 模式系统和授权系统均已落地。保留为历史记录。
+> **关键偏差：**
+> - 授权评估器位于 `src/context/grant/grant-evaluator.ts`（非计划中的 `src/context/parent/grant.ts`），整个授权系统在 `src/context/grant/` 目录下（含 `bash-judge.ts`、`dangerous-commands.ts`、`intent-parser.ts`、`types.ts`、`index.ts`）。
+> - Bash 授权使用 `judgeBash` 5 步判定流程（`bash-judge.ts`），非计划中的简单危险命令列表。支持 Intent Lang 解析、`dangerous=i_know`/`batch=i_know` 参数、`ask_user` 交互确认。
+> - 计划模式（plan mode）不是一刀切拒绝：支持 `getAllowedFile()`（`plan_on` 指定的文件）和 plan-mode-writable 目录（如 `.mycc/longtext`、`.mycc/imgcache`）。
+> - 无 worktree 的子进程在 normal 模式下可写入项目根目录（fallback），非计划中的直接拒绝。
+> - `GrantRequest` 类型包含 `intent` 字段（bash 必需），见 `src/context/grant/types.ts`。
+> - `requestGrant` 的 `args` 参数包含 `intent` 字段，见 `ChildCore.requestGrant` 和 `ParentContext.initializeIpcHandlers` 的 `grant_request` handler。
+
 ## Executive Summary
 
 Implement a **mode system** (`plan` / `normal`) combined with a **grant-based permission system** for child processes. In `plan` mode, all code changes are prohibited. In `normal` mode, children must request grants for sensitive operations outside their owned worktree.
@@ -26,6 +35,7 @@ export interface CoreModule {
   requestGrant(tool: 'write_file' | 'edit_file' | 'bash', args: {
     path?: string;
     command?: string;
+    intent?: string;
   }): Promise<{ approved: boolean; reason?: string }>;
 }
 ```
@@ -172,78 +182,56 @@ interface GrantResponse {
 
 ### Grant Evaluator (Main Process)
 
-The parent evaluates grant requests from children:
+授权评估器位于 `src/context/grant/grant-evaluator.ts`，导出 `evaluateGrant` 函数。实际实现比计划更复杂：
 
 ```typescript
-// src/context/parent/grant.ts
-import * as path from 'path';
-import type { Core } from './core.js';
-
+// src/context/grant/grant-evaluator.ts
 export async function evaluateGrant(
   sender: string,
-  request: Extract<GrantRequest, { tool: 'write_file' | 'edit_file' }> | Extract<GrantRequest, { tool: 'bash' }>,
+  request: GrantRequest,
   core: Core
 ): Promise<{ approved: boolean; reason?: string }> {
-  // 1. Check mode first
-  if (core.getMode() === 'plan') {
-    return {
-      approved: false,
-      reason: 'Code changes are prohibited in plan mode.',
-    };
-  }
+  const mode = core.getMode();
+  const isChildProcess = sender !== 'lead';
 
-  // 2. File operations
-  if (request.tool === 'write_file' || request.tool === 'edit_file') {
-    // Check if sender owns a worktree
-    const worktrees = loadWorktrees();
-    const ownedWt = worktrees.find(wt => wt.name === sender);
-
-    if (ownedWt) {
-      const resolved = path.resolve(core.getWorkDir(), request.path);
-      if (resolved.startsWith(ownedWt.path)) {
-        return { approved: true };  // Auto-grant for owned worktree
-      }
-    }
-
-    return {
-      approved: false,
-      reason: `'${request.path}' is outside your worktree. Teammates can only modify files within their assigned worktree.`,
-    };
-  }
-
-  // 3. Bash commands
+  // 1. Bash 工具：使用 judgeBash 5 步判定流程（非简单危险命令列表）
   if (request.tool === 'bash') {
-    // Block dangerous commands
-    const dangerous = ['rm -rf /', 'sudo rm', 'mkfs', 'dd if='];
-    if (dangerous.some(d => request.command.includes(d))) {
-      return { approved: false, reason: 'Dangerous command blocked' };
-    }
-
-    // Block git commit (must use git_commit tool)
-    if (/\bgit\s+commit\b/.test(request.command)) {
-      return { approved: false, reason: 'Use git_commit tool instead' };
-    }
-
-    // Auto-grant for owned worktree
-    const worktrees = loadWorktrees();
-    const ownedWt = worktrees.find(wt => wt.name === sender);
-    if (ownedWt) {
-      return { approved: true };
-    }
-
-    // Allow read-only commands for children without worktree
-    const readOnly = /^git (status|log|diff|branch|show)/.test(request.command);
-    if (readOnly) {
-      return { approved: true };
-    }
-
-    return {
-      approved: false,
-      reason: `Cannot run '${request.command.slice(0, 50)}...' without an assigned worktree.`,
-    };
+    const result = await judgeBash(
+      request.command,
+      request.intent || '',
+      mode,
+      isChildProcess,
+      (query, asker, options) => core.question(query, asker, options).then(r => r.answer),
+      core.escAware.bind(core)
+    );
+    return { approved: result.decision === 'allow', reason: result.reason };
   }
 
-  return { approved: false, reason: `Unknown tool: ${(request as { tool: string }).tool}` };
+  // 2. 文件操作（write_file, edit_file）
+  if (mode === 'plan') {
+    // 计划模式不是一刀切拒绝：
+    // a) 检查 getAllowedFile()（plan_on 指定的文件）
+    // b) 检查 plan-mode-writable 目录（.mycc/longtext, .mycc/imgcache 等）
+    // c) 其余拒绝
+    ...
+  }
+
+  // 3. Normal 模式文件操作：检查 worktree 所有权（子进程）
+  if (isChildProcess) {
+    const worktrees = await listWorktrees(core.getWorkDir());
+    const ownedWt = worktrees.find(wt => wt.name === sender);
+    if (ownedWt) {
+      // 在 owned worktree 内 → 自动授权
+    }
+    // 无 owned worktree → 允许写入项目根目录（fallback）
+    if (resolved.startsWith(core.getWorkDir())) {
+      return { approved: true };
+    }
+    // 项目根目录外 → 拒绝
+  }
+
+  // 4. Normal 模式 lead（父进程）：允许
+  return { approved: true };
 }
 ```
 

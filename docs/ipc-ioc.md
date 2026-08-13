@@ -71,7 +71,7 @@ private handleChildMessage(sender: string, msg: ChildMessage): void {
 
 ```typescript
 type SendResponseCallback = (
-  responseType: string,    // 响应类型，如 'db_result', 'wt_result'
+  responseType: string,    // 响应类型，如 'db_result', 'team_result', 'wiki_result', 'core_result', 'grant_result', 'question_result'
   success: boolean,        // 操作是否成功
   data?: unknown,          // 成功时返回的数据
   error?: string           // 失败时的错误信息
@@ -139,15 +139,17 @@ sendResponse('error', false, undefined, '错误信息');
 
 ### 响应类型
 
-不同的模块使用不同的响应类型：
+不同的模块使用不同的响应类型（响应类型集合定义于 `child/ipc-helpers.ts` 的 `RESPONSE_TYPES`）：
 
 | 响应类型 | 模块 | 说明 |
 |---------|------|------|
 | `db_result` | issue | 数据库操作结果 |
-| `wt_result` | wt | 工作树操作结果 |
 | `team_result` | team | 团队操作结果 |
+| `wiki_result` | wiki | 知识库操作结果 |
+| `core_result` | core | Core 操作结果（imgDescribe、readPictureCached） |
+| `grant_result` | grant | 授权操作结果（grant_request、external_path_access） |
 | `question_result` | core | 用户问答结果 |
-| `error` | 通用 | 错误响应 |
+| `error` | 通用 | 错误响应（dispatch 异常或未注册消息类型时使用） |
 
 ## IpcRegistry 类
 
@@ -166,23 +168,21 @@ class IpcRegistry {
   // 注销处理器
   unregister(messageType: string): void;
 
-  // 检查处理器是否存在
-  hasHandler(messageType: string): boolean;
-
   // 分发消息到处理器
-  async dispatch(sender: string, msg: { type: string; [key: string]: unknown }): 
-    Promise<void | IpcHandlerResult>;
-
-  // 列出所有处理器（调试用）
-  listHandlers(): { messageType: string; module: string }[];
+  async dispatch(
+    sender: string,
+    msg: { type: string; [key: string]: unknown },
+    sendResponse: SendResponseCallback
+  ): Promise<void>;
 }
 ```
 
 ### 错误处理
 
-- 重复注册同一消息类型会抛出错误
-- 处理器执行异常会返回 `{ success: false, error: '...' }`
-- 未注册的消息类型返回 `undefined`（静默忽略）
+- 重复注册同一消息类型会抛出错误（包含 existing 和 new 模块名）
+- 处理器执行异常会调用 `sendResponse('error', false, undefined, errorMessage)`
+- 未注册的消息类型会调用 `sendResponse('error', false, undefined, 'No handler registered for message type: ...')`（**不是**静默忽略）
+- `dispatch` 前未设置 context 会抛出 `IPC registry context not initialized`
 
 ## TeamModule 接口扩展
 
@@ -228,20 +228,29 @@ export function createMyModuleIpcHandlers(): IpcHandlerRegistration[] {
 
 ### 2. 在上下文初始化时注册
 
+处理器在 `ParentContext.initializeIpcHandlers()` 中注册（见 `src/context/parent-context.ts`）：
+
 ```typescript
-// src/context/index.ts
+// src/context/parent-context.ts
+export class ParentContext implements AgentContext {
+  initializeIpcHandlers(): void {
+    const handlers: IpcHandlerRegistration[] = [
+      // ... 现有 handler
+      {
+        messageType: 'my_action',
+        module: 'my-module',
+        handler: async (sender, payload, ctx, sendResponse) => {
+          const { param } = payload as { param: string };
+          ctx.core.brief('info', sender, `执行: ${param}`);
+          sendResponse('db_result', true, { result: 'ok' });
+        },
+      },
+    ];
 
-import { createMyModule, createMyModuleIpcHandlers } from './my-module.js';
-
-export function createAgentContext(workDir?: string): AgentContext {
-  // ... 创建模块 ...
-
-  // 注册处理器
-  for (const handler of createMyModuleIpcHandlers()) {
-    team.registerHandler(handler);
+    for (const handler of handlers) {
+      this.teamModule.registerHandler(handler);
+    }
   }
-
-  return ctx;
 }
 ```
 
@@ -258,24 +267,76 @@ process.send({
 
 ## 内置处理器
 
-### team 模块
+### 直接处理（不在 IpcRegistry 中）
+
+以下消息类型由 `TeamManager.handleChildMessage()` 直接处理，**不经过** IpcRegistry：
 
 | 消息类型 | 说明 | 响应 |
 |---------|------|------|
-| `status` | 更新队友状态 | 无 |
-| `log` | 记录日志 | 无 |
+| `status` | 更新队友状态（working/idle/holding/shutdown） | 无 |
+| `teammate_ready` | spawn 完成就绪通知 | 无 |
+| `eta_update` | 时间预算通知（更新截止时间） | 无 |
+| `log` | 记录日志（带 @sender/tool 标签路由到 teammate timeline） | 无 |
 | `error` | 记录错误 | 无 |
+| `verbose` | 详细日志（仅 -v 模式） | 无 |
+| `condition_replace` | skill_compile 后通知重载 hook 条件 | 无 |
+| `question` | 用户提问（加入 pendingQuestions 队列，稍后在 COLLECT 状态处理） | `question_result` |
 
-### issue 模块
+### IpcRegistry 注册的处理器
 
-| 消息类型 | 说明 | 响应 |
+以下消息类型通过 `IpcRegistry.dispatch()` 分发到注册的 handler：
+
+**issue 模块**（响应类型 `db_result`）：
+
+| 消息类型 | 说明 | 响应数据 |
 |---------|------|------|
+| `db_issue_get` | 获取 Issue | `Issue` |
+| `db_issue_list` | 列出 Issue | `Issue[]` |
 | `db_issue_create` | 创建 Issue | `{ id: number }` |
 | `db_issue_claim` | 认领 Issue | `{ claimed: boolean }` |
+| `db_issue_publish` | 发布 Issue | `{ published: boolean }` |
 | `db_issue_close` | 关闭 Issue | 无 |
 | `db_issue_comment` | 添加评论 | 无 |
 | `db_block_add` | 添加阻塞关系 | 无 |
 | `db_block_remove` | 移除阻塞关系 | 无 |
+| `db_issue_clear_all` | 清空所有 Issue | 无 |
+
+**team 模块**（响应类型 `team_result`）：
+
+| 消息类型 | 说明 | 响应数据 |
+|---------|------|------|
+| `team_print` | 获取团队状态 | `{ message: string }` |
+
+**wiki 模块**（响应类型 `wiki_result`）：
+
+| 消息类型 | 说明 | 响应数据 |
+|---------|------|------|
+| `wiki_prepare` | Wiki 准备 | prepare 结果 |
+| `wiki_put` | Wiki 存储 | put 结果 |
+| `wiki_get` | Wiki 查询 | 查询结果 |
+| `wiki_delete` | Wiki 删除 | 删除结果 |
+| `wiki_get_by_domain` | 按域查询 | 结果列表 |
+| `wiki_batch_put` | 批量存储 | 结果列表 |
+| `wiki_wal_get` | 获取 WAL | WAL 条目 |
+| `wiki_wal_append` | 追加 WAL | 无 |
+| `wiki_rebuild` | 重建索引 | 重建结果 |
+| `wiki_domains_list` | 列出域 | 域列表 |
+| `wiki_domain_get` | 获取域 | 域信息 |
+| `wiki_domain_register` | 注册域 | 无 |
+
+**core 模块**（响应类型 `core_result`）：
+
+| 消息类型 | 说明 | 响应数据 |
+|---------|------|------|
+| `core_img_describe` | 图片描述 | `{ description: string }` |
+| `core_read_picture_cached` | 图片缓存读取 | `PictureResult` |
+
+**grant 模块**（响应类型 `grant_result`）：
+
+| 消息类型 | 说明 | 响应数据 |
+|---------|------|------|
+| `grant_request` | 授权请求 | `{ approved: boolean, reason?: string }` |
+| `external_path_access` | 外部路径访问请求 | `{ approved: boolean, resolvedPath: string, reason?: string }` |
 
 ## 设计决策
 
@@ -298,8 +359,8 @@ process.send({
 
 | 文件 | 说明 |
 |------|------|
-| `src/types.ts` | 类型定义 |
-| `src/context/ipc-registry.ts` | 注册表实现 |
-| `src/context/team.ts` | IPC 消息分发 |
-| `src/context/issue.ts` | Issue 模块处理器示例 |
-| `src/context/index.ts` | 处理器注册入口 |
+| `src/types.ts` | 类型定义（IpcHandlerRegistration、SendResponseCallback 等） |
+| `src/context/ipc-registry.ts` | IpcRegistry 注册表实现 |
+| `src/context/parent/team.ts` | TeamManager — IPC 消息接收、直接处理通知、dispatch 到 IpcRegistry |
+| `src/context/parent-context.ts` | ParentContext — `initializeIpcHandlers()` 注册所有 handler |
+| `src/context/child/ipc-helpers.ts` | IpcClient — 子进程 IPC 通信原语、RESPONSE_TYPES 定义 |

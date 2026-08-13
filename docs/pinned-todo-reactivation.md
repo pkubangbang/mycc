@@ -344,7 +344,8 @@ Pinned todos can be automatically reactivated (marked back to not done) when a c
 | `src/context/shared/registry.ts` | register `todoPinningTool` |
 | `src/loop/states/collect.ts` | `checkReactivation` before nudge, same throttle cycle |
 | `src/loop/agent-prompts.ts` | lead-only prompt sections |
-| `src/tests/context/todo.test.ts` | NEW — pinned survival, pinTodo hash guard, candidates, hasOpenTodo |
+| `src/tests/context/shared/todo.test.ts` | pinned survival, pinTodo hash guard, candidates, hasOpenTodo |
+| `src/tests/loop/states/collect-reactivation.test.ts` | `parseReactivationResult` + reactivation flow |
 | `MYCC.md` | user-facing docs for pinned todos + reactivation |
 
 ## RDBMS Usage Example

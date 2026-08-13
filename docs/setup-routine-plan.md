@@ -1,18 +1,24 @@
 # MyCC Setup Routine Plan
 
+> **Status**: Implemented. The setup wizard now supports both Ollama and DeepSeek providers via `API_PROVIDER` selection. See `src/setup/prompts.ts` for the current prompt definitions.
+
 ## Overview
 
-Interactive setup wizard for first-time installation or environment recovery when mycc cannot start due to misconfigured environment variables.
+Interactive setup wizard for first-time installation or environment recovery when mycc cannot start due to misconfigured environment variables. The wizard prompts for provider selection (Ollama or DeepSeek) first, then adapts subsequent prompts based on the choice.
 
 ## Environment Variables
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `OLLAMA_HOST` | No | `http://127.0.0.1:11434` | Ollama server URL |
-| `OLLAMA_MODEL` | No | `glm-5:cloud` | General/chat model |
-| `OLLAMA_VISION_MODEL` | No | `none` | Vision model (set to "none" to disable) |
-| `OLLAMA_EMBEDDING_MODEL` | No | (empty) | Embedding model for semantic search/RAG |
-| `OLLAMA_API_KEY` | No | (empty) | API key for cloud features (sensitive) |
+| `OLLAMA_HOST` | No | `http://127.0.0.1:11434` | Ollama server URL (always asked — embeddings use Ollama) |
+| `OLLAMA_EMBEDDING_MODEL` | No | `nomic-embed-text` | Embedding model for semantic search/RAG (always Ollama) |
+| `OLLAMA_MODEL` | No | `glm-5:cloud` | General/chat model (Ollama provider) |
+| `OLLAMA_VISION_MODEL` | No | `none` | Vision model (set to "none" to disable; Ollama provider) |
+| `OLLAMA_API_KEY` | No | (empty) | API key for cloud features (sensitive; Ollama provider) |
+| `API_PROVIDER` | No | `ollama` | Provider selection: `ollama` or `deepseek` |
+| `DEEPSEEK_HOST` | No | `https://api.deepseek.com` | DeepSeek API endpoint (DeepSeek provider) |
+| `DEEPSEEK_API_KEY` | No | (empty) | DeepSeek API key (sensitive; DeepSeek provider) |
+| `DEEPSEEK_MODEL` | No | `deepseek-chat` | DeepSeek model name (DeepSeek provider) |
 | `TOKEN_THRESHOLD` | No | `50000` | Context limit threshold |
 | `EDITOR` | No | Platform default | Text editor for file editing |
 
@@ -32,10 +38,11 @@ When user runs `mycc --setup`:
 1. **Display current settings** - Show all env vars with redacted sensitive values, indicate source (`[user]`, `[project]`, `[default]`, or `(not set)`)
 2. **Choose config location** - User-level (`~/.mycc-store/.env`) or project-level (`./.mycc/.env`)
 3. **Create directory** if needed
-4. **Interactive prompts** for each configuration value
-5. **Pull models** via `ollama pull` (OLLAMA_MODEL, OLLAMA_VISION_MODEL, OLLAMA_EMBEDDING_MODEL)
-6. **Write `.env` file** at chosen location
-7. **Print success** message
+4. **Choose provider** - Ollama (1) or DeepSeek (2)
+5. **Interactive prompts** for each configuration value (adapted based on provider choice; OLLAMA_HOST and OLLAMA_EMBEDDING_MODEL always asked since embeddings use Ollama)
+6. **Pull models** via `ollama pull` (Ollama provider only; skipped for DeepSeek — cloud-based models)
+7. **Write `.env` file** at chosen location
+8. **Print success** message (reflects selected provider)
 
 ## Config Location
 
@@ -54,7 +61,7 @@ Sensitive values displayed as `****xxxx` (last 4 chars visible). On re-run:
 
 ## Model Pulling
 
-After configuration, automatically pull:
+After configuration, automatically pull (Ollama provider only; skipped for DeepSeek since models are cloud-based):
 1. `OLLAMA_MODEL` (required) - warn if pull fails
 2. `OLLAMA_VISION_MODEL` (if set and not "none") - silent failure
 3. `OLLAMA_EMBEDDING_MODEL` (if set) - silent failure
@@ -94,12 +101,12 @@ Editor suggestions by platform:
 ```
 src/setup/
 ├── index.ts          # Entry point, orchestrates setup flow
-├── wizard.ts         # Interactive readline prompts
-├── prompts.ts        # Prompt definitions and validation
+├── wizard.ts         # Interactive readline prompts, provider selection
+├── prompts.ts        # Prompt definitions (Ollama + DeepSeek), validation, ENV_REQUIREMENTS
 ├── paths.ts          # Cross-platform path resolution
 ├── display.ts        # Current settings display with redaction
-├── models.ts         # Model pulling via ollama
-├── ollama.ts         # Ollama binary detection and service checks
+├── models.ts         # Model pulling via ollama (skipped for DeepSeek)
+├── ollama-setup.ts   # Ollama binary detection and service checks
 └── editor.ts         # Platform-specific editor defaults
 ```
 
@@ -108,7 +115,7 @@ src/setup/
 | File | Changes |
 |------|---------|
 | `src/index.ts` | Add `--setup` flag handling, show setup instruction on env validation failure |
-| `src/config.ts` | Export `ENV_REQUIREMENTS` for reuse |
+| `src/config.ts` | Export `ENV_REQUIREMENTS` for reuse (imported from `src/setup/prompts.ts`) |
 
 ## Success Criteria
 

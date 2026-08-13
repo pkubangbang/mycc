@@ -232,24 +232,17 @@ function findAllCheckpoints(messages: Message[]): Array<{ id: string; descriptio
 When checkpoint is created, add a todo entry:
 
 ```typescript
-todo_write({
-  items: [{
-    name: `Checkpoint: ${description}`,
-    note: `ID: ${id}`,
-    done: false
-  }]
+todo_create({
+  name: `Checkpoint: ${description}`,
+  note: `ID: ${id}`
 });
 ```
 
-When recap is called, mark the todo as done:
+When recap is called, mark the todo as done via `closeCheckpointTodo`:
 
 ```typescript
-todo_write({
-  items: [{
-    name: `Checkpoint: ${description}`,
-    done: true
-  }]
-});
+// Best-effort close (no error if not found)
+ctx.todo.closeCheckpointTodo(id);
 ```
 
 ### Todo Nudge
@@ -400,11 +393,11 @@ Agent: [calls checkpoint AND read_file in same turn]
 
 | File | Purpose |
 |------|---------|
-| `src/tools/checkpoint.ts` | Checkpoint tool implementation |
-| `src/tools/recap.ts` | Recap tool implementation |
-| `src/loop/triologue.ts` | Helper: findCheckpointById(), findAllCheckpoints() |
-| `src/loop/states/act.ts` | Validation: checkpoint isolation before tool execution |
-| System prompt | Add checkpoint tool visibility |
+| `src/tools/checkpoint.ts` | Checkpoint tool definition (meta-tool, handler returns empty string) |
+| `src/tools/recap.ts` | Recap tool definition (meta-tool, handler returns empty string) |
+| `src/loop/triologue.ts` | Helpers: `findCheckpointById()`, `findAllCheckpoints()` |
+| `src/loop/checkpoint-recap.ts` | Core logic: `handleCheckpoint()`, `handleRecap()`, `handleRecapWithPatch()`, isolation validation |
+| `src/loop/states/hook.ts` | State machine handling: detects checkpoint/recap calls, invokes core logic, enforces isolation |
 
 ## System Prompt Addition
 

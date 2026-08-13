@@ -1,5 +1,13 @@
 # Session Management
 
+> **状态：已实施。** 会话管理已落地于 `src/session/`（`index.ts`、`restoration.ts`、`types.ts`）和 `src/slashes/`（`save.ts`、`load.ts`、`fork.ts`）。保留为设计文档。
+> **关键偏差：**
+> - 会话文件存储在子目录 `.mycc/sessions/{session-id}/session-{sessionid}.json`（非扁平结构），三ologue 文件也在同一子目录内。
+> - `/load <id>` 不创建新会话——它将源会话的摘要注入**当前**（空）会话的 triologue。只有 `--from <id>` 启动参数和 `/fork` 斜杠命令才创建全新的会话（旧会话 sealed，永不写入）。
+> - `onTeammateCreate`/`onFirstQuery`/`onTeammateReady` 回调钩子不存在——会话文件由 `TeamManager.createTeammate`（写 teammates + child_triologues）和 `agent-repl.ts`（写 first_query）直接更新。
+> - 文档提到的 `sessionUtil` 对应 `src/session/restoration.ts`（`prepareRestoration`、`readDosq`、`extractFirstQuery`）。
+> - `Session` 类型包含 `version: '2.0'` 字段，`lead_triologue` 为字符串路径（非"only one"的抽象描述）。
+
 This design doc demostrates the idea behind the session restoration.
 
 ## What is a session
@@ -17,12 +25,12 @@ This design doc demostrates the idea behind the session restoration.
 
 Session is persisted in two ways:
 
-1. When the agent starts, a new session file will be created in `.mycc/sessions`. Certain events
+1. When the agent starts, a new session file will be created in `.mycc/sessions/{session-id}/session-{sessionid}.json` (per-ID subdirectory). Certain events
 will update its content, for example:
    - the first user query will update the bookmark title
-   - `tm_create` tool call will add a teammate to the list
-   - the ready state of teammate will add a child triologue path
-2. When `/save` the slash-command is used, the same session file will be copied into the user's home (`~/.mycc-store/sessions`).
+   - `tm_create` tool call will add a teammate to the list and register the child triologue path
+   - teammate ready notification confirms the child triologue path
+2. When `/save` the slash-command is used, the entire session subdirectory is copied into the user's home (`~/.mycc-store/sessions/{session-id}/`).
 
 We call the first case "project session" and the second case "user session".
 
@@ -34,11 +42,10 @@ Saved sessions can be manually loaded; Only when the lead's triologue is empty s
 
 **Session is designed to only be partially restored.** In other words, session restoration is lossy.
 
-To restore a session, the user should use `/load` the slash-command. If no arguments are given,
-then a list of saved sessions are shown to the terminal; the list consists of sessions in current dir (i.e. project session) 
-as well as in home dir (i.e. user session); if there's colliding session ids, the user session will shadow the other.
+There are two restoration paths:
 
-If an argument is given, it is taken as the session id.
+1. **`/load <id>`** (slash command, mid-session): Branches context from a sealed source session into the **current** (empty) session's triologue. Does NOT create a new session file. The current session must be empty (use `/clear` or double Ctrl+L first).
+2. **`--from <id>`** (startup arg) / **`/fork`** (slash command): Creates a **brand-new** session (new id, new triologue file, new session json). The old session's files are sealed — never written to again. This is the "genetic branching" path.
 
 **To load a project session, read the below; to load a user session, first find the corresponding project one by the project dir property inside the session file, then after a simple validation load the project one.**
 
@@ -96,15 +103,16 @@ All the missing parts such as team setup and todo/issues are expected to have th
 
 ## Implementation details
 Pay attention to the triologue module: it's used by the main process and the child processes, so you
-shouldn't add logic specific to main process there. Instead, create a sessionUtil to do that.
+shouldn't add logic specific to main process there. Instead, session-specific logic lives in `src/session/` (`index.ts`, `restoration.ts`).
 
-| hook | source | action(callback) |
+| event | source | action |
 |---------|--------|---------|
-| onTeammateCreate | triologue | update project session file's teammate field     |
-| onFirstQuery     | triologue | update project session file's user's first query |
-| onTeammateReady  | IPC call  | update teammate's triologue paths |
-| /save            | slash-cmd | copy project session to user session |
-| /load xxx        | slash-cmd | prepare the transcripts, feed into triologue |
+| tm_create | `TeamManager.createTeammate` | write session file: add teammate name + child triologue path |
+| teammate ready | `teammate-worker.ts` → IPC `teammate_ready` | session file already updated at spawn time |
+| first user query | `agent-repl.ts` | write session file: update `first_query` field |
+| /save | `src/slashes/save.ts` | copy entire session subdirectory to `~/.mycc-store/sessions/{id}/` |
+| /load \<id\> | `src/slashes/load.ts` | `prepareRestoration` → inject summary pair into current triologue + DOSQ |
+| --from \<id\> / /fork | `src/session/index.ts` `restoreSession` | `prepareRestoration` → create brand-new session with branched context |
 
 
 ## Appendix: summarizeTriologue algorithm

@@ -1,6 +1,8 @@
 # Agent-Loop Testing Plan
 
 > **Goal**: Enhance agent-loop observability, build a maintainable mock harness, and exhaustively test all state transition paths for streak x=1,2,3 using a parametric test generator.
+>
+> **Status:** Implemented. All planned files exist: `src/loop/loop-events.ts`, `src/tests/loop/loop-events-helper.ts`, `src/tests/loop/mock-harness.ts`, `src/tests/loop/console-capture.ts`, `src/tests/loop/path-generator.ts`, `src/tests/loop/states/paths-x1.test.ts`, `paths-x2.test.ts`, `paths-x3.test.ts`. All 10 events and 53 paths are implemented.
 
 ---
 

@@ -2,23 +2,10 @@
 
 ## Overview
 
-The Confusion Index is a built-in property of `ctx.core` that quantifies how "stuck" an LLM agent is. When the index reaches a threshold (default: 10), the agent requests help differently based on context:
+The Confusion Index is a built-in property of `ctx.core` that quantifies how "stuck" an LLM agent is. When the index reaches a threshold (default: 10) and the message count is sufficient (≥ 6), the agent requests help differently based on context:
 
-- **Main process**: Triggers a hint round (LLM self-analysis)
+- **Main process**: Triggers a hint round (LLM self-analysis) in COLLECT state
 - **Child processes**: Sends mail to lead requesting guidance
-
-## Key Changes from v1
-
-| Aspect | v1 | v2 |
-|--------|----|----|
-| Storage | `Triologue.confusion` | `ctx.core.confusionIndex` |
-| Flag | `hintGenerated` boolean | No flag (use score reset) |
-| Hint trigger | Check in `Triologue.needsHintRound()` | Check in agent loop |
-| Child behavior | Same as main | Mail to lead |
-| Brief tool | Optional parameter | Required `confidence` parameter |
-| Nudge | None | Periodic reminder to use brief |
-
----
 
 ## Architecture
 
@@ -36,7 +23,7 @@ interface CoreModule {
 }
 ```
 
-**Implementation** (in `BaseCore`):
+**Implementation** (in `src/context/shared/base-core.ts`, inherited by `Core` and `ChildCore`):
 ```typescript
 protected confusionIndex: number = 0;
 
@@ -57,19 +44,19 @@ resetConfusionIndex(): void {
 
 ## Scoring Formula
 
-### Score Updates
+### Main Process (tool.ts + llm.ts + hook.ts)
 
-The confusion index changes based on:
+| Event | Delta | Source | Rationale |
+|-------|-------|--------|-----------|
+| Brief with confidence >= 8 | `8 - confidence` (negative) | `src/tools/brief.ts` | High confidence reduces confusion |
+| Brief with confidence < 8 | `8 - confidence` (positive) | `src/tools/brief.ts` | Low confidence increases confusion |
+| Non-exploration tool, no semantic duplication | -1 | `src/loop/states/tool.ts` | Progress reduces confusion |
+| Non-exploration tool, semantic duplication | `similarityToDelta(maxSim)` (positive) | `src/loop/states/tool.ts` via `requestEmbeddingTracker` | Repeated requests increase confusion |
+| Tool error result | +2 | `src/loop/states/tool.ts` | Obstacles increase confusion |
+| Crossroad fire | +2 | `src/loop/states/llm.ts` | Direction change indicates confusion |
+| Plan mode assistant turn | +1 | `src/loop/states/hook.ts` | Plan mode exploration driver (sparse tool calls) |
 
-| Event | Delta | Rationale |
-|-------|-------|-----------|
-| Brief with confidence >= 8 | `8 - confidence` (negative) | High confidence reduces confusion |
-| Brief with confidence < 8 | `8 - confidence` (positive) | Low confidence increases confusion |
-| Action tool | -1 | Progress reduces confusion |
-| Tool error | +2 | Obstacles increase confusion |
-| Repetition | +1 | Loops increase confusion |
-
-**Formula**: `delta = 8 - confidence`
+**Brief formula**: `delta = 8 - confidence`
 
 | Confidence | Delta | Effect |
 |------------|-------|--------|
@@ -85,6 +72,22 @@ The confusion index changes based on:
 | 1 | +7 | Increases confusion |
 | 0 | +8 | Increases confusion |
 
+### Semantic Duplication Detection (Main Process)
+
+The main process uses embedding-based semantic duplication detection (`src/loop/request-embedding.ts`) instead of simple tool-name matching. After each tool call, `requestEmbeddingTracker.addEntry()` records the tool name + arguments. `getMaxSimilarity()` returns the highest embedding similarity to previous calls, and `similarityToDelta()` converts it to a confusion delta. This replaces the old "same tool name in last 5 calls" heuristic.
+
+### Child Process (teammate-worker.ts)
+
+The child process uses a simpler repetition heuristic (`recentToolCalls` array, last 5 calls):
+
+| Event | Delta | Rationale |
+|-------|-------|-----------|
+| Non-exploration action tool, not repeated | -1 | Progress |
+| Non-exploration action tool, repeated | +1 | Repetition |
+| `mail_to` repeated | +2 | Repeated mail is highly confusing |
+| Bash read-only command | 0 | Exploration, no change |
+| Tool error result | +2 | Obstacle |
+
 ### Invariant
 
 **The confusion index is always >= 0** (clamped on increase).
@@ -95,33 +98,19 @@ The confusion index changes based on:
 
 ### Exploration Tools (No Score Change)
 
-Read-only operations:
+Main process (`src/loop/states/tool.ts`):
 
 ```
-read_file, web_search, web_fetch, question,
-issue_list, wt_print, bg_print, tm_print, recall,
-wiki_get, wiki_prepare, screen, read_picture
+read_file, web_search, web_fetch, brief,
+issue_list, bg_print, tm_print, question, recall
 ```
 
-### Action Tools (-1 Point)
+Child process (`src/context/teammate-worker.ts`) uses the same set.
 
-State-modifying operations:
-
-```
-write_file, edit_file, todo_write,
-issue_create, issue_close, issue_claim, issue_comment,
-blockage_create, blockage_remove,
-tm_create, tm_remove,
-wt_create, wt_remove,
-bg_create, bg_remove,
-mail_to, broadcast,
-git_commit, plan_on, plan_off
-```
-
-### Bash Tool (Dynamic)
+### Bash Tool (Child Process — Dynamic)
 
 - **Read-only commands** (0 points): `ls`, `cat`, `pwd`, `head`, `tail`, `wc`, `find`, `which`, `git status/log/diff/branch/show/ls-files`
-- **Other commands** (-1 point): Default action tool
+- **Other commands** (-1 point or +1 if repeated): Default action tool
 
 ---
 
@@ -132,38 +121,41 @@ git_commit, plan_on, plan_off
 In `src/loop/states/collect.ts`:
 
 ```typescript
-if (ctx.core.getConfusionIndex() >= 10) {
-  agentIO.log(chalk.blue('[hint round] Generating problem analysis...'));
-  const result = await triologue.generateHintRound();
+const CONFUSION_THRESHOLD = 10;
+const MIN_MESSAGES_FOR_HINT = 6;
+
+if (confusionIndex >= CONFUSION_THRESHOLD && messageCount >= MIN_MESSAGES_FOR_HINT) {
+  ctx.core.brief('info', 'loop', 'Generating hint...');
+  const result = await ctx.core.escAware(
+    async (abortController) => {
+      return await triologue.generateHintRound(abortController, confusionIndex, breakdown, pendingSkills);
+    },
+    () => { startWrapUp(...); return 'aborted'; }
+  );
   if (result === 'aborted') {
     return AgentState.PROMPT;
   }
-  // generateHintRound already resets confusion
+  ctx.core.resetConfusionIndex();
 }
 ```
 
 ### Child Process
 
-In `src/context/teammate-worker.ts`:
+In `src/context/teammate-worker.ts`, after tool execution:
 
 ```typescript
-async function checkAndRequestHelp(ctx: AgentContext, triologue: Triologue): Promise<boolean> {
-  const confusionIndex = ctx.core.getConfusionIndex();
-  
-  if (confusionIndex < 10) {
-    return false;
+const confusionIndex = ctx.core.getConfusionIndex();
+const messageCount = triologue.getMessagesRaw().length;
+if (confusionIndex >= CONFUSION_THRESHOLD && messageCount >= MIN_MESSAGES_FOR_HINT) {
+  const lastRole = triologue.getLastRole();
+  if (lastRole === 'assistant' || lastRole === 'tool') {
+    ctx.team.mailTo('lead', 'Guidance request',
+      `Guidance request (confusion index: ${confusionIndex}). ` +
+      `I'm working but could benefit from direction or feedback. ` +
+      `Current state: ${ctx.todo.hasOpenTodo() ? ctx.todo.printTodoList() : 'No active todos'}`,
+      ctx.core.getName());
+    ctx.core.resetConfusionIndex();
   }
-  
-  // Use LLM to generate help request
-  const helpRequest = await generateHelpRequest(ctx, triologue);
-  
-  // Send mail to lead
-  ctx.team.mailTo('lead', 'Stuck - need guidance', helpRequest);
-  
-  // Reset confusion
-  ctx.core.resetConfusionIndex();
-  
-  return true;
 }
 ```
 
@@ -173,27 +165,24 @@ async function checkAndRequestHelp(ctx: AgentContext, triologue: Triologue): Pro
 
 ### Required Parameter
 
-The brief tool now requires a `confidence` parameter:
+The brief tool requires a `confidence` parameter (`src/tools/brief.ts`):
 
 ```typescript
 brief(message: string, confidence: number)
 ```
 
-**Description**:
-> Send status updates. Use frequently.
-> Confidence (0-10): 10=certain, 8=confident, 5=uncertain, 2=guessing.
-> Confidence >= 8 reduces confusion, < 8 increases it.
-
 **Implementation**:
 ```typescript
 handler: (ctx, args) => {
   const { message, confidence } = args;
-  if (confidence < 0 || confidence > 10) {
-    throw new Error(`confidence must be 0-10, got ${confidence}`);
+  if (typeof confidence !== 'number' || confidence < 0 || confidence > 10) {
+    return 'Error: confidence parameter is required and must be a number between 0 and 10';
   }
-  ctx.core.brief('info', 'brief', message);
-  const delta = 8 - confidence;
-  ctx.core.increaseConfusionIndex(delta);
+  const deltaConfusion = 8 - confidence;
+  ctx.core.increaseConfusionIndex(deltaConfusion);
+  // Also records brief to peer heartbeat (lead only)
+  ctx.peer.recordBrief(message, confidence);
+  ctx.core.brief('info', 'brief', message, `confidence: ${confidence * 10}%`);
   return 'Status updated.';
 }
 ```
@@ -202,112 +191,54 @@ handler: (ctx, args) => {
 
 ## Brief Nudge
 
-Similar to todo nudging, the agent receives periodic reminders to use brief:
-
-### TurnVars Addition
+### TurnVars
 
 ```typescript
 interface TurnVars {
   isFirstRound: boolean;
   nextTodoNudge: number;
   lastTodoState: string;
-  nextBriefNudge: number;  // New
+  nextBriefNudge: number;  // init 5
+  lastUserQuery: string;
+  extractedKeywords: string[];
 }
 ```
 
 ### Nudge Logic
 
-In `src/loop/states/collect.ts`:
+In `src/loop/states/collect.ts` (main process) and `src/context/teammate-worker.ts` (child):
 
 ```typescript
-// Brief nudging
 turn.nextBriefNudge--;
 if (turn.nextBriefNudge <= 0) {
-  triologue.user(`<reminder>Provide a brief status update using the brief tool. Example: brief("Working on X", confidence: 7)</reminder>`);
+  triologue.note('REMINDER', 'Provide a brief status update using the brief tool. Example: brief("Working on X", 7)');
   turn.nextBriefNudge = 5;
 }
 ```
 
 ### Reset on Brief Usage
 
-In `src/loop/states/tool.ts`:
+In `src/loop/states/tool.ts` (main) and `src/context/teammate-worker.ts` (child):
 
 ```typescript
 if (toolName === 'brief') {
-  // Reset brief nudge counter
-  env.turn.nextBriefNudge = 5;
+  turn.nextBriefNudge = 5;
 }
 ```
 
 ---
 
-## Files Changed
+## Files
 
-| File | Change |
-|------|--------|
-| `src/types.ts` | Add 3 methods to `CoreModule` |
-| `src/context/shared/base-core.ts` | Add `confusionIndex` field + 3 methods |
-| `src/loop/triologue.ts` | Remove `ConfusionCalculator`, remove `hintGenerated`, use `ctx.core` |
-| `src/loop/confusion-calculator.ts` | **DELETE** |
-| `src/tools/brief.ts` | Add `confidence` parameter (required) |
-| `src/loop/states/tool.ts` | Add confusion scoring logic |
-| `src/loop/states/collect.ts` | Check confusion, trigger hint (main) |
-| `src/loop/state-machine.ts` | Add `nextBriefNudge` to `TurnVars` |
-| `src/context/teammate-worker.ts` | Add `checkAndRequestHelp()` for child |
-| `src/loop/agent-repl.ts` | Pass `ctx` to Triologue |
-| `src/loop/agent-prompts.ts` | Remove brief instruction from child prompt |
-
----
-
-## Example Scenario
-
-### Stuck Pattern
-
-```
-Step 1: brief("Reading files", 7) → delta = 1 → score = 1
-Step 2: read_file (exploration) → score = 1 (no change)
-Step 3: brief("Not sure what to do", 3) → delta = 5 → score = 6
-Step 4: edit_file (action) → score = 5 (progress)
-Step 5: Tool error (ENOENT) → score = 7 (obstacle)
-Step 6: brief("Confused about path", 2) → delta = 6 → score = 13
-Step 7: score >= 10 → TRIGGER HINT
-
-[Hint generated, confusion reset to 0]
-
-Step 8: brief("Now I understand", 9) → delta = -1 → score = 0
-```
-
-### Smooth Progress
-
-```
-Step 1: brief("Found the issue", 9) → delta = -1 → score = 0
-Step 2: edit_file (action) → score = 0 (clamped)
-Step 3: brief("Testing fix", 8) → delta = 0 → score = 0
-Step 4: bash test (action) → score = 0
-Step 5: brief("Fix verified", 10) → delta = -2 → score = 0 (clamped)
-```
-
----
-
-## Differences from v1
-
-1. **No `hintGenerated` flag**: Confusion resets after hint, allowing multiple hints per turn
-2. **Built into `ctx.core`**: No separate `ConfusionCalculator` class
-3. **Child process support**: Children mail lead for help instead of hint rounds
-4. **Brief integration**: Confidence parameter affects confusion directly
-5. **Nudge system**: Periodic reminders to use brief tool
-
----
-
-## Implementation Order
-
-1. Add `confusionIndex` + methods to `BaseCore`
-2. Add methods to `CoreModule` interface
-3. Remove `ConfusionCalculator` from `Triologue`
-4. Update `brief.ts` with `confidence` parameter
-5. Add confusion scoring in `tool.ts`
-6. Add hint check in `collect.ts` (main)
-7. Add help request in `teammate-worker.ts` (child)
-8. Add brief nudge to `TurnVars` and `collect.ts`
-9. Remove brief instruction from child prompt in `agent-prompts.ts`
-10. Pass `ctx` to `Triologue` constructor
+| File | Role |
+|------|------|
+| `src/types.ts` | `CoreModule` interface with 3 confusion methods |
+| `src/context/shared/base-core.ts` | `confusionIndex` field + 3 methods |
+| `src/tools/brief.ts` | `confidence` parameter + confusion delta |
+| `src/loop/states/tool.ts` | Confusion scoring: semantic duplication, errors, brief reset |
+| `src/loop/states/collect.ts` | Hint trigger (confusion ≥ 10 && messages ≥ 6) |
+| `src/loop/states/llm.ts` | Crossroad +2 confusion |
+| `src/loop/states/hook.ts` | Plan mode +1 per assistant turn |
+| `src/loop/state-machine.ts` | `nextBriefNudge` in TurnVars |
+| `src/context/teammate-worker.ts` | Child confusion scoring + guidance request to lead |
+| `src/loop/request-embedding.ts` | Semantic duplication tracker (embedding similarity) |

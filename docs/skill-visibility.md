@@ -289,48 +289,36 @@ The `Sequence` class (`src/hook/sequence.ts`) provides these functions for condi
 | `src/loop/states/hook.ts` | HOOK state handler — registered in state machine |
 | `src/loop/state-machine.ts` | State machine: COLLECT → LLM → HOOK → {TOOL \| STOP} |
 
-## Closing the Gap: Pending Hook Visibility
+## Pending Hook Visibility
 
 ### The Problem
 
-Currently, when a fresh mycc installation starts:
+When a fresh mycc installation starts:
 
 1. Skills with `when` fields are loaded into `loader.skills` 
 2. `conditions.syncPending(loader)` marks them as needing compilation
-3. **The LLM has zero awareness** of these pending hooks until a hint round fires (which only happens when confusion is detected)
-4. The hint round just lists names — no descriptions, no actionable guidance
+3. Without intervention, the LLM has zero awareness of these pending hooks until a hint round fires (which only happens when confusion is detected)
 
-**Result:** The LLM doesn't know what proactive hooks it *could* have. There's a discovery gap.
+### The Fix (Implemented)
 
-### The Fix
+Pending hook information is injected into the triologue's `projectContext` at startup, so the LLM always sees it (just like README.md and mindmap instructions).
 
-Inject pending hook information into the triologue's `projectContext` at startup, so the LLM always sees it (just like README.md and mindmap instructions).
+#### Implementation
 
-#### Implementation Plan
+##### 1. `src/loop/triologue.ts` — `setPendingHooksInfo()`
 
-##### 1. `src/loop/triologue.ts` — Add `setPendingHooksInfo()`
-
-A new method that formats pending skills into a user+assistant pair and pushes them into `projectContext`:
+A method that formats pending skills into a `[Hooks Pending]` projectContext entry:
 
 ```
 [Hooks Pending] The following skills have "when" conditions that can be 
-compiled into proactive hooks. They are NOT active yet.
-
-- lint-after-edit: Run lint checks after editing code files
-  When: after editing code, run lint before commit
-  Use: skill_compile(name="lint-after-edit")
-
-- test-after-edit: Run tests after editing code files  
-  When: after editing code, run tests before commit
-  Use: skill_compile(name="test-after-edit")
-
-Not all need to be compiled upfront. Compile only those relevant 
-to your current task.
+compiled into proactive hooks. They are NOT active yet - use skill_compile 
+to activate them:
+...
 ```
 
-##### 2. `src/loop/agent-repl.ts` — Call the new method
+##### 2. `src/loop/agent-repl.ts` — Called after `syncPending`
 
-After `conditions.syncPending(loader)` (line 257), add logic to gather pending skills from the loader and inject them:
+After `conditions.syncPending(loader)`, pending skills are gathered and injected:
 
 ```ts
 const pendingSkillNames = conditions.getPending();
@@ -341,21 +329,3 @@ if (pendingSkillNames.length > 0) {
   triologue.setPendingHooksInfo(pendingSkills);
 }
 ```
-
-#### Files Changed
-
-| File | Change | Reason |
-|------|--------|--------|
-| `src/loop/triologue.ts` | Add `setPendingHooksInfo()` | New projectContext injection point |
-| `src/loop/agent-repl.ts` | Call it after `syncPending` | Actually inject at startup |
-
-#### What Stays the Same
-
-- `conditions.syncPending()` / `conditions.getPending()` — unchanged
-- The hint round notification — still fires, still lists pending skills as backup
-- The `skill_compile` tool — unchanged
-- All hook evaluation logic — unchanged
-
-#### Key Design Decision
-
-Using `projectContext` (not a HINT/REMINDER note that scrolls away) ensures the info is **always visible** to the LLM in every turn, right alongside README.md and mindmap instructions. It's zero-cost (no LLM calls, just string formatting).
