@@ -172,9 +172,17 @@ function send(): void {
   const value = text.value;
   const files = localFiles.value.length > 0 ? [...localFiles.value] : undefined;
   if (!value.trim() && !files) return;
+  // A card is pending — the user must reply on the card, not the chat box.
+  // The chat input is NOT disabled (it stays focusable so it never loses
+  // focus and the user can keep typing), but sending is blocked here: Enter
+  // is a no-op that leaves the typed text buffered in the box. The
+  // card-pending hint above already tells the user to reply on the card.
+  if (props.state.hasPendingCard) return;
+  let sent = false;
   if (props.state.isWaiting) {
     // A prompt is pending — this is a fresh user query.
     chatApi.sendInput(value, files);
+    sent = true;
   } else if (props.state.isRunning || props.state.isAutoMode) {
     // The agent is actively working OR it is in auto mode (idle in the WAIT
     // state). In both cases there is no PROMPT waiting for a fresh query, so
@@ -184,10 +192,19 @@ function send(): void {
     // branch reachable even from the idle WAIT state, where isRunning is
     // false but isAutoMode is true.
     chatApi.sendSteer(value, files);
+    sent = true;
   }
-  text.value = '';
-  localFiles.value = [];
-  props.state.pendingFiles = [];
+  // Clear only after an actual send. The no-op paths above (card-pending
+  // guard, and the send→running gap where none of isWaiting/isRunning/
+  // isAutoMode is true yet) return without sending — leaving the typed text
+  // buffered in the box so the user can press Enter again once the state
+  // changes. The old code cleared unconditionally here, which wiped buffered
+  // text during the gap — the data loss this guard prevents.
+  if (sent) {
+    text.value = '';
+    localFiles.value = [];
+    props.state.pendingFiles = [];
+  }
 }
 
 function onKeydown(event: KeyboardEvent): void {
@@ -354,19 +371,27 @@ const inputAreaStyle = computed(() =>
     ></div>
     <div class="input-row">
       <div class="input-area-wrapper">
+        <!-- The textarea is ONLY disabled when disconnected — never on
+             hasPendingCard or the isWaiting/isRunning/isAutoMode flags.
+             Keeping it always enabled (while connected) means it never
+             loses focus during the send→running gap or while a card is
+             pending: the browser only moves focus off a focused element
+             when it becomes disabled. Sending is gated in send() instead
+             (card-pending and the gap are no-ops that buffer the typed
+             text), and the 发送 button stays disabled via its own binding. -->
         <textarea
           v-model="text"
           class="input-area"
           :style="inputAreaStyle"
           :placeholder="state.hasPendingCard ? '请在卡片上回复…' : (state.isWaiting ? '输入消息…' : (state.isAutoMode ? '给自动模式发指引…' : '等待回复中…'))"
-          :disabled="state.hasPendingCard || (!state.isWaiting && !state.isRunning && !state.isAutoMode) || state.connectionStatus !== 'connected'"
+          :disabled="state.connectionStatus !== 'connected'"
           rows="2"
           @keydown="onKeydown"
           @paste="onPaste"
         ></textarea>
         <button
           class="attach-btn"
-          :disabled="state.hasPendingCard || (!state.isWaiting && !state.isRunning && !state.isAutoMode) || state.connectionStatus !== 'connected'"
+          :disabled="state.connectionStatus !== 'connected'"
           title="附加文件"
           @click="openFilePicker"
         >
