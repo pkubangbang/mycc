@@ -27,9 +27,9 @@ import { grepSearch } from '../utils/grep-search.js';
 /**
  * Configuration constants
  */
-const MAX_ROUNDS_DEFAULT = 30;
+const MAX_ROUNDS_DEFAULT = 25;
 /** When remaining rounds drops to this threshold, inject a force-stop steering note. */
-const FORCE_STOP_THRESHOLD = 3;
+const FORCE_STOP_THRESHOLD = 5;
 const WEB_TIMEOUT_MS = 30000; // 30 seconds timeout for web operations
 const TOKEN_THRESHOLD = getTokenThreshold();
 const READ_CHUNK_SIZE = 10000; // max chars returned per read_file call
@@ -316,6 +316,27 @@ const EXPLORER_TOOLS: Tool[] = [
           },
         },
         required: ['term'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'final',
+      description:
+        'Submit your final summary for this section. Call this when you have finished ' +
+        'exploring and are ready to write the summary. The summary should be concise ' +
+        '(50-200 words). Once you call this tool, exploration ends and your summary is ' +
+        'recorded. You can call mark_file, mark_url, mark_term BEFORE final to mark resources.',
+      parameters: {
+        type: 'object',
+        properties: {
+          summary: {
+            type: 'string',
+            description: 'The final summary text for this documentation section (50-200 words)',
+          },
+        },
+        required: ['summary'],
       },
     },
   },
@@ -676,20 +697,27 @@ ${existingContextSection}
 Use tools (read_file, ls, grep, mark_file, web_search, web_fetch, mark_url, mark_term) to explore code and web resources relevant to this section, then write a concise summary.
 
 ## Round Budget — IMPORTANT
-You have at most **${budget} rounds** of LLM calls total. Each round is one assistant turn (which may contain multiple tool calls). When you have gathered enough information, STOP calling tools and output your summary as plain text (no tool calls). You will be told your remaining rounds each turn; when few remain, you MUST stop exploring and write the summary immediately.
+You have at most **${budget} rounds** of LLM calls total. Each round is one assistant turn (which may contain multiple tool calls). You will be told your remaining rounds each turn.
+
+## How to Finish
+When you have gathered enough information, call the **final** tool with your summary (50-200 words). Calling final ends exploration and records your summary. You can call mark_file, mark_url, mark_term before final to mark relevant resources.
+
+**IMPORTANT: You MUST use the final tool to submit your summary.** Do NOT output your summary as plain text — plain text will be rejected and you will be asked to use the final tool instead. The ONLY way to finish is to call final.
+
+When the remaining rounds drop to **5 or fewer**, you MUST call **final** immediately with whatever summary you have — do NOT continue exploring. The countdown has started; each remaining round is precious.
 
 ## Efficiency: Batch Tool Calls
 **Call multiple tools in a single round** whenever the calls are independent. For example, if you need to read three files, issue all three read_file calls in one round — not three separate rounds. This conserves your round budget. Only serialize calls when one depends on another's result (e.g. grep first, then read_file a path found by grep).
 
-## Summary Content
-Your final summary (plain text, no tool calls) should include:
+## Summary Content (for the final tool)
+Your summary should include:
 - What this section covers
-- Relevant files/modules (mark them with mark_file)
-- Relevant URLs (mark them with mark_url)
-- Key terms (mark them with mark_term)
+- Key files/modules (mark them with mark_file before calling final)
+- Relevant URLs (mark them with mark_url before calling final)
+- Key terms (mark them with mark_term before calling final)
 - Key technical details
 
-Explore now, batching independent tool calls. When done, output only the summary, without any additional explanations or commentary.`;
+Explore now, batching independent tool calls. When ready, call final with your summary.`;
 }
 
 /**
@@ -764,14 +792,19 @@ export async function summarizeWithExplorer(
       }
     }
 
-    // No tool calls = done
+    // No tool calls — the LLM emitted plain text instead of calling `final`.
+    // Per the prompt contract, the ONLY valid exit is the `final` tool. Reject
+    // the plain-text output and ask the LLM to call `final` instead. This keeps
+    // the tool-call sequence legal (assistant→tool→assistant) by injecting a
+    // user message that re-issues the instruction.
     if (!assistantMsg.tool_calls || assistantMsg.tool_calls.length === 0) {
-      return {
-        summary: assistantMsg.content || '(no summary)',
-        markedFiles,
-        markedUrls,
-        markedTerms,
-      };
+      messages.push({
+        role: 'user',
+        content:
+          `Your previous response was plain text, but the summary must be submitted via the final tool. ` +
+          `Call the final tool now with your summary (50-200 words). Do NOT output plain text — use the final tool.`,
+      });
+      continue;
     }
 
     // ── Steering: append round-budget hint to the LAST tool result ──
@@ -781,14 +814,45 @@ export async function summarizeWithExplorer(
     // the tool output it just requested.
     const remaining = maxRounds - rounds;
     const budgetHint = remaining <= FORCE_STOP_THRESHOLD
-      ? `\n\n[STEERING] ${remaining} round${remaining === 1 ? '' : 's'} left. STOP calling tools now and write your summary as plain text (no tool calls). You have enough information.`
-      : `\n\n[STEERING] ${remaining} round${remaining === 1 ? '' : 's'} left. Batch independent tool calls to conserve rounds; stop and output your summary when ready.`;
+      ? `\n\n[STEERING] ${remaining} round${remaining === 1 ? '' : 's'} left. COUNTDOWN ACTIVE — call the final tool NOW with your summary. Do NOT call any other tools. You have enough information.`
+      : `\n\n[STEERING] ${remaining} round${remaining === 1 ? '' : 's'} left. Batch independent tool calls to conserve rounds; call final with your summary when ready.`;
 
     // Execute tool calls (each individually guarded)
     const calls = assistantMsg.tool_calls as ToolCall[];
     for (let i = 0; i < calls.length; i++) {
       const tc = calls[i];
       const toolName = tc.function.name;
+
+      // Detect the `final` tool — extract the summary and end exploration.
+      // This is the preferred completion path: the LLM submits its summary
+      // via a structured tool call rather than plain text.
+      if (toolName === 'final') {
+        const finalArgs = tc.function.arguments as Record<string, unknown>;
+        const finalSummary = (finalArgs.summary as string) || '';
+        if (finalSummary && finalSummary.trim().length > 10) {
+          // Accept the final summary — exploration complete.
+          messages.push({
+            role: 'tool',
+            content: 'Final summary accepted. Exploration complete.',
+            tool_call_id: tc.id,
+          });
+          return {
+            summary: finalSummary,
+            markedFiles,
+            markedUrls,
+            markedTerms,
+          };
+        }
+        // Summary too short — reject and let the loop continue so the LLM
+        // can retry with a more substantial summary.
+        messages.push({
+          role: 'tool',
+          content: 'Error: summary too short (minimum 10 characters). Call final again with a more detailed summary (50-200 words).',
+          tool_call_id: tc.id,
+        });
+        continue;  // skip the steering-hint append for this rejected call
+      }
+
       if (onProgress) {
         onProgress(rounds, toolName, tc.function.arguments as Record<string, unknown>);
       }
@@ -830,10 +894,50 @@ export async function summarizeWithExplorer(
     }
   }
 
-  // Max rounds reached or error broke out - return last assistant message
-  const lastAssistant = messages.filter((m) => m.role === 'assistant').pop();
+  // Budget exhausted or API error broke the loop. Attempt to extract a summary
+  // via a fresh, tools-free retryChat call using the compacted exploration
+  // history (same technique as compactMessages). This is a NEW messages array
+  // with no historical tool_calls, so omitting tools is safe.
+  try {
+    const conversationText = minifyMessages(messages, {
+      maxContentLength: 1000,
+      maxArgsLength: 300,
+      truncateToolOutput: true,  // truncate large file reads in the transcript
+    });
+
+    const fallbackResponse = await retryChat(
+      {
+        model: MODEL,
+        messages: [
+          {
+            role: 'user',
+            content:
+              `You are writing a summary for documentation section "${nodeTitle}".\n\n` +
+              `## Section content\n${nodeText.slice(0, 4000)}\n\n` +
+              `## Parent context\n${ancestorContext?.slice(0, 2000) || '(none)'}\n\n` +
+              `Below is a compact transcript of an exploration session. Based on it, write a concise summary (50-200 words):\n\n` +
+              conversationText,
+          },
+        ],
+        think: false,
+        // No tools — fresh single-turn call, no historical tool_calls to conflict.
+      },
+      { noSpinner: true },
+    );
+
+    const fallback = fallbackResponse.message.content || '';
+    if (fallback.trim().length > 20) {
+      return { summary: fallback, markedFiles, markedUrls, markedTerms };
+    }
+  } catch (err) {
+    agentIO.brief('warn', 'explorer', `Fallback summary failed for "${nodeTitle}": ${(err as Error).message}`);
+  }
+
+  // All attempts failed — return empty summary. The node keeps its original
+  // text; a recompile (count_incomplete_nodes detects empty summary) will
+  // retry this node later.
   return {
-    summary: lastAssistant?.content || '(exploration timeout)',
+    summary: '',
     markedFiles,
     markedUrls,
     markedTerms,
