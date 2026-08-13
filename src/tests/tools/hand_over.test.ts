@@ -35,9 +35,19 @@ vi.mock('../../engine/chat-provider.js', () => ({
 
 // Mock child_process so hasTmux()/detectTerminalLauncher()/whichSync succeed
 // without requiring tmux or a GUI terminal on the test host. execAsync is
-// stubbed to a no-op success so session creation never really runs.
+// stubbed to a no-op success. spawn is stubbed to return an EventEmitter that
+// emits 'close' with code 0 and has unref(), so the hand_over handler's
+// spawnTmux() helper (used for the new session + send-keys delivery) resolves
+// cleanly instead of throwing on a missing .on().
+import { EventEmitter } from 'events';
 vi.mock('child_process', () => ({
-  spawn: vi.fn(() => ({ unref: vi.fn() }) as unknown as never),
+  spawn: vi.fn(() => {
+    const ee = new EventEmitter();
+    // Emit 'close' with code 0 asynchronously so the 'close' listener attaches
+    // first (mirrors a real subprocess completing successfully).
+    queueMicrotask(() => ee.emit('close', 0));
+    return Object.assign(ee, { unref: vi.fn() }) as unknown as never;
+  }),
   exec: vi.fn(),
   execSync: vi.fn((cmd: string) => {
     // whichSync probes for a binary; report success for tmux and a launcher.
@@ -99,6 +109,38 @@ describe('Cluster A — hand_over intent validation', () => {
     expect(result).not.toContain('Intent format is:');
     expect(result).not.toContain("doesn't match that");
     expect(result).not.toContain("doesn't mean");
+  });
+
+  it('delivers the command via a bare session + send-keys (not cmd /k shell-command)', async () => {
+    // Structural contract for the Windows-fix: session creation must (1) create
+    // a bare session whose shell is the startup-detected one, and (2) send-keys
+    // the command into the pane verbatim — NOT pass `cmd /k ${command}` as the
+    // session's initial shell-command argument (the old cmd.exe metacharacter
+    // breakage). We assert on spawn's argv, turning the previously-green
+    // "does not contain a rejection" into a real delivery-contract check.
+    const result = await handOverTool.handler(ctx, {
+      command: 'echo a & echo b > C:\\tmp\\x.txt',
+      intent: 'RUN USER TO run a metacharacter command',
+    });
+
+    expect(result).not.toContain('Failed to create session');
+
+    const calls = vi.mocked(cp.spawn).mock.calls.map((c) => c[1]) as string[][];
+
+    // Call 1: bare new-session, with a shell name (NOT an embedded `cmd /k ...`).
+    const newSessionArgs = calls.find((a) => a[0] === 'new-session');
+    expect(newSessionArgs).toBeDefined();
+    expect(newSessionArgs!.join(' ')).not.toContain('cmd /k');
+    // The last arg is the shell name (pwsh/powershell/bash/zsh), not the command.
+    const shellArg = newSessionArgs![newSessionArgs!.length - 1];
+    expect(['pwsh', 'powershell', 'bash', 'zsh']).toContain(shellArg);
+
+    // Call 2: send-keys delivers the command verbatim (with a leading-space guard)
+    // + Enter, NOT embedded into an execAsync string.
+    const sendKeysArgs = calls.find((a) => a[0] === 'send-keys');
+    expect(sendKeysArgs).toBeDefined();
+    expect(sendKeysArgs!.join(' ')).toContain(` ${'echo a & echo b > C:\\tmp\\x.txt'}`);
+    expect(sendKeysArgs![sendKeysArgs!.length - 1]).toBe('Enter');
   });
 
   it('rejects READ USER TO ... with Socratic verb hint (names "execute a command or process," never RUN)', async () => {

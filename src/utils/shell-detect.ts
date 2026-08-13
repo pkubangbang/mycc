@@ -40,6 +40,12 @@ export interface ShellInfo {
   platform: 'Linux' | 'macOS' | 'Windows';
   /** Which of the four shells was committed to. */
   shell: ShellKind;
+  /** Bare executable name (no path, no extension). Safe to pass as the shell
+   *  argument to things that expect a command name resolved via PATH — e.g.
+   *  tmux/psmux `new-session`'s default-shell argument, whose value must not
+   *  be an absolute path (a spaced Windows path like
+   *  `C:\Program Files\WindowsApps\...\pwsh.exe` breaks psmux). */
+  shell_cmd: string;
   /** Absolute path to the shell executable (set for the Windows shells). */
   path?: string;
 }
@@ -164,24 +170,24 @@ export function detectShell(reset = false): ShellInfo {
   if (platform === 'win32') {
     const pwshPath = detectPwsh7();
     if (pwshPath) {
-      cached = { isWin: true, platform: 'Windows', shell: 'pwsh7', path: pwshPath };
+      cached = { isWin: true, platform: 'Windows', shell: 'pwsh7', shell_cmd: 'pwsh', path: pwshPath };
     } else {
       const ps5Path = detectPowershell5();
       // 5.1 is always present on supported Windows; if somehow not found we
       // still commit to powershell5 (exec() will throw a clear spawn error
       // rather than silently picking a different shell).
-      cached = { isWin: true, platform: 'Windows', shell: 'powershell5', path: ps5Path ?? 'powershell.exe' };
+      cached = { isWin: true, platform: 'Windows', shell: 'powershell5', shell_cmd: 'powershell', path: ps5Path ?? 'powershell.exe' };
     }
     return cached;
   }
 
   if (platform === 'darwin') {
-    cached = { isWin: false, platform: 'macOS', shell: 'zsh' };
+    cached = { isWin: false, platform: 'macOS', shell: 'zsh', shell_cmd: 'zsh' };
     return cached;
   }
 
   if (platform === 'linux') {
-    cached = { isWin: false, platform: 'Linux', shell: 'bash' };
+    cached = { isWin: false, platform: 'Linux', shell: 'bash', shell_cmd: 'bash' };
     return cached;
   }
 

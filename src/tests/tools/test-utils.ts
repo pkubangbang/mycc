@@ -66,7 +66,9 @@ export function createMockContext(workdir: string): AgentContext {
 
   return {
     core,
-    todo: {} as never,
+    todo: {
+      createTodo: vi.fn(),
+    } as never,
     mail: {} as never,
     skill: {} as never,
     issue: {} as never,

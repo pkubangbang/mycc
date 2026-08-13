@@ -21,24 +21,45 @@ import chalk from 'chalk';
 import { agentIO } from '../loop/agent-io.js';
 import { parseIntent } from '../context/grant/intent-parser.js';
 import { retryChat, MODEL } from '../engine/chat-provider.js';
+import { getShellInfo } from '../utils/shell-detect.js';
 
 const execAsync = promisify(exec);
 
+/**
+ * Spawn `tmux` with an explicit arg array (NOT via a shell). This is the
+ * escaping-safe delivery path: each argument is passed verbatim to tmux
+ * without cmd.exe/PowerShell re-interpreting metacharacters (&, >, |, quotes).
+ * Critical for `send-keys`, where the command must reach the pane byte-for-byte.
+ */
+function spawnTmux(args: string[], cwd: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const proc = spawn('tmux', args, { cwd, stdio: 'ignore' });
+    proc.on('error', reject);
+    proc.on('close', (code) => {
+      if (code === 0) {
+        resolve();
+      } else {
+        reject(new Error(`tmux exited with code ${code}`));
+      }
+    });
+  });
+}
+
 export const handOverTool: ToolDefinition = {
   name: 'hand_over',
-  description: `Opens a popup terminal and BLOCKS until user interaction. Use ONLY for commands that require interactive input (passwords, prompts, SSH, vim, htop) or when the user explicitly requests a terminal. For all non-interactive commands, use the bash tool instead. hand_over owns the tmux framing — pass the INNER interactive command (e.g. \`ssh\`, \`vim\`, \`sudo\`), NOT a \`tmux ...\` command (which would nest a tmux client inside hand_over's own session); use the bash tool for any \`tmux ...\` invocation instead.`,
+  description: `Opens a popup terminal and BLOCKS until the user finishes interacting, then captures and returns the terminal output. Use this when the task REQUIRES a human at the terminal — e.g. entering a password (sudo, SSH passphrase, 2FA), an interactive TUI (vim, htop, less), an SSH session, or anything that reads from a TTY. It delegates terminal control to the user, so it is the wrong tool for automation/background work: for non-interactive commands use the bash tool; for long-running background jobs use bg_create; for programmatically driving a persistent terminal use the bash tool with tmux send-keys/capture-pane. hand_over OWNS the tmux framing: pass the INNER foreground command only (e.g. \`sudo apt install X\`, \`ssh host\`, \`vim file\`) — do NOT prefix it with \`tmux\` or any \`tmux ...\` command (that would nest a tmux client inside hand_over's own session); manage tmux itself via the bash tool.`,
   input_schema: {
     type: 'object',
     properties: {
       command: {
         type: 'string',
         description:
-          'The foreground interactive command to hand to the user (e.g. `ssh host`, `vim file`, `sudo apt install ...`). hand_over wraps this in its own tmux session, so do NOT prefix it with `tmux` — pass the inner command only.',
+          'The single foreground command to hand to the user to type/run in the popup (e.g. `sudo apt install X`, `ssh user@host`, `vim notes.txt`, `htop`). It is typed into the popup shell verbatim and run there; do NOT prefix it with `tmux` and do NOT chain background/detached constructs (`&&`, `&`, `> file`) — pass one interactive command the user must drive to completion.',
       },
       intent: {
         type: 'string',
         description:
-          'REQUIRED: Explain why this command is needed (use intent language). The OBJECT must be USER.',
+          'REQUIRED: Explain why this command is needed (use intent language). The OBJECT must be USER and the VERB must be RUN: hand_over is "execute a command by having a human interact with the terminal", not an automated read/build/test.',
       },
     },
     required: ['command', 'intent'],
@@ -126,18 +147,31 @@ async function handleHandOver(ctx: AgentContext, args: Record<string, unknown>):
   const sessionName = `mycc-${Date.now()}`;
 
   try {
-    if (isWin) {
-      await execAsync(
-        `tmux new-session -d -s ${sessionName} -c "${cwd}" -x 120 -y 40 ` + `"cmd /k ${command}"`
-      );
-    } else {
-      // Encode command to avoid shell escaping issues
-      const encoded = Buffer.from(command).toString('base64');
-      await execAsync(
-        `tmux new-session -d -s ${sessionName} -c "${cwd}" -x 120 -y 40 ` +
-          `"bash -c 'eval \\$(echo ${encoded} | base64 -d); exec bash'"`
-      );
-    }
+    // Create a BARE session whose default shell is the one detected at startup
+    // (shell-detect.ts). We no longer pass the user command as the session's
+    // initial shell-command argument: on Windows that string was built via
+    // `cmd /k ${command}` and re-interpreted by cmd.exe, so any shell
+    // metacharacter (&, >, |, quotes, spaces-in-paths) broke it — the session
+    // started blank or died, leaving "the command never got typed in".
+    //
+    // Instead we (1) set the shell by bare name, then (2) `send-keys` the
+    // command into the pane verbatim (via spawn arg array, no shell) so the
+    // pane's own shell parses it correctly. This also fixes the old
+    // cmd-vs-bash hardcoding: every platform now uses its native detected shell.
+    const shellName = getShellInfo().shell_cmd;
+    await spawnTmux(
+      ['new-session', '-d', '-s', sessionName, '-c', cwd, '-x', '120', '-y', '40', shellName],
+      cwd,
+    );
+
+    // Type the command into the pane. The leading space is harmless and guards
+    // against a command starting with `-` being mistaken for a tmux option.
+    // No fixed sleep is needed — the pty buffers the input before the shell
+    // prompt is even ready.
+    await spawnTmux(
+      ['send-keys', '-t', sessionName, ` ${command}`, 'Enter'],
+      cwd,
+    );
   } catch (e) {
     return `Error: Failed to create session: ${e}`;
   }
@@ -239,18 +273,33 @@ async function handleHandOver(ctx: AgentContext, args: Record<string, unknown>):
       ? await summarizeOutput(output, command, maxLines)
       : output || '(empty output)';
 
-  // 9. Build and return result
+  // 9. Build and return result.
+  //
+  // The return value is the LLM's only window into what happened in the popup,
+  // so it must (a) state clearly whether the session still lives, (b) surface
+  // the captured output, and (c) tell the LLM HOW to act on it next — not just
+  // dump a session name and leave the LLM to guess. The "Next action" line is
+  // the guidance: if the session is kept, the LLM should continue driving it
+  // via bash + tmux send-keys/capture-pane; if killed, the output here is
+  // final and the task should be assessed from it.
   const header = `User ran: ${command}`;
   const status = keepSession
-    ? `Session: ${sessionName} (kept)\nTo reattach: tmux attach -t ${sessionName}`
-    : `Session: ${sessionName} (killed)`;
+    ? `Status: session still open (kept)\nSession name: ${sessionName}`
+    : `Status: session closed (output captured below)\nSession name: ${sessionName}`;
 
-  // Append usage guide for kept sessions so LLM knows how to interact with it
-  const guide = keepSession
-    ? `\n---\nTo interact with this session, use bash with tmux commands:\n  tmux send-keys -t ${sessionName} 'your command' Enter\n  tmux capture-pane -t ${sessionName} -p\n  tmux attach -t ${sessionName} (interactive)`
-    : '';
+  const nextAction = keepSession
+    ? `Next action: continue this interactive session with the bash tool —\n` +
+      `  tmux send-keys -t ${sessionName} '<command>' Enter   (type a command)\n` +
+      `  tmux capture-pane -t ${sessionName} -p               (read the screen)`
+    : `Next action: the session is closed; read the captured output below and continue (or ask the user for guidance if the human reported something).`;
 
-  return `${header}\n${status}\nOutput (${lines.length} lines):\n\n${result}${guide}`;
+  return (
+    `${header}\n` +
+    `${status}\n` +
+    `${nextAction}\n` +
+    `\n` +
+    `Output (${lines.length} lines):\n\n${result}`
+  );
 }
 
 /**
