@@ -3,6 +3,11 @@
  *
  * Safely evaluates expressions without using Function constructor.
  * Parses expression to AST with jsep, then walks the tree.
+ *
+ * Two scope prefixes:
+ *   turn.*    — functions operating on current turn (since last user query)
+ *   session.* — functions operating on entire livelog (since session start or last compact)
+ * Plus global isPlanMode() and call.* context.
  */
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -27,18 +32,34 @@ export interface CallContext {
 
 /**
  * Context for expression evaluation
+ *
+ * Turn-scoped functions (operate on events since last user query):
+ * - turnCount: count tool occurrences in current turn
+ * - turnLastIndex: last index of a tool in current turn
+ * - turnCountResult: count tool results matching a substring in current turn
+ * - turnHadError: whether any tool errored in current turn
+ *
+ * Session-scoped functions (operate on entire livelog):
+ * - sessionCount: count tool occurrences across livelog
+ * - sessionLastIndex: last index of a tool across livelog
+ * - sessionCountResult: count tool results matching a substring across livelog
+ * - sessionHadError: whether any tool errored across livelog
+ *
+ * Global:
+ * - isPlanMode: check if agent is in plan mode
+ *
+ * Call context (current tool call being evaluated):
+ * - call.metadata.X / call.args.X
  */
 export interface EvalContext {
-  has: (tool: string) => boolean;
-  hasAny: (tools: string[]) => boolean;
-  lastIndexOf: (pattern: string) => number;
-  last: (tool?: string) => unknown;
-  lastError: () => unknown;
-  count: (tool?: string) => number;
-  totalCount: (tool?: string) => number;
-  countResult: (tool: string, pattern: string, maxChars?: number) => number;
-  since: (tool: string) => unknown[];
-  sinceEdit: () => unknown[];
+  turnCount: (tool?: string) => number;
+  turnLastIndex: (tool: string) => number;
+  turnCountResult: (tool: string, pattern: string, maxChars?: number) => number;
+  turnHadError: (tool?: string) => boolean;
+  sessionCount: (tool?: string) => number;
+  sessionLastIndex: (tool: string) => number;
+  sessionCountResult: (tool: string, pattern: string, maxChars?: number) => number;
+  sessionHadError: (tool?: string) => boolean;
   isPlanMode: () => boolean;
   call?: CallContext;
 }
@@ -104,7 +125,7 @@ function evaluateNode(node: jsep.Expression, ctx: EvalContext): JsepEvaluatedNod
       const evaluatedArgs = callNode.arguments.map(arg => evaluateNode(arg, ctx));
       const args = evaluatedArgs.map(a => a.value);
 
-      // Case 1: Direct function call like has('tool')
+      // Case 1: Direct function call like isPlanMode()
       if (callee.type === 'Identifier') {
         const idName = (callee as jsep.Identifier).name;
         if (!(idName in ctx)) {
@@ -121,15 +142,16 @@ function evaluateNode(node: jsep.Expression, ctx: EvalContext): JsepEvaluatedNod
       if (callee.type === 'MemberExpression') {
         const member = callee as jsep.MemberExpression;
 
-        // seq.XXX() calls
+        // turn.XXX() and session.XXX() calls
         if (member.object.type === 'Identifier' &&
-            (member.object as jsep.Identifier).name === 'seq') {
+            ((member.object as jsep.Identifier).name === 'turn' ||
+             (member.object as jsep.Identifier).name === 'session')) {
           if (member.property.type !== 'Identifier') {
-            throw new Error('Dynamic seq property not supported');
+            throw new Error('Dynamic property not supported on turn/session');
           }
           const mName = (member.property as jsep.Identifier).name;
           if (!(mName in ctx)) {
-            throw new Error(`Unknown seq function: ${mName}`);
+            throw new Error(`Unknown function: ${(member.object as jsep.Identifier).name}.${mName}`);
           }
           const fn = ctx[mName as keyof EvalContext] as (...a: unknown[]) => unknown;
           const result = makeEvaluatedNode(node, fn(...args));
@@ -317,24 +339,25 @@ function evaluateNode(node: jsep.Expression, ctx: EvalContext): JsepEvaluatedNod
 }
 
 /**
- * Evaluate an expression string using jsep AST
- * Replaces seq.X calls with direct function calls
+ * Evaluate an expression string using jsep AST.
+ * Preprocesses turn.X( / session.X( → X( and keeps isPlanMode() as-is.
+ * jsep doesn't understand the turn/session objects, so we strip the prefix
+ * and resolve the function name directly from the EvalContext.
  */
 export function evaluateExpression(expression: string, ctx: EvalContext): boolean {
   try {
-    // Preprocess: replace seq.X with X (jsep doesn't understand seq object)
+    // Preprocess: replace turn.X( / session.X( with X( (jsep doesn't understand turn/session objects)
+    // isPlanMode() is a direct identifier, no prefix needed.
     const jsExpr = expression
-      .replace(/seq\.has\(/g, 'has(')
-      .replace(/seq\.hasAny\(/g, 'hasAny(')
-      .replace(/seq\.lastIndexOf\(/g, 'lastIndexOf(')
-      .replace(/seq\.last\(/g, 'last(')
-      .replace(/seq\.lastError\(/g, 'lastError(')
-      .replace(/seq\.totalCount\(/g, 'totalCount(')
-      .replace(/seq\.count\(/g, 'count(')
-      .replace(/seq\.countResult\(/g, 'countResult(')
-      .replace(/seq\.since\(/g, 'since(')
-      .replace(/seq\.sinceEdit\(/g, 'sinceEdit(')
-      .replace(/seq\.isPlanMode\(/g, 'isPlanMode(');
+      .replace(/turn\.count\(/g, 'turnCount(')
+      .replace(/turn\.lastIndex\(/g, 'turnLastIndex(')
+      .replace(/turn\.countResult\(/g, 'turnCountResult(')
+      .replace(/turn\.hadError\(/g, 'turnHadError(')
+      .replace(/session\.count\(/g, 'sessionCount(')
+      .replace(/session\.lastIndex\(/g, 'sessionLastIndex(')
+      .replace(/session\.countResult\(/g, 'sessionCountResult(')
+      .replace(/session\.hadError\(/g, 'sessionHadError(')
+      .replace(/isPlanMode\(/g, 'isPlanMode('); // no-op, kept for clarity
 
     // Parse to AST
     const ast = jsep(jsExpr);

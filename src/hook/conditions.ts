@@ -37,7 +37,7 @@ const CONDITION_SCHEMA = {
   type: 'object',
   properties: {
     trigger: { type: 'array', items: { type: 'string' }, description: "Array of trigger names: 'stop' (no tool calls), '*' (any tool), or specific tool names like 'bash', 'edit_file', 'git_commit'" },
-    condition: { type: 'string', description: 'Expression using seq.X functions' },
+    condition: { type: 'string', description: 'Expression using turn.X / session.X / isPlanMode() functions' },
     action: {
       type: 'object',
       properties: {
@@ -516,20 +516,29 @@ ${existingInfo}
 
 ${toolsSection}
 
-Available condition functions (use seq.X syntax):
-- seq.has(toolName): Check if tool exists in current turn
-- seq.hasAny([tool1, tool2]): Check if any tool exists in current turn
-- seq.lastIndexOf(pattern): Get index (position) of last tool/command occurrence. Accepts "toolName" or "bash#pattern". Returns -1 if not found. Higher index = more recent. For checking if a command was run, use: seq.lastIndexOf('bash#lint') != -1. For ordering checks: seq.lastIndexOf('edit_file') >= seq.lastIndexOf('bash#lint')
-- seq.last(toolName?): Get last event (optionally filtered by tool)
-- seq.lastError(): Get last error event
-- seq.count(toolName?): Count tool occurrences since last user query (current turn)
-- seq.totalCount(toolName?): Count tool occurrences since session start (entire conversation)
-- seq.countResult(tool, pattern, maxChars?): Count tool results matching a substring. tool='*' for all tools. maxChars limits search to first N chars (prevents false positives from file content)
-- seq.since(toolName): Events after last occurrence
-- seq.sinceEdit(): Events after last file edit
-- seq.isPlanMode(): Check if agent is in plan mode (prevents hooks during planning)
+Available condition functions (use turn.X / session.X / isPlanMode() syntax):
 
-IMPORTANT: Use == (not ===) for equality comparisons in conditions. All seq functions return primitives (numbers, booleans), so == is sufficient — never use ===.
+TURN-SCOPED (current turn, since last user query):
+- turn.count(tool?): Count tool occurrences in current turn. No arg = all tools. Tool spec: "toolName", "skill_load#name", "bash#commandPrefix" (clause-split by ;/&&/||, then prefix match).
+- turn.lastIndex(tool): Index of last matching tool in current turn. -1 = not found. Higher = more recent. Use for ordering: turn.lastIndex('edit_file') >= turn.lastIndex('bash#pnpm lint'). For existence check: turn.lastIndex('bash#pnpm lint') != -1.
+- turn.countResult(tool, pattern, maxChars?): Count tool results containing substring in current turn. tool='*' for all tools. maxChars limits search to first N chars (prevents false positives from file content).
+- turn.hadError(tool?): Whether any tool (or specific tool) result contains 'error'/'failed' in current turn. Optional tool spec to filter by.
+
+SESSION-SCOPED (entire livelog, since session start or last compact):
+- session.count(tool?): Same as turn.count but across entire livelog.
+- session.lastIndex(tool): Same as turn.lastIndex but across entire livelog.
+- session.countResult(tool, pattern, maxChars?): Same as turn.countResult but across entire livelog.
+- session.hadError(tool?): Whether any tool result in livelog contains 'error'/'failed'.
+
+GLOBAL:
+- isPlanMode(): Check if agent is in plan mode (prevents hooks during planning).
+
+TOOL SPEC FORMAT (three classes):
+- "toolName" — plain tool, exact name match (e.g. "edit_file", "git_commit")
+- "skill_load#skillName" — skill_load whose name arg contains skillName (e.g. "skill_load#plan-quality")
+- "bash#commandPrefix" — bash whose command, after clause-splitting by ;/&&/||, has a clause STARTING WITH commandPrefix (e.g. "bash#pnpm lint" matches "pnpm lint && pnpm test" but "bash#lint" does NOT match "pnpm lint")
+
+IMPORTANT: Use == (not ===) for equality comparisons in conditions. All functions return primitives (numbers, booleans), so == is sufficient — never use ===.
 
 Available call metadata (use call.metadata.X syntax for current call):
 - call.metadata.filePath: Target file path (for file operations)
@@ -564,13 +573,14 @@ Example intents for bash:
 - "TEST ARTIFACT TO run tests after code edits"
 
 Examples:
-- "run lint before commit if files changed": { "trigger": ["git_commit"], "condition": "seq.hasAny(['edit_file', 'write_file']) && seq.lastIndexOf('bash#lint') == -1", "action": { "type": "inject_before", "tool": "bash", "args": { "command": "pnpm lint", "intent": "TEST ARTIFACT TO verify lint before commit", "timeout": 30 } } }
-- "block commit unless linted": { "trigger": ["git_commit"], "condition": "seq.hasAny(['edit_file', 'write_file']) && (seq.lastIndexOf('edit_file') >= seq.lastIndexOf('bash#lint') || seq.lastIndexOf('write_file') >= seq.lastIndexOf('bash#lint'))", "action": { "type": "block", "reason": "Run pnpm lint first - files have been edited since the last lint run" } }
-- "search wiki on errors": { "trigger": ["*"], "condition": "seq.lastError() && !seq.has('wiki_get')", "action": { "type": "inject_before", "tool": "wiki_get", "args": { "query": "error", "domain": "pitfall" } } }
+- "run lint before commit if files changed": { "trigger": ["git_commit"], "condition": "turn.count('edit_file') > 0 && turn.lastIndex('bash#pnpm lint') == -1", "action": { "type": "inject_before", "tool": "bash", "args": { "command": "pnpm lint", "intent": "TEST ARTIFACT TO verify lint before commit", "timeout": 30 } } }
+- "block commit unless linted": { "trigger": ["git_commit"], "condition": "(turn.lastIndex('edit_file') != -1 || turn.lastIndex('write_file') != -1) && (turn.lastIndex('edit_file') >= turn.lastIndex('bash#pnpm lint') || turn.lastIndex('write_file') >= turn.lastIndex('bash#pnpm lint'))", "action": { "type": "block", "reason": "Run pnpm lint first - files have been edited since the last lint run" } }
+- "search wiki on errors": { "trigger": ["*"], "condition": "turn.hadError() && turn.lastIndex('wiki_get') == -1", "action": { "type": "inject_before", "tool": "wiki_get", "args": { "query": "error", "domain": "pitfall" } } }
 - "block force push to main": { "trigger": ["bash"], "condition": "call.args.command.includes('git push --force') && call.args.command.includes('main')", "action": { "type": "block", "reason": "Force push to main is prohibited" } }
 - "block test files over 300 lines": { "trigger": ["write_file"], "condition": "call.metadata.filePath.includes('/tests/') && call.metadata.newLoc > 300", "action": { "type": "block", "reason": "Test files cannot exceed 300 lines" } }
 - "block destructive bash to main": { "trigger": ["bash"], "condition": "call.metadata.isDestructive && call.args.command.includes('main')", "action": { "type": "block", "reason": "Destructive operations on main branch prohibited" } }
-- "compact on repeated intent failures": { "trigger": ["bash"], "condition": "seq.countResult('bash', 'Error: [Intent]', 20) >= 3 && seq.totalCount() > 20", "action": { "type": "compact" } }
+- "compact on repeated intent failures": { "trigger": ["bash"], "condition": "turn.countResult('bash', 'Error: [Intent]', 20) >= 3 && session.count() > 20", "action": { "type": "compact" } }
+- "only fire once per session": { "trigger": ["stop"], "condition": "isPlanMode() && session.count('skill_load#plan-quality') == 0", "action": { "type": "replace", "tool": "skill_load", "args": { "name": "plan-quality" } } }
 ${errorFeedback}
 
 Output a JSON object with trigger, condition, and action.`;

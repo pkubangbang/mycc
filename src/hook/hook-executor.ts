@@ -102,7 +102,7 @@ const HOOK_PRIORITY: Record<string, number> = {
 export class HookExecutor {
   private conditions: ConditionRegistry;
   private sequence: Sequence;
-  private injectedThisMove: Set<string> = new Set();
+  private injectedThisChat: Set<string> = new Set();
   /**
    * Per-turn dedup: skill names whose stop+block/replace hook has already
    * ACTED this turn. Caps each such hook at once per turn (PROMPT→PROMPT).
@@ -154,14 +154,14 @@ export class HookExecutor {
     skillContent: string,
     cond?: Condition
   ): Promise<HookResult> {
-    // Prevent duplicate injection within the same move (one LLM response)
-    if (this.injectedThisMove.has(skillName)) {
+    // Prevent duplicate injection within the same chat (one LLM response)
+    if (this.injectedThisChat.has(skillName)) {
       return {
         action: 'proceed',
-        message: `[Hook: ${skillName}] (already injected this move)`,
+        message: `[Hook: ${skillName}] (already injected this chat)`,
       };
     }
-    this.injectedThisMove.add(skillName);
+    this.injectedThisChat.add(skillName);
 
     switch (action.type) {
       case 'inject_before':
@@ -437,7 +437,7 @@ export class HookExecutor {
    * - Non-empty calls array → process tool-specific hooks
    *
    * Conditions can reference:
-   * - seq.* methods for history
+   * - turn and session methods for history
    * - call.metadata.* for current call's metadata
    *
    * Hook priority: blockers → replacers → injectors (first wins within each group)
@@ -447,8 +447,8 @@ export class HookExecutor {
     ctx: AgentContext,
     getSkill: (name: string) => { content?: string } | undefined
   ): Promise<ProcessToolCallsResult> {
-    // Clear per-move dedup at the start of each new move
-    this.injectedThisMove.clear();
+    // Clear per-chat dedup at the start of each new chat
+    this.injectedThisChat.clear();
 
     const result: ProcessToolCallsResult = {
       calls: [],
@@ -522,7 +522,7 @@ export class HookExecutor {
 
         // Per-turn cap: a stop+block/replace hook acts at most ONCE per turn.
         // Without this, such a hook would re-fire on every HOOK batch
-        // (processToolCalls clears injectedThisMove each call) and, for replace,
+        // (processToolCalls clears injectedThisChat each call) and, for replace,
         // repeatedly swap the stop for a tool call so the agent never stops to
         // give its plan. inject_before/inject_after/message are intentionally
         // NOT capped (they may legitimately fire per-batch). The set is cleared

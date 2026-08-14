@@ -15,23 +15,21 @@ import type { Condition, HookAction } from './conditions.js';
 import jsep from 'jsep';
 import { evaluateExpression } from './evaluator.js';
 import { parseIntent, validateIntent } from '../context/grant/intent-parser.js';
-import { extractSearchKey } from './sequence.js';
+import { extractSearchKey, matchesToolSpec, splitClauses } from './sequence.js';
 
 /**
  * Minimal sequence interface for testing
- * Only includes methods needed for condition evaluation
+ * Only includes methods needed for condition evaluation (new turn and session API)
  */
 export interface TestableSequence {
-  has(toolName: string): boolean;
-  hasAny(tools: string[]): boolean;
-  lastIndexOf(pattern: string): number;
-  last(toolName?: string): unknown;
-  lastError(): unknown;
-  count(toolName?: string): number;
-  totalCount(toolName?: string): number;
-  countResult(tool: string, pattern: string, maxChars?: number): number;
-  since(toolName: string): unknown[];
-  sinceEdit(): unknown[];
+  turnCount(tool?: string): number;
+  turnLastIndex(tool: string): number;
+  turnCountResult(tool: string, pattern: string, maxChars?: number): number;
+  turnHadError(tool?: string): boolean;
+  sessionCount(tool?: string): number;
+  sessionLastIndex(tool: string): number;
+  sessionCountResult(tool: string, pattern: string, maxChars?: number): number;
+  sessionHadError(tool?: string): boolean;
   isPlanMode(): boolean;
 }
 
@@ -70,13 +68,20 @@ export interface CompileResult {
 
 const VALID_ACTION_TYPES = ['inject_before', 'inject_after', 'block', 'replace', 'message', 'compact'];
 
-const SEQ_FUNCTIONS = ['has', 'hasAny', 'lastIndexOf', 'last', 'lastError', 'count', 'totalCount', 'countResult', 'since', 'sinceEdit', 'isPlanMode'];
+/**
+ * Known function names (without the turn./session. prefix).
+ * These are the 8 scoped functions + isPlanMode.
+ * The validator checks that turn.X / session.X uses one of these names.
+ */
+const KNOWN_SCOPED_FUNCTIONS = new Set([
+  'count', 'lastIndex', 'countResult', 'hadError',
+]);
 
 // Allowed literal values in expressions
 const ALLOWED_LITERALS = ['true', 'false', 'null', 'undefined'];
 
-// Allowed root identifiers (besides seq)
-const ALLOWED_ROOTS = ['seq', 'call'];
+// Allowed root identifiers (objects that can be accessed)
+const ALLOWED_ROOTS = new Set(['turn', 'session', 'call', 'isPlanMode']);
 
 // Dangerous identifiers that should never be allowed
 const DANGEROUS_IDENTIFIERS = new Set([
@@ -254,7 +259,7 @@ export function validateSchema(condition: unknown): ValidationResult {
 
 /**
  * Validate condition expression syntax using jsep AST parser
- * Checks for valid seq.X function calls and safe patterns
+ * Checks for valid turn.X / session.X / isPlanMode() function calls and safe patterns
  */
 export function validateExpression(expression: string): ValidationResult {
   const errors: string[] = [];
@@ -278,9 +283,14 @@ export function validateExpression(expression: string): ValidationResult {
   const visitErrors = visitNode(ast, errors, warnings);
   errors.push(...visitErrors);
 
-  // Check for === usage (seq functions return primitives)
+  // Check for === usage (functions return primitives)
   if (expression.includes('===')) {
-    warnings.push('Using === in condition - seq functions return primitives, consider ==');
+    warnings.push('Using === in condition - functions return primitives, consider ==');
+  }
+
+  // Check for legacy seq.X usage
+  if (/seq\./.test(expression)) {
+    errors.push('Legacy "seq.X" syntax is no longer supported. Use "turn.X" or "session.X" instead.');
   }
 
   return { valid: errors.length === 0, errors, warnings };
@@ -300,8 +310,8 @@ function visitNode(node: jsep.Expression, errors: string[], warnings: string[]):
         newErrors.push(`Forbidden identifier: ${name}`);
       }
       // Check for unknown identifiers (not literals or allowed roots)
-      if (!ALLOWED_LITERALS.includes(name) && !ALLOWED_ROOTS.includes(name)) {
-        // Could be a variable reference outside seq/call context
+      if (!ALLOWED_LITERALS.includes(name) && !ALLOWED_ROOTS.has(name)) {
+        // Could be a variable reference outside turn/session/call context
         warnings.push(`Unknown identifier "${name}" - may not be defined`);
       }
       break;
@@ -315,7 +325,7 @@ function visitNode(node: jsep.Expression, errors: string[], warnings: string[]):
     case 'CallExpression': {
       const callExpr = node as jsep.CallExpression;
 
-      // Check if this is a seq.XXX() call
+      // Check if this is a turn.XXX() or session.XXX() call
       if (callExpr.callee.type === 'MemberExpression') {
         const memberExpr = callExpr.callee as jsep.MemberExpression;
 
@@ -327,20 +337,20 @@ function visitNode(node: jsep.Expression, errors: string[], warnings: string[]):
           }
         }
 
-        // Check if the object is 'seq'
+        // Check if the object is 'turn' or 'session'
         if (memberExpr.object.type === 'Identifier') {
           const objName = (memberExpr.object as jsep.Identifier).name;
 
-          if (objName === 'seq') {
+          if (objName === 'turn' || objName === 'session') {
             // Get the method name
             let methodName: string | undefined;
             if (memberExpr.property.type === 'Identifier') {
               methodName = (memberExpr.property as jsep.Identifier).name;
             }
 
-            // Validate it's a known seq method
-            if (methodName && !SEQ_FUNCTIONS.includes(methodName)) {
-              newErrors.push(`Unknown seq method: seq.${methodName}`);
+            // Validate it's a known scoped function
+            if (methodName && !KNOWN_SCOPED_FUNCTIONS.has(methodName)) {
+              newErrors.push(`Unknown ${objName} method: ${objName}.${methodName}`);
             }
           } else if (objName === 'call') {
             // call.args.X.method() is allowed (e.g., call.args.command.includes())
@@ -364,21 +374,23 @@ function visitNode(node: jsep.Expression, errors: string[], warnings: string[]):
           // Chained call like call.args.command.includes()
           // Check if the root is 'call'
           const rootObj = getRootObject(memberExpr.object);
-          if (rootObj && rootObj !== 'seq' && rootObj !== 'call') {
+          if (rootObj && rootObj !== 'turn' && rootObj !== 'session' && rootObj !== 'call') {
             if (DANGEROUS_IDENTIFIERS.has(rootObj)) {
               newErrors.push(`Forbidden object: ${rootObj}`);
             }
           }
         }
       } else {
-        // Direct function call (not seq.XXX())
+        // Direct function call (not turn.XXX() or session.XXX())
         if (callExpr.callee.type === 'Identifier') {
           const fnName = (callExpr.callee as jsep.Identifier).name;
-          if (!ALLOWED_LITERALS.includes(fnName)) {
-            newErrors.push(`Direct function call "${fnName}()" is not allowed - only seq.XXX() calls permitted`);
+          if (fnName === 'isPlanMode') {
+            // isPlanMode() is the only allowed direct function call
+          } else if (!ALLOWED_LITERALS.includes(fnName)) {
+            newErrors.push(`Direct function call "${fnName}()" is not allowed - only turn.XXX(), session.XXX(), or isPlanMode() permitted`);
           }
         } else {
-          newErrors.push('Only seq.XXX() function calls are allowed');
+          newErrors.push('Only turn.XXX(), session.XXX(), or isPlanMode() calls are allowed');
         }
       }
 
@@ -422,7 +434,7 @@ function visitNode(node: jsep.Expression, errors: string[], warnings: string[]):
       break;
     }
 
-    case 'BinaryExpression': 
+    case 'BinaryExpression':
     case 'LogicalExpression': {
       const binaryExpr = node as jsep.BinaryExpression;
       newErrors.push(...visitNode(binaryExpr.left, errors, warnings));
@@ -497,34 +509,16 @@ export function testExpression(
   callContext?: { metadata?: Record<string, unknown>; args?: Record<string, unknown> }
 ): TestResult {
   try {
-    // Preprocess the expression the same way evaluateExpression does
-    const jsExpr = expression
-      .replace(/seq\.has\(/g, 'has(')
-      .replace(/seq\.hasAny\(/g, 'hasAny(')
-      .replace(/seq\.lastIndexOf\(/g, 'lastIndexOf(')
-      .replace(/seq\.last\(/g, 'last(')
-      .replace(/seq\.lastError\(/g, 'lastError(')
-      .replace(/seq\.totalCount\(/g, 'totalCount(')
-      .replace(/seq\.count\(/g, 'count(')
-      .replace(/seq\.since\(/g, 'since(')
-      .replace(/seq\.sinceEdit\(/g, 'sinceEdit(')
-      .replace(/seq\.isPlanMode\(/g, 'isPlanMode(');
-
-    // Try parsing first to catch syntax errors
-    // jsep throws on invalid syntax, which we surface as a test failure
-    jsep(jsExpr);
     // Build EvalContext compatible with evaluator
     const ctx = {
-      has: (tool: string) => sequence.has(tool),
-      hasAny: (tools: string[]) => sequence.hasAny(tools),
-      lastIndexOf: (pattern: string) => sequence.lastIndexOf(pattern),
-      last: (tool?: string) => sequence.last(tool),
-      lastError: () => sequence.lastError(),
-      count: (tool?: string) => sequence.count(tool),
-      totalCount: (tool?: string) => sequence.totalCount(tool),
-      countResult: (tool: string, pattern: string, maxChars?: number) => sequence.countResult(tool, pattern, maxChars),
-      since: (tool: string) => sequence.since(tool),
-      sinceEdit: () => sequence.sinceEdit(),
+      turnCount: (tool?: string) => sequence.turnCount(tool),
+      turnLastIndex: (tool: string) => sequence.turnLastIndex(tool),
+      turnCountResult: (tool: string, pattern: string, maxChars?: number) => sequence.turnCountResult(tool, pattern, maxChars),
+      turnHadError: (tool?: string) => sequence.turnHadError(tool),
+      sessionCount: (tool?: string) => sequence.sessionCount(tool),
+      sessionLastIndex: (tool: string) => sequence.sessionLastIndex(tool),
+      sessionCountResult: (tool: string, pattern: string, maxChars?: number) => sequence.sessionCountResult(tool, pattern, maxChars),
+      sessionHadError: (tool?: string) => sequence.sessionHadError(tool),
       isPlanMode: () => sequence.isPlanMode(),
       call: callContext || {
         metadata: {
@@ -553,16 +547,14 @@ export function testExpression(
  */
 export function smokeTestExpression(expression: string): TestResult {
   const emptyMock: TestableSequence = {
-    has: () => false,
-    hasAny: () => false,
-    lastIndexOf: () => -1,
-    last: () => undefined,
-    lastError: () => undefined,
-    count: () => 0,
-    totalCount: () => 0,
-    countResult: (_tool: string, _pattern: string, _maxChars?: number) => 0,
-    since: () => [],
-    sinceEdit: () => [],
+    turnCount: () => 0,
+    turnLastIndex: () => -1,
+    turnCountResult: () => 0,
+    turnHadError: () => false,
+    sessionCount: () => 0,
+    sessionLastIndex: () => -1,
+    sessionCountResult: () => 0,
+    sessionHadError: () => false,
     isPlanMode: () => false,
   };
   return testExpression(expression, emptyMock);
@@ -589,70 +581,119 @@ export function testScenarios(
  * MockSequence - a minimal sequence implementation for testing
  *
  * Mirrors Sequence's pattern-matching semantics so validation/testing and
- * runtime agree: `tool#pattern` matches `args.command` (bash) or `args.name`
- * (other tools), and totalCount('tool#pattern') counts across the whole
- * (mock) session via a never-reset pattern log.
+ * runtime agree: tool#pattern uses matchesToolSpec() (three-class matching:
+ * plain tool, skill_load#name, bash#commandPrefix with clause-splitting).
  */
-export class MockSequence {
+export class MockSequence implements TestableSequence {
   private events: Array<{ tool: string; args: Record<string, unknown>; result: string }> = [];
-  /** Session-level (never-reset) log mirroring Sequence.sessionPatternLog */
+  /** Session-level (never-reset) results log mirroring Sequence.sessionResultsLog */
+  private sessionResultsLog: Array<{ tool: string; args: Record<string, unknown>; result: string }> = [];
+  /** Session-level (never-reset) tally: tool name → count */
+  private sessionTally: Map<string, number> = new Map();
+  /** Session-level (never-reset) pattern log mirroring Sequence.sessionPatternLog */
   private sessionPatternLog: Array<{ tool: string; key: string }> = [];
 
   constructor(initialEvents: Array<{ tool: string; args: Record<string, unknown>; result: string }> = []) {
-    this.events = initialEvents;
     for (const e of initialEvents) {
-      const key = extractSearchKey(e);
-      if (key !== undefined) this.sessionPatternLog.push({ tool: e.tool, key });
+      this.addEventInternal(e.tool, e.args, e.result);
     }
   }
 
-  has(toolName: string): boolean { return this.events.some(e => e.tool === toolName); }
-  hasAny(tools: string[]): boolean { return tools.some(t => this.has(t)); }
+  // --- Turn-scoped ---
 
-  lastIndexOf(pattern: string): number {
-    if (pattern.includes('#')) {
-      const [tool, argPattern] = pattern.split('#');
-      for (let i = this.events.length - 1; i >= 0; i--) {
-        const e = this.events[i];
-        if (e.tool !== tool) continue;
-        const key = extractSearchKey(e);
-        if (typeof key !== 'string') continue;
-        if (key.includes(argPattern)) return i;
-      }
-      return -1;
-    }
-    return this.events.map(e => e.tool).lastIndexOf(pattern);
+  turnCount(tool?: string): number {
+    if (!tool) return this.events.length;
+    return this.events.filter(e => matchesToolSpec(e, tool)).length;
   }
 
-  last(): unknown { return this.events.length === 0 ? undefined : this.events[this.events.length - 1]; }
-  lastError(): undefined { return undefined; }
-  count(toolName?: string): number { return toolName ? this.events.filter(e => e.tool === toolName).length : this.events.length; }
-  totalCount(toolName?: string): number {
-    if (!toolName) return this.events.length;
-    if (toolName.includes('#')) {
-      const [tool, argPattern] = toolName.split('#');
-      return this.sessionPatternLog.filter(
-        e => e.tool === tool && e.key.includes(argPattern)
-      ).length;
+  turnLastIndex(tool: string): number {
+    for (let i = this.events.length - 1; i >= 0; i--) {
+      if (matchesToolSpec(this.events[i], tool)) return i;
     }
-    return this.events.filter(e => e.tool === toolName).length;
+    return -1;
   }
-  countResult(tool: string, pattern: string, maxChars?: number): number {
+
+  turnCountResult(tool: string, pattern: string, maxChars?: number): number {
     return this.events.filter(e => {
-      if (tool !== '*' && e.tool !== tool) return false;
+      if (tool !== '*' && !matchesToolSpec(e, tool)) return false;
       const searchText = maxChars ? e.result.slice(0, maxChars) : e.result;
       return searchText.includes(pattern);
     }).length;
   }
-  since(): unknown[] { return []; }
-  sinceEdit(): unknown[] { return []; }
+
+  turnHadError(tool?: string): boolean {
+    return this.events.some(e => {
+      if (tool && !matchesToolSpec(e, tool)) return false;
+      const result = e.result?.toLowerCase() || '';
+      return result.includes('error') || result.includes('failed');
+    });
+  }
+
+  // --- Session-scoped ---
+
+  sessionCount(tool?: string): number {
+    if (!tool) return this.sessionResultsLog.length;
+    if (tool.includes('#')) {
+      const [toolName, pattern] = tool.split('#');
+      return this.sessionPatternLog.filter(e => {
+        if (e.tool !== toolName) return false;
+        if (toolName === 'bash') {
+          const clauses = splitClauses(e.key);
+          return clauses.some(c => c.startsWith(pattern));
+        }
+        return e.key.includes(pattern);
+      }).length;
+    }
+    return this.sessionTally.get(tool) || 0;
+  }
+
+  sessionLastIndex(tool: string): number {
+    for (let i = this.sessionResultsLog.length - 1; i >= 0; i--) {
+      if (matchesToolSpec(this.sessionResultsLog[i], tool)) return i;
+    }
+    return -1;
+  }
+
+  sessionCountResult(tool: string, pattern: string, maxChars?: number): number {
+    return this.sessionResultsLog.filter(e => {
+      if (tool !== '*' && !matchesToolSpec(e, tool)) return false;
+      const searchText = maxChars ? e.result.slice(0, maxChars) : e.result;
+      return searchText.includes(pattern);
+    }).length;
+  }
+
+  sessionHadError(tool?: string): boolean {
+    return this.sessionResultsLog.some(e => {
+      if (tool && !matchesToolSpec(e, tool)) return false;
+      const result = e.result?.toLowerCase() || '';
+      return result.includes('error') || result.includes('failed');
+    });
+  }
+
+  // --- Global ---
+
   isPlanMode(): boolean { return false; }
 
+  // --- Utility ---
+
   addEvent(tool: string, args: Record<string, unknown> = {}, result = ''): void {
+    this.addEventInternal(tool, args, result);
+  }
+
+  private addEventInternal(tool: string, args: Record<string, unknown>, result: string): void {
     const event = { tool, args, result };
     this.events.push(event);
+    this.sessionResultsLog.push(event);
+    this.sessionTally.set(tool, (this.sessionTally.get(tool) || 0) + 1);
     const key = extractSearchKey(event);
     if (key !== undefined) this.sessionPatternLog.push({ tool, key });
+  }
+
+  /**
+   * Simulate turn boundary (clear turn-level events only)
+   */
+  markPromptBoundary(): void {
+    this.events = [];
   }
 }
 
@@ -719,8 +760,8 @@ export async function compileCondition(
       version: newVersion,
       condition: typeof pObj.condition === 'string' ? pObj.condition : 'true',
       action: (pObj.action as HookAction) || { type: 'message' },
-      reason: existingVersion > 0 
-        ? `refined via skill_compile for ${skillName}` 
+      reason: existingVersion > 0
+        ? `refined via skill_compile for ${skillName}`
         : `initial compilation for ${skillName}`,
     }],
   };
