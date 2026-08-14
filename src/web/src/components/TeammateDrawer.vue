@@ -615,6 +615,36 @@ const drawerStyle = computed(() =>
 .tm-md :deep(p:last-child) {
   margin-bottom: 0;
 }
+.tm-md :deep(h1),
+.tm-md :deep(h2),
+.tm-md :deep(h3),
+.tm-md :deep(h4) {
+  margin: 10px 0 4px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+.tm-md :deep(h1) { font-size: 1.2em; }
+.tm-md :deep(h2) { font-size: 1.1em; }
+.tm-md :deep(h3) { font-size: 1em; }
+/* Lists: constrain padding-inline-start so markdown-it bullets/numbers stay
+   inside the narrow teammate bubble. Without this the browser default
+   (padding-inline-start: 40px) pushes the marker past the left edge and clips
+   the first characters — the letterbox padding bug. Mirrors MessageItem.vue's
+   markdown-body list rule (padding-left: 22px). */
+.tm-md :deep(ul),
+.tm-md :deep(ol) {
+  margin: 4px 0 6px;
+  padding-left: 22px;
+}
+.tm-md :deep(li) {
+  margin: 1px 0;
+}
+.tm-md :deep(blockquote) {
+  margin: 6px 0;
+  padding: 2px 10px;
+  border-left: 3px solid var(--md-blockquote-border);
+  color: var(--md-blockquote-text);
+}
 .tm-md :deep(code) {
   font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
   font-size: 12px;
