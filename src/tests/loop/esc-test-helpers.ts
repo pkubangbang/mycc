@@ -208,6 +208,7 @@ export function createMockMachineEnv(options: MockMachineEnvOptions): MachineEnv
     } as unknown as Sequence,
     hookExecutor: {
       processToolCalls: vi.fn(async () => createMockHookResult()),
+      resetTurn: vi.fn(),
       ...options.hookExecutor,
     } as unknown as HookExecutor,
     inputProvider: {

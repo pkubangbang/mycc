@@ -200,12 +200,17 @@ function connectWebSocket(): void {
       // the card fields flat on the wire (cardId/query/kind/options/...);
       // map them into the nested `card` payload the components expect.
       state.isWaiting = true;
-      state.isRunning = false;
       state.showRetry = false;
-      // A card is now pending — disable the main chat input so the user
-      // replies on the card itself. Dialog input during a card is silently
-      // dropped by the backend (the agent is in TOOL state awaiting the card
-      // resolver, not PROMPT state), so we gate the input box here.
+      // NOTE: do NOT set state.isRunning = false here. A card is a TOOL-state
+      // ask() prompt — the backend's agentRunning stays true throughout the
+      // card wait. If we force isRunning=false on the frontend, then after
+      // the user submits the card response the backend calls setAgentRunning
+      // (true), but its dedup guard (serve-hub.ts: value === this.agentRunning)
+      // sees true===true and skips broadcasting 'running:on' — so the frontend
+      // isRunning stays permanently false and the send button locks forever.
+      // The card's hasPendingCard flag already disables the send button via
+      // the :disabled binding in ChatInput.vue, so clearing isRunning here is
+      // both unnecessary and harmful.
       state.hasPendingCard = true;
       const cardId = (msg as { cardId?: string }).cardId;
       const query = (msg as { query?: string }).query ?? msg.content;

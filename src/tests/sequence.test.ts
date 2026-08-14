@@ -2,650 +2,568 @@
  * Tests for sequence.ts
  *
  * Tests cover:
- * - Sequence.evaluate() with various expressions
- * - All seq.X functions (has, hasAny, lastIndexOf, last, lastError, count, since, sinceEdit)
+ * - Sequence basic operations (add, getEvents, clear, markPromptBoundary)
+ * - Turn-scoped API: turnCount, turnLastIndex, turnCountResult, turnHadError
+ * - Session-scoped API: sessionCount, sessionLastIndex, sessionCountResult, sessionHadError
+ * - isPlanMode()
+ * - evaluate() with various expressions
  * - Edge cases and error handling
+ * - Three-class tool spec matching
  */
 
-import { describe, it, expect, beforeEach } from 'vitest';
-import { Sequence, type SequenceEvent } from '../hook/sequence.js';
+import { describe, it, expect, beforeEach } from "vitest";
+import { Sequence, type SequenceEvent } from "../hook/sequence.js";
 
 // ============================================================================
 // Sequence Basic Operations
 // ============================================================================
 
-describe('Sequence', () => {
+describe("Sequence", () => {
   let seq: Sequence;
 
   beforeEach(() => {
     seq = new Sequence();
   });
 
-  describe('add() and getEvents()', () => {
-    it('should add events to sequence', () => {
-      seq.add({ tool: 'bash', args: { command: 'test' }, result: 'ok', timestamp: Date.now() });
+  describe("add() and getEvents()", () => {
+    it("should add events to sequence", () => {
+      seq.add({ tool: "bash", args: { command: "test" }, result: "ok", timestamp: Date.now() });
       expect(seq.getEvents()).toHaveLength(1);
     });
 
-    it('should return copy of events array', () => {
-      seq.add({ tool: 'bash', args: { command: 'test' }, result: 'ok', timestamp: Date.now() });
+    it("should return copy of events array", () => {
+      seq.add({ tool: "bash", args: { command: "test" }, result: "ok", timestamp: Date.now() });
       const events = seq.getEvents();
-      events.push({ tool: 'edit_file', args: { path: 'test' }, result: 'ok', timestamp: Date.now() });
+      events.push({ tool: "edit_file", args: { path: "test" }, result: "ok", timestamp: Date.now() });
       expect(seq.getEvents()).toHaveLength(1); // Original unchanged
     });
   });
 
-  describe('clear()', () => {
-    it('should clear all events', () => {
-      seq.add({ tool: 'bash', args: { command: 'test' }, result: 'ok', timestamp: Date.now() });
-      seq.add({ tool: 'edit_file', args: { path: 'test' }, result: 'ok', timestamp: Date.now() });
+  describe("clear()", () => {
+    it("should clear all events and session counters", () => {
+      seq.add({ tool: "bash", args: { command: "test" }, result: "ok", timestamp: Date.now() });
+      seq.add({ tool: "edit_file", args: { path: "test" }, result: "ok", timestamp: Date.now() });
       expect(seq.getEvents()).toHaveLength(2);
 
       seq.clear();
       expect(seq.getEvents()).toHaveLength(0);
+      expect(seq.sessionCount()).toBe(0);
+    });
+  });
+
+  describe("markPromptBoundary()", () => {
+    it("should clear turn events but preserve session counters", () => {
+      seq.add({ tool: "bash", args: { command: "test" }, result: "ok", timestamp: Date.now() });
+      seq.add({ tool: "edit_file", args: { path: "test" }, result: "ok", timestamp: Date.now() });
+
+      seq.markPromptBoundary();
+
+      expect(seq.getEvents()).toHaveLength(0);
+      expect(seq.sessionCount()).toBe(2);
     });
   });
 });
 
 // ============================================================================
-// seq.has()
+// turn.count(tool?)
 // ============================================================================
 
-describe('seq.has()', () => {
+describe("turn.count(tool?)", () => {
   let seq: Sequence;
 
   beforeEach(() => {
     seq = new Sequence();
   });
 
-  it('should return false for empty sequence', () => {
-    expect(seq.has('bash')).toBe(false);
+  it("should return 0 for empty sequence", () => {
+    expect(seq.turnCount()).toBe(0);
+    expect(seq.turnCount("bash")).toBe(0);
   });
 
-  it('should return true for existing tool', () => {
-    seq.add({ tool: 'bash', args: { command: 'test' }, result: 'ok', timestamp: Date.now() });
-    expect(seq.has('bash')).toBe(true);
+  it("should count all tools when no arg", () => {
+    seq.add({ tool: "bash", args: { command: "test" }, result: "ok", timestamp: Date.now() });
+    seq.add({ tool: "edit_file", args: { path: "test" }, result: "ok", timestamp: Date.now() });
+    seq.add({ tool: "read_file", args: { path: "test" }, result: "ok", timestamp: Date.now() });
+    expect(seq.turnCount()).toBe(3);
   });
 
-  it('should return false for non-existent tool', () => {
-    seq.add({ tool: 'bash', args: { command: 'test' }, result: 'ok', timestamp: Date.now() });
-    expect(seq.has('edit_file')).toBe(false);
+  it("should count specific tool", () => {
+    seq.add({ tool: "bash", args: { command: "t1" }, result: "ok", timestamp: Date.now() });
+    seq.add({ tool: "bash", args: { command: "t2" }, result: "ok", timestamp: Date.now() });
+    seq.add({ tool: "edit_file", args: { path: "test" }, result: "ok", timestamp: Date.now() });
+    expect(seq.turnCount("bash")).toBe(2);
+    expect(seq.turnCount("edit_file")).toBe(1);
+    expect(seq.turnCount("read_file")).toBe(0);
   });
 
-  it('should find tool among multiple events', () => {
-    seq.add({ tool: 'bash', args: { command: 'test' }, result: 'ok', timestamp: Date.now() });
-    seq.add({ tool: 'edit_file', args: { path: 'test.ts' }, result: 'ok', timestamp: Date.now() });
-    seq.add({ tool: 'read_file', args: { path: 'test.ts' }, result: 'ok', timestamp: Date.now() });
+  it("should count with bash#prefix (clause-split + prefix match)", () => {
+    seq.add({ tool: "bash", args: { command: "pnpm lint" }, result: "ok", timestamp: Date.now() });
+    seq.add({ tool: "bash", args: { command: "pnpm test" }, result: "ok", timestamp: Date.now() });
+    expect(seq.turnCount("bash#pnpm")).toBe(2);
+    expect(seq.turnCount("bash#pnpm lint")).toBe(1);
+    expect(seq.turnCount("bash#pnpm test")).toBe(1);
+    expect(seq.turnCount("bash#lint")).toBe(0); // prefix not substring
+  });
 
-    expect(seq.has('bash')).toBe(true);
-    expect(seq.has('edit_file')).toBe(true);
-    expect(seq.has('read_file')).toBe(true);
-    expect(seq.has('write_file')).toBe(false);
+  it("should count with skill_load#name (args.name contains)", () => {
+    seq.add({ tool: "skill_load", args: { name: "plan-quality" }, result: "ok", timestamp: Date.now() });
+    seq.add({ tool: "skill_load", args: { name: "create-skill" }, result: "ok", timestamp: Date.now() });
+    expect(seq.turnCount("skill_load#plan-quality")).toBe(1);
+    expect(seq.turnCount("skill_load#create-skill")).toBe(1);
+    expect(seq.turnCount("skill_load#nonexistent")).toBe(0);
   });
 });
 
 // ============================================================================
-// seq.hasAny()
+// turn.lastIndex(tool)
 // ============================================================================
 
-describe('seq.hasAny()', () => {
+describe("turn.lastIndex(tool)", () => {
   let seq: Sequence;
 
   beforeEach(() => {
     seq = new Sequence();
   });
 
-  it('should return false for empty sequence', () => {
-    expect(seq.hasAny(['bash', 'edit_file'])).toBe(false);
+  it("should return -1 for empty sequence", () => {
+    expect(seq.turnLastIndex("bash")).toBe(-1);
   });
 
-  it('should return true if any tool exists', () => {
-    seq.add({ tool: 'bash', args: { command: 'test' }, result: 'ok', timestamp: Date.now() });
-    expect(seq.hasAny(['bash', 'edit_file'])).toBe(true);
+  it("should return index of last matching tool", () => {
+    seq.add({ tool: "bash", args: { command: "test" }, result: "ok", timestamp: Date.now() });
+    seq.add({ tool: "edit_file", args: { path: "test" }, result: "ok", timestamp: Date.now() });
+    expect(seq.turnLastIndex("bash")).toBe(0);
+    expect(seq.turnLastIndex("edit_file")).toBe(1);
   });
 
-  it('should return true if second tool exists', () => {
-    seq.add({ tool: 'edit_file', args: { path: 'test' }, result: 'ok', timestamp: Date.now() });
-    expect(seq.hasAny(['bash', 'edit_file'])).toBe(true);
+  it("should return -1 for non-existent tool", () => {
+    seq.add({ tool: "bash", args: { command: "test" }, result: "ok", timestamp: Date.now() });
+    expect(seq.turnLastIndex("write_file")).toBe(-1);
   });
 
-  it('should return false if none exist', () => {
-    seq.add({ tool: 'read_file', args: { path: 'test' }, result: 'ok', timestamp: Date.now() });
-    expect(seq.hasAny(['bash', 'edit_file'])).toBe(false);
+  it("should handle bash#prefix (clause-split + prefix match)", () => {
+    seq.add({ tool: "bash", args: { command: "pnpm lint" }, result: "ok", timestamp: Date.now() });
+    expect(seq.turnLastIndex("bash#lint")).toBe(-1); // prefix not substring
+    expect(seq.turnLastIndex("bash#pnpm")).toBe(0);
+    expect(seq.turnLastIndex("bash#pnpm lint")).toBe(0);
   });
 
-  it('should handle empty array', () => {
-    seq.add({ tool: 'bash', args: { command: 'test' }, result: 'ok', timestamp: Date.now() });
-    expect(seq.hasAny([])).toBe(false);
+  it("should handle skill_load#name", () => {
+    seq.add({ tool: "read_file", args: { path: "a" }, result: "ok", timestamp: Date.now() });
+    seq.add({ tool: "skill_load", args: { name: "plan-quality" }, result: "ok", timestamp: Date.now() });
+    expect(seq.turnLastIndex("skill_load#plan-quality")).toBe(1);
+    expect(seq.turnLastIndex("skill_load#create-skill")).toBe(-1);
+  });
+
+  it("should handle edge cases: non-string command and missing command", () => {
+    seq.add({ tool: "bash", args: { command: 123 }, result: "ok", timestamp: Date.now() });
+    expect(seq.turnLastIndex("bash#test")).toBe(-1);
+
+    seq.add({ tool: "bash", args: { intent: "test" }, result: "ok", timestamp: Date.now() });
+    expect(seq.turnLastIndex("bash#test")).toBe(-1);
   });
 });
 
 // ============================================================================
-// seq.lastIndexOf() - command pattern matching
+// turn.countResult(tool, pattern, maxChars?)
 // ============================================================================
 
-describe('seq.lastIndexOf() command patterns', () => {
+describe("turn.countResult(tool, pattern, maxChars?)", () => {
   let seq: Sequence;
 
   beforeEach(() => {
     seq = new Sequence();
   });
 
-  describe('bash#pattern syntax', () => {
-    it('should find command containing pattern', () => {
-      seq.add({
-        tool: 'bash',
-        args: { command: 'pnpm lint', intent: 'lint' },
-        result: 'ok',
-        timestamp: Date.now(),
-      });
-      expect(seq.lastIndexOf('bash#lint')).not.toBe(-1);
-      expect(seq.lastIndexOf('bash#pnpm')).not.toBe(-1);
-      expect(seq.lastIndexOf('bash#test')).toBe(-1);
-    });
-
-    it('should handle partial pattern matches', () => {
-      seq.add({
-        tool: 'bash',
-        args: { command: 'git commit -m "message"', intent: 'commit' },
-        result: 'ok',
-        timestamp: Date.now(),
-      });
-      expect(seq.lastIndexOf('bash#git commit')).not.toBe(-1);
-      expect(seq.lastIndexOf('bash#-m')).not.toBe(-1);
-    });
-
-    it('should not match non-bash tools', () => {
-      seq.add({
-        tool: 'edit_file',
-        args: { path: 'lint.ts' },
-        result: 'ok',
-        timestamp: Date.now(),
-      });
-      expect(seq.lastIndexOf('bash#lint')).toBe(-1);
-    });
+  it("should return 0 for empty sequence", () => {
+    expect(seq.turnCountResult("bash", "error")).toBe(0);
   });
 
-  describe('regular tool index check', () => {
-    it('should return index for tool name without #', () => {
-      seq.add({ tool: 'bash', args: { command: 'test' }, result: 'ok', timestamp: Date.now() });
-      seq.add({ tool: 'edit_file', args: { path: 'test' }, result: 'ok', timestamp: Date.now() });
-      expect(seq.lastIndexOf('bash')).toBe(0);
-      expect(seq.lastIndexOf('edit_file')).toBe(1);
-    });
-
-    it('should return -1 for non-existent tool', () => {
-      seq.add({ tool: 'bash', args: { command: 'test' }, result: 'ok', timestamp: Date.now() });
-      expect(seq.lastIndexOf('write_file')).toBe(-1);
-    });
+  it("should count results containing pattern for specific tool", () => {
+    seq.add({ tool: "bash", args: { command: "test" }, result: "error: failed", timestamp: Date.now() });
+    seq.add({ tool: "bash", args: { command: "test2" }, result: "ok", timestamp: Date.now() });
+    seq.add({ tool: "edit_file", args: { path: "a" }, result: "error: something", timestamp: Date.now() });
+    expect(seq.turnCountResult("bash", "error")).toBe(1);
+    expect(seq.turnCountResult("edit_file", "error")).toBe(1);
   });
 
-  describe('edge cases', () => {
-    it('should handle command that is not a string', () => {
-      seq.add({
-        tool: 'bash',
-        args: { command: 123 }, // Invalid type
-        result: 'ok',
-        timestamp: Date.now(),
-      });
-      expect(seq.lastIndexOf('bash#test')).toBe(-1);
-    });
+  it("should count results containing pattern for all tools with *", () => {
+    seq.add({ tool: "bash", args: { command: "test" }, result: "error: failed", timestamp: Date.now() });
+    seq.add({ tool: "edit_file", args: { path: "a" }, result: "error: something", timestamp: Date.now() });
+    expect(seq.turnCountResult("*", "error")).toBe(2);
+  });
 
-    it('should handle missing command arg', () => {
-      seq.add({
-        tool: 'bash',
-        args: { intent: 'test' }, // No command
-        result: 'ok',
-        timestamp: Date.now(),
-      });
-      expect(seq.lastIndexOf('bash#test')).toBe(-1);
-    });
+  it("should respect maxChars limit", () => {
+    const longResult = "x".repeat(50) + "error: found";
+    seq.add({ tool: "bash", args: { command: "test" }, result: longResult, timestamp: Date.now() });
+    expect(seq.turnCountResult("bash", "error", 50)).toBe(0);
+    expect(seq.turnCountResult("bash", "error", 100)).toBe(1);
+  });
+
+  it("should support bash#prefix tool spec", () => {
+    seq.add({ tool: "bash", args: { command: "pnpm lint" }, result: "error: failed", timestamp: Date.now() });
+    expect(seq.turnCountResult("bash#pnpm", "error")).toBe(1);
+    expect(seq.turnCountResult("bash#test", "error")).toBe(0);
   });
 });
 
 // ============================================================================
-// seq.last()
+// turn.hadError(tool?)
 // ============================================================================
 
-describe('seq.last()', () => {
+describe("turn.hadError(tool?)", () => {
   let seq: Sequence;
 
   beforeEach(() => {
     seq = new Sequence();
   });
 
-  it('should return undefined for empty sequence', () => {
-    expect(seq.last()).toBeUndefined();
+  it("should return false for empty sequence", () => {
+    expect(seq.turnHadError()).toBe(false);
   });
 
-  it('should return last event without filter', () => {
-    seq.add({ tool: 'bash', args: { command: 'first' }, result: 'ok', timestamp: Date.now() });
-    seq.add({ tool: 'edit_file', args: { path: 'test.ts' }, result: 'ok', timestamp: Date.now() });
-
-    const last = seq.last();
-    expect(last?.tool).toBe('edit_file');
+  it("should return false when no error events", () => {
+    seq.add({ tool: "bash", args: { command: "test" }, result: "ok", timestamp: Date.now() });
+    seq.add({ tool: "edit_file", args: { path: "test" }, result: "ok", timestamp: Date.now() });
+    expect(seq.turnHadError()).toBe(false);
   });
 
-  it('should return last event matching tool', () => {
-    seq.add({ tool: 'bash', args: { command: 'first' }, result: 'ok', timestamp: Date.now() });
-    seq.add({ tool: 'edit_file', args: { path: 'test.ts' }, result: 'ok', timestamp: Date.now() });
-    seq.add({ tool: 'bash', args: { command: 'second' }, result: 'ok', timestamp: Date.now() });
-
-    const lastBash = seq.last('bash');
-    expect(lastBash?.args.command).toBe('second');
+  it("should detect error in any tool result", () => {
+    seq.add({ tool: "bash", args: { command: "test" }, result: "ok", timestamp: Date.now() });
+    seq.add({ tool: "bash", args: { command: "fail" }, result: "Error: Command failed", timestamp: Date.now() });
+    expect(seq.turnHadError()).toBe(true);
   });
 
-  it('should return undefined for non-existent tool filter', () => {
-    seq.add({ tool: 'bash', args: { command: 'test' }, result: 'ok', timestamp: Date.now() });
-    expect(seq.last('edit_file')).toBeUndefined();
+  it("should detect error in specific tool when filtered", () => {
+    seq.add({ tool: "edit_file", args: { path: "a" }, result: "error: failed", timestamp: Date.now() });
+    seq.add({ tool: "bash", args: { command: "test" }, result: "ok", timestamp: Date.now() });
+    expect(seq.turnHadError("edit_file")).toBe(true);
+    expect(seq.turnHadError("bash")).toBe(false);
   });
 
-  it('should return the most recent when multiple matches exist', () => {
-    seq.add({ tool: 'bash', args: { command: 'first' }, result: 'ok', timestamp: 1000 });
-    seq.add({ tool: 'bash', args: { command: 'second' }, result: 'ok', timestamp: 2000 });
-    seq.add({ tool: 'bash', args: { command: 'third' }, result: 'ok', timestamp: 3000 });
+  it("should support bash#prefix tool spec", () => {
+    seq.add({ tool: "bash", args: { command: "pnpm build" }, result: "error: failed", timestamp: Date.now() });
+    expect(seq.turnHadError("bash#pnpm")).toBe(true);
+    expect(seq.turnHadError("bash#pnpm test")).toBe(false);
+  });
 
-    const last = seq.last('bash');
-    expect(last?.args.command).toBe('third');
+  it("should detect 'failed' as well as 'error'", () => {
+    seq.add({ tool: "bash", args: { command: "test" }, result: "Build failed", timestamp: Date.now() });
+    expect(seq.turnHadError()).toBe(true);
   });
 });
 
 // ============================================================================
-// seq.lastError()
+// session.count(tool?)
 // ============================================================================
 
-describe('seq.lastError()', () => {
+describe("session.count(tool?)", () => {
   let seq: Sequence;
 
   beforeEach(() => {
     seq = new Sequence();
   });
 
-  it('should return undefined for empty sequence', () => {
-    expect(seq.lastError()).toBeUndefined();
+  it("should return 0 for empty sequence", () => {
+    expect(seq.sessionCount()).toBe(0);
+    expect(seq.sessionCount("bash")).toBe(0);
   });
 
-  it('should return undefined when no error events', () => {
-    seq.add({ tool: 'bash', args: { command: 'test' }, result: 'ok', timestamp: Date.now() });
-    seq.add({ tool: 'edit_file', args: { path: 'test' }, result: 'ok', timestamp: Date.now() });
-    expect(seq.lastError()).toBeUndefined();
+  it("should count all tools when no arg", () => {
+    seq.add({ tool: "bash", args: { command: "test" }, result: "ok", timestamp: Date.now() });
+    seq.add({ tool: "edit_file", args: { path: "test" }, result: "ok", timestamp: Date.now() });
+    expect(seq.sessionCount()).toBe(2);
   });
 
-  it('should find error event', () => {
-    seq.add({ tool: 'bash', args: { command: 'test' }, result: 'ok', timestamp: Date.now() });
-    seq.add({
-      tool: 'bash',
-      args: { command: 'fail' },
-      result: 'Error: Command failed',
-      timestamp: Date.now(),
-    });
-
-    const err = seq.lastError();
-    expect(err).toBeDefined();
-    expect(err?.tool).toBe('bash');
-    expect(err?.message).toContain('Error');
+  it("should count specific tool across turns (survives markPromptBoundary)", () => {
+    seq.add({ tool: "bash", args: { command: "t1" }, result: "ok", timestamp: 1000 });
+    seq.add({ tool: "bash", args: { command: "t2" }, result: "ok", timestamp: 2000 });
+    seq.markPromptBoundary();
+    seq.add({ tool: "bash", args: { command: "t3" }, result: "ok", timestamp: 3000 });
+    expect(seq.sessionCount("bash")).toBe(3);
   });
 
-  it('should find event with "failed" in result', () => {
-    seq.add({
-      tool: 'bash',
-      args: { command: 'test' },
-      result: 'Process failed with exit code 1',
-      timestamp: Date.now(),
-    });
-
-    const err = seq.lastError();
-    expect(err).toBeDefined();
-    expect(err?.result).toContain('failed');
+  it("should count with bash#prefix (clause-split + prefix match)", () => {
+    seq.add({ tool: "bash", args: { command: "pnpm lint" }, result: "ok", timestamp: Date.now() });
+    seq.add({ tool: "bash", args: { command: "pnpm test" }, result: "ok", timestamp: Date.now() });
+    expect(seq.sessionCount("bash#pnpm lint")).toBe(1);
+    expect(seq.sessionCount("bash#pnpm")).toBe(2);
+    expect(seq.sessionCount("bash#lint")).toBe(0); // prefix not substring
   });
 
-  it('should return most recent error', () => {
-    seq.add({
-      tool: 'bash',
-      args: { command: 'first' },
-      result: 'Error: first error',
-      timestamp: 1000,
-    });
-    seq.add({ tool: 'edit_file', args: { path: 'test' }, result: 'ok', timestamp: 2000 });
-    seq.add({
-      tool: 'bash',
-      args: { command: 'second' },
-      result: 'Error: second error',
-      timestamp: 3000,
-    });
-
-    const err = seq.lastError();
-    expect(err?.result).toContain('second error');
+  it("should count with skill_load#name across turns", () => {
+    seq.add({ tool: "skill_load", args: { name: "plan-quality" }, result: "ok", timestamp: 1000 });
+    seq.markPromptBoundary();
+    seq.add({ tool: "skill_load", args: { name: "plan-quality" }, result: "ok", timestamp: 2000 });
+    expect(seq.sessionCount("skill_load#plan-quality")).toBe(2);
   });
 
-  it('should include message field for convenience', () => {
-    seq.add({
-      tool: 'bash',
-      args: { command: 'test' },
-      result: 'Error: test failed',
-      timestamp: Date.now(),
-    });
-
-    const err = seq.lastError();
-    expect(err?.message).toBe('Error: test failed');
+  it("should reset on clear()", () => {
+    seq.add({ tool: "bash", args: { command: "test" }, result: "ok", timestamp: Date.now() });
+    expect(seq.sessionCount("bash")).toBe(1);
+    seq.clear();
+    expect(seq.sessionCount("bash")).toBe(0);
+    expect(seq.sessionCount()).toBe(0);
   });
 });
 
 // ============================================================================
-// seq.count()
+// session.lastIndex(tool)
 // ============================================================================
 
-describe('seq.count()', () => {
+describe("session.lastIndex(tool)", () => {
   let seq: Sequence;
 
   beforeEach(() => {
     seq = new Sequence();
   });
 
-  it('should return 0 for empty sequence', () => {
-    expect(seq.count()).toBe(0);
-    expect(seq.count('bash')).toBe(0);
+  it("should return -1 for empty sequence", () => {
+    expect(seq.sessionLastIndex("bash")).toBe(-1);
   });
 
-  it('should count all events without filter', () => {
-    seq.add({ tool: 'bash', args: { command: 'test' }, result: 'ok', timestamp: Date.now() });
-    seq.add({ tool: 'edit_file', args: { path: 'test' }, result: 'ok', timestamp: Date.now() });
-    seq.add({ tool: 'read_file', args: { path: 'test' }, result: 'ok', timestamp: Date.now() });
-
-    expect(seq.count()).toBe(3);
+  it("should return index of last matching tool in livelog", () => {
+    seq.add({ tool: "bash", args: { command: "test" }, result: "ok", timestamp: Date.now() });
+    seq.add({ tool: "edit_file", args: { path: "test" }, result: "ok", timestamp: Date.now() });
+    expect(seq.sessionLastIndex("bash")).toBe(0);
+    expect(seq.sessionLastIndex("edit_file")).toBe(1);
   });
 
-  it('should count specific tool', () => {
-    seq.add({ tool: 'bash', args: { command: 'test1' }, result: 'ok', timestamp: Date.now() });
-    seq.add({ tool: 'bash', args: { command: 'test2' }, result: 'ok', timestamp: Date.now() });
-    seq.add({ tool: 'edit_file', args: { path: 'test' }, result: 'ok', timestamp: Date.now() });
+  it("should index into session log across turns (survives markPromptBoundary)", () => {
+    seq.add({ tool: "bash", args: { command: "test" }, result: "ok", timestamp: 1000 });
+    seq.add({ tool: "edit_file", args: { path: "a" }, result: "ok", timestamp: 2000 });
+    seq.markPromptBoundary();
+    seq.add({ tool: "bash", args: { command: "test2" }, result: "ok", timestamp: 3000 });
+    // session index is relative to session start, not turn start
+    // session log has 3 entries: bash(0), edit_file(1), bash(2)
+    expect(seq.sessionLastIndex("bash")).toBe(2);
+    expect(seq.sessionLastIndex("edit_file")).toBe(1);
+  });
 
-    expect(seq.count('bash')).toBe(2);
-    expect(seq.count('edit_file')).toBe(1);
-    expect(seq.count('read_file')).toBe(0);
+  it("should handle bash#prefix", () => {
+    seq.add({ tool: "bash", args: { command: "pnpm lint" }, result: "ok", timestamp: Date.now() });
+    expect(seq.sessionLastIndex("bash#pnpm lint")).toBe(0);
+    expect(seq.sessionLastIndex("bash#lint")).toBe(-1);
   });
 });
 
 // ============================================================================
-// seq.since()
+// session.countResult(tool, pattern, maxChars?)
 // ============================================================================
 
-describe('seq.since()', () => {
+describe("session.countResult(tool, pattern, maxChars?)", () => {
   let seq: Sequence;
 
   beforeEach(() => {
     seq = new Sequence();
   });
 
-  it('should return empty array for empty sequence', () => {
-    expect(seq.since('bash')).toEqual([]);
+  it("should return 0 for empty sequence", () => {
+    expect(seq.sessionCountResult("bash", "error")).toBe(0);
   });
 
-  it('should return all events if tool not found', () => {
-    seq.add({ tool: 'edit_file', args: { path: 'a' }, result: 'ok', timestamp: 1000 });
-    seq.add({ tool: 'edit_file', args: { path: 'b' }, result: 'ok', timestamp: 2000 });
-
-    const events = seq.since('bash');
-    expect(events).toHaveLength(2);
+  it("should count results containing pattern across entire session", () => {
+    seq.add({ tool: "bash", args: { command: "test" }, result: "error: failed", timestamp: 1000 });
+    seq.markPromptBoundary();
+    seq.add({ tool: "bash", args: { command: "test2" }, result: "error: another", timestamp: 2000 });
+    expect(seq.sessionCountResult("bash", "error")).toBe(2);
   });
 
-  it('should return events after last occurrence', () => {
-    seq.add({ tool: 'bash', args: { command: 'first' }, result: 'ok', timestamp: 1000 });
-    seq.add({ tool: 'edit_file', args: { path: 'a' }, result: 'ok', timestamp: 2000 });
-    seq.add({ tool: 'edit_file', args: { path: 'b' }, result: 'ok', timestamp: 3000 });
-
-    const events = seq.since('bash');
-    expect(events).toHaveLength(2);
-    expect(events[0].tool).toBe('edit_file');
+  it("should count results containing pattern for all tools with *", () => {
+    seq.add({ tool: "bash", args: { command: "test" }, result: "error: failed", timestamp: Date.now() });
+    seq.add({ tool: "edit_file", args: { path: "a" }, result: "error: something", timestamp: Date.now() });
+    expect(seq.sessionCountResult("*", "error")).toBe(2);
   });
 
-  it('should return empty array if tool is last event', () => {
-    seq.add({ tool: 'edit_file', args: { path: 'a' }, result: 'ok', timestamp: 1000 });
-    seq.add({ tool: 'bash', args: { command: 'test' }, result: 'ok', timestamp: 2000 });
-
-    const events = seq.since('bash');
-    expect(events).toHaveLength(0);
-  });
-
-  it('should use last occurrence when tool appears multiple times', () => {
-    seq.add({ tool: 'bash', args: { command: 'first' }, result: 'ok', timestamp: 1000 });
-    seq.add({ tool: 'edit_file', args: { path: 'a' }, result: 'ok', timestamp: 2000 });
-    seq.add({ tool: 'bash', args: { command: 'second' }, result: 'ok', timestamp: 3000 });
-    seq.add({ tool: 'edit_file', args: { path: 'b' }, result: 'ok', timestamp: 4000 });
-
-    const events = seq.since('bash');
-    expect(events).toHaveLength(1);
-    expect(events[0].args.path).toBe('b');
+  it("should respect maxChars limit", () => {
+    const longResult = "x".repeat(50) + "error: found";
+    seq.add({ tool: "bash", args: { command: "test" }, result: longResult, timestamp: Date.now() });
+    expect(seq.sessionCountResult("bash", "error", 50)).toBe(0);
+    expect(seq.sessionCountResult("bash", "error", 100)).toBe(1);
   });
 });
 
 // ============================================================================
-// seq.sinceEdit()
+// session.hadError(tool?)
 // ============================================================================
 
-describe('seq.sinceEdit()', () => {
+describe("session.hadError(tool?)", () => {
   let seq: Sequence;
 
   beforeEach(() => {
     seq = new Sequence();
   });
 
-  it('should return empty array for empty sequence', () => {
-    expect(seq.sinceEdit()).toEqual([]);
+  it("should return false for empty sequence", () => {
+    expect(seq.sessionHadError()).toBe(false);
   });
 
-  it('should return all events if no edits found', () => {
-    seq.add({ tool: 'bash', args: { command: 'test' }, result: 'ok', timestamp: 1000 });
-    seq.add({ tool: 'read_file', args: { path: 'test' }, result: 'ok', timestamp: 2000 });
-
-    const events = seq.sinceEdit();
-    expect(events).toHaveLength(2);
+  it("should detect error across turns (survives markPromptBoundary)", () => {
+    seq.add({ tool: "bash", args: { command: "test" }, result: "error: failed", timestamp: 1000 });
+    seq.markPromptBoundary();
+    expect(seq.sessionHadError()).toBe(true);
   });
 
-  it('should return events after edit_file', () => {
-    seq.add({ tool: 'bash', args: { command: 'test' }, result: 'ok', timestamp: 1000 });
-    seq.add({ tool: 'edit_file', args: { path: 'test.ts' }, result: 'ok', timestamp: 2000 });
-    seq.add({ tool: 'read_file', args: { path: 'test.ts' }, result: 'ok', timestamp: 3000 });
-
-    const events = seq.sinceEdit();
-    expect(events).toHaveLength(1);
-    expect(events[0].tool).toBe('read_file');
+  it("should detect error in specific tool when filtered", () => {
+    seq.add({ tool: "edit_file", args: { path: "a" }, result: "error: failed", timestamp: Date.now() });
+    seq.add({ tool: "bash", args: { command: "test" }, result: "ok", timestamp: Date.now() });
+    expect(seq.sessionHadError("edit_file")).toBe(true);
+    expect(seq.sessionHadError("bash")).toBe(false);
   });
 
-  it('should return events after write_file', () => {
-    seq.add({ tool: 'bash', args: { command: 'test' }, result: 'ok', timestamp: 1000 });
-    seq.add({ tool: 'write_file', args: { path: 'test.ts' }, result: 'ok', timestamp: 2000 });
-    seq.add({ tool: 'read_file', args: { path: 'test.ts' }, result: 'ok', timestamp: 3000 });
-
-    const events = seq.sinceEdit();
-    expect(events).toHaveLength(1);
-    expect(events[0].tool).toBe('read_file');
+  it("should reset on clear()", () => {
+    seq.add({ tool: "bash", args: { command: "test" }, result: "error: failed", timestamp: Date.now() });
+    expect(seq.sessionHadError()).toBe(true);
+    seq.clear();
+    expect(seq.sessionHadError()).toBe(false);
   });
 
-  it('should use most recent edit', () => {
-    seq.add({ tool: 'edit_file', args: { path: 'a.ts' }, result: 'ok', timestamp: 1000 });
-    seq.add({ tool: 'bash', args: { command: 'lint' }, result: 'ok', timestamp: 2000 });
-    seq.add({ tool: 'edit_file', args: { path: 'b.ts' }, result: 'ok', timestamp: 3000 });
-    seq.add({ tool: 'read_file', args: { path: 'c.ts' }, result: 'ok', timestamp: 4000 });
-
-    const events = seq.sinceEdit();
-    expect(events).toHaveLength(1);
-    expect(events[0].tool).toBe('read_file');
+  it("should detect 'failed' as well as 'error'", () => {
+    seq.add({ tool: "bash", args: { command: "test" }, result: "Build failed", timestamp: Date.now() });
+    expect(seq.sessionHadError()).toBe(true);
   });
 });
 
 // ============================================================================
-// Sequence.evaluate()
+// Sequence.evaluate() with expressions
 // ============================================================================
 
-describe('Sequence.evaluate()', () => {
+describe("Sequence.evaluate()", () => {
   let seq: Sequence;
 
   beforeEach(() => {
     seq = new Sequence();
   });
 
-  describe('seq.has()', () => {
-    it('should evaluate seq.has() expression', () => {
-      seq.add({ tool: 'bash', args: { command: 'test' }, result: 'ok', timestamp: Date.now() });
+  describe("turn.count()", () => {
+    it("should evaluate turn.count() expression", () => {
+      seq.add({ tool: "bash", args: { command: "test1" }, result: "ok", timestamp: Date.now() });
+      seq.add({ tool: "bash", args: { command: "test2" }, result: "ok", timestamp: Date.now() });
+      seq.add({ tool: "bash", args: { command: "test3" }, result: "ok", timestamp: Date.now() });
 
-      expect(seq.evaluate('seq.has("bash")')).toBe(true);
-      expect(seq.evaluate('seq.has("edit_file")')).toBe(false);
+      expect(seq.evaluate('turn.count("bash") === 3')).toBe(true);
+      expect(seq.evaluate('turn.count("bash") > 2')).toBe(true);
+      expect(seq.evaluate('turn.count() === 3')).toBe(true);
     });
   });
 
-  describe('seq.hasAny()', () => {
-    it('should evaluate seq.hasAny() expression', () => {
-      seq.add({ tool: 'bash', args: { command: 'test' }, result: 'ok', timestamp: Date.now() });
+  describe("turn.lastIndex()", () => {
+    it("should evaluate turn.lastIndex() expression with command pattern", () => {
+      seq.add({ tool: "bash", args: { command: "pnpm lint" }, result: "ok", timestamp: Date.now() });
+      seq.add({ tool: "edit_file", args: { path: "test" }, result: "ok", timestamp: Date.now() });
 
-      expect(seq.evaluate('seq.hasAny(["bash", "edit_file"])')).toBe(true);
-      expect(seq.evaluate('seq.hasAny(["edit_file", "write_file"])')).toBe(false);
+      expect(seq.evaluate('turn.lastIndex("bash#pnpm lint") != -1')).toBe(true);
+      expect(seq.evaluate('turn.lastIndex("bash#test") == -1')).toBe(true);
+    });
+
+    it("should evaluate lastIndex comparison", () => {
+      seq.add({ tool: "edit_file", args: { path: "test" }, result: "ok", timestamp: 1000 });
+      seq.add({ tool: "bash", args: { command: "pnpm lint" }, result: "ok", timestamp: 2000 });
+
+      expect(seq.evaluate('turn.lastIndex("edit_file") >= turn.lastIndex("bash#pnpm lint")')).toBe(false);
     });
   });
 
-  describe('seq.lastIndexOf()', () => {
-    it('should evaluate seq.lastIndexOf() expression with command pattern', () => {
-      seq.add({
-        tool: 'bash',
-        args: { command: 'pnpm lint' },
-        result: 'ok',
-        timestamp: Date.now(),
-      });
-
-      expect(seq.evaluate('seq.lastIndexOf("bash#lint") != -1')).toBe(true);
-      expect(seq.evaluate('seq.lastIndexOf("bash#test") == -1')).toBe(true);
+  describe("turn.hadError()", () => {
+    it("should evaluate turn.hadError() expression", () => {
+      seq.add({ tool: "bash", args: { command: "test" }, result: "error: failed", timestamp: Date.now() });
+      expect(seq.evaluate("turn.hadError()")).toBe(true);
     });
 
-    it('should compare ordering with lastIndexOf', () => {
-      seq.add({ tool: 'edit_file', args: { path: 'test' }, result: 'ok', timestamp: 1000 });
-      seq.add({ tool: 'bash', args: { command: 'pnpm lint' }, result: 'ok', timestamp: 2000 });
-
-      // lint happened after edit, so edit is not newer
-      expect(seq.evaluate('seq.lastIndexOf("edit_file") >= seq.lastIndexOf("bash#lint")')).toBe(false);
+    it("should return false when no error", () => {
+      seq.add({ tool: "bash", args: { command: "test" }, result: "ok", timestamp: Date.now() });
+      expect(seq.evaluate("turn.hadError()")).toBe(false);
     });
   });
 
-  describe('seq.last()', () => {
-    it('should evaluate seq.last() expression', () => {
-      seq.add({ tool: 'bash', args: { command: 'test' }, result: 'ok', timestamp: Date.now() });
-
-      expect(seq.evaluate('seq.last().tool === "bash"')).toBe(true);
-    });
-
-    it('should handle undefined last()', () => {
-      // Empty sequence, last() returns undefined
-      // Comparing undefined === "bash" is false
-      expect(seq.evaluate('seq.last()?.tool === "bash"')).toBe(false);
+  describe("turn.countResult()", () => {
+    it("should evaluate turn.countResult() expression", () => {
+      seq.add({ tool: "bash", args: { command: "test" }, result: "error: failed", timestamp: Date.now() });
+      expect(seq.evaluate('turn.countResult("bash", "error") > 0')).toBe(true);
     });
   });
 
-  describe('seq.lastError()', () => {
-    it('should evaluate seq.lastError() expression', () => {
-      seq.add({
-        tool: 'bash',
-        args: { command: 'test' },
-        result: 'Error: failed',
-        timestamp: Date.now(),
-      });
-
-      expect(seq.evaluate('seq.lastError() !== undefined')).toBe(true);
-    });
-
-    it('should return false when no error', () => {
-      seq.add({ tool: 'bash', args: { command: 'test' }, result: 'ok', timestamp: Date.now() });
-
-      expect(seq.evaluate('seq.lastError() !== undefined')).toBe(false);
+  describe("session.count()", () => {
+    it("should evaluate session.count() expression", () => {
+      seq.add({ tool: "edit_file", args: { path: "a" }, result: "ok", timestamp: 1000 });
+      seq.markPromptBoundary();
+      seq.add({ tool: "edit_file", args: { path: "b" }, result: "ok", timestamp: 2000 });
+      expect(seq.evaluate('session.count("edit_file") == 2')).toBe(true);
     });
   });
 
-  describe('seq.count()', () => {
-    it('should evaluate seq.count() expression', () => {
-      seq.add({ tool: 'bash', args: { command: 'test1' }, result: 'ok', timestamp: Date.now() });
-      seq.add({ tool: 'bash', args: { command: 'test2' }, result: 'ok', timestamp: Date.now() });
-      seq.add({ tool: 'bash', args: { command: 'test3' }, result: 'ok', timestamp: Date.now() });
-
-      expect(seq.evaluate('seq.count("bash") === 3')).toBe(true);
-      expect(seq.evaluate('seq.count("bash") > 2')).toBe(true);
-      expect(seq.evaluate('seq.count() === 3')).toBe(true);
+  describe("session.lastIndex()", () => {
+    it("should evaluate session.lastIndex() expression", () => {
+      seq.add({ tool: "bash", args: { command: "pnpm lint" }, result: "ok", timestamp: 1000 });
+      seq.markPromptBoundary();
+      seq.add({ tool: "edit_file", args: { path: "a" }, result: "ok", timestamp: 2000 });
+      expect(seq.evaluate('session.lastIndex("edit_file") >= session.lastIndex("bash#pnpm lint")')).toBe(true);
     });
   });
 
-  describe('seq.since()', () => {
-    it('should evaluate seq.since() expression', () => {
-      seq.add({ tool: 'bash', args: { command: 'test' }, result: 'ok', timestamp: 1000 });
-      seq.add({ tool: 'edit_file', args: { path: 'a' }, result: 'ok', timestamp: 2000 });
-      seq.add({ tool: 'edit_file', args: { path: 'b' }, result: 'ok', timestamp: 3000 });
-
-      expect(seq.evaluate('seq.since("bash").length === 2')).toBe(true);
+  describe("session.hadError()", () => {
+    it("should evaluate session.hadError() expression", () => {
+      seq.add({ tool: "bash", args: { command: "test" }, result: "error: failed", timestamp: 1000 });
+      seq.markPromptBoundary();
+      expect(seq.evaluate("session.hadError()")).toBe(true);
     });
   });
 
-  describe('seq.sinceEdit()', () => {
-    it('should evaluate seq.sinceEdit() expression', () => {
-      seq.add({ tool: 'edit_file', args: { path: 'test' }, result: 'ok', timestamp: 1000 });
-      seq.add({ tool: 'bash', args: { command: 'lint' }, result: 'ok', timestamp: 2000 });
-
-      expect(seq.evaluate('seq.sinceEdit().length === 1')).toBe(true);
-    });
-  });
-
-  describe('complex expressions', () => {
-    it('should evaluate boolean AND', () => {
-      seq.add({ tool: 'edit_file', args: { path: 'test' }, result: 'ok', timestamp: Date.now() });
-      seq.add({ tool: 'bash', args: { command: 'pnpm lint' }, result: 'ok', timestamp: Date.now() });
+  describe("complex expressions", () => {
+    it("should evaluate boolean AND", () => {
+      seq.add({ tool: "edit_file", args: { path: "test" }, result: "ok", timestamp: Date.now() });
+      seq.add({ tool: "bash", args: { command: "pnpm lint" }, result: "ok", timestamp: Date.now() });
 
       expect(
-        seq.evaluate('seq.has("edit_file") && seq.lastIndexOf("bash#lint") != -1')
+        seq.evaluate('turn.count("edit_file") > 0 && turn.lastIndex("bash#pnpm lint") != -1')
       ).toBe(true);
     });
 
-    it('should evaluate boolean OR', () => {
-      seq.add({ tool: 'edit_file', args: { path: 'test' }, result: 'ok', timestamp: Date.now() });
+    it("should evaluate boolean OR", () => {
+      seq.add({ tool: "edit_file", args: { path: "test" }, result: "ok", timestamp: Date.now() });
 
       expect(
-        seq.evaluate('seq.has("edit_file") || seq.has("write_file")')
+        seq.evaluate('turn.count("edit_file") > 0 || turn.count("write_file") > 0')
       ).toBe(true);
     });
 
-    it('should evaluate negation', () => {
-      seq.add({ tool: 'edit_file', args: { path: 'test' }, result: 'ok', timestamp: Date.now() });
+    it("should evaluate negation", () => {
+      seq.add({ tool: "edit_file", args: { path: "test" }, result: "ok", timestamp: Date.now() });
 
-      expect(seq.evaluate('seq.lastIndexOf("bash#lint") == -1')).toBe(true);
+      expect(seq.evaluate('turn.lastIndex("bash#pnpm lint") == -1')).toBe(true);
     });
 
-    it('should evaluate complex condition', () => {
-      seq.add({ tool: 'edit_file', args: { path: 'test' }, result: 'ok', timestamp: 1000 });
-      seq.add({ tool: 'bash', args: { command: 'pnpm test' }, result: 'ok', timestamp: 2000 });
+    it("should evaluate complex condition", () => {
+      seq.add({ tool: "edit_file", args: { path: "test" }, result: "ok", timestamp: 1000 });
+      seq.add({ tool: "bash", args: { command: "pnpm test" }, result: "ok", timestamp: 2000 });
 
-      const expr = 'seq.has("edit_file") && seq.lastIndexOf("bash#lint") == -1 && seq.count("bash") >= 1';
+      const expr = 'turn.count("edit_file") > 0 && turn.lastIndex("bash#pnpm lint") == -1 && turn.count("bash") >= 1';
       expect(seq.evaluate(expr)).toBe(true);
     });
   });
 
-  describe('literal values', () => {
-    it('should evaluate true', () => {
-      expect(seq.evaluate('true')).toBe(true);
+  describe("literal values", () => {
+    it("should evaluate true", () => {
+      expect(seq.evaluate("true")).toBe(true);
     });
 
-    it('should evaluate false', () => {
-      expect(seq.evaluate('false')).toBe(false);
+    it("should evaluate false", () => {
+      expect(seq.evaluate("false")).toBe(false);
     });
   });
 
-  describe('error handling', () => {
-    it('should return false on syntax error', () => {
-      // Invalid syntax - will throw internally but return false
-      expect(seq.evaluate('seq.has(')).toBe(false);
+  describe("error handling", () => {
+    it("should return false on syntax error", () => {
+      expect(seq.evaluate("turn.count(")).toBe(false);
     });
 
-    it('should return false on undefined function', () => {
-      expect(seq.evaluate('seq.nonexistent()')).toBe(false);
+    it("should return false on undefined function", () => {
+      expect(seq.evaluate("turn.nonexistent()")).toBe(false);
     });
 
-    it('should return false on type error', () => {
-      seq.add({ tool: 'bash', args: { command: 'test' }, result: 'ok', timestamp: Date.now() });
-      // Type errors cause evaluation to fail and return false
-      expect(seq.evaluate('seq.last().args.command.foo')).toBe(false);
+    it("should return false on legacy seq.* syntax", () => {
+      seq.add({ tool: "edit_file", args: { path: "test" }, result: "ok", timestamp: Date.now() });
+      expect(seq.evaluate('seq.has("edit_file")')).toBe(false);
     });
   });
 });
@@ -654,10 +572,10 @@ describe('Sequence.evaluate()', () => {
 // hasSkillInConversation()
 // ============================================================================
 
-describe('Sequence.hasSkillInConversation()', () => {
-  it('should return false without triologue', () => {
+describe("Sequence.hasSkillInConversation()", () => {
+  it("should return false without triologue", () => {
     const seq = new Sequence();
-    expect(seq.hasSkillInConversation('test-skill')).toBe(false);
+    expect(seq.hasSkillInConversation("test-skill")).toBe(false);
   });
 });
 
@@ -665,148 +583,118 @@ describe('Sequence.hasSkillInConversation()', () => {
 // Integration Tests
 // ============================================================================
 
-describe('Sequence Integration Tests', () => {
-  it('should support realistic pre-commit hook scenario', () => {
+describe("Sequence Integration Tests", () => {
+  it("should support realistic pre-commit hook scenario", () => {
     const seq = new Sequence();
 
     // User edits some files
-    seq.add({ tool: 'edit_file', args: { path: 'src/test.ts' }, result: 'ok', timestamp: 1000 });
-    seq.add({ tool: 'edit_file', args: { path: 'src/util.ts' }, result: 'ok', timestamp: 2000 });
+    seq.add({ tool: "edit_file", args: { path: "src/test.ts" }, result: "ok", timestamp: 1000 });
+    seq.add({ tool: "edit_file", args: { path: "src/util.ts" }, result: "ok", timestamp: 2000 });
 
     // Condition: files edited and no lint run yet
     const shouldLint = seq.evaluate(
-      'seq.hasAny(["edit_file", "write_file"]) && seq.lastIndexOf("bash#lint") == -1'
+      'turn.count("edit_file") > 0 && turn.lastIndex("bash#pnpm lint") == -1'
     );
     expect(shouldLint).toBe(true);
 
     // Run lint
-    seq.add({ tool: 'bash', args: { command: 'pnpm lint' }, result: 'ok', timestamp: 3000 });
+    seq.add({ tool: "bash", args: { command: "pnpm lint" }, result: "ok", timestamp: 3000 });
 
     // Now condition should be false
     const shouldLintNow = seq.evaluate(
-      'seq.hasAny(["edit_file", "write_file"]) && seq.lastIndexOf("bash#lint") == -1'
+      'turn.count("edit_file") > 0 && turn.lastIndex("bash#pnpm lint") == -1'
     );
     expect(shouldLintNow).toBe(false);
   });
 
-  it('should support error-triggered wiki search', () => {
+  it("should support error-triggered wiki search", () => {
     const seq = new Sequence();
 
     // No errors yet
-    expect(seq.evaluate('seq.lastError() !== undefined && !seq.has("wiki_get")')).toBe(false);
+    expect(seq.evaluate("turn.hadError() && turn.count('wiki_get') == 0")).toBe(false);
 
     // An error occurs
     seq.add({
-      tool: 'bash',
-      args: { command: 'pnpm build' },
-      result: 'Error: TypeScript compilation failed',
+      tool: "bash",
+      args: { command: "pnpm build" },
+      result: "Error: TypeScript compilation failed",
       timestamp: 1000,
     });
 
     // Should search wiki
     const shouldSearchWiki = seq.evaluate(
-      'seq.lastError() !== undefined && !seq.has("wiki_get")'
+      "turn.hadError() && turn.count('wiki_get') == 0"
     );
     expect(shouldSearchWiki).toBe(true);
 
     // Wiki search done
     seq.add({
-      tool: 'wiki_get',
-      args: { query: 'typescript error', domain: 'pitfall' },
-      result: 'ok',
+      tool: "wiki_get",
+      args: { query: "typescript error", domain: "pitfall" },
+      result: "ok",
       timestamp: 2000,
     });
 
     // Should not search again
     const shouldSearchAgain = seq.evaluate(
-      'seq.lastError() !== undefined && !seq.has("wiki_get")'
+      "turn.hadError() && turn.count('wiki_get') == 0"
     );
     expect(shouldSearchAgain).toBe(false);
   });
 
-  it('should support force push blocking', () => {
-    const seq = new Sequence();
-
-    // Regular push
-    seq.add({
-      tool: 'bash',
-      args: { command: 'git push origin main' },
-      result: 'ok',
-      timestamp: 1000,
-    });
-
-    // Not force push
-    expect(
-      seq.evaluate('seq.last().args.command.includes("force") && seq.last().args.command.includes("main")')
-    ).toBe(false);
-
-    // Force push attempt
-    seq.add({
-      tool: 'bash',
-      args: { command: 'git push --force origin main' },
-      result: 'ok',
-      timestamp: 2000,
-    });
-
-    // Should block
-    expect(
-      seq.evaluate('seq.last().args.command.includes("force") && seq.last().args.command.includes("main")')
-    ).toBe(true);
-  });
-
-  it('should count tool occurrences correctly', () => {
+  it("should count tool occurrences correctly", () => {
     const seq = new Sequence();
 
     // Multiple bash calls
     for (let i = 0; i < 5; i++) {
-      seq.add({ tool: 'bash', args: { command: `echo ${i}` }, result: 'ok', timestamp: i * 1000 });
+      seq.add({ tool: "bash", args: { command: `echo ${i}` }, result: "ok", timestamp: i * 1000 });
     }
 
     // Check count
-    expect(seq.evaluate('seq.count("bash") >= 3')).toBe(true);
-    expect(seq.evaluate('seq.count("bash") >= 5')).toBe(true);
-    expect(seq.evaluate('seq.count("bash") > 5')).toBe(false);
+    expect(seq.evaluate('turn.count("bash") >= 3')).toBe(true);
+    expect(seq.evaluate('turn.count("bash") >= 5')).toBe(true);
+    expect(seq.evaluate('turn.count("bash") > 5')).toBe(false);
   });
 });
 
 // ============================================================================
-// seq.isPlanMode()
+// isPlanMode()
 // ============================================================================
 
-describe('seq.isPlanMode()', () => {
-  it('should return false when mode getter not provided', () => {
+describe("isPlanMode()", () => {
+  it("should return false when mode getter not provided", () => {
     const seq = new Sequence();
     expect(seq.isPlanMode()).toBe(false);
   });
 
-  it('should return true when in plan mode', () => {
-    const seq = new Sequence(undefined, () => 'plan');
+  it("should return true when in plan mode", () => {
+    const seq = new Sequence(undefined, () => "plan");
     expect(seq.isPlanMode()).toBe(true);
   });
 
-  it('should return false when in normal mode', () => {
-    const seq = new Sequence(undefined, () => 'normal');
+  it("should return false when in normal mode", () => {
+    const seq = new Sequence(undefined, () => "normal");
     expect(seq.isPlanMode()).toBe(false);
   });
 });
 
-describe('Sequence.evaluate() with isPlanMode', () => {
-  it('should evaluate seq.isPlanMode() expression', () => {
-    const seq = new Sequence(undefined, () => 'plan');
-    expect(seq.evaluate('seq.isPlanMode()')).toBe(true);
+describe("Sequence.evaluate() with isPlanMode", () => {
+  it("should evaluate isPlanMode() expression", () => {
+    const seq = new Sequence(undefined, () => "plan");
+    expect(seq.evaluate("isPlanMode()")).toBe(true);
   });
 
-  it('should prevent hook in plan mode', () => {
-    const seq = new Sequence(undefined, () => 'plan');
-    seq.add({ tool: 'edit_file', args: { path: 'test' }, result: 'ok', timestamp: Date.now() });
-    
-    expect(seq.evaluate('seq.has("edit_file") && !seq.isPlanMode()')).toBe(false);
+  it("should prevent hook in plan mode", () => {
+    const seq = new Sequence(undefined, () => "plan");
+    seq.add({ tool: "edit_file", args: { path: "test" }, result: "ok", timestamp: Date.now() });
+
+    expect(seq.evaluate('turn.count("edit_file") > 0 && !isPlanMode()')).toBe(false);
   });
 
-  it('should allow hook in normal mode', () => {
-    const seq = new Sequence(undefined, () => 'normal');
-    seq.add({ tool: 'edit_file', args: { path: 'test' }, result: 'ok', timestamp: Date.now() });
-    
-    expect(seq.evaluate('seq.has("edit_file") && !seq.isPlanMode()')).toBe(true);
+  it("should allow hook in normal mode", () => {
+    const seq = new Sequence(undefined, () => "normal");
+    seq.add({ tool: "edit_file", args: { path: "test" }, result: "ok", timestamp: Date.now() });
+
+    expect(seq.evaluate('turn.count("edit_file") > 0 && !isPlanMode()')).toBe(true);
   });
 });

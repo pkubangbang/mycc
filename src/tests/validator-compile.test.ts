@@ -11,7 +11,7 @@ describe('compileCondition()', () => {
     it('should compile valid JSON response', async () => {
       const jsonResponse = JSON.stringify({
         trigger: ['git_commit'],
-        condition: 'seq.has("edit_file")',
+        condition: 'turn.count("edit_file") > 0',
         action: { type: 'inject_before', tool: 'bash', args: { command: 'pnpm lint', intent: 'TEST ARTIFACT TO verify lint' } },
       });
 
@@ -103,7 +103,7 @@ describe('compileCondition()', () => {
     it('should fail on expression syntax error', async () => {
       const jsonResponse = JSON.stringify({
         trigger: ['bash'],
-        condition: 'seq.has(', // Invalid syntax
+        condition: 'turn.count(', // Invalid syntax
         action: { type: 'message' },
       });
 
@@ -120,7 +120,7 @@ describe('ConditionValidator.validate()', () => {
     const condition: Condition = {
       trigger: ['bash'],
       when: 'test',
-      condition: 'seq.has("edit_file")',
+      condition: 'turn.count("edit_file") > 0',
       action: { type: 'message' },
       version: 1,
     };

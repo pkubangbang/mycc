@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Tests for hooks.ts
  *
  * Tests cover:
@@ -145,7 +145,7 @@ describe('HookExecutor', () => {
       registry.set('has-edits', {
         trigger: ['git_commit'],
         when: 'has file edits',
-        condition: 'seq.hasAny(["edit_file", "write_file"])',
+        condition: 'turn.count("edit_file") > 0 || turn.count("write_file") > 0',
         action: { type: 'message' },
         version: 1,
       });
@@ -175,7 +175,7 @@ describe('HookExecutor', () => {
       // Mark as injected
       registry.markInjected('test-hook');
 
-      // Second check - should still match (per-move dedup happens in execute(), not matches())
+      // Second check - should still match (per-chat dedup happens in execute(), not matches())
       expect(executor.checkHooks('bash')).toContain('test-hook');
     });
   });
@@ -453,7 +453,7 @@ describe('HookExecutor', () => {
       registry.set('plan-quality', {
         trigger: ['stop'],
         when: 'replace stop with skill load',
-        condition: 'seq.isPlanMode() && seq.totalCount("skill_load#plan-quality") == 0',
+        condition: 'isPlanMode() && session.count("skill_load#plan-quality") == 0',
         action: {
           type: 'replace',
           tool: 'skill_load',
@@ -479,7 +479,7 @@ describe('HookExecutor', () => {
     });
 
     it('processStopTrigger should replace stop with a skill_load call end-to-end', async () => {
-      // Use plan mode so seq.isPlanMode() is true. The shared beforeEach
+      // Use plan mode so isPlanMode() is true. The shared beforeEach
       // sequence has no mode getter (defaults to normal), so build a plan-mode
       // sequence + executor bound to it for this test.
       (ctx.core.getMode as ReturnType<typeof vi.fn>).mockReturnValue('plan' as const);
@@ -489,7 +489,7 @@ describe('HookExecutor', () => {
       registry.set('plan-quality', {
         trigger: ['stop'],
         when: 'replace stop with skill load when in plan mode and skill not loaded',
-        condition: 'seq.isPlanMode() && seq.totalCount("skill_load#plan-quality") == 0',
+        condition: 'isPlanMode() && session.count("skill_load#plan-quality") == 0',
         action: {
           type: 'replace',
           tool: 'skill_load',
@@ -532,7 +532,7 @@ describe('HookExecutor', () => {
       registry.set('plan-quality', {
         trigger: ['stop'],
         when: 'replace stop with skill load',
-        condition: 'seq.isPlanMode() && seq.totalCount("skill_load#plan-quality") == 0',
+        condition: 'isPlanMode() && session.count("skill_load#plan-quality") == 0',
         action: {
           type: 'replace',
           tool: 'skill_load',
@@ -548,7 +548,7 @@ describe('HookExecutor', () => {
 
       // Batch 2 (same turn, e.g. after the skill_load resolves and the agent
       // stops again): the hook must NOT re-fire — otherwise it would loop
-      // forever replacing stop with skill_load. injectedThisMove is cleared
+      // forever replacing stop with skill_load. injectedThisChat is cleared
       // each processToolCalls call, so without stopDisturbance this would fire.
       const r2 = await ex.processToolCalls([], ctx, getSkill);
       expect(r2.calls).toHaveLength(0); // stop proceeds — no re-replacement
@@ -561,7 +561,7 @@ describe('HookExecutor', () => {
       registry.set('plan-quality', {
         trigger: ['stop'],
         when: 'replace stop with skill load',
-        condition: 'seq.isPlanMode() && seq.totalCount("skill_load#plan-quality") == 0',
+        condition: 'isPlanMode() && session.count("skill_load#plan-quality") == 0',
         action: {
           type: 'replace',
           tool: 'skill_load',
@@ -589,14 +589,14 @@ describe('HookExecutor', () => {
       registry.set('hook-a', {
         trigger: ['stop'],
         when: 'a',
-        condition: 'seq.isPlanMode()',
+        condition: 'isPlanMode()',
         action: { type: 'replace', tool: 'skill_load', args: { name: 'a' } },
         version: 1,
       });
       registry.set('hook-b', {
         trigger: ['stop'],
         when: 'b',
-        condition: 'seq.isPlanMode()',
+        condition: 'isPlanMode()',
         action: { type: 'replace', tool: 'skill_load', args: { name: 'b' } },
         version: 1,
       });
@@ -682,11 +682,11 @@ describe('HookExecutor', () => {
   });
 
   // ============================================================================
-  // Per-move duplicate prevention
+  // Per-chat duplicate prevention
   // ============================================================================
 
-  describe('per-move duplicate prevention', () => {
-    it('should deduplicate within the same move', async () => {
+  describe('per-chat duplicate prevention', () => {
+    it('should deduplicate within the same chat', async () => {
       registry.set('test-hook', {
         trigger: ['bash'],
         when: 'test',
@@ -707,7 +707,7 @@ describe('HookExecutor', () => {
       );
       expect(result1.message).toContain('test-hook');
 
-      // Second execution in same move — should be deduped
+      // Second execution in same chat — should be deduped
       const result2 = await executor.execute(
         'test-hook',
         registry.get('test-hook')!.action,
@@ -715,7 +715,7 @@ describe('HookExecutor', () => {
         pendingCalls,
         'Test content'
       );
-      expect(result2.message).toContain('already injected this move');
+      expect(result2.message).toContain('already injected this chat');
     });
 
     it('should allow reactivation in a new move', async () => {
@@ -739,7 +739,7 @@ describe('HookExecutor', () => {
       );
       expect(result.message).toContain('test-hook');
 
-      // Simulate new move — processToolCalls clears injectedThisMove
+      // Simulate new move — processToolCalls clears injectedThisChat
       await executor.processToolCalls([], ctx, (name) =>
         name === 'test-hook' ? { content: 'Test content' } : undefined
       );
@@ -766,7 +766,7 @@ describe('HookExecutor', () => {
       registry.set('pre-commit-lint', {
         trigger: ['git_commit'],
         when: 'run lint before commit if files changed',
-        condition: 'seq.hasAny(["edit_file", "write_file"]) && seq.lastIndexOf("bash#lint") == -1',
+        condition: '(turn.count("edit_file") > 0 || turn.count("write_file") > 0) && turn.lastIndex("bash#pnpm lint") == -1',
         action: {
           type: 'inject_before',
           tool: 'bash',
@@ -801,7 +801,7 @@ describe('HookExecutor', () => {
       registry.set('pre-commit-lint', {
         trigger: ['git_commit'],
         when: 'run lint before commit',
-        condition: 'seq.hasAny(["edit_file", "write_file"]) && seq.lastIndexOf("bash#lint") == -1',
+        condition: '(turn.count("edit_file") > 0 || turn.count("write_file") > 0) && turn.lastIndex("bash#pnpm lint") == -1',
         action: {
           type: 'inject_before',
           tool: 'bash',
@@ -823,7 +823,7 @@ describe('HookExecutor', () => {
       registry.set('block-force-main', {
         trigger: ['bash'],
         when: 'block force push to main',
-        condition: 'seq.last().args.command.includes("force") && seq.last().args.command.includes("main")',
+        condition: 'turn.count("bash#git push --force") > 0',
         action: {
           type: 'block',
           reason: 'Force pushing to main branch is prohibited. Please create a feature branch.',
@@ -856,7 +856,7 @@ describe('HookExecutor', () => {
       registry.set('error-wiki', {
         trigger: ['*'],
         when: 'search wiki on error',
-        condition: 'seq.lastError() !== undefined',
+        condition: 'turn.hadError()',
         action: {
           type: 'inject_before',
           tool: 'wiki_get',
