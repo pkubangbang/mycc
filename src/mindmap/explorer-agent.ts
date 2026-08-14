@@ -911,12 +911,7 @@ export async function summarizeWithExplorer(
         messages: [
           {
             role: 'user',
-            content:
-              `You are writing a summary for documentation section "${nodeTitle}".\n\n` +
-              `## Section content\n${nodeText.slice(0, 4000)}\n\n` +
-              `## Parent context\n${ancestorContext?.slice(0, 2000) || '(none)'}\n\n` +
-              `Below is a compact transcript of an exploration session. Based on it, write a concise summary (50-200 words):\n\n` +
-              conversationText,
+            content: `You are writing a summary for documentation section "${nodeTitle}".\n\n## Section content\n${nodeText.slice(0, 4000)}\n\n## Parent context\n${ancestorContext?.slice(0, 2000) || '(none)'}\n\nBelow is a compact transcript of an exploration session. Based on it, write a concise summary (50-200 words):\n\n${conversationText}`,
           },
         ],
         think: false,

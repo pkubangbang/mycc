@@ -176,25 +176,49 @@ function timeStr(m: ChatMessage): string {
 // Auto-scroll the body of an expanded accordion to the bottom when new
 // messages arrive, mirroring ChatLog.vue's stick-to-bottom behavior. We use
 // a per-teammate ref map.
+//
+// Stick-to-bottom: each body tracks whether the user has scrolled up. New
+// messages only auto-scroll to the bottom when the user is already at (or
+// near) the bottom — if the user scrolled up to read older messages, the
+// scroll position is preserved. This mirrors ChatLog.vue's userScrolledUp /
+// isAtBottom pattern so the teammate drawer doesn't yank the user back to
+// the bottom every time a new message arrives.
 const bodyRefs = new Map<string, HTMLElement | null>();
+const bodyScrolledUp = new Map<string, boolean>();
 
 function setBodyRef(name: string, el: Element | ComponentPublicInstance | null): void {
   bodyRefs.set(name, (el instanceof HTMLElement) ? el : null);
+}
+
+function isBodyAtBottom(name: string): boolean {
+  const el = bodyRefs.get(name);
+  if (!el) return true;
+  return el.scrollHeight - el.scrollTop - el.clientHeight < 50;
 }
 
 function scrollToBottom(name: string): void {
   const el = bodyRefs.get(name);
   if (el) {
     el.scrollTop = el.scrollHeight;
+    bodyScrolledUp.set(name, false);
   }
 }
 
-// Watch each group's message count; when it grows, scroll the body to bottom.
+function onBodyScroll(name: string): void {
+  if (isBodyAtBottom(name)) {
+    bodyScrolledUp.set(name, false);
+  } else {
+    bodyScrolledUp.set(name, true);
+  }
+}
+
+// Watch each group's message count; when it grows, scroll the body to bottom
+// ONLY if the user hasn't scrolled up (stick-to-bottom behavior).
 watch(
   () => groups.value.map(g => `${g.name}:${g.messages.length}`).join('|'),
   () => {
     for (const g of groups.value) {
-      if (expanded.value.has(g.name)) {
+      if (expanded.value.has(g.name) && !bodyScrolledUp.get(g.name)) {
         nextTick(() => scrollToBottom(g.name));
       }
     }
@@ -300,6 +324,7 @@ const drawerStyle = computed(() =>
           v-if="expanded.has(g.name)"
           class="accordion-body"
           :ref="(el) => setBodyRef(g.name, el)"
+          @scroll="onBodyScroll(g.name)"
         >
           <div
             v-for="(m, idx) in g.messages"
