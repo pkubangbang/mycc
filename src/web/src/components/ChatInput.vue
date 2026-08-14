@@ -183,23 +183,27 @@ function send(): void {
     // A prompt is pending — this is a fresh user query.
     chatApi.sendInput(value, files);
     sent = true;
-  } else if (props.state.isRunning || props.state.isAutoMode) {
-    // The agent is actively working OR it is in auto mode (idle in the WAIT
-    // state). In both cases there is no PROMPT waiting for a fresh query, so
-    // the input is a mid-task steering note — buffered in the backend queue
-    // and consumed at the next COLLECT (injected as a REMINDER) or PROMPT
-    // (synthesized via forkChat after an interrupt). Auto mode keeps this
-    // branch reachable even from the idle WAIT state, where isRunning is
-    // false but isAutoMode is true.
+  } else {
+    // Every other connected state: the agent is actively working, in auto
+    // mode, OR in the transient send→running gap (right after sendInput
+    // set isWaiting=false but before the backend's running:on arrives,
+    // so none of isWaiting/isRunning/isAutoMode is true yet). In all these
+    // cases there is no PROMPT waiting for a fresh query, so the input is a
+    // mid-task steering note — buffered in the backend queue and consumed
+    // at the next COLLECT (injected as a REMINDER) or PROMPT (synthesized
+    // via forkChat after an interrupt). Auto mode keeps this branch
+    // reachable even from the idle WAIT state, where isRunning is false
+    // but isAutoMode is true. Routing the gap through sendSteer (rather
+    // than dropping it as a no-op) means the send button — now always
+    // enabled whenever there is text — never silently swallows a click.
     chatApi.sendSteer(value, files);
     sent = true;
   }
-  // Clear only after an actual send. The no-op paths above (card-pending
-  // guard, and the send→running gap where none of isWaiting/isRunning/
-  // isAutoMode is true yet) return without sending — leaving the typed text
-  // buffered in the box so the user can press Enter again once the state
-  // changes. The old code cleared unconditionally here, which wiped buffered
-  // text during the gap — the data loss this guard prevents.
+  // Clear only after an actual send. The only remaining no-op path is the
+  // card-pending guard above, which returns without sending — leaving the
+  // typed text buffered in the box so the user can press Enter again once
+  // the card is dismissed. The old code cleared unconditionally here, which
+  // wiped buffered text during the gap — the data loss this guard prevents.
   if (sent) {
     text.value = '';
     localFiles.value = [];
@@ -445,7 +449,7 @@ const inputAreaStyle = computed(() =>
       />
       <button
         class="send-btn"
-        :disabled="state.hasPendingCard || (!text.trim() && localFiles.length === 0) || (!state.isWaiting && !state.showRetry && !state.isRunning && !state.isAutoMode) || state.connectionStatus !== 'connected'"
+        :disabled="state.hasPendingCard || (!text.trim() && localFiles.length === 0) || state.connectionStatus !== 'connected'"
         @click="send"
       >发送</button>
     </div>
