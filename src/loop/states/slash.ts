@@ -11,7 +11,7 @@
 
 import chalk from 'chalk';
 import { AgentState } from '../state-machine.js';
-import type { MachineEnv, TurnVars, PassData, HandlerResult } from '../state-machine.js';
+import type { MachineEnv, TurnVars, ChatData, HandlerResult } from '../state-machine.js';
 import type { SlashCommandContext } from '../../types.js';
 import { slashRegistry } from '../../slashes/index.js';
 
@@ -25,7 +25,7 @@ export function setSlashQuery(query: string): void {
 export async function handleSlash(
   env: MachineEnv,
   _turn: TurnVars,
-  _pass: PassData,
+  _chat: ChatData,
 ): Promise<HandlerResult> {
   const { ctx, triologue, sessionFilePath } = env;
   const query = slashQuery;

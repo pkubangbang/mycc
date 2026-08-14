@@ -27,7 +27,7 @@
 
 import chalk from 'chalk';
 import { AgentState } from '../state-machine.js';
-import type { MachineEnv, TurnVars, PassData, HandlerResult } from '../state-machine.js';
+import type { MachineEnv, TurnVars, ChatData, HandlerResult } from '../state-machine.js';
 import { agentIO } from '../agent-io.js';
 import { autoState } from '../auto-state.js';
 import { getServeHub } from '../../serve/serve-registry.js';
@@ -64,7 +64,7 @@ function eventPending(env: MachineEnv): boolean {
 export async function handleWait(
   env: MachineEnv,
   _turn: TurnVars,
-  _pass: PassData,
+  _chat: ChatData,
 ): Promise<HandlerResult> {
   const { ctx, triologue } = env;
 
@@ -98,7 +98,7 @@ export async function handleWait(
 
     if (eventPending(env)) {
       // A teammate becoming active means we should await their cycle so the
-      // lead collects the resulting mail / question in one COLLECT pass.
+      // lead collects the resulting mail / question in one COLLECT chat.
       const teammates = ctx.team.listTeammates();
       const active = teammates.some((t) => t.status === 'holding' || t.status === 'working');
       if (active) {

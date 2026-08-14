@@ -1,7 +1,7 @@
 /**
  * esc-test-helpers.ts - Shared test utilities for ESC-neglection loop tests.
  *
- * Provides factories for TurnVars, PassData, mock ChatResponse, mock ToolCall,
+ * Provides factories for TurnVars, ChatData, mock ChatResponse, mock ToolCall,
  * mock HookResult, and a fully-wired MachineEnv with mocked dependencies.
  *
  * NOTE: This file does NOT import Triologue — test files import it themselves
@@ -10,7 +10,7 @@
  */
 import { vi } from 'vitest';
 import { createMockContext, type MockContextOptions } from '../test-utils/mock-context.js';
-import type { MachineEnv, TurnVars, PassData } from '../../loop/state-machine.js';
+import type { MachineEnv, TurnVars, ChatData } from '../../loop/state-machine.js';
 import type { ToolCall, ToolScope } from '../../types.js';
 import type { ConditionRegistry } from '../../hook/conditions.js';
 import type { Sequence } from '../../hook/sequence.js';
@@ -36,8 +36,8 @@ export function createTurnVars(overrides: Partial<TurnVars> = {}): TurnVars {
   };
 }
 
-/** Create a fresh PassData with default values. */
-export function createPassData(overrides: Partial<PassData> = {}): PassData {
+/** Create a fresh ChatData with default values. */
+export function createChatData(overrides: Partial<ChatData> = {}): ChatData {
   return {
     abortController: null,
     rawToolCalls: [],

@@ -484,6 +484,8 @@ export interface CrossroadResult {
   truncated: string;
   /** The best continuation text */
   continuation: string;
+  /** All candidate continuations (for the crossroad record file) */
+  candidates: string[];
 }
 
 /**
@@ -546,7 +548,7 @@ export async function handleCrossroad(
 
     selectedIndex = continuations.indexOf(best);
     agentIO.verbose('crossroad', `Selected continuation #${selectedIndex + 1}: ${best.slice(0, 150)}...`);
-    result = { truncated: prefix, continuation: best };
+    result = { truncated: prefix, continuation: best, candidates: continuations };
     return result;
   } finally {
     stopSpinner();

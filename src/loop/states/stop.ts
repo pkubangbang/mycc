@@ -7,14 +7,14 @@
 
 import chalk from 'chalk';
 import { AgentState, presentResult } from '../state-machine.js';
-import type { MachineEnv, TurnVars, PassData, HandlerResult } from '../state-machine.js';
+import type { MachineEnv, TurnVars, ChatData, HandlerResult } from '../state-machine.js';
 import { agentIO } from '../agent-io.js';
 import { autoState } from '../auto-state.js';
 
 export async function handleStop(
   env: MachineEnv,
   _turn: TurnVars,
-  _pass: PassData,
+  _chat: ChatData,
 ): Promise<HandlerResult> {
   const { triologue, ctx } = env;
 

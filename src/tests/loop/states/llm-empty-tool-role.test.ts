@@ -18,7 +18,7 @@
  * spins forever.
  *
  * Code path under test (llm.ts empty-output handler):
- *   if (!pass.assistantContent && pass.rawToolCalls.length === 0) {
+ *   if (!chat.assistantContent && chat.rawToolCalls.length === 0) {
  *     emptyRetries++;
  *     if (emptyRetries > MAX_EMPTY_RETRIES) { stopSpinner(); return PROMPT; }
  *     triologue.agent('', [{ brief ... }]);
@@ -54,7 +54,7 @@ vi.mock('../../../loop/esc-wrap-up.js', () => ({
 }));
 
 // handleCrossroad returns null (no crossroad fires) so the empty-output path
-// is reached with pass.assistantContent === '' and rawToolCalls === [].
+// is reached with chat.assistantContent === '' and rawToolCalls === [].
 vi.mock('../../../loop/crossroad.js', () => ({ handleCrossroad: vi.fn() }));
 vi.mock('../../../engine/chat-helpers.js', () => ({ stopSpinner: vi.fn() }));
 
@@ -101,7 +101,7 @@ import { Triologue } from '../../../loop/triologue.js';
 import { autoState } from '../../../loop/auto-state.js';
 import {
   createTurnVars,
-  createPassData,
+  createChatData,
   createMockMachineEnv,
   createMockChatResponse,
 } from '../esc-test-helpers.js';
@@ -140,9 +140,9 @@ describe('handleLlm — empty output when lastRole === "tool" (img_describe regr
 
     const env = createMockMachineEnv({ triologue });
     const turn = createTurnVars();
-    const pass = createPassData();
+    const chat = createChatData();
 
-    const result = await handleLlm(env, turn, pass);
+    const result = await handleLlm(env, turn, chat);
 
     // Reached the success path.
     expect(result).toBe(AgentState.HOOK);
@@ -162,9 +162,9 @@ describe('handleLlm — empty output when lastRole === "tool" (img_describe regr
 
     const env = createMockMachineEnv({ triologue });
     const turn = createTurnVars();
-    const pass = createPassData();
+    const chat = createChatData();
 
-    const result = await handleLlm(env, turn, pass);
+    const result = await handleLlm(env, turn, chat);
 
     // Backstop fired — control returned to the user, not an infinite spin.
     expect(result).toBe(AgentState.PROMPT);
@@ -187,9 +187,9 @@ describe('handleLlm — empty output when lastRole === "tool" (img_describe regr
 
     const env = createMockMachineEnv({ triologue });
     const turn = createTurnVars();
-    const pass = createPassData();
+    const chat = createChatData();
 
-    const result = await handleLlm(env, turn, pass);
+    const result = await handleLlm(env, turn, chat);
 
     expect(result).toBe(AgentState.HOOK);
     expect(triologue.agent).toHaveBeenCalledTimes(1);
@@ -205,9 +205,9 @@ describe('handleLlm — empty output when lastRole === "tool" (img_describe regr
 
     const env = createMockMachineEnv({ triologue });
     const turn = createTurnVars();
-    const pass = createPassData();
+    const chat = createChatData();
 
-    const result = await handleLlm(env, turn, pass);
+    const result = await handleLlm(env, turn, chat);
 
     expect(result).toBe(AgentState.HOOK);
     // recordLlmSuccess is on the success exit path only — called exactly once.

@@ -91,7 +91,7 @@ import { loader } from '../../../context/shared/loader.js';
 import { Triologue } from '../../../loop/triologue.js';
 import {
   createTurnVars,
-  createPassData,
+  createChatData,
   createMockMachineEnv,
   createMockAugmentedToolCall,
   createMockHookResult,
@@ -110,9 +110,9 @@ describe('handleTool — ESC handling before / between / during tool execution',
   it('should return COLLECT immediately when hookResult is null', async () => {
     const env = createMockMachineEnv({ triologue });
     const turn = createTurnVars();
-    const pass = createPassData({ hookResult: null });
+    const chat = createChatData({ hookResult: null });
 
-    const result = await handleTool(env, turn, pass);
+    const result = await handleTool(env, turn, chat);
 
     expect(result).toBe(AgentState.COLLECT);
   });
@@ -121,7 +121,7 @@ describe('handleTool — ESC handling before / between / during tool execution',
   it('should skip all tools, clear neglected mode, and return PROMPT when ESC at entry', async () => {
     const env = createMockMachineEnv({ triologue });
     const turn = createTurnVars();
-    const pass = createPassData({
+    const chat = createChatData({
       hookResult: createMockHookResult({
         calls: [createMockAugmentedToolCall('bash', { command: 'ls' })],
       }),
@@ -130,7 +130,7 @@ describe('handleTool — ESC handling before / between / during tool execution',
     // Simulate ESC already pressed before entering handleTool
     agentIO.setNeglectedMode(true);
 
-    const result = await handleTool(env, turn, pass);
+    const result = await handleTool(env, turn, chat);
 
     expect(result).toBe(AgentState.PROMPT);
     // Neglected mode cleared before returning to PROMPT
@@ -156,11 +156,11 @@ describe('handleTool — ESC handling before / between / during tool execution',
     const call1 = createMockAugmentedToolCall('bash', { command: 'ls' });
     const call2 = createMockAugmentedToolCall('read_file', { path: 'b.ts' });
     const turn = createTurnVars();
-    const pass = createPassData({
+    const chat = createChatData({
       hookResult: createMockHookResult({ calls: [call1, call2] }),
     });
 
-    const result = await handleTool(env, turn, pass);
+    const result = await handleTool(env, turn, chat);
 
     expect(result).toBe(AgentState.PROMPT);
     // The interrupted output WAS registered as a tool result (triologue.tool)
@@ -177,14 +177,14 @@ describe('handleTool — ESC handling before / between / during tool execution',
     const blockedMsg = 'blocked by safety hook';
     const call = createMockAugmentedToolCall('bash', { command: 'rm -rf /' });
     const turn = createTurnVars();
-    const pass = createPassData({
+    const chat = createChatData({
       hookResult: createMockHookResult({
         calls: [call],
         blockedCalls: new Map([[call.id, blockedMsg]]),
       }),
     });
 
-    const result = await handleTool(env, turn, pass);
+    const result = await handleTool(env, turn, chat);
 
     expect(result).toBe(AgentState.COLLECT);
     // The rejection is registered as a tool result (not executed)
@@ -202,13 +202,13 @@ describe('handleTool — ESC handling before / between / during tool execution',
 
     const call = createMockAugmentedToolCall('read_file', { path: 'a.ts' });
     const turn = createTurnVars();
-    const pass = createPassData({
+    const chat = createChatData({
       hookResult: createMockHookResult({ calls: [call] }),
     });
 
     vi.mocked(loader.execute).mockResolvedValueOnce('file contents here');
 
-    const result = await handleTool(env, turn, pass);
+    const result = await handleTool(env, turn, chat);
 
     expect(result).toBe(AgentState.COLLECT);
     expect(loader.execute).toHaveBeenCalledTimes(1);

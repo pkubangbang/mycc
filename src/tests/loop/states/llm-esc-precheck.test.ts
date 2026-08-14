@@ -80,7 +80,7 @@ import { retryChat } from '../../../engine/chat-provider.js';
 import { Triologue } from '../../../loop/triologue.js';
 import {
   createTurnVars,
-  createPassData,
+  createChatData,
   createMockMachineEnv,
 } from '../esc-test-helpers.js';
 
@@ -95,9 +95,9 @@ describe('handleLlm — ESC pre-check (isNeglectedMode before escAware)', () => 
   it('should call startWrapUp with triologue and (empty) tools, then return PROMPT', async () => {
     const env = createMockMachineEnv({ triologue });
     const turn = createTurnVars();
-    const pass = createPassData();
+    const chat = createChatData();
 
-    const result = await handleLlm(env, turn, pass);
+    const result = await handleLlm(env, turn, chat);
 
     expect(result).toBe(AgentState.PROMPT);
     expect(startWrapUp).toHaveBeenCalledTimes(1);
@@ -108,9 +108,9 @@ describe('handleLlm — ESC pre-check (isNeglectedMode before escAware)', () => 
   it('should clear neglected mode after starting wrap-up', async () => {
     const env = createMockMachineEnv({ triologue });
     const turn = createTurnVars();
-    const pass = createPassData();
+    const chat = createChatData();
 
-    await handleLlm(env, turn, pass);
+    await handleLlm(env, turn, chat);
 
     expect(agentIO.setNeglectedMode).toHaveBeenCalledWith(false);
   });
@@ -118,9 +118,9 @@ describe('handleLlm — ESC pre-check (isNeglectedMode before escAware)', () => 
   it('should not call retryChat when already in neglected mode', async () => {
     const env = createMockMachineEnv({ triologue });
     const turn = createTurnVars();
-    const pass = createPassData();
+    const chat = createChatData();
 
-    await handleLlm(env, turn, pass);
+    await handleLlm(env, turn, chat);
 
     expect(retryChat).not.toHaveBeenCalled();
   });
@@ -128,9 +128,9 @@ describe('handleLlm — ESC pre-check (isNeglectedMode before escAware)', () => 
   it('should stop the spinner before returning to PROMPT', async () => {
     const env = createMockMachineEnv({ triologue });
     const turn = createTurnVars();
-    const pass = createPassData();
+    const chat = createChatData();
 
-    await handleLlm(env, turn, pass);
+    await handleLlm(env, turn, chat);
 
     // stopSpinner is called at line 60 (before startWrapUp)
     expect(stopSpinner).toHaveBeenCalled();

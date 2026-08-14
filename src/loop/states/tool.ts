@@ -7,7 +7,7 @@
  */
 
 import { AgentState } from '../state-machine.js';
-import type { MachineEnv, TurnVars, PassData, HandlerResult } from '../state-machine.js';
+import type { MachineEnv, TurnVars, ChatData, HandlerResult } from '../state-machine.js';
 import { agentIO } from '../agent-io.js';
 import { ResultTooLargeError } from '../../types.js';
 import { loader } from '../../context/shared/loader.js';
@@ -50,10 +50,10 @@ function isErrorResult(result: string): boolean {
 export async function handleTool(
   env: MachineEnv,
   turn: TurnVars,
-  pass: PassData,
+  chat: ChatData,
 ): Promise<HandlerResult> {
   const { triologue, ctx, sequence } = env;
-  const hookResult = pass.hookResult;
+  const hookResult = chat.hookResult;
   if (!hookResult) return AgentState.COLLECT;
 
   // Execute each tool call sequentially

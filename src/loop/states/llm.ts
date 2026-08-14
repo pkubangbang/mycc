@@ -3,7 +3,7 @@
  *
  * Builds the system prompt, calls retryChat with internal retry loop,
  * handles abort and transient errors, and stores the response data
- * on PassData for downstream states.
+ * on ChatData for downstream states.
  *
  * Crossroad feature:
  * - After LLM response, detect turning words (However, Wait, 但, etc.)
@@ -18,7 +18,7 @@
 
 import chalk from 'chalk';
 import { AgentState } from '../state-machine.js';
-import type { MachineEnv, TurnVars, PassData, HandlerResult } from '../state-machine.js';
+import type { MachineEnv, TurnVars, ChatData, HandlerResult } from '../state-machine.js';
 import type { ToolCall } from '../../types.js';
 import { retryChat, MODEL } from '../../engine/chat-provider.js';
 import { stopSpinner } from '../../engine/chat-helpers.js';
@@ -29,11 +29,14 @@ import { startWrapUp } from '../esc-wrap-up.js';
 import { loader } from '../../context/shared/loader.js';
 import { handleCrossroad } from '../crossroad.js';
 import { loopEvents } from '../loop-events.js';
+import * as fs from 'fs';
+import * as path from 'path';
+import { getSessionContext, getSessionDir } from '../../config.js';
 
 export async function handleLlm(
   env: MachineEnv,
   turn: TurnVars,
-  pass: PassData,
+  chat: ChatData,
 ): Promise<HandlerResult> {
   const { triologue, ctx, scope, inputProvider } = env;
 
@@ -49,23 +52,23 @@ export async function handleLlm(
   //    is the EXACT cache prefix the next retryChat will use — so the forkChat
   //    inside compact() is a guaranteed cache hit.
   //
-  // 2. Deferred — pass.deferredCompact: a hook (e.g. compact-on-intent-trap)
+  // 2. Deferred — chat.deferredCompact: a hook (e.g. compact-on-intent-trap)
   //    requested compaction during the HOOK state. Rather than compacting
   //    mid-HOOK (no tools in scope), the HOOK set this flag and we consume it
   //    here for the same cache-friendliness reason.
   //
   // Both reset the stale stat counts (confusion, sequence, crossroad cooldown)
   // because the old context is summarized away.
-  if (triologue.needsCompact() || pass.deferredCompact) {
+  if (triologue.needsCompact() || chat.deferredCompact) {
     const compactTools = loader.getToolsForScope(scope);
-    const reason = pass.deferredCompact
+    const reason = chat.deferredCompact
       ? 'Compacting context (hook-deferred)...'
       : 'Context threshold exceeded, compacting...';
     ctx.core.brief('info', 'autoCompact', reason);
     // Observability: emit compact_triggered (silent when no listeners)
-    loopEvents.emit('compact_triggered', { reason: pass.deferredCompact ? 'deferred' : 'proactive' });
+    loopEvents.emit('compact_triggered', { reason: chat.deferredCompact ? 'deferred' : 'proactive' });
     await triologue.compact(turn.lastUserQuery || undefined, undefined, compactTools);
-    pass.deferredCompact = false;
+    chat.deferredCompact = false;
     // Reset stat counts — old context is summarized away.
     ctx.core.resetConfusionIndex();
     env.requestEmbeddingTracker.clear();
@@ -113,7 +116,7 @@ export async function handleLlm(
       const response = await ctx.core.escAware(
         async (abortController) => {
           // Store abort controller for potential external abort
-          pass.abortController = abortController;
+          chat.abortController = abortController;
 
           // Observability: emit llm_call (silent when no listeners)
           loopEvents.emit('llm_call', { model: MODEL, toolCount: tools.length });
@@ -148,20 +151,20 @@ export async function handleLlm(
 
       // Store response data on pass for downstream states
       const assistantMessage = response.message;
-      pass.rawToolCalls = assistantMessage.tool_calls
+      chat.rawToolCalls = assistantMessage.tool_calls
         ? [...(assistantMessage.tool_calls as ToolCall[])]
         : [];
-      pass.assistantContent = assistantMessage.content || '';
+      chat.assistantContent = assistantMessage.content || '';
       // Read the assistant's reasoning/thinking. Ollama exposes it as the
       // `thinking` field; DeepSeek exposes it as `reasoning_content`. Read
       // both, preferring whichever is present (Ollama path, DeepSeek path).
       const assistantReasoning =
         (assistantMessage as unknown as Record<string, unknown>).thinking as string | undefined
         || (assistantMessage as unknown as Record<string, unknown>).reasoning_content as string | undefined;
-      pass.assistantReasoningContent = assistantReasoning;
+      chat.assistantReasoningContent = assistantReasoning;
 
       // Release the LLM call's abort controller — it's no longer needed
-      pass.abortController = null;
+      chat.abortController = null;
 
       // =====================================================================
       // Crossroad: detect turning words, generate alternative continuations
@@ -172,7 +175,7 @@ export async function handleLlm(
       // (transparent skip), using the original LLM output as-is.
       if (tools.length > 0) {
         // ── COOLDOWN GATE ──
-        // If crossroad fired last pass, skip detection this pass to let the LLM
+        // If crossroad fired last chat, skip detection this pass to let the LLM
         // execute its committed actions. Crossroad can re-fire next pass if
         // turning words persist. See docs/crossroad-cooldown.md.
         if (env.crossroadOccurred) {
@@ -183,8 +186,8 @@ export async function handleLlm(
             async (abortController) => {
               return await handleCrossroad(
                 triologue.getMessages(),
-                pass.assistantContent,
-                pass.rawToolCalls,
+                chat.assistantContent,
+                chat.rawToolCalls,
                 tools,
                 abortController.signal,
               );
@@ -202,10 +205,35 @@ export async function handleLlm(
               `Continuation: "${crossroadResult.continuation.slice(0, 80)}..."`,
             );
             // Replace content with truncated prefix + continuation will be injected in hook.ts
-            pass.assistantContent = crossroadResult.truncated;
-            pass.crossroadContinuation = crossroadResult.continuation;
+            chat.assistantContent = crossroadResult.truncated;
+            chat.crossroadContinuation = crossroadResult.continuation;
             // Discard original tool calls — LLM will regenerate them after crossroad
-            pass.rawToolCalls = [];
+            chat.rawToolCalls = [];
+
+            // Write a crossroad record file to the session directory so the
+            // full decision (prefix, all candidates, selected continuation) is
+            // persisted on disk. The file path is stored on chat.crossroadFilePath
+            // and injected into the brief tool result by hook.ts, enabling the
+            // read_file aloud replay-bypass mechanism (Part 4).
+            try {
+              const sessionId = getSessionContext();
+              const sessionDir = getSessionDir(sessionId);
+              const timestamp = Date.now();
+              const crossroadFilePath = path.join(sessionDir, `crossroad-${timestamp}.json`);
+              const crossroadData = {
+                sessionId,
+                timestamp,
+                prefix: crossroadResult.truncated,
+                candidates: crossroadResult.candidates,
+                continuation: crossroadResult.continuation,
+              };
+              fs.writeFileSync(crossroadFilePath, JSON.stringify(crossroadData, null, 2), 'utf-8');
+              chat.crossroadFilePath = crossroadFilePath;
+            } catch (writeErr) {
+              // Non-fatal: crossroad still works without the file; the replay
+              // bypass just won't be available for this resolution.
+              ctx.core.verbose('llm', `Failed to write crossroad file: ${(writeErr as Error).message}`);
+            }
 
             // Every crossroad fire counts towards the hint round (confusion threshold).
             // Previously this was conditional on crossroadOccurred (consecutive-only),
@@ -242,7 +270,7 @@ export async function handleLlm(
       // the identical-input loop. As a backstop against an LLM that keeps
       // returning empty even after the prompt, bail to PROMPT after
       // MAX_EMPTY_RETRIES consecutive empties so the agent never spins forever.
-      if (!pass.assistantContent && pass.rawToolCalls.length === 0) {
+      if (!chat.assistantContent && chat.rawToolCalls.length === 0) {
         emptyRetries++;
         // Observability: emit llm_empty (silent when no listeners)
         loopEvents.emit('llm_empty', { retry: emptyRetries, maxRetries: MAX_EMPTY_RETRIES });

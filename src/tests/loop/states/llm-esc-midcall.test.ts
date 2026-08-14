@@ -4,7 +4,7 @@
  * Code path under test (llm.ts:65-96):
  *   const response = await ctx.core.escAware(
  *     async (abortController) => {
- *       pass.abortController = abortController;
+ *       chat.abortController = abortController;
  *       return await retryChat({ model, messages, tools, think }, { signal, neglected });
  *     },
  *     () => {
@@ -82,7 +82,7 @@ import { retryChat } from '../../../engine/chat-provider.js';
 import { Triologue } from '../../../loop/triologue.js';
 import {
   createTurnVars,
-  createPassData,
+  createChatData,
   createMockMachineEnv,
   createMockChatResponse,
 } from '../esc-test-helpers.js';
@@ -103,15 +103,15 @@ describe('handleLlm — ESC during retryChat (escAware cleanup returns null)', (
     }) as never;
 
     const turn = createTurnVars();
-    const pass = createPassData();
+    const chat = createChatData();
 
-    const result = await handleLlm(env, turn, pass);
+    const result = await handleLlm(env, turn, chat);
 
     expect(result).toBe(AgentState.PROMPT);
-    // PassData should NOT be populated with LLM response
-    expect(pass.rawToolCalls).toEqual([]);
-    expect(pass.assistantContent).toBe('');
-    expect(pass.abortController).toBeNull(); // released after ESC
+    // ChatData should NOT be populated with LLM response
+    expect(chat.rawToolCalls).toEqual([]);
+    expect(chat.assistantContent).toBe('');
+    expect(chat.abortController).toBeNull(); // released after ESC
   });
 
   it('should call startWrapUp during ESC cleanup', async () => {
@@ -121,9 +121,9 @@ describe('handleLlm — ESC during retryChat (escAware cleanup returns null)', (
     }) as never;
 
     const turn = createTurnVars();
-    const pass = createPassData();
+    const chat = createChatData();
 
-    await handleLlm(env, turn, pass);
+    await handleLlm(env, turn, chat);
 
     // The cleanup function calls startWrapUp(triologue, tools)
     expect(startWrapUp).toHaveBeenCalledTimes(1);
@@ -137,9 +137,9 @@ describe('handleLlm — ESC during retryChat (escAware cleanup returns null)', (
     }) as never;
 
     const turn = createTurnVars();
-    const pass = createPassData();
+    const chat = createChatData();
 
-    await handleLlm(env, turn, pass);
+    await handleLlm(env, turn, chat);
 
     expect(agentIO.setNeglectedMode).toHaveBeenCalledWith(false);
     expect(stopSpinner).toHaveBeenCalled();
@@ -153,13 +153,13 @@ describe('handleLlm — ESC during retryChat (escAware cleanup returns null)', (
     }) as never;
 
     const turn = createTurnVars();
-    const pass = createPassData();
+    const chat = createChatData();
 
     vi.mocked(retryChat).mockResolvedValueOnce(
       createMockChatResponse({ content: 'hello' }) as never,
     );
 
-    await handleLlm(env, turn, pass);
+    await handleLlm(env, turn, chat);
 
     // Verify retryChat was called with think: false (not neglected, not plan mode)
     expect(retryChat).toHaveBeenCalledTimes(1);
@@ -175,13 +175,13 @@ describe('handleLlm — ESC during retryChat (escAware cleanup returns null)', (
     }) as never;
 
     const turn = createTurnVars();
-    const pass = createPassData();
+    const chat = createChatData();
 
     vi.mocked(retryChat).mockResolvedValueOnce(
       createMockChatResponse({ content: 'response' }) as never,
     );
 
-    await handleLlm(env, turn, pass);
+    await handleLlm(env, turn, chat);
 
     // crossroad block is gated on tools.length > 0 — should not be entered
     // env.crossroadOccurred should be reset to false (else branch at line 150)

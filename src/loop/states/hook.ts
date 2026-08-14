@@ -8,7 +8,7 @@
  * META-TOOLS: checkpoint and recap are handled here (not as regular tools)
  * because they need access to triologue which is not in AgentContext.
  *
- * CROSSROAD: When crossroadContinuation is set on pass, the continuation is
+ * CROSSROAD: When crossroadContinuation is set on chat, the continuation is
  * merged into finalAssistantContent before triologue.agent() is called, and a
  * REMINDER note is injected after. No mutation of triologue internals occurs.
  * The flow goes to COLLECT so the LLM can regenerate tool calls.
@@ -16,7 +16,7 @@
 
 import chalk from 'chalk';
 import { AgentState } from '../state-machine.js';
-import type { MachineEnv, TurnVars, PassData, HandlerResult } from '../state-machine.js';
+import type { MachineEnv, TurnVars, ChatData, HandlerResult } from '../state-machine.js';
 import type { ToolCall } from '../../types.js';
 import type { AugmentedToolCall } from '../../hook/hook-executor.js';
 import { augmentToolCalls } from '../../hook/hook-preprocessor.js';
@@ -52,7 +52,7 @@ function createCheckpointContext(env: MachineEnv): CheckpointContext {
 async function handleCheckpointCall(
   call: AugmentedToolCall,
   env: MachineEnv,
-  pass: PassData,
+  chat: ChatData,
   turn: TurnVars,
 ): Promise<HandlerResult> {
   const { triologue, ctx } = env;
@@ -65,13 +65,13 @@ async function handleCheckpointCall(
   );
 
   // Register the assistant message with tool calls
-  triologue.agent(pass.assistantContent, pass.rawToolCalls as ToolCall[] | undefined, pass.assistantReasoningContent);
+  triologue.agent(chat.assistantContent, chat.rawToolCalls as ToolCall[] | undefined, chat.assistantReasoningContent);
 
   // Add tool response (checkpoint info is in the tool result — no note needed)
   triologue.tool('checkpoint', result.result, call.id);
 
-  if (pass.assistantContent) {
-    ctx.core.brief('info', 'assistant', pass.assistantContent);
+  if (chat.assistantContent) {
+    ctx.core.brief('info', 'assistant', chat.assistantContent);
   }
 
   turn.isFirstRound = false;
@@ -87,14 +87,14 @@ async function handleCheckpointCall(
 async function handleRecapCall(
   call: AugmentedToolCall,
   env: MachineEnv,
-  pass: PassData,
+  chat: ChatData,
   turn: TurnVars,
 ): Promise<HandlerResult> {
   const { triologue, ctx } = env;
 
   // Show assistant text content if any
-  if (pass.assistantContent) {
-    ctx.core.brief('info', 'assistant', pass.assistantContent);
+  if (chat.assistantContent) {
+    ctx.core.brief('info', 'assistant', chat.assistantContent);
   }
 
   // Validate and extract checkpoint
@@ -106,7 +106,7 @@ async function handleRecapCall(
     : undefined;
 
   if (!checkpointId || typeof checkpointId !== 'string' || checkpointId.trim() === '') {
-    triologue.agent(pass.assistantContent, pass.rawToolCalls as ToolCall[] | undefined, pass.assistantReasoningContent);
+    triologue.agent(chat.assistantContent, chat.rawToolCalls as ToolCall[] | undefined, chat.assistantReasoningContent);
     triologue.tool('recap', 'Error: checkpoint_id is required and must be a non-empty string.', call.id);
     turn.isFirstRound = false;
     return AgentState.COLLECT;
@@ -115,7 +115,7 @@ async function handleRecapCall(
   // comment is REQUIRED: it determines the direction of the next turn.
   // (abandon path is exempt — it discards the checkpoint, no steering needed.)
   if (!abandon && !comment) {
-    triologue.agent(pass.assistantContent, pass.rawToolCalls as ToolCall[] | undefined, pass.assistantReasoningContent);
+    triologue.agent(chat.assistantContent, chat.rawToolCalls as ToolCall[] | undefined, chat.assistantReasoningContent);
     triologue.tool('recap', 'Error: comment is required (it determines the direction of the next turn). Provide a clear, actionable directive stating what should happen next.', call.id);
     turn.isFirstRound = false;
     return AgentState.COLLECT;
@@ -123,7 +123,7 @@ async function handleRecapCall(
 
   const checkpoint = triologue.findCheckpointById(checkpointId);
   if (!checkpoint) {
-    triologue.agent(pass.assistantContent, pass.rawToolCalls as ToolCall[] | undefined, pass.assistantReasoningContent);
+    triologue.agent(chat.assistantContent, chat.rawToolCalls as ToolCall[] | undefined, chat.assistantReasoningContent);
     const allCheckpoints = triologue.findAllCheckpoints();
     const msg = allCheckpoints.length === 0
       ? 'Error: No checkpoint found.'
@@ -223,7 +223,7 @@ async function handleRecapCall(
 
   // Check for ESC cancellation
   if (summary.startsWith('[RECAP] Cancelled:')) {
-    triologue.agent(pass.assistantContent, pass.rawToolCalls as ToolCall[] | undefined, pass.assistantReasoningContent);
+    triologue.agent(chat.assistantContent, chat.rawToolCalls as ToolCall[] | undefined, chat.assistantReasoningContent);
     triologue.tool('recap', summary, call.id);
     ctx.core.brief('warn', 'recap', summary);
     // ESC pressed during recap - return to PROMPT immediately
@@ -301,20 +301,20 @@ async function handleRecapCall(
 export async function handleHook(
   env: MachineEnv,
   turn: TurnVars,
-  pass: PassData,
+  chat: ChatData,
 ): Promise<HandlerResult> {
   const { triologue, ctx, hookExecutor } = env;
 
   try {
     // 1. Augment tool calls with metadata (file paths, LOC, destructive detection)
-    const augmentedCalls = augmentToolCalls(pass.rawToolCalls);
-    pass.augmentedCalls = augmentedCalls;
+    const augmentedCalls = augmentToolCalls(chat.rawToolCalls);
+    chat.augmentedCalls = augmentedCalls;
 
     // 2. Validate checkpoint isolation (must be called alone)
     const checkpointValidation = validateCheckpointIsolation(augmentedCalls);
     if (!checkpointValidation.valid) {
       // Register the error as tool responses so the LLM sees it and can retry
-      triologue.agent(pass.assistantContent, pass.rawToolCalls as ToolCall[] | undefined, pass.assistantReasoningContent);
+      triologue.agent(chat.assistantContent, chat.rawToolCalls as ToolCall[] | undefined, chat.assistantReasoningContent);
       for (const call of augmentedCalls) {
         triologue.tool(call.function.name, checkpointValidation.message!, call.id);
       }
@@ -326,7 +326,7 @@ export async function handleHook(
     // 2b. Validate recap isolation (must be called alone)
     const recapValidation = validateRecapIsolation(augmentedCalls);
     if (!recapValidation.valid) {
-      triologue.agent(pass.assistantContent, pass.rawToolCalls as ToolCall[] | undefined, pass.assistantReasoningContent);
+      triologue.agent(chat.assistantContent, chat.rawToolCalls as ToolCall[] | undefined, chat.assistantReasoningContent);
       for (const call of augmentedCalls) {
         triologue.tool(call.function.name, recapValidation.message!, call.id);
       }
@@ -342,7 +342,7 @@ export async function handleHook(
       ctx,
       ctx.skill.getSkill.bind(ctx.skill),
     );
-    pass.hookResult = hookResult;
+    chat.hookResult = hookResult;
 
     // Observability: emit hook_result (silent when no listeners)
     loopEvents.emit('hook_result', {
@@ -360,7 +360,7 @@ export async function handleHook(
     //    stat counts now; the LLM stage consumes the flag.
     if (hookResult.compactRequested) {
       ctx.core.brief('info', 'compact', 'Compacting context (deferred to LLM stage)...');
-      pass.deferredCompact = true;
+      chat.deferredCompact = true;
 
       // Reset stat counts now — the confusion that triggered the compact is
       // stale regardless of when the compact itself runs.
@@ -375,12 +375,12 @@ export async function handleHook(
     //    Guard against blocked meta-calls so the agent sees the rejection.
     const checkpointCall = hookResult.calls.find(c => c.function.name === 'checkpoint');
     if (checkpointCall && !hookResult.blockedCalls.has(checkpointCall.id)) {
-      return handleCheckpointCall(checkpointCall, env, pass, turn);
+      return handleCheckpointCall(checkpointCall, env, chat, turn);
     }
 
     const recapCall = hookResult.calls.find(c => c.function.name === 'recap');
     if (recapCall && !hookResult.blockedCalls.has(recapCall.id)) {
-      return handleRecapCall(recapCall, env, pass, turn);
+      return handleRecapCall(recapCall, env, chat, turn);
     }
 
     // 5. Crossroad: FIRST-CLASS branch — handled BEFORE normal registration.
@@ -390,12 +390,12 @@ export async function handleHook(
     //    Stop-trigger hooks that fired on the empty rawToolCalls are intentionally
     //    not carried forward — crossroad's purpose is to have the LLM regenerate
     //    tool calls after resolving its direction.
-    if (pass.crossroadContinuation) {
+    if (chat.crossroadContinuation) {
       // Join with a space: the continuation is the genuinely new content that
       // follows the prefix's last sentence (the anchor was stripped during
       // generation). A space reads as natural prose continuation, whereas a
       // newline would create a visual paragraph break mid-sentence.
-      const finalContent = `${pass.assistantContent || ''} ${pass.crossroadContinuation}`;
+      const finalContent = `${chat.assistantContent || ''} ${chat.crossroadContinuation}`;
       const briefCallId = Math.random().toString(36).slice(2, 10);
       triologue.agent(finalContent, [{
         id: briefCallId,
@@ -403,13 +403,25 @@ export async function handleHook(
           name: 'brief',
           arguments: { message: 'Resolved my direction. Let me continue with the tools.', confidence: 7 },
         },
-      }] as ToolCall[], pass.assistantReasoningContent);
-      triologue.tool('brief', 'OK', briefCallId);
+      }] as ToolCall[], chat.assistantReasoningContent);
 
-      // Show only the continuation (the new direction) — the prefix is
-      // already in pass.assistantContent and registered via triologue.agent()
-      // above. Repeating it in the brief duplicates content the user saw.
-      ctx.core.brief('info', 'crossroad', `Resolved: ${pass.crossroadContinuation}`);
+      // Inject the crossroad file path into the brief tool result so the LLM
+      // knows where the full decision record lives. When there is no
+      // crossroad file (e.g. file write failed), fall back to 'OK'.
+      const briefResult = chat.crossroadFilePath
+        ? `Crossroad triggered. The decision making process can be found at ${chat.crossroadFilePath}`
+        : 'OK';
+      triologue.tool('brief', briefResult, briefCallId);
+
+      // Two-output display: first show the prefix (the content before the
+      // turning word — it was never displayed because streaming content is
+      // collected, not printed live, and this branch returns before the
+      // normal assistant brief at the bottom of the handler). Then show the
+      // resolved continuation (the new direction).
+      if (chat.assistantContent) {
+        ctx.core.brief('info', 'assistant', chat.assistantContent);
+      }
+      ctx.core.brief('info', 'crossroad', `Resolved: ${chat.crossroadContinuation}`);
 
       // Inject deferred hook messages so the LLM sees them in the next round.
       // Each deferred message carries its originating hook name for attribution.
@@ -417,13 +429,14 @@ export async function handleHook(
         triologue.note('REMINDER', dm.message, dm.hookName);
       }
 
-      pass.crossroadContinuation = undefined;
+      chat.crossroadContinuation = undefined;
+      chat.crossroadFilePath = undefined;
       return AgentState.COLLECT;
     }
 
     // 6. Normal agent registration (no crossroad — mutual exclusion ensured
     //    by the early return above).
-    const finalAssistantContent = pass.assistantContent;
+    const finalAssistantContent = chat.assistantContent;
     const finalToolCalls =
       hookResult.calls.length > 0
         ? hookResult.calls.map((c) => ({ id: c.id, function: c.function }))
@@ -431,7 +444,7 @@ export async function handleHook(
     triologue.agent(
       finalAssistantContent,
       finalToolCalls as ToolCall[] | undefined,
-      pass.assistantReasoningContent,
+      chat.assistantReasoningContent,
     );
 
     // Confusion scoring: +1 per assistant turn (agent spinning without progress)
@@ -464,8 +477,8 @@ export async function handleHook(
       return AgentState.STOP;
     }
 
-    if (pass.assistantContent) {
-      ctx.core.brief('info', 'assistant', pass.assistantContent);
+    if (chat.assistantContent) {
+      ctx.core.brief('info', 'assistant', chat.assistantContent);
     }
 
     // From the second round onward, mute LLM text responses

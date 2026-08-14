@@ -69,7 +69,7 @@ import { handleStop } from '../../../loop/states/stop.js';
 import { AgentState, presentResult } from '../../../loop/state-machine.js';
 import { agentIO } from '../../../loop/agent-io.js';
 import { Triologue } from '../../../loop/triologue.js';
-import { createTurnVars, createPassData, createMockMachineEnv } from '../esc-test-helpers.js';
+import { createTurnVars, createChatData, createMockMachineEnv } from '../esc-test-helpers.js';
 import { createMockContext } from '../../test-utils/mock-context.js';
 
 describe('handleStop — neglected mode at entry (ESC wrap-up)', () => {
@@ -84,12 +84,12 @@ describe('handleStop — neglected mode at entry (ESC wrap-up)', () => {
   it('should clear neglected mode FIRST, flush output, present result, and return PROMPT', async () => {
     const env = createMockMachineEnv({ triologue });
     const turn = createTurnVars();
-    const pass = createPassData();
+    const chat = createChatData();
 
     // ESC pressed — neglected mode active at entry
     agentIO.setNeglectedMode(true);
 
-    const result = await handleStop(env, turn, pass);
+    const result = await handleStop(env, turn, chat);
 
     expect(result).toBe(AgentState.PROMPT);
     // Neglected mode cleared
@@ -113,11 +113,11 @@ describe('handleStop — neglected mode at entry (ESC wrap-up)', () => {
     // Re-wire ctx since createMockMachineEnv builds its own ctx from ctxOptions
     env.ctx = ctx;
     const turn = createTurnVars();
-    const pass = createPassData();
+    const chat = createChatData();
 
     agentIO.setNeglectedMode(true);
 
-    await handleStop(env, turn, pass);
+    await handleStop(env, turn, chat);
 
     // agentIO.log called with the teammates-still-working message
     expect(agentIO.log).toHaveBeenCalledTimes(1);
@@ -136,11 +136,11 @@ describe('handleStop — neglected mode at entry (ESC wrap-up)', () => {
     const env = createMockMachineEnv({ triologue });
     env.ctx = ctx;
     const turn = createTurnVars();
-    const pass = createPassData();
+    const chat = createChatData();
 
     agentIO.setNeglectedMode(true);
 
-    await handleStop(env, turn, pass);
+    await handleStop(env, turn, chat);
 
     expect(agentIO.log).not.toHaveBeenCalled();
     // Still presents result and returns PROMPT
@@ -156,12 +156,12 @@ describe('handleStop — neglected mode at entry (ESC wrap-up)', () => {
     const env = createMockMachineEnv({ triologue });
     env.ctx = ctx;
     const turn = createTurnVars();
-    const pass = createPassData();
+    const chat = createChatData();
 
     // NOT in neglected mode — exercises the normal awaitTeam branch
     agentIO.setNeglectedMode(false);
 
-    const result = await handleStop(env, turn, pass);
+    const result = await handleStop(env, turn, chat);
 
     expect(result).toBe(AgentState.PROMPT);
     expect(presentResult).toHaveBeenCalledWith(triologue);

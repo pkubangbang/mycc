@@ -11,7 +11,7 @@
  *   - ESC quick-return:  PROMPT → COLLECT → LLM (ESC) → PROMPT → exit
  *                       (LLM returns PROMPT instead of HOOK → loop jumps back)
  *   - TurnVars reset on PROMPT-from-STOP (but not from SLASH)
- *   - PassData reset on every COLLECT entry
+ *   - ChatData reset on every COLLECT entry
  *   - Exit when PROMPT returns null
  *
  * Strategy: Use mock StateHandler functions (vi.fn) that return scripted states,
@@ -201,9 +201,9 @@ describe('AgentStateMachine — full-loop ESC integration', () => {
     expect(promptTurnVars[1].isFirstRound).toBe(true);
   });
 
-  // [4] PassData is reset on every COLLECT entry — including after the ESC
+  // [4] ChatData is reset on every COLLECT entry — including after the ESC
   //     short-circuit loops back through COLLECT on the next turn.
-  it('should provide fresh PassData on each COLLECT entry across ESC quick-return', async () => {
+  it('should provide fresh ChatData on each COLLECT entry across ESC quick-return', async () => {
     const deps = createMockDeps();
     const passSnapshots: { rawToolCalls: unknown[]; assistantContent: string }[] = [];
     let collectCalls = 0;
@@ -211,13 +211,13 @@ describe('AgentStateMachine — full-loop ESC integration', () => {
     const handlers: Record<AgentState, StateHandler> = {
       [AgentState.PROMPT]: vi.fn(async () => AgentState.COLLECT),
       [AgentState.SLASH]: vi.fn(),
-      [AgentState.COLLECT]: vi.fn(async (_env, _turn, pass) => {
+      [AgentState.COLLECT]: vi.fn(async (_env, _turn, chat) => {
         collectCalls++;
-        passSnapshots.push({ rawToolCalls: [...pass.rawToolCalls], assistantContent: pass.assistantContent });
+        passSnapshots.push({ rawToolCalls: [...chat.rawToolCalls], assistantContent: chat.assistantContent });
         // First COLLECT: mutate pass, then go LLM → ESC → PROMPT → COLLECT again
         if (collectCalls === 1) {
-          pass.rawToolCalls = [{ id: 'stale', function: { name: 'bash', arguments: {} } }] as never;
-          pass.assistantContent = 'stale content';
+          chat.rawToolCalls = [{ id: 'stale', function: { name: 'bash', arguments: {} } }] as never;
+          chat.assistantContent = 'stale content';
           return AgentState.LLM;
         }
         return null; // exit on second COLLECT
@@ -231,7 +231,7 @@ describe('AgentStateMachine — full-loop ESC integration', () => {
 
     await buildMachine(deps, handlers).run();
 
-    // Second COLLECT must have FRESH PassData (empty), not the stale mutation.
+    // Second COLLECT must have FRESH ChatData (empty), not the stale mutation.
     expect(passSnapshots[0].rawToolCalls).toEqual([]);
     expect(passSnapshots[1].rawToolCalls).toEqual([]);
     expect(passSnapshots[1].assistantContent).toBe('');

@@ -137,7 +137,7 @@ vi.mock('../../../utils/multiline-input.js', () => ({
 import { handlePrompt, setInitialQuery } from '../../../loop/states/prompt.js';
 import { AgentState } from '../../../loop/state-machine.js';
 import { Triologue } from '../../../loop/triologue.js';
-import { createTurnVars, createPassData, createMockMachineEnv } from '../esc-test-helpers.js';
+import { createTurnVars, createChatData, createMockMachineEnv } from '../esc-test-helpers.js';
 
 const uploadedImage = {
   filename: 'image-1786587692871.png',
@@ -168,7 +168,7 @@ describe('handlePrompt — uploaded-file reminder survives wrap-up rollback', ()
       promptRetry: vi.fn(async () => false),
     } as never;
 
-    const result = await handlePrompt(env, createTurnVars(), createPassData());
+    const result = await handlePrompt(env, createTurnVars(), createChatData());
 
     expect(result).toBe(AgentState.COLLECT);
 
@@ -197,7 +197,7 @@ describe('handlePrompt — uploaded-file reminder survives wrap-up rollback', ()
       promptRetry: vi.fn(async () => false),
     } as never;
 
-    const result = await handlePrompt(env, createTurnVars(), createPassData());
+    const result = await handlePrompt(env, createTurnVars(), createChatData());
 
     expect(result).toBe(AgentState.COLLECT);
 

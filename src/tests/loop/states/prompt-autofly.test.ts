@@ -150,7 +150,7 @@ import { AgentState } from '../../../loop/state-machine.js';
 import { autoState } from '../../../loop/auto-state.js';
 import { PromptAbortError } from '../../../loop/agent-io.js';
 import { isDebugAutofly, isDebuggingPrompt } from '../../../config.js';
-import { createTurnVars, createPassData, createMockMachineEnv } from '../esc-test-helpers.js';
+import { createTurnVars, createChatData, createMockMachineEnv } from '../esc-test-helpers.js';
 import { Triologue } from '../../../loop/triologue.js';
 
 // Helper: build a minimal env with a stub triologue that reports no wrap-up.
@@ -190,7 +190,7 @@ describe('handlePrompt — auto-mode engagement gate', () => {
       const { env } = makeEnv();
       vi.mocked(autoState.getAuto).mockReturnValue(true);
 
-      const result = await handlePrompt(env, createTurnVars(), createPassData());
+      const result = await handlePrompt(env, createTurnVars(), createChatData());
 
       expect(result).toBe(AgentState.WAIT);
       // setAuto(true) is the idempotent re-sync (no-op, keeps onAutoChange calm)
@@ -204,7 +204,7 @@ describe('handlePrompt — auto-mode engagement gate', () => {
       vi.mocked(autoState.getStreak).mockReturnValue(99);
       vi.mocked(isDebugAutofly).mockReturnValue(true);
 
-      const result = await handlePrompt(env, createTurnVars(), createPassData());
+      const result = await handlePrompt(env, createTurnVars(), createChatData());
 
       expect(result).toBe(AgentState.WAIT);
       // Case 1 short-circuits before the streak/threshold are consulted.
@@ -220,7 +220,7 @@ describe('handlePrompt — auto-mode engagement gate', () => {
       vi.mocked(autoState.getAutoflyThreshold).mockReturnValue(3); // singleton default
       vi.mocked(autoState.getStreak).mockReturnValue(4); // 4 >= 3
 
-      const result = await handlePrompt(env, createTurnVars(), createPassData());
+      const result = await handlePrompt(env, createTurnVars(), createChatData());
 
       expect(result).toBe(AgentState.WAIT);
       expect(autoState.setAuto).toHaveBeenCalledWith(true); // engage so subsequent loops take case 1
@@ -234,7 +234,7 @@ describe('handlePrompt — auto-mode engagement gate', () => {
       vi.mocked(autoState.getAutoflyThreshold).mockReturnValue(5); // seeded from --autofly=5
       vi.mocked(autoState.getStreak).mockReturnValue(5); // 5 >= 5
 
-      const result = await handlePrompt(env, createTurnVars(), createPassData());
+      const result = await handlePrompt(env, createTurnVars(), createChatData());
 
       expect(result).toBe(AgentState.WAIT);
       expect(autoState.setAuto).toHaveBeenCalledWith(true);
@@ -246,7 +246,7 @@ describe('handlePrompt — auto-mode engagement gate', () => {
       vi.mocked(autoState.getAutoflyThreshold).mockReturnValue(3);
       vi.mocked(autoState.getStreak).mockReturnValue(3); // 3 >= 3 → engage
 
-      const result = await handlePrompt(env, createTurnVars(), createPassData());
+      const result = await handlePrompt(env, createTurnVars(), createChatData());
 
       expect(result).toBe(AgentState.WAIT);
       expect(autoState.setAuto).toHaveBeenCalledWith(true);
@@ -258,7 +258,7 @@ describe('handlePrompt — auto-mode engagement gate', () => {
       vi.mocked(autoState.getAutoflyThreshold).mockReturnValue(3);
       vi.mocked(autoState.getStreak).mockReturnValue(2); // 2 >= 3 is false
 
-      const result = await handlePrompt(env, createTurnVars(), createPassData());
+      const result = await handlePrompt(env, createTurnVars(), createChatData());
 
       expect(result).toBe(AgentState.COLLECT);
       expect(autoState.setAuto).not.toHaveBeenCalledWith(true);
@@ -281,7 +281,7 @@ describe('handlePrompt — auto-mode engagement gate', () => {
       vi.mocked(autoState.getAutoflyThreshold).mockReturnValue(3);
       vi.mocked(autoState.getStreak).mockReturnValue(2); // 2 LLM stages this turn
 
-      const result = await handlePrompt(env, createTurnVars(), createPassData());
+      const result = await handlePrompt(env, createTurnVars(), createChatData());
 
       expect(result).toBe(AgentState.COLLECT); // prompt shown (user input consumed)
       expect(autoState.setAuto).not.toHaveBeenCalledWith(true);
@@ -294,7 +294,7 @@ describe('handlePrompt — auto-mode engagement gate', () => {
       vi.mocked(autoState.getAutoflyThreshold).mockReturnValue(3);
       vi.mocked(autoState.getStreak).mockReturnValue(3); // 3 LLM stages this turn
 
-      const result = await handlePrompt(env, createTurnVars(), createPassData());
+      const result = await handlePrompt(env, createTurnVars(), createChatData());
 
       expect(result).toBe(AgentState.WAIT); // prompt NOT shown; auto-continue
       expect(autoState.setAuto).toHaveBeenCalledWith(true);
@@ -308,7 +308,7 @@ describe('handlePrompt — auto-mode engagement gate', () => {
       vi.mocked(isDebugAutofly).mockReturnValue(false);
       vi.mocked(autoState.getStreak).mockReturnValue(100); // huge streak, but flag is off
 
-      const result = await handlePrompt(env, createTurnVars(), createPassData());
+      const result = await handlePrompt(env, createTurnVars(), createChatData());
 
       expect(result).toBe(AgentState.COLLECT);
       expect(autoState.setAuto).not.toHaveBeenCalledWith(true);
@@ -334,7 +334,7 @@ describe('handlePrompt — auto-mode engagement gate', () => {
       vi.mocked(autoState.getAutoflyThreshold).mockReturnValue(3);
       vi.mocked(autoState.getStreak).mockReturnValue(4);
 
-      const result = await handlePrompt(env, createTurnVars(), createPassData());
+      const result = await handlePrompt(env, createTurnVars(), createChatData());
 
       expect(result).toBe(AgentState.WAIT);
       expect(autoState.setAuto).toHaveBeenCalledWith(true);
@@ -347,7 +347,7 @@ describe('handlePrompt — auto-mode engagement gate', () => {
       vi.mocked(autoState.getAutoflyThreshold).mockReturnValue(3);
       vi.mocked(autoState.getStreak).mockReturnValue(3); // 3 >= 3 → engage
 
-      const result = await handlePrompt(env, createTurnVars(), createPassData());
+      const result = await handlePrompt(env, createTurnVars(), createChatData());
 
       expect(result).toBe(AgentState.WAIT);
       expect(autoState.setAuto).toHaveBeenCalledWith(true);
@@ -359,7 +359,7 @@ describe('handlePrompt — auto-mode engagement gate', () => {
       (env.ctx.peer.hasActiveChannel as ReturnType<typeof vi.fn>).mockReturnValue(true);
       vi.mocked(autoState.getStreak).mockReturnValue(0); // ESC just reset streak
 
-      const result = await handlePrompt(env, createTurnVars(), createPassData());
+      const result = await handlePrompt(env, createTurnVars(), createChatData());
 
       // Falls through to normal prompting — the breathing room lets the user
       // intervene (e.g. retry a rejected git_commit) before auto re-engages.
@@ -374,7 +374,7 @@ describe('handlePrompt — auto-mode engagement gate', () => {
       (env.ctx.peer.hasActiveChannel as ReturnType<typeof vi.fn>).mockReturnValue(false);
       vi.mocked(autoState.getStreak).mockReturnValue(99);
 
-      const result = await handlePrompt(env, createTurnVars(), createPassData());
+      const result = await handlePrompt(env, createTurnVars(), createChatData());
 
       expect(result).toBe(AgentState.COLLECT);
       expect(autoState.setAuto).not.toHaveBeenCalledWith(true);
@@ -400,7 +400,7 @@ describe('handlePrompt — auto-mode engagement gate', () => {
         promptRetry: vi.fn(async () => false),
       } as never;
 
-      const result = await handlePrompt(env, createTurnVars(), createPassData());
+      const result = await handlePrompt(env, createTurnVars(), createChatData());
 
       expect(result).toBe(AgentState.WAIT);
       expect(autoState.setAuto).toHaveBeenCalledWith(true); // engage; channel joined
@@ -417,7 +417,7 @@ describe('handlePrompt — auto-mode engagement gate', () => {
         promptRetry: vi.fn(async () => false),
       } as never;
 
-      await expect(handlePrompt(env, createTurnVars(), createPassData())).rejects.toBe(genuine);
+      await expect(handlePrompt(env, createTurnVars(), createChatData())).rejects.toBe(genuine);
       // Auto is NOT engaged by a genuine failure.
       expect(autoState.setAuto).not.toHaveBeenCalledWith(true);
     });

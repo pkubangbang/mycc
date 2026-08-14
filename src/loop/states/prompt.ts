@@ -22,7 +22,7 @@ import chalk from 'chalk';
 import * as fs from 'fs';
 import * as path from 'path';
 import { AgentState } from '../state-machine.js';
-import type { MachineEnv, TurnVars, PassData, HandlerResult } from '../state-machine.js';
+import type { MachineEnv, TurnVars, ChatData, HandlerResult } from '../state-machine.js';
 import { loader } from '../../context/shared/loader.js';
 import { openMultilineEditor } from '../../utils/multiline-input.js';
 import { readSession, writeSession } from '../../session/index.js';
@@ -133,7 +133,7 @@ export function setInitialQuery(query: string | null): void {
 export async function handlePrompt(
   env: MachineEnv,
   turn: TurnVars,
-  _pass: PassData,
+  _chat: ChatData,
 ): Promise<HandlerResult> {
   const { triologue, inputProvider, sessionFilePath } = env;
   const { ctx } = env;

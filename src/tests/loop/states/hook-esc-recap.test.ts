@@ -5,7 +5,7 @@
  *   const summary = await handleRecap(fullMessages, allTools, checkpoint.description,
  *                                     escAware, comment, lastUserQuery, checkpointResult);
  *   if (summary.startsWith('[RECAP] Cancelled:')) {
- *     triologue.agent(pass.assistantContent, pass.rawToolCalls, ...);
+ *     triologue.agent(chat.assistantContent, chat.rawToolCalls, ...);
  *     triologue.tool('recap', summary, call.id);
  *     ctx.core.brief('warn', 'recap', summary);
  *     if (agentIO.isNeglectedMode()) {
@@ -91,7 +91,7 @@ import { loader } from '../../../context/shared/loader.js';
 import { Triologue } from '../../../loop/triologue.js';
 import {
   createTurnVars,
-  createPassData,
+  createChatData,
   createMockMachineEnv,
   createMockAugmentedToolCall,
   createMockHookResult,
@@ -127,7 +127,7 @@ describe('handleHook — ESC during recap (recap cancellation)', () => {
   it('should return PROMPT when ESC fires during recap (neglected mode true)', async () => {
     const { env, recapCall } = makeRecapEnv();
     const turn = createTurnVars();
-    const pass = createPassData({ assistantContent: 'summarizing now' });
+    const chat = createChatData({ assistantContent: 'summarizing now' });
 
     // handleRecapWithPatch returns the cancelled summary (ESC during recap LLM call)
     // patch is null because getMindmap() returns null (no mindmap in mock env)
@@ -138,7 +138,7 @@ describe('handleHook — ESC during recap (recap cancellation)', () => {
     // ESC set neglected mode
     agentIO.setNeglectedMode(true);
 
-    const result = await handleHook(env, turn, pass);
+    const result = await handleHook(env, turn, chat);
 
     expect(result).toBe(AgentState.PROMPT);
     // Neglected mode cleared before returning to PROMPT
@@ -154,7 +154,7 @@ describe('handleHook — ESC during recap (recap cancellation)', () => {
   it('should return COLLECT (not PROMPT) when recap cancelled but neglected mode is false', async () => {
     const { env, recapCall } = makeRecapEnv();
     const turn = createTurnVars();
-    const pass = createPassData({ assistantContent: 'summarizing now' });
+    const chat = createChatData({ assistantContent: 'summarizing now' });
 
     vi.mocked(handleRecapWithPatch).mockResolvedValueOnce({
       summary: '[RECAP] Cancelled: ESC pressed during recap.',
@@ -163,7 +163,7 @@ describe('handleHook — ESC during recap (recap cancellation)', () => {
     // NOT in neglected mode — the cancelled-but-not-neglected path
     agentIO.setNeglectedMode(false);
 
-    const result = await handleHook(env, turn, pass);
+    const result = await handleHook(env, turn, chat);
 
     expect(result).toBe(AgentState.COLLECT);
     // summary still registered as the recap tool result
@@ -179,7 +179,7 @@ describe('handleHook — ESC during recap (recap cancellation)', () => {
   it('should call handleRecapWithPatch with full messages, tools, and escAware wrapper', async () => {
     const { env } = makeRecapEnv();
     const turn = createTurnVars({ lastUserQuery: 'finish the task' });
-    const pass = createPassData({ assistantContent: 'let me recap' });
+    const chat = createChatData({ assistantContent: 'let me recap' });
 
     // Normal (non-cancelled) recap completion — no patch (getMindmap returns null)
     vi.mocked(handleRecapWithPatch).mockResolvedValueOnce({
@@ -190,7 +190,7 @@ describe('handleHook — ESC during recap (recap cancellation)', () => {
     const fakeMessages = [{ role: 'user', content: 'msg1' }];
     vi.mocked(triologue.getMessages).mockReturnValue(fakeMessages as never);
 
-    await handleHook(env, turn, pass);
+    await handleHook(env, turn, chat);
 
     expect(handleRecapWithPatch).toHaveBeenCalledTimes(1);
     const callArgs = vi.mocked(handleRecapWithPatch).mock.calls[0];

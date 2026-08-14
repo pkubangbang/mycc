@@ -3,7 +3,7 @@
  */
 import { describe, it, expect, vi } from 'vitest';
 import { AgentStateMachine, AgentState, presentResult } from '../../loop/state-machine.js';
-import type { MachineEnv, TurnVars, PassData, StateHandler } from '../../loop/state-machine.js';
+import type { MachineEnv, TurnVars, ChatData, StateHandler } from '../../loop/state-machine.js';
 import type { Triologue } from '../../loop/triologue.js';
 import type { AgentContext, ToolScope } from '../../types.js';
 import type { ConditionRegistry } from '../../hook/conditions.js';
@@ -157,7 +157,7 @@ describe('AgentStateMachine', () => {
     let callCount = 0;
 
     const handlers: Record<AgentState, StateHandler> = {
-      [AgentState.PROMPT]: vi.fn(async (_env, turn, _pass) => {
+      [AgentState.PROMPT]: vi.fn(async (_env, turn, _chat) => {
         callCount++;
         if (callCount === 1) return AgentState.COLLECT;
         return null; // Exit on second call
@@ -218,7 +218,7 @@ describe('AgentStateMachine', () => {
     const turnVarsHistory: TurnVars[] = [];
 
     const handlers: Record<AgentState, StateHandler> = {
-      [AgentState.PROMPT]: vi.fn(async (_env, turn, _pass) => {
+      [AgentState.PROMPT]: vi.fn(async (_env, turn, _chat) => {
         turnVarsHistory.push({ ...turn });
         if (turnVarsHistory.length === 1) return AgentState.COLLECT;
         return null;
@@ -254,7 +254,7 @@ describe('AgentStateMachine', () => {
     const turnVarsHistory: TurnVars[] = [];
 
     const handlers: Record<AgentState, StateHandler> = {
-      [AgentState.PROMPT]: vi.fn(async (_env, turn, _pass) => {
+      [AgentState.PROMPT]: vi.fn(async (_env, turn, _chat) => {
         turnVarsHistory.push({ ...turn, isFirstRound: turn.isFirstRound });
         if (turnVarsHistory.length === 1) {
           // First call: go to SLASH
@@ -285,16 +285,16 @@ describe('AgentStateMachine', () => {
     expect(turnVarsHistory[1].isFirstRound).toBe(true);
   });
 
-  it('should reset PassData on each COLLECT entry', async () => {
+  it('should reset ChatData on each COLLECT entry', async () => {
     const deps = createMockDeps();
-    const passHistory: PassData[] = [];
+    const chatHistory: ChatData[] = [];
 
     const handlers: Record<AgentState, StateHandler> = {
       [AgentState.PROMPT]: vi.fn(async () => AgentState.COLLECT),
       [AgentState.SLASH]: vi.fn(),
-      [AgentState.COLLECT]: vi.fn(async (_env, _turn, pass) => {
-        passHistory.push({ ...pass });
-        if (passHistory.length < 2) return AgentState.LLM;
+      [AgentState.COLLECT]: vi.fn(async (_env, _turn, chat) => {
+        chatHistory.push({ ...chat });
+        if (chatHistory.length < 2) return AgentState.LLM;
         return null; // Exit after second COLLECT
       }),
       [AgentState.LLM]: vi.fn(async () => AgentState.COLLECT), // Go back to COLLECT
@@ -312,14 +312,14 @@ describe('AgentStateMachine', () => {
 
     await machine.run();
 
-    // Each COLLECT should have fresh PassData
-    expect(passHistory.length).toBe(2);
-    for (const pass of passHistory) {
-      expect(pass.abortController).toBeNull();
-      expect(pass.rawToolCalls).toEqual([]);
-      expect(pass.assistantContent).toBe('');
-      expect(pass.augmentedCalls).toEqual([]);
-      expect(pass.hookResult).toBeNull();
+    // Each COLLECT should have fresh ChatData
+    expect(chatHistory.length).toBe(2);
+    for (const chat of chatHistory) {
+      expect(chat.abortController).toBeNull();
+      expect(chat.rawToolCalls).toEqual([]);
+      expect(chat.assistantContent).toBe('');
+      expect(chat.augmentedCalls).toEqual([]);
+      expect(chat.hookResult).toBeNull();
     }
   });
 
@@ -347,11 +347,11 @@ describe('AgentStateMachine', () => {
     await expect(machine.run()).rejects.toThrow('Handler error');
   });
 
-  it('should pass env, turn, and pass to handlers', async () => {
+  it('should pass env, turn, and chat to handlers', async () => {
     const deps = createMockDeps();
 
     const handlers: Record<AgentState, StateHandler> = {
-      [AgentState.PROMPT]: vi.fn(async (env, turn, pass) => {
+      [AgentState.PROMPT]: vi.fn(async (env, turn, chat) => {
         expect(env.triologue).toBeDefined();
         expect(env.ctx).toBeDefined();
         expect(env.scope).toBe('main');
@@ -362,7 +362,7 @@ describe('AgentStateMachine', () => {
         expect(env.sessionFilePath).toBe('/tmp/session.json');
         expect(env.pendingSlashQuery).toBeNull();
         expect(turn.isFirstRound).toBe(true);
-        expect(pass.rawToolCalls).toEqual([]);
+        expect(chat.rawToolCalls).toEqual([]);
         return null;
       }),
       [AgentState.SLASH]: vi.fn(),

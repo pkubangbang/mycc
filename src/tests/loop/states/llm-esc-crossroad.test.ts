@@ -96,7 +96,7 @@ import { retryChat } from '../../../engine/chat-provider.js';
 import { Triologue } from '../../../loop/triologue.js';
 import {
   createTurnVars,
-  createPassData,
+  createChatData,
   createMockMachineEnv,
   createMockChatResponse,
 } from '../esc-test-helpers.js';
@@ -128,21 +128,21 @@ describe('handleLlm — ESC during crossroad processing', () => {
     }) as never;
 
     const turn = createTurnVars();
-    const pass = createPassData();
+    const chat = createChatData();
 
     vi.mocked(retryChat).mockResolvedValueOnce(
       createMockChatResponse({ content: 'some response' }) as never,
     );
 
-    const result = await handleLlm(env, turn, pass);
+    const result = await handleLlm(env, turn, chat);
 
     expect(result).toBe(AgentState.PROMPT);
     // stopSpinner must be called on the ESC-during-crossroad path
     expect(stopSpinner).toHaveBeenCalled();
     // crossroadResult is null (from cleanup), so assistantContent is unchanged
-    expect(pass.assistantContent).toBe('some response');
+    expect(chat.assistantContent).toBe('some response');
     // crossroadContinuation must NOT be set (crossroad was skipped)
-    expect(pass.crossroadContinuation).toBeUndefined();
+    expect(chat.crossroadContinuation).toBeUndefined();
   });
 
   it('should apply crossroad result (truncate + continuation, discard tools) when crossroad succeeds', async () => {
@@ -153,7 +153,7 @@ describe('handleLlm — ESC during crossroad processing', () => {
     }) as never;
 
     const turn = createTurnVars();
-    const pass = createPassData();
+    const chat = createChatData();
 
     vi.mocked(retryChat).mockResolvedValueOnce(
       createMockChatResponse({
@@ -167,16 +167,16 @@ describe('handleLlm — ESC during crossroad processing', () => {
       continuation: 'Let me continue differently.',
     } as never);
 
-    const result = await handleLlm(env, turn, pass);
+    const result = await handleLlm(env, turn, chat);
 
     // No ESC → proceeds to HOOK
     expect(result).toBe(AgentState.HOOK);
     // assistantContent replaced with truncated prefix
-    expect(pass.assistantContent).toBe('original');
+    expect(chat.assistantContent).toBe('original');
     // continuation stored on pass
-    expect(pass.crossroadContinuation).toBe('Let me continue differently.');
+    expect(chat.crossroadContinuation).toBe('Let me continue differently.');
     // original tool calls discarded — LLM will regenerate them
-    expect(pass.rawToolCalls).toEqual([]);
+    expect(chat.rawToolCalls).toEqual([]);
     // crossroadOccurred flag set
     expect(env.crossroadOccurred).toBe(true);
   });
@@ -188,7 +188,7 @@ describe('handleLlm — ESC during crossroad processing', () => {
     }) as never;
 
     const turn = createTurnVars();
-    const pass = createPassData();
+    const chat = createChatData();
     // Flag starts false (normal case) — verify it stays false when no crossroad fires.
     // Note: pre-setting true would now trigger the cooldown gate (skip detection).
     env.crossroadOccurred = false;
@@ -199,13 +199,13 @@ describe('handleLlm — ESC during crossroad processing', () => {
     // handleCrossroad returns null → no crossroad this pass
     vi.mocked(handleCrossroad).mockResolvedValueOnce(null as never);
 
-    const result = await handleLlm(env, turn, pass);
+    const result = await handleLlm(env, turn, chat);
 
     expect(result).toBe(AgentState.HOOK);
     // Flag must remain false because no crossroad occurred
     expect(env.crossroadOccurred).toBe(false);
     // content untouched, no continuation
-    expect(pass.assistantContent).toBe('plain response');
-    expect(pass.crossroadContinuation).toBeUndefined();
+    expect(chat.assistantContent).toBe('plain response');
+    expect(chat.crossroadContinuation).toBeUndefined();
   });
 });

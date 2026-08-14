@@ -7,7 +7,7 @@
  */
 
 import { AgentState } from '../state-machine.js';
-import type { MachineEnv, TurnVars, PassData, HandlerResult } from '../state-machine.js';
+import type { MachineEnv, TurnVars, ChatData, HandlerResult } from '../state-machine.js';
 import { agentIO } from '../agent-io.js';
 import { autoState } from '../auto-state.js';
 import { startWrapUp } from '../esc-wrap-up.js';
@@ -193,7 +193,7 @@ async function checkReactivation(env: MachineEnv): Promise<void> {
 export async function handleCollect(
   env: MachineEnv,
   turn: TurnVars,
-  _pass: PassData,
+  _chat: ChatData,
 ): Promise<HandlerResult> {
   const { triologue, ctx } = env;
 
@@ -376,7 +376,7 @@ export async function handleCollect(
 
     // 5b. Worktree cleanup nudge.
     //     nextWtNudge == 0 is the "check now" sentinel: cheaply call
-    //     listWorktrees() (async git query) each pass. If worktrees exist,
+    //     listWorktrees() (async git query) each chat. If worktrees exist,
     //     inject a REMINDER and arm the counter to N so we don't nag every
     //     turn. If none, leave the counter at 0 (re-checks next pass).
     //     When the counter is nonzero, just decrement it.

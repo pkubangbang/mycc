@@ -77,7 +77,7 @@ import { retryChat } from '../../../engine/chat-provider.js';
 import { Triologue } from '../../../loop/triologue.js';
 import {
   createTurnVars,
-  createPassData,
+  createChatData,
   createMockMachineEnv,
   createMockChatResponse,
   createMockToolCall,
@@ -107,7 +107,7 @@ describe('handleLlm — crossroad cooldown gate', () => {
     env.ctx.core.escAware = runOperationEscAware();
 
     const turn = createTurnVars();
-    const pass = createPassData();
+    const chat = createChatData();
     // Arm cooldown — simulate "crossroad fired last pass"
     env.crossroadOccurred = true;
 
@@ -119,18 +119,18 @@ describe('handleLlm — crossroad cooldown gate', () => {
       }) as never,
     );
 
-    const result = await handleLlm(env, turn, pass);
+    const result = await handleLlm(env, turn, chat);
 
     // Cooldown: proceeds to HOOK (not PROMPT), tools preserved
     expect(result).toBe(AgentState.HOOK);
     // handleCrossroad must NOT be called during cooldown
     expect(handleCrossroad).not.toHaveBeenCalled();
     // assistantContent unchanged (not truncated)
-    expect(pass.assistantContent).toBe('Let me check the files. However, maybe not.');
+    expect(chat.assistantContent).toBe('Let me check the files. However, maybe not.');
     // tool calls PRESERVED (not discarded)
-    expect(pass.rawToolCalls).toEqual(toolCalls);
+    expect(chat.rawToolCalls).toEqual(toolCalls);
     // no continuation set
-    expect(pass.crossroadContinuation).toBeUndefined();
+    expect(chat.crossroadContinuation).toBeUndefined();
     // cooldown consumed — flag reset
     expect(env.crossroadOccurred).toBe(false);
   });
@@ -150,7 +150,7 @@ describe('handleLlm — crossroad cooldown gate', () => {
     // --- Pass 1: crossroad fires ---
     {
       const turn = createTurnVars();
-      const pass = createPassData();
+      const chat = createChatData();
       env.crossroadOccurred = false; // start clean
 
       vi.mocked(retryChat).mockResolvedValueOnce(
@@ -164,10 +164,10 @@ describe('handleLlm — crossroad cooldown gate', () => {
         continuation: 'Let me focus on config.',
       } as never);
 
-      const result = await handleLlm(env, turn, pass);
+      const result = await handleLlm(env, turn, chat);
       expect(result).toBe(AgentState.HOOK);
       expect(handleCrossroad).toHaveBeenCalledTimes(1);
-      expect(pass.rawToolCalls).toEqual([]); // discarded
+      expect(chat.rawToolCalls).toEqual([]); // discarded
       expect(env.crossroadOccurred).toBe(true); // cooldown armed
     }
 
@@ -176,7 +176,7 @@ describe('handleLlm — crossroad cooldown gate', () => {
     // --- Pass 2: cooldown skips detection ---
     {
       const turn = createTurnVars();
-      const pass = createPassData();
+      const chat = createChatData();
       // env.crossroadOccurred is true from pass 1 (same env)
 
       vi.mocked(retryChat).mockResolvedValueOnce(
@@ -186,12 +186,12 @@ describe('handleLlm — crossroad cooldown gate', () => {
         }) as never,
       );
 
-      const result = await handleLlm(env, turn, pass);
+      const result = await handleLlm(env, turn, chat);
       expect(result).toBe(AgentState.HOOK);
       // handleCrossroad NOT called during cooldown
       expect(handleCrossroad).not.toHaveBeenCalled();
       // tool calls preserved
-      expect(pass.rawToolCalls).toHaveLength(1);
+      expect(chat.rawToolCalls).toHaveLength(1);
       expect(env.crossroadOccurred).toBe(false); // cooldown consumed
     }
 
@@ -200,7 +200,7 @@ describe('handleLlm — crossroad cooldown gate', () => {
     // --- Pass 3: crossroad fires again ---
     {
       const turn = createTurnVars();
-      const pass = createPassData();
+      const chat = createChatData();
       // env.crossroadOccurred is false (cooldown consumed)
 
       vi.mocked(retryChat).mockResolvedValueOnce(
@@ -214,11 +214,11 @@ describe('handleLlm — crossroad cooldown gate', () => {
         continuation: 'Focus on config now.',
       } as never);
 
-      const result = await handleLlm(env, turn, pass);
+      const result = await handleLlm(env, turn, chat);
       expect(result).toBe(AgentState.HOOK);
       // handleCrossroad called again on pass 3
       expect(handleCrossroad).toHaveBeenCalledTimes(1);
-      expect(pass.rawToolCalls).toEqual([]); // discarded
+      expect(chat.rawToolCalls).toEqual([]); // discarded
       expect(env.crossroadOccurred).toBe(true); // re-armed
     }
   });
@@ -231,7 +231,7 @@ describe('handleLlm — crossroad cooldown gate', () => {
     env.ctx.core.escAware = runOperationEscAware();
 
     const turn = createTurnVars();
-    const pass = createPassData();
+    const chat = createChatData();
     env.crossroadOccurred = false; // fresh state (not consecutive)
 
     vi.mocked(retryChat).mockResolvedValueOnce(
@@ -245,7 +245,7 @@ describe('handleLlm — crossroad cooldown gate', () => {
       continuation: 'resolved',
     } as never);
 
-    await handleLlm(env, turn, pass);
+    await handleLlm(env, turn, chat);
 
     // +2 confusion must be called unconditionally (not guarded by crossroadOccurred)
     expect(env.ctx.core.increaseConfusionIndex).toHaveBeenCalledWith(2);
@@ -262,7 +262,7 @@ describe('handleLlm — crossroad cooldown gate', () => {
     agentIO.setNeglectedMode(true);
 
     const turn = createTurnVars();
-    const pass = createPassData();
+    const chat = createChatData();
     env.crossroadOccurred = true; // stale flag
 
     vi.mocked(retryChat).mockResolvedValueOnce(
@@ -282,7 +282,7 @@ describe('handleLlm — crossroad cooldown gate', () => {
     // handled by the PROMPT reset (prompt.ts). So here we just verify the
     // function returns PROMPT and the flag is unchanged (will be reset at
     // PROMPT entry).
-    const result = await handleLlm(env, turn, pass);
+    const result = await handleLlm(env, turn, chat);
     expect(result).toBe(AgentState.PROMPT);
     // Flag is NOT reset here — it's reset at PROMPT entry (prompt.ts).
     // This is by design: the PROMPT reset is the boundary that clears it.

@@ -95,7 +95,7 @@ import { loader } from '../../../context/shared/loader.js';
 import { Triologue } from '../../../loop/triologue.js';
 import {
   createTurnVars,
-  createPassData,
+  createChatData,
   createMockMachineEnv,
 } from '../esc-test-helpers.js';
 import { createMockContext } from '../../test-utils/mock-context.js';
@@ -128,9 +128,9 @@ describe('handleCollect — ESC during hint generation', () => {
     }) as never;
 
     const turn = createTurnVars();
-    const pass = createPassData();
+    const chat = createChatData();
 
-    const result = await handleCollect(env, turn, pass);
+    const result = await handleCollect(env, turn, chat);
 
     expect(result).toBe(AgentState.PROMPT);
     // startWrapUp called by the cleanup function
@@ -155,9 +155,9 @@ describe('handleCollect — ESC during hint generation', () => {
     }) as never;
 
     const turn = createTurnVars();
-    const pass = createPassData();
+    const chat = createChatData();
 
-    await handleCollect(env, turn, pass);
+    await handleCollect(env, turn, chat);
 
     // The 'aborted' branch returns BEFORE resetConfusionIndex — so it must
     // NOT be called (confusion preserved so hint regenerates next round).
@@ -182,9 +182,9 @@ describe('handleCollect — ESC during hint generation', () => {
     }) as never;
 
     const turn = createTurnVars();
-    const pass = createPassData();
+    const chat = createChatData();
 
-    const result = await handleCollect(env, turn, pass);
+    const result = await handleCollect(env, turn, chat);
 
     expect(result).toBe(AgentState.LLM);
     // hint completed → confusion reset
@@ -202,9 +202,9 @@ describe('handleCollect — ESC during hint generation', () => {
     env.ctx = ctx;
 
     const turn = createTurnVars();
-    const pass = createPassData();
+    const chat = createChatData();
 
-    const result = await handleCollect(env, turn, pass);
+    const result = await handleCollect(env, turn, chat);
 
     expect(result).toBe(AgentState.LLM);
     // hint block NOT entered → no wrap-up, no hint generation
@@ -226,9 +226,9 @@ describe('handleCollect — ESC during hint generation', () => {
     env.ctx = ctx;
 
     const turn = createTurnVars();
-    const pass = createPassData();
+    const chat = createChatData();
 
-    await handleCollect(env, turn, pass);
+    await handleCollect(env, turn, chat);
 
     // A note was injected with the 'URGENT' tag (neglected-mode mail handling)
     const urgentCalls = vi.mocked(triologue.note).mock.calls.filter(

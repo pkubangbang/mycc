@@ -88,7 +88,7 @@ export interface TurnVars {
 }
 
 /** Pass lifetime — fresh at every COLLECT entry, flows LLM→HOOK→{TOOL|STOP} */
-export interface PassData {
+export interface ChatData {
   abortController: AbortController | null;
   rawToolCalls: ToolCall[];
   /** Text content from the LLM assistant message */
@@ -99,6 +99,10 @@ export interface PassData {
   hookResult: ProcessToolCallsResult | null;
   /** If crossroad was triggered, the best continuation text (injected in hook.ts) */
   crossroadContinuation?: string;
+  /** If crossroad was triggered, the path to the crossroad record JSON file
+   *  (written to the session dir by llm.ts, injected into the brief tool result
+   *  by hook.ts so the LLM knows where the full decision record lives). */
+  crossroadFilePath?: string;
   /**
    * Set by HOOK when a hook requests compaction (e.g. compact-on-intent-trap).
    * Consumed and cleared by the LLM stage, which performs the compact there
@@ -119,7 +123,7 @@ export type HandlerResult = AgentState | null;
 export type StateHandler = (
   env: MachineEnv,
   turn: TurnVars,
-  pass: PassData,
+  chat: ChatData,
 ) => Promise<HandlerResult>;
 
 // ============================================================================
@@ -171,7 +175,7 @@ export class AgentStateMachine {
    */
   async run(): Promise<void> {
     let turn: TurnVars = { isFirstRound: true, nextTodoNudge: 3, lastTodoState: '', nextBriefNudge: 5, lastUserQuery: '', extractedKeywords: [] };
-    let pass: PassData = { abortController: null, rawToolCalls: [], assistantContent: '', augmentedCalls: [], hookResult: null, deferredCompact: false };
+    let chat: ChatData = { abortController: null, rawToolCalls: [], assistantContent: '', augmentedCalls: [], hookResult: null, deferredCompact: false };
     // Initial state is always PROMPT. PROMPT is the single decision point for
     // whether to run autonomously: it redirects to WAIT when auto mode is on
     // (e.g. started via --auto, which calls autoState.setAuto(true)) or when
@@ -192,12 +196,12 @@ export class AgentStateMachine {
       }
       // COLLECT = fresh pipeline pass — always reset.
       if (state === AgentState.COLLECT) {
-        pass = { abortController: null, rawToolCalls: [], assistantContent: '', augmentedCalls: [], hookResult: null, deferredCompact: false };
+        chat = { abortController: null, rawToolCalls: [], assistantContent: '', augmentedCalls: [], hookResult: null, deferredCompact: false };
       }
 
       // ── Execute ──
       const handler: StateHandler = this.handlers[state];
-      const result: HandlerResult = await handler(this.env, turn, pass);
+      const result: HandlerResult = await handler(this.env, turn, chat);
 
       // null = exit signal (from PROMPT handler)
       if (result === null) return;
