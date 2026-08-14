@@ -11,6 +11,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { retryChat, MODEL, forkChat } from '../engine/chat-provider.js';
 import type { Message, ToolCall, Tool, WikiModule, NoteCategory, Skill } from '../types.js';
+import type { LegacyConditionInfo } from '../hook/conditions.js';
 import { minifyMessages } from '../utils/llm-chat-minifier.js';
 import { estimateTokens, estimateTokensForMessages } from '../utils/token.js';
 import { ResultTooLargeError } from '../types.js';
@@ -188,6 +189,45 @@ export class Triologue {
     this.projectContext.push(
       { role: 'user', content: lines.join('\n') },
       { role: 'assistant', content: 'Understood. I know which hooks are available but not yet active. I can compile them when needed using the skill_compile tool.' }
+    );
+  }
+
+  /**
+   * Add instructions for hookish skills whose compiled condition uses the
+   * outdated `seq.X` API and was therefore rejected at load (never activated).
+   * Lists each legacy skill with its name, "when" string, and the exact
+   * skill_compile command to recompile it into the current `turn.X` /
+   * `session.X` syntax. Only adds content if there are legacy conditions.
+   *
+   * Injected into projectContext so the LLM always sees which hooks failed
+   * to load and can recompile them — closing the gap on projects that were
+   * migrated to the new hook condition API but still have stale conditions.json
+   * entries written against the old `seq.X` API.
+   */
+  setLegacyHooksInfo(legacy: LegacyConditionInfo[]): void {
+    if (legacy.length === 0) return;
+
+    const lines: string[] = [
+      '[Hooks Outdated] The following hookish skills have compiled conditions using the outdated `seq.X` API, which is no longer supported. These hooks were NOT loaded and are inactive. Recompile them to reactivate using the current `turn.X` / `session.X` / `isPlanMode()` syntax:',
+      '',
+    ];
+
+    for (const entry of legacy) {
+      lines.push(`- ${entry.name}:`);
+      if (entry.when) {
+        lines.push(`  When: ${entry.when}`);
+      }
+      lines.push(`  Old condition: ${entry.condition}`);
+      lines.push(`  Recompile: skill_compile(name="${entry.name}")`);
+      lines.push('');
+    }
+
+    lines.push('Recompiling re-runs the LLM translation and emits the new syntax, updating conditions.json in place. Once recompiled, the hook activates automatically on the next load.');
+    lines.push('');
+
+    this.projectContext.push(
+      { role: 'user', content: lines.join('\n') },
+      { role: 'assistant', content: 'Understood. I see hooks with outdated `seq.X` conditions that failed to load. I will recompile them with skill_compile to reactivate them.' }
     );
   }
 

@@ -108,6 +108,21 @@ export interface Condition {
   history?: ConditionHistory[];
 }
 
+/**
+ * Info about a condition rejected at load due to legacy `seq.X` syntax.
+ * Collected so the agent can be prompted to recompile via skill_compile.
+ */
+export interface LegacyConditionInfo {
+  /** Skill name (the conditions.json key) */
+  name: string;
+  /** Original natural-language "when" string */
+  when: string;
+  /** The legacy compiled expression that failed validation */
+  condition: string;
+  /** Source skill file path (relative to skills dir), if present */
+  sourceFile?: string;
+}
+
 
 /**
  * Condition registry - manages compiled conditions
@@ -128,12 +143,13 @@ export class ConditionRegistry {
    * Validates all conditions before loading.
    * Removes orphaned conditions (source file no longer exists).
    */
-  async load(): Promise<{ errors: string[]; warnings: string[] }> {
+  async load(): Promise<{ errors: string[]; warnings: string[]; legacyConditions: LegacyConditionInfo[] }> {
     const errors: string[] = [];
     const warnings: string[] = [];
+    const legacyConditions: LegacyConditionInfo[] = [];
 
     if (!fs.existsSync(this.filePath)) {
-      return { errors, warnings };
+      return { errors, warnings, legacyConditions };
     }
 
     let content: string;
@@ -141,7 +157,7 @@ export class ConditionRegistry {
       content = fs.readFileSync(this.filePath, 'utf-8');
     } catch (err) {
       errors.push(`Failed to read conditions.json: ${(err as Error).message}`);
-      return { errors, warnings };
+      return { errors, warnings, legacyConditions };
     }
 
     // Validate JSON syntax before parsing
@@ -152,7 +168,7 @@ export class ConditionRegistry {
       errors.push(`Invalid JSON in conditions.json: ${(parseErr as Error).message}. File backed up.`);
       // Backup corrupted file
       this.backupCorruptedFile();
-      return { errors, warnings };
+      return { errors, warnings, legacyConditions };
     }
 
     const orphanedConditions: string[] = [];
@@ -163,6 +179,21 @@ export class ConditionRegistry {
       
       if (!result.valid) {
         errors.push(`Condition '${name}' failed validation: ${result.errors.join('; ')}`);
+        // Detect legacy `seq.X` syntax: collect for recompile prompting.
+        // The validator sets an explicit error mentioning "Legacy" when the
+        // expression contains `seq.`; we also double-check the raw condition
+        // string as a belt-and-suspenders guard.
+        const isLegacy = (cond && typeof cond === 'object' && typeof cond.condition === 'string')
+          ? /seq\./.test(cond.condition)
+          : result.errors.some(e => /Legacy/i.test(e));
+        if (isLegacy) {
+          legacyConditions.push({
+            name,
+            when: cond?.when,
+            condition: cond?.condition,
+            sourceFile: cond?.sourceFile,
+          });
+        }
         // Don't load invalid conditions
         continue;
       }
@@ -207,7 +238,7 @@ export class ConditionRegistry {
       }
     }
 
-    return { errors, warnings };
+    return { errors, warnings, legacyConditions };
   }
 
   /**

@@ -294,6 +294,13 @@ export async function main(): Promise<void> {
     console.log(chalk.yellow(`[conditions] Warning: ${warning}`));
   }
 
+  // Inject info about hooks whose compiled condition uses the outdated
+  // `seq.X` API (rejected at load) so the LLM is prompted to recompile them
+  // via skill_compile into the current `turn.X` / `session.X` syntax.
+  // This surfaces legacy conditions as a projectContext note the agent sees
+  // every turn — non-blocking, but actionable (names the exact commands).
+  triologue.setLegacyHooksInfo(loadResult.legacyConditions);
+
   // Wire up IPC-based condition reload: skill_compile sends IPC message
   // to refresh runtime conditions without restarting the agent
   agentIO.setConditionReloadCallback(async () => {

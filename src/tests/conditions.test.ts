@@ -527,6 +527,58 @@ describe("ConditionRegistry", () => {
       expect(registry.get("skill1")).toBeUndefined();
     });
 
+    it("should collect legacy seq.X conditions in legacyConditions", async () => {
+      // A condition written against the old `seq.X` API fails validation
+      // (the validator explicitly rejects `seq.` syntax). load() should:
+      //   1. NOT load the condition (it stays inactive)
+      //   2. Collect it into legacyConditions so the agent can be prompted
+      //      to recompile via skill_compile.
+      const conditions = {
+        "legacy-hook": {
+          trigger: ["git_commit"],
+          when: "run lint before commit",
+          condition: 'seq.lastIndexOf("bash#pnpm lint") == -1',
+          action: { type: "block", reason: "Run lint first" },
+          version: 1,
+          sourceFile: "project:legacy-hook",
+        },
+      };
+
+      fs.writeFileSync(conditionsFile, JSON.stringify(conditions, null, 2));
+      const result = await registry.load();
+
+      // Condition is NOT loaded (rejected at validation)
+      expect(registry.get("legacy-hook")).toBeUndefined();
+      // It IS collected as a legacy condition for recompile prompting
+      expect(result.legacyConditions).toHaveLength(1);
+      expect(result.legacyConditions[0]).toMatchObject({
+        name: "legacy-hook",
+        when: "run lint before commit",
+        condition: 'seq.lastIndexOf("bash#pnpm lint") == -1',
+        sourceFile: "project:legacy-hook",
+      });
+      // An error is still reported (validation failure message)
+      expect(result.errors.length).toBeGreaterThan(0);
+    });
+
+    it("should NOT collect valid turn.X conditions as legacy", async () => {
+      const conditions = {
+        "valid-hook": {
+          trigger: ["git_commit"],
+          when: "run lint before commit",
+          condition: 'turn.lastIndex("bash#pnpm lint") == -1',
+          action: { type: "block", reason: "Run lint first" },
+          version: 1,
+        },
+      };
+
+      fs.writeFileSync(conditionsFile, JSON.stringify(conditions, null, 2));
+      const result = await registry.load();
+
+      expect(registry.get("valid-hook")).toBeDefined();
+      expect(result.legacyConditions).toHaveLength(0);
+    });
+
     it("should handle array instead of object", async () => {
       fs.writeFileSync(conditionsFile, "[]");
       await registry.load();
