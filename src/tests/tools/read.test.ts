@@ -191,35 +191,15 @@ describe('readTool', () => {
     expect(readTool.input_schema.required).toContain('path');
   });
 
-  // ── aloud parameter + FileHandler dispatch (Part 4) ──
+  // ── pure read: no handler intercepts special file types ──
 
-  it('should brief the result to terminal when aloud=true on a normal text file', async () => {
-    const testFile = path.join(tempDir, 'aloud.txt');
-    fs.writeFileSync(testFile, 'Display me to the user');
-
-    const result = await readTool.handler(ctx, { path: 'aloud.txt', aloud: true });
-
-    // LLM still receives the normal read result (with header)
-    expect(result).toContain('Display me to the user');
-    expect(result).toContain('File: aloud.txt');
-    // Terminal was shown the same content via brief('info', 'read_aloud', ...)
-    expect(ctx.core.brief).toHaveBeenCalledWith('info', 'read_aloud', expect.stringContaining('Display me to the user'));
-  });
-
-  it('should NOT brief to terminal when aloud is omitted (default false)', async () => {
-    const testFile = path.join(tempDir, 'silent.txt');
-    fs.writeFileSync(testFile, 'Silent content');
-
-    await readTool.handler(ctx, { path: 'silent.txt' });
-
-    // read_aloud brief must never fire without aloud=true.
-    // (Other briefs like 'read' progress still happen, so we check the specific label.)
-    const calls = vi.mocked(ctx.core.brief).mock.calls;
-    const aloudCalls = calls.filter(c => c[1] === 'read_aloud');
-    expect(aloudCalls).toHaveLength(0);
-  });
-
-  it('should dispatch crossroad-json-handler for a .json file with crossroad fields and return short confirmation', async () => {
+  it('should return full content for a crossroad JSON file (no handler intercepts)', async () => {
+    // read_file is now pure: it always returns the actual file content to the
+    // LLM. Previously a crossroad-json-handler intercepted and returned a short
+    // summary instead of the content — the LLM could never edit what it
+    // "read". Now the full JSON is returned, so edit_file old_text matching
+    // works. The display/replay concern moved to bash display=true +
+    // mycc-pretty-print --type=crossroad.
     const record = {
       sessionId: 'test-session',
       timestamp: 1700000000000,
@@ -232,50 +212,14 @@ describe('readTool', () => {
 
     const result = await readTool.handler(ctx, { path: 'crossroad-1700000000000.json' });
 
-    // toolResult is the SHORT confirmation, NOT the merged prefix+continuation.
-    expect(result).toContain('replayed to terminal');
-    expect(result).toContain('3 candidate continuation(s)');
-    // The full reconstructed text is NOT returned to the LLM.
-    expect(result).not.toContain('I was about to say one thing.');
-    expect(result).not.toContain('But actually, let me reconsider the assumptions.');
-  });
-
-  it('should brief the merged prefix+continuation to terminal when aloud=true on a crossroad JSON file', async () => {
-    const record = {
-      sessionId: 'test-session',
-      timestamp: 1700000000001,
-      prefix: 'The prefix text.',
-      candidates: ['c1', 'c2'],
-      continuation: 'The continuation text.',
-    };
-    const testFile = path.join(tempDir, 'crossroad-1700000000001.json');
-    fs.writeFileSync(testFile, JSON.stringify(record, null, 2));
-
-    const result = await readTool.handler(ctx, { path: 'crossroad-1700000000001.json', aloud: true });
-
-    // LLM gets the short confirmation
-    expect(result).toContain('replayed to terminal');
-    // Terminal gets the MERGED prefix + continuation (the replay bypass display)
-    expect(ctx.core.brief).toHaveBeenCalledWith(
-      'info', 'read_aloud',
-      expect.stringContaining('The prefix text.'),
-    );
-    expect(ctx.core.brief).toHaveBeenCalledWith(
-      'info', 'read_aloud',
-      expect.stringContaining('The continuation text.'),
-    );
-  });
-
-  it('should NOT dispatch the handler for a plain .json file without crossroad fields', async () => {
-    const testFile = path.join(tempDir, 'config.json');
-    fs.writeFileSync(testFile, JSON.stringify({ setting: true, nested: { a: 1 } }, null, 2));
-
-    const result = await readTool.handler(ctx, { path: 'config.json' });
-
-    // No crossroad fields → handler does not match → normal read path.
-    // The full JSON content (with header) is returned to the LLM.
-    expect(result).toContain('File: config.json');
-    expect(result).toContain('"setting": true');
+    // The FULL JSON content is returned to the LLM (with header), not a short
+    // confirmation. The LLM can see the real text and edit it.
+    expect(result).toContain('File: crossroad-1700000000000.json');
+    expect(result).toContain('"prefix"');
+    expect(result).toContain('"continuation"');
+    expect(result).toContain('I was about to say one thing.');
+    expect(result).toContain('But actually, let me reconsider the assumptions.');
+    // No handler summary — that mechanism was removed.
     expect(result).not.toContain('replayed to terminal');
   });
 });

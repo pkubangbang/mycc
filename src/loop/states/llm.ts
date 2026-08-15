@@ -214,7 +214,12 @@ export async function handleLlm(
             // full decision (prefix, all candidates, selected continuation) is
             // persisted on disk. The file path is stored on chat.crossroadFilePath
             // and injected into the brief tool result by hook.ts, enabling the
-            // read_file aloud replay-bypass mechanism (Part 4).
+            // replay mechanism: the LLM runs
+            //   bash(command="mycc-pretty-print --type=crossroad <path>", display=true)
+            // to merge prefix + continuation to stdout, which the display flag
+            // briefs to the terminal. Because the display is a bash tool result
+            // (not chat.assistantContent), detectTurningWord never scans it, so
+            // replaying a crossroad cannot re-trigger it.
             try {
               const sessionId = getSessionContext();
               const sessionDir = getSessionDir(sessionId);

@@ -406,10 +406,19 @@ export async function handleHook(
       }] as ToolCall[], chat.assistantReasoningContent);
 
       // Inject the crossroad file path into the brief tool result so the LLM
-      // knows where the full decision record lives. When there is no
-      // crossroad file (e.g. file write failed), fall back to 'OK'.
+      // knows where the full decision record lives, and how to replay it to
+      // the terminal user. When there is no crossroad file (e.g. file write
+      // failed), fall back to 'OK'.
+      //
+      // Replay mechanism: the LLM runs `bash(command="mycc-pretty-print
+      // --type=crossroad <path>", display=true)`. mycc-pretty-print merges
+      // prefix + continuation to stdout; the display flag briefs stdout to the
+      // terminal so the user sees the reconstructed response. Because the
+      // display happens through a bash tool result (NOT chat.assistantContent),
+      // detectTurningWord — which only scans chat.assistantContent — never sees
+      // the reconstructed text, so replaying a crossroad cannot re-trigger it.
       const briefResult = chat.crossroadFilePath
-        ? `Crossroad triggered. The decision making process can be found at ${chat.crossroadFilePath}`
+        ? `Crossroad triggered. To report the decision to the user, run: bash(command="mycc-pretty-print --type=crossroad ${chat.crossroadFilePath}", display=true)`
         : 'OK';
       triologue.tool('brief', briefResult, briefCallId);
 

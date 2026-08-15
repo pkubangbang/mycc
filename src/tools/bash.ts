@@ -8,6 +8,10 @@
  * - intent: Explain why you want to use this command (mandatory)
  * - timeout: Seconds before killing the process (mandatory)
  *   - Process is killed immediately with SIGKILL on timeout
+ * - display: If true, also display stdout to the terminal user via brief,
+ *   in addition to returning it as a tool result. Use when the user
+ *   explicitly asks to see a command's output (e.g. replaying a crossroad
+ *   decision via `mycc-pretty-print --type=crossroad <path>`).
  *
  * Output is automatically summarized if it exceeds 20000 characters.
  */
@@ -94,6 +98,10 @@ export const bashTool: ToolDefinition = {
         maximum: 60,
         default: 30,
       },
+      display: {
+        type: 'boolean',
+        description: 'If true, also display the command stdout to the terminal user via brief, in addition to returning it as a tool result. Use when the user explicitly asks to see output (e.g. replaying a crossroad decision via `mycc-pretty-print --type=crossroad <path>`). Default: false.',
+      },
     },
     required: ['command', 'intent'],
   },
@@ -101,6 +109,7 @@ export const bashTool: ToolDefinition = {
   handler: async (ctx: AgentContext, args: Record<string, unknown>): Promise<string> => {
     const command = args.command as string;
     const intent = args.intent as string;
+    const display = args.display === true;
 
     // Coerce timeout to a safe integer in [1, 60].
     // The LLM frequently omits timeout (undefined) or sends out-of-range values
@@ -197,8 +206,16 @@ export const bashTool: ToolDefinition = {
 
     const output = parts.join('\n');
 
-    // Verbose output: show the full result contents
-    ctx.core.verbose('bash', 'Command output', { command, exitCode, stdout: stdout.slice(0, 2000), stderr: stderr.slice(0, 500) });
+    // ── display to terminal user ──
+    // When display=true, brief the raw stdout to the terminal user so they
+    // see the command's output (in addition to the LLM receiving the full
+    // structured result below). Only stdout is shown — clean, no labels or
+    // exit-code line. This supercedes the old ctx.core.verbose('bash', ...)
+    // debug line: display is LLM-controlled and works in any mode, whereas
+    // verbose only fired under the -v flag.
+    if (display && stdout.trim()) {
+      ctx.core.brief('info', 'bash_display', stdout.trim());
+    }
 
     // Check if we need to truncate
     const outputChars = output.length;

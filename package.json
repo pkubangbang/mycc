@@ -5,7 +5,8 @@
   "type": "module",
   "bin": {
     "mycc": "./bin/mycc.js",
-    "mdcalc": "./scripts/mdcalc/mdcalc.js"
+    "mdcalc": "./scripts/mdcalc/mdcalc.js",
+    "mycc-pretty-print": "./scripts/pretty-print/pretty-print.js"
   },
   "exports": {
     ".": {

@@ -248,6 +248,86 @@ describe('bashTool', () => {
     expect(result).not.toContain('[stderr]');
   });
 
+  // ── display parameter ──
+  // When display=true, bash briefs the raw stdout to the terminal user via
+  // ctx.core.brief('info', 'bash_display', stdout), in addition to returning
+  // the full structured result to the LLM. This is the mechanism that replaced
+  // read_file's old `aloud` parameter + read-handlers dispatch: the
+  // display-to-terminal concern now lives in the bash tool, keeping read_file
+  // pure (always returns file content, no handler indirection).
+
+  it('should brief stdout to terminal when display=true', async () => {
+    const mockExec = vi.mocked(agentIO.exec);
+    mockExec.mockResolvedValue({
+      stdout: 'display this to the user',
+      stderr: '',
+      interrupted: false,
+      exitCode: 0,
+      timedOut: false,
+    });
+
+    const result = await bashTool.handler(ctx, {
+      command: 'echo display this to the user',
+      intent: 'test display',
+      timeout: 5,
+      display: true,
+    });
+
+    // LLM still receives the full structured result
+    expect(result).toContain('Command completed successfully');
+    expect(result).toContain('display this to the user');
+    // Terminal was shown the raw stdout via brief('info', 'bash_display', ...)
+    expect(ctx.core.brief).toHaveBeenCalledWith(
+      'info', 'bash_display', 'display this to the user'
+    );
+  });
+
+  it('should NOT brief to terminal when display is omitted (default false)', async () => {
+    const mockExec = vi.mocked(agentIO.exec);
+    mockExec.mockResolvedValue({
+      stdout: 'silent output',
+      stderr: '',
+      interrupted: false,
+      exitCode: 0,
+      timedOut: false,
+    });
+
+    await bashTool.handler(ctx, {
+      command: 'echo silent output',
+      intent: 'test no display',
+      timeout: 5,
+    });
+
+    // bash_display brief must never fire without display=true.
+    // (Other briefs like 'bash' progress still happen, so check the specific label.)
+    const calls = vi.mocked(ctx.core.brief).mock.calls;
+    const displayCalls = calls.filter(c => c[1] === 'bash_display');
+    expect(displayCalls).toHaveLength(0);
+  });
+
+  it('should NOT brief to terminal when display=true but stdout is empty', async () => {
+    const mockExec = vi.mocked(agentIO.exec);
+    mockExec.mockResolvedValue({
+      stdout: '',
+      stderr: 'some error',
+      interrupted: false,
+      exitCode: 1,
+      timedOut: false,
+    });
+
+    await bashTool.handler(ctx, {
+      command: 'failing-cmd',
+      intent: 'test empty stdout with display',
+      timeout: 5,
+      display: true,
+    });
+
+    // No stdout to display → bash_display brief must not fire.
+    const calls = vi.mocked(ctx.core.brief).mock.calls;
+    const displayCalls = calls.filter(c => c[1] === 'bash_display');
+    expect(displayCalls).toHaveLength(0);
+  });
+
   it('should have correct metadata', () => {
     expect(bashTool.name).toBe('bash');
     expect(bashTool.scope).toEqual(['main', 'child']);
@@ -257,6 +337,9 @@ describe('bashTool', () => {
     // is intentionally NOT in `required`. This prevents the guaranteed
     // first-call failure when the LLM omits timeout.
     expect(bashTool.input_schema.required).not.toContain('timeout');
+    // display is optional — defaults to false (no terminal display).
+    expect(bashTool.input_schema.required).not.toContain('display');
+    expect(bashTool.input_schema.properties).toHaveProperty('display');
   });
 });
 
