@@ -23,6 +23,7 @@
  */
 
 import { format as formatCrossroad } from './crossroad.js';
+import { format as formatChannel } from './channel.js';
 
 /**
  * Registry of type → formatter function.
@@ -30,6 +31,7 @@ import { format as formatCrossroad } from './crossroad.js';
  */
 const FORMATTERS = {
   crossroad: formatCrossroad,
+  channel: formatChannel,
 };
 
 const HELP = `mycc-pretty-print — Pretty-print files for terminal display
@@ -39,9 +41,11 @@ Usage:
 
 Types:
   crossroad    Merge prefix + continuation from a crossroad record JSON
+  channel      Render a peer-discovery channel file (ChannelFile JSON)
 
 Examples:
-  mycc-pretty-print --type=crossroad .mycc/sessions/abc/crossroad-1700000000000.json`;
+  mycc-pretty-print --type=crossroad .mycc/sessions/abc/crossroad-1700000000000.json
+  mycc-pretty-print --type=channel ~/.mycc-store/discovery/channels/<owner>-<channelId>.json`;
 
 /**
  * Parse argv into { type, help, path }.
