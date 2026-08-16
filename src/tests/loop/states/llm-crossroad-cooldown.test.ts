@@ -270,20 +270,17 @@ describe('handleLlm — crossroad cooldown gate', () => {
     );
 
     // In neglected mode, the early-return at the top of handleLlm fires
-    // (ESC pressed before LLM call). So we need to test the no-tools path
-    // differently: the tools array is empty because loader returns [].
-    // Actually, neglected mode triggers the early return before retryChat.
-    // So this test verifies the early-return path resets the flag via PROMPT.
+    // (ESC pressed before LLM call) and returns STOP for centralized wrap-up.
     // The no-tools `else` branch is hard to reach because neglected mode
-    // returns early. We verify the flag is not left stale by checking it
-    // after the early return.
+    // returns early. We verify the function returns STOP and the flag is
+    // unchanged (will be reset at PROMPT entry).
     //
     // Note: the early return path does NOT reset crossroadOccurred — that's
     // handled by the PROMPT reset (prompt.ts). So here we just verify the
-    // function returns PROMPT and the flag is unchanged (will be reset at
+    // function returns STOP and the flag is unchanged (will be reset at
     // PROMPT entry).
     const result = await handleLlm(env, turn, chat);
-    expect(result).toBe(AgentState.PROMPT);
+    expect(result).toBe(AgentState.STOP);
     // Flag is NOT reset here — it's reset at PROMPT entry (prompt.ts).
     // This is by design: the PROMPT reset is the boundary that clears it.
   });

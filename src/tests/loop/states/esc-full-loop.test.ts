@@ -93,9 +93,10 @@ function buildMachine(deps: ReturnType<typeof createMockDeps>, handlers: Record<
 }
 
 describe('AgentStateMachine — full-loop ESC integration', () => {
-  // [1] ESC quick-return: LLM returns PROMPT (instead of HOOK) when ESC fires.
-  //     The loop should jump straight back to PROMPT, skipping HOOK/TOOL/STOP.
-  it('should short-circuit to PROMPT (skipping HOOK/TOOL/STOP) when LLM returns PROMPT on ESC', async () => {
+  // [1] ESC quick-return: LLM returns STOP (instead of HOOK) when ESC fires.
+  //     STOP then handles the wrap-up and returns PROMPT. The loop should
+  //     go LLM → STOP → PROMPT, skipping HOOK/TOOL.
+  it('should route through STOP (not skip it) when LLM returns STOP on ESC', async () => {
     const deps = createMockDeps();
     const visited: AgentState[] = [];
     let promptCalls = 0;
@@ -108,8 +109,8 @@ describe('AgentStateMachine — full-loop ESC integration', () => {
       }),
       [AgentState.SLASH]: vi.fn(),
       [AgentState.COLLECT]: vi.fn(async () => { visited.push(AgentState.COLLECT); return AgentState.LLM; }),
-      // LLM simulates ESC: returns PROMPT (not HOOK) → quick-return
-      [AgentState.LLM]: vi.fn(async () => { visited.push(AgentState.LLM); return AgentState.PROMPT; }),
+      // LLM simulates ESC: returns STOP (not HOOK) → STOP handles wrap-up
+      [AgentState.LLM]: vi.fn(async () => { visited.push(AgentState.LLM); return AgentState.STOP; }),
       [AgentState.HOOK]: vi.fn(async () => { visited.push(AgentState.HOOK); return AgentState.TOOL; }),
       [AgentState.TOOL]: vi.fn(async () => { visited.push(AgentState.TOOL); return AgentState.STOP; }),
       [AgentState.STOP]: vi.fn(async () => { visited.push(AgentState.STOP); return AgentState.PROMPT; }),
@@ -118,12 +119,13 @@ describe('AgentStateMachine — full-loop ESC integration', () => {
 
     await buildMachine(deps, handlers).run();
 
-    // Sequence: PROMPT → COLLECT → LLM → PROMPT (ESC short-circuit) → exit
-    expect(visited).toEqual([AgentState.PROMPT, AgentState.COLLECT, AgentState.LLM, AgentState.PROMPT]);
-    // HOOK/TOOL/STOP must NOT have been visited (ESC skipped them)
+    // Sequence: PROMPT → COLLECT → LLM → STOP → PROMPT (ESC routes through STOP)
+    expect(visited).toEqual([AgentState.PROMPT, AgentState.COLLECT, AgentState.LLM, AgentState.STOP, AgentState.PROMPT]);
+    // HOOK/TOOL must NOT have been visited (ESC skipped them)
     expect(handlers[AgentState.HOOK]).not.toHaveBeenCalled();
     expect(handlers[AgentState.TOOL]).not.toHaveBeenCalled();
-    expect(handlers[AgentState.STOP]).not.toHaveBeenCalled();
+    // STOP IS visited now (it handles the wrap-up)
+    expect(handlers[AgentState.STOP]).toHaveBeenCalledTimes(1);
   });
 
   // [2] Normal pipeline completes a full turn then exits on the next PROMPT.
@@ -163,10 +165,10 @@ describe('AgentStateMachine — full-loop ESC integration', () => {
   });
 
   // [3] TurnVars is reset when re-entering PROMPT from STOP (new conversational turn),
-  //     but preserved across the ESC short-circuit (PROMPT-from-LLM also resets since
-  //     prevState !== SLASH). The key invariant: ESC quick-return re-shows the prompt
-  //     with FRESH TurnVars so the user's next query starts a clean turn.
-  it('should reset TurnVars on PROMPT re-entry after the ESC quick-return from LLM', async () => {
+  //     including the ESC path (LLM → STOP → PROMPT). The key invariant: ESC
+  //     re-shows the prompt with FRESH TurnVars so the user's next query starts
+  //     a clean turn.
+  it('should reset TurnVars on PROMPT re-entry after the ESC route through STOP from LLM', async () => {
     const deps = createMockDeps();
     const promptTurnVars: { isFirstRound: boolean; nextTodoNudge: number }[] = [];
     let promptCalls = 0;
@@ -185,10 +187,10 @@ describe('AgentStateMachine — full-loop ESC integration', () => {
         turn.nextTodoNudge = 99;
         return AgentState.LLM;
       }),
-      [AgentState.LLM]: vi.fn(async () => AgentState.PROMPT), // ESC quick-return
+      [AgentState.LLM]: vi.fn(async () => AgentState.STOP), // ESC → STOP
       [AgentState.HOOK]: vi.fn(),
       [AgentState.TOOL]: vi.fn(),
-      [AgentState.STOP]: vi.fn(),
+      [AgentState.STOP]: vi.fn(async () => AgentState.PROMPT),
       [AgentState.WAIT]: vi.fn(),
     };
 
@@ -202,8 +204,8 @@ describe('AgentStateMachine — full-loop ESC integration', () => {
   });
 
   // [4] ChatData is reset on every COLLECT entry — including after the ESC
-  //     short-circuit loops back through COLLECT on the next turn.
-  it('should provide fresh ChatData on each COLLECT entry across ESC quick-return', async () => {
+  //     path loops back through COLLECT on the next turn (LLM → STOP → PROMPT → COLLECT).
+  it('should provide fresh ChatData on each COLLECT entry across ESC route through STOP', async () => {
     const deps = createMockDeps();
     const passSnapshots: { rawToolCalls: unknown[]; assistantContent: string }[] = [];
     let collectCalls = 0;
@@ -214,7 +216,7 @@ describe('AgentStateMachine — full-loop ESC integration', () => {
       [AgentState.COLLECT]: vi.fn(async (_env, _turn, chat) => {
         collectCalls++;
         passSnapshots.push({ rawToolCalls: [...chat.rawToolCalls], assistantContent: chat.assistantContent });
-        // First COLLECT: mutate pass, then go LLM → ESC → PROMPT → COLLECT again
+        // First COLLECT: mutate pass, then go LLM → ESC → STOP → PROMPT → COLLECT again
         if (collectCalls === 1) {
           chat.rawToolCalls = [{ id: 'stale', function: { name: 'bash', arguments: {} } }] as never;
           chat.assistantContent = 'stale content';
@@ -222,10 +224,10 @@ describe('AgentStateMachine — full-loop ESC integration', () => {
         }
         return null; // exit on second COLLECT
       }),
-      [AgentState.LLM]: vi.fn(async () => AgentState.PROMPT), // ESC quick-return
+      [AgentState.LLM]: vi.fn(async () => AgentState.STOP), // ESC → STOP
       [AgentState.HOOK]: vi.fn(),
       [AgentState.TOOL]: vi.fn(),
-      [AgentState.STOP]: vi.fn(),
+      [AgentState.STOP]: vi.fn(async () => AgentState.PROMPT),
       [AgentState.WAIT]: vi.fn(),
     };
 
@@ -237,9 +239,9 @@ describe('AgentStateMachine — full-loop ESC integration', () => {
     expect(passSnapshots[1].assistantContent).toBe('');
   });
 
-  // [5] ESC during a multi-tool pipeline: LLM returns PROMPT, aborting the turn,
+  // [5] ESC during a multi-tool pipeline: LLM returns STOP, STOP returns PROMPT,
   //     and the loop exits cleanly when PROMPT then returns null.
-  it('should exit cleanly when PROMPT returns null after the ESC quick-return path', async () => {
+  it('should exit cleanly when PROMPT returns null after the ESC route through STOP', async () => {
     const deps = createMockDeps();
     const visited: AgentState[] = [];
     let promptCalls = 0;
@@ -253,17 +255,17 @@ describe('AgentStateMachine — full-loop ESC integration', () => {
       }),
       [AgentState.SLASH]: vi.fn(),
       [AgentState.COLLECT]: vi.fn(async () => { visited.push(AgentState.COLLECT); return AgentState.LLM; }),
-      [AgentState.LLM]: vi.fn(async () => { visited.push(AgentState.LLM); return AgentState.PROMPT; }),
+      [AgentState.LLM]: vi.fn(async () => { visited.push(AgentState.LLM); return AgentState.STOP; }),
       [AgentState.HOOK]: vi.fn(),
       [AgentState.TOOL]: vi.fn(),
-      [AgentState.STOP]: vi.fn(),
+      [AgentState.STOP]: vi.fn(async () => { visited.push(AgentState.STOP); return AgentState.PROMPT; }),
       [AgentState.WAIT]: vi.fn(),
     };
 
     await buildMachine(deps, handlers).run();
 
-    // Loop terminated cleanly after the second PROMPT returned null.
-    expect(visited).toEqual([AgentState.PROMPT, AgentState.COLLECT, AgentState.LLM, AgentState.PROMPT]);
+    // Loop terminated cleanly: PROMPT → COLLECT → LLM → STOP → PROMPT → exit
+    expect(visited).toEqual([AgentState.PROMPT, AgentState.COLLECT, AgentState.LLM, AgentState.STOP, AgentState.PROMPT]);
     expect(handlers[AgentState.PROMPT]).toHaveBeenCalledTimes(2);
     // No SLASH branch was entered
     expect(handlers[AgentState.SLASH]).not.toHaveBeenCalled();

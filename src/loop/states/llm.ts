@@ -25,7 +25,6 @@ import { stopSpinner } from '../../engine/chat-helpers.js';
 import { buildPlanModePrompt, buildNormalModePrompt, isInPlanMode } from '../agent-prompts.js';
 import { agentIO } from '../agent-io.js';
 import { autoState } from '../auto-state.js';
-import { startWrapUp } from '../esc-wrap-up.js';
 import { loader } from '../../context/shared/loader.js';
 import { handleCrossroad } from '../crossroad.js';
 import { loopEvents } from '../loop-events.js';
@@ -108,15 +107,13 @@ export async function handleLlm(
     const tools = agentIO.isNeglectedMode() ? [] : loader.getToolsForScope(scope);
 
     try {
-      // If ESC was already pressed before entering escAware, start wrap-up and return early
+      // If ESC was already pressed before entering escAware, return STOP for
+      // centralized wrap-up (stop.ts handles startWrapUp + auto-off).
       if (agentIO.isNeglectedMode()) {
-        ctx.core.verbose('llm', 'ESC pressed before LLM call - starting wrap-up');
+        ctx.core.verbose('llm', 'ESC pressed before LLM call - returning to STOP for wrap-up');
         // Observability: emit esc_interrupt (silent when no listeners)
         loopEvents.emit('esc_interrupt', { state: 'llm' });
-        stopSpinner(); // Ensure spinner is stopped before returning to PROMPT
-        startWrapUp(triologue, tools);
-        agentIO.setNeglectedMode(false);
-        return AgentState.PROMPT;
+        return AgentState.STOP;
       }
 
       const response = await ctx.core.escAware(
@@ -138,9 +135,9 @@ export async function handleLlm(
           );
         },
         () => {
-          // This runs when ESC is pressed DURING the LLM call
-          // Always start wrap-up to give user a quick response
-          startWrapUp(triologue, tools);
+          // This runs when ESC is pressed DURING the LLM call.
+          // Just return null — the null check below returns STOP for
+          // centralized wrap-up (stop.ts handles startWrapUp).
           return null;
         }
       );
@@ -150,9 +147,9 @@ export async function handleLlm(
         ctx.core.verbose('llm', 'LLM response discarded due to ESC interruption');
         // Observability: emit esc_interrupt (silent when no listeners)
         loopEvents.emit('esc_interrupt', { state: 'llm' });
-        stopSpinner(); // Ensure spinner is stopped before returning to PROMPT
-        agentIO.setNeglectedMode(false);
-        return AgentState.PROMPT;
+        // Return STOP for centralized wrap-up (stop.ts handles startWrapUp
+        // + auto-off + setNeglectedMode). Neglected mode is NOT cleared here.
+        return AgentState.STOP;
       }
 
       // Store response data on pass for downstream states
@@ -200,10 +197,9 @@ export async function handleLlm(
             },
             () => null,
           );
-          // ESC pressed during crossroad processing - return to PROMPT immediately
+          // ESC pressed during crossroad processing - return STOP for wrap-up
           if (agentIO.isNeglectedMode()) {
-            stopSpinner();
-            return AgentState.PROMPT;
+            return AgentState.STOP;
           }
           if (crossroadResult) {
             ctx.core.verbose('llm',

@@ -112,7 +112,7 @@ describe('handleLlm — ESC during crossroad processing', () => {
     triologue = new Triologue();
   });
 
-  it('should return PROMPT immediately when ESC fires during crossroad (neglected mode true)', async () => {
+  it('should return STOP immediately when ESC fires during crossroad (neglected mode true)', async () => {
     const env = createMockMachineEnv({ triologue });
     // 1st escAware (retryChat): run normally
     // 2nd escAware (crossroad): call cleanup (returns null) AND set neglected=true
@@ -136,9 +136,11 @@ describe('handleLlm — ESC during crossroad processing', () => {
 
     const result = await handleLlm(env, turn, chat);
 
-    expect(result).toBe(AgentState.PROMPT);
-    // stopSpinner must be called on the ESC-during-crossroad path
-    expect(stopSpinner).toHaveBeenCalled();
+    // Neglection paths now return STOP; stop.ts handles startWrapUp +
+    // stopSpinner + setNeglectedMode.
+    expect(result).toBe(AgentState.STOP);
+    // stopSpinner NOT called by llm.ts on this path (stop.ts handles it)
+    expect(stopSpinner).not.toHaveBeenCalled();
     // crossroadResult is null (from cleanup), so assistantContent is unchanged
     expect(chat.assistantContent).toBe('some response');
     // crossroadContinuation must NOT be set (crossroad was skipped)

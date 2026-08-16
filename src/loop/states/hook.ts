@@ -226,10 +226,13 @@ async function handleRecapCall(
     triologue.agent(chat.assistantContent, chat.rawToolCalls as ToolCall[] | undefined, chat.assistantReasoningContent);
     triologue.tool('recap', summary, call.id);
     ctx.core.brief('warn', 'recap', summary);
-    // ESC pressed during recap - return to PROMPT immediately
+    // ESC pressed during recap - return STOP for centralized wrap-up
+    // (stop.ts handles startWrapUp + auto-off + setNeglectedMode).
+    // Neglected mode is NOT cleared here. The cancelled summary was already
+    // registered as a tool response above (triologue.agent + triologue.tool),
+    // so triologue parity is intact (last role = 'tool').
     if (agentIO.isNeglectedMode()) {
-      agentIO.setNeglectedMode(false);
-      return AgentState.PROMPT;
+      return AgentState.STOP;
     }
     turn.isFirstRound = false;
     return AgentState.COLLECT;

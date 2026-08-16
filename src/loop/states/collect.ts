@@ -10,7 +10,6 @@ import { AgentState } from '../state-machine.js';
 import type { MachineEnv, TurnVars, ChatData, HandlerResult } from '../state-machine.js';
 import { agentIO } from '../agent-io.js';
 import { autoState } from '../auto-state.js';
-import { startWrapUp } from '../esc-wrap-up.js';
 import { isVerbose } from '../../config.js';
 import { loader } from '../../context/shared/loader.js';
 import { forkChat } from '../../engine/chat-provider.js';
@@ -300,16 +299,17 @@ export async function handleCollect(
           return await triologue.generateHintRound(abortController, confusionIndex, breakdown, pendingSkills);
         },
         () => {
-          // Start wrap-up when ESC is pressed during hint generation
-          startWrapUp(triologue, loader.getToolsForScope(env.scope));
+          // ESC pressed during hint generation — return 'aborted' so the
+          // caller returns STOP for centralized wrap-up (stop.ts handles
+          // startWrapUp + auto-off + setNeglectedMode).
           return 'aborted' as const;
         }
       );
       
-      // If aborted (ESC pressed), skip to PROMPT to show prompt immediately
+      // If aborted (ESC pressed), return STOP for centralized wrap-up.
+      // Neglected mode is NOT cleared here — stop.ts handles that.
       if (result === 'aborted') {
-        agentIO.setNeglectedMode(false);
-        return AgentState.PROMPT;
+        return AgentState.STOP;
       }
       // Reset confusion after hint
       ctx.core.resetConfusionIndex();

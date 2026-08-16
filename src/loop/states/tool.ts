@@ -58,18 +58,19 @@ export async function handleTool(
 
   // Execute each tool call sequentially
   for (const toolCall of hookResult.calls) {
-    // ESC: abort current tool and return to PROMPT immediately
+    // ESC: abort current tool and return to STOP for centralized wrap-up
     if (agentIO.isNeglectedMode()) {
       // Observability: emit esc_interrupt (silent when no listeners)
       loopEvents.emit('esc_interrupt', { state: 'tool' });
-      agentIO.setNeglectedMode(false); // Clear neglected mode before returning to PROMPT
       // Skip any remaining pending tool calls to maintain triologue parity
       // (tool responses must follow assistant tool_calls)
       triologue.skipPendingTools(
         'Tool use interrupted - user pressed ESC.',
         'Tool use skipped due to ESC interruption.',
       );
-      return AgentState.PROMPT;
+      // Return STOP for centralized wrap-up (stop.ts handles startWrapUp +
+      // auto-off + setNeglectedMode). Neglected mode is NOT cleared here.
+      return AgentState.STOP;
     }
 
     const toolCallId = toolCall.id;

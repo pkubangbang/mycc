@@ -44,7 +44,6 @@ vi.mock('../../../loop/agent-io.js', () => {
 });
 
 vi.mock('../../../loop/esc-wrap-up.js', () => ({
-  startWrapUp: vi.fn(),
   evaluateWrapUp: vi.fn(),
   clearWrapUp: vi.fn(),
 }));
@@ -90,7 +89,6 @@ vi.mock('../../../loop/triologue.js', () => {
 import { handleCollect } from '../../../loop/states/collect.js';
 import { AgentState } from '../../../loop/state-machine.js';
 import { agentIO } from '../../../loop/agent-io.js';
-import { startWrapUp } from '../../../loop/esc-wrap-up.js';
 import { loader } from '../../../context/shared/loader.js';
 import { Triologue } from '../../../loop/triologue.js';
 import {
@@ -114,7 +112,7 @@ describe('handleCollect — ESC during hint generation', () => {
     return Array.from({ length: n }, () => ({ role: 'user', content: 'x' }));
   }
 
-  it('should start wrap-up, clear neglected mode, and return PROMPT when ESC fires during hint gen', async () => {
+  it('should return STOP for centralized wrap-up when ESC fires during hint gen', async () => {
     // Configure triologue to have enough messages to enter the hint block
     vi.mocked(triologue.getMessagesRaw).mockReturnValue(makeMessages(8));
     const ctx = createMockContext({
@@ -132,12 +130,9 @@ describe('handleCollect — ESC during hint generation', () => {
 
     const result = await handleCollect(env, turn, chat);
 
-    expect(result).toBe(AgentState.PROMPT);
-    // startWrapUp called by the cleanup function
-    expect(startWrapUp).toHaveBeenCalledTimes(1);
-    expect(startWrapUp).toHaveBeenCalledWith(triologue, expect.any(Array));
-    // neglected mode cleared before returning to PROMPT
-    expect(agentIO.isNeglectedMode()).toBe(false);
+    // Neglection paths now return STOP; stop.ts handles startWrapUp +
+    // setNeglectedMode. collect.ts no longer clears neglected mode itself.
+    expect(result).toBe(AgentState.STOP);
   });
 
   it('should NOT reset confusion index when ESC aborts hint generation', async () => {
@@ -189,8 +184,6 @@ describe('handleCollect — ESC during hint generation', () => {
     expect(result).toBe(AgentState.LLM);
     // hint completed → confusion reset
     expect(resetFn).toHaveBeenCalledTimes(1);
-    // no wrap-up on the normal path
-    expect(startWrapUp).not.toHaveBeenCalled();
   });
 
   it('should skip hint block when confusion index is below threshold', async () => {
@@ -207,8 +200,7 @@ describe('handleCollect — ESC during hint generation', () => {
     const result = await handleCollect(env, turn, chat);
 
     expect(result).toBe(AgentState.LLM);
-    // hint block NOT entered → no wrap-up, no hint generation
-    expect(startWrapUp).not.toHaveBeenCalled();
+    // hint block NOT entered → no hint generation
     expect(triologue.generateHintRound).not.toHaveBeenCalled();
   });
 

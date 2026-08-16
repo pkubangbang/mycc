@@ -118,7 +118,7 @@ describe('handleTool — ESC handling before / between / during tool execution',
   });
 
   // [A] ESC at entry — before any tool runs
-  it('should skip all tools, clear neglected mode, and return PROMPT when ESC at entry', async () => {
+  it('should skip all tools and return STOP for centralized wrap-up when ESC at entry', async () => {
     const env = createMockMachineEnv({ triologue });
     const turn = createTurnVars();
     const chat = createChatData({
@@ -132,9 +132,11 @@ describe('handleTool — ESC handling before / between / during tool execution',
 
     const result = await handleTool(env, turn, chat);
 
-    expect(result).toBe(AgentState.PROMPT);
-    // Neglected mode cleared before returning to PROMPT
-    expect(agentIO.isNeglectedMode()).toBe(false);
+    // Neglection paths now return STOP; stop.ts handles startWrapUp +
+    // setNeglectedMode. tool.ts no longer clears neglected mode itself.
+    expect(result).toBe(AgentState.STOP);
+    // Neglected mode NOT cleared by tool.ts (stop.ts handles it)
+    expect(agentIO.isNeglectedMode()).toBe(true);
     // skipPendingTools called to maintain triologue parity
     expect(triologue.skipPendingTools).toHaveBeenCalledTimes(1);
     // No tool was executed
@@ -142,12 +144,12 @@ describe('handleTool — ESC handling before / between / during tool execution',
   });
 
   // [B] ESC during tool execution — escAware cleanup fires, then the NEXT
-  //     iteration's entry-check sees neglected mode and returns PROMPT.
+  //     iteration's entry-check sees neglected mode and returns STOP.
   //     Requires at least 2 calls so the loop iterates again after the ESC.
-  it('should register interrupted output, then return PROMPT on next iteration when ESC fires mid-tool', async () => {
+  it('should register interrupted output, then return STOP on next iteration when ESC fires mid-tool', async () => {
     const env = createMockMachineEnv({ triologue });
     // escAware cleanup returns the interrupted-string; we also flip neglected
-    // mode to true so the NEXT loop iteration's entry-check returns PROMPT.
+    // mode to true so the NEXT loop iteration's entry-check returns STOP.
     env.ctx.core.escAware = vi.fn(async (_operation: any, cleanup: any) => {
       agentIO.setNeglectedMode(true); // ESC sets neglected mode
       return cleanup(new AbortController()); // returns 'Tool interrupted by user.'
@@ -162,7 +164,8 @@ describe('handleTool — ESC handling before / between / during tool execution',
 
     const result = await handleTool(env, turn, chat);
 
-    expect(result).toBe(AgentState.PROMPT);
+    // Neglection paths now return STOP; stop.ts handles wrap-up.
+    expect(result).toBe(AgentState.STOP);
     // The interrupted output WAS registered as a tool result (triologue.tool)
     expect(triologue.tool).toHaveBeenCalledWith('bash', 'Tool interrupted by user.', call1.id);
     // skipPendingTools fires on the next iteration (call2 skipped)

@@ -38,7 +38,6 @@ vi.mock('../../../loop/agent-io.js', () => ({
 
 // Mock esc-wrap-up so we can assert startWrapUp was called without firing LLM
 vi.mock('../../../loop/esc-wrap-up.js', () => ({
-  startWrapUp: vi.fn(),
   evaluateWrapUp: vi.fn(),
   clearWrapUp: vi.fn(),
 }));
@@ -74,7 +73,6 @@ vi.mock('../../../loop/triologue.js', () => {
 import { handleLlm } from '../../../loop/states/llm.js';
 import { AgentState } from '../../../loop/state-machine.js';
 import { agentIO } from '../../../loop/agent-io.js';
-import { startWrapUp } from '../../../loop/esc-wrap-up.js';
 import { stopSpinner } from '../../../engine/chat-helpers.js';
 import { retryChat } from '../../../engine/chat-provider.js';
 import { Triologue } from '../../../loop/triologue.js';
@@ -92,27 +90,15 @@ describe('handleLlm — ESC pre-check (isNeglectedMode before escAware)', () => 
     triologue = new Triologue();
   });
 
-  it('should call startWrapUp with triologue and (empty) tools, then return PROMPT', async () => {
+  it('should return STOP for centralized wrap-up (not PROMPT) when ESC already pressed', async () => {
     const env = createMockMachineEnv({ triologue });
     const turn = createTurnVars();
     const chat = createChatData();
 
     const result = await handleLlm(env, turn, chat);
 
-    expect(result).toBe(AgentState.PROMPT);
-    expect(startWrapUp).toHaveBeenCalledTimes(1);
-    // tools is [] because isNeglectedMode() is true at line 55
-    expect(startWrapUp).toHaveBeenCalledWith(triologue, []);
-  });
-
-  it('should clear neglected mode after starting wrap-up', async () => {
-    const env = createMockMachineEnv({ triologue });
-    const turn = createTurnVars();
-    const chat = createChatData();
-
-    await handleLlm(env, turn, chat);
-
-    expect(agentIO.setNeglectedMode).toHaveBeenCalledWith(false);
+    // Neglection paths now return STOP; stop.ts handles startWrapUp.
+    expect(result).toBe(AgentState.STOP);
   });
 
   it('should not call retryChat when already in neglected mode', async () => {
@@ -125,16 +111,25 @@ describe('handleLlm — ESC pre-check (isNeglectedMode before escAware)', () => 
     expect(retryChat).not.toHaveBeenCalled();
   });
 
-  it('should stop the spinner before returning to PROMPT', async () => {
+  it('should not clear neglected mode (stop.ts handles that)', async () => {
     const env = createMockMachineEnv({ triologue });
     const turn = createTurnVars();
     const chat = createChatData();
 
     await handleLlm(env, turn, chat);
 
-    // stopSpinner is called at line 60 (before startWrapUp)
-    expect(stopSpinner).toHaveBeenCalled();
-    // setNeglectedMode(false) is called AFTER stopSpinner and startWrapUp
-    expect(agentIO.setNeglectedMode).toHaveBeenCalledWith(false);
+    // llm.ts no longer clears neglected mode — stop.ts does it.
+    expect(agentIO.setNeglectedMode).not.toHaveBeenCalledWith(false);
+  });
+
+  it('should not stop the spinner (stop.ts handles that)', async () => {
+    const env = createMockMachineEnv({ triologue });
+    const turn = createTurnVars();
+    const chat = createChatData();
+
+    await handleLlm(env, turn, chat);
+
+    // llm.ts no longer calls stopSpinner on this path — stop.ts does.
+    expect(stopSpinner).not.toHaveBeenCalled();
   });
 });

@@ -124,7 +124,7 @@ describe('handleHook — ESC during recap (recap cancellation)', () => {
     return { env, recapCall };
   }
 
-  it('should return PROMPT when ESC fires during recap (neglected mode true)', async () => {
+  it('should return STOP when ESC fires during recap (neglected mode true)', async () => {
     const { env, recapCall } = makeRecapEnv();
     const turn = createTurnVars();
     const chat = createChatData({ assistantContent: 'summarizing now' });
@@ -140,9 +140,11 @@ describe('handleHook — ESC during recap (recap cancellation)', () => {
 
     const result = await handleHook(env, turn, chat);
 
-    expect(result).toBe(AgentState.PROMPT);
-    // Neglected mode cleared before returning to PROMPT
-    expect(agentIO.isNeglectedMode()).toBe(false);
+    // Neglection paths now return STOP; stop.ts handles startWrapUp +
+    // setNeglectedMode. hook.ts no longer clears neglected mode itself.
+    expect(result).toBe(AgentState.STOP);
+    // Neglected mode NOT cleared by hook.ts (stop.ts handles it)
+    expect(agentIO.isNeglectedMode()).toBe(true);
     // The cancelled summary registered as the recap tool result
     expect(triologue.tool).toHaveBeenCalledWith(
       'recap',

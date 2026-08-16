@@ -41,7 +41,6 @@ vi.mock('../../../loop/agent-io.js', () => {
 });
 
 vi.mock('../../../loop/esc-wrap-up.js', () => ({
-  startWrapUp: vi.fn(),
   evaluateWrapUp: vi.fn(),
   clearWrapUp: vi.fn(),
 }));
@@ -76,7 +75,6 @@ vi.mock('../../../loop/triologue.js', () => {
 import { handleLlm } from '../../../loop/states/llm.js';
 import { AgentState } from '../../../loop/state-machine.js';
 import { agentIO } from '../../../loop/agent-io.js';
-import { startWrapUp } from '../../../loop/esc-wrap-up.js';
 import { stopSpinner } from '../../../engine/chat-helpers.js';
 import { retryChat } from '../../../engine/chat-provider.js';
 import { Triologue } from '../../../loop/triologue.js';
@@ -95,7 +93,7 @@ describe('handleLlm — ESC during retryChat (escAware cleanup returns null)', (
     triologue = new Triologue();
   });
 
-  it('should return PROMPT and discard response when ESC fires during LLM call', async () => {
+  it('should return STOP and discard response when ESC fires during LLM call', async () => {
     const env = createMockMachineEnv({ triologue });
     // Mock escAware to simulate ESC: call cleanup (returns null) instead of operation
     env.ctx.core.escAware = vi.fn(async (_operation, cleanup) => {
@@ -107,14 +105,15 @@ describe('handleLlm — ESC during retryChat (escAware cleanup returns null)', (
 
     const result = await handleLlm(env, turn, chat);
 
-    expect(result).toBe(AgentState.PROMPT);
+    // Neglection paths now return STOP; stop.ts handles startWrapUp.
+    expect(result).toBe(AgentState.STOP);
     // ChatData should NOT be populated with LLM response
     expect(chat.rawToolCalls).toEqual([]);
     expect(chat.assistantContent).toBe('');
     expect(chat.abortController).toBeNull(); // released after ESC
   });
 
-  it('should call startWrapUp during ESC cleanup', async () => {
+  it('should not clear neglected mode or stop spinner (stop.ts handles those)', async () => {
     const env = createMockMachineEnv({ triologue });
     env.ctx.core.escAware = vi.fn(async (_operation, cleanup) => {
       return cleanup(new AbortController());
@@ -125,24 +124,10 @@ describe('handleLlm — ESC during retryChat (escAware cleanup returns null)', (
 
     await handleLlm(env, turn, chat);
 
-    // The cleanup function calls startWrapUp(triologue, tools)
-    expect(startWrapUp).toHaveBeenCalledTimes(1);
-    expect(startWrapUp).toHaveBeenCalledWith(triologue, expect.any(Array));
-  });
-
-  it('should clear neglected mode and stop spinner after ESC cleanup', async () => {
-    const env = createMockMachineEnv({ triologue });
-    env.ctx.core.escAware = vi.fn(async (_operation, cleanup) => {
-      return cleanup(new AbortController());
-    }) as never;
-
-    const turn = createTurnVars();
-    const chat = createChatData();
-
-    await handleLlm(env, turn, chat);
-
-    expect(agentIO.setNeglectedMode).toHaveBeenCalledWith(false);
-    expect(stopSpinner).toHaveBeenCalled();
+    // llm.ts no longer clears neglected mode or stops the spinner on ESC —
+    // stop.ts handles both. The cleanup just returns null.
+    expect(agentIO.setNeglectedMode).not.toHaveBeenCalledWith(false);
+    expect(stopSpinner).not.toHaveBeenCalled();
   });
 
   it('should pass think=false in retryChat request when not in neglected or plan mode', async () => {
