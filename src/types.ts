@@ -928,6 +928,13 @@ export interface SlashCommandContext {
   nextQuery?: string;
   /** Sequence tracker — can be cleared by /clear or double Ctrl+L */
   sequence?: { clear(): void };
+  /**
+   * Hook executor — its per-turn dedup state (stopDisturbance) must be reset
+   * alongside sequence.clear() so that a stop+replace hook suppressed by the
+   * dedup cap re-fires after /clear or /compact (otherwise the cap persists
+   * even though the session.* counters it was deduping against have reset).
+   */
+  hookExecutor?: { resetTurn(): void };
 }
 
 /**

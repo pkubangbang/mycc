@@ -14,6 +14,10 @@ export const clearCommand: SlashCommand = {
     const triologue = context.triologue as Triologue;
     triologue.clear();
     context.sequence?.clear();
+    // Reset hook dedup so a stop+replace hook suppressed by the per-turn cap
+    // can re-fire after /clear — sequence.clear() resets the session.* counters
+    // it was deduping against, but not the dedup set itself.
+    context.hookExecutor?.resetTurn();
     clearWrapUp();
     context.ctx.todo.clear();
     context.ctx.issue.clearAll();

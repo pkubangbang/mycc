@@ -73,6 +73,12 @@ export async function handleLlm(
     ctx.core.resetConfusionIndex();
     env.requestEmbeddingTracker.clear();
     env.sequence.clear();
+    // Reset hook dedup so a stop+replace hook suppressed by the per-turn cap
+    // can re-fire after auto-compact. Auto-compact fires mid-turn (at the LLM
+    // stage) with no subsequent PROMPT/resetTurn boundary, so without this the
+    // dedup cap would persist for the rest of the turn even though the
+    // session.* counters it was deduping against have been reset.
+    env.hookExecutor.resetTurn();
     env.crossroadOccurred = false;
   }
 

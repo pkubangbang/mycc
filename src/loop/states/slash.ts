@@ -42,6 +42,7 @@ export async function handleSlash(
     triologue,
     sessionFilePath,
     sequence: env.sequence,
+    hookExecutor: env.hookExecutor,
   };
 
   try {

@@ -34,6 +34,10 @@ export const compactCommand: SlashCommand = {
       // relevant after compaction (old context has been summarized away).
       context.ctx.core.resetConfusionIndex();
       context.sequence?.clear();
+      // Reset hook dedup so a stop+replace hook suppressed by the per-turn cap
+      // can re-fire after /compact — sequence.clear() resets the session.*
+      // counters it was deduping against, but not the dedup set itself.
+      context.hookExecutor?.resetTurn();
       if (focus) {
         console.log(chalk.green(`Compaction complete (focus: ${focus}).`));
       } else {
