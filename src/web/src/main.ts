@@ -31,6 +31,7 @@ const state = reactive<ChatState>({
   hasPendingCard: false,
   verboseLogs: false,
   steeringBuffer: [],
+  pendingSteeringReview: [],
   pendingFiles: [],
   teammateMessages: [],
   darkMode: localStorage.getItem('mycc-theme') === 'dark',
@@ -42,6 +43,15 @@ let msgIdCounter = 0;
 function nextId(): number {
   return ++msgIdCounter;
 }
+
+// pendingSteeringReview lifecycle: notes captured from 'steer-flush' persist
+// across PROMPT cycles until the user explicitly acts on the "继续…" card
+// (send as query / discard). They are NOT cleared by a broad isWaiting
+// watcher — that would drop notes the user never saw whenever the user
+// typed a normal fresh query (an unrelated PROMPT exit). Instead the array
+// is cleared only at explicit abandon events (see the 'auto' WS handler
+// below and the ws.onclose handler), so unhandled notes resurface at the
+// next PROMPT instead of being silently lost.
 
 /**
  * Whether a given message should be shown given the current 详细日志 setting.
@@ -233,7 +243,15 @@ function connectWebSocket(): void {
       }
     } else if (msg.type === 'steer-flush') {
       // Backend consumed the queued steering notes (drained at COLLECT or
-      // synthesized at PROMPT). Clear the buffer bar.
+      // synthesized at PROMPT). Before clearing the buffer bar, capture the
+      // notes into pendingSteeringReview so they surface as a "继续…" card
+      // at the next PROMPT — letting the user ALSO send them as a fresh
+      // query or discard them, rather than having them silently injected as
+      // REMINDER notes only. Skipped in auto mode: the agent processes
+      // steering automatically there, and there is no PROMPT to review at.
+      if (state.steeringBuffer.length > 0 && !state.isAutoMode) {
+        state.pendingSteeringReview.push(...state.steeringBuffer);
+      }
       state.steeringBuffer.splice(0, state.steeringBuffer.length);
     } else if (msg.type === 'file-upload') {
       // Backend echoed a file upload — could show a transient indicator.
@@ -246,6 +264,15 @@ function connectWebSocket(): void {
       // agentIO.setAuto() on every flag flip, plus sent once on WS connect
       // for late joiners.
       state.isAutoMode = msg.content === 'on';
+      // Entering auto mode abandons any pending steering review: the agent
+      // processes steering automatically in auto mode (no PROMPT to review
+      // at), and the steer-flush capture is already skipped in auto mode.
+      // Leaving auto mode does NOT resurrect the review — those notes are
+      // gone. This is the only non-destructive abandon path that clears the
+      // array (besides the user's explicit send/discard and disconnect).
+      if (state.isAutoMode) {
+        state.pendingSteeringReview.splice(0);
+      }
     } else if (msg.type === 'running') {
       // Backend signaled agent processing state. Idle states (PROMPT/WAIT)
       // → 'off'; processing states (COLLECT/LLM/HOOK/TOOL/STOP/SLASH) → 'on'.
@@ -281,6 +308,13 @@ function connectWebSocket(): void {
     state.isRunning = false;
     state.showRetry = false;
     state.hasPendingCard = false;
+    // Disconnect abandons any pending steering review: the review card is
+    // PROMPT-gated (isWaiting), which is now false, and the user can't act
+    // on it while disconnected. On reconnect the server re-sends 'prompt' if
+    // the agent is still waiting, but the flushed notes are already gone
+    // (consumed by the backend at COLLECT) — resurfacing stale captured
+    // notes would be misleading. Drop them.
+    state.pendingSteeringReview.splice(0);
     // Do NOT reset isAutoMode here: it is a durable session-level flag the
     // server resends on reconnect (see the on-connect broadcast in
     // serve-hub.ts). Clearing it would flicker the chat input box disabled

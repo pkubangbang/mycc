@@ -163,52 +163,82 @@ const canCompact = computed(() =>
   props.state.connectionStatus === 'connected',
 );
 
+// ── Send gate + warning banner (single source of truth) ──
+//
+// The chatInput textarea is NEVER disabled — not on disconnect, not on a
+// pending card, not on the steering-review card. Instead, a warning banner
+// tells the user when the typed text will not be submitted, and the send
+// button's :disabled mirrors the actual send behavior: the button is
+// disabled exactly when sending is impossible, so if the button is enabled,
+// send() will submit; if disabled, send() is a no-op. This removes the need
+// for any redundant guards inside send().
+//
+// showSteeringReview: a transient "继续…" card (rendered in ChatLog) is
+// pending user action at PROMPT. While it is showing, sending from the chat
+// box is blocked — the user must first deal with the card (send the notes as
+// a query or discard them). This is treated as a "card interruption", the
+// same category as hasPendingCard.
+const showSteeringReview = computed(() =>
+  props.state.isWaiting && props.state.pendingSteeringReview.length > 0,
+);
+
+// canSend: the three disable conditions the send button mirrors —
+// (1) no pending card (interactive ask() card OR the steering-review card),
+// (2) non-empty content (text or files),
+// (3) connected to the server.
+const canSend = computed(() =>
+  !props.state.hasPendingCard &&
+  !showSteeringReview.value &&
+  (text.value.trim() !== '' || localFiles.value.length > 0) &&
+  props.state.connectionStatus === 'connected',
+);
+
+// Warning banner shown when the textarea is enabled (always) but the typed
+// text will NOT be submitted. Covers: a pending ask() card, a pending
+// steering-review card, and network disconnection. The banner replaces the
+// old behavior of disabling the textarea — the box stays focusable so it
+// never loses focus, and the banner explains why the text won't go through.
+const showInputWarning = computed(() =>
+  props.state.hasPendingCard ||
+  showSteeringReview.value ||
+  props.state.connectionStatus !== 'connected',
+);
+
+const inputWarningText = computed(() => {
+  if (props.state.hasPendingCard) return '请在上方卡片上回复，当前输入不会被提交';
+  if (showSteeringReview.value) return '请先处理上方转向消息卡片，当前输入不会被提交';
+  if (props.state.connectionStatus !== 'connected') return '网络未连接，当前输入不会被提交';
+  return '';
+});
+
 function onCompactClick(): void {
   if (!canCompact.value) return;
   chatApi.sendInput('/compact');
 }
 
 function send(): void {
+  // canSend is the single source of truth: the send button's :disabled
+  // mirrors it, so if we reach here, sending is genuinely possible. No
+  // redundant empty/card/disconnect guards are needed — the button being
+  // enabled guarantees they all pass. The Enter key path calls send() too,
+  // so the same guard protects it.
+  if (!canSend.value) return;
   const value = text.value;
   const files = localFiles.value.length > 0 ? [...localFiles.value] : undefined;
-  if (!value.trim() && !files) return;
-  // A card is pending — the user must reply on the card, not the chat box.
-  // The chat input is NOT disabled (it stays focusable so it never loses
-  // focus and the user can keep typing), but sending is blocked here: Enter
-  // is a no-op that leaves the typed text buffered in the box. The
-  // card-pending hint above already tells the user to reply on the card.
-  if (props.state.hasPendingCard) return;
-  let sent = false;
+  // Tag the content with the actual loop stage: a PROMPT wait is pending
+  // (isWaiting) → send as a fresh query (type:'input'); every other state
+  // (agent working, auto mode, the transient send→running gap) → send as a
+  // mid-task steering note (type:'steer'), buffered in the backend and
+  // consumed at the next COLLECT (REMINDER) or surfaced for review at the
+  // next PROMPT.
   if (props.state.isWaiting) {
-    // A prompt is pending — this is a fresh user query.
     chatApi.sendInput(value, files);
-    sent = true;
   } else {
-    // Every other connected state: the agent is actively working, in auto
-    // mode, OR in the transient send→running gap (right after sendInput
-    // set isWaiting=false but before the backend's running:on arrives,
-    // so none of isWaiting/isRunning/isAutoMode is true yet). In all these
-    // cases there is no PROMPT waiting for a fresh query, so the input is a
-    // mid-task steering note — buffered in the backend queue and consumed
-    // at the next COLLECT (injected as a REMINDER) or PROMPT (synthesized
-    // via forkChat after an interrupt). Auto mode keeps this branch
-    // reachable even from the idle WAIT state, where isRunning is false
-    // but isAutoMode is true. Routing the gap through sendSteer (rather
-    // than dropping it as a no-op) means the send button — now always
-    // enabled whenever there is text — never silently swallows a click.
     chatApi.sendSteer(value, files);
-    sent = true;
   }
-  // Clear only after an actual send. The only remaining no-op path is the
-  // card-pending guard above, which returns without sending — leaving the
-  // typed text buffered in the box so the user can press Enter again once
-  // the card is dismissed. The old code cleared unconditionally here, which
-  // wiped buffered text during the gap — the data loss this guard prevents.
-  if (sent) {
-    text.value = '';
-    localFiles.value = [];
-    props.state.pendingFiles = [];
-  }
+  text.value = '';
+  localFiles.value = [];
+  props.state.pendingFiles = [];
 }
 
 function onKeydown(event: KeyboardEvent): void {
@@ -375,20 +405,21 @@ const inputAreaStyle = computed(() =>
     ></div>
     <div class="input-row">
       <div class="input-area-wrapper">
-        <!-- The textarea is ONLY disabled when disconnected — never on
-             hasPendingCard or the isWaiting/isRunning/isAutoMode flags.
-             Keeping it always enabled (while connected) means it never
-             loses focus during the send→running gap or while a card is
-             pending: the browser only moves focus off a focused element
-             when it becomes disabled. Sending is gated in send() instead
-             (card-pending and the gap are no-ops that buffer the typed
-             text), and the 发送 button stays disabled via its own binding. -->
+        <!-- The textarea is NEVER disabled — not on disconnect, not on a
+             pending card, not on the steering-review card. Keeping it
+             always enabled means it never loses focus during the
+             send→running gap, while a card is pending, or while
+             disconnected: the browser only moves focus off a focused
+             element when it becomes disabled. Instead of disabling, a
+             warning banner (input-warning below) tells the user when the
+             typed text will not be submitted, and the 发送 button's own
+             :disabled binding (canSend) is the single gatekeeper for
+             whether sending actually happens. -->
         <textarea
           v-model="text"
           class="input-area"
           :style="inputAreaStyle"
           :placeholder="state.hasPendingCard ? '请在卡片上回复…' : (state.isWaiting ? '输入消息…' : (state.isAutoMode ? '给自动模式发指引…' : '等待回复中…'))"
-          :disabled="state.connectionStatus !== 'connected'"
           rows="2"
           @keydown="onKeydown"
           @paste="onPaste"
@@ -449,17 +480,21 @@ const inputAreaStyle = computed(() =>
       />
       <button
         class="send-btn"
-        :disabled="state.hasPendingCard || (!text.trim() && localFiles.length === 0) || state.connectionStatus !== 'connected'"
+        :disabled="!canSend"
         @click="send"
       >发送</button>
     </div>
-    <div v-if="state.hasPendingCard" class="card-pending-hint">
+    <!-- Warning banner: shown when the textarea is enabled (always) but the
+         typed text will NOT be submitted — a pending ask() card, a pending
+         steering-review card, or network disconnection. Replaces the old
+         behavior of disabling the textarea; the box stays focusable. -->
+    <div v-if="showInputWarning" class="input-warning">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <circle cx="12" cy="12" r="10" />
         <line x1="12" y1="8" x2="12" y2="12" />
         <line x1="12" y1="16" x2="12.01" y2="16" />
       </svg>
-      <span>请在上方卡片上回复</span>
+      <span>{{ inputWarningText }}</span>
     </div>
     <div v-if="uploadError" class="upload-error">{{ uploadError }}</div>
     <div v-if="localFiles.length > 0" class="file-chips">
@@ -687,9 +722,11 @@ const inputAreaStyle = computed(() =>
   color: #ef4444;
   border: 1px solid color-mix(in srgb, #ef4444 30%, transparent);
 }
-/* Hint shown when an interactive card is pending — tells the user to reply
-   on the card itself instead of in the (now-disabled) chat input box. */
-.card-pending-hint {
+/* Warning banner shown when the textarea is enabled (always) but the typed
+   text will NOT be submitted — a pending ask() card, a pending
+   steering-review card, or network disconnection. Amber accent signals a
+   warning (distinct from the old accent-blue card-pending hint). */
+.input-warning {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -697,9 +734,9 @@ const inputAreaStyle = computed(() =>
   padding: 4px 10px;
   border-radius: 4px;
   font-size: 12px;
-  background: color-mix(in srgb, var(--accent) 12%, var(--bg-input));
-  color: var(--accent);
-  border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+  background: color-mix(in srgb, #f59e0b 12%, var(--bg-input));
+  color: #b45309;
+  border: 1px solid color-mix(in srgb, #f59e0b 30%, transparent);
 }
 .file-chips {
   display: flex;

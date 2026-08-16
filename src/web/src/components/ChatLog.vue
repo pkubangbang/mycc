@@ -4,6 +4,7 @@ import type { ChatMessage, ChatState } from '../types';
 import { chatApi, isMessageVisible } from '../main';
 import MessageItem from './MessageItem.vue';
 import CardItem from './CardItem.vue';
+import SteeringReviewCard from './SteeringReviewCard.vue';
 import RocketIcon from './RocketIcon.vue';
 import MeteorField from './MeteorField.vue';
 
@@ -94,6 +95,35 @@ function onQuote(quotedText: string): void {
     : quotedText;
 }
 
+// ── Steering review "继续…" card handlers ──
+//
+// When the agent reaches PROMPT (isWaiting) with captured steering notes in
+// state.pendingSteeringReview, SteeringReviewCard renders at the tail of the
+// chat flow and emits the user's choice here. The "send as query" path
+// captures the notes into a local, clears the array, THEN calls sendInput —
+// in that order — so the array is empty before the PROMPT ends (no separate
+// watcher is needed; pendingSteeringReview persists across PROMPT cycles
+// until the user explicitly acts, and is only cleared elsewhere at explicit
+// abandon events: disconnect and auto-mode entry, both in main.ts).
+function onSendSteeringAsQuery(): void {
+  if (props.state.pendingSteeringReview.length === 0) return;
+  // Combine remaining notes with a blank-line separator, then clear before
+  // the send so the array is empty by the time the PROMPT ends.
+  const combined = props.state.pendingSteeringReview.join('\n\n');
+  props.state.pendingSteeringReview.splice(0);
+  chatApi.sendInput(combined);
+}
+
+function onDiscardSteeringNote(index: number): void {
+  props.state.pendingSteeringReview.splice(index, 1);
+  // If the last note is discarded, the array is empty → the card's v-if
+  // becomes false and the card auto-hides; the normal input box re-enables.
+}
+
+function onDiscardAllSteering(): void {
+  props.state.pendingSteeringReview.splice(0);
+}
+
 // Watch for new messages — auto-scroll only if user is already at bottom
 watch(
   () => visibleMessages.value.length,
@@ -116,8 +146,14 @@ watch(
 // which grows scrollHeight with no re-scroll — leaving the rocket below the
 // fold. Watching the flags and re-scrolling (only when the user hasn't
 // pinned up) keeps the tail — and thus the rocket — in view.
+//
+// The same applies to the transient SteeringReviewCard at the tail: it
+// appears/disappears when isWaiting toggles or pendingSteeringReview empties,
+// changing scrollHeight without touching visibleMessages.length. Adding
+// those to the watched tuple keeps the card in view when it surfaces at
+// PROMPT.
 watch(
-  () => [props.state.isAutoMode, props.state.isRunning] as const,
+  () => [props.state.isAutoMode, props.state.isRunning, props.state.isWaiting, props.state.pendingSteeringReview.length] as const,
   () => {
     if (!userScrolledUp) {
       nextTick(() => scrollToBottom());
@@ -142,6 +178,18 @@ onMounted(() => {
       <CardItem v-if="msg.type === 'card' && msg.card" :card="msg.card" />
       <MessageItem v-else :message="msg" :on-quote="onQuote" />
     </template>
+    <!-- Temporary "继续…" card: surfaces flushed steering notes for the user
+         to send as a query or discard when the agent reaches PROMPT. Rendered
+         at the tail of the chat flow (same visual spot as other cards) but
+         NOT stored in messages — purely transient, auto-hides when
+         pendingSteeringReview empties or isWaiting flips false. -->
+    <SteeringReviewCard
+      v-if="state.isWaiting && state.pendingSteeringReview.length > 0"
+      :notes="state.pendingSteeringReview"
+      @send-as-query="onSendSteeringAsQuery"
+      @discard-note="onDiscardSteeringNote"
+      @discard-all="onDiscardAllSteering"
+    />
     <!-- ESC / interrupt button — at the bottom of the chat history
          (document-relative, scrolls with content). Two variants share the
          same interrupt handler but differ in look:

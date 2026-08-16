@@ -72,6 +72,18 @@ export interface ChatState {
    *  was working). Displayed as chips in the SteeringBuffer bar; cleared when
    *  the backend broadcasts 'steer-flush' (notes consumed at COLLECT/PROMPT). */
   steeringBuffer: string[];
+  /** Steering notes captured from 'steer-flush' for user review at the next
+   *  PROMPT. Populated when the backend flushes the steering queue (at
+   *  COLLECT), surfacing the notes the backend already consumed so the user
+   *  can ALSO decide to send them as a fresh query or discard them — rather
+   *  than having them silently injected as REMINDER notes only. Surfaced as
+   *  a temporary "继续…" card inside the chat log (SteeringReviewCard) when
+   *  isWaiting is true. Cleared when the agent leaves PROMPT (isWaiting
+   *  flips false), or when the user sends them as a query / discards them.
+   *  Not captured in auto mode (the agent processes steering automatically,
+   *  no PROMPT to review at). Not persisted to the message list — purely
+   *  transient, never survives a refresh. */
+  pendingSteeringReview: string[];
   /** Dark mode toggle (default light). Persisted in localStorage so the
    *  preference survives page reloads. */
   darkMode: boolean;
