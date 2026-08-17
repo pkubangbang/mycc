@@ -113,10 +113,16 @@ function spawnForShell(cwd: string, command: string): { proc: ChildProcess; isWi
   if (shellInfo.shell === 'pwsh7') {
     const effectiveCommand = `try { chcp 65001 > $null } catch {}; $ProgressPreference = 'SilentlyContinue'; $OutputEncoding = [System.Text.Encoding]::UTF8; [Console]::OutputEncoding = [System.Text.Encoding]::UTF8; ${command}`;
     return {
+      // Native exes (e.g. python) bypass the PowerShell preamble's UTF-8
+      // settings and use the system active code page (936=GBK) for their
+      // stdout/stderr pipes, producing mojibake when mycc decodes as UTF-8.
+      // PYTHONUTF8=1 forces Python's UTF-8 mode (3.7+, also fixes -c arg
+      // decoding); PYTHONIOENCODING=utf-8 forces stdio encoding for older
+      // interpreters. Mirrors the bg.ts fix (commit e492e35).
       proc: spawn(shellInfo.path!, [
         '-NoProfile', '-NonInteractive', '-EncodedCommand',
         Buffer.from(effectiveCommand, 'utf16le').toString('base64'),
-      ], { cwd, windowsHide: true }),
+      ], { cwd, windowsHide: true, env: { ...process.env, PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8' } }),
       isWin: true,
     };
   }
@@ -129,10 +135,13 @@ function spawnForShell(cwd: string, command: string): { proc: ChildProcess; isWi
     // (left to the system-prompt reminder). See windows-shell-strategy skill.
     const effectiveCommand = `try { chcp 65001 > $null } catch {}; $ProgressPreference = 'SilentlyContinue'; $OutputEncoding = [System.Text.Encoding]::UTF8; [Console]::OutputEncoding = [System.Text.Encoding]::UTF8; ${PS51_LAYER2_PATCH}${command}`;
     return {
+      // Native exes bypass the preamble's UTF-8 settings (see pwsh7 branch
+      // comment). PYTHONUTF8/PYTHONIOENCODING force UTF-8 stdio for Python
+      // and other native exes that respect these vars.
       proc: spawn(shellInfo.path!, [
         '-NoProfile', '-NonInteractive', '-EncodedCommand',
         Buffer.from(effectiveCommand, 'utf16le').toString('base64'),
-      ], { cwd, windowsHide: true }),
+      ], { cwd, windowsHide: true, env: { ...process.env, PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8' } }),
       isWin: true,
     };
   }
