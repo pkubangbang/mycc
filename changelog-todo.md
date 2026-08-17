@@ -77,6 +77,136 @@ When updating the changelog, use the following procedure:
 ### Tests
 - **Peer**: 3 new test files (peer-freshness, peer-concurrency, peer-guard-paths) + updated peer.test.ts and mail_to.test.ts — 2190 passed, 11 skipped, 0 failed.
 
+## 2026-08-08
+### Features
+- **Shell Detection**: Detect shell once at startup; tailor prompt + exec; split agent-io.
+- **Peer**: Surface instance progress via briefs + 1h listing cutoff.
+- **mail_to**: Fail-fast recipient validation — reject unknown recipients up front.
+### Fixes
+- **shell-detect**: Detect Store-installed pwsh 7 via `access(2)` instead of `stat(2)`.
+### Docs
+- **Skills**: Clarify set-title (stay silent when not acting on reminder); reframe self-awareness as end-user tutor glossary; mediator — bash-only examples, shell-agnostic JSON authoring.
+
+## 2026-08-09
+### Features
+- **Shell Detection**: Detect shell once at startup; tailor prompt + exec; split agent-io.
+- **Peer**: Surface instance progress via briefs + 1h listing cutoff.
+- **mail_to**: Fail-fast recipient validation — reject unknown recipients up front.
+### Fixes
+- **shell-detect**: Detect Store-installed pwsh 7 via `access(2)` instead of `stat(2)`.
+### Docs & Chores
+- **hand_over**: Update tool description.
+- **Skills**: Clarify set-title (stay silent when not acting on reminder); reframe self-awareness as end-user tutor glossary; mediator — bash-only examples, shell-agnostic JSON authoring.
+
+## 2026-08-10
+### Features
+- **Peer**: Grant read-only access to peer workDir on channel join.
+- **Grant**: Whitelist `~/.mycc-store/discovery` for free read+write across instances.
+### Fixes
+- **git_commit**: Distinguish auto-mode rejection from user denial.
+### Refactoring & Docs
+- **Mediator**: Progressive-disclosure split + skill_load Location line; clarify that post-write joined/firstQuerySent=true is the success signal.
+
+## 2026-08-11
+### Features
+- **WebUI**: Redesign auto-mode rocket button with warp scene and fix scroll.
+- **Tool**: Add brief-triggered skill discovery.
+- **screen**: Update tool to add `desktop` param.
+### Fixes
+- **WebUI**: Wake blocked PROMPT on auto-mode entry so pending mail is polled immediately; fix frontend type errors (add frontend typecheck to npm test); move vite and `@vitejs/plugin-vue` to dependencies.
+- **crossroad**: Eliminate duplicate paragraphs in Resolved messages.
+### Refactoring
+- **WebUI**: Extract rocket + meteor starfield into components, add enter/exit transitions, fix meteor coverage and v-for key.
+- **Core**: `Core.question()` returns structured `AskResult` instead of plain string.
+### Chores
+- **Deps**: Upgrade deps and fix Vue App type name clash.
+### Tests
+- **Agent Loop**: Add observability, mock harness, and 53 parametric path tests with hang detection.
+
+## 2026-08-12
+### Features
+- **WebUI**: Add compact button in chatInput.
+### Fixes
+- **triologue**: Reset `wrapUpMark` on compact to prevent sparse-hole crash after `/compact`.
+- **autofly**: Make streak count per-turn LLM-stage momentum.
+- **screen**: Make `imgDescribe` use `retryChat` so vision calls can timeout/abort.
+
+## 2026-08-13
+### Features
+- **wiki_get**: Add brief logging matching web_search/recall pattern.
+### Fixes
+- **Mindmap**: Add final tool as sole summary exit + budget-exhaustion fallback.
+- **WebUI**: Keep chat input always enabled; gate sending instead of disabling; resolve wrap-up before draining uploaded files.
+- **hook**: Make replace-on-stop safe, generalize `#pattern`, add per-turn dedup for stop+block/replace; instruct condition compiler to use `==` not `===`.
+### Docs
+- **Docs**: Audit all docs/ for consistency with current code.
+### Tests
+- **Typecheck**: Add dedicated test typecheck and align mocks with current module APIs.
+
+## 2026-08-14
+### Features
+- **Hook**: Redesign hook condition API (`seq.*` → `turn.*/session.*`); prompt LLM to recompile legacy `seq.X` conditions.
+- **Skill**: Add install-from-zip built-in skill.
+### Fixes
+- **crossroad**: Display prefix, persist decision record, add read_file aloud replay bypass.
+- **WebUI**: Constrain teammate letterbox list/heading padding; unlock send button during send→running gap; preserve teammate drawer scroll position + fix lint warning.
+### Tests
+- **Hook**: Rewrite hook test suite for `turn.*/session.*` API + fix webui send-button lock after card submission.
+
+## 2026-08-16
+### Features
+- **pretty-print**: Add "channel" type for ChannelFile rendering.
+### Fixes
+- **hook**: Reset hook dedup on `/clear`, `/compact`, and auto-compact.
+### Refactoring
+- **Core**: Restore read/write symmetry by moving display concern from read_file to bash.
+- **WebUI**: Redesign chatInput + sendButton — always-enabled textarea, warning banner, steering-review card.
+
+## 2026-08-17
+### Release
+- **v0.10.2**: Patch release — hook condition API redesign, agent-loop test harness, crossroad decision records, webui chatInput redesign, mindmap link-carrying patches, Windows UTF-8 stdio fix.
+### Features
+- **Mindmap**: Patch-added nodes carry links (term hoist without recompile).
+- **Hook**: Redesign condition API (`seq.*` → `turn.*/session.*`); prompt LLM to recompile legacy `seq.X` conditions.
+- **Tool**: Add brief-triggered skill discovery.
+- **Screen**: Add `desktop` param for multi-monitor capture.
+- **WebUI**: Redesign chatInput + sendButton (always-enabled textarea, warning banner, steering-review card); redesign auto-mode rocket button with warp scene.
+- **Pretty-print**: Add "channel" type for ChannelFile rendering.
+- **Skill**: Add `install-from-zip` built-in skill.
+### Fixes
+- **agent-exec**: Force UTF-8 stdio for native exes (python) on Windows.
+- **Neglection**: Centralize wrap-up in STOP state.
+- **Hook**: Reset hook dedup on `/clear`, `/compact`, and auto-compact; make replace-on-stop safe, generalize `#pattern`, add per-turn dedup for stop+block/replace; instruct condition compiler to use `==` not `===`.
+- **Crossroad**: Display prefix, persist decision record, add `read_file` aloud replay bypass; eliminate duplicate paragraphs in Resolved messages.
+- **WebUI**: Constrain teammate letterbox list/heading padding; unlock send button during send→running gap; preserve teammate drawer scroll position; keep chat input always enabled (gate sending instead of disabling); resolve wrap-up before draining uploaded files; wake blocked PROMPT on auto-mode entry so pending mail is polled immediately; add frontend typecheck to npm test and fix type errors.
+- **Triologue**: Reset `wrapUpMark` on compact to prevent sparse-hole crash after `/compact`.
+- **Autofly**: Make streak count per-turn LLM-stage momentum.
+- **Screen**: Make `imgDescribe` use `retryChat` so vision calls can timeout/abort.
+- **wiki_get**: Add brief logging matching web_search/recall pattern.
+- **Mindmap**: Add final tool as sole summary exit + budget-exhaustion fallback.
+- **hand_over**: Set session shell from detection and type command via send-keys.
+- **Shell-detect**: Detect Store-installed pwsh 7 via `access(2)` instead of `stat(2)`.
+- **git_commit**: Distinguish auto-mode rejection from user denial.
+### Refactoring
+- **Core**: `Core.question()` returns structured `AskResult` instead of plain string.
+- **Mediator**: Progressive-disclosure split + `skill_load` Location line.
+- **read/write**: Restore symmetry by moving display concern from `read_file` to bash.
+- **WebUI**: Extract rocket + meteor starfield into components, add enter/exit transitions.
+- **Shell**: Detect shell once at startup; tailor prompt + exec; split `agent-io`.
+- **Deps**: Upgrade deps and fix Vue App type name clash; move vite and `@vitejs/plugin-vue` to dependencies.
+### Docs
+- **Docs**: Audit all `docs/` for consistency with current code.
+- **Skill**: `set-title` — stay silent when not acting on the reminder; `self-awareness` — reframe as end-user tutor glossary; `mediator` — bash-only examples, shell-agnostic JSON authoring.
+- **Peer**: Document that post-write joined/firstQuerySent=true is the success signal; grant read-only access to peer workDir on channel join; whitelist `~/.mycc-store/discovery` for free read+write across instances.
+- **hand_over**: Update tool description.
+### Peer
+- **Progress**: Surface instance progress via briefs + 1h listing cutoff.
+- **mail_to**: Fail-fast recipient validation — reject unknown recipients up front.
+### Tests
+- **Agent-loop**: Add observability, mock harness, and 53 parametric path tests with hang detection.
+- **Hook**: Rewrite test suite for `turn.*/session.*` API.
+- **Typecheck**: Add dedicated test typecheck and align mocks with current module APIs.
+
 # Todo
 
 > Todo - Or never?
