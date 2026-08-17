@@ -97,14 +97,16 @@ function onQuote(quotedText: string): void {
 
 // ── Steering review "继续…" card handlers ──
 //
-// When the agent reaches PROMPT (isWaiting) with captured steering notes in
-// state.pendingSteeringReview, SteeringReviewCard renders at the tail of the
-// chat flow and emits the user's choice here. The "send as query" path
-// captures the notes into a local, clears the array, THEN calls sendInput —
-// in that order — so the array is empty before the PROMPT ends (no separate
-// watcher is needed; pendingSteeringReview persists across PROMPT cycles
-// until the user explicitly acts, and is only cleared elsewhere at explicit
-// abandon events: disconnect and auto-mode entry, both in main.ts).
+// When the agent reaches PROMPT (isWaiting) with steering notes still pending
+// in state.pendingSteeringReview (populated by main.ts at the 'prompt' message
+// from notes the agent never consumed — NOT from drained notes), SteeringReviewCard
+// renders at the tail of the chat flow and emits the user's choice here. The
+// "send as query" path captures the notes into a local, clears the array,
+// THEN calls sendInput — in that order — so the array is empty before the
+// PROMPT ends (no separate watcher is needed; pendingSteeringReview persists
+// across PROMPT cycles until the user explicitly acts, and is only cleared
+// elsewhere at explicit abandon events: disconnect and auto-mode entry, both
+// in main.ts).
 function onSendSteeringAsQuery(): void {
   if (props.state.pendingSteeringReview.length === 0) return;
   // Combine remaining notes with a blank-line separator, then clear before

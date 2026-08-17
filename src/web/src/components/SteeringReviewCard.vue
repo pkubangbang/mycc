@@ -1,11 +1,13 @@
 <script setup lang="ts">
 /**
- * SteeringReviewCard.vue - Temporary "继续…" card surfacing flushed steering
+ * SteeringReviewCard.vue - Temporary "继续…" card surfacing pending steering
  *
- * When the backend drains the steering queue (at COLLECT) the frontend
- * captures the notes into `state.pendingSteeringReview` (see main.ts). When
- * the agent then reaches PROMPT (isWaiting === true), this card renders at
- * the tail of the chat log flow — in the same visual spot as other question
+ * When the agent reaches PROMPT with steering notes STILL PENDING in the
+ * backend queue (notes the agent never consumed — they were neither drained
+ * at COLLECT nor synthesized at PROMPT), main.ts moves them from
+ * `state.steeringBuffer` into `state.pendingSteeringReview` at the moment
+ * the 'prompt' message flips isWaiting true. This card then renders at the
+ * tail of the chat log flow — in the same visual spot as other question
  * cards — and asks the user to decide what to do with those notes:
  *
  *   • 发送为查询 — combine all remaining notes (joined by a blank line) and
@@ -21,6 +23,11 @@
  * actual state mutations (send/discard) are performed by the parent
  * (ChatLog.vue) via the emitted events — this component only renders the
  * notes and emits the user's choice.
+ *
+ * NOTE: notes that the agent ALREADY consumed (drained at COLLECT as a
+ * REMINDER, or synthesized into a fresh query at PROMPT) do NOT appear here —
+ * a 'steer-flush' clears the buffer bar without populating this card. This
+ * card is strictly for the "stuck in PROMPT" case the user reported.
  */
 defineProps<{ notes: string[] }>();
 

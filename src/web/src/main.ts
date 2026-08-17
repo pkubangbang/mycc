@@ -44,14 +44,16 @@ function nextId(): number {
   return ++msgIdCounter;
 }
 
-// pendingSteeringReview lifecycle: notes captured from 'steer-flush' persist
-// across PROMPT cycles until the user explicitly acts on the "继续…" card
-// (send as query / discard). They are NOT cleared by a broad isWaiting
-// watcher — that would drop notes the user never saw whenever the user
-// typed a normal fresh query (an unrelated PROMPT exit). Instead the array
-// is cleared only at explicit abandon events (see the 'auto' WS handler
-// below and the ws.onclose handler), so unhandled notes resurface at the
-// next PROMPT instead of being silently lost.
+// pendingSteeringReview lifecycle: notes surfaced as the "继续…" card persist
+// across PROMPT cycles until the user explicitly acts on the card (send as
+// query / discard). They are populated ONLY from steeringBuffer at the moment
+// a 'prompt' message flips isWaiting true (notes still pending in the backend
+// queue — the agent never consumed them), NOT from the 'steer-flush' event
+// (which fires AFTER the agent already consumed the notes, so capturing there
+// would resurface already-received notes — the original bug). The array is
+// cleared only at explicit abandon events (auto-mode entry and the ws.onclose
+// handler below), so unhandled notes resurface at the next PROMPT instead of
+// being silently lost.
 
 /**
  * Whether a given message should be shown given the current 详细日志 setting.
@@ -204,6 +206,22 @@ function connectWebSocket(): void {
       if (msg.content) {
         state.messages.push(msg);
       }
+      // Surface the "继续…" review card from steering notes STILL PENDING in the
+      // backend queue at PROMPT — i.e. notes the agent never consumed. These
+      // are the genuine "stuck in PROMPT" notes: a drain at COLLECT (steer-flush
+      // clears the buffer) or a PROMPT synthesis (drain after peek) would have
+      // fired steer-flush and emptied steeringBuffer BEFORE this prompt fired,
+      // so any notes still in steeringBuffer here were never drained. Move
+      // them into pendingSteeringReview (which renders the card) and clear the
+      // buffer bar — they are now "in review", no longer just queued.
+      //
+      // Skipped in auto mode: the agent processes steering automatically there
+      // (COLLECT drains + steer-flush clear the buffer before any prompt), and
+      // there is no PROMPT to review at anyway.
+      if (state.steeringBuffer.length > 0 && !state.isAutoMode) {
+        state.pendingSteeringReview.push(...state.steeringBuffer);
+        state.steeringBuffer.splice(0, state.steeringBuffer.length);
+      }
     } else if (msg.type === 'card') {
       // An interactive card is pending a response — treat like a prompt:
       // the chat input box hides while the card is shown. The backend sends
@@ -242,16 +260,14 @@ function connectWebSocket(): void {
         state.steeringBuffer.push(msg.content);
       }
     } else if (msg.type === 'steer-flush') {
-      // Backend consumed the queued steering notes (drained at COLLECT or
-      // synthesized at PROMPT). Before clearing the buffer bar, capture the
-      // notes into pendingSteeringReview so they surface as a "继续…" card
-      // at the next PROMPT — letting the user ALSO send them as a fresh
-      // query or discard them, rather than having them silently injected as
-      // REMINDER notes only. Skipped in auto mode: the agent processes
-      // steering automatically there, and there is no PROMPT to review at.
-      if (state.steeringBuffer.length > 0 && !state.isAutoMode) {
-        state.pendingSteeringReview.push(...state.steeringBuffer);
-      }
+      // Backend drained the queued steering notes — i.e. the agent CONSUMED
+      // them (injected as a REMINDER at COLLECT, or synthesized into a fresh
+      // query at PROMPT). They are handled; just clear the buffer bar. Do NOT
+      // capture them into pendingSteeringReview: that would resurface
+      // already-consumed notes as a "继续…" continue card, which is the bug
+      // the user reported. The continue card is now populated instead at the
+      // 'prompt' message (see above) from notes still pending in the queue —
+      // the only notes the agent never consumed.
       state.steeringBuffer.splice(0, state.steeringBuffer.length);
     } else if (msg.type === 'file-upload') {
       // Backend echoed a file upload — could show a transient indicator.
@@ -266,7 +282,7 @@ function connectWebSocket(): void {
       state.isAutoMode = msg.content === 'on';
       // Entering auto mode abandons any pending steering review: the agent
       // processes steering automatically in auto mode (no PROMPT to review
-      // at), and the steer-flush capture is already skipped in auto mode.
+      // at), and the continue card is already skipped in auto mode.
       // Leaving auto mode does NOT resurrect the review — those notes are
       // gone. This is the only non-destructive abandon path that clears the
       // array (besides the user's explicit send/discard and disconnect).
@@ -311,9 +327,10 @@ function connectWebSocket(): void {
     // Disconnect abandons any pending steering review: the review card is
     // PROMPT-gated (isWaiting), which is now false, and the user can't act
     // on it while disconnected. On reconnect the server re-sends 'prompt' if
-    // the agent is still waiting, but the flushed notes are already gone
-    // (consumed by the backend at COLLECT) — resurfacing stale captured
-    // notes would be misleading. Drop them.
+    // the agent is still waiting, and the continue card is repopulated from
+    // the (still-pending) steeringBuffer at that point — but stale notes
+    // captured before the drop may have since been consumed by the agent, so
+    // resurfacing them would be misleading. Drop them.
     state.pendingSteeringReview.splice(0);
     // Do NOT reset isAutoMode here: it is a durable session-level flag the
     // server resends on reconnect (see the on-connect broadcast in
