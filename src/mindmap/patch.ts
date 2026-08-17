@@ -11,7 +11,7 @@
  */
 
 import type { Mindmap, Node } from './types.js';
-import type { MindmapPatchAction } from './types.js';
+import type { MindmapPatchAction, Link } from './types.js';
 import { get_node, get_ancestors, get_descendants } from './get-node.js';
 import { safeNodeId } from '../utils/sanitize.js';
 import { summarizeWithExplorer } from './explorer-agent.js';
@@ -363,7 +363,13 @@ export function applyPatchAction(mindmap: Mindmap, action: MindmapPatchAction): 
         summary: '',
         level: parent.level + 1,
         children: [],
-        links: [],
+        // Replay optional outbound links from the patch action so patch-added
+        // nodes can carry term/file/url/node links. Most importantly, `term`
+        // links are hoisted by recall's collectDescendantTerms to the root
+        // "Key Terms" list — this is how patch-added terminology surfaces at
+        // runtime without recompiling MYCC.md. Filter to well-formed Link
+        // objects (defensive: a malformed links array must not poison the tree).
+        links: sanitizeLinks(action.links),
         is_mycc: false,  // patch-added, not from MYCC.md
         is_patch: true,  // marked as patch-touched
       };
@@ -412,4 +418,47 @@ export function applyPatchAction(mindmap: Mindmap, action: MindmapPatchAction): 
     default:
       return false;
   }
+}
+
+/**
+ * Sanitize an optional `links` array from a patch action into well-formed
+ * `Link` objects before attaching it to a new node.
+ *
+ * Defensive: a malformed `links` entry (wrong type, missing target fields,
+ * or non-string scalars) is dropped rather than poisoning the tree. Only
+ * entries with a valid `target_type` and the corresponding target field
+ * survive. `comment` defaults to '' (Link.comment is a required string).
+ *
+ * This is the single gateway through which patch-sourced links enter the
+ * in-memory tree — it is the reason recall's collectDescendantTerms can
+ * hoist patch-added `term` links to the root "Key Terms" list at runtime.
+ */
+function sanitizeLinks(links: Link[] | undefined): Link[] {
+  if (!Array.isArray(links)) return [];
+  const validTypes = new Set<Link['target_type']>(['node', 'file', 'url', 'term']);
+  const out: Link[] = [];
+  for (const l of links) {
+    if (!l || typeof l !== 'object') continue;
+    if (!validTypes.has(l.target_type)) continue;
+    const comment = typeof l.comment === 'string' ? l.comment : '';
+    switch (l.target_type) {
+      case 'node':
+        if (typeof l.node_id === 'string' && l.node_id.length > 0)
+          out.push({ target_type: 'node', node_id: l.node_id, comment });
+        break;
+      case 'file':
+        if (typeof l.file_path === 'string' && l.file_path.length > 0)
+          out.push({ target_type: 'file', file_path: l.file_path, comment });
+        break;
+      case 'url':
+        if (typeof l.url === 'string' && l.url.length > 0)
+          out.push({ target_type: 'url', url: l.url, comment });
+        break;
+      case 'term':
+        if (typeof l.term_name === 'string' && l.term_name.length > 0)
+          out.push({ target_type: 'term', term_name: l.term_name, comment });
+        break;
+    }
+  }
+  return out;
 }

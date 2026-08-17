@@ -137,6 +137,15 @@ export interface MindmapPatchAction {
   title?: string;
   /** For 'add'/'update': the new text content */
   text?: string;
+  /**
+   * For 'add': optional outbound links to attach to the new node.
+   * Replayed onto the in-memory node by applyPatchAction so patch-added
+   * nodes can carry term/file/url/node links — in particular `term` links,
+   * which recall's collectDescendantTerms hoists to the root "Key Terms"
+   * list. Without this field, patch-added nodes always enter the tree with
+   * `links: []` and can never surface as Key Terms (no recompile needed).
+   */
+  links?: Link[];
   /** ISO timestamp of when the patch was created */
   timestamp: string;
   /** Checkpoint ID that triggered this patch */

@@ -19,7 +19,7 @@ import {
 import { get_node, get_ancestors } from '../../mindmap/get-node.js';
 import { applyPatchAction } from '../../mindmap/patch.js';
 import { safeNodeId } from '../../utils/sanitize.js';
-import type { Mindmap, Node, MindmapPatchAction } from '../../mindmap/types.js';
+import type { Mindmap, Node, MindmapPatchAction, Link } from '../../mindmap/types.js';
 
 // ── Fixtures ───────────────────────────────────────────────────────────────
 
@@ -189,5 +189,67 @@ describe('get_node (Fix B — normalized-id matching)', () => {
     const childId = '/mycc.md/code-cleanup/deep-rule';
     const ancestors = get_ancestors(mindmap, childId);
     expect(ancestors.map((a) => a.id)).toEqual(['/', '/mycc.md', '/mycc.md/code-cleanup']);
+  });
+});
+
+// ── Patch-sourced links: patch-added nodes carry term links (runtime hoist) ──
+
+describe('applyPatchAction add replays action.links (term hoist)', () => {
+  let mindmap: Mindmap;
+  beforeEach(() => { mindmap = makeMindmap(); });
+
+  it('attaches action.links onto the new node (term links hoist to root Key Terms)', () => {
+    // Add a terminology-style node directly under /mycc.md (present in the
+    // fixture) so applyPatchAction can resolve the parent.
+    const add: MindmapPatchAction = {
+      action: 'add', path: '/mycc.md',
+      title: 'backlog / livelog / TP constraint',
+      text: 'backlog = the append-only triologue JSONL file; livelog = the in-memory Triologue messages array.',
+      timestamp: '', checkpoint_id: '', reason: 'terminology', mindmap_hash: 'h1',
+      links: [
+        { target_type: 'term', term_name: 'backlog', comment: 'append-only triologue JSONL on disk' },
+        { target_type: 'term', term_name: 'livelog', comment: 'in-memory Triologue messages array' },
+      ],
+    };
+    expect(applyPatchAction(mindmap, add)).toBe(true);
+
+    // Resolve the new node by its sanitized id (title contains spaces/slashes
+    // → safeNodeId collapses 'backlog / livelog / TP constraint' to
+    // 'backlog-livelog-tp-constraint').
+    const node = get_node(mindmap, '/mycc.md/backlog-livelog-tp-constraint');
+    expect(node).not.toBeNull();
+    const termLinks = node!.links.filter((l) => l.target_type === 'term');
+    expect(termLinks.map((l) => l.term_name).sort()).toEqual(['backlog', 'livelog']);
+  });
+
+  it('omits action.links entirely when not provided (backward compatible)', () => {
+    const add: MindmapPatchAction = {
+      action: 'add', path: '/mycc.md', title: 'Plain Node', text: 'no links',
+      timestamp: '', checkpoint_id: '', reason: 't', mindmap_hash: 'h1',
+    };
+    expect(applyPatchAction(mindmap, add)).toBe(true);
+    const node = get_node(mindmap, '/mycc.md/plain-node');
+    expect(node).not.toBeNull();
+    expect(node!.links).toEqual([]);
+  });
+
+  it('drops malformed link entries (bad target_type / missing target field) defensively', () => {
+    const add: MindmapPatchAction = {
+      action: 'add', path: '/mycc.md', title: 'Bad Links', text: 'x',
+      timestamp: '', checkpoint_id: '', reason: 't', mindmap_hash: 'h1',
+      links: [
+        { target_type: 'term', term_name: 'good-term', comment: 'ok' },
+        { target_type: 'term', term_name: '', comment: 'empty term dropped' },
+        { target_type: 'bogus' as Link['target_type'], comment: 'bad type dropped' },
+        { target_type: 'file', comment: 'no file_path dropped' },
+        null as unknown as Link,
+      ],
+    };
+    expect(applyPatchAction(mindmap, add)).toBe(true);
+    const node = get_node(mindmap, '/mycc.md/bad-links');
+    expect(node).not.toBeNull();
+    expect(node!.links).toHaveLength(1);
+    expect(node!.links[0].target_type).toBe('term');
+    expect(node!.links[0].term_name).toBe('good-term');
   });
 });
