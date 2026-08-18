@@ -32,11 +32,38 @@ export interface ChatMessage {
   /** Tool intent/description (e.g. "RUN USER TO list project files" for bash).
    *  When present, rendered as an outlined box above the bubble content. */
   detail?: string;
-  /** Card payload — present when type === 'card'. Drives CardItem.vue. */
+  /** Card payload — present when type === 'card'. Drives CardItem.vue.
+   *  Populated by applyServerMessage when a card wire message arrives (see
+   *  the top-level cardId/query/kind fields below); persisted onto messages
+   *  pushed into `state.messages` and replayed via /history. */
   card?: CardPayload;
+  /** Stable steering-note id — present only on 'steer-echo' broadcasts, so the
+   *  frontend can key duplicate-text notes by id and target them for the
+   *  boomerang 'steer-resolve' API. */
+  steerId?: number;
+  // ── Card wire fields (top-level on an incoming 'card' message) ──
+  // The backend broadcasts cards using the flat CardMessage shape
+  // (serve-hub.ts: CardMessage has type/cardId/query/kind/options/...), so an
+  // incoming WS card message carries these at the top level — NOT nested
+  // under `card`. applyServerMessage reads them here and then assembles a
+  // `card` payload onto the persisted message. Declared optional so every
+  // other MessageType stays a valid ChatMessage without these fields.
+  cardId?: string;
+  query?: string;
+  kind?: 'input' | 'confirm' | 'choice';
+  options?: CardOption[];
+  initialContent?: string;
+  placeholder?: string;
 }
 
 export type ConnectionStatus = 'connected' | 'disconnected' | 'reconnecting';
+
+/** A steering note with a stable id, so duplicate text can be targeted
+ *  individually (per-note discard/send keyed by id, not text). */
+export interface SteeringNote {
+  id: number;
+  text: string;
+}
 
 export interface ChatState {
   messages: ChatMessage[];
@@ -73,25 +100,29 @@ export interface ChatState {
    *  the backend broadcasts 'steer-flush' (notes consumed at COLLECT/PROMPT),
    *  OR moved into pendingSteeringReview at the next PROMPT (notes still
    *  pending — the agent never consumed them). */
-  steeringBuffer: string[];
+  steeringBuffer: SteeringNote[];
   /** Steering notes still pending in the backend queue when the agent reached
    *  PROMPT — i.e. notes the agent never consumed (neither drained at COLLECT
-   *  as a REMINDER nor synthesized into a fresh query at PROMPT). Populated by
-   *  main.ts at the 'prompt' message (when isWaiting flips true and the buffer
-   *  is non-empty), NOT from 'steer-flush' (which fires AFTER consumption, so
-   *  capturing there would resurface already-received notes — the original
-   *  bug). Surfaced as a temporary "继续…" card inside the chat log
-   *  (SteeringReviewCard) so the user can send them as a fresh query or
-   *  discard them, rather than leaving them stuck in the queue. Cleared when
-   *  the user sends them as a query / discards them, or at explicit abandon
-   *  events (disconnect, auto-mode entry). Not captured in auto mode (the
-   *  agent processes steering automatically, no PROMPT to review at). Not
-   *  persisted to the message list — purely transient, never survives a
-   *  refresh. */
-  pendingSteeringReview: string[];
+   *  as a REMINDER nor sent/resolved by the user). Populated by main.ts at the
+   *  'prompt' message (when isWaiting flips true and the buffer is non-empty),
+   *  NOT from 'steer-flush' (which fires AFTER consumption, so capturing there
+   *  would resurface already-received notes — the original bug). Surfaced as a
+   *  temporary "继续…" card inside the chat log (SteeringReviewCard) so the
+   *  user can send them as a fresh query or discard them, rather than leaving
+   *  them stuck in the queue. Cleared when the user resolves them (send/discard
+   *  via the boomerang 'steer-resolve' API), or at explicit abandon events
+   *  (disconnect, auto-mode entry). Not captured in auto mode (the agent
+   *  processes steering automatically, no PROMPT to review at). Not persisted
+   *  to the message list — purely transient, never survives a refresh. */
+  pendingSteeringReview: SteeringNote[];
   /** Dark mode toggle (default light). Persisted in localStorage so the
    *  preference survives page reloads. */
   darkMode: boolean;
+  /** Debug mode flag. When true, the `window.__myccDebug` seam and the
+   *  debug panel are active. This flag is ONLY ever set via the debug seam's
+   *  enable()/disable() (there is no persistent UI toggle), so it defaults
+   *  off in production and never auto-activates. */
+  debugMode: boolean;
   /** Files selected for upload but not yet sent. Cleared on send. */
   pendingFiles: FileInfo[];
   /** Teammate messages routed by the @-prefix label convention — any

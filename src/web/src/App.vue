@@ -8,6 +8,7 @@ import ChatInput from './components/ChatInput.vue';
 import TeammateCard from './components/TeammateCard.vue';
 import TeammateDrawer from './components/TeammateDrawer.vue';
 import TodoCard from './components/TodoCard.vue';
+import DebugPanel from './components/DebugPanel.vue';
 
 defineProps<{ state: ChatState }>();
 
@@ -32,6 +33,7 @@ function closeDrawer(): void {
   <div class="app-container">
     <StatusBar :state="state" />
     <SteeringBuffer :notes="state.steeringBuffer" />
+    <DebugPanel v-if="state.debugMode" :state="state" />
     <div class="middle-section">
       <ChatLog
         :messages="state.messages"

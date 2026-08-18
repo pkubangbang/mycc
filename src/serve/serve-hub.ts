@@ -36,6 +36,7 @@ import { autoState } from '../loop/auto-state.js';
 import { PromptAbortError } from '../loop/agent-io.js';
 import { setResultCallback } from '../utils/letter-box.js';
 import { getMaxUploadMb } from '../config.js';
+import { type SteeringNote, resolveSteeringQueue, joinSteeringNotes } from './steering-queue.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -58,11 +59,13 @@ interface FileUploadMeta {
 }
 
 interface WsMessage {
-  type: 'input' | 'exit' | 'interrupt' | 'card-response' | 'steer' | 'auto';
+  type: 'input' | 'exit' | 'interrupt' | 'card-response' | 'steer' | 'steer-resolve' | 'auto';
   text?: string;
   cardId?: string;
   value?: string;
   files?: FileUploadMeta[];
+  /** Steering note ids the client wants to SEND (boomerang resolve). */
+  sendIds?: number[];
 }
 
 interface FileUploadEntry {
@@ -170,8 +173,12 @@ export class ServeHub {
   // Unlike the mail system (file-backed, for inter-agent communication),
   // steering is ephemeral user mid-task direction: in-memory, cleared on
   // stop(), never persisted. Drained at PROMPT (synthesize with fresh query
-  // via forkChat) or COLLECT (inject as REMINDER note).
-  private steeringQueue: string[] = [];
+  // via forkChat) or COLLECT (inject as REMINDER note). Each note carries a
+  // stable monotonic id so duplicate text can be individually resolved.
+  private steeringQueue: SteeringNote[] = [];
+  // Monotonic id counter for steering notes (stable across notes with the
+  // same text). Incremented in pushSteer; never reset within a serve session.
+  private steeringIdCounter = 0;
 
   // ── File upload queue — ephemeral in-memory buffer for webui file uploads ──
   // Files uploaded from the chat box are buffered here until the agent loop
@@ -687,32 +694,45 @@ export class ServeHub {
    * Echoes the note to all connected clients via a 'steer-echo' broadcast so
    * the frontend buffer bar displays it immediately. The note is buffered
    * here until consumed by {@link drainSteering} (COLLECT) or
-   * {@link getSteeringNotes}+{@link drainSteering} (PROMPT synthesis).
+   * {@link getSteeringNotes}+{@link resolveSteering} (PROMPT boomerang).
    */
   pushSteer(text: string): void {
-    this.steeringQueue.push(text);
+    const note: SteeringNote = { id: ++this.steeringIdCounter, text };
+    this.steeringQueue.push(note);
     // Persist the steering note to the user log so it survives a page
     // refresh and re-renders as a right-side user bubble. The triologue
     // never receives the raw steering text as a real user message (it is
     // drained and injected as a [REMINDER] note at COLLECT/PROMPT), so
     // without this persistence the steering bubble is lost on refresh.
     this.appendUserLog(text, 'steer');
-    // Echo to all clients so the buffer bar shows the queued note.
-    // Using broadcast() (not a raw ws.send) ensures the echo is also logged
-    // for reconnect replay consistency, though steering echoes are
-    // transient by design — they are cleared via 'steer-flush'.
-    this.broadcast('steer-echo', text);
+    // Echo to all clients so the buffer bar shows the queued note. The echo
+    // carries the stable steerId so the frontend can target a specific note
+    // for per-note discard / send (duplicate text is keyed by id, not text).
+    // We send the payload directly (not via broadcast()) because broadcast()
+    // only accepts a flat string `content` — it cannot carry the extra
+    // `steerId` field. The echo is transient by design and cleared via
+    // 'steer-flush', so it does not need to be logged for replay.
+    const echoPayload = JSON.stringify({ type: 'steer-echo', content: text, steerId: note.id });
+    for (const client of this.clients) {
+      if (client.readyState === WebSocket.OPEN) {
+        try { client.send(echoPayload); } catch { /* ignore */ }
+      }
+    }
   }
 
   /**
-   * Consume and return all queued steering notes, clearing the queue.
+   * Consume and return all queued steering notes' TEXT, clearing the queue.
    * Broadcasts a 'steer-flush' to all clients so the frontend buffer bar
-   * clears. Called from COLLECT (inject as REMINDER) and PROMPT (after
-   * forkChat synthesis). Returns an empty array if the queue is empty.
+   * clears. Called from COLLECT (inject as REMINDER). Returns an empty array
+   * if the queue is empty.
+   *
+   * NOTE: returns `string[]` (the note texts) for backward compatibility —
+   * COLLECT's REMINDER injection and any other text-only consumer does not
+   * need ids. For id-aware resolution use {@link resolveSteering}.
    */
   drainSteering(): string[] {
     if (this.steeringQueue.length === 0) return [];
-    const notes = this.steeringQueue;
+    const notes = this.steeringQueue.map((n) => n.text);
     this.steeringQueue = [];
     // Notify all clients to clear their buffer bar
     this.broadcast('steer-flush', '');
@@ -720,11 +740,40 @@ export class ServeHub {
   }
 
   /**
+   * Atomically RESOLVE the steering queue with positive "boomerang"
+   * semantics: the client declares which note ids to SEND; every note NOT in
+   * `sendIds` is implicitly DISCARDED. The whole queue is drained in one
+   * atomic step regardless of the selection, so PROMPT can never re-synthesize
+   * the same notes afterward.
+   *
+   * - Selected notes (id ∈ sendIds, in queue order) are joined with a blank
+   *   line and submitted via {@link submitInput}.
+   * - An empty/absent selection drains without submitting anything.
+   * - Always broadcasts 'steer-flush' (unless the queue was already empty).
+   *
+   * Returns the array of submitted note texts (empty when nothing was sent).
+   */
+  resolveSteering(sendIds: number[] = []): string[] {
+    if (this.steeringQueue.length === 0) return [];
+    const selected = resolveSteeringQueue(this.steeringQueue, sendIds);
+    // Atomic drain: clear the whole queue BEFORE any submit so a later PROMPT
+    // peek sees an empty queue and cannot re-synthesize (the original bug).
+    this.steeringQueue = [];
+    this.broadcast('steer-flush', '');
+    if (selected.length > 0) {
+      this.submitInput(joinSteeringNotes(selected));
+    }
+    return selected.map((n) => n.text);
+  }
+
+  /**
    * Peek at queued steering notes without consuming them. Used by PROMPT
-   * to decide whether to run forkChat synthesis before draining.
+   * to decide whether to run forkChat synthesis before draining. Returns the
+   * note texts (not ids) for backward compatibility with
+   * {@link synthesizeWithSteering}.
    */
   getSteeringNotes(): string[] {
-    return [...this.steeringQueue];
+    return this.steeringQueue.map((n) => n.text);
   }
 
   // ===========================================================================
@@ -1112,6 +1161,12 @@ export class ServeHub {
             this.pushFileUpload({ filename: f.filename, data: f.data, mimeType: f.mimeType, text: msg.text });
           }
         }
+        break;
+      case 'steer-resolve':
+        // Boomerang resolve: the client declares which steering note ids to
+        // SEND; everything not declared is implicitly discarded. Atomically
+        // drains the whole queue so PROMPT never re-synthesizes these notes.
+        this.resolveSteering(msg.sendIds ?? []);
         break;
       case 'auto':
         // One-way "enter auto mode" request from the webui lightning bolt

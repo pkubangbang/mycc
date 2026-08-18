@@ -29,11 +29,13 @@
  * a 'steer-flush' clears the buffer bar without populating this card. This
  * card is strictly for the "stuck in PROMPT" case the user reported.
  */
-defineProps<{ notes: string[] }>();
+import type { SteeringNote } from '../types';
+
+defineProps<{ notes: SteeringNote[] }>();
 
 const emit = defineEmits<{
   (e: 'send-as-query'): void;
-  (e: 'discard-note', index: number): void;
+  (e: 'discard-note', id: number): void;
   (e: 'discard-all'): void;
 }>();
 
@@ -41,8 +43,8 @@ function sendAsQuery(): void {
   emit('send-as-query');
 }
 
-function discardNote(index: number): void {
-  emit('discard-note', index);
+function discardNote(id: number): void {
+  emit('discard-note', id);
 }
 
 function discardAll(): void {
@@ -58,15 +60,15 @@ function discardAll(): void {
       </div>
       <div class="steering-notes">
         <div
-          v-for="(note, i) in notes"
-          :key="i"
+          v-for="note in notes"
+          :key="note.id"
           class="steering-note"
         >
-          <span class="steering-note-text" :title="note">{{ note }}</span>
+          <span class="steering-note-text" :title="note.text">{{ note.text }}</span>
           <button
             class="steering-note-discard"
             title="丢弃此条"
-            @click="discardNote(i)"
+            @click="discardNote(note.id)"
           >&times;</button>
         </div>
       </div>

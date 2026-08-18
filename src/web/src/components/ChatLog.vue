@@ -98,32 +98,38 @@ function onQuote(quotedText: string): void {
 // ── Steering review "继续…" card handlers ──
 //
 // When the agent reaches PROMPT (isWaiting) with steering notes still pending
-// in state.pendingSteeringReview (populated by main.ts at the 'prompt' message
-// from notes the agent never consumed — NOT from drained notes), SteeringReviewCard
-// renders at the tail of the chat flow and emits the user's choice here. The
-// "send as query" path captures the notes into a local, clears the array,
-// THEN calls sendInput — in that order — so the array is empty before the
-// PROMPT ends (no separate watcher is needed; pendingSteeringReview persists
-// across PROMPT cycles until the user explicitly acts, and is only cleared
-// elsewhere at explicit abandon events: disconnect and auto-mode entry, both
-// in main.ts).
+// in state.pendingSteeringReview (populated by message-dispatch.ts at the
+// 'prompt' message from notes the agent never consumed), SteeringReviewCard
+// renders at the tail of the chat flow and emits the user's choice here.
+//
+// All three actions funnel into a single positive "boomerang" resolve: the
+// client declares which note ids to SEND; every note NOT declared is
+// implicitly discarded. The backend atomically drains the whole steering
+// queue on 'steer-resolve', so no note is re-synthesized at the next PROMPT.
+// Per-note "×" is a LOCAL unselect only (removes that id from the card);
+// the authoritative send/discard happens when the user clicks 发送为查询 or
+// 全部丢弃 (or when the last note is unselected → resolveSteering([])).
 function onSendSteeringAsQuery(): void {
-  if (props.state.pendingSteeringReview.length === 0) return;
-  // Combine remaining notes with a blank-line separator, then clear before
-  // the send so the array is empty by the time the PROMPT ends.
-  const combined = props.state.pendingSteeringReview.join('\n\n');
-  props.state.pendingSteeringReview.splice(0);
-  chatApi.sendInput(combined);
+  const ids = props.state.pendingSteeringReview.map((n) => n.id);
+  if (ids.length === 0) return;
+  chatApi.resolveSteering(ids);
 }
 
-function onDiscardSteeringNote(index: number): void {
-  props.state.pendingSteeringReview.splice(index, 1);
-  // If the last note is discarded, the array is empty → the card's v-if
-  // becomes false and the card auto-hides; the normal input box re-enables.
+function onDiscardSteeringNote(id: number): void {
+  // Local-only unselect: remove this note from the rendered card. If none
+  // remain, immediately resolve with an empty selection (drain without send).
+  const idx = props.state.pendingSteeringReview.findIndex((n) => n.id === id);
+  if (idx >= 0) {
+    props.state.pendingSteeringReview.splice(idx, 1);
+  }
+  if (props.state.pendingSteeringReview.length === 0) {
+    chatApi.resolveSteering([]);
+  }
 }
 
 function onDiscardAllSteering(): void {
-  props.state.pendingSteeringReview.splice(0);
+  if (props.state.pendingSteeringReview.length === 0) return;
+  chatApi.resolveSteering([]);
 }
 
 // Watch for new messages — auto-scroll only if user is already at bottom

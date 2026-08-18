@@ -16,7 +16,9 @@
 import { createApp, reactive } from 'vue';
 import type { App as VueApp } from 'vue';
 import App from './App.vue';
-import type { ChatMessage, ChatState, CardOption, FileInfo } from './types';
+import type { ChatMessage, ChatState, CardOption, FileInfo, SteeringNote } from './types';
+import { applyServerMessage } from './message-dispatch';
+import { registerDebugSeam } from './debug';
 import './style.css';
 
 // Reactive state — survives HMR (module-level, not in any component)
@@ -35,6 +37,7 @@ const state = reactive<ChatState>({
   pendingFiles: [],
   teammateMessages: [],
   darkMode: localStorage.getItem('mycc-theme') === 'dark',
+  debugMode: false,
 });
 
 // Monotonic id counter for stable v-for keys (avoids array-index keys that
@@ -126,7 +129,7 @@ async function fetchHistory(): Promise<void> {
   try {
     const res = await fetch('/history');
     if (!res.ok) return;
-    const data = await res.json() as { messages: ChatMessage[]; steeringBuffer?: string[]; isRunning?: boolean };
+    const data = await res.json() as { messages: ChatMessage[]; steeringBuffer?: SteeringNote[]; isRunning?: boolean };
     // Empty-content prompts are "waiting for input" signals, not chat content.
     // Drop them from the visible record; non-empty prompts (e.g. 'Retry? [Y/n]')
     // remain visible. Also drop steer-echo/steer-flush entries — those belong
@@ -187,131 +190,8 @@ function connectWebSocket(): void {
     } catch {
       return; // ignore malformed messages
     }
-    // Ensure every live message has a stable id for v-for keys.
-    if (msg.id === undefined) msg.id = nextId();
-
-    // A prompt message signals "work done, waiting for user input".
-    // An empty-content prompt is purely a waiting signal — not chat content —
-    // so it is not shown as a bubble (only its state side-effects apply).
-    // Non-prompt messages mean the agent is actively working.
-    if (msg.type === 'prompt') {
-      state.isWaiting = true;
-      state.isRunning = false;
-      // Retry button appears when the prompt is a Retry? [Y/n] question
-      if (/retry/i.test(msg.content)) {
-        state.showRetry = true;
-      } else {
-        state.showRetry = false;
-      }
-      if (msg.content) {
-        state.messages.push(msg);
-      }
-      // Surface the "继续…" review card from steering notes STILL PENDING in the
-      // backend queue at PROMPT — i.e. notes the agent never consumed. These
-      // are the genuine "stuck in PROMPT" notes: a drain at COLLECT (steer-flush
-      // clears the buffer) or a PROMPT synthesis (drain after peek) would have
-      // fired steer-flush and emptied steeringBuffer BEFORE this prompt fired,
-      // so any notes still in steeringBuffer here were never drained. Move
-      // them into pendingSteeringReview (which renders the card) and clear the
-      // buffer bar — they are now "in review", no longer just queued.
-      //
-      // Skipped in auto mode: the agent processes steering automatically there
-      // (COLLECT drains + steer-flush clear the buffer before any prompt), and
-      // there is no PROMPT to review at anyway.
-      if (state.steeringBuffer.length > 0 && !state.isAutoMode) {
-        state.pendingSteeringReview.push(...state.steeringBuffer);
-        state.steeringBuffer.splice(0, state.steeringBuffer.length);
-      }
-    } else if (msg.type === 'card') {
-      // An interactive card is pending a response — treat like a prompt:
-      // the chat input box hides while the card is shown. The backend sends
-      // the card fields flat on the wire (cardId/query/kind/options/...);
-      // map them into the nested `card` payload the components expect.
-      state.isWaiting = true;
-      state.showRetry = false;
-      // NOTE: do NOT set state.isRunning = false here. A card is a TOOL-state
-      // ask() prompt — the backend's agentRunning stays true throughout the
-      // card wait. If we force isRunning=false on the frontend, then after
-      // the user submits the card response the backend calls setAgentRunning
-      // (true), but its dedup guard (serve-hub.ts: value === this.agentRunning)
-      // sees true===true and skips broadcasting 'running:on' — so the frontend
-      // isRunning stays permanently false and the send button locks forever.
-      // The card's hasPendingCard flag already disables the send button via
-      // the :disabled binding in ChatInput.vue, so clearing isRunning here is
-      // both unnecessary and harmful.
-      state.hasPendingCard = true;
-      const cardId = (msg as { cardId?: string }).cardId;
-      const query = (msg as { query?: string }).query ?? msg.content;
-      const kind = (msg as { kind?: 'input' | 'confirm' | 'choice' }).kind ?? 'input';
-      const cardPayload = {
-        cardId: cardId ?? '',
-        query,
-        kind,
-        options: (msg as { options?: CardOption[] }).options,
-        initialContent: (msg as { initialContent?: string }).initialContent,
-        placeholder: (msg as { placeholder?: string }).placeholder,
-      };
-      state.messages.push({ type: 'card', content: query, id: nextId(), card: cardPayload });
-    } else if (msg.type === 'steer-echo') {
-      // Backend echoed a steering note the user (or another client) queued.
-      // Push to the buffer bar — do NOT touch isWaiting/isRunning (the LLM
-      // is still working) and do NOT add to the chat message list.
-      if (msg.content) {
-        state.steeringBuffer.push(msg.content);
-      }
-    } else if (msg.type === 'steer-flush') {
-      // Backend drained the queued steering notes — i.e. the agent CONSUMED
-      // them (injected as a REMINDER at COLLECT, or synthesized into a fresh
-      // query at PROMPT). They are handled; just clear the buffer bar. Do NOT
-      // capture them into pendingSteeringReview: that would resurface
-      // already-consumed notes as a "继续…" continue card, which is the bug
-      // the user reported. The continue card is now populated instead at the
-      // 'prompt' message (see above) from notes still pending in the queue —
-      // the only notes the agent never consumed.
-      state.steeringBuffer.splice(0, state.steeringBuffer.length);
-    } else if (msg.type === 'file-upload') {
-      // Backend echoed a file upload — could show a transient indicator.
-      // The actual processing happens server-side; nothing to do here.
-    } else if (msg.type === 'file-flush') {
-      // Backend drained the file upload queue (files saved to disk).
-      // Nothing to clear on the client side.
-    } else if (msg.type === 'auto') {
-      // Backend signaled the lead's autonomous (auto) mode state. Set by
-      // agentIO.setAuto() on every flag flip, plus sent once on WS connect
-      // for late joiners.
-      state.isAutoMode = msg.content === 'on';
-      // Entering auto mode abandons any pending steering review: the agent
-      // processes steering automatically in auto mode (no PROMPT to review
-      // at), and the continue card is already skipped in auto mode.
-      // Leaving auto mode does NOT resurrect the review — those notes are
-      // gone. This is the only non-destructive abandon path that clears the
-      // array (besides the user's explicit send/discard and disconnect).
-      if (state.isAutoMode) {
-        state.pendingSteeringReview.splice(0);
-      }
-    } else if (msg.type === 'running') {
-      // Backend signaled agent processing state. Idle states (PROMPT/WAIT)
-      // → 'off'; processing states (COLLECT/LLM/HOOK/TOOL/STOP/SLASH) → 'on'.
-      // The backend is the single source of truth — we never set isRunning
-      // locally. Sent on every state transition + on WS connect for late joiners.
-      state.isRunning = msg.content === 'on';
-    } else {
-      state.isWaiting = false;
-      // Any non-card, non-prompt message means the agent has moved past the
-      // card (or there was none) — clear the pending-card flag so the chat
-      // input box re-enables. This covers the normal flow where the card is
-      // answered and the agent proceeds.
-      state.hasPendingCard = false;
-      // Route by the @-prefix label convention: teammate messages go to a
-      // separate teammateMessages array for the accordion UI, keeping the
-      // main chat log focused on the lead's conversation. See the
-      // "@-prefix teammate label convention" section in MYCC.md.
-      if (msg.label?.startsWith('@')) {
-        state.teammateMessages.push(msg);
-      } else {
-        state.messages.push(msg);
-      }
-    }
+    // Delegate the pure state-transition logic to the DOM-free dispatch module.
+    applyServerMessage(state, msg, { nextId, chatApi });
   };
 
   ws.onclose = () => {
@@ -409,6 +289,26 @@ export const chatApi = {
     state.pendingFiles = [];
     wsSend({ type: 'steer', text: text || undefined, files: files && files.length > 0 ? files : undefined });
   },
+  /**
+   * Resolve the pending steering-review card with positive "boomerang"
+   * semantics: `sendIds` declares which note ids the user wants to SEND; every
+   * note NOT in `sendIds` is implicitly discarded. The backend atomically
+   * drains the whole queue on 'steer-resolve', so no note is re-synthesized at
+   * the next PROMPT. Locally we clear the review card (and buffer bar) so the
+   * UI reflects the resolution immediately, then send the single WS message.
+   *
+   * - sendIds = all remaining ids → "发送为查询" (send-as-query)
+   * - sendIds = subset → partial discard (send the rest)
+   * - sendIds = [] → discard-all (drain without submitting)
+   */
+  resolveSteering(sendIds: number[]): void {
+    // Local optimistic clear: the card disappears and the input box re-enables.
+    state.pendingSteeringReview.splice(0);
+    state.steeringBuffer.splice(0);
+    // The backend owns the authoritative queue; this is a single positive
+    // message (no separate discard-then-input ordering problem).
+    wsSend({ type: 'steer-resolve', sendIds });
+  },
   sendExit(): void {
     wsSend({ type: 'exit' });
   },
@@ -450,6 +350,11 @@ export const chatApi = {
     localStorage.setItem('mycc-theme', state.darkMode ? 'dark' : 'light');
   },
 };
+
+// Install the debug seam so reproducible tests (and the debug panel) can
+// inject synthetic server messages through the same dispatch path as the real
+// WS handler. Registered only under import.meta.env.DEV; a no-op otherwise.
+registerDebugSeam(state, { nextId, chatApi });
 
 // Create Vue app
 mountedApp = createApp(App, { state });

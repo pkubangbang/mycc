@@ -1,21 +1,24 @@
 <script setup lang="ts">
+import type { SteeringNote } from '../types';
+
 /**
  * SteeringBuffer.vue - Buffer bar showing queued steering notes
  *
  * Displays mid-task steering notes the user sent while the LLM was working.
  * The notes are buffered in `state.steeringBuffer` (populated by 'steer-echo'
- * WS messages from the backend) and cleared on a 'steer-flush' WS message
- * (when the backend consumes the notes at COLLECT or synthesizes them at
- * PROMPT). Rendered as a thin amber chip bar between StatusBar and ChatLog.
+ * WS messages from the backend, each carrying a stable id) and cleared on a
+ * 'steer-flush' WS message (when the backend consumes the notes at COLLECT or
+ * resolves them via the boomerang API at PROMPT). Rendered as a thin amber
+ * chip bar between StatusBar and ChatLog.
  */
-defineProps<{ notes: string[] }>();
+defineProps<{ notes: SteeringNote[] }>();
 </script>
 
 <template>
   <div v-if="notes.length > 0" class="steering-buffer">
     <span class="sb-label">🧭 转向</span>
     <div class="sb-chips">
-      <span v-for="(note, i) in notes" :key="i" class="sb-chip" :title="note">{{ note }}</span>
+      <span v-for="note in notes" :key="note.id" class="sb-chip" :title="note.text">{{ note.text }}</span>
     </div>
   </div>
 </template>
