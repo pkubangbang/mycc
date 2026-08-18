@@ -12,5 +12,3 @@ sigma/
 # git cannot re-include a path if its parent directory is ignored, so we
 # ignore .mycc's contents rather than the directory itself.
 !/.mycc/skills/
-
-/.mycc/

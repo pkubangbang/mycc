@@ -694,18 +694,32 @@ function isInsideGitRepo(): boolean {
 }
 
 /**
- * Ensure .mycc/ is listed in .gitignore when the project is git-managed.
- * Appends the entry if .gitignore exists but lacks it, or creates .gitignore
- * with the entry if it doesn't exist yet.
+ * Ensure .mycc/'s contents are listed in .gitignore when the project is
+ * git-managed. Appends the entry if .gitignore exists but lacks it, or
+ * creates .gitignore with the entry if it doesn't exist yet.
  *
- * Uses `/.mycc/` (root-relative) to ignore the entire directory without
- * affecting nested .mycc directories in subfolders.
+ * Uses `/.mycc/*` (root-relative, contents-only) rather than `/.mycc/`
+ * (whole-directory). The difference matters for selective un-ignoring:
+ *   - `/.mycc/` ignores the directory itself, so git NEVER looks inside it
+ *     and no negation pattern (`!.mycc/skills/foo.md`) can re-include a file
+ *     — the directory is opaque to git.
+ *   - `/.mycc/*` ignores the directory's *contents* but keeps the directory
+ *     itself traversable, so a later negation (e.g. `!.mycc/skills/`) can
+ *     carve out specific subpaths the user wants to track (shared project
+ *     skills, docs, etc.). The default ephemeral state (sessions, caches,
+ *     uploaded files) stays ignored.
+ *
+ * Idempotency accepts EITHER the new `/.mycc/*` or the legacy `/.mycc/` form
+ * as "already handled" so an upgrade does not append a duplicate line to an
+ * existing .gitignore (the legacy entry still effectively ignores
+ * everything; a user who wants selective un-ignore can switch the line to
+ * `/.mycc/*` manually at their leisure).
  */
 export function ensureGitignore(): void {
   if (!isInsideGitRepo()) return;
 
   const gitignorePath = path.resolve('.gitignore');
-  const entry = '/.mycc/';
+  const entry = '/.mycc/*';
 
   // If .gitignore doesn't exist, create it with the entry
   if (!fs.existsSync(gitignorePath)) {
@@ -713,10 +727,15 @@ export function ensureGitignore(): void {
     return;
   }
 
-  // Check if the entry already exists (exact match or commented out)
+  // Check if an equivalent entry already exists. Accept both the current
+  // `/.mycc/*` (contents-only, allows negation) and the legacy `/.mycc/`
+  // (whole-directory) as "already handled" so we never append a duplicate.
   const content = fs.readFileSync(gitignorePath, 'utf-8');
   const lines = content.split('\n');
-  const hasEntry = lines.some(line => line.trim() === entry);
+  const hasEntry = lines.some(line => {
+    const t = line.trim();
+    return t === entry || t === '/.mycc/';
+  });
   if (hasEntry) return;
 
   // Append the entry
