@@ -1123,16 +1123,38 @@ export class ServeHub {
     }
 
     switch (msg.type) {
-      case 'input':
-        if (msg.text !== undefined) {
-          this.submitInput(msg.text);
+      case 'input': {
+        // Files attached with NO comment arrive as { text: undefined, files: [...] }
+        // (the frontend sends `text: text || undefined`, so an empty comment
+        // becomes undefined). Without a text branch that resolves the blocked
+        // waitForInput(), the loop would NEVER start: submitInput() would be
+        // skipped, the PROMPT wait would stay blocked, and the uploaded file
+        // would sit stranded in the file queue (only drained during a loop
+        // that never begins). The frontend also optimistically flips
+        // isWaiting=false on send, so the user's NEXT message then routes
+        // through sendSteer (buffered) instead of sendInput — everything
+        // buffers and nothing runs.
+        //
+        // Fix: when files are present but text is empty/undefined, submit a
+        // non-empty placeholder so waitForInput() resolves and the loop
+        // starts. The PROMPT handler drains fileUploads separately and injects
+        // a [REMINDER] listing each saved file, so the LLM still sees the
+        // upload — the placeholder only needs to be non-empty to drive the
+        // loop. A real comment (non-empty text) is submitted verbatim.
+        const hasFiles = msg.files !== undefined && msg.files.length > 0;
+        const textToSend = msg.text !== undefined && msg.text.trim() !== ''
+          ? msg.text
+          : (hasFiles ? '(uploaded files)' : undefined);
+        if (textToSend !== undefined) {
+          this.submitInput(textToSend);
         }
-        if (msg.files && msg.files.length > 0) {
-          for (const f of msg.files) {
+        if (hasFiles) {
+          for (const f of msg.files!) {
             this.pushFileUpload({ filename: f.filename, data: f.data, mimeType: f.mimeType, text: msg.text });
           }
         }
         break;
+      }
       case 'exit':
         this.gracefulShutdown().catch((err) => {
           agentIO.verbose('serve', `exit shutdown error: ${String(err)}`);

@@ -424,49 +424,60 @@ const inputAreaStyle = computed(() =>
           @keydown="onKeydown"
           @paste="onPaste"
         ></textarea>
-        <button
-          class="attach-btn"
-          :disabled="state.connectionStatus !== 'connected'"
-          title="附加文件"
-          @click="openFilePicker"
-        >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-            <polyline points="17 8 12 3 7 8" />
-            <line x1="12" y1="3" x2="12" y2="15" />
-          </svg>
-        </button>
-        <!-- "压缩上下文" button — sits to the LEFT of the lightning-bolt
-             button. Sends the "/compact" slash command via the normal input
-             path. Only enabled in normal mode at the PROMPT stage; disabled
-             when auto mode is on or the loop is busy. -->
-        <button
-          class="compact-btn"
-          :disabled="!canCompact"
-          title="压缩上下文"
-          @click="onCompactClick"
-        >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M3 5 Q6 12 3 19" />
-            <path d="M21 5 Q18 12 21 19" />
-            <path d="M9 3 L14 3 L16 5 L15 21 L8 21 Z" />
-          </svg>
-        </button>
-        <!-- Lightning bolt: one-way "enter auto mode" button. Sits to the
-             LEFT of the attach button. If already in auto mode, surface a
-             transient "已经是自动模式了" toast locally (no round-trip);
-             otherwise send the 'auto' WS message to enter auto mode. -->
-        <button
-          class="auto-btn"
-          :class="{ 'auto-btn--on': state.isAutoMode }"
-          :disabled="state.connectionStatus !== 'connected'"
-          :title="state.isAutoMode ? '已经是自动模式了' : '进入自动模式'"
-          @click="onAutoClick"
-        >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
-          </svg>
-        </button>
+        <!-- Toolbar with the three action buttons (compact, auto, attach),
+             rendered as a single horizontal row. The toolbar is always an
+             overlay INSIDE the textarea (absolute-positioned relative to
+             .input-area-wrapper). Its placement is responsive via CSS:
+               - wide  (>600px): anchored to the bottom-right corner; the
+                 textarea uses padding-right to clear the button strip;
+               - narrow (≤600px): spans the full bottom edge; the textarea
+                 uses padding-bottom to clear the toolbar row.
+             Order left→right: compact, auto, attach (attach rightmost). -->
+        <div class="input-toolbar">
+          <!-- "压缩上下文" button — sends the "/compact" slash command via
+               the normal input path. Only enabled in normal mode at the
+               PROMPT stage; disabled when auto mode is on or the loop is
+               busy. -->
+          <button
+            class="tool-btn compact-btn"
+            :disabled="!canCompact"
+            title="压缩上下文"
+            @click="onCompactClick"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M3 5 Q6 12 3 19" />
+              <path d="M21 5 Q18 12 21 19" />
+              <path d="M9 3 L14 3 L16 5 L15 21 L8 21 Z" />
+            </svg>
+          </button>
+          <!-- Lightning bolt: one-way "enter auto mode" button. If already
+               in auto mode, surface a transient "已经是自动模式了" toast
+               locally (no round-trip); otherwise send the 'auto' WS message
+               to enter auto mode. -->
+          <button
+            class="tool-btn auto-btn"
+            :class="{ 'auto-btn--on': state.isAutoMode }"
+            :disabled="state.connectionStatus !== 'connected'"
+            :title="state.isAutoMode ? '已经是自动模式了' : '进入自动模式'"
+            @click="onAutoClick"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
+            </svg>
+          </button>
+          <button
+            class="tool-btn attach-btn"
+            :disabled="state.connectionStatus !== 'connected'"
+            title="附加文件"
+            @click="openFilePicker"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+              <polyline points="17 8 12 3 7 8" />
+              <line x1="12" y1="3" x2="12" y2="15" />
+            </svg>
+          </button>
+        </div>
         <transition name="auto-toast">
           <div v-if="autoToast" class="auto-toast">{{ autoToast }}</div>
         </transition>
@@ -559,8 +570,10 @@ const inputAreaStyle = computed(() =>
   resize: none;
   border: 1px solid var(--border-input);
   border-radius: 6px;
-  /* Right padding clears the attach + lightning-bolt + compact buttons at
-     the bottom-right of the textarea (three 28px buttons + gaps). */
+  /* Default (wide, >600px): right padding clears the toolbar strip
+     (three 28px buttons + 2×4px gaps + 2px margin ≈ 98px) anchored at the
+     bottom-right of the textarea. The narrow-screen layout switches this
+     to a bottom padding via the @media query below. */
   padding: 8px 98px 8px 12px;
   font-size: 14px;
   font-family: inherit;
@@ -579,39 +592,22 @@ const inputAreaStyle = computed(() =>
   background: var(--bg-input-field-disabled);
   color: var(--text-input-disabled);
 }
-.attach-btn {
+/* Toolbar overlay: a single horizontal row of three icon buttons. It is
+   always absolutely positioned INSIDE the textarea (relative to
+   .input-area-wrapper). On wide screens it hugs the bottom-right corner;
+   on narrow screens (≤600px) it spans the full bottom edge. The buttons
+   share a common .tool-btn base; each adds its own hover color. */
+.input-toolbar {
   position: absolute;
   right: 2px;
   bottom: 2px;
   display: flex;
   align-items: center;
-  justify-content: center;
-  background: var(--bg-input-field);
-  color: var(--text-muted);
-  border: none;
-  border-radius: 4px;
-  padding: 4px;
-  width: 28px;
-  height: 28px;
-  cursor: pointer;
-  transition: color 0.15s, background 0.15s;
+  gap: 4px;
+  z-index: 2;
 }
-.attach-btn:hover:not(:disabled) {
-  color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 10%, var(--bg-input-field));
-}
-.attach-btn:disabled {
-  opacity: 0.3;
-  cursor: not-allowed;
-}
-/* "压缩上下文" button — sits to the LEFT of the lightning-bolt button
-   (right:66px vs the lightning bolt's right:34px). Same size/shape as the
-   attach and auto buttons so the trio reads as a toolbar. Disabled state
-   dims the icon (opacity 0.3) and shows a not-allowed cursor. */
-.compact-btn {
-  position: absolute;
-  right: 66px;
-  bottom: 2px;
+/* Shared icon-button base for the three toolbar buttons. */
+.tool-btn {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -625,45 +621,37 @@ const inputAreaStyle = computed(() =>
   cursor: pointer;
   transition: color 0.15s, background 0.15s;
 }
+.tool-btn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+.attach-btn:hover:not(:disabled),
 .compact-btn:hover:not(:disabled) {
   color: var(--accent);
   background: color-mix(in srgb, var(--accent) 10%, var(--bg-input-field));
-}
-.compact-btn:disabled {
-  opacity: 0.3;
-  cursor: not-allowed;
-}
-/* Lightning-bolt "enter auto mode" button — sits to the LEFT of the attach
-   button at the bottom of the textarea. Same size/shape as the attach
-   button so the pair reads as a toolbar. Highlights amber when auto mode
-   is already on (a live state cue). */
-.auto-btn {
-  position: absolute;
-  right: 34px;
-  bottom: 2px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: var(--bg-input-field);
-  color: var(--text-muted);
-  border: none;
-  border-radius: 4px;
-  padding: 4px;
-  width: 28px;
-  height: 28px;
-  cursor: pointer;
-  transition: color 0.15s, background 0.15s;
 }
 .auto-btn:hover:not(:disabled) {
   color: #f59e0b;
   background: color-mix(in srgb, #f59e0b 12%, var(--bg-input-field));
 }
-.auto-btn:disabled {
-  opacity: 0.3;
-  cursor: not-allowed;
-}
 .auto-btn--on {
   color: #f59e0b;
+}
+/* Narrow screens (≤600px): the toolbar drops to span the full bottom edge
+   of the textarea, right-aligned within the row. The textarea switches its
+   clear-space from padding-right (wide) to padding-bottom so the toolbar
+   row no longer overlaps typed text. The toolbar is still INSIDE the
+   textarea (absolute overlay), just stretched across the bottom. */
+@media (max-width: 600px) {
+  .input-area {
+    padding: 8px 12px 40px;
+  }
+  .input-toolbar {
+    right: 4px;
+    left: 4px;
+    bottom: 4px;
+    justify-content: flex-end;
+  }
 }
 /* Transient toast shown when the user clicks the lightning bolt while
    already in auto mode. Floats above the input box, auto-clears in 2.5s. */
