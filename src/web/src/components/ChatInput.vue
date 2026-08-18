@@ -537,7 +537,14 @@ const inputAreaStyle = computed(() =>
 }
 /* Horizontal resize handle at the top edge of the input box. A thin bar
    with a wider transparent hit area; row-resize cursor. Highlights on
-   hover/active to signal it's draggable. */
+   hover/active to signal it's draggable.
+
+   touch-action:none is REQUIRED for stable touch dragging: without it the
+   browser interprets the first pointermove as a pan/scroll gesture and
+   fires pointercancel (or lets the page scroll), which severs
+   setPointerCapture mid-drag — the "can't drag reliably on touchscreen"
+   bug. touch-action:none tells the browser this element owns the gesture,
+   so pointermove/up fire uninterrupted. */
 .input-resize-handle {
   position: absolute;
   top: -4px;
@@ -549,6 +556,9 @@ const inputAreaStyle = computed(() =>
   background: var(--border-color);
   z-index: 5;
   transition: background 0.15s;
+  touch-action: none;
+  -webkit-touch-callout: none;
+  user-select: none;
 }
 .input-resize-handle:hover,
 .input-resize-handle:active {

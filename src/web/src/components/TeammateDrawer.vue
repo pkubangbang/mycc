@@ -377,7 +377,12 @@ const drawerStyle = computed(() =>
 }
 /* Draggable resize handle — a thin vertical bar on the left edge. The
    visible bar is 3px; a wider transparent gutter (padding) makes it easy
-   to grab. A hover/active highlight tells the user it's draggable. */
+   to grab. A hover/active highlight tells the user it's draggable.
+
+   touch-action:none is REQUIRED for stable touch dragging: without it the
+   browser interprets the first pointermove as a horizontal pan gesture and
+   fires pointercancel (or lets the page scroll), severing
+   setPointerCapture mid-drag. */
 .drawer-resize-handle {
   position: absolute;
   top: 0;
@@ -389,6 +394,9 @@ const drawerStyle = computed(() =>
   background: var(--border-color);
   z-index: 5;
   transition: background 0.15s;
+  touch-action: none;
+  -webkit-touch-callout: none;
+  user-select: none;
 }
 .drawer-resize-handle:hover,
 .drawer-resize-handle:active {
@@ -671,5 +679,29 @@ const drawerStyle = computed(() =>
 }
 .drawer-empty {
   padding: 32px 8px;
+}
+
+/* Narrow screens (≤600px): the drawer stops being a side-by-side split with
+   the chat log and instead overlays it as a full-width panel stacked on top.
+   On a phone-width viewport a 50/50 split leaves both panes unreadably thin,
+   so the drawer covers the chat log entirely while open; closing it (✕)
+   reveals the chat log again. The inline px width from the drag handle is
+   overridden with !important because inline styles win over regular media-
+   query rules; the resize handle is meaningless in overlay mode (there is no
+   adjacent pane to resize against) so it is hidden. */
+@media (max-width: 600px) {
+  .teammate-drawer {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    width: 100% !important;
+    min-width: 0;
+    border-left: none;
+    z-index: 10;
+  }
+  .drawer-resize-handle {
+    display: none;
+  }
 }
 </style>
