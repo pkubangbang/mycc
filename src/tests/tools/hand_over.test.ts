@@ -362,5 +362,77 @@ describe('Cluster B — P1-1 tmux nesting self-check', () => {
   });
 });
 
+// ═══════════════════════════════════════════════════════════════════════
+// Cluster C — empty command ("!" only) opens an interactive shell
+// Regression: the user typing just "!" at the prompt must NOT cause the
+// literal text "undefined" to be typed into the pane (the old bug, from
+// `command || undefined` in prompt.ts being stringified by send-keys).
+// ═══════════════════════════════════════════════════════════════════════
+
+describe('Cluster C — empty command opens an interactive shell (no "undefined")', () => {
+  let tempDir: string;
+  let ctx: AgentContext;
+
+  beforeEach(() => {
+    tempDir = createTempDir();
+    ctx = createMockContext(tempDir);
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    removeTempDir(tempDir);
+  });
+
+  it('does NOT send-keys the literal "undefined" for an empty command', async () => {
+    const result = await handOverTool.handler(ctx, {
+      command: '',
+      intent: 'RUN USER TO open interactive shell',
+    });
+    // Must reach the session path (not a validation/prereq rejection).
+    expect(result).not.toContain('Failed to create session');
+    expect(result).not.toContain('Intent format is:');
+
+    const calls = vi.mocked(cp.spawn).mock.calls.map((c) => c[1]) as string[][];
+    const sendKeysArgs = calls.find((a) => a[0] === 'send-keys');
+    // For an empty command, send-keys must be SKIPPED entirely — the pane
+    // stays at a clean shell prompt. The old bug typed ` undefined` here.
+    expect(sendKeysArgs).toBeUndefined();
+  });
+
+  it('labels the result "(interactive shell)" instead of "undefined"', async () => {
+    const result = await handOverTool.handler(ctx, {
+      command: '',
+      intent: 'RUN USER TO open interactive shell',
+    });
+    expect(result).toContain('User ran: (interactive shell)');
+    expect(result).not.toContain('User ran: undefined');
+  });
+
+  it('records a non-undefined todo body for an empty command', async () => {
+    await handOverTool.handler(ctx, {
+      command: '',
+      intent: 'RUN USER TO open interactive shell',
+    });
+    const createTodo = ctx.todo.createTodo as ReturnType<typeof vi.fn>;
+    expect(createTodo).toHaveBeenCalled();
+    const [, body] = createTodo.mock.calls[createTodo.mock.calls.length - 1];
+    expect(body).toBe('(interactive shell)');
+  });
+
+  it('still send-keys a real command (non-empty unchanged behavior)', async () => {
+    const result = await handOverTool.handler(ctx, {
+      command: 'vim notes.txt',
+      intent: 'RUN USER TO edit notes',
+    });
+    expect(result).not.toContain('Failed to create session');
+
+    const calls = vi.mocked(cp.spawn).mock.calls.map((c) => c[1]) as string[][];
+    const sendKeysArgs = calls.find((a) => a[0] === 'send-keys');
+    expect(sendKeysArgs).toBeDefined();
+    expect(sendKeysArgs!.join(' ')).toContain(' vim notes.txt');
+    expect(sendKeysArgs![sendKeysArgs!.length - 1]).toBe('Enter');
+  });
+});
+
 // Silence the unused-promisify import warning under strict configs.
 void promisify;

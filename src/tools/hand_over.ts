@@ -168,16 +168,26 @@ async function handleHandOver(ctx: AgentContext, args: Record<string, unknown>):
     // against a command starting with `-` being mistaken for a tmux option.
     // No fixed sleep is needed — the pty buffers the input before the shell
     // prompt is even ready.
-    await spawnTmux(
-      ['send-keys', '-t', sessionName, ` ${command}`, 'Enter'],
-      cwd,
-    );
+    //
+    // An empty command (the user typed just "!" at the prompt, or the agent
+    // called hand_over with command="") means "open an interactive shell with
+    // no initial command". Skip the send-keys so the pane stays at a clean
+    // shell prompt — typing the literal "undefined" (from a coerced
+    // command || undefined) was the old bug.
+    if (command.length > 0) {
+      await spawnTmux(
+        ['send-keys', '-t', sessionName, ` ${command}`, 'Enter'],
+        cwd,
+      );
+    }
   } catch (e) {
     return `Error: Failed to create session: ${e}`;
   }
 
   // 3. Track session in todo
-  ctx.todo.createTodo(`hand_over: [sessionName: ${sessionName}]`, command);
+  // For an empty command (interactive shell), label it "(interactive shell)"
+  // instead of leaving the todo body blank / showing "undefined".
+  ctx.todo.createTodo(`hand_over: [sessionName: ${sessionName}]`, command || '(interactive shell)');
 
   // 4. Open popup terminal (detached, returns immediately)
   const terminalArgs = parseTerminalArgs(terminalLauncher, sessionName);
@@ -282,7 +292,7 @@ async function handleHandOver(ctx: AgentContext, args: Record<string, unknown>):
   // the guidance: if the session is kept, the LLM should continue driving it
   // via bash + tmux send-keys/capture-pane; if killed, the output here is
   // final and the task should be assessed from it.
-  const header = `User ran: ${command}`;
+  const header = `User ran: ${command || '(interactive shell)'}`;
   const status = keepSession
     ? `Status: session still open (kept)\nSession name: ${sessionName}`
     : `Status: session closed (output captured below)\nSession name: ${sessionName}`;

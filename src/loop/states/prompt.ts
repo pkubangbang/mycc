@@ -312,9 +312,14 @@ export async function handlePrompt(
 
   // Bang commands: execute via hand_over tool
   if (query.trim().startsWith('!')) {
+    // An empty command (user typed just "!") means "open an interactive
+    // shell with no initial command". Pass the empty string through rather
+    // than coercing to undefined — hand_over distinguishes "" (open a plain
+    // shell) from a real command, and `undefined` would be stringified into
+    // the literal text "undefined" typed into the pane.
     const command = query.trim().slice(1).trim();
     const result = await loader.execute('hand_over', env.ctx, {
-      command: command || undefined,
+      command,
       intent: `RUN USER TO execute interactive command from user`,
     });
     triologue.note('REMINDER', result);
