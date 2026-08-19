@@ -13,13 +13,13 @@ import type { ToolDefinition, AgentContext } from '../types.js';
 
 export const mailToTool: ToolDefinition = {
   name: 'mail_to',
-  description: 'Send an async message to a teammate or "lead". Non-blocking - does not wait for response. Use for task assignment and inter-agent communication. Include meaningful content.',
+  description: 'Send an async message to a teammate or "lead" within the current mycc instance (intra-session IPC). Non-blocking - does not wait for response. Use for task assignment and inter-agent communication between the lead and its teammates. For cross-instance mail (to a remote mycc instance or a cronjob-triggered lead), use the `mycc-mail` CLI via the bash tool (e.g. `mycc-mail <session-id> --title "..." --content "..."`); this tool does NOT route to other mycc instances.',
   input_schema: {
     type: 'object',
     properties: {
       name: {
         type: 'string',
-        description: 'Target name to receive the message. A teammate name or "lead" for local instance IPC, OR a cross-instance peer identity "<session-id>/lead" (e.g. "3b1b83d.../lead") to route through the peer discovery module to a remote mycc instance mailbox.',
+        description: 'Target name to receive the message. A teammate name or "lead" for local instance IPC. Cross-instance mail (remote mycc instances, cronjobs) is handled by the `mycc-mail` CLI, NOT this tool — slash-bearing names like "<session-id>/lead" are rejected with a pointer to the CLI.',
       },
       title: {
         type: 'string',
@@ -62,62 +62,36 @@ export const mailToTool: ToolDefinition = {
     const senderName = ctx.core.getName();
     const isTeammateToLead = name === 'lead' && senderName !== 'lead';
 
-    // UUID format: 8 hex - 4 hex - 4 hex - 4 hex - 12 hex (case-insensitive).
-    // Shared by the peer-routing block and the fail-fast recipient validation.
-    const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
     // -------------------------------------------------------------------------
-    // Fail-fast recipient validation (replaces the former soft bare-session-id
-    // warning). mail_to is fire-and-forget, so a recipient that doesn't resolve
-    // to a KNOWN, live recipient must be rejected up front — otherwise the mail
-    // is silently lost and the sender gets a misleading "OK". This turned the
-    // silent-failure trap (a bare session-id, a stale/offline peer, or a
-    // non-existent teammate name) into an immediate, correctable error.
+    // Recipient validation — intra-session only.
     //
-    // Three valid recipient forms:
+    // mail_to is scoped to communication WITHIN the current mycc instance:
     //   1. "lead"               — local IPC sentinel (lead↔teammate). Always OK.
-    //   2. "<uuid>/lead"        — cross-instance peer. Must be an ONLINE peer
-    //                            (ctx.peer.isFresh(uuid)); a stale/offline
-    //                            peer's mail is dropped anyway, so failing fast
-    //                            here is informative and correct.
-    //   3. "<teammate-name>"    — a live teammate in the current instance's
+    //   2. "<teammate-name>"    — a live teammate in the current instance's
     //                            roster. Validated via ctx.team.listTeammates()
     //                            ONLY in the lead/parent context — a child
     //                            teammate's listTeammates() throws FORBIDDEN, and
     //                            the child writes mailbox files directly, so it
     //                            cannot validate; we skip the check there.
     //
-    // Any other slash-bearing name (e.g. "review-peer-1/lead", "<bad-uuid>/lead",
-    // "<uuid>/worker") is rejected: no teammate is named with a "/", and it
-    // isn't a valid fresh peer route, so it is almost certainly a mistake.
+    // Cross-instance / external mail (cronjobs, other mycc instances, the
+    // mediator pattern) is handled by the `mycc-mail` CLI — a standalone
+    // script (scripts/mycc-mail/mycc-mail.js, exposed as a global bin) that
+    // appends a JSONL line to a remote lead's mailbox. Any slash-bearing name
+    // (e.g. "<uuid>/lead", "<bad-uuid>/lead") is rejected here with a pointer
+    // to the CLI: the agent should run the CLI via the bash tool instead.
     // -------------------------------------------------------------------------
     if (name !== 'lead') {
       const slashIdx = name.indexOf('/');
       if (slashIdx > 0) {
-        const peerSid = name.slice(0, slashIdx);
-        const peerAgent = name.slice(slashIdx + 1);
-        if (peerAgent === 'lead' && UUID_RE.test(peerSid)) {
-          // Valid peer form — fail fast if the peer is NOT online/fresh.
-          // sendPeerMail() below re-checks as a backup, but surfacing it here
-          // gives a clearer, earlier rejection.
-          if (!ctx.peer.isFresh(peerSid)) {
-            ctx.core.brief('error', 'mail_to',
-              `Peer ${peerSid} is offline/stale or not registered — mail rejected (fail-fast).`);
-            return `Error: peer ${peerSid} is offline/stale or not registered. ` +
-              `The remote mycc instance may have exited, or its heartbeat is older than the freshness window. ` +
-              `Verify the peer is running with myccdp enabled, then resend. Valid recipient forms: ` +
-              `"lead", "<session-id>/lead" (online peer), or a live teammate name.`;
-          }
-          // Peer is fresh — fall through to the sendPeerMail call below.
-        } else {
-          // Slash-bearing name that is NOT a valid <uuid>/lead peer route.
-          ctx.core.brief('error', 'mail_to',
-            `Unrecognized recipient '${name}': not a valid "<session-id>/lead" peer route, and teammate names cannot contain "/".`);
-          return `Error: unrecognized recipient '${name}'. A slash-bearing name must be a valid peer route ` +
-            `"<session-id>/lead" with the session-id as a UUID and an ONLINE peer. ` +
-            `For cross-instance peer mail use "<session-id>/lead" (verify the peer is online via the peers tool first). ` +
-            `For local mail use "lead" or a live teammate name (no "/").`;
-        }
+        ctx.core.brief('error', 'mail_to',
+          `Cross-instance mail is handled by the \`mycc-mail\` CLI, not mail_to. Recipient '${name}' contains a "/" (peer/cross-session form).`);
+        return `Error: cross-instance mail is handled by the \`mycc-mail\` CLI, not the mail_to tool.\n` +
+          `Recipient '${name}' looks like a cross-session form ("<session-id>/lead").\n` +
+          `To send mail to a remote mycc instance, run via the bash tool:\n` +
+          `  mycc-mail <session-id> --title "<title>" --content "<content>"\n` +
+          `Discover the target session-id with the peers tool (or \`mycc-mail --list\`).\n` +
+          `mail_to is scoped to intra-session communication: "lead" or a live teammate name (no "/").`;
       } else {
         // Bare teammate name (no "/") — validate against the live roster.
         // Only the lead/parent can enumerate teammates; a child's
@@ -134,35 +108,8 @@ export const mailToTool: ToolDefinition = {
             `Teammate '${name}' does not exist in the current roster — mail rejected (fail-fast).`);
           return `Error: teammate '${name}' does not exist. Use tm_create to spawn a teammate first, ` +
             `or check the name with the tm_print tool. Valid recipient forms: ` +
-            `"lead", "<session-id>/lead" (online peer), or a live teammate name.`;
+            `"lead" or a live teammate name. For cross-instance mail use the \`mycc-mail\` CLI.`;
         }
-      }
-    }
-
-    // Cross-instance peer routing: if `name` matches the identity pattern
-    // <session-id>/<agent-name> (agent-name is currently only "lead"), route
-    // the message through ctx.peer to the remote peer's mailbox instead of
-    // local teammate IPC. This makes mail_to work across mycc instances.
-    // The session-id part must be a valid UUID (8-4-4-4-12 hex format), and
-    // the agent-name part must be "lead". Validating the UUID format (not just
-    // "contains a dash") prevents misrouting teammate names that happen to
-    // contain a dash + "/lead" (e.g. "review-peer-1/lead") to the peer path.
-    // (The fail-fast block above already confirmed the peer is fresh.)
-    const peerSlashIdx = name.indexOf('/');
-    if (peerSlashIdx > 0) {
-      const peerSid = name.slice(0, peerSlashIdx);
-      const peerAgent = name.slice(peerSlashIdx + 1);
-      if (peerAgent === 'lead' && UUID_RE.test(peerSid)) {
-        const ok = ctx.peer.sendPeerMail(peerSid, title, content);
-        if (ok) {
-          ctx.core.brief('info', 'mail_to', `(peer→${name}) ${title}\n${chalk.gray(content)}`);
-          return `OK. Peer mail sent to ${name}.`;
-        }
-        // Defensive: isFresh passed above but sendPeerMail returned false
-        // (e.g. the peer went stale between the check and the send).
-        ctx.core.brief('error', 'mail_to', `Peer ${peerSid} delivery failed (sendPeerMail=false) — mail not delivered.`);
-        return `Error: peer ${peerSid} delivery failed. The peer was fresh at validation but the mailbox write was rejected ` +
-          `(the remote instance may have just exited). Verify the peer is running and resend.`;
       }
     }
 

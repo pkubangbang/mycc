@@ -6,6 +6,7 @@
   "bin": {
     "mycc": "./bin/mycc.js",
     "mdcalc": "./scripts/mdcalc/mdcalc.js",
+    "mycc-mail": "./scripts/mycc-mail/mycc-mail.js",
     "mycc-pretty-print": "./scripts/pretty-print/pretty-print.js"
   },
   "exports": {

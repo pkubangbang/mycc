@@ -10,10 +10,10 @@ message defines the instance's role, its peer, and the reply contract.
 ## Pipeline (A → B → C)
 Three instances in sequence. The mediator creates two channel pairs:
 - Pair `stage1`: A (owner) ↔ B (peer). A's firstQuery = "produce the design
-  artifact; when done, mail it to B via mail_to(name=\"<sessionB>/lead\", ...)."
+  artifact; when done, mail it to B via the mycc-mail CLI: mycc-mail <sessionB> --title \"...\" --content \"...\" (run via bash)."
 - Pair `stage2`: B (owner) ↔ C (peer). B's firstQuery = "wait for the design
   from A; implement it; when done, mail the code to C via
-  mail_to(name=\"<sessionC>/lead\", ...)."
+  mycc-mail <sessionC> --title \"...\" --content \"...\" (run via bash)."
 - Pair `stage3`: C (owner) ↔ A (peer). C's firstQuery = "wait for the code
   from B; test it; mail the test report back to A."
 Each instance knows only its upstream/downstream peer; the mediator encoded
@@ -33,5 +33,6 @@ mycc instance, not an outside mediator. The outside mediator creates:
 - Pair `broker-b`: A ↔ B. A's firstQuery = "you are the broker; send task X to
   B and task Y to C; collect results." (C is reachable from A via a second pair.)
 - Pair `broker-c`: A ↔ C.
-The broker instance A uses `mail_to` to both B and C and waits for replies. This
-is the cross-instance analogue of Divide-and-Conquer.
+The broker instance A uses the `mycc-mail` CLI (via the `bash` tool) to mail
+both B and C and waits for replies. This is the cross-instance analogue of
+Divide-and-Conquer.

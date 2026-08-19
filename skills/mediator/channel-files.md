@@ -18,7 +18,7 @@ an instance into a workflow without telling it anything interactively.
   "ownerSessionId": "a3c83bbd-...",
   "peerSessionId": "b7f2c1e0-...",
   "title": "Build feature X together",
-  "firstQuery": "You are the backend instance. The frontend instance will mail you API requirements via this channel. Reply to mail using mail_to(name=\"b7f2c1e0-.../lead\", ...). Do NOT write prose replies.",
+  "firstQuery": "You are the backend instance. The frontend instance will mail you API requirements via this channel. Reply to mail using the mycc-mail CLI via the bash tool: mycc-mail b7f2c1e0-... --title \"reply: <topic>\" --content \"<body>\". Do NOT write prose replies, and do NOT use mail_to for cross-instance replies.",
   "joined": false,
   "firstQuerySent": false,
   "createdAt": 1786079578000
@@ -78,7 +78,7 @@ split of `firstQuery` is asymmetric and intentional:
   auto-joins its file, this `firstQuery` is delivered to the **peer's** mailbox,
   starting the peer's role.
 - **Your own channel file** carries a **self-kickoff** — a generated message
-  telling you whom you connected to and to reply via `mail_to`. When your own
+  telling you whom you connected to and to reply via `mycc-mail`. When your own
   poll auto-joins your file, this `firstQuery` is delivered to **your** mailbox,
   starting your side.
 
@@ -99,7 +99,7 @@ File 1 (the peer's file — carries your instruction to the peer):
   "ownerSessionId": "<peerSession>",
   "peerSessionId": "<selfSession>",
   "title": "feature-x",
-  "firstQuery": "<YOUR instruction to the peer — its role + the mail_to(<selfSession>/lead, ...) reply contract>",
+  "firstQuery": "<YOUR instruction to the peer — its role + the mycc-mail <selfSession> --title \"...\" --content \"...\" reply contract (run via bash)>",
   "joined": false,
   "firstQuerySent": false,
   "createdAt": <Date.now()>
@@ -114,7 +114,7 @@ File 2 (your own file — carries your self-kickoff):
   "ownerSessionId": "<selfSession>",
   "peerSessionId": "<peerSession>",
   "title": "feature-x",
-  "firstQuery": "Connected to peer <peerSession> on channel feature-x (topic: \"feature-x\"). Reply to this peer via mail_to(name=\"<peerSession>/lead\", title=\"feature-x:<subject>\", content=\"...\"). Do NOT reply by writing prose in the conversation.",
+  "firstQuery": "Connected to peer <peerSession> on channel feature-x (topic: \"feature-x\"). Reply to this peer via the mycc-mail CLI run through the bash tool: mycc-mail <peerSession> --title \"feature-x:<subject>\" --content \"<body>\". Do NOT reply by writing prose in the conversation, and do NOT use mail_to (it is intra-session only).",
   "joined": false,
   "firstQuerySent": false,
   "createdAt": <Date.now()>
@@ -123,13 +123,14 @@ File 2 (your own file — carries your self-kickoff):
 
 Within ~5s your own poll joins your file (delivering the self-kickoff to your
 mailbox) and the peer's poll joins its file (delivering your instruction to the
-peer's mailbox). From there, both sides reply peer-to-peer via `mail_to`.
+peer's mailbox). From there, both sides reply peer-to-peer via `mycc-mail`
+(run through the `bash` tool).
 
 > **Why a self-kickoff?** Without it, joining your own channel file delivers
 > nothing to your mailbox, so your instance sits idle waiting for the peer to
 > speak first. The self-kickoff primes your loop with the peer's identity and
 > the reply contract, so you can act immediately (e.g. send the first real
-> `mail_to` to the peer). The peer, meanwhile, gets its role from *your*
+> `mycc-mail` to the peer). The peer, meanwhile, gets its role from *your*
 > message on the peer's file.
 
 Use Mode 2 when you want to **reach out to a peer from your own running
@@ -165,8 +166,8 @@ pipeline where you are the first stage.
   picked up by the poll mid-write. In bash/Node: write to `<file>.tmp` then
   rename to `<file>`.
 - **Use absolute mailbox paths** if you ever append mail manually; but
-  prefer letting the instances use `mail_to` (which reads the mailbox path from
-  `identity.json`) rather than hand-appending.
+  prefer letting the instances use the `mycc-mail` CLI (which reads the
+  mailbox path from `identity.json`) rather than hand-appending.
 
 ## Authoring Channel Files Reliably (Hand-Rolled JSON Is a Trap)
 
@@ -195,7 +196,7 @@ mkdir -p "$chanDir"
 # jq escapes them to \n in the output. Do NOT pre-escape as literal "\n".
 firstQuery='You are the backend instance.
 The frontend instance will mail you API requirements via this channel.
-Reply to mail using mail_to(name="<sessionB>/lead", ...). Do NOT write prose.'
+Reply to mail using mycc-mail <sessionB> --title "reply: <topic>" --content "<body>" (via bash). Do NOT write prose.'
 
 tmp=$(mktemp)
 jq -n \

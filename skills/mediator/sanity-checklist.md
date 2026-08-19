@@ -27,15 +27,17 @@
       structure (channelId, ownerSessionId, peerSessionId, firstQuery) to
       confirm it is otherwise intact; if it is, the wiring succeeded.
 - [ ] Each `firstQuery` states the instance's role, its peer's session-id, and
-      the `mail_to(name="<peer>/lead", ...)` reply contract.
+      the `mycc-mail <peer-session-id> --title "..." --content "..."` reply
+      contract (run via the `bash` tool).
 - [ ] The `channelId` is identical across the pair; the files differ only in
       `ownerSessionId`/`peerSessionId` (mirrored) and per-instance `firstQuery`.
 - [ ] Within ~5s, each instance's COLLECT state injects its `[MAIL]` firstQuery
       and begins its role. (If not, the instance may not be running or its poll
       is stalled — check the heartbeat.)
-- [ ] Peer mail_to uses `name="<session-id>/lead"` (not a bare session-id) and
-      the peer is online (`peers()` shows it fresh). See `mail-discipline.md`
-      for the fail-fast recipient rules.
+- [ ] Cross-instance replies use the `mycc-mail` CLI via the `bash` tool
+      (`mycc-mail <session-id> --title "..." --content "..."`), NOT the
+      `mail_to` tool (which is intra-session only and rejects slash-bearing
+      names). See `mail-discipline.md`.
 
 ## Pitfalls
 
@@ -51,8 +53,8 @@
   sibling leaves `peerSessionId` undiscovered; the instance joins but cannot
   route replies. Create BOTH files.
 - **Expecting the mediator to relay** — after kickoff the instances talk
-  peer-to-peer via `mail_to`. The mediator's job is wiring + firstQuery, not
-  message brokering.
+  peer-to-peer via the `mycc-mail` CLI (run through `bash`). The mediator's
+  job is wiring + firstQuery, not message brokering.
 - **Confusing this with team mode** — if the "agents" can be child teammates of
   one lead, do NOT use cross-instance mediation; use the `coordination` skill
   (cheaper, shared session, no channel files).
@@ -68,12 +70,12 @@
   correct escaping). Use a file-write tool, or a JSON-aware writer + atomic
   move + read-back validate. Never hand-concatenate the JSON string. See
   `channel-files.md`.
-- **Bare session-id / unknown recipient in mail_to** — mail_to now FAILS
-  FAST: it rejects any recipient that isn't `lead`, a valid
-  `<session-id>/lead` with an ONLINE peer (`isFresh`), or a live teammate in
-  the roster. Using `mail_to(name="<session-id>", ...)` WITHOUT the `/lead`
-  suffix, or mailing a stale/offline peer or a non-existent teammate, is
-  rejected up front with an error naming the unrecognized recipient. Cross-
-  instance peer mail MUST use `name="<session-id>/lead"` and the peer must be
-  online; for local mail use `lead` or a live teammate name (no `/`). See
+- **Using `mail_to` for cross-instance mail** — `mail_to` is scoped to
+  intra-session communication (lead ↔ teammates within ONE mycc instance).
+  Any slash-bearing recipient (`<session-id>/lead`) is REJECTED with an
+  error pointing to the `mycc-mail` CLI. Cross-instance / external mail
+  (peer replies, cronjobs, mediator scripts) MUST use the `mycc-mail` CLI
+  via the `bash` tool: `mycc-mail <session-id> --title "..." --content "..."`.
+  The CLI looks up the target mailbox in `~/.mycc-store/discovery/identity.json`
+  and warns (but still delivers) if the target's heartbeat is stale. See
   `mail-discipline.md`.

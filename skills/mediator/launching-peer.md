@@ -84,8 +84,9 @@ Confirm the new peer's `session-id` appears with a fresh heartbeat. Only then
 author the channel file pair (see `channel-files.md`) and let the 5s poll
 deliver the `firstQuery` to the peer's mailbox. Because the peer is in
 `--auto`, its loop will pick up the `[MAIL]` firstQuery at its next COLLECT,
-execute the requested checks/work, and `mail_to` the reply back to you — no
-human intervention at the peer's terminal.
+execute the requested checks/work, and mail the reply back to you via the
+`mycc-mail` CLI (run through `bash`) — no human intervention at the peer's
+terminal.
 
 **When to use this pattern:**
 - You are a mycc agent acting as mediator/broker and need a transient peer to
