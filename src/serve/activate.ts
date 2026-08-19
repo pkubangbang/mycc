@@ -66,5 +66,18 @@ export async function activateServe(port: number, host?: string | null): Promise
       }
     }
   }
+
+  // Windows firewall warning — only when bound to a non-localhost interface
+  // (--host passed → 0.0.0.0 or a specific LAN IP). Inbound connections from
+  // other devices may be blocked by Windows Defender Firewall; surface the
+  // one-line fix at the exact moment the user starts a LAN-visible server.
+  // host === null means localhost-only bind (no --host) → no firewall concern.
+  if (process.platform === 'win32' && host) {
+    console.log(chalk.yellow(`  ⚠  Windows Firewall may block access from other devices.`));
+    console.log(chalk.yellow(`     If the Web UI is unreachable from another machine, run this once`));
+    console.log(chalk.yellow(`     in an elevated PowerShell (Run as Administrator):`));
+    console.log(chalk.gray(`       netsh advfirewall firewall add rule name="mycc serve" dir=in action=allow protocol=TCP localport=${port}`));
+  }
+
   console.log(chalk.gray('Terminal input disabled. Press ESC to return to CLI, or use the exit button in the web UI.'));
 }

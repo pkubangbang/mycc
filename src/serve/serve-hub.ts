@@ -27,7 +27,7 @@ import { PromptAbortError } from '../loop/agent-io.js';
 import { setResultCallback } from '../utils/letter-box.js';
 import { getMaxUploadMb } from '../config.js';
 import { type SteeringNote, resolveSteeringQueue, joinSteeringNotes } from './steering-queue.js';
-import type { LogEntry, FileUploadMeta, WsMessage, FileUploadEntry, CardMessage } from './serve-types.js';
+import type { LogEntry, FileUploadEntry, CardMessage } from './serve-types.js';
 export type { CardMessage } from './serve-types.js';
 import { stripAnsi, detectLanIpv4, detectAllLanIpv4 } from './serve-utils.js';
 import { ClientRegistry } from './serve-clients.js';
