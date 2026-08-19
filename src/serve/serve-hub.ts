@@ -29,7 +29,7 @@ import { getMaxUploadMb } from '../config.js';
 import { type SteeringNote, resolveSteeringQueue, joinSteeringNotes } from './steering-queue.js';
 import type { LogEntry, FileUploadMeta, WsMessage, FileUploadEntry, CardMessage } from './serve-types.js';
 export type { CardMessage } from './serve-types.js';
-import { stripAnsi, detectLanIpv4 } from './serve-utils.js';
+import { stripAnsi, detectLanIpv4, detectAllLanIpv4 } from './serve-utils.js';
 import { ClientRegistry } from './serve-clients.js';
 import { readHistory } from './serve-history.js';
 import { DisconnectTimer } from './serve-disconnect-timer.js';
@@ -137,6 +137,29 @@ export class ServeHub implements HubHandler {
       displayHost = 'localhost';
     }
     return `http://${displayHost}:${this.port}`;
+  }
+
+  /**
+   * Return all display URLs for the startup banner. When bound to 0.0.0.0,
+   * yields a local URL (localhost) plus one network URL per non-internal
+   * IPv4 so the user can see every reachable address, not just the first.
+   * When bound to a specific host, yields that single URL. Returns null
+   * when not running.
+   */
+  getUrls(): { local: string; network: string[] } | { local: string; network: [] } | null {
+    if (!this.running) return null;
+    if (this.host && this.host !== '0.0.0.0') {
+      // Specific host — single URL, no separate local/network split.
+      const url = `http://${this.host}:${this.port}`;
+      return { local: url, network: [] };
+    }
+    const local = `http://localhost:${this.port}`;
+    if (this.host === '0.0.0.0') {
+      const network = detectAllLanIpv4().map(ip => `http://${ip}:${this.port}`);
+      return { local, network };
+    }
+    // localhost-only bind (no --host).
+    return { local, network: [] };
   }
 
   /** Start the Express + Vite + WS stack on a single port. */

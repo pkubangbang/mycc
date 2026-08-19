@@ -56,6 +56,15 @@ export async function activateServe(port: number, host?: string | null): Promise
     process.send({ type: 'serve_mode', active: true });
   }
 
-  console.log(chalk.cyan(`\n🌐 Web UI started at ${hub.getUrl()}`));
+  console.log(chalk.cyan(`\n🌐 Web UI started`));
+  const urls = hub.getUrls();
+  if (urls) {
+    console.log(chalk.gray(`  ➜  Local:   ${urls.local}`));
+    if (urls.network.length > 0) {
+      for (const u of urls.network) {
+        console.log(chalk.gray(`  ➜  Network: ${u}`));
+      }
+    }
+  }
   console.log(chalk.gray('Terminal input disabled. Press ESC to return to CLI, or use the exit button in the web UI.'));
 }

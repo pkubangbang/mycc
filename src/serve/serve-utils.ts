@@ -29,17 +29,20 @@ export function stripAnsi(text: string): string {
 }
 
 /**
- * Detect the machine's primary LAN IPv4 address for display when the server
- * is bound to 0.0.0.0 (all interfaces). Walks os.networkInterfaces() and
- * returns the first non-internal IPv4 address (skips loopback 127.x and
- * link-local 169.254.x). Returns null if no suitable address is found —
- * the caller then falls back to 'localhost'.
+ * Detect ALL non-internal IPv4 addresses on the machine for display when the
+ * server is bound to 0.0.0.0 (all interfaces). Walks os.networkInterfaces()
+ * and returns every non-internal IPv4 address (skips loopback 127.x and
+ * link-local 169.254.x — APIPA), de-duplicated and order-stable.
  *
  * Used only for the startup message / getUrl() reporting; the actual bind
  * is still 0.0.0.0 so the server accepts connections on every interface.
+ * Returns an empty array if no suitable address is found — the caller then
+ * falls back to 'localhost'.
  */
-export function detectLanIpv4(): string | null {
+export function detectAllLanIpv4(): string[] {
   const interfaces = os.networkInterfaces();
+  const seen = new Set<string>();
+  const out: string[] = [];
   for (const name of Object.keys(interfaces)) {
     const addrs = interfaces[name];
     if (!addrs) continue;
@@ -47,9 +50,23 @@ export function detectLanIpv4(): string | null {
       // IPv4, not internal (loopback), not link-local (169.254.x — APIPA)
       if (a.family === 'IPv4' && !a.internal) {
         if (a.address.startsWith('169.254.')) continue;
-        return a.address;
+        if (seen.has(a.address)) continue; // de-dup across interfaces
+        seen.add(a.address);
+        out.push(a.address);
       }
     }
   }
-  return null;
+  return out;
+}
+
+/**
+ * Detect the machine's primary LAN IPv4 address for display when the server
+ * is bound to 0.0.0.0 (all interfaces). Returns the first non-internal IPv4
+ * address, or null if none is found — the caller then falls back to
+ * 'localhost'. Thin wrapper over detectAllLanIpv4() kept for the single-URL
+ * "already running" reporting path (getUrl()).
+ */
+export function detectLanIpv4(): string | null {
+  const all = detectAllLanIpv4();
+  return all.length > 0 ? all[0] : null;
 }
