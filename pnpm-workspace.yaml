@@ -1,3 +1,15 @@
 allowBuilds:
   esbuild: true
   sharp: true
+
+# pnpm configuration (non-auth settings live here on pnpm v11+; see note below).
+#
+# Since pnpm v11, non-auth settings are read from pnpm-workspace.yaml (NOT the
+# `pnpm` field of package.json, which is no longer read, and NOT .npmrc, which
+# is npm's config file). Keeping pnpm-only settings here means npm never sees
+# them, so the "Unknown project config node-linker" warning is avoided.
+#
+# nodeLinker: hoisted — create a flat node_modules (npm/Yarn-classic style)
+# instead of the default symlinked isolated layout. Needed because some of the
+# project's native deps / tooling do not work well with symlinks.
+nodeLinker: hoisted

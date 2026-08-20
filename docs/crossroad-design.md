@@ -11,7 +11,7 @@ The "crossroad" feature intercepts LLM responses that contain "turning words" �
 3. **Selects the best continuation** via a second `forkChat` call
 4. **Merges** the continuation into the assistant message in the HOOK state, discarding original tool calls — the LLM regenerates them in the next COLLECT round
 
-Tool calls are NOT a precondition to skip crossroad. If the LLM outputs turning words WITH tool calls, the tool calls are discarded and only the prefix text is kept. After crossroad, the LLM naturally generates new tool calls based on the prefix + continuation.
+Tool calls ARE now a precondition to SKIP crossroad. If the LLM emits tool calls alongside turning words, crossroad is skipped entirely — the tool calls execute normally. Crossroad only fires on text-only responses (no tool calls) containing turning words. After crossroad fires (text-only path), the LLM naturally generates new tool calls based on the prefix + continuation.
 
 ## Turning Word Detection
 
@@ -112,7 +112,7 @@ Flow:
 After the LLM response is stored on `pass`, crossroad runs BEFORE the empty-output check:
 
 ```typescript
-if (tools.length > 0) {
+if (tools.length > 0 && chat.rawToolCalls.length === 0) {
   // Cooldown gate: if crossroad fired last pass, skip this pass
   if (env.crossroadOccurred) {
     env.crossroadOccurred = false;  // consume cooldown
@@ -122,7 +122,6 @@ if (tools.length > 0) {
         return await handleCrossroad(
           triologue.getMessages(),
           pass.assistantContent,
-          pass.rawToolCalls,
           tools,
           abortController.signal,
         );
@@ -137,18 +136,21 @@ if (tools.length > 0) {
     if (crossroadResult) {
       pass.assistantContent = crossroadResult.truncated;
       pass.crossroadContinuation = crossroadResult.continuation;
-      pass.rawToolCalls = [];  // discard original tool calls
+      pass.rawToolCalls = [];  // no tool calls to discard (guard ensured this)
       ctx.core.increaseConfusionIndex(2);  // unconditional +2
       env.crossroadOccurred = true;  // arm cooldown for next pass
     } else {
       env.crossroadOccurred = false;
     }
   }
+} else {
+  // Tool calls present OR no tools available — reset flag
+  env.crossroadOccurred = false;
 }
 ```
 
 Key points:
-- Crossroad only runs when `tools.length > 0` (needs tool definitions for `forkChat` cache preservation).
+- Crossroad only runs when `tools.length > 0 && rawToolCalls.length === 0` — a tool call means the LLM committed to an action, and crossroad's purpose is to resolve indecision, not redirect a committed action. Running crossroad on a response that has tool calls would truncate the LLM's reasoning, discard its tool calls, and inject an alien continuation as its "own" thinking — a mis-direction that intimidates the LLM away from calling mid-thought tools like `brief` (whose reasoning text naturally contains hedging language like "However", "But", "Wait" that triggers detection).
 - Wrapped in `escAware` so ESC during crossroad processing returns null (transparent skip, uses original output as-is).
 - ESC during crossroad → immediate return to PROMPT.
 - Cooldown gate (`crossroadOccurred` flag): crossroad skips detection for one pass after firing.
@@ -166,10 +168,10 @@ if (pass.crossroadContinuation) {
     id: briefCallId,
     function: {
       name: 'brief',
-      arguments: { message: 'Resolved my direction. Let me continue with the tools.', confidence: 7 },
+      arguments: { message: 'Refining my approach. Continuing.', confidence: 7 },
     },
   }], pass.assistantReasoningContent);
-  triologue.tool('brief', 'OK', briefCallId);
+  triologue.tool('brief', briefResult, briefCallId);  // see wording below
 
   // Inject deferred hook messages
   for (const dm of hookResult.deferredMessages) {
@@ -183,7 +185,8 @@ if (pass.crossroadContinuation) {
 
 Key points:
 - Continuation is joined with a space (natural prose continuation, not a paragraph break).
-- A synthetic `brief()` tool call is injected (NOT a `note('CONTINUE', ...)`) to give the LLM a thinking trace and actively engage it.
+- A synthetic `brief()` tool call is injected (NOT a `note('CONTINUE', ...)`) to give the LLM a thinking trace and actively engage it. The message is phrased neutrally (`"Refining my approach. Continuing."`) — it frames the crossroad as a refinement, not a rescue, so the LLM does not feel it was "lost" and needed saving.
+- The `brief` tool result uses non-alarming wording: `"A direction refinement was applied to your response. To display the full response to the user, run: bash(...)"` instead of `"Crossroad triggered. To report the decision..."`. The replay mechanism (running `mycc-pretty-print --type=crossroad <path>` via bash with `display=true`) is retained — it lets the LLM show the user the full reconstructed response. The alarm language was removed because "triggered" and "report the decision" implied the LLM did something wrong, which intimidated it away from mid-thought tools.
 - Deferred hook messages are injected so the LLM sees them in the next round.
 - Flow goes to `COLLECT` (not `STOP`) so the LLM regenerates tool calls.
 - Stop-trigger hooks on the empty `rawToolCalls` are intentionally NOT carried forward.

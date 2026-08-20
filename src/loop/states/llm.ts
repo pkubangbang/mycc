@@ -6,9 +6,11 @@
  * on ChatData for downstream states.
  *
  * Crossroad feature:
- * - After LLM response, detect turning words (However, Wait, 但, etc.)
+ * - After LLM response (text-only, no tool calls), detect turning words
+ *   (However, Wait, 但, etc.)
  * - If found, truncate output, generate alternative continuations, select best
- * - Discard tool calls — LLM will regenerate them after crossroad
+ * - A tool call means the LLM committed to an action — crossroad is skipped
+ *   so the committed action is not discarded or mis-directed.
  *
  * Quick-return ESC behavior:
  * - When ESC is pressed during LLM call, start background wrap-up
@@ -172,11 +174,16 @@ export async function handleLlm(
       // =====================================================================
       // Crossroad: detect turning words, generate alternative continuations
       // =====================================================================
-      // Only run when tools are available — crossroad needs tool definitions
-      // to preserve prompt cache during forkChat calls.
+      // Only run when tools are available AND the LLM emitted no tool calls.
+      // A tool call means the LLM has committed to an action — crossroad's
+      // purpose is to resolve indecision, not redirect a committed action.
+      // Running crossroad on a response that has tool calls would truncate the
+      // LLM's reasoning, discard its tool calls, and inject an alien
+      // continuation as its "own" thinking — a mis-direction that intimidates
+      // the LLM away from calling mid-thought tools like brief.
       // Wrapped in escAware so ESC during crossroad processing returns null
       // (transparent skip), using the original LLM output as-is.
-      if (tools.length > 0) {
+      if (tools.length > 0 && chat.rawToolCalls.length === 0) {
         // ── COOLDOWN GATE ──
         // If crossroad fired last chat, skip detection this pass to let the LLM
         // execute its committed actions. Crossroad can re-fire next pass if
@@ -190,7 +197,6 @@ export async function handleLlm(
               return await handleCrossroad(
                 triologue.getMessages(),
                 chat.assistantContent,
-                chat.rawToolCalls,
                 tools,
                 abortController.signal,
               );

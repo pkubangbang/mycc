@@ -160,7 +160,6 @@ describe('handleLlm — ESC during crossroad processing', () => {
     vi.mocked(retryChat).mockResolvedValueOnce(
       createMockChatResponse({
         content: 'original text',
-        toolCalls: [{ id: 'c1', function: { name: 'bash', arguments: {} } } as never],
       }) as never,
     );
     // handleCrossroad returns a valid result
@@ -177,7 +176,7 @@ describe('handleLlm — ESC during crossroad processing', () => {
     expect(chat.assistantContent).toBe('original');
     // continuation stored on pass
     expect(chat.crossroadContinuation).toBe('Let me continue differently.');
-    // original tool calls discarded — LLM will regenerate them
+    // no tool calls in the original response (text-only — crossroad requires this)
     expect(chat.rawToolCalls).toEqual([]);
     // crossroadOccurred flag set
     expect(env.crossroadOccurred).toBe(true);

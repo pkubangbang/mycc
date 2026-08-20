@@ -12,6 +12,9 @@
  * - +2 confusion is added on EVERY crossroad fire (unconditional, not just
  *   consecutive — the old consecutive-only guard is dead code with cooldown).
  * - No-tools / neglected mode resets the flag (existing behavior preserved).
+ * - Crossroad is SKIPPED when the LLM emitted tool calls — a tool call means
+ *   the LLM committed to an action, so crossroad must not truncate its
+ *   reasoning or discard its calls. (Guard added to prevent mis-direction.)
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
@@ -95,6 +98,12 @@ describe('handleLlm — crossroad cooldown gate', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    // mockReset (not just clearAllMocks) also clears queued mockResolvedValueOnce
+    // return values — Test 4 (neglected mode) queues a retryChat response that
+    // hits an early STOP return and is never consumed, so without reset it
+    // would bleed into the next test and be mistaken for that test's response.
+    vi.mocked(retryChat).mockReset();
+    vi.mocked(handleCrossroad).mockReset();
     agentIO.setNeglectedMode(false);
     triologue = new Triologue();
   });
@@ -153,10 +162,11 @@ describe('handleLlm — crossroad cooldown gate', () => {
       const chat = createChatData();
       env.crossroadOccurred = false; // start clean
 
+      // Text-only response (no tool calls) — crossroad only fires when the
+      // LLM waffles without committing to an action.
       vi.mocked(retryChat).mockResolvedValueOnce(
         createMockChatResponse({
           content: 'Check auth. However, maybe config.',
-          toolCalls: [createMockToolCall('bash', { command: 'cat auth' })],
         }) as never,
       );
       vi.mocked(handleCrossroad).mockResolvedValueOnce({
@@ -167,7 +177,7 @@ describe('handleLlm — crossroad cooldown gate', () => {
       const result = await handleLlm(env, turn, chat);
       expect(result).toBe(AgentState.HOOK);
       expect(handleCrossroad).toHaveBeenCalledTimes(1);
-      expect(chat.rawToolCalls).toEqual([]); // discarded
+      expect(chat.rawToolCalls).toEqual([]); // no tool calls to begin with
       expect(env.crossroadOccurred).toBe(true); // cooldown armed
     }
 
@@ -203,10 +213,10 @@ describe('handleLlm — crossroad cooldown gate', () => {
       const chat = createChatData();
       // env.crossroadOccurred is false (cooldown consumed)
 
+      // Text-only response (no tool calls) — crossroad fires again
       vi.mocked(retryChat).mockResolvedValueOnce(
         createMockChatResponse({
           content: 'Check auth. However, maybe config.',
-          toolCalls: [createMockToolCall('bash', { command: 'ls' })],
         }) as never,
       );
       vi.mocked(handleCrossroad).mockResolvedValueOnce({
@@ -218,7 +228,7 @@ describe('handleLlm — crossroad cooldown gate', () => {
       expect(result).toBe(AgentState.HOOK);
       // handleCrossroad called again on pass 3
       expect(handleCrossroad).toHaveBeenCalledTimes(1);
-      expect(chat.rawToolCalls).toEqual([]); // discarded
+      expect(chat.rawToolCalls).toEqual([]); // no tool calls to begin with
       expect(env.crossroadOccurred).toBe(true); // re-armed
     }
   });
@@ -237,7 +247,6 @@ describe('handleLlm — crossroad cooldown gate', () => {
     vi.mocked(retryChat).mockResolvedValueOnce(
       createMockChatResponse({
         content: 'text with turning word',
-        toolCalls: [createMockToolCall('bash', {})],
       }) as never,
     );
     vi.mocked(handleCrossroad).mockResolvedValueOnce({
@@ -283,5 +292,42 @@ describe('handleLlm — crossroad cooldown gate', () => {
     expect(result).toBe(AgentState.STOP);
     // Flag is NOT reset here — it's reset at PROMPT entry (prompt.ts).
     // This is by design: the PROMPT reset is the boundary that clears it.
+  });
+
+  // ---------------------------------------------------------------------------
+  // Test 5: Crossroad skipped when the LLM emitted tool calls
+  // ---------------------------------------------------------------------------
+  it('should skip crossroad when tool calls are present (guard against mis-direction)', async () => {
+    const env = createMockMachineEnv({ triologue });
+    env.ctx.core.escAware = runOperationEscAware();
+
+    const turn = createTurnVars();
+    const chat = createChatData();
+    env.crossroadOccurred = false; // detection would run if not for the guard
+
+    // Response has turning words AND tool calls — the guard must skip crossroad
+    // so the LLM's committed action is not discarded or mis-directed.
+    const toolCalls = [createMockToolCall('brief', { message: 'Working on X', confidence: 7 })];
+    vi.mocked(retryChat).mockResolvedValueOnce(
+      createMockChatResponse({
+        content: 'I need to verify the auth flow. However, the issue might be in the DB layer.',
+        toolCalls,
+      }) as never,
+    );
+
+    const result = await handleLlm(env, turn, chat);
+
+    // Proceeds to HOOK (tools execute normally)
+    expect(result).toBe(AgentState.HOOK);
+    // handleCrossroad must NOT be called — tool calls present
+    expect(handleCrossroad).not.toHaveBeenCalled();
+    // assistantContent unchanged (not truncated)
+    expect(chat.assistantContent).toBe('I need to verify the auth flow. However, the issue might be in the DB layer.');
+    // tool calls PRESERVED (not discarded)
+    expect(chat.rawToolCalls).toEqual(toolCalls);
+    // no continuation set
+    expect(chat.crossroadContinuation).toBeUndefined();
+    // flag reset (no crossroad this pass)
+    expect(env.crossroadOccurred).toBe(false);
   });
 });

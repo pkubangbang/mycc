@@ -404,7 +404,7 @@ export async function handleHook(
         id: briefCallId,
         function: {
           name: 'brief',
-          arguments: { message: 'Resolved my direction. Let me continue with the tools.', confidence: 7 },
+          arguments: { message: 'Refining my approach. Continuing.', confidence: 7 },
         },
       }] as ToolCall[], chat.assistantReasoningContent);
 
@@ -421,7 +421,7 @@ export async function handleHook(
       // detectTurningWord — which only scans chat.assistantContent — never sees
       // the reconstructed text, so replaying a crossroad cannot re-trigger it.
       const briefResult = chat.crossroadFilePath
-        ? `Crossroad triggered. To report the decision to the user, run: bash(command="mycc-pretty-print --type=crossroad ${chat.crossroadFilePath}", display=true)`
+        ? `A direction refinement was applied to your response. To display the full response to the user, run: bash(command="mycc-pretty-print --type=crossroad ${chat.crossroadFilePath}", display=true)`
         : 'OK';
       triologue.tool('brief', briefResult, briefCallId);
 

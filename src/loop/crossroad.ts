@@ -10,7 +10,7 @@
  * 5. Reconstruct triologue with A + C_best + [REMINDER] continue with your work
  */
 
-import type { Message, Tool, ToolCall } from '../types.js';
+import type { Message, Tool } from '../types.js';
 import type { RetryConfig } from '../engine/chat-helpers.js';
 import { forkChat } from '../engine/chat-provider.js';
 import { startSpinner, stopSpinner, sleep } from '../engine/chat-helpers.js';
@@ -501,7 +501,6 @@ export interface CrossroadResult {
 export async function handleCrossroad(
   messages: Message[],
   originalContent: string,
-  _originalToolCalls: ToolCall[],
   tools: Tool[],
   signal?: AbortSignal,
 ): Promise<CrossroadResult | null> {

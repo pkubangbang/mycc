@@ -388,7 +388,7 @@ describe('handleCrossroad', () => {
 
   it('should return null when no turning word is detected', async () => {
     const content = 'This is a normal response with no turning word anywhere in the text at all.';
-    const result = await handleCrossroad(MESSAGES, content, [], TOOLS);
+    const result = await handleCrossroad(MESSAGES, content, TOOLS);
     expect(result).toBeNull();
     // forkChat should not be called (detection failed before generation)
     expect(forkChat).not.toHaveBeenCalled();
@@ -406,7 +406,7 @@ describe('handleCrossroad', () => {
       '2',
     );
 
-    const result = await handleCrossroad(MESSAGES, content, [], TOOLS);
+    const result = await handleCrossroad(MESSAGES, content, TOOLS);
 
     expect(result).not.toBeNull();
     expect(result!.truncated).toBe(anchor);
@@ -420,7 +420,7 @@ describe('handleCrossroad', () => {
     // First batch: 6 calls → empty. handleCrossroad retries → 6 more → empty → null.
     vi.mocked(forkChat).mockImplementation(async () => 'No anchor present here.' as never);
 
-    const result = await handleCrossroad(MESSAGES, content, [], TOOLS);
+    const result = await handleCrossroad(MESSAGES, content, TOOLS);
 
     expect(result).toBeNull();
     // 6 (first batch) + 6 (retry batch) = 12
@@ -438,7 +438,7 @@ describe('handleCrossroad', () => {
       'Still no anchor.',                   // dir3 retry fail
     );
 
-    const result = await handleCrossroad(MESSAGES, content, [], TOOLS);
+    const result = await handleCrossroad(MESSAGES, content, TOOLS);
 
     expect(result).not.toBeNull();
     expect(result!.continuation).toBe('Only valid direction.');
@@ -450,7 +450,7 @@ describe('handleCrossroad', () => {
     // forkChat returns empty string for all → stripInternalMarkup → '' → no continuation
     vi.mocked(forkChat).mockImplementation(async () => '' as never);
 
-    const result = await handleCrossroad(MESSAGES, content, [], TOOLS);
+    const result = await handleCrossroad(MESSAGES, content, TOOLS);
     expect(result).toBeNull();
   });
 });
@@ -475,7 +475,7 @@ describe('handleCrossroad — turning word detection integration', () => {
       '3',
     );
 
-    const result = await handleCrossroad(MESSAGES, content, [], TOOLS);
+    const result = await handleCrossroad(MESSAGES, content, TOOLS);
 
     expect(result).not.toBeNull();
     expect(result!.truncated).toBe(anchor);
@@ -488,7 +488,7 @@ describe('handleCrossroad — turning word detection integration', () => {
     // Position 0 → prefix is '' → wordsBeforeTurn is '' → no anchor enforcement
     vi.mocked(forkChat).mockImplementation(async () => 'Some continuation text here.' as never);
 
-    const result = await handleCrossroad(MESSAGES, content, [], TOOLS);
+    const result = await handleCrossroad(MESSAGES, content, TOOLS);
 
     // Prefix empty → anchor empty → continuations pass without stripping
     expect(result).not.toBeNull();
