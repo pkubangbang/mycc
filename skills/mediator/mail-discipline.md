@@ -3,55 +3,17 @@
 > Sub-reference of the `mediator` skill. Loaded on demand via `read_file`.
 > The entry point is `SKILL.md`.
 
-## Two Mail Channels — `mail_to` (intra-session) vs `mycc-mail` (cross-session)
-
-mycc has TWO mail channels, and the distinction is enforced by the tools:
-
-- **`mail_to` tool** — **intra-session only.** Routes to `lead` or a live
-  teammate name within the CURRENT mycc instance. Any slash-bearing name
-  (e.g. `<session-id>/lead`) is REJECTED with an error pointing to the
-  `mycc-mail` CLI. Use this for lead↔teammate communication inside one
-  instance.
-- **`mycc-mail` CLI** — **cross-instance / external.** A standalone global
-  bin (`scripts/mycc-mail/mycc-mail.js`, on PATH after `npm link`) that
-  appends a JSONL line to a REMOTE lead's mailbox. It looks up the target's
-  mailbox path from `~/.mycc-store/discovery/identity.json` by session-id.
-  Use this from a mediator script, a cronjob, or from inside an agent via
-  the `bash` tool when the agent itself needs to reply to a peer.
-
-### How an agent sends cross-instance mail (the reply contract)
-
-An agent (a mycc lead) replies to a peer by running the `mycc-mail` CLI via
-the `bash` tool — NOT via `mail_to`:
-
-```
-bash command: mycc-mail <peerSessionId> --title "reply: <topic>" --content "<body>"
-bash intent:  RUN SYSTEM TO deliver cross-instance mail to peer <peerSessionId>
-```
-
-The peer's session-id comes from the `[MAIL]` note's `from` field (it is the
-`<session-id>/lead` identity string) or from the `peers` tool. `mycc-mail`
-discovers the peer's mailbox path from `identity.json` and appends the mail;
-the peer's next COLLECT injects it as a `[MAIL]` note automatically.
-
-> **Why a CLI and not `mail_to`?** `mail_to` runs inside the agent process
-> and shares its `ctx` (roster, IPC). Cross-instance delivery has no such
-> shared context — the target is a separate process, possibly on a separate
-> working directory, possibly not even an agent (a cronjob target). A
-> standalone CLI that reads the on-disk `identity.json` registry is the
-> clean boundary: the agent invokes it via `bash`, the CLI does the file
-> append, and the target lead's existing COLLECT machinery picks it up.
-
 ## Bake the Reply Discipline into firstQuery
 
-A `firstQuery` should state the reply contract explicitly so the instance
-replies correctly on turn one. Put this in every `firstQuery`:
+The system already nudges instances (via the todo/peer-channels nudge) to
+reply via `mail_to(name="<peerSessionId>/lead", ...)`. But a firstQuery should
+also state the contract explicitly so the instance replies correctly on turn
+one, before any nudge fires. Put this in every `firstQuery`:
 ```
-Reply to peer mail using the mycc-mail CLI via the bash tool:
-  mycc-mail <peerSessionId> --title "reply: <topic>" --content "<body>"
+Reply to peer mail using mail_to with the peer identity:
+  mail_to(name="<peerSessionId>/lead", title="...", content="...")
 Do NOT reply by writing prose in the conversation — that stays in your
-letterbox and never reaches the peer. Do NOT use mail_to for cross-instance
-replies (it rejects slash-bearing names). The peer's session-id is <peerSessionId>.
+letterbox and never reaches the peer. The peer's session-id is <peerSessionId>.
 ```
 
 ## Waiting for Peer Replies (You Don't Need To Poll)
@@ -65,11 +27,12 @@ pull it.
 
 ### The mechanism (verified in source)
 
-- **Appending mail (the sender's side):** the `mycc-mail` CLI appends a
-  single JSONL line to the recipient's unread mailbox (`unread-lead.jsonl`)
-  — `scripts/mycc-mail/mycc-mail.js` `appendMailToPath` mirrors the format
-  in `src/peer/channel.ts:83` (`fs.appendFileSync(mailboxPath, ...)`). The
-  line is `{"id","from","title","content","timestamp"}` + newline.
+- **Appending mail (the sender's side):** when a peer (or you) calls
+  `mail_to(name="<session-id>/lead", ...)`, or when a channel's `firstQuery`
+  is delivered on join, a single JSONL line is appended to the recipient's
+  unread mailbox (`unread-lead.jsonl`) — `src/peer/channel.ts:83`
+  (`fs.appendFileSync(mailboxPath, ...)`) via `appendMailToPath`. The
+  `mail_to` peer-routing path is `sendPeerMail` (`src/peer/channel.ts:280-294`).
 - **Injecting mail (the recipient's side):** on the recipient lead's **next
   COLLECT state**, the unread mailbox is drained and each mail is injected
   into the triologue as a `[MAIL]` note automatically:
@@ -85,7 +48,7 @@ pull it.
 
 ### The correct pattern: fire-and-forget
 
-After you wire the channel pair (or after you send a `mycc-mail` to a peer),
+After you wire the channel pair (or after you send a `mail_to` to a peer),
 **do not poll the mailbox.** Just **yield your turn** — finish your current
 tool calls and return to PROMPT (or continue with other work). The peer's
 reply will arrive as a `[MAIL]` note in a future round, automatically, the
@@ -113,26 +76,27 @@ and breaks in several ways:
   burns tokens and attention on nothing.
 
 In short: **the agent loop is the mail consumer. Step out of its way.**
-Fire the kickoff / `mycc-mail`, then end your turn. The reply comes to you.
+Fire the kickoff / `mail_to`, then end your turn. The reply comes to you.
 
-## Recipient Rules
+## Recipient Rules (mail_to FAILS FAST)
 
-- **Cross-instance peer mail** MUST use the `mycc-mail` CLI:
-  `mycc-mail <session-id> --title "..." --content "..."` (run via `bash`).
-  Discover the target session-id with the `peers` tool or `mycc-mail --list`.
-  `mycc-mail` warns (but still delivers) if the target's heartbeat is stale;
-  verify the peer is online with `peers()` first to avoid orphaned mail.
-- **`mail_to` is intra-session only.** It accepts `lead` or a live teammate
-  name (no `/`). Any slash-bearing name (`<session-id>/lead`) is rejected
-  with an error pointing to the `mycc-mail` CLI. Mailing a non-existent
-  teammate is also rejected up front.
-- For **local mail** (lead↔teammate within one instance) use `mail_to` with
-  `lead` or a live teammate name.
+mail_to now FAILS FAST: it rejects any recipient that isn't `lead`, a valid
+`<session-id>/lead` with an ONLINE peer (`isFresh`), or a live teammate in the
+roster.
+
+- **Cross-instance peer mail MUST use `name="<session-id>/lead"`** (with the
+  `/lead` suffix) and the peer must be online — verify with `peers()` first.
+- **A bare session-id (no `/lead`) is rejected up front** with an error naming
+  the unrecognized recipient — it no longer silently routes to a nonexistent
+  teammate and returns a misleading `OK`.
+- Mailing a **stale/offline** peer or a **non-existent teammate** is rejected
+  up front with an error naming the unrecognized recipient.
+- For **local mail** use `lead` or a live teammate name (no `/`).
 
 > **Channel vs. direct peer mail.** A channel's `firstQuery` is a one-shot
 > conversation starter delivered to the local mailbox. After that, the two
-> instances exchange mail via `mycc-mail <session-id> ...` (run via `bash`),
-> which appends directly to the remote mailbox — it does NOT go through the
-> channel file. The channel file's job is **discovery + kickoff**; ongoing
-> traffic is peer mail. So the `channelId`/`title` mostly matter for the
-> initial `firstQuery` framing.
+> instances exchange mail via `mail_to(name="<session-id>/lead", ...)`, which
+> appends directly to the remote mailbox (freshness-gated) — it does NOT go
+> through the channel file. The channel file's job is **discovery + kickoff**;
+> ongoing traffic is peer mail. So the `channelId`/`title` mostly matter for
+> the initial `firstQuery` framing.

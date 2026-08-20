@@ -26,7 +26,7 @@ export const peersTool: ToolDefinition = {
   name: 'peers',
   description:
     'List online mycc instances (cross-instance peer discovery). Returns each instance\'s session-id, workDir, and whether it is the local ("self") instance. ' +
-    'Use this to discover peer session-ids so you can (a) send cross-instance mail via the `mycc-mail` CLI (e.g. `mycc-mail <session-id> --title "..." --content "..."` via the bash tool) or (b) create channel files under ~/.mycc-store/discovery/channels/ to wire multiple instances into a mediated workflow. Only the lead can run this; teammates have no peer discovery. ' +
+    'Use this to discover peer session-ids so you can (a) send cross-instance mail via mail_to(name="<session-id>/lead", ...) or (b) create channel files under ~/.mycc-store/discovery/channels/ to wire multiple instances into a mediated workflow. Only the lead can run this; teammates have no peer discovery. ' +
     'Peers whose latest heartbeat is older than 1 hour are omitted entirely (even with all=true) so the listing does not grow unbounded with dead instances\' briefs; the count of omitted peers is noted in the summary.',
   input_schema: {
     type: 'object',

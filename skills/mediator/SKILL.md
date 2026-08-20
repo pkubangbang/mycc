@@ -10,13 +10,11 @@ description: >
   peer-discovery model (identity.json + heartbeats + channels), how to
   discover online instances with the peers tool, how to author channel
   files to connect two instances, the firstQuery seeding mechanism, and
-  the reply discipline (instances reply via the `mycc-mail` CLI run through
-  the bash tool — `mycc-mail <session-id> --title "..." --content "..."` —
-  NOT via the in-process `mail_to` tool, and NOT by writing prose). Use
-  when the user asks to "connect two mycc instances", "make these two
-  agents talk", "set up a multi-instance pipeline/workflow", or "act as a
-  mediator".
-keywords: ["cross-instance", "multi-instance", "channel files", "channel file pair", firstQuery, "wire instances", "connect mycc instances", "two mycc instances", "peer discovery", mediator, "mycc-mail", "session-id routing", "headless peer", identity, heartbeat]
+  the reply discipline (instances reply via mail_to with the peer identity
+  "<session-id>/lead", NOT by writing prose). Use when the user asks to
+  "connect two mycc instances", "make these two agents talk", "set up a
+  multi-instance pipeline/workflow", or "act as a mediator".
+keywords: ["cross-instance", "multi-instance", "channel files", "channel file pair", firstQuery, "wire instances", "connect mycc instances", "two mycc instances", "peer discovery", mediator, "mail_to peer", "session-id routing", "headless peer", identity, heartbeat]
 ---
 
 # Mediator: Composing Multiple mycc Instances into a Workflow
@@ -36,9 +34,8 @@ keywords: ["cross-instance", "multi-instance", "channel files", "channel file pa
 >   raw `node`), the order-of-operations checklist, and why `--auto`/
 >   `--serve` are not required for wiring.
 > - `mail-discipline.md` — The fire-and-forget reply model (no mailbox
->   polling), the reply contract to bake into firstQuery, and the two mail
->   channels (`mail_to` intra-session vs `mycc-mail` CLI cross-instance)
->   and their recipient rules.
+>   polling), the reply contract to bake into firstQuery, and the mail_to
+>   fail-fast recipient rules.
 > - `sanity-checklist.md` — Pre-declare-wired checklist and the full
 >   pitfalls list.
 
@@ -126,12 +123,11 @@ anything interactively.
    hand-rolled shell JSON).
 3. **Bake the reply discipline into firstQuery** — each `firstQuery`
    must state the instance's role, its peer's session-id, and the
-   `mycc-mail <peerSessionId> --title "..." --content "..."` reply contract
-   (run via the `bash` tool — `mail_to` is intra-session only and rejects
-   cross-session names). See `mail-discipline.md`.
+   `mail_to(name="<peerSessionId>/lead", ...)` reply contract. See
+   `mail-discipline.md`.
 4. **Let them talk; monitor from the outside** — after kickoff the
-   instances mail each other directly via `mycc-mail <session-id> ...` run
-   through the `bash` tool. The mediator does NOT relay messages.
+   instances mail each other directly via `mail_to` with the
+   `<session-id>/lead` identity. The mediator does NOT relay messages.
    See `mail-discipline.md` for why you must NOT
    busy-poll the mailbox (fire-and-forget; replies arrive as `[MAIL]`
    notes automatically at the next COLLECT).
@@ -166,7 +162,7 @@ Before declaring the workflow wired, run through
 `sanity-checklist.md`. The common traps: wiring a
 stale instance, pre-setting `joined:true`, forgetting the second file of
 the pair, expecting the mediator to relay, reply-by-prose, hand-rolled
-JSON, and using `mail_to` for cross-instance mail (use the `mycc-mail` CLI instead).
+JSON, and bare session-id / unknown recipient in mail_to.
 
 ## Summary
 
@@ -181,11 +177,9 @@ JSON, and using `mail_to` for cross-instance mail (use the `mycc-mail` CLI inste
 4. **Author two channel files** (one per participant), mirrored, with
    `joined:false`/`firstQuerySent:false` and a per-instance `firstQuery`.
 5. Each `firstQuery` defines the instance's **role**, its **peer's
-   session-id**, and the **`mycc-mail <peer-session-id> ...` reply
-   contract** (run via the `bash` tool — `mail_to` is intra-session only).
-   (See `mail-discipline.md`.)
-6. After kickoff, instances communicate **peer-to-peer via the `mycc-mail`
-   CLI** (run through `bash`; appends directly to the remote mailbox) —
-   the mediator does not relay.
+   session-id**, and the **`mail_to(name="<peer>/lead", ...)` reply
+   contract**. (See `mail-discipline.md`.)
+6. After kickoff, instances communicate **peer-to-peer via `mail_to`**
+   (freshness-gated direct mailbox append) — the mediator does not relay.
 7. Use the **coordination** skill for in-process lead+teammate teams; use
    THIS skill only for multi-instance orchestration.
