@@ -56,12 +56,11 @@ function onKeydown(event: KeyboardEvent): void {
         >提交</button>
       </template>
 
-      <!-- confirm / choice kind: option buttons + free-text input -->
+      <!-- notice kind: instruction + single OK button, NO free-text input.
+           Used by /load & --from DOSQ confirmations where the user just
+           needs to review/edit an external file then acknowledge — a
+           textarea would be useless and misleading here. -->
       <template v-else-if="card.kind === 'notice'">
-        <!-- notice kind: instruction + single OK button, NO free-text input.
-             Used by /load & --from DOSQ confirmations where the user just
-             needs to review/edit an external file then acknowledge — a
-             textarea would be useless and misleading here. -->
         <div class="card-options">
           <button
             v-for="opt in card.options"
@@ -74,7 +73,31 @@ function onKeydown(event: KeyboardEvent): void {
         </div>
       </template>
 
-      <!-- confirm / choice kind: option buttons + free-text input -->
+      <!-- choice kind: option buttons ONLY, NO free-text input.
+           choice cards come from queries with a trailing [?/?] bracket
+           suffix (e.g. [1/2/3/4] for external-path-access grants, [y/N] for
+           yes/no prompts). The backend only parses the bracket tokens — any
+           free text falls through to a default/deny and is silently
+           discarded, so offering a textarea here is misleading. The user
+           must pick one of the buttons. -->
+      <template v-else-if="card.kind === 'choice'">
+        <div class="card-options">
+          <button
+            v-for="opt in card.options"
+            :key="opt.value"
+            class="card-option-btn"
+            :class="{ 'card-option-default': opt.isDefault }"
+            :disabled="responded"
+            @click="selectOption(opt.value)"
+          >{{ opt.label }}</button>
+        </div>
+      </template>
+
+      <!-- confirm kind: option buttons + free-text input.
+           confirm cards have no [?/?] bracket — they use Continue/Cancel
+           buttons but the free-text textarea is retained so the user can
+           type a custom response (e.g. git_commit feedback, a custom file
+           path for plan_on) instead of clicking a button. -->
       <template v-else>
         <div class="card-options">
           <button
@@ -86,9 +109,6 @@ function onKeydown(event: KeyboardEvent): void {
             @click="selectOption(opt.value)"
           >{{ opt.label }}</button>
         </div>
-        <!-- Free-text input: always rendered for choice/confirm cards so the
-             user can type a custom response (e.g. git_commit feedback, a
-             custom file path for plan_on) instead of clicking a button. -->
         <textarea
           v-model="inputValue"
           class="card-input card-input-below"
@@ -203,7 +223,7 @@ function onKeydown(event: KeyboardEvent): void {
   border-color: var(--accent);
   font-weight: 600;
 }
-/* Free-text input rendered below the option buttons (choice/confirm cards). */
+/* Free-text input rendered below the option buttons (confirm cards only). */
 .card-input.card-input-below {
   margin-top: 10px;
   font-size: 13px;
