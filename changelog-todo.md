@@ -207,6 +207,55 @@ When updating the changelog, use the following procedure:
 - **Hook**: Rewrite test suite for `turn.*/session.*` API.
 - **Typecheck**: Add dedicated test typecheck and align mocks with current module APIs.
 
+## 2026-08-18
+### Features
+- **Serve (steering)**: Replace negative discard/send-as-query semantics with a single positive "boomerang" API — `resolveSteering(sendIds)` atomically clears the backend queue, submits selected notes as a combined query, and drops the rest (no re-buffering, no double injection); add id-based SteeringReviewCard + `steer-resolve` WS message.
+- **Serve (steering)**: Extract `steering-queue.ts` as a pure, testable module (no agent-io dep).
+- **WebUI**: Extract `message-dispatch.ts` (DOM-free pure dispatch) as the single chokepoint for all WS state transitions; add `debug.ts` (`window.__myccDebug` enable/inject/snapshot/reset seam) so tests drive the exact same dispatch path as live WS events.
+- **WebUI**: Add DebugPanel.vue (debugMode flag in ChatState).
+### Fixes
+- **Bang command**: Bare `!` no longer coerces to `undefined` — pass the empty string through; `hand_over` skips send-keys on empty command (leaves a clean shell prompt) and labels todo/header "(interactive shell)".
+- **WebUI**: Responsive ChatInput toolbar + image-only send.
+- **Config**: `ensureGitignore` uses `/.mycc/*` not `/.mycc/`.
+- **WebUI**: Stabilize resize handle touch dragging + overlay teammate drawer on narrow screens.
+### Refactoring
+- **Serve**: Split `serve-hub.ts` (1227 lines) into 7 cohesive ≤500-line modules — `serve-types`, `serve-utils`, `serve-clients`, `serve-history`, `serve-disconnect-timer`, `serve-ws-handler`, slimmed `serve-hub` facade; embed multi-browser user-bubble sync in `serve-ws-handler` (broadcastExcept so a query/steering note typed in one browser appears live in every other connected browser, skipping the optimistic sender).
+### Tests
+- **Serve**: 17 new steering-queue + message-dispatch unit tests.
+- **hand_over**: 4 regression tests (Cluster C) for the bare `!` bang command.
+### Docs
+- **Serve**: Add E2E test doc.
+
+## 2026-08-19
+### Features
+- **mycc-mail CLI**: Add global `mycc-mail` bin (cross-instance / cronjob-triggered mail by looking up a target lead's mailbox in `~/.mycc-store/discovery/identity.json` and appending a JSONL line).
+- **mail_to**: Scope the `mail_to` tool down to intra-session communication only (lead ↔ teammates within one mycc instance); slash-bearing `<uuid>/lead` names rejected with an error pointing to the `mycc-mail` CLI.
+- **Serve**: Print all reachable URLs in startup banner — enumerate every LAN IP (Local: + Network: lines, Vite-style) instead of just the first.
+- **Serve**: Warn about Windows Defender Firewall on LAN-visible `--host` startup (win32 + truthy host only) with the exact one-line `netsh` remediation command.
+### Refactoring
+- **Skills**: Refactor 3 stocked skills (coordination, mycc-self-awareness, clear-sessions) to progressive-disclosure structure (monolithic SKILL.md → entry file + sibling `.md` files loaded on demand via read_file).
+
+## 2026-08-20
+### Fixes
+- **mail_to (revert)**: Restore `mail_to` peer IPC; keep `mycc-mail` CLI for external triggers only. The a7a0750 DRY migration pushed a system-level concern (inter-instance messaging) into the user-level tool layer (bash), where the bash-judge LLM classifier blocked peer mail in plan mode. Peer communication returns to the tool layer as a direct IPC call (`mail_to` → `ctx.peer.sendPeerMail`), bypassing the bash-judge pipeline; skills + tests reverted to pre-a7a0750 state.
+- **Crossroad**: Skip crossroad when tool calls present — gate on `rawToolCalls.length === 0` so a committed tool call (e.g. mid-thought `brief`) isn't truncated by an alien continuation; soften the response wording ("Resolved my direction..." → "Refining my approach. Continuing.").
+- **Config**: Move `node-linker=hoisted` from `.npmrc` to `pnpm-workspace.yaml` (pnpm v11+ reads non-auth settings from there), silencing npm's "Unknown project config node-linker" warning.
+### Tests
+- **Crossroad**: Add "skip crossroad when tool calls present"; fix mock leakage (mockReset in beforeEach); update existing crossroad-firing tests to use text-only responses.
+### Docs
+- **Crossroad**: Update `crossroad-design.md` (new guard + softened wording).
+
+## 2026-08-21
+### Features
+- **WebUI (shiki)**: Integrate shiki syntax highlighting (dual-theme github-light/github-dark, `defaultColor:false`) so a single render switches colors with the WebUI theme toggle via CSS variables — no re-highlighting; fenced code blocks and bash command cards (`bash` + `bg_create` labels) render as highlighted cards; `bg_create` pre-exec brief keeps label/content raw so it renders as a highlighted card titled "bg_create".
+- **Slash**: Add `/reload` command to restart only the Lead process, reusing the Coordinator — no `--from` (conversation cleared), no new terminal; if `/serve` was active the new Lead rebinds the web UI to the same port (browser auto-reconnects).
+### Fixes
+- **WebUI**: Remove free-text textarea from choice cards (bracket-suffix `[1/2/3/4]` prompts) — the backend silently discarded it as Deny since `requestExternalPathAccess()` only parses the option numbers; confirm cards (git_commit feedback, plan_on custom path) keep their textarea.
+- **Serve**: Add 'notice' card kind for `/load` & `--from` DOSQ confirmation — instruction + single OK button, no free-text input (driven by new inert `AskOptions.notice` flag, only changes the webui card kind).
+- **Platform**: Expose coordinator PID to lead agent (`MYCC_COORDINATOR_PID` env) and add a Process PIDs subsection to the platform prompt so broad kill commands can exclude the coordinator (prevents lead self-kill when stopping dev servers).
+### Docs
+- **Slash**: Add `docs/reload-design.md` (full design doc with effect-boundary table — coordinator-resident modules like `index.ts`/`config.ts` are NOT reloaded) + `/reload` section in `slash-commands.md`.
+
 # Todo
 
 > Todo - Or never?
