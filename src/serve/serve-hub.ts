@@ -126,6 +126,20 @@ export class ServeHub implements HubHandler {
 
   isRunning(): boolean { return this.running; }
 
+  /**
+   * The port the server is currently bound to (0 when not running). Used by
+   * /reload so the coordinator can respawn the lead with `--serve <port>` and
+   * the web UI resumes on the same port after the brief disconnect.
+   */
+  getPort(): number { return this.port; }
+
+  /**
+   * The host the server is bound to (null = localhost-only). Used by /reload
+   * to forward the --host binding to the respawned lead so the web UI stays
+   * reachable on the same interface.
+   */
+  getHost(): string | null { return this.host; }
+
   getUrl(): string | null {
     if (!this.running) return null;
     let displayHost: string;

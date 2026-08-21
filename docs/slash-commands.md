@@ -1,6 +1,7 @@
 ---
-updated_at: 2026-08-13
+updated_at: 2026-08-21
 changelog:
+  - "2026-08-21: Added /reload (restart lead, reuse coordinator, clear context); command count 20 -> 21"
   - "2026-08-13: Updated command count from 15 to 20, version from v0.7.0 to v0.10.1"
   - "2026-08-13: Removed nonexistent /index command"
   - "2026-08-13: Added missing commands: /fork, /mail, /serve, /auto, /channel, /peer"
@@ -10,7 +11,7 @@ changelog:
 
 Slash commands are special commands that start with `/` and are handled directly by the agent's REPL interface, bypassing the LLM. They provide quick access to system functions like session management, team coordination, issue tracking, and more.
 
-**Current command count**: 20 commands (as of v0.10.1)
+**Current command count**: 21 commands (as of v0.10.2)
 
 ## How Slash Commands Work
 
@@ -398,6 +399,55 @@ Restored query: "Read the project structure"
 
 ---
 
+### /reload
+
+**Description**: Restart mycc with fresh code, reusing the coordinator and clearing the context. Web UI auto-reconnects if active.
+
+**Usage**:
+```
+/reload   - Restart the lead process only (the coordinator is reused)
+```
+
+**Behavior**:
+- Kills the current **lead** and respawns a fresh one from the current source;
+  the **coordinator** process is reused (not restarted).
+- No context pre-population: the new lead starts with a **fresh, empty session**
+  (no `--from`), so the conversation is cleared.
+- Teammates are child processes of the lead, so they are killed when the old
+  lead exits (no explicit dismissal).
+- If `/serve` is active, the lead sends its current port/host to the
+  coordinator, which respawns the new lead with `--serve <port> --host <host>`.
+  The web UI rebinds to the **same port**; the browser auto-reconnects after
+  the brief disconnect and resumes with a cleared context.
+
+**Effect boundary (important):**
+
+`/reload` only restarts the **lead** process, so it picks up changes to
+**lead-side** code (`src/lead.ts` and everything it imports — the agent loop,
+all tools, all slash commands, skills, mindmap, serve/webui, peer discovery,
+context, engine providers, sessions). It does **NOT** pick up changes to
+**coordinator-process** code, which is loaded once at mycc startup and never
+reloaded:
+
+| File | Why it lives in the coordinator |
+|---|---|
+| `src/index.ts` | The coordinator itself (spawn/IPC/reload logic) |
+| `src/config.ts` | Parses CLI args once at module load (frozen for the coordinator's lifetime) |
+| `src/loop/agent-io.ts`, `src/utils/key-parser.ts`, `src/utils/tsx-run.ts`, `src/help.ts` | Imported directly by the coordinator |
+
+**Rule of thumb:** editing `src/index.ts` or `src/config.ts` → run a full
+`mycc` restart. Any other edit → `/reload` is enough.
+
+Because `src/config.ts` is a coordinator-process module, **CLI flags are frozen
+for the coordinator's lifetime.** `/reload` only forwards `--serve`/`--host`
+(when serve is active) plus `--skip-healthcheck`; it cannot change
+`--token-threshold`, `--ollama-model`, etc. Use a full restart to change those.
+
+> See `docs/reload-design.md` for the full design, including the reload
+> sequence and the coordinator vs lead effect boundary.
+
+---
+
 ### /mail
 
 **Description**: Show unread mails and recent read mails.
@@ -539,6 +589,7 @@ Slash commands are implemented in `src/slashes/`:
 | `mode.ts` | `/mode` |
 | `plan.ts` | `/plan` |
 | `fork.ts` | `/fork` |
+| `reload.ts` | `/reload` |
 | `mail.ts` | `/mail` |
 | `serve.ts` | `/serve` |
 | `auto.ts` | `/auto` |

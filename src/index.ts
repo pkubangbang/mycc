@@ -60,6 +60,7 @@ if (process.stdout.isTTY) {
 type CoordinatorMessage =
   | { type: 'ready' }
   | { type: 'restart'; sessionId: string; cwd: string }
+  | { type: 'reload'; serveActive: boolean; servePort: number; serveHost: string | null }
   | { type: 'exit' }
   | { type: 'serve_mode'; active: boolean }
   | { type: 'serve_shutdown_done' };
@@ -176,6 +177,13 @@ function runCoordinator(): void {
     child.on('message', (msg: CoordinatorMessage) => {
       if (msg.type === 'restart') {
         restart(msg.sessionId, msg.cwd);
+      } else if (msg.type === 'reload') {
+        // /reload — restart only the lead with fresh code (no --from, so no
+        // context pre-population). The coordinator is reused; teammates die
+        // with the old lead. If serve was active, forward --serve/--host so
+        // the new lead rebinds the web UI to the same port (browser
+        // auto-reconnects after the brief disconnect).
+        reloadLead(msg.serveActive, msg.servePort, msg.serveHost);
       } else if (msg.type === 'exit') {
         // Lead requested exit - exit coordinator cleanly with code 0
         process.exit(0);
@@ -273,6 +281,118 @@ function runCoordinator(): void {
           settled = true;
           currentLead.off('message', onReady);
           console.error(chalk.red('New lead process exited unexpectedly during restart.'));
+          process.exit(1);
+        }
+      };
+      currentLead.on('message', onReady);
+      currentLead.on('exit', onFail);
+    });
+
+    isRestarting = false;
+  }
+
+  /**
+   * /reload — restart only the Lead process, reusing the Coordinator.
+   *
+   * Differs from {@link restart} (used by /load) in two ways:
+   *   1. No `--from` flag is passed → the new Lead calls createNewSession(),
+   *      producing a fresh empty triologue. No context is pre-populated (the
+   *      conversation is cleared).
+   *   2. Serve mode survives — if the old Lead had /serve active, the new
+   *      Lead is spawned with `--serve <port> --host <host>` so the web UI
+   *      rebinds to the same port. The browser's WebSocket auto-reconnect
+   *      (src/web/src/main.ts) bridges the brief disconnect, so from the
+   *      user's perspective the UI disconnects then resumes with cleared
+   *      context.
+   *
+   * Teammates are child processes of the Lead; they die when the old Lead is
+   * killed (process group), so they are naturally killed — no explicit
+   * dismissal is needed at the Coordinator level.
+   *
+   * The graceful serve-shutdown handshake (serve_shutdown → serve_shutdown_done)
+   * is reused from restart() so the Vite dev server and HTTP port are released
+   * before the new Lead rebinds them — critical on Windows where SIGTERM →
+   * TerminateProcess and no signal handler runs.
+   *
+   * @param serveActive - whether /serve was active on the old Lead
+   * @param servePort - the port the old ServeHub was bound to (0 if not active)
+   * @param serveHost - the host the old ServeHub was bound to (null = localhost)
+   */
+  async function reloadLead(
+    serveActive: boolean,
+    servePort: number,
+    serveHost: string | null,
+  ): Promise<void> {
+    isRestarting = true;
+    const previousLead = lead;
+
+    // The old Lead's ServeHub is a Lead-process singleton; it is torn down
+    // when the Lead exits. Reset serveMode now — the new Lead will re-enable
+    // it via its own serve_mode IPC once activateServe() runs.
+    const wasServeActive = serveMode;
+    serveMode = false;
+
+    // Kill old Lead. When serve was active, ask the Lead to shut down Vite
+    // via IPC before SIGTERM so the next Lead won't hit EADDRINUSE on the
+    // rebinding --serve port. Same Windows-safe pattern as restart().
+    if (previousLead) {
+      if (wasServeActive || serveActive) {
+        let shutdownDone = false;
+        const onShutdownDone = (msg: CoordinatorMessage) => {
+          if (msg.type === 'serve_shutdown_done') shutdownDone = true;
+        };
+        previousLead.on('message', onShutdownDone);
+        previousLead.send({ type: 'serve_shutdown' });
+        await new Promise<void>((resolve) => {
+          const deadline = setTimeout(() => resolve(), 1500);
+          const check = setInterval(() => {
+            if (shutdownDone || previousLead.killed) {
+              clearTimeout(deadline);
+              clearInterval(check);
+              resolve();
+            }
+          }, 50);
+        });
+        previousLead.off('message', onShutdownDone);
+      }
+      previousLead.kill('SIGTERM');
+      previousLead.unref();
+    }
+
+    // Build args for the new Lead:
+    //   - NO --from flag → fresh session, no context pre-population
+    //   - If serve was active, forward --serve <port> (and --host) so the
+    //     new Lead re-activates the web UI on the same port/interface.
+    //     The Lead's agent-repl.ts checks shouldServe() + getServePort()/
+    //     getServeHost() and calls activateServe(), rebinding the same port.
+    const reloadArgs: string[] = [];
+    if (serveActive && servePort > 0) {
+      reloadArgs.push('--serve', String(servePort));
+      if (serveHost) {
+        reloadArgs.push('--host', serveHost);
+      }
+    }
+
+    const currentLead = startLead(reloadArgs);
+    lead = currentLead;
+
+    // Wait for ready signal. If the new Lead exits before sending 'ready',
+    // exit the Coordinator instead of hanging forever.
+    let settled = false;
+    await new Promise<void>((resolve) => {
+      const onReady = (msg: CoordinatorMessage) => {
+        if (msg.type === 'ready' && !settled) {
+          settled = true;
+          currentLead.off('message', onReady);
+          currentLead.off('exit', onFail);
+          resolve();
+        }
+      };
+      const onFail = (_code: number | null) => {
+        if (!settled) {
+          settled = true;
+          currentLead.off('message', onReady);
+          console.error(chalk.red('New lead process exited unexpectedly during reload.'));
           process.exit(1);
         }
       };
