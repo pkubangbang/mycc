@@ -146,6 +146,9 @@ function runCoordinator(): void {
     const env = { ...process.env };
     // Use COLUMNS env var if set, otherwise use process.stdout.columns
     env.COLUMNS = process.env.COLUMNS || String(process.stdout.columns || 80);
+    // Pass the coordinator's PID so the lead agent can avoid killing its parent
+    // process when stopping dev servers or running broad kill operations.
+    env.MYCC_COORDINATOR_PID = String(process.pid);
 
     const child = spawnTsx({
       script: tsxScript,

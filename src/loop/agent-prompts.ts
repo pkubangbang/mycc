@@ -238,6 +238,33 @@ function buildPlatformSection(): string {
     throw new Error(`buildPlatformSection: unknown shell kind '${info.shellKind as string}'`);
   }
 
+  // --- Process PIDs ---
+  // Expose the lead's own PID and the coordinator (parent) PID so the LLM
+  // can avoid killing them when stopping dev servers or running broad kill
+  // commands. The coordinator PID is injected by index.ts via env var; the
+  // lead's own PID is available via process.pid.
+  const coordinatorPid = process.env.MYCC_COORDINATOR_PID;
+  const pidLines: string[] = [
+    '',
+    '### Process PIDs',
+    `Your own process PID: ${process.pid}`,
+  ];
+  if (coordinatorPid) {
+    pidLines.push(
+      `Coordinator (parent) PID: ${coordinatorPid}`,
+      '',
+      '**WARNING**: Never kill the coordinator PID or your own PID. Killing the coordinator',
+      'will terminate your own process as well. When stopping dev servers or running broad',
+      'kill commands (e.g. `taskkill /F`, `kill $(lsof -t -i:PORT)`), always exclude these PIDs.',
+    );
+  } else {
+    pidLines.push(
+      '',
+      'NOTE: Coordinator PID is not available. Be cautious when running broad kill commands',
+      '— avoid killing processes you did not start.',
+    );
+  }
+
   return [
     '## Platform',
     `Platform: ${info.platform}`,
@@ -255,6 +282,7 @@ function buildPlatformSection(): string {
     escaping,
     '- For JSON/strings: use double quotes and escape inner quotes with backslash',
     '- When in doubt: use single quotes for literal strings in bash/zsh, double quotes in PowerShell',
+    ...pidLines,
   ].join('\n');
 }
 
