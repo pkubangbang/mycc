@@ -50,7 +50,7 @@ export interface ChatMessage {
   // other MessageType stays a valid ChatMessage without these fields.
   cardId?: string;
   query?: string;
-  kind?: 'input' | 'confirm' | 'choice';
+  kind?: 'input' | 'confirm' | 'choice' | 'notice';
   options?: CardOption[];
   initialContent?: string;
   placeholder?: string;
@@ -155,7 +155,7 @@ export interface CardOption {
 export interface CardPayload {
   cardId: string;
   query: string;
-  kind: 'input' | 'confirm' | 'choice';
+  kind: 'input' | 'confirm' | 'choice' | 'notice';
   options?: CardOption[];
   initialContent?: string;
   placeholder?: string;

@@ -57,6 +57,24 @@ function onKeydown(event: KeyboardEvent): void {
       </template>
 
       <!-- confirm / choice kind: option buttons + free-text input -->
+      <template v-else-if="card.kind === 'notice'">
+        <!-- notice kind: instruction + single OK button, NO free-text input.
+             Used by /load & --from DOSQ confirmations where the user just
+             needs to review/edit an external file then acknowledge — a
+             textarea would be useless and misleading here. -->
+        <div class="card-options">
+          <button
+            v-for="opt in card.options"
+            :key="opt.value"
+            class="card-option-btn"
+            :class="{ 'card-option-default': opt.isDefault }"
+            :disabled="responded"
+            @click="selectOption(opt.value)"
+          >{{ opt.label }}</button>
+        </div>
+      </template>
+
+      <!-- confirm / choice kind: option buttons + free-text input -->
       <template v-else>
         <div class="card-options">
           <button

@@ -54,7 +54,7 @@ export interface CardMessage {
   type: 'card';
   cardId: string;
   query: string;
-  kind: 'input' | 'confirm' | 'choice';
+  kind: 'input' | 'confirm' | 'choice' | 'notice';
   options?: { label: string; value: string; isDefault?: boolean }[];
   initialContent?: string;
   placeholder?: string;

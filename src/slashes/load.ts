@@ -99,8 +99,14 @@ export const loadCommand: SlashCommand = {
 
       console.log(chalk.yellow('Edit the DOSQ file if needed, then save and close to continue...'));
 
-      // Wait for user to edit DOSQ
-      await agentIO.ask(chalk.cyan('Press Enter when ready to continue > '), { useAsPrompt: true, onEsc: '' });
+      // Wait for user to edit DOSQ. notice:true renders an instruction + a
+      // single OK button in the webui (NO useless text input) — the user
+      // edits the DOSQ file in their editor, then clicks OK to continue.
+      // onEnter:'' makes Enter-on-empty (terminal) / OK (webui) resolve to ''.
+      await agentIO.ask(
+        chalk.cyan('Edit the DOSQ file if needed, save and close, then click OK to continue'),
+        { useAsPrompt: true, onEsc: '', onEnter: '', notice: true },
+      );
 
       // Read DOSQ content
       const dosqContent = readDosq(dosqPath);

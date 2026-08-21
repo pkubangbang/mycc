@@ -93,6 +93,13 @@ export interface AskOptions {
   onEsc?: string;
   /** Value to resolve with when Enter pressed on empty input. If not set, returns ''. */
   onEnter?: string;
+  /** If true, the serve-mode card renders as a 'notice' — an instruction
+   *  plus a single OK button with NO free-text input. Used for prompts where
+   *  the user performs an action outside the chat (e.g. editing the DOSQ
+   *  file in /load) and only needs to acknowledge completion. In the
+   *  terminal path this flag is inert (Enter-on-empty still resolves to
+   *  onEnter or '' as usual); it only changes the webui card kind. */
+  notice?: boolean;
 
 }
 
@@ -758,39 +765,50 @@ class AgentIO {
       // No bracket → fall back to the historical heuristics:
       //  - onEnter set (press-Enter-to-continue style) → confirm
       //  - default                                                → input
-      let kind: 'input' | 'confirm' | 'choice' = 'input';
+      let kind: 'input' | 'confirm' | 'choice' | 'notice' = 'input';
       let cardOptions: { label: string; value: string; isDefault?: boolean }[] | undefined;
 
-      // Strip a trailing CLI prompt marker ("> " or ">").
-      const querySansMarker = query.replace(/\s*>\s*$/, '');
-      // Match a trailing bracket: [a/B/c] or [1/2/3/4] etc.
-      const bracketMatch = querySansMarker.match(/\[([^\]]+)\]$/);
-      if (bracketMatch) {
-        const tokens = bracketMatch[1].split('/');
-        // Map well-known letter tokens to human labels; numeric / other
-        // tokens pass through as their own label.
-        const labelFor = (tok: string): string => {
-          const lower = tok.toLowerCase();
-          if (lower === 'y') return 'Yes';
-          if (lower === 'n') return 'No';
-          if (lower === 'q') return 'Quit';
-          return tok;
-        };
-        cardOptions = tokens.map((tok) => {
-          const isDefault = tok !== tok.toLowerCase(); // contains an uppercase letter
-          return {
-            label: labelFor(tok),
-            value: tok.toLowerCase(),
-            isDefault,
+      // 'notice' flag takes precedence: render an instruction + a single OK
+      // button with NO free-text input. Used by /load & --from DOSQ
+      // confirmations where the user edits an external file then
+      // acknowledges — a textarea there is useless and misleading. The OK
+      // button resolves to onEnter (default '') so the terminal path (which
+      // ignores `kind`) behaves identically: Enter-on-empty → onEnter → ''.
+      if (options?.notice) {
+        kind = 'notice';
+        cardOptions = [{ label: 'OK', value: options.onEnter ?? '', isDefault: true }];
+      } else {
+        // Strip a trailing CLI prompt marker ("> " or ">").
+        const querySansMarker = query.replace(/\s*>\s*$/, '');
+        // Match a trailing bracket: [a/B/c] or [1/2/3/4] etc.
+        const bracketMatch = querySansMarker.match(/\[([^\]]+)\]$/);
+        if (bracketMatch) {
+          const tokens = bracketMatch[1].split('/');
+          // Map well-known letter tokens to human labels; numeric / other
+          // tokens pass through as their own label.
+          const labelFor = (tok: string): string => {
+            const lower = tok.toLowerCase();
+            if (lower === 'y') return 'Yes';
+            if (lower === 'n') return 'No';
+            if (lower === 'q') return 'Quit';
+            return tok;
           };
-        });
-        kind = 'choice';
-      } else if (options?.onEnter !== undefined) {
-        kind = 'confirm';
-        cardOptions = [
-          { label: 'Continue', value: options.onEnter },
-          { label: 'Cancel', value: options.onEsc ?? '' },
-        ];
+          cardOptions = tokens.map((tok) => {
+            const isDefault = tok !== tok.toLowerCase(); // contains an uppercase letter
+            return {
+              label: labelFor(tok),
+              value: tok.toLowerCase(),
+              isDefault,
+            };
+          });
+          kind = 'choice';
+        } else if (options?.onEnter !== undefined) {
+          kind = 'confirm';
+          cardOptions = [
+            { label: 'Continue', value: options.onEnter },
+            { label: 'Cancel', value: options.onEsc ?? '' },
+          ];
+        }
       }
 
       hub.broadcastCard({
