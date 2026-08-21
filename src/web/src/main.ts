@@ -19,6 +19,7 @@ import App from './App.vue';
 import type { ChatMessage, ChatState, CardOption, FileInfo, SteeringNote } from './types';
 import { applyServerMessage } from './message-dispatch';
 import { registerDebugSeam } from './debug';
+import { ensureHighlighterReady } from './highlight';
 import './style.css';
 
 // Reactive state — survives HMR (module-level, not in any component)
@@ -247,10 +248,16 @@ window.addEventListener('beforeunload', () => {
   }
 });
 
-// Page load sequence: fetch history FIRST, then establish the WS connection.
-// This guarantees the chat record is populated before any live update arrives.
+// Page load sequence: initialize the Shiki highlighter, fetch history, then
+// establish the WS connection. The highlighter is awaited FIRST so the first
+// render (history bubbles, which may contain code blocks) already has
+// syntax highlighting — markdown-it's sync `highlight` callback calls into a
+// ready singleton. Fetching history and connecting the WS follow; the
+// highlighter init is non-blocking to the WS (it resolves quickly and only
+// gates rendering, which happens at mount below).
 void (async () => {
   state.connectionStatus = 'reconnecting';
+  await ensureHighlighterReady();
   await fetchHistory();
   connectWebSocket();
 })();

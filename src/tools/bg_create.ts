@@ -62,7 +62,13 @@ export const bgCreateTool: ToolDefinition = {
       return 'Error: Bg module not available in this context';
     }
 
-    ctx.core.brief('info', 'bg_create', `Running background command: ${command}`, intent);
+    // Emit the command as a 'bg_create'-labeled info brief. The WebUI's
+    // isBashCommand path matches label:'bash' OR label:'bg_create', so this
+    // renders as a syntax-highlighted command card titled "bg_create"
+    // (distinct from a regular bash card) while still getting shiki
+    // highlighting. The content is the raw command (no prefix) so the card
+    // shows just the command with a $ prompt, like the bash tool's card.
+    ctx.core.brief('info', 'bg_create', command, intent);
 
     try {
       const pid = await ctx.bg.runCommand(command);

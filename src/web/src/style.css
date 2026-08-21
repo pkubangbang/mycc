@@ -176,3 +176,22 @@ html, body, #app {
   --accent-disabled: #2a5a3a;
   --accent-text: #fff;
 }
+
+/* ── Shiki dual-theme: DARK mode color resolution ──
+   Shiki's multi-theme mode (defaultColor:false) emits per-token colors as
+   inline `--shiki-light` / `--shiki-dark` CSS variables on each `<pre>` and
+   `<span>`. The LIGHT resolution lives in MessageItem.vue (scoped). The DARK
+   resolution MUST be global (here) because Vue's `:deep()` cannot combine
+   with a leading `:global()` ancestor — it strips the `:deep()` target and
+   leaves a bare `:root.dark { color }` that colors the <html> element
+   instead of the shiki spans. These plain global selectors apply the dark
+   variables whenever `<html class="dark">` is active, so a single
+   highlighted render switches colors on theme toggle with no re-highlight. */
+:root.dark .markdown-body pre.shiki,
+:root.dark .bash-command-html pre.shiki {
+  color: var(--shiki-dark, var(--text-primary));
+}
+:root.dark .markdown-body pre.shiki span,
+:root.dark .bash-command-html pre.shiki span {
+  color: var(--shiki-dark, inherit);
+}

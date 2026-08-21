@@ -2,6 +2,7 @@
 import { computed, ref } from 'vue';
 import MarkdownIt from 'markdown-it';
 import type { ChatMessage } from '../types';
+import { highlightCode, highlightBash } from '../highlight';
 
 const props = defineProps<{
   message: ChatMessage;
@@ -19,13 +20,20 @@ const isUser = computed(() => props.message.type === 'user');
 // produces a LogEntry with type:'log', label:'bash', content:<command>,
 // detail:<intent-lang>. The command is a raw shell string, NOT markdown —
 // rendering it through markdown-it would mangle flags (e.g. -rf becoming a
-// list item, --porcelain becoming an em-dash). Detect this case so the
-// bubble renders the command as a monospace terminal block with a dollar
-// prompt prefix, and keeps the intent in the dashed outline box. Warn/error
-// bash logs (rejections) carry label:'bash' too but have type:'warn'/'error'
-// — they keep their existing styling and are NOT treated as command cards.
+// list item, --porcelain becoming an em-dash).
+//
+// Bash-style command cards: the bash tool's pre-execution info log
+// (label:'bash') AND the bg_create tool's pre-execution info log
+// (label:'bg_create') both carry a raw shell command as `content` and an
+// intent-lang string as `detail`. Both render as a syntax-highlighted
+// terminal block with a dollar prompt prefix (see bashHtml / highlightBash),
+// but each keeps its own label as the card title via the `header` computed
+// (e.g. "[HH:MM:SS] [bg_create]" vs "[HH:MM:SS] [bash]"). Warn/error bash
+// logs (rejections) carry these labels too but have type:'warn'/'error' —
+// they keep their existing styling and are NOT treated as command cards.
+const BASH_COMMAND_LABELS = new Set(['bash', 'bg_create']);
 const isBashCommand = computed(() =>
-  props.message.type === 'log' && props.message.label === 'bash'
+  props.message.type === 'log' && !!props.message.label && BASH_COMMAND_LABELS.has(props.message.label)
 );
 
 // Todo tool logs (todo_create / todo_update / todo_pinning) carry the full
@@ -59,15 +67,32 @@ const renderMarkdown = computed(() =>
 
 // markdown-it with html disabled (default) — raw HTML in LLM output is
 // escaped, preventing XSS. linkify auto-links bare URLs; breaks converts
-// single \n to <br> for chat-style line wrapping.
+// single \n to <br> for chat-style line wrapping. The `highlight` option
+// delegates fenced code blocks to Shiki (see highlight.ts), which returns a
+// dual-theme `<pre>` (light + dark via CSS variables) so a single render
+// switches colors with the WebUI theme toggle. main.ts awaits the Shiki
+// highlighter init before mounting, so this sync callback is safe at render
+// time. Unknown languages fall back to an escaped plain block.
 const md = new MarkdownIt({
   html: false,
   linkify: true,
   breaks: true,
+  highlight(code, lang): string {
+    return highlightCode(code, lang);
+  },
 });
 
 const rendered = computed(() =>
   renderMarkdown.value ? md.render(props.message.content) : '',
+);
+
+// Bash command card: highlight the raw shell command with Shiki (lang
+// 'bash') and prepend the `$` prompt span outside the tokenized code. The
+// highlighter outputs a dual-theme `<pre><code>` (light/dark via CSS vars),
+// so this single render switches colors with the WebUI theme toggle. See
+// highlight.ts for the async-init / sync-use design.
+const bashHtml = computed(() =>
+  isBashCommand.value ? highlightBash(props.message.content) : '',
 );
 
 // Pre-wrap preserves tool output formatting (newlines, indentation).
@@ -193,10 +218,14 @@ function quoteContent(): void {
       <div class="bubble" :class="[message.type, { mono: isMonospace, 'bash-card': isBashCommand }]">
         <div v-if="message.detail" class="bubble-detail">{{ message.detail }}</div>
         <template v-if="isBashCommand">
-          <!-- Bash command card: the shell command renders as a monospace
-               terminal block with a dollar prompt prefix. The intent-lang
-               string is already shown above in the .bubble-detail outline box. -->
-          <pre class="bash-command"><span class="bash-prompt">$</span>{{ message.content }}</pre>
+          <!-- Bash command card: the shell command is syntax-highlighted
+               with Shiki (lang 'bash') and the `$` prompt is prepended as a
+               styled span outside the tokenized code. The intent-lang string
+               is already shown above in the .bubble-detail outline box.
+               v-html is safe here — highlightBash returns Shiki output
+               (escaped tokens in colored spans), not raw user HTML. -->
+          <!-- eslint-disable-next-line vue/no-v-html -->
+          <div class="bash-command-html" v-html="bashHtml"></div>
         </template>
         <template v-else-if="isTodoCard">
           <!-- Todo tool log: the full todoList snapshot is "extracted" into
@@ -348,23 +377,34 @@ function quoteContent(): void {
 
 /* Bash command card — the bash tool's pre-execution info log
    (label:'bash', type:'log') is recognized and rendered as a reinforced
-   card: the shell command sits in a monospace terminal block with a dollar
-   prompt prefix, distinct from a plain log bubble. The intent-lang string
-   renders above it in the .bubble-detail outline box (unchanged). The bubble
-   itself stays sans-serif so the dashed intent box keeps its normal font;
-   only the command block is monospace. */
+   card: the shell command is Shiki-highlighted (lang 'bash') in a monospace
+   terminal block with a dollar prompt prefix, distinct from a plain log
+   bubble. The intent-lang string renders above it in the .bubble-detail
+   outline box (unchanged). The bubble itself stays sans-serif so the dashed
+   intent box keeps its normal font; only the command block is monospace. */
 .bubble.bash-card {
   background: var(--md-pre-bg);
   border: 1px solid var(--bubble-result-border);
 }
-.bash-command {
+.bash-command-html {
+  margin: 0;
+}
+.bash-command-html :deep(pre) {
   font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
   font-size: 13px;
   line-height: 1.5;
   color: var(--text-primary);
   margin: 0;
+  padding: 0;
+  background: transparent;
   white-space: pre-wrap;
   word-break: break-word;
+  overflow-x: auto;
+}
+.bash-command-html :deep(code) {
+  font-family: inherit;
+  background: none;
+  padding: 0;
 }
 .bash-prompt {
   color: var(--accent);
@@ -405,14 +445,40 @@ function quoteContent(): void {
   padding: 1px 5px;
   border-radius: 4px;
 }
-.markdown-body :deep(pre) {
+/* Shiki-highlighted fenced code blocks. Shiki emits a `<pre class="shiki">`
+   with inline-styled `<span>` tokens. In dual-theme mode (defaultColor:false)
+   each token uses CSS variables --shiki-light / --shiki-dark, so we map them
+   to the active WebUI theme: light vars under :root, dark vars under
+   :root.dark. The pre background is overridden with the WebUI's own
+   --md-pre-bg so code blocks blend with the bubble instead of using
+   Shiki's theme background (which would clash with the chat surface). */
+.markdown-body :deep(pre.shiki),
+.markdown-body :deep(pre.shiki-fallback) {
+  margin: 8px 0;
+  padding: 10px 12px;
+  background: var(--md-pre-bg) !important;
+  border-radius: 6px;
+  overflow-x: auto;
+}
+.markdown-body :deep(pre.shiki code),
+.markdown-body :deep(pre.shiki-fallback code) {
+  background: none;
+  padding: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+  counter-reset: none;
+}
+/* Unstyled (non-Shiki) pre fallback — keep the original look for any pre
+   that Shiki did not produce (e.g. legacy renders before highlighter init). */
+.markdown-body :deep(pre:not(.shiki):not(.shiki-fallback)) {
   margin: 8px 0;
   padding: 10px 12px;
   background: var(--md-pre-bg);
   border-radius: 6px;
   overflow-x: auto;
 }
-.markdown-body :deep(pre code) {
+.markdown-body :deep(pre:not(.shiki):not(.shiki-fallback) code) {
   background: none;
   padding: 0;
   font-size: 13px;
@@ -445,6 +511,28 @@ function quoteContent(): void {
   border: none;
   border-top: 1px solid var(--md-hr);
   margin: 10px 0;
+}
+
+/* ── Shiki dual-theme CSS variable mapping ──
+   Shiki's multi-theme mode (defaultColor:false) emits the base text color as
+   inline `--shiki-light` / `--shiki-dark` on the `<pre>` element, and per-
+   token colors as the same variables on each `<span>`. We resolve them to
+   the active WebUI theme so a single highlighted render switches colors when
+   the user toggles light/dark — no re-highlighting needed.
+
+   The LIGHT rules live here (scoped, applied by default). The DARK rules
+   (`:root.dark ...`) live in style.css as GLOBAL rules — Vue's `:deep()`
+   cannot combine with a leading `:global()` ancestor (it strips the
+   `:deep()` target, leaving a bare `:root.dark { color }` that colors the
+   <html> instead of the spans). Global rules in style.css avoid that
+   scoping bug entirely. */
+.markdown-body :deep(pre.shiki),
+.bash-command-html :deep(pre.shiki) {
+  color: var(--shiki-light, var(--text-primary));
+}
+.markdown-body :deep(pre.shiki span),
+.bash-command-html :deep(pre.shiki span) {
+  color: var(--shiki-light, inherit);
 }
 
 /* ── Action toolbar (download / copy / quote) ──
