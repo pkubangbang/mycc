@@ -63,7 +63,8 @@ type CoordinatorMessage =
   | { type: 'reload'; serveActive: boolean; servePort: number; serveHost: string | null }
   | { type: 'exit' }
   | { type: 'serve_mode'; active: boolean }
-  | { type: 'serve_shutdown_done' };
+  | { type: 'serve_shutdown_done' }
+  | { type: 'skill_reindex' };
 
 // ---------------------------------------------------------------------------
 // Setup Mode
@@ -201,6 +202,13 @@ function runCoordinator(): void {
           cleanup();
           process.exit(130);
         }
+      } else if (msg.type === 'skill_reindex') {
+        // Loader's skill file watcher detected a project-skill change and
+        // wants the wiki 'skills' domain re-indexed. Relay the signal back
+        // to the Lead so ParentContext (the wiki module's owner) can act on
+        // it — the loader stays decoupled from the wiki module. Pure echo,
+        // no state.
+        child.send({ type: 'skill_reindex' });
       }
     });
 

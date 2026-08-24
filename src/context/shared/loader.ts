@@ -454,6 +454,25 @@ export class Loader implements DynamicLoader, SkillModule {
       300,
     );
 
+    // Debounced wiki re-index signal — a SEPARATE, longer debounce (2 min) so
+    // a burst of skill-file edits across MULTIPLE LLM turns (e.g. an edit_file
+    // then a write_file to a sibling, or two consecutive turns refining a
+    // skill) coalesces into ONE re-index. A shorter interval (e.g. 2s) would
+    // let the gap between two turns each trigger a separate reindex, which is
+    // unwanted. The loader emits a generic IPC signal ('skill_reindex') with
+    // NO wiki reference; the wiki module's owner (ParentContext) listens for
+    // it and re-indexes. This keeps the loader decoupled from the wiki
+    // module. Guarded on process.send so processes without IPC (e.g. tests)
+    // no-op.
+    const debouncedReindex = debounce(
+      () => {
+        if (process.send) {
+          process.send({ type: 'skill_reindex' });
+        }
+      },
+      120000,
+    );
+
     // Watch .mycc/tools/ for project tool changes
     if (fs.existsSync(toolsDir)) {
       this.toolWatcher = watch(toolsDir, (_event, filename) => {
@@ -483,6 +502,14 @@ export class Loader implements DynamicLoader, SkillModule {
               agentIO.verbose('loader', `Reloading skill: ${filename}`);
             }
             debouncedReloadSkill(filepath, filepath);
+            // Schedule a debounced wiki re-index signal so the skills domain
+            // stays in sync with disk (catches merges/deletes that the
+            // per-skill skill_load re-index path can't, since that path only
+            // re-indexes the one skill it was asked to load — no orphan
+            // sweep). The 2 min debounce coalesces edits across multiple LLM
+            // turns into one signal; the listener (ParentContext) no-ops if
+            // the wiki isn't ready yet.
+            debouncedReindex('__skill_change__');
           }
         }
       });

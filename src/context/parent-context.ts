@@ -377,5 +377,22 @@ export class ParentContext implements AgentContext {
     for (const handler of handlers) {
       this.teamModule.registerHandler(handler);
     }
+
+    // Listen for skill-reindex signals from the loader's file watcher
+    // (relayed back by the Coordinator). The loader emits this generic IPC
+    // signal when project-level skill files change — it carries NO wiki
+    // reference, keeping the loader decoupled from the wiki module.
+    // ParentContext (which owns the WikiManager) re-indexes skills to wiki
+    // with orphan cleanup, so merges/deletes that the per-skill skill_load
+    // re-index path can't sweep are caught. Multiple process.on('message')
+    // listeners are fine — Node.js fans out to all; this listener only acts
+    // on 'skill_reindex', agentIO's listener handles its own message types.
+    process.on('message', (msg: { type: string }) => {
+      if (msg.type === 'skill_reindex') {
+        void loader.indexAllSkillsToWiki(this.wikiModule).catch((err) => {
+          this.coreModule.brief('warn', 'wiki', `Skill re-index failed: ${(err as Error).message}`);
+        });
+      }
+    });
   }
 }
