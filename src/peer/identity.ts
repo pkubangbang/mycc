@@ -28,6 +28,14 @@ const MAX_BRIEF_TOKENS = 200;
  * localOldest check passes as long as it beat after the local oldest).
  */
 const FRESHNESS_WINDOW_MS = 90_000;
+/**
+ * Pruning cutoff: on register(), identity entries whose latest heartbeat is
+ * older than this are removed from identity.json. This reclaims orphans left
+ * by instances that crashed/were SIGKILLed without running peer.stop() →
+ * unregister(). Set to the same 1h the `peers` tool uses to hide dead peers,
+ * so an entry is pruned exactly when it stops appearing in the listing.
+ */
+const IDENTITY_PRUNE_CUTOFF_MS = 60 * 60 * 1000;
 
 /**
  * Atomic file write: write to temp file then rename.
@@ -86,6 +94,42 @@ function readIdentityMap(): Record<string, IdentityEntry> {
  */
 function writeIdentityMap(map: Record<string, IdentityEntry>): void {
   atomicWrite(getIdentityFile(), JSON.stringify(map, null, 2));
+}
+
+/**
+ * Remove identity entries for instances whose latest heartbeat is older than
+ * {@link IDENTITY_PRUNE_CUTOFF_MS} (1h). This reclaims orphaned entries left
+ * by instances that crashed or were SIGKILLed without running unregister() —
+ * without this, identity.json grows monotonically with one entry per dead
+ * instance forever, bloating every readIdentityMap()/listIdentities() call.
+ *
+ * Safety: a live instance beats every 30s (HEARTBEAT_INTERVAL_MS), so its
+ * latest heartbeat is always within the cutoff and it is never pruned. A
+ * freshly-started instance whose heartbeat file does not exist yet (but which
+ * is registered in the map) is also preserved — it has had no chance to beat
+ * yet, and pruning it would race its own register(). Only entries with a
+ * heartbeat file showing a beat older than the cutoff are removed.
+ *
+ * Never removes the caller's own sessionId — guard against self-prune in case
+ * the caller's heartbeat file is somehow stale during a re-register.
+ *
+ * @param map The identity map to prune in place.
+ * @param selfSessionId The caller's own session id (always preserved).
+ * @returns The number of entries removed (for logging/diagnostics).
+ */
+function pruneStaleEntries(map: Record<string, IdentityEntry>, selfSessionId: string): number {
+  const now = Date.now();
+  let removed = 0;
+  for (const sid of Object.keys(map)) {
+    if (sid === selfSessionId) continue; // never self-prune
+    const latest = readHeartbeats(sid);
+    if (latest.length === 0) continue; // no heartbeat file yet → preserve (could be mid-startup)
+    if (now - latest[latest.length - 1] > IDENTITY_PRUNE_CUTOFF_MS) {
+      delete map[sid];
+      removed++;
+    }
+  }
+  return removed;
 }
 
 /**
@@ -182,16 +226,23 @@ export class IdentityManager {
   /**
    * Register (upsert) this instance into identity.json.
    *
+   * As a side effect, also prunes stale entries from other instances: any
+   * identity whose latest heartbeat is older than {@link IDENTITY_PRUNE_CUTOFF_MS}
+   * is removed during the read-merge-write. This reclaims orphans left by
+   * instances that crashed without running unregister(), so identity.json does
+   * not grow unbounded over time.
+   *
    * Uses a read-merge-write loop with retries to avoid clobbering a concurrent
    * registration from another instance. Each iteration re-reads the current
-   * map, merges this instance's entry, and atomically writes. If another
-   * instance wrote between our read and write, our atomic rename overwrites
-   * theirs — but the loop re-reads on the next iteration so we eventually
-   * converge. The retry cap bounds worst-case contention.
+   * map, prunes stale entries, merges this instance's entry, and atomically
+   * writes. If another instance wrote between our read and write, our atomic
+   * rename overwrites theirs — but the loop re-reads on the next iteration so
+   * we eventually converge. The retry cap bounds worst-case contention.
    */
   register(): void {
     for (let attempt = 0; attempt < 5; attempt++) {
       const map = readIdentityMap();
+      pruneStaleEntries(map, this.sessionId);
       map[this.sessionId] = {
         sessionId: this.sessionId,
         workDir: this.workDir,

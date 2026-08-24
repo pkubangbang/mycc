@@ -95,6 +95,67 @@ describe('IdentityManager', () => {
     expect(id.listIdentities()).toHaveLength(0);
   });
 
+  it('register() prunes stale identity entries (heartbeat older than 1h)', () => {
+    // Pre-seed identity.json with an orphan entry for SID_B whose heartbeat
+    // is 2h old — well beyond the 1h prune cutoff.
+    const now = Date.now();
+    fs.writeFileSync(identityFile(), JSON.stringify({
+      [SID_B]: { sessionId: SID_B, workDir: '/work/b', mailbox: makeMailboxPath(SID_B), startedAt: now - 2 * 60 * 60 * 1000 },
+    }, null, 2), 'utf-8');
+    writeHeartbeatRaw(SID_B, [now - 2 * 60 * 60 * 1000, now - 7000 * 1000, now - 7200 * 1000]);
+
+    const id = new IdentityManager(SID_A, '/work/a', makeMailboxPath(SID_A));
+    id.register();
+
+    const entries = id.listIdentities();
+    expect(entries).toHaveLength(1);
+    expect(entries[0].sessionId).toBe(SID_A); // stale SID_B was pruned
+  });
+
+  it('register() preserves fresh identity entries (heartbeat within 1h)', () => {
+    // Pre-seed identity.json with a fresh entry for SID_B (beat 10s ago).
+    const now = Date.now();
+    fs.writeFileSync(identityFile(), JSON.stringify({
+      [SID_B]: { sessionId: SID_B, workDir: '/work/b', mailbox: makeMailboxPath(SID_B), startedAt: now - 10_000 },
+    }, null, 2), 'utf-8');
+    writeHeartbeatRaw(SID_B, [now - 30_000, now - 20_000, now - 10_000]);
+
+    const id = new IdentityManager(SID_A, '/work/a', makeMailboxPath(SID_A));
+    id.register();
+
+    const sids = id.listIdentities().map(e => e.sessionId).sort();
+    expect(sids).toEqual([SID_A, SID_B]); // both present
+  });
+
+  it('register() preserves entries with no heartbeat file (mid-startup peer)', () => {
+    // Pre-seed identity.json with SID_B but NO heartbeat file — it registered
+    // but has not beaten yet. Pruning must not remove it (could be mid-startup).
+    const now = Date.now();
+    fs.writeFileSync(identityFile(), JSON.stringify({
+      [SID_B]: { sessionId: SID_B, workDir: '/work/b', mailbox: makeMailboxPath(SID_B), startedAt: now - 5_000 },
+    }, null, 2), 'utf-8');
+    // Deliberately no writeHeartbeatRaw(SID_B, ...).
+
+    const id = new IdentityManager(SID_A, '/work/a', makeMailboxPath(SID_A));
+    id.register();
+
+    const sids = id.listIdentities().map(e => e.sessionId).sort();
+    expect(sids).toEqual([SID_A, SID_B]); // SID_B preserved despite no beats
+  });
+
+  it('register() never prunes its own entry even if its heartbeat is stale', () => {
+    // Self-prune guard: write a stale heartbeat for SID_A itself, then
+    // register SID_A. The self entry must survive.
+    const now = Date.now();
+    writeHeartbeatRaw(SID_A, [now - 2 * 60 * 60 * 1000]); // 2h old
+
+    const id = new IdentityManager(SID_A, '/work/a', makeMailboxPath(SID_A));
+    id.register();
+
+    const sids = id.listIdentities().map(e => e.sessionId);
+    expect(sids).toContain(SID_A); // self preserved
+  });
+
   it('isFresh() returns false for an unregistered session', () => {
     const id = new IdentityManager(SID_A, '/work/a', makeMailboxPath(SID_A));
     id.register();
