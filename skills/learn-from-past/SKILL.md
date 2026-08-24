@@ -3,17 +3,19 @@ name: learn-from-past
 description: >
   Hookish skill that triggers when the agent calls brief with confidence 10
   (100%), indicating a completed task. Suggests capturing successful experience
-  into reusable skills. Asks the user three options: yes (search/create/optimize
-  skills), no (return to main task), or later (create a deferred lfp file in
-  .mycc/lfplater/ for future processing). Guards against false triggers: only
-  fires in normal mode (not plan mode), after 5+ total tool calls in the session,
-  and when real work tools (edit_file, write_file, or bash) were used at any
-  point in this session (not just the current turn). Use when a task has been completed successfully and the experience
-  could be distilled into a reusable skill. The hook uses a message action — the
-  weakest, non-blocking hook action that injects a REMINDER note the agent sees
-  in its next round. The message is autonomy-supportive (self-determination
+  into a deferred lfplater doc. Asks the user a binary choice: yes (create a
+  pointer doc in .mycc/lfplater/ for future processing by the skill-manager
+  peer) or no (decline summarizing and continue). Guards against false
+  triggers: only fires in normal mode (not plan mode), after 5+ total tool
+  calls in the session, and when real work tools (edit_file, write_file, or
+  bash) were used at any point in this session (not just the current turn).
+  Use when a task has been completed successfully and the experience could be
+  distilled into a reusable skill. The hook uses a message action — the
+  weakest, non-blocking hook action that injects a REMINDER note the agent
+  sees in its next round. The message is autonomy-supportive (self-determination
   theory), affirms the user's freedom to decline (reactance theory), and frames
-  the experience as already-owned value at risk of being lost (endowment effect).
+  the experience as already-owned value at risk of being lost (endowment
+  effect).
 keywords: [learn, past, experience, success, skill, create, optimize, lfp,
   summary, capture, knowledge, distill, brief, confidence, completed,
   reusable, lesson, lfplater, deferred, autonomy, nudge, suggestion, preserve]
@@ -58,8 +60,8 @@ These guards prevent false triggers from:
 the conversation that the agent sees in its next round. The message is
 autonomy-supportive and affirms the user's freedom to decline.
 
-The injected message instructs the agent to ask the user a 3-way choice:
-**yes / no / later**. See the [Hook Message](#hook-message) section below.
+The injected message instructs the agent to ask the user a **binary** choice:
+**yes / no**. See the [Hook Message](#hook-message) section below.
 
 ## Hook Message
 
@@ -68,68 +70,23 @@ The following message is injected as a REMINDER note:
 ```
 [REMINDER] A task was just reported complete (brief confidence=10). The experience you just built is valuable and already yours — but it's easy to lose once this context moves on.
 
-You may offer the user a quick choice to preserve it. If the work taught something worth reusing, ask the user — briefly — whether to:
-1. **yes** — turn this success into a reusable skill (run `skill_load(name="learn-from-past")` for the full workflow)
-2. **no** — continue without saving
-3. **later** — defer for now; drop a pointer in `.mycc/lfplater/` to revisit later
+You MUST offer the user a quick binary choice to preserve it (unless you have already asked for this task, the user recently declined a similar offer, or the work was genuinely trivial/read-only). Ask the user — in ONE line — whether to:
+1. **yes** — drop a pointer doc in `.mycc/lfplater/` capturing this success, for the skill-manager peer to process into a reusable skill later
+2. **no** — decline summarizing and continue with the main task
 
-This is entirely the user's call, and you are free to skip asking — for example if the work was routine, the user is mid-flow, or they've already declined a similar offer. Ask at most once per completed task.
+Do NOT self-suppress this question with a vague judgment that the work "wasn't worth it." Ask at most once per completed task.
 ```
 
 ## Workflow: When the User Chooses
 
-When the user responds to the 3-way choice, follow the branch below.
+When the user responds to the binary choice, follow the branch below.
 
-### Branch 1: yes — Summarize into a Reusable Skill
+### Branch 1: yes — Defer to .mycc/lfplater/
 
-The goal is to find, create, or optimize a skill that captures what made this
-task successful.
-
-**Step 1: Search for existing skills**
-
-Use `skill_search` with keywords derived from the task domain:
-
-```
-skill_search(search="relevant keywords from the task")
-```
-
-**Step 2: Decide — create new or optimize existing?**
-
-- **If a relevant skill exists**: Load it with `skill_load`, analyze its content,
-  and identify what's missing or could be improved based on this task's
-  experience. Use `edit_file` to add the new insight, pitfall, or example.
-- **If no relevant skill exists**: Use the `create-skill` skill to create a new
-  one. Load it first: `skill_load(name="create-skill")`. Follow its workflow:
-  gather requirements, research, select template, write, create in
-  `.mycc/skills/`.
-
-**Step 3: Capture the lesson**
-
-The skill should capture:
-- **What was the problem** — the task the user asked for
-- **What worked** — the approach, tools, or sequence that succeeded
-- **Key decisions** — why certain choices were made
-- **Pitfalls avoided** — mistakes that were sidestepped
-- **Concrete examples** — specific code, commands, or patterns
-
-**Step 4: Verify**
-
-- Ensure the skill has proper frontmatter (name, description, keywords)
-- If hookish, ensure the `when` field is clear
-- Test that `skill_search` can find it with relevant keywords
-
-### Branch 2: no — Continue Without Saving
-
-Acknowledge the user's choice briefly and return to the main task. Do not
-persist the suggestion or revisit it unless the user brings it up.
-
-Example response:
-> No problem — continuing with the main task.
-
-### Branch 3: later — Defer to .mycc/lfplater/
-
-Create a markdown file in `.mycc/lfplater/` that captures enough context to
-revisit the summary later.
+Create a markdown file in `.mycc/lfplater/` that captures enough context for the
+skill-manager peer to process into a reusable skill later. Do NOT create or
+optimize a skill inline — that is the skill-manager peer's job, running
+asynchronously in the background.
 
 **File naming**: `{timestamp}-{short-task-description}.md`
 Example: `2026-07-13-153022-fix-bash-intent-validation.md`
@@ -162,17 +119,32 @@ After creating the file, briefly tell the user it's been saved for later and
 return to the main task.
 
 Example response:
-> Saved for later — you can find it in `.mycc/lfplater/`. Continuing with the main task.
+> Saved for later — you can find it in `.mycc/lfplater/`. The skill-manager will process it into a reusable skill. Continuing with the main task.
+
+### Branch 2: no — Decline Summarizing
+
+Acknowledge the user's choice briefly and return to the main task. Do not
+persist the suggestion or revisit it unless the user brings it up.
+
+Example response:
+> No problem — continuing with the main task.
 
 ## lfplater File Format
 
 All deferred summary files live in `.mycc/lfplater/`. Each file is a standalone
-markdown document following the template above. To process a deferred file
-later:
+markdown document following the template above. The `lfplater-skill-manager`
+peer (a headless mycc instance launched with `--role skill-manager`) processes
+these files asynchronously:
 
-1. Read the file with `read_file`
-2. Follow Branch 1 (yes) using the captured context
-3. After creating/updating the skill, optionally delete the lfplater file
+1. Reads each `.mycc/lfplater/` file
+2. Searches for existing skills via `skill_search`
+3. Creates new skills (via the `create-skill` workflow) or optimizes existing
+   ones (via `edit_file`), merging duplicates conservatively
+4. Deletes consumed lfplater files
+5. Reports completion back to the sender via `mail_to`
+
+This keeps the knowledge-capture loop closed without interrupting the user's
+main-task flow.
 
 ## Non-Nagging Guidance
 
@@ -181,11 +153,15 @@ This hook must not feel intrusive. Follow these principles:
 - **Ask at most once per completed task** — the `injectedThisMove` dedup in
   `HookExecutor` prevents same-move re-trigger; the message itself instructs
   "ask at most once per completed task."
-- **Skip if routine** — if the task was trivial or routine, the agent may skip
-  asking (the message explicitly allows this).
 - **Respect "no"** — if the user declines, do not re-suggest for the same task.
-- **Be brief** — the question to the user should be quick, not a lengthy
+- **Be brief** — the question to the user should be ONE line, not a lengthy
   explanation.
+
+> **Note:** the "skip if routine" latitude is intentionally REMOVED in favor
+> of the [Mandatory Gating](#mandatory-gating-the-question-must-be-asked)
+> section below. The LLM's judgment of "routine" is unreliable and tends to
+> suppress the question entirely. The gating section provides an exhaustive
+> list of the ONLY valid skip reasons.
 
 ## Common Pitfalls
 
@@ -210,15 +186,57 @@ use judgment, not blindly ask every time.
 
 **Problem**: Rushing to create a skill from a trivial task produces noise.
 
-**Solution**: Only create a skill if the experience is genuinely reusable. If
-the task was routine, the "no" or "later" branch is more appropriate.
+**Solution**: Only defer to `.mycc/lfplater/` if the experience is genuinely
+reusable. If the task was routine, the "no" branch is more appropriate — the
+skill-manager peer will not produce a useful skill from a trivial lfplater doc.
+
+## Mandatory Gating: The Question Must Be Asked
+
+The LLM has a known blind-spot for self-initiated knowledge capture: it tends
+to silently omit the yes/no question, rationalizing that the task was "routine"
+or that asking would interrupt the user's flow. This defeats the entire
+purpose of the hook.
+
+**Therefore, when this hook fires, asking the user the binary question is
+MANDATORY — not optional.** The only valid reason to skip asking is one of the
+explicit skip conditions below. The agent MUST NOT self-suppress the question
+based on a vague judgment that the work "wasn't worth it."
+
+### When you MAY skip asking (exhaustive list)
+
+The question may be omitted ONLY when one of these is true:
+
+1. **Already asked for this task** — the `injectedThisMove` dedup in
+   `HookExecutor` already prevents same-move re-trigger; if you have already
+   asked the user about this specific completion and received an answer, do
+   not ask again.
+2. **User already declined a similar offer this session** — if the user
+   recently said "no" to an LFP prompt for comparable work, respect that and
+   skip.
+3. **Genuinely trivial / read-only** — the work was a pure lookup, a one-line
+   typo fix, or a read-only exploration with no reusable insight. (The trigger
+   guards already filter most of these via the session-scoped work-tool check,
+   but a borderline case may slip through.)
+
+If NONE of the above apply, you MUST ask the user the binary question (yes /
+no). Do not skip it because you feel the user is "mid-flow" — the question
+itself is a single line and the user can decline with one keystroke.
+
+### How to ask
+
+Present the binary choice in ONE line, e.g.:
+
+> Want to save this success as a reusable skill? (yes / no)
+
+Do not preface it with a lengthy explanation. Do not bury it in a wall of
+text. One line, two options, then act on the answer.
 
 ## Verification Checklist
 
 - [ ] Hook condition compiled correctly (trigger=['brief'], 4-part condition)
-- [ ] Message action injects the REMINDER note with 3-way choice
-- [ ] `yes` branch: skill_search → create or optimize → verify
+- [ ] Message action injects the REMINDER note with binary choice (yes / no)
+- [ ] `yes` branch: lfplater doc created in `.mycc/lfplater/` with full template
 - [ ] `no` branch: acknowledge and continue
-- [ ] `later` branch: lfplater file created with full template
 - [ ] False-trigger guards working (plan mode, low count, read-only sessions)
-- [ ] Non-nagging behavior (ask once, respect "no", skip if routine)
+- [ ] Non-nagging behavior (ask once, respect "no", skip only per the exhaustive list)
+- [ ] **Mandatory gating**: the question is asked unless an explicit skip condition applies — the agent must NOT self-suppress it
