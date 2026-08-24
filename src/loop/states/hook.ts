@@ -409,19 +409,22 @@ export async function handleHook(
       }] as ToolCall[], chat.assistantReasoningContent);
 
       // Inject the crossroad file path into the brief tool result so the LLM
-      // knows where the full decision record lives, and how to replay it to
-      // the terminal user. When there is no crossroad file (e.g. file write
-      // failed), fall back to 'OK'.
+      // knows where the full decision record lives. When there is no crossroad
+      // file (e.g. file write failed), fall back to 'OK'.
       //
-      // Replay mechanism: the LLM runs `bash(command="mycc-pretty-print
-      // --type=crossroad <path>", display=true)`. mycc-pretty-print merges
+      // NOTE: we deliberately do NOT instruct the LLM to replay the crossroad
+      // by default. Pretty-printing the crossroad is only needed when the user
+      // explicitly asks to see the full reconstructed response; pushing it as a
+      // default action wastes a turn and clutters the transcript. The LLM may
+      // run `bash(command="mycc-pretty-print --type=crossroad <path>",
+      // display=true)` if the user requests it — mycc-pretty-print merges
       // prefix + continuation to stdout; the display flag briefs stdout to the
       // terminal so the user sees the reconstructed response. Because the
       // display happens through a bash tool result (NOT chat.assistantContent),
       // detectTurningWord — which only scans chat.assistantContent — never sees
       // the reconstructed text, so replaying a crossroad cannot re-trigger it.
       const briefResult = chat.crossroadFilePath
-        ? `A direction refinement was applied to your response. To display the full response to the user, run: bash(command="mycc-pretty-print --type=crossroad ${chat.crossroadFilePath}", display=true)`
+        ? `A direction refinement was applied to your response. The full decision record is saved at: ${chat.crossroadFilePath} (you may replay it with mycc-pretty-print --type=crossroad <path> only if the user asks to see the full response).`
         : 'OK';
       triologue.tool('brief', briefResult, briefCallId);
 
