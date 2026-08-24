@@ -59,6 +59,19 @@ const TRANSIENT_ERROR_PATTERNS = [
   'connection attempt failed',
   'did not properly respond',
   'established connection failed',
+  // Ollama library: AbortableAsyncIterator throws this when the HTTP stream
+  // ends WITHOUT a final chunk carrying done:true (or status:"success"). It
+  // is the symptom of a premature mid-stream connection close — the server
+  // (often Ollama cloud) dropped the SSE/fetch body before sending the
+  // terminator. This is a recoverable network condition (same family as
+  // 'premature close' / 'unexpected eof' above), but its literal message
+  // shares no substring with any existing pattern, so without this entry
+  // isTransientError() returns false → classifyError() returns 'fatal' →
+  // retryChat's `if (!isTransientError(err)) throw err;` rethrows on the
+  // FIRST attempt with zero retries. The error then bubbles to the COLLECT
+  // catch, which logs it and returns to PROMPT — silently aborting the
+  // in-flight hint round (or chat) instead of retrying the dropped stream.
+  'did not receive done or success response in stream',
 ];
 
 /**
