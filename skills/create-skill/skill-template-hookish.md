@@ -5,7 +5,7 @@ description: >
   Keep it concise but informative for RAG search.
   Token limit: < 800 tokens
 keywords: [tag1, tag2, tag3]
-when: trigger condition here (e.g., "before LLM finishes reply, if edit_file was used this session")
+when: trigger condition here (e.g., "before LLM finishes reply, if edit_file was used this session"). See the "Condition Expression Reference" section in create-skill for the full expression grammar.
 ---
 
 # [Skill Name]

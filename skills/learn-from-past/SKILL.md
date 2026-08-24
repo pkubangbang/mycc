@@ -7,8 +7,8 @@ description: >
   skills), no (return to main task), or later (create a deferred lfp file in
   .mycc/lfplater/ for future processing). Guards against false triggers: only
   fires in normal mode (not plan mode), after 5+ total tool calls in the session,
-  and when real work tools (edit_file, write_file, or bash) were used in the
-  current turn. Use when a task has been completed successfully and the experience
+  and when real work tools (edit_file, write_file, or bash) were used at any
+  point in this session (not just the current turn). Use when a task has been completed successfully and the experience
   could be distilled into a reusable skill. The hook uses a message action — the
   weakest, non-blocking hook action that injects a REMINDER note the agent sees
   in its next round. The message is autonomy-supportive (self-determination
@@ -17,7 +17,7 @@ description: >
 keywords: [learn, past, experience, success, skill, create, optimize, lfp,
   summary, capture, knowledge, distill, brief, confidence, completed,
   reusable, lesson, lfplater, deferred, autonomy, nudge, suggestion, preserve]
-when: "after brief is called with confidence 10 (100%), if not in plan mode, total tool calls exceeds 5, and work tools (edit_file, write_file, or bash) were used this turn, suggest the agent to ask the user whether to summarize the successful experience into a reusable skill"
+when: "after brief is called with confidence 10 (100%), if not in plan mode, total tool calls exceeds 5, and work tools (edit_file, write_file, or bash) were used at any point in this session, suggest the agent to ask the user whether to summarize the successful experience into a reusable skill"
 ---
 
 # Learn From Past (LFP)
@@ -37,13 +37,20 @@ Fires after `brief` is called when ALL of these are true:
 - `call.args.confidence == 10` — the agent reported 100% certainty (completed task)
 - `!seq.isPlanMode()` — not in plan mode (planning ≠ completing)
 - `seq.totalCount() > 5` — at least 5 tool calls this session (real work, not premature optimism)
-- `seq.hasAny(['edit_file', 'write_file', 'bash'])` — real work tools used in the current turn
+- `session.count('edit_file') > 0 || session.count('write_file') > 0 || session.count('bash') > 0` — real work tools used at any point in this session (session-scoped, not turn-scoped)
 
 These guards prevent false triggers from:
 - **Plan-mode confidence** ("confident about my plan" is not task completion)
 - **Defensive confusion gaming** (confidence=10 reduces confusion index by 2; the LLM may use it just to lower confusion)
 - **Premature optimism** (reporting confidence=10 after 1-2 calls)
-- **Read-only turns** (only read/grep/recall used — nothing to summarize)
+- **Read-only sessions** (only read/grep/recall used — nothing to summarize)
+
+> **Why session-scoped, not turn-scoped:** the confidence=10 brief that marks
+> task completion often happens in a turn with NO work tools (e.g. a turn that
+> only calls `brief` to report the result of edits made in an *earlier* turn).
+> Checking only the current turn would miss these completions. Session-scoped
+> counting (`session.count(...)`) persists across turn boundaries, so the hook
+> fires whenever real work happened *anywhere* in the session.
 
 ## Action
 
@@ -188,7 +195,7 @@ This hook must not feel intrusive. Follow these principles:
 (e.g., defensive confusion reduction, premature optimism, plan confidence).
 
 **Solution**: The condition includes three guards (`!seq.isPlanMode()`,
-`seq.totalCount() > 5`, `seq.hasAny(['edit_file','write_file','bash'])`) that
+`seq.totalCount() > 5`, `session.count('edit_file') > 0 || session.count('write_file') > 0 || session.count('bash') > 0`) that
 filter out these false triggers.
 
 ### Pitfall: Over-Suggesting
@@ -213,5 +220,5 @@ the task was routine, the "no" or "later" branch is more appropriate.
 - [ ] `yes` branch: skill_search → create or optimize → verify
 - [ ] `no` branch: acknowledge and continue
 - [ ] `later` branch: lfplater file created with full template
-- [ ] False-trigger guards working (plan mode, low count, read-only turns)
+- [ ] False-trigger guards working (plan mode, low count, read-only sessions)
 - [ ] Non-nagging behavior (ask once, respect "no", skip if routine)
