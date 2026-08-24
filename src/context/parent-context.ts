@@ -13,7 +13,7 @@ import { WikiManager } from './parent/wiki.js';
 import { PeerManager } from '../peer/peer.js';
 import { loader } from './shared/loader.js';
 import { evaluateGrant } from './grant/index.js';
-import { getSessionDir } from '../config.js';
+import { getSessionDir, getRole } from '../config.js';
 import { getSessionId } from '../session/index.js';
 import * as path from 'path';
 import type { CoreModule, TodoModule, MailModule, SkillModule, IssueModule, BgModule, TeamModule } from '../types.js';
@@ -52,7 +52,7 @@ export class ParentContext implements AgentContext {
     const peerSessionId = getSessionId(sessionFilePath);
     const peerWorkDir = process.cwd();
     const peerMailboxPath = path.resolve(getSessionDir(peerSessionId), 'unread-lead.jsonl');
-    this.peerModule = new PeerManager(peerSessionId, peerWorkDir, peerMailboxPath);
+    this.peerModule = new PeerManager(peerSessionId, peerWorkDir, peerMailboxPath, getRole());
   }
 
   // Getters for each module

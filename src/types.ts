@@ -530,6 +530,10 @@ export interface IdentityEntry {
   workDir: string;
   mailbox: string;
   startedAt: number;
+  /** Optional role label (--role CLI flag / MYCC_ROLE env). Tags the
+   *  instance so peers can discover it by role (e.g. "skill-manager").
+   *  Absent for productivity instances (no --role). */
+  role?: string;
 }
 
 /**

@@ -106,7 +106,7 @@ const args = minimist(process.argv.slice(2), {
   // putting it in `boolean` would swallow `--serve 9000` (port ignored).
   boolean: ['v', 'verbose', 'skip-healthcheck', 'setup', 'debug-eval', 'debug-tp', 'debug-prompt', 'auto', 'debug-autofly', 'allow-plan-off'],
   string: [
-    'from', 'port', 'host', 'max-upload-mb', 'autofly',
+    'from', 'port', 'host', 'max-upload-mb', 'autofly', 'role',
     'ollama-host', 'ollama-api-key', 'ollama-model', 'ollama-vision-model', 'ollama-embedding-model',
     'deepseek-host', 'deepseek-api-key', 'deepseek-model',
     'api-provider', 'token-threshold', 'editor', 'skill-match-threshold',
@@ -149,6 +149,7 @@ function buildCmdArgsEnv(parsed: typeof args): Record<string, string> {
     'token-threshold': 'TOKEN_THRESHOLD',
     'editor': 'EDITOR',
     'skill-match-threshold': 'SKILL_MATCH_THRESHOLD',
+    'role': 'MYCC_ROLE',
   };
   for (const [argKey, envKey] of Object.entries(map)) {
     const value = parsed[argKey];
@@ -253,6 +254,24 @@ export function isDebuggingPrompt(): boolean {
  */
 export function shouldAuto(): boolean {
   return args.auto === true;
+}
+
+/**
+ * Get the instance role label (--role CLI flag or MYCC_ROLE env var).
+ *
+ * Used to tag the instance's identity.json entry so peers can discover
+ * instances by role (e.g. "skill-manager" for a headless skill-management
+ * peer). Returns undefined if no role is set (the default for productivity
+ * instances — the field is absent from their identity entry).
+ *
+ * Reads parsed CLI args directly (not process.env) to avoid inheriting a
+ * stale MYCC_ROLE env var from a parent process (e.g. a skill-manager peer
+ * spawned by a productivity lead must not inherit the lead's absent role,
+ * and a productivity lead must not inherit a peer's role).
+ */
+export function getRole(): string | undefined {
+  const r = args.role;
+  return (typeof r === 'string' && r.length > 0) ? r : undefined;
 }
 
 /**

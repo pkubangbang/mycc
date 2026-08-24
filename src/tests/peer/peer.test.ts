@@ -156,6 +156,28 @@ describe('IdentityManager', () => {
     expect(sids).toContain(SID_A); // self preserved
   });
 
+  it('register() includes the role field when provided', () => {
+    const id = new IdentityManager(SID_A, '/work/a', makeMailboxPath(SID_A), 'skill-manager');
+    id.register();
+    const entries = id.listIdentities();
+    expect(entries).toHaveLength(1);
+    expect(entries[0].role).toBe('skill-manager');
+    // The role is persisted in the JSON on disk.
+    const raw = JSON.parse(fs.readFileSync(identityFile(), 'utf-8'));
+    expect(raw[SID_A].role).toBe('skill-manager');
+  });
+
+  it('register() omits the role field when not provided (clean JSON)', () => {
+    const id = new IdentityManager(SID_A, '/work/a', makeMailboxPath(SID_A));
+    id.register();
+    const entries = id.listIdentities();
+    expect(entries).toHaveLength(1);
+    expect(entries[0].role).toBeUndefined();
+    // The role key is absent from the JSON (not role: null / undefined).
+    const raw = JSON.parse(fs.readFileSync(identityFile(), 'utf-8'));
+    expect(raw[SID_A]).not.toHaveProperty('role');
+  });
+
   it('isFresh() returns false for an unregistered session', () => {
     const id = new IdentityManager(SID_A, '/work/a', makeMailboxPath(SID_A));
     id.register();

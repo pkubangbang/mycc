@@ -13,8 +13,8 @@ export class PeerManager implements PeerModule {
   private identity: IdentityManager;
   private channel: ChannelManager;
 
-  constructor(sessionId: string, workDir: string, mailboxPath: string) {
-    this.identity = new IdentityManager(sessionId, workDir, mailboxPath);
+  constructor(sessionId: string, workDir: string, mailboxPath: string, role?: string) {
+    this.identity = new IdentityManager(sessionId, workDir, mailboxPath, role);
     this.channel = new ChannelManager(sessionId, this.identity, mailboxPath);
   }
 

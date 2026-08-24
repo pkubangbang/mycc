@@ -80,6 +80,7 @@ export const peersTool: ToolDefinition = {
       const started = new Date(id.startedAt).toISOString().replace('T', ' ').slice(0, 19);
       const tag = isSelf ? ' (self)' : '';
       const state = fresh ? 'online' : 'offline';
+      const roleTag = id.role ? `\n    role: ${id.role}` : '';
       // Surface recent briefs so the lead can monitor peer progress.
       const briefs = ctx.peer.getBriefs(id.sessionId);
       const briefLine = briefs.length > 0
@@ -89,7 +90,7 @@ export const peersTool: ToolDefinition = {
           }).join('\n')}`
         : '';
       rows.push(
-        `- session=${id.sessionId}${tag}\n    workDir: ${id.workDir}\n    status: ${state}\n    started: ${started}${briefLine}`,
+        `- session=${id.sessionId}${tag}\n    workDir: ${id.workDir}\n    status: ${state}\n    started: ${started}${roleTag}${briefLine}`,
       );
     }
 

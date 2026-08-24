@@ -215,12 +215,14 @@ export class IdentityManager {
   private sessionId: string;
   private workDir: string;
   private mailboxPath: string;
+  private role?: string;
   private intervalHandle: ReturnType<typeof setInterval> | null = null;
 
-  constructor(sessionId: string, workDir: string, mailboxPath: string) {
+  constructor(sessionId: string, workDir: string, mailboxPath: string, role?: string) {
     this.sessionId = sessionId;
     this.workDir = workDir;
     this.mailboxPath = mailboxPath;
+    this.role = role;
   }
 
   /**
@@ -248,6 +250,7 @@ export class IdentityManager {
         workDir: this.workDir,
         mailbox: this.mailboxPath,
         startedAt: Date.now(),
+        ...(this.role ? { role: this.role } : {}),
       };
       writeIdentityMap(map);
       // Re-read to verify our entry survived (no clobber by a concurrent write).
