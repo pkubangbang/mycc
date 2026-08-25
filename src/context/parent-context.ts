@@ -13,7 +13,7 @@ import { WikiManager } from './parent/wiki.js';
 import { PeerManager } from '../peer/peer.js';
 import { loader } from './shared/loader.js';
 import { evaluateGrant } from './grant/index.js';
-import { getSessionDir, getRole } from '../config.js';
+import { getSessionDir, getDaemonSkill, shouldDaemon } from '../config.js';
 import { getSessionId } from '../session/index.js';
 import * as path from 'path';
 import type { CoreModule, TodoModule, MailModule, SkillModule, IssueModule, BgModule, TeamModule } from '../types.js';
@@ -52,7 +52,7 @@ export class ParentContext implements AgentContext {
     const peerSessionId = getSessionId(sessionFilePath);
     const peerWorkDir = process.cwd();
     const peerMailboxPath = path.resolve(getSessionDir(peerSessionId), 'unread-lead.jsonl');
-    this.peerModule = new PeerManager(peerSessionId, peerWorkDir, peerMailboxPath, getRole());
+    this.peerModule = new PeerManager(peerSessionId, peerWorkDir, peerMailboxPath, getDaemonSkill(), shouldDaemon());
   }
 
   // Getters for each module
@@ -389,7 +389,13 @@ export class ParentContext implements AgentContext {
     // on 'skill_reindex', agentIO's listener handles its own message types.
     process.on('message', (msg: { type: string }) => {
       if (msg.type === 'skill_reindex') {
-        void loader.indexAllSkillsToWiki(this.wikiModule).catch((err) => {
+        // The loader builds PURE-DATA SkillIndexEntry[] (no wiki reference);
+        // we hand it to the WikiManager we own, which performs the wiki-DB
+        // re-index with orphan cleanup under the reindex lock. This keeps the
+        // loader decoupled from the wiki module — the loader emits a generic
+        // IPC signal, and the wiki layer (ParentContext) owns the re-index.
+        const entries = loader.buildAllSkillEntries();
+        void this.wikiModule.indexSkills(entries).catch((err) => {
           this.coreModule.brief('warn', 'wiki', `Skill re-index failed: ${(err as Error).message}`);
         });
       }

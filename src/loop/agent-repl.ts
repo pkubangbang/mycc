@@ -14,7 +14,7 @@ import { healthCheck } from '../engine/chat-provider.js';
 import { ParentContext } from '../context/parent-context.js';
 import { getSessionId } from '../session/index.js';
 import { slashRegistry } from '../slashes/index.js';
-import { getTokenThreshold, isDebuggingEval, shouldServe, getServePort, getServeHost, getEmbeddingModel, shouldAuto, getAutoflyThresholdArg, getDiscoveryDir } from '../config.js';
+import { getTokenThreshold, isDebuggingEval, shouldServe, getServePort, getServeHost, getEmbeddingModel, shouldAuto, shouldDaemon, getDaemonSkill, getAutoflyThresholdArg, getDiscoveryDir } from '../config.js';
 import { Triologue } from './triologue.js';
 import { agentIO } from './agent-io.js';
 import { autoState } from './auto-state.js';
@@ -45,6 +45,7 @@ import { handleStop } from './states/stop.js';
 import { handleWait } from './states/wait.js';
 import { clearWrapUp } from './esc-wrap-up.js';
 import pkg from '../../package.json';
+import { Cron } from 'croner';
 import { get_default_mindmap_path, load_mindmap, validate_mindmap, applyPatchAction, readAllPatches, getPatchPath } from '../mindmap/index.js';
 import type { Node, Mindmap } from '../mindmap/types.js';
 import type { Skill } from '../types.js';
@@ -203,7 +204,11 @@ export async function main(): Promise<void> {
   // Start peer discovery protocol: register identity + begin heartbeat + channel poll
   ctx.peer.start();
 
-  await loader.indexAllSkillsToWiki(ctx.wiki);
+  // Index all skills into wiki at startup. The loader builds PURE-DATA
+  // SkillIndexEntry[] (no wiki reference); we hand it to ctx.wiki.indexSkills,
+  // which owns the wiki-DB re-index + reindex lock. This keeps the loader
+  // (skill-loading layer) decoupled from the wiki module (RAG layer).
+  await ctx.wiki.indexSkills(loader.buildAllSkillEntries());
 
   // Load mindmap (mindmap.json + replay patches from mindmap-patch.jsonl)
   const workDir = process.cwd();
@@ -349,6 +354,85 @@ export async function main(): Promise<void> {
     autoState.resetStreak();
     autoState.setAuto(true);
     console.log(chalk.cyan('auto mode is on (--auto). Mails will be auto-replied. Press esc to exit.'));
+  }
+
+  // ── --daemon CLI arg: headless daemon mode ──
+  // Daemon mode = auto mode + no terminal. The Lead runs detached (spawned
+  // by the Coordinator with stdio:'ignore'). It auto-loads the named skill
+  // (if provided), starts a cron timer for skills with `service_cron`, and
+  // stays alive in WAIT mode between cron ticks / external mail_to nudges.
+  // Only daemon mode activates the cron timer — a non-daemon lead loading a
+  // skill with service_cron does NOT start cron.
+  let daemonCronJob: Cron | null = null;
+  if (shouldDaemon()) {
+    // Force auto mode on (daemon is always headless auto).
+    autoState.resetStreak();
+    autoState.setAuto(true);
+    console.log(chalk.cyan('daemon mode is on (--daemon). Running headless.'));
+
+    const daemonSkill = getDaemonSkill();
+
+    // Dedup check: ONLY when a skill name is provided (role is non-empty).
+    // Bare --daemon (no skill) does NOT participate in dedup — multiple
+    // passive daemons may coexist. The check happens AFTER peer.start() so
+    // identity.json is populated, but BEFORE we register ourselves... actually
+    // we register first, then check for OTHER instances (not self).
+    if (daemonSkill) {
+      const identities = ctx.peer.listIdentities();
+      const selfWorkDir = process.cwd();
+      const selfSessionId = ctx.peer.getSelfSessionId();
+      for (const entry of identities) {
+        if (entry.sessionId === selfSessionId) continue; // skip self
+        if (entry.role === daemonSkill && entry.workDir === selfWorkDir) {
+          if (ctx.peer.isFresh(entry.sessionId)) {
+            console.error(chalk.red(`A daemon with role '${daemonSkill}' is already running for this workDir.`));
+            console.error(chalk.gray(`Existing session: ${entry.sessionId.slice(0, 7)}`));
+            // No cron job to stop yet — daemonCronJob is created later (line
+            // below in the skill.service_cron branch), so it is still null here.
+            ctx.peer.stop();
+            process.send!({ type: 'exit' });
+            process.exit(1);
+          }
+        }
+      }
+    }
+
+    // Auto-load skill if provided.
+    if (daemonSkill) {
+      const skill = loader.getSkill(daemonSkill);
+      if (!skill) {
+        console.error(chalk.red(`Skill '${daemonSkill}' not found. Cannot start daemon.`));
+        ctx.peer.stop();
+        process.send!({ type: 'exit' });
+        process.exit(1);
+      }
+      // Inject a system note so the LLM loads the skill on its first turn.
+      // The WAIT state's 1s poll will pick up this note (it is appended to
+      // the triologue) and route to COLLECT → LLM.
+      triologue.note('SYSTEM', `Daemon started with skill '${daemonSkill}'. Load it via skill_load(name="${daemonSkill}") and follow its workflow.`);
+
+      // Start cron timer if the skill declares service_cron.
+      if (skill.service_cron) {
+        try {
+          // { unref: true } so the timer doesn't keep the process alive on its
+          // own — the agent loop / heartbeat already keep it alive. This
+          // prevents a zombie timer if the loop exits but the process lingers.
+          daemonCronJob = new Cron(skill.service_cron, { unref: true }, () => {
+            const title = 'Service nudge';
+            const content = `[Service nudge] Cron tick for '${daemonSkill}'. Check for pending work and process it per the skill's workflow.`;
+            ctx.mail.appendMail('lead', title, content);
+            console.log(chalk.gray(`[cron] Nudge sent for '${daemonSkill}'`));
+          });
+          console.log(chalk.gray(`[cron] Started: ${skill.service_cron}`));
+        } catch (err) {
+          console.error(chalk.red(`[cron] Failed to start: ${(err as Error).message}`));
+        }
+      } else {
+        console.log(chalk.gray(`[daemon] Skill '${daemonSkill}' has no service_cron — passive daemon (waits for external mail).`));
+      }
+    } else {
+      console.log(chalk.gray(`[daemon] No skill specified — passive daemon (waits for external mail).`));
+    }
   }
 
   // ── --autofly=N CLI arg: seed the autofly threshold into the singleton ──
@@ -508,6 +592,7 @@ export async function main(): Promise<void> {
       return;
     }
     console.log(chalk.yellow('\nShutting down...'));
+    if (daemonCronJob) daemonCronJob.stop();
     ctx.team.dismissTeam(false); // Graceful shutdown of all teammates
     ctx.peer.stop(); // Stop heartbeat + channel poll + unregister identity
     process.send!({ type: 'exit' });
@@ -520,6 +605,7 @@ export async function main(): Promise<void> {
   // HTTP port are released before the process exits — otherwise restart()
   // orphans them and the next /serve hits EADDRINUSE.
   process.on('SIGTERM', async () => {
+    if (daemonCronJob) daemonCronJob.stop();
     ctx.team.dismissTeam(false);
     ctx.peer.stop(); // Stop heartbeat + channel poll + unregister identity
     try { await getServeHub().stop(); } catch { /* stop() already best-effort internally */ }
@@ -646,6 +732,7 @@ export async function main(): Promise<void> {
   // Normal exit: shut down the serve hub (Vite dev server + HTTP port)
   // so no child processes are orphaned when the Lead process exits.
   await getServeHub().stop();
+  if (daemonCronJob) daemonCronJob.stop();
   ctx.peer.stop(); // Stop heartbeat + channel poll + unregister identity
 
   // Signal Coordinator to exit

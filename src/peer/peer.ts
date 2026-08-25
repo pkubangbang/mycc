@@ -13,8 +13,8 @@ export class PeerManager implements PeerModule {
   private identity: IdentityManager;
   private channel: ChannelManager;
 
-  constructor(sessionId: string, workDir: string, mailboxPath: string, role?: string) {
-    this.identity = new IdentityManager(sessionId, workDir, mailboxPath, role);
+  constructor(sessionId: string, workDir: string, mailboxPath: string, role?: string, daemon?: boolean) {
+    this.identity = new IdentityManager(sessionId, workDir, mailboxPath, role, daemon);
     this.channel = new ChannelManager(sessionId, this.identity, mailboxPath);
   }
 
@@ -96,6 +96,11 @@ export class PeerManager implements PeerModule {
     return this.identity.getLatestHeartbeat(sessionId);
   }
 
+  /** {@inheritDoc PeerModule.getPid} */
+  getPid(sessionId: string): number | null {
+    return this.identity.getPid(sessionId);
+  }
+
   /**
    * Delegate the channel-join callback to the ChannelManager. Wired once at
    * startup by agent-repl.ts so a channel joining mid-PROMPT aborts the
@@ -128,5 +133,6 @@ export class NoopPeerModule implements PeerModule {
   recordBrief(_message: string, _confidence: number): void { /* no-op: children don't maintain a heartbeat */ }
   getBriefs(_sessionId: string): Array<{ time: number; content: string; confidence: number }> { return []; }
   getLatestHeartbeat(_sessionId: string): number | null { return null; }
+  getPid(_sessionId: string): number | null { return null; }
   setOnChannelJoin(_callback: (channelId: string) => void): void { /* no-op: children don't participate in peer discovery */ }
 }

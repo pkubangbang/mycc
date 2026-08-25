@@ -56,6 +56,7 @@ const STARTUP_FLAGS: FlagRow[] = [
   { flag: '--from <session-id>', desc: 'Branch a NEW session pre-filled from an old session' },
   { flag: '--skip-healthcheck', desc: 'Skip the startup health check (faster startup)' },
   { flag: '--auto', desc: 'Start in autonomous mode (no prompt; auto-reply questions; press esc to exit)' },
+  { flag: '--daemon [skill]', desc: 'Start a detached headless daemon (returns immediately). With a skill name, auto-loads it and starts its cron timer (if service_cron); without, runs a passive auto-mode daemon' },
   { flag: '--allow-plan-off', desc: 'In auto mode, auto-approve plan_off (skip confirmation; lets unattended peers escape plan mode)' },
   { flag: '-v, --verbose', desc: 'Show detailed debug output' },
   { flag: '-h, --help', desc: 'Show this help message and exit' },
@@ -98,6 +99,7 @@ export function printHelp(): void {
   out.push('  mycc --serve [port]      # start the Web UI');
   out.push('  mycc --from <session-id> # branch a session from an old one');
   out.push('  mycc --auto               # start in autonomous mode');
+  out.push('  mycc --daemon lfplater-skill-manager --skip-healthcheck  # start a headless service daemon');
   out.push('  mycc --help | -h         # show this help and exit');
   out.push('');
 

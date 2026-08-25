@@ -12,8 +12,8 @@ import type { AgentContext, Skill, SkillModule, WikiModule } from '../../types.j
 vi.mock('../../context/shared/loader.js', () => ({
   loader: {
     getSkillLayer: vi.fn(() => 'project'),
-    indexSkillToWiki: vi.fn(() => Promise.resolve()),
-    indexAllSkillsToWiki: vi.fn(() => Promise.resolve()),
+    buildSkillIndexEntry: vi.fn(() => null),
+    buildAllSkillEntries: vi.fn(() => []),
   },
 }));
 
@@ -37,12 +37,15 @@ function createMockContextWithSkills(
     listAllTools: vi.fn().mockReturnValue([]),
     compileCondition: vi.fn().mockResolvedValue({}),
     replaceCondition: vi.fn().mockResolvedValue({ success: true }),
+    buildSkillIndexEntry: vi.fn(() => null),
+    buildAllSkillEntries: vi.fn(() => []),
   };
 
   // Mock wiki with configurable return values
   const wikiModule: WikiModule = {
     get: vi.fn().mockResolvedValue(wikiGetResult),
     registerDomain: vi.fn().mockResolvedValue(undefined),
+    indexSkills: vi.fn().mockResolvedValue(undefined),
     prepare: vi.fn().mockResolvedValue({ accepted: true, hash: 'mock-hash' }),
     put: vi.fn().mockResolvedValue(undefined),
     delete: vi.fn().mockResolvedValue(undefined),
@@ -169,10 +172,13 @@ describe('skillSearchTool - Basics', () => {
       listAllTools: vi.fn().mockReturnValue([]),
       compileCondition: vi.fn().mockResolvedValue({}),
       replaceCondition: vi.fn().mockResolvedValue({ success: true }),
+      buildSkillIndexEntry: vi.fn(() => null),
+      buildAllSkillEntries: vi.fn(() => []),
     };
     const wikiModule: WikiModule = {
       get: vi.fn().mockRejectedValue(new Error('Embedding model not available')),
       registerDomain: vi.fn().mockResolvedValue(undefined),
+      indexSkills: vi.fn().mockResolvedValue(undefined),
       prepare: vi.fn().mockResolvedValue({ accepted: true, hash: 'mock-hash' }),
       put: vi.fn().mockResolvedValue(undefined),
       delete: vi.fn().mockResolvedValue(undefined),

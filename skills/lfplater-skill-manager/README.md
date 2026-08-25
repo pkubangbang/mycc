@@ -1,128 +1,130 @@
 # lfplater-skill-manager
 
-A built-in skill that turns accumulated `.mycc/lfplater/` files into reusable
-skills autonomously, using a **deterministic timer** (not LLM-driven spawning)
-to trigger a headless `--role skill-manager` peer.
+A built-in **service skill** that turns accumulated `.mycc/lfplater/` files
+into reusable skills autonomously. Run as a daemon via the `--daemon` flag:
+
+```bash
+mycc --daemon lfplater-skill-manager --skip-healthcheck
+```
+
+The skill declares `service: true` + `service_cron: "*/10 * * * *"` in its
+frontmatter, so the daemon Lead self-nudges every 10 minutes (via croner),
+scans the lfplater backlog, processes any new files, then idles in WAIT mode
+between ticks / external `mail_to` nudges.
 
 ## Architecture
 
 ```
-timer.js (Node.js, deterministic)        skill-manager peer (mycc --auto --role skill-manager)
-┌──────────────────────────────┐         ┌──────────────────────────────────────────────┐
-│ Every N min:                 │         │ Stays alive in --auto mode (WAIT-polls mail).│
-│  1. Scan .mycc/lfplater/     │  mail   │ Receives [MAIL] → loads this skill →         │
-│  2. Find/spawn skill-manager │ ──────> │ scans lfplater → creates/optimizes/merges    │
-│  3. Send batch via mycc-mail │         │ skills → deletes consumed files → idle.      │
-└──────────────────────────────┘         └──────────────────────────────────────────────┘
+mycc --daemon lfplater-skill-manager
+┌──────────────────────────────────────────────────────────────────┐
+│ Daemon Lead (detached, headless, --auto mode, WAIT-polls mail).  │
+│                                                                  │
+│  croner tick (every 10 min)  ─┐                                  │
+│  ───────────────────────────  │                                  │
+│   1. append a [Service nudge] mail                                │
+│   2. WAIT picks it up → loads this skill                          │
+│   3. scans .mycc/lfplater/ → creates/optimizes/merges skills       │
+│   4. deletes consumed lfplater files → idle until next tick        │
+│                                                                  │
+│  Also responds to external mail_to from any peer in the same      │
+│  workDir (discovered via peers()).                               │
+└──────────────────────────────────────────────────────────────────┘
 ```
 
-The timer is plain Node.js — no LLM judgment in the trigger loop. This avoids
-the LLM overconfidence blind-spot (the agent will not reliably self-identify
-the need to spawn a skill-manager). The peer does the LLM work; the timer
-just delivers work to it.
+There is no separate operator script and no LLM judgment in the trigger
+loop — the croner timer is deterministic infrastructure. This avoids the
+LLM overconfidence blind-spot (the agent will not reliably self-identify
+the need to spawn a skill-manager). The daemon does the LLM work; croner
+just nudges it on a schedule.
 
 ## Setup
 
-### 1. Start the timer
-
-From the project working directory:
+From the project working directory, start the daemon (it detaches and
+returns immediately):
 
 ```bash
-# Foreground (for testing):
-node skills/lfplater-skill-manager/timer.js
-
-# As a background task (from inside mycc):
-bg_create(command="node skills/lfplater-skill-manager/timer.js")
-
-# As a system cron job (every 10 min):
-*/10 * * * * cd /path/to/project && node skills/lfplater-skill-manager/timer.js
+mycc --daemon lfplater-skill-manager --skip-healthcheck
 ```
 
-> **Note:** The timer self-terminates after 3 consecutive ticks with no fresh
-> lead in `identity.json` for this working directory (the "orphan checker").
-> At the default 10-min interval, that's a 30-min grace period — enough for a
-> lead restart, but short enough that a dead lead's timer won't run forever.
+The Coordinator spawns the Lead as a detached background process
+(`child.unref()`, no terminal I/O) and exits. The Lead runs headless in
+`--auto` mode, registers its identity with `daemon: true` + `role:
+lfplater-skill-manager`, stamps its OS PID into the heartbeat file, and
+enters WAIT mode. No manual teardown is needed — it stays alive between
+ticks and external nudges.
 
-### 2. Drop lfplater files
+## Dropping lfplater files
 
-The `learn-from-past` hook's "later" branch writes files to `.mycc/lfplater/`.
-The timer picks them up on the next tick and mails the skill-manager peer to
-process them.
+The `learn-from-past` hook's "later" branch writes files to
+`.mycc/lfplater/`. The daemon picks them up on the next croner tick (or
+on an external `mail_to` nudge) and processes them.
 
-### 3. The peer is spawned automatically
+## Stopping the daemon
 
-The timer spawns `mycc --auto --role skill-manager --skip-healthcheck` if no
-fresh skill-manager peer is found in `identity.json`. The peer stays alive
-between batches — no teardown needed.
+The daemon is a detached process with no terminal. To find and kill it,
+use peer discovery — the daemon stamps its OS PID into its heartbeat file,
+which the `peers` tool surfaces:
 
-## Environment variables
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `MYCC_SKILL_MANAGER_INTERVAL_MIN` | `10` | Timer poll interval in minutes |
-| `MYCC_SKILL_MANAGER_ROLE` | `skill-manager` | Role label to match in identity.json |
-
-## Stopping
-
-bg_create tasks survive lead death (detached + unref). The timer and peer
-write PID files so they can be killed even after the lead is gone:
+1. From any mycc in the same working directory, run `peers()`.
+2. Find the entry with `daemon: true` and `role: lfplater-skill-manager`.
+3. Read its `pid: <N> (kill via ...)` line — it gives the platform-specific
+   kill command (`taskkill /PID <N>` on Windows, `kill <N>` on Unix).
 
 ```bash
-# Stop the timer:
-kill "$(cat .mycc/lfplater-skill-manager-timer.pid)"
-# On Windows:
-# taskkill /F /PID "$(Get-Content .mycc/lfplater-skill-manager-timer.pid)"
-
-# Stop the peer:
-kill "$(cat .mycc/lfplater-skill-manager-peer.pid)"
-# On Windows:
-# taskkill /F /PID "$(Get-Content .mycc/lfplater-skill-manager-peer.pid)"
-```
-
-If the PID file is missing (e.g. the timer was started before PID-file support),
-find the process manually:
-
-```bash
-# Unix:
-ps aux | grep 'lfplater-skill-manager/timer.js'
-ps aux | grep 'mycc --auto --role skill-manager'
+# Unix (graceful — lets the Lead run its shutdown handler):
+kill <pid>
+# Force (immediate; stale heartbeat cleaned by the 1h prune sweep):
+kill -9 <pid>
 
 # Windows:
-Get-Process node | Where-Object { $_.Path -like '*mycc*' }
+taskkill /PID <pid>       # graceful
+taskkill /F /PID <pid>     # force
 ```
+
+> **Why killing the PID reliably stops the cron:** croner's `Cron` timer
+> runs its tick callbacks inside the Lead's event loop, and is created with
+> `{ unref: true }` so it never keeps the process alive on its own. There
+> is no separate cron process to orphan — killing the Lead PID terminates
+> the cron with it.
 
 ## How it works (details)
 
-1. **Timer** (`timer.js`): periodically scans `.mycc/lfplater/`. If files
-   exist, it finds a skill-manager peer in `identity.json` (matching
-   `role == "skill-manager"` && `workDir == cwd` && fresh heartbeat). If none
-   is fresh, it spawns one and waits for registration. Then it sends a batch
-   mail via the `mycc-mail` CLI.
+1. **Startup**: `mycc --daemon lfplater-skill-manager` spawns a detached
+   Lead. The Lead forces `--auto` mode, dedups against any existing daemon
+   with the same role + workDir (via `identity.json` + freshness), auto-
+   loads the skill via a system note, and starts the croner timer from the
+   skill's `service_cron`. If the skill has no `service_cron`, it runs as a
+   *passive* daemon (stays alive, triggered only by external `mail_to`).
 
-2. **Peer** (`mycc --auto --role skill-manager`): runs in auto mode, WAIT-
-   polling for mail. On receiving the `[MAIL]` note, it loads this skill
-   (`skill_load(name="lfplater-skill-manager")`), processes the lfplater
-   files (search/create/optimize/merge skills), deletes consumed files, and
-   mails a report back. Then it idles for the next batch.
+2. **Cron tick**: croner fires on the `service_cron` schedule and appends a
+   `[Service nudge]` mail. The WAIT state's poll picks it up and routes to
+   the LLM, which (having loaded this skill) scans `.mycc/lfplater/`,
+   processes files (search/create/optimize/merge skills), deletes consumed
+   files, and mails a report back. Then it idles until the next tick.
 
-3. **Discovery**: the peer registers in `identity.json` with
-   `role: "skill-manager"`. Any lead (or the timer) can find it via
-   `peers()` or `mycc-mail --list`. Stale peer entries (heartbeat > 1h) are
-   pruned on the next register() call (the prune-on-register logic in
-   `src/peer/identity.ts`).
+3. **External nudge**: any peer in the same workDir can `mail_to` the daemon
+   (discovered via `peers()`) to trigger an immediate processing pass
+   outside the cron schedule.
+
+4. **Discovery**: the daemon registers in `identity.json` with `daemon:
+   true` and `role: "lfplater-skill-manager"`, and stamps its PID into its
+   heartbeat file. Any lead can find it via `peers()` and read the kill
+   target. Stale entries (heartbeat > 1h) are pruned on the next
+   `register()` call (prune-on-register logic in `src/peer/identity.ts`).
 
 ## Files
 
 | File | Purpose |
 |------|---------|
-| `SKILL.md` | The workflow the peer loads on receiving mail |
-| `timer.js` | The deterministic periodic trigger (standalone Node.js) |
+| `SKILL.md` | The workflow the daemon loads on each cron tick / external nudge |
 | `README.md` | This file |
 
-## Why a timer, not an LLM hook?
+## Why a daemon, not an LLM hook?
 
-The original design had the `learn-from-past` hook instruct the lead agent's
-LLM to spawn a skill-manager when lfplater files accumulate. This hit the
-LLM overconfidence blind-spot (commit `c9c4f7b`): the LLM does not reliably
-self-identify the need for such an action. The timer replaces that with
-deterministic infrastructure — no LLM judgment is involved in the trigger.
+The original design had the `learn-from-past` hook instruct the lead
+agent's LLM to spawn a skill-manager when lfplater files accumulate. This
+hit the LLM overconfidence blind-spot (commit `c9c4f7b`): the LLM does not
+reliably self-identify the need for such an action. The `--daemon` mode
+replaces both the old LLM-spawn path and the earlier `peer-operator.js`
+script with a single deterministic mechanism — a croner timer inside a
+detached Lead. No LLM judgment is involved in the trigger.

@@ -106,7 +106,7 @@ const args = minimist(process.argv.slice(2), {
   // putting it in `boolean` would swallow `--serve 9000` (port ignored).
   boolean: ['v', 'verbose', 'skip-healthcheck', 'setup', 'debug-eval', 'debug-tp', 'debug-prompt', 'auto', 'debug-autofly', 'allow-plan-off'],
   string: [
-    'from', 'port', 'host', 'max-upload-mb', 'autofly', 'role',
+    'from', 'port', 'host', 'max-upload-mb', 'autofly', 'daemon',
     'ollama-host', 'ollama-api-key', 'ollama-model', 'ollama-vision-model', 'ollama-embedding-model',
     'deepseek-host', 'deepseek-api-key', 'deepseek-model',
     'api-provider', 'token-threshold', 'editor', 'skill-match-threshold',
@@ -149,7 +149,6 @@ function buildCmdArgsEnv(parsed: typeof args): Record<string, string> {
     'token-threshold': 'TOKEN_THRESHOLD',
     'editor': 'EDITOR',
     'skill-match-threshold': 'SKILL_MATCH_THRESHOLD',
-    'role': 'MYCC_ROLE',
   };
   for (const [argKey, envKey] of Object.entries(map)) {
     const value = parsed[argKey];
@@ -257,21 +256,73 @@ export function shouldAuto(): boolean {
 }
 
 /**
- * Get the instance role label (--role CLI flag or MYCC_ROLE env var).
+ * Get the daemon skill name from the --daemon CLI arg.
  *
- * Used to tag the instance's identity.json entry so peers can discover
- * instances by role (e.g. "skill-manager" for a headless skill-management
- * peer). Returns undefined if no role is set (the default for productivity
- * instances — the field is absent from their identity entry).
+ * When mycc is started with `--daemon <skill-name>`, the Lead process runs
+ * headless in auto mode and auto-loads the named skill. When `--daemon` is
+ * given without a skill name, the Lead runs as a passive auto-mode daemon
+ * (no skill, waits for external mail_to). Returns undefined when --daemon
+ * is not set (normal interactive mode) or when --daemon is bare (empty
+ * string).
  *
  * Reads parsed CLI args directly (not process.env) to avoid inheriting a
- * stale MYCC_ROLE env var from a parent process (e.g. a skill-manager peer
- * spawned by a productivity lead must not inherit the lead's absent role,
- * and a productivity lead must not inherit a peer's role).
+ * stale value from a parent process.
  */
-export function getRole(): string | undefined {
-  const r = args.role;
-  return (typeof r === 'string' && r.length > 0) ? r : undefined;
+export function getDaemonSkill(): string | undefined {
+  const d = args.daemon;
+  return (typeof d === 'string' && d.length > 0) ? d : undefined;
+}
+
+/**
+ * Check if daemon mode is requested via the --daemon CLI arg.
+ *
+ * Returns true for both `--daemon` (bare) and `--daemon <skill-name>`. When
+ * true, the Lead runs headless in auto mode (no terminal interaction). Only
+ * daemon mode activates the cron timer for skills with `service_cron`.
+ *
+ * Reads parsed CLI args directly (not process.env) to avoid inheriting a
+ * stale value from a parent process.
+ */
+export function shouldDaemon(): boolean {
+  return args.daemon !== undefined;
+}
+
+/**
+ * Secret-bearing flags that must NEVER appear in the system prompt.
+ * Used by {@link getLaunchArgs} to redact their values to `***`.
+ */
+const SECRET_FLAGS = ['ollama-api-key', 'deepseek-api-key'];
+
+/**
+ * Return a sanitized summary of the CLI flags this instance was launched with,
+ * suitable for inclusion in the system prompt so the LLM can self-identify
+ * how it was started (e.g. `--auto --daemon skill-manager --skip-healthcheck`).
+ *
+ * Secret-bearing flags (--ollama-api-key, --deepseek-api-key) are redacted to
+ * `--<flag> ***` — the LLM sees that a key was provided without learning its
+ * value. Flags that are `false`/`null`/`undefined` (not set) are omitted.
+ * Positional args (`_`) are skipped. Returns `(none)` when no flags are set.
+ *
+ * Reads the module-private parsed `args` object directly (not process.env)
+ * so the launch-time CLI invocation is reported faithfully.
+ */
+export function getLaunchArgs(): string {
+  const parts: string[] = [];
+  for (const [key, value] of Object.entries(args)) {
+    if (key === '_') continue;              // positional args
+    if (SECRET_FLAGS.includes(key)) {
+      parts.push(`--${key} ***`);
+      continue;
+    }
+    if (value === true) {
+      parts.push(`--${key}`);
+    } else if (value === false || value === null || value === undefined) {
+      continue;                             // flag not set
+    } else {
+      parts.push(`--${key} ${value}`);
+    }
+  }
+  return parts.length > 0 ? parts.join(' ') : '(none)';
 }
 
 /**
@@ -628,6 +679,18 @@ export function getWikiLogsDir(): string {
 
 export function getWikiDbDir(): string {
   return path.join(getWikiDir(), 'db');
+}
+
+/**
+ * Path to the wiki-DB-level reindex lockfile, co-located with the LanceDB
+ * table it protects (`~/.mycc-store/wiki/reindex.lock`). The parent
+ * `getWikiDir()` is created by `ensureDirs()`, so the lockfile's directory
+ * always exists. Used by `WikiManager.acquireReindexLock()` to serialize
+ * concurrent `indexAllSkillsToWiki` runs across all mycc instances sharing
+ * the (user-level) wiki DB.
+ */
+export function getWikiReindexLockFile(): string {
+  return path.join(getWikiDir(), 'reindex.lock');
 }
 
 export function getWikiDomainsFile(): string {

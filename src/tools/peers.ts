@@ -81,6 +81,15 @@ export const peersTool: ToolDefinition = {
       const tag = isSelf ? ' (self)' : '';
       const state = fresh ? 'online' : 'offline';
       const roleTag = id.role ? `\n    role: ${id.role}` : '';
+      const daemonTag = id.daemon ? `\n    daemon: true` : '';
+      // Surface the OS PID so another MYCC can terminate the instance
+      // (primarily daemons — detached Leads with no terminal). croner's
+      // timer lives inside the Lead's event loop and is unref'd, so killing
+      // this PID stops the cron with no orphaned timer. On Windows use
+      // `taskkill /PID <pid>`; on Unix `kill <pid>` (SIGTERM lets the Lead
+      // run its graceful shutdown; SIGKILL tears it down immediately).
+      const peerPid = ctx.peer.getPid(id.sessionId);
+      const pidTag = peerPid !== null ? `\n    pid: ${peerPid} (kill via ${process.platform === 'win32' ? `taskkill /PID ${peerPid}` : `kill ${peerPid}`})` : '';
       // Surface recent briefs so the lead can monitor peer progress.
       const briefs = ctx.peer.getBriefs(id.sessionId);
       const briefLine = briefs.length > 0
@@ -90,7 +99,7 @@ export const peersTool: ToolDefinition = {
           }).join('\n')}`
         : '';
       rows.push(
-        `- session=${id.sessionId}${tag}\n    workDir: ${id.workDir}\n    status: ${state}\n    started: ${started}${roleTag}${briefLine}`,
+        `- session=${id.sessionId}${tag}\n    workDir: ${id.workDir}\n    status: ${state}\n    started: ${started}${roleTag}${daemonTag}${pidTag}${briefLine}`,
       );
     }
 

@@ -133,8 +133,8 @@ Example response:
 
 All deferred summary files live in `.mycc/lfplater/`. Each file is a standalone
 markdown document following the template above. The `lfplater-skill-manager`
-peer (a headless mycc instance launched with `--role skill-manager`) processes
-these files asynchronously:
+daemon (a headless mycc instance launched with
+`mycc --daemon lfplater-skill-manager`) processes these files asynchronously:
 
 1. Reads each `.mycc/lfplater/` file
 2. Searches for existing skills via `skill_search`

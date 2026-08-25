@@ -268,6 +268,8 @@ See the following documentation for detailed explanations:
 5. Debug by hit F5 (vscode debug mode)
 6. Once the code is ready, run `npm link` to update the global `mycc` executive.
 
+> Note: this repo should enable the skill manager.
+
 ## License
 
 MIT

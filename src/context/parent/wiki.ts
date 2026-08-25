@@ -20,9 +20,10 @@ import type {
   WALEntry,
   RebuildResult,
   CoreModule,
+  SkillIndexEntry,
 } from '../../types.js';
-import { getEmbedding, EMBEDDING_DIM, NAMESPACE } from '../../engine/rag-provider.js';
-import { getWikiLogsDir, getWikiDbDir, getWikiDomainsFile, ensureDirs } from '../../config.js';
+import { getEmbedding, getEmbeddings, EMBEDDING_DIM, NAMESPACE } from '../../engine/rag-provider.js';
+import { getWikiLogsDir, getWikiDbDir, getWikiDomainsFile, getWikiReindexLockFile, getHeartbeatFile, ensureDirs, getMyccDir, getSessionContext } from '../../config.js';
 
 const DUPLICATE_THRESHOLD = 0.95;
 const MIN_CONTENT_LENGTH = 50;
@@ -71,6 +72,371 @@ export class WikiManager implements WikiModule {
         createdAt: new Date().toISOString(),
       };
       this.table = await this.db.createTable(this.tableName, [initialRecord]);
+    }
+  }
+
+  // ============================================================
+  // Skill Re-index (wiki-DB-level) — moved here from loader.ts
+  // ============================================================
+
+  /**
+   * Freshness window for the reindex lock — mirrors FRESHNESS_WINDOW_MS in
+   * src/peer/identity.ts (90s). A lock holder whose latest heartbeat is
+   * older than this is considered stale (crashed without releasing) and the
+   * lock may be stolen.
+   */
+  private static readonly REINDEX_FRESHNESS_MS = 90_000;
+
+  /**
+   * One-shot crash handlers so a SIGINT/SIGTERM during a reindex still
+   * releases the lock. Registered on first acquire. SIGKILL leaves a stale
+   * lock, which the freshness check on the next acquire recovers from.
+   */
+  private reindexLockHandlersRegistered = false;
+
+  /**
+   * Re-index a set of skills into the wiki "skills" domain.
+   *
+   * The caller (loader) builds the {@link SkillIndexEntry} array — it owns
+   * skill discovery and scoping (the scope-prefixed title + Scope/Name/
+   * Description/Keywords content + content hash). This method owns the
+   * wiki-DB re-index:
+   *  1. Register the "skills" domain.
+   *  2. Cache check — if every entry's content hash matches the on-disk
+   *     snapshot (and the RAG namespace is unchanged), skip entirely.
+   *  3. Acquire the wiki-DB-level reindex lock (see {@link acquireReindexLock}).
+   *     If another live instance is re-indexing, skip — the caller's watcher
+   *     will fire again or its next skill_load catches it up.
+   *  4. Batch path (under the lock): one table scan (getByDomain, 0
+   *     embeddings), an in-memory diff, ONE batched embedding call for
+   *     changed/new skills, batch delete of stale records, ONE batchPut
+   *     insert, then write the cache.
+   *
+   * The lock is acquired and released INSIDE this method (try/finally), so
+   * no caller needs to know about the lock — all re-index entry points are
+   * serialized by calling this single method.
+   *
+   * Optimized to avoid the per-skill Ollama round-trips that previously made
+   * this step block startup.
+   */
+  async indexSkills(entries: SkillIndexEntry[]): Promise<void> {
+    // 1. Register 'skills' domain
+    await this.registerDomain('skills', 'Skills indexed for semantic matching');
+
+    // 2. Cache check — skip the whole pass if nothing changed.
+    if (this.isSkillIndexCacheValid(entries)) {
+      this.core.brief('info', 'wiki', `Indexed ${entries.length} skills (cached)`);
+      return;
+    }
+
+    // 3. Acquire the reindex lock. If another live instance is re-indexing,
+    //    skip — the cache check will still skip next time if that instance
+    //    finished, and a missed fs.watch event is caught by the next
+    //    skill_load (per-skill re-index, a lighter path that doesn't need
+    //    this lock).
+    if (!this.acquireReindexLock()) {
+      this.core.brief('info', 'wiki', 'Reindex skipped: another instance is reindexing');
+      return;
+    }
+    try {
+      // 4. Batch path — one table scan for all existing 'skills' records.
+      const existing = await this.getByDomain('skills');
+      const existingByTitle = new Map<string, { hash: string; content: string }>();
+      for (const r of existing) {
+        existingByTitle.set(r.document.title, { hash: r.hash, content: r.document.content });
+      }
+
+      // In-memory diff: partition into unchanged / stale / new
+      const toDelete: string[] = [];
+      const toAdd: WikiDocument[] = [];
+      for (const { document } of entries) {
+        const found = existingByTitle.get(document.title);
+        if (found && found.content === document.content) {
+          continue; // unchanged
+        }
+        if (found) {
+          toDelete.push(found.hash); // content changed → delete old before re-add
+        }
+        toAdd.push(document);
+      }
+      // Detect orphaned existing records (titles no longer present) and delete them.
+      //
+      // IMPORTANT: the wiki DB is shared across ALL projects (it lives in
+      // ~/.mycc-store/wiki, not under the project). Skill record titles are
+      // prefixed with their scope — `[user]:`, `[built-in]:`, or
+      // `<project-basename>:`. A record written by project A therefore has a
+      // title prefix project B cannot match, so it must NOT be treated as an
+      // orphan by project B — otherwise two projects would mutually wipe each
+      // other's project-scoped skill records on every startup.
+      //
+      // Only records whose title prefix is in THIS project's own scope set
+      // ([user], [built-in], and the current project basename) are eligible
+      // for orphan deletion. Records from other projects are left untouched.
+      const projectName = path.basename(process.cwd());
+      const ownScopePrefixes = new Set(['[user]:', '[built-in]:', `${projectName}:`]);
+      const isOwnScope = (title: string): boolean => {
+        for (const prefix of ownScopePrefixes) {
+          if (title.startsWith(prefix)) return true;
+        }
+        return false;
+      };
+      const currentTitles = new Set(entries.map((e) => e.document.title));
+      for (const [title, rec] of existingByTitle) {
+        if (currentTitles.has(title)) continue; // still present
+        if (!isOwnScope(title)) continue; // belongs to another project — leave it
+        toDelete.push(rec.hash);
+      }
+
+      // Batch embed all new/changed documents in ONE Ollama call
+      let embeddings: number[][] = [];
+      if (toAdd.length > 0) {
+        embeddings = await getEmbeddings(
+          toAdd.map((d) => d.content),
+          'document',
+        );
+      }
+
+      // Batch delete stale/orphaned records
+      for (const hash of toDelete) {
+        await this.delete(hash);
+      }
+
+      // Batch insert all new/changed documents in ONE table.add() call
+      if (toAdd.length > 0) {
+        const batchEntries = toAdd.map((document, i) => ({ document, embedding: embeddings[i] }));
+        await this.batchPut(batchEntries);
+      }
+
+      // Write the cache so the next startup can skip if nothing changed
+      this.writeSkillIndexCache(entries);
+
+      this.core.brief('info', 'wiki', `Indexed ${entries.length} skills`);
+    } finally {
+      this.releaseReindexLock();
+    }
+  }
+
+  /**
+   * Path to the skill-index cache file (under project .mycc/, gitignored).
+   * The cache stores a snapshot of every indexed skill's title→content hash
+   * plus the RAG namespace, so unchanged skills can be skipped on restart.
+   */
+  private getSkillIndexCachePath(): string {
+    return path.join(getMyccDir(), 'skill-index-cache.json');
+  }
+
+  /**
+   * Read the on-disk skill-index cache and return whether it covers every
+   * current skill with a matching content hash, under the same RAG namespace.
+   */
+  private isSkillIndexCacheValid(entries: SkillIndexEntry[]): boolean {
+    const cachePath = this.getSkillIndexCachePath();
+    if (!fs.existsSync(cachePath)) return false;
+
+    try {
+      const raw = fs.readFileSync(cachePath, 'utf-8');
+      const cache = JSON.parse(raw) as {
+        namespace?: string;
+        skills?: Record<string, string>;
+      };
+
+      // Namespace change (embedding model swap) invalidates the cache —
+      // vectors live in a different LanceDB table.
+      if (cache.namespace !== NAMESPACE) return false;
+      if (!cache.skills) return false;
+
+      // Every current skill must be present with a matching content hash
+      const cached = cache.skills;
+      if (Object.keys(cached).length !== entries.length) return false;
+      for (const { document, contentHash } of entries) {
+        if (cached[document.title] !== contentHash) return false;
+      }
+      return true;
+    } catch {
+      return false; // corrupt cache → treat as miss
+    }
+  }
+
+  /**
+   * Persist the skill-index cache snapshot to disk.
+   */
+  private writeSkillIndexCache(entries: SkillIndexEntry[]): void {
+    try {
+      ensureDirs();
+      const cachePath = this.getSkillIndexCachePath();
+      const skills: Record<string, string> = {};
+      for (const { document, contentHash } of entries) {
+        skills[document.title] = contentHash;
+      }
+      const cache = { namespace: NAMESPACE, skills };
+      fs.writeFileSync(cachePath, JSON.stringify(cache, null, 2), 'utf-8');
+    } catch {
+      // Cache write failure is non-fatal — indexing already succeeded.
+    }
+  }
+
+  // ============================================================
+  // Reindex Lock (private — used only by indexSkills)
+  // ============================================================
+
+  /**
+   * Try to acquire the wiki-DB-level reindex lock
+   * (`~/.mycc-store/wiki/reindex.lock`).
+   *
+   * Acquire logic:
+   *  1. `fs.openSync(lockPath, 'wx')` — atomic create-if-not-exists. On
+   *     success, write my `{sessionId, pid, startedAt, namespace}` and
+   *     return true.
+   *  2. On EEXIST: read the file.
+   *     - namespace mismatch (embedding model changed) → steal (overwrite).
+   *     - holder's session is stale (no fresh heartbeat, or PID is dead)
+   *       → steal.
+   *     - holder is fresh (alive, same namespace) → skip (return false).
+   *  3. On any read/parse error → treat as stale (steal) — a corrupt lock
+   *     is useless.
+   *
+   * Returns true if this instance now holds the lock, false if another live
+   * instance is re-indexing.
+   */
+  private acquireReindexLock(): boolean {
+    const lockPath = getWikiReindexLockFile();
+    const myInfo = {
+      sessionId: getSessionContext(),
+      pid: process.pid,
+      startedAt: Date.now(),
+      namespace: NAMESPACE,
+    };
+
+    // 1. Atomic create-if-not-exists.
+    try {
+      const fd = fs.openSync(lockPath, 'wx');
+      fs.writeSync(fd, JSON.stringify(myInfo));
+      fs.closeSync(fd);
+      this.registerReindexCrashHandlers();
+      return true;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'EEXIST') {
+        // Unexpected error (e.g. permission denied) — can't acquire. Skip
+        // rather than risk concurrent writes.
+        this.core.brief('warn', 'wiki', `Reindex lock acquire error: ${(err as Error).message}`);
+        return false;
+      }
+    }
+
+    // 2. Lock exists — inspect the holder.
+    let holder: { sessionId?: string; pid?: number; startedAt?: number; namespace?: string };
+    try {
+      holder = JSON.parse(fs.readFileSync(lockPath, 'utf-8'));
+    } catch {
+      // Corrupt lock — steal it.
+      this.stealReindexLock(lockPath, myInfo);
+      return true;
+    }
+
+    // 2a. Namespace mismatch (embedding model swapped) → invalidate.
+    if (holder.namespace !== NAMESPACE) {
+      this.stealReindexLock(lockPath, myInfo);
+      return true;
+    }
+
+    // 2b. Stale holder? Check heartbeat freshness + PID liveness.
+    if (this.isReindexLockStale(holder)) {
+      this.stealReindexLock(lockPath, myInfo);
+      return true;
+    }
+
+    // 2c. Holder is fresh and same namespace — another live instance is
+    // re-indexing. Skip.
+    return false;
+  }
+
+  /**
+   * Overwrite the lockfile with our info (steal a stale/corrupt/foreign lock).
+   * Best-effort; a concurrent steal by another instance is harmless (last
+   * writer wins, and the loser's freshness check will skip on its next tick).
+   */
+  private stealReindexLock(lockPath: string, myInfo: object): void {
+    try {
+      fs.writeFileSync(lockPath, JSON.stringify(myInfo), 'utf-8');
+      this.registerReindexCrashHandlers();
+    } catch {
+      this.core.brief('warn', 'wiki', 'Reindex lock steal write failed — will retry next tick');
+    }
+  }
+
+  /**
+   * Is a lock holder stale (its process is dead or its heartbeat is older
+   * than the freshness window)? Mirrors the absolute-window check in
+   * identity.ts's isFresh(), plus a PID-liveness probe.
+   */
+  private isReindexLockStale(holder: { sessionId?: string; pid?: number }): boolean {
+    // PID-dead check: process.kill(pid, 0) throws if no such process.
+    if (typeof holder.pid === 'number' && holder.pid > 0) {
+      try {
+        process.kill(holder.pid, 0);
+        // PID is alive — NOT stale on this signal alone. Fall through to the
+        // heartbeat check, which is the stronger signal (a zombie holding the
+        // lock but no longer beating is stale).
+      } catch {
+        // PID is dead → stale.
+        return true;
+      }
+    }
+
+    // Heartbeat freshness check: mirror identity.ts's absolute window.
+    if (holder.sessionId) {
+      const hbFile = getHeartbeatFile(holder.sessionId);
+      if (fs.existsSync(hbFile)) {
+        try {
+          const parsed = JSON.parse(fs.readFileSync(hbFile, 'utf-8')) as Record<string, unknown>;
+          const ts = Array.isArray(parsed.timestamps) ? parsed.timestamps
+            : Array.isArray(parsed.heartbeats) ? parsed.heartbeats
+            : [];
+          if (ts.length > 0) {
+            const latest = ts[ts.length - 1] as number;
+            return Date.now() - latest > WikiManager.REINDEX_FRESHNESS_MS;
+          }
+        } catch {
+          // Corrupt heartbeat — can't confirm freshness; treat as stale so
+          // we don't block forever on a dead holder.
+          return true;
+        }
+      }
+      // No heartbeat file at all — the holder may be a non-mycc process or a
+      // crashed instance that never beat. Treat as stale (PID check above is
+      // the tiebreaker; if the PID is alive we already returned false there).
+    }
+
+    // No PID and no usable heartbeat — conservatively treat as stale so a
+    // corrupt/ancient lock doesn't block reindexing forever.
+    return true;
+  }
+
+  /**
+   * Register one-shot SIGINT/SIGTERM handlers that release the reindex lock
+   * on crash. Idempotent (registered once per process). Best-effort: SIGKILL
+   * bypasses these, leaving a stale lock recovered by the next acquire's
+   * freshness check.
+   */
+  private registerReindexCrashHandlers(): void {
+    if (this.reindexLockHandlersRegistered) return;
+    this.reindexLockHandlersRegistered = true;
+    const release = () => {
+      try { fs.unlinkSync(getWikiReindexLockFile()); } catch { /* best-effort */ }
+    };
+    process.once('SIGINT', () => { release(); process.exit(0); });
+    process.once('SIGTERM', () => { release(); process.exit(0); });
+  }
+
+  /**
+   * Release the reindex lock. Safe to call when not held (unlink is
+   * best-effort). Always called in a `finally` by {@link indexSkills}.
+   */
+  private releaseReindexLock(): void {
+    try {
+      fs.unlinkSync(getWikiReindexLockFile());
+    } catch {
+      // Already gone or never acquired — best-effort.
     }
   }
 

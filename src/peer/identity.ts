@@ -68,10 +68,20 @@ export interface BriefEntry {
  * current schema adds a `briefs` array (last {@link MAX_BRIEFS} briefs) and
  * renames `timestamps` → `heartbeats`. `readHeartbeatData` accepts BOTH
  * shapes for backward-compat with files written by older instances.
+ *
+ * `pid` (the recording process's OS PID) is written so peers can discover
+ * how to terminate the instance — primarily for daemon mode, where the Lead
+ * is a detached background process with no terminal. `pid` lives in the
+ * heartbeat (not identity.json) so it stays live even across Coordinator
+ * restarts and is refreshed every beat. The cron timer croner runs lives
+ * INSIDE the Lead's event loop (and is `unref`'d), so killing this PID stops
+ * the cron with no orphaned timer.
  */
 interface HeartbeatData {
   heartbeats: number[];
   briefs: BriefEntry[];
+  /** Recording process's OS PID (so peers can kill the instance). */
+  pid?: number;
 }
 
 /**
@@ -144,12 +154,15 @@ function readHeartbeatData(sessionId: string): HeartbeatData {
   try {
     const content = fs.readFileSync(hbFile, 'utf-8');
     const parsed = JSON.parse(content) as Record<string, unknown>;
+    // pid: read from either schema (older files lack it → undefined).
+    const pid = typeof parsed.pid === 'number' ? parsed.pid : undefined;
     // Legacy schema: { timestamps: number[] }
     const ts = parsed.timestamps;
     if (Array.isArray(ts)) {
       return {
         heartbeats: ts as number[],
         briefs: Array.isArray(parsed.briefs) ? (parsed.briefs as BriefEntry[]) : [],
+        pid,
       };
     }
     // Current schema: { heartbeats: number[], briefs: BriefEntry[] }
@@ -157,6 +170,7 @@ function readHeartbeatData(sessionId: string): HeartbeatData {
     return {
       heartbeats: Array.isArray(hb) ? (hb as number[]) : [],
       briefs: Array.isArray(parsed.briefs) ? (parsed.briefs as BriefEntry[]) : [],
+      pid,
     };
   } catch {
     return { heartbeats: [], briefs: [] };
@@ -181,12 +195,15 @@ function readBriefs(sessionId: string): BriefEntry[] {
 
 /**
  * Write a heartbeat file atomically with the current schema
- * `{ heartbeats: [...], briefs: [...] }`. Preserves existing briefs.
+ * `{ heartbeats: [...], briefs: [...], pid }`. Preserves existing briefs.
+ * `pid` is stamped by the caller ({@link IdentityManager} passes its own
+ * `process.pid`), not read back — so a fresh beat always carries the live PID.
  */
-function writeHeartbeats(sessionId: string, heartbeats: number[]): void {
+function writeHeartbeats(sessionId: string, heartbeats: number[], pid: number): void {
   const data: HeartbeatData = {
     heartbeats,
     briefs: readBriefs(sessionId),
+    pid,
   };
   atomicWrite(getHeartbeatFile(sessionId), JSON.stringify(data, null, 2));
 }
@@ -216,13 +233,15 @@ export class IdentityManager {
   private workDir: string;
   private mailboxPath: string;
   private role?: string;
+  private daemon?: boolean;
   private intervalHandle: ReturnType<typeof setInterval> | null = null;
 
-  constructor(sessionId: string, workDir: string, mailboxPath: string, role?: string) {
+  constructor(sessionId: string, workDir: string, mailboxPath: string, role?: string, daemon?: boolean) {
     this.sessionId = sessionId;
     this.workDir = workDir;
     this.mailboxPath = mailboxPath;
     this.role = role;
+    this.daemon = daemon;
   }
 
   /**
@@ -251,6 +270,7 @@ export class IdentityManager {
         mailbox: this.mailboxPath,
         startedAt: Date.now(),
         ...(this.role ? { role: this.role } : {}),
+        ...(this.daemon ? { daemon: true } : {}),
       };
       writeIdentityMap(map);
       // Re-read to verify our entry survived (no clobber by a concurrent write).
@@ -309,12 +329,14 @@ export class IdentityManager {
 
   /**
    * Write a single heartbeat: push Date.now(), trim to last 3, write atomically.
+   * Stamps `process.pid` into the file so peers can discover a kill target
+   * (primarily for daemon mode — the detached Lead has no terminal).
    */
   private beat(): void {
     const timestamps = readHeartbeats(this.sessionId);
     timestamps.push(Date.now());
     const trimmed = timestamps.slice(-MAX_HEARTBEATS);
-    writeHeartbeats(this.sessionId, trimmed);
+    writeHeartbeats(this.sessionId, trimmed, process.pid);
   }
 
   /**
@@ -363,6 +385,21 @@ export class IdentityManager {
   getLatestHeartbeat(sessionId: string): number | null {
     const ts = readHeartbeats(sessionId);
     return ts.length > 0 ? ts[ts.length - 1] : null;
+  }
+
+  /**
+   * Read a remote session's OS PID from its heartbeat file, or null if the
+   * session has no heartbeat file or the file predates the `pid` field.
+   * Used by the `peers` tool to surface a kill target — primarily for daemon
+   * mode, where the Lead is a detached background process with no terminal
+   * and no PID recorded in identity.json. The cron timer croner runs lives
+   * inside the Lead's event loop (and is `unref`'d), so killing this PID
+   * stops the cron with no orphaned timer. Returns null on the child
+   * (NoopPeerModule).
+   */
+  getPid(sessionId: string): number | null {
+    const data = readHeartbeatData(sessionId);
+    return typeof data.pid === 'number' ? data.pid : null;
   }
 
   /**

@@ -80,7 +80,9 @@ export function createMockContext(workdir: string): AgentContext {
       awaitExit: vi.fn(),
     } as never,
     team: {} as never,
-    wiki: {} as never,
+    wiki: {
+      indexSkills: vi.fn().mockResolvedValue(undefined),
+    } as never,
     peer: {
       listIdentities: vi.fn(() => []),
       isFresh: vi.fn(() => false),
@@ -95,6 +97,7 @@ export function createMockContext(workdir: string): AgentContext {
       recordBrief: vi.fn(),
       getBriefs: vi.fn(() => []),
       getLatestHeartbeat: vi.fn(() => null),
+      getPid: vi.fn(() => null),
       setOnChannelJoin: vi.fn(),
     } as never,
   };

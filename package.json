@@ -32,6 +32,7 @@
     "@lancedb/lancedb": "^0.27.2",
     "@vitejs/plugin-vue": "^6.0.0",
     "chalk": "^6.0.0",
+    "croner": "^10.0.1",
     "express": "^5.0.0",
     "gray-matter": "^4.0.3",
     "jsep": "^1.4.0",

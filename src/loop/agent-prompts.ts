@@ -13,6 +13,7 @@ import {
   OBJECT_MEANINGS,
 } from '../context/grant/intent-parser.js';
 import { getShellInfo, type ShellKind } from '../utils/shell-detect.js';
+import { getLaunchArgs } from '../config.js';
 
 // ============================================================================
 // Platform Detection
@@ -306,11 +307,27 @@ Pinned todos can be automatically reactivated (marked back to not done) when a c
 }
 
 // ============================================================================
+// Launch Args Section (shared across all prompts)
+// ============================================================================
+
+/**
+ * Expose the launch argv (sanitized — secrets redacted) so the LLM can
+ * self-identify how it was started. A daemon Lead sees
+ * `--daemon lfplater-skill-manager --skip-healthcheck` and knows its role; a
+ * normal lead sees `(none)`. Generic — no `if (role)` special-casing.
+ */
+function buildLaunchArgsSection(): string {
+  return `## Launch Args\nYou were started with: \`${getLaunchArgs()}\``;
+}
+
+// ============================================================================
 // Shared Common Sections (used by all normal mode prompts)
 // ============================================================================
 
 function buildCommonSections(): string {
   return [
+    buildLaunchArgsSection(),
+    '',
     buildVerificationSection(),
     '',
     buildPlatformSection(),
@@ -470,6 +487,8 @@ But your FINAL plan must be:
 - Specific about what files to change
 - Specific about the implementation steps
 - Explicit about assumptions and dependencies
+
+${buildLaunchArgsSection()}
 
 ${buildVerificationSection()}
 

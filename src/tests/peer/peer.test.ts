@@ -326,6 +326,40 @@ describe('IdentityManager', () => {
     const id = new IdentityManager(SID_A, '/work/a', makeMailboxPath(SID_A));
     expect(id.getBriefs(SID_B)).toEqual([]);
   });
+
+  it('beat() stamps process.pid into the heartbeat file (kill target for daemons)', () => {
+    const id = new IdentityManager(SID_A, '/work/a', makeMailboxPath(SID_A));
+    id.startHeartbeat();
+    id.stopHeartbeat();
+    const raw = JSON.parse(fs.readFileSync(heartbeatFile(SID_A), 'utf-8'));
+    expect(raw.pid).toBe(process.pid);
+  });
+
+  it('getPid() reads back the PID stamped by a beat', () => {
+    const id = new IdentityManager(SID_A, '/work/a', makeMailboxPath(SID_A));
+    id.startHeartbeat();
+    id.stopHeartbeat();
+    expect(id.getPid(SID_A)).toBe(process.pid);
+  });
+
+  it('getPid() returns null for a heartbeat file without a pid field (legacy/backward-compat)', () => {
+    // Legacy {timestamps} file has no pid — getPid must degrade to null.
+    writeHeartbeatRaw(SID_A, [100, 200, 300]);
+    const id = new IdentityManager(SID_A, '/work/a', makeMailboxPath(SID_A));
+    expect(id.getPid(SID_A)).toBeNull();
+  });
+
+  it('getPid() returns null for a session with no heartbeat file', () => {
+    const id = new IdentityManager(SID_A, '/work/a', makeMailboxPath(SID_A));
+    expect(id.getPid(SID_B)).toBeNull();
+  });
+
+  it('PeerManager.getPid() forwards to IdentityManager', () => {
+    const peer = new PeerManager(SID_A, '/work/a', makeMailboxPath(SID_A));
+    peer.start();
+    expect(peer.getPid(SID_A)).toBe(process.pid);
+    peer.stop();
+  });
 });
 
 describe('ChannelManager', () => {

@@ -8,12 +8,16 @@ import { skillLoadTool } from '../../tools/skill_load.js';
 import { createMockContext } from './test-utils.js';
 import type { AgentContext, Skill, SkillModule } from '../../types.js';
 
-// Mock the loader singleton
+// Mock the loader singleton. buildSkillIndexEntry returns a minimal valid
+// SkillIndexEntry so skill_load's ctx.wiki.indexSkills([entry]) path runs.
 vi.mock('../../context/shared/loader.js', () => ({
   loader: {
     getSkillLayer: vi.fn(() => 'project'),
-    indexSkillToWiki: vi.fn(() => Promise.resolve()),
-    indexAllSkillsToWiki: vi.fn(() => Promise.resolve()),
+    buildSkillIndexEntry: vi.fn(() => ({
+      document: { domain: 'skills', title: '[project]:test', content: 'test', references: [] },
+      contentHash: 'deadbeef',
+    })),
+    buildAllSkillEntries: vi.fn(() => []),
   },
 }));
 
@@ -28,6 +32,8 @@ function createMockContextWithSkills(workdir: string, skills: Skill[]): AgentCon
     listAllTools: vi.fn().mockReturnValue([]),
     compileCondition: vi.fn().mockResolvedValue({}),
     replaceCondition: vi.fn().mockResolvedValue({ success: true }),
+    buildSkillIndexEntry: vi.fn(() => null),
+    buildAllSkillEntries: vi.fn(() => []),
   };
 
   const ctx = createMockContext(workdir);

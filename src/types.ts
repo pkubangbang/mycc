@@ -245,6 +245,13 @@ export interface Skill {
   content: string;
   when?: string;  // Natural language hook condition
   sourceFile?: string;  // Source file path (relative to skills dir)
+  /** Declares this skill CAN be run as a daemon service via `--daemon <name>`.
+   *  Absent → not a service. */
+  service?: boolean;
+  /** Cron expression (e.g. "0/10 * * * *", slash-star-10) for scheduled
+   *  self-nudge mail when running as a daemon. Absent with `service: true` →
+   *  passive daemon (stays alive, triggered only by external mail_to). */
+  service_cron?: string;
 }
 
 // ============================================================================
@@ -530,9 +537,11 @@ export interface IdentityEntry {
   workDir: string;
   mailbox: string;
   startedAt: number;
-  /** Optional role label (--role CLI flag / MYCC_ROLE env). Tags the
-   *  instance so peers can discover it by role (e.g. "skill-manager").
-   *  Absent for productivity instances (no --role). */
+  /** Daemon mode flag (true when started with --daemon). */
+  daemon?: boolean;
+  /** Optional role label: the skill name loaded by --daemon <skill-name>.
+   *  Absent when --daemon is bare (no skill) or when not in daemon mode.
+   *  Tags the instance so peers can discover it by role. */
   role?: string;
 }
 
@@ -625,6 +634,16 @@ export interface PeerModule {
    * (NoopPeerModule) returns null.
    */
   getLatestHeartbeat(sessionId: string): number | null;
+  /**
+   * Read a remote session's OS PID from its heartbeat file, or null if the
+   * session has no heartbeat file or the file predates the `pid` field.
+   * Used by the `peers` tool to surface a kill target — primarily for daemon
+   * mode, where the Lead is a detached background process with no terminal
+   * and no PID in identity.json. The cron timer croner runs lives inside the
+   * Lead's event loop (and is `unref`'d), so killing this PID stops the cron
+   * with no orphaned timer. Returns null on the child (NoopPeerModule).
+   */
+  getPid(sessionId: string): number | null;
 }
 
 /**
@@ -665,6 +684,28 @@ export interface SkillModule {
    * No-op (returns error) when no runtime registry is available (child process).
    */
   replaceCondition(skillName: string): Promise<{ success: boolean; error?: string }>;
+  /**
+   * Build the {@link SkillIndexEntry} for ONE skill, or null if the skill
+   * is not loaded. The entry is pure data — the scope-prefixed title, the
+   * Scope/Name/Description/Keywords embedding content, and a short content
+   * hash — with NO wiki reference. The CALLER hands the entry (or an array
+   * of them via {@link buildAllSkillEntries}) to {@link WikiModule.indexSkills},
+   * which owns the wiki-DB re-index, embeddings, and the reindex lock.
+   *
+   * This keeps the loader (skill-loading layer) fully decoupled from the
+   * wiki module (RAG layer): the loader never imports or references
+   * WikiModule.
+   */
+  buildSkillIndexEntry(name: string, layer: 'user' | 'project' | 'built-in'): SkillIndexEntry | null;
+  /**
+   * Build {@link SkillIndexEntry} entries for ALL currently loaded skills.
+   * Pure data — no wiki reference. The CALLER passes the array to
+   * {@link WikiModule.indexSkills} to perform the wiki-DB re-index.
+   *
+   * The loader owns skill discovery + scoping + content hashing; the wiki
+   * module owns the DB re-index + lock + cache.
+   */
+  buildAllSkillEntries(): SkillIndexEntry[];
 }
 
 /**
@@ -784,6 +825,22 @@ export interface WikiDocument {
 }
 
 /**
+ * A skill entry prepared by the loader for wiki indexing.
+ *
+ * The loader owns skill discovery and scoping (it builds the {@link WikiDocument}
+ * — scope-prefixed title + Scope/Name/Description/Keywords content — and the
+ * content hash). The wiki module owns the actual DB re-index
+ * ({@link WikiModule.indexSkills}): cache check, batch diff, embeddings,
+ * insert/delete, and the reindex lock. This split keeps the wiki-DB
+ * read-modify-write — and its concurrency lock — entirely inside the wiki
+ * module, so no caller needs to know about the lock.
+ */
+export interface SkillIndexEntry {
+  document: WikiDocument;
+  contentHash: string;
+}
+
+/**
  * Domain metadata stored in domains.json
  */
 export interface WikiDomain {
@@ -895,6 +952,18 @@ export interface WikiModule {
   listDomains(): Promise<WikiDomain[]>;
   getDomain(name: string): Promise<WikiDomain | undefined>;
   registerDomain(name: string, description?: string): Promise<void>;
+  /**
+   * Re-index a set of skills into the wiki "skills" domain.
+   *
+   * The caller (loader) builds the {@link SkillIndexEntry} array — it owns
+   * skill discovery and scoping. This method owns the wiki-DB re-index:
+   * cache check, batch diff (getByDomain → delete stale → batchPut new),
+   * one batched embedding call, cache write, and the wiki-DB-level reindex
+   * lock that serializes concurrent runs across all mycc instances sharing
+   * the (user-level) wiki DB. The lock is acquired and released INSIDE this
+   * method, so no caller needs to know about it.
+   */
+  indexSkills(entries: SkillIndexEntry[]): Promise<void>;
 }
 
 /**

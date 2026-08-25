@@ -19,7 +19,7 @@
 import { ChildProcess } from 'child_process';
 import { resolve } from 'path';
 import chalk from 'chalk';
-import { isVerbose, validateEnv, ensureToolTypeImports, shouldRunSetup, loadEnv, shouldServe } from './config.js';
+import { isVerbose, validateEnv, ensureToolTypeImports, shouldRunSetup, loadEnv, shouldServe, shouldDaemon } from './config.js';
 import { agentIO } from './loop/agent-io.js';
 import { parseKeys, isCtrlC, isEscape } from './utils/key-parser.js';
 import { getProjectRoot, spawnTsx } from './utils/tsx-run.js';
@@ -107,6 +107,16 @@ function runCoordinator(): void {
 
   // Ensure type imports work for custom tools
   ensureToolTypeImports();
+
+  // ── --daemon: detach and exit immediately ──
+  // When --daemon is set, the Coordinator spawns the Lead as a detached
+  // background process (no terminal I/O, no stdin forwarding, no resize
+  // polling) and exits immediately. The Lead runs headless in auto mode.
+  // This skips the entire terminal setup below.
+  if (shouldDaemon()) {
+    startDaemonLead();
+    return;
+  }
 
   // ---------------------------------------------------------------------------
   // Coordinator State
@@ -579,4 +589,54 @@ function runCoordinator(): void {
       lead?.send({ type: 'resize', columns: currentColumns });
     }
   }, 300);
+
+  /**
+   * Spawn the Lead as a detached background process (daemon mode).
+   *
+   * `--daemon` makes the Coordinator spawn the Lead with stdout/stderr/stdin
+   * disconnected (no terminal), detached from the parent process group, then
+   * `child.unref()` so the Coordinator can exit without waiting. The
+   * Coordinator prints the daemon PID and exits 0 immediately.
+   *
+   * IPC is kept (`stdio: ['ignore','ignore','ignore','ipc']`) so the Lead's
+   * `process.send` guard passes and it can start — without IPC, agent-repl.ts
+   * refuses to boot. The Lead sends 'ready'/'exit' IPC messages after the
+   * Coordinator has already exited; they are harmlessly dropped (no listener).
+   * The loader's `skill_reindex` IPC signal is also dropped (no Coordinator to
+   * relay it), but the loader guards on `process.send` so it no-ops safely.
+   *
+   * The Lead receives all original CLI args (including `--daemon <skill>`
+   * and `--skip-healthcheck`) and runs headless in auto mode — no raw-mode
+   * stdin setup, no resize forwarding, no IPC forwarding loop.
+   */
+  function startDaemonLead(): void {
+    const tsxScript = resolve(PROJECT_ROOT, 'src', 'lead.ts');
+
+    // Forward all original CLI args (they already include --daemon/--skip-healthcheck).
+    const forwardedArgs = process.argv.slice(2);
+    if (skipHealthCheck && !forwardedArgs.includes('--skip-healthcheck')) {
+      forwardedArgs.push('--skip-healthcheck');
+    }
+
+    const env = { ...process.env };
+    env.COLUMNS = process.env.COLUMNS || '120';
+    env.MYCC_COORDINATOR_PID = String(process.pid);
+
+    const child = spawnTsx({
+      script: tsxScript,
+      args: forwardedArgs,
+      cwd: process.cwd(),
+      stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
+      env,
+    });
+
+    // Detach so the daemon survives the Coordinator's exit.
+    // On Unix, stdio:'ignore' + unref() is sufficient — the child becomes
+    // orphaned (reparented to init) and keeps running. On Windows, the child
+    // has no console window because stdout/stderr are ignored.
+    child.unref();
+
+    console.log(chalk.green(`Daemon started (pid: ${child.pid}).`));
+    process.exit(0);
+  }
 }

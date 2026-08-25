@@ -87,6 +87,8 @@ export function createMockSkill(overrides: Partial<SkillModule> = {}): SkillModu
     listAllTools: vi.fn(() => []),
     compileCondition: vi.fn(async () => ({})),
     replaceCondition: vi.fn(async () => ({ success: true })),
+    buildSkillIndexEntry: vi.fn(() => null),
+    buildAllSkillEntries: vi.fn(() => []),
     ...overrides,
   };
 }
@@ -165,6 +167,7 @@ export function createMockWiki(overrides: Partial<WikiModule> = {}): WikiModule 
     listDomains: vi.fn(async () => []),
     getDomain: vi.fn(async () => undefined),
     registerDomain: vi.fn(async () => {}),
+    indexSkills: vi.fn(async () => {}),
     ...overrides,
   };
 }
@@ -191,6 +194,7 @@ export function createMockPeer(overrides: Partial<PeerModule> = {}): PeerModule 
     recordBrief: vi.fn(),
     getBriefs: vi.fn(() => []),
     getLatestHeartbeat: vi.fn(() => null),
+    getPid: vi.fn(() => null),
     setOnChannelJoin: vi.fn(),
     ...overrides,
   };

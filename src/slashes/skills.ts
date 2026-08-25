@@ -18,9 +18,12 @@ export const skillsCommand: SlashCommand = {
     const { args, ctx } = context;
 
     if (args[1] === 'build') {
-      // Reload skills from disk to pick up newly added skills, then index to wiki
+      // Reload skills from disk to pick up newly added skills, then index to wiki.
+      // The loader builds PURE-DATA SkillIndexEntry[] (no wiki reference); we
+      // hand it to ctx.wiki.indexSkills, which owns the wiki-DB re-index +
+      // reindex lock. This keeps the loader decoupled from the wiki module.
       loader.loadSkills();
-      await loader.indexAllSkillsToWiki(ctx.wiki);
+      await ctx.wiki.indexSkills(loader.buildAllSkillEntries());
       console.log(`${chalk.green('✓')} Skills reloaded and indexed in wiki.`);
       return;
     }

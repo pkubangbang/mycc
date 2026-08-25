@@ -87,6 +87,36 @@ describe('peersTool — 1-hour cutoff', () => {
     expect(result).toContain('online');
   });
 
+  it('surfaces the peer OS pid as a kill target (so another MYCC can terminate a daemon)', async () => {
+    const identities = [{ ...mkIdentity(SID_FRESH), daemon: true, role: 'lfplater-skill-manager' }];
+    (ctx.peer.listIdentities as ReturnType<typeof vi.fn>).mockReturnValue(identities);
+    (ctx.peer.getLatestHeartbeat as ReturnType<typeof vi.fn>).mockReturnValue(NOW - 1000);
+    (ctx.peer.isFresh as ReturnType<typeof vi.fn>).mockReturnValue(true);
+    (ctx.peer.getPid as ReturnType<typeof vi.fn>).mockReturnValue(4242);
+    (ctx.peer.getBriefs as ReturnType<typeof vi.fn>).mockReturnValue([]);
+
+    const result = await peersTool.handler(ctx, {});
+
+    expect(result).toContain('pid: 4242');
+    // The kill command must match the host platform.
+    const killCmd = process.platform === 'win32' ? 'taskkill /PID 4242' : 'kill 4242';
+    expect(result).toContain(killCmd);
+  });
+
+  it('omits the pid line when getPid returns null (legacy heartbeat without a pid field)', async () => {
+    const identities = [mkIdentity(SID_FRESH)];
+    (ctx.peer.listIdentities as ReturnType<typeof vi.fn>).mockReturnValue(identities);
+    (ctx.peer.getLatestHeartbeat as ReturnType<typeof vi.fn>).mockReturnValue(NOW - 1000);
+    (ctx.peer.isFresh as ReturnType<typeof vi.fn>).mockReturnValue(true);
+    (ctx.peer.getPid as ReturnType<typeof vi.fn>).mockReturnValue(null);
+    (ctx.peer.getBriefs as ReturnType<typeof vi.fn>).mockReturnValue([]);
+
+    const result = await peersTool.handler(ctx, {});
+
+    expect(result).toContain(SID_FRESH);
+    expect(result).not.toMatch(/\bpid:/);
+  });
+
   it('treats a peer with no heartbeat file (latest=null) as NOT cutoff-omitted; falls back to isFresh', async () => {
     const identities = [mkIdentity(SID_NO_HB)];
     (ctx.peer.listIdentities as ReturnType<typeof vi.fn>).mockReturnValue(identities);

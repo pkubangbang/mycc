@@ -75,9 +75,16 @@ Once you find the correct name, load it with:
       : 'unknown';
     ctx.core.brief('info', 'skill_load', `Loaded: ${skillName} (${levelLabel} — ${absPath})`);
 
-    // Try to re-index skill to wiki (best effort, may fail if no embedding model)
+    // Try to re-index skill to wiki (best effort, may fail if no embedding model).
+    // The loader builds a PURE-DATA SkillIndexEntry (no wiki reference); the
+    // tool hands it to ctx.wiki.indexSkills, which owns the wiki-DB re-index
+    // (cache check, batch diff, reindex lock). This keeps the loader decoupled
+    // from the wiki module.
     try {
-      await loader.indexSkillToWiki(skill, ctx.wiki, layer);
+      const entry = loader.buildSkillIndexEntry(skill.name, layer);
+      if (entry) {
+        await ctx.wiki.indexSkills([entry]);
+      }
     } catch {
       // Ignore indexing errors - skill content is still valid
     }
@@ -94,7 +101,10 @@ Once you find the correct name, load it with:
     const description = skill.description ? `Description: ${skill.description}\n\n` : '';
     const keywords = skill.keywords.length > 0 ? `Keywords: ${skill.keywords.join(', ')}\n\n` : '';
     const when = skill.when ? `When: ${skill.when}\n\n` : '';
+    const service = skill.service
+      ? `Service: active${skill.service_cron ? ` (cron: ${skill.service_cron})` : ' (passive)'}\n\n`
+      : '';
     const location = skillDir ? `Location: ${skillDir}\n\n` : '';
-    return `${header}${description}${keywords}${when}${location}---\n\n${skill.content}`;
+    return `${header}${description}${keywords}${when}${service}${location}---\n\n${skill.content}`;
   },
 };

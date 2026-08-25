@@ -2,7 +2,7 @@
  * wiki.ts - ChildWiki implementation for IPC-based wiki operations
  */
 
-import type { WikiModule, WikiDocument, WikiDomain, PrepareResult, PutResult, GetOptions, SearchResult, WALEntry, RebuildResult } from '../../types.js';
+import type { WikiModule, WikiDocument, WikiDomain, PrepareResult, PutResult, GetOptions, SearchResult, WALEntry, RebuildResult, SkillIndexEntry } from '../../types.js';
 import { ipc } from './ipc-helpers.js';
 
 /**
@@ -166,6 +166,19 @@ export class ChildWiki implements WikiModule {
 
   async registerDomain(name: string, description?: string): Promise<void> {
     await ipc.sendRequest<void>('wiki_domain_register', { name, description });
+  }
+
+  /**
+   * Re-index skills into the wiki. This is a PARENT-ONLY operation: the
+   * parent's loader builds the skill entries (it owns the skill map) and
+   * calls indexSkills on the real WikiManager, which holds the reindex lock
+   * and does the batch DB write. A child (teammate) never drives a re-index
+   * — its skill edits trigger an IPC 'skill_reindex' signal to the parent,
+   * which re-indexes. So this stub is never invoked at runtime; it exists
+   * only to satisfy the WikiModule interface. No-op (resolves immediately).
+   */
+  async indexSkills(_entries: SkillIndexEntry[]): Promise<void> {
+    // Parent-only — no IPC delegation, no-op in the child.
   }
 
 }
