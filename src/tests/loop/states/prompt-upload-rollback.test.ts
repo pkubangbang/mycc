@@ -19,6 +19,7 @@
  * file reminder is still present in the final triologue messages.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import * as path from 'path';
 
 // --- Mocks (paths relative to this test file: src/tests/loop/states/) --------
 
@@ -180,7 +181,7 @@ describe('handlePrompt — uploaded-file reminder survives wrap-up rollback', ()
     // The uploaded-file reminder must survive the rollback.
     expect(combinedText).toContain('Previously uploaded file(s) (from interrupted run)');
     expect(combinedText).toContain('image-1786587692871.png');
-    expect(combinedText).toContain('.mycc' + '\\uploaded'); // path uses platform sep
+    expect(combinedText).toContain('.mycc' + path.sep + 'uploaded'); // path uses platform sep
   });
 
   it('still commits (not rollback) the wrap-up when evaluateWrapUp says commit', async () => {

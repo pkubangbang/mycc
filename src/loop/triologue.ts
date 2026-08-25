@@ -14,7 +14,7 @@ import type { Message, ToolCall, Tool, WikiModule, NoteCategory } from '../types
 import { minifyMessages } from '../utils/llm-chat-minifier.js';
 import { estimateTokens, estimateTokensForMessages } from '../utils/token.js';
 import { ResultTooLargeError } from '../types.js';
-import { getLongtextDir, ensureDirs, getTokenThreshold, isDebuggingTp, getSessionContext, getSessionDir } from '../config.js';
+import { getLongtextDir, ensureDirs, isDebuggingTp, getSessionContext, getSessionDir } from '../config.js';
 import { agentIO } from './agent-io.js';
 import { attemptAutoFix } from './tp-auto-fixer.js';
 import { loopEvents } from './loop-events.js';

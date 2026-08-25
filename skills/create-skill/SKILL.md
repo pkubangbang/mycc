@@ -17,7 +17,7 @@ description: >
   (lowercase-hyphenated), anti-patterns to avoid, and iteration based on
   user feedback. Do NOT use for automatic knowledge distillation after
   tasks — only when explicitly requested.
-keywords: [skill, create, new, template, documentation, knowledge, meta, process, reference, lesson, hookish, frontmatter, RAG, "best practice", discoverability, reusable, condition, expression, when, hook, trigger, jsep, evaluator]
+keywords: [skill, create, new, template, documentation, knowledge, meta, process, reference, lesson, hookish, service, daemon, cron, scheduled, background, headless, frontmatter, RAG, "best practice", discoverability, reusable, condition, expression, when, hook, trigger, jsep, evaluator]
 ---
 
 # Creating Effective Skills
@@ -33,8 +33,18 @@ knowledge distillation after tasks — only when explicitly requested.
 | **Reference** | Lookup info, formats, configurations | `skill-template-reference.md` |
 | **Lesson** | Captured lessons learned from experience | `skill-template-lesson.md` |
 | **Hookish** | Auto-triggering skills based on conditions (hooks) | `skill-template-hookish.md` |
+| **Service** | Long-lived headless background workers run via `--daemon` (cron-scheduled or event-driven) | `skill-template-service.md` |
 
 Read the template file to understand the structure for the chosen type.
+
+> **Service skills must be ACTIONABLE.** A service skill runs headless via
+> `--daemon` with no human to redirect it, so every cron nudge / external
+> mail must tell the LLM exactly what to inspect, what to do, and how to
+> report. Vague instructions ("monitor the system") produce a daemon that
+> wakes, finds nothing concrete, and idles. Use the
+> `skill-template-service.md` template and make Step 1 name an exact
+> pending-work signal, Step 2 name exact tools + decision logic, and Step 4
+> consume each item so the loop is idempotent.
 
 ## Creation Process
 

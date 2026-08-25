@@ -12,7 +12,7 @@ description: >
   source (use the environment-detection / tool-and-skill-development skills
   for that); use it when the user's questions are about mycc the tool, not
   about the current project.
-keywords: [mycc, runtime, environment, tutor, glossary, letterbox, webui, serve, neglected, esc, session, triologue, teammate, mindmap, wiki, worktree, intent language, grant system, peer, channel, slash command, Ollama, DeepSeek, end-user]
+keywords: [mycc, runtime, environment, tutor, glossary, letterbox, webui, serve, neglected, esc, session, triologue, teammate, mindmap, wiki, worktree, intent language, grant system, peer, channel, slash command, Ollama, DeepSeek, end-user, service, service_cron, daemon, cron, scheduled, background, headless]
 ---
 
 # mycc Self-Awareness: A Tutor for mycc's Own Concepts
@@ -35,6 +35,11 @@ keywords: [mycc, runtime, environment, tutor, glossary, letterbox, webui, serve,
 > - `io-surfaces.md` — The two I/O surfaces (CLI TUI vs WebUI) and every
 >   folder mycc auto-creates on disk (project-level `.mycc/` and user-level
 >   `~/.mycc-store/`), with what creates each and why.
+> - `daemon-services.md` — The `service` / `service_cron` / `--daemon`
+>   mechanism: how a skill runs as a long-lived headless background service
+>   with cron-scheduled self-nudge mail. Read when the user says "design a
+>   service that...", "run on a schedule/cron", "run in the background /
+>   headless / as a daemon".
 
 This skill exists for one situation: **you are running mycc inside some
 other project** (not the mycc codebase), and the user starts asking about
@@ -90,6 +95,8 @@ plain-language summary; the sibling file has the full detail where noted.
 | **peer / channel** | A *separate* mycc instance (own process/cwd), discovered via `peers`; a channel is a file-pair a mediator writes to wire instances together. Cross-instance. | `mediator` skill |
 | **communication model** | Mail is push-based: `mail_to` appends one line to the recipient's mailbox; the recipient's next COLLECT drains it and injects it as a `[MAIL]` note. Fire-and-forget; never poll. | `mediator` skill |
 | **worktree** | A parallel checkout of the same git repo on a new branch (`wt_create`/`wt_enter`/`wt_leave`/`wt_remove`/`wt_print`). | `worktree` skill |
+| **service / `--daemon`** | A skill that declares `service: true` in frontmatter and runs as a **long-lived headless background process** via `mycc --daemon <skill>` (auto mode on, no terminal). Cron-scheduled if it also declares `service_cron`. | `daemon-services.md` |
+| **service_cron** | A cron expression (e.g. `"0/10 * * * *"`) in a service skill's frontmatter; the daemon starts a timer that periodically injects a "Service nudge" mail to drive the agent — **deterministic** scheduling, not LLM self-identification. | `daemon-services.md` |
 
 ### Knowledge & safety
 
@@ -132,6 +139,24 @@ mycc's relationship with Ollama is **not uniform**:
 
 > **Full launch commands, flag reference, and the locate-the-install
 > scripts:** see `launching-and-locating.md`.
+
+## Daemon Services (brief)
+
+mycc can run a skill as a **long-lived headless background service** —
+"design a service that runs on a schedule" maps here. A skill opts in by
+declaring `service: true` (and optionally `service_cron: "<cron expr>"`) in
+its frontmatter; launch it with `mycc --daemon <skill>` (forces auto mode
+on, no terminal). With `service_cron`, a `croner` timer periodically
+appends a **"Service nudge"** mail to the lead's own mailbox, which the
+agent loop's WAIT→COLLECT drains and acts on per the skill's workflow —
+**deterministic** scheduling, not relying on the LLM deciding to check in.
+Without `service_cron` → **passive daemon** (stays alive, triggered only by
+external `mail_to`). Only `--daemon` activates the cron timer; a normal
+lead loading a `service_cron` skill does NOT start cron. The canonical
+example is the built-in `lfplater-skill-manager`.
+
+> **Full mechanism, frontmatter fields, `daemon-init.ts` bootstrap, data
+> flow, and how to design a service skill:** see `daemon-services.md`.
 
 ## Configuration (brief)
 
@@ -184,7 +209,12 @@ another project:
 8. **Ollama HARD vs SOFT** — embedding needs a local Ollama (HARD); chat
    can use DeepSeek or cloud-Ollama (SOFT). Detail in
    `ollama-dependencies.md`.
-9. Launch with `mycc` from the project dir; find the install via the
-   `mycc` shim or `npm root -g`. Detail in `launching-and-locating.md`.
-10. Two I/O surfaces (CLI + WebUI) and a known set of auto-created folders.
+9. **service / `--daemon` / `service_cron`** — a skill that declares
+   `service: true` runs as a long-lived headless background process via
+   `mycc --daemon <skill>`; `service_cron` drives it on a deterministic
+   cron schedule via self-nudge mail. "Design a service that..." maps
+   here. Detail in `daemon-services.md`.
+10. Launch with `mycc` from the project dir; find the install via the
+    `mycc` shim or `npm root -g`. Detail in `launching-and-locating.md`.
+11. Two I/O surfaces (CLI + WebUI) and a known set of auto-created folders.
     Detail in `io-surfaces.md`.

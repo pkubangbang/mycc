@@ -122,7 +122,7 @@ export function buildHookInfoMessages(
 export async function initHookSystem(
   _ctx: AgentContext,
   loader: HookLoader,
-  triologue: Triologue,
+  _triologue: Triologue,
 ): Promise<ConditionRegistry> {
   // Initialize hook system (machine lifetime)
   const conditions = new ConditionRegistry();
