@@ -43,7 +43,7 @@ import pkg from '../../package.json';
 import { loadProjectMindmap } from './mindmap-loader.js';
 import { registerSignalHandlers } from './signal-handlers.js';
 import { initDaemonMode } from './daemon-init.js';
-import { initHookSystem } from './hook-bootstrap.js';
+import { initHookSystem, buildHookInfoMessages } from './hook-bootstrap.js';
 import { wireServeCallbacks } from './serve-wiring.js';
 
 const version = pkg.version;
@@ -185,24 +185,61 @@ export async function main(): Promise<void> {
     ctx.issue.clearAll();
   });
 
-  // Inject project context based on mindmap availability
+  // ── Register project-context populators ──
+  // Each populator is a () => Message[] closure registered ONCE here. The
+  // triologue calls rebuildProjectContext() (clear + re-invoke all populators)
+  // at compact()/clear() boundaries, so dynamic context (README, mindmap
+  // instruction, hook info) stays fresh without external rebuild calls and
+  // without extra cache penalty (the conversation prefix already changes at
+  // those boundaries). Registration order = projectContext order.
+
+  // (1) Mindmap instruction — depends on mindmapLoaded (captured now; the
+  //     mindmap is not reloaded mid-session, so this is stable).
   if (mindmapLoaded) {
-    // Mindmap available - instruct LLM to use recall tool
-    triologue.setMindmapInstruction();
+    triologue.registerProjectContextPopulator(() => [
+      { role: 'user', content: '[System] A mindmap (knowledge tree) is available. Use the `recall` tool to explore it. Start with `recall("/")` to see top-level nodes, then drill down into children. The mindmap contains compiled project knowledge and guidance.' },
+      { role: 'assistant', content: 'Understood. I will use the recall tool to explore the mindmap. Starting with recall("/") to see the top-level structure.' },
+    ]);
   } else {
-    // No mindmap - instruct LLM to read MYCC.md and NOT use recall
-    triologue.setNoMindmapInstruction();
+    triologue.registerProjectContextPopulator(() => [
+      { role: 'user', content: '[System] No mindmap found. Please read MYCC.md to understand the project context and structure. IMPORTANT: The recall tool will not work without a mindmap, so do NOT use it. Use read_file tool to explore MYCC.md instead.' },
+      { role: 'assistant', content: 'Understood. I will read MYCC.md using read_file to understand the project. I will NOT use the recall tool since no mindmap is available.' },
+    ]);
   }
 
-  // Always load README.md if available (for general project context)
-  const readmePath = path.join(process.cwd(), 'README.md');
-  if (fs.existsSync(readmePath)) triologue.setReadmeMd(fs.readFileSync(readmePath, 'utf-8'));
+  // (2) README.md — re-reads from disk on every rebuild so edits to README
+  //     surface after the next compact/clear. Skips when too large or absent.
+  triologue.registerProjectContextPopulator(() => {
+    const readmePathPop = path.join(process.cwd(), 'README.md');
+    if (!fs.existsSync(readmePathPop)) return [];
+    const content = fs.readFileSync(readmePathPop, 'utf-8');
+    const maxChars = Math.floor(getTokenThreshold() * 4 * 0.1);
+    if (content.length > maxChars) {
+      agentIO.brief('info', 'triologue', 'README.md is too large to load, skipping');
+      return [];
+    }
+    return [
+      { role: 'user', content: `[Project Context - README.md from project root, FYI]\n\n${content}` },
+      { role: 'assistant', content: 'Understood. I have read the project context from README.md.' },
+    ];
+  });
 
   // Initialize hook system (machine lifetime): load the ConditionRegistry,
   // report errors/warnings, wire IPC reload, sync pending skills, wire the
-  // registry into the loader, and inject legacy/pending hook info into the
-  // triologue project context. Returns the registry for Sequence/HookExecutor.
+  // registry into the loader. Returns the registry for Sequence/HookExecutor.
+  // (Legacy/pending hook info is no longer injected here — it is produced by
+  // the buildHookInfoMessages populator registered below.)
   const conditions = await initHookSystem(ctx, loader, triologue);
+
+  // (3) Hook info (pending + legacy) — registered AFTER initHookSystem so the
+  //     closure can capture `conditions` and `loader`. Each rebuild re-queries
+  //     the registry, so newly-compiled hooks drop out and newly-loaded legacy
+  //     ones appear without a restart.
+  triologue.registerProjectContextPopulator(() => buildHookInfoMessages(conditions, loader));
+
+  // Initial build: populate projectContext from all registered populators.
+  // (compact()/clear() will call rebuildProjectContext() internally thereafter.)
+  triologue.rebuildProjectContext();
 
   const core = ctx.core as Core;
   const sequence = new Sequence(triologue, () => core.getMode());

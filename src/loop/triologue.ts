@@ -10,8 +10,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { retryChat, MODEL, forkChat } from '../engine/chat-provider.js';
-import type { Message, ToolCall, Tool, WikiModule, NoteCategory, Skill } from '../types.js';
-import type { LegacyConditionInfo } from '../hook/conditions.js';
+import type { Message, ToolCall, Tool, WikiModule, NoteCategory } from '../types.js';
 import { minifyMessages } from '../utils/llm-chat-minifier.js';
 import { estimateTokens, estimateTokensForMessages } from '../utils/token.js';
 import { ResultTooLargeError } from '../types.js';
@@ -70,6 +69,15 @@ export class Triologue {
   private options: Required<Omit<TriologueOptions, 'wiki' | 'getDuplicationReport'>> & Pick<TriologueOptions, 'wiki' | 'getDuplicationReport'>;
   // Project context files (in-memory only, not persisted)
   private projectContext: Message[] = [];
+  /**
+   * Populator registry: functions that produce project-context Message[] pairs.
+   * Callers (agent-repl, hook-bootstrap) register closures ONCE at startup.
+   * rebuildProjectContext() clears projectContext and re-invokes all populators
+   * in registration order, so compact() and clear() can refresh dynamic content
+   * (README, mindmap instruction, hook info) without external rebuild calls.
+   * Each populator returns a Message[] (typically a user/assistant context pair).
+   */
+  private populators: Array<() => Message[]> = [];
 
   /**
    * The last real user query (not system notes).
@@ -116,119 +124,50 @@ export class Triologue {
   }
 
   /**
-   * Set README.md content (project context)
-   * Appends context pair to project context (appears after MYCC.md if both set)
-   * If content is too large, skips it entirely.
-   */
-  setReadmeMd(content: string): void {
-    // Use 10% of TOKEN_THRESHOLD (converted to chars) as max size
-    const maxChars = Math.floor(getTokenThreshold() * 4 * 0.1);
-    if (content.length > maxChars) {
-      agentIO.brief('info', 'triologue', 'README.md is too large to load, skipping');
-      return;
-    }
-    this.projectContext.push(
-      { role: 'user', content: `[Project Context - README.md from project root, FYI]\n\n${content}` },
-      { role: 'assistant', content: 'Understood. I have read the project context from README.md.' }
-    );
-  }
-
-  /**
-   * Add instruction when mindmap is loaded
-   * Tells LLM to use the recall tool to explore the mindmap
-   */
-  setMindmapInstruction(): void {
-    this.projectContext.push(
-      { role: 'user', content: '[System] A mindmap (knowledge tree) is available. Use the `recall` tool to explore it. Start with `recall("/")` to see top-level nodes, then drill down into children. The mindmap contains compiled project knowledge and guidance.' },
-      { role: 'assistant', content: 'Understood. I will use the recall tool to explore the mindmap. Starting with recall("/") to see the top-level structure.' }
-    );
-  }
-
-  /**
-   * Add instruction when no mindmap exists
-   * Tells LLM to read MYCC.md directly and NOT use the recall tool
-   */
-  setNoMindmapInstruction(): void {
-    this.projectContext.push(
-      { role: 'user', content: '[System] No mindmap found. Please read MYCC.md to understand the project context and structure. IMPORTANT: The recall tool will not work without a mindmap, so do NOT use it. Use read_file tool to explore MYCC.md instead.' },
-      { role: 'assistant', content: 'Understood. I will read MYCC.md using read_file to understand the project. I will NOT use the recall tool since no mindmap is available.' }
-    );
-  }
-
-  /**
-   * Add instructions for pending hookish skills (skills with "when" but no compiled condition).
-   * Lists each pending skill with its name, description, and when-condition, along with
-   * the skill_compile command to activate it. Only adds content if there are pending skills.
+   * Register a project-context populator.
    *
-   * Injected into projectContext so the LLM always sees which hooks could be activated
-   * - closing the gap on fresh installations where hooks are loaded but not yet compiled.
+   * A populator is a `() => Message[]` closure that produces context pairs
+   * (e.g. README, mindmap instruction, hook info) to inject between the
+   * system prompt and the conversation. Callers register populators ONCE at
+   * startup; rebuildProjectContext() re-invokes all of them, so the dynamic
+   * content they produce is refreshed at compact()/clear() boundaries (where
+   * the conversation prefix already changes, so no additional cache penalty).
+   *
+   * @returns A disposer function that removes this populator (for cleanup/swap)
    */
-  setPendingHooksInfo(hooks: Skill[]): void {
-    if (hooks.length === 0) return;
-
-    const lines: string[] = [
-      '[Hooks Pending] The following skills have "when" conditions that can be compiled into proactive hooks. They are NOT active yet - use skill_compile to activate them:',
-      '',
-    ];
-
-    for (const hook of hooks) {
-      lines.push(`- ${hook.name}: ${hook.description}`);
-      if (hook.when) {
-        lines.push(`  When: ${hook.when}`);
-      }
-      if (hook.keywords && hook.keywords.length > 0) {
-        lines.push(`  Keywords: ${hook.keywords.join(', ')}`);
-      }
-      lines.push(`  Activate: skill_compile(name="${  hook.name  }")`);
-      lines.push('');
-    }
-
-    lines.push('Not all hooks need to be compiled upfront. Only compile the ones relevant to your current task. A compiled hook stays in effect until the skill file changes.');
-    lines.push('');
-
-    this.projectContext.push(
-      { role: 'user', content: lines.join('\n') },
-      { role: 'assistant', content: 'Understood. I know which hooks are available but not yet active. I can compile them when needed using the skill_compile tool.' }
-    );
+  registerProjectContextPopulator(fn: () => Message[]): () => void {
+    this.populators.push(fn);
+    return () => {
+      const idx = this.populators.indexOf(fn);
+      if (idx !== -1) this.populators.splice(idx, 1);
+    };
   }
 
   /**
-   * Add instructions for hookish skills whose compiled condition uses the
-   * outdated `seq.X` API and was therefore rejected at load (never activated).
-   * Lists each legacy skill with its name, "when" string, and the exact
-   * skill_compile command to recompile it into the current `turn.X` /
-   * `session.X` syntax. Only adds content if there are legacy conditions.
+   * Rebuild projectContext from scratch: clear it and re-invoke every
+   * registered populator in registration order. Called internally by
+   * compact() and clear() so dynamic context (README, mindmap, hooks) stays
+   * fresh across those boundaries without external rebuild calls.
    *
-   * Injected into projectContext so the LLM always sees which hooks failed
-   * to load and can recompile them — closing the gap on projects that were
-   * migrated to the new hook condition API but still have stale conditions.json
-   * entries written against the old `seq.X` API.
+   * Cache invariant: this only runs at compact/clear time, where the
+   * conversation prefix already changes, so rebuilding projectContext adds no
+   * additional cache penalty. It must NOT be called mid-conversation (that
+   * would invalidate the cached prefix every turn).
    */
-  setLegacyHooksInfo(legacy: LegacyConditionInfo[]): void {
-    if (legacy.length === 0) return;
-
-    const lines: string[] = [
-      '[Hooks Outdated] The following hookish skills have compiled conditions using the outdated `seq.X` API, which is no longer supported. These hooks were NOT loaded and are inactive. Recompile them to reactivate using the current `turn.X` / `session.X` / `isPlanMode()` syntax:',
-      '',
-    ];
-
-    for (const entry of legacy) {
-      lines.push(`- ${entry.name}:`);
-      if (entry.when) {
-        lines.push(`  When: ${entry.when}`);
+  rebuildProjectContext(): void {
+    this.projectContext = [];
+    for (const populator of this.populators) {
+      try {
+        const produced = populator();
+        if (Array.isArray(produced)) {
+          for (const m of produced) {
+            if (m && typeof m === 'object' && m.role) this.projectContext.push(m);
+          }
+        }
+      } catch (err) {
+        agentIO.brief('error', 'triologue', `project-context populator failed: ${(err as Error).message}`);
       }
-      lines.push(`  Old condition: ${entry.condition}`);
-      lines.push(`  Recompile: skill_compile(name="${entry.name}")`);
-      lines.push('');
     }
-
-    lines.push('Recompiling re-runs the LLM translation and emits the new syntax, updating conditions.json in place. Once recompiled, the hook activates automatically on the next load.');
-    lines.push('');
-
-    this.projectContext.push(
-      { role: 'user', content: lines.join('\n') },
-      { role: 'assistant', content: 'Understood. I see hooks with outdated `seq.X` conditions that failed to load. I will recompile them with skill_compile to reactivate them.' }
-    );
   }
 
   /**
@@ -525,6 +464,10 @@ export class Triologue {
     // raw reader (minifyMessages in runAutoCompact, or checkpoint iteration)
     // with "Cannot read properties of undefined (reading 'role')".
     this.wrapUpMark = -1;
+    // Refresh dynamic project context (README, mindmap, hooks) at the compact
+    // boundary — the conversation prefix already changed, so no extra cache
+    // penalty. Populators re-read current state (e.g. newly-compiled hooks).
+    this.rebuildProjectContext();
   }
 
   /**
@@ -545,6 +488,9 @@ export class Triologue {
     this.pendingToolCalls.clear();
     this.pendingToolCallOrder = [];
     this.wrapUpMark = -1;
+    // Fresh start: rebuild dynamic project context from populators so the
+    // cleared conversation still carries current README/mindmap/hook state.
+    this.rebuildProjectContext();
   }
 
   // === Wrap-Up Management (ESC interrupt) ===

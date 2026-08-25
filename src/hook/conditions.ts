@@ -133,9 +133,28 @@ export class ConditionRegistry {
   private injected: Set<string> = new Set();  // Skills already injected in conversation
   private filePath: string;
   private loader: { listSkills: () => Array<{ name: string; when?: string }> } | null = null;
+  /**
+   * Cached legacy conditions (outdated `seq.X` syntax) from the last load().
+   * Refreshed by load() — at startup and on the IPC condition-reload callback
+   * in hook-bootstrap.ts. Read via {@link getLegacyConditions} by the hook
+   * populator (triologue.ts projectContext rebuild) without a disk re-read.
+   */
+  private cachedLegacy: LegacyConditionInfo[] = [];
 
   constructor() {
     this.filePath = path.join(getMyccDir(), 'conditions.json');
+  }
+
+  /**
+   * Get cached legacy conditions from the last load(). Does NOT re-read disk.
+   *
+   * Used by the projectContext hook populator (via buildHookInfoMessages in
+   * hook-bootstrap.ts) so that rebuildProjectContext() on compact/clear can
+   * surface legacy hooks fresh without a conditions.json re-read. The cache is
+   * refreshed whenever load() runs (startup + IPC condition-reload callback).
+   */
+  getLegacyConditions(): LegacyConditionInfo[] {
+    return this.cachedLegacy;
   }
 
   /**
@@ -237,6 +256,11 @@ export class ConditionRegistry {
         warnings.push(`Removed ${orphanedConditions.length} orphaned condition(s): ${orphanedConditions.join(', ')}`);
       }
     }
+
+    // Cache legacy conditions for getLegacyConditions() — refreshed on every
+    // load() (startup + IPC condition-reload). Read by the projectContext hook
+    // populator without a disk re-read.
+    this.cachedLegacy = legacyConditions;
 
     return { errors, warnings, legacyConditions };
   }
