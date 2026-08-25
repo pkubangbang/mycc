@@ -962,8 +962,18 @@ export interface WikiModule {
    * lock that serializes concurrent runs across all mycc instances sharing
    * the (user-level) wiki DB. The lock is acquired and released INSIDE this
    * method, so no caller needs to know about it.
+   *
+   * Options:
+   *  - `skipOrphanSweep`: when true, do NOT delete existing own-scope
+   *    records whose title is absent from `entries`. Use this for a
+   *    PARTIAL re-index (e.g. skill_load re-indexing just the one skill it
+   *    loaded), where `entries` is a subset of all loaded skills and the
+   *    orphan sweep would wrongly delete every unmentioned sibling. The
+   *    full-set callers (startup, /skills build, the skill_reindex IPC
+   *    handler) leave this false so genuine orphans (deleted skills) are
+   *    still cleaned up. The changed/new upsert path always runs regardless.
    */
-  indexSkills(entries: SkillIndexEntry[]): Promise<void>;
+  indexSkills(entries: SkillIndexEntry[], options?: { skipOrphanSweep?: boolean }): Promise<void>;
 }
 
 /**

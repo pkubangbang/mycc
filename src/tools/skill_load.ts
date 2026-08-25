@@ -75,15 +75,25 @@ Once you find the correct name, load it with:
       : 'unknown';
     ctx.core.brief('info', 'skill_load', `Loaded: ${skillName} (${levelLabel} — ${absPath})`);
 
-    // Try to re-index skill to wiki (best effort, may fail if no embedding model).
-    // The loader builds a PURE-DATA SkillIndexEntry (no wiki reference); the
-    // tool hands it to ctx.wiki.indexSkills, which owns the wiki-DB re-index
-    // (cache check, batch diff, reindex lock). This keeps the loader decoupled
-    // from the wiki module.
+    // Re-index the loaded skill to wiki (best effort, may fail if no embedding
+    // model). The loader builds a PURE-DATA SkillIndexEntry (no wiki
+    // reference); the tool hands it to ctx.wiki.indexSkills, which owns the
+    // wiki-DB re-index (cache check, batch diff, reindex lock).
+    //
+    // This is a PARTIAL re-index (just the one skill), so we pass
+    // skipOrphanSweep: true. indexSkills() otherwise does orphan detection —
+    // any existing own-scope record whose title is absent from `entries` is
+    // deleted — which would wipe every OTHER skill on a single-skill call
+    // (the passed set is a subset of all loaded skills). The full-set
+    // callers (startup, /skills build, the skill_reindex IPC handler) leave
+    // the flag off so genuine orphans (deleted skills) are still cleaned up.
+    // The changed/new upsert path always runs, so the loaded skill is still
+    // (re)indexed. The cache is NOT touched on a partial call (it snapshots
+    // the complete set), so the next full startup still reconciles correctly.
     try {
       const entry = loader.buildSkillIndexEntry(skill.name, layer);
       if (entry) {
-        await ctx.wiki.indexSkills([entry]);
+        await ctx.wiki.indexSkills([entry], { skipOrphanSweep: true });
       }
     } catch {
       // Ignore indexing errors - skill content is still valid

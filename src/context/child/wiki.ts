@@ -177,7 +177,7 @@ export class ChildWiki implements WikiModule {
    * which re-indexes. So this stub is never invoked at runtime; it exists
    * only to satisfy the WikiModule interface. No-op (resolves immediately).
    */
-  async indexSkills(_entries: SkillIndexEntry[]): Promise<void> {
+  async indexSkills(_entries: SkillIndexEntry[], _options?: { skipOrphanSweep?: boolean }): Promise<void> {
     // Parent-only — no IPC delegation, no-op in the child.
   }
 

@@ -119,12 +119,17 @@ export class WikiManager implements WikiModule {
    * Optimized to avoid the per-skill Ollama round-trips that previously made
    * this step block startup.
    */
-  async indexSkills(entries: SkillIndexEntry[]): Promise<void> {
+  async indexSkills(entries: SkillIndexEntry[], options?: { skipOrphanSweep?: boolean }): Promise<void> {
+    const skipOrphanSweep = options?.skipOrphanSweep === true;
+
     // 1. Register 'skills' domain
     await this.registerDomain('skills', 'Skills indexed for semantic matching');
 
     // 2. Cache check — skip the whole pass if nothing changed.
-    if (this.isSkillIndexCacheValid(entries)) {
+    //    Only valid for a FULL re-index: the cache snapshots the complete
+    //    skill set (title→hash), so a length mismatch with a PARTIAL entry
+    //    list (skipOrphanSweep) is expected and must NOT short-circuit.
+    if (!skipOrphanSweep && this.isSkillIndexCacheValid(entries)) {
       this.core.brief('info', 'wiki', `Indexed ${entries.length} skills (cached)`);
       return;
     }
@@ -172,19 +177,30 @@ export class WikiManager implements WikiModule {
       // Only records whose title prefix is in THIS project's own scope set
       // ([user], [built-in], and the current project basename) are eligible
       // for orphan deletion. Records from other projects are left untouched.
-      const projectName = path.basename(process.cwd());
-      const ownScopePrefixes = new Set(['[user]:', '[built-in]:', `${projectName}:`]);
-      const isOwnScope = (title: string): boolean => {
-        for (const prefix of ownScopePrefixes) {
-          if (title.startsWith(prefix)) return true;
+      //
+      // SKIPPED on a PARTIAL re-index (skipOrphanSweep): `entries` may be a
+      // subset of all loaded skills (e.g. skill_load re-indexes just the one
+      // skill it loaded). Sweeping orphans against a subset would delete
+      // every unmentioned own-scope sibling. Only a FULL re-index (startup,
+      // /skills build, the skill_reindex IPC handler) runs the sweep, since
+      // only then is `entries` the complete current set and an absent title a
+      // genuine orphan (the skill was actually deleted). The changed/new
+      // upsert above always runs regardless.
+      if (!skipOrphanSweep) {
+        const projectName = path.basename(process.cwd());
+        const ownScopePrefixes = new Set(['[user]:', '[built-in]:', `${projectName}:`]);
+        const isOwnScope = (title: string): boolean => {
+          for (const prefix of ownScopePrefixes) {
+            if (title.startsWith(prefix)) return true;
+          }
+          return false;
+        };
+        const currentTitles = new Set(entries.map((e) => e.document.title));
+        for (const [title, rec] of existingByTitle) {
+          if (currentTitles.has(title)) continue; // still present
+          if (!isOwnScope(title)) continue; // belongs to another project — leave it
+          toDelete.push(rec.hash);
         }
-        return false;
-      };
-      const currentTitles = new Set(entries.map((e) => e.document.title));
-      for (const [title, rec] of existingByTitle) {
-        if (currentTitles.has(title)) continue; // still present
-        if (!isOwnScope(title)) continue; // belongs to another project — leave it
-        toDelete.push(rec.hash);
       }
 
       // Batch embed all new/changed documents in ONE Ollama call
@@ -207,8 +223,15 @@ export class WikiManager implements WikiModule {
         await this.batchPut(batchEntries);
       }
 
-      // Write the cache so the next startup can skip if nothing changed
-      this.writeSkillIndexCache(entries);
+      // Write the cache so the next startup can skip if nothing changed.
+      // Only a FULL re-index may rewrite the cache — the cache snapshots the
+      // COMPLETE skill set, so a partial (skipOrphanSweep) call writing its
+      // subset would corrupt the cache (next full startup would miss it,
+      // forcing a needless re-embed, and worse, the length-only check could
+      // false-pass on a coincidentally-sized subset).
+      if (!skipOrphanSweep) {
+        this.writeSkillIndexCache(entries);
+      }
 
       this.core.brief('info', 'wiki', `Indexed ${entries.length} skills`);
     } finally {
