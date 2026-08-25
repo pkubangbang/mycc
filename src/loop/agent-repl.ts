@@ -44,6 +44,7 @@ import { loadProjectMindmap } from './mindmap-loader.js';
 import { registerSignalHandlers } from './signal-handlers.js';
 import { initDaemonMode } from './daemon-init.js';
 import { initHookSystem, buildHookInfoMessages } from './hook-bootstrap.js';
+import { buildPlatformCalendarMessages } from './prompt-populators.js';
 import { wireServeCallbacks } from './serve-wiring.js';
 
 const version = pkg.version;
@@ -231,7 +232,13 @@ export async function main(): Promise<void> {
   // the buildHookInfoMessages populator registered below.)
   const conditions = await initHookSystem(ctx, loader, triologue);
 
-  // (3) Hook info (pending + legacy) — registered AFTER initHookSystem so the
+  // (3) Platform + Calendar (live environment) — delivered as project-context
+  //     messages so the system prompt stays byte-stable between compact/clear
+  //     boundary (keeping the prompt-cache prefix hot) while still refreshing
+  //     when the prefix changes anyway. Registered after README, before hooks.
+  triologue.registerProjectContextPopulator(() => buildPlatformCalendarMessages());
+
+  // (4) Hook info (pending + legacy) — registered AFTER initHookSystem so the
   //     closure can capture `conditions` and `loader`. Each rebuild re-queries
   //     the registry, so newly-compiled hooks drop out and newly-loaded legacy
   //     ones appear without a restart.

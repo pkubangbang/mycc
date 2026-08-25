@@ -513,7 +513,7 @@ export function buildNormalModePrompt(
 }
 ```
 
-> **注**：子进程提示包含 Knowledge Boundary、Platform、Intent Lang、Calendar、Output Behavior 等共享段落（`buildCommonSections()`），但不包含 Pinned Todo 段落（该段落仅用于 lead）。
+> **注**：子进程提示包含 Knowledge Boundary、Intent Lang、Output Behavior 等共享段落（`buildCommonSections()`），但不包含 Pinned Todo 段落（该段落仅用于 lead）。`## Platform` 与 `## Calendar` 段落不再内联于系统提示——它们由 `prompt-populators.ts` 的 `buildPlatformCalendarMessages()` 以 projectContext populator 的方式注入（见 `src/loop/prompt-populators.ts`），在主进程与子进程中都于启动时注册并在 compact/clear 时重建。
 
 ## 与主进程上下文对比
 

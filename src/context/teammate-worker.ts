@@ -16,6 +16,7 @@ import { StreamAbortedError } from '../engine/chat-provider.js';
 import type { AgentContext, Message } from '../types.js';
 import type { ToolCall } from '../types.js';
 import { buildNormalModePrompt } from '../loop/agent-prompts.js';
+import { buildPlatformCalendarMessages } from '../loop/prompt-populators.js';
 import { getTokenThreshold, getSessionContext, getSessionDir, setSessionContext, isVerbose } from '../config.js';
 import { Triologue } from '../loop/triologue.js';
 import { ipc, sendStatus } from './child/ipc-helpers.js';
@@ -165,6 +166,16 @@ function createPersistentTriologue(name: string, assignedPath?: string): Triolog
       }
     },
   });
+
+  // Register the platform + calendar project-context populator so the child
+  // delivers (## Platform, ## Calendar) the same way the lead does — via the
+  // populator registry (commit ab73acc) rather than buildCommonSections().
+  // This keeps the child's system prompt byte-stable between compact/clear
+  // boundaries (preserving the prompt-cache prefix) while still refreshing
+  // the environment info at the boundary where the prefix changes anyway.
+  triologue.registerProjectContextPopulator(() => buildPlatformCalendarMessages());
+  // Initial build so the child's very first getMessages() carries the content.
+  triologue.rebuildProjectContext();
 
   return triologue;
 }
