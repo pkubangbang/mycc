@@ -52,6 +52,13 @@ if (process.stdout.isTTY) {
   process.stdout.write('\x1b]0;mycc\x07');
 }
 
+// Parsed upfront so it's available to all functions, including the daemon
+// early-return path (startDaemonLead) that runs before runCoordinator()'s
+// nested state declarations. Previously startDaemonLead worked around the
+// temporal dead zone with a redundant `skipHealthCheckLocal` re-derivation;
+// hoisting the const here makes that unnecessary.
+const skipHealthCheck = process.argv.includes('--skip-healthcheck');
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -138,9 +145,6 @@ function runCoordinator(): void {
   // signal handler runs).
   let shuttingDownServe = false;
   let serveShutdownTimer: ReturnType<typeof setTimeout> | null = null;
-
-  // Flags to forward to lead processes
-  const skipHealthCheck = process.argv.includes('--skip-healthcheck');
 
   // ---------------------------------------------------------------------------
   // Lead Process Management
@@ -614,9 +618,6 @@ function runCoordinator(): void {
 
     // Forward all original CLI args (they already include --daemon/--skip-healthcheck).
     const forwardedArgs = process.argv.slice(2);
-    if (skipHealthCheck && !forwardedArgs.includes('--skip-healthcheck')) {
-      forwardedArgs.push('--skip-healthcheck');
-    }
 
     const env = { ...process.env };
     env.COLUMNS = process.env.COLUMNS || '120';
