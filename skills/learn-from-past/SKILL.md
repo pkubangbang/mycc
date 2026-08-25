@@ -37,8 +37,8 @@ knowledge capture at the moment of success.
 Fires after `brief` is called when ALL of these are true:
 
 - `call.args.confidence == 10` — the agent reported 100% certainty (completed task)
-- `!seq.isPlanMode()` — not in plan mode (planning ≠ completing)
-- `seq.totalCount() > 5` — at least 5 tool calls this session (real work, not premature optimism)
+- `!isPlanMode()` — not in plan mode (planning ≠ completing)
+- `session.count() > 5` — at least 5 tool calls this session (real work, not premature optimism)
 - `session.count('edit_file') > 0 || session.count('write_file') > 0 || session.count('bash') > 0` — real work tools used at any point in this session (session-scoped, not turn-scoped)
 
 These guards prevent false triggers from:
@@ -170,8 +170,8 @@ This hook must not feel intrusive. Follow these principles:
 **Problem**: The LLM uses confidence=10 for reasons other than task completion
 (e.g., defensive confusion reduction, premature optimism, plan confidence).
 
-**Solution**: The condition includes three guards (`!seq.isPlanMode()`,
-`seq.totalCount() > 5`, `session.count('edit_file') > 0 || session.count('write_file') > 0 || session.count('bash') > 0`) that
+**Solution**: The condition includes three guards (`!isPlanMode()`,
+`session.count() > 5`, `session.count('edit_file') > 0 || session.count('write_file') > 0 || session.count('bash') > 0`) that
 filter out these false triggers.
 
 ### Pitfall: Over-Suggesting

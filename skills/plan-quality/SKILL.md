@@ -66,7 +66,7 @@ mid-plan. The action replaces the stop with a `skill_load` of this skill.
 
 ```
 trigger: ["stop"]
-condition: seq.isPlanMode() && seq.totalCount('skill_load#plan-quality') == 0
+condition: isPlanMode() && session.count('skill_load#plan-quality') == 0
 action:
   type: replace
   tool: skill_load
@@ -212,7 +212,7 @@ PDF generation, verification).
 
 1. The agent stops in plan mode. This hook fires: since
    `skill_load("plan-quality")` has not run this session
-   (`seq.totalCount('skill_load#plan-quality') == 0`), the stop is replaced
+   (`session.count('skill_load#plan-quality') == 0`), the stop is replaced
    with a `skill_load("plan-quality")` call.
 2. The skill loads and its guidance is in attention.
 3. **Part 1:** The agent runs `wiki_get(query="pitfalls assumptions plan",
@@ -237,7 +237,7 @@ section by section.
 
 ### On the Dedup Guard
 
-The condition `seq.totalCount('skill_load#plan-quality') == 0` is
+The condition `session.count('skill_load#plan-quality') == 0` is
 **session-scoped**: once this skill has been loaded at any point in the
 session, the hook will not re-fire. The `tool#pattern` substring matching
 reads `skill_load`'s `args.name` (via `extractSearchKey()`), so the guard is

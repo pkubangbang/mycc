@@ -30,8 +30,8 @@ to restore the intent language table to the attention window.
 ## Trigger
 
 Fires before `bash` execution when:
-- `seq.countResult('bash', 'Error: [Intent]', 20) >= 3` — three or more bash tool results start with 'Error: [Intent]' (within first 20 chars)
-- `seq.totalCount() > 20` — session is large enough that attention degradation is likely
+- `session.countResult('bash', 'Error: [Intent]', 20) >= 3` — three or more bash tool results start with 'Error: [Intent]' (within first 20 chars)
+- `session.count() > 20` — session is large enough that attention degradation is likely
 
 ## Action
 
