@@ -6,23 +6,18 @@ import * as fs from 'fs';
 import * as path from 'path';
 import chalk from 'chalk';
 import { MODEL } from '../engine/chat-provider.js';
-import { getOllamaHost, getApiProvider } from '../config.js';
-
-const OLLAMA_HOST = getOllamaHost();
 import { classifyError } from '../engine/chat-helpers.js';
-import { healthCheck } from '../engine/chat-provider.js';
 import { ParentContext } from '../context/parent-context.js';
 import { getSessionId } from '../session/index.js';
 import { slashRegistry } from '../slashes/index.js';
-import { getTokenThreshold, isDebuggingEval, shouldServe, getServePort, getServeHost, getEmbeddingModel, shouldAuto, shouldDaemon, getDaemonSkill, getAutoflyThresholdArg, getDiscoveryDir } from '../config.js';
+import { getTokenThreshold, shouldServe, getServePort, getServeHost, shouldAuto, getAutoflyThresholdArg, getDiscoveryDir } from '../config.js';
 import { Triologue } from './triologue.js';
 import { agentIO } from './agent-io.js';
 import { autoState } from './auto-state.js';
-import { shouldSkipHealthCheck } from '../config.js';
+import { runHealthCheck, displayStartupBanner } from './startup.js';
 import { loader } from '../context/shared/loader.js';
 import { getLayerBaseDir } from '../utils/skill-path-resolver.js';
 import { initializeSession } from '../session/index.js';
-import { ConditionRegistry } from '../hook/conditions.js';
 import { Sequence } from '../hook/sequence.js';
 import { HookExecutor } from '../hook/hook-executor.js';
 import { Core } from '../context/parent/core.js';
@@ -45,10 +40,11 @@ import { handleStop } from './states/stop.js';
 import { handleWait } from './states/wait.js';
 import { clearWrapUp } from './esc-wrap-up.js';
 import pkg from '../../package.json';
-import { Cron } from 'croner';
-import { get_default_mindmap_path, load_mindmap, validate_mindmap, applyPatchAction, readAllPatches, getPatchPath } from '../mindmap/index.js';
-import type { Node, Mindmap } from '../mindmap/types.js';
-import type { Skill } from '../types.js';
+import { loadProjectMindmap } from './mindmap-loader.js';
+import { registerSignalHandlers } from './signal-handlers.js';
+import { initDaemonMode } from './daemon-init.js';
+import { initHookSystem } from './hook-bootstrap.js';
+import { wireServeCallbacks } from './serve-wiring.js';
 
 const version = pkg.version;
 
@@ -69,80 +65,13 @@ export async function main(): Promise<void> {
   // Initialize AgentIO early (needed for ask() during health check and session restoration)
   agentIO.initMain();
 
-  // Health check: validate Ollama connectivity and model availability
-  let modelInfo: { family?: string; parameterSize?: string; contextLength: number } | null = null;
-  if (shouldSkipHealthCheck()) {
-    console.log(chalk.gray('Skipping health check (test mode)'));
-  }
+  // Health check: validate provider connectivity and model availability.
+  // Returns model info for the banner (null when skipped). Exits the process
+  // if the user declines to retry a failed check.
+  const modelInfo = await runHealthCheck();
 
-  if (isDebuggingEval()) {
-    console.log(chalk.yellow('Debug-eval mode enabled: expression AST trees will be printed'));
-  }
-
-  if (!shouldSkipHealthCheck()) {
-    while (true) {
-      const health = await healthCheck(tokenThreshold);
-      if (health.ok) {
-        if (health.modelInfo) modelInfo = health.modelInfo;
-        if (health.warnings && health.warnings.length > 0) {
-          console.log();
-          for (const warning of health.warnings) {
-            console.log(chalk.yellow(`[warning] ${warning}`));
-          }
-        }
-        break;
-      }
-
-      console.error(chalk.red(`Health check failed: ${health.error}`));
-      console.log(chalk.gray('─'.repeat(40)));
-      console.log(chalk.yellow('Common fixes:'));
-      if (getApiProvider() === 'deepseek') {
-        console.log(chalk.gray('  1. Check DEEPSEEK_API_KEY in .mycc/.env'));
-        console.log(chalk.gray('  2. Verify DEEPSEEK_MODEL is correct'));
-        console.log(chalk.gray('  3. Check network connectivity to api.deepseek.com'));
-      } else {
-        console.log(chalk.gray('  1. Ensure Ollama is running: ollama serve'));
-        console.log(chalk.gray('  2. Check OLLAMA_HOST in ~/.mycc-store/.env'));
-        console.log(chalk.gray('  3. Verify model exists: ollama list'));
-      }
-      console.log();
-
-      const answer = agentIO.getAuto() ? 'y' : await agentIO.ask(chalk.cyan('Retry health check? [Y/n] > '), { useAsPrompt: true, onEsc: 'n', onEnter: 'y' });
-      if (answer.toLowerCase() === 'n' || answer.toLowerCase() === 'no') {
-        console.log(chalk.yellow('Exiting at user request.'));
-        process.exit(1);
-      }
-
-      console.log(chalk.cyan('Retrying health check...'));
-      console.log();
-    }
-  }
-
-  // Display startup info
-  const labelWidth = 12;
-  const alignLabel = (label: string) => label.padEnd(labelWidth);
-
-  const apiProvider = getApiProvider();
-  const providerLabel = apiProvider === 'deepseek' ? 'DeepSeek' : 'Ollama';
-  const hostUrl = apiProvider === 'deepseek'
-    ? process.env.DEEPSEEK_HOST || 'https://api.deepseek.com'
-    : OLLAMA_HOST;
-
-  console.log();
-  console.log(chalk.cyan.bold(`Coding Agent v${version}`));
-  console.log(chalk.gray('─'.repeat(40)));
-  console.log(chalk.cyan(`${alignLabel('Model:')}${MODEL}`));
-  console.log(chalk.gray(`${alignLabel('Host:')}${hostUrl}`));
-  console.log(chalk.gray(`${alignLabel('Provider:')}${providerLabel}`));
-
-  if (modelInfo) {
-    if (modelInfo.family) console.log(chalk.gray(`${alignLabel('Family:')}${modelInfo.family}`));
-    if (modelInfo.parameterSize) console.log(chalk.gray(`${alignLabel('Params:')}${modelInfo.parameterSize}`));
-    console.log(chalk.gray(`${alignLabel('Context:')}${modelInfo.contextLength}`));
-  }
-
-  console.log(chalk.gray(`${alignLabel('Threshold:')}${tokenThreshold} tokens`));
-  console.log(chalk.gray(`${alignLabel('Embedding:')}${getEmbeddingModel()}`));
+  // Display startup info banner (version, model, host, provider, threshold).
+  displayStartupBanner(version, modelInfo);
 
   // Initialize session (restore or create new)
   const sessionInit = await initializeSession();
@@ -161,7 +90,11 @@ export async function main(): Promise<void> {
   // Pass initial query to prompt handler
   setInitialQuery(initialQuery);
 
-  // Display session info
+  // Display session info (Session/WorkDir/Commands lines, aligned with the
+  // startup banner's label width — see startup.displayStartupBanner).
+  const labelWidth = 12;
+  const alignLabel = (label: string) => label.padEnd(labelWidth);
+
   const sessionId = getSessionId(sessionFilePath);
   // When this session was branched from a sealed source (--from / /fork), show
   // the lineage so the user understands "Session: <new> (forked from <old>)"
@@ -210,34 +143,11 @@ export async function main(): Promise<void> {
   // (skill-loading layer) decoupled from the wiki module (RAG layer).
   await ctx.wiki.indexSkills(loader.buildAllSkillEntries());
 
-  // Load mindmap (mindmap.json + replay patches from mindmap-patch.jsonl)
+  // Load mindmap (mindmap.json + replay patches from mindmap-patch.jsonl).
+  // loadProjectMindmap installs the mindmap on ctx.core and returns whether
+  // a mindmap is available (drives the project-context injection path below).
   const workDir = process.cwd();
-  const mindmapPath = get_default_mindmap_path(workDir);
-  let mindmapLoaded = false;
-
-  if (!fs.existsSync(mindmapPath)) {
-    // No mindmap.json - show warning
-    console.log(chalk.yellow('[mindmap] No mindmap found. LLM will read MYCC.md directly.'));
-  } else {
-    try {
-      const mindmap = loadMindmapWithPatches(mindmapPath, workDir);
-
-      // Validate against MYCC.md (existing hash-check logic preserved)
-      const claudeMdPath = path.join(workDir, 'MYCC.md');
-      if (fs.existsSync(claudeMdPath) && !validate_mindmap(mindmap, claudeMdPath)) {
-        // Validation failed - show warning but continue loading
-        console.log(chalk.yellow('[mindmap] Validation failed (outdated). Loading anyway.'));
-      } else {
-        // Success
-        console.log(chalk.gray(`[mindmap] Loaded: ${countNodes(mindmap.root)} nodes`));
-      }
-
-      ctx.core.setMindmap(mindmap);
-      mindmapLoaded = true;
-    } catch (err) {
-      console.log(chalk.red(`[mindmap] Failed to load: ${(err as Error).message}`));
-    }
-  }
+  const mindmapLoaded = loadProjectMindmap(workDir, ctx.core);
 
   const requestEmbeddingTracker = new RequestEmbeddingTracker();
 
@@ -288,58 +198,11 @@ export async function main(): Promise<void> {
   const readmePath = path.join(process.cwd(), 'README.md');
   if (fs.existsSync(readmePath)) triologue.setReadmeMd(fs.readFileSync(readmePath, 'utf-8'));
 
-  // Initialize hook system (machine lifetime)
-  const conditions = new ConditionRegistry();
-  const loadResult = await conditions.load();
-  // Report load errors/warnings
-  for (const error of loadResult.errors) {
-    console.error(chalk.red(`[conditions] Error: ${error}`));
-  }
-  for (const warning of loadResult.warnings) {
-    console.log(chalk.yellow(`[conditions] Warning: ${warning}`));
-  }
-
-  // Inject info about hooks whose compiled condition uses the outdated
-  // `seq.X` API (rejected at load) so the LLM is prompted to recompile them
-  // via skill_compile into the current `turn.X` / `session.X` syntax.
-  // This surfaces legacy conditions as a projectContext note the agent sees
-  // every turn — non-blocking, but actionable (names the exact commands).
-  triologue.setLegacyHooksInfo(loadResult.legacyConditions);
-
-  // Wire up IPC-based condition reload: skill_compile sends IPC message
-  // to refresh runtime conditions without restarting the agent
-  agentIO.setConditionReloadCallback(async () => {
-    const reloadResult = await conditions.load();
-    // Report reload errors/warnings
-    for (const error of reloadResult.errors) {
-      console.error(chalk.red(`[conditions] Error: ${error}`));
-    }
-    for (const warning of reloadResult.warnings) {
-      console.log(chalk.yellow(`[conditions] Warning: ${warning}`));
-    }
-  });
-
-  // Sync pending skills (skills with 'when' but no compiled condition)
-  // Will be notified during hint round
-  conditions.syncPending(loader);
-
-  // Wire the runtime ConditionRegistry into the Loader so that
-  // skill_compile (via ctx.skill.compileCondition) can update the in-memory
-  // conditions directly — no throwaway registry, no broken IPC, no restart.
-  // Lead process only; child processes leave the loader's registry null and
-  // fall back to disk write + 'condition_replace' IPC.
-  loader.setConditionRegistry(conditions);
-
-  // Inject pending hook info into project context so the LLM knows
-  // which hooks are available but not yet compiled (closes the gap
-  // on fresh installations where hooks are loaded but inactive).
-  const pendingSkillNames = conditions.getPending();
-  if (pendingSkillNames.length > 0) {
-    const pendingSkills = pendingSkillNames
-      .map(name => loader.getSkill(name))
-      .filter((s): s is Skill => !!s);
-    triologue.setPendingHooksInfo(pendingSkills);
-  }
+  // Initialize hook system (machine lifetime): load the ConditionRegistry,
+  // report errors/warnings, wire IPC reload, sync pending skills, wire the
+  // registry into the loader, and inject legacy/pending hook info into the
+  // triologue project context. Returns the registry for Sequence/HookExecutor.
+  const conditions = await initHookSystem(ctx, loader, triologue);
 
   const core = ctx.core as Core;
   const sequence = new Sequence(triologue, () => core.getMode());
@@ -357,83 +220,14 @@ export async function main(): Promise<void> {
   }
 
   // ── --daemon CLI arg: headless daemon mode ──
-  // Daemon mode = auto mode + no terminal. The Lead runs detached (spawned
-  // by the Coordinator with stdio:'ignore'). It auto-loads the named skill
-  // (if provided), starts a cron timer for skills with `service_cron`, and
-  // stays alive in WAIT mode between cron ticks / external mail_to nudges.
-  // Only daemon mode activates the cron timer — a non-daemon lead loading a
-  // skill with service_cron does NOT start cron.
-  let daemonCronJob: Cron | null = null;
-  if (shouldDaemon()) {
-    // Force auto mode on (daemon is always headless auto).
-    autoState.resetStreak();
-    autoState.setAuto(true);
-    console.log(chalk.cyan('daemon mode is on (--daemon). Running headless.'));
-
-    const daemonSkill = getDaemonSkill();
-
-    // Dedup check: ONLY when a skill name is provided (role is non-empty).
-    // Bare --daemon (no skill) does NOT participate in dedup — multiple
-    // passive daemons may coexist. The check happens AFTER peer.start() so
-    // identity.json is populated, but BEFORE we register ourselves... actually
-    // we register first, then check for OTHER instances (not self).
-    if (daemonSkill) {
-      const identities = ctx.peer.listIdentities();
-      const selfWorkDir = process.cwd();
-      const selfSessionId = ctx.peer.getSelfSessionId();
-      for (const entry of identities) {
-        if (entry.sessionId === selfSessionId) continue; // skip self
-        if (entry.role === daemonSkill && entry.workDir === selfWorkDir) {
-          if (ctx.peer.isFresh(entry.sessionId)) {
-            console.error(chalk.red(`A daemon with role '${daemonSkill}' is already running for this workDir.`));
-            console.error(chalk.gray(`Existing session: ${entry.sessionId.slice(0, 7)}`));
-            // No cron job to stop yet — daemonCronJob is created later (line
-            // below in the skill.service_cron branch), so it is still null here.
-            ctx.peer.stop();
-            process.send!({ type: 'exit' });
-            process.exit(1);
-          }
-        }
-      }
-    }
-
-    // Auto-load skill if provided.
-    if (daemonSkill) {
-      const skill = loader.getSkill(daemonSkill);
-      if (!skill) {
-        console.error(chalk.red(`Skill '${daemonSkill}' not found. Cannot start daemon.`));
-        ctx.peer.stop();
-        process.send!({ type: 'exit' });
-        process.exit(1);
-      }
-      // Inject a system note so the LLM loads the skill on its first turn.
-      // The WAIT state's 1s poll will pick up this note (it is appended to
-      // the triologue) and route to COLLECT → LLM.
-      triologue.note('SYSTEM', `Daemon started with skill '${daemonSkill}'. Load it via skill_load(name="${daemonSkill}") and follow its workflow.`);
-
-      // Start cron timer if the skill declares service_cron.
-      if (skill.service_cron) {
-        try {
-          // { unref: true } so the timer doesn't keep the process alive on its
-          // own — the agent loop / heartbeat already keep it alive. This
-          // prevents a zombie timer if the loop exits but the process lingers.
-          daemonCronJob = new Cron(skill.service_cron, { unref: true }, () => {
-            const title = 'Service nudge';
-            const content = `[Service nudge] Cron tick for '${daemonSkill}'. Check for pending work and process it per the skill's workflow.`;
-            ctx.mail.appendMail('lead', title, content);
-            console.log(chalk.gray(`[cron] Nudge sent for '${daemonSkill}'`));
-          });
-          console.log(chalk.gray(`[cron] Started: ${skill.service_cron}`));
-        } catch (err) {
-          console.error(chalk.red(`[cron] Failed to start: ${(err as Error).message}`));
-        }
-      } else {
-        console.log(chalk.gray(`[daemon] Skill '${daemonSkill}' has no service_cron — passive daemon (waits for external mail).`));
-      }
-    } else {
-      console.log(chalk.gray(`[daemon] No skill specified — passive daemon (waits for external mail).`));
-    }
-  }
+  // Daemon mode = auto mode + no terminal. initDaemonMode forces auto on,
+  // dedups against an existing daemon with the same role+workDir, auto-loads
+  // the named skill, and starts the croner timer from the skill's
+  // service_cron. Returns the cron job (null when not in daemon mode or the
+  // skill has no service_cron) so the signal handlers + final cleanup can
+  // stop it. Only daemon mode activates the cron timer — a non-daemon lead
+  // loading a skill with service_cron does NOT start cron.
+  const daemonCronJob = initDaemonMode(ctx, loader, triologue);
 
   // ── --autofly=N CLI arg: seed the autofly threshold into the singleton ──
   // When --autofly=N is provided (a positive integer), override the singleton's
@@ -446,92 +240,13 @@ export async function main(): Promise<void> {
     autoState.setAutoflyThreshold(autoflyThresholdArg);
   }
 
-  // Wire the webui mirror into the autoState singleton's onAutoChange
-  // callback. Previously agentIO.setAuto() called getServeHub().broadcastAuto
-  // directly; now the singleton owns the flag and fires this callback on a
-  // real flip, so the webui chat input box stays enabled for steering and the
-  // 停止 button stays visible+spinning while the lead is in WAIT. Registered
-  // here (where ServeHub is in scope) to keep AutoState free of any
-  // serve-hub import and avoid the module-load cycle. Best-effort: broadcastAuto
-  // is a no-op when serve isn't running.
-  autoState.onAutoChange = (value: boolean) => {
-    try {
-      getServeHub().broadcastAuto(value);
-    } catch {
-      // serve-hub import cycle or serve not running — best-effort, no throw
-    }
-  };
-
-  // Wire the channel-join event into the agent loop. When a peer channel
-  // joins (the 5s poll sweep calls joinChannel, or /channel does directly),
-  // ChannelManager fires the onChannelJoin callback registered here. This
-  // covers the mid-PROMPT case: a channel joining AFTER the Layer A gate was
-  // checked but WHILE ask()/waitForInput() is blocked. The callback:
-  //   1. Engages auto mode (setAuto(true)) — the channel is a live automation
-  //      feed; the loop should run autonomously now. Subsequent PROMPT entries
-  //      take the Layer A hasActiveChannel() path.
-  //   2. Aborts a blocked terminal PROMPT wait (agentIO.abortAsk) — rejects the
-  //      blocked ask() Promise with a PromptAbortError, which propagates as a
-  //      thrown exception through getInput() to the try/catch in prompt.ts
-  //      (Layer B), returning AgentState.WAIT. No-op if no ask() is blocked.
-  //   3. Aborts a blocked serve PROMPT wait (getServeHub().rejectInput) — same
-  //      rejection path for the webui's waitForInput(). No-op if not blocked.
-  // GUARD: all three actions fire ONLY when a PROMPT wait is actually blocked
-  //   (agentIO.isPromptBlocked()). Without this guard, a channel joining while
-  //   the loop is in COLLECT/LLM/HOOK/TOOL would flip auto mode mid-pass — a
-  //   subtle coupling. When not blocked, the join is caught by the Layer A
-  //   hasActiveChannel() gate on the next PROMPT entry. abortAsk/rejectInput
-  //   are already self-guarded no-ops, but setAuto(true) is not, so the
-  //   isPromptBlocked() check is the real gate. Best-effort: each call swallows
-  //   its own errors so a failure in one path doesn't block the other.
-  ctx.peer.setOnChannelJoin((channelId: string) => {
-    // Grant read-only access to the just-joined channel's peer workDir. The
-    // peer's workDir is read from identity.json (keyed by peerSessionId). This
-    // lets the LLM read the peer's project files (read_file/grep) without
-    // per-access user prompts, but never write to them (folder_recursive_
-    // readonly). Idempotent — addExternalAutoGrant overwrites the Map entry.
-    // Teammates inherit via the IPC external_path_access handler.
-    const ch = ctx.peer.listChannels().find(c => c.channelId === channelId);
-    if (ch?.joined && ch.peerSessionId) {
-      const peer = ctx.peer.listIdentities().find(e => e.sessionId === ch.peerSessionId);
-      if (peer?.workDir) {
-        ctx.core.addExternalAutoGrant(peer.workDir, false); // false = read-only
-      }
-    }
-
-    if (!agentIO.isPromptBlocked()) {
-      // Not blocked in PROMPT — the Layer A gate will catch this channel on
-      // the next PROMPT entry. Do not flip auto mid-pass.
-      return;
-    }
-    autoState.setAuto(true);
-    try { agentIO.abortAsk(); } catch { /* best-effort */ }
-    try { getServeHub().rejectInput(); } catch { /* best-effort */ }
-  });
-
-  // Register the combined auto-mode ENTRY callback for the webui. The
-  // /serve "enter auto" lightning-bolt button sends an 'auto' WS message;
-  // ServeHub calls this provider to flip autoState (which both Core and
-  // AgentIO delegate to) — exactly the /auto slash path. Returns false when
-  // already in auto mode so the hub can surface "已经是自动模式了".
-  getServeHub().setEnterAutoProvider(() => {
-    if (autoState.getAuto()) return false;
-    autoState.resetStreak();
-    autoState.setAuto(true);
-    console.log(chalk.cyan('auto mode is on (webui). Mails will be auto-replied. Press esc to exit.'));
-
-    // Wake a blocked PROMPT wait so the loop immediately redirects to WAIT
-    // (where mail/event polling happens). Same pattern as the channel-join
-    // callback above. Without this, when the lead is blocked in PROMPT
-    // (e.g. mail was written to unread-lead.jsonl while idle), the loop
-    // stays stuck until a user message arrives — so auto mode appears
-    // unresponsive to pending mail. Both calls are self-guarded no-ops
-    // when not blocked.
-    try { agentIO.abortAsk(); } catch { /* best-effort */ }
-    try { getServeHub().rejectInput(); } catch { /* best-effort */ }
-
-    return true;
-  });
+  // ── Wire the serve/webui integration ──
+  // Groups the three serve callbacks: autoState.onAutoChange (mirror to
+  // webui), the channel-join callback (engage auto + abort a blocked PROMPT
+  // when a peer channel joins mid-flight), and the webui "enter auto"
+  // provider. Registered here to keep AutoState/ChannelManager free of any
+  // serve-hub import (avoids the module-load cycle).
+  wireServeCallbacks(ctx);
 
   // ── Build state handlers ──
   const handlers: Record<string, StateHandler> = {
@@ -564,53 +279,11 @@ export async function main(): Promise<void> {
     requestEmbeddingTracker,
   );
 
-  // ── Global error handlers — keep lead alive on unexpected errors ──
-  // Only Ctrl+C (SIGINT), empty input, 'exit'/'q'/'quit', or 'n'/'no'
-  // at the Retry prompt will shut down the agent.
-  process.on('uncaughtException', (err) => {
-    const msg = err instanceof Error ? err.message : String(err);
-    console.error();
-    console.error(chalk.red(`Uncaught exception: ${msg}`));
-    console.error(chalk.gray('The agent will continue. Press Ctrl+C or type exit to quit.'));
-    // Do NOT exit — keep the agent alive
-  });
-
-  process.on('unhandledRejection', (reason) => {
-    const msg = reason instanceof Error ? reason.message : String(reason);
-    console.error();
-    console.error(chalk.red(`Unhandled rejection: ${msg}`));
-    console.error(chalk.gray('The agent will continue. Press Ctrl+C or type exit to quit.'));
-    // Do NOT exit — keep the agent alive
-  });
-
-  // ── SIGINT handler ──
-  process.on('SIGINT', () => {
-    const controller = agentIO.getLlmAbortController();
-    if (controller) {
-      controller.abort();
-      console.log(chalk.yellow('\nInterrupting current operation...'));
-      return;
-    }
-    console.log(chalk.yellow('\nShutting down...'));
-    if (daemonCronJob) daemonCronJob.stop();
-    ctx.team.dismissTeam(false); // Graceful shutdown of all teammates
-    ctx.peer.stop(); // Stop heartbeat + channel poll + unregister identity
-    process.send!({ type: 'exit' });
-  });
-
-  // ── SIGTERM handler ──
-  // Coordinator sends SIGTERM to the process group on Ctrl+C, and to the
-  // previous Lead on restart() (cwd change via /load). Gracefully dismiss
-  // teammates and stop the ServeHub so the Vite dev-server child and bound
-  // HTTP port are released before the process exits — otherwise restart()
-  // orphans them and the next /serve hits EADDRINUSE.
-  process.on('SIGTERM', async () => {
-    if (daemonCronJob) daemonCronJob.stop();
-    ctx.team.dismissTeam(false);
-    ctx.peer.stop(); // Stop heartbeat + channel poll + unregister identity
-    try { await getServeHub().stop(); } catch { /* stop() already best-effort internally */ }
-    process.exit(0);
-  });
+  // ── Register global signal/error handlers ──
+  // Registered AFTER daemon mode has started its cron timer so the handlers
+  // can stop it on shutdown. uncaughtException/unhandledRejection keep the
+  // lead alive; SIGINT/SIGTERM tear down (cron, teammates, peer, serve hub).
+  registerSignalHandlers(ctx, daemonCronJob);
 
   // Ready
   process.send({ type: 'ready' });
@@ -737,59 +410,4 @@ export async function main(): Promise<void> {
 
   // Signal Coordinator to exit
   process.send({ type: 'exit' });
-}
-
-/**
- * Count nodes in mindmap tree
- */
-function countNodes(node: Node): number {
-  let count = 1;
-  for (const child of node.children) {
-    count += countNodes(child);
-  }
-  return count;
-}
-
-/**
- * Load mindmap.json then replay hash-matched patches from mindmap-patch.jsonl.
- *
- * Two independent on-disk lines merge only in memory at load time:
- * 1. mindmap.json — MYCC.md isomorph (load_mindmap sets is_mycc=true, is_patch=false)
- * 2. mindmap-patch.jsonl — append-only patch log from recap
- *
- * Patches are hash-gated: only those whose mindmap_hash matches the loaded
- * mindmap.json hash are applied (others are skipped — created against an older
- * version). See docs/mindmap-redesign.md Part 3.
- *
- * @param mindmapPath - Path to mindmap.json
- * @param workDir - Project working directory (for locating the patch jsonl)
- * @returns The merged in-memory mindmap (base + replayed patches)
- */
-function loadMindmapWithPatches(mindmapPath: string, workDir: string): Mindmap {
-  const mindmap = load_mindmap(mindmapPath);
-
-  // Replay patches from jsonl (hash-gated)
-  const patchPath = getPatchPath(workDir);
-  if (fs.existsSync(patchPath)) {
-    const patches = readAllPatches(patchPath);
-    let applied = 0;
-    let skipped = 0;
-    for (const patch of patches) {
-      // Skip patches created against a different mindmap.json version
-      if (patch.mindmap_hash !== mindmap.hash) {
-        skipped++;
-        continue;
-      }
-      if (applyPatchAction(mindmap, patch)) {
-        applied++;
-      } else {
-        skipped++;
-      }
-    }
-    if (applied > 0 || skipped > 0) {
-      console.log(chalk.gray(`[mindmap] Replayed ${applied} patches (${skipped} skipped)`));
-    }
-  }
-
-  return mindmap;
 }
