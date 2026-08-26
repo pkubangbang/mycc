@@ -61,7 +61,7 @@ export function registerSignalHandlers(ctx: AgentContext, daemonCronJob: Cron | 
     if (daemonCronJob) daemonCronJob.stop();
     ctx.team.dismissTeam(false); // Graceful shutdown of all teammates
     ctx.peer.stop(); // Stop heartbeat + channel poll + unregister identity
-    process.send!({ type: 'exit' });
+    process.send?.({ type: 'exit' });
   });
 
   // ── SIGTERM handler ──

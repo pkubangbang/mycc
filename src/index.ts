@@ -16,13 +16,14 @@
  * - Coordinator only intercepts coordinator-level commands (Ctrl+C, Ctrl+D, ESC)
  */
 
-import { ChildProcess } from 'child_process';
+import { ChildProcess, spawn } from 'child_process';
 import { resolve } from 'path';
+import { existsSync } from 'fs';
 import chalk from 'chalk';
 import { isVerbose, validateEnv, ensureToolTypeImports, shouldRunSetup, loadEnv, shouldServe, shouldDaemon } from './config.js';
 import { agentIO } from './loop/agent-io.js';
 import { parseKeys, isCtrlC, isEscape } from './utils/key-parser.js';
-import { getProjectRoot, spawnTsx } from './utils/tsx-run.js';
+import { getProjectRoot, spawnTsx, getTsxLoaderPath } from './utils/tsx-run.js';
 import { printHelp } from './help.js';
 import { installVerboseLog } from './utils/verbose-log.js';
 
@@ -645,22 +646,66 @@ function runCoordinator(): void {
     env.COLUMNS = process.env.COLUMNS || '120';
     env.MYCC_COORDINATOR_PID = String(process.pid);
 
-    const child = spawnTsx({
-      script: tsxScript,
-      args: forwardedArgs,
-      cwd: process.cwd(),
-      stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
-      env,
-      // Detach the daemon Lead into its own process group so it survives the
-      // Coordinator's exit. Without `detached: true`, Windows sends a
-      // CTRL_CLOSE_EVENT to the whole console group when the Coordinator
-      // exits, killing the Lead — this was the root cause of the daemon's
-      // silent exit within seconds of startup. On Unix, detached makes the
-      // child a new process-group leader so it is not reached by a SIGINT
-      // sent to the parent's group. Combined with child.unref() below, the
-      // Coordinator can exit 0 immediately while the Lead keeps running.
-      detached: true,
-    });
+    // On Windows, spawn the native Go wrapper (bin/mycc-daemon.exe) which
+    // calls CreateProcessW with CREATE_NEW_CONSOLE + STARTF_USESHOWWINDOW +
+    // SW_HIDE. This gives the Lead a HIDDEN console that all its child
+    // processes (cmd.exe from execSync) inherit — eliminating the console
+    // window flashing that occurs when a detached Lead (DETACHED_PROCESS =
+    // no console) spawns cmd.exe which self-allocates a visible console.
+    //
+    // The wrapper is a one-shot launcher: it spawns the Lead and exits
+    // immediately. The Lead survives because CREATE_NEW_CONSOLE puts it in
+    // its own console process group. No IPC is used (the daemon Lead's IPC
+    // is fire-and-forget — the Coordinator exits right after, so messages
+    // are harmlessly dropped). See docs/lead-detach-issue-solution.md.
+    //
+    // Fallback: when the wrapper binary is missing (e.g. built from source
+    // without Go, or on a non-Windows platform), use the existing spawnTsx
+    // approach. The flash issue is Windows-only; Unix uses process groups,
+    // not consoles, so spawnTsx is correct there.
+    const wrapperPath = resolve(PROJECT_ROOT, 'bin', 'mycc-daemon.exe');
+    const useWrapper = process.platform === 'win32' && existsSync(wrapperPath);
+
+    let child: ChildProcess;
+    if (useWrapper) {
+      const loaderPath = getTsxLoaderPath();
+      child = spawn(wrapperPath, [
+        process.execPath,           // node.exe path
+        loaderPath,                 // tsx ESM loader (file:// URL)
+        tsxScript,                  // src/lead.ts
+        ...forwardedArgs,           // --daemon, --skip-healthcheck, etc.
+      ], {
+        cwd: process.cwd(),
+        // stdio: no IPC channel — the Go wrapper can't do Node.js IPC, and
+        // the daemon Lead's IPC is fire-and-forget anyway (Coordinator exits
+        // immediately). The Lead's IPC guard is relaxed for daemon mode
+        // (agent-repl.ts) so it boots without process.send.
+        stdio: ['ignore', 'pipe', 'pipe'],
+        env,
+        // detached: true so the wrapper survives the Coordinator's exit.
+        // The wrapper itself is a one-shot launcher (exits right after
+        // CreateProcessW), but detached keeps it from being killed by the
+        // Coordinator's CTRL_CLOSE_EVENT before it can spawn the Lead.
+        detached: true,
+      });
+    } else {
+      child = spawnTsx({
+        script: tsxScript,
+        args: forwardedArgs,
+        cwd: process.cwd(),
+        stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
+        env,
+        // Detach the daemon Lead into its own process group so it survives the
+        // Coordinator's exit. Without `detached: true`, Windows sends a
+        // CTRL_CLOSE_EVENT to the whole console group when the Coordinator
+        // exits, killing the Lead — this was the root cause of the daemon's
+        // silent exit within seconds of startup. On Unix, detached makes the
+        // child a new process-group leader so it is not reached by a SIGINT
+        // sent to the parent's group. Combined with child.unref() below, the
+        // Coordinator can exit 0 immediately while the Lead keeps running.
+        detached: true,
+      });
+    }
 
     // Verbose-mode diagnostics: log daemon lifecycle events to the
     // coordinator log. These fire asynchronously; since the Coordinator

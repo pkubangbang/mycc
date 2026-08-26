@@ -83,8 +83,13 @@ export function getProjectRoot(): string {
 /**
  * Get the path to tsx ESM loader
  * Uses import.meta.resolve for ESM-compatible path resolution
+ *
+ * Exported so the Coordinator (src/index.ts) can pass the loader path to the
+ * native Go daemon wrapper (bin/mycc-daemon.exe), which spawns node.exe with
+ * `--import <loader>` via CreateProcessW. The wrapper needs the resolved
+ * loader URL because it runs outside the tsx context.
  */
-function getTsxLoaderPath(): string {
+export function getTsxLoaderPath(): string {
   try {
     // Use import.meta.resolve to find tsx/esm module path
     const resolved = import.meta.resolve('tsx/esm');
@@ -219,10 +224,6 @@ export function spawnTsx(options: TsxSpawnOptions): ChildProcess {
     env: options.env ?? process.env,
     stdio: options.stdio ?? 'inherit',
     detached: options.detached ?? false,
-    // Hide any console window allocated for a detached child on Windows.
-    // `detached: true` allocates a new console for the child by default;
-    // windowsHide suppresses it so a daemon Lead does not pop up a window.
-    windowsHide: true,
   };
 
   return spawn(command, args, spawnOptions);

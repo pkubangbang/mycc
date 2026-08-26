@@ -10,7 +10,7 @@ import { classifyError } from '../engine/chat-helpers.js';
 import { ParentContext } from '../context/parent-context.js';
 import { getSessionId } from '../session/index.js';
 import { slashRegistry } from '../slashes/index.js';
-import { getTokenThreshold, shouldServe, getServePort, getServeHost, shouldAuto, getAutoflyThresholdArg, getDiscoveryDir } from '../config.js';
+import { getTokenThreshold, shouldServe, getServePort, getServeHost, shouldAuto, shouldDaemon, getAutoflyThresholdArg, getDiscoveryDir } from '../config.js';
 import { Triologue } from './triologue.js';
 import { agentIO } from './agent-io.js';
 import { autoState } from './auto-state.js';
@@ -50,8 +50,13 @@ import { wireServeCallbacks } from './serve-wiring.js';
 const version = pkg.version;
 
 export async function main(): Promise<void> {
-  // Guard: Must run under Coordinator
-  if (!process.send) {
+  // Guard: Must run under Coordinator (normal mode requires IPC channel).
+  // Daemon mode is an exception: on Windows the Lead is spawned by a native
+  // Go wrapper (mycc-daemon.exe) that uses CreateProcessW without an IPC
+  // channel, so process.send is undefined. On Unix the daemon Lead still
+  // gets an IPC channel via spawnTsx, but we relax the guard uniformly for
+  // daemon mode so the same code path works on both platforms.
+  if (!process.send && !shouldDaemon()) {
     console.error(chalk.red('Error: Lead process must be started via Coordinator (mycc command)'));
     console.error(chalk.gray('Run: mycc'));
     process.exit(1);
@@ -330,7 +335,7 @@ export async function main(): Promise<void> {
   registerSignalHandlers(ctx, daemonCronJob);
 
   // Ready
-  process.send({ type: 'ready' });
+  process.send?.({ type: 'ready' });
 
   // ── Serve mode (--serve CLI flag): start web UI before the REPL loop ──
   // The /serve slash command path activates serve mid-session instead.
@@ -453,5 +458,5 @@ export async function main(): Promise<void> {
   ctx.peer.stop(); // Stop heartbeat + channel poll + unregister identity
 
   // Signal Coordinator to exit
-  process.send({ type: 'exit' });
+  process.send?.({ type: 'exit' });
 }

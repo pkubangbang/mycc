@@ -66,7 +66,7 @@ export function initDaemonMode(
           console.error(chalk.gray(`Existing session: ${entry.sessionId.slice(0, 7)}`));
           // No cron job to stop yet — it is created below, so still null here.
           ctx.peer.stop();
-          process.send!({ type: 'exit' });
+          process.send?.({ type: 'exit' });
           process.exit(1);
         }
       }
@@ -79,7 +79,7 @@ export function initDaemonMode(
     if (!skill) {
       console.error(chalk.red(`Skill '${daemonSkill}' not found. Cannot start daemon.`));
       ctx.peer.stop();
-      process.send!({ type: 'exit' });
+      process.send?.({ type: 'exit' });
       process.exit(1);
     }
     // Inject a system note so the LLM loads the skill on its first turn.
