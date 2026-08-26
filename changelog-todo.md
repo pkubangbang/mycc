@@ -256,6 +256,15 @@ When updating the changelog, use the following procedure:
 ### Docs
 - **Slash**: Add `docs/reload-design.md` (full design doc with effect-boundary table — coordinator-resident modules like `index.ts`/`config.ts` are NOT reloaded) + `/reload` section in `slash-commands.md`.
 
+## 2026-08-26
+### Fixes
+- **Crossroad (revert + brief exemption)**: Revert the `f7a2af8` guard that skipped crossroad whenever ANY tool call was present — it over-suppressed genuine direction reversals. Replace with a `brief`-only exemption (Option B): crossroad runs when `tools.length > 0 && !isBriefOnly` (where `isBriefOnly = rawToolCalls.length > 0 && every call is brief`). A `brief`-only response is mid-thought narration whose text naturally contains "However"/"But"/"Wait" (Tier 2 turning words) as hedging — NOT a genuine reversal; firing on it truncates reasoning and discards a harmless status call (a mis-direction documented in `crossroad-1787189812709.json`). A NON-brief tool call (read_file, bash, edit_file, ...) alongside turning words IS a committed action the LLM then pivoted away from — crossroad fires and discards ALL tool calls (including any `brief`); the LLM regenerates them after the continuation. Peer-reviewed by a 4-member team (parity-auditor, loop-analyst, detection-quality, test-coverage) over 97 real-world session files.
+- **Crossroad (stale-continuation leak)**: When crossroad produces an empty prefix (turning word at position 0, allowed by the `MIN_PREFIX_LENGTH=30` exception), the empty-output handler's `continue` re-entered the retry loop without clearing `chat.crossroadContinuation`/`crossroadFilePath`, so the next pass's unrelated LLM response reached HOOK and the crossroad branch merged a STALE continuation onto it. Fix: clear both fields before the `continue`.
+### Tests
+- **Crossroad**: `llm-crossroad-cooldown.test.ts` — rename Test 5 to brief-only exemption; add Test 5b (non-brief `bash` + turning word → crossroad fires, tool calls discarded) and Test 5c (brief + bash → crossroad fires, BOTH discarded); restore `bash` tool calls to Tests 1-3 that `f7a2af8` had stripped. `llm-esc-crossroad.test.ts` — restore the `bash` tool call to Test 2. All 22 llm state tests + 93 crossroad unit tests pass.
+### Docs
+- **Crossroad**: Update `docs/crossroad-design.md` for Option B — overview (brief-only exemption vs non-brief fire), code snippet aligned to `chat.` + `isBriefOnly` guard, key points, and edge cases (brief-only exemption row + stale-continuation empty-prefix row); correct ESC-during-crossroad to return STOP (not PROMPT).
+
 # Todo
 
 > Todo - Or never?

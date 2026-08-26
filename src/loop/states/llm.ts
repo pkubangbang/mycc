@@ -6,11 +6,11 @@
  * on ChatData for downstream states.
  *
  * Crossroad feature:
- * - After LLM response (text-only, no tool calls), detect turning words
- *   (However, Wait, 但, etc.)
+ * - After LLM response, detect turning words (However, Wait, 但, etc.)
  * - If found, truncate output, generate alternative continuations, select best
- * - A tool call means the LLM committed to an action — crossroad is skipped
- *   so the committed action is not discarded or mis-directed.
+ * - Discard tool calls — LLM will regenerate them after crossroad
+ *   (brief-only tool calls are exempted: their text is mid-thought narration,
+ *   not a committed direction reversal; see docs/crossroad-design.md)
  *
  * Quick-return ESC behavior:
  * - When ESC is pressed during LLM call, start background wrap-up
@@ -174,16 +174,26 @@ export async function handleLlm(
       // =====================================================================
       // Crossroad: detect turning words, generate alternative continuations
       // =====================================================================
-      // Only run when tools are available AND the LLM emitted no tool calls.
-      // A tool call means the LLM has committed to an action — crossroad's
-      // purpose is to resolve indecision, not redirect a committed action.
-      // Running crossroad on a response that has tool calls would truncate the
-      // LLM's reasoning, discard its tool calls, and inject an alien
-      // continuation as its "own" thinking — a mis-direction that intimidates
-      // the LLM away from calling mid-thought tools like brief.
+      // Runs when tools are available AND the LLM did not emit a brief-only
+      // tool-call set. A `brief`-only response is mid-thought narration — its
+      // accompanying text naturally contains "However"/"But"/"Wait" as
+      // hedging while the LLM reasons through alternatives, NOT a genuine
+      // direction reversal. Firing crossroad on it truncates the reasoning,
+      // discards a harmless status call, and injects an alien continuation
+      // (a mis-direction documented in crossroad-1787189812709.json). So
+      // `brief`-only calls are exempted.
+      //
+      // Non-brief tool calls (read_file, bash, edit_file, ...) alongside
+      // turning words ARE a committed action the LLM then pivoted away from
+      // — genuine indecision worth intercepting. Crossroad discards those
+      // tool calls (rawToolCalls = []); the LLM regenerates them after the
+      // continuation in the next COLLECT round. See docs/crossroad-design.md.
+      //
       // Wrapped in escAware so ESC during crossroad processing returns null
       // (transparent skip), using the original LLM output as-is.
-      if (tools.length > 0 && chat.rawToolCalls.length === 0) {
+      const isBriefOnly = chat.rawToolCalls.length > 0
+        && chat.rawToolCalls.every(tc => tc.function.name === 'brief');
+      if (tools.length > 0 && !isBriefOnly) {
         // ── COOLDOWN GATE ──
         // If crossroad fired last chat, skip detection this pass to let the LLM
         // execute its committed actions. Crossroad can re-fire next pass if
@@ -215,7 +225,9 @@ export async function handleLlm(
             // Replace content with truncated prefix + continuation will be injected in hook.ts
             chat.assistantContent = crossroadResult.truncated;
             chat.crossroadContinuation = crossroadResult.continuation;
-            // Discard original tool calls — LLM will regenerate them after crossroad
+            // Discard original tool calls — LLM will regenerate them after
+            // crossroad. (The brief-only case never reaches here: it was
+            // exempted by the guard above.)
             chat.rawToolCalls = [];
 
             // Write a crossroad record file to the session directory so the
@@ -288,6 +300,18 @@ export async function handleLlm(
         // Observability: emit llm_empty (silent when no listeners)
         loopEvents.emit('llm_empty', { retry: emptyRetries, maxRetries: MAX_EMPTY_RETRIES });
         ctx.core.verbose('llm', `LLM returned empty response (no content, no tool calls). Injecting synthetic brief() to prompt re-engagement. (empty retry ${emptyRetries}/${MAX_EMPTY_RETRIES})`);
+
+        // Stale-continuation leak guard: crossroad may have set
+        // chat.crossroadContinuation this pass (when the turning word was at
+        // position 0, producing an empty prefix ""). In that case the
+        // empty-output check fires and we `continue` the while loop — but the
+        // continuation was never consumed by hook.ts. Without this clear, the
+        // NEXT iteration's unrelated LLM response would reach HOOK and the
+        // crossroad branch would merge the STALE continuation onto it, applying
+        // a wrong continuation to a wrong response. Clear it so the next pass
+        // starts clean. (crossroadFilePath is cleared too for symmetry.)
+        chat.crossroadContinuation = undefined;
+        chat.crossroadFilePath = undefined;
 
         if (emptyRetries > MAX_EMPTY_RETRIES) {
           // Context is likely unrecoverable on its own — give control back to

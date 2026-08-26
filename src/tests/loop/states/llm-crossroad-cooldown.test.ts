@@ -12,9 +12,16 @@
  * - +2 confusion is added on EVERY crossroad fire (unconditional, not just
  *   consecutive — the old consecutive-only guard is dead code with cooldown).
  * - No-tools / neglected mode resets the flag (existing behavior preserved).
- * - Crossroad is SKIPPED when the LLM emitted tool calls — a tool call means
- *   the LLM committed to an action, so crossroad must not truncate its
- *   reasoning or discard its calls. (Guard added to prevent mis-direction.)
+ * - Crossroad is SKIPPED when the LLM emitted a `brief`-ONLY tool-call set —
+ *   `brief` is mid-thought narration whose text naturally contains "However"/
+ *   "But"/"Wait" at sentence boundaries (Tier 2 turning words), NOT a genuine
+ *   direction reversal. Firing on it truncates reasoning and discards a
+ *   harmless status call (a mis-direction documented in
+ *   crossroad-1787189812709.json). (Brief-only exemption, Option B.)
+ * - Crossroad FIRES when a NON-brief tool call (read_file, bash, edit_file,
+ *   ...) co-occurs with turning words — that IS a committed action the LLM
+ *   then pivoted away from, worth intercepting. ALL tool calls are discarded
+ *   and the LLM regenerates them after the continuation.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
@@ -162,11 +169,13 @@ describe('handleLlm — crossroad cooldown gate', () => {
       const chat = createChatData();
       env.crossroadOccurred = false; // start clean
 
-      // Text-only response (no tool calls) — crossroad only fires when the
-      // LLM waffles without committing to an action.
+      // Response with a NON-brief tool call (bash) + turning words — crossroad
+      // FIRES (non-brief committed action the LLM then pivoted away from) and
+      // discards the tool calls; the LLM regenerates them after the continuation.
       vi.mocked(retryChat).mockResolvedValueOnce(
         createMockChatResponse({
           content: 'Check auth. However, maybe config.',
+          toolCalls: [createMockToolCall('bash', { command: 'cat auth' })],
         }) as never,
       );
       vi.mocked(handleCrossroad).mockResolvedValueOnce({
@@ -177,7 +186,7 @@ describe('handleLlm — crossroad cooldown gate', () => {
       const result = await handleLlm(env, turn, chat);
       expect(result).toBe(AgentState.HOOK);
       expect(handleCrossroad).toHaveBeenCalledTimes(1);
-      expect(chat.rawToolCalls).toEqual([]); // no tool calls to begin with
+      expect(chat.rawToolCalls).toEqual([]); // discarded by crossroad
       expect(env.crossroadOccurred).toBe(true); // cooldown armed
     }
 
@@ -213,10 +222,12 @@ describe('handleLlm — crossroad cooldown gate', () => {
       const chat = createChatData();
       // env.crossroadOccurred is false (cooldown consumed)
 
-      // Text-only response (no tool calls) — crossroad fires again
+      // Response with a NON-brief tool call (bash) + turning words — crossroad
+      // fires again (cooldown consumed last pass) and discards the tool calls.
       vi.mocked(retryChat).mockResolvedValueOnce(
         createMockChatResponse({
           content: 'Check auth. However, maybe config.',
+          toolCalls: [createMockToolCall('bash', { command: 'ls' })],
         }) as never,
       );
       vi.mocked(handleCrossroad).mockResolvedValueOnce({
@@ -228,7 +239,7 @@ describe('handleLlm — crossroad cooldown gate', () => {
       expect(result).toBe(AgentState.HOOK);
       // handleCrossroad called again on pass 3
       expect(handleCrossroad).toHaveBeenCalledTimes(1);
-      expect(chat.rawToolCalls).toEqual([]); // no tool calls to begin with
+      expect(chat.rawToolCalls).toEqual([]); // discarded by crossroad
       expect(env.crossroadOccurred).toBe(true); // re-armed
     }
   });
@@ -247,6 +258,7 @@ describe('handleLlm — crossroad cooldown gate', () => {
     vi.mocked(retryChat).mockResolvedValueOnce(
       createMockChatResponse({
         content: 'text with turning word',
+        toolCalls: [createMockToolCall('bash', {})],
       }) as never,
     );
     vi.mocked(handleCrossroad).mockResolvedValueOnce({
@@ -295,18 +307,21 @@ describe('handleLlm — crossroad cooldown gate', () => {
   });
 
   // ---------------------------------------------------------------------------
-  // Test 5: Crossroad skipped when the LLM emitted tool calls
+  // Test 5: Crossroad skipped when the LLM emitted a brief-ONLY tool-call set
   // ---------------------------------------------------------------------------
-  it('should skip crossroad when tool calls are present (guard against mis-direction)', async () => {
+  it('should skip crossroad when only brief tool calls are present (brief-only exemption)', async () => {
     const env = createMockMachineEnv({ triologue });
     env.ctx.core.escAware = runOperationEscAware();
 
     const turn = createTurnVars();
     const chat = createChatData();
-    env.crossroadOccurred = false; // detection would run if not for the guard
+    env.crossroadOccurred = false; // detection would run if not for the exemption
 
-    // Response has turning words AND tool calls — the guard must skip crossroad
-    // so the LLM's committed action is not discarded or mis-directed.
+    // Response has turning words AND a brief-only tool-call set — the brief-only
+    // exemption must skip crossroad. `brief` is mid-thought narration whose text
+    // naturally contains "However"/"But"/"Wait" (Tier 2 turning words), NOT a
+    // genuine direction reversal. Firing would truncate the reasoning and
+    // discard a harmless status call (mis-direction, crossroad-1787189812709.json).
     const toolCalls = [createMockToolCall('brief', { message: 'Working on X', confidence: 7 })];
     vi.mocked(retryChat).mockResolvedValueOnce(
       createMockChatResponse({
@@ -317,9 +332,9 @@ describe('handleLlm — crossroad cooldown gate', () => {
 
     const result = await handleLlm(env, turn, chat);
 
-    // Proceeds to HOOK (tools execute normally)
+    // Proceeds to HOOK (brief executes normally)
     expect(result).toBe(AgentState.HOOK);
-    // handleCrossroad must NOT be called — tool calls present
+    // handleCrossroad must NOT be called — brief-only exemption
     expect(handleCrossroad).not.toHaveBeenCalled();
     // assistantContent unchanged (not truncated)
     expect(chat.assistantContent).toBe('I need to verify the auth flow. However, the issue might be in the DB layer.');
@@ -329,5 +344,91 @@ describe('handleLlm — crossroad cooldown gate', () => {
     expect(chat.crossroadContinuation).toBeUndefined();
     // flag reset (no crossroad this pass)
     expect(env.crossroadOccurred).toBe(false);
+  });
+
+  // ---------------------------------------------------------------------------
+  // Test 5b: Crossroad FIRES when a NON-brief tool call co-occurs with turning
+  // words — the committed action the LLM then pivoted away from is worth
+  // intercepting. ALL tool calls (including any brief) are discarded.
+  // ---------------------------------------------------------------------------
+  it('should fire crossroad and discard tool calls when a non-brief tool call is present', async () => {
+    const env = createMockMachineEnv({ triologue });
+    env.ctx.core.escAware = runOperationEscAware();
+
+    const turn = createTurnVars();
+    const chat = createChatData();
+    env.crossroadOccurred = false; // detection runs
+
+    // Response has turning words AND a non-brief tool call (bash) — crossroad
+    // FIRES, truncates the content, and discards the tool calls.
+    const toolCalls = [createMockToolCall('bash', { command: 'ls -la' })];
+    vi.mocked(retryChat).mockResolvedValueOnce(
+      createMockChatResponse({
+        content: 'Let me list the files. However, maybe I should check the logs instead.',
+        toolCalls,
+      }) as never,
+    );
+    vi.mocked(handleCrossroad).mockResolvedValueOnce({
+      truncated: 'Let me list the files.',
+      continuation: 'Let me check the logs instead.',
+    } as never);
+
+    const result = await handleLlm(env, turn, chat);
+
+    // Proceeds to HOOK (continuation injected there)
+    expect(result).toBe(AgentState.HOOK);
+    // handleCrossroad WAS called — non-brief tool call present
+    expect(handleCrossroad).toHaveBeenCalledTimes(1);
+    // assistantContent replaced with truncated prefix
+    expect(chat.assistantContent).toBe('Let me list the files.');
+    // continuation stored on pass
+    expect(chat.crossroadContinuation).toBe('Let me check the logs instead.');
+    // tool calls DISCARDED (crossroad discards all tool calls)
+    expect(chat.rawToolCalls).toEqual([]);
+    // cooldown armed
+    expect(env.crossroadOccurred).toBe(true);
+    // +2 confusion added on the fire
+    expect(env.ctx.core.increaseConfusionIndex).toHaveBeenCalledWith(2);
+  });
+
+  // ---------------------------------------------------------------------------
+  // Test 5c: Crossroad FIRES when brief AND a non-brief tool call co-occur —
+  // the non-brief call breaks the brief-only exemption, so crossroad fires and
+  // discards BOTH tool calls.
+  // ---------------------------------------------------------------------------
+  it('should fire crossroad and discard ALL tool calls when brief + non-brief co-occur', async () => {
+    const env = createMockMachineEnv({ triologue });
+    env.ctx.core.escAware = runOperationEscAware();
+
+    const turn = createTurnVars();
+    const chat = createChatData();
+    env.crossroadOccurred = false; // detection runs
+
+    // brief + bash: the bash call makes this NOT brief-only, so crossroad fires.
+    const toolCalls = [
+      createMockToolCall('brief', { message: 'Investigating', confidence: 6 }),
+      createMockToolCall('bash', { command: 'pwd' }),
+    ];
+    vi.mocked(retryChat).mockResolvedValueOnce(
+      createMockChatResponse({
+        content: 'I will check the directory. Wait, perhaps the config is the real issue.',
+        toolCalls,
+      }) as never,
+    );
+    vi.mocked(handleCrossroad).mockResolvedValueOnce({
+      truncated: 'I will check the directory.',
+      continuation: 'Let me focus on the config.',
+    } as never);
+
+    const result = await handleLlm(env, turn, chat);
+
+    expect(result).toBe(AgentState.HOOK);
+    // handleCrossroad WAS called — non-brief (bash) present, exemption broken
+    expect(handleCrossroad).toHaveBeenCalledTimes(1);
+    expect(chat.assistantContent).toBe('I will check the directory.');
+    expect(chat.crossroadContinuation).toBe('Let me focus on the config.');
+    // BOTH tool calls discarded (brief + bash)
+    expect(chat.rawToolCalls).toEqual([]);
+    expect(env.crossroadOccurred).toBe(true);
   });
 });

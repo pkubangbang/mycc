@@ -2,7 +2,9 @@
  * llm-esc-crossroad.test.ts — handleLlm: ESC during crossroad processing.
  *
  * Code path under test (llm.ts:118-150):
- *   if (tools.length > 0) {
+ *   const isBriefOnly = rawToolCalls.length > 0
+ *     && rawToolCalls.every(tc => tc.function.name === 'brief');
+ *   if (tools.length > 0 && !isBriefOnly) {
  *     // Cooldown gate: if crossroadOccurred, skip detection, reset flag
  *     if (env.crossroadOccurred) {
  *       env.crossroadOccurred = false;
@@ -13,12 +15,18 @@
  *       );
  *       if (agentIO.isNeglectedMode()) { stopSpinner(); return PROMPT; }
  *       if (crossroadResult) {
- *         ...apply crossroad...
+ *         ...apply crossroad...   // rawToolCalls = [] (discard ALL tool calls)
  *         ctx.core.increaseConfusionIndex(2);  // unconditional +2 (every fire)
  *         env.crossroadOccurred = true;        // arm cooldown
  *       } else { env.crossroadOccurred = false; }
  *     }
  *   } else { env.crossroadOccurred = false; }
+ *
+ * Note: a `brief`-ONLY tool-call set is exempted (isBriefOnly) — `brief` is
+ * mid-thought narration, not a committed direction reversal. A NON-brief tool
+ * call (bash, read_file, ...) alongside turning words IS committed and fires
+ * crossroad, discarding ALL tool calls. Tests here use a non-brief `bash` call
+ * so crossroad fires (the brief-only exemption does NOT apply).
  *
  * Strategy:
  *  - To simulate ESC DURING crossroad: the 2nd escAware call (crossroad) calls
@@ -160,6 +168,7 @@ describe('handleLlm — ESC during crossroad processing', () => {
     vi.mocked(retryChat).mockResolvedValueOnce(
       createMockChatResponse({
         content: 'original text',
+        toolCalls: [{ id: 'c1', function: { name: 'bash', arguments: {} } } as never],
       }) as never,
     );
     // handleCrossroad returns a valid result
@@ -176,7 +185,7 @@ describe('handleLlm — ESC during crossroad processing', () => {
     expect(chat.assistantContent).toBe('original');
     // continuation stored on pass
     expect(chat.crossroadContinuation).toBe('Let me continue differently.');
-    // no tool calls in the original response (text-only — crossroad requires this)
+    // original tool calls discarded — LLM will regenerate them after crossroad
     expect(chat.rawToolCalls).toEqual([]);
     // crossroadOccurred flag set
     expect(env.crossroadOccurred).toBe(true);
