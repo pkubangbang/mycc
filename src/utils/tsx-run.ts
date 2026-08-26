@@ -163,6 +163,21 @@ interface TsxSpawnOptions {
   env?: NodeJS.ProcessEnv;
   /** stdio configuration (defaults to 'inherit') */
   stdio?: SpawnOptions['stdio'];
+  /**
+   * Detach the child from the parent's process group / controlling terminal.
+   *
+   * On Unix, `detached: true` makes the child a new process-group leader
+   * (so it survives the parent's exit and is not killed by a SIGINT sent to
+   * the parent's group). On Windows, `detached: true` is required for the
+   * child to outlive the parent — without it, when the parent exits Windows
+   * sends a CTRL_CLOSE_EVENT to the whole console process group, killing
+   * every child that shares the parent's console. The daemon Lead MUST be
+   * spawned detached so it keeps running after the Coordinator exits.
+   *
+   * Callers that set this should also call `child.unref()` so the parent
+   * does not wait for the child.
+   */
+  detached?: boolean;
 }
 
 /**
@@ -203,6 +218,11 @@ export function spawnTsx(options: TsxSpawnOptions): ChildProcess {
     cwd: options.cwd,
     env: options.env ?? process.env,
     stdio: options.stdio ?? 'inherit',
+    detached: options.detached ?? false,
+    // Hide any console window allocated for a detached child on Windows.
+    // `detached: true` allocates a new console for the child by default;
+    // windowsHide suppresses it so a daemon Lead does not pop up a window.
+    windowsHide: true,
   };
 
   return spawn(command, args, spawnOptions);

@@ -24,6 +24,7 @@ import { agentIO } from './loop/agent-io.js';
 import { parseKeys, isCtrlC, isEscape } from './utils/key-parser.js';
 import { getProjectRoot, spawnTsx } from './utils/tsx-run.js';
 import { printHelp } from './help.js';
+import { installVerboseLog } from './utils/verbose-log.js';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -110,6 +111,10 @@ function runCoordinator(): void {
 
   if (isVerbose()) {
     agentIO.verbose('config', 'Debug logging enabled');
+    const logPath = installVerboseLog('coordinator');
+    if (logPath) {
+      console.log(chalk.gray(`[verbose] coordinator log → ${logPath}`));
+    }
   }
 
   // Ensure type imports work for custom tools
@@ -612,6 +617,23 @@ function runCoordinator(): void {
    * The Lead receives all original CLI args (including `--daemon <skill>`
    * and `--skip-healthcheck`) and runs headless in auto mode — no raw-mode
    * stdin setup, no resize forwarding, no IPC forwarding loop.
+   *
+   * ── Verbose capture under -v ──
+   * stdio stays 'ignore' even in verbose mode: the Lead installs its OWN
+   * `installVerboseLog('lead')` tee (lead.ts), which intercepts
+   * `process.stdout.write` and writes to `.mycc/verbose-lead-<ts>.log`
+   * *before* forwarding to the (black-hole) stdout. So the file captures
+   * the Lead's output regardless of stdio. We do NOT switch to 'pipe'
+   * here because the Coordinator exits immediately after spawning — an
+   * undrained pipe would fill its buffer and block the Lead.
+   *
+   * To diagnose a daemon that exits silently, attach listeners (only in
+   * verbose mode) for the child's 'exit'/'error'/'message' events and log
+   * them to the coordinator log BEFORE calling process.exit(0). This gives
+   * a small window (the listeners fire asynchronously after unref) during
+   * which an early exit code is captured — though once the Coordinator
+   * exits, later events are lost. The Lead's own log file is the durable
+   * record; this coordinator-side logging is a best-effort supplement.
    */
   function startDaemonLead(): void {
     const tsxScript = resolve(PROJECT_ROOT, 'src', 'lead.ts');
@@ -629,7 +651,34 @@ function runCoordinator(): void {
       cwd: process.cwd(),
       stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
       env,
+      // Detach the daemon Lead into its own process group so it survives the
+      // Coordinator's exit. Without `detached: true`, Windows sends a
+      // CTRL_CLOSE_EVENT to the whole console group when the Coordinator
+      // exits, killing the Lead — this was the root cause of the daemon's
+      // silent exit within seconds of startup. On Unix, detached makes the
+      // child a new process-group leader so it is not reached by a SIGINT
+      // sent to the parent's group. Combined with child.unref() below, the
+      // Coordinator can exit 0 immediately while the Lead keeps running.
+      detached: true,
     });
+
+    // Verbose-mode diagnostics: log daemon lifecycle events to the
+    // coordinator log. These fire asynchronously; since the Coordinator
+    // exits right after this, only events that arrive in the brief window
+    // before exit are captured. The durable record is the Lead's own
+    // verbose-lead-<ts>.log (installed inside the Lead process).
+    if (isVerbose()) {
+      console.log(`[verbose] spawning daemon lead: script=${tsxScript} args=${JSON.stringify(forwardedArgs)} pid=${child.pid}`);
+      child.on('exit', (code, signal) => {
+        console.log(`[verbose] daemon lead exited: code=${code} signal=${signal}`);
+      });
+      child.on('error', (err) => {
+        console.log(`[verbose] daemon lead error: ${err.stack || err.message}`);
+      });
+      child.on('message', (msg) => {
+        console.log(`[verbose] daemon lead IPC: ${JSON.stringify(msg)}`);
+      });
+    }
 
     // Detach so the daemon survives the Coordinator's exit.
     // On Unix, stdio:'ignore' + unref() is sufficient — the child becomes
@@ -638,6 +687,29 @@ function runCoordinator(): void {
     child.unref();
 
     console.log(chalk.green(`Daemon started (pid: ${child.pid}).`));
+
+    // In verbose mode, hold the Coordinator alive briefly so the daemon's
+    // early lifecycle events (exit/error/ready IPC) are captured in the
+    // coordinator log before we exit. If the daemon exits within this
+    // window (the silent-exit bug), the 'exit' listener above logs the code
+    // and we exit immediately. Otherwise we exit after the grace period and
+    // let the daemon run on. The durable record is the Lead's own
+    // verbose-lead-<ts>.log.
+    if (isVerbose()) {
+      let exited = false;
+      child.on('exit', () => { exited = true; });
+      const graceMs = 2000;
+      setTimeout(() => {
+        if (!exited) {
+          console.log(`[verbose] daemon still alive after ${graceMs}ms — coordinator exiting, daemon continues (pid=${child.pid})`);
+        } else {
+          console.log(`[verbose] daemon exited within grace window — see verbose-lead-<ts>.log for the reason`);
+        }
+        process.exit(0);
+      }, graceMs).unref?.();
+      return;
+    }
+
     process.exit(0);
   }
 }

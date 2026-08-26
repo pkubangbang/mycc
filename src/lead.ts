@@ -11,10 +11,12 @@
  */
 
 import { validateEnv, loadEnv } from './config.js';
+import { isVerbose } from './config.js';
 import { main } from './loop/agent-repl.js';
 import { agentIO } from './loop/agent-io.js';
 import { getServeHub } from './serve/serve-registry.js';
 import { detectShell } from './utils/shell-detect.js';
+import { installVerboseLog } from './utils/verbose-log.js';
 
 // ---------------------------------------------------------------------------
 // Terminal Title
@@ -32,6 +34,21 @@ if (process.stdout.isTTY) {
 // ---------------------------------------------------------------------------
 
 loadEnv();
+
+// ---------------------------------------------------------------------------
+// Verbose File Logging (-v)
+// ---------------------------------------------------------------------------
+// When -v is set, tee everything written to stdout/stderr into
+// .mycc/verbose-lead-<timestamp>.log. This captures the Lead's output even
+// when it runs headless under `--daemon` (where stdio is 'ignore' and the
+// terminal shows nothing). Installed here — before main() — so the tee is
+// active for the entire agent loop, including the daemon's silent-exit case.
+if (isVerbose()) {
+  const logPath = installVerboseLog('lead');
+  if (logPath) {
+    console.log(`[verbose] lead log → ${logPath}`);
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Windows Shell Detection (single source of truth)
