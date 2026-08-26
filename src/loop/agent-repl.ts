@@ -159,7 +159,7 @@ export async function main(): Promise<void> {
 
   const triologue = new Triologue({
     tokenThreshold,
-    wiki: ctx.wiki,
+    getWikiDomains: async () => await ctx.wiki.listDomains(),
     getDuplicationReport: () => requestEmbeddingTracker.getDuplicationReport(),
     onMessage: (messages) => {
       const lastMsg = messages[messages.length - 1];

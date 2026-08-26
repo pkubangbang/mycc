@@ -7,7 +7,7 @@
  */
 
 import { retryChat, MODEL } from '../engine/chat-provider.js';
-import type { Message, WikiModule, NoteCategory } from '../types.js';
+import type { Message, NoteCategory } from '../types.js';
 import { minifyMessages } from '../utils/llm-chat-minifier.js';
 import { agentIO } from './agent-io.js';
 
@@ -76,8 +76,8 @@ export interface HintRoundContext {
   getMessagesRaw(): Message[];
   /** Add a system note (e.g. the formatted hint) into the conversation */
   note(category: NoteCategory, message: string): void;
-  /** Optional wiki module for domain-aware knowledge suggestions */
-  getWiki(): WikiModule | undefined;
+  /** Optional callback to retrieve wiki domains for knowledge suggestions */
+  getWikiDomains?(): Promise<Array<{ domain_name: string; description?: string }>>;
   /** Optional duplication report from the embedding tracker */
   getDuplicationReport?(): string;
 }
@@ -132,8 +132,8 @@ export async function generateHintRound(
   const compactContext = minifyMessages(filteredMessages, { maxContentLength: 300, maxArgsLength: 100, truncateToolOutput: true });
 
   // Get wiki domains for knowledge search suggestion
-  const wiki = ctx.getWiki();
-  const domains = wiki ? await wiki.listDomains() : [];
+  const getWikiDomains = ctx.getWikiDomains;
+  const domains = getWikiDomains ? await getWikiDomains() : [];
   const domainInfo = domains.length > 0
     ? domains.map(d => `- ${d.domain_name}${d.description ? `: ${d.description}` : ''}`).join('\n')
     : 'No domains available';

@@ -10,7 +10,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { retryChat, MODEL, forkChat } from '../engine/chat-provider.js';
-import type { Message, ToolCall, Tool, WikiModule, NoteCategory } from '../types.js';
+import type { Message, ToolCall, Tool, NoteCategory } from '../types.js';
 import { minifyMessages } from '../utils/llm-chat-minifier.js';
 import { estimateTokens, estimateTokensForMessages } from '../utils/token.js';
 import { ResultTooLargeError } from '../types.js';
@@ -52,8 +52,8 @@ interface TriologueOptions {
   /** Called after each message is added */
   onMessage?: (messages: Message[]) => void;
 
-  /** Wiki module for domain list during compact */
-  wiki?: WikiModule;
+  /** Callback to retrieve wiki domains for knowledge persistence during compact */
+  getWikiDomains?: () => Promise<Array<{ domain_name: string; description?: string }>>;
   /** Optional duplication report provider for hint round */
   getDuplicationReport?: () => string;
 }
@@ -66,7 +66,15 @@ export class Triologue {
   private pendingToolCallOrder: string[] = []; // Track order for sequential resolution
   private tokenCount: number = 0;
   private systemPrompt: string | null = null;
-  private options: Required<Omit<TriologueOptions, 'wiki' | 'getDuplicationReport'>> & Pick<TriologueOptions, 'wiki' | 'getDuplicationReport'>;
+  private options: TriologueOptions & {
+    tokenThreshold: number;
+    resultThreshold: number;
+    hintThreshold: number;
+    onMisorder: (warning: MisorderWarning) => void;
+    onToolMisalign: (warning: ToolAlignmentWarning) => void;
+    onCompact: (transcriptPath: string) => void;
+    onMessage: (messages: Message[]) => void;
+  };
   // Project context files (in-memory only, not persisted)
   private projectContext: Message[] = [];
   /**
@@ -109,7 +117,7 @@ export class Triologue {
       onCompact: options.onCompact ?? this.defaultOnCompact,
       onMessage: options.onMessage ?? (() => {}),
 
-      wiki: options.wiki,
+      getWikiDomains: options.getWikiDomains ?? undefined,
       getDuplicationReport: options.getDuplicationReport,
     };
   }
@@ -661,13 +669,6 @@ export class Triologue {
   }
 
   /**
-   * Get the wiki module if available (for hint round context interface)
-   */
-  getWiki(): WikiModule | undefined {
-    return this.options.wiki;
-  }
-
-  /**
    * Get the duplication report from the embedding tracker (for hint round context interface)
    */
   getDuplicationReport(): string {
@@ -864,7 +865,7 @@ export class Triologue {
     this.options.onCompact(transcriptPath);
 
     // Get wiki domains for knowledge persistence instruction
-    const domains = this.options.wiki ? await this.options.wiki.listDomains() : [];
+    const domains = this.options.getWikiDomains ? await this.options.getWikiDomains() : [];
     const domainList = domains.length > 0
       ? domains.map(d => `- ${d.domain_name}${d.description ? `: ${d.description}` : ''}`).join('\n')
       : '';
