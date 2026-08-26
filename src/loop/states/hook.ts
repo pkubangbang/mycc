@@ -400,11 +400,25 @@ export async function handleHook(
       // newline would create a visual paragraph break mid-sentence.
       const finalContent = `${chat.assistantContent || ''} ${chat.crossroadContinuation}`;
       const briefCallId = Math.random().toString(36).slice(2, 10);
+      // Mode-aware brief message. In normal mode, "Continuing." nudges the LLM
+      // to regenerate tool calls after the crossroad — the desired behavior.
+      // In plan mode, "Continuing." is a go-forward signal that contradicts
+      // the plan-mode directive to stop and present the plan once analysis is
+      // done (buildPlanBasePrompt: "End your turn WITHOUT using any tools").
+      // The LLM reads its own brief text and mistakes "Continuing." for an
+      // instruction to keep exploring instead of presenting its plan. In plan
+      // mode we drop the forward nudge and frame the brief as a refinement of
+      // the analysis only — leaving the decision to stop or continue to the
+      // LLM based on whether the plan is complete.
+      const inPlanMode = ctx.core.getMode() === 'plan';
+      const briefMessage = inPlanMode
+        ? 'Refining my analysis.'
+        : 'Refining my approach. Continuing.';
       triologue.agent(finalContent, [{
         id: briefCallId,
         function: {
           name: 'brief',
-          arguments: { message: 'Refining my approach. Continuing.', confidence: 7 },
+          arguments: { message: briefMessage, confidence: 7 },
         },
       }] as ToolCall[], chat.assistantReasoningContent);
 
