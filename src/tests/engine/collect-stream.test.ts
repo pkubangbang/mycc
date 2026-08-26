@@ -7,7 +7,7 @@
 
 import { describe, test, afterEach } from 'vitest';
 import { expect } from 'chai';
-import { collectStream, StreamAbortedError } from '../../engine/chat-helpers.js';
+import { collectStream, StreamAbortedError, StreamTimeoutError } from '../../engine/chat-helpers.js';
 
 /**
  * Create an async iterable that yields items then rejects after a delay.
@@ -164,5 +164,91 @@ describe('collectStream — abort race condition', () => {
     });
 
     expect(result).to.deep.equal(['hello', 'world']);
+  });
+
+  test('should throw StreamTimeoutError (not raw cancel error) on first-token timeout', async () => {
+    // Bug fix: the first-token timeout callback calls abort?.(), which makes
+    // the for-await loop throw a raw reader-cancel error (NOT
+    // StreamAbortedError). Without the firstTokenTimeoutFired check in the
+    // catch block, the raw cancel error fell through to `throw err`, so
+    // retryWithBackoff's isTransientError() never saw a StreamTimeoutError
+    // and retry escalation failed. This test verifies the catch block now
+    // converts the raw cancel into a StreamTimeoutError.
+    const controller = new AbortController();
+
+    // A stream that never yields a first token. Its .next() rejects with a
+    // raw cancel error when abort() is called — mirroring how Ollama's
+    // reader.cancel propagates through the async iterator.
+    let cancelFn: (() => void) | null = null;
+    async function* hangingStream(): AsyncIterable<string> {
+      await new Promise<void>((_, reject) => {
+        // .next() hangs until cancel() rejects it with a raw error.
+        cancelFn = () => reject(new Error('The reader has been cancelled'));
+      });
+      // unreachable — the above promise rejects
+    }
+
+    let abortCalled = false;
+    const abortFn = () => {
+      abortCalled = true;
+      // Cancel the hanging .next() — this makes the for-await loop throw the
+      // raw cancel error, exactly as the real reader.cancel does.
+      cancelFn?.();
+    };
+
+    const resultPromise = collectStream(hangingStream(), abortFn, {
+      signal: controller.signal,
+      firstTokenTimeoutMs: 20, // very short so the timeout fires quickly
+    });
+
+    try {
+      await resultPromise;
+      expect.fail('Expected collectStream to throw StreamTimeoutError');
+    } catch (err) {
+      // The fix: the catch block checks firstTokenTimeoutFired and throws
+      // StreamTimeoutError instead of the raw cancel error.
+      expect(err).to.be.instanceOf(StreamTimeoutError);
+      expect((err as StreamTimeoutError).message).to.include('first token');
+    }
+    expect(abortCalled).to.be.true;
+  });
+
+  test('should throw StreamTimeoutError on response timeout (not raw cancel error)', async () => {
+    // Companion to the first-token timeout test: the response timeout fires
+    // after the first token arrived but before the stream completed. The
+    // catch block must convert the raw cancel into a StreamTimeoutError too.
+    const controller = new AbortController();
+
+    // A stream that yields one chunk (first token) then hangs forever. Its
+    // second .next() rejects with a raw cancel error when abort() is called.
+    let cancelFn: (() => void) | null = null;
+    async function* oneThenHangStream(): AsyncIterable<string> {
+      yield 'first'; // first token received
+      await new Promise<void>((_, reject) => {
+        cancelFn = () => reject(new Error('The reader has been cancelled'));
+      });
+      // unreachable
+    }
+
+    let abortCalled = false;
+    const abortFn = () => {
+      abortCalled = true;
+      cancelFn?.();
+    };
+
+    const resultPromise = collectStream(oneThenHangStream(), abortFn, {
+      signal: controller.signal,
+      firstTokenTimeoutMs: 10000, // large so first-token timeout does not fire
+      responseTimeoutMs: 20,      // short so response timeout fires quickly
+    });
+
+    try {
+      await resultPromise;
+      expect.fail('Expected collectStream to throw StreamTimeoutError');
+    } catch (err) {
+      expect(err).to.be.instanceOf(StreamTimeoutError);
+      expect((err as StreamTimeoutError).message).to.include('Response');
+    }
+    expect(abortCalled).to.be.true;
   });
 });

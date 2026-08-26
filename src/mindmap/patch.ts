@@ -356,6 +356,15 @@ export function applyPatchAction(mindmap: Mindmap, action: MindmapPatchAction): 
         ? `/${safeNodeId(action.title)}`
         : `${parent.id}/${safeNodeId(action.title)}`;
 
+      // Idempotency: if a child with this id already exists, skip the push.
+      // loadMindmapWithPatches replays all JSONL patch lines on every load
+      // with no dedup, so a duplicate 'add' line (e.g. from a crash during
+      // rebuildPatches, or a re-run of a patch command) would create a
+      // duplicate node — self-amplifying on the next rebuildPatches until a
+      // manual /mindmap compile. Treating a duplicate add as a no-op makes
+      // replay safe.
+      if (parent.children.some(c => c.id === id)) return true;
+
       const newNode: Node = {
         id,
         title: action.title,

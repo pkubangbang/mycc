@@ -105,6 +105,13 @@ export function attemptAutoFix(
         content: '',
         tool_calls: [syntheticCall],
       } as Message);
+      // Register the synthetic tool_call to the pending maps so the subsequent
+      // tool() call can resolve the tool_call_id via findPendingToolCall and
+      // validateToolAlignment does not falsely report 'no_pending_calls'.
+      // _injectBypass() only pushes the message; it does not register pending
+      // calls (agent() does that at its own call site, but the auto-fixer
+      // bypasses agent()).
+      triologue._registerPendingToolCalls([syntheticCall]);
       break;
     }
 

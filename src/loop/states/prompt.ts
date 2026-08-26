@@ -267,6 +267,16 @@ export async function handlePrompt(
         console.log(chalk.gray('(autonomous iteration)'));
         env.ctx.core.resetConfusionIndex();
         env.crossroadOccurred = false;  // clear stale cooldown at turn start
+        // Reset sequence boundary and per-turn hook state for the autonomous
+        // path too. markPromptBoundary() and resetTurn() are called on the
+        // real-user-query path (below), but this autonomous null-skip early
+        // return bypassed them — so in daemon/--auto mode, turn.* hook
+        // conditions accumulated across all iterations (never cleared) and
+        // the per-turn stop+block/replace hook dedup cap never refreshed
+        // (stopDisturbance is only cleared by resetTurn()). Calling them here
+        // keeps both COLLECT-bound paths consistent.
+        env.sequence.markPromptBoundary();
+        env.hookExecutor.resetTurn();
         return AgentState.COLLECT;
       }
 

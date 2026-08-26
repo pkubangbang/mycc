@@ -194,6 +194,43 @@ describe('get_node (Fix B — normalized-id matching)', () => {
 
 // ── Patch-sourced links: patch-added nodes carry term links (runtime hoist) ──
 
+describe('applyPatchAction add is idempotent (replay-safe dedup)', () => {
+  // Bug fix: the 'add' branch used to push a new node unconditionally.
+  // loadMindmapWithPatches replays all JSONL patch lines on every load with
+  // no dedup, so a duplicate 'add' line created a duplicate node —
+  // self-amplifying on the next rebuildPatches. The fix adds an existence
+  // guard: if a child with the same id already exists, the add is a no-op.
+  let mindmap: Mindmap;
+  beforeEach(() => { mindmap = makeMindmap(); });
+
+  it('returns true and does NOT duplicate when the same add is applied twice', () => {
+    const add: MindmapPatchAction = {
+      action: 'add', path: '/mycc.md', title: 'Dup Node', text: 'x',
+      timestamp: '', checkpoint_id: '', reason: 't', mindmap_hash: 'h1',
+    };
+    expect(applyPatchAction(mindmap, add)).toBe(true);
+    expect(applyPatchAction(mindmap, add)).toBe(true); // idempotent no-op
+
+    const parent = get_node(mindmap, '/mycc.md')!;
+    const matches = parent.children.filter(c => c.id === '/mycc.md/dup-node');
+    expect(matches).toHaveLength(1); // exactly one, not two
+  });
+
+  it('does NOT duplicate when replaying many identical add lines (simulates loadMindmapWithPatches)', () => {
+    const add: MindmapPatchAction = {
+      action: 'add', path: '/mycc.md', title: 'Replay Node', text: 'x',
+      timestamp: '', checkpoint_id: '', reason: 't', mindmap_hash: 'h1',
+    };
+    // Simulate 5 duplicate JSONL lines being replayed.
+    for (let i = 0; i < 5; i++) {
+      expect(applyPatchAction(mindmap, add)).toBe(true);
+    }
+    const parent = get_node(mindmap, '/mycc.md')!;
+    const matches = parent.children.filter(c => c.id === '/mycc.md/replay-node');
+    expect(matches).toHaveLength(1);
+  });
+});
+
 describe('applyPatchAction add replays action.links (term hoist)', () => {
   let mindmap: Mindmap;
   beforeEach(() => { mindmap = makeMindmap(); });

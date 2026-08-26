@@ -409,6 +409,28 @@ export async function collectStream<T>(
     return result;
   } catch (err) {
     if (err instanceof StreamAbortedError) throw err;
+    // Timeout-induced abort: the first-token / response timeout callbacks call
+    // abort?.() which makes the for-await loop throw a raw reader-cancel error
+    // (NOT StreamAbortedError). Without these checks the raw cancel error
+    // falls through to `throw err` below, so retryWithBackoff's
+    // isTransientError() never sees a StreamTimeoutError → no retry/escalation
+    // (all 4 retries hit the same wall once and fail). Convert the raw cancel
+    // error into the proper StreamTimeoutError so retry escalation works.
+    // These checks must run BEFORE the signal?.aborted check: the timeout
+    // aborts the stream reader, not the user-supplied AbortSignal, so
+    // signal?.aborted is false here.
+    if (firstTokenTimeoutFired) {
+      throw new StreamTimeoutError(
+        `Request timed out after ${firstTokenTimeoutMs}ms (waiting for first token)`,
+        'first-token',
+      );
+    }
+    if (responseTimeoutFired) {
+      throw new StreamTimeoutError(
+        `Response timed out after ${responseTimeoutMs}ms`,
+        'response',
+      );
+    }
     if (signal?.aborted) throw new StreamAbortedError(err instanceof Error ? err : undefined);
     throw err;
   } finally {

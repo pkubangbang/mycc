@@ -749,6 +749,20 @@ export class Triologue {
   }
 
   /**
+   * INTERNAL: Register tool calls to the pending maps (id + order).
+   * Used by tp-auto-fixer.ts after _injectBypass() injects a synthetic
+   * assistant message with tool_calls, so the pending call map is populated
+   * and the subsequent tool() call can resolve the tool_call_id correctly.
+   * Mirrors the registration logic in agent() (lines ~431-432).
+   */
+  _registerPendingToolCalls(toolCalls: ToolCall[]): void {
+    for (const tc of toolCalls) {
+      this.pendingToolCalls.set(tc.id, tc);
+      this.pendingToolCallOrder.push(tc.id);
+    }
+  }
+
+  /**
    * INTERNAL: Get pending tool call order (copy).
    * Used by tp-auto-fixer.ts to iterate over pending calls for recovery.
    */

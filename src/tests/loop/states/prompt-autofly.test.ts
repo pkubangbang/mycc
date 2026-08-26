@@ -381,6 +381,30 @@ describe('handlePrompt — auto-mode engagement gate', () => {
     });
   });
 
+  describe('autonomous null-skip path resets per-turn hook state', () => {
+    // Bug fix: the autonomous null-skip early return (p0Input === null) used
+    // to bypass env.sequence.markPromptBoundary() and env.hookExecutor.resetTurn(),
+    // which sit later in the function on the real-user-query path. In daemon/--auto
+    // mode every iteration takes the null-skip path, so turn.* hook conditions
+    // accumulated across iterations and the per-turn stop+block/replace dedup
+    // cap never refreshed. Both calls are now made on the null-skip path too.
+    it('calls markPromptBoundary() and resetTurn() on the autonomous null-skip path', async () => {
+      const { env } = makeEnv();
+      // Input provider returns null → autonomous skip (no user message).
+      env.inputProvider = {
+        getInput: vi.fn(async () => null),
+        setMode: vi.fn(),
+        promptRetry: vi.fn(async () => false),
+      } as never;
+
+      const result = await handlePrompt(env, createTurnVars(), createChatData());
+
+      expect(result).toBe(AgentState.COLLECT);
+      expect(env.sequence.markPromptBoundary).toHaveBeenCalledTimes(1);
+      expect(env.hookExecutor.resetTurn).toHaveBeenCalledTimes(1);
+    });
+  });
+
   describe('Layer B: a channel joining MID-PROMPT aborts the blocked wait', () => {
     // After the autofly gate falls through (no active channel yet, flag off or
     // streak below threshold), getInput() blocks. If a channel joins mid-wait,

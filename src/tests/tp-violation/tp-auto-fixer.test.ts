@@ -63,6 +63,12 @@ function createMockTriologue(): Triologue {
     _injectBypass: vi.fn((msg: Message) => {
       injectedMessages.push(msg);
     }),
+    _registerPendingToolCalls: vi.fn((toolCalls: ToolCall[]) => {
+      for (const tc of toolCalls) {
+        pendingToolCalls.set(tc.id, tc);
+        pendingToolCallOrder.push(tc.id);
+      }
+    }),
     _getPendingToolCallOrder: vi.fn(() => [...pendingToolCallOrder]),
     _getPendingToolCall: vi.fn((id: string) => pendingToolCalls.get(id) || undefined),
     _clearPendingToolCalls: vi.fn(() => {
@@ -179,6 +185,24 @@ describe('attemptAutoFix', () => {
       expect(call.tool_calls).toBeDefined();
       expect(call.tool_calls!.length).toBe(1);
       expect(call.tool_calls![0].function.name).toBe('');
+    });
+
+    it('should register the synthetic tool_call to pending maps so tool() can resolve it', () => {
+      const result = attemptAutoFix(triologue, 'tool_no_assistant', 'user');
+      expect(result).toBe('recovered');
+      // _registerPendingToolCalls must be called with the synthetic tool_call
+      // so findPendingToolCall resolves the id and validateToolAlignment
+      // does not falsely report 'no_pending_calls'.
+      expect(triologue._registerPendingToolCalls).toHaveBeenCalledTimes(1);
+      const registered = vi.mocked(triologue._registerPendingToolCalls).mock.calls[0][0];
+      expect(registered.length).toBe(1);
+      // The registered call must be the same synthetic call that was injected.
+      const injectedCall = vi.mocked(triologue._injectBypass).mock.calls[0][0];
+      // injectedCall.tool_calls is typed as OllamaToolCall[] (no id field in
+      // the base Ollama type); the synthetic call is a ToolCall (extends with
+      // id). Cast to access .id for the equality check.
+      const injectedToolCall = injectedCall.tool_calls![0] as ToolCall;
+      expect(registered[0].id).toBe(injectedToolCall.id);
     });
   });
 
