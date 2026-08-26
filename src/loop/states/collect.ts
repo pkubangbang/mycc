@@ -447,6 +447,11 @@ export async function handleCollect(
           lines.push(`The below skills are loaded and also relevant: ${loadedSkills.join(', ')}.`);
         }
         lines.push('Note: you can also use skill_search to search for skills semantically.');
+        // This is a silent nudge: either load a skill that genuinely helps the
+        // current task (via skill_load), or ignore it and keep working. Do NOT
+        // write a prose reply explaining why you are/aren't loading a skill —
+        // that clutters the conversation and re-triggers the same nudge.
+        lines.push('Discipline: this is a silent nudge. If a skill helps the current task, load it with skill_load; otherwise stay silent and continue. Do NOT narrate your decision.');
 
         triologue.note('HINT', lines.join('\n'));
       }
