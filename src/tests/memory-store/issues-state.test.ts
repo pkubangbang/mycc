@@ -58,7 +58,7 @@ describe('memory-store', () => {
 
     it('should continue ID sequence after removal', () => {
       const id1 = createIssue('Issue 1', 'Content', []);
-      const id2 = createIssue('Issue 2', 'Content', []);
+      createIssue('Issue 2', 'Content', []);
 
       // Remove first issue
       updateIssue(id1, { status: 'completed' as IssueStatus });

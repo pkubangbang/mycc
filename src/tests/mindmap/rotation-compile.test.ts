@@ -16,8 +16,8 @@ import * as os from 'os';
 import * as crypto from 'crypto';
 import { compile_mindmap } from '../../mindmap/compile.js';
 import { compute_hash } from '../../mindmap/validate.js';
-import { load_mindmap, try_load_mindmap } from '../../mindmap/load.js';
-import { create_lock, try_read_lock, remove_lock } from '../../mindmap/compile-utils.js';
+import { load_mindmap } from '../../mindmap/load.js';
+import { create_lock, remove_lock } from '../../mindmap/compile-utils.js';
 import type { Node } from '../../mindmap/types.js';
 
 // Track whether summarizeWithExplorer received existingNode
@@ -29,8 +29,8 @@ vi.mock('../../mindmap/explorer-agent.js', () => ({
       nodeTitle: string,
       nodeText: string,
       ancestorContext: string,
-      workDir: string,
-      onProgress?: unknown,
+      _workDir: string,
+      _onProgress?: unknown,
       existingNode?: Node
     ) => {
       summarizeCalls.push({
@@ -177,7 +177,6 @@ Content B.
 
     // First compile
     await compile_mindmap(mdPath, tempDir, 'mindmap.json');
-    const firstCallCount = summarizeCalls.length;
 
     // Reset tracking
     summarizeCalls.length = 0;
@@ -253,7 +252,6 @@ Content B.
 
     // First compile
     const firstResult = await compile_mindmap(mdPath, tempDir, 'mindmap.json');
-    const firstCallCount = summarizeCalls.length;
 
     // Reset tracking
     summarizeCalls.length = 0;

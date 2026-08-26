@@ -117,7 +117,7 @@ describe("ConditionRegistry", () => {
       };
 
       fs.writeFileSync(conditionsFile, JSON.stringify(conditions, null, 2));
-      const result = await registry.load();
+      await registry.load();
 
       // Empty trigger passes validation (warning only), load may reject if validation fails
       // The condition is loaded since validation passes

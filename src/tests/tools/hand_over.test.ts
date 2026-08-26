@@ -14,7 +14,6 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { handOverTool } from '../../tools/hand_over.js';
-import { agentIO } from '../../loop/agent-io.js';
 import { createMockContext, createTempDir, removeTempDir } from './test-utils.js';
 import type { AgentContext } from '../../types.js';
 

@@ -46,16 +46,6 @@ function findNode(root: Node, id: string): Node | null {
   return null;
 }
 
-// Helper to find parent of a node
-function findParent(root: Node, id: string, parent: Node | null = null): Node | null {
-  for (const child of root.children) {
-    if (child.id === id) return root;
-    const found = findParent(child, id, root);
-    if (found) return found;
-  }
-  return null;
-}
-
 // Helper to collect all ancestors
 function collectAncestors(root: Node, id: string): Node[] {
   const ancestors: Node[] = [];
@@ -92,17 +82,9 @@ function generateSummary(
   descendants: Node[],
   agentContext?: string
 ): string {
-  // A: Ancestor texts
-  const A = ancestors.map(a => a.text).join('\n');
-  
-  // N: Node text
-  const N = node.text;
-  
-  // C: Descendant summaries
-  const C = descendants.map(d => d.summary).filter(s => s).join('\n');
-  
-  // E: Agent behavior context (like PLAN mode)
-  const E = agentContext || '';
+  // A-N-C-E context (ancestors, node, descendants, agent context) is computed
+  // by the real implementation; this mock returns a fixed summary string.
+  void ancestors; void node; void descendants; void agentContext;
   
   // Generate summary (mock - real impl would call LLM)
   return `Summary: ${node.title} (level ${node.level})`;
@@ -138,7 +120,7 @@ function patch_mindmap(
   mindmap: Mindmap, 
   id: string, 
   newText: string, 
-  feedback?: string
+  _feedback?: string
 ): Node | null {
   // Find the node
   const node = findNode(mindmap.root, id);
@@ -286,10 +268,6 @@ describe('patch_mindmap', () => {
 
   describe('Cascade to Ancestors', () => {
     it('should update ancestor summaries', () => {
-      const originalChildSummary = findNode(mindmap.root, '/parent/child')?.summary;
-      const originalParentSummary = findNode(mindmap.root, '/parent')?.summary;
-      const originalRootSummary = mindmap.root.summary;
-
       patch_mindmap(
         mindmap,
         '/parent/child/grandchild',
@@ -458,7 +436,6 @@ describe('summarize_node', () => {
 
   it('should update node summary in place', () => {
     const node = findNode(mindmap.root, '/parent/child');
-    const originalSummary = node?.summary;
 
     summarize_node(mindmap, '/parent/child');
 

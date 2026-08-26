@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 
 // Mock LineEditor before importing agent-io
 vi.mock('../../utils/line-editor.js', () => {
@@ -12,8 +12,7 @@ vi.mock('../../utils/line-editor.js', () => {
   };
 });
 
-// Import after mocking
-import { agentIO } from '../../loop/agent-io.js';
+// Import after mocking (agentIO mock is set up above via vi.mock; no direct use needed here)
 
 describe('agent-io', () => {
   describe('ReplayBuffer', () => {

@@ -16,14 +16,12 @@ import * as os from 'os';
 describe('evaluateGrant', () => {
   let tempDir: string;
   let mockGetMode: Mock<() => 'plan' | 'normal'>;
-  let mockGetWorkDir: Mock<() => string>;
   let mockWorktrees: Array<{ name: string; path: string; branch: string }>;
 
   beforeEach(() => {
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mycc-grant-test-'));
 
     mockGetMode = vi.fn<() => 'plan' | 'normal'>(() => 'normal' as const);
-    mockGetWorkDir = vi.fn(() => tempDir);
 
     // Mock worktree structure
     mockWorktrees = [
@@ -117,8 +115,6 @@ describe('evaluateGrant', () => {
 
     it('should reject files for child without worktree', async () => {
       mockGetMode.mockReturnValue('normal');
-
-      const filePath = path.join(tempDir, 'some-file.ts');
 
       // Once evaluateGrant is implemented:
       // const result = await evaluateGrant('no-worktree-agent', {

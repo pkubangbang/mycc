@@ -21,7 +21,6 @@ import {
   compile_mindmap_from_content,
   get_bottom_up_nodes,
 } from '../../mindmap/compile.js';
-import type { Node } from '../../mindmap/types.js';
 
 describe('parse_markdown', () => {
   it('should parse H1 heading as level 1 section', () => {

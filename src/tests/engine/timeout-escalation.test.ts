@@ -80,7 +80,6 @@ vi.mock('ollama', () => {
 
 import {
   escalateFirstTokenTimeout,
-  StreamTimeoutError,
   DEFAULT_RETRY_CONFIG,
 } from '../../engine/chat-helpers.js';
 

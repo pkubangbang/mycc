@@ -84,7 +84,6 @@ import { handleStop } from '../../../loop/states/stop.js';
 import { AgentState, presentResult } from '../../../loop/state-machine.js';
 import { agentIO } from '../../../loop/agent-io.js';
 import { startWrapUp } from '../../../loop/esc-wrap-up.js';
-import { loader } from '../../../context/shared/loader.js';
 import { stopSpinner } from '../../../engine/chat-helpers.js';
 import { autoState } from '../../../loop/auto-state.js';
 import { Triologue } from '../../../loop/triologue.js';

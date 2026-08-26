@@ -101,26 +101,6 @@ function isValidNodeStructure(node: unknown): boolean {
   return true;
 }
 
-// Test fixtures
-function createTestMindmap(overrides: Partial<Mindmap> = {}): Mindmap {
-  return {
-    dir: '/test/dir',
-    hash: 'test-hash',
-    compiled_at: new Date(),
-    updated_at: new Date(),
-    root: {
-      id: '/',
-      text: '# Test\n\nTest content',
-      title: 'Test',
-      summary: 'Test summary',
-      level: 0,
-      children: [],
-      links: []
-    },
-    ...overrides
-  };
-}
-
 describe('validate_mindmap', () => {
   let tempDir: string;
   let testMdPath: string;

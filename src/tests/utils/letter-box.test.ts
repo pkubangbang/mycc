@@ -22,7 +22,6 @@ function wrapText(text: string, maxWidth: number): string[] {
     // Split remaining content into words
     const words = content.split(/\s+/).filter(w => w.length > 0);
     let currentLine = indent;
-    const innerWidth = maxWidth - indent.length;
 
     for (const word of words) {
       const potentialLine = currentLine === indent ? indent + word : currentLine + ' ' + word;

@@ -4,7 +4,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { Triologue } from '../../loop/triologue.js';
-import type { WikiModule, WikiDomain } from '../../types.js';
+import type { WikiModule } from '../../types.js';
 
 describe('Hint Round JSON Output', () => {
   let triologue: Triologue;

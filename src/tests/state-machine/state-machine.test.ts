@@ -3,7 +3,7 @@
  */
 import { describe, it, expect, vi } from 'vitest';
 import { AgentStateMachine, AgentState, presentResult } from '../../loop/state-machine.js';
-import type { MachineEnv, TurnVars, ChatData, StateHandler } from '../../loop/state-machine.js';
+import type { TurnVars, ChatData, StateHandler } from '../../loop/state-machine.js';
 import type { Triologue } from '../../loop/triologue.js';
 import type { AgentContext, ToolScope } from '../../types.js';
 import type { ConditionRegistry } from '../../hook/conditions.js';
@@ -157,7 +157,7 @@ describe('AgentStateMachine', () => {
     let callCount = 0;
 
     const handlers: Record<AgentState, StateHandler> = {
-      [AgentState.PROMPT]: vi.fn(async (_env, turn, _chat) => {
+      [AgentState.PROMPT]: vi.fn(async (_env, _turn, _chat) => {
         callCount++;
         if (callCount === 1) return AgentState.COLLECT;
         return null; // Exit on second call

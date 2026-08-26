@@ -7,7 +7,6 @@ import { describe, it, expect } from 'vitest';
 import {
   getSkillAbsolutePath,
   resolveToSkillPath,
-  type SkillLayer,
 } from '../utils/skill-path-resolver.js';
 import path from 'path';
 import os from 'os';

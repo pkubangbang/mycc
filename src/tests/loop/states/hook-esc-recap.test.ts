@@ -87,7 +87,6 @@ import { handleHook } from '../../../loop/states/hook.js';
 import { AgentState } from '../../../loop/state-machine.js';
 import { agentIO } from '../../../loop/agent-io.js';
 import { handleRecapWithPatch } from '../../../loop/checkpoint-recap.js';
-import { loader } from '../../../context/shared/loader.js';
 import { Triologue } from '../../../loop/triologue.js';
 import {
   createTurnVars,

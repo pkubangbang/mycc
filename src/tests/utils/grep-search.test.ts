@@ -12,7 +12,7 @@
  * - grepSearch edge cases: empty pattern, regex special chars, long pattern, pattern with spaces/dots,
  *   non-existent directory, maxResults capping, binary file handling
  */
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
   shellQuote,
   collectGitignores,

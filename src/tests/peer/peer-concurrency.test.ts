@@ -24,7 +24,7 @@ const sessionDir = () => path.join(tempDir, 'sessions', 'test-session');
 vi.mock('../../config.js', () => ({
   getSessionDir: (sid: string) => path.join(tempDir, 'sessions', sid),
   getSessionContext: () => 'test-session',
-  setSessionContext: (sid: string) => { /* no-op for tests */ },
+  setSessionContext: (_sid: string) => { /* no-op for tests */ },
   ensureDirs: () => {
     const dir = sessionDir();
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });

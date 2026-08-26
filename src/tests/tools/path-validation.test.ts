@@ -24,11 +24,7 @@ const blockedPatterns = [
 // - URL-encoded paths are treated literally
 // - Backslashes on Linux are literal characters
 // - '....//' is not a valid traversal pattern
-const allowedPatterns = [
-  '..%2F..%2F..%2Fetc/passwd',
-  '....//....//etc/passwd',
-  '..\\..\\..\\windows\\system32',
-];
+// (removed unused allowedPatterns array)
 
 describe('path validation', () => {
   let tempDir: string;

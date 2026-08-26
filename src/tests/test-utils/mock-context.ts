@@ -28,7 +28,7 @@ export function createMockCore(overrides: Partial<CoreModule> = {}): CoreModule 
     imgDescribe: vi.fn(async () => 'image description'),
     readPictureCached: vi.fn(async () => ({ pairs: [], cacheToken: 'token' })),
     requestGrant: vi.fn(async () => ({ approved: true })),
-    requestExternalPathAccess: vi.fn(async (tool, path) => ({ approved: true, resolvedPath: path })),
+    requestExternalPathAccess: vi.fn(async (_tool, path) => ({ approved: true, resolvedPath: path })),
     addExternalAutoGrant: vi.fn(),
     getMode: vi.fn(() => 'normal' as const),
     getAuto: vi.fn(() => false),

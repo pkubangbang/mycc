@@ -202,7 +202,7 @@ describe('compact() resets wrapUpMark — stale-mark sparse-hole crash', () => {
   it('rollbackWrapUp() never stretches the array (safety-net guard)', async () => {
     // Directly test the safety net: forge a stale mark larger than the array,
     // then rollback — must NOT stretch.
-    const { messages, wrapUpMark } = internals(t);
+    const { messages } = internals(t);
     messages.push({ role: 'user', content: 'only' } as Message);
     // Simulate a stale mark (as if compact left it dangling at 50).
     (t as unknown as { wrapUpMark: number }).wrapUpMark = 50;

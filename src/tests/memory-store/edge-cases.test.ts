@@ -18,7 +18,6 @@ import {
   getTeammate,
   listTeammates,
   updateTeammateStatus,
-  removeTeammate,
   clearAll,
 } from '../../context/memory-store.js';
 import type { IssueStatus, TeammateStatus } from '../../types.js';
@@ -152,9 +151,9 @@ describe('memory-store edge cases', () => {
     });
 
     it('should not reuse IDs even after "logical deletion"', () => {
-      const id1 = createIssue('Issue 1', 'Content', []);
+      createIssue('Issue 1', 'Content', []);
       const id2 = createIssue('Issue 2', 'Content', []);
-      const id3 = createIssue('Issue 3', 'Content', []);
+      createIssue('Issue 3', 'Content', []);
 
       // Mark issue as abandoned (logical deletion)
       updateIssue(id2, { status: 'abandoned' as IssueStatus });

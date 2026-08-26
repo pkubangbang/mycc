@@ -67,12 +67,8 @@ describe('checkSensitivePath', () => {
 
   it('should block Windows-style /etc paths', () => {
     // On Windows, check that a drive-prefixed /etc path is also blocked
-    const result = checkSensitivePath('C:\\etc\\passwd');
-    // On Windows this would match the pattern if we use path.resolve to normalize
-    // but the source code checks exact pattern match, so this may not match
     // The test just ensures no crash for Windows-style paths
     const normalized = path.resolve('C:\\etc\\passwd');
-    const etcResult = checkSensitivePath(normalized);
     // It should either block it or not - but should not throw
     expect(() => checkSensitivePath(normalized)).not.toThrow();
   });

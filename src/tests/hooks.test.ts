@@ -10,7 +10,7 @@
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { HookExecutor, createToolCall } from '../hook/hook-executor.js';
-import { ConditionRegistry, type Condition, type HookAction } from '../hook/conditions.js';
+import { ConditionRegistry } from '../hook/conditions.js';
 import { Sequence } from '../hook/sequence.js';
 import type { ToolCall, AgentContext, CoreModule } from '../types.js';
 
@@ -601,7 +601,7 @@ describe('HookExecutor', () => {
         version: 1,
       });
 
-      const anySkill = (n: string) => ({ content: 'skill body' });
+      const anySkill = (_n: string) => ({ content: 'skill body' });
 
       // First batch: only the highest-priority-first stop hook acts (replace
       // is priority 1, first-wins within the priority group, so only ONE

@@ -4,7 +4,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { issueListTool } from '../../tools/issue_list.js';
-import type { AgentContext, IssueModule, CoreModule, Issue } from '../../types.js';
+import type { AgentContext, IssueModule, CoreModule } from '../../types.js';
 
 // Factory to create mock issue module
 function createMockIssueModule(): IssueModule {

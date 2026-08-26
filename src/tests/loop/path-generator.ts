@@ -253,7 +253,6 @@ export async function drivePath(
   //    fires and throws with the stuck state name, pinpointing WHERE the
   //    hang occurred. This is finer-grained than vitest's global 10s timeout.
   const states = spec.expectedStates;
-  const maxTransitions = states.length; // upper bound: expected transitions
 
   // Emit synthetic initial transition so PROMPT appears in the trace
   loopEvents.emit('state_transition', { from: 'init', to: states[0] });

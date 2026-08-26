@@ -40,7 +40,7 @@ describe('Todo', () => {
   it('should not auto-clear when at least one item remains open', () => {
     const todo = new Todo();
     const a = todo.createTodo('Task A');
-    const b = todo.createTodo('Task B');
+    todo.createTodo('Task B');
 
     todo.updateTodo(a.id, a.hash, a.name, true);
     expect(todo.getItems().length).toBe(2);
@@ -95,7 +95,7 @@ describe('Todo', () => {
 
   it('should find and close checkpoint todos', () => {
     const todo = new Todo();
-    const cp = todo.createTodo('checkpoint: abc12345', 'abc12345');
+    todo.createTodo('checkpoint: abc12345', 'abc12345');
     expect(todo.findCheckpointTodo('abc12345')).not.toBeNull();
     todo.closeCheckpointTodo('abc12345');
     expect(todo.findCheckpointTodo('abc12345')).toBeNull();
@@ -184,7 +184,7 @@ describe('Todo', () => {
 
   it('getReactivationCandidates should return only pinned+done+reactivate items', () => {
     const todo = new Todo();
-    const a = todo.createTodo('Open task'); // not done
+    todo.createTodo('Open task'); // not done
     const b = todo.createTodo('Done pinned w/ reactivate');
     const c = todo.createTodo('Done pinned w/o reactivate');
     const d = todo.createTodo('Done non-pinned w/ reactivate');

@@ -44,7 +44,6 @@ vi.mock('../../engine/chat-helpers.js', () => ({
 import { forkChat } from '../../engine/chat-provider.js';
 import { sleep } from '../../engine/chat-helpers.js';
 import {
-  detectTurningWord,
   generateContinuations,
   selectBestContinuation,
   handleCrossroad,
@@ -415,7 +414,6 @@ describe('handleCrossroad', () => {
 
   it('should extract wordsBeforeTurn and enforce anchor in generation', async () => {
     const content = 'I will check the config file. Wait, the issue is in the env vars.';
-    const anchor = 'I will check the config file.';
     // All 3 dirs fail validation (don't start with anchor), retry also fails → empty
     // First batch: 6 calls → empty. handleCrossroad retries → 6 more → empty → null.
     vi.mocked(forkChat).mockImplementation(async () => 'No anchor present here.' as never);

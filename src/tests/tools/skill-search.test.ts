@@ -143,7 +143,6 @@ describe('skillSearchTool - Basics', () => {
     const result = await skillSearchTool.handler(ctx, { search: 'code review' });
 
     // Should mention code-review only once
-    const matches = (result.match(/code-review/g) || []).length;
     // Header mentions it, and the skill line mentions it - but only one result entry
     expect(result).toContain('Found 1 skill');
   });
