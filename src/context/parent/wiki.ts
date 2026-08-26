@@ -233,6 +233,16 @@ export class WikiManager implements WikiModule {
         this.writeSkillIndexCache(entries);
       }
 
+      // Partial re-index (skill_load): the diff already ran against the
+      // existing record. If nothing changed (no add, no delete), there was
+      // no embedding call and no DB mutation — the generic "Indexed N
+      // skills" log would be misleading (it implies work was done). Stay
+      // silent in that case; only log when the skill was actually added or
+      // updated.
+      if (skipOrphanSweep && toAdd.length === 0 && toDelete.length === 0) {
+        return;
+      }
+
       this.core.brief('info', 'wiki', `Indexed ${entries.length} skills`);
     } finally {
       this.releaseReindexLock();

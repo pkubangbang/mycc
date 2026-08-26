@@ -40,7 +40,7 @@ describe('Hint Round JSON Output', () => {
     } as unknown as WikiModule;
 
     triologue = new Triologue({
-      wiki: mockWiki,
+      getWikiDomains: async () => mockWiki.listDomains(),
       hintThreshold: 10,
     });
   });
