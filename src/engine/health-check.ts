@@ -4,6 +4,8 @@
  */
 
 import type { ChatResponse } from 'ollama';
+import { Ollama } from 'ollama';
+import { getOllamaHost } from '../config.js';
 import type { RetryChatRequest, RetryChatConfig } from './chat-helpers.js';
 
 export interface HealthCheckResult {
@@ -94,4 +96,38 @@ export async function probeModel(
   }
 
   return { contextLength, motd };
+}
+
+/**
+ * Probe the embedding model via a lightweight `ollama.embed()` call.
+ *
+ * Embeddings are required for wiki/RAG semantic search, skill matching, and
+ * document similarity — all of which would otherwise fail at runtime on the
+ * first `getEmbedding()` call with a confusing error if the model is missing
+ * or misnamed. Probing at health-check time surfaces the problem early with
+ * an actionable message (the exact `ollama pull <model>` command).
+ *
+ * Uses the Ollama JS client (same path as `rag-nomic.ts`/`rag-embeddinggemma.ts`
+ * at runtime) rather than a raw REST call, so the probe exercises the real
+ * code path. The embedding model is provided by Ollama regardless of the
+ * chat API provider (Ollama or DeepSeek) — both providers call this.
+ *
+ * @returns A warning string on failure (non-fatal — the agent can still run
+ *   chat-only; RAG features just won't work), or `null` on success.
+ */
+export async function probeEmbeddingModel(): Promise<string | null> {
+  const embeddingModel = process.env.OLLAMA_EMBEDDING_MODEL || 'nomic-embed-text';
+  try {
+    const ollama = new Ollama({ host: getOllamaHost() });
+    const response = await ollama.embed({ model: embeddingModel, input: 'test' });
+    if (!response.embeddings || response.embeddings.length === 0) {
+      throw new Error('Model returned no embeddings');
+    }
+    return null; // success
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return `Embedding model '${embeddingModel}' is not available on Ollama: ${msg}. ` +
+      `RAG/wiki/skill-matching features will fail at runtime. ` +
+      `Run 'ollama pull ${embeddingModel}' to fix this.`;
+  }
 }

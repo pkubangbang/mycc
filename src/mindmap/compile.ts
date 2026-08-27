@@ -27,6 +27,8 @@ import {
   try_load_existing_mindmap,
   collect_nodes_bottom_up,
   ProgressTracker,
+  LockExistsError,
+  get_lock_path,
 } from './compile-utils.js';
 import { summarizeWithExplorer } from './explorer-agent.js';
 
@@ -330,8 +332,32 @@ export async function compile_mindmap(
     }
   }
 
-  // Create lock file
-  create_lock(outFile, mdPath, hash);
+  // Create lock file. Uses the atomic 'wx' flag — if another process won
+  // the race (created the lock between our try_read_lock check and here),
+  // throw a clear error instead of silently overwriting their lock.
+  try {
+    create_lock(outFile, mdPath, hash);
+  } catch (err) {
+    if (err instanceof LockExistsError) {
+      // Another process created a fresh lock in the TOCTOU window. Re-read
+      // it — if it's fresh and matches, let them finish (abort this compile).
+      // If stale, remove and retry once.
+      const racedLock = try_read_lock(outFile);
+      if (racedLock && is_lock_fresh(racedLock) && racedLock.source_hash === hash) {
+        const raceError = new Error(
+          `Another process is already compiling ${mdPath} (fresh lock at ${get_lock_path(outFile)}). ` +
+          `Retry later, or run with force=true to override.`,
+        );
+        raceError.cause = err;
+        throw raceError;
+      }
+      // Stale/mismatched lock won the race — remove and create ours.
+      remove_lock(outFile);
+      create_lock(outFile, mdPath, hash);
+    } else {
+      throw err;
+    }
+  }
 
   // Parse markdown and build new tree
   const sections = parse_markdown(content);

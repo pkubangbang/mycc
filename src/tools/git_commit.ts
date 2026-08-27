@@ -20,9 +20,7 @@ import type { ToolDefinition, AgentContext } from '../types.js';
 import { agentIO } from '../loop/agent-io.js';
 import { MailBox } from '../context/shared/mail.js';
 import { findWorktreeByName } from '../context/worktree-store.js';
-import fs from 'fs';
 import path from 'path';
-import os from 'os';
 import { spawn } from 'child_process';
 
 export const gitCommitTool: ToolDefinition = {
@@ -173,28 +171,21 @@ export const gitCommitTool: ToolDefinition = {
     // User granted permission - execute the commit
     ctx.core.brief('info', 'git_commit', 'Permission granted, executing commit');
 
-    // Use a temp file for the commit message to avoid shell escaping issues
-    // This works reliably across all platforms (Windows cmd, PowerShell, bash)
-    const tempDir = os.tmpdir();
-    const tempFile = path.join(tempDir, `git-commit-msg-${Date.now()}.txt`);
-
     try {
-      // Write message to temp file
-      fs.writeFileSync(tempFile, message, 'utf-8');
-
-      // On Windows, cmd.exe needs special handling for paths
-      // Use forward slashes which git understands, avoiding quote issues
-      const gitPath = process.platform === 'win32'
-        ? tempFile.replace(/\\/g, '/')
-        : tempFile;
-
-      // Build command - use spawn directly to avoid shell quoting issues
+      // Use stdin (`git commit -F -`) instead of a temp file for the commit
+      // message. This eliminates the temp-file leak on SIGKILL (the `finally`
+      // cleanup block doesn't run on SIGKILL) and the shell-escaping concerns
+      // of a file path — git reads the message directly from stdin.
       const args = amend
-        ? ['commit', '--amend', '-F', gitPath]
-        : ['commit', '-F', gitPath];
+        ? ['commit', '--amend', '-F', '-']
+        : ['commit', '-F', '-'];
 
       // Use spawn directly to avoid cmd.exe quote issues
       const proc = spawn('git', args, { cwd: commitCwd });
+
+      // Write commit message to stdin
+      proc.stdin?.write(message, 'utf-8');
+      proc.stdin?.end();
 
       // Collect output
       const stdoutBuffer: Buffer[] = [];
@@ -287,15 +278,8 @@ export const gitCommitTool: ToolDefinition = {
       const errorMessage = error instanceof Error ? error.message : String(error);
       ctx.core.brief('error', 'git_commit', `Error executing commit: ${errorMessage}`);
       return `Error executing commit: ${errorMessage}`;
-    } finally {
-      // Clean up temp file
-      try {
-        if (fs.existsSync(tempFile)) {
-          fs.unlinkSync(tempFile);
-        }
-      } catch {
-        // Ignore cleanup errors
-      }
     }
+    // No finally block needed — git commit -F - reads the message from stdin,
+    // so there is no temp file to clean up (eliminates the SIGKILL leak).
   },
 };

@@ -52,6 +52,14 @@ export function installVerboseLog(role: 'coordinator' | 'lead'): string | null {
     return null;
   }
 
+  // Capture the ORIGINAL (unwrapped) stderr writer before defining writeChunk.
+  // writeChunk's one-time failure warning must write to the real stderr, not
+  // the tee wrapper we install below — otherwise the warning would be fed
+  // right back into the broken stream and be swallowed.
+  const realStderrWrite = process.stderr.write.bind(process.stderr) as
+    (chunk: string | Uint8Array, cb?: (err?: Error | null) => void) => boolean;
+
+  let verboseWriteFailed = false;
   const writeChunk = (chunk: unknown): boolean => {
     try {
       if (typeof chunk === 'string' || Buffer.isBuffer(chunk)) {
@@ -59,8 +67,19 @@ export function installVerboseLog(role: 'coordinator' | 'lead'): string | null {
       } else {
         stream.write(String(chunk));
       }
-    } catch {
-      // swallow — never let logging crash the process
+    } catch (err) {
+      // Don't crash the process, but warn ONCE so disk-full / permission /
+      // stream-closed errors are not silently lost — without this, every
+      // subsequent verbose log line is dropped with zero diagnostic. The
+      // warning goes to the real stderr (captured above), not the tee.
+      if (!verboseWriteFailed) {
+        verboseWriteFailed = true;
+        try {
+          realStderrWrite(`[verbose-log] Write to ${logPath} failed, logging disabled: ${err instanceof Error ? err.message : String(err)}\n`);
+        } catch {
+          // last-resort: even the warning failed; nothing more we can do
+        }
+      }
     }
     return true;
   };

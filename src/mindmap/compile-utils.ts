@@ -279,7 +279,29 @@ export function get_lock_path(outFile: string): string {
 }
 
 /**
- * Create a lock file
+ * Error thrown when {@link create_lock} finds the lock file already exists
+ * (another process won the race). Distinguished from other fs errors so the
+ * caller can decide to wait/retry or abort rather than treating it as a
+ * generic I/O failure.
+ */
+export class LockExistsError extends Error {
+  readonly code = 'EEXIST' as const;
+  constructor(public readonly lockPath: string) {
+    super(`Lock file already exists: ${lockPath} (another process is compiling)`);
+    this.name = 'LockExistsError';
+  }
+}
+
+/**
+ * Create a lock file atomically.
+ *
+ * Uses the `wx` flag (O_EXCL) so creation fails atomically with `EEXIST` if
+ * another process already created the lock — this closes the TOCTOU race
+ * where two processes both pass the `try_read_lock` freshness check and both
+ * call `create_lock`, overwriting each other's lock and compiling to the
+ * same `.new` file concurrently.
+ *
+ * @throws {LockExistsError} if the lock file already exists (race lost).
  */
 export function create_lock(outFile: string, mdPath: string, hash: string): LockFile {
   const lock: LockFile = {
@@ -289,7 +311,16 @@ export function create_lock(outFile: string, mdPath: string, hash: string): Lock
     output_file: outFile,
   };
   const lockPath = get_lock_path(outFile);
-  fs.writeFileSync(lockPath, JSON.stringify(lock, null, 2), 'utf-8');
+  // 'wx' atomically fails with EEXIST if the file already exists, closing
+  // the TOCTOU window between try_read_lock and create_lock.
+  try {
+    fs.writeFileSync(lockPath, JSON.stringify(lock, null, 2), { encoding: 'utf-8', flag: 'wx' });
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'EEXIST') {
+      throw new LockExistsError(lockPath);
+    }
+    throw err;
+  }
   return lock;
 }
 

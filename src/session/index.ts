@@ -132,6 +132,12 @@ export function readSession(filePath: string): Session | null {
 /**
  * Write a session file (atomic)
  *
+ * Uses the temp-file + rename pattern (same as ConditionRegistry.save()):
+ * writes to a temp file in the SAME directory, then atomically renames it
+ * over the target. A crash mid-write leaves the temp file orphaned but the
+ * main session file intact — never a truncated/corrupt session JSON that
+ * would make the session unreadable on the next start.
+ *
  * @param filePath - Path to session file
  * @param session - Session object to write
  */
@@ -140,7 +146,13 @@ export function writeSession(filePath: string, session: Session): void {
     ...session,
     version: '2.0',
   };
-  fs.writeFileSync(filePath, JSON.stringify(sessionFile, null, 2), 'utf-8');
+  const content = JSON.stringify(sessionFile, null, 2);
+
+  // Write to a temp file in the SAME directory as the target (avoids
+  // cross-device rename issues), then atomically rename into place.
+  const tempFile = `${filePath}.tmp.${Date.now()}`;
+  fs.writeFileSync(tempFile, content, 'utf-8');
+  fs.renameSync(tempFile, filePath);
 }
 
 /**

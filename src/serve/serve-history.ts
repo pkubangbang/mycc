@@ -134,11 +134,17 @@ export function readHistory(
       // Read the user log (real user submissions) and merge by timestamp.
       const userEntries = readUserLog(userLogPath);
 
-      // Merge triologue entries + user entries + in-memory messageLog by
-      // timestamp. Entries without a timestamp (legacy transcript lines)
-      // sort first via the `?? 0` fallback so they stay at their natural position.
-      const combined = entries.concat(userEntries).concat(messageLog);
-      combined.sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0));
+      // Merge triologue entries + user entries + in-memory messageLog.
+      // Filter out entries WITHOUT a timestamp — legacy pre-timestamp
+      // transcript lines have no reliable chronological position, so
+      // sorting them to 0 (front) or MAX_SAFE_INTEGER (end) would misorder
+      // them relative to timestamped entries. Excluding them keeps the
+      // reconstructed history chronologically accurate.
+      const combined = entries
+        .concat(userEntries)
+        .concat(messageLog)
+        .filter((e) => typeof e.timestamp === 'number');
+      combined.sort((a, b) => (a.timestamp as number) - (b.timestamp as number));
 
       // Cap at MAX_LOG_SIZE (keep the most recent entries)
       if (combined.length > MAX_LOG_SIZE) {

@@ -184,6 +184,10 @@ export class Triologue {
       const lastMsg = this.store.last()!;
       lastMsg.content += `\n${content}`;
       this.store.recomputeTokenCount();
+      // Track the merged user query so auto-compact preserves the
+      // complete user intent, not just the pre-merge fragment. Without
+      // this, a compact right after a merge loses the latest instruction.
+      this.store.setLastUserQuery(lastMsg.content);
       this.options.onMessage(this.store.getRaw());
       return;
     }

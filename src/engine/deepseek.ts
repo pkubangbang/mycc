@@ -11,7 +11,7 @@ import type { ChatRequest, ChatResponse, WebSearchResult, WebFetchResponse, Mess
 import type { Message } from '../types.js';
 import { agentIO } from '../loop/agent-io.js';
 import type { HealthCheckResult } from './health-check.js';
-import { probeModel } from './health-check.js';
+import { probeModel, probeEmbeddingModel } from './health-check.js';
 import {
   collectStream,
   isTransientError,
@@ -563,48 +563,78 @@ export async function imgDescribe(_image: string, _prompt?: string): Promise<str
 export async function structuredChat(
   messages: { role: string; content: string }[],
   _format: object,
+  options?: { signal?: AbortSignal; timeoutMs?: number; maxRetries?: number },
 ): Promise<ChatResponse> {
   const url = `${getHost()}/chat/completions`;
   const apiKey = getApiKey();
+  const timeoutMs = options?.timeoutMs ?? 60000;
+  const maxRetries = options?.maxRetries ?? 2;
 
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
-      model: MODEL,
-      messages,
-      response_format: { type: 'json_object' },
-      stream: false,
-    }),
-  });
+  let lastError: Error | null = null;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    // Combine caller's signal with a timeout signal so a hung API call
+    // can be aborted (ESC via caller signal, or the built-in timeout).
+    // AbortSignal.any() is available on Node 20.3+; the project targets
+    // Node 20+ (per @types/node ^24), so this is safe.
+    const signals: AbortSignal[] = [AbortSignal.timeout(timeoutMs)];
+    if (options?.signal) signals.push(options.signal);
+    const combinedSignal = AbortSignal.any(signals);
 
-  if (!response.ok) {
-    const text = await response.text().catch(() => '');
-    throw new Error(`DeepSeek API error ${response.status}: ${text.slice(0, 500)}`);
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          model: MODEL,
+          messages,
+          response_format: { type: 'json_object' },
+          stream: false,
+        }),
+        signal: combinedSignal,
+      });
+
+      if (!response.ok) {
+        const text = await response.text().catch(() => '');
+        throw new Error(`DeepSeek API error ${response.status}: ${text.slice(0, 500)}`);
+      }
+
+      const data = await response.json();
+      const choice = data.choices?.[0];
+
+      return {
+        model: data.model || MODEL,
+        created_at: new Date(),
+        message: {
+          role: 'assistant' as const,
+          content: choice?.message?.content || '',
+        },
+        done: true,
+        done_reason: choice?.finish_reason || 'stop',
+        total_duration: 0,
+        load_duration: 0,
+        prompt_eval_count: data.usage?.prompt_tokens || 0,
+        prompt_eval_duration: 0,
+        eval_count: data.usage?.completion_tokens || 0,
+        eval_duration: 0,
+      };
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err));
+      // Don't retry on caller abort — propagate immediately.
+      if (options?.signal?.aborted) throw lastError;
+      // Don't retry on non-transient 4xx errors (bad request, auth).
+      if (err instanceof Error && /DeepSeek API error 4\d\d/.test(err.message)) {
+        throw err;
+      }
+      if (attempt < maxRetries) {
+        // Linear backoff: 1s, 2s, ...
+        await new Promise((r) => setTimeout(r, 1000 * (attempt + 1)));
+      }
+    }
   }
-
-  const data = await response.json();
-  const choice = data.choices?.[0];
-
-  return {
-    model: data.model || MODEL,
-    created_at: new Date(),
-    message: {
-      role: 'assistant' as const,
-      content: choice?.message?.content || '',
-    },
-    done: true,
-    done_reason: choice?.finish_reason || 'stop',
-    total_duration: 0,
-    load_duration: 0,
-    prompt_eval_count: data.usage?.prompt_tokens || 0,
-    prompt_eval_duration: 0,
-    eval_count: data.usage?.completion_tokens || 0,
-    eval_duration: 0,
-  };
+  throw lastError || new Error('structuredChat: all retries exhausted');
 }
 
 // ─── Health check ─────────────────────────────────────────────────────────
@@ -628,6 +658,22 @@ export async function healthCheck(tokenThreshold: number): Promise<HealthCheckRe
       return {
         ok: false,
         error: `TOKEN_THRESHOLD (${tokenThreshold}) exceeds 80% of model context length (${DEEPSEEK_CONTEXT_LENGTH}). Reduce TOKEN_THRESHOLD to ${maxThreshold} or less.`,
+      };
+    }
+
+    // Probe embedding model. DeepSeek does not provide embeddings — Ollama
+    // does, regardless of the chat API provider. A failure is a WARNING,
+    // not a hard error — the agent can still run chat-only; RAG features
+    // just fail at first use with an actionable hint.
+    const embeddingWarning = await probeEmbeddingModel();
+    if (embeddingWarning) {
+      return {
+        ok: true,
+        warnings: [embeddingWarning],
+        modelInfo: {
+          name: MODEL,
+          contextLength: DEEPSEEK_CONTEXT_LENGTH,
+        },
       };
     }
 

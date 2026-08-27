@@ -171,8 +171,16 @@ export async function main(): Promise<void> {
         // leaks into LLM summarization (minifyMessages).
         const entry = { ...lastMsg, timestamp: Date.now() };
         fs.appendFileSync(triologuePath, `${JSON.stringify(entry)}\n`, 'utf-8');
-      } catch {
-        // Ignore write errors
+      } catch (writeErr) {
+        // Don't crash on transcript write failure, but make it observable
+        // so disk-full / permission / invalid-path issues are not silently
+        // lost — without this, every subsequent message is dropped from the
+        // durable transcript with zero diagnostic.
+        agentIO.verbose('triologue', `Transcript write failed: ${writeErr instanceof Error ? writeErr.message : String(writeErr)}`);
+        loopEvents.emit('triologue_event', {
+          kind: 'transcript_write_error',
+          detail: writeErr instanceof Error ? writeErr.message : String(writeErr),
+        });
       }
     },
   });

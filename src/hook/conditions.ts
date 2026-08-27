@@ -693,6 +693,13 @@ Output a JSON object with trigger, condition, and action.`;
           }
         }
 
+        // If trigger validation set an error, retry the outer loop instead
+        // of persisting an invalid condition. Without this guard, an invalid
+        // trigger is silently persisted via this.set/this.save on the first
+        // attempt — the `continue`/`break` above only control the inner for
+        // loop, not this outer retry loop.
+        if (lastError) continue;
+
         // Store source file path if provided
         if (sourceFile) {
           condition.sourceFile = sourceFile;

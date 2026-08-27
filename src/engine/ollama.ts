@@ -11,7 +11,7 @@ import type { ChatRequest, ChatResponse, WebSearchResult, WebFetchResponse } fro
 import { getOllamaHost, getOllamaApiKey, getOllamaModel, getVisionModel, isVisionEnabled } from '../config.js';
 import { agentIO } from '../loop/agent-io.js';
 import type { HealthCheckResult } from './health-check.js';
-import { probeModel } from './health-check.js';
+import { probeModel, probeEmbeddingModel } from './health-check.js';
 import {
   collectStream,
   isTransientError,
@@ -467,14 +467,26 @@ export async function healthCheck(tokenThreshold: number): Promise<HealthCheckRe
       };
     }
 
+    // Probe embedding model (required for wiki/RAG/skill matching). A
+    // failure is a WARNING, not a hard error — the agent can still run
+    // chat-only; RAG features just fail at first use with an actionable hint.
+    const embeddingWarning = await probeEmbeddingModel();
+
+    // Assemble warnings: vision-model absence + embedding probe failure.
+    const warnings: string[] = [];
+    if (!isVisionEnabled()) {
+      warnings.push(
+        'OLLAMA_VISION_MODEL is not set. Vision features (screen/read_picture tools) are disabled.',
+        'Set it to a vision model (e.g., OLLAMA_VISION_MODEL=gemma4:31b-cloud) or "none" to dismiss this warning.',
+      );
+    }
+    if (embeddingWarning) {
+      warnings.push(embeddingWarning);
+    }
+
     return {
       ok: true,
-      warnings: isVisionEnabled()
-        ? undefined
-        : [
-            'OLLAMA_VISION_MODEL is not set. Vision features (screen/read_picture tools) are disabled.',
-            'Set it to a vision model (e.g., OLLAMA_VISION_MODEL=gemma4:31b-cloud) or "none" to dismiss this warning.',
-          ],
+      warnings: warnings.length > 0 ? warnings : undefined,
       modelInfo: {
         name: MODEL,
         contextLength,
