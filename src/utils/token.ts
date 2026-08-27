@@ -108,8 +108,21 @@ export function estimateTokensForMessages(messages: Message[]): number {
 /**
  * Truncate `text` so its estimated token count is at most `maxTokens`.
  *
- * Uses {@link estimateTextTokens} to measure. Trims trailing whitespace-delimited
- * tokens one at a time until the estimate fits, then strips a trailing space.
+ * Two-stage strategy:
+ *
+ * 1. **Word-level (whitespace-delimited):** split on `\s+` and pop trailing
+ *    words until the estimate fits. This keeps whole words for Western text
+ *    (no mid-word cuts) and is the fast common path.
+ *
+ * 2. **Character-level fallback:** for scripts written without inter-word
+ *    spaces — CJK (Chinese/Japanese/Korean), and dense mixed strings — the
+ *    whitespace split yields a single-element array. Popping it empties the
+ *    array, so stage 1 returns `""` instead of a truncated prefix. When that
+ *    happens AND the original text was non-empty, progressively drop trailing
+ *    characters until the estimate fits, returning a leading-prefix truncation.
+ *    CJK characters each carry ~2 tokens, so this converges in few steps and
+ *    never splits a multi-byte UTF-16 code unit (we slice by index, not bytes).
+ *
  * Returns the original text unchanged if it already fits. Never throws: on any
  * unexpected shape, returns the original text.
  *
@@ -122,9 +135,27 @@ export function truncateToTokens(text: string, maxTokens: number): string {
   if (estimateTextTokens(text) <= maxTokens) return text;
 
   const words = text.split(/\s+/).filter((w) => w.length > 0);
-  // Remove trailing words until the remaining estimate fits.
+  // Stage 1: remove trailing words until the remaining estimate fits.
   while (words.length > 0 && estimateTextTokens(words.join(' ')) > maxTokens) {
     words.pop();
   }
-  return words.join(' ');
+  const wordResult = words.join(' ');
+  // If word-level truncation produced a non-empty prefix, use it. This is the
+  // normal Western-text path (whole words, no mid-word cut).
+  if (wordResult.length > 0) return wordResult;
+
+  // Stage 2: character-level fallback. Reached when stage 1 emptied the word
+  // array — i.e. the text has no usable whitespace boundaries (pure CJK or a
+  // single dense run longer than the budget). Fall back to dropping trailing
+  // characters so we return a leading prefix instead of discarding everything.
+  // Walk backwards from the full length; since estimateTextTokens is monotonic
+  // in length, the first length that fits is the longest prefix that fits.
+  for (let len = text.length; len > 0; len--) {
+    const candidate = text.slice(0, len);
+    if (estimateTextTokens(candidate) <= maxTokens) {
+      return candidate;
+    }
+  }
+  // Even a single character exceeds maxTokens (extremely small budget).
+  return '';
 }

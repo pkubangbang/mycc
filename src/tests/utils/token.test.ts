@@ -126,4 +126,37 @@ describe('truncateToTokens', () => {
       expect(longText).toContain(w);
     }
   });
+
+  it('truncates pure CJK (spaceless) text to a leading prefix instead of discarding it', () => {
+    // Pure CJK: no whitespace, so split(/\s+/) yields one element. Without the
+    // character-level fallback, pop() would empty the array and return "".
+    const longText = '你好世界测试中文截断逻辑验证这是一个很长的中文句子用来测试截断功能是否正常工作'.repeat(4);
+    expect(estimateTextTokens(longText)).toBeGreaterThan(200);
+    const truncated = truncateToTokens(longText, 200);
+    // Must fit the budget.
+    expect(estimateTextTokens(truncated)).toBeLessThanOrEqual(200);
+    // Must be non-empty (the bug returned "" here).
+    expect(truncated.length).toBeGreaterThan(0);
+    // Must be a leading prefix (leading content preserved, trailing dropped).
+    expect(longText.startsWith(truncated)).toBe(true);
+  });
+
+  it('truncates a single CJK run longer than a tiny budget to a non-empty prefix', () => {
+    // CJK chars are ~2 tokens each. With a budget of 8, we expect ~4 chars kept,
+    // not "" (which the word-only path returned before the fix).
+    const text = '你好世界测试验证';
+    const truncated = truncateToTokens(text, 8);
+    expect(estimateTextTokens(truncated)).toBeLessThanOrEqual(8);
+    expect(truncated.length).toBeGreaterThan(0);
+    expect(text.startsWith(truncated)).toBe(true);
+  });
+
+  it('falls back to character-level for mixed text where a single run exceeds the budget', () => {
+    // One CJK run (no spaces) bigger than the budget, plus trailing words.
+    const text = '你好世界测试验证这是一个很长的无空格中文段落'.repeat(3) + ' tail words here';
+    const truncated = truncateToTokens(text, 60);
+    expect(estimateTextTokens(truncated)).toBeLessThanOrEqual(60);
+    expect(truncated.length).toBeGreaterThan(0);
+    expect(text.startsWith(truncated)).toBe(true);
+  });
 });

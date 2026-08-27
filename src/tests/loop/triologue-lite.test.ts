@@ -101,11 +101,11 @@ import { TriologueLite } from '../../loop/triologue-lite.js';
 
 describe('TriologueLite', () => {
   let t: TriologueLite;
-  let onMessage: ReturnType<typeof vi.fn>;
+  let onMessage: ReturnType<typeof vi.fn<(messages: Message[]) => void>>;
 
   beforeEach(() => {
     vi.clearAllMocks();
-    onMessage = vi.fn();
+    onMessage = vi.fn<(messages: Message[]) => void>();
     t = new TriologueLite({ tokenThreshold: 1000, onMessage });
   });
 
@@ -351,8 +351,11 @@ describe('TriologueLite', () => {
       ).find((m) => m.role === 'assistant');
       const roundTrip = JSON.parse(JSON.stringify(assistantMsg)) as Message;
       expect(roundTrip.tool_calls).toHaveLength(1);
-      expect(roundTrip.tool_calls![0].id).toBe('q9');
-      expect(roundTrip.tool_calls![0].function.name).toBe('edit_file');
+      // Message.tool_calls is typed via Ollama's ToolCall (no `id`); our local
+      // ToolCall extension adds it, so cast the element to read the id.
+      const tc = roundTrip.tool_calls![0] as ToolCall;
+      expect(tc.id).toBe('q9');
+      expect(tc.function.name).toBe('edit_file');
     });
   });
 
