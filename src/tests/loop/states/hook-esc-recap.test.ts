@@ -69,13 +69,17 @@ vi.mock('../../../loop/triologue.js', () => {
     getMessagesRaw = vi.fn(() => []);
     getLastRole = vi.fn(() => null);
     setSystemPrompt = vi.fn();
-    findCheckpointById = vi.fn(() => ({
-      id: 'abc12345',
-      index: 2,
-      description: 'test checkpoint',
+    getCheckpointManager = vi.fn(() => ({
+      findOpen: vi.fn(() => null),
+      findById: vi.fn(() => ({
+        id: 'abc12345',
+        index: 2,
+        description: 'test checkpoint',
+      })),
+      findAll: vi.fn(() => []),
+      generateId: vi.fn(() => 'deadbeef'),
+      recap: vi.fn(),
     }));
-    findAllCheckpoints = vi.fn(() => []);
-    recapMessages = vi.fn();
     getTokenCount = vi.fn(() => 100);
     skipPendingTools = vi.fn();
   }

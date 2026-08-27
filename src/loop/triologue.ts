@@ -9,63 +9,27 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { retryChat, MODEL, forkChat } from '../engine/chat-provider.js';
 import type { Message, ToolCall, Tool, NoteCategory } from '../types.js';
-import { minifyMessages } from '../utils/llm-chat-minifier.js';
-import { estimateTokens, estimateTokensForMessages } from '../utils/token.js';
 import { ResultTooLargeError } from '../types.js';
-import { getLongtextDir, ensureDirs, isDebuggingTp, getSessionContext, getSessionDir } from '../config.js';
+import { getLongtextDir, ensureDirs } from '../config.js';
 import { agentIO } from './agent-io.js';
-import { attemptAutoFix } from './tp-auto-fixer.js';
+import { TpAutoFixer } from './triologue/tp-fix.js';
 import { loopEvents } from './loop-events.js';
+import type { Role, MisorderWarning, ToolAlignmentWarning, TriologueOptions } from './triologue/types.js';
 
-type Role = 'system' | 'user' | 'assistant' | 'tool';
-
-interface MisorderWarning {
-  from: Role;
-  to: Role;
-  gap: 'missing_assistant' | 'missing_tool_response' | 'unexpected_duplicate' | 'invalid_sequence';
-  context: { lastMessage?: Message; newMessage?: Partial<Message> };
-}
-
-interface ToolAlignmentWarning {
-  functionName: string;
-  toolCallId?: string;
-  issue: 'no_pending_calls' | 'id_not_found' | 'name_mismatch' | 'orphan_result';
-  expectedId?: string;
-  expectedName?: string;
-}
-
-interface TriologueOptions {
-  /** Token threshold for auto-compact (default: 50000) */
-  tokenThreshold?: number;
-  /** Result size threshold in chars (default: 20000) */
-  resultThreshold?: number;
-  /** Message threshold for hint round (default: 10) */
-  hintThreshold?: number;
-  /** Called when misordered role transition detected */
-  onMisorder?: (warning: MisorderWarning) => void;
-  /** Called when tool call/result alignment issue detected */
-  onToolMisalign?: (warning: ToolAlignmentWarning) => void;
-  /** Called when auto-compact is triggered */
-  onCompact?: (transcriptPath: string) => void;
-  /** Called after each message is added */
-  onMessage?: (messages: Message[]) => void;
-
-  /** Callback to retrieve wiki domains for knowledge persistence during compact */
-  getWikiDomains?: () => Promise<Array<{ domain_name: string; description?: string }>>;
-  /** Optional duplication report provider for hint round */
-  getDuplicationReport?: () => string;
-}
+export type { Role, MisorderWarning, ToolAlignmentWarning, TriologueOptions, CheckpointInfo } from './triologue/types.js';
+export { CheckpointManager } from './triologue/checkpoint.js';
 
 import { generateHintRound as doHintRound } from './hint-round.js';
+import { MessageStore } from './triologue/store.js';
+import { PendingToolLedger } from './triologue/pending-tools.js';
+import { runAutoCompact as doRunAutoCompact } from './triologue/compact.js';
+import { CheckpointManager } from './triologue/checkpoint.js';
+import { WrapUpManager } from './triologue/wrap-up.js';
 
 export class Triologue {
-  private messages: Message[] = [];
-  private pendingToolCalls: Map<string, ToolCall> = new Map();
-  private pendingToolCallOrder: string[] = []; // Track order for sequential resolution
-  private tokenCount: number = 0;
-  private systemPrompt: string | null = null;
+  private store: MessageStore = new MessageStore();
+  private ledger: PendingToolLedger = new PendingToolLedger();
   private options: TriologueOptions & {
     tokenThreshold: number;
     resultThreshold: number;
@@ -75,33 +39,41 @@ export class Triologue {
     onCompact: (transcriptPath: string) => void;
     onMessage: (messages: Message[]) => void;
   };
-  // Project context files (in-memory only, not persisted)
-  private projectContext: Message[] = [];
-  /**
-   * Populator registry: functions that produce project-context Message[] pairs.
-   * Callers (agent-repl, hook-bootstrap) register closures ONCE at startup.
-   * rebuildProjectContext() clears projectContext and re-invokes all populators
-   * in registration order, so compact() and clear() can refresh dynamic content
-   * (README, mindmap instruction, hook info) without external rebuild calls.
-   * Each populator returns a Message[] (typically a user/assistant context pair).
-   */
-  private populators: Array<() => Message[]> = [];
 
   /**
-   * The last real user query (not system notes).
-   * Tracked to preserve user intent during auto-compaction.
+   * Wrap-up management (see triologue/wrap-up.ts): marks the message index
+   * at which a wrap-up turn started, enabling commit/rollback within a
+   * grace period. Delegated to WrapUpManager; the facade retains the
+   * message-side operations (append WRAP_UP message, truncate store).
    */
-  private lastUserQuery: string = '';
+  private wrapUp: WrapUpManager = new WrapUpManager();
 
   /**
-   * Wrap-up management: marks the message index at which a wrap-up turn started.
-   * - beginWrapUp() sets this to messages.length, adds a WRAP_UP user message
-   * - finishWrapUp() adds an agent message (keeps mark for potential rollback)
-   * - commitWrapUp() clears the mark (keep wrap-up permanently)
-   * - rollbackWrapUp() truncates messages to this mark (remove wrap-up turn)
-   * Value of -1 means no active wrap-up.
+   * Checkpoint feature domain delegate (see triologue/checkpoint.ts).
+   * Created lazily via getCheckpointManager(); bound to the live message
+   * store so callers always see the current history.
    */
-  private wrapUpMark: number = -1;
+  private checkpointManager: CheckpointManager | null = null;
+
+  /**
+   * TP-recovery delegate (see triologue/tp-fix.ts). Owns both the recovery
+   * dispatch and the --debug-tp violation-throw path, so the facade keeps
+   * no TP-recovery logic of its own. Deps are arrow closures over this
+   * facade's private store/ledger — resolved lazily at call time.
+   */
+  private tpFix = new TpAutoFixer({
+    injectBypass: (message: Message): void => {
+      this.addMessage(message);
+    },
+    registerPending: (toolCalls: ToolCall[]): void => {
+      this.ledger.register(toolCalls);
+    },
+    getPendingOrder: (): string[] => this.ledger.getOrder(),
+    getPendingById: (id: string): ToolCall | undefined => this.ledger.getById(id),
+    clearPending: (): void => {
+      this.ledger.clear();
+    },
+  });
 
   constructor(options: TriologueOptions = {}) {
     const hintThreshold = options.hintThreshold ?? 10;
@@ -122,13 +94,13 @@ export class Triologue {
     };
   }
 
-  // === Core API ===
+  // === Lifecycle & Configuration ===
 
   /**
    * Set or update the system prompt
    */
   setSystemPrompt(prompt: string): void {
-    this.systemPrompt = prompt;
+    this.store.setSystemPrompt(prompt);
   }
 
   /**
@@ -144,11 +116,7 @@ export class Triologue {
    * @returns A disposer function that removes this populator (for cleanup/swap)
    */
   registerProjectContextPopulator(fn: () => Message[]): () => void {
-    this.populators.push(fn);
-    return () => {
-      const idx = this.populators.indexOf(fn);
-      if (idx !== -1) this.populators.splice(idx, 1);
-    };
+    return this.store.registerPopulator(fn);
   }
 
   /**
@@ -163,20 +131,36 @@ export class Triologue {
    * would invalidate the cached prefix every turn).
    */
   rebuildProjectContext(): void {
-    this.projectContext = [];
-    for (const populator of this.populators) {
-      try {
-        const produced = populator();
-        if (Array.isArray(produced)) {
-          for (const m of produced) {
-            if (m && typeof m === 'object' && m.role) this.projectContext.push(m);
-          }
-        }
-      } catch (err) {
-        agentIO.brief('error', 'triologue', `project-context populator failed: ${(err as Error).message}`);
-      }
-    }
+    this.store.rebuildProjectContext();
   }
+
+  /**
+   * Load a single restoration pair into the triologue without triggering onMessage callback.
+   * Used during session restoration to preload summary context.
+   * @param pair - A [user_message, assistant_message] tuple
+   */
+  loadRestoration(pair: [Message, Message]): void {
+    this.store.push(pair[0]);
+    this.store.incrementTokenCount(pair[0]);
+    this.store.push(pair[1]);
+    this.store.incrementTokenCount(pair[1]);
+  }
+
+  /**
+   * Clear all messages and reset state
+   * Called by /clear command
+   */
+  clear(): void {
+    this.store.replaceAll([]);
+    this.store.resetTokenCount();
+    this.ledger.clear();
+    this.wrapUp.reset();
+    // Fresh start: rebuild dynamic project context from populators so the
+    // cleared conversation still carries current README/mindmap/hook state.
+    this.rebuildProjectContext();
+  }
+
+  // === Message Producers ===
 
   /**
    * Add a user message (real user input - clears temporary hint)
@@ -184,10 +168,7 @@ export class Triologue {
   user(content: string): void {
     const lastRole = this.getLastRole();
     if (lastRole === 'tool') {
-      const fixResult = attemptAutoFix(this, 'user_after_tool', lastRole);
-      if (fixResult === 'debug_throw') {
-        this.throwTpViolation('cannot add user message after tool role');
-      }
+      const fixResult = this.tpFix.handle('user_after_tool', lastRole, 'cannot add user message after tool role');
       if (fixResult === 'allowed') {
         // Provider supports tool → user natively — skip bridge, just append
         this.addMessage({ role: 'user', content });
@@ -200,14 +181,14 @@ export class Triologue {
       // the JSONL transcript records this combined state. Note: writing
       // combines into the same message creates duplicate content in the
       // transcript, but ensures every note()/user() call is recorded.
-      const lastMsg = this.messages[this.messages.length - 1];
+      const lastMsg = this.store.last()!;
       lastMsg.content += `\n${content}`;
-      this.tokenCount = estimateTokensForMessages(this.messages);
-      this.options.onMessage(this.messages);
+      this.store.recomputeTokenCount();
+      this.options.onMessage(this.store.getRaw());
       return;
     }
     // Track last real user query for auto-compact context preservation
-    this.lastUserQuery = content;
+    this.store.setLastUserQuery(content);
     this.addMessage({ role: 'user', content });
   }
 
@@ -227,10 +208,7 @@ export class Triologue {
   note(category: NoteCategory, message: string, hookName?: string): void {
     const lastRole = this.getLastRole();
     if (lastRole === 'tool') {
-      const fixResult = attemptAutoFix(this, 'note_after_tool', lastRole);
-      if (fixResult === 'debug_throw') {
-        this.throwTpViolation('cannot add note after tool role');
-      }
+      const fixResult = this.tpFix.handle('note_after_tool', lastRole, 'cannot add note after tool role');
       if (fixResult === 'allowed') {
         // Provider supports tool → note natively — skip bridge, just append
         this.addMessage({ role: 'user', content: `[${category}] ${message}`, ...(hookName ? { hook_name: hookName } : {}) });
@@ -244,10 +222,10 @@ export class Triologue {
     if (lastRole === 'user' && !hookName) {
       // Combine: append to last user message, then fire onMessage so
       // the JSONL transcript records this combined state.
-      const lastMsg = this.messages[this.messages.length - 1];
+      const lastMsg = this.store.last()!;
       lastMsg.content += `\n${noteContent}`;
-      this.tokenCount = estimateTokensForMessages(this.messages);
-      this.options.onMessage(this.messages);
+      this.store.recomputeTokenCount();
+      this.options.onMessage(this.store.getRaw());
       return;
     }
     this.addMessage({ role: 'user', content: noteContent, ...(hookName ? { hook_name: hookName } : {}) });
@@ -264,14 +242,11 @@ export class Triologue {
     // Check for missing assistant with tool_calls
     const lastRole = this.getLastRole();
     if (lastRole !== 'assistant' && lastRole !== 'tool') {
-      if (attemptAutoFix(this, 'tool_no_assistant', lastRole) === 'debug_throw') {
-        this.throwTpViolation(`cannot add tool message after ${lastRole} role (gap: missing_assistant)`);
-      }
+      this.tpFix.handle('tool_no_assistant', lastRole, `cannot add tool message after ${lastRole} role (gap: missing_assistant)`);
       // Recovered: a synthetic assistant with tool_calls was injected.
       // After injection, the pending tool call map has an entry, but it's empty-named.
-      // We need to update it so findPendingToolCall works for this functionName.
-      // Update the last pending tool call entry with the correct function name.
-      this.updateLastPendingToolCall(functionName);
+      // We need to update it so pending-ledger name resolution works for this functionName.
+      this.ledger.updateLastName(functionName);
     }
 
     // Check result size threshold
@@ -307,11 +282,11 @@ export class Triologue {
     let resolvedId = toolCallId;
     if (!resolvedId) {
       // Find the next pending tool call matching this function name
-      resolvedId = this.findPendingToolCall(functionName);
+      resolvedId = this.ledger.findByName(functionName);
     }
 
     // Validate alignment
-    this.validateToolAlignment(functionName, resolvedId);
+    this.ledger.validateAlignment(functionName, resolvedId, (w) => this.options.onToolMisalign(w));
 
     // Add the tool response with both tool_name and tool_call_id
     this.addMessage({
@@ -322,85 +297,8 @@ export class Triologue {
     });
 
     // Remove from pending after adding result
-    if (resolvedId && this.pendingToolCalls.has(resolvedId)) {
-      this.pendingToolCalls.delete(resolvedId);
-      this.pendingToolCallOrder = this.pendingToolCallOrder.filter(id => id !== resolvedId);
-    }
-  }
-
-  /**
-   * Skip all pending tool calls with placeholder results.
-   * Called when ESC interrupts tool execution.
-   * @param firstMessage - Message for the first interrupted tool
-   * @param subsequentMessage - Message for remaining skipped tools (defaults to firstMessage)
-   */
-  skipPendingTools(firstMessage: string, subsequentMessage?: string): void {
-    let isFirst = true;
-    for (const id of this.pendingToolCallOrder) {
-      const tc = this.pendingToolCalls.get(id);
-      if (tc) {
-        const msg = isFirst ? firstMessage : (subsequentMessage || firstMessage);
-        this.addMessage({
-          role: 'tool',
-          tool_name: tc.function.name,
-          content: msg,
-          tool_call_id: id,
-        });
-        isFirst = false;
-      }
-    }
-    this.pendingToolCalls.clear();
-    this.pendingToolCallOrder = [];
-  }
-
-  /**
-   * Find pending tool call by function name (returns first match in order)
-   */
-  private findPendingToolCall(functionName: string): string | undefined {
-    for (const id of this.pendingToolCallOrder) {
-      const tc = this.pendingToolCalls.get(id);
-      if (tc && tc.function.name === functionName) {
-        return id;
-      }
-    }
-    return undefined;
-  }
-
-  /**
-   * Validate tool call/result alignment
-   */
-  private validateToolAlignment(functionName: string, toolCallId?: string): void {
-    // No pending tool calls at all - orphan result
-    if (this.pendingToolCalls.size === 0) {
-      this.options.onToolMisalign({
-        functionName,
-        toolCallId,
-        issue: 'no_pending_calls',
-      });
-      return;
-    }
-
-    // toolCallId provided but not found in pending
-    if (toolCallId && !this.pendingToolCalls.has(toolCallId)) {
-      this.options.onToolMisalign({
-        functionName,
-        toolCallId,
-        issue: 'id_not_found',
-      });
-      return;
-    }
-
-    // toolCallId provided but name mismatch
-    if (toolCallId) {
-      const tc = this.pendingToolCalls.get(toolCallId);
-      if (tc && tc.function.name !== functionName) {
-        this.options.onToolMisalign({
-          functionName,
-          toolCallId,
-          issue: 'name_mismatch',
-          expectedName: tc.function.name,
-        });
-      }
+    if (resolvedId) {
+      this.ledger.resolve(resolvedId);
     }
   }
 
@@ -412,15 +310,11 @@ export class Triologue {
 
     // Reject invalid transitions
     if (lastRole === 'assistant') {
-      if (attemptAutoFix(this, 'duplicate_assistant', lastRole) === 'debug_throw') {
-        this.throwTpViolation('cannot add assistant message after assistant role (duplicate)');
-      }
+      this.tpFix.handle('duplicate_assistant', lastRole, 'cannot add assistant message after assistant role (duplicate)');
       // Recovered: pending tool calls cleared, fall through to add new assistant message
     }
     if (lastRole === 'system') {
-      if (attemptAutoFix(this, 'agent_after_system', lastRole) === 'debug_throw') {
-        this.throwTpViolation('cannot add assistant message after system role');
-      }
+      this.tpFix.handle('agent_after_system', lastRole, 'cannot add assistant message after system role');
       // Recovered: bridge user message injected, fall through to add assistant message
       // Note: lastRole is still 'system' locally, but the last message in the array
       // is now the bridge user message. getLastRole() would return 'user'.
@@ -435,11 +329,48 @@ export class Triologue {
 
     // Track pending tool calls in order
     if (toolCalls) {
-      for (const tc of toolCalls) {
-        this.pendingToolCalls.set(tc.id, tc);
-        this.pendingToolCallOrder.push(tc.id);
+      this.ledger.register(toolCalls);
+    }
+  }
+
+  /**
+   * Skip all pending tool calls with placeholder results.
+   * Called when ESC interrupts tool execution.
+   *
+   * API NOTE (Phase 2.5 audit correction): this method HAS an external
+   * consumer — states/tool.ts ESC path (flush remaining pending calls to
+   * maintain TP parity before STOP). It therefore stays PUBLIC; the earlier
+   * "internal-only" classification was wrong. Documented for accuracy.
+   *
+   * @param firstMessage - Message for the first interrupted tool
+   * @param subsequentMessage - Message for remaining skipped tools (defaults to firstMessage)
+   */
+  skipPendingTools(firstMessage: string, subsequentMessage?: string): void {
+    let isFirst = true;
+    for (const id of this.ledger.getOrder()) {
+      const tc = this.ledger.getById(id);
+      if (tc) {
+        const msg = isFirst ? firstMessage : (subsequentMessage || firstMessage);
+        this.addMessage({
+          role: 'tool',
+          tool_name: tc.function.name,
+          content: msg,
+          tool_call_id: id,
+        });
+        isFirst = false;
       }
     }
+    this.ledger.clear();
+  }
+
+  // === Compaction ===
+
+  /**
+   * Check if auto-compact is needed.
+   * Called by tool.ts after each tool execution to detect context overflow.
+   */
+  needsCompact(): boolean {
+    return this.store.tokenCount > this.options.tokenThreshold;
   }
 
   /**
@@ -458,11 +389,23 @@ export class Triologue {
    *   exact cache prefix the next LLM call will use.
    */
   async compact(focus?: string, signal?: AbortSignal, tools?: Tool[]): Promise<void> {
-    const compacted = await this.runAutoCompact(focus, signal, tools);
-    this.messages = compacted;
-    this.tokenCount = estimateTokensForMessages(this.messages);
-    this.pendingToolCalls.clear();
-    this.pendingToolCallOrder = [];
+    // Inline delegation to the compaction layer (triologue/compact.ts) via a
+    // CompactDeps adapter over the facade's own state (single caller).
+    const compacted = await doRunAutoCompact(
+      {
+        getRawMessages: () => this.store.getRaw(),
+        getFullMessages: () => this.store.getFullMessages(),
+        lastUserQuery: () => this.store.lastUserQuery,
+        onCompact: (p) => this.options.onCompact(p),
+        getWikiDomains: this.options.getWikiDomains,
+      },
+      focus,
+      signal,
+      tools,
+    );
+    this.store.replaceAll(compacted);
+    this.store.recomputeTokenCount();
+    this.ledger.clear();
     // Compaction replaces the entire conversation with a 2-message summary,
     // invalidating any active wrap-up turn: the context the wrap-up was part
     // of no longer exists. Without this reset, a stale wrapUpMark (still
@@ -471,127 +414,11 @@ export class Triologue {
     // array, stretching it with undefined sparse holes that crash the next
     // raw reader (minifyMessages in runAutoCompact, or checkpoint iteration)
     // with "Cannot read properties of undefined (reading 'role')".
-    this.wrapUpMark = -1;
+    this.wrapUp.reset();
     // Refresh dynamic project context (README, mindmap, hooks) at the compact
     // boundary — the conversation prefix already changed, so no extra cache
     // penalty. Populators re-read current state (e.g. newly-compiled hooks).
     this.rebuildProjectContext();
-  }
-
-  /**
-   * Check if auto-compact is needed.
-   * Called by tool.ts after each tool execution to detect context overflow.
-   */
-  needsCompact(): boolean {
-    return this.tokenCount > this.options.tokenThreshold;
-  }
-
-  /**
-   * Clear all messages and reset state
-   * Called by /clear command
-   */
-  clear(): void {
-    this.messages = [];
-    this.tokenCount = 0;
-    this.pendingToolCalls.clear();
-    this.pendingToolCallOrder = [];
-    this.wrapUpMark = -1;
-    // Fresh start: rebuild dynamic project context from populators so the
-    // cleared conversation still carries current README/mindmap/hook state.
-    this.rebuildProjectContext();
-  }
-
-  // === Wrap-Up Management (ESC interrupt) ===
-
-  /**
-   * Begin a wrap-up turn after ESC interrupt.
-   * Adds a WRAP_UP user message as a SEPARATE message (never combines with
-   * the last user message), ensuring rollbackWrapUp() can work via simple
-   * array truncation.
-   *
-   * If there are stale pending tool calls (e.g., ESC was pressed during tool
-   * execution), flushes them via skipPendingTools to maintain TP parity before
-   * adding the wrap-up message. Safe to call regardless of current last role.
-   */
-  beginWrapUp(): void {
-    if (this.wrapUpMark !== -1) return; // already in wrap-up
-    // If there are stale pending tool calls (e.g., ESC pressed during tool
-    // execution before skipPendingTools resolved them), flush them now to
-    // maintain TP parity before adding the WRAP_UP user message.
-    if (this.pendingToolCalls.size > 0) {
-      this.skipPendingTools(
-        'Tool use interrupted - user pressed ESC.',
-        'Tool use skipped due to ESC interruption.',
-      );
-    }
-    this.wrapUpMark = this.messages.length;
-    // Always add as SEPARATE message (never combine with last user)
-    this.addMessage({
-      role: 'user',
-      content: `[WRAP_UP] LLM call interrupted. Please wrap up quickly and ask user for next steps.`,
-    });
-  }
-
-  /**
-   * Complete the wrap-up turn with an agent response.
-   * The wrapUpMark is kept so rollbackWrapUp() can still undo both the
-   * user_wrap and agent_wrap messages during the grace period.
-   * This is safe to call even after rollbackWrapUp() has already been
-   * called (wrapUpMark === -1) — it becomes a no-op.
-   *
-   * @param content - The assistant's wrap-up response
-   */
-  finishWrapUp(content: string): void {
-    if (this.wrapUpMark === -1) return; // already committed or rolled back
-    // Direct push to bypass TP check (we know last role is user_wrap or tool)
-    this.messages.push({ role: 'assistant', content });
-    this.updateTokenCount(this.messages[this.messages.length - 1]);
-    if (this.options.onMessage) {
-      this.options.onMessage(this.messages);
-    }
-    // wrapUpMark stays — allows rollback to remove both user_wrap and agent_wrap
-  }
-
-  /**
-   * Permanently keep the wrap-up turn (user_wrap + agent_wrap).
-   * Clears the wrapUpMark so future rollbackWrapUp() calls are no-ops.
-   */
-  commitWrapUp(): void {
-    this.wrapUpMark = -1;
-  }
-
-  /**
-   * Roll back the wrap-up turn, removing all messages added since beginWrapUp().
-   * Truncates messages to the recorded wrapUpMark via simple array .length,
-   * which is instant and race-free.
-   * Also clears pending tool calls since any from the wrap-up turn are invalid.
-   */
-  rollbackWrapUp(): void {
-    if (this.wrapUpMark === -1) return; // nothing to roll back
-    // Guard: never STRETCH the array. Normally wrapUpMark <= messages.length
-    // (it was set to the length before the wrap-up messages were appended).
-    // But if the array was replaced/shortened between beginWrapUp and this
-    // call (e.g. compact() swapped in a 2-message summary), wrapUpMark could
-    // exceed the current length — assigning it would fill the gap with
-    // undefined sparse holes. Truncate only; if the mark is stale and past
-    // the end, the array is already shorter, so clearing it fully (length=0
-    // would lose the compacted summary) is wrong — instead, leave the array
-    // as-is (the wrap-up messages are already gone) and just reset the mark.
-    if (this.wrapUpMark < this.messages.length) {
-      this.messages.length = this.wrapUpMark;
-    }
-    this.tokenCount = estimateTokensForMessages(this.messages);
-    this.pendingToolCalls.clear();
-    this.pendingToolCallOrder = [];
-    this.wrapUpMark = -1;
-  }
-
-  /**
-   * Check if a wrap-up turn is currently active (beginWrapUp was called
-   * but not yet committed or rolled back).
-   */
-  hasActiveWrapUp(): boolean {
-    return this.wrapUpMark !== -1;
   }
 
   /**
@@ -613,6 +440,103 @@ export class Triologue {
     return doHintRound(this, abortController, confusionScore, confusionBreakdown, pendingSkills);
   }
 
+  // === Wrap-Up Management (ESC interrupt) ===
+
+  /**
+   * Begin a wrap-up turn after ESC interrupt.
+   * Adds a WRAP_UP user message as a SEPARATE message (never combines with
+   * the last user message), ensuring rollbackWrapUp() can work via simple
+   * array truncation.
+   *
+   * If there are stale pending tool calls (e.g., ESC was pressed during tool
+   * execution), flushes them via skipPendingTools to maintain TP parity before
+   * adding the wrap-up message. Safe to call regardless of current last role.
+   */
+  beginWrapUp(): void {
+    if (this.wrapUp.isActive) return; // already in wrap-up
+    // If there are stale pending tool calls (e.g., ESC pressed during tool
+    // execution before skipPendingTools resolved them), flush them now to
+    // maintain TP parity before adding the WRAP_UP user message.
+    if (this.ledger.size > 0) {
+      this.skipPendingTools(
+        'Tool use interrupted - user pressed ESC.',
+        'Tool use skipped due to ESC interruption.',
+      );
+    }
+    this.wrapUp.begin(this.store.length);
+    // Always add as SEPARATE message (never combine with last user)
+    this.addMessage({
+      role: 'user',
+      content: `[WRAP_UP] LLM call interrupted. Please wrap up quickly and ask user for next steps.`,
+    });
+  }
+
+  /**
+   * Complete the wrap-up turn with an agent response.
+   * The wrapUpMark is kept so rollbackWrapUp() can still undo both the
+   * user_wrap and agent_wrap messages during the grace period.
+   * This is safe to call even after rollbackWrapUp() has already been
+   * called (wrapUpMark === -1) — it becomes a no-op.
+   *
+   * @param content - The assistant's wrap-up response
+   */
+  finishWrapUp(content: string): void {
+    if (!this.wrapUp.isActive) return; // already committed or rolled back
+    // Direct push to bypass TP check (we know last role is user_wrap or tool)
+    const message: Message = { role: 'assistant', content };
+    this.store.push(message);
+    this.store.incrementTokenCount(message);
+    if (this.options.onMessage) {
+      this.options.onMessage(this.store.getRaw());
+    }
+    // mark stays — allows rollback to remove both user_wrap and agent_wrap
+  }
+
+  /**
+   * Permanently keep the wrap-up turn (user_wrap + agent_wrap).
+   * Clears the mark so future rollbackWrapUp() calls are no-ops.
+   */
+  commitWrapUp(): void {
+    this.wrapUp.commit();
+  }
+
+  /**
+   * Roll back the wrap-up turn, removing all messages added since beginWrapUp().
+   * Truncates messages to the recorded wrapUpMark via simple array .length,
+   * which is instant and race-free.
+   * Also clears pending tool calls since any from the wrap-up turn are invalid.
+   */
+  rollbackWrapUp(): void {
+    if (!this.wrapUp.isActive) return; // nothing to roll back
+    const mark = this.wrapUp.value;
+    // Guard: never STRETCH the array. Normally mark <= messages.length
+    // (it was set to the length before the wrap-up messages were appended).
+    // But if the array was replaced/shortened between beginWrapUp and this
+    // call (e.g. compact() swapped in a 2-message summary), mark could
+    // exceed the current length — assigning it would fill the gap with
+    // undefined sparse holes. Truncate only; if the mark is stale and past
+    // the end, the array is already shorter, so clearing it fully (length=0
+    // would lose the compacted summary) is wrong — instead, leave the array
+    // as-is (the wrap-up messages are already gone) and just reset the mark.
+    if (mark < this.store.length) {
+      this.truncateAndRecount(mark);
+    } else {
+      // Mark is stale and past the end: the array is already shorter, so
+      // truncating further is wrong — just recount and clear the ledger.
+      this.store.recomputeTokenCount();
+      this.ledger.clear();
+    }
+    this.wrapUp.reset();
+  }
+
+  /**
+   * Check if a wrap-up turn is currently active (beginWrapUp was called
+   * but not yet committed or rolled back).
+   */
+  hasActiveWrapUp(): boolean {
+    return this.wrapUp.isActive;
+  }
+
   // === Accessors ===
 
   /**
@@ -628,23 +552,7 @@ export class Triologue {
    * chokepoint rather than guarding every possible producer of a hole.
    */
   getMessages(): Message[] {
-    const result: Message[] = [];
-
-    if (this.systemPrompt) {
-      result.push({ role: 'system', content: this.systemPrompt });
-    }
-
-    // Inject project context (README, mindmap instructions, etc.)
-    for (const m of this.projectContext) {
-      if (m && typeof m === 'object' && m.role) result.push(m);
-    }
-
-    // Conversation history
-    for (const m of this.messages) {
-      if (m && typeof m === 'object' && m.role) result.push(m);
-    }
-
-    return result;
+    return this.store.getFullMessages();
   }
 
   /**
@@ -661,11 +569,7 @@ export class Triologue {
    * getMessages() so there is a single chokepoint for ALL message access.
    */
   getMessagesRaw(): Message[] {
-    const result: Message[] = [];
-    for (const m of this.messages) {
-      if (m && typeof m === 'object' && m.role) result.push(m);
-    }
-    return result;
+    return this.store.getRaw();
   }
 
   /**
@@ -683,11 +587,7 @@ export class Triologue {
    * crash here with "Cannot read properties of undefined (reading 'role')".
    */
   getLastRole(): Role | null {
-    for (let i = this.messages.length - 1; i >= 0; i--) {
-      const m = this.messages[i];
-      if (m && typeof m === 'object' && m.role) return m.role as Role;
-    }
-    return null;
+    return this.store.lastRole();
   }
 
   /**
@@ -695,14 +595,14 @@ export class Triologue {
    * Used by auto-compact to preserve user intent in the summary.
    */
   getLastUserQuery(): string {
-    return this.lastUserQuery;
+    return this.store.lastUserQuery;
   }
 
   /**
    * Get current token count
    */
   getTokenCount(): number {
-    return this.tokenCount;
+    return this.store.tokenCount;
   }
 
   /**
@@ -712,86 +612,43 @@ export class Triologue {
     return this.options.tokenThreshold;
   }
 
-  /**
-   * Load a single restoration pair into the triologue without triggering onMessage callback.
-   * Used during session restoration to preload summary context.
-   * @param pair - A [user_message, assistant_message] tuple
-   */
-  loadRestoration(pair: [Message, Message]): void {
-    this.messages.push(pair[0]);
-    this.updateTokenCount(pair[0]);
-    this.messages.push(pair[1]);
-    this.updateTokenCount(pair[1]);
-  }
-
-  // === Internal Methods ===
+  // === Feature Domain Delegates ===
 
   /**
-   * INTERNAL: Add a message to the triologue bypassing TP validation.
-   * Used by tp-auto-fixer.ts only. Prefixed with _ to signal "internal use only".
+   * Get the checkpoint feature-domain delegate (see triologue/checkpoint.ts).
    *
-   * Pushes the message directly, updates token count, and calls onMessage callback.
+   * Checkpoint is an isolated feature domain: instead of the facade offering
+   * individual passthrough methods (findOpenCheckpoint/findCheckpointById/
+   * findAllCheckpoints/generateCheckpointId/recapMessages), callers obtain
+   * this delegate ONCE and interact with it directly for all checkpoint
+   * concerns (queries, id generation, and the recap span truncation).
+   *
+   * The manager is bound to the live message store, so it always reflects
+   * the current history (including compact/clear/restore swaps). It is
+   * memoized — repeated calls return the same instance.
    */
-  _injectBypass(message: Message): void {
-    this.messages.push(message);
-    this.updateTokenCount(message);
-    if (this.options.onMessage) {
-      this.options.onMessage(this.messages);
+  getCheckpointManager(): CheckpointManager {
+    if (!this.checkpointManager) {
+      this.checkpointManager = new CheckpointManager({
+        getMessages: () => this.store.getRaw(),
+        onRecap: (startIndex: number) => this.truncateAndRecount(startIndex),
+      });
     }
+    return this.checkpointManager;
   }
 
-  /**
-   * INTERNAL: Clear all pending tool calls.
-   * Used by tp-auto-fixer.ts to clean up stale pending calls after recovery.
-   */
-  _clearPendingToolCalls(): void {
-    this.pendingToolCalls.clear();
-    this.pendingToolCallOrder = [];
-  }
+  // === Private Helpers ===
 
   /**
-   * INTERNAL: Register tool calls to the pending maps (id + order).
-   * Used by tp-auto-fixer.ts after _injectBypass() injects a synthetic
-   * assistant message with tool_calls, so the pending call map is populated
-   * and the subsequent tool() call can resolve the tool_call_id correctly.
-   * Mirrors the registration logic in agent() (lines ~431-432).
+   * Truncate the message store to `index` (exclusive of later messages),
+   * recalculate the token count from the kept messages, and clear the
+   * pending tool ledger (any pending calls from the removed span are now
+   * invalid). Used by recap span removal and wrap-up rollback.
    */
-  _registerPendingToolCalls(toolCalls: ToolCall[]): void {
-    for (const tc of toolCalls) {
-      this.pendingToolCalls.set(tc.id, tc);
-      this.pendingToolCallOrder.push(tc.id);
-    }
-  }
-
-  /**
-   * INTERNAL: Get pending tool call order (copy).
-   * Used by tp-auto-fixer.ts to iterate over pending calls for recovery.
-   */
-  _getPendingToolCallOrder(): string[] {
-    return [...this.pendingToolCallOrder];
-  }
-
-  /**
-   * INTERNAL: Get a pending tool call by ID.
-   * Used by tp-auto-fixer.ts to look up pending calls for recovery.
-   */
-  _getPendingToolCall(id: string): ToolCall | undefined {
-    return this.pendingToolCalls.get(id);
-  }
-
-  /**
-   * INTERNAL: Update the function name of the last pending tool call entry.
-   * Used after tool_no_assistant recovery where a synthetic tool_call was injected
-   * with an empty function name. This updates it to match the actual tool being called.
-   */
-  private updateLastPendingToolCall(functionName: string): void {
-    if (this.pendingToolCallOrder.length > 0) {
-      const lastId = this.pendingToolCallOrder[this.pendingToolCallOrder.length - 1];
-      const tc = this.pendingToolCalls.get(lastId);
-      if (tc) {
-        tc.function.name = functionName;
-      }
-    }
+  private truncateAndRecount(startIndex: number): void {
+    this.store.truncateTo(startIndex);
+    this.store.recomputeTokenCount();
+    this.ledger.clear();
   }
 
   /**
@@ -800,171 +657,15 @@ export class Triologue {
    * Overflow checking is done in tool.ts after each tool result.
    */
   private addMessage(message: Message): void {
-    this.messages.push(message);
-    this.updateTokenCount(message);
+    this.store.push(message);
+    this.store.incrementTokenCount(message);
 
     // Call onMessage callback if set
     if (this.options.onMessage) {
-      this.options.onMessage(this.messages);
+      this.options.onMessage(this.store.getRaw());
     }
   }
 
-  /**
-   * Throw a TP violation error, with optional stack trace when --debug-tp is enabled.
-   */
-  private throwTpViolation(message: string): never {
-    if (isDebuggingTp()) {
-      const stack = new Error().stack;
-      agentIO.brief('error', 'tp', `${message}\nCall site:\n${stack}`);
-    }
-    throw new Error(`TP violation: ${message}`);
-  }
-
-  /**
-   * Update token count incrementally
-   */
-  private updateTokenCount(message: Message): void {
-    const increment = estimateTokens(message);
-    this.tokenCount += increment;
-    agentIO.verbose('triologue', `Token count: ${this.tokenCount} (+${increment} from ${message.role})`);
-  }
-
-  /**
-   * Run auto-compact: save transcript and summarize with LLM
-   * @param focus - Optional focus topic to emphasize in summary
-   * @param signal - Optional AbortSignal passed to retryChat so a stuck
-   *   summarization can be aborted (e.g. by the teammate turn watchdog)
-   *   rather than blocking mail polling indefinitely.
-   * @param tools - Optional full tool list for forkChat-based working-memory
-   *   extraction. When provided (and non-empty), a concurrent forkChat forks
-   *   from the full un-minified messages (with this tools schema) and extracts
-   *   recent working memory, appended to the summary as a
-   *   `### Recent Working Memory` section. The fork reuses the cached prefix
-   *   the main agent loop already paid for (system + projectContext +
-   *   conversation + full tools schema), so it is cache-hot when called from
-   *   the LLM stage. When omitted/empty, falls back to summary-only.
-   */
-  private async runAutoCompact(focus?: string, signal?: AbortSignal, tools?: Tool[]): Promise<Message[]> {
-    // Ensure transcript directory exists (session dir)
-    const sessionId = getSessionContext();
-    const transcriptDir = getSessionDir(sessionId);
-    if (!fs.existsSync(transcriptDir)) {
-      fs.mkdirSync(transcriptDir, { recursive: true });
-    }
-
-    // Save full transcript to disk
-    const timestamp = Math.floor(Date.now() / 1000);
-    const transcriptPath = path.join(transcriptDir, `transcript-lead-${timestamp}.jsonl`);
-
-    const writeStream = fs.createWriteStream(transcriptPath);
-    for (const msg of this.messages) {
-      writeStream.write(`${JSON.stringify(msg)}\n`);
-    }
-    writeStream.end();
-
-    this.options.onCompact(transcriptPath);
-
-    // Get wiki domains for knowledge persistence instruction
-    const domains = this.options.getWikiDomains ? await this.options.getWikiDomains() : [];
-    const domainList = domains.length > 0
-      ? domains.map(d => `- ${d.domain_name}${d.description ? `: ${d.description}` : ''}`).join('\n')
-      : '';
-
-    // Ask LLM to summarize
-    const conversationText = minifyMessages(this.messages);
-
-    const knowledgeInstruction = domains.length > 0
-      ? `### Knowledge Persistence\n` +
-      `Available wiki domains:\n${domainList}\n\n` +
-      `IMPORTANT: Only persist knowledge that matches one of the available domains above.\n` +
-      `For knowledge worth remembering, note as: "Knowledge: [domain] - [fact/rule]"\n` +
-      `Skip opinions, temporary details, or knowledge that does not fit any domain.\n\n`
-      : '';
-
-    const focusInstruction = focus
-      ? `\n**Focus Area:** Pay special attention to information related to "${focus}" and ensure the summary captures all relevant details about this topic.\n`
-      : '';
-
-    const userQueryInstruction = this.lastUserQuery
-      ? `\n**User's Last Instruction:** "${this.lastUserQuery}"\nEnsure the summary preserves ALL constraints, pending tasks, and requests from this instruction. The agent should continue working on this after the compact.\n`
-      : '';
-
-    const summaryPrompt =
-      `Summarize this conversation for continuity. Cover the following sections:\n\n` +
-      `### 1) What Was Accomplished\n` +
-      `Key actions taken, files created/modified, findings made.\n\n` +
-      `### 2) Current State\n` +
-      `What the agent now knows — be specific enough that subsequent turns do NOT need to re-verify findings already made.\n` +
-      `Include any pending or unfinished tasks.\n\n` +
-      `### 3) Key Decisions Made\n` +
-      `Design choices, fix strategies, or workflow decisions.\n\n` +
-      `${knowledgeInstruction}` +
-      `${focusInstruction}` +
-      `${userQueryInstruction}` +
-      `${conversationText}`;
-
-    // Working-memory focus prompt — runs concurrently with the summary via
-    // forkChat on the FULL un-minified messages (with the complete tools schema
-    // so the fork hits the prompt cache the main loop already paid for).
-    // toolChoice:'none' constrains output to text-only without invalidating the
-    // cached prefix (it's a sampling parameter, not part of the cached tokens).
-    // The two calls are independent: the summary sees minified text; the focus
-    // sees the real conversation. Neither sees the other's output.
-    const focusExtractionPrompt =
-      `Extract the current working memory from the conversation above. Focus on:\n` +
-      `- The immediate task the agent is working on\n` +
-      `- Recent tool results that are still relevant (file contents, command outputs, search results)\n` +
-      `- Current file(s) being edited or examined\n` +
-      `- In-progress decisions or next steps\n\n` +
-      `Be concise but preserve specific details (function names, line numbers, file paths, exact values).\n` +
-      `This working memory will be combined with a broader summary to maintain continuity after compaction.\n` +
-      `Output TEXT ONLY — do NOT use any tools.`;
-
-    // Run summary + focus concurrently. The summary uses a fresh retryChat
-    // (no cache — minified text differs from the cached prefix by design). The
-    // focus uses forkChat on the full messages with tools (cache hit when
-    // called from the LLM stage). When tools is omitted/empty, skip the focus
-    // call and fall back to summary-only (historical behavior).
-    const useFocus = !!(tools && tools.length > 0);
-    const fullMessages = useFocus ? this.getMessages() : [];
-
-    const [summaryResponse, focusText] = await Promise.all([
-      retryChat(
-        { model: MODEL, messages: [{ role: 'user', content: summaryPrompt }] },
-        { signal, noSpinner: true },
-      ),
-      useFocus
-        ? forkChat(fullMessages, tools!, focusExtractionPrompt, signal, 'none')
-        : Promise.resolve(''),
-    ]);
-
-    const summary = summaryResponse.message.content || '(no summary)';
-
-    // Build a compact summary pair that includes user intent preservation.
-    // The focus (when extracted) is appended as a `### Recent Working Memory`
-    // section inside the SAME user message — the post-compact shape stays two
-    // messages, preserving the historical contract.
-    const focusPrefix = focus ? `Focus: ${focus}. ` : '';
-    const userQueryNote = this.lastUserQuery
-      ? `\n\n**Previous user instruction:** ${this.lastUserQuery}`
-      : '';
-    const focusSection = focusText
-      ? `\n\n### Recent Working Memory\n${focusText}`
-      : '';
-
-    const summaryPrefix = `[Conversation compressed. ${focusPrefix}Transcript: ${transcriptPath}]\n\n`;
-
-    return [
-      {
-        role: 'user',
-        content: `${summaryPrefix}${summary}${focusSection}${userQueryNote}`,
-      },
-      {
-        role: 'assistant',
-        content: 'Understood. I have the context from the summary. Continuing.',
-      },
-    ];
-  }
   // === Default Callbacks ===
 
   private defaultOnMisorder(warning: MisorderWarning): void {
@@ -992,126 +693,5 @@ export class Triologue {
       detail: `Transcript saved: ${transcriptPath}`,
     });
     agentIO.brief('info', 'autoCompact', `Transcript saved: ${transcriptPath}`);
-  }
-
-  // === Checkpoint Methods ===
-
-  /**
-   * Check if a message is a checkpoint by its [CHECKPOINT] content prefix
-   * or legacy regex for backwards compatibility
-   *
-   * Parses the `if_abandoned` direction from the "Original direction:" line.
-   * Legacy checkpoints (pre-if_abandoned) yield `if_abandoned: undefined`.
-   */
-  private isCheckpointMessage(msg: Message): { id: string; description: string; if_abandoned?: string } | null {
-    // Checkpoint tool responses have role='tool' and tool_name='checkpoint'
-    if (msg.role !== 'tool' || (msg as unknown as Record<string, unknown>).tool_name !== 'checkpoint' || !msg.content) return null;
-
-    // Content format: "Checkpoint created: abc12345\n\nDescription: ...\nOriginal direction: ..."
-    const idMatch = msg.content.match(/^Checkpoint created: ([a-z0-9]{8})/m);
-    const descMatch = msg.content.match(/^Description: (.+)$/m);
-    const dirMatch = msg.content.match(/^Original direction: (.+)$/m);
-    if (idMatch) {
-      return {
-        id: idMatch[1],
-        description: descMatch?.[1] || '',
-        if_abandoned: dirMatch?.[1],
-      };
-    }
-
-    return null;
-  }
-
-  /**
-   * Find the last open checkpoint in message history
-   * @returns Checkpoint info if found, null otherwise
-   */
-  findOpenCheckpoint(): { id: string; description: string; if_abandoned?: string } | null {
-    for (let i = this.messages.length - 1; i >= 0; i--) {
-      const result = this.isCheckpointMessage(this.messages[i]);
-      if (result) return result;
-    }
-    return null;
-  }
-
-  /**
-   * Find all checkpoints in message history
-   * @returns Array of checkpoint info
-   */
-  findAllCheckpoints(): Array<{ id: string; description: string; if_abandoned?: string }> {
-    const checkpoints: Array<{ id: string; description: string; if_abandoned?: string }> = [];
-    for (const msg of this.messages) {
-      const result = this.isCheckpointMessage(msg);
-      if (result) checkpoints.push(result);
-    }
-    return checkpoints;
-  }
-
-  /**
-   * Find a checkpoint by ID in message history.
-   * Returns the index of the ASSISTANT message that originally called the checkpoint,
-   * so that recapMessages can remove the entire span (assistant → checkpoint tool →
-   * subtask → recap call → recap tool) and replace it with a single note().
-   *
-   * @param id - The checkpoint ID to find
-   * @returns Checkpoint info with assistant message index if found, null otherwise
-   */
-  findCheckpointById(id: string): { id: string; description: string; if_abandoned?: string; index: number } | null {
-    for (let i = 0; i < this.messages.length; i++) {
-      const msg = this.messages[i];
-      const result = this.isCheckpointMessage(msg);
-      if (result && result.id === id) {
-        // Scan backwards from the checkpoint tool message to find the
-        // assistant message whose tool_calls include the checkpoint call.
-        for (let j = i - 1; j >= 0; j--) {
-          const candidate = this.messages[j];
-          if (candidate.role === 'assistant' && candidate.tool_calls) {
-            const hasCheckpointCall = candidate.tool_calls.some(
-              (tc: { function: { name: string } }) => tc.function.name === 'checkpoint'
-            );
-            if (hasCheckpointCall) {
-              return { id, description: result.description, if_abandoned: result.if_abandoned, index: j };
-            }
-          }
-        }
-        // Fallback: if no assistant found (shouldn't happen in normal flow),
-        // return index after the checkpoint tool message.
-        return { id, description: result.description, if_abandoned: result.if_abandoned, index: i + 1 };
-      }
-    }
-    return null;
-  }
-
-  /**
-   * Generate a random checkpoint ID (8 lowercase alphanumeric characters)
-   */
-  static generateCheckpointId(): string {
-    return Math.random().toString(36).slice(2, 10);
-  }
-
-  /**
-   * Get messages from a specific index to the end
-   * @param startIndex - The starting index
-   * @returns Messages from startIndex to end
-   */
-  getMessagesFrom(startIndex: number): Message[] {
-    return this.messages.slice(startIndex);
-  }
-
-  /**
-   * Slice messages from startIndex onwards (inclusive).
-   * Used by recap tool to remove the checkpoint span before appending ?recap, !recap.
-   * @param startIndex - Index of checkpoint message (inclusive)
-   */
-  recapMessages(startIndex: number): void {
-    // Keep messages before startIndex, discard the rest
-    this.messages = this.messages.slice(0, startIndex);
-
-    // Recalculate token count from kept messages
-    this.tokenCount = estimateTokensForMessages(this.messages);
-
-    // Clear pending tool calls (any calls from the recapped messages are now invalid)
-    this.pendingToolCalls.clear();
-    this.pendingToolCallOrder = [];
   }
 }

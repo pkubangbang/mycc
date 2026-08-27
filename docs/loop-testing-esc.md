@@ -1270,8 +1270,8 @@ import { Triologue } from '../../loop/triologue.js';
 it('should return PROMPT when ESC fires during recap and neglectedMode is true', async () => {
   const triologue = new Triologue();
   // Set up triologue with a checkpoint so recap can find it
-  // (handleRecapCall calls triologue.findCheckpointById)
-  // ... need to mock triologue.findCheckpointById to return a checkpoint
+  // (handleRecapCall calls triologue.getCheckpointManager().findById(id))
+  // ... need to mock getCheckpointManager() to return a manager stub
 
   const recapCall = createMockToolCall('recap', { checkpoint_id: 'abc12345' }, 'call-recap');
   const env = createMockMachineEnv({
@@ -1283,12 +1283,16 @@ it('should return PROMPT when ESC fires during recap and neglectedMode is true',
     },
   });
 
-  // Mock triologue.findCheckpointById to return a fake checkpoint
-  vi.spyOn(triologue, 'findCheckpointById').mockReturnValue({
-    id: 'abc12345',
-    description: 'test checkpoint',
-    index: 0,
-  } as any);
+  // Mock getCheckpointManager() to return a fake manager
+  (triologue as any).getCheckpointManager = vi.fn(() => ({
+    findById: (id: string) => ({
+      id: 'abc12345',
+      description: 'test checkpoint',
+      index: 0,
+    }),
+    findAll: () => [],
+    recap: vi.fn(),
+  }));
   vi.spyOn(triologue, 'getTokenCount').mockReturnValue(1000);
   vi.spyOn(triologue, 'getMessages').mockReturnValue([]);
 

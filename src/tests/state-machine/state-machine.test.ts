@@ -44,10 +44,13 @@ describe('AgentStateMachine', () => {
       getTokenThreshold: vi.fn(() => 50000),
       needsCompact: vi.fn(() => false),
       hasActiveWrapUp: vi.fn(() => false),
-      findAllCheckpoints: vi.fn(() => []),
-      findOpenCheckpoint: vi.fn(() => null),
-      findCheckpointById: vi.fn(() => null),
-      getMessagesFrom: vi.fn(() => []),
+      getCheckpointManager: vi.fn(() => ({
+        findOpen: vi.fn(() => null),
+        findById: vi.fn(() => null),
+        findAll: vi.fn(() => []),
+        generateId: vi.fn(() => 'deadbeef'),
+        recap: vi.fn(),
+      })),
       getWiki: vi.fn(() => undefined),
     } as unknown as Triologue;
 

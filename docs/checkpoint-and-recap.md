@@ -92,7 +92,7 @@ When `recap` is called:
 2. State machine calls `handleRecap()` which:
    - Finds checkpoint by ID
    - Summarizes messages from checkpoint to end
-   - Replaces with: `triologue.recapMessages(index, userMessage, assistantMessage)`
+   - Replaces with: `triologue.getCheckpointManager().recap(index)` (truncates the span and drops stale pending tool calls; the summary pair is then appended by the state machine)
 3. State machine adds continuation prompt
 
 **Result**: `[user(summary), assistant(acknowledgment)]`
@@ -195,36 +195,18 @@ if (toolCalls.some(tc => tc.function.name === 'checkpoint') && toolCalls.length 
 
 ## Finding Open Checkpoint
 
-To check if a checkpoint exists, scan message history:
+To check if a checkpoint exists, use the checkpoint feature-domain delegate:
 
 ```typescript
-function findOpenCheckpoint(messages: Message[]): { id: string; description: string } | null {
-  for (const msg of messages) {
-    if (msg.role === 'user') {
-      const match = msg.content.match(/^\[CHECKPOINT ([a-z0-9]{8}): (.+)\]$/);
-      if (match) {
-        return { id: match[1], description: match[2] };
-      }
-    }
-  }
-  return null;
-}
+// The manager parses the [CHECKPOINT id] marker format from message history.
+const open = triologue.getCheckpointManager().findOpen();
+// open: { id, description, if_abandoned? } | null
 ```
 
 To find all checkpoints (for error messages):
 ```typescript
-function findAllCheckpoints(messages: Message[]): Array<{ id: string; description: string }> {
-  const checkpoints = [];
-  for (const msg of messages) {
-    if (msg.role === 'user') {
-      const match = msg.content.match(/^\[CHECKPOINT ([a-z0-9]{8}): (.+)\]$/);
-      if (match) {
-        checkpoints.push({ id: match[1], description: match[2] });
-      }
-    }
-  }
-  return checkpoints;
-}
+const all = triologue.getCheckpointManager().findAll();
+// Array<{ id, description, if_abandoned? }>
 ```
 
 ## Todo Integration
@@ -395,7 +377,8 @@ Agent: [calls checkpoint AND read_file in same turn]
 |------|---------|
 | `src/tools/checkpoint.ts` | Checkpoint tool definition (meta-tool, handler returns empty string) |
 | `src/tools/recap.ts` | Recap tool definition (meta-tool, handler returns empty string) |
-| `src/loop/triologue.ts` | Helpers: `findCheckpointById()`, `findAllCheckpoints()` |
+| `src/loop/triologue.ts` | Facade accessor: `getCheckpointManager()` |
+| `src/loop/triologue/checkpoint.ts` | `CheckpointManager`: `findOpen()`, `findAll()`, `findById()`, `generateId()`, `recap()` |
 | `src/loop/checkpoint-recap.ts` | Core logic: `handleCheckpoint()`, `handleRecap()`, `handleRecapWithPatch()`, isolation validation |
 | `src/loop/states/hook.ts` | State machine handling: detects checkpoint/recap calls, invokes core logic, enforces isolation |
 

@@ -1,9 +1,16 @@
 /**
- * Tests for tp-auto-fixer.ts - Auto-recovery for triologue parity violations
+ * Tests for triologue/tp-fix.ts - Auto-recovery for triologue parity violations
+ *
+ * 2026-08: tp-auto-fixer.ts was folded INTO the triologue layer as
+ * triologue/tp-fix.ts. attemptAutoFix now takes a TpFixContext adapter
+ * (injectBypass / registerPending / getPendingOrder / getPendingById /
+ * clearPending) instead of the old Triologue facade with _-prefixed
+ * methods. The mock builds that context directly — behavior assertions
+ * are unchanged.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { attemptAutoFix } from '../../loop/tp-auto-fixer.js';
-import type { Triologue } from '../../loop/triologue.js';
+import { attemptAutoFix } from '../../loop/triologue/tp-fix.js';
+import type { TpFixContext } from '../../loop/triologue/tp-fix.js';
 import type { Message, ToolCall } from '../../types.js';
 
 // Use vi.hoisted for variables accessible in hoisted vi.mock factory
@@ -53,49 +60,53 @@ vi.mock('../../config.js', () => ({
   getRagProvider: () => 'nomic',
 }));
 
-function createMockTriologue(): Triologue {
-  // Create a minimal mock that satisfies the Triologue interface
+// Mock agentIO (imported eagerly by tp-fix.ts)
+vi.mock('../../loop/agent-io.js', () => ({
+  agentIO: {
+    brief: vi.fn(),
+    verbose: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+  },
+}));
+
+function createMockContext(): TpFixContext & {
+  injectedMessages: Message[];
+  pendingToolCalls: Map<string, ToolCall>;
+  pendingToolCallOrder: string[];
+} {
   const injectedMessages: Message[] = [];
   const pendingToolCalls = new Map<string, ToolCall>();
   const pendingToolCallOrder: string[] = [];
 
   return {
-    _injectBypass: vi.fn((msg: Message) => {
+    injectedMessages,
+    pendingToolCalls,
+    pendingToolCallOrder,
+    injectBypass: vi.fn((msg: Message) => {
       injectedMessages.push(msg);
     }),
-    _registerPendingToolCalls: vi.fn((toolCalls: ToolCall[]) => {
+    registerPending: vi.fn((toolCalls: ToolCall[]) => {
       for (const tc of toolCalls) {
         pendingToolCalls.set(tc.id, tc);
         pendingToolCallOrder.push(tc.id);
       }
     }),
-    _getPendingToolCallOrder: vi.fn(() => [...pendingToolCallOrder]),
-    _getPendingToolCall: vi.fn((id: string) => pendingToolCalls.get(id) || undefined),
-    _clearPendingToolCalls: vi.fn(() => {
+    getPendingOrder: vi.fn(() => [...pendingToolCallOrder]),
+    getPendingById: vi.fn((id: string) => pendingToolCalls.get(id) || undefined),
+    clearPending: vi.fn(() => {
       pendingToolCalls.clear();
       pendingToolCallOrder.length = 0;
     }),
-    getMessagesRaw: vi.fn(() => []),
-    getMessages: vi.fn(() => []),
-    getLastRole: vi.fn(() => null),
-    getLastUserQuery: vi.fn(() => ''),
-    getTokenCount: vi.fn(() => 0),
-    getTokenThreshold: vi.fn(() => 50000),
-    needsCompact: vi.fn(() => false),
-    hasActiveWrapUp: vi.fn(() => false),
-    findAllCheckpoints: vi.fn(() => []),
-    findOpenCheckpoint: vi.fn(() => null),
-    findCheckpointById: vi.fn(() => null),
-    getMessagesFrom: vi.fn(() => []),
-    getWiki: vi.fn(() => undefined),
-  } as unknown as Triologue;
+  };
 }
 
 describe('attemptAutoFix', () => {
-  let triologue: Triologue;
+  let ctx: ReturnType<typeof createMockContext>;
 
   beforeEach(() => {
-    triologue = createMockTriologue();
+    ctx = createMockContext();
     vi.clearAllMocks();
   });
 
@@ -105,7 +116,7 @@ describe('attemptAutoFix', () => {
 
       const types = ['user_after_tool', 'note_after_tool', 'tool_no_assistant', 'duplicate_assistant', 'agent_after_system', 'invalid_sequence'] as const;
       for (const type of types) {
-        const result = attemptAutoFix(triologue, type, 'assistant');
+        const result = attemptAutoFix(ctx, type, 'assistant');
         expect(result).toBe('debug_throw');
       }
     });
@@ -115,35 +126,35 @@ describe('attemptAutoFix', () => {
     it('should return allowed for user_after_tool with ollama provider', () => {
       mockDebuggingTp.current = false;
       mockApiProvider.current = 'ollama';
-      const result = attemptAutoFix(triologue, 'user_after_tool', 'tool');
+      const result = attemptAutoFix(ctx, 'user_after_tool', 'tool');
       expect(result).toBe('allowed');
     });
 
     it('should return allowed for note_after_tool with ollama provider', () => {
       mockDebuggingTp.current = false;
       mockApiProvider.current = 'ollama';
-      const result = attemptAutoFix(triologue, 'note_after_tool', 'tool');
+      const result = attemptAutoFix(ctx, 'note_after_tool', 'tool');
       expect(result).toBe('allowed');
     });
 
     it('should return allowed for user_after_tool with deepseek provider', () => {
       mockDebuggingTp.current = false;
       mockApiProvider.current = 'deepseek';
-      const result = attemptAutoFix(triologue, 'user_after_tool', 'tool');
+      const result = attemptAutoFix(ctx, 'user_after_tool', 'tool');
       expect(result).toBe('allowed');
     });
 
     it('should return allowed for note_after_tool with deepseek provider', () => {
       mockDebuggingTp.current = false;
       mockApiProvider.current = 'deepseek';
-      const result = attemptAutoFix(triologue, 'note_after_tool', 'tool');
+      const result = attemptAutoFix(ctx, 'note_after_tool', 'tool');
       expect(result).toBe('allowed');
     });
 
     it('should NOT return allowed for tool_no_assistant even with ollama', () => {
       mockDebuggingTp.current = false;
       mockApiProvider.current = 'ollama';
-      const result = attemptAutoFix(triologue, 'tool_no_assistant', 'user');
+      const result = attemptAutoFix(ctx, 'tool_no_assistant', 'user');
       expect(result).toBe('recovered');
     });
   });
@@ -152,9 +163,9 @@ describe('attemptAutoFix', () => {
     it('should inject empty assistant bridge for non-ollama provider', () => {
       mockDebuggingTp.current = false;
       mockApiProvider.current = 'other';
-      const result = attemptAutoFix(triologue, 'user_after_tool', 'tool');
+      const result = attemptAutoFix(ctx, 'user_after_tool', 'tool');
       expect(result).toBe('recovered');
-      expect(triologue._injectBypass).toHaveBeenCalledWith({
+      expect(ctx.injectBypass).toHaveBeenCalledWith({
         role: 'assistant',
         content: '',
       });
@@ -165,9 +176,9 @@ describe('attemptAutoFix', () => {
     it('should inject empty assistant bridge for non-ollama provider', () => {
       mockDebuggingTp.current = false;
       mockApiProvider.current = 'other';
-      const result = attemptAutoFix(triologue, 'note_after_tool', 'tool');
+      const result = attemptAutoFix(ctx, 'note_after_tool', 'tool');
       expect(result).toBe('recovered');
-      expect(triologue._injectBypass).toHaveBeenCalledWith({
+      expect(ctx.injectBypass).toHaveBeenCalledWith({
         role: 'assistant',
         content: '',
       });
@@ -176,10 +187,10 @@ describe('attemptAutoFix', () => {
 
   describe('recovery for tool_no_assistant', () => {
     it('should inject synthetic assistant with tool_calls', () => {
-      const result = attemptAutoFix(triologue, 'tool_no_assistant', 'user');
+      const result = attemptAutoFix(ctx, 'tool_no_assistant', 'user');
       expect(result).toBe('recovered');
-      expect(triologue._injectBypass).toHaveBeenCalled();
-      const call = vi.mocked(triologue._injectBypass).mock.calls[0][0];
+      expect(ctx.injectBypass).toHaveBeenCalled();
+      const call = vi.mocked(ctx.injectBypass).mock.calls[0][0];
       expect(call.role).toBe('assistant');
       expect(call.content).toBe('');
       expect(call.tool_calls).toBeDefined();
@@ -188,19 +199,16 @@ describe('attemptAutoFix', () => {
     });
 
     it('should register the synthetic tool_call to pending maps so tool() can resolve it', () => {
-      const result = attemptAutoFix(triologue, 'tool_no_assistant', 'user');
+      const result = attemptAutoFix(ctx, 'tool_no_assistant', 'user');
       expect(result).toBe('recovered');
-      // _registerPendingToolCalls must be called with the synthetic tool_call
-      // so findPendingToolCall resolves the id and validateToolAlignment
+      // registerPending must be called with the synthetic tool_call so the
+      // pending-ledger resolution finds the id and alignment validation
       // does not falsely report 'no_pending_calls'.
-      expect(triologue._registerPendingToolCalls).toHaveBeenCalledTimes(1);
-      const registered = vi.mocked(triologue._registerPendingToolCalls).mock.calls[0][0];
+      expect(ctx.registerPending).toHaveBeenCalledTimes(1);
+      const registered = vi.mocked(ctx.registerPending).mock.calls[0][0];
       expect(registered.length).toBe(1);
       // The registered call must be the same synthetic call that was injected.
-      const injectedCall = vi.mocked(triologue._injectBypass).mock.calls[0][0];
-      // injectedCall.tool_calls is typed as OllamaToolCall[] (no id field in
-      // the base Ollama type); the synthetic call is a ToolCall (extends with
-      // id). Cast to access .id for the equality check.
+      const injectedCall = vi.mocked(ctx.injectBypass).mock.calls[0][0];
       const injectedToolCall = injectedCall.tool_calls![0] as ToolCall;
       expect(registered[0].id).toBe(injectedToolCall.id);
     });
@@ -209,43 +217,36 @@ describe('attemptAutoFix', () => {
   describe('recovery for duplicate_assistant', () => {
     it('should inject tool results for pending calls and clear them', () => {
       // Set up pending tool calls
-      const triologueWithPending = {
-        _injectBypass: vi.fn(),
-        _getPendingToolCallOrder: vi.fn(() => ['call_1', 'call_2']),
-        _getPendingToolCall: vi.fn((id: string) => {
-          if (id === 'call_1') return { id: 'call_1', function: { name: 'bash', arguments: {} } } as ToolCall;
-          if (id === 'call_2') return { id: 'call_2', function: { name: 'edit_file', arguments: {} } } as ToolCall;
-          return undefined;
-        }),
-        _clearPendingToolCalls: vi.fn(),
-      } as unknown as Triologue;
+      const ctxWithPending = createMockContext();
+      ctxWithPending.pendingToolCallOrder.push('call_1', 'call_2');
+      ctxWithPending.pendingToolCalls.set('call_1', { id: 'call_1', function: { name: 'bash', arguments: {} } } as ToolCall);
+      ctxWithPending.pendingToolCalls.set('call_2', { id: 'call_2', function: { name: 'edit_file', arguments: {} } } as ToolCall);
 
-      const result = attemptAutoFix(triologueWithPending, 'duplicate_assistant', 'assistant');
+      const result = attemptAutoFix(ctxWithPending, 'duplicate_assistant', 'assistant');
       expect(result).toBe('recovered');
-      expect(triologueWithPending._injectBypass).toHaveBeenCalledTimes(2);
-      expect(triologueWithPending._clearPendingToolCalls).toHaveBeenCalled();
+      expect(ctxWithPending.injectBypass).toHaveBeenCalledTimes(2);
+      expect(ctxWithPending.clearPending).toHaveBeenCalled();
+      // The two injected messages are tool results for the pending calls.
+      const injected = ctxWithPending.injectedMessages;
+      expect(injected[0].role).toBe('tool');
+      expect(injected[1].role).toBe('tool');
     });
 
     it('should handle empty pending calls gracefully', () => {
-      const triologueEmpty = {
-        _injectBypass: vi.fn(),
-        _getPendingToolCallOrder: vi.fn(() => []),
-        _getPendingToolCall: vi.fn(() => undefined),
-        _clearPendingToolCalls: vi.fn(),
-      } as unknown as Triologue;
+      const ctxEmpty = createMockContext();
 
-      const result = attemptAutoFix(triologueEmpty, 'duplicate_assistant', 'assistant');
+      const result = attemptAutoFix(ctxEmpty, 'duplicate_assistant', 'assistant');
       expect(result).toBe('recovered');
-      expect(triologueEmpty._injectBypass).not.toHaveBeenCalled();
-      expect(triologueEmpty._clearPendingToolCalls).toHaveBeenCalled();
+      expect(ctxEmpty.injectBypass).not.toHaveBeenCalled();
+      expect(ctxEmpty.clearPending).toHaveBeenCalled();
     });
   });
 
   describe('recovery for agent_after_system', () => {
     it('should inject bridge user message', () => {
-      const result = attemptAutoFix(triologue, 'agent_after_system', 'system');
+      const result = attemptAutoFix(ctx, 'agent_after_system', 'system');
       expect(result).toBe('recovered');
-      expect(triologue._injectBypass).toHaveBeenCalledWith({
+      expect(ctx.injectBypass).toHaveBeenCalledWith({
         role: 'user',
         content: '[TP_RECOVERY] Continue.',
       });
@@ -254,9 +255,9 @@ describe('attemptAutoFix', () => {
 
   describe('recovery for invalid_sequence', () => {
     it('should inject neutral empty assistant message', () => {
-      const result = attemptAutoFix(triologue, 'invalid_sequence', null);
+      const result = attemptAutoFix(ctx, 'invalid_sequence', null);
       expect(result).toBe('recovered');
-      expect(triologue._injectBypass).toHaveBeenCalledWith({
+      expect(ctx.injectBypass).toHaveBeenCalledWith({
         role: 'assistant',
         content: '',
       });

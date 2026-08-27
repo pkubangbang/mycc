@@ -1,8 +1,10 @@
 /**
  * explorer-agent.ts - Autonomous code exploration for mindmap summarization
  *
- * This agent uses a loop pattern similar to teammate-worker to explore
- * the codebase and generate enriched summaries for mindmap nodes.
+ * Uses the TriologueLite facade (the same simplified Triologue used by
+ * teammate-worker) over the shared triologue submodules (store / compact /
+ * pending-tools / tp-fix) to manage the message history, compaction, and
+ * role-transition legality for the exploration loop.
  *
  * Tools available:
  * - read_file: Read file contents
@@ -22,6 +24,8 @@ import * as path from 'path';
 import { minifyMessages } from '../utils/llm-chat-minifier.js';
 import { getTokenThreshold, getMyccDir, getSessionContext, getSessionDir } from '../config.js';
 import { agentIO } from '../loop/agent-io.js';
+import { TriologueLite } from '../loop/triologue-lite.js';
+import type { MisorderWarning, ToolAlignmentWarning } from '../loop/triologue-lite.js';
 import { grepSearch } from '../utils/grep-search.js';
 
 /**
@@ -31,7 +35,6 @@ const MAX_ROUNDS_DEFAULT = 25;
 /** When remaining rounds drops to this threshold, inject a force-stop steering note. */
 const FORCE_STOP_THRESHOLD = 5;
 const WEB_TIMEOUT_MS = 30000; // 30 seconds timeout for web operations
-const TOKEN_THRESHOLD = getTokenThreshold();
 const READ_CHUNK_SIZE = 10000; // max chars returned per read_file call
 
 /**
@@ -63,90 +66,83 @@ export interface ExplorationResult {
 }
 
 /**
- * Estimate token count for messages (word-based approximation)
+ * Resolve the directory for explorer transcripts: the current session dir
+ * when a session context exists, otherwise a fallback under the mycc dir.
  */
-function estimateTokens(messages: Message[]): number {
-  let count = 0;
-  for (const msg of messages) {
-    if (msg.content) {
-      count += msg.content.split(/\s+/).length;
-    }
-    if (msg.tool_calls) {
-      for (const tc of msg.tool_calls) {
-        count += JSON.stringify(tc.function.arguments).split(/\s+/).length;
-      }
-    }
+function resolveTranscriptDir(): string {
+  try {
+    const sessionId = getSessionContext();
+    return getSessionDir(sessionId);
+  } catch {
+    return path.join(getMyccDir(), 'transcripts');
   }
-  return count;
 }
 
 /**
- * Compact messages by summarizing with LLM
- * Saves transcript to disk and returns summarized messages
+ * Append the newest message to the explorer's JSONL transcript.
+ * Wired as TriologueLite's onMessage callback so every producer call
+ * (user/note/agent/tool) is persisted from the very first turn — better
+ * crash observability than the previous write-only-at-compaction scheme.
+ *
+ * The filename includes a node-title slug because up to MAX_CONCURRENT_NODES
+ * explorers run concurrently during compilation; a timestamp-only name could
+ * collide within the same second.
  */
-async function compactMessages(
+function appendExplorerTranscript(
   messages: Message[],
-  nodeTitle: string
-): Promise<Message[]> {
-  // Use session directory if available, otherwise fall back to transcripts
-  let transcriptDir: string;
+  transcriptPath: string
+): void {
+  const lastMsg = messages[messages.length - 1];
+  if (!lastMsg) return;
   try {
-    const sessionId = getSessionContext();
-    transcriptDir = getSessionDir(sessionId);
+    fs.appendFileSync(transcriptPath, `${JSON.stringify(lastMsg)}\n`, 'utf-8');
   } catch {
-    transcriptDir = path.join(getMyccDir(), 'transcripts');
+    // Transcript persistence is best-effort; never fail exploration over it.
   }
+}
+
+function slugifyNodeTitle(nodeTitle: string): string {
+  const slug = nodeTitle
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 60);
+  return slug || 'node';
+}
+
+/**
+ * Create a TriologueLite for one node's exploration run.
+ *
+ * Token threshold comes from the shared config (same source the previous
+ * local estimateTokens/compactMessages path used). Transcript is persisted
+ * per-message via onMessage.
+ */
+function createExplorerTriologue(nodeTitle: string): TriologueLite {
+  const transcriptDir = resolveTranscriptDir();
   if (!fs.existsSync(transcriptDir)) {
     fs.mkdirSync(transcriptDir, { recursive: true });
   }
-
-  // Save full transcript to disk
   const timestamp = Math.floor(Date.now() / 1000);
-  const transcriptPath = path.join(transcriptDir, `explorer-${timestamp}.jsonl`);
-
-  const writeStream = fs.createWriteStream(transcriptPath);
-  for (const msg of messages) {
-    writeStream.write(`${JSON.stringify(msg)}\n`);
-  }
-  writeStream.end();
-
-  // Build conversation text for summarization
-  const conversationText = minifyMessages(messages);
-
-  const response = await retryChat(
-    {
-      model: MODEL,
-      messages: [
-        {
-          role: 'user',
-          content:
-            `Summarize this exploration session for continuity. Include:\n` +
-            `1) What was discovered\n` +
-            `2) Current progress\n` +
-            `3) Key findings so far\n` +
-            `4) Files/URLs marked as relevant\n\n` +
-            `Context: Exploring section "${nodeTitle}"\n\n` +
-            `${conversationText}`,
-        },
-      ],
-      think: false,
-    },
-    { noSpinner: true },
+  const transcriptPath = path.join(
+    transcriptDir,
+    `transcript-explorer-${slugifyNodeTitle(nodeTitle)}-${timestamp}.jsonl`
   );
 
-  const summary = response.message.content || '(no summary)';
+  const onMisorder = (warning: MisorderWarning): void => {
+    agentIO.brief('warn', 'explorer', `Triologue misorder for "${nodeTitle}": ${warning.from} → ${warning.to} (gap: ${warning.gap})`);
+  };
+  const onToolMisalign = (warning: ToolAlignmentWarning): void => {
+    agentIO.brief('warn', 'explorer', `Triologue tool misalign for "${nodeTitle}": ${warning.functionName} (issue: ${warning.issue})`);
+  };
 
-  // Return compacted messages: summary + acknowledgment
-  return [
-    {
-      role: 'user',
-      content: `[Conversation compressed. Transcript: ${transcriptPath}]\n\n${summary}`,
-    },
-    {
-      role: 'assistant',
-      content: 'Understood. I have the context from the summary. Continuing exploration.',
-    },
-  ];
+  const triologue = new TriologueLite({
+    tokenThreshold: getTokenThreshold(),
+    onMessage: (messages: Message[]) => appendExplorerTranscript(messages, transcriptPath),
+    onMisorder,
+    onToolMisalign,
+  });
+
+  return triologue;
 }
 
 /**
@@ -744,24 +740,46 @@ export async function summarizeWithExplorer(
   existingNode?: Node
 ): Promise<ExplorationResult> {
   const maxRounds = MAX_ROUNDS_DEFAULT;
-  const messages: Message[] = [];
   const markedFiles: MarkedItem[] = [];
   const markedUrls: MarkedItem[] = [];
   const markedTerms: MarkedTerm[] = [];
 
+  // TriologueLite manages the message history for this run: role-transition
+  // legality (TpAutoFixer), pending tool-call ledger, token accounting, and
+  // compaction (needsCompact/compact). Transcript persistence is wired via
+  // the onMessage callback inside the factory.
+  const triologue = createExplorerTriologue(nodeTitle);
+
   const prompt = buildExplorationPrompt(nodeTitle, nodeText, ancestorContext, existingNode, maxRounds);
-  messages.push({ role: 'user', content: prompt });
+  triologue.user(prompt);
 
   let rounds = 0;
   while (rounds < maxRounds) {
     rounds++;
+
+    // ── Auto-compact at the top of the LLM stage (teammate-worker style) ──
+    // triologue.getMessages() here is the EXACT cache prefix the retryChat
+    // below will use, so the forkChat working-memory call inside compact()
+    // (with EXPLORER_TOOLS passed) is a guaranteed cache hit. When a prior
+    // tool result pushed us over the threshold, this catches it before the
+    // next LLM call. Compaction failure is non-fatal: continue with the
+    // full context (store tokenCount may stay over threshold; the model
+    // context window > threshold covers the overage, same rationale as the
+    // teammate worker).
+    if (triologue.needsCompact()) {
+      try {
+        await triologue.compact(nodeTitle, undefined, EXPLORER_TOOLS);
+      } catch (err) {
+        agentIO.brief('warn', 'explorer', `Compaction failed for "${nodeTitle}": ${(err as Error).message}. Continuing with full context.`);
+      }
+    }
 
     let response;
     try {
       response = await retryChat(
         {
           model: MODEL,
-          messages,
+          messages: triologue.getMessages(),
           tools: EXPLORER_TOOLS,
           think: false,
         },
@@ -774,36 +792,17 @@ export async function summarizeWithExplorer(
     }
 
     const assistantMsg = response.message;
-    messages.push({
-      role: 'assistant',
-      content: assistantMsg.content || '',
-      tool_calls: assistantMsg.tool_calls,
-    });
-
-    // Check for compaction after adding assistant message
-    if (estimateTokens(messages) > TOKEN_THRESHOLD) {
-      try {
-        const compacted = await compactMessages(messages, nodeTitle);
-        messages.length = 0;
-        messages.push(...compacted);
-      } catch (err) {
-        agentIO.brief('warn', 'explorer', `Compaction failed for "${nodeTitle}": ${(err as Error).message}. Continuing with full context.`);
-        // Continue with uncompacted messages - better than crashing
-      }
-    }
+    triologue.agent(assistantMsg.content || '', assistantMsg.tool_calls as ToolCall[] | undefined);
 
     // No tool calls — the LLM emitted plain text instead of calling `final`.
     // Per the prompt contract, the ONLY valid exit is the `final` tool. Reject
-    // the plain-text output and ask the LLM to call `final` instead. This keeps
-    // the tool-call sequence legal (assistant→tool→assistant) by injecting a
-    // user message that re-issues the instruction.
+    // the plain-text output and ask the LLM to call `final` instead. Injected
+    // as a user() note; the tp-fix layer keeps the tool→user transition legal.
     if (!assistantMsg.tool_calls || assistantMsg.tool_calls.length === 0) {
-      messages.push({
-        role: 'user',
-        content:
-          `Your previous response was plain text, but the summary must be submitted via the final tool. ` +
-          `Call the final tool now with your summary (50-200 words). Do NOT output plain text — use the final tool.`,
-      });
+      triologue.user(
+        `Your previous response was plain text, but the summary must be submitted via the final tool. ` +
+        `Call the final tool now with your summary (50-200 words). Do NOT output plain text — use the final tool.`
+      );
       continue;
     }
 
@@ -831,11 +830,7 @@ export async function summarizeWithExplorer(
         const finalSummary = (finalArgs.summary as string) || '';
         if (finalSummary && finalSummary.trim().length > 10) {
           // Accept the final summary — exploration complete.
-          messages.push({
-            role: 'tool',
-            content: 'Final summary accepted. Exploration complete.',
-            tool_call_id: tc.id,
-          });
+          triologue.tool('final', 'Final summary accepted. Exploration complete.', tc.id);
           return {
             summary: finalSummary,
             markedFiles,
@@ -845,11 +840,7 @@ export async function summarizeWithExplorer(
         }
         // Summary too short — reject and let the loop continue so the LLM
         // can retry with a more substantial summary.
-        messages.push({
-          role: 'tool',
-          content: 'Error: summary too short (minimum 10 characters). Call final again with a more detailed summary (50-200 words).',
-          tool_call_id: tc.id,
-        });
+        triologue.tool('final', 'Error: summary too short (minimum 10 characters). Call final again with a more detailed summary (50-200 words).', tc.id);
         continue;  // skip the steering-hint append for this rejected call
       }
 
@@ -875,31 +866,16 @@ export async function summarizeWithExplorer(
       if (i === calls.length - 1) {
         output = `${output}${budgetHint}`;
       }
-      messages.push({
-        role: 'tool',
-        content: output,
-        tool_call_id: tc.id,
-      });
-    }
-
-    // Check for compaction after adding tool results
-    if (estimateTokens(messages) > TOKEN_THRESHOLD) {
-      try {
-        const compacted = await compactMessages(messages, nodeTitle);
-        messages.length = 0;
-        messages.push(...compacted);
-      } catch (err) {
-        agentIO.brief('warn', 'explorer', `Compaction failed for "${nodeTitle}": ${(err as Error).message}. Continuing with full context.`);
-      }
+      triologue.tool(toolName, output, tc.id);
     }
   }
 
   // Budget exhausted or API error broke the loop. Attempt to extract a summary
   // via a fresh, tools-free retryChat call using the compacted exploration
-  // history (same technique as compactMessages). This is a NEW messages array
-  // with no historical tool_calls, so omitting tools is safe.
+  // history (same technique as the compaction layer). This is a NEW messages
+  // array with no historical tool_calls, so omitting tools is safe.
   try {
-    const conversationText = minifyMessages(messages, {
+    const conversationText = minifyMessages(triologue.getMessagesRaw(), {
       maxContentLength: 1000,
       maxArgsLength: 300,
       truncateToolOutput: true,  // truncate large file reads in the transcript

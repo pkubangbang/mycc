@@ -30,7 +30,8 @@
  *
  * A Set-based pre-scan (build Set<loaded> and Set<suggested> once per turn, then O(1)
  * lookups) would be genuinely faster, but the checkpoint/recap logic makes caching
- * impractical: recapMessages() mutates the triologue in-place by truncating message
+ * impractical: the checkpoint recap (triologue.getCheckpointManager().recap())
+ * mutates the triologue in-place by truncating message
  * spans and replacing them with summaries, invalidating any pre-built index. The
  * triologue content changes shape every time a checkpoint is closed, so a cached
  * "which skills appear where" would need rebuilding on every turn anyway — defeating
