@@ -29,7 +29,6 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { Message } from '../../types.js';
 
 vi.mock('../../loop/agent-io.js', () => ({
   agentIO: {
@@ -117,12 +116,38 @@ import { Triologue } from '../../loop/triologue.js';
 import { minifyMessages } from '../../utils/llm-chat-minifier.js';
 
 interface TriologueInternals {
-  messages: Message[];
+  /** Build a conversation of n user/assistant turns via the PUBLIC API. */
+  seedTurns: (n: number) => void;
+  /** Live snapshot of the conversation length. */
+  messageCount: () => number;
   wrapUpMark: number;
 }
 
 function internals(t: Triologue): TriologueInternals {
-  return t as unknown as TriologueInternals;
+  // Phase 2 refactor: messages live in the private MessageStore. White-box
+  // array poking is replaced by public-API seeding + length reads, so the
+  // regression scenario (long conversation → wrap-up → compact → rollback)
+  // is reproduced through the same surface production code uses.
+  return {
+    seedTurns: (n: number) => {
+      for (let i = 0; i < n; i++) {
+        t.user(`q${i}`);
+        t.agent(`a${i}`);
+      }
+    },
+    messageCount: () => t.getMessagesRaw().length,
+    get wrapUpMark(): number {
+      return (t as unknown as { wrapUp: { value: number } }).wrapUp.value;
+    },
+    set wrapUpMark(value: number) {
+      const mgr = (t as unknown as { wrapUp: { value: number; commit(): void; reset(): void; begin(n: number): void } }).wrapUp;
+      if (value === -1) {
+        mgr.reset();
+      } else {
+        mgr.begin(value);
+      }
+    },
+  };
 }
 
 describe('compact() resets wrapUpMark — stale-mark sparse-hole crash', () => {
@@ -135,12 +160,8 @@ describe('compact() resets wrapUpMark — stale-mark sparse-hole crash', () => {
 
   it('compact() should reset wrapUpMark to -1 (root-cause fix)', async () => {
     // Build a conversation long enough that wrapUpMark is meaningfully large.
-    const { messages } = internals(t);
-    for (let i = 0; i < 24; i++) {
-      messages.push({ role: 'user', content: `q${i}` } as Message);
-      messages.push({ role: 'assistant', content: `a${i}` } as Message);
-    }
-    t.beginWrapUp(); // sets wrapUpMark = messages.length (49), appends [WRAP_UP]
+    internals(t).seedTurns(24);
+    t.beginWrapUp(); // sets wrapUpMark = message count (49), appends [WRAP_UP]
     expect(internals(t).wrapUpMark).toBeGreaterThan(2);
 
     await t.compact();
@@ -151,16 +172,9 @@ describe('compact() resets wrapUpMark — stale-mark sparse-hole crash', () => {
   });
 
   it('rollbackWrapUp() after compact must NOT leave sparse undefined holes', async () => {
-    const { messages: before } = internals(t);
-    for (let i = 0; i < 24; i++) {
-      before.push({ role: 'user', content: `q${i}` } as Message);
-      before.push({ role: 'assistant', content: `a${i}` } as Message);
-    }
+    internals(t).seedTurns(24);
     t.beginWrapUp();
     await t.compact();
-    // Re-read AFTER compact — compact() does `this.messages = compacted`, so
-    // the pre-compact array reference is stale. internals() returns the live one.
-    const messages = internals(t).messages;
 
     // Simulate prompt.ts:385-393 grace-period rollback path.
     if (t.hasActiveWrapUp()) {
@@ -168,8 +182,9 @@ describe('compact() resets wrapUpMark — stale-mark sparse-hole crash', () => {
     }
 
     // Array must NOT be stretched: length stays at the compacted size (<=2).
-    expect(messages.length).toBeLessThanOrEqual(2);
+    expect(internals(t).messageCount()).toBeLessThanOrEqual(2);
     // No undefined/null/non-object holes — the crash seed.
+    const messages = t.getMessagesRaw();
     for (let i = 0; i < messages.length; i++) {
       expect(messages[i]).toBeDefined();
       expect(messages[i]).not.toBeNull();
@@ -179,41 +194,35 @@ describe('compact() resets wrapUpMark — stale-mark sparse-hole crash', () => {
   });
 
   it('no reader crashes on the post-compact-then-rollback array', async () => {
-    const { messages: before } = internals(t);
-    for (let i = 0; i < 24; i++) {
-      before.push({ role: 'user', content: `q${i}` } as Message);
-      before.push({ role: 'assistant', content: `a${i}` } as Message);
-    }
+    internals(t).seedTurns(24);
     t.beginWrapUp();
     await t.compact();
-    const messages = internals(t).messages;
     if (t.hasActiveWrapUp()) {
       t.rollbackWrapUp();
     }
 
-    // Every reader that consumes this.messages must not throw reading 'role'.
+    // Every reader that consumes the messages must not throw reading 'role'.
     expect(() => t.getLastRole()).not.toThrow();
     expect(() => t.getMessages()).not.toThrow();
     expect(() => t.getMessagesRaw()).not.toThrow();
     // The confirmed crash function: minifyMessages on the RAW array.
-    expect(() => minifyMessages(messages)).not.toThrow();
+    expect(() => minifyMessages(t.getMessagesRaw())).not.toThrow();
   });
 
   it('rollbackWrapUp() never stretches the array (safety-net guard)', async () => {
     // Directly test the safety net: forge a stale mark larger than the array,
     // then rollback — must NOT stretch.
-    const { messages } = internals(t);
-    messages.push({ role: 'user', content: 'only' } as Message);
+    t.user('only');
     // Simulate a stale mark (as if compact left it dangling at 50).
-    (t as unknown as { wrapUpMark: number }).wrapUpMark = 50;
-    expect(messages.length).toBe(1);
+    internals(t).wrapUpMark = 50;
+    expect(internals(t).messageCount()).toBe(1);
 
     t.rollbackWrapUp();
 
     // Safety net: length stays 1, NOT 50. No holes created.
-    expect(messages.length).toBe(1);
-    expect(messages[0]).toBeDefined();
-    expect((messages[0] as { role?: unknown }).role).toBe('user');
+    expect(internals(t).messageCount()).toBe(1);
+    expect(t.getMessagesRaw()[0]).toBeDefined();
+    expect((t.getMessagesRaw()[0] as { role?: unknown }).role).toBe('user');
     expect(internals(t).wrapUpMark).toBe(-1);
   });
 });

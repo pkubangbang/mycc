@@ -121,10 +121,10 @@ async function handleRecapCall(
     return AgentState.COLLECT;
   }
 
-  const checkpoint = triologue.findCheckpointById(checkpointId);
+  const checkpoint = triologue.getCheckpointManager().findById(checkpointId);
   if (!checkpoint) {
     triologue.agent(chat.assistantContent, chat.rawToolCalls as ToolCall[] | undefined, chat.assistantReasoningContent);
-    const allCheckpoints = triologue.findAllCheckpoints();
+    const allCheckpoints = triologue.getCheckpointManager().findAll();
     const msg = allCheckpoints.length === 0
       ? 'Error: No checkpoint found.'
       : `Error: Checkpoint "${checkpointId}" not found. Available: ${allCheckpoints.map(cp => `[${cp.id}: ${cp.description}]`).join(', ')}`;
@@ -137,7 +137,7 @@ async function handleRecapCall(
 
   if (abandon) {
     // Truncate at the assistant that called checkpoint — removes entire span.
-    triologue.recapMessages(checkpoint.index);
+    triologue.getCheckpointManager().recap(checkpoint.index);
 
     // Inject artificial assistant + tool result instead of note(),
     // so the triologue maintains natural tool-call flow.
@@ -239,7 +239,7 @@ async function handleRecapCall(
   }
 
   // Truncate at the assistant that called checkpoint — removes entire span.
-  triologue.recapMessages(checkpoint.index);
+  triologue.getCheckpointManager().recap(checkpoint.index);
 
   // Inject artificial assistant + tool result instead of note(),
   // so the triologue maintains natural tool-call flow.

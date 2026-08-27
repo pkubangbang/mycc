@@ -9,7 +9,7 @@ import chalk from 'chalk';
 import type { Message, TodoModule, Tool } from '../types.js';
 import type { Mindmap, MindmapPatchAction, Node } from '../mindmap/types.js';
 import { get_node } from '../mindmap/get-node.js';
-import { Triologue } from './triologue.js';
+import type { Triologue } from './triologue.js';
 import { forkChat } from '../engine/chat-provider.js';
 
 /**
@@ -111,7 +111,8 @@ export function handleCheckpoint(
   }
 
   // Check for existing open checkpoint
-  const existingCheckpoint = triologue.findOpenCheckpoint();
+  const checkpoints = triologue.getCheckpointManager();
+  const existingCheckpoint = checkpoints.findOpen();
   if (existingCheckpoint) {
     return { 
       success: false,
@@ -123,7 +124,7 @@ export function handleCheckpoint(
   }
 
   // Generate checkpoint ID
-  const id = Triologue.generateCheckpointId();
+  const id = checkpoints.generateId();
 
   // Auto-create a todo item tracking this checkpoint
   ctx.todo.createTodo(`Checkpoint: ${description}`, id);

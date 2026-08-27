@@ -89,7 +89,8 @@ export class Sequence {
 
   /**
    * Clear the sequence (reset on new session or compact)
-   * Co-called with triologue.compact() / triologue.recapMessages(), so session
+   * Co-called with triologue.compact() / the checkpoint recap
+   * (triologue.getCheckpointManager().recap(index)), so session
    * counters stay in sync with livelog content.
    */
   clear(): void {

@@ -18,7 +18,7 @@ import type { ToolCall } from '../types.js';
 import { buildNormalModePrompt } from '../loop/agent-prompts.js';
 import { buildPlatformCalendarMessages } from '../loop/prompt-populators.js';
 import { getTokenThreshold, getSessionContext, getSessionDir, setSessionContext, isVerbose } from '../config.js';
-import { Triologue } from '../loop/triologue.js';
+import { TriologueLite } from '../loop/triologue-lite.js';
 import { ipc, sendStatus } from './child/ipc-helpers.js';
 
 const POLL_INTERVAL = 5000; // 5 seconds
@@ -132,11 +132,15 @@ function reportStuckTurn(reason: string, elapsedMs: number): void {
 }
 
 /**
- * Create a triologue that persists messages to disk
+ * Create a triologue that persists messages to disk.
+ * Uses TriologueLite — the teammate-only simplified facade over the shared
+ * triologue submodules (store/compact/pending-tools/tp-fix). Teammates don't
+ * need the lead-only features (wrap-up, checkpoint, hint round, longtext dump).
+ *
  * @param name - Teammate name (for fallback path generation)
  * @param assignedPath - Pre-assigned path from parent (optional)
  */
-function createPersistentTriologue(name: string, assignedPath?: string): Triologue {
+function createPersistentTriologue(name: string, assignedPath?: string): TriologueLite {
   // Use assigned path if provided, otherwise generate in session dir
   if (assignedPath) {
     triologuePath = assignedPath;
@@ -154,7 +158,7 @@ function createPersistentTriologue(name: string, assignedPath?: string): Triolog
   // Clear existing file on start
   fs.writeFileSync(triologuePath, '', 'utf-8');
 
-  const triologue = new Triologue({
+  const triologue = new TriologueLite({
     tokenThreshold: getTokenThreshold(),
     onMessage: (messages: Message[]) => {
       // Append last message to file
@@ -597,7 +601,7 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
 }
 
 // === Idle State: Poll for new work ===
-async function enterIdleState(triologue: Triologue): Promise<'shutdown' | 'resume'> {
+async function enterIdleState(triologue: TriologueLite): Promise<'shutdown' | 'resume'> {
   sendStatus('idle');
 
   while (!shutdownRequested) {

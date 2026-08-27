@@ -71,18 +71,33 @@ vi.mock('../../engine/ollama.js', () => ({
 }));
 
 import { Triologue } from '../../loop/triologue.js';
+import { MessageStore } from '../../loop/triologue/store.js';
 import { forkChat } from '../../engine/chat-provider.js';
 
 // Helper to reach the two private arrays from a test without TS complaining
 // about private access. We deliberately corrupt these to mimic the real-world
 // post-compact state that triggered the original crash.
+//
+// Phase 2 refactor: the arrays moved into the private MessageStore. The store
+// intentionally exposes no hole-injecting API (holes are the bug, not a
+// feature), so the seam dereferences the store's actual private fields —
+// pushing directly onto the LIVE arrays, unlike getRaw()/getFullMessages()
+// which return filtered copies.
 interface TriologueInternals {
   messages: Message[];
   projectContext: Message[];
 }
 
 function internals(t: Triologue): TriologueInternals {
-  return t as unknown as TriologueInternals;
+  const store = (t as unknown as { store: MessageStore }).store;
+  return {
+    get messages(): Message[] {
+      return (store as unknown as { messages: Message[] }).messages;
+    },
+    get projectContext(): Message[] {
+      return (store as unknown as { projectContext: Message[] }).projectContext;
+    },
+  };
 }
 
 describe('Triologue — /compact undefined-role regression (defense-in-depth)', () => {

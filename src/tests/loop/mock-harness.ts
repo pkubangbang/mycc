@@ -200,9 +200,13 @@ export class MockHarness {
         skipPendingTools = vi.fn();
         getTokenCount = vi.fn(() => 0);
         getTokenThreshold = vi.fn(() => 8000);
-        findCheckpointById = vi.fn(() => null);
-        findAllCheckpoints = vi.fn(() => []);
-        recapMessages = vi.fn();
+        getCheckpointManager = vi.fn(() => ({
+          findOpen: vi.fn(() => null),
+          findById: vi.fn(() => null),
+          findAll: vi.fn(() => []),
+          generateId: vi.fn(() => 'deadbeef'),
+          recap: vi.fn(),
+        }));
         generateHintRound = vi.fn(async () => 'hint');
       }
       return { Triologue: TriologueStub };
