@@ -62,7 +62,16 @@ function findProjectRoot(): string {
         // Ignore parse errors
       }
     }
-    currentDir = dirname(currentDir);
+    const parent = dirname(currentDir);
+    // Filesystem-root guard: on Windows `dirname('C:\\') === 'C:\\'`, so the
+    // `currentDir !== '/'` loop condition never becomes false and the loop
+    // would spin forever if no `mycc` package.json is found upward. Break
+    // once dirname stops advancing (hit a drive root on Windows, or `/` on
+    // Unix — where this guard is a no-op since the while condition already
+    // catches it). Defensive: normal install trees find package.json long
+    // before this triggers.
+    if (parent === currentDir) break;
+    currentDir = parent;
   }
   
   // Fallback: go up from src/utils to project root
