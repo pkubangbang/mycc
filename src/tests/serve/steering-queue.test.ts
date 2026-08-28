@@ -50,6 +50,18 @@ describe('resolveSteeringQueue', () => {
     expect(resolveSteeringQueue([], [7])).toEqual([]);
     expect(resolveSteeringQueue(notes([1, 'a']), [999])).toEqual([]);
   });
+
+  // duplicate-id boundary (test-strength dir-14 round-10): when two notes
+  // share the same id, a single sendIds entry selects BOTH. The filter-based
+  // implementation keeps every note whose id is in sendIds, so duplicate ids
+  // are not de-duplicated. This test pins the current contract; if the
+  // implementation is later changed to dedupe, update the expectation here.
+  it('selects all notes sharing a duplicate id when that id is sent', () => {
+    const queue = notes([1, 'a'], [1, 'b']);
+    const selected = resolveSteeringQueue(queue, [1]);
+    expect(selected).toHaveLength(2);
+    expect(selected.map((n) => n.text)).toEqual(['a', 'b']);
+  });
 });
 
 describe('joinSteeringNotes', () => {
