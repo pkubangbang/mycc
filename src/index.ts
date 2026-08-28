@@ -233,11 +233,23 @@ function runCoordinator(): void {
     });
 
     // Handle exit - cleanup and exit coordinator
-    child.on('exit', (code) => {
+    child.on('exit', (code, signal) => {
       // Only exit coordinator if this is the current lead and we're not restarting
       if (child === lead && !isRestarting) {
         // Cleanup
         child.stdin?.destroy();
+        // Surface abnormal lead exits to the user before propagating the code.
+        // A crashed lead (non-zero exit or a signal like SIGSEGV / OOM-kill)
+        // would otherwise exit the coordinator with zero diagnostic — the
+        // daemon path (startDaemonLead, ~line 717) already logs code+signal;
+        // this mirrors it for the foreground path so the user sees WHY the
+        // lead died instead of a bare prompt return.
+        if (code !== 0 && code !== null) {
+          console.error(chalk.red(`Lead process exited with code ${code}.`));
+        }
+        if (signal) {
+          console.error(chalk.red(`Lead process killed by signal ${signal}.`));
+        }
         process.exit(code ?? 0);
       }
     });
