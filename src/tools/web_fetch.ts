@@ -27,11 +27,28 @@ export const webFetchTool: ToolDefinition = {
       return 'Error: url is required';
     }
 
-    // Validate URL format
+    // Validate URL format + protocol allowlist.
+    // `new URL()` accepts any scheme (file:, ftp:, data:, javascript:, ...),
+    // but the error message below has always promised "http:// or https://".
+    // Enforce it here (the sole URL-validation chokepoint before the URL is
+    // handed to the provider's fetch). Non-http(s) schemes are rejected
+    // rather than forwarded — the downstream fetch is a web fetch, so a
+    // file:/ftp:/data: URL has no useful behavior there anyway.
+    // NOTE: private-IP / SSRF blocking is intentionally NOT added here. The
+    // actual fetch is performed server-side by the provider (Ollama cloud's
+    // ollama.webFetch, or 'not supported' under DeepSeek), so a request to a
+    // private/metadata IP would originate from the provider's infra, not the
+    // mycc process — classic SSRF against the user's own metadata endpoint
+    // (e.g. 169.254.169.254) does not apply, and IP blocking would also break
+    // legitimate local-Ollama setups.
+    let parsed: URL;
     try {
-      new URL(url);
+      parsed = new URL(url);
     } catch {
       return 'Error: Invalid URL format. Please provide a valid URL starting with http:// or https://';
+    }
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      return `Error: Unsupported URL protocol "${parsed.protocol}". Only http:// and https:// are supported.`;
     }
 
     ctx.core.brief('info', 'web_fetch', `Fetching: ${url}`);
