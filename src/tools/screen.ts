@@ -45,8 +45,39 @@ interface DetectedEnv {
 /**
  * Detect the runtime environment: OS, display server, desktop compositor,
  * and which screenshot tools are installed.
+ *
+ * Memoized at the module level: the environment (OS, display server,
+ * desktop compositor, and which screenshot binaries are on $PATH) is
+ * stable for the lifetime of the process, and re-running `which`/`where`
+ * (up to 7 child processes, each with a 3s timeout) on every `screen`
+ * call is pure waste. The expensive probe (the `which`/`where` execSync
+ * calls) runs only on the first call; subsequent calls return the cached
+ * result. The cache lives at module level because the probe is the only
+ * time-consuming part.
+ *
+ * The caller controls re-probing via the `probe` arg. When `probe` is
+ * false (default), the cached result is reused if present — this is the
+ * normal path and avoids repeated child-process spawns. When `probe` is
+ * true, the cache is bypassed and the environment is re-detected (e.g.
+ * after a screenshot tool was installed mid-session), refreshing the
+ * cache with the new result.
  */
-function detectEnvironment(): DetectedEnv {
+let cachedEnv: DetectedEnv | null = null;
+
+/**
+ * Clear the cached environment. Exported for tests so each case can start
+ * from a cold cache; not part of the tool's public contract (the `probe`
+ * arg is the production re-detect path — it re-runs detection AND refreshes
+ * the cache, whereas this just drops it).
+ */
+export function resetEnvCacheForTests(): void {
+  cachedEnv = null;
+}
+
+function detectEnvironment(probe = false): DetectedEnv {
+  if (cachedEnv && !probe) {
+    return cachedEnv;
+  }
   const platform = os.platform();
   const isWin = platform === 'win32';
 
@@ -102,7 +133,8 @@ function detectEnvironment(): DetectedEnv {
     }
   }
 
-  return { platform, displayServer, desktop, availableTools };
+  cachedEnv = { platform, displayServer, desktop, availableTools };
+  return cachedEnv;
 }
 
 // ---------------------------------------------------------------------------
@@ -339,6 +371,11 @@ export const screenTool: ToolDefinition = {
         description:
           'Which monitor to capture on a multi-monitor setup, given as a 1-based index (1 = primary monitor, 2 = second monitor, 3 = third, etc.). Omit or set to 1 to capture the primary monitor. On Windows this selects among [System.Windows.Forms.Screen]::AllScreens (internally converted to a 0-based array index); on macOS it maps directly to `screencapture -D <index>` (display number is 1-based). If the index is out of range, the tool lists the available monitors and their bounds so you can pick a valid one.',
       },
+      probe: {
+        type: 'boolean',
+        description:
+          'If true, re-run environment detection (probe which screenshot tools are installed via `which`/`where`) instead of reusing the cached result. Defaults to false — the environment is process-stable, so detection is cached after the first call to avoid spawning child processes on every screen call. Set probe=true after installing a screenshot tool mid-session (e.g. `sudo apt install scrot`) so the newly-installed tool is picked up.',
+      },
     },
     required: [],
   },
@@ -361,8 +398,13 @@ export const screenTool: ToolDefinition = {
     }
     const monitorIndex = desktopNum - 1; // 0-based for AllScreens indexing
 
+    // Re-probe control: by default the cached environment is reused (it is
+    // process-stable). `probe=true` forces a fresh `which`/`where` round,
+    // e.g. after a screenshot tool was installed mid-session.
+    const probe = args.probe === true;
+
     // Detect environment
-    const env = detectEnvironment();
+    const env = detectEnvironment(probe);
     ctx.core.brief('info', 'screen', `Environment: OS=${env.platform}, display=${env.displayServer}, desktop=${env.desktop}, monitor=${desktopNum}`);
 
     // On Windows, validate the monitor index up front so an out-of-range
