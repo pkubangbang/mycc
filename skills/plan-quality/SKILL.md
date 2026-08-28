@@ -4,22 +4,27 @@ description: >
   Hookish skill that fires when mycc is about to give a plan in plan mode (it
   has stopped with no pending tool calls). It replaces the stop with a
   skill_load of this skill BEFORE presenting the plan, so the plan is
-  strengthened in two ways. Part 1: search the "pitfall" wiki domain for
+  strengthened in three ways. Part 1: search the "pitfall" wiki domain for
   known traps already stepped into, to verify basic assumptions against
   history — the "pitfall" domain may not exist yet, so the guidance is
   compatibility-aware (suggest "/domain add pitfall" if missing) and also
   covers collecting user feedback to maintain the pitfall domain. Part 2:
   how to present the plan — if the content is large, describe it section by
   section and let the user confirm each part, rather than dumping a wall of
-  text. The hook uses a replace action on the stop trigger; this is
-  necessary because the LLM has a known planning-overconfidence blind-spot
-  and will not voluntarily seek planning help (recorded in the pitfall domain
-  itself, commit c9c4f7b). Use whenever the agent enters plan mode to design
-  an approach and is about to present the plan.
+  text. Part 3: a per-section design review train-of-thought — for each
+  part of the change, ask (a) can the work be done at a higher level so the
+  design is much simplified, and (b) how do the changes in this section
+  interact with changes in other sections; report non-trivial findings as a
+  note on each section. The hook uses a replace action on the stop trigger;
+  this is necessary because the LLM has a known planning-overconfidence
+  blind-spot and will not voluntarily seek planning help (recorded in the
+  pitfall domain itself, commit c9c4f7b). Use whenever the agent enters plan
+  mode to design an approach and is about to present the plan.
 keywords: [plan, quality, pitfall, presentation, section, confirm, stop,
   hook, reminder, blind-spot, overconfidence, wiki, domain, feedback,
   assumption, verify, before-plan, plan_on, knowledge, check, validate,
-  counter-example, trap, lesson]
+  counter-example, trap, lesson, scope, correlation, interaction,
+  simplification, design-review]
 when: "when mycc stops in plan mode (about to give a plan, no pending tool calls), if this skill has not been loaded yet this session, replace the stop with a skill_load of this skill so the plan is strengthened before it is given"
 ---
 
@@ -30,7 +35,7 @@ when: "when mycc stops in plan mode (about to give a plan, no pending tool calls
 When mycc is in plan mode and about to give a plan (it has stopped with no
 pending tool calls), this hook replaces the stop with a `skill_load` of this
 skill, so the guidance arrives before the plan is given. The skill
-strengthens the plan in two ways:
+strengthens the plan in three ways:
 
 1. **Watch out for known pitfalls** — search the "pitfall" wiki domain for
    traps already stepped into, so basic assumptions are verified against
@@ -40,6 +45,12 @@ strengthens the plan in two ways:
 2. **Present the plan well** — if the plan content is large, describe it
    section by section and let the user confirm each part, rather than
    dumping a wall of text.
+3. **Review each part for scope and correlation** — for every part of the
+   change, run a design train-of-thought: (a) *scope* — can the work be
+   done at a higher level so the design is much simplified? (b)
+   *correlation* — how do the changes in this part interact with the
+   changes in the other parts? Report any non-trivial finding as a note on
+   that section (see Part 3).
 
 ## Why a Hook, Not a Voluntary Skill
 
@@ -204,6 +215,104 @@ the plan-mode workflow).
 - **Incremental agreement** — each confirmed section is a checkpoint, so
   by the end the user has consciously agreed to every part.
 
+## Part 3: Review Each Part for Scope and Correlation
+
+Before and while presenting the plan, run a **design train-of-thought** on
+each part of the change. This is the skill's third strengthening pass and
+it targets the two failure modes an overconfident planner slips into most
+easily: **over-complication** (solving at too low a level) and **ignored
+interactions** (treating each part as independent when it is not).
+
+For **each section/part** of the planned change, ask two questions:
+
+### Question 1 — Scope: can you work at a higher level?
+
+> For this part of the change, can the work be done at a higher level so
+> the design is much simplified?
+
+Look for a coarser abstraction that dissolves the part's complexity:
+
+- **Is there a shared primitive?** If two or more parts each build their
+  own mechanism for the same concern (e.g. two ad-hoc path resolvers, two
+  retry loops), hoist it into one helper/type and have every part use it.
+  The part may shrink to a one-line call.
+- **Is the part fighting the framework instead of using it?** A hand-rolled
+  X (parser, scheduler, queue) where the platform/the project already
+  offers one is a sign you are working a level too low. Adopting the
+  existing primitive often deletes the part entirely.
+- **Can several parts collapse into one?** If parts A, B, C are really
+  three steps of one operation, present them as one part with sub-steps
+  rather than three independent sections — fewer interaction surfaces to
+  reason about.
+- **Is the granularity driven by the *file layout* rather than the
+  *logic*?** Splitting "edit foo.ts" and "edit bar.ts" into two parts when
+  they are one logical change inflates the plan and hides their coupling.
+  Merge by logic, not by file.
+
+If a higher level exists, **rework the part at that level** before
+presenting it. The user sees a simpler section and the plan has fewer
+moving parts to go wrong.
+
+### Question 2 — Correlation: how do the changes interact?
+
+> How do the changes in this part interact with the changes in the other
+  parts?
+
+Treat the plan as a graph of changes, not a flat list. For this part,
+consider its edges to every other part:
+
+- **Ordering / dependency** — does this part *require* another part to land
+  first (it reads a field the other part adds), or *forbid* another part
+  from landing first (they edit the same lines)? Mark the ordering
+  constraint explicitly so execution does not race.
+- **Shared state** — do two parts read/write the same variable, file,
+  table, or config key? An interaction here can cause one part to silently
+  undo or duplicate the other. Name the shared resource and the
+  read/write direction per part.
+- **Contract shifts** — does this part change an interface (signature,
+  return shape, error mode, file format) that another part consumes? A
+  contract change ripples; flag it so the consuming part is updated in the
+  same plan, not discovered later as a breakage.
+- **Cancellation / redundancy** — does this part make another part
+  obsolete (the higher-level primitive from Question 1 replaces it), or
+  duplicate its effect (two parts both set the same flag)? Surface the
+  overlap so the redundant part is dropped, not both shipped.
+
+### Report non-trivial findings as a section note
+
+If either question turns up something **non-trivial** — a real
+simplification opportunity, a hidden ordering/contract/shared-state
+interaction — attach it as a short note to that section when presenting:
+
+> **Section 2 — PDF generation**
+> <description>
+>
+> *Note (scope):* The retry logic here duplicates Section 1's HTML-render
+> retry; I'll hoist both into one `withRetry` helper and this section
+> becomes a one-line call — simpler, and a single place to tune backoff.
+> *Note (correlation):* This part writes `output.pdf` that Section 3
+> (verification) reads, so Section 3 must run after this one — ordering
+> constraint noted.
+
+If a section's review is trivial (no simplification, no interaction),
+**do not pad the section with an empty note** — silence is the correct
+signal that the part is clean. The note exists only to surface real
+findings the user should weigh in on.
+
+### Why this pass
+
+- **Scope combats over-complication** — the overconfident planner accepts
+  its first decomposition and buries complexity per-part; the higher-level
+  question forces a re-abstraction that often deletes work.
+- **Correlation combats the "independent parts" illusion** — a flat
+  section list invites treating each part in isolation; the interaction
+  question forces the planner to name the edges, which is where the real
+  bugs and integration surprises live.
+- **Notes make findings reviewable** — surfacing a non-trivial scope or
+  correlation finding as a section note gives the user a concrete point
+  to accept, adjust, or reject at the section checkpoint, instead of the
+  interaction biting during execution.
+
 ## Example
 
 **Scenario:** The agent is planning a feature that involves generating PDFs
@@ -227,7 +336,21 @@ PDF generation, verification).
    > Does this look right?
    
    The user confirms. The agent continues to Section 2, then Section 3.
-5. After all sections are confirmed, the agent recaps and calls `plan_off`.
+5. **Part 3:** Before presenting, the agent runs the scope/correlation
+   review on each section. Suppose it finds two non-trivial items:
+   - *Scope (Section 1 vs Section 2):* both HTML render and PDF generation
+     each roll their own retry-on-failure loop. The agent hoists a shared
+     `withRetry` helper — Section 2's retry block collapses to a one-line
+     call, so the plan is simpler and backoff is tuned in one place.
+   - *Correlation (Section 2 → Section 3):* Section 2 writes `output.pdf`,
+     which Section 3 (verification) reads and asserts on. So Section 3 is
+     order-dependent on Section 2 — the agent notes this so execution does
+     not run verification before generation.
+   
+   The agent attaches these as notes on the relevant sections as it
+   presents them (see the Part 3 note format), and the user confirms each
+   section with the notes in view.
+6. After all sections are confirmed, the agent recaps and calls `plan_off`.
 
 If instead the "pitfall" domain did not exist, the agent would tell the
 user, offer `/domain add pitfall`, then proceed to present the plan
