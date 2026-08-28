@@ -5,9 +5,13 @@
  * ~/.mycc-store/discovery/identity.json and maintains a rolling heartbeat at
  * ~/.mycc-store/discovery/heartbeat/[session-id].json.
  *
- * Freshness rule: fresh ⟺ remoteLatest > localOldest
+ * Freshness rule: fresh ⟺ (now - remoteLatest < FRESHNESS_WINDOW_MS) AND
+ *                              (remoteLatest > localOldest OR remoteLatest is recent)
  * - localOldest = local.timestamps[0] || -Infinity
  * - remoteLatest = remote.timestamps[last] || (Date.now() - 30000)
+ * - recent = (now - remoteLatest <= HEARTBEAT_INTERVAL_MS) — closes the
+ *   startup race so a peer that started before the local instance is
+ *   discovered instantly instead of after ~HEARTBEAT_INTERVAL_MS (30s).
  */
 
 import * as fs from 'fs';
@@ -405,16 +409,28 @@ export class IdentityManager {
   /**
    * Check freshness of a remote session.
    *
-   * fresh ⟺ (remoteLatest > localOldest) AND (now - remoteLatest < FRESHNESS_WINDOW_MS)
+   * fresh ⟺ (now - remoteLatest < FRESHNESS_WINDOW_MS) AND
+   *          (remoteLatest > localOldest OR remoteLatest is recent)
    *
    * - localOldest = local.timestamps[0] || -Infinity
    *   (if local has 0 beats, no baseline → everything passes the relative check)
    * - remoteLatest = remote.timestamps[last] || (Date.now() - 30_000)
    *   (if remote has 0 beats but is registered, assume it just started 30s ago)
-   * - Absolute window: even if the relative check passes, a remote whose
-   *   latest heartbeat is older than FRESHNESS_WINDOW_MS (90s) is NOT fresh.
-   *   This prevents a dead/crashed instance from appearing fresh forever
-   *   (its last beat stays "after local oldest" indefinitely).
+   * - Absolute window: a remote whose latest heartbeat is older than
+   *   FRESHNESS_WINDOW_MS (90s) is NOT fresh. This prevents a dead/crashed
+   *   instance from appearing fresh forever.
+   * - Relative check: remoteLatest > localOldest catches a peer whose last
+   *   beat predates the local instance's oldest beat (i.e. it died before
+   *   the local instance started). BUT this race-fails at startup: a peer
+   *   that started BEFORE the local instance has its (single) beat older
+   *   than the local oldest beat, so it is wrongly marked stale until its
+   *   next beat (~HEARTBEAT_INTERVAL_MS = 30s later). The `recent` clause
+   *   closes that gap: a remote whose latest beat is within one heartbeat
+   *   interval of now is treated as live regardless of the relative check,
+   *   so a freshly-started peer is discovered instantly instead of after
+   *   ~30s. The absolute window still bounds it, so a peer that just died
+   *   (beat <30s ago but no longer beating) only appears fresh for up to
+   *   FRESHNESS_WINDOW_MS — the same grace a relative-only check gives.
    */
   isFresh(sessionId: string): boolean {
     // 1. Check identity.json has an entry for sessionId
@@ -423,23 +439,37 @@ export class IdentityManager {
 
     // 2. Read remote heartbeat
     const remoteTimestamps = readHeartbeats(sessionId);
+    const now = Date.now();
     const remoteLatest = remoteTimestamps.length > 0
       ? remoteTimestamps[remoteTimestamps.length - 1]
-      : Date.now() - 30_000;
+      : now - 30_000;
 
     // 3. Absolute freshness window: a remote whose latest heartbeat is older
     //    than FRESHNESS_WINDOW_MS is stale, regardless of the relative check.
-    if (Date.now() - remoteLatest > FRESHNESS_WINDOW_MS) {
+    if (now - remoteLatest > FRESHNESS_WINDOW_MS) {
       return false;
     }
 
-    // 4. Compute localOldest
+    // 4. Recent clause: a remote that has beaten within one heartbeat
+    //    interval of now is live — skip the relative check. This fixes the
+    //    startup race where a peer that started before the local instance
+    //    has its oldest beat older than the local oldest beat and would
+    //    otherwise be marked stale for ~HEARTBEAT_INTERVAL_MS (30s) until
+    //    its next beat. A peer that just died stays "recent" only until
+    //    its last beat ages past FRESHNESS_WINDOW_MS (handled above).
+    if (now - remoteLatest <= HEARTBEAT_INTERVAL_MS) {
+      return true;
+    }
+
+    // 5. Compute localOldest
     const localTimestamps = this.getOwnHeartbeat();
     const localOldest = localTimestamps.length > 0
       ? localTimestamps[0]
       : -Infinity;
 
-    // 5. Relative check
+    // 6. Relative check: remote's latest beat must be newer than the local
+    //    oldest beat, so a peer that died before the local instance started
+    //    (its last beat predates local oldest) is correctly marked stale.
     return remoteLatest > localOldest;
   }
 

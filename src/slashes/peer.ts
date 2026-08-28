@@ -37,6 +37,7 @@ const PEER_LISTING_CUTOFF_MS = 60 * 60 * 1000;
 
 export const peerCommand: SlashCommand = {
   name: 'peer',
+  aliases: ['peers'],
   description: 'List online mycc peers with heartbeat status: /peer [--all] [--self]',
   handler: (context) => {
     const { ctx } = context;

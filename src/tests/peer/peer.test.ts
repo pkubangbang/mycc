@@ -212,6 +212,44 @@ describe('IdentityManager', () => {
     expect(id.isFresh(SID_B)).toBe(false);
   });
 
+  it('isFresh() is true for a peer that started before local with a RECENT beat (startup race)', () => {
+    // Regression: a peer (B) that started BEFORE the local instance (A) has
+    // its only heartbeat older than A's oldest beat. The relative check
+    // (remoteLatest > localOldest) alone would mark it stale for up to
+    // HEARTBEAT_INTERVAL_MS (30s) until B's next beat — the "30s delay"
+    // bug. The "recent clause" fixes this: a remote whose latest beat is
+    // within one heartbeat interval of now is live regardless of the
+    // relative ordering. Here B's latest beat is 5s ago (recent) but older
+    // than A's oldest beat (now-1000), so WITHOUT the fix this is false.
+    const id = new IdentityManager(SID_A, '/work/a', makeMailboxPath(SID_A));
+    id.register();
+    const idB = new IdentityManager(SID_B, '/work/b', makeMailboxPath(SID_B));
+    idB.register();
+    const now = Date.now();
+    // A started later: oldest beat at now-1000. B started earlier: single
+    // beat at now-5000 (recent, within 30s, but older than A's oldest).
+    writeHeartbeatRaw(SID_A, [now - 1000]);
+    writeHeartbeatRaw(SID_B, [now - 5000]);
+    expect(id.isFresh(SID_B)).toBe(true);
+  });
+
+  it('isFresh() is false for a peer whose recent beat is NOT recent enough AND older than local oldest', () => {
+    // The "recent clause" only grants freshness within HEARTBEAT_INTERVAL_MS.
+    // A remote whose latest beat is older than that window (but still within
+    // FRESHNESS_WINDOW_MS) must still pass the relative check. Here B's
+    // latest beat is 45s ago (past the 30s recent window) and older than A's
+    // oldest (now-1000), so it is correctly stale — the relative check still
+    // guards peers that died a while ago.
+    const id = new IdentityManager(SID_A, '/work/a', makeMailboxPath(SID_A));
+    id.register();
+    const idB = new IdentityManager(SID_B, '/work/b', makeMailboxPath(SID_B));
+    idB.register();
+    const now = Date.now();
+    writeHeartbeatRaw(SID_A, [now - 1000]);
+    writeHeartbeatRaw(SID_B, [now - 45_000]);
+    expect(id.isFresh(SID_B)).toBe(false);
+  });
+
   it('isFresh() treats everything as fresh when local has 0 beats (oldest = -Infinity)', () => {
     const id = new IdentityManager(SID_A, '/work/a', makeMailboxPath(SID_A));
     id.register();
