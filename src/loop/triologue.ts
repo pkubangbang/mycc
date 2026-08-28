@@ -19,12 +19,13 @@ import type { Role, MisorderWarning, ToolAlignmentWarning, TriologueOptions } fr
 
 export type { Role, MisorderWarning, ToolAlignmentWarning, TriologueOptions, CheckpointInfo } from './triologue/types.js';
 export { CheckpointManager } from './triologue/checkpoint.js';
+export { HintRoundManager } from './triologue/hint-round.js';
 
-import { generateHintRound as doHintRound } from './hint-round.js';
 import { MessageStore } from './triologue/store.js';
 import { PendingToolLedger } from './triologue/pending-tools.js';
 import { runAutoCompact as doRunAutoCompact } from './triologue/compact.js';
 import { CheckpointManager } from './triologue/checkpoint.js';
+import { HintRoundManager } from './triologue/hint-round.js';
 import { WrapUpManager } from './triologue/wrap-up.js';
 
 export class Triologue {
@@ -54,6 +55,14 @@ export class Triologue {
    * store so callers always see the current history.
    */
   private checkpointManager: CheckpointManager | null = null;
+
+  /**
+   * Hint-round feature domain delegate (see triologue/hint-round.ts).
+   * Created lazily via getHintRoundManager(); bound to the live message
+   * store so callers always see the current history (including
+   * compact/clear/restore swaps).
+   */
+  private hintRoundManager: HintRoundManager | null = null;
 
   /**
    * TP-recovery delegate (see triologue/tp-fix.ts). Owns both the recovery
@@ -433,15 +442,16 @@ export class Triologue {
    * @param confusionScore - Current confusion score
    * @param confusionBreakdown - Breakdown of confusion factors
    * @param pendingSkills - Skills with 'when' but no compiled condition (for notification)
-   * @returns 'aborted' if ESC was pressed, 'success' if completed
+   * @returns 'aborted' if ESC was pressed, 'success' if the hint was injected,
+   *   'compact' if the LLM signalled should_compact (caller triggers compaction).
    */
   async generateHintRound(
     abortController: AbortController,
     confusionScore: number,
     confusionBreakdown: string,
     pendingSkills?: string[]
-  ): Promise<'aborted' | 'success'> {
-    return doHintRound(this, abortController, confusionScore, confusionBreakdown, pendingSkills);
+  ): Promise<'aborted' | 'success' | 'compact'> {
+    return this.getHintRoundManager().generate(abortController, confusionScore, confusionBreakdown, pendingSkills);
   }
 
   // === Wrap-Up Management (ESC interrupt) ===
@@ -639,6 +649,32 @@ export class Triologue {
       });
     }
     return this.checkpointManager;
+  }
+
+  /**
+   * Get the hint-round feature-domain delegate (see triologue/hint-round.ts).
+   *
+   * Hint-round is an isolated feature domain: instead of the facade owning the
+   * LLM problem-analysis logic, callers obtain this delegate ONCE and interact
+   * with it directly (generate a hint round + inject the HINT note). The
+   * facade's generateHintRound() is a thin delegation to this manager so the
+   * public method signature (used by collect.ts and test mocks) stays stable.
+   *
+   * The manager is bound to the live message store + note() injector + the
+   * optional wiki-domain and duplication-report callbacks, so it always
+   * reflects the current history (including compact/clear/restore swaps). It
+   * is memoized — repeated calls return the same instance.
+   */
+  getHintRoundManager(): HintRoundManager {
+    if (!this.hintRoundManager) {
+      this.hintRoundManager = new HintRoundManager({
+        getMessagesRaw: () => this.store.getRaw(),
+        note: (category: NoteCategory, message: string) => this.note(category, message),
+        getWikiDomains: this.options.getWikiDomains,
+        getDuplicationReport: this.options.getDuplicationReport,
+      });
+    }
+    return this.hintRoundManager;
   }
 
   // === Private Helpers ===

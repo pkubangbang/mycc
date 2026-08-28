@@ -334,6 +334,21 @@ export async function handleCollect(
       if (result === 'aborted') {
         return AgentState.STOP;
       }
+      // If the LLM signalled should_compact (dead-loop or context stress),
+      // trigger compaction now and return STOP so the next turn proceeds on
+      // fresh, compacted context. The confusion index is reset (the stale
+      // score was computed against the pre-compact history). Compaction is
+      // the intervention — no HINT note was injected (the hint-round module
+      // skips the note on should_compact since compact() would discard it).
+      if (result === 'compact') {
+        ctx.core.brief('info', 'loop', 'Hint round signalled compaction (dead-loop / context stress); compacting...');
+        // Drain the per-turn tool scope so compact()'s optional working-memory
+        // fork sees the tools the NEXT LLM call will use (preserves prompt cache).
+        const tools = loader.getToolsForScope(env.scope);
+        await triologue.compact(undefined, undefined, tools);
+        ctx.core.resetConfusionIndex();
+        return AgentState.STOP;
+      }
       // Reset confusion after hint
       ctx.core.resetConfusionIndex();
     }
