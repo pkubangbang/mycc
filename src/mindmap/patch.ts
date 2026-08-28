@@ -212,9 +212,14 @@ export async function remove_node(mindmap: Mindmap, id: string): Promise<boolean
     return false;
   }
 
-  // Find and remove the child
+  // Find and remove the child. Match by normalized id (safeNodeId of the
+  // child's title) — the canonical addressing scheme is the normalized id,
+  // NOT the raw title (see get-node.ts findChild). A bare toLowerCase title
+  // comparison fails for any title with spaces/special chars: path segment
+  // "code-cleanup" never equals raw title "Code Cleanup" lowercased to
+  // "code cleanup", so the delete silently no-ops.
   const index = parent.children.findIndex(
-    (c) => c.title.toLowerCase() === nodeTitle.toLowerCase()
+    (c) => safeNodeId(c.title) === nodeTitle
   );
 
   if (index === -1) {
@@ -272,10 +277,14 @@ export async function move_node(
     return null;
   }
 
-  // Remove from old parent
+  // Remove from old parent. Match by normalized id (safeNodeId of the
+  // child's title), NOT the raw title — the canonical addressing scheme is
+  // the normalized id (see get-node.ts findChild). A bare toLowerCase title
+  // comparison fails for spaced/special-char titles and makes the move a
+  // silent no-op.
   const nodeTitle = segments[segments.length - 1];
   const index = oldParent.children.findIndex(
-    (c) => c.title.toLowerCase() === nodeTitle.toLowerCase()
+    (c) => safeNodeId(c.title) === nodeTitle
   );
 
   if (index === -1) {
@@ -414,8 +423,12 @@ export function applyPatchAction(mindmap: Mindmap, action: MindmapPatchAction): 
       const parent = get_node(mindmap, parentPath);
       if (!parent) return false;
 
+      // Match by normalized id (safeNodeId of the child's title), NOT the raw
+      // title — the canonical addressing scheme is the normalized id (see
+      // get-node.ts findChild). A bare toLowerCase title comparison fails for
+      // spaced/special-char titles and makes the delete a silent no-op.
       const index = parent.children.findIndex(
-        (c) => c.title.toLowerCase() === nodeTitle.toLowerCase()
+        (c) => safeNodeId(c.title) === nodeTitle
       );
       if (index === -1) return false;
 

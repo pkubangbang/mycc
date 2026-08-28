@@ -192,6 +192,63 @@ describe('get_node (Fix B — normalized-id matching)', () => {
   });
 });
 
+// ── applyPatchAction delete matches by normalized id, not raw title ────────
+
+describe('applyPatchAction delete (normalized-id matching)', () => {
+  let mindmap: Mindmap;
+  beforeEach(() => { mindmap = makeMindmap(); });
+
+  it('deletes a spaced-title child by its normalized id segment', () => {
+    // Regression: the delete branch used c.title.toLowerCase() ===
+    // nodeTitle.toLowerCase(), matching the RAW title. The fixture child has
+    // title "Code Cleanup" but its canonical address (id segment) is
+    // "code-cleanup" (safeNodeId("Code Cleanup")). With raw-title matching,
+    // deleting by the normalized id "/mycc.md/code-cleanup" compared segment
+    // "code-cleanup" against raw "Code Cleanup" → "code cleanup" (with a
+    // SPACE) → never matched → the delete was a silent no-op. Now matching
+    // uses safeNodeId(c.title) === segment, consistent with get_node, so the
+    // delete succeeds.
+    expect(get_node(mindmap, '/mycc.md/code-cleanup')).not.toBeNull();
+    const del: MindmapPatchAction = {
+      action: 'delete', path: '/mycc.md/code-cleanup',
+      timestamp: '', checkpoint_id: '', reason: 't', mindmap_hash: 'h1',
+    };
+    expect(applyPatchAction(mindmap, del)).toBe(true);
+    expect(get_node(mindmap, '/mycc.md/code-cleanup')).toBeNull();
+  });
+
+  it('returns false (no-op) when deleting by the raw title path (not a real id)', () => {
+    // The raw title is NOT a valid address — deleting "/mycc.md/Code Cleanup"
+    // must be a no-op (the node still exists under its real id).
+    expect(get_node(mindmap, '/mycc.md/code-cleanup')).not.toBeNull();
+    const del: MindmapPatchAction = {
+      action: 'delete', path: '/mycc.md/Code Cleanup',
+      timestamp: '', checkpoint_id: '', reason: 't', mindmap_hash: 'h1',
+    };
+    expect(applyPatchAction(mindmap, del)).toBe(false);
+    expect(get_node(mindmap, '/mycc.md/code-cleanup')).not.toBeNull();
+  });
+
+  it('deletes a CJK-title child by its normalized id segment', () => {
+    // Add a CJK-titled node, then delete it by its sanitized id.
+    const add: MindmapPatchAction = {
+      action: 'add', path: '/mycc.md',
+      title: '主题节点', text: 'cjk body',
+      timestamp: '', checkpoint_id: '', reason: 't', mindmap_hash: 'h1',
+    };
+    expect(applyPatchAction(mindmap, add)).toBe(true);
+    const cjkId = '/mycc.md/主题节点'; // safeNodeId preserves CJK letters
+    expect(get_node(mindmap, cjkId)).not.toBeNull();
+
+    const del: MindmapPatchAction = {
+      action: 'delete', path: cjkId,
+      timestamp: '', checkpoint_id: '', reason: 't', mindmap_hash: 'h1',
+    };
+    expect(applyPatchAction(mindmap, del)).toBe(true);
+    expect(get_node(mindmap, cjkId)).toBeNull();
+  });
+});
+
 // ── Patch-sourced links: patch-added nodes carry term links (runtime hoist) ──
 
 describe('applyPatchAction add is idempotent (replay-safe dedup)', () => {
