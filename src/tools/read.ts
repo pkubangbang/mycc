@@ -17,7 +17,7 @@ import * as path from 'path';
 import { filetypeinfo } from '../utils/magic-bytes.js';
 import type { ToolDefinition, AgentContext } from '../types.js';
 import { getTokenThreshold, isVerbose } from '../config.js';
-import { resolvePath } from '../utils/path.js';
+import { resolvePath, isInsideWorkspace } from '../utils/path.js';
 import { stripBom, countReplacementChars } from '../utils/encoding.js';
 
 /** Hard-coded line limit to prevent context overflow */
@@ -99,7 +99,7 @@ export const readTool: ToolDefinition = {
       const resolved = resolvePath(filePath, ctx.core.getWorkDir());
 
       // If path is outside workspace, request grant
-      const isExternal = !resolved.startsWith(ctx.core.getWorkDir());
+      const isExternal = !isInsideWorkspace(resolved, ctx.core.getWorkDir());
       if (isExternal) {
         const access = await ctx.core.requestExternalPathAccess('read_file', resolved);
         if (!access.approved) {

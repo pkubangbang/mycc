@@ -9,6 +9,7 @@
 
 import type { ToolDefinition, AgentContext } from '../types.js';
 import * as path from 'path';
+import { isInsideWorkspace } from '../utils/path.js';
 import { retryChat, MODEL } from '../engine/chat-provider.js';
 import { grepSearch, DEFAULT_MAX_RESULTS, MAX_MAX_RESULTS } from '../utils/grep-search.js';
 
@@ -86,7 +87,7 @@ export const grepTool: ToolDefinition = {
     // is read-only, so readonly grants (e.g. from a prior read_file) also
     // cover it. Previously this hard-blocked with "escapes workspace", leaving
     // no way to search external directories.
-    if (!resolvedDir.startsWith(workDir)) {
+    if (!isInsideWorkspace(resolvedDir, workDir)) {
       const access = await ctx.core.requestExternalPathAccess('grep', resolvedDir);
       if (!access.approved) {
         const msg = `Error: ${access.reason || 'Access denied'}`;

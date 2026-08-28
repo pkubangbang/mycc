@@ -38,7 +38,12 @@ export function augmentCall(call: ToolCall): AugmentedToolCall {
   switch (call.function.name) {
     case 'write_file':
     case 'edit_file': {
-      metadata.filePath = args.file_path as string;
+      // Schema param is `path` (see write.ts/edit.ts tool definitions), not
+      // `file_path`. Reading `file_path` left metadata.filePath undefined,
+      // which made every hook reading call.metadata.filePath (e.g. the
+      // "block test files over N lines" pattern documented in conditions.ts)
+      // silently dead — the condition evaluated on undefined and never fired.
+      metadata.filePath = args.path as string;
       if (args.content && typeof args.content === 'string') {
         metadata.newLoc = args.content.split('\n').length;
       }

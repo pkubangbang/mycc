@@ -5,7 +5,7 @@
 import { describe, it, expect } from 'vitest';
 import * as os from 'os';
 import * as path from 'path';
-import { resolvePath } from '../../utils/path.js';
+import { resolvePath, isInsideWorkspace } from '../../utils/path.js';
 
 describe('resolvePath', () => {
   it('should resolve relative paths against workdir', () => {
@@ -67,5 +67,39 @@ describe('resolvePath', () => {
   it('should throw a clear error when path is an empty string', () => {
     const workdir = '/home/user/project';
     expect(() => resolvePath('', workdir)).toThrow(/path argument is required/);
+  });
+});
+
+describe('isInsideWorkspace', () => {
+  it('returns true for a path inside the workdir', () => {
+    const workdir = '/home/user/project';
+    expect(isInsideWorkspace(path.resolve(workdir, 'src', 'read.ts'), workdir)).toBe(true);
+  });
+
+  it('returns true when the resolved path IS the workdir', () => {
+    const workdir = '/home/user/project';
+    expect(isInsideWorkspace(workdir, workdir)).toBe(true);
+  });
+
+  it('returns false for the parent of the workdir', () => {
+    const workdir = '/home/user/project';
+    expect(isInsideWorkspace(path.resolve(workdir, '..'), workdir)).toBe(false);
+  });
+
+  it('returns false for a sibling directory sharing a name prefix', () => {
+    // The classic bare-startsWith bug: '/home/user/project-evil' wrongly
+    // passed '/home/user/project'.startsWith(...) and escaped the workspace.
+    const workdir = '/home/user/project';
+    const sibling = '/home/user/project-evil/escape.txt';
+    expect(isInsideWorkspace(sibling, workdir)).toBe(false);
+  });
+
+  it('returns false for an unrelated absolute path', () => {
+    const workdir = '/home/user/project';
+    expect(isInsideWorkspace('/etc/passwd', workdir)).toBe(false);
+  });
+
+  it('returns false when workdir is empty', () => {
+    expect(isInsideWorkspace('/home/user/project', '')).toBe(false);
   });
 });

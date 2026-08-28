@@ -42,3 +42,26 @@ export function resolvePath(p: string, workdir: string): string {
   // Resolve relative to workdir (no-op if already absolute)
   return path.resolve(workdir, p);
 }
+
+/**
+ * Robust workspace-containment check.
+ *
+ * A bare `resolved.startsWith(workdir)` is unsafe: a sibling directory that
+ * shares a prefix (e.g. workdir `/proj/mycc` vs `/proj/mycc-evil/escape.txt`)
+ * passes the prefix test and escapes the workspace. The correct check is
+ * `path.relative(workdir, resolved)`:
+ *   - ''        → resolved IS the workdir (contained)
+ *   - '..'/'..' → resolved is outside or an ancestor (not contained)
+ *   - otherwise → resolved is inside (contained)
+ * On Windows `path.relative` is case-insensitive for drive letters, so this
+ * also avoids false "external" results from case differences.
+ *
+ * @param resolved - already-absolute path (run through resolvePath first)
+ * @param workdir  - the workspace root (absolute)
+ * @returns true if `resolved` is the workdir itself or inside it
+ */
+export function isInsideWorkspace(resolved: string, workdir: string): boolean {
+  if (workdir === '') return false;
+  const rel = path.relative(workdir, resolved);
+  return rel === '' || (!path.isAbsolute(rel) && !rel.startsWith('..'));
+}

@@ -14,14 +14,18 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import { isInsideWorkspace } from '../utils/path.js';
 import type { ToolDefinition, AgentContext } from '../types.js';
 
 /**
- * Validate path doesn't escape workspace
+ * Validate path doesn't escape workspace.
+ * Delegates to the shared isInsideWorkspace helper (robust against sibling
+ * directories sharing a prefix with the workdir, which a bare startsWith
+ * would wrongly admit).
  */
 function safePath(p: string, workdir: string): string {
   const resolved = path.resolve(workdir, p);
-  if (!resolved.startsWith(workdir)) {
+  if (!isInsideWorkspace(resolved, workdir)) {
     throw new Error(`Path escapes workspace: ${p}`);
   }
   return resolved;

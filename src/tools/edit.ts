@@ -6,7 +6,7 @@
 
 import * as fs from 'fs';
 import type { ToolDefinition, AgentContext } from '../types.js';
-import { resolvePath } from '../utils/path.js';
+import { resolvePath, isInsideWorkspace } from '../utils/path.js';
 import { checkSensitivePath } from '../utils/sensitive-paths.js';
 import { stripBom, detectLineEnding, normalizeLineEndings, countReplacementChars, hasBom } from '../utils/encoding.js';
 
@@ -76,7 +76,7 @@ export const editTool: ToolDefinition = {
       }
 
       // Check if path is outside workspace
-      const isExternal = !resolvedPath.startsWith(ctx.core.getWorkDir());
+      const isExternal = !isInsideWorkspace(resolvedPath, ctx.core.getWorkDir());
       if (isExternal) {
         // Block sensitive system paths (never writable, regardless of grant)
         const sensitive = checkSensitivePath(resolvedPath);
