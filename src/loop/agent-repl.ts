@@ -215,10 +215,25 @@ export async function main(): Promise<void> {
       { role: 'assistant', content: 'Understood. I will use the recall tool to explore the mindmap. Starting with recall("/") to see the top-level structure.' },
     ]);
   } else {
-    triologue.registerProjectContextPopulator(() => [
-      { role: 'user', content: '[System] No mindmap found. Please read MYCC.md to understand the project context and structure. IMPORTANT: The recall tool will not work without a mindmap, so do NOT use it. Use read_file tool to explore MYCC.md instead.' },
-      { role: 'assistant', content: 'Understood. I will read MYCC.md using read_file to understand the project. I will NOT use the recall tool since no mindmap is available.' },
-    ]);
+    // No mindmap. The recall tool needs a mindmap, so always steer the agent
+    // away from it. Only instruct a read_file(MYCC.md) when MYCC.md actually
+    // exists — a productivity MYCC started in a dir with no MYCC.md would
+    // otherwise be sent into a doomed read_file on every context rebuild.
+    // Re-checked at rebuild time (the populator closure) so a MYCC.md added
+    // mid-session surfaces after the next compact/clear.
+    triologue.registerProjectContextPopulator(() => {
+      const myccPath = path.join(process.cwd(), 'MYCC.md');
+      if (fs.existsSync(myccPath)) {
+        return [
+          { role: 'user', content: '[System] No mindmap found. Please read MYCC.md to understand the project context and structure. IMPORTANT: The recall tool will not work without a mindmap, so do NOT use it. Use read_file tool to explore MYCC.md instead.' },
+          { role: 'assistant', content: 'Understood. I will read MYCC.md using read_file to understand the project. I will NOT use the recall tool since no mindmap is available.' },
+        ];
+      }
+      return [
+        { role: 'user', content: '[System] No mindmap found. The recall tool will not work without a mindmap, so do NOT use it. Rely on the README.md project context (if provided) and normal exploration (read_file, grep, bash) to understand the project.' },
+        { role: 'assistant', content: 'Understood. No mindmap is available, so I will not use the recall tool. I will rely on the README.md project context and normal exploration to understand the project.' },
+      ];
+    });
   }
 
   // (2) README.md — re-reads from disk on every rebuild so edits to README
