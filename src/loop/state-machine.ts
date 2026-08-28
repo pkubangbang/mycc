@@ -194,9 +194,13 @@ export class AgentStateMachine {
       if ((state === AgentState.PROMPT || state === AgentState.WAIT) && prevState !== AgentState.SLASH) {
         turn = { isFirstRound: true, nextTodoNudge: 3, lastTodoState: '', nextBriefNudge: 5, lastUserQuery: '', extractedKeywords: [] };
       }
-      // COLLECT = fresh pipeline pass — always reset.
+      // COLLECT = fresh pipeline pass — always reset. Preserve
+      // `deferredCompact`: HOOK sets it (e.g. compact-on-intent-trap) and
+      // returns COLLECT so the LLM stage can run the compact where the tool
+      // list is in scope. Resetting it to false here wipes the request before
+      // the LLM stage ever sees it, leaving the deferred-compact branch dead.
       if (state === AgentState.COLLECT) {
-        chat = { abortController: null, rawToolCalls: [], assistantContent: '', augmentedCalls: [], hookResult: null, deferredCompact: false };
+        chat = { abortController: null, rawToolCalls: [], assistantContent: '', augmentedCalls: [], hookResult: null, deferredCompact: chat.deferredCompact };
       }
 
       // ── Execute ──

@@ -222,9 +222,13 @@ export function runExec(
         } catch {
           // Process may have already exited — ignore
         }
+        // Return the partial output collected before the timeout — consistent
+        // with the ESC (onNeglected) and close paths, which both flush the
+        // ReplayBuffer. The previous `stdout: '', stderr: ''` discarded the
+        // child's output up to the timeout point.
         resolve({
-          stdout: '',
-          stderr: '',
+          stdout: stdoutBuffer.getString(),
+          stderr: stderrBuffer.getString(),
           interrupted: false,
           exitCode: 137,
           timedOut: true,

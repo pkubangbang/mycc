@@ -506,6 +506,12 @@ export async function handleCollect(
       `COLLECT state error: ${errorMessage}`,
       `messages(raw)=${rawLen} tokens=${tokLen}\n${errorStack}`,
     );
+    // If the user interrupted (neglected mode), route to STOP for centralized
+    // wrap-up instead of dropping into PROMPT (which would prompt mid-
+    // interruption). Mirrors the HOOK catch's neglected-mode guard.
+    if (agentIO.isNeglectedMode()) {
+      return AgentState.STOP;
+    }
     return AgentState.PROMPT;
   }
 }

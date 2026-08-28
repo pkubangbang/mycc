@@ -517,6 +517,13 @@ export async function handleHook(
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : String(err);
     ctx.core.brief('error', 'hook', `HOOK state error: ${errorMessage}`);
+    // If the user interrupted (neglected mode), route to STOP for centralized
+    // wrap-up (stop.ts handles startWrapUp + auto-off + setNeglectedMode)
+    // instead of dropping into PROMPT, which would prompt for new input mid-
+    // interruption.
+    if (agentIO.isNeglectedMode()) {
+      return AgentState.STOP;
+    }
     return AgentState.PROMPT;
   }
 }
