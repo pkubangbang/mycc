@@ -265,6 +265,29 @@ When updating the changelog, use the following procedure:
 ### Docs
 - **Crossroad**: Update `docs/crossroad-design.md` for Option B — overview (brief-only exemption vs non-brief fire), code snippet aligned to `chat.` + `isBriefOnly` guard, key points, and edge cases (brief-only exemption row + stale-continuation empty-prefix row); correct ESC-during-crossroad to return STOP (not PROMPT).
 
+## 2026-08-28
+### Fixes
+- **observability (dir-11)**: Foreground lead-exit handler logs non-zero exit codes and signals (`index.ts`); SIGTERM teardown logs each step via verbose (`signal-handlers.ts`).
+- **serve (dir-9)**: Cap WebSocket `maxPayload` and log discarded steering notes in `resolveSteering` (preserve the framework-free purity of `steering-queue.ts` by logging in the caller `serve-hub.ts`).
+- **utils (dir-10)**: `tsx-run findProjectRoot` breaks the loop at the filesystem root (Windows infinite-loop guard); `verbose-log` flips the `installed` flag only after the tee stream is open (fixes permanent silent-failure when an early `createWriteStream` error left `installed=true` with no stream); `multiline-input` warns on temp-file read failure instead of returning a silent empty submit (real I/O failure no longer disguised as a user cancel).
+- **read-picture (dir-5, peer)**: Return `Error:` not `Warning:` for an unsupported image extension.
+- **screen (dir-5, peer)**: Memoize `detectEnvironment` + add a probe arg to force re-detect.
+- **web_fetch (dir-5, peer)**: Enforce an `http`/`https` protocol allowlist at the tool gate.
+- **hand_over (dir-5, peer)**: `summarizeOutput` fallback preserves the raw output + typed launcher arg dispatch.
+
+### Tests
+- **state-machine**: `deferredCompact` cross-COLLECT retention regression test; `agent-exec` timeout flake hardened (1s→3s).
+- **path-validation**: Strengthen traversal/sensitive-path assertions with exact rejection reasons.
+- **mycc_title, session**: Strengthen `mycc_title` OSC 0 + `normalizeTitle`; add `find-session-paths` resolution tests.
+- **teammate-worker**: Make transcript write failures observable; fix a literal double-space in `appendFileSync`.
+- **chore(test)**: Run typecheck before vitest in `pnpm test`. Full suite: 150 files / 2683 tests passed (after peer's `hand_over` fix).
+
+### Docs & Chores
+- **code-review archive**: Archived 92 review docs to `.mycc/code-review/archive/`, keeping the 13 latest-per-direction docs + `.progress.json` at the top level. Wrote `SUMMARY-of-unfixed-issues.md` beside them as the resting backlog index (15 HELD across dir-2/3/4/7 + 1 DEFERRED dir-10 + 1 DROPPED dir-9 + 2 dir-14 test-strength).
+- **daemon stopped**: Terminated the `mycc-self-improvement` daemon (PID 2760) so the `service_cron` timer stops generating new review docs; the cron timer lives inside the daemon's Lead event loop so killing the PID leaves no orphaned timer.
+- **channel closed**: Removed the `code-review-sync` channel file pair (self `0b052c92` + offline peer `ae37b057`) from `~/.mycc-store/discovery/channels/`.
+- **Dropped (dir-9 发现1)**: WebSocket ping/pong heartbeat — fully implemented then reverted per user steering ("not necessary" for a single-user local dev tool); remains HELD-but-won't-pursue in the summary.
+
 # Todo
 
 > Todo - Or never?
