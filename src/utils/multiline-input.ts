@@ -123,7 +123,13 @@ export async function openMultilineEditor(initialContent: string): Promise<{ act
   let editedContent: string;
   try {
     editedContent = fs.readFileSync(filePath, 'utf-8');
-  } catch {
+  } catch (readErr) {
+    // The temp file read failed (deleted mid-edit, permission revoked, ...).
+    // Returning an empty submit silently would disguise a real I/O failure as
+    // a deliberate user cancel, so the agent would see '' and behave as if the
+    // user chose to submit nothing. Surface the failure first.
+    agentIO.brief('warn', 'multiline',
+      `Multi-line temp file read failed, submitting empty: ${readErr instanceof Error ? readErr.message : String(readErr)}`);
     return { action: 'submit', content: '' };
   }
   const result = extractContent(editedContent);
