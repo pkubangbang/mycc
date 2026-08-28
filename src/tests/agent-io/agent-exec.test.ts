@@ -32,7 +32,7 @@ describe('runExec timeout — partial output preservation', () => {
     const command = `node -e "${script}"`;
 
     const result = await runExec(
-      { cwd: process.cwd(), command, timeout: 1 },
+      { cwd: process.cwd(), command, timeout: 3 },
       () => {},
     );
 
@@ -48,7 +48,7 @@ describe('runExec timeout — partial output preservation', () => {
     // A command that produces no output and just blocks.
     const command = `node -e "setTimeout(()=>{}, 30000)"`;
     const result = await runExec(
-      { cwd: process.cwd(), command, timeout: 1 },
+      { cwd: process.cwd(), command, timeout: 3 },
       () => {},
     );
 

@@ -326,6 +326,94 @@ describe('AgentStateMachine', () => {
     }
   });
 
+  it('should preserve deferredCompact across the COLLECT reset (hook-deferred compact reaches the LLM stage)', async () => {
+    // Regression for agent-loop-state-machine (dir-1) PR-F test gap 1.
+    // HOOK may set chat.deferredCompact = true (e.g. compact-on-intent-trap)
+    // and return COLLECT so the LLM stage can run the compact where the tool
+    // list is in scope. The COLLECT entry resets ChatData — but it MUST
+    // preserve deferredCompact, otherwise the flag is wiped before the LLM
+    // stage ever sees it and the deferred-compact branch (llm.ts:63) goes
+    // dead. 6b61410 fixed state-machine.ts:203 to carry
+    // `deferredCompact: chat.deferredCompact` across the reset; this test
+    // locks that so a future regression that hardcodes `deferredCompact:
+    // false` in the reset goes red.
+    //
+    // Flow under test: PROMPT → COLLECT → LLM → HOOK (set flag, → COLLECT)
+    //   → COLLECT (assert deferredCompact survived the reset) → LLM (assert
+    //   the deferred-compact branch consumed + cleared it) → STOP → PROMPT
+    //   (exit).
+    const deps = createMockDeps();
+    const collectChatSnapshots: boolean[] = [];
+    let llmSawDeferred: boolean | null = null;
+    let llmClearedDeferred: boolean | null = null;
+    let hookPass = 0;
+
+    const handlers: Record<AgentState, StateHandler> = {
+      [AgentState.PROMPT]: vi.fn(async (_env, _turn, _chat) => AgentState.COLLECT),
+      [AgentState.SLASH]: vi.fn(),
+      [AgentState.COLLECT]: vi.fn(async (_env, _turn, chat) => {
+        // Snapshot whether the flag survived the COLLECT reset.
+        collectChatSnapshots.push(chat.deferredCompact);
+        return AgentState.LLM;
+      }),
+      [AgentState.LLM]: vi.fn(async (_env, _turn, chat) => {
+        // The LLM stage is the consumer: it reads chat.deferredCompact to
+        // decide whether to compact, then clears it (llm.ts:63/72). On the
+        // first LLM pass the flag is false (no HOOK has run yet); on the
+        // second pass (after HOOK set it) it must be true, and we clear it
+        // to mirror the real consumer.
+        llmSawDeferred = chat.deferredCompact;
+        if (chat.deferredCompact) {
+          // Mirror llm.ts:72 — the consumer clears the flag after compacting.
+          chat.deferredCompact = false;
+          llmClearedDeferred = chat.deferredCompact;
+        }
+        return AgentState.HOOK;
+      }),
+      [AgentState.HOOK]: vi.fn(async (_env, _turn, chat) => {
+        hookPass++;
+        if (hookPass === 1) {
+          // First HOOK pass: request a deferred compact and bounce back to
+          // COLLECT (the real compact-on-intent-trap path).
+          chat.deferredCompact = true;
+          return AgentState.COLLECT;
+        }
+        // Second HOOK pass (after the LLM consumed it): go to STOP. Driven
+        // by the pass counter, NOT a flag re-check, so the flow is
+        // deterministic and cannot re-enter the set-flag branch forever.
+        return AgentState.STOP;
+      }),
+      [AgentState.TOOL]: vi.fn(),
+      [AgentState.STOP]: vi.fn(async () => AgentState.PROMPT),
+      [AgentState.WAIT]: vi.fn(),
+    };
+
+    // Make PROMPT exit on its second entry (after STOP → PROMPT).
+    let promptCount = 0;
+    handlers[AgentState.PROMPT] = vi.fn(async () => {
+      promptCount++;
+      return promptCount === 1 ? AgentState.COLLECT : null;
+    });
+
+    const machine = new AgentStateMachine(
+      deps.triologue, deps.ctx, 'main' as ToolScope,
+      deps.conditions, deps.sequence, deps.hookExecutor, deps.inputProvider,
+      '/tmp/session.json', handlers, deps.requestEmbeddingTracker,
+    );
+
+    await machine.run();
+
+    // COLLECT was entered twice: first with deferredCompact=false (fresh
+    // pass), second with deferredCompact=true — the flag set by HOOK must
+    // have survived the COLLECT reset. This is the core regression guard.
+    expect(collectChatSnapshots).toEqual([false, true]);
+    // The LLM stage saw the deferred flag on the second pass (proving the
+    // preserved flag reached the consumer) and cleared it (mirroring
+    // llm.ts:72).
+    expect(llmSawDeferred).toBe(true);
+    expect(llmClearedDeferred).toBe(false);
+  });
+
   it('should propagate errors from handlers', async () => {
     const deps = createMockDeps();
     const testError = new Error('Handler error');
