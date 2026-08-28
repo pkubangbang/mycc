@@ -115,6 +115,19 @@ describe('readPictureTool', () => {
     expect(out).toContain('Error:');
   });
 
+  it('should expand ~ to home dir and reject it as escaping the workspace', async () => {
+    // Regression: safePath previously used a bare path.resolve(workdir, p) that
+    // did NOT expand `~`, so `~/some.png` resolved to `<workdir>/~/some.png`
+    // (inside the workspace) and the tool reported "file not found" — silently
+    // masking the wrong location. Now safePath uses resolvePath (matching
+    // read/write/edit), so `~/some.png` expands to <home>/some.png, which is
+    // outside the temp workdir and is rejected as escaping the workspace.
+    const out = await readPictureTool.handler(ctx, { path: '~/some.png' });
+    expect(out).toContain('Error:');
+    expect(out).toContain('escapes workspace');
+    expect(ctx.core.readPictureCached).not.toHaveBeenCalled();
+  });
+
   it('should handle non-existent file', async () => {
     const out = await readPictureTool.handler(ctx, { path: 'nope.png' });
     expect(out).toContain('Error:');

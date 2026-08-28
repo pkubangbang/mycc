@@ -14,17 +14,24 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { isInsideWorkspace } from '../utils/path.js';
+import { resolvePath, isInsideWorkspace } from '../utils/path.js';
 import type { ToolDefinition, AgentContext } from '../types.js';
 
 /**
  * Validate path doesn't escape workspace.
- * Delegates to the shared isInsideWorkspace helper (robust against sibling
- * directories sharing a prefix with the workdir, which a bare startsWith
- * would wrongly admit).
+ * Uses the shared resolvePath (which expands `~` to the user's home
+ * directory, matching read/write/edit) before the isInsideWorkspace guard
+ * (robust against sibling directories sharing a prefix with the workdir,
+ * which a bare startsWith would wrongly admit).
+ *
+ * NOTE: previously this used a bare `path.resolve(workdir, p)` that did NOT
+ * expand `~`, so a user-supplied `~/pic.png` was resolved under the workdir
+ * instead of home — a divergence from the sibling read/write/edit tools that
+ * all go through resolvePath. Reusing the shared primitive fixes that and
+ * keeps path handling in one place.
  */
 function safePath(p: string, workdir: string): string {
-  const resolved = path.resolve(workdir, p);
+  const resolved = resolvePath(p, workdir);
   if (!isInsideWorkspace(resolved, workdir)) {
     throw new Error(`Path escapes workspace: ${p}`);
   }
