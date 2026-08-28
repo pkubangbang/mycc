@@ -13,7 +13,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { handOverTool } from '../../tools/hand_over.js';
+import { handOverTool, parseTerminalArgs } from '../../tools/hand_over.js';
 import { createMockContext, createTempDir, removeTempDir } from './test-utils.js';
 import type { AgentContext } from '../../types.js';
 
@@ -435,3 +435,142 @@ describe('Cluster C — empty command opens an interactive shell (no "undefined"
 
 // Silence the unused-promisify import warning under strict configs.
 void promisify;
+
+// Import the mocked retryChat so Cluster D can override it to reject and
+// assert the summarizeOutput fallback path.
+import { retryChat } from '../../engine/chat-provider.js';
+// Import the mocked agentIO so Cluster D can pin the ask() answer to 'n'
+// (killSession path → summarizeOutput branch).
+import { agentIO } from '../../loop/agent-io.js';
+
+// ═══════════════════════════════════════════════════════════════════════
+// Cluster D — 弱点2: summarizeOutput fallback + parseTerminalArgs dispatch
+// ═══════════════════════════════════════════════════════════════════════
+
+describe('Cluster D — 弱点2 summarizeOutput fallback + parseTerminalArgs', () => {
+  let tempDir: string;
+  let ctx: AgentContext;
+
+  beforeEach(() => {
+    tempDir = createTempDir();
+    ctx = createMockContext(tempDir);
+    vi.clearAllMocks();
+    // Default: ask returns 'n' (killSession path → summarizeOutput branch).
+    vi.mocked(agentIO.ask).mockResolvedValue('n');
+  });
+
+  afterEach(() => {
+    removeTempDir(tempDir);
+  });
+
+  // ── summarizeOutput try/catch fallback (摘要丢输出 fix) ────────────────
+
+  it('falls back to truncated RAW output when summarization fails (no bytes lost)', async () => {
+    // >100 lines triggers summarizeOutput; make retryChat reject so the
+    // catch path runs. execAsync (capture-pane) returns 150 lines.
+    // NOTE: execAsync = promisify(exec) calls exec(cmd, cb) with the
+    // callback as the LAST arg (no options object), so the mock must find
+    // the callback positionally rather than assume a fixed arity.
+    const longOutput = Array.from({ length: 150 }, (_, i) => `line ${i}`).join('\n');
+    vi.mocked(cp.exec).mockImplementation(((
+      ...args: unknown[]
+    ) => {
+      const cb = args[args.length - 1] as (e: Error | null, r: { stdout: string; stderr: string }) => void;
+      cb(null, { stdout: longOutput, stderr: '' });
+      return undefined as never;
+    }) as never);
+    vi.mocked(retryChat).mockRejectedValue(new Error('model down'));
+
+    const result = await handOverTool.handler(ctx, {
+      command: 'long-running-cmd',
+      intent: 'RUN USER TO run a long command',
+    });
+
+    // The raw output is preserved (head-truncated), NOT replaced by a bare
+    // '(summarization failed)' placeholder that drops the captured bytes.
+    expect(result).not.toContain('(summarization failed)');
+    expect(result).toContain('summarization failed — showing raw output');
+    expect(result).toContain('line 0');
+    expect(result).toContain('line 99');
+    // Truncated at maxLines (100) — line 100+ must NOT appear.
+    expect(result).not.toContain('line 100\n');
+    expect(vi.mocked(retryChat)).toHaveBeenCalledTimes(1);
+  });
+
+  it('uses the LLM summary when summarization succeeds (unchanged happy path)', async () => {
+    const longOutput = Array.from({ length: 150 }, (_, i) => `line ${i}`).join('\n');
+    vi.mocked(cp.exec).mockImplementation(((
+      ...args: unknown[]
+    ) => {
+      const cb = args[args.length - 1] as (e: Error | null, r: { stdout: string; stderr: string }) => void;
+      cb(null, { stdout: longOutput, stderr: '' });
+      return undefined as never;
+    }) as never);
+    vi.mocked(retryChat).mockResolvedValue({ message: { role: 'assistant', content: 'LLM summary of output' } } as never);
+
+    const result = await handOverTool.handler(ctx, {
+      command: 'long-running-cmd',
+      intent: 'RUN USER TO run a long command',
+    });
+
+    expect(result).toContain('LLM summary of output');
+    expect(result).not.toContain('summarization failed');
+  });
+
+  it('does NOT call summarizeOutput for <=100-line output (raw passthrough)', async () => {
+    const shortOutput = Array.from({ length: 50 }, (_, i) => `line ${i}`).join('\n');
+    vi.mocked(cp.exec).mockImplementation(((
+      ...args: unknown[]
+    ) => {
+      const cb = args[args.length - 1] as (e: Error | null, r: { stdout: string; stderr: string }) => void;
+      cb(null, { stdout: shortOutput, stderr: '' });
+      return undefined as never;
+    }) as never);
+
+    await handOverTool.handler(ctx, {
+      command: 'short-cmd',
+      intent: 'RUN USER TO run a short command',
+    });
+
+    expect(vi.mocked(retryChat)).not.toHaveBeenCalled();
+  });
+
+  // ── parseTerminalArgs typed dispatch (解析脆弱 fix) ───────────────────
+
+  it('dispatches the macOS launcher to [open, -a, Terminal.app, --args, --, tmux, attach, -t, <session>]', () => {
+    const [exe, args] = parseTerminalArgs('open -a Terminal.app --args', 'mycc-42');
+    expect(exe).toBe('open');
+    expect(args).toEqual(['-a', 'Terminal.app', '--args', '--', 'tmux', 'attach', '-t', 'mycc-42']);
+  });
+
+  it('dispatches the Windows wt launcher to a single-token exe', () => {
+    const [exe, args] = parseTerminalArgs('wt', 'mycc-42');
+    expect(exe).toBe('wt');
+    expect(args).toEqual(['--', 'tmux', 'attach', '-t', 'mycc-42']);
+  });
+
+  it('dispatches the Windows cmd launcher to [cmd, /c, start, cmd, /k, --, ...] (space-bearing literal, NOT split-inferred)', () => {
+    const [exe, args] = parseTerminalArgs('cmd /c start cmd /k', 'mycc-42');
+    // The typed dispatch declares the boundary; a bare split(' ') would have
+    // produced the same args here, but the contract is now explicit and a
+    // future space-bearing launcher path won't be mis-split.
+    expect(exe).toBe('cmd');
+    expect(args).toEqual(['/c', 'start', 'cmd', '/k', '--', 'tmux', 'attach', '-t', 'mycc-42']);
+  });
+
+  it('treats a bare Linux launcher name as a single-token exe with no fixed args', () => {
+    const [exe, args] = parseTerminalArgs('gnome-terminal', 'mycc-42');
+    expect(exe).toBe('gnome-terminal');
+    expect(args).toEqual(['--', 'tmux', 'attach', '-t', 'mycc-42']);
+  });
+
+  it('passes through an unknown launcher as a single-token exe (no mis-split on spaces)', () => {
+    // A hypothetical launcher path with spaces: the old launcher.split(' ')
+    // would have split this into 3 tokens; the typed dispatch treats the
+    // whole string as the exe (unknown launchers fall through to the bare
+    // single-token branch), so no args are wrongly carved out of the exe.
+    const [exe, args] = parseTerminalArgs('/Apps/Visual Studio Code.app/bin/code', 'mycc-42');
+    expect(exe).toBe('/Apps/Visual Studio Code.app/bin/code');
+    expect(args).toEqual(['--', 'tmux', 'attach', '-t', 'mycc-42']);
+  });
+});

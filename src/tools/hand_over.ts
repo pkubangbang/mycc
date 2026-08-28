@@ -313,23 +313,39 @@ async function handleHandOver(ctx: AgentContext, args: Record<string, unknown>):
 }
 
 /**
- * Summarize long terminal output using LLM
+ * Summarize long terminal output using LLM.
+ *
+ * Wrapped in try/catch (dir-5 弱点2): if the LLM summarization call fails
+ * (model error, network, abort), we must NOT drop the original output and
+ * return a bare '(summarization failed)' — that loses the captured bytes
+ * the agent needs (errors, exit codes, log lines). Fall back to a head
+ * truncation of the RAW output (the same maxLines cap), so the agent still
+ * sees real content instead of a placeholder.
  */
 async function summarizeOutput(output: string, command: string, maxLines: number): Promise<string> {
-  const response = await retryChat({
-    model: MODEL,
-    messages: [
-      {
-        role: 'system',
-        content: `Summarize terminal output. Keep under ${maxLines} lines. Preserve errors and exit codes.`,
-      },
-      {
-        role: 'user',
-        content: `Command: ${command}\n\n${output}`,
-      },
-    ],
-  });
-  return response.message.content || '(summarization failed)';
+  try {
+    const response = await retryChat({
+      model: MODEL,
+      messages: [
+        {
+          role: 'system',
+          content: `Summarize terminal output. Keep under ${maxLines} lines. Preserve errors and exit codes.`,
+        },
+        {
+          role: 'user',
+          content: `Command: ${command}\n\n${output}`,
+        },
+      ],
+    });
+    return response.message.content || '(summarization returned empty)';
+  } catch {
+    // LLM summarization failed — fall back to a head-truncated copy of the
+    // raw output rather than dropping it. Preserves real bytes (errors,
+    // exit codes) up to maxLines, with a marker so the agent knows the
+    // summary was skipped.
+    const truncated = output.split('\n').slice(0, maxLines).join('\n');
+    return `(summarization failed — showing raw output, first ${maxLines} lines)\n${truncated}`;
+  }
 }
 
 // ============================================================================
@@ -383,11 +399,32 @@ function whichSync(cmd: string): boolean {
 }
 
 /**
- * Parse terminal launcher command into executable and arguments
- * Handles launchers with built-in flags (e.g., "open -a Terminal.app --args")
+ * Parse terminal launcher command into executable and arguments.
+ *
+ * dir-5 弱点2: previously this did a bare `launcher.split(' ')`, inferring
+ * the exe/args boundary from whitespace. That is fragile — a launcher
+ * whose path contains spaces (e.g. a future `/Applications/Visual Studio
+ * Code.app/.../code`) would be split at the wrong position, yielding a
+ * bogus exe and broken args. Instead, dispatch by the known launcher
+ * string to a typed `[exe, ...fixedArgs]` tuple, so the exe/args boundary
+ * is declared per-launcher rather than guessed from spaces. Each launcher
+ * then gets the common tail `-- tmux attach -t <sessionName>` appended
+ * (all supported launchers use `--` to separate their own args from the
+ * command to run).
+ *
+ * Exported for direct unit testing (the launcher spawn is a detached
+ * fire-and-forget, hard to observe from the handler).
  */
-function parseTerminalArgs(launcher: string, sessionName: string): [string, string[]] {
-  const parts = launcher.split(' ');
-  // All terminal launchers use '--' to separate their args from the command
-  return [parts[0], [...parts.slice(1), '--', 'tmux', 'attach', '-t', sessionName]];
+export function parseTerminalArgs(launcher: string, sessionName: string): [string, string[]] {
+  // Per-launcher typed dispatch: [exe, ...launcher-specific args].
+  const dispatch: Record<string, [string, ...string[]]> = {
+    'open -a Terminal.app --args': ['open', '-a', 'Terminal.app', '--args'],
+    'wt': ['wt'],
+    'cmd /c start cmd /k': ['cmd', '/c', 'start', 'cmd', '/k'],
+  };
+  const known = dispatch[launcher];
+  // Linux launchers (gnome-terminal, konsole, xfce4-terminal, mate-terminal,
+  // xterm) are bare single-token executables with no built-in flags.
+  const [exe, ...fixedArgs] = known ?? [launcher];
+  return [exe, [...fixedArgs, '--', 'tmux', 'attach', '-t', sessionName]];
 }
