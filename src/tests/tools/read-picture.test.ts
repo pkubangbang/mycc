@@ -135,14 +135,20 @@ describe('readPictureTool', () => {
     expect(ctx.core.readPictureCached).not.toHaveBeenCalled();
   });
 
-  it('should warn on unsupported extension', async () => {
+  it('should return an Error on unsupported extension (so isErrorResult bumps confusion)', async () => {
+    // Regression: unsupported extensions previously returned a `Warning:`
+    // prefix, which isErrorResult (tool.ts) does not match — the TOOL state
+    // treated the result as a non-error (even decrementing confusion by 1
+    // for "progress"), giving the agent a false success signal when nothing
+    // was actually read. Now it returns `Error:` so the failure surfaces.
     const file = path.join(tempDir, 'doc.txt');
     fs.writeFileSync(file, 'hello');
 
     const out = await readPictureTool.handler(ctx, { path: 'doc.txt' });
 
-    expect(out).toContain('Warning:');
+    expect(out).toContain('Error:');
     expect(out).toContain('.txt');
+    expect(out).toContain('not a supported image format');
     expect(ctx.core.readPictureCached).not.toHaveBeenCalled();
   });
 

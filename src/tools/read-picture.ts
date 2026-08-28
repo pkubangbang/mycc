@@ -91,11 +91,18 @@ export const readPictureTool: ToolDefinition = {
         return `Error: Image file not found: ${imagePath}`;
       }
 
-      // Check it's likely an image file
+      // Check it's likely an image file.
+      // Returns an `Error:` (not `Warning:`) so the downstream isErrorResult
+      // check in the TOOL state (tool.ts) recognizes it as a failure and
+      // bumps the confusion index — an unsupported extension means nothing
+      // was read, and the agent must not mistake the result for partial
+      // progress. There is no "try anyway" fallback: the handler returns
+      // here and never reaches readPictureCached, so an `Error:` cannot
+      // suppress a legitimate attempt.
       const ext = path.extname(safe).toLowerCase();
       const validExtensions = ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp'];
       if (!validExtensions.includes(ext)) {
-        return `Warning: File extension "${ext}" may not be a supported image format. Supported formats: ${validExtensions.join(', ')}`;
+        return `Error: File extension "${ext}" is not a supported image format. Supported formats: ${validExtensions.join(', ')}`;
       }
 
       // Delegate to core.readPictureCached (handles caching, vision call, M token).
