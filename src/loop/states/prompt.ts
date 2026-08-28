@@ -25,7 +25,7 @@ import { AgentState } from '../state-machine.js';
 import type { MachineEnv, TurnVars, ChatData, HandlerResult } from '../state-machine.js';
 import { loader } from '../../context/shared/loader.js';
 import { openMultilineEditor } from '../../utils/multiline-input.js';
-import { readSession, writeSession } from '../../session/index.js';
+import { resolveHeadlessFirstQuery } from '../../session/index.js';
 import { setSlashQuery } from './slash.js';
 import { evaluateWrapUp, clearWrapUp } from '../esc-wrap-up.js';
 import { extractKeywords } from '../keyword-extractor.js';
@@ -438,12 +438,14 @@ export async function handlePrompt(
   // Reset per-turn hook state (stop+block/replace hooks may act once per turn)
   env.hookExecutor.resetTurn();
 
-  // Capture first query as bookmark title
+  // Capture first query as bookmark title. resolveHeadlessFirstQuery unifies
+  // the two capture cases into one session-layer call: a plain empty
+  // first_query (normal interactive start) is written directly, and a
+  // HEADLESS_FIRST_QUERY_MARKER (--auto started idle, the user pressed ESC
+  // to leave auto mode, and typed the first real query) is replaced with
+  // the real query — same archive outcome either way.
   if (!bookmarkCaptured) {
-    const session = readSession(sessionFilePath);
-    if (session && !session.first_query) {
-      session.first_query = query.slice(0, 100);
-      writeSession(sessionFilePath, session);
+    if (resolveHeadlessFirstQuery(sessionFilePath, query)) {
       bookmarkCaptured = true;
     }
   }

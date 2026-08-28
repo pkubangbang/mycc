@@ -19,6 +19,74 @@ import { agentIO } from '../loop/agent-io.js';
 import { openEditor } from '../utils/open-editor.js';
 
 /**
+ * Marker seeded into `first_query` for every session that BOOTSTRAPS into
+ * auto mode (`--auto`, `--daemon <skill>`, bare `--daemon`). Such sessions
+ * skip the interactive PROMPT state entirely (the auto gate in prompt.ts
+ * returns WAIT before the bookmark capture runs), so without the marker
+ * their `first_query` stays '' and cleanupEmptySessions treats them as
+ * garbage once they are >1 min old — deleting the session dir out from
+ * under a live process (the daemon-stall bug of 2026-08-27).
+ *
+ * The marker is a LIFECYCLE field, not a one-shot bookmark: when the first
+ * real wake event arrives (channel first-query / peer or cron mail /
+ * teammate question / webui steering note — all converge on COLLECT), the
+ * COLLECT handler overwrites the marker with that event's text, so the
+ * archived session ends up with its genuine first query.
+ */
+export const HEADLESS_FIRST_QUERY_MARKER = '[auto mode] awaiting first query';
+
+/**
+ * Absolute freshness window for treating a session as still live during
+ * empty-session cleanup. Mirrors FRESHNESS_WINDOW_MS in peer/identity.ts:
+ * a live instance beats every 30s, so a latest beat within 90s means the
+ * owning process is alive RIGHT NOW and its session directory must not be
+ * deleted.
+ *
+ * This is the SECOND layer of the two-layer live-session defense:
+ * 1. Bootstrap-auto sessions (--auto / --daemon) carry the
+ *    {@link HEADLESS_FIRST_QUERY_MARKER} in `first_query` from the start,
+ *    so the cleanup predicate `!session.first_query` categorically
+ *    excludes them — no timing involved.
+ * 2. The heartbeat guard covers every OTHER live session with an empty
+ *    first_query (idle interactive sessions, non-bootstrap peers) that
+ *    the marker does not apply to.
+ */
+const LIVE_SESSION_HEARTBEAT_WINDOW_MS = 90_000;
+
+/**
+ * Check whether a session directory is owned by a live process: its
+ * heartbeat file (~/.mycc-store/discovery/heartbeat/{id}.json) contains a
+ * beat within {@link LIVE_SESSION_HEARTBEAT_WINDOW_MS} of now.
+ *
+ * Used as a deletion guard in {@link cleanupEmptySessions}: an empty
+ * (no first_query) session that is heartbeating is NOT garbage — it is a
+ * live session the marker does not cover (e.g. an idle interactive session
+ * whose first keystroke has not happened yet, or a headless process
+ * started by another entry point) and its owner process would break the
+ * moment its mailbox/triologue files vanish (cron nudges append to the
+ * mailbox path under the session dir).
+ *
+ * Best-effort: any read/parse error returns false (the file is then treated
+ * as not-live and the normal cleanup rules apply).
+ */
+function hasLiveHeartbeat(sessionId: string): boolean {
+  try {
+    const hbFile = path.join(os.homedir(), '.mycc-store', 'discovery', 'heartbeat', `${sessionId}.json`);
+    if (!fs.existsSync(hbFile)) return false;
+    const parsed = JSON.parse(fs.readFileSync(hbFile, 'utf-8')) as {
+      heartbeats?: unknown[];
+      timestamps?: unknown[];
+    };
+    // Accept both current ({heartbeats}) and legacy ({timestamps}) schemas.
+    const beats = Array.isArray(parsed.heartbeats) ? parsed.heartbeats : Array.isArray(parsed.timestamps) ? parsed.timestamps : [];
+    const latest = beats.filter((t): t is number => typeof t === 'number').pop();
+    return typeof latest === 'number' && Date.now() - latest < LIVE_SESSION_HEARTBEAT_WINDOW_MS;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Result of matching a session ID
  */
 export interface SessionMatch {
@@ -153,6 +221,81 @@ export function writeSession(filePath: string, session: Session): void {
   const tempFile = `${filePath}.tmp.${Date.now()}`;
   fs.writeFileSync(tempFile, content, 'utf-8');
   fs.renameSync(tempFile, filePath);
+}
+
+/**
+ * Mark a bootstrap-auto session (``--auto`` / ``--daemon``) as headless by
+ * seeding {@link HEADLESS_FIRST_QUERY_MARKER} into its `first_query`.
+ *
+ * WHY: bootstrap-auto sessions skip the interactive PROMPT state (the auto
+ * gate in prompt.ts returns WAIT before the bookmark capture), so their
+ * `first_query` would stay '' forever and cleanupEmptySessions would
+ * garbage-collect the live session dir once it is >1 min old. The marker
+ * makes the cleanup predicate categorically exclude the session — no
+ * heartbeat timing involved.
+ *
+ * Semantics:
+ * - No-op when the session file is missing/unreadable (nothing to mark).
+ * - No-op when `first_query` is already set — an interactive capture or an
+ *   earlier marker wins; never overwrite a real first query.
+ * - Best-effort: any error is swallowed. A failed marker write must never
+ *   kill process startup (the heartbeat guard is the second layer that
+ *   still protects the session in that case).
+ *
+ * @param sessionFilePath - Path to the session-{id}.json to mark
+ * @returns true when the marker was written, false otherwise
+ */
+export function markHeadlessSession(sessionFilePath: string): boolean {
+  try {
+    const session = readSession(sessionFilePath);
+    if (!session || session.first_query) return false;
+    session.first_query = HEADLESS_FIRST_QUERY_MARKER;
+    writeSession(sessionFilePath, session);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Replace the headless {@link HEADLESS_FIRST_QUERY_MARKER} with the REAL
+ * first query once one arrives. Called from the COLLECT handler when the
+ * first genuine wake event is processed — mail (peer mail, cron nudge, or
+ * a channel first-query delivered to the local mailbox), a teammate
+ * question, or a webui steering note — and from the PROMPT interactive
+ * bookmark capture when a user ESC-ed out of a fresh bootstrap-auto
+ * session and typed the first real query. All reset sources converge on
+ * this single function.
+ *
+ * When the session has NO first_query at all (plain interactive capture),
+ * the query is written directly — this unifies the interactive bookmark
+ * capture and the marker reset into one call site.
+ *
+ * Semantics:
+ * - Marker present → replaced with the real query text.
+ * - first_query empty → written with the real query text (interactive
+ *   bookmark capture path).
+ * - first_query already a real query → NEVER overwritten (no-op).
+ * - No-op when the session file is missing/unreadable.
+ * - Best-effort: any error is swallowed (a failed archive write must not
+ *   break the wake-event processing or the interactive prompt flow).
+ *
+ * @param sessionFilePath - Path to the session-{id}.json to update
+ * @param firstQuery - The real first query text (truncated to 100 chars,
+ *   matching the interactive bookmark capture's truncation)
+ * @returns true when first_query was written or replaced, false otherwise
+ */
+export function resolveHeadlessFirstQuery(sessionFilePath: string, firstQuery: string): boolean {
+  try {
+    const session = readSession(sessionFilePath);
+    if (!session) return false;
+    if (session.first_query && session.first_query !== HEADLESS_FIRST_QUERY_MARKER) return false;
+    session.first_query = firstQuery.slice(0, 100);
+    writeSession(sessionFilePath, session);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -419,6 +562,15 @@ export function getSessionId(filePath: string): string {
  * Clean up empty session files (sessions with no first_query)
  * Skips files created within 1 minute to prevent concurrency issues.
  *
+ * A session survives cleanup when ANY of these holds:
+ * - it has a `first_query` (interactive capture, or the
+ *   {@link HEADLESS_FIRST_QUERY_MARKER} seeded for bootstrap-auto sessions
+ *   — `--auto` / `--daemon`; see {@link markHeadlessSession}),
+ * - it is the current session,
+ * - it was created within the last minute (concurrency grace), or
+ * - its owner process is still beating (fresh heartbeat — the second
+ *   defense layer for live sessions the marker does not cover).
+ *
  * @param currentSessionId - Session ID to preserve (the current session)
  * @returns Number of removed empty sessions
  */
@@ -437,6 +589,18 @@ export function cleanupEmptySessions(currentSessionId: string): number {
     return fs.existsSync(sessionFile);
   };
 
+  // Deletion guard: skip sessions owned by a live process (fresh heartbeat).
+  // This is the SECOND layer of the live-session defense: bootstrap-auto
+  // sessions (--auto / --daemon) are already excluded categorically via the
+  // HEADLESS_FIRST_QUERY_MARKER in first_query (see markHeadlessSession).
+  // The heartbeat guard covers every OTHER live session with an empty
+  // first_query — e.g. an idle interactive session whose first keystroke
+  // has not happened yet. Without it, such a session matches "empty" once
+  // it is >1 min old and its directory gets deleted while the owner process
+  // keeps running deaf (cron nudges append to a mailbox path that no
+  // longer exists).
+  const isLive = (session: Session): boolean => hasLiveHeartbeat(session.id);
+
   // Clean up project sessions
   const projectDir = getSessionsDir();
   if (fs.existsSync(projectDir)) {
@@ -447,7 +611,7 @@ export function cleanupEmptySessions(currentSessionId: string): number {
     for (const dir of dirs) {
       const sessionPath = path.join(projectDir, dir, `session-${dir}.json`);
       const session = readSession(sessionPath);
-      if (session && !session.first_query && session.id !== currentSessionId && !isRecent(session)) {
+      if (session && !session.first_query && session.id !== currentSessionId && !isRecent(session) && !isLive(session)) {
         // Remove the entire session directory
         const sessionDir = path.join(projectDir, dir);
         const files = fs.readdirSync(sessionDir);
@@ -470,7 +634,7 @@ export function cleanupEmptySessions(currentSessionId: string): number {
     for (const dir of dirs) {
       const sessionPath = path.join(userDir, dir, `session-${dir}.json`);
       const session = readSession(sessionPath);
-      if (session && !session.first_query && session.id !== currentSessionId && !isRecent(session)) {
+      if (session && !session.first_query && session.id !== currentSessionId && !isRecent(session) && !isLive(session)) {
         // Remove the entire session directory
         const sessionDir = path.join(userDir, dir);
         const files = fs.readdirSync(sessionDir);

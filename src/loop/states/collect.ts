@@ -17,6 +17,7 @@ import type { SequenceEvent } from '../../hook/sequence.js';
 import { getSkillTriologueStatus } from '../../utils/skill-dedup.js';
 import { listWorktrees } from '../../context/worktree-store.js';
 import { getServeHub } from '../../serve/serve-registry.js';
+import { resolveHeadlessFirstQuery } from '../../session/index.js';
 import * as fs from 'fs';
 import * as path from 'path';
 import { loopEvents } from '../loop-events.js';
@@ -244,6 +245,7 @@ export async function handleCollect(
     //     path: the LLM reached COLLECT mid-run with notes still queued, so
     //     they are current direction for the ongoing work and injected as-is.
     //     Reuses the REMINDER NoteCategory — no new category needed.
+    let firstSteerNote: string | null = null;
     if (getServeHub().isRunning()) {
       const steerNotes = getServeHub().drainSteering();
       if (steerNotes.length > 0) {
@@ -255,10 +257,31 @@ export async function handleCollect(
         // successful since last user input". An empty drain (no notes) is NOT
         // user input, so the reset stays inside this guard.
         autoState.resetStreak();
+        firstSteerNote = steerNotes[0];
       }
     }
 
-    // 2d. Drain file upload queue (webui-only): if serve is running, save any
+    // 2d. Headless first_query marker reset: a session that bootstrapped into
+    //     auto mode (--auto / --daemon) carries the HEADLESS_FIRST_QUERY_MARKER
+    //     in first_query (see markHeadlessSession). The first real wake event
+    //     processed HERE is that session's actual first query — mail covers a
+    //     channel first-query (delivered to the local mailbox), peer mail, and
+    //     cron nudges; a steering note covers a webui/user hint; a teammate
+    //     question lands as the Q&A mail appended by handlePendingQuestions()
+    //     in step 1, so it is collected by the same collectMails() above.
+    //     resolveHeadlessFirstQuery no-ops unless the value is still exactly
+    //     the marker, so later events never overwrite a real first query.
+    //     (A marker left by a user who ESC-ed out of a fresh --auto session
+    //     and typed interactively is resolved by the PROMPT bookmark capture
+    //     in prompt.ts — see the HEADLESS_FIRST_QUERY_MARKER branch there.)
+    const firstEvent = mails.length > 0
+      ? `Mail from ${mails[0].from}: ${mails[0].title}\n${mails[0].content}`
+      : firstSteerNote;
+    if (firstEvent) {
+      resolveHeadlessFirstQuery(env.sessionFilePath, firstEvent);
+    }
+
+    // 2e. Drain file upload queue (webui-only): if serve is running, save any
     //     uploaded files to ./.mycc/uploaded/ and mention them via a REMINDER
     //     note so the LLM can reference them (e.g. via read_picture).
     if (getServeHub().isRunning()) {

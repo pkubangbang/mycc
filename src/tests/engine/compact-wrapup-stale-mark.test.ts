@@ -44,7 +44,7 @@ vi.mock('../../loop/agent-io.js', () => ({
 // values instead of throwing "Session context not initialized". Must also
 // include getOllamaModel (ollama.ts reads it at module load: `export const
 // MODEL = getOllamaModel()`) and the other config fns chat-provider/ollama
-// import eagerly. Mirrors the exhaustive list in tp-auto-fixer.test.ts.
+// import eagerly. Mirrors the exhaustive list in tp-fix.test.ts.
 vi.mock('../../config.js', async (importOriginal) => {
   const actual = await importOriginal() as Record<string, unknown>;
   return {

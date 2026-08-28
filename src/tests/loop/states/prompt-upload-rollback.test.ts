@@ -99,10 +99,11 @@ vi.mock('../../../context/shared/loader.js', () => ({
   },
 }));
 
-// session/index.js: stub readSession/writeSession.
+// session/index.js: stub readSession/writeSession + resolveHeadlessFirstQuery.
 vi.mock('../../../session/index.js', () => ({
   readSession: vi.fn(() => null),
   writeSession: vi.fn(),
+  resolveHeadlessFirstQuery: vi.fn(() => false),
 }));
 
 // states/slash.js: stub setSlashQuery.

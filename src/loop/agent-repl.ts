@@ -8,7 +8,7 @@ import chalk from 'chalk';
 import { MODEL } from '../engine/chat-provider.js';
 import { classifyError } from '../engine/chat-helpers.js';
 import { ParentContext } from '../context/parent-context.js';
-import { getSessionId } from '../session/index.js';
+import { getSessionId, markHeadlessSession } from '../session/index.js';
 import { slashRegistry } from '../slashes/index.js';
 import { getTokenThreshold, shouldServe, getServePort, getServeHost, shouldAuto, shouldDaemon, getAutoflyThresholdArg, getDiscoveryDir } from '../config.js';
 import { Triologue } from './triologue.js';
@@ -285,6 +285,22 @@ export async function main(): Promise<void> {
   // stop it. Only daemon mode activates the cron timer — a non-daemon lead
   // loading a skill with service_cron does NOT start cron.
   const daemonCronJob = initDaemonMode(ctx, loader, triologue);
+
+  // ── Headless first_query marker ──
+  // Every session that BOOTSTRAPS into auto mode (--auto, --daemon) skips
+  // the interactive PROMPT state (the auto gate in prompt.ts returns WAIT
+  // before the bookmark capture runs), so its first_query would stay ''
+  // forever and cleanupEmptySessions would garbage-collect the live
+  // session dir once it is >1 min old. Seed HEADLESS_FIRST_QUERY_MARKER so
+  // the session is categorically excluded from cleanup. The COLLECT
+  // handler later replaces the marker with the first real query (mail /
+  // teammate question / steering note). One condition covers all
+  // bootstrap-auto entry points; interactive and autofly-engaged sessions
+  // are untouched (autofly requires a prior interactive query, which
+  // already wrote first_query).
+  if (autoState.getAuto()) {
+    markHeadlessSession(sessionFilePath);
+  }
 
   // ── --autofly=N CLI arg: seed the autofly threshold into the singleton ──
   // When --autofly=N is provided (a positive integer), override the singleton's

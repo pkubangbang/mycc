@@ -12,7 +12,7 @@ description: >
   source (use the environment-detection / tool-and-skill-development skills
   for that); use it when the user's questions are about mycc the tool, not
   about the current project.
-keywords: [mycc, runtime, environment, tutor, glossary, letterbox, webui, serve, neglected, esc, session, triologue, teammate, mindmap, wiki, worktree, intent language, grant system, peer, channel, slash command, Ollama, DeepSeek, end-user, service, service_cron, daemon, cron, scheduled, background, headless]
+keywords: [mycc, runtime, environment, tutor, glossary, letterbox, webui, serve, neglected, esc, session, triologue, teammate, mindmap, wiki, worktree, intent language, grant system, peer, channel, crossroad, slash command, Ollama, DeepSeek, end-user, service, service_cron, daemon, cron, scheduled, background, headless]
 ---
 
 # mycc Self-Awareness: A Tutor for mycc's Own Concepts
