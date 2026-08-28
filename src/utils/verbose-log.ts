@@ -60,6 +60,30 @@ export function installVerboseLog(role: 'coordinator' | 'lead'): string | null {
     (chunk: string | Uint8Array, cb?: (err?: Error | null) => void) => boolean;
 
   let verboseWriteFailed = false;
+
+  // An async write failure on the stream (ENOSPC, permission revoked, the
+  // log volume being unmounted mid-run) emits an 'error' event. WITHOUT a
+  // listener, Node escalates an unhandled stream 'error' to an
+  // uncaughtException — and the uncaughtException handler below writes back
+  // to this SAME broken stream, which fails again and emits another 'error',
+  // producing a feedback loop of uncaughtException spam (one per stdout
+  // write) that can mask the real error. Attach an 'error' listener that
+  // mirrors the synchronous writeChunk path's discipline: warn ONCE to the
+  // real stderr and set the shared verboseWriteFailed flag so every later
+  // write attempt short-circuits, breaking the loop. (Attached here, after
+  // the flag/realStderrWrite are declared, so the closure sees them at
+  // attach time with no temporal-dead-zone ambiguity.)
+  stream.on('error', (err) => {
+    if (!verboseWriteFailed) {
+      verboseWriteFailed = true;
+      try {
+        realStderrWrite(`[verbose-log] Log stream error on ${logPath}, logging disabled: ${err instanceof Error ? err.message : String(err)}\n`);
+      } catch {
+        // last-resort: even the warning failed; nothing more we can do
+      }
+    }
+  });
+
   const writeChunk = (chunk: unknown): boolean => {
     try {
       if (typeof chunk === 'string' || Buffer.isBuffer(chunk)) {
