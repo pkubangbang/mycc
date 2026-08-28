@@ -518,6 +518,12 @@ export class ServeHub implements HubHandler {
   }
 
   private onWsClose(ws: WebSocket): void {
+    // During stop(), running=false is set FIRST, then clients.closeAll() closes
+    // every client, each firing onWsClose. Without this guard each close would
+    // re-arm disconnectTimer.start() AFTER stop() already cancelled it, leaving
+    // a stray reconnect timer running against a stopped server. A closed
+    // connection during shutdown is expected — skip the reconnect path.
+    if (!this.running) return;
     this.clients.delete(ws);
     if (this.clients.size === 0) { this.disconnectTimer.start(); }
   }
