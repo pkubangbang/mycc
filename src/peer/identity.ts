@@ -5,10 +5,15 @@
  * ~/.mycc-store/discovery/identity.json and maintains a rolling heartbeat at
  * ~/.mycc-store/discovery/heartbeat/[session-id].json.
  *
- * Freshness rule: fresh ⟺ (now - remoteLatest < FRESHNESS_WINDOW_MS) AND
+ * Freshness rule: fresh ⟺ (remote has ≥1 heartbeat) AND
+ *                              (now - remoteLatest < FRESHNESS_WINDOW_MS) AND
  *                              (remoteLatest > localOldest OR remoteLatest is recent)
  * - localOldest = local.timestamps[0] || -Infinity
- * - remoteLatest = remote.timestamps[last] || (Date.now() - 30000)
+ * - remoteLatest = remote.timestamps[last]
+ *   (a remote with ZERO heartbeats is NOT fresh — it is not provably live;
+ *    it may have crashed between register() and its first beat(). The earlier
+ *    synthetic `Date.now() - 30000` fallback matched the `recent` clause on
+ *    the nose and judged never-beat instances fresh indefinitely.)
  * - recent = (now - remoteLatest <= HEARTBEAT_INTERVAL_MS) — closes the
  *   startup race so a peer that started before the local instance is
  *   discovered instantly instead of after ~HEARTBEAT_INTERVAL_MS (30s).
@@ -437,12 +442,19 @@ export class IdentityManager {
     const map = readIdentityMap();
     if (!(sessionId in map)) return false;
 
-    // 2. Read remote heartbeat
+    // 2. Read remote heartbeat. A registered instance that has NEVER beaten
+    //    (no heartbeat file / empty) is NOT provably live — it may have
+    //    crashed/exited between register() and its first beat(). Treat it as
+    //    not-fresh rather than synthesizing a fake "just started 30s ago"
+    //    timestamp. (An earlier synthetic fallback `now - 30_000` was exactly
+    //    HEARTBEAT_INTERVAL_MS, which the `recent` clause below matched on
+    //    the nose → a never-beat instance was judged fresh indefinitely.)
     const remoteTimestamps = readHeartbeats(sessionId);
+    if (remoteTimestamps.length === 0) {
+      return false;
+    }
     const now = Date.now();
-    const remoteLatest = remoteTimestamps.length > 0
-      ? remoteTimestamps[remoteTimestamps.length - 1]
-      : now - 30_000;
+    const remoteLatest = remoteTimestamps[remoteTimestamps.length - 1];
 
     // 3. Absolute freshness window: a remote whose latest heartbeat is older
     //    than FRESHNESS_WINDOW_MS is stale, regardless of the relative check.

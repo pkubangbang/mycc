@@ -434,6 +434,62 @@ describe('ChannelManager', () => {
     expect(() => ch.joinChannel('missing')).toThrow(/Channel file not found/);
   });
 
+  it('listChannels() warns and skips a malformed (unparseable) channel file instead of throwing', () => {
+    // Regression for peer-discovery 弱点3: a corrupted/half-written channel
+    // file (present but invalid JSON) used to be silently skipped with zero
+    // observability. Now readChannelFile logs a console.warn. listChannels
+    // must still not throw and must exclude the malformed entry.
+    const cid = 'chan-malformed';
+    const dir = channelsDir();
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    // Write a syntactically invalid JSON file (truncated/half-written shape).
+    fs.writeFileSync(channelFile(SID_A, cid), '{ "channelId": "broken', 'utf-8');
+
+    const idA = new IdentityManager(SID_A, '/work/a', makeMailboxPath(SID_A));
+    const ch = new ChannelManager(SID_A, idA, makeMailboxPath(SID_A));
+
+    const warns: string[] = [];
+    const spy = vi.spyOn(console, 'warn').mockImplementation((...args: unknown[]) => { warns.push(args.join(' ')); });
+    const list = ch.listChannels();
+    spy.mockRestore();
+
+    expect(list).toEqual([]);              // malformed entry excluded
+    expect(warns.some(w => w.includes('malformed channel file'))).toBe(true);
+  });
+
+  it('sweepChannels() warns (and does not throw) when joinChannel throws for an unjoined channel', () => {
+    // Regression for peer-discovery 弱点3: sweepChannels used to swallow
+    // joinChannel throws with a bare `catch {}` — zero observability. The catch
+    // guards a genuine race window (file present+valid at listChannels() time,
+    // then gone/malformed by the time joinChannel re-reads it). We exercise the
+    // catch path deterministically by stubbing joinChannel to throw: the file
+    // is written so listChannels() returns it as unjoined, then the stub makes
+    // the sweep's joinChannel call throw, and the sweep must emit a console.warn
+    // naming the channelId instead of silently eating the error.
+    const cid = 'chan-sweep-throw';
+    const mailbox = makeMailboxPath(SID_A);
+    writeChannelRaw(SID_A, cid, {
+      channelId: cid, ownerSessionId: SID_A, peerSessionId: SID_B,
+      title: 't', firstQuery: null, joined: false, firstQuerySent: false, createdAt: 1,
+    });
+    const idA = new IdentityManager(SID_A, '/work/a', mailbox);
+    const ch = new ChannelManager(SID_A, idA, mailbox);
+    // Stub joinChannel so the sweep's auto-join throws — emulates the
+    // race where the channel file disappears between list and join.
+    vi.spyOn(ch as unknown as { joinChannel: () => never }, 'joinChannel')
+      .mockImplementation(() => { throw new Error('Channel file not found: race'); });
+
+    const warns: string[] = [];
+    const spy = vi.spyOn(console, 'warn').mockImplementation((...args: unknown[]) => { warns.push(args.join(' ')); });
+    // startChannelPoll() calls sweepChannels() once immediately.
+    ch.startChannelPoll();
+    ch.stopChannelPoll();
+    spy.mockRestore();
+
+    expect(warns.some(w => w.includes('sweep auto-join failed'))).toBe(true);
+    expect(warns.some(w => w.includes(cid))).toBe(true);
+  });
+
   it('joinChannel() sets joined=true and delivers firstQuery to the LOCAL mailbox', () => {
     const cid = 'chan-002';
     const mailbox = makeMailboxPath(SID_A);

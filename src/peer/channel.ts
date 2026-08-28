@@ -38,13 +38,17 @@ function atomicWrite(filePath: string, data: string): void {
 
 /**
  * Read and parse a channel file. Returns null if missing or malformed.
+ * A malformed file (present but unparseable — e.g. a half-written JSON from
+ * a concurrent/crashed writer) is logged via console.warn so corruption is
+ * observable instead of silently degrading channel behavior.
  */
 function readChannelFile(filePath: string): ChannelFile | null {
   if (!fs.existsSync(filePath)) return null;
   try {
     const content = fs.readFileSync(filePath, 'utf-8');
     return JSON.parse(content) as ChannelFile;
-  } catch {
+  } catch (err) {
+    console.warn(`[channel] malformed channel file, ignoring: ${filePath}: ${err instanceof Error ? err.message : String(err)}`);
     return null;
   }
 }
@@ -148,8 +152,11 @@ export class ChannelManager {
       if (!channel.joined) {
         try {
           this.joinChannel(channel.channelId);
-        } catch {
-          // joinChannel throws if channel file missing — skip silently
+        } catch (err) {
+          // joinChannel throws if the channel file went missing or is malformed
+          // between listChannels() and joinChannel() — log it so a silently
+          // failing channel is observable instead of swallowed every 5s.
+          console.warn(`[channel] sweep auto-join failed for ${channel.channelId}: ${err instanceof Error ? err.message : String(err)}`);
         }
       }
     }

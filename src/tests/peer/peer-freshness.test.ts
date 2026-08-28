@@ -122,10 +122,13 @@ describe('isFresh() absolute-window fix (Fix #1)', () => {
     expect(id.isFresh(SID_B)).toBe(false);
   });
 
-  it('a remote registered with zero heartbeats but very old startedAt is not fresh (absolute window)', () => {
-    // When remote has 0 beats, the fallback is Date.now()-30s (recent), so this
-    // case is fresh. The absolute-window check applies to actual heartbeat
-    // timestamps. This test documents the fallback behavior is still fresh.
+  it('a remote registered with ZERO heartbeats is NOT fresh (not provably live)', () => {
+    // Regression for peer-discovery 弱点1: a registered instance that never
+    // wrote a heartbeat (crashed/exited between register() and first beat())
+    // must NOT be judged fresh. The old code synthesized remoteLatest =
+    // Date.now() - 30_000, which the `recent` clause (<= HEARTBEAT_INTERVAL_MS
+    // = 30_000) matched exactly → a never-beat instance was fresh indefinitely
+    // (until the 1h prune). Now: zero heartbeats → not fresh.
     const id = new IdentityManager(SID_A, '/work/a', makeMailboxPath(SID_A));
     id.register();
     const idB = new IdentityManager(SID_B, '/work/b', makeMailboxPath(SID_B));
@@ -133,7 +136,28 @@ describe('isFresh() absolute-window fix (Fix #1)', () => {
 
     const now = Date.now();
     writeHeartbeatRaw(SID_A, [now - 600_000]);
-    // No heartbeat file for B → fallback to Date.now()-30s → within window → fresh.
+    // No heartbeat file for B → registered but never beat → NOT fresh.
+    expect(id.isFresh(SID_B)).toBe(false);
+  });
+
+  it('a remote with exactly one recent heartbeat is still fresh (startup-race fix preserved)', () => {
+    // The recent clause must still close the startup race: a peer that beat
+    // once within HEARTBEAT_INTERVAL_MS is fresh even if its single beat is
+    // older than the local oldest beat. This guards against over-tightening
+    // the 弱点1 fix (which must only kill the zero-heartbeat path, not the
+    // real-recent-heartbeat path).
+    const id = new IdentityManager(SID_A, '/work/a', makeMailboxPath(SID_A));
+    id.register();
+    const idB = new IdentityManager(SID_B, '/work/b', makeMailboxPath(SID_B));
+    idB.register();
+
+    const now = Date.now();
+    // Local oldest is NEWER than remote's single recent beat — the relative
+    // check (remoteLatest > localOldest) would FAIL, but the recent clause
+    // (beat within 30s) must still mark B fresh.
+    writeHeartbeatRaw(SID_A, [now - 5_000]);
+    writeHeartbeatRaw(SID_B, [now - 20_000]);
+
     expect(id.isFresh(SID_B)).toBe(true);
   });
 });
