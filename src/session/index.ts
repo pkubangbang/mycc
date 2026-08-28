@@ -79,8 +79,22 @@ function hasLiveHeartbeat(sessionId: string): boolean {
     };
     // Accept both current ({heartbeats}) and legacy ({timestamps}) schemas.
     const beats = Array.isArray(parsed.heartbeats) ? parsed.heartbeats : Array.isArray(parsed.timestamps) ? parsed.timestamps : [];
-    const latest = beats.filter((t): t is number => typeof t === 'number').pop();
-    return typeof latest === 'number' && Date.now() - latest < LIVE_SESSION_HEARTBEAT_WINDOW_MS;
+    // NOTE: take the MAXIMUM beat, not the LAST (`.pop()`). `.pop()` only
+    // equals the max when beats are appended monotonically by a single
+    // writer. This function reads the RAW heartbeat file (including the
+    // legacy {timestamps} schema), where entries can be non-monotonic /
+    // reordered (concurrent writes, legacy migration). `.pop()` would then
+    // pick an older beat and misjudge a live session as dead — its directory
+    // gets deleted out from under the running process (exactly the
+    // daemon-stall bug this guard exists to prevent). Use a reduce instead
+    // of Math.max(...beats) to avoid a stack overflow on large arrays and
+    // to handle the empty case: reduce over no elements returns -Infinity,
+    // so Date.now() - (-Infinity) = Infinity > window → correctly returns
+    // false (no numeric beats → not live).
+    const latest = beats
+      .filter((t): t is number => typeof t === 'number')
+      .reduce((max, t) => (t > max ? t : max), -Infinity);
+    return Date.now() - latest < LIVE_SESSION_HEARTBEAT_WINDOW_MS;
   } catch {
     return false;
   }

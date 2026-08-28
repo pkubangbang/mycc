@@ -117,6 +117,31 @@ describe('cleanupEmptySessions live-session guard', () => {
     expect(fs.existsSync(path.join(PROJECT_TMP, '.mycc', 'sessions', id))).toBe(false);
   });
 
+  it('preserves a live session when heartbeats are non-monotonic (pop() would miss the recent beat)', () => {
+    // Regression for hasLiveHeartbeat using .pop() (last element) instead of
+    // Math.max. The function reads the raw heartbeat file, which can contain
+    // non-monotonic / reordered entries (concurrent writes, legacy {timestamps}
+    // migration). With .pop(), a STALE beat sitting AFTER the recent beat in the
+    // array would be picked as "latest" → the live session is misjudged dead →
+    // its directory is deleted out from under the running process. This test
+    // writes a recent beat (10s ago) followed by a stale beat (10min ago), so
+    // .pop() returns the stale one (judged dead) while the reduce fix correctly
+    // returns the recent one (judged live).
+    fs.mkdirSync(path.join(PROJECT_TMP, '.mycc', 'sessions'), { recursive: true });
+    const id = `nonmonotonic-${Date.now()}`;
+    makeEmptySession(PROJECT_TMP, id, 30); // 30 min old — would be deleted without the heartbeat guard
+    fs.mkdirSync(HEARTBEAT_DIR, { recursive: true });
+    const file = path.join(HEARTBEAT_DIR, `${id}.json`);
+    fs.writeFileSync(file, JSON.stringify({ heartbeats: [Date.now() - 10_000, Date.now() - 10 * 60_000], briefs: [] }), 'utf-8');
+    heartbeatFiles.push(file);
+
+    chdirTo(PROJECT_TMP);
+    const removed = cleanupEmptySessions('some-other-current-session');
+    expect(removed).toBe(0);
+    expect(fs.existsSync(path.join(PROJECT_TMP, '.mycc', 'sessions', id, `session-${id}.json`))).toBe(true);
+    expect(fs.existsSync(path.join(PROJECT_TMP, '.mycc', 'sessions', id, 'triologue-lead.jsonl'))).toBe(true);
+  });
+
   it('still skips sessions created within the last minute (unchanged behavior)', () => {
     fs.mkdirSync(path.join(PROJECT_TMP, '.mycc', 'sessions'), { recursive: true });
     const id = `recent-${Date.now()}`;
