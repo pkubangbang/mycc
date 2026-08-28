@@ -228,8 +228,13 @@ export class ServeHub implements HubHandler {
     });
 
     // Chat WebSocket on /ws (noServer; route upgrades by URL so Vite HMR at /
-    // is left untouched).
-    this.wsServer = new WebSocketServer({ noServer: true });
+    // is left untouched). maxPayload caps a single inbound ws frame to the same
+    // byte limit the application enforces for file uploads (getMaxUploadMb).
+    // Without it, the `ws` library default is 100 MB — decoupled from
+    // MYCC_MAX_UPLOAD_MB — so a client could send a near-100 MB single frame
+    // that bypasses the app-level size guard in pushFileUpload.
+    const maxPayloadBytes = getMaxUploadMb() * 1024 * 1024;
+    this.wsServer = new WebSocketServer({ noServer: true, maxPayload: maxPayloadBytes });
     this.wsServer.on('connection', (ws) => this.onWsConnection(ws));
     this.upgradeHandler = (req, socket, head) => {
       if (req.url === '/ws') {
@@ -415,6 +420,16 @@ export class ServeHub implements HubHandler {
   resolveSteering(sendIds: number[] = []): string[] {
     if (this.steeringQueue.length === 0) return [];
     const selected = resolveSteeringQueue(this.steeringQueue, sendIds);
+    // Source-side observability for the implicitly-discarded notes (dir-9
+    // 发现3). The pure resolveSteeringQueue silently drops everything not in
+    // sendIds; logging the discarded ids/count here (before the atomic drain)
+    // makes "which steering notes vanished" diagnosable under -v. steering-
+    // queue.ts itself stays framework-free/pure, so the log lives in the hub.
+    const discarded = this.steeringQueue.filter((n) => !sendIds.includes(n.id));
+    if (discarded.length > 0) {
+      agentIO.verbose('serve',
+        `Steering notes discarded (not sent): ids=[${discarded.map((n) => n.id).join(',')}] count=${discarded.length}`);
+    }
     this.steeringQueue = []; // atomic drain BEFORE submit
     this.broadcast('steer-flush', '');
     if (selected.length > 0) { this.submitInput(joinSteeringNotes(selected)); }
