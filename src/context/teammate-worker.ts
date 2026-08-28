@@ -164,9 +164,17 @@ function createPersistentTriologue(name: string, assignedPath?: string): Triolog
       // Append last message to file
       const lastMsg = messages[messages.length - 1];
       try {
-        fs.appendFileSync(triologuePath, `${JSON.stringify(lastMsg)  }\n`, 'utf-8');
-      } catch {
-        // Ignore write errors
+        fs.appendFileSync(triologuePath, `${JSON.stringify(lastMsg)}\n`, 'utf-8');
+      } catch (writeErr) {
+        // Don't crash the worker on transcript write failure, but make it
+        // observable — mirroring the lead-side onMessage in agent-repl.ts,
+        // which logs via agentIO.verbose + emits a triologue_event. The child
+        // has no agentIO/loopEvents, so route through ctx.core.verbose (the
+        // IPC verbose notification the parent prints under -v). Without this,
+        // a disk-full / permission / invalid-path failure drops EVERY
+        // subsequent message from the durable transcript with zero diagnostic.
+        ctx.core.verbose('triologue',
+          `Transcript write failed: ${writeErr instanceof Error ? writeErr.message : String(writeErr)}`);
       }
     },
   });
