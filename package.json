@@ -20,7 +20,7 @@
   },
   "scripts": {
     "start": "tsx src/index.ts",
-    "test": "vitest run && npm run typecheck && npm run typecheck:test && npm run typecheck:web",
+    "test": "npm run typecheck && npm run typecheck:test && npm run typecheck:web && vitest run",
     "typecheck": "tsc --noEmit",
     "typecheck:test": "tsc --noEmit -p tsconfig.test.json",
     "typecheck:web": "vue-tsc --noEmit -p src/web/tsconfig.json",
