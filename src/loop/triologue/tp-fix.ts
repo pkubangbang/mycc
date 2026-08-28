@@ -153,9 +153,16 @@ export function attemptAutoFix(
       for (const id of ctx.getPendingOrder()) {
         const tc = ctx.getPendingById(id);
         if (tc) {
+          // A malformed provider tool_call may carry an empty function.name.
+          // Injecting a tool result with an empty tool_name can confuse
+          // downstream tool routing/display, and clearPending() below drops
+          // these calls permanently (no later chance to recover the name).
+          // Fall back to a recognizable placeholder so the injected result is
+          // well-formed even when the provider omitted the name.
+          const toolName = tc.function.name || '__tp_recovery_unknown_tool__';
           ctx.injectBypass({
             role: 'tool',
-            tool_name: tc.function.name,
+            tool_name: toolName,
             content: '[TP_RECOVERY] Tool call skipped due to consecutive assistant messages.',
             tool_call_id: id,
           });

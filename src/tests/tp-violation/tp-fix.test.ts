@@ -240,6 +240,28 @@ describe('attemptAutoFix', () => {
       expect(ctxEmpty.injectBypass).not.toHaveBeenCalled();
       expect(ctxEmpty.clearPending).toHaveBeenCalled();
     });
+
+    it('uses a placeholder tool_name when a pending tool_call has an empty function.name', () => {
+      // Regression: a malformed provider tool_call may carry an empty
+      // function.name. The duplicate_assistant branch used to inject a tool
+      // result with tool_name: '' — empty tool_name can confuse downstream
+      // tool routing/display, and clearPending() then drops the call
+      // permanently (no later chance to recover the name). Now the branch
+      // falls back to a recognizable placeholder so the injected result is
+      // well-formed even when the provider omitted the name.
+      const ctxBad = createMockContext();
+      ctxBad.pendingToolCallOrder.push('call_bad');
+      ctxBad.pendingToolCalls.set('call_bad', { id: 'call_bad', function: { name: '', arguments: {} } } as ToolCall);
+
+      const result = attemptAutoFix(ctxBad, 'duplicate_assistant', 'assistant');
+      expect(result).toBe('recovered');
+      expect(ctxBad.injectBypass).toHaveBeenCalledTimes(1);
+      const injected = ctxBad.injectedMessages[0];
+      expect(injected.role).toBe('tool');
+      expect(injected.tool_name).not.toBe('');
+      expect(injected.tool_name).toBe('__tp_recovery_unknown_tool__');
+      expect(injected.tool_call_id).toBe('call_bad');
+    });
   });
 
   describe('recovery for agent_after_system', () => {
