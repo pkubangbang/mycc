@@ -31,7 +31,6 @@ let installed = false;
  */
 export function installVerboseLog(role: 'coordinator' | 'lead'): string | null {
   if (installed) return null;
-  installed = true;
 
   const dotMycc = path.join(process.cwd(), '.mycc');
   try {
@@ -51,6 +50,13 @@ export function installVerboseLog(role: 'coordinator' | 'lead'): string | null {
   } catch {
     return null;
   }
+
+  // Mark installed only AFTER the stream is open. The earlier placement
+  // (right after the `if (installed) return null` guard) left `installed`
+  // true on the `.mycc` creation / createWriteStream early-return paths, so
+  // a later retry no-oped and verbose logging stayed disabled for the whole
+  // process with no log file — a permanent silent failure.
+  installed = true;
 
   // Capture the ORIGINAL (unwrapped) stderr writer before defining writeChunk.
   // writeChunk's one-time failure warning must write to the real stderr, not
