@@ -172,6 +172,20 @@ export function detectEnvironment(): Environment {
 // ─── Command wrapping ───────────────────────────────────────────────────────
 
 /**
+ * Escape a value for safe interpolation inside a POSIX single-quoted string.
+ *
+ * A bare `'...'` literal breaks if the value itself contains a single quote
+ * (e.g. a PATH entry like `/opt/a'b/bin`): the embedded `'` closes the
+ * single-quoted context early, turning `export PATH='/opt/a'b/bin'` into a
+ * syntax error in the spawned shell, so the terminal starts and the command
+ * never runs. The standard POSIX escape is to close the quote, emit an
+ * escaped literal quote, and reopen: `'` → `'\''`.
+ */
+function shellSingleQuote(value: string): string {
+  return value.replace(/'/g, `'\\''`);
+}
+
+/**
  * Wrap a command so it inherits the current process's PATH and environment
  * when run inside a new terminal.
  *
@@ -187,15 +201,20 @@ export function detectEnvironment(): Environment {
  * After the command finishes, `exec bash` starts an interactive shell so the
  * user can continue working in the terminal window.
  *
+ * Env values are shellSingleQuote-escaped so a single quote inside PATH /
+ * DISPLAY / WAYLAND_DISPLAY (a legal, if rare, character) cannot break the
+ * `export` statement's quoting and turn the spawned terminal into a bash
+ * syntax error.
+ *
  * @param cmd - The shell command to wrap
  * @returns The wrapped command string ready for `bash -c`
  */
-function wrapCommand(cmd: string): string {
+export function wrapCommand(cmd: string): string {
   // Export the current PATH so the new terminal inherits nvm-managed binaries etc.
   // Also pass through DISPLAY/WAYLAND_DISPLAY for GUI apps.
-  const pathExport = `export PATH='${process.env.PATH}'`;
-  const displayExport = process.env.DISPLAY ? ` export DISPLAY='${process.env.DISPLAY}';` : '';
-  const waylandExport = process.env.WAYLAND_DISPLAY ? ` export WAYLAND_DISPLAY='${process.env.WAYLAND_DISPLAY}';` : '';
+  const pathExport = `export PATH='${shellSingleQuote(process.env.PATH ?? '')}'`;
+  const displayExport = process.env.DISPLAY ? ` export DISPLAY='${shellSingleQuote(process.env.DISPLAY)}';` : '';
+  const waylandExport = process.env.WAYLAND_DISPLAY ? ` export WAYLAND_DISPLAY='${shellSingleQuote(process.env.WAYLAND_DISPLAY)}';` : '';
   const envSetup = `${pathExport};${displayExport}${waylandExport}`;
 
   return `${envSetup} ${cmd}; exec bash`;
