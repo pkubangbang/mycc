@@ -46,7 +46,7 @@ const HINT_SCHEMA = {
     },
     should_compact: {
       type: 'boolean',
-      description: 'Set true when the agent is stuck in a dead-loop (repeating the same failed actions, or cycling the same tool calls without progress) OR when the conversation context is degraded (very long, stale, attention scattered). Compaction summarises the history and restores focus — set this to trigger a context compaction instead of (or in addition to) a hint. Set false for normal blockers a hint can resolve.',
+      description: 'Set true ONLY when the agent is stuck in a dead-loop (repeating the same failed actions, or cycling the same tool calls without progress) AND a hint alone will not break it. Do NOT set it for long conversations or scattered attention — context length is handled by a separate token-based compaction, and a hint is almost always the better intervention for those. Set false for normal blockers a hint can resolve.',
     },
   },
   required: ['blocker', 'next_step', 'focus_on', 'wiki_domain', 'wiki_query', 'should_compact'],
@@ -66,10 +66,9 @@ CRITICAL INSTRUCTIONS:
 5. In the conversation context, tool calls tagged as ti[hook-name]|tool-name|args were injected by a hookish skill, NOT chosen by the agent. When diagnosing confusion, consider whether a hook is misbehaving — injecting the wrong tool, blocking spuriously, replacing incorrectly, or firing when it shouldn't. If a hook is the blocker, name the hook skill in the blocker field and describe what it is doing wrong.
 6. Cautious moves: if you notice the agent is making repeated single-tool-call turns where it could have batched independent calls (e.g. reading files one at a time, pinning todos one by one, creating issues one per turn), this is not a blocker but an efficiency gap. In that case set blocker to "no blockers" and put a concrete batch encouragement in next_step — tell the agent to emit all independent, dependency-free tool calls in a single response. Do NOT encourage batching when one call's arguments depend on another's result (e.g. creating a todo then pinning it by id, reading a file then editing it) or for checkpoint/recap which must be called alone.
 7. Reply with ONLY a JSON object. No commentary, no markdown fences.
-8. should_compact decides whether to trigger a context compaction (summarise the history to restore focus). Set it true when EITHER:
-   (a) DEAD-LOOP — the agent is repeating the same failed actions or cycling the same tool calls without making progress (e.g. the same error 3+ times, the same edit attempted repeatedly, the same file read over and over). A hint alone will not break a true loop because the stale context keeps biasing the agent the same way; compaction clears that bias.
-   (b) CONTEXT STRESS — the conversation is very long and the agent's attention is scattered (low-confidence or off-topic moves, lost track of the original goal). Compaction recentres on the user's intent and recent state.
-   Set it false for ordinary blockers a hint can resolve (an unfamiliar tool error, a missing API pattern, a misbehaving hook). should_compact is independent of blocker — you may have a real blocker with should_compact=false, or blocker="no blockers" with should_compact=true.
+8. should_compact decides whether to trigger a context compaction (summarise the history to restore focus). Set it true ONLY for a genuine DEAD-LOOP — the agent is repeating the same failed actions or cycling the same tool calls without making progress (e.g. the same error 3+ times, the same edit attempted repeatedly, the same file read over and over), and a hint alone will not break the loop because the stale context keeps biasing the agent the same way.
+   Do NOT set should_compact for long conversations, scattered attention, low-confidence moves, or losing track of the goal. Those are NOT dead-loops — a token-based compaction handles context length on a separate, objective path, and for scattered attention a HINT is the better intervention (it re-states the goal and next step WITHOUT discarding the working memory the agent just built). Setting should_compact on a long-but-progressing conversation throws away useful context.
+   Evidence: look at the "Repeated actions" line in the breakdown (if present) — it lists the same tool called N times with the same error. If there is NO repeated-action evidence, default should_compact to false. should_compact is independent of blocker — you may have a real blocker with should_compact=false, or blocker="no blockers" with should_compact=true (only if a dead-loop is visible).
 
 The schema is:
 ${JSON.stringify(HINT_SCHEMA, null, 2)}
@@ -87,10 +86,7 @@ EXAMPLE D — cautious moves (single-tool turns, encourage batching):
 {"blocker":"no blockers","next_step":"You are making one tool call per turn. Batch independent calls — emit all the read_file / todo_pinning / issue_create calls with no data dependency on each other in a single response to save round-trips. Do not batch calls where one needs another's result, and keep checkpoint/recap alone.","focus_on":"batching independent tool calls","wiki_domain":"project","wiki_query":"parallel tool calls batch independent","should_compact":false}
 
 EXAMPLE E — dead-loop (same failed edit attempted repeatedly):
-{"blocker":"Agent has attempted the same edit_file 4 times and hit the same 'old_text not found' error each time","next_step":"Re-read the target file fresh to see its current content, then rebuild old_text from that","focus_on":"stale old_text vs current file content","wiki_domain":"project","wiki_query":"edit_file old_text not found re-read","should_compact":true}
-
-EXAMPLE F — context stress (very long conversation, scattered attention):
-{"blocker":"no blockers","next_step":"Re-establish the original goal from the summary and continue the next concrete step","focus_on":"recentring on the user's original intent","wiki_domain":"project","wiki_query":"context length attention scattered goal","should_compact":true}`;
+{"blocker":"Agent has attempted the same edit_file 4 times and hit the same 'old_text not found' error each time","next_step":"Re-read the target file fresh to see its current content, then rebuild old_text from that","focus_on":"stale old_text vs current file content","wiki_domain":"project","wiki_query":"edit_file old_text not found re-read","should_compact":true}`;
 
 /** Shape of the parsed hint data from LLM response */
 interface HintData {

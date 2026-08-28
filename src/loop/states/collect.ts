@@ -59,6 +59,15 @@ function generateBreakdown(
     parts.push(`${errors.length} tool errors`);
   }
 
+  // Dead-loop evidence: same tool called 3+ times recently with the same error
+  // prefix. Feeds the hint-round prompt instruction 8 so the LLM judges
+  // should_compact on facts (a repeated-action line) rather than a vague
+  // "the conversation feels long" feeling, which was over-triggering compact.
+  const repeated = detectRepeatedActions(events);
+  if (repeated) {
+    parts.push(repeated);
+  }
+
   return parts.length > 0 ? parts.join(', ') : 'No issues detected';
 }
 
@@ -70,6 +79,79 @@ interface ReactivationEvaluation {
   hash: string;
   reopen: boolean;
   reason?: string;
+}
+
+/**
+ * Detect repeated tool actions that signal a dead-loop, to feed the hint
+ * round as objective evidence (so the LLM judges should_compact on facts,
+ * not on a vague "the conversation feels long" feeling).
+ *
+ * A "repeated action" = the same tool called 3+ times in the recent window
+ * with results that share the same error-ish prefix. We look at the trailing
+ * events (the recent window) and group consecutive same-tool calls; if 3+
+ * share a common error prefix, we report it. Bash is keyed by its first
+ * command clause (so repeated `pnpm test` runs group together even when the
+ * tail differs); other tools are keyed by a stable arg (path/name/command).
+ *
+ * Returns a human-readable line like:
+ *   "Repeated actions: edit_file ×4 (results start with "Error: old_text not found")"
+ * or null if no repetition is found. The hint-round prompt (instruction 8)
+ * tells the LLM to default should_compact=false when there is no such line.
+ *
+ * Exported for unit testing (see src/tests/loop/states/collect-repeated.test.ts).
+ */
+export function detectRepeatedActions(events: SequenceEvent[]): string | null {
+  if (events.length < 3) return null;
+  // Inspect only the trailing window — a dead-loop is a RECENT phenomenon.
+  const window = events.slice(-8);
+  // Group consecutive same-tool calls; report the largest group with 3+ that
+  // also share an error prefix in their results.
+  const groups: Array<{ tool: string; events: SequenceEvent[] }> = [];
+  for (const ev of window) {
+    const last = groups[groups.length - 1];
+    if (last && last.tool === ev.tool) {
+      last.events.push(ev);
+    } else {
+      groups.push({ tool: ev.tool, events: [ev] });
+    }
+  }
+  let best: { tool: string; count: number; prefix: string } | null = null;
+  for (const g of groups) {
+    if (g.events.length < 3) continue;
+    const prefix = commonErrorPrefix(g.events.map(e => e.result || ''));
+    if (prefix) {
+      const candidate = { tool: g.tool, count: g.events.length, prefix };
+      if (!best || candidate.count > best.count) best = candidate;
+    }
+  }
+  if (!best) return null;
+  return `Repeated actions: ${best.tool} ×${best.count} (results start with "${best.prefix}")`;
+}
+
+/**
+ * Find the longest common error prefix across results that look like errors.
+ * Only considers results that start with an error-ish marker; if fewer than
+ * 3 share a prefix, returns null (not a dead-loop signal).
+ */
+function commonErrorPrefix(results: string[]): string | null {
+  const errorish = results.filter(r => {
+    const lower = r.toLowerCase();
+    return lower.startsWith('error:') || lower.startsWith('error ') ||
+      lower.startsWith('failed') || lower.includes('not found') ||
+      lower.includes('no such') || lower.includes('does not match');
+  });
+  if (errorish.length < 3) return null;
+  // Longest common prefix of the first 40 chars (enough to identify the
+  // repeated error class without dumping a whole message into the breakdown).
+  const snippets = errorish.map(r => r.slice(0, 40));
+  let prefix = snippets[0];
+  for (const s of snippets) {
+    while (prefix && !s.startsWith(prefix)) {
+      prefix = prefix.slice(0, -1);
+    }
+    if (!prefix) break;
+  }
+  return prefix && prefix.length >= 6 ? prefix : null;
 }
 
 /**
@@ -335,19 +417,44 @@ export async function handleCollect(
         return AgentState.STOP;
       }
       // If the LLM signalled should_compact (dead-loop or context stress),
-      // trigger compaction now and return STOP so the next turn proceeds on
-      // fresh, compacted context. The confusion index is reset (the stale
-      // score was computed against the pre-compact history). Compaction is
-      // the intervention — no HINT note was injected (the hint-round module
-      // skips the note on should_compact since compact() would discard it).
+      // trigger compaction now and CONTINUE the loop on fresh, compacted
+      // context. Compaction is a mid-turn intervention (not a turn boundary),
+      // so we return COLLECT (not STOP): COLLECT → LLM will retryChat on the
+      // now-compacted triologue within the same turn. Returning STOP here was
+      // the bug — STOP → PROMPT ends the turn and waits for user input, so the
+      // loop stalled at PROMPT after a hint-compact. This mirrors the
+      // hook-deferred compaction path (hook.ts sets deferredCompact → llm.ts
+      // compacts and continues the while-loop).
+      //
+      // TP parity: compact() replaces the conversation with a 2-message
+      // [summary_user, summary_assistant] pair, so getLastRole() is
+      // 'assistant' — any note/user/tool the following states inject starts
+      // from a legal role sequence. No special TP handling needed here.
+      //
+      // Stat reset MUST mirror the llm.ts auto-compact branch: the stale
+      // sequence events, embedding tracker, hook dedup cap, and crossroad
+      // cooldown were all computed against the pre-compact history that no
+      // longer exists. Without these resets, the continued loop would run on
+      // corrupted stats (e.g. sequence events inflating the next confusion
+      // score, hook dedup cap suppressing the next turn's hooks).
       if (result === 'compact') {
         ctx.core.brief('info', 'loop', 'Hint round signalled compaction (dead-loop / context stress); compacting...');
         // Drain the per-turn tool scope so compact()'s optional working-memory
         // fork sees the tools the NEXT LLM call will use (preserves prompt cache).
         const tools = loader.getToolsForScope(env.scope);
         await triologue.compact(undefined, undefined, tools);
+        // Reset ALL stale stat counts — old context is summarized away.
         ctx.core.resetConfusionIndex();
-        return AgentState.STOP;
+        env.requestEmbeddingTracker.clear();
+        env.sequence.clear();
+        // Reset hook dedup so a stop+replace hook suppressed by the per-turn
+        // cap can re-fire after this mid-turn compact. The llm.ts branch has
+        // the same comment: auto-compact fires mid-turn with no PROMPT/resetTurn
+        // boundary, so without this the dedup cap would persist for the rest
+        // of the turn even though session.* counters were reset.
+        env.hookExecutor.resetTurn();
+        env.crossroadOccurred = false;
+        return AgentState.COLLECT;
       }
       // Reset confusion after hint
       ctx.core.resetConfusionIndex();

@@ -78,6 +78,7 @@ vi.mock('../../../loop/triologue.js', () => {
     getMessages = vi.fn(() => []);
     setSystemPrompt = vi.fn();
     generateHintRound = vi.fn(async () => 'hint round text');
+    compact = vi.fn(async () => {});
     getTokenCount = vi.fn(() => 100);
     getTokenThreshold = vi.fn(() => 50000);
     getLastRole = vi.fn(() => null);
@@ -201,6 +202,90 @@ describe('handleCollect — ESC during hint generation', () => {
     expect(result).toBe(AgentState.LLM);
     // hint block NOT entered → no hint generation
     expect(triologue.generateHintRound).not.toHaveBeenCalled();
+  });
+
+  describe('hint-round compaction (result === "compact")', () => {
+    // Helper to build an env wired for the 'compact' branch: enough messages,
+    // high confusion, escAware runs the operation and returns 'compact'.
+    function makeCompactEnv() {
+      vi.mocked(triologue.getMessagesRaw).mockReturnValue(makeMessages(8));
+      vi.mocked(triologue.generateHintRound).mockResolvedValue('compact' as never);
+      const ctx = createMockContext({
+        core: {
+          getConfusionIndex: vi.fn(() => 12),
+          resetConfusionIndex: vi.fn(),
+          brief: vi.fn(),
+        } as never,
+      });
+      const env = createMockMachineEnv({ triologue });
+      env.ctx = ctx;
+      // escAware runs the operation normally (no ESC) → returns 'compact'
+      env.ctx.core.escAware = vi.fn(async (operation: any) => {
+        return await operation(new AbortController());
+      }) as never;
+      return env;
+    }
+
+    it('should return COLLECT (not STOP) so the loop continues on compacted context', async () => {
+      const env = makeCompactEnv();
+      const turn = createTurnVars();
+      const chat = createChatData();
+
+      const result = await handleCollect(env, turn, chat);
+
+      // BEFORE: return STOP → PROMPT (loop stalled at PROMPT, waiting for user).
+      // AFTER:  return COLLECT → LLM retries on the compacted triologue, same turn.
+      expect(result).toBe(AgentState.COLLECT);
+      expect(result).not.toBe(AgentState.STOP);
+    });
+
+    it('should call triologue.compact to perform the compaction', async () => {
+      const env = makeCompactEnv();
+      const turn = createTurnVars();
+      const chat = createChatData();
+
+      await handleCollect(env, turn, chat);
+
+      expect(triologue.compact).toHaveBeenCalledTimes(1);
+    });
+
+    it('should reset confusion index after hint-compact', async () => {
+      const env = makeCompactEnv();
+      const turn = createTurnVars();
+      const chat = createChatData();
+
+      await handleCollect(env, turn, chat);
+
+      expect(env.ctx.core.resetConfusionIndex).toHaveBeenCalledTimes(1);
+    });
+
+    it('should reset sequence, hookExecutor, and requestEmbeddingTracker (mirror llm.ts auto-compact)', async () => {
+      const env = makeCompactEnv();
+      const turn = createTurnVars();
+      const chat = createChatData();
+
+      await handleCollect(env, turn, chat);
+
+      // Stat counts were computed against the pre-compact history; after
+      // compact() they are stale and must be cleared, exactly as the llm.ts
+      // auto-compact branch does. Without these the continued loop runs on
+      // corrupted stats (e.g. sequence events inflating the next confusion
+      // score, hook dedup cap suppressing the next turn's hooks).
+      expect(env.sequence.clear).toHaveBeenCalledTimes(1);
+      expect(env.hookExecutor.resetTurn).toHaveBeenCalledTimes(1);
+      expect(env.requestEmbeddingTracker.clear).toHaveBeenCalledTimes(1);
+    });
+
+    it('should reset crossroadOccurred to false', async () => {
+      const env = makeCompactEnv();
+      env.crossroadOccurred = true; // arm a stale cooldown
+      const turn = createTurnVars();
+      const chat = createChatData();
+
+      await handleCollect(env, turn, chat);
+
+      expect(env.crossroadOccurred).toBe(false);
+    });
   });
 
   it('should inject URGENT note (not MAIL) when collecting mail in neglected mode', async () => {
