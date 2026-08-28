@@ -71,10 +71,23 @@ export function registerSignalHandlers(ctx: AgentContext, daemonCronJob: Cron | 
   // HTTP port are released before the process exits — otherwise restart()
   // orphans them and the next /serve hits EADDRINUSE.
   process.on('SIGTERM', async () => {
-    if (daemonCronJob) daemonCronJob.stop();
+    // The whole teardown runs with zero logging otherwise — if a step hangs
+    // or throws, the user sees nothing before the silent process.exit(0).
+    // Each step is best-effort by design (the `false` flag on dismissTeam
+    // and the catch on serveHub stop are intentional), but verbose-logging
+    // each one makes "which step is stuck" diagnosable under -v, mirroring
+    // the foreground lead-exit logging in index.ts.
+    if (daemonCronJob) {
+      agentIO.verbose('signal', 'SIGTERM: stopping daemon cron job');
+      daemonCronJob.stop();
+    }
+    agentIO.verbose('signal', 'SIGTERM: dismissing team');
     ctx.team.dismissTeam(false);
+    agentIO.verbose('signal', 'SIGTERM: stopping peer (heartbeat + channel poll)');
     ctx.peer.stop(); // Stop heartbeat + channel poll + unregister identity
+    agentIO.verbose('signal', 'SIGTERM: stopping ServeHub (Vite + HTTP port)');
     try { await getServeHub().stop(); } catch { /* stop() already best-effort internally */ }
+    agentIO.verbose('signal', 'SIGTERM: teardown complete, exiting');
     process.exit(0);
   });
 }
