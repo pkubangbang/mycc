@@ -248,7 +248,6 @@ See the following documentation for detailed explanations:
 - **Child Process Teammates**: `docs/child-context.md` - IPC, state machine, auto-claim
 - **Dynamic Loading**: `docs/dynamic-loading.md` - Hot-reload, tool scopes, skill format
 - **Mindmap**: `docs/mindmap-design.md` - Knowledge navigation, A-N-C-E summarization, process isolation
-- **SQLite Persistence**: `docs/database-schema.md` - Tables, WAL mode, transactions
 
 ## Day-to-day Workflow as a user
 
