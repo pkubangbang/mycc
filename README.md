@@ -81,7 +81,7 @@ and you are fine with the local LLM, Ollama alone without the cloud is also acce
 
 Recommended models: `glm-5:cloud` and `gemma4:31b-cloud`.
 
-**Option B: DeepSeek** — Cloud-based API. Does not require local hardware. No `web_search`, `web_fetch`, `screen`, or `read_picture` support.
+**Option B: DeepSeek** — Cloud-based API. Does not require local hardware. Supports `web_search` (server-side via the Responses API — the search runs on DeepSeek's servers and returns a synthesized answer). `web_fetch`, `screen`, and `read_picture` are **not** supported.
 
 Get an API key at [platform.deepseek.com](https://platform.deepseek.com/api_keys) and set it as `DEEPSEEK_API_KEY`. An embedding model via Ollama is still needed for wiki/RAG features.
 
@@ -155,7 +155,7 @@ The wizard will guide you through configuring:
 - **TOKEN_THRESHOLD** - Context limit threshold (default: 50000)
 - **EDITOR** - Text editor for file editing
 
-> **Note:** When using DeepSeek, `web_search`, `web_fetch`, `screen`, and `read_picture` tools are **not available**. Embeddings for wiki/RAG still require Ollama (any embedding model).
+> **Note:** When using DeepSeek, `web_search` **is** available (server-side via the Responses API), but `web_fetch`, `screen`, and `read_picture` tools are **not available**. Embeddings for wiki/RAG still require Ollama (any embedding model).
 
 You can choose to store configuration at:
 - **User-level**: `~/.mycc-store/.env` (global, applies to all projects)

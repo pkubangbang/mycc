@@ -20,6 +20,7 @@ import {
   sleep,
   startSpinner,
   stopSpinner,
+  retryWithBackoff,
   StreamAbortedError,
   StreamTimeoutError,
   DEFAULT_RETRY_CONFIG,
@@ -546,10 +547,144 @@ export async function retryMultipleChoice(
   return null;
 }
 
-// ─── Auxiliary (not supported by DeepSeek) ───────────────────────────────
+// ─── Auxiliary ────────────────────────────────────────────────────────────
 
-export async function webSearch(_query: string): Promise<WebSearchResult[]> {
-  throw new Error('webSearch not supported by DeepSeek provider');
+// ============================================================================
+// Web Search via DeepSeek Responses API
+// ============================================================================
+//
+// DeepSeek exposes server-side web search ONLY through the Responses API
+// (`POST /responses`), not `/chat/completions`. The `web_search` tool type is
+// executed entirely on the server: the model decides whether to search, the
+// server performs the search / page opens, and the model synthesises a final
+// answer from the results.
+//
+// Wire format (verified live): the response `output` array is a list of items.
+// Each `web_search_call` item records one search action:
+//   { type: 'web_search_call', status, action: { type: 'search'|'open_page',
+//     queries?: string[], url?: string } }
+// and each `message` item carries model output in `content[].text` with a
+// `phase` ('commentary' | 'final_answer'). The raw search snippets are NOT
+// exposed to the client — the server folds them into the model's context and
+// the distilled result appears in the final_answer message text.
+//
+// For mycc's `webSearch()` contract (`WebSearchResult[]`, each rendered as a
+// numbered block) we return ONE result whose `content` is the obtained answer,
+// prefixed with a compact search-activity summary (queries run / pages opened)
+// so the caller can see what was actually searched. Mirrors ollama.ts's use of
+// retryWithBackoff and throws on hard (non-transient) errors.
+
+/** Shape of the `output` items returned by `POST /responses`. */
+interface ResponsesOutputItem {
+  type?: string;
+  status?: string;
+  id?: string;
+  action?: {
+    type?: string;
+    queries?: string[];
+    url?: string;
+  };
+  content?: Array<{ type?: string; text?: string }>;
+  phase?: string;
+  role?: string;
+}
+
+interface ResponsesResponse {
+  status?: string;
+  error?: { code?: string; message?: string } | null;
+  output?: ResponsesOutputItem[];
+}
+
+/**
+ * Call the DeepSeek Responses API (non-streaming) and extract the useful
+ * content for a web search. Returns the synthesis (final answer) along with a
+ * summary of the search actions the server performed.
+ */
+async function deepseekResponsesWebSearch(query: string): Promise<string> {
+  const url = `${getHost()}/responses`;
+  const apiKey = getApiKey();
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model: MODEL,
+      input: query,
+      tools: [{ type: 'web_search' }],
+      stream: false,
+    }),
+  });
+
+  if (!response.ok) {
+    let errorBody = '';
+    try {
+      errorBody = await response.text();
+    } catch {
+      // ignore
+    }
+    throw new Error(`DeepSeek Responses API error ${response.status}: ${errorBody.slice(0, 500)}`);
+  }
+
+  const data = (await response.json()) as ResponsesResponse;
+  if (data.status === 'failed') {
+    throw new Error(
+      `DeepSeek Responses API failed: ${data.error?.message || 'unknown error'}`,
+    );
+  }
+
+  const items = data.output || [];
+
+  // Collect search activity for a transparency summary.
+  const searchLines: string[] = [];
+  for (const item of items) {
+    const action = item.action;
+    if (!action) continue;
+    if (action.type === 'search' && action.queries?.length) {
+      searchLines.push(`Searched: ${action.queries.join('; ')}`);
+    } else if (action.type === 'open_page' && action.url) {
+      searchLines.push(`Opened page: ${action.url}`);
+    }
+  }
+
+  // Extract the final answer: prefer the message whose phase is 'final_answer',
+  // falling back to the last message item that carries output_text.
+  let answer = '';
+  const messages = items.filter((i) => i.type === 'message');
+  const finalMsg = messages.find((m) => m.phase === 'final_answer') || messages[messages.length - 1];
+  if (finalMsg?.content) {
+    answer = finalMsg.content
+      .filter((c) => c.type === 'output_text' && c.text)
+      .map((c) => c.text as string)
+      .join('\n')
+      .trim();
+  }
+
+  // If the model produced no message text (e.g. answered only in reasoning or
+  // returned an empty message), surface something actionable rather than an
+  // empty result the caller would misread as "no results found".
+  if (!answer) {
+    const reason = items
+      .filter((i) => i.type === 'reasoning')
+      .flatMap((r) => (r.content || []).map((c) => c.text || ''))
+      .join('\n')
+      .trim();
+    answer = reason ? `(No answer text returned; model reasoning: ${reason})` : '(No answer text returned by web search)';
+  }
+
+  const header =
+    searchLines.length > 0 ? `Web search "${query}" — DeepSeek server-side result:\n${searchLines.join('\n')}\n\n` : '';
+
+  return `${header}${answer}`;
+}
+
+export async function webSearch(query: string): Promise<WebSearchResult[]> {
+  return retryWithBackoff(async () => {
+    const content = await deepseekResponsesWebSearch(query);
+    return [{ content }];
+  }, { maxRetries: 2 });
 }
 
 export async function webFetch(_url: string): Promise<WebFetchResponse> {
