@@ -27,6 +27,7 @@
 
 import type { SlashCommand } from '../types.js';
 import chalk from 'chalk';
+import { formatLocalDateTime } from '../utils/time.js';
 
 /**
  * Hard cutoff for the listing: a peer whose latest heartbeat is older than
@@ -76,7 +77,7 @@ export const peerCommand: SlashCommand = {
 
       if (fresh) online++;
 
-      const started = new Date(id.startedAt).toISOString().replace('T', ' ').slice(0, 19);
+      const started = formatLocalDateTime(id.startedAt);
       const ageMs = now - id.startedAt;
       const age = ageMs < 60_000
         ? `${Math.round(ageMs / 1000)}s ago`
@@ -101,7 +102,7 @@ export const peerCommand: SlashCommand = {
       const briefs = ctx.peer.getBriefs(id.sessionId);
       const briefLine = briefs.length > 0
         ? `\n    briefs:\n${briefs.map((b) => {
-            const t = new Date(b.time).toISOString().replace('T', ' ').slice(0, 19);
+            const t = formatLocalDateTime(b.time);
             return `      - [${t}] (conf ${b.confidence}) ${b.content}`;
           }).join('\n')}`
         : '';

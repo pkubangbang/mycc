@@ -14,6 +14,7 @@
  */
 
 import type { ToolDefinition, AgentContext } from '../types.js';
+import { formatLocalDateTime } from '../utils/time.js';
 
 /**
  * Hard cutoff for the peers listing: a peer whose latest heartbeat is older
@@ -77,7 +78,7 @@ export const peersTool: ToolDefinition = {
 
       if (fresh) online++;
 
-      const started = new Date(id.startedAt).toISOString().replace('T', ' ').slice(0, 19);
+      const started = formatLocalDateTime(id.startedAt);
       const tag = isSelf ? ' (self)' : '';
       const state = fresh ? 'online' : 'offline';
       const roleTag = id.role ? `\n    role: ${id.role}` : '';
@@ -94,7 +95,7 @@ export const peersTool: ToolDefinition = {
       const briefs = ctx.peer.getBriefs(id.sessionId);
       const briefLine = briefs.length > 0
         ? `\n    briefs:\n${briefs.map((b) => {
-            const t = new Date(b.time).toISOString().replace('T', ' ').slice(0, 19);
+            const t = formatLocalDateTime(b.time);
             return `      - [${t}] (conf ${b.confidence}) ${b.content}`;
           }).join('\n')}`
         : '';
