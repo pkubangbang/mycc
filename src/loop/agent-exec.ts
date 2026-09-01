@@ -49,7 +49,7 @@ export interface ExecResult {
  *
  * Pattern adapted from open-science PR#421 and midscene PR#2756.
  */
-function filterCliXml(chunk: Buffer): Buffer {
+export function filterCliXml(chunk: Buffer): Buffer {
   const text = chunk.toString('utf-8');
   // Fast path: no CLIXML marker → return untouched.
   if (!text.includes('#< CLIXML') && !text.includes('<Objs')) {
@@ -91,11 +91,28 @@ class ReplayBuffer {
   }
 }
 
-/** The 5.1-only Layer-2 patch (default write encoding -> no-BOM UTF-8). */
-const PS51_LAYER2_PATCH =
+/**
+ * The 5.1-only Layer-2 patch.
+ *
+ * Write side: default write encoding -> no-BOM UTF-8. 5.1's `-Encoding UTF8`
+ * writes a BOM (EF BB BF) that corrupts formats needing pure-ASCII headers
+ * (e.g. `jar cfm`), so the default is set to a no-BOM UTF8Encoding. An
+ * explicit `-Encoding UTF8` from the LLM still wins and still writes a BOM.
+ *
+ * Read side: `Get-Content` defaults to the system ANSI codepage (936=GBK on
+ * zh-CN) in 5.1, so reading a UTF-8-no-BOM file with non-ASCII text produces
+ * mojibake. Setting `Get-Content:Encoding` to `'utf8'` fixes the READ default
+ * (it only affects decoding, so it writes no BOM — unlike the write cmdlets).
+ * The string form `'utf8'` is required here: a `[System.Text.UTF8Encoding]`
+ * object does NOT bind to `Get-Content`'s `-Encoding` parameter (which expects
+ * the `FileSystemCmdletProviderEncoding` enum), and would emit a binding
+ * warning while leaving the default unchanged.
+ */
+export const PS51_LAYER2_PATCH =
   "$PSDefaultParameterValues['Set-Content:Encoding']=[System.Text.UTF8Encoding]::new($false); " +
   "$PSDefaultParameterValues['Add-Content:Encoding']=[System.Text.UTF8Encoding]::new($false); " +
-  "$PSDefaultParameterValues['Out-File:Encoding']=[System.Text.UTF8Encoding]::new($false); ";
+  "$PSDefaultParameterValues['Out-File:Encoding']=[System.Text.UTF8Encoding]::new($false); " +
+  "$PSDefaultParameterValues['Get-Content:Encoding']='utf8'; ";
 
 /**
  * Build the command string + spawn the process for the detected shell.
@@ -130,9 +147,10 @@ function spawnForShell(cwd: string, command: string): { proc: ChildProcess; isWi
   if (shellInfo.shell === 'powershell5') {
     // 5.1 defaults to ANSI read / BOM-on-UTF8 write — append the
     // $PSDefaultParameterValues Layer-2 patch (default write encoding ->
-    // no-BOM UTF-8). An explicit -Encoding UTF8 from the LLM still wins and
-    // still writes a BOM; Get-Content's read default is unfixable in 5.1
-    // (left to the system-prompt reminder). See windows-shell-strategy skill.
+    // no-BOM UTF-8, and default read encoding -> UTF-8). An explicit
+    // -Encoding UTF8 from the LLM still wins and still writes a BOM on the
+    // write side; the read side is now fixed by the patch (see
+    // PS51_LAYER2_PATCH above).
     const effectiveCommand = `try { chcp 65001 > $null } catch {}; $ProgressPreference = 'SilentlyContinue'; $OutputEncoding = [System.Text.Encoding]::UTF8; [Console]::OutputEncoding = [System.Text.Encoding]::UTF8; ${PS51_LAYER2_PATCH}${command}`;
     return {
       // Native exes bypass the preamble's UTF-8 settings (see pwsh7 branch

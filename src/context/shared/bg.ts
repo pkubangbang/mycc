@@ -4,6 +4,8 @@
 
 import { spawn, execSync, ChildProcess } from 'child_process';
 import type { BgModule, BgTask, CoreModule } from '../../types.js';
+import { getShellInfo } from '../../utils/shell-detect.js';
+import { filterCliXml, PS51_LAYER2_PATCH } from '../../loop/agent-exec.js';
 
 /** Maximum accumulated output per task (100 KB). Older output is trimmed. */
 const MAX_OUTPUT_BYTES = 100 * 1024;
@@ -24,20 +26,29 @@ export class BackgroundTasks implements BgModule {
 
   /**
    * Run a command in the background.
-   * On Windows, uses PowerShell with UTF-8 encoding preamble matching agent-io.ts.
+   * On Windows, uses the detected shell (pwsh7 or powershell5) with the same
+   * UTF-8 encoding preamble as the bash tool (agent-exec.ts): chcp 65001 +
+   * $OutputEncoding/[Console]::OutputEncoding UTF-8, plus the 5.1-only
+   * $PSDefaultParameterValues Layer-2 patch (no-BOM write + UTF-8 read).
    * On Unix, uses the system shell directly.
    */
   async runCommand(cmd: string): Promise<number> {
-    const isWin = process.platform === 'win32';
+    const shellInfo = getShellInfo();
+    const isWin = shellInfo.isWin;
+
+    // Build the Windows preamble. pwsh7 defaults to UTF-8 no-BOM, so it only
+    // needs the console/pipe encoding preamble; powershell5 additionally needs
+    // the Layer-2 patch (no-BOM write default + UTF-8 read default).
+    const preamble =
+      `try { chcp 65001 > $null } catch {}; $ProgressPreference = 'SilentlyContinue'; $OutputEncoding = [System.Text.Encoding]::UTF8; [Console]::OutputEncoding = [System.Text.Encoding]::UTF8; ` +
+      (shellInfo.shell === 'powershell5' ? PS51_LAYER2_PATCH : '');
+
     const child = isWin
-      ? spawn('powershell', [
+      ? spawn(shellInfo.path ?? 'powershell', [
           '-NoProfile',
           '-NonInteractive',
           '-EncodedCommand',
-          Buffer.from(
-            `try { chcp 65001 > $null } catch {}; $ProgressPreference = 'SilentlyContinue'; $OutputEncoding = [System.Text.Encoding]::UTF8; [Console]::OutputEncoding = [System.Text.Encoding]::UTF8; ${cmd}`,
-            'utf16le'
-          ).toString('base64'),
+          Buffer.from(`${preamble}${cmd}`, 'utf16le').toString('base64'),
         ], {
           cwd: this.core.getWorkDir(),
           windowsHide: true,
@@ -45,9 +56,10 @@ export class BackgroundTasks implements BgModule {
           // which breaks stdout/stderr piping (output goes to that console
           // instead of the pipes). We use unref() instead to allow the
           // child to outlive the parent while keeping pipes intact.
-          // PYTHONIOENCODING forces Python scripts to use UTF-8 for their
-          // stdout/stderr pipes regardless of the system code page.
-          env: { ...process.env, PYTHONIOENCODING: 'utf-8' },
+          // PYTHONUTF8/PYTHONIOENCODING force Python scripts to use UTF-8
+          // for their stdout/stderr pipes regardless of the system code page
+          // (mirrors agent-exec.ts).
+          env: { ...process.env, PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8' },
         })
       : spawn(cmd, [], {
           cwd: this.core.getWorkDir(),
@@ -97,7 +109,7 @@ export class BackgroundTasks implements BgModule {
     };
 
     child.stdout?.on('data', appendOutput);
-    child.stderr?.on('data', appendOutput);
+    child.stderr?.on('data', (data: Buffer) => appendOutput(filterCliXml(data)));
 
     // Handle completion
     child.on('close', (code) => {
