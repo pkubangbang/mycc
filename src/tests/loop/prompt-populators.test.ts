@@ -17,7 +17,10 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { buildPlatformCalendarMessages } from '../../loop/prompt-populators.js';
+import * as fs from 'fs';
+import * as path from 'path';
+import * as os from 'os';
+import { buildPlatformCalendarMessages, buildNodeModulesReminderMessages } from '../../loop/prompt-populators.js';
 
 describe('buildPlatformCalendarMessages', () => {
   it('returns a user + assistant message pair', () => {
@@ -50,5 +53,57 @@ describe('buildPlatformCalendarMessages', () => {
     const calendarIdx = user.content.indexOf('## Calendar');
     expect(platformIdx).toBeGreaterThanOrEqual(0);
     expect(calendarIdx).toBeGreaterThan(platformIdx);
+  });
+});
+
+describe('buildNodeModulesReminderMessages', () => {
+  // Helper: run a callback with cwd set to a temp dir, restoring cwd after.
+  function withTempCwd<T>(fn: () => T): T {
+    const originalCwd = process.cwd();
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mycc-populator-test-'));
+    process.chdir(tmpDir);
+    try {
+      return fn();
+    } finally {
+      process.chdir(originalCwd);
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  }
+
+  it('returns an empty array when node_modules does not exist', () => {
+    withTempCwd(() => {
+      const messages = buildNodeModulesReminderMessages();
+      expect(messages).toEqual([]);
+    });
+  });
+
+  it('returns a user + assistant pair when node_modules exists', () => {
+    withTempCwd(() => {
+      fs.mkdirSync(path.join(process.cwd(), 'node_modules'));
+      const messages = buildNodeModulesReminderMessages();
+      expect(messages).toHaveLength(2);
+      expect(messages[0].role).toBe('user');
+      expect(messages[1].role).toBe('assistant');
+    });
+  });
+
+  it('emits the node_modules exclusion reminder in the user content', () => {
+    withTempCwd(() => {
+      fs.mkdirSync(path.join(process.cwd(), 'node_modules'));
+      const [user] = buildNodeModulesReminderMessages();
+      expect(user.content).toContain('node_modules');
+      expect(user.content).toContain('exclude');
+      // Cross-platform guidance for both Unix and PowerShell should be present.
+      expect(user.content).toContain('--exclude-dir=node_modules');
+      expect(user.content).toContain('notmatch');
+    });
+  });
+
+  it('mentions that the grep tool already auto-excludes node_modules', () => {
+    withTempCwd(() => {
+      fs.mkdirSync(path.join(process.cwd(), 'node_modules'));
+      const [user] = buildNodeModulesReminderMessages();
+      expect(user.content).toContain('grep tool already auto-excludes');
+    });
   });
 });

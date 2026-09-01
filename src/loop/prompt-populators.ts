@@ -23,6 +23,8 @@
  */
 
 import * as os from 'os';
+import * as fs from 'fs';
+import * as path from 'path';
 import { getShellInfo, type ShellKind } from '../utils/shell-detect.js';
 import type { Message } from '../types.js';
 
@@ -180,6 +182,58 @@ export function buildPlatformCalendarMessages(): Message[] {
       role: 'assistant',
       content:
         'Understood. I have noted the current date and platform/shell environment.',
+    },
+  ];
+}
+
+// ============================================================================
+// node_modules Detection
+// ============================================================================
+
+/**
+ * Build the node_modules exclusion reminder as a projectContext deliverable.
+ *
+ * The grep tool already auto-excludes node_modules (via ALWAYS_EXCLUDE_DIRS
+ * in grep-search.ts), but the bash tool does NOT — and the LLM frequently
+ * uses `ls` / `Get-ChildItem` via bash to explore the working directory,
+ * which would dump thousands of node_modules entries. This populator detects
+ * whether node_modules/ exists in the cwd and, if so, emits a reminder.
+ *
+ * The existence check runs at registration time and at every rebuild
+ * (compact/clear boundary), not on every LLM call — so the prompt-cache
+ * prefix stays stable between rebuilds. This matches the README populator
+ * pattern (re-reads from disk on every rebuild) and the pitfall rule that
+ * projectContext must be stable between rebuild boundaries.
+ *
+ * Returns an empty array when node_modules/ does not exist, so no messages
+ * are injected for non-Node.js projects (a zero-cost no-op).
+ */
+export function buildNodeModulesReminderMessages(): Message[] {
+  const nodeModulesPath = path.join(process.cwd(), 'node_modules');
+  if (!fs.existsSync(nodeModulesPath)) return [];
+
+  const content =
+    `[System - node_modules detected]\n\n` +
+    `A "node_modules" directory exists in the project root. This directory ` +
+    `contains thousands of installed dependency files and should NEVER be ` +
+    `listed or searched directly.\n\n` +
+    `When using the bash tool for ls/directory listing:\n` +
+    `- Exclude node_modules from recursive listings. On Unix: ` +
+    `\`ls --ignore=node_modules\` or \`find . -not -path '*/node_modules/*'\`. ` +
+    `On Windows PowerShell: \`Get-ChildItem -Recurse | Where-Object { $_.FullName -notmatch 'node_modules' }\`.\n\n` +
+    `When using grep: the grep tool already auto-excludes node_modules, ` +
+    `so prefer it over bash grep.\n\n` +
+    `When using bash grep (fallback): always add --exclude-dir=node_modules ` +
+    `(Unix) or pipe through \`Where-Object { $_ -notmatch 'node_modules' }\` ` +
+    `(Windows PowerShell).`;
+
+  return [
+    { role: 'user', content },
+    {
+      role: 'assistant',
+      content:
+        'Understood. I will exclude node_modules from ls and grep commands ' +
+        'to avoid listing or searching installed dependencies.',
     },
   ];
 }

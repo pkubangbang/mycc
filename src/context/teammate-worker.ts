@@ -16,7 +16,7 @@ import { StreamAbortedError } from '../engine/chat-provider.js';
 import type { AgentContext, Message } from '../types.js';
 import type { ToolCall } from '../types.js';
 import { buildNormalModePrompt } from '../loop/agent-prompts.js';
-import { buildPlatformCalendarMessages } from '../loop/prompt-populators.js';
+import { buildPlatformCalendarMessages, buildNodeModulesReminderMessages } from '../loop/prompt-populators.js';
 import { getTokenThreshold, getSessionContext, getSessionDir, setSessionContext, isVerbose } from '../config.js';
 import { TriologueLite } from '../loop/triologue-lite.js';
 import { ipc, sendStatus } from './child/ipc-helpers.js';
@@ -186,6 +186,11 @@ function createPersistentTriologue(name: string, assignedPath?: string): Triolog
   // boundaries (preserving the prompt-cache prefix) while still refreshing
   // the environment info at the boundary where the prefix changes anyway.
   triologue.registerProjectContextPopulator(() => buildPlatformCalendarMessages());
+  // node_modules reminder — detects node_modules/ in cwd and reminds the
+  // teammate to exclude it from ls/grep (the bash tool does not auto-exclude
+  // like the grep tool does). Same stable-prefix pattern as above: re-checked
+  // only at rebuild boundaries, zero messages when no node_modules/ exists.
+  triologue.registerProjectContextPopulator(() => buildNodeModulesReminderMessages());
   // Initial build so the child's very first getMessages() carries the content.
   triologue.rebuildProjectContext();
 

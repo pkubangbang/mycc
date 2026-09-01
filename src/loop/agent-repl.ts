@@ -44,7 +44,7 @@ import { loadProjectMindmap } from './mindmap-loader.js';
 import { registerSignalHandlers } from './signal-handlers.js';
 import { initDaemonMode } from './daemon-init.js';
 import { initHookSystem, buildHookInfoMessages } from './hook-bootstrap.js';
-import { buildPlatformCalendarMessages } from './prompt-populators.js';
+import { buildPlatformCalendarMessages, buildNodeModulesReminderMessages } from './prompt-populators.js';
 import { wireServeCallbacks } from './serve-wiring.js';
 
 const version = pkg.version;
@@ -265,6 +265,14 @@ export async function main(): Promise<void> {
   //     boundary (keeping the prompt-cache prefix hot) while still refreshing
   //     when the prefix changes anyway. Registered after README, before hooks.
   triologue.registerProjectContextPopulator(() => buildPlatformCalendarMessages());
+
+  // (3b) node_modules reminder — detects node_modules/ in cwd and reminds the
+  //      agent to exclude it from ls/grep. The grep tool already auto-excludes
+  //      node_modules, but the bash tool (used for ls) does NOT. Re-checked at
+  //      every rebuild boundary (compact/clear) so the prompt-cache prefix
+  //      stays stable between rebuilds; a zero-message no-op when no
+  //      node_modules/ exists (non-Node.js projects).
+  triologue.registerProjectContextPopulator(() => buildNodeModulesReminderMessages());
 
   // (4) Hook info (pending + legacy) — registered AFTER initHookSystem so the
   //     closure can capture `conditions` and `loader`. Each rebuild re-queries
