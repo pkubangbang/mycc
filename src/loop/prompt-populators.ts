@@ -3,7 +3,7 @@
  * sections (platform + calendar) to the LLM.
  *
  * These two sections (## Platform and ## Calendar) were historically baked into
- * the system prompt by agent-prompts.ts via buildCommonSections() and rebuilt on
+ * the system prompt by prompts/common.ts via buildCommonSections() and rebuilt on
  * EVERY LLM call. But the system prompt is the FIRST tokens of the prompt-cache
  * prefix (system + projectContext + conversation + tools), so any change to it
  * mid-session (e.g. the date rolling over at midnight, or the coordinator PID)

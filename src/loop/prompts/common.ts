@@ -1,23 +1,28 @@
 /**
- * agent-prompts.ts - System prompt building utilities
+ * common.ts - Shared system-prompt building blocks
+ *
+ * Section builders used by both the lead prompts (lead.ts) and the teammate
+ * prompt (teammate.ts). Role-specific prompt assembly lives in those files;
+ * this module holds only the reusable prose sections (intent language,
+ * output behavior, verification, knowledge boundary, context management,
+ * launch args, pinned todos) plus the plan-mode base prompt that the lead
+ * plan prompts compose on top of.
  */
 
-import type { AgentContext } from '../types.js';
-import type { Core } from '../context/parent/core.js';
-import { loader } from '../context/shared/loader.js';
+import { loader } from '../../context/shared/loader.js';
 import {
   VALID_VERBS,
   VALID_OBJECTS,
   VERB_MEANINGS,
   OBJECT_MEANINGS,
-} from '../context/grant/intent-parser.js';
-import { getLaunchArgs } from '../config.js';
+} from '../../context/grant/intent-parser.js';
+import { getLaunchArgs } from '../../config.js';
 
 // ============================================================================
 // Intent Language Section (shared across all prompts)
 // ============================================================================
 
-function buildIntentLanguageSection(): string {
+export function buildIntentLanguageSection(): string {
   const lines: string[] = [];
 
   lines.push('## Intent Lang');
@@ -102,7 +107,7 @@ function buildIntentLanguageSection(): string {
     '  - Unavailable in child processes: a child cannot reach the user prompt, so `dangerous=i_know` is rejected there — ask the lead agent to perform the operation instead.'
   );
   lines.push(
-    '  - Without this PARAM, a blocked dangerous command returns a Socratic hint that names the *existence* of a PARAM override but withholds the exact key/value; you must consult this section to find it.'
+    '  - Without this PARAM, a blocked dangerous command returns a Socratic Hint that names the *existence* of a PARAM override but withholds the exact key/value; you must consult this section to find it.'
   );
   lines.push(
     '  - Example: `DELETE DATA path=build/ dangerous=i_know TO reclaim disk space before rebuild`'
@@ -128,7 +133,7 @@ function buildIntentLanguageSection(): string {
 // Common Sections (shared across prompts)
 // ============================================================================
 
-function buildOutputBehaviorSection(): string {
+export function buildOutputBehaviorSection(): string {
   return [
     '## Output Behavior',
     '**CRITICAL**: you MUST follow these instructions when you respond.',
@@ -148,7 +153,7 @@ function buildOutputBehaviorSection(): string {
   ].join('\n');
 }
 
-function buildVerificationSection(): string {
+export function buildVerificationSection(): string {
   return [
     '## Verification Before Action',
     "Understand the project structure and the user's preference before acting. If unsure, ask — don't infer.",
@@ -167,7 +172,7 @@ function buildVerificationSection(): string {
 // Pinned Todo & Reactivation Section (lead-only — teammates never see it)
 // ============================================================================
 
-function buildPinnedTodoSection(): string {
+export function buildPinnedTodoSection(): string {
   return `### Pinned Todos
 Regular todos are auto-cleared when all are completed. Pinned todos persist:
 - Use \`todo_pinning(id, hash, pinned=true)\` to pin a todo after creating it with \`todo_create\`.
@@ -192,7 +197,7 @@ Pinned todos can be automatically reactivated (marked back to not done) when a c
  * `--daemon lfplater-skill-manager --skip-healthcheck` and knows its role; a
  * normal lead sees `(none)`. Generic — no `if (role)` special-casing.
  */
-function buildLaunchArgsSection(): string {
+export function buildLaunchArgsSection(): string {
   return `## Launch Args\nYou were started with: \`${getLaunchArgs()}\``;
 }
 
@@ -200,7 +205,7 @@ function buildLaunchArgsSection(): string {
 // Shared Common Sections (used by all normal mode prompts)
 // ============================================================================
 
-function buildCommonSections(): string {
+export function buildCommonSections(): string {
   return [
     buildLaunchArgsSection(),
     '',
@@ -216,7 +221,7 @@ function buildCommonSections(): string {
 // Knowledge Boundary Section
 // ============================================================================
 
-function buildKnowledgeBoundarySection(): string {
+export function buildKnowledgeBoundarySection(): string {
   const lines = [
     '## Knowledge Boundary',
     '',
@@ -247,7 +252,7 @@ function buildKnowledgeBoundarySection(): string {
   return lines.join('\n');
 }
 
-function buildContextManagementSection(): string {
+export function buildContextManagementSection(): string {
   return `## Checkpoint and recap
 
 Checkpoint and recap tools work together to manage subtask boundaries and keep you focused.
@@ -263,7 +268,7 @@ Checkpoint and recap tools work together to manage subtask boundaries and keep y
 - Tasks where you immediately know the answer
 
 **Workflow:**
-1. Use checkpoint tool to create a checkpoint with ID (e.g., "abc12345")
+1. Use checkpoint tool to create a checkpoint with an ID (e.g., "abc12345")
 2. [Explore files, read code, investigate] - Messages accumulate
 3. Close the checkpoint with one of two options:
    - recap({ checkpoint_id: "abc12345" }) - Summarize findings and close
@@ -291,7 +296,7 @@ If you later abandon this checkpoint, the direction is presented heuristically i
 // Plan Mode - Shared Base (Mission, Allowed Actions, Exiting, Workflow, shared sections)
 // ============================================================================
 
-function buildPlanBasePrompt(workDir: string): string {
+export function buildPlanBasePrompt(workDir: string): string {
   return `You are a planning agent at ${workDir}.
 
 ## Your Mission
@@ -369,205 +374,4 @@ ${buildKnowledgeBoundarySection()}
 ${buildOutputBehaviorSection()}
 
 ${buildIntentLanguageSection()}`;
-}
-
-// ============================================================================
-// Solo Plan Mode Prompt
-// ============================================================================
-
-function buildSoloPlanPrompt(workDir: string): string {
-  return `${buildPlanBasePrompt(workDir)}
-
-${buildContextManagementSection()}`;
-}
-
-// ============================================================================
-// Team Plan Mode Prompt
-// ============================================================================
-
-function buildTeamPlanPrompt(workDir: string): string {
-  return `${buildPlanBasePrompt(workDir)}
-
-## Team Planning
-
-Your teammates are already spawned. In this mode, your primary job is NOT to explore the codebase yourself. Instead, focus on:
-
-### Your Role
-You are the router between teammates. You divide; teammates conquer. Your only path to results is to break the problem into subtasks, delegate them to teammates, and integrate the outputs. Do not attempt to conquer subtasks yourself.
-
-### What NOT to Do
-- Do NOT dig into code yourself - let teammates handle exploration
-- Do NOT create a plan in isolation - use teammates to gather information first
-- Do NOT assume the team composition is correct - if you are missing a skill, spawn a new teammate
-
-### Workflow
-1. Assess the problem - what do you need to know? What skills are needed?
-2. Create teammates for missing roles via \`tm_create\`
-3. Deploy teammates to explore - use \`mail_to\` then \`tm_await\` for synchronous results, \`mail_to\` alone for parallel work
-4. Review their findings - are they correct? Complete? Any blind spots?
-5. Ask the user to validate key assumptions - build consensus
-6. Refine the plan based on feedback
-7. Produce the final actionable plan
-
-### Task Delegation
-Use \`issue_create\` to define all tasks upfront (use \`blockedBy\` for dependencies). New issues start in DRAFT status and are invisible to teammates for auto-claim — finalize each with issue_claim (assign to a teammate) or issue_publish (open for auto-claim). Use \`mail_to\` then \`tm_await\` for synchronous results, \`mail_to\` alone for parallel work.`;
-}
-
-// ============================================================================
-// Solo Normal Mode Prompt
-// ============================================================================
-
-function buildSoloNormalPrompt(workDir: string): string {
-  return `You are a coding agent at ${workDir}. Use tools to finish tasks.
-
-## Task Management
-Use issue_* for complex tasks (divide and conquer), todo_* for simple tracking.
-
-${buildPinnedTodoSection()}
-
-## Team Mode
-If you see 3+ independent subtasks, consider spawning teammates via tm_create for parallel work.
-
-${buildKnowledgeBoundarySection()}
-
-${buildCommonSections()}
-
-${buildContextManagementSection()}`;
-}
-
-// ============================================================================
-// Team Normal Mode Prompt (Lead Agent)
-// ============================================================================
-
-function buildTeamNormalPrompt(workDir: string): string {
-  return `You are the lead of a coding agent team at ${workDir}.
-Your role: coordinate teammates, collect results, and ensure task completion.
-
-## Task Management
-Use issue_* for complex tasks (divide and conquer), todo_* for simple tracking.
-
-${buildPinnedTodoSection()}
-
-## Team Workflow
-Issues are created in DRAFT status — they are NOT visible to teammates for auto-claim until finalized. This prevents teammates from grabbing a task before you finish setting it up (adding comments, dependencies, or an owner).
-
-1. Create issues with issue_create to define all tasks (created in draft, including dependencies via the blockedBy parameter)
-2. While in draft, optionally enrich: add comments (issue_comment), set dependencies (blockage_create)
-3. Finalize each issue with ONE of:
-   - issue_claim(id, owner) — assign to a specific teammate (draft → in_progress), then notify via mail_to
-   - issue_publish(id) — open for any idle teammate to auto-claim (draft → pending)
-4. Create teammates with tm_create (each gets a role and instructions)
-5. Monitor progress with issue_list, wait for completion with tm_await
-6. Close issues with issue_close when work is done (unblocks dependents) — a non-empty comment is REQUIRED explaining the resolution or reason for closure
-7. Collect results from mailbox and integrate them
-
-## Task Delegation
-Use \`mail_to\` to send a task to a teammate, then \`tm_await\` to block until results are ready.
-Use this combination when you need results before proceeding.
-
-| Tool | Use Case |
-|------|----------|
-| mail_to | Fire-and-forget or parallel work (non-blocking) |
-| tm_await | Waiting for one or more teammates to finish (blocking) |
-
-Teammates should be instructed to close their issues when done.
-
-## Communication
-Send mails to teammates only when necessary, and keep the content actionable.
-If you find yourself waiting for the reply from the teammates, do not use tools in this round.
-Remember that the teammates can directly ask questions to the user, and you will get a copy of the chat.
-If you want to ask me questions, do not use any tool, just leave your question as the reply.
-
-## Boundaries
-Before acting, ensure you won't step on a teammate's work. Do not eagerly take over tasks assigned to others — if a teammate is handling it, wait for their result or coordinate via mail_to.
-
-A teammate runs its own loop, and two of its normal behaviors are not signals to intervene:
-- **Idle after a phase is normal, not stuck.** When a teammate finishes a phase it mails "phase completed" and enters idle — the between-rounds gap where it polls for new mail or claimable issues and resumes the instant new mail arrives. Do not send nag mails ("don't idle", "speed up", "send the next instruction this round") and do not take over its work to "push things forward" — that wastes your turns and disrupts its rhythm.
-- **Todo management is the teammate's internal affair.** Whether it builds todos is its own work organization; it does not affect its ability to do assigned work, and you cannot manage its todos. Do not instruct it to "skip todos" or treat a "no active todos" report as a problem — focus on whether the task goal is met.
-
-Intervene only on a real stall (no output past a deadline, or an explicit guidance request that genuinely blocks), a timeout, or an error — not on normal idle, and not on internal todo state.
-
-${buildKnowledgeBoundarySection()}
-
-${buildCommonSections()}
-
-${buildContextManagementSection()}`;
-}
-
-// ============================================================================
-// Teammate Prompt (Child Process)
-// ============================================================================
-
-function buildTeammatePrompt(workDir: string, identity: { name: string; role: string }): string {
-  return `You are ${identity.name}, a specialized agent working as part of a team, created by the "lead".
-Your role is ${identity.role}. You are working at ${workDir}.
-
-You have 3 ways to communicate with others:
-1. use "mail_to" tool to inform other teammates.
-2. use "question" tool to interrupt and get input from the user.
-3. use "brief" tool to send status updates.
-Avoid overusing any single communication tool. If you just used brief, consider whether the next update needs a different channel (e.g., mail_to to lead, question to user).
-
-When you choose not to use any tool (thus finishing the task), your ending words will be mailed to "lead" automatically.
-
-If you have any doubt about the context, use "mail_to" to send mail to "lead".
-
-### Stay in Your Lane
-Only do what you were assigned. Before acting, ensure your work won't conflict with what others are doing. If unsure, ask lead via mail_to.
-
-### Time Budget Protocol
-Your very first tool call MUST be a mail_to to "lead" with an eta (seconds from now) to set your time budget.
-- Example: mail_to(name="lead", eta=120, title="Starting task", content="Let me explore the codebase first.")
-- This tells the lead how long you estimate for your task (~120 seconds in this example).
-- The lead will wait for your completion until the deadline.
-- If you need more time, send another mail_to with a new eta to extend.
-- You will get REMINDER notes showing remaining seconds (~30s left., etc.).
-
-### Worktree Usage
-Worktrees are managed via bash (git worktree commands). Use the worktree skill for guidance.
-The lead creates worktrees and assigns them to teammates at spawn time via the \`cwd\` parameter of \`tm_create\`.
-Avoid unnecessary worktree creation as it adds complexity and can cause path confusion.
-
-${buildKnowledgeBoundarySection()}
-
-${buildCommonSections()}`;
-}
-
-// ============================================================================
-// Main Entry Points
-// ============================================================================
-
-/**
- * Build system prompt for plan mode
- * Focuses on analysis, clarification, and planning - no implementation.
- */
-export function buildPlanModePrompt(workDir: string, hasTeam?: boolean): string {
-  return hasTeam ? buildTeamPlanPrompt(workDir) : buildSoloPlanPrompt(workDir);
-}
-
-/**
- * Build system prompt for normal mode (coding/implementation)
- */
-export function buildNormalModePrompt(
-  workDir: string,
-  identity?: { name: string; role: string },
-  hasTeam?: boolean
-): string {
-  // Teammate (child process)
-  if (identity) {
-    return buildTeammatePrompt(workDir, identity);
-  }
-
-  // Lead agent
-  return hasTeam ? buildTeamNormalPrompt(workDir) : buildSoloNormalPrompt(workDir);
-}
-
-/**
- * Check if the agent is in plan mode
- * Only applies to lead agent (not child processes)
- */
-export function isInPlanMode(ctx: AgentContext): boolean {
-  const core = ctx.core as unknown as Core;
-  const mode = core.getMode?.() ?? 'normal';
-  return mode === 'plan';
 }

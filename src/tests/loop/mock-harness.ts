@@ -115,7 +115,7 @@ export class MockHarness {
    *  - loop/esc-wrap-up.js (startWrapUp, evaluateWrapUp, clearWrapUp)
    *  - loop/crossroad.js (handleCrossroad)
    *  - engine/chat-helpers.js (stopSpinner)
-   *  - loop/agent-prompts.js (buildPlanModePrompt, buildNormalModePrompt, isInPlanMode)
+   *  - loop/prompts/lead.js (buildPlanModePrompt, buildNormalModePrompt, isInPlanMode)
    *  - context/shared/loader.js (getToolsForScope, execute)
    *  - loop/triologue.js (Triologue stub class)
    *  - loop/state-machine.js (AgentState enum + presentResult)
@@ -170,8 +170,8 @@ export class MockHarness {
       stopSpinner: vi.fn(),
     }));
 
-    // --- agent-prompts ---
-    vi.mock('../../../loop/agent-prompts.js', () => ({
+    // --- prompts/lead ---
+    vi.mock('../../../loop/prompts/lead.js', () => ({
       buildPlanModePrompt: vi.fn(() => 'plan-prompt'),
       buildNormalModePrompt: vi.fn(() => 'normal-prompt'),
       isInPlanMode: vi.fn(() => false),

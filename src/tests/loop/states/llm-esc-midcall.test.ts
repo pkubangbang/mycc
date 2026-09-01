@@ -48,7 +48,7 @@ vi.mock('../../../loop/esc-wrap-up.js', () => ({
 vi.mock('../../../loop/crossroad.js', () => ({ handleCrossroad: vi.fn() }));
 vi.mock('../../../engine/chat-helpers.js', () => ({ stopSpinner: vi.fn() }));
 
-vi.mock('../../../loop/agent-prompts.js', () => ({
+vi.mock('../../../loop/prompts/lead.js', () => ({
   buildPlanModePrompt: vi.fn(() => 'plan-prompt'),
   buildNormalModePrompt: vi.fn(() => 'normal-prompt'),
   isInPlanMode: vi.fn(() => false),

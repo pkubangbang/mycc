@@ -14,7 +14,7 @@
  * On Windows, pwsh 7 is chosen when present, otherwise Windows PowerShell
  * 5.1 — both are legitimate first-class outcomes, not a degraded fallback.
  * The detected result is consumed by:
- *   - `agent-prompts.ts` — the system prompt is tailored to the ONE detected
+ *   - `prompts/` (lead.ts/common.ts) — the system prompt is tailored to the ONE detected
  *     shell and hides guidance that does not apply (e.g. the 5.1 BOM/mojibake
  *     warnings are shown only when 5.1 is detected; pwsh 7's utf8NoBOM note is
  *     shown only when pwsh 7 is detected).

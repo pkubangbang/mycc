@@ -15,7 +15,7 @@ import { retryChat, MODEL } from '../engine/chat-provider.js';
 import { StreamAbortedError } from '../engine/chat-provider.js';
 import type { AgentContext, Message } from '../types.js';
 import type { ToolCall } from '../types.js';
-import { buildNormalModePrompt } from '../loop/agent-prompts.js';
+import { buildNormalModePrompt } from '../loop/prompts/lead.js';
 import { buildPlatformCalendarMessages, buildNodeModulesReminderMessages } from '../loop/prompt-populators.js';
 import { getTokenThreshold, getSessionContext, getSessionDir, setSessionContext, isVerbose } from '../config.js';
 import { TriologueLite } from '../loop/triologue-lite.js';

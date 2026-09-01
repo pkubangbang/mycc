@@ -24,7 +24,7 @@ import type { MachineEnv, TurnVars, ChatData, HandlerResult } from '../state-mac
 import type { ToolCall } from '../../types.js';
 import { retryChat, MODEL } from '../../engine/chat-provider.js';
 import { stopSpinner } from '../../engine/chat-helpers.js';
-import { buildPlanModePrompt, buildNormalModePrompt, isInPlanMode } from '../agent-prompts.js';
+import { buildPlanModePrompt, buildNormalModePrompt, isInPlanMode } from '../prompts/lead.js';
 import { agentIO } from '../agent-io.js';
 import { autoState } from '../auto-state.js';
 import { loader } from '../../context/shared/loader.js';

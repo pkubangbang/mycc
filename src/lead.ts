@@ -54,7 +54,7 @@ if (isVerbose()) {
 // Windows Shell Detection (single source of truth)
 // ---------------------------------------------------------------------------
 // Detected ONCE here in the Lead process (where both the system prompt in
-// agent-prompts.ts and exec() in agent-io.ts live). PowerShell 7 (pwsh) is
+// prompts/lead.ts and exec() in agent-io.ts live). PowerShell 7 (pwsh) is
 // required on Windows — 5.1 is NOT a compatible fallback, so if pwsh 7 is
 // missing we warn loudly and exec() will throw a clear error rather than
 // silently running commands through an incompatible shell. See
