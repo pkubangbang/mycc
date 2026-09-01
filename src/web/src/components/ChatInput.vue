@@ -233,6 +233,12 @@ function send(): void {
   // next PROMPT.
   if (props.state.isWaiting) {
     chatApi.sendInput(value, files);
+    // Arm the send→running latch: the backend is now inside the PROMPT
+    // handler doing post-input work (keyword extraction / steering synthesis
+    // — both LLM calls) before it transitions COLLECT and broadcasts
+    // 'running on'. Without the latch, this window reads as the vacuum
+    // stage — a false positive (the user-observed "parsing 时处于空窗期").
+    latchSubmitted();
   } else {
     chatApi.sendSteer(value, files);
   }
@@ -382,6 +388,81 @@ function onInputHandleUp(e: PointerEvent): void {
 const inputAreaStyle = computed(() =>
   inputHeight.value > 0 ? { height: `${inputHeight.value}px` } : {},
 );
+
+// ── State-machine stage tag row (diagnostic) ──
+//
+// A full-width row of chips, rendered as the FIRST element inside
+// .chat-input (below the top border/divider, above the input row), visible
+// ONLY when 详细日志 (state.verboseLogs) is on. It surfaces the frontend-
+// owned state used by send()'s routing decision, so the user can see at a
+// glance WHY a submitted message will be routed as type:'input' (query) vs
+// type:'steer' (buffered) — and catch desync (e.g. backend blocked at PROMPT
+// while the frontend believes otherwise) in flows like 停止-button → submit.
+//
+// The stage label is derived from the SAME flags send() uses, evaluated in
+// the same priority order:
+//   1. 断线        — connection not established; nothing is sent anyway.
+//   2. 卡片待回复  — hasPendingCard; routing is blocked by the card gate.
+//   3. PROMPT      — isWaiting true with no pending card → sendInput (query).
+//   4. 运行中      — isRunning → sendSteer (COLLECT will drain as REMINDER).
+//   5. WAIT 自动待命 — auto mode idle (steady WAIT broadcasts neither prompt
+//                     nor running) → sendSteer (wait.ts polls the queue).
+//   6. 已提交·后端处理中 — a query was JUST submitted (sendInput) and the
+//                     backend is still inside the PROMPT handler doing
+//                     post-input processing (keyword extraction / steering
+//                     synthesis — LLM calls!) before transitioning to
+//                     COLLECT. The frontend optimistically flipped
+//                     isWaiting=false at send, so without this latch the
+//                     window would read as the vacuum stage — a false
+//                     positive. Messages sent during this window go to the
+//                     steer buffer AND ARE consumed at the imminent COLLECT.
+//   7. 空窗(疑似失同步) — none of the above: send() would route to sendSteer
+//                     while the state machine has no consumer scheduled for
+//                     the buffer (the 停止-button vacuum). Amber warning.
+const stage = computed(() => {
+  if (props.state.connectionStatus !== 'connected') return '未连接';
+  if (props.state.hasPendingCard) return '卡片待回复';
+  if (props.state.isWaiting) return 'PROMPT 等待输入';
+  if (props.state.isRunning) return '运行中';
+  if (props.state.isAutoMode) return 'WAIT 自动待命';
+  if (justSubmitted.value) return '已提交·后端处理中';
+  return '空窗(疑似失同步)';
+});
+// The 空窗 stage is the smoking-gun state — flag it so it renders amber.
+const isVacuumStage = computed(() => stage.value === '空窗(疑似失同步)');
+
+// Send→running latch: set when a query is submitted as type:'input'; cleared
+// as soon as the backend signals a stage transition (running on / prompt /
+// card) or disconnected. The 15s timer is a safety net: if the backend is
+// actually desynced (e.g. the input was silently dropped by a stale-client
+// race in submitInput), the latch MUST expire so the genuine vacuum stage
+// re-surfaces instead of being masked forever.
+const justSubmitted = ref(false);
+let submitLatchTimer: ReturnType<typeof setTimeout> | null = null;
+function latchSubmitted(): void {
+  justSubmitted.value = true;
+  if (submitLatchTimer) clearTimeout(submitLatchTimer);
+  submitLatchTimer = setTimeout(() => { justSubmitted.value = false; }, 15000);
+}
+function clearSubmitLatch(): void {
+  justSubmitted.value = false;
+  if (submitLatchTimer) { clearTimeout(submitLatchTimer); submitLatchTimer = null; }
+}
+watch(
+  () => [props.state.isRunning, props.state.isWaiting, props.state.connectionStatus] as const,
+  ([running, waiting, conn]) => {
+    if (justSubmitted.value && (running || waiting || conn !== 'connected')) {
+      clearSubmitLatch();
+    }
+  },
+);
+
+// Format the lastServerMsg timestamp as HH:MM:SS (local time) for the tag row.
+function fmtTime(at: number): string {
+  const d = new Date(at);
+  const p = (n: number): string => String(n).padStart(2, '0');
+  return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}
 </script>
 
 <template>
@@ -403,6 +484,33 @@ const inputAreaStyle = computed(() =>
       @pointercancel="onInputHandleUp"
       title="拖拽调整输入框高度"
     ></div>
+    <!-- State-machine stage tag row (diagnostic) — visible ONLY in
+         detailed-logs (详细日志) mode. Sits inside .chat-input, below the top
+         divider, above the input row, as a full-width strip. Surfaces the
+         frontend-owned flags that drive send()'s input/steer routing so the
+         user can see exactly why a message will be submitted as a query vs
+         buffered as a steering note — and catch desync (e.g. the backend is
+         blocked at PROMPT while the frontend believes otherwise) in flows
+         like 停止-button → submit. -->
+    <div
+      v-if="state.verboseLogs"
+      class="stage-row"
+      :class="{ 'stage-row--vacuum': isVacuumStage }"
+    >
+      <span
+        class="stage-chip stage-chip--phase"
+        :class="{ 'stage-chip--warn': isVacuumStage }"
+      >{{ stage }}</span>
+      <span class="stage-chip" :class="{ 'stage-chip--on': state.isWaiting }">isWaiting={{ state.isWaiting }}</span>
+      <span class="stage-chip" :class="{ 'stage-chip--on': state.isRunning }">isRunning={{ state.isRunning }}</span>
+      <span class="stage-chip" :class="{ 'stage-chip--on': state.isAutoMode }">auto={{ state.isAutoMode }}</span>
+      <span class="stage-chip">steerBuffer={{ state.steeringBuffer.length }}</span>
+      <span class="stage-chip">review={{ state.pendingSteeringReview.length }}</span>
+      <span
+        v-if="state.lastServerMsg"
+        class="stage-chip stage-chip--msg"
+      >最后消息: {{ state.lastServerMsg.type }} @{{ fmtTime(state.lastServerMsg.at) }}</span>
+    </div>
     <div class="input-row">
       <div class="input-area-wrapper">
         <!-- The textarea is NEVER disabled — not on disconnect, not on a
@@ -534,6 +642,50 @@ const inputAreaStyle = computed(() =>
 }
 .chat-input.drag-over {
   background: color-mix(in srgb, var(--accent) 8%, var(--bg-input));
+}
+/* ── State-machine stage tag row (diagnostic, detailed-logs only) ──
+   A full-width chip strip above the input row. Amber accent when the
+   stage is the 空窗 vacuum state (the smoke-gun for the isWaiting desync). */
+.stage-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 2px;
+  border-radius: 6px;
+  font-size: 11px;
+  line-height: 1.4;
+  user-select: text;
+}
+.stage-row--vacuum {
+  background: color-mix(in srgb, #f59e0b 10%, transparent);
+  border: 1px solid color-mix(in srgb, #f59e0b 35%, transparent);
+}
+.stage-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--bg-input-field);
+  color: var(--text-muted);
+  border: 1px solid var(--border-color);
+  white-space: nowrap;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+.stage-chip--on {
+  background: color-mix(in srgb, #07c160 14%, var(--bg-input-field));
+  color: #07c160;
+  border-color: color-mix(in srgb, #07c160 45%, transparent);
+}
+.stage-chip--warn {
+  background: color-mix(in srgb, #f59e0b 18%, var(--bg-input-field));
+  color: #f59e0b;
+  border-color: color-mix(in srgb, #f59e0b 50%, transparent);
+  font-weight: 600;
+}
+.stage-chip--msg {
+  color: var(--text-primary);
+  border-style: dashed;
 }
 /* Horizontal resize handle at the top edge of the input box. A thin bar
    with a wider transparent hit area; row-resize cursor. Highlights on

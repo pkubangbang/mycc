@@ -50,6 +50,13 @@ export function applyServerMessage(
   // Ensure every live message has a stable id for v-for keys.
   if (msg.id === undefined) msg.id = ctx.nextId();
 
+  // Record the last server message BEFORE any branching so EVERY wire type —
+  // the explicitly-handled ones below AND anything falling through the default
+  // branch — is observable in the ChatInput state-tag row (detailed-logs mode
+  // only). This is the diagnostic hook for isWaiting desync: the tag row shows
+  // which message type last touched the flags after a 'prompt'.
+  state.lastServerMsg = { type: msg.type, at: Date.now() };
+
   // A prompt message signals "work done, waiting for user input".
   if (msg.type === 'prompt') {
     state.isWaiting = true;

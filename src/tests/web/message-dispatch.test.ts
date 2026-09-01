@@ -147,3 +147,44 @@ describe('applyServerMessage — other transitions', () => {
     expect(state.isWaiting).toBe(true);
   });
 });
+
+describe('applyServerMessage — lastServerMsg diagnostic recording', () => {
+  it('records type+timestamp for explicitly handled messages', () => {
+    const state = makeState();
+    const ctx = makeCtx();
+    applyServerMessage(state, { type: 'prompt', content: '' }, ctx);
+    expect(state.lastServerMsg?.type).toBe('prompt');
+    expect(typeof state.lastServerMsg?.at).toBe('number');
+
+    applyServerMessage(state, { type: 'running', content: 'on' }, ctx);
+    expect(state.lastServerMsg?.type).toBe('running');
+  });
+
+  it('records messages that fall through the default branch too', () => {
+    const state = makeState();
+    const ctx = makeCtx();
+    // 'result' with no label is not explicitly branched — it hits the default
+    // fall-through (the isWaiting flipper under investigation).
+    applyServerMessage(state, { type: 'result', content: 'wrap-up summary' }, ctx);
+    expect(state.lastServerMsg?.type).toBe('result');
+    expect(state.isWaiting).toBe(false); // default branch flipped it
+  });
+
+  it('keeps recording on every subsequent message (latest wins)', () => {
+    const state = makeState();
+    const ctx = makeCtx();
+    applyServerMessage(state, { type: 'prompt', content: '' }, ctx);
+    applyServerMessage(state, steerEcho('note', 1), ctx);
+    expect(state.lastServerMsg?.type).toBe('steer-echo');
+  });
+
+  it('replaces the previous record instead of accumulating', () => {
+    const state = makeState();
+    const ctx = makeCtx();
+    applyServerMessage(state, { type: 'prompt', content: '' }, ctx);
+    const first = { ...state.lastServerMsg! };
+    applyServerMessage(state, { type: 'auto', content: 'off' }, ctx);
+    expect(state.lastServerMsg!.type).not.toBe(first.type);
+    expect(state.lastServerMsg!.at).toBeGreaterThanOrEqual(first.at);
+  });
+});

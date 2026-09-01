@@ -132,6 +132,14 @@ export interface ChatState {
    *  reconnect via the /history replay (approximate persistence — lost on
    *  serve stop/restart, same as the main messageLog). */
   teammateMessages: ChatMessage[];
+  /** The LAST server message seen by applyServerMessage, recorded at the very
+   *  top of the function (before any type-specific branching) so EVERY wire
+   *  message type — explicitly handled or falling through the default branch
+   *  — is observable. Rendered in ChatInput's state-tag row (detailed-logs
+   *  mode only) to diagnose isWaiting desync: e.g. which message type flipped
+   *  isWaiting back to false after a 'prompt' (the 停止-button steering-buffer
+   *  stall investigation). Ephemeral diagnostic scratch — never persisted. */
+  lastServerMsg?: { type: string; at: number };
 }
 
 export interface FileInfo {

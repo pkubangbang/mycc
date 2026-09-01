@@ -31,6 +31,10 @@ export interface DebugSnapshot {
   pendingSteeringReview: SteeringNote[];
   messageCount: number;
   teammateMessageCount: number;
+  /** Type + timestamp of the last server message dispatched (diagnostic —
+   *  mirrors state.lastServerMsg so the debug panel/agents can see which
+   *  wire message last flipped the flags). */
+  lastServerMsg?: { type: string; at: number };
 }
 
 export interface MyccDebug {
@@ -71,6 +75,7 @@ export function registerDebugSeam(
         pendingSteeringReview: [...state.pendingSteeringReview],
         messageCount: state.messages.length,
         teammateMessageCount: state.teammateMessages.length,
+        lastServerMsg: state.lastServerMsg ? { ...state.lastServerMsg } : undefined,
       };
     },
     inject(msg: ChatMessage): void {
