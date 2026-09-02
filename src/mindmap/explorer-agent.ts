@@ -13,6 +13,8 @@
  * - mark_file: Mark a file as related to the topic
  * - web_search: Search the web for information
  * - web_fetch: Fetch content from a URL
+ * - mark_url: Mark a URL as related to the topic
+ * - mark_term: Mark a project-specific term as important (hoisted to root)
  */
 
 import { MODEL, retryChat, webSearch as engineWebSearch, webFetch as engineWebFetch } from '../engine/chat-provider.js';

@@ -419,8 +419,11 @@ export class IdentityManager {
    *
    * - localOldest = local.timestamps[0] || -Infinity
    *   (if local has 0 beats, no baseline → everything passes the relative check)
-   * - remoteLatest = remote.timestamps[last] || (Date.now() - 30_000)
-   *   (if remote has 0 beats but is registered, assume it just started 30s ago)
+   * - remoteLatest = remote.timestamps[last]
+   *   (a remote with ZERO heartbeats is NOT fresh — it is not provably live;
+   *    it may have crashed between register() and its first beat(). The earlier
+   *    synthetic `Date.now() - 30000` fallback matched the `recent` clause on
+   *    the nose and judged never-beat instances fresh indefinitely.)
    * - Absolute window: a remote whose latest heartbeat is older than
    *   FRESHNESS_WINDOW_MS (90s) is NOT fresh. This prevents a dead/crashed
    *   instance from appearing fresh forever.
