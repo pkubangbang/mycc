@@ -18,6 +18,7 @@ describe('magic-bytes', () => {
       expect(result).toHaveLength(1);
       expect(result[0].typename).toBe('jpeg');
       expect(result[0].mime).toBe('image/jpeg');
+      expect(result[0].extension).toBe('.jpg');
     });
 
     it('should detect GIF', () => {
@@ -26,6 +27,7 @@ describe('magic-bytes', () => {
       expect(result).toHaveLength(1);
       expect(result[0].typename).toBe('gif');
       expect(result[0].mime).toBe('image/gif');
+      expect(result[0].extension).toBe('.gif');
     });
 
     it('should detect BMP', () => {
@@ -33,6 +35,8 @@ describe('magic-bytes', () => {
       const result = filetypeinfo(bmp);
       expect(result).toHaveLength(1);
       expect(result[0].typename).toBe('bmp');
+      expect(result[0].mime).toBe('image/bmp');
+      expect(result[0].extension).toBe('.bmp');
     });
 
     it('should detect ICO', () => {
@@ -40,6 +44,8 @@ describe('magic-bytes', () => {
       const result = filetypeinfo(ico);
       expect(result).toHaveLength(1);
       expect(result[0].typename).toBe('ico');
+      expect(result[0].mime).toBe('image/x-icon');
+      expect(result[0].extension).toBe('.ico');
     });
 
     it('should detect WebP (RIFF...WEBP)', () => {
@@ -74,6 +80,8 @@ describe('magic-bytes', () => {
       const result = filetypeinfo(mp3);
       expect(result).toHaveLength(1);
       expect(result[0].typename).toBe('mp3');
+      expect(result[0].mime).toBe('audio/mpeg');
+      expect(result[0].extension).toBe('.mp3');
     });
 
     it('should detect MP3 (ID3 tag)', () => {
@@ -81,6 +89,7 @@ describe('magic-bytes', () => {
       const result = filetypeinfo(mp3);
       expect(result).toHaveLength(1);
       expect(result[0].typename).toBe('mp3');
+      expect(result[0].mime).toBe('audio/mpeg');
     });
 
     it('should detect OGG', () => {
@@ -88,6 +97,8 @@ describe('magic-bytes', () => {
       const result = filetypeinfo(ogg);
       expect(result).toHaveLength(1);
       expect(result[0].typename).toBe('ogg');
+      expect(result[0].mime).toBe('audio/ogg');
+      expect(result[0].extension).toBe('.ogg');
     });
 
     it('should detect FLV', () => {
@@ -95,6 +106,8 @@ describe('magic-bytes', () => {
       const result = filetypeinfo(flv);
       expect(result).toHaveLength(1);
       expect(result[0].typename).toBe('flv');
+      expect(result[0].mime).toBe('video/x-flv');
+      expect(result[0].extension).toBe('.flv');
     });
   });
 
@@ -109,6 +122,8 @@ describe('magic-bytes', () => {
       const result = filetypeinfo(mp4);
       expect(result).toHaveLength(1);
       expect(result[0].typename).toBe('mp4');
+      expect(result[0].mime).toBe('video/mp4');
+      expect(result[0].extension).toBe('.mp4');
     });
 
     it('should detect MKV', () => {
@@ -116,6 +131,8 @@ describe('magic-bytes', () => {
       const result = filetypeinfo(mkv);
       expect(result).toHaveLength(1);
       expect(result[0].typename).toBe('mkv');
+      expect(result[0].mime).toBe('video/x-matroska');
+      expect(result[0].extension).toBe('.mkv');
     });
   });
 
@@ -125,6 +142,8 @@ describe('magic-bytes', () => {
       const result = filetypeinfo(zip);
       expect(result).toHaveLength(1);
       expect(result[0].typename).toBe('zip');
+      expect(result[0].mime).toBe('application/zip');
+      expect(result[0].extension).toBe('.zip');
     });
 
     it('should detect empty ZIP', () => {
@@ -132,6 +151,7 @@ describe('magic-bytes', () => {
       const result = filetypeinfo(emptyZip);
       expect(result).toHaveLength(1);
       expect(result[0].typename).toBe('zip');
+      expect(result[0].mime).toBe('application/zip');
     });
 
     it('should detect GZIP', () => {
@@ -139,6 +159,8 @@ describe('magic-bytes', () => {
       const result = filetypeinfo(gzip);
       expect(result).toHaveLength(1);
       expect(result[0].typename).toBe('gzip');
+      expect(result[0].mime).toBe('application/gzip');
+      expect(result[0].extension).toBe('.gz');
     });
 
     it('should detect RAR', () => {
@@ -146,6 +168,8 @@ describe('magic-bytes', () => {
       const result = filetypeinfo(rar);
       expect(result).toHaveLength(1);
       expect(result[0].typename).toBe('rar');
+      expect(result[0].mime).toBe('application/x-rar');
+      expect(result[0].extension).toBe('.rar');
     });
 
     it('should detect 7z', () => {
@@ -153,6 +177,8 @@ describe('magic-bytes', () => {
       const result = filetypeinfo(sevenZ);
       expect(result).toHaveLength(1);
       expect(result[0].typename).toBe('7z');
+      expect(result[0].mime).toBe('application/x-7z-compressed');
+      expect(result[0].extension).toBe('.7z');
     });
 
     it('should detect TAR (ustar at offset 257)', () => {
@@ -166,6 +192,8 @@ describe('magic-bytes', () => {
       const result = filetypeinfo(tar);
       expect(result).toHaveLength(1);
       expect(result[0].typename).toBe('tar');
+      expect(result[0].mime).toBe('application/x-tar');
+      expect(result[0].extension).toBe('.tar');
     });
   });
 
@@ -175,6 +203,8 @@ describe('magic-bytes', () => {
       const result = filetypeinfo(pdf);
       expect(result).toHaveLength(1);
       expect(result[0].typename).toBe('pdf');
+      expect(result[0].mime).toBe('application/pdf');
+      expect(result[0].extension).toBe('.pdf');
     });
   });
 
@@ -184,6 +214,8 @@ describe('magic-bytes', () => {
       const result = filetypeinfo(exe);
       expect(result).toHaveLength(1);
       expect(result[0].typename).toBe('exe');
+      expect(result[0].mime).toBe('application/octet-stream');
+      expect(result[0].extension).toBe('.exe');
     });
 
     it('should detect ELF', () => {
@@ -191,6 +223,8 @@ describe('magic-bytes', () => {
       const result = filetypeinfo(elf);
       expect(result).toHaveLength(1);
       expect(result[0].typename).toBe('elf');
+      expect(result[0].mime).toBe('application/octet-stream');
+      expect(result[0].extension).toBe('.elf');
     });
 
     it('should detect Mach-O', () => {
@@ -198,6 +232,8 @@ describe('magic-bytes', () => {
       const result = filetypeinfo(macho);
       expect(result).toHaveLength(1);
       expect(result[0].typename).toBe('macho');
+      expect(result[0].mime).toBe('application/octet-stream');
+      expect(result[0].extension).toBe('.dylib');
     });
   });
 
@@ -207,6 +243,8 @@ describe('magic-bytes', () => {
       const result = filetypeinfo(sqlite);
       expect(result).toHaveLength(1);
       expect(result[0].typename).toBe('sqlite');
+      expect(result[0].mime).toBe('application/x-sqlite3');
+      expect(result[0].extension).toBe('.sqlite');
     });
   });
 
@@ -214,6 +252,11 @@ describe('magic-bytes', () => {
     it('should return empty array for empty buffer', () => {
       const result = filetypeinfo(Buffer.alloc(0));
       expect(result).toHaveLength(0);
+    });
+
+    it('should return empty array for null/undefined input', () => {
+      expect(filetypeinfo(null as unknown as Uint8Array)).toHaveLength(0);
+      expect(filetypeinfo(undefined as unknown as Uint8Array)).toHaveLength(0);
     });
 
     it('should return empty array for unknown signature', () => {
@@ -234,6 +277,21 @@ describe('magic-bytes', () => {
       const result = filetypeinfo(png);
       expect(result).toHaveLength(1);
       expect(result[0].typename).toBe('png');
+    });
+
+    it('should not detect TAR when buffer is too short for ustar offset', () => {
+      // ustar signature lives at offset 257; a short buffer must not match.
+      const shortTar = Buffer.alloc(100);
+      shortTar[257] = 0x75; // out of bounds — ignored, but guard the length check
+      const result = filetypeinfo(shortTar);
+      expect(result).toHaveLength(0);
+    });
+
+    it('should not detect MP4 when ftyp is not at offset 4', () => {
+      // ftyp bytes present but at the wrong offset (offset 0)
+      const notMp4 = Buffer.from([0x66, 0x74, 0x79, 0x70, 0x00, 0x00, 0x00, 0x00]);
+      const result = filetypeinfo(notMp4);
+      expect(result).toHaveLength(0);
     });
 
     it('should distinguish WebP from WAV (both RIFF)', () => {

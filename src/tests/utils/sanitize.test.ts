@@ -73,4 +73,23 @@ describe('safeNodeId', () => {
   it('should handle consecutive special characters', () => {
     expect(safeNodeId('a!!!b@@@c')).toBe('abc');
   });
+
+  it('should collapse mixed separators (spaces + slashes + dashes)', () => {
+    // Spaces and slashes become dashes, then consecutive dashes collapse.
+    expect(safeNodeId('a / b / c')).toBe('a-b-c');
+    expect(safeNodeId('a--b---c')).toBe('a-b-c');
+  });
+
+  it('should preserve dots and underscores while removing other specials', () => {
+    expect(safeNodeId('my.file_name-v2!')).toBe('my.file_name-v2');
+  });
+
+  it('should handle CJK mixed with special characters', () => {
+    expect(safeNodeId('测试 项目!')).toBe('测试-项目');
+  });
+
+  it('should handle a string that becomes only dashes (collapses to empty)', () => {
+    // '---' → all dashes → collapse to '-' → trim leading/trailing → ''
+    expect(safeNodeId('---')).toBe('');
+  });
 });

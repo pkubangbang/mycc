@@ -232,4 +232,28 @@ describe('LineEditor - Edge Cases', () => {
     editor.handleKey(key('return'));
     expect(onDone).toHaveBeenCalledWith('a');
   });
+
+  it('should handle maximum column width clamp (120)', () => {
+    editor = createEditor({ columns: 200 }); // Clamped to 120
+    editor.handleKey(charKey('a'));
+    editor.handleKey(key('return'));
+    expect(onDone).toHaveBeenCalledWith('a');
+  });
+
+  it('should handle insertAtCursor with empty content', () => {
+    editor = createEditor();
+    editor.insertAtCursor('pasted text');
+    editor.handleKey(key('return'));
+    expect(onDone).toHaveBeenCalledWith('pasted text');
+  });
+
+  it('should handle insertAtCursor in the middle of content', () => {
+    editor = createEditor();
+    editor.handleKey(charKey('a'));
+    editor.handleKey(charKey('c'));
+    editor.handleKey(key('left')); // between a and c
+    editor.insertAtCursor('b');
+    editor.handleKey(key('return'));
+    expect(onDone).toHaveBeenCalledWith('abc');
+  });
 });

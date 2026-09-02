@@ -44,6 +44,23 @@ describe('isTransientError()', () => {
     expect(isTransientError(new Error('unexpected eof'))).toBe(true);
   });
 
+  it('should classify HTTP 5xx status codes as transient', () => {
+    expect(isTransientError(new Error('HTTP 500 Internal Server Error'))).toBe(true);
+    expect(isTransientError(new Error('HTTP 502 Bad Gateway'))).toBe(true);
+    expect(isTransientError(new Error('HTTP 503 Service Unavailable'))).toBe(true);
+    expect(isTransientError(new Error('HTTP 504 Gateway Timeout'))).toBe(true);
+  });
+
+  it('should classify rate-limit and overload errors as transient', () => {
+    expect(isTransientError(new Error('rate limit exceeded'))).toBe(true);
+    expect(isTransientError(new Error('server overloaded'))).toBe(true);
+  });
+
+  it('should classify connection-refused and timeout errors as transient', () => {
+    expect(isTransientError(new Error('connect ECONNREFUSED 127.0.0.1:11434'))).toBe(true);
+    expect(isTransientError(new Error('request timed out after 20000ms'))).toBe(true);
+  });
+
   it('should return false for a genuinely non-transient error', () => {
     expect(isTransientError(new Error('some unrelated syntax problem'))).toBe(false);
   });

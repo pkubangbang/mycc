@@ -49,3 +49,47 @@ describe('augmentCall — filePath contract (args.path, not args.file_path)', ()
     expect(aug.metadata!.filePath).toBeUndefined();
   });
 });
+
+describe('augmentCall — bash destructive command detection', () => {
+  it('flags rm -rf as destructive', () => {
+    const call = makeCall('bash', { command: 'rm -rf node_modules' });
+    const aug = augmentCall(call);
+    expect(aug.metadata!.isDestructive).toBe(true);
+  });
+
+  it('flags git push --force as destructive', () => {
+    const call = makeCall('bash', { command: 'git push --force origin main' });
+    const aug = augmentCall(call);
+    expect(aug.metadata!.isDestructive).toBe(true);
+  });
+
+  it('flags git reset --hard as destructive', () => {
+    const call = makeCall('bash', { command: 'git reset --hard HEAD~1' });
+    const aug = augmentCall(call);
+    expect(aug.metadata!.isDestructive).toBe(true);
+  });
+
+  it('flags drop database as destructive (case-insensitive)', () => {
+    const call = makeCall('bash', { command: 'DROP DATABASE mydb' });
+    const aug = augmentCall(call);
+    expect(aug.metadata!.isDestructive).toBe(true);
+  });
+
+  it('does NOT flag a safe command as destructive', () => {
+    const call = makeCall('bash', { command: 'ls -la' });
+    const aug = augmentCall(call);
+    expect(aug.metadata!.isDestructive).toBe(false);
+  });
+
+  it('does NOT flag a plain rm without -rf', () => {
+    const call = makeCall('bash', { command: 'rm file.txt' });
+    const aug = augmentCall(call);
+    expect(aug.metadata!.isDestructive).toBe(false);
+  });
+
+  it('leaves isDestructive undefined when command is missing', () => {
+    const call = makeCall('bash', {});
+    const aug = augmentCall(call);
+    expect(aug.metadata!.isDestructive).toBeUndefined();
+  });
+});

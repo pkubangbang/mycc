@@ -102,4 +102,21 @@ describe('isInsideWorkspace', () => {
   it('returns false when workdir is empty', () => {
     expect(isInsideWorkspace('/home/user/project', '')).toBe(false);
   });
+
+  it('returns false when resolved is an ancestor of workdir', () => {
+    const workdir = '/home/user/project/sub';
+    expect(isInsideWorkspace('/home/user/project', workdir)).toBe(false);
+  });
+
+  it('returns true for a nested subdirectory', () => {
+    const workdir = '/home/user/project';
+    expect(isInsideWorkspace(path.resolve(workdir, 'src', 'deep', 'nested'), workdir)).toBe(true);
+  });
+
+  it('returns false when workdir is a prefix but resolved is a sibling (case-insensitive on Windows)', () => {
+    // The classic bare-startsWith bug: '/home/user/project-evil' shares the
+    // '/home/user/project' prefix but is NOT inside the workspace.
+    const workdir = '/home/user/project';
+    expect(isInsideWorkspace('/home/user/project-evil', workdir)).toBe(false);
+  });
 });

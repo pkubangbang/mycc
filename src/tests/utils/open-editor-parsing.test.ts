@@ -59,4 +59,30 @@ describe('parseFile', () => {
     const result = parseFile('path/with spaces/file.ts:10');
     expect(result).toEqual({ file: 'path/with spaces/file.ts', line: 10 });
   });
+
+  it('should handle a file with a colon in the name (no line number)', () => {
+    // A colon in the path itself (e.g. a URL-ish name) with no trailing number
+    const result = parseFile('my:file.ts');
+    expect(result).toEqual({ file: 'my:file.ts' });
+  });
+
+  it('should handle line number 0', () => {
+    const result = parseFile('file.ts:0');
+    expect(result).toEqual({ file: 'file.ts', line: 0 });
+  });
+
+  it('should handle column 0', () => {
+    const result = parseFile('file.ts:10:0');
+    expect(result).toEqual({ file: 'file.ts', line: 10, column: 0 });
+  });
+
+  it('should handle a large line number', () => {
+    const result = parseFile('file.ts:99999');
+    expect(result).toEqual({ file: 'file.ts', line: 99999 });
+  });
+
+  it('should handle a file with no extension', () => {
+    const result = parseFile('Makefile:5');
+    expect(result).toEqual({ file: 'Makefile', line: 5 });
+  });
 });

@@ -187,4 +187,23 @@ describe('detectTurningWord — edge cases', () => {
     const result = detectTurningWord('   \n\n   ');
     expect(result).toBeNull();
   });
+
+  it('should handle content with only a turning word and no prefix/suffix', () => {
+    // "However" at position 0 with no suffix — should be rejected (suffix too short)
+    const result = detectTurningWord('However');
+    expect(result).toBeNull();
+  });
+
+  it('should handle a turning word at the very end with insufficient suffix', () => {
+    // "However" at position 0 but only 3 chars after → below MIN_SUFFIX_LENGTH
+    const result = detectTurningWord('However, xyz');
+    expect(result).toBeNull();
+  });
+
+  it('should handle a turning word preceded by a newline (sentence boundary)', () => {
+    const content = 'The first part of the analysis is complete.\nHowever, we need to reconsider the approach given the new constraints.';
+    const result = detectTurningWord(content);
+    expect(result).not.toBeNull();
+    expect(result!.word).toBe('However');
+  });
 });

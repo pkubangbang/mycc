@@ -25,14 +25,33 @@ describe('checkSensitivePath', () => {
   it('should block /etc subdirectories', () => {
     const result = checkSensitivePath('/etc/nginx/nginx.conf');
     expect(result).not.toBeNull();
+    if (result) {
+      expect(result.reason).toContain('system configuration');
+    }
   });
 
   it('should block /usr/lib', () => {
-    expect(checkSensitivePath('/usr/lib/libc.so')).not.toBeNull();
+    const result = checkSensitivePath('/usr/lib/libc.so');
+    expect(result).not.toBeNull();
+    if (result) {
+      expect(result.reason).toContain('system libraries');
+    }
   });
 
   it('should block /boot', () => {
-    expect(checkSensitivePath('/boot/vmlinuz')).not.toBeNull();
+    const result = checkSensitivePath('/boot/vmlinuz');
+    expect(result).not.toBeNull();
+    if (result) {
+      expect(result.reason).toContain('boot loader');
+    }
+  });
+
+  it('should block /sys, /proc, /dev, /bin, /root', () => {
+    expect(checkSensitivePath('/sys/kernel')).not.toBeNull();
+    expect(checkSensitivePath('/proc/cpuinfo')).not.toBeNull();
+    expect(checkSensitivePath('/dev/sda')).not.toBeNull();
+    expect(checkSensitivePath('/bin/ls')).not.toBeNull();
+    expect(checkSensitivePath('/root/.bashrc')).not.toBeNull();
   });
 
   it('should block ~/ssh directory', () => {
@@ -48,21 +67,46 @@ describe('checkSensitivePath', () => {
     const sshPath = path.join(os.homedir(), '.ssh', 'id_rsa');
     const result = checkSensitivePath(sshPath);
     expect(result).not.toBeNull();
+    if (result) {
+      expect(result.reason).toContain('SSH');
+    }
   });
 
   it('should block ~/.gnupg', () => {
     const gnupgPath = path.join(os.homedir(), '.gnupg');
-    expect(checkSensitivePath(gnupgPath)).not.toBeNull();
+    const result = checkSensitivePath(gnupgPath);
+    expect(result).not.toBeNull();
+    if (result) {
+      expect(result.reason).toContain('GPG');
+    }
   });
 
   it('should block ~/.aws', () => {
     const awsPath = path.join(os.homedir(), '.aws');
-    expect(checkSensitivePath(awsPath)).not.toBeNull();
+    const result = checkSensitivePath(awsPath);
+    expect(result).not.toBeNull();
+    if (result) {
+      expect(result.reason).toContain('AWS');
+    }
+  });
+
+  it('should block ~/.gitconfig', () => {
+    const gitconfigPath = path.join(os.homedir(), '.gitconfig');
+    const result = checkSensitivePath(gitconfigPath);
+    expect(result).not.toBeNull();
+    if (result) {
+      expect(result.reason).toContain('git configuration');
+    }
   });
 
   it('should allow ~/.mycc-store (not sensitive)', () => {
     const myccPath = path.join(os.homedir(), '.mycc-store');
     expect(checkSensitivePath(myccPath)).toBeNull();
+  });
+
+  it('should allow a sibling that merely shares a sensitive prefix', () => {
+    // '/etc-backup' must NOT be blocked just because it starts with '/etc'.
+    expect(checkSensitivePath('/etc-backup/file.txt')).toBeNull();
   });
 
   it('should block Windows-style /etc paths', () => {

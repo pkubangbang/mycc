@@ -113,7 +113,13 @@ describe('key-parser', () => {
       it('should parse Ctrl+H (0x08) - should be backspace, not ctrl+h', () => {
         // Note: 0x08 is backspace in the implementation
         const result = parseKeys(hexBuf(0x08));
-        expect(result[0].name).toBe('backspace');
+        expect(result[0]).toEqual<KeyInfo>({
+          name: 'backspace',
+          ctrl: false,
+          meta: false,
+          shift: false,
+          sequence: '\x7f',
+        });
       });
 
       it('should parse Ctrl+I (0x09) - Tab', () => {
@@ -130,7 +136,13 @@ describe('key-parser', () => {
       it('should parse Ctrl+J (0x0a) - should be return, not ctrl+j', () => {
         // Note: 0x0a is treated as return in the implementation
         const result = parseKeys(hexBuf(0x0a));
-        expect(result[0].name).toBe('return');
+        expect(result[0]).toEqual<KeyInfo>({
+          name: 'return',
+          ctrl: false,
+          meta: false,
+          shift: false,
+          sequence: '\r',
+        });
       });
 
       it('should parse Ctrl+K (0x0b)', () => {
@@ -158,7 +170,13 @@ describe('key-parser', () => {
       it('should parse Ctrl+M (0x0d) - should be return, not ctrl+m', () => {
         // Note: 0x0d is treated as return in the implementation
         const result = parseKeys(hexBuf(0x0d));
-        expect(result[0].name).toBe('return');
+        expect(result[0]).toEqual<KeyInfo>({
+          name: 'return',
+          ctrl: false,
+          meta: false,
+          shift: false,
+          sequence: '\r',
+        });
       });
 
       it('should parse Ctrl+N (0x0e)', () => {

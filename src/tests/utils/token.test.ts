@@ -5,9 +5,10 @@ import { describe, it, expect } from 'vitest';
 import { estimateTokens, estimateTokensForMessages, estimateTextTokens, truncateToTokens } from '../../utils/token.js';
 
 describe('estimateTokens', () => {
-  it('should return 0 for empty content', () => {
+  it('should return the message overhead for empty content', () => {
     const tokens = estimateTokens({ role: 'user', content: '' });
-    expect(tokens).toBeGreaterThanOrEqual(0);
+    // Empty content still incurs the fixed per-message overhead (4).
+    expect(tokens).toBe(4);
   });
 
   it('should return positive number for simple text', () => {
@@ -48,9 +49,10 @@ describe('estimateTokens', () => {
     expect(tokens).toBeGreaterThan(0);
   });
 
-  it('should handle null content', () => {
+  it('should handle null content (returns message overhead)', () => {
     const tokens = estimateTokens({ role: 'user', content: undefined as unknown as string });
-    expect(tokens).toBeGreaterThanOrEqual(0);
+    // No content → only the fixed per-message overhead.
+    expect(tokens).toBe(4);
   });
 });
 
@@ -66,6 +68,15 @@ describe('estimateTokensForMessages', () => {
       { role: 'assistant', content: 'world' },
     ]);
     expect(multiple).toBeGreaterThan(single);
+  });
+
+  it('should be exactly the sum of individual estimates', () => {
+    const msgs = [
+      { role: 'user', content: 'hello' },
+      { role: 'assistant', content: 'world' },
+    ];
+    const sum = estimateTokens(msgs[0]) + estimateTokens(msgs[1]);
+    expect(estimateTokensForMessages(msgs)).toBe(sum);
   });
 
   it('should handle mixed message types', () => {

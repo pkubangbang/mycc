@@ -135,11 +135,11 @@ describe('key-parser', () => {
       it('should handle truncated multi-byte UTF-8', () => {
         // '中' is e4 b8 ad - truncated to just e4 b8
         // The TextDecoder with fatal: true throws for each byte that can't be decoded
-        // So we get two separate hex escapes
+        // So we get two separate hex escapes, one per byte
         const result = parseKeys(hexBuf(0xe4, 0xb8));
         expect(result).toHaveLength(2);
-        expect(result[0].sequence).toMatch(/\\x[0-9a-f]+/);
-        expect(result[1].sequence).toMatch(/\\x[0-9a-f]+/);
+        expect(result[0].sequence).toBe('\\xe4');
+        expect(result[1].sequence).toBe('\\xb8');
       });
     });
 
