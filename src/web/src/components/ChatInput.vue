@@ -406,7 +406,7 @@ const inputAreaStyle = computed(() =>
 //   3. PROMPT      — isWaiting true with no pending card → sendInput (query).
 //   4. 运行中      — isRunning → sendSteer (COLLECT will drain as REMINDER).
 //   5. AWAIT 自动待命 — auto mode idle (steady AWAIT broadcasts neither prompt
-//                     nor running) → sendSteer (wait.ts polls the queue).
+//                     nor running) → sendSteer (await.ts polls the queue).
 //   6. 已提交·后端处理中 — a query was JUST submitted (sendInput) and the
 //                     backend is still inside the PROMPT handler doing
 //                     post-input processing (keyword extraction / steering

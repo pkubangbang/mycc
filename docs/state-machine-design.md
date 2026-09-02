@@ -19,7 +19,7 @@ The original `src/loop/agent-loop.ts` has been removed; the state machine in `sr
 | **hook** | Augment tool calls with metadata. Evaluate hook conditions. Inject, replace, or block tool calls. Handle meta-tools (checkpoint, recap). Crossroad continuation injection. Handle deferred compact requests (sets `pass.deferredCompact`, actual compact runs at LLM stage). Branch to `tool` or `stop`. | `src/loop/states/hook.ts` |
 | **tool** | Execute tool calls sequentially. Handle ESC interruption, hook blocking, sequence tracking, ResultTooLargeError, confusion scoring (semantic duplication via embedding similarity, error results), keyword extraction from brief messages. | `src/loop/states/tool.ts` |
 | **stop** | Handle the no-tool-call case. Neglected mode wrap-up (ESC during LLM → display final response, exit auto mode if on). Await teammates (if any). Always transitions to `prompt` — PROMPT is the single decision point for the auto-redirect. | `src/loop/states/stop.ts` |
-| **wait** | Autonomous-mode block. Replaces prompting when auto mode is on. Blocks for an external event — new mail, a teammate state change (holding/working), or a webui steering note — then transitions to `collect`. ESC (or a programmatic `setAuto(false)`) exits auto mode and returns to `prompt`. Polls every 1s. | `src/loop/states/wait.ts` |
+| **wait** | Autonomous-mode block. Replaces prompting when auto mode is on. Blocks for an external event — new mail, a teammate state change (holding/working), or a webui steering note — then transitions to `collect`. ESC (or a programmatic `setAuto(false)`) exits auto mode and returns to `prompt`. Polls every 1s. | `src/loop/states/await.ts` |
 
 ## Data Tiers
 
@@ -125,7 +125,7 @@ src/loop/states/llm.ts          — handleLlm
 src/loop/states/hook.ts         — handleHook
 src/loop/states/tool.ts         — handleTool
 src/loop/states/stop.ts         — handleStop (always → PROMPT)
-src/loop/states/wait.ts         — handleWait (autonomous-mode block)
+src/loop/states/await.ts         — handleWait (autonomous-mode block)
 ```
 
 `src/loop/agent-repl.ts` is the thin wrapper: init → AgentStateMachine → run → error display.
@@ -158,4 +158,4 @@ src/loop/states/wait.ts         — handleWait (autonomous-mode block)
 | confusion scoring (semantic duplication) | tool | `tool.ts` |
 | awaitTeam + timeout | stop | `stop.ts` |
 | neglected wrap-up | stop | `stop.ts` |
-| auto-mode block | wait | `wait.ts` |
+| auto-mode block | wait | `await.ts` |

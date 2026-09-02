@@ -42,7 +42,7 @@ agent loop 已从早期的 `while(true)` 命令式循环重构为**显式状态�
 | `HOOK` | 执行 hook，处理 hook 对 tool call 的拦截/增强 | `src/loop/states/hook.ts` |
 | `TOOL` | 顺序执行 tool calls，记录 sequence，语义重复检测 | `src/loop/states/tool.ts` |
 | `STOP` | 无 tool call 时的收尾：neglected mode wrap-up 或 team awaiting | `src/loop/states/stop.ts` |
-| `AWAIT` | auto 模式下的自主循环等待 | `src/loop/states/wait.ts` |
+| `AWAIT` | auto 模式下的自主循环等待 | `src/loop/states/await.ts` |
 
 ### 数据分层
 

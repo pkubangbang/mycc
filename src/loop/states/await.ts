@@ -1,5 +1,5 @@
 /**
- * wait.ts - AWAIT state handler (autonomous mode)
+ * await.ts - AWAIT state handler (autonomous mode)
  *
  * Replaces the PROMPT stage in auto mode. Instead of prompting the user,
  * the loop blocks here until an external event arrives — a new mail, a

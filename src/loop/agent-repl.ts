@@ -37,7 +37,7 @@ import { handleLlm } from './states/llm.js';
 import { handleHook } from './states/hook.js';
 import { handleTool } from './states/tool.js';
 import { handleStop } from './states/stop.js';
-import { handleWait } from './states/wait.js';
+import { handleWait } from './states/await.js';
 import { clearWrapUp } from './esc-wrap-up.js';
 import pkg from '../../package.json';
 import { loadProjectMindmap } from './mindmap-loader.js';

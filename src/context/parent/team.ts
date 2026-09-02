@@ -482,7 +482,7 @@ export class TeamManager implements TeamModule {
         // lead returns to COLLECT, whose 2c block drains steering as a REMINDER
         // (mid-task user direction). We only PEEK here (getSteeringNotes is
         // non-consuming); the drain happens downstream in COLLECT, keeping a
-        // single consumption point. Same guard as wait.ts eventPending().
+        // single consumption point. Same guard as await.ts eventPending().
         if (getServeHub().isRunning() && getServeHub().getSteeringNotes().length > 0) {
           resolve(); return; // steering waiting — let lead consume it via COLLECT
         }
