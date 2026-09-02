@@ -16,7 +16,7 @@ import { StreamAbortedError } from '../engine/chat-provider.js';
 import type { AgentContext, Message } from '../types.js';
 import type { ToolCall } from '../types.js';
 import { buildNormalModePrompt } from '../loop/prompts/lead.js';
-import { buildPlatformCalendarMessages, buildNodeModulesReminderMessages } from '../loop/prompt-populators.js';
+import { buildPlatformCalendarMessages, buildNodeModulesReminderMessages, buildSkillKeywordsMessages } from '../loop/prompt-populators.js';
 import { getTokenThreshold, getSessionContext, getSessionDir, setSessionContext, isVerbose } from '../config.js';
 import { TriologueLite } from '../loop/triologue-lite.js';
 import { ipc, sendStatus } from './child/ipc-helpers.js';
@@ -191,6 +191,12 @@ function createPersistentTriologue(name: string, assignedPath?: string): Triolog
   // like the grep tool does). Same stable-prefix pattern as above: re-checked
   // only at rebuild boundaries, zero messages when no node_modules/ exists.
   triologue.registerProjectContextPopulator(() => buildNodeModulesReminderMessages());
+  // Skill keywords — the (potentially lengthy) list of available skill
+  // keywords, delivered as project context so the system prompt stays
+  // byte-stable and the prompt-cache prefix stays hot. Same stable-prefix
+  // pattern: re-queried only at rebuild boundaries, zero messages when no
+  // skills are loaded.
+  triologue.registerProjectContextPopulator(() => buildSkillKeywordsMessages());
   // Initial build so the child's very first getMessages() carries the content.
   triologue.rebuildProjectContext();
 

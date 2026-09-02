@@ -15,10 +15,9 @@ import type { AgentContext } from '../../types.js';
 import type { Core } from '../../context/parent/core.js';
 import {
   buildCommonSections,
-  buildContextManagementSection,
   buildIntentLanguageSection,
-  buildKnowledgeBoundarySection,
   buildLaunchArgsSection,
+  buildLeadAgentMemorySection,
   buildOutputBehaviorSection,
   buildPinnedTodoSection,
   buildVerificationSection,
@@ -107,8 +106,6 @@ ${buildLaunchArgsSection()}
 
 ${buildVerificationSection()}
 
-${buildKnowledgeBoundarySection()}
-
 ${buildOutputBehaviorSection()}
 
 ${buildIntentLanguageSection()}`;
@@ -121,7 +118,7 @@ ${buildIntentLanguageSection()}`;
 function buildSoloPlanPrompt(workDir: string): string {
   return `${buildPlanBasePrompt(workDir)}
 
-${buildContextManagementSection()}`;
+${buildLeadAgentMemorySection()}`;
 }
 
 // ============================================================================
@@ -153,7 +150,9 @@ You are the router between teammates. You divide; teammates conquer. Your only p
 7. Produce the final actionable plan
 
 ### Task Delegation
-Use \`issue_create\` to define all tasks upfront (use \`blockedBy\` for dependencies). New issues start in DRAFT status and are invisible to teammates for auto-claim — finalize each with issue_claim (assign to a teammate) or issue_publish (open for auto-claim). Use \`mail_to\` then \`tm_await\` for synchronous results, \`mail_to\` alone for parallel work.`;
+Use \`issue_create\` to define all tasks upfront (use \`blockedBy\` for dependencies). New issues start in DRAFT status and are invisible to teammates for auto-claim — finalize each with issue_claim (assign to a teammate) or issue_publish (open for auto-claim). Use \`mail_to\` then \`tm_await\` for synchronous results, \`mail_to\` alone for parallel work.
+
+${buildLeadAgentMemorySection()}`;
 }
 
 // ============================================================================
@@ -171,11 +170,9 @@ ${buildPinnedTodoSection()}
 ## Team Mode
 If you see 3+ independent subtasks, consider spawning teammates via tm_create for parallel work.
 
-${buildKnowledgeBoundarySection()}
-
 ${buildCommonSections()}
 
-${buildContextManagementSection()}`;
+${buildLeadAgentMemorySection()}`;
 }
 
 // ============================================================================
@@ -230,11 +227,9 @@ A teammate runs its own loop, and two of its normal behaviors are not signals to
 
 Intervene only on a real stall (no output past a deadline, or an explicit guidance request that genuinely blocks), a timeout, or an error — not on normal idle, and not on internal todo state.
 
-${buildKnowledgeBoundarySection()}
-
 ${buildCommonSections()}
 
-${buildContextManagementSection()}`;
+${buildLeadAgentMemorySection()}`;
 }
 
 // ============================================================================

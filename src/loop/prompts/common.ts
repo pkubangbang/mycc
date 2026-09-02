@@ -10,7 +10,7 @@
  * re-exported here for backward compatibility with existing callers.
  */
 
-import { loader } from '../../context/shared/loader.js';
+
 import { getLaunchArgs } from '../../config.js';
 import { buildIntentLanguageSection } from './intent-lang.js';
 
@@ -115,85 +115,60 @@ export function buildCommonSections(): string {
 }
 
 // ============================================================================
-// Knowledge Boundary Section
+// Agent Memory Sections (capability architecture — spirit, not tool catalog)
 // ============================================================================
 
-export function buildKnowledgeBoundarySection(): string {
-  const base = [
-    '## Knowledge Boundary',
-    '',
-    'You have access to these knowledge sources (in priority order):',
-    '- **Recall**: Explore the mindmap knowledge tree. Use `recall(path="/")` to discover available knowledge. ' +
-    'START HERE for project context.',
-    '- **Skills**: Specialized knowledge for specific tasks. Use `skill_search(search="...")` to discover relevant skills.',
-    '- **Web**: External information from the internet. Use `web_search(query)` and `web_fetch(url)` as LAST RESORT.',
-    '',
-    '**Priority Rule**: Always check local knowledge sources (Recall → Skills) BEFORE searching the web.',
-    'Local sources are faster, more accurate for this project, and always available.',
-    'Use web_search only when:',
-    '- No local knowledge matches your query',
-    '- You need the latest information (e.g., current library versions)',
-    '- You need external documentation not in the project',
-  ];
+/**
+ * Shared conceptual axes for both lead and teammate agent-memory sections.
+ * Ranked by behavioral value: knowledge-priority first (most behavior-changing),
+ * execution-scope second, persistence third. Each axis is one line — a short
+ * clause naming the axis + the conceptual contrast, NOT a tool catalog. The
+ * LLM already sees the tool schemas; this section gives it the mental model
+ * to organize them.
+ *
+ * The knowledge axis folds in the concrete usage hints that used to live in
+ * the standalone Knowledge Boundary section (now removed), so this section is
+ * the single home for both the mental model AND the actionable "how to use"
+ * detail. The dynamic skill-keywords list was moved to a project-context
+ * populator (buildSkillKeywordsMessages in prompt-populators.ts) to keep the
+ * lengthy keyword collection out of the byte-stable system prompt.
+ */
+const commonAxes = [
+  'Knowledge is layered by priority — check local sources FIRST, web LAST: recall(path="/") explores the mindmap knowledge tree (START HERE for project context); skill_search discovers on-demand specialist skills; wiki_get queries the persistent RAG store; web_search/web_fetch are the last resort, not the first.',
+  'Work happens at three scopes: solo (direct file/command tools), team (in-process teammates via messaging), and cross-instance (separate mycc processes).',
+  'State is either ephemeral (working tracking, background tasks) or persisted (tasks, knowledge base, skills) — persisted state survives across turns.',
+];
 
-  const keywords = loader.getSkillKeywords();
-  if (keywords.length === 0) {
-    return base.join('\n');
-  }
-
-  const keywordsBlock = [
-    '',
-    '### Skill Keywords',
-    '',
-    `Available skill keywords: \`${keywords.join('`, `')}\``,
-    '',
-    'If your current task is relevant to or exactly matches any of these keywords, **proactively** use `skill_search(search="<keyword>")` ' +
-    'to discover relevant skills before proceeding with a generic approach.',
-  ];
-  return [...base, ...keywordsBlock].join('\n');
-}
-
-export function buildContextManagementSection(): string {
+/**
+ * Lead agent-memory section. Adds lead-only coordination (teammates, peers,
+ * checkpoint/recap context compression) and communication channels on top of
+ * the shared axes. The lead reaches the user through the `agent >>` prompt,
+ * NOT via a tool — so `question` is absent here (it is child-only).
+ */
+export function buildLeadAgentMemorySection(): string {
   return [
-    '## Checkpoint and recap',
-    '',
-    'Checkpoint and recap tools work together to manage subtask boundaries and keep you focused.',
-    '',
-    '**When to use checkpoint:**',
-    '- Before reading multiple files to understand a codebase',
-    '- Before investigating a bug or issue',
-    '- Before doing experiments to proof the concept',
-    '',
-    '**When NOT to use checkpoint:**',
-    '- Quick single-file edits',
-    '- Simple lookups (one file, one command)',
-    '- Tasks where you immediately know the answer',
-    '',
-    '**Workflow:**',
-    '1. Use checkpoint tool to create a checkpoint with an ID (e.g., "abc12345")',
-    '2. [Explore files, read code, investigate] - Messages accumulate',
-    '3. Close the checkpoint with one of two options:',
-    '   - recap({ checkpoint_id: "abc12345" }) - Summarize findings and close',
-    '   - recap({ checkpoint_id: "abc12345", abandon: true }) - Discard and close',
-    '4. Continue with clean context',
-    '',
-    '**Rules:**',
-    '- Only ONE open checkpoint at a time',
-    '- Checkpoint must be called ALONE (no other tools in same turn)',
-    '- Use the checkpoint ID from step 1 when calling recap',
-    '',
-    '**Optional comment:**',
-    'You can add a `comment` property to recap to record your findings, like:',
-    '- recap({ checkpoint_id: "abc12345", comment: "Found that the bug is in the parser; next step is to update the tokenizer." })',
-    '',
-    'The comment is shown in the recap log for user visibility.',
-    '',
-    '**Required if_abandoned (checkpoint):**',
-    'You MUST declare your original direction when creating a checkpoint:',
-    '- checkpoint({ description: "...", if_abandoned: "Investigate the parser to find the bug source." })',
-    'If you later abandon this checkpoint, the direction is presented heuristically in the abandon note: ' +
-    '"the original direction was X; compare it with the current context and find your path." ' +
-    'This preserves continuity when the exploration is discarded.',
+    '## Agent Memory',
+    'You have structured capability modules beyond basic file I/O. They organize along a few conceptual axes:',
+    ...commonAxes,
+    'You also coordinate: spawn/await teammates, broadcast, discover peer instances, and compress exploration via checkpoint/recap (lead-only).',
+    'Communication is async (mail_to), status (brief), or topic-shift (mycc_title).',
   ].join('\n');
 }
+
+/**
+ * Teammate agent-memory section. Adds the child-only `question` tool (the
+ * teammate's unique channel to the user) on top of the shared axes. The
+ * teammate has no team coordination, no peers, no context compression, no
+ * plan mode — those are the lead's.
+ */
+export function buildTeammateAgentMemorySection(): string {
+  return [
+    '## Agent Memory',
+    'You have structured capability modules beyond basic file I/O. They organize along a few conceptual axes:',
+    ...commonAxes,
+    'You can interrupt and ask the user directly via question; you do not coordinate teammates or peers.',
+  ].join('\n');
+}
+
+
 

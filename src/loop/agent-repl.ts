@@ -44,7 +44,7 @@ import { loadProjectMindmap } from './mindmap-loader.js';
 import { registerSignalHandlers } from './signal-handlers.js';
 import { initDaemonMode } from './daemon-init.js';
 import { initHookSystem, buildHookInfoMessages } from './hook-bootstrap.js';
-import { buildPlatformCalendarMessages, buildNodeModulesReminderMessages } from './prompt-populators.js';
+import { buildPlatformCalendarMessages, buildNodeModulesReminderMessages, buildSkillKeywordsMessages } from './prompt-populators.js';
 import { wireServeCallbacks } from './serve-wiring.js';
 
 const version = pkg.version;
@@ -273,6 +273,13 @@ export async function main(): Promise<void> {
   //      stays stable between rebuilds; a zero-message no-op when no
   //      node_modules/ exists (non-Node.js projects).
   triologue.registerProjectContextPopulator(() => buildNodeModulesReminderMessages());
+
+  // (3c) Skill keywords — the (potentially lengthy) list of available skill
+  //      keywords, delivered as project context so the system prompt stays
+  //      byte-stable and the prompt-cache prefix stays hot. Re-queried at
+  //      every rebuild boundary so newly-loaded/unloaded skills surface after
+  //      the next compact/clear. A zero-message no-op when no skills are loaded.
+  triologue.registerProjectContextPopulator(() => buildSkillKeywordsMessages());
 
   // (4) Hook info (pending + legacy) — registered AFTER initHookSystem so the
   //     closure can capture `conditions` and `loader`. Each rebuild re-queries

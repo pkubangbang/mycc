@@ -7,7 +7,7 @@
  * boundary, launch args) from common.ts.
  */
 
-import { buildCommonSections, buildKnowledgeBoundarySection } from './common.js';
+import { buildCommonSections, buildTeammateAgentMemorySection } from './common.js';
 
 // ============================================================================
 // Teammate Prompt (Child Process)
@@ -46,7 +46,7 @@ Worktrees are managed via bash (git worktree commands). Use the worktree skill f
 The lead creates worktrees and assigns them to teammates at spawn time via the \`cwd\` parameter of \`tm_create\`.
 Avoid unnecessary worktree creation as it adds complexity and can cause path confusion.
 
-${buildKnowledgeBoundarySection()}
+${buildTeammateAgentMemorySection()}
 
 ${buildCommonSections()}`;
 }

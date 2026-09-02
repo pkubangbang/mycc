@@ -17,7 +17,7 @@ import type { ToolDefinition } from '../types.js';
 
 export const checkpointTool: ToolDefinition = {
   name: 'checkpoint',
-  description: `Create a checkpoint marker for context management. Use before exploration or investigation tasks that generate many messages. Must be called alone (no other tools in same turn).`,
+  description: `Create a checkpoint marker for context management. Use before exploration or investigation tasks that generate many messages. Must be called alone (no other tools in same turn). Do NOT use for quick single-file edits, simple lookups, or tasks where you immediately know the answer — checkpoint overhead is wasted on trivial tasks.`,
   input_schema: {
     type: 'object',
     properties: {
