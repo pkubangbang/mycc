@@ -22,7 +22,7 @@ import type { AgentContext } from '../types.js';
  *    (broadcastAuto is a no-op when serve isn't running).
  * 2. `ctx.peer.setOnChannelJoin` — when a peer channel joins mid-PROMPT,
  *    grant read-only access to the peer's workDir, engage auto mode, and
- *    abort the blocked PROMPT wait so the loop redirects to WAIT. Guarded by
+ *    abort the blocked PROMPT wait so the loop redirects to AWAIT. Guarded by
  *    `agentIO.isPromptBlocked()` so it never flips auto mid-pass (COLLECT/
  *    LLM/HOOK/TOOL); a join while not blocked is caught by the Layer A
  *    hasActiveChannel() gate on the next PROMPT entry.
@@ -35,7 +35,7 @@ export function wireServeCallbacks(ctx: AgentContext): void {
   // Previously agentIO.setAuto() called getServeHub().broadcastAuto directly;
   // now the singleton owns the flag and fires this callback on a real flip,
   // so the webui chat input box stays enabled for steering and the 停止 button
-  // stays visible+spinning while the lead is in WAIT. Best-effort: broadcastAuto
+  // stays visible+spinning while the lead is in AWAIT. Best-effort: broadcastAuto
   // is a no-op when serve isn't running.
   autoState.onAutoChange = (value: boolean) => {
     try {
@@ -56,7 +56,7 @@ export function wireServeCallbacks(ctx: AgentContext): void {
   //   2. Aborts a blocked terminal PROMPT wait (agentIO.abortAsk) — rejects the
   //      blocked ask() Promise with a PromptAbortError, which propagates as a
   //      thrown exception through getInput() to the try/catch in prompt.ts
-  //      (Layer B), returning AgentState.WAIT. No-op if no ask() is blocked.
+  //      (Layer B), returning AgentState.AWAIT. No-op if no ask() is blocked.
   //   3. Aborts a blocked serve PROMPT wait (getServeHub().rejectInput) — same
   //      rejection path for the webui's waitForInput(). No-op if not blocked.
   // GUARD: all three actions fire ONLY when a PROMPT wait is actually blocked
@@ -103,7 +103,7 @@ export function wireServeCallbacks(ctx: AgentContext): void {
     autoState.setAuto(true);
     console.log(chalk.cyan('auto mode is on (webui). Mails will be auto-replied. Press esc to exit.'));
 
-    // Wake a blocked PROMPT wait so the loop immediately redirects to WAIT
+    // Wake a blocked PROMPT wait so the loop immediately redirects to AWAIT
     // (where mail/event polling happens). Same pattern as the channel-join
     // callback above. Without this, when the lead is blocked in PROMPT
     // (e.g. mail was written to unread-lead.jsonl while idle), the loop

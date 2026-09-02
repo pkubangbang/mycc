@@ -104,7 +104,7 @@ const args = minimist(process.argv.slice(2), {
   //   (absent)           -> undefined (serve mode OFF)
   // Putting it in `string` would break bare `--serve` (yields "" not true);
   // putting it in `boolean` would swallow `--serve 9000` (port ignored).
-  boolean: ['v', 'verbose', 'skip-healthcheck', 'setup', 'debug-eval', 'debug-tp', 'debug-prompt', 'auto', 'debug-autofly', 'allow-plan-off'],
+  boolean: ['v', 'verbose', 'skip-healthcheck', 'setup', 'debug-eval', 'debug-tp', 'debug-prompt', 'disable-crossroad', 'auto', 'debug-autofly', 'allow-plan-off'],
   string: [
     'from', 'port', 'host', 'max-upload-mb', 'autofly', 'daemon',
     'ollama-host', 'ollama-api-key', 'ollama-model', 'ollama-vision-model', 'ollama-embedding-model',
@@ -115,7 +115,7 @@ const args = minimist(process.argv.slice(2), {
   default: {
     v: false, from: null, port: null,
     'skip-healthcheck': false, setup: false,
-    'debug-eval': false, 'debug-tp': false, 'debug-prompt': false, 'debug-autofly': false,
+    'debug-eval': false, 'debug-tp': false, 'debug-prompt': false, 'disable-crossroad': false, 'debug-autofly': false,
     'allow-plan-off': false,
   },
 });
@@ -134,6 +134,7 @@ function buildCmdArgsEnv(parsed: typeof args): Record<string, string> {
     'debug-eval': 'MYCC_DEBUG_EVAL',
     'debug-tp': 'MYCC_DEBUG_TP',
     'debug-prompt': 'MYCC_DEBUG_PROMPT',
+    'disable-crossroad': 'MYCC_DISABLE_CROSSROAD',
     'debug-autofly': 'MYCC_DEBUG_AUTOfLY',
     'allow-plan-off': 'MYCC_ALLOW_PLAN_OFF',
     // Env-configurable vars (override .env files)
@@ -232,6 +233,17 @@ export function isDebuggingTp(): boolean {
 }
 
 /**
+ * Check if crossroad detection is disabled (--disable-crossroad flag).
+ * When enabled, the LLM state skips turning-word detection entirely —
+ * no truncation, no continuation generation. Useful when crossroad fires
+ * false positives (e.g. when the LLM's output legitimately mentions words
+ * that match a turning-word pattern, such as the state name "AWAIT").
+ */
+export function isCrossroadDisabled(): boolean {
+  return process.env.MYCC_DISABLE_CROSSROAD === 'true';
+}
+
+/**
  * Check if debug-prompt mode is enabled (--debug-prompt flag)
  * When enabled, extracted keywords are printed to the console during prompt stage.
  */
@@ -243,7 +255,7 @@ export function isDebuggingPrompt(): boolean {
  * Check if autonomous (auto) mode is requested via the --auto CLI flag.
  *
  * When true, the lead starts in auto mode: the PROMPT stage is replaced by
- * a WAIT stage (block for mail/teammate/steering events) and every
+ * an AWAIT stage (block for mail/teammate/steering events) and every
  * interactive question() auto-replies with its onEsc default. Plan/normal
  * mode is preserved — auto only governs prompting. The user can exit auto
  * mode at any time by pressing ESC.

@@ -13,9 +13,9 @@
  *   - Calls presentResult() to display the LLM's text-only response (the
  *     HOOK→STOP path where the LLM ran in neglected mode with empty tools —
  *     last triologue role IS 'assistant').
- * The WAIT handler is the exception: it turns off auto mode and returns
+ * The AWAIT handler is the exception: it turns off auto mode and returns
  * PROMPT directly (no wrap-up needed — the previous turn already presented
- * its result via STOP→PROMPT before entering WAIT).
+ * its result via STOP→PROMPT before entering AWAIT).
  */
 
 import chalk from 'chalk';

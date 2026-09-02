@@ -104,7 +104,7 @@ export class ChannelManager {
   // injects the firstQuery). Set externally via setOnChannelJoin() so the peer
   // module stays a pure file+mail layer with no loop/autoState imports. The
   // agent loop wires a callback that aborts a blocked PROMPT wait so a channel
-  // joining mid-PROMPT redirects the loop to WAIT. Single listener (overwrite).
+  // joining mid-PROMPT redirects the loop to AWAIT. Single listener (overwrite).
   private onChannelJoin: ((channelId: string) => void) | null = null;
 
   constructor(sessionId: string, identityManager: IdentityManager, mailboxPath: string) {

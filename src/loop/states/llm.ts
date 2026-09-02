@@ -32,7 +32,7 @@ import { handleCrossroad } from '../crossroad.js';
 import { loopEvents } from '../loop-events.js';
 import * as fs from 'fs';
 import * as path from 'path';
-import { getSessionContext, getSessionDir } from '../../config.js';
+import { getSessionContext, getSessionDir, isCrossroadDisabled } from '../../config.js';
 
 export async function handleLlm(
   env: MachineEnv,
@@ -193,7 +193,13 @@ export async function handleLlm(
       // (transparent skip), using the original LLM output as-is.
       const isBriefOnly = chat.rawToolCalls.length > 0
         && chat.rawToolCalls.every(tc => tc.function.name === 'brief');
-      if (tools.length > 0 && !isBriefOnly) {
+      // The entire crossroad block is skipped when --disable-crossroad is set.
+      // This is an escape hatch for when crossroad fires false positives — e.g.
+      // when the LLM's output legitimately mentions a word matching a turning
+      // pattern (such as a state name), which the detector cannot distinguish
+      // from a genuine interjection. With the flag on, the LLM output passes
+      // through unchanged and the cooldown flag is simply reset.
+      if (tools.length > 0 && !isBriefOnly && !isCrossroadDisabled()) {
         // ── COOLDOWN GATE ──
         // If crossroad fired last chat, skip detection this pass to let the LLM
         // execute its committed actions. Crossroad can re-fire next pass if
@@ -272,7 +278,8 @@ export async function handleLlm(
           }
         }
       } else {
-        // No tools available (e.g. neglected mode) — reset the flag
+        // No tools available (e.g. neglected mode), OR crossroad disabled via
+        // --disable-crossroad — reset the flag either way.
         env.crossroadOccurred = false;
       }
 
@@ -348,7 +355,7 @@ export async function handleLlm(
       // "momentum"): it starts at 0 at PROMPT entry (resetStreak in prompt.ts)
       // and climbs 1 per LLM stage. The autofly gate at the NEXT PROMPT entry
       // evaluates streak >= threshold — so a turn with 3+ LLM stages engages
-      // auto mode (→ WAIT + "auto mode is on" note), while a turn with fewer
+      // auto mode (→ AWAIT + "auto mode is on" note), while a turn with fewer
       // does not. The PROMPT-entry reset makes the count per-turn, so prior
       // turns never carry over.
       autoState.recordLlmSuccess();

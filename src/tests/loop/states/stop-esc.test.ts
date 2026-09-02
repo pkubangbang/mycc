@@ -42,7 +42,7 @@ vi.mock('../../../loop/state-machine.js', () => ({
     HOOK: 'hook',
     TOOL: 'tool',
     STOP: 'stop',
-    WAIT: 'wait',
+    AWAIT: 'await',
   },
   presentResult: vi.fn(),
 }));

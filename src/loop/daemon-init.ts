@@ -4,7 +4,7 @@
  * Extracted from agent-repl.ts. Daemon mode = auto mode + no terminal: the
  * Lead runs detached (spawned by the Coordinator with stdio:'ignore'),
  * auto-loads the named skill (if provided), starts a croner timer for skills
- * with `service_cron`, and stays alive in WAIT mode between cron ticks /
+ * with `service_cron`, and stays alive in AWAIT mode between cron ticks /
  * external mail_to nudges. Only daemon mode activates the cron timer — a
  * non-daemon lead loading a skill with service_cron does NOT start cron.
  */
@@ -83,7 +83,7 @@ export function initDaemonMode(
       process.exit(1);
     }
     // Inject a system note so the LLM loads the skill on its first turn.
-    // The WAIT state's 1s poll will pick up this note (it is appended to
+    // The AWAIT state's 1s poll will pick up this note (it is appended to
     // the triologue) and route to COLLECT → LLM.
     triologue.note('SYSTEM', `Daemon started with skill '${daemonSkill}'. Load it via skill_load(name="${daemonSkill}") and follow its workflow.`);
 

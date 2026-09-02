@@ -8,7 +8,7 @@
 // Performance note: the exhaust flames + mach rings use CSS keyframe
 // animations. They are now driven by the `warping` prop via the `.rocket--active`
 // class so the high-energy (faster) variant only applies while the agent is
-// actively processing. The idle (WAIT) thrust keeps a gentle animation; if
+// actively processing. The idle (AWAIT) thrust keeps a gentle animation; if
 // even that is unwanted, the parent can simply not render this component.
 //
 // The SVG markup is unchanged from the original inline version; only the
@@ -115,12 +115,12 @@ defineProps<{
 /* A hot outer plume + bright inner core + mach diamonds (shock rings) that
    propagate downward from the nozzle. The plume continuously disturbs
    (scaleY/scaleX breathing) and the mach rings travel outward + fade,
-   giving a real jet/spray feel rather than伸缩线条. WAIT keeps a gentle
+   giving a real jet/spray feel rather than伸缩线条. AWAIT keeps a gentle
    idle thrust; is-warping (RUNNING) boosts opacity + speeds every part. */
 .rocket-exhaust {
   transform-origin: 12px 14px;
   transform-box: view-box;
-  /* WAIT: gentle idle thrust */
+  /* AWAIT: gentle idle thrust */
   opacity: 0.7;
 }
 /* RUNNING: high-energy propulsion */

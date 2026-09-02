@@ -20,10 +20,10 @@ import { ref, watch, onMounted, onBeforeUnmount } from 'vue';
 // `infinite` for the whole lifetime of the auto button, and kept an
 // `animationiteration` listener attached that fired ~10×/sec doing
 // querySelectorAll + 5× setProperty — even while the starfield was
-// invisible (opacity 0) during WAIT (idle auto mode).
+// invisible (opacity 0) during AWAIT (idle auto mode).
 //
 // This component gates everything on the `warping` prop:
-//   • warping=false (WAIT / idle): the `.is-warping` class is absent →
+//   • warping=false (AWAIT / idle): the `.is-warping` class is absent →
 //     `animation-play-state: paused` halts every meteor animation (no
 //     compositor work, no iteration events), the field is opacity:0, and
 //     the JS listener is detached. Zero per-frame cost.
@@ -221,7 +221,7 @@ watch(
   /* PERFORMANCE: pause the flight animation unless warping. Without this the
      5 meteors animate `infinite` for the whole auto-mode lifetime, keeping
      the compositor busy + firing animationiteration events even while the
-     field is invisible (opacity 0) during WAIT. paused = zero per-frame
+     field is invisible (opacity 0) during AWAIT. paused = zero per-frame
      cost; the .is-warping rule below resumes them. */
   animation-play-state: paused;
 }
@@ -275,7 +275,7 @@ watch(
 
 /* PERFORMANCE: only run the flight animation while warping. The base
    animation-play-state: paused (above) is overridden here for the active
-   state. This is what makes WAIT (idle auto) cost nothing. */
+   state. This is what makes AWAIT (idle auto) cost nothing. */
 .warp-field.is-warping .meteor {
   animation-play-state: running;
 }

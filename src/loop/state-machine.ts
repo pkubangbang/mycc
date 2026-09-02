@@ -44,7 +44,7 @@ export enum AgentState {
   HOOK = 'hook',
   TOOL = 'tool',
   STOP = 'stop',
-  WAIT = 'wait',
+  AWAIT = 'await',
 }
 
 // ============================================================================
@@ -177,11 +177,11 @@ export class AgentStateMachine {
     let turn: TurnVars = { isFirstRound: true, nextTodoNudge: 3, lastTodoState: '', nextBriefNudge: 5, lastUserQuery: '', extractedKeywords: [] };
     let chat: ChatData = { abortController: null, rawToolCalls: [], assistantContent: '', augmentedCalls: [], hookResult: null, deferredCompact: false };
     // Initial state is always PROMPT. PROMPT is the single decision point for
-    // whether to run autonomously: it redirects to WAIT when auto mode is on
+    // whether to run autonomously: it redirects to AWAIT when auto mode is on
     // (e.g. started via --auto, which calls autoState.setAuto(true)) or when
     // the --debug-autofly autofly trigger fires. Starting at PROMPT (instead
     // of branching on getAuto() here) keeps the engagement policy in one
-    // place and avoids duplicating the WAIT-vs-PROMPT choice at startup.
+    // place and avoids duplicating the AWAIT-vs-PROMPT choice at startup.
     let state: AgentState = AgentState.PROMPT;
     let prevState: AgentState | null = null;
 
@@ -189,9 +189,9 @@ export class AgentStateMachine {
       // ── Lifetime boundaries ──
       // PROMPT = new conversational turn — but only when coming from STOP or startup.
       // When coming from SLASH we preserve TurnVars (same turn, slash was a side trip).
-      // WAIT is also a turn boundary in auto mode: each autonomous cycle starts a
-      // fresh turn (fresh nudges, lastUserQuery cleared). WAIT never follows SLASH.
-      if ((state === AgentState.PROMPT || state === AgentState.WAIT) && prevState !== AgentState.SLASH) {
+      // AWAIT is also a turn boundary in auto mode: each autonomous cycle starts a
+      // fresh turn (fresh nudges, lastUserQuery cleared). AWAIT never follows SLASH.
+      if ((state === AgentState.PROMPT || state === AgentState.AWAIT) && prevState !== AgentState.SLASH) {
         turn = { isFirstRound: true, nextTodoNudge: 3, lastTodoState: '', nextBriefNudge: 5, lastUserQuery: '', extractedKeywords: [] };
       }
       // COLLECT = fresh pipeline pass — always reset. Preserve

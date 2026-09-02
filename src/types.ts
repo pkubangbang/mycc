@@ -446,7 +446,7 @@ export interface CoreModule {
    * Whether the lead agent is in autonomous ("auto") mode.
    *
    * Auto mode is orthogonal to plan/normal: it changes the agent loop so
-   * the PROMPT stage is replaced by a WAIT stage (block for mail/teammate/
+   * the PROMPT stage is replaced by an AWAIT stage (block for mail/teammate/
    * steering events instead of prompting the user), and every interactive
    * question() auto-replies with its onEsc default so the loop never blocks.
    *
@@ -591,7 +591,7 @@ export interface PeerModule {
    * joined=true and injects the firstQuery). The callback lets the agent loop
    * react to a channel joining MID-PROMPT — i.e. after the Layer A gate was
    * checked but while ask()/waitForInput() is blocked — by aborting the
-   * blocked PROMPT wait so the loop redirects to WAIT (see prompt.ts Layer B).
+   * blocked PROMPT wait so the loop redirects to AWAIT (see prompt.ts Layer B).
    *
    * Channels that joined before PROMPT is reached are caught by the Layer A
    * hasActiveChannel() gate; this callback covers the mid-flight case. The

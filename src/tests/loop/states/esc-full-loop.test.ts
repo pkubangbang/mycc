@@ -114,7 +114,7 @@ describe('AgentStateMachine — full-loop ESC integration', () => {
       [AgentState.HOOK]: vi.fn(async () => { visited.push(AgentState.HOOK); return AgentState.TOOL; }),
       [AgentState.TOOL]: vi.fn(async () => { visited.push(AgentState.TOOL); return AgentState.STOP; }),
       [AgentState.STOP]: vi.fn(async () => { visited.push(AgentState.STOP); return AgentState.PROMPT; }),
-      [AgentState.WAIT]: vi.fn(),
+      [AgentState.AWAIT]: vi.fn(),
     };
 
     await buildMachine(deps, handlers).run();
@@ -146,7 +146,7 @@ describe('AgentStateMachine — full-loop ESC integration', () => {
       [AgentState.HOOK]: vi.fn(async () => { visited.push(AgentState.HOOK); return AgentState.TOOL; }),
       [AgentState.TOOL]: vi.fn(async () => { visited.push(AgentState.TOOL); return AgentState.STOP; }),
       [AgentState.STOP]: vi.fn(async () => { visited.push(AgentState.STOP); return AgentState.PROMPT; }),
-      [AgentState.WAIT]: vi.fn(),
+      [AgentState.AWAIT]: vi.fn(),
     };
 
     await buildMachine(deps, handlers).run();
@@ -191,7 +191,7 @@ describe('AgentStateMachine — full-loop ESC integration', () => {
       [AgentState.HOOK]: vi.fn(),
       [AgentState.TOOL]: vi.fn(),
       [AgentState.STOP]: vi.fn(async () => AgentState.PROMPT),
-      [AgentState.WAIT]: vi.fn(),
+      [AgentState.AWAIT]: vi.fn(),
     };
 
     await buildMachine(deps, handlers).run();
@@ -228,7 +228,7 @@ describe('AgentStateMachine — full-loop ESC integration', () => {
       [AgentState.HOOK]: vi.fn(),
       [AgentState.TOOL]: vi.fn(),
       [AgentState.STOP]: vi.fn(async () => AgentState.PROMPT),
-      [AgentState.WAIT]: vi.fn(),
+      [AgentState.AWAIT]: vi.fn(),
     };
 
     await buildMachine(deps, handlers).run();
@@ -259,7 +259,7 @@ describe('AgentStateMachine — full-loop ESC integration', () => {
       [AgentState.HOOK]: vi.fn(),
       [AgentState.TOOL]: vi.fn(),
       [AgentState.STOP]: vi.fn(async () => { visited.push(AgentState.STOP); return AgentState.PROMPT; }),
-      [AgentState.WAIT]: vi.fn(),
+      [AgentState.AWAIT]: vi.fn(),
     };
 
     await buildMachine(deps, handlers).run();

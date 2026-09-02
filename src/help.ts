@@ -67,6 +67,7 @@ const DEBUG_FLAGS: FlagRow[] = [
   { flag: '--debug-suggest', desc: 'Log the SUGGEST background task (LLM response + feedback)' },
   { flag: '--debug-eval', desc: 'Print the parsed jsep AST for each hook condition expression' },
   { flag: '--debug-prompt', desc: 'Show extracted keywords + "Parsing..." spinner in the PROMPT state' },
+  { flag: '--disable-crossroad', desc: 'Skip crossroad turning-word detection (no truncation, no continuation generation)' },
 ];
 
 /** Pad a flag column to a fixed width for aligned columns. */

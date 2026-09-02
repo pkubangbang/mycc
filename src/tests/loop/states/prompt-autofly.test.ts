@@ -4,7 +4,7 @@
  * Code path under test (prompt.ts, top of handlePrompt):
  *   if (autoState.getAuto()) {                  // case 1: already on
  *     autoState.setAuto(true);                  // idempotent re-sync
- *     return AgentState.WAIT;
+ *     return AgentState.AWAIT;
  *   }
  *   // Autofly gate — BOTH triggers share the streak gate (the breathing room:
  *   // ESC resets streak to 0, so neither re-engages auto until a turn again
@@ -15,13 +15,13 @@
  *         && autoState.getStreak() >= autoState.getAutoflyThreshold()) {
  *     autoState.setAuto(true);                  // engage so subsequent loops take case 1
  *     console.log('auto mode is on.');          // user-visible note
- *     return AgentState.WAIT;
+ *     return AgentState.AWAIT;
  *   }
  *   autoState.resetStreak();                     // per-turn reset (all fall-through paths)
  *   // ... then Layer B: try/catch around getInput() catches PromptAbortError
- *   //      (thrown when a channel joins MID-PROMPT) → setAuto(true) + WAIT.
+ *   //      (thrown when a channel joins MID-PROMPT) → setAuto(true) + AWAIT.
  *
- * PROMPT is the single decision point for the WAIT redirect. STOP always
+ * PROMPT is the single decision point for the AWAIT redirect. STOP always
  * routes here; the initial state is always PROMPT. The threshold lives in
  * the AutoState singleton (agent-repl seeds it from --autofly=N at startup),
  * so PROMPT reads a single source of truth. An active peer channel is
@@ -87,7 +87,7 @@ vi.mock('../../../loop/state-machine.js', () => ({
     HOOK: 'hook',
     TOOL: 'tool',
     STOP: 'stop',
-    WAIT: 'wait',
+    AWAIT: 'await',
   },
   presentResult: vi.fn(),
 }));
@@ -187,13 +187,13 @@ describe('handlePrompt — auto-mode engagement gate', () => {
   });
 
   describe('case 1: auto mode already on', () => {
-    it('returns WAIT without prompting the user', async () => {
+    it('returns AWAIT without prompting the user', async () => {
       const { env } = makeEnv();
       vi.mocked(autoState.getAuto).mockReturnValue(true);
 
       const result = await handlePrompt(env, createTurnVars(), createChatData());
 
-      expect(result).toBe(AgentState.WAIT);
+      expect(result).toBe(AgentState.AWAIT);
       // setAuto(true) is the idempotent re-sync (no-op, keeps onAutoChange calm)
       expect(autoState.setAuto).toHaveBeenCalledWith(true);
     });
@@ -207,7 +207,7 @@ describe('handlePrompt — auto-mode engagement gate', () => {
 
       const result = await handlePrompt(env, createTurnVars(), createChatData());
 
-      expect(result).toBe(AgentState.WAIT);
+      expect(result).toBe(AgentState.AWAIT);
       // Case 1 short-circuits before the streak/threshold are consulted.
       expect(autoState.getStreak).not.toHaveBeenCalled();
       expect(autoState.getAutoflyThreshold).not.toHaveBeenCalled();
@@ -215,7 +215,7 @@ describe('handlePrompt — auto-mode engagement gate', () => {
   });
 
   describe('case 2: --debug-autofly autofly trigger', () => {
-    it('engages auto mode and returns WAIT when streak > default threshold', async () => {
+    it('engages auto mode and returns AWAIT when streak > default threshold', async () => {
       const { env } = makeEnv();
       vi.mocked(isDebugAutofly).mockReturnValue(true);
       vi.mocked(autoState.getAutoflyThreshold).mockReturnValue(3); // singleton default
@@ -223,13 +223,13 @@ describe('handlePrompt — auto-mode engagement gate', () => {
 
       const result = await handlePrompt(env, createTurnVars(), createChatData());
 
-      expect(result).toBe(AgentState.WAIT);
+      expect(result).toBe(AgentState.AWAIT);
       expect(autoState.setAuto).toHaveBeenCalledWith(true); // engage so subsequent loops take case 1
       // No per-turn reset on the engage path — setAuto(true) just reset the streak.
       expect(autoState.resetStreak).not.toHaveBeenCalled();
     });
 
-    it('engages auto mode and returns WAIT when streak >= a custom singleton threshold', async () => {
+    it('engages auto mode and returns AWAIT when streak >= a custom singleton threshold', async () => {
       const { env } = makeEnv();
       vi.mocked(isDebugAutofly).mockReturnValue(true);
       vi.mocked(autoState.getAutoflyThreshold).mockReturnValue(5); // seeded from --autofly=5
@@ -237,7 +237,7 @@ describe('handlePrompt — auto-mode engagement gate', () => {
 
       const result = await handlePrompt(env, createTurnVars(), createChatData());
 
-      expect(result).toBe(AgentState.WAIT);
+      expect(result).toBe(AgentState.AWAIT);
       expect(autoState.setAuto).toHaveBeenCalledWith(true);
     });
 
@@ -249,7 +249,7 @@ describe('handlePrompt — auto-mode engagement gate', () => {
 
       const result = await handlePrompt(env, createTurnVars(), createChatData());
 
-      expect(result).toBe(AgentState.WAIT);
+      expect(result).toBe(AgentState.AWAIT);
       expect(autoState.setAuto).toHaveBeenCalledWith(true);
     });
 
@@ -273,7 +273,7 @@ describe('handlePrompt — auto-mode engagement gate', () => {
     // (llm.ts recordLlmSuccess). The gate at the NEXT PROMPT entry evaluates
     // the count from the just-finished turn. A turn with 2 LLM stages never
     // triggers (streak 2 < threshold 3); a turn with 3 LLM stages triggers
-    // (streak 3 >= threshold 3) → WAIT + "auto mode is on" note instead of
+    // (streak 3 >= threshold 3) → AWAIT + "auto mode is on" note instead of
     // showing the prompt.
 
     it('2-LLM-stage turn (streak 2) does NOT trigger autofly → falls through to prompt', async () => {
@@ -289,7 +289,7 @@ describe('handlePrompt — auto-mode engagement gate', () => {
       expect(autoState.resetStreak).toHaveBeenCalled(); // per-turn reset
     });
 
-    it('3-LLM-stage turn (streak 3) triggers autofly → WAIT + "auto mode is on" note', async () => {
+    it('3-LLM-stage turn (streak 3) triggers autofly → AWAIT + "auto mode is on" note', async () => {
       const { env } = makeEnv();
       vi.mocked(isDebugAutofly).mockReturnValue(true);
       vi.mocked(autoState.getAutoflyThreshold).mockReturnValue(3);
@@ -297,7 +297,7 @@ describe('handlePrompt — auto-mode engagement gate', () => {
 
       const result = await handlePrompt(env, createTurnVars(), createChatData());
 
-      expect(result).toBe(AgentState.WAIT); // prompt NOT shown; auto-continue
+      expect(result).toBe(AgentState.AWAIT); // prompt NOT shown; auto-continue
       expect(autoState.setAuto).toHaveBeenCalledWith(true);
       expect(autoState.resetStreak).not.toHaveBeenCalled(); // engage path skips the reset
     });
@@ -337,7 +337,7 @@ describe('handlePrompt — auto-mode engagement gate', () => {
 
       const result = await handlePrompt(env, createTurnVars(), createChatData());
 
-      expect(result).toBe(AgentState.WAIT);
+      expect(result).toBe(AgentState.AWAIT);
       expect(autoState.setAuto).toHaveBeenCalledWith(true);
     });
 
@@ -350,7 +350,7 @@ describe('handlePrompt — auto-mode engagement gate', () => {
 
       const result = await handlePrompt(env, createTurnVars(), createChatData());
 
-      expect(result).toBe(AgentState.WAIT);
+      expect(result).toBe(AgentState.AWAIT);
       expect(autoState.setAuto).toHaveBeenCalledWith(true);
     });
 
@@ -411,10 +411,10 @@ describe('handlePrompt — auto-mode engagement gate', () => {
     // streak below threshold), getInput() blocks. If a channel joins mid-wait,
     // the channel-join callback rejects the blocked Promise with a
     // PromptAbortError; the try/catch around getInput() catches it and returns
-    // WAIT (engaging auto unconditionally — the join event itself is the signal;
+    // AWAIT (engaging auto unconditionally — the join event itself is the signal;
     // the next PROMPT re-applies the streak gate for the breathing room).
 
-    it('catches PromptAbortError from getInput() → engages auto and returns WAIT', async () => {
+    it('catches PromptAbortError from getInput() → engages auto and returns AWAIT', async () => {
       const { env } = makeEnv();
       vi.mocked(isDebugAutofly).mockReturnValue(false);
       (env.ctx.peer.hasActiveChannel as ReturnType<typeof vi.fn>).mockReturnValue(false);
@@ -427,7 +427,7 @@ describe('handlePrompt — auto-mode engagement gate', () => {
 
       const result = await handlePrompt(env, createTurnVars(), createChatData());
 
-      expect(result).toBe(AgentState.WAIT);
+      expect(result).toBe(AgentState.AWAIT);
       expect(autoState.setAuto).toHaveBeenCalledWith(true); // engage; channel joined
     });
 

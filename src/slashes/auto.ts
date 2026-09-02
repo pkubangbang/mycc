@@ -5,7 +5,7 @@
  *   /auto   - Enter auto mode
  *
  * Auto mode is ORTHOGONAL to plan/normal mode: it only changes the agent
- * loop so the PROMPT stage is replaced by a WAIT stage (block for mail /
+ * loop so the PROMPT stage is replaced by an AWAIT stage (block for mail /
  * teammate state changes / webui steering notes instead of prompting the
  * user), and every interactive question() auto-replies with its onEsc
  * default so the loop never blocks. Plan/normal mode stays active —
@@ -15,7 +15,7 @@
  * handler clears the auto flag and the prompt resumes.
  *
  * The original motivation is "autonomous mycc": multiple mycc instances can
- * chain by writing to each other's mailbox, each blocking in WAIT until
+ * chain by writing to each other's mailbox, each blocking in AWAIT until
  * roused by an incoming mail, forming a workflow without human prompting.
  */
 

@@ -243,6 +243,7 @@ mycc provides several `--debug-*` flags for investigating specific subsystems:
 | `--debug-tp` | **Triologue Parity** — when a role transition violation occurs (e.g., `tool → user` without an `assistant` bridge), throw an error with a stack trace instead of auto-recovering. Useful when developing the auto-fixer or debugging `triologue.ts`. |
 | `--debug-suggest` | **SUGGEST Background Task** — logs the LLM response and feedback of the background suggest task to the terminal via `ctx.core.brief()`. The SUGGEST task runs after each turn to proactively discover relevant tools/skills for the next user query. |
 | `--debug-eval` | **Expression Evaluation** — prints the parsed AST tree for each hook condition expression during evaluation. Useful when developing hookish skills with custom `when` conditions in `evaluator.ts`. |
+| `--disable-crossroad` | **Skip Crossroad** — disables turning-word detection entirely. No truncation, no continuation generation. Use when crossroad fires false positives (e.g. when the LLM's output legitimately mentions a word matching a turning pattern, such as a state name). |
 
 Combine with `-v` (verbose) for maximum detail:
 ```bash

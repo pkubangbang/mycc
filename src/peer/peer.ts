@@ -104,7 +104,7 @@ export class PeerManager implements PeerModule {
   /**
    * Delegate the channel-join callback to the ChannelManager. Wired once at
    * startup by agent-repl.ts so a channel joining mid-PROMPT aborts the
-   * blocked PROMPT wait and redirects the loop to WAIT.
+   * blocked PROMPT wait and redirects the loop to AWAIT.
    */
   setOnChannelJoin(callback: (channelId: string) => void): void {
     this.channel.setOnChannelJoin(callback);

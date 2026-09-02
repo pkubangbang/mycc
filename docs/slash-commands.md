@@ -490,7 +490,7 @@ for the coordinator's lifetime.** `/reload` only forwards `--serve`/`--host`
 ```
 
 **Behavior**:
-- Replaces PROMPT stage with WAIT stage (block for mail/teammate/steering events)
+- Replaces PROMPT stage with AWAIT stage (block for mail/teammate/steering events)
 - Every interactive question() auto-replies with its onEsc default
 - Plan/normal mode stays active — auto only governs prompting
 - Exit auto mode by pressing ESC

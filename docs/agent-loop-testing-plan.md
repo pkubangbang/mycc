@@ -8,7 +8,7 @@
 
 ## Background
 
-The agent-loop uses an explicit state machine (`src/loop/state-machine.ts`) with 8 states: PROMPT, SLASH, COLLECT, LLM, HOOK, TOOL, STOP, WAIT. Three data tiers (MachineEnv, TurnVars, PassData) manage state lifetime. The LLM call surface is `retryChat()` / `forkChat()` in `src/engine/chat-provider.ts`.
+The agent-loop uses an explicit state machine (`src/loop/state-machine.ts`) with 8 states: PROMPT, SLASH, COLLECT, LLM, HOOK, TOOL, STOP, AWAIT. Three data tiers (MachineEnv, TurnVars, PassData) manage state lifetime. The LLM call surface is `retryChat()` / `forkChat()` in `src/engine/chat-provider.ts`.
 
 Existing tests (13 files in `src/tests/loop/states/`) focus on ESC scenarios. The test infrastructure (vitest, `mock-context.ts`, `esc-test-helpers.ts`) is solid but lacks structured observability, a centralized mock layer, and systematic path coverage.
 

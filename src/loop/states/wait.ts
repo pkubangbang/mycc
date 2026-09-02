@@ -1,16 +1,16 @@
 /**
- * wait.ts - WAIT state handler (autonomous mode)
+ * wait.ts - AWAIT state handler (autonomous mode)
  *
  * Replaces the PROMPT stage in auto mode. Instead of prompting the user,
  * the loop blocks here until an external event arrives — a new mail, a
  * teammate state change (question / finished / mail), or a webui steering
  * note — then transitions to COLLECT to process the event. This is the
  * core of "autonomous mycc": multiple instances can chain by writing to
- * each other's mailbox, each blocking in WAIT until roused.
+ * each other's mailbox, each blocking in AWAIT until roused.
  *
- * Entry: PROMPT redirects to WAIT when auto mode is on (or when the
+ * Entry: PROMPT redirects to AWAIT when auto mode is on (or when the
  *        --debug-autofly autofly trigger engages it). STOP always routes
- *        to PROMPT, which is the single decision point for the WAIT
+ *        to PROMPT, which is the single decision point for the AWAIT
  *        redirect.
  * Exit:
  *   - COLLECT — an event arrived (mail / teammate / steering).
@@ -20,8 +20,8 @@
  *               auto is orthogonal and only governs prompting.
  *
  * POLL design: checks are cheap (in-memory flags + tiny file read for
- * mail). A 1s poll keeps WAIT responsive without busy-spinning. Each poll
- * also re-checks `getAuto()` so a programmatic `setAuto(false)` exits WAIT
+ * mail). A 1s poll keeps AWAIT responsive without busy-spinning. Each poll
+ * also re-checks `getAuto()` so a programmatic `setAuto(false)` exits AWAIT
  * even without ESC, and `isNeglectedMode()` so ESC is honored promptly.
  */
 
@@ -32,8 +32,8 @@ import { agentIO } from '../agent-io.js';
 import { autoState } from '../auto-state.js';
 import { getServeHub } from '../../serve/serve-registry.js';
 
-/** Poll interval for the WAIT blocking loop (ms). */
-const WAIT_POLL_MS = 1000;
+/** Poll interval for the AWAIT blocking loop (ms). */
+const AWAIT_POLL_MS = 1000;
 
 /**
  * Check whether an event is already pending (mail, teammate, or steering).
@@ -71,7 +71,7 @@ export async function handleWait(
   // Fast path: an event is already pending → go straight to COLLECT.
   if (eventPending(env)) {
     // If a teammate is holding or working, wait for them so the lead sees
-    // the resulting mail / question rather than spinning COLLECT→STOP→WAIT.
+    // the resulting mail / question rather than spinning COLLECT→STOP→AWAIT.
     const teammates = ctx.team.listTeammates();
     const active = teammates.some((t) => t.status === 'holding' || t.status === 'working');
     if (active) {
@@ -109,11 +109,11 @@ export async function handleWait(
 
     // Nothing pending — sleep briefly and re-check. escAware is not needed
     // here because we poll isNeglectedMode() each iteration; a plain delay
-    // is fine and keeps WAIT cancelable within one poll interval.
-    await new Promise((resolve) => setTimeout(resolve, WAIT_POLL_MS));
+    // is fine and keeps AWAIT cancelable within one poll interval.
+    await new Promise((resolve) => setTimeout(resolve, AWAIT_POLL_MS));
 
     // Suppress unused-warning while keeping triologue available for future
-    // note injection if WAIT ever needs to log a heartbeat.
+    // note injection if AWAIT ever needs to log a heartbeat.
     void triologue;
   }
 }

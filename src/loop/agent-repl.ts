@@ -298,7 +298,7 @@ export async function main(): Promise<void> {
   // ── --auto CLI flag: enter autonomous mode at startup ──
   // Auto mode is orthogonal to plan/normal. Setting the flag here means the
   // state machine's initial PROMPT hits the auto safety-net guard and jumps
-  // straight to WAIT (block for mail/teammate/steering events, no user
+  // straight to AWAIT (block for mail/teammate/steering events, no user
   // prompt). The user can exit by pressing ESC, same as /auto mid-session.
   if (shouldAuto()) {
     autoState.resetStreak();
@@ -318,7 +318,7 @@ export async function main(): Promise<void> {
 
   // ── Headless first_query marker ──
   // Every session that BOOTSTRAPS into auto mode (--auto, --daemon) skips
-  // the interactive PROMPT state (the auto gate in prompt.ts returns WAIT
+  // the interactive PROMPT state (the auto gate in prompt.ts returns AWAIT
   // before the bookmark capture runs), so its first_query would stay ''
   // forever and cleanupEmptySessions would garbage-collect the live
   // session dir once it is >1 min old. Seed HEADLESS_FIRST_QUERY_MARKER so
@@ -360,7 +360,7 @@ export async function main(): Promise<void> {
     hook: handleHook as StateHandler,
     tool: handleTool as StateHandler,
     stop: handleStop as StateHandler,
-    wait: handleWait as StateHandler,
+    await: handleWait as StateHandler,
   };
 
   // ── Create state machine ──
@@ -405,13 +405,13 @@ export async function main(): Promise<void> {
 
   // ── Wire running state to web UI ──
   // The state machine emits state_transition on every state change. Idle
-  // states (PROMPT/WAIT) mean the agent is waiting for input/events;
+  // states (PROMPT/AWAIT) mean the agent is waiting for input/events;
   // everything else means the agent is actively processing. The web UI
   // mirrors this as `isRunning` so the rocket button's warp background
-  // appears only during actual work, not during auto-mode WAIT idle.
+  // appears only during actual work, not during auto-mode AWAIT idle.
   loopEvents.on('state_transition', (payload) => {
     const { to } = payload as StateTransitionPayload;
-    const running = to !== 'prompt' && to !== 'wait';
+    const running = to !== 'prompt' && to !== 'await';
     try {
       getServeHub().setAgentRunning(running);
     } catch {

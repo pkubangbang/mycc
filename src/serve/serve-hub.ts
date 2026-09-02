@@ -60,7 +60,7 @@ export class ServeHub implements HubHandler {
   // ── Input bridge — single resolver, no AbortController ──
   private inputResolver: ((input: string | null) => void) | null = null;
   // Rejecter paired with inputResolver: an external wake (peer channel join)
-  // REJECTs waitForInput() with PromptAbortError (→ prompt.ts catch → WAIT),
+  // REJECTs waitForInput() with PromptAbortError (→ prompt.ts catch → AWAIT),
   // distinct from abortInput() which RESOLVES with null (→ terminal fallback).
   private inputRejecter: ((reason: unknown) => void) | null = null;
 
@@ -97,7 +97,7 @@ export class ServeHub implements HubHandler {
   private enterAutoProvider: (() => boolean) | null = null;
 
   private running = false;
-  // State-machine-driven processing flag (idle PROMPT/WAIT → false; else true).
+  // State-machine-driven processing flag (idle PROMPT/AWAIT → false; else true).
   private agentRunning = false;
   // Re-entrancy guard for stop().
   private stopping = false;
@@ -300,7 +300,7 @@ export class ServeHub implements HubHandler {
   /**
    * Blocks until submitInput (WS), abortInput (stop), or rejectInput (peer
    * channel join). Returns the input string, null if aborted (serve stopped),
-   * or throws PromptAbortError if rejected (→ prompt.ts catch → WAIT).
+   * or throws PromptAbortError if rejected (→ prompt.ts catch → AWAIT).
    */
   waitForInput(): Promise<string | null> {
     return new Promise((resolve, reject) => {
@@ -334,7 +334,7 @@ export class ServeHub implements HubHandler {
 
   /**
    * Reject a blocked waitForInput() with PromptAbortError (external wake →
-   * WAIT). Distinct from abortInput() (resolve null → terminal fallback). Card
+   * AWAIT). Distinct from abortInput() (resolve null → terminal fallback). Card
    * resolvers are NOT rejected — a channel join mid-card is not a PROMPT wait.
    */
   rejectInput(): void {
@@ -471,13 +471,13 @@ export class ServeHub implements HubHandler {
   // Auto-mode + running-state signals (session-level, not logged)
   // ===========================================================================
 
-  /** Broadcast auto-mode state to all clients (keeps chat box enabled in WAIT). */
+  /** Broadcast auto-mode state to all clients (keeps chat box enabled in AWAIT). */
   broadcastAuto(value: boolean): void {
     const payload = JSON.stringify({ type: 'auto', content: value ? 'on' : 'off' });
     this.clients.forEachOpen((ws) => ws.send(payload));
   }
 
-  /** Broadcast agent running state (idle PROMPT/WAIT → off; processing → on). */
+  /** Broadcast agent running state (idle PROMPT/AWAIT → off; processing → on). */
   setAgentRunning(value: boolean): void {
     if (value === this.agentRunning) return;
     this.agentRunning = value;

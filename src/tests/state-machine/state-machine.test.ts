@@ -26,7 +26,7 @@ describe('AgentState', () => {
     expect(AgentState.HOOK).toBe('hook');
     expect(AgentState.TOOL).toBe('tool');
     expect(AgentState.STOP).toBe('stop');
-    expect(AgentState.WAIT).toBe('wait');
+    expect(AgentState.AWAIT).toBe('await');
   });
 });
 
@@ -144,7 +144,7 @@ describe('AgentStateMachine', () => {
       [AgentState.HOOK]: vi.fn(),
       [AgentState.TOOL]: vi.fn(),
       [AgentState.STOP]: vi.fn(),
-      [AgentState.WAIT]: vi.fn(),
+      [AgentState.AWAIT]: vi.fn(),
     };
 
     const machine = new AgentStateMachine(
@@ -172,7 +172,7 @@ describe('AgentStateMachine', () => {
       [AgentState.HOOK]: vi.fn(async () => AgentState.TOOL),
       [AgentState.TOOL]: vi.fn(async () => AgentState.STOP),
       [AgentState.STOP]: vi.fn(async () => AgentState.PROMPT),
-      [AgentState.WAIT]: vi.fn(),
+      [AgentState.AWAIT]: vi.fn(),
     };
 
     const machine = new AgentStateMachine(
@@ -202,7 +202,7 @@ describe('AgentStateMachine', () => {
       [AgentState.HOOK]: vi.fn(),
       [AgentState.TOOL]: vi.fn(),
       [AgentState.STOP]: vi.fn(),
-      [AgentState.WAIT]: vi.fn(),
+      [AgentState.AWAIT]: vi.fn(),
     };
 
     const machine = new AgentStateMachine(
@@ -233,7 +233,7 @@ describe('AgentStateMachine', () => {
       [AgentState.HOOK]: vi.fn(async () => AgentState.TOOL),
       [AgentState.TOOL]: vi.fn(async () => AgentState.STOP),
       [AgentState.STOP]: vi.fn(async () => AgentState.PROMPT),
-      [AgentState.WAIT]: vi.fn(),
+      [AgentState.AWAIT]: vi.fn(),
     };
 
     const machine = new AgentStateMachine(
@@ -273,7 +273,7 @@ describe('AgentStateMachine', () => {
       [AgentState.HOOK]: vi.fn(),
       [AgentState.TOOL]: vi.fn(),
       [AgentState.STOP]: vi.fn(),
-      [AgentState.WAIT]: vi.fn(),
+      [AgentState.AWAIT]: vi.fn(),
     };
 
     const machine = new AgentStateMachine(
@@ -305,7 +305,7 @@ describe('AgentStateMachine', () => {
       [AgentState.HOOK]: vi.fn(),
       [AgentState.TOOL]: vi.fn(),
       [AgentState.STOP]: vi.fn(),
-      [AgentState.WAIT]: vi.fn(),
+      [AgentState.AWAIT]: vi.fn(),
     };
 
     const machine = new AgentStateMachine(
@@ -386,7 +386,7 @@ describe('AgentStateMachine', () => {
       }),
       [AgentState.TOOL]: vi.fn(),
       [AgentState.STOP]: vi.fn(async () => AgentState.PROMPT),
-      [AgentState.WAIT]: vi.fn(),
+      [AgentState.AWAIT]: vi.fn(),
     };
 
     // Make PROMPT exit on its second entry (after STOP → PROMPT).
@@ -427,7 +427,7 @@ describe('AgentStateMachine', () => {
       [AgentState.HOOK]: vi.fn(),
       [AgentState.TOOL]: vi.fn(),
       [AgentState.STOP]: vi.fn(),
-      [AgentState.WAIT]: vi.fn(),
+      [AgentState.AWAIT]: vi.fn(),
     };
 
     const machine = new AgentStateMachine(
@@ -478,7 +478,7 @@ describe('AgentStateMachine', () => {
       [AgentState.HOOK]: vi.fn(),
       [AgentState.TOOL]: vi.fn(),
       [AgentState.STOP]: vi.fn(),
-      [AgentState.WAIT]: vi.fn(),
+      [AgentState.AWAIT]: vi.fn(),
     };
 
     const machine = new AgentStateMachine(

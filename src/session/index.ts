@@ -22,7 +22,7 @@ import { openEditor } from '../utils/open-editor.js';
  * Marker seeded into `first_query` for every session that BOOTSTRAPS into
  * auto mode (`--auto`, `--daemon <skill>`, bare `--daemon`). Such sessions
  * skip the interactive PROMPT state entirely (the auto gate in prompt.ts
- * returns WAIT before the bookmark capture runs), so without the marker
+ * returns AWAIT before the bookmark capture runs), so without the marker
  * their `first_query` stays '' and cleanupEmptySessions treats them as
  * garbage once they are >1 min old — deleting the session dir out from
  * under a live process (the daemon-stall bug of 2026-08-27).
@@ -242,7 +242,7 @@ export function writeSession(filePath: string, session: Session): void {
  * seeding {@link HEADLESS_FIRST_QUERY_MARKER} into its `first_query`.
  *
  * WHY: bootstrap-auto sessions skip the interactive PROMPT state (the auto
- * gate in prompt.ts returns WAIT before the bookmark capture), so their
+ * gate in prompt.ts returns AWAIT before the bookmark capture), so their
  * `first_query` would stay '' forever and cleanupEmptySessions would
  * garbage-collect the live session dir once it is >1 min old. The marker
  * makes the cleanup predicate categorically exclude the session — no

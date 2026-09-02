@@ -141,10 +141,10 @@ export async function handlePrompt(
   // ── Auto-mode engagement gate ──
   // PROMPT is the single decision point for whether the loop should skip
   // prompting the user and run autonomously. Two conditions, checked in
-  // order, redirect to WAIT instead of asking for input:
+  // order, redirect to AWAIT instead of asking for input:
   //
   //   1. Auto mode is already on (e.g. engaged via /auto or a prior autofly
-  //      trigger). Just jump to WAIT — the loop keeps running.
+  //      trigger). Just jump to AWAIT — the loop keeps running.
   //
   //   2. Auto mode is off, but one of the autofly triggers is armed AND the
   //      streak of consecutive successful LLM stages exceeds the threshold N.
@@ -152,7 +152,7 @@ export async function handlePrompt(
   //      channel (a joined channel with a fresh peer — see hasActiveChannel()).
   //      Having an active channel is equivalent to --debug-autofly: it engages
   //      auto mode now (setAuto(true)) so subsequent PROMPT entries take path 1,
-  //      then jumps to WAIT. ESC gives the user N turns (default 3) before the
+  //      then jumps to AWAIT. ESC gives the user N turns (default 3) before the
   //      streak re-arms and auto re-engages.
   //
   // The threshold lives in the AutoState singleton — agent-repl seeds it once
@@ -163,7 +163,7 @@ export async function handlePrompt(
   // mode is untouched by this gate (auto is orthogonal to plan/normal).
   if (autoState.getAuto()) {
     autoState.setAuto(true); // idempotent re-sync (no-op, keeps onAutoChange calm)
-    return AgentState.WAIT;
+    return AgentState.AWAIT;
   }
   // ── Autofly engagement gate (shared streak gate for both triggers) ──
   // Both --debug-autofly and an active peer channel share the SAME streak >=
@@ -194,13 +194,13 @@ export async function handlePrompt(
   // joining MID-PROMPT (after this gate fell through but while ask()/
   // waitForInput() is blocked) is handled by Layer B — the try/catch around
   // getInput() below, which catches a PromptAbortError rejection and returns
-  // WAIT. Layer B engages auto unconditionally because a channel DID just join
+  // AWAIT. Layer B engages auto unconditionally because a channel DID just join
   // (the event itself is the signal); the next PROMPT then re-applies this
   // streak gate.
   if ((isDebugAutofly() || ctx.peer.hasActiveChannel()) && autoState.getStreak() >= autoState.getAutoflyThreshold()) {
     autoState.setAuto(true); // engage auto mode so subsequent loops take path 1
     console.log(chalk.gray('auto mode is on.'));
-    return AgentState.WAIT;
+    return AgentState.AWAIT;
   }
 
   // ── Per-turn streak reset ──
@@ -249,7 +249,7 @@ export async function handlePrompt(
       // PromptAbortError (terminal via AgentIO.abortAsk, serve via
       // ServeHub.rejectInput); that rejection propagates as a thrown exception
       // through UserInputProvider.getInput() / WebInputProvider.getInput() to
-      // here. We catch it and redirect to WAIT — the channel is now active, so
+      // here. We catch it and redirect to AWAIT — the channel is now active, so
       // the next PROMPT entry takes the Layer A hasActiveChannel() path. Any
       // other thrown error is a genuine failure: re-throw so it surfaces.
       try {
@@ -257,7 +257,7 @@ export async function handlePrompt(
       } catch (e) {
         if (e instanceof PromptAbortError) {
           autoState.setAuto(true); // engage auto; channel is active now
-          return AgentState.WAIT;
+          return AgentState.AWAIT;
         }
         throw e;
       }

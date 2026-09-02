@@ -405,7 +405,7 @@ const inputAreaStyle = computed(() =>
 //   2. 卡片待回复  — hasPendingCard; routing is blocked by the card gate.
 //   3. PROMPT      — isWaiting true with no pending card → sendInput (query).
 //   4. 运行中      — isRunning → sendSteer (COLLECT will drain as REMINDER).
-//   5. WAIT 自动待命 — auto mode idle (steady WAIT broadcasts neither prompt
+//   5. AWAIT 自动待命 — auto mode idle (steady AWAIT broadcasts neither prompt
 //                     nor running) → sendSteer (wait.ts polls the queue).
 //   6. 已提交·后端处理中 — a query was JUST submitted (sendInput) and the
 //                     backend is still inside the PROMPT handler doing
@@ -424,7 +424,7 @@ const stage = computed(() => {
   if (props.state.hasPendingCard) return '卡片待回复';
   if (props.state.isWaiting) return 'PROMPT 等待输入';
   if (props.state.isRunning) return '运行中';
-  if (props.state.isAutoMode) return 'WAIT 自动待命';
+  if (props.state.isAutoMode) return 'AWAIT 自动待命';
   if (justSubmitted.value) return '已提交·后端处理中';
   return '空窗(疑似失同步)';
 });

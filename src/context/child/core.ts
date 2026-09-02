@@ -172,7 +172,7 @@ export class ChildCore extends BaseCore implements CoreModule {
 
   /**
    * Teammates never use autonomous mode — it is a lead-only loop behavior
-   * (replaces the PROMPT stage with WAIT and auto-replies question()).
+   * (replaces the PROMPT stage with AWAIT and auto-replies question()).
    * Always returns false for child processes.
    */
   getAuto(): boolean {

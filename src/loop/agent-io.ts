@@ -24,11 +24,11 @@ import type { ExecOptions, ExecResult } from './agent-exec.js';
  * Error used to reject a blocked {@link AgentIO.ask} (terminal) or
  * {@link ServeHub.waitForInput} (serve) Promise when an external event —
  * currently a peer channel joining — must abort the PROMPT wait and
- * redirect the loop to WAIT without prompting the user.
+ * redirect the loop to AWAIT without prompting the user.
  *
  * Throwing (rejecting) rather than resolving with a sentinel keeps the
  * PROMPT state handler's listener as a plain `catch` block: it catches
- * this typed error and returns `AgentState.WAIT`, re-throwing anything
+ * this typed error and returns `AgentState.AWAIT`, re-throwing anything
  * else so genuine failures still surface. The class is exported so prompt.ts
  * can do an `instanceof` check.
  *
@@ -671,7 +671,7 @@ class AgentIO {
    *
    * Terminal path: a blocked ask() has askRejecter set.
    * Serve path: ServeHub.waitForInput has inputRejecter set.
-   * Returns false in all other states (COLLECT, LLM, HOOK, TOOL, STOP, WAIT).
+   * Returns false in all other states (COLLECT, LLM, HOOK, TOOL, STOP, AWAIT).
    */
   isPromptBlocked(): boolean {
     // Terminal: askRejecter is set only while a terminal ask() is blocked.
@@ -689,10 +689,10 @@ class AgentIO {
   /**
    * Reject a blocked terminal `ask()` when an external event (currently a
    * peer channel joining) must abort the PROMPT wait and redirect the loop
-   * to WAIT. Rejects the pending ask() Promise with a {@link PromptAbortError}
+   * to AWAIT. Rejects the pending ask() Promise with a {@link PromptAbortError}
    * so the rejection propagates as a thrown exception through
    * `UserInputProvider.getInput()` to a `catch` block in prompt.ts, which
-   * returns `AgentState.WAIT`.
+   * returns `AgentState.AWAIT`.
    *
    * Mirrors the ESC-during-ask() cancel path (agent-io.ts neglection handler):
    * capture the rejecter, close the LineEditor, null the singleton fields,

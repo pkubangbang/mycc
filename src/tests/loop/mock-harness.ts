@@ -222,7 +222,7 @@ export class MockHarness {
         HOOK: 'hook',
         TOOL: 'tool',
         STOP: 'stop',
-        WAIT: 'wait',
+        AWAIT: 'await',
       },
       presentResult: vi.fn(),
       AgentStateMachine: vi.fn(),

@@ -206,11 +206,11 @@ onMounted(() => {
            • AUTO mode: a sky-blue button with a line-art rocket. When the
              agent is actively processing (isRunning), a "hyperspace jump"
              warp background appears behind the rocket and the exhaust
-             flames animate; when idle (WAIT), the background fades out and
+             flames animate; when idle (AWAIT), the background fades out and
              the rocket sits still, signalling the lead is autonomously
              waiting and can be taken back over.
          Both stop a running task / exit auto mode (the interrupt triggers
-         neglection, which the WAIT/STOP handlers catch to clear auto and
+         neglection, which the AWAIT/STOP handlers catch to clear auto and
          resume the prompt). Distinct from the viewport-sticky
          scroll-to-bottom button below. -->
     <div v-if="state.isRunning && !state.isAutoMode" class="interrupt-row">
@@ -236,7 +236,7 @@ onMounted(() => {
              components, both driven by the `warping` prop (= isRunning):
                • <MeteorField> — the clipped meteor starfield. It pauses its
                  CSS animations + detaches its animationiteration listener
-                 when not warping, so WAIT (idle auto) costs nothing.
+                 when not warping, so AWAIT (idle auto) costs nothing.
                • <RocketIcon> — the line-art rocket + exhaust. The
                  high-energy (faster) exhaust variant is gated on warping.
              The button itself stays the clip frame (overflow:hidden).
