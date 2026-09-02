@@ -39,9 +39,7 @@ export class BackgroundTasks implements BgModule {
     // Build the Windows preamble. pwsh7 defaults to UTF-8 no-BOM, so it only
     // needs the console/pipe encoding preamble; powershell5 additionally needs
     // the Layer-2 patch (no-BOM write default + UTF-8 read default).
-    const preamble =
-      `try { chcp 65001 > $null } catch {}; $ProgressPreference = 'SilentlyContinue'; $OutputEncoding = [System.Text.Encoding]::UTF8; [Console]::OutputEncoding = [System.Text.Encoding]::UTF8; ` +
-      (shellInfo.shell === 'powershell5' ? PS51_LAYER2_PATCH : '');
+    const preamble = `try { chcp 65001 > $null } catch {}; $ProgressPreference = 'SilentlyContinue'; $OutputEncoding = [System.Text.Encoding]::UTF8; [Console]::OutputEncoding = [System.Text.Encoding]::UTF8; ${shellInfo.shell === 'powershell5' ? PS51_LAYER2_PATCH : ''}`;
 
     const child = isWin
       ? spawn(shellInfo.path ?? 'powershell', [
