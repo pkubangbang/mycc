@@ -63,17 +63,10 @@ export class ChildTeam implements TeamModule {
   }
 
   /**
-   * FORBIDDEN: Await teammate not available to child
+   * FORBIDDEN: Await teammates not available to child
    */
-  async awaitTeammate(): Promise<never> {
-    throw new Error('FORBIDDEN: awaitTeammate not available to child');
-  }
-
-  /**
-   * FORBIDDEN: Await team not available to child
-   */
-  async awaitTeam(): Promise<never> {
-    throw new Error('FORBIDDEN: awaitTeam not available to child');
+  async awaitTeammates(): Promise<never> {
+    throw new Error('FORBIDDEN: awaitTeammates not available to child');
   }
 
   /**

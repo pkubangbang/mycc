@@ -301,6 +301,31 @@ export interface WorkTree {
 export type TeammateStatus = 'working' | 'idle' | 'holding' | 'shutdown';
 
 /**
+ * Reason `awaitTeammates` stopped waiting.
+ *
+ * The unified wait primitive returns a typed reason instead of a bare
+ * boolean, so callers (STOP, AWAIT, the `tm_await` tool) can pick the next
+ * state machine node deterministically:
+ *   - 'all done'  — target teammate(s) reached idle/shutdown (finished)
+ *   - 'holding'   — a teammate is blocked on a question for the lead
+ *   - 'mail'      — new mail arrived in the lead's mailbox (teammate OR peer)
+ *   - 'steering'  — a WebUI steering note was queued by the user
+ *   - 'esc'       — the user pressed ESC (neglected mode)
+ *   - 'timeout'   — the max-wait safety valve fired
+ *
+ * Callers restrict which reasons break the wait via the `reasons` option:
+ * STOP includes 'all done' + 'timeout' (bounded wait for completion);
+ * AWAIT excludes them (unbounded wait for new events).
+ */
+export type TeammateWaitReason =
+  | 'all done'
+  | 'holding'
+  | 'mail'
+  | 'steering'
+  | 'esc'
+  | 'timeout';
+
+/**
  * Teammate - child process agent
  */
 export interface Teammate {
@@ -799,8 +824,17 @@ export interface TeamModule {
   createTeammate(name: string, role: string, prompt: string, cwd?: string): Promise<string>;
   getTeammate(name: string): Teammate | undefined;
   listTeammates(): { name: string; role: string; status: TeammateStatus }[];
-  awaitTeammate(name: string, timeout?: number): Promise<{ waited: boolean }>;
-  awaitTeam(timeout?: number): Promise<{ result: string }>;
+  awaitTeammates(opts?: {
+    /** Wait for a single teammate by name; if omitted, wait for all. */
+    name?: string;
+    /** Max-wait safety valve in ms. Default 10min. Set to a short value and
+     *  handle 'timeout' by re-calling when you want periodic re-checks. */
+    timeoutMs?: number;
+    /** Restrict which reasons break the wait. Default: all reasons. STOP
+     *  includes 'all done' + 'timeout' (bounded wait for completion); AWAIT
+     *  excludes them (unbounded wait for new events). */
+    reasons?: TeammateWaitReason[];
+  }): Promise<TeammateWaitReason>;
   printTeam(): string | Promise<string>;
   removeTeammate(name: string, force?: boolean): void;
   dismissTeam(force?: boolean): void;

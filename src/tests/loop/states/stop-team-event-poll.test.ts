@@ -1,19 +1,18 @@
 /**
- * stop-team-event-poll.test.ts — handleStop normal-mode (non-neglected) branch
- * with the event-polling teammate wait.
+ * stop-team-event-poll.test.ts — handleStop normal-mode (non-neglected) branch.
  *
- * Replaces stop-team-await.test.ts, which mocked the one-shot `awaitTeam()`.
- * STOP no longer calls `awaitTeam()`; it polls live teammate status + mailbox +
- * steering on every 1s tick (mirroring AWAIT's eventPending() pattern, but
- * working in manual mode). This file tests that polling loop.
+ * STOP delegates the teammate wait to the unified `ctx.team.awaitTeammates`
+ * primitive, which polls teammate status + mailbox + steering + ESC + a
+ * max-wait safety valve every 1s and returns a typed `TeammateWaitReason`.
+ * STOP switches on the reason to pick the next state:
+ *   - 'holding' / 'mail' / 'steering' → COLLECT
+ *   - 'timeout'                       → COLLECT + SYSTEM timeout note
+ *   - 'esc' / 'all done'              → PROMPT
  *
- * The loop's only exits are explicit events:
- *   - ESC pressed            → PROMPT
- *   - a teammate is holding  → COLLECT
- *   - no teammate is working → PROMPT (all done)
- *   - new mail arrived       → COLLECT (heartbeat / watchdog)
- *   - steering note queued   → COLLECT
- *   - max-wait exceeded      → COLLECT + SYSTEM timeout note (safety valve)
+ * These tests mock `awaitTeammates` to return each reason and assert STOP
+ * routes it to the correct state. The "shows letter-box BEFORE wait" and
+ * "idle at entry" cases verify STOP's pre-wait behavior (presentResult +
+ * the working-teammate notice), which runs before the awaitTeammates call.
  *
  * Sibling: stop-esc.test.ts covers the neglection branch.
  */
@@ -72,58 +71,42 @@ vi.mock('../../../loop/triologue.js', () => {
   return { Triologue: TriologueStub };
 });
 
-// serve-registry: controllable isRunning() + getSteeringNotes().
-vi.mock('../../../serve/serve-registry.js', () => {
-  let running = false;
-  let notes: string[] = [];
-  return {
-    getServeHub: vi.fn(() => ({
-      isRunning: vi.fn(() => running),
-      getSteeringNotes: vi.fn(() => notes),
-      drainSteering: vi.fn(() => notes),
-    })),
-    // test-only setters (hoisted above the import below)
-    __setRunning: vi.fn((v: boolean) => { running = v; }),
-    __setNotes: vi.fn((n: string[]) => { notes = n; }),
-  };
-});
+// serve-registry is no longer imported by stop.ts (the steering check moved
+// into awaitTeammates). The mock remains harmless but is not exercised here.
+vi.mock('../../../serve/serve-registry.js', () => ({
+  getServeHub: vi.fn(() => ({
+    isRunning: vi.fn(() => false),
+    getSteeringNotes: vi.fn(() => []),
+    drainSteering: vi.fn(() => []),
+  })),
+}));
 
 // --- Imports after mocks -----------------------------------------------------
 import { handleStop } from '../../../loop/states/stop.js';
 import { AgentState, presentResult } from '../../../loop/state-machine.js';
-import { agentIO } from '../../../loop/agent-io.js';
 import { Triologue } from '../../../loop/triologue.js';
 import { createTurnVars, createChatData, createMockMachineEnv } from '../esc-test-helpers.js';
 import { createMockContext } from '../../test-utils/mock-context.js';
-// Cast the mocked module to reach the test-only setters.
-import * as serveRegistry from '../../../serve/serve-registry.js';
 
-// The polling loop sleeps 1s between ticks; the max-wait safety valve is 10min.
-const POLL_MS = 1000;
-const MAX_WAIT_MS = 10 * 60 * 1000;
-
-describe('handleStop — normal-mode event-polling teammate wait', () => {
+describe('handleStop — normal-mode teammate wait via awaitTeammates', () => {
   let triologue: Triologue;
 
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.useFakeTimers();
     triologue = new Triologue();
-    // Default: no WebUI, no steering notes.
-    (serveRegistry as unknown as { __setRunning: (v: boolean) => void }).__setRunning(false);
-    (serveRegistry as unknown as { __setNotes: (n: string[]) => void }).__setNotes([]);
   });
 
   afterEach(() => {
     vi.useRealTimers();
   });
 
-  // ── letter-box ordering (kept from the old test) ──
+  // ── letter-box ordering ──
 
   it('shows the letter-box (presentResult) BEFORE the wait begins', async () => {
     const ctx = createMockContext({
       team: {
         listTeammates: vi.fn(() => []) as never,
+        awaitTeammates: vi.fn(async () => 'all done' as const) as never,
       },
     });
     const env = createMockMachineEnv({ triologue });
@@ -136,15 +119,16 @@ describe('handleStop — normal-mode event-polling teammate wait', () => {
     expect(presentResult).toHaveBeenCalledWith(triologue);
   });
 
-  // ── Case 1: teammate idle at entry → PROMPT immediately ──
+  // ── reason routing: all done → PROMPT ──
 
-  it('returns PROMPT immediately when no teammate is working at entry', async () => {
+  it('returns PROMPT when awaitTeammates reports all done', async () => {
     const ctx = createMockContext({
       team: {
         listTeammates: vi.fn(() => [
           { name: 'dev1', status: 'idle' },
           { name: 'dev2', status: 'shutdown' },
         ]) as never,
+        awaitTeammates: vi.fn(async () => 'all done' as const) as never,
       },
     });
     const env = createMockMachineEnv({ triologue });
@@ -153,62 +137,15 @@ describe('handleStop — normal-mode event-polling teammate wait', () => {
     const result = await handleStop(env, createTurnVars(), createChatData());
 
     expect(result).toBe(AgentState.PROMPT);
-    // No poll tick should have been needed.
-    expect(vi.getTimerCount()).toBe(0);
   });
 
-  // ── Case 2: working → idle mid-poll → PROMPT ──
+  // ── reason routing: holding → COLLECT ──
 
-  it('returns PROMPT when a working teammate goes idle mid-poll (re-read catches transition)', async () => {
-    const statuses = [
-      [{ name: 'dev1', status: 'working' }],
-      [{ name: 'dev1', status: 'idle' }],
-    ];
-    const listTeammates = vi.fn(() => statuses.shift() ?? []);
-    const ctx = createMockContext({
-      team: { listTeammates: listTeammates as never },
-    });
-    const env = createMockMachineEnv({ triologue });
-    env.ctx = ctx;
-
-    const promise = handleStop(env, createTurnVars(), createChatData());
-
-    // First tick: teammate working → loop keeps polling.
-    await vi.advanceTimersByTimeAsync(POLL_MS);
-    // Second tick: teammate now idle → returns PROMPT.
-    await vi.advanceTimersByTimeAsync(POLL_MS);
-
-    expect(await promise).toBe(AgentState.PROMPT);
-    expect(listTeammates).toHaveBeenCalledTimes(2);
-  });
-
-  // ── Case 3: working, mail arrives → COLLECT ──
-
-  it('returns COLLECT when new mail arrives during the wait (heartbeat event)', async () => {
-    const ctx = createMockContext({
-      team: {
-        listTeammates: vi.fn(() => [{ name: 'dev1', status: 'working' }]) as never,
-      },
-      mail: {
-        hasNewMails: vi.fn(() => true),
-      } as never,
-    });
-    const env = createMockMachineEnv({ triologue });
-    env.ctx = ctx;
-
-    const promise = handleStop(env, createTurnVars(), createChatData());
-
-    await vi.advanceTimersByTimeAsync(POLL_MS);
-
-    expect(await promise).toBe(AgentState.COLLECT);
-  });
-
-  // ── Case 4: holding → COLLECT immediately ──
-
-  it('returns COLLECT immediately when a teammate is holding (question path)', async () => {
+  it('returns COLLECT when awaitTeammates reports holding (question path)', async () => {
     const ctx = createMockContext({
       team: {
         listTeammates: vi.fn(() => [{ name: 'dev1', status: 'holding' }]) as never,
+        awaitTeammates: vi.fn(async () => 'holding' as const) as never,
       },
     });
     const env = createMockMachineEnv({ triologue });
@@ -217,102 +154,75 @@ describe('handleStop — normal-mode event-polling teammate wait', () => {
     const result = await handleStop(env, createTurnVars(), createChatData());
 
     expect(result).toBe(AgentState.COLLECT);
-    expect(vi.getTimerCount()).toBe(0);
   });
 
-  // ── Case 5: ESC pressed during wait → PROMPT ──
+  // ── reason routing: mail → COLLECT ──
 
-  it('returns PROMPT when ESC is pressed during the wait', async () => {
-    const isNeglected = vi
-      .fn()
-      .mockReturnValueOnce(false) // first tick: not neglected
-      .mockReturnValueOnce(true); // second tick: ESC pressed
-    vi.mocked(agentIO.isNeglectedMode).mockImplementation(isNeglected);
-
+  it('returns COLLECT when awaitTeammates reports mail (heartbeat/peer event)', async () => {
     const ctx = createMockContext({
       team: {
         listTeammates: vi.fn(() => [{ name: 'dev1', status: 'working' }]) as never,
+        awaitTeammates: vi.fn(async () => 'mail' as const) as never,
       },
     });
     const env = createMockMachineEnv({ triologue });
     env.ctx = ctx;
 
-    const promise = handleStop(env, createTurnVars(), createChatData());
+    const result = await handleStop(env, createTurnVars(), createChatData());
 
-    await vi.advanceTimersByTimeAsync(POLL_MS);
-
-    expect(await promise).toBe(AgentState.PROMPT);
+    expect(result).toBe(AgentState.COLLECT);
   });
 
-  // ── Case 6: steering note arrives during wait → COLLECT ──
+  // ── reason routing: steering → COLLECT ──
 
-  it('returns COLLECT when a steering note is queued during the wait', async () => {
-    (serveRegistry as unknown as { __setRunning: (v: boolean) => void }).__setRunning(true);
-    (serveRegistry as unknown as { __setNotes: (n: string[]) => void }).__setNotes(['stop and review']);
-
+  it('returns COLLECT when awaitTeammates reports steering (webui note)', async () => {
     const ctx = createMockContext({
       team: {
         listTeammates: vi.fn(() => [{ name: 'dev1', status: 'working' }]) as never,
+        awaitTeammates: vi.fn(async () => 'steering' as const) as never,
       },
     });
     const env = createMockMachineEnv({ triologue });
     env.ctx = ctx;
 
-    const promise = handleStop(env, createTurnVars(), createChatData());
+    const result = await handleStop(env, createTurnVars(), createChatData());
 
-    await vi.advanceTimersByTimeAsync(POLL_MS);
-
-    expect(await promise).toBe(AgentState.COLLECT);
+    expect(result).toBe(AgentState.COLLECT);
   });
 
-  // ── Case 7: working with passed deadline (stale ETA) → keeps polling, NOT PROMPT ──
+  // ── reason routing: esc → PROMPT ──
 
-  it('keeps polling (does NOT return PROMPT) while a teammate stays working with a passed deadline', async () => {
-    // The reproduction-1 guard: the old code returned 'all done' → PROMPT when
-    // the deadline passed. The new loop keeps polling until the teammate goes
-    // idle or an event arrives. Here the teammate stays 'working' for several
-    // ticks with no mail/steering — the loop must NOT exit to PROMPT.
+  it('returns PROMPT when awaitTeammates reports esc (user interrupted)', async () => {
     const ctx = createMockContext({
       team: {
         listTeammates: vi.fn(() => [{ name: 'dev1', status: 'working' }]) as never,
+        awaitTeammates: vi.fn(async () => 'esc' as const) as never,
       },
     });
     const env = createMockMachineEnv({ triologue });
     env.ctx = ctx;
 
-    const promise = handleStop(env, createTurnVars(), createChatData());
+    const result = await handleStop(env, createTurnVars(), createChatData());
 
-    // Advance several ticks well past any plausible deadline; teammate still working.
-    for (let i = 0; i < 5; i++) {
-      await vi.advanceTimersByTimeAsync(POLL_MS);
-    }
-
-    // The loop is still pending (no exit event) — it has NOT returned PROMPT.
-    // We can't await `promise` (it would hang), so assert it is still unresolved.
-    let settled = false;
-    promise.then(() => { settled = true; });
-    await vi.advanceTimersByTimeAsync(0);
-    expect(settled).toBe(false);
+    expect(result).toBe(AgentState.PROMPT);
   });
 
-  // ── Case 8: max-wait safety valve → COLLECT + SYSTEM timeout note ──
+  // ── reason routing: timeout → COLLECT + SYSTEM timeout note ──
 
-  it('returns COLLECT with a SYSTEM timeout note when the max-wait is exceeded', async () => {
+  it('returns COLLECT with a SYSTEM timeout note when awaitTeammates reports timeout', async () => {
     const ctx = createMockContext({
       team: {
         listTeammates: vi.fn(() => [{ name: 'dev1', status: 'working' }]) as never,
         printTeam: vi.fn(() => 'Team:\n  dev1 (coder): working') as never,
+        awaitTeammates: vi.fn(async () => 'timeout' as const) as never,
       },
     });
     const env = createMockMachineEnv({ triologue });
     env.ctx = ctx;
 
-    const promise = handleStop(env, createTurnVars(), createChatData());
+    const result = await handleStop(env, createTurnVars(), createChatData());
 
-    // Advance past the max-wait while the teammate stays working and no event fires.
-    await vi.advanceTimersByTimeAsync(MAX_WAIT_MS + POLL_MS);
-
-    expect(await promise).toBe(AgentState.COLLECT);
+    expect(result).toBe(AgentState.COLLECT);
     expect(triologue.note).toHaveBeenCalledWith(
       'SYSTEM',
       expect.stringContaining('Timeout waiting for teammates'),

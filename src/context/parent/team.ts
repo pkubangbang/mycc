@@ -9,6 +9,7 @@ import type {
   TeamModule,
   Teammate,
   TeammateStatus,
+  TeammateWaitReason,
   AgentContext,
   IpcHandlerRegistration,
   SendResponseCallback,
@@ -61,10 +62,6 @@ export class TeamManager implements TeamModule {
     query: string;
     options?: { onEsc?: string; onEnter?: string };
   }> = [];
-
-  // Two-phase await subscribers
-  private phase1Subscribers: Map<string, Set<() => void>> = new Map(); // waiting for working
-  private phase2Subscribers: Map<string, Set<() => void>> = new Map(); // waiting for idle/shutdown
 
   // ETA/deadline tracking per teammate (from eta_update IPC)
   private teammateEta: Map<string, {
@@ -226,29 +223,8 @@ export class TeamManager implements TeamModule {
       const status = msg.status as TeammateStatus;
       this.statuses.set(sender, status);
       MemoryStore.updateTeammateStatus(sender, status);
-
-      // Resolve subscribers based on status change
-      if (status === 'working') {
-        // Phase 1 complete: move subscribers to phase 2
-        const phase1 = this.phase1Subscribers.get(sender);
-        if (phase1 && phase1.size > 0) {
-          const phase2 = this.phase2Subscribers.get(sender) ?? new Set();
-          for (const resolve of phase1) {
-            phase2.add(resolve);
-          }
-          this.phase2Subscribers.set(sender, phase2);
-          phase1.clear();
-        }
-      } else if (status === 'idle' || status === 'shutdown' || status === 'holding') {
-        // Phase 2 complete: resolve all waiting for finish
-        const phase2 = this.phase2Subscribers.get(sender);
-        if (phase2) {
-          for (const resolve of phase2) {
-            resolve();
-          }
-          phase2.clear();
-        }
-      }
+      // awaitTeammates polls this.statuses on each 1s tick, so a status
+      // change is picked up on the next poll — no subscriber plumbing.
       return;
     }
 
@@ -425,134 +401,101 @@ export class TeamManager implements TeamModule {
   }
 
   /**
-   * Wait for a specific teammate to finish.
+   * Wait for teammate(s) to stop, responding to steering so the WebUI chat
+   * is not blocked.
    *
-   * Uses the teammate's ETA (from mail_to) as the dynamic timeout.
-   * Polls every 1s for status changes and deadline extensions.
-   * - If 'idle'/'shutdown': resolve immediately (finished)
-   * - If 'holding': resolve immediately (need to answer question)
-   * - If 'working': wait for status change or deadline expiry
+   * This is the SINGLE unified wait primitive. It polls every 1s and returns
+   * a typed {@link TeammateWaitReason} as soon as one of the caller's
+   * accepted `reasons` fires, so callers (STOP, AWAIT, the `tm_await` tool)
+   * can pick the next state machine node deterministically:
+   *   - 'all done'  — target teammate(s) reached idle/shutdown (finished)
+   *   - 'holding'   — a teammate is blocked on a question for the lead
+   *   - 'mail'      — new mail arrived in the lead's mailbox (teammate OR peer)
+   *   - 'steering'  — a WebUI steering note was queued by the user
+   *   - 'esc'       — the user pressed ESC (neglected mode)
+   *   - 'timeout'   — the max-wait safety valve fired
    *
-   * @param defaultTimeout - Fallback timeout in ms when no ETA is set (default: 5min)
+   * Callers restrict which reasons break the wait via `opts.reasons`:
+   *   - STOP includes 'all done' + 'timeout' (bounded wait for completion)
+   *   - AWAIT excludes them (unbounded wait for new events); it re-calls
+   *     with a short `timeoutMs` and handles 'timeout' by re-checking
+   *     autoState, then re-awaiting.
+   *
+   * `opts.name` narrows the teammate-status checks to a single teammate
+   * (used by the `tm_await` tool's `name` argument); omit it to wait for
+   * all teammates.
+   *
+   * @param opts - { name?, timeoutMs? (default 10min), reasons? (default all) }
+   * @returns the reason the wait stopped
    */
-  async awaitTeammate(name: string, defaultTimeout: number = 300000): Promise<{ waited: boolean }> {
-    const status = this.statuses.get(name);
+  async awaitTeammates(opts?: {
+    name?: string;
+    timeoutMs?: number;
+    reasons?: TeammateWaitReason[];
+  }): Promise<TeammateWaitReason> {
+    const name = opts?.name;
+    const maxWaitMs = opts?.timeoutMs ?? 10 * 60 * 1000;
+    const accepted: TeammateWaitReason[] = opts?.reasons
+      ?? ['all done', 'holding', 'mail', 'steering', 'esc', 'timeout'];
+    const accepts = (r: TeammateWaitReason): boolean => accepted.includes(r);
 
-    // Create promise that resolves when teammate finishes their current work cycle
-    const promise = new Promise<void>((resolve) => {
-      if (status === 'holding') {
-        // Holding means they have a question - resolve immediately
-        // Lead should process pending questions
-        resolve();
-      } else if (status === 'working') {
-        // Currently working - subscribe to phase 2 (working → non-working transition)
-        const phase2 = this.phase2Subscribers.get(name) ?? new Set<() => void>();
-        phase2.add(resolve);
-        this.phase2Subscribers.set(name, phase2);
-      } else {
-        // Not working (idle/shutdown/undefined) - subscribe to phase 1
-        // Will be moved to phase 2 when they start working
-        // This ensures we wait for: start working → finish working transition
-        const phase1 = this.phase1Subscribers.get(name) ?? new Set<() => void>();
-        phase1.add(resolve);
-        this.phase1Subscribers.set(name, phase1);
+    const waitStart = Date.now();
+
+    // Helper: filter teammates by the optional `name` (single-teammate wait).
+    const scopedTeammates = () => {
+      const all = this.listTeammates();
+      return name ? all.filter((t) => t.name === name) : all;
+    };
+
+    // First tick is immediate (no sleep), so an event already pending is
+    // caught without a 1s delay. Subsequent ticks sleep 1s.
+    let firstTick = true;
+    while (true) {
+      // ESC pressed — break so the lead can return to PROMPT.
+      if (accepts('esc') && agentIO.isNeglectedMode()) {
+        return 'esc';
       }
-    });
 
-    // Dynamic timeout with poll-based deadline tracking
-    const timeoutPromise = new Promise<void>((resolve) => {
-      let lastCheck = 0;
-      const poll = () => {
-        // ESC pressed — resolve immediately so the lead can return to PROMPT
-        if (agentIO.isNeglectedMode()) {
-          resolve(); return;
-        }
+      const live = scopedTeammates();
 
-        const currentStatus = this.statuses.get(name);
-        if (currentStatus === 'idle' || currentStatus === 'shutdown') {
-          resolve(); return; // finished
-        }
+      // A teammate is holding (has a question for the lead).
+      if (accepts('holding') && live.some((t) => t.status === 'holding')) {
+        return 'holding';
+      }
 
-        // Check if the teammate sent mail to lead — resolve so lead can read it
-        if (this.context.mail.hasNewMails()) {
-          resolve(); return; // mail waiting — let lead read and respond
-        }
+      // No working teammates → all done. (Idle/shutdown are the resting state.)
+      // Only fired when the caller accepts 'all done' (STOP does; AWAIT does not).
+      if (accepts('all done') && !live.some((t) => t.status === 'working')) {
+        return 'all done';
+      }
 
-        // WebUI steering note arrived during the wait — break the await so the
-        // lead returns to COLLECT, whose 2c block drains steering as a REMINDER
-        // (mid-task user direction). We only PEEK here (getSteeringNotes is
-        // non-consuming); the drain happens downstream in COLLECT, keeping a
-        // single consumption point. Same guard as await.ts eventPending().
-        if (getServeHub().isRunning() && getServeHub().getSteeringNotes().length > 0) {
-          resolve(); return; // steering waiting — let lead consume it via COLLECT
-        }
+      // New mail arrived in the lead's mailbox (teammate results, peer mail,
+      // system reminders). Source-agnostic — callers route it the same way.
+      if (accepts('mail') && this.context.mail.hasNewMails()) {
+        return 'mail';
+      }
 
-        const eta = this.teammateEta.get(name);
-        if (eta) {
-          if (eta.updatedAt > lastCheck) {
-            lastCheck = eta.updatedAt; // deadline was extended
-          }
-          if (Date.now() >= eta.deadlineMs) {
-            // Deadline passed — notify lead via brief
-            this.context.core.brief('warn', name,
-              `Deadline ${new Date(eta.deadlineMs).toLocaleTimeString()} passed. ` +
-              `Use tm_await to wait longer, tm_remove to terminate.`);
-            resolve(); return;
-          }
-        } else if (lastCheck === 0) {
-          lastCheck = Date.now(); // start default timeout
-        } else if (Date.now() - lastCheck >= defaultTimeout) {
-          resolve(); return; // default timeout expired
-        }
+      // WebUI steering note queued by the user (mid-task direction). PEEK
+      // only (non-consuming) — the drain happens downstream in COLLECT's 2c
+      // block, keeping a single consumption point.
+      if (accepts('steering')
+        && getServeHub().isRunning()
+        && getServeHub().getSteeringNotes().length > 0) {
+        return 'steering';
+      }
 
-        setTimeout(poll, 1000);
-      };
-      poll();
-    });
+      // Safety valve: max-wait exceeded while a teammate is still working.
+      if (accepts('timeout') && Date.now() - waitStart >= maxWaitMs) {
+        return 'timeout';
+      }
 
-    await Promise.race([promise, timeoutPromise]);
-    return { waited: true };
-  }
-
-  /**
-   * Wait for all teammates to finish.
-   *
-   * Uses each teammate's ETA deadline as the dynamic timeout.
-   * Resolves as soon as one teammate raises a question (holding).
-   *
-   * @returns result: "no teammates" | "got question" | "all done" | "timeout"
-   */
-  async awaitTeam(_timeout?: number): Promise<{ result: string }> {
-    const teammates = this.listTeammates();
-
-    // No teammates or all shutdown
-    if (teammates.length === 0 || teammates.every((t) => t.status === 'shutdown')) {
-      return { result: 'no teammates' };
+      // Nothing fired — sleep briefly and re-check. The 1s poll keeps the
+      // wait responsive to teammate transitions without busy-spinning.
+      if (firstTick) {
+        firstTick = false;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 1000));
     }
-
-    // Holding is highest priority — return immediately
-    const holding = teammates.find((t) => t.status === 'holding');
-    if (holding) {
-      return { result: 'got question' };
-    }
-
-    // If nobody is working, no need to wait
-    const working = teammates.filter((t) => t.status === 'working');
-    if (working.length === 0) {
-      return { result: 'all done' };
-    }
-
-    // Wait for each working teammate via awaitTeammate (which respects ETA deadlines)
-    await Promise.all(working.map((t) => this.awaitTeammate(t.name)));
-
-    // After all resolves, check final state
-    const finalTeammates = this.listTeammates();
-    const finalHolding = finalTeammates.some((t) => t.status === 'holding');
-    if (finalHolding) {
-      return { result: 'got question' };
-    }
-
-    return { result: 'all done' };
   }
 
   /**
@@ -579,7 +522,7 @@ export class TeamManager implements TeamModule {
         // So `remaining === 0` on a `working` teammate means "the previously
         // declared budget elapsed", NOT "about to terminate" — annotate it
         // explicitly so the lead does not misread a stale 0s as a live
-        // countdown. Only awaitTeammate's "Deadline passed" warning is an
+        // countdown. Only awaitTeammates's 'timeout' reason is an
         // actionable expiry signal; this row is not.
         if (remaining > 0) {
           info += `, deadline ${deadlineStr} (${remaining}s remaining)`;

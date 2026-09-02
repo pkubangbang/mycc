@@ -19,10 +19,18 @@
  *               the interactive prompt). Plan/normal mode is preserved —
  *               auto is orthogonal and only governs prompting.
  *
- * POLL design: checks are cheap (in-memory flags + tiny file read for
- * mail). A 1s poll keeps AWAIT responsive without busy-spinning. Each poll
- * also re-checks `getAuto()` so a programmatic `setAuto(false)` exits AWAIT
- * even without ESC, and `isNeglectedMode()` so ESC is honored promptly.
+ * EVENT DETECTION is delegated to the unified `awaitTeammates` primitive
+ * (ctx.team.awaitTeammates), which polls teammate status + mailbox +
+ * steering + ESC + a max-wait safety valve every 1s and returns the typed
+ * reason it stopped. AWAIT does NOT accept 'all done' or 'timeout' as
+ * exits: a teammate being merely idle is not a new event (the next event
+ * may be peer mail, a steering note, or a teammate waking back up), so the
+ * wait stays unbounded until a genuine new event arrives or ESC exits auto
+ * mode. The while-loop only re-checks `getAuto()` between bounded 60s
+ * waits, so a programmatic setAuto(false) (without ESC) still exits — this
+ * is AWAIT-specific auto-mode gating that cannot live in the primitive
+ * without coupling it to autoState (the `tm_await` tool needs to wait
+ * regardless of auto state).
  */
 
 import chalk from 'chalk';
@@ -30,60 +38,25 @@ import { AgentState } from '../state-machine.js';
 import type { MachineEnv, TurnVars, ChatData, HandlerResult } from '../state-machine.js';
 import { agentIO } from '../agent-io.js';
 import { autoState } from '../auto-state.js';
-import { getServeHub } from '../../serve/serve-registry.js';
-
-/** Poll interval for the AWAIT blocking loop (ms). */
-const AWAIT_POLL_MS = 1000;
-
-/**
- * Check whether an event is already pending (mail, teammate, or steering).
- * Returns true as soon as one is available — caller transitions to COLLECT.
- */
-function eventPending(env: MachineEnv): boolean {
-  // 1. New mail in the lead's inbox.
-  if (env.ctx.mail.hasNewMails()) {
-    return true;
-  }
-
-  // 2. A teammate is holding (has a question for the lead) or working
-  //    (may produce mail / a state change soon). Idle/shutdown alone do
-  //    not warrant a COLLECT — nothing new to process.
-  const teammates = env.ctx.team.listTeammates();
-  if (teammates.some((t) => t.status === 'holding' || t.status === 'working')) {
-    return true;
-  }
-
-  // 3. Webui steering notes queued by the user (mid-task direction).
-  if (getServeHub().isRunning() && getServeHub().getSteeringNotes().length > 0) {
-    return true;
-  }
-
-  return false;
-}
 
 export async function handleWait(
   env: MachineEnv,
   _turn: TurnVars,
   _chat: ChatData,
 ): Promise<HandlerResult> {
-  const { ctx, triologue } = env;
+  const { ctx } = env;
 
-  // Fast path: an event is already pending → go straight to COLLECT.
-  if (eventPending(env)) {
-    // If a teammate is holding or working, wait for them so the lead sees
-    // the resulting mail / question rather than spinning COLLECT→STOP→AWAIT.
-    const teammates = ctx.team.listTeammates();
-    const active = teammates.some((t) => t.status === 'holding' || t.status === 'working');
-    if (active) {
-      await ctx.team.awaitTeam();
-    }
-    return AgentState.COLLECT;
-  }
+  // Block until a teammate/steering/mail event or ESC exits auto mode.
+  // 'all done' (teammates idle) and 'timeout' are NOT exits — re-check
+  // autoState between bounded 60s waits and re-await. All event detection
+  // (status / mail / steering / ESC) is delegated to awaitTeammates.
+  while (autoState.getAuto()) {
+    const reason = await ctx.team.awaitTeammates({
+      reasons: ['holding', 'mail', 'steering', 'esc', 'timeout'],
+      timeoutMs: 60_000,
+    });
 
-  // Block until an event arrives or ESC exits auto mode.
-  while (true) {
-    // ESC pressed → exit auto mode (orthogonal: plan/normal preserved).
-    if (agentIO.isNeglectedMode()) {
+    if (reason === 'esc') {
       autoState.setAuto(false);
       agentIO.setNeglectedMode(false);
       agentIO.flushOutput();
@@ -91,29 +64,14 @@ export async function handleWait(
       return AgentState.PROMPT;
     }
 
-    // Programmatic auto-off (e.g. a tool cleared the flag).
-    if (!autoState.getAuto()) {
-      return AgentState.PROMPT;
+    if (reason === 'timeout') {
+      continue; // re-check autoState, then re-await
     }
 
-    if (eventPending(env)) {
-      // A teammate becoming active means we should await their cycle so the
-      // lead collects the resulting mail / question in one COLLECT chat.
-      const teammates = ctx.team.listTeammates();
-      const active = teammates.some((t) => t.status === 'holding' || t.status === 'working');
-      if (active) {
-        await ctx.team.awaitTeam();
-      }
-      return AgentState.COLLECT;
-    }
-
-    // Nothing pending — sleep briefly and re-check. escAware is not needed
-    // here because we poll isNeglectedMode() each iteration; a plain delay
-    // is fine and keeps AWAIT cancelable within one poll interval.
-    await new Promise((resolve) => setTimeout(resolve, AWAIT_POLL_MS));
-
-    // Suppress unused-warning while keeping triologue available for future
-    // note injection if AWAIT ever needs to log a heartbeat.
-    void triologue;
+    // holding / mail / steering → COLLECT to process the event.
+    return AgentState.COLLECT;
   }
+
+  // Programmatic auto-off (setAuto(false) without ESC) → PROMPT.
+  return AgentState.PROMPT;
 }

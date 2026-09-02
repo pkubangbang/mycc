@@ -249,7 +249,7 @@ export async function drivePath(
   //
   // 2. **Per-transition timeout** — each transition must complete within
   //    `HANG_TIMEOUT_MS` (default 2000ms). If a handler hangs (e.g.
-  //    awaitTeam never resolves, hint round LLM call blocks), the timeout
+  //    awaitTeammates never resolves, hint round LLM call blocks), the timeout
   //    fires and throws with the stuck state name, pinpointing WHERE the
   //    hang occurred. This is finer-grained than vitest's global 10s timeout.
   const states = spec.expectedStates;

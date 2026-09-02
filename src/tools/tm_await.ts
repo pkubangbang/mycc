@@ -36,30 +36,16 @@ export const tmAwaitTool: ToolDefinition = {
           return `Error: Teammate '${name}' not found`;
         }
 
-        const result = await ctx.team.awaitTeammate(name, timeout);
-        return result.waited ? 'OK' : 'OK (already idle)';
+        const reason = await ctx.team.awaitTeammates({ name, timeoutMs: timeout });
+        return reasonToMessage(reason);
       } else {
         const teammates = ctx.team.listTeammates();
         if (teammates.length === 0) {
           return 'No teammates to wait for. Create teammates with tm_create first.';
         }
 
-        const result = await ctx.team.awaitTeam(timeout);
-        // Map result to user-friendly message
-        switch (result.result) {
-          case 'no teammates':
-            return 'No teammates to wait for. Create teammates with tm_create first.';
-          case 'got question':
-            return 'Teammate has a question waiting for response.';
-          case 'no workload':
-            return 'All teammates are idle - no work in progress.';
-          case 'all done':
-            return 'All teammates finished their work.';
-          case 'timeout':
-            return 'Timeout waiting for teammates to finish.';
-          default:
-            return `Unknown result: ${result.result}`;
-        }
+        const reason = await ctx.team.awaitTeammates({ timeoutMs: timeout });
+        return reasonToMessage(reason);
       }
     } catch (error: unknown) {
       const err = error as Error;
@@ -68,3 +54,16 @@ export const tmAwaitTool: ToolDefinition = {
     }
   },
 };
+
+/** Map a TeammateWaitReason to a user-facing message. */
+function reasonToMessage(reason: string): string {
+  switch (reason) {
+    case 'all done':  return 'All teammates finished their work.';
+    case 'holding':   return 'A teammate has a question waiting for response.';
+    case 'mail':      return 'New mail arrived.';
+    case 'steering':  return 'A WebUI steering note is waiting.';
+    case 'esc':       return 'Wait interrupted by ESC.';
+    case 'timeout':   return 'Timeout waiting for teammates to finish.';
+    default:          return `Unknown result: ${reason}`;
+  }
+}

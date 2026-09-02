@@ -130,7 +130,7 @@ const TOOL_COLORS: Record<string, (text: string) => string> = {
   session: chalk.gray,
   assistant: chalk.gray,
   auto_claim: chalk.gray,
-  awaitTeam: chalk.gray,
+  awaitTeammates: chalk.gray,
   watchdog: chalk.gray,
   compact: chalk.gray,
   loader: chalk.gray,

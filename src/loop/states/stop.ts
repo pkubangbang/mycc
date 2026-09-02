@@ -26,7 +26,6 @@ import { autoState } from '../auto-state.js';
 import { startWrapUp } from '../esc-wrap-up.js';
 import { loader } from '../../context/shared/loader.js';
 import { stopSpinner } from '../../engine/chat-helpers.js';
-import { getServeHub } from '../../serve/serve-registry.js';
 
 export async function handleStop(
   env: MachineEnv,
@@ -78,71 +77,29 @@ export async function handleStop(
       return AgentState.PROMPT;
     }
 
-    // Normal mode: wait for teammates (each respects their ETA deadline)
+    // Normal mode: wait for teammates to stop, responding to steering so the
+    // WebUI chat is not blocked. The unified awaitTeammates polls teammate
+    // status + mailbox + steering + ESC + a max-wait safety valve every 1s
+    // and returns the reason it stopped, so STOP picks the next state.
     // Show the final response (letter-box) BEFORE awaiting, so the user sees
     // the result immediately and doesn't think the lead is frozen while it
-    // waits on teammates. The PROMPT state's `agent >>` is suppressed during
-    // the await (we're blocked here, not at the input prompt); instead we log
-    // an "awaiting teammate(s)" notice so the user knows why there's no prompt.
+    // waits on teammates.
     presentResult(triologue);
 
     const teammates = ctx.team.listTeammates();
     if (teammates.some((t) => t.status === 'working')) {
       agentIO.log(
-        chalk.yellow('awaiting teammate(s) — use /team to check status, or ESC to interrupt'),
+        chalk.yellow('awaiting teammate(s) — use ESC to interrupt'),
       );
     }
 
-    // Event-polling wait: re-read live teammate status + mailbox + steering on
-    // every tick, instead of blocking on a one-shot awaitTeam() that can miss
-    // transitions or misreport 'all done'. This mirrors AWAIT's eventPending()
-    // pattern but works in manual mode (not gated on autoState).
-    // The teammate's heartbeat (30s progress mail), status transitions (IPC),
-    // and watchdog reports ARE the event stream that pumps this loop.
-    const TEAM_POLL_MS = 1000;
-    // Safety valve: if a teammate stays 'working' but never sends mail and
-    // never changes status (e.g. a hung process that emits no watchdog report),
-    // the loop would poll forever. Cap the total wait and fall back to the old
-    // 'timeout' behavior (COLLECT + SYSTEM note) so the lead can't stall.
-    const TEAM_MAX_WAIT_MS = 10 * 60 * 1000; // 10 minutes
-    const waitStart = Date.now();
-
-    while (true) {
-      // ESC pressed — return to PROMPT so the user can intervene.
-      if (agentIO.isNeglectedMode()) {
-        return AgentState.PROMPT;
-      }
-
-      // Re-read live teammate status every tick (not a snapshot).
-      const liveTeammates = ctx.team.listTeammates();
-      const hasWorking = liveTeammates.some((t) => t.status === 'working');
-      const hasHolding = liveTeammates.some((t) => t.status === 'holding');
-
-      // Event 1: a teammate is holding (has a question for the lead).
-      if (hasHolding) {
+    const reason = await ctx.team.awaitTeammates({ timeoutMs: 10 * 60 * 1000 });
+    switch (reason) {
+      case 'holding':
+      case 'mail':
+      case 'steering':
         return AgentState.COLLECT;
-      }
-
-      // Event 2: no working teammates AND no holding → all done.
-      // (Idle/shutdown teammates are not events; they are the resting state.)
-      if (!hasWorking) {
-        return AgentState.PROMPT;
-      }
-
-      // Event 3: new mail arrived (teammate heartbeat, watchdog report, etc.).
-      if (ctx.mail.hasNewMails()) {
-        return AgentState.COLLECT;
-      }
-
-      // Event 4: WebUI steering note queued by the user.
-      const steerPending =
-        getServeHub().isRunning() && getServeHub().getSteeringNotes().length > 0;
-      if (steerPending) {
-        return AgentState.COLLECT;
-      }
-
-      // Safety valve: max-wait exceeded while a teammate is still working.
-      if (Date.now() - waitStart >= TEAM_MAX_WAIT_MS) {
+      case 'timeout': {
         const teamInfo = ctx.team.printTeam();
         triologue.note(
           'SYSTEM',
@@ -151,11 +108,10 @@ export async function handleStop(
         );
         return AgentState.COLLECT;
       }
-
-      // No event yet — sleep briefly and re-check. The 1s poll keeps the wait
-      // responsive to teammate transitions without busy-spinning. Teammate
-      // heartbeats (30s) and status IPCs are picked up on the next tick.
-      await new Promise((resolve) => setTimeout(resolve, TEAM_POLL_MS));
+      case 'esc':
+      case 'all done':
+      default:
+        return AgentState.PROMPT;
     }
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : String(err);

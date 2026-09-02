@@ -11,7 +11,7 @@
  * |--------|---------------------|---------------------------------------------|
  * | T      | tool_calls (bash)   | HOOK→TOOL→COLLECT (normal tool round)       |
  * | H      | tool_calls (ckpt)   | HOOK→COLLECT (checkpoint/recap/blocked/etc) |
- * | W      | text-only           | HOOK→STOP→COLLECT (awaitTeam question/time) |
+ * | W      | text-only           | HOOK→STOP→COLLECT (awaitTeammates question/time) |
  * | E      | throw Error         | LLM→PROMPT (ESC/empty-exhausted/error-decl) |
  * | X      | text-only           | HOOK→PROMPT (recap ESC / catch error)       |
  * | P      | tool_calls (bash)   | HOOK→TOOL→PROMPT (ESC per-tool)             |
@@ -242,7 +242,7 @@ export class MockHarness {
    * Symbol → Response:
    *  - T: tool_calls (bash) — HOOK returns TOOL, TOOL returns COLLECT
    *  - H: tool_calls (checkpoint) — HOOK returns COLLECT (meta-tool path)
-   *  - W: text-only — HOOK returns STOP, STOP awaitTeam returns COLLECT
+   *  - W: text-only — HOOK returns STOP, STOP awaitTeammates returns COLLECT
    *  - E: throw Error — simulates ESC/empty-exhausted/error-declined (LLM→PROMPT)
    *  - X: text-only — HOOK catch error fires, HOOK→PROMPT
    *  - P: tool_calls (bash) — TOOL ESC fires during execution (TOOL→PROMPT)
@@ -274,7 +274,7 @@ export class MockHarness {
 
       case 'W':
         // Text-only response (no tools) → HOOK returns STOP
-        // STOP awaitTeam returns question/timeout/mail → COLLECT
+        // STOP awaitTeammates returns question/timeout/mail → COLLECT
         return createMockChatResponse({ content: 'Waiting for team input.' });
 
       case 'E':

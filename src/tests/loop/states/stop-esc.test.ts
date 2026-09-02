@@ -16,8 +16,8 @@
  * Both paths turn off auto mode (ESC = "give me control back").
  *
  * The normal-mode (non-neglected) teammate-wait branch is covered by the
- * sibling stop-team-event-poll.test.ts (the event-polling loop that replaced
- * the one-shot awaitTeam call).
+ * sibling stop-team-event-poll.test.ts (the awaitTeammates primitive that
+ * replaced the one-shot awaitTeam call), which now delegates to awaitTeammates.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
