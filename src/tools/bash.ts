@@ -6,7 +6,7 @@
  * Parameters:
  * - command: The shell command to execute
  * - intent: Explain why you want to use this command (mandatory)
- * - timeout: Seconds before killing the process (mandatory)
+ * - timeout: Seconds before killing the process (optional, defaults to 30)
  *   - Process is killed immediately with SIGKILL on timeout
  * - display: If true, also display stdout to the terminal user via brief,
  *   in addition to returning it as a tool result. Use when the user

@@ -9,7 +9,7 @@
  * 1. Create tmux session in cwd
  * 2. Open external terminal
  * 3. Wait for user to work
- * 4. User presses Enter to capture & kill, or 'k' to keep
+ * 4. User presses Enter to capture & kill, or 'y' to keep
  * 5. Capture and summarize output
  * 6. Kill or keep session based on user choice
  */

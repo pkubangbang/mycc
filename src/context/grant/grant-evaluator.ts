@@ -39,7 +39,7 @@ export function isPlanModeWritablePath(resolvedPath: string, workDir: string): b
 /**
  * Evaluate a grant request from a child process or tool
  * 
- * For bash: Uses the 5-step judging process
+ * For bash: Uses the 6-step judging process
  * For files: Checks mode and worktree ownership
  */
 export async function evaluateGrant(

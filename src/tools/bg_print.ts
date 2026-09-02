@@ -3,7 +3,7 @@
  *
  * Scope: ['main', 'child'] - Available to both lead and child agents
  *
- * Without a pid: lists all tasks with status (running/completed/failed).
+ * Without a pid: lists all tasks with status (running/completed/failed/killed).
  * With a pid: shows the detailed view including accumulated output (tail-capped).
  */
 

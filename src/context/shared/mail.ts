@@ -3,7 +3,7 @@
  *
  * Session-based file structure (no timestamp — session directory provides isolation):
  *   .mycc/sessions/{session-id}/
- *     unread-{owner}.jsonl    ← inbox (truncated on collect)
+ *     unread-{owner}.jsonl    ← inbox (moved to backlog on collect)
  *     readmail-{owner}.jsonl   ← backlog (append-only)
  *
  * When a teammate re-spawns, stale unread mail from a previous incarnation

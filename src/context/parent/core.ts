@@ -448,7 +448,7 @@ export class Core extends BaseCore implements CoreModule {
   /**
    * Request grant for sensitive operations
    * Parent is trusted but still respects mode
-   * For bash: delegates to grant evaluator (5-step judging process)
+   * For bash: delegates to grant evaluator (6-step judging process)
    * For files: checks mode and allowed file
    * @param tool - The tool requesting grant
    * @param args - Tool arguments (path for file ops, command and intent for bash)

@@ -1,5 +1,5 @@
 /**
- * bash-judge.ts - 5-step bash command judging logic
+ * bash-judge.ts - Multi-step bash command judging logic
  */
 
 import type { ParsedIntent, BashJudgeResult } from './types.js';

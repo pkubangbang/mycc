@@ -14,6 +14,9 @@
  * Parameters:
  * - message: The commit message (required)
  * - amend: Whether to amend the previous commit (optional, default false)
+ * - cwd: Working directory for the git commit (optional, e.g. a worktree path
+ *   like ".worktrees/feat"). If omitted, uses the agent's current working
+ *   directory.
  */
 
 import type { ToolDefinition, AgentContext } from '../types.js';

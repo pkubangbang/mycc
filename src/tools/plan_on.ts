@@ -1,7 +1,7 @@
 /**
  * plan_on.ts - Switch to plan mode (code changes prohibited)
  *
- * Scope: ['main', 'child'] - Available to all agents
+ * Scope: ['main'] - Only available to main agent
  *
  * This tool switches the agent to plan mode where code changes are prohibited.
  * It can optionally specify files that are allowed to be edited during plan mode.

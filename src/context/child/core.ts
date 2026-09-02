@@ -73,10 +73,10 @@ export class ChildCore extends BaseCore implements CoreModule {
    * @param image - Base64-encoded image string or file path
    * @param prompt - Optional custom prompt for the vision model
    * @param signal - Optional AbortSignal for ESC handling. Forwarded to the
-   *   parent over IPC as an aborted flag (the parent's handler does not yet
-   *   consume a signal across the IPC boundary, but the field is plumbed so a
-   *   future change can honor it; today the parent's escAware wrapper still
-   *   governs abort for the lead process).
+   *   parent over IPC as an aborted flag; the parent's handler consumes it by
+   *   creating a pre-aborted signal so the engine's retryChat rejects
+   *   immediately via StreamAbortedError rather than issuing a vision call
+   *   that would be thrown away.
    * @returns Description of the image
    */
   async imgDescribe(image: string, prompt?: string, signal?: AbortSignal): Promise<string> {
