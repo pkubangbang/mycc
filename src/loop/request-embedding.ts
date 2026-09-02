@@ -5,7 +5,7 @@
  * converts each into an embedding vector via Ollama, and computes cosine
  * similarity to detect when the agent is semantically repeating itself.
  *
- * The max similarity is mapped to a confusion delta (+0 to +2) and fed
+ * The max similarity is mapped to a confusion delta (0, +1, or +3) and fed
  * into the confusion index for hint round triggering.
  */
 

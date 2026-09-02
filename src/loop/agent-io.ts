@@ -1054,13 +1054,6 @@ class AgentIO {
   }
 
   /**
-   * Execute a shell command with strict timeout enforcement.
-   * Uses spawn with bash -c for full control over subprocess lifecycle.
-   * @param options - Command options (cwd, command, timeout in seconds)
-   * @returns Result with stdout, stderr, interrupted flag, exit code, and timedOut flag
-   * @throws Error if timeout is invalid (not integer between 1-60)
-   */
-  /**
    * Execute a command in a subprocess (the bash tool). Delegates the spawn +
    * timeout + process-kill logic to runExec() in agent-exec.ts; the only
    * state coupling is the ESC (neglected) callback, which lets an ESC press

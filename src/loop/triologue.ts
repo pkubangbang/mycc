@@ -380,7 +380,7 @@ export class Triologue {
 
   /**
    * Check if auto-compact is needed.
-   * Called by tool.ts after each tool execution to detect context overflow.
+   * Called by the LLM stage (llm.ts) to detect context overflow.
    */
   needsCompact(): boolean {
     return this.store.tokenCount > this.options.tokenThreshold;
@@ -694,7 +694,7 @@ export class Triologue {
   /**
    * Add a message to the triologue.
    * Note: Auto-compact is NOT called here to avoid race conditions.
-   * Overflow checking is done in tool.ts after each tool result.
+   * Overflow checking is done in the LLM stage (llm.ts) before each call.
    */
   private addMessage(message: Message): void {
     this.store.push(message);
