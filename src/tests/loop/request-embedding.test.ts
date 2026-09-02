@@ -150,7 +150,9 @@ describe('RequestEmbeddingTracker', () => {
         callNumbers.add(parseInt(match[1], 10));
       }
       // After eviction, call numbers should be within 1–20
+      expect(callNumbers.size).toBeGreaterThan(0); // report is non-empty
       expect(Math.max(...callNumbers)).toBeLessThanOrEqual(20);
+      expect(Math.min(...callNumbers)).toBeGreaterThanOrEqual(1);
     });
 
     it('should gracefully handle getEmbedding failure', async () => {
@@ -381,11 +383,61 @@ describe('RequestEmbeddingTracker', () => {
     });
 
     it('should return 0 for vectors of different lengths', async () => {
-      // Manually test: if somehow vectors had different lengths, should not throw.
-      // This is a defensive test — the mocked getEmbedding always returns 768-dim
-      // vectors, but we verify that a mismatch would handle gracefully.
-      // We test this via the delta mapping: a 0 similarity maps to delta 0.
-      expect(tracker.similarityToDelta(0)).toBe(0);
+      // Two entries with embeddings of DIFFERENT lengths — cosine must
+      // return 0 (guard clause) rather than throw or produce NaN.
+      mockGetEmbedding.mockResolvedValueOnce([1, 0, 0]);
+      await tracker.addEntry('tool_a', {});
+
+      mockGetEmbedding.mockResolvedValueOnce([1, 0, 0, 0]);
+      await tracker.addEntry('tool_b', {});
+
+      expect(tracker.getMaxSimilarity()).toBe(0);
+    });
+
+    it('should compute cosine similarity for orthogonal vectors as 0', async () => {
+      // [1,0,0] and [0,1,0] are orthogonal → cosine = 0.
+      mockGetEmbedding.mockResolvedValueOnce([1, 0, 0]);
+      await tracker.addEntry('tool_a', {});
+
+      mockGetEmbedding.mockResolvedValueOnce([0, 1, 0]);
+      await tracker.addEntry('tool_b', {});
+
+      expect(tracker.getMaxSimilarity()).toBeCloseTo(0, 10);
+    });
+
+    it('should compute cosine similarity for identical vectors as 1', async () => {
+      // Identical unit vectors → cosine = 1.
+      mockGetEmbedding.mockResolvedValueOnce([1, 0, 0]);
+      await tracker.addEntry('tool_a', {});
+
+      mockGetEmbedding.mockResolvedValueOnce([1, 0, 0]);
+      await tracker.addEntry('tool_b', {});
+
+      expect(tracker.getMaxSimilarity()).toBeCloseTo(1, 10);
+    });
+
+    it('should clamp negative cosine similarity to 0 (maxSim starts at 0)', async () => {
+      // [1,0,0] and [-1,0,0] are anti-parallel → cosine = -1, but
+      // getMaxSimilarity() initializes maxSim to 0 and only keeps sim > maxSim,
+      // so negative similarities are clamped to 0.
+      mockGetEmbedding.mockResolvedValueOnce([1, 0, 0]);
+      await tracker.addEntry('tool_a', {});
+
+      mockGetEmbedding.mockResolvedValueOnce([-1, 0, 0]);
+      await tracker.addEntry('tool_b', {});
+
+      expect(tracker.getMaxSimilarity()).toBe(0);
+    });
+
+    it('should compute a known cosine value for a 45-degree pair', async () => {
+      // [1,0] and [1,1] (normalized) → cosine = 1/√2 ≈ 0.7071.
+      mockGetEmbedding.mockResolvedValueOnce([1, 0]);
+      await tracker.addEntry('tool_a', {});
+
+      mockGetEmbedding.mockResolvedValueOnce([1, 1]);
+      await tracker.addEntry('tool_b', {});
+
+      expect(tracker.getMaxSimilarity()).toBeCloseTo(Math.SQRT1_2, 5);
     });
   });
 });

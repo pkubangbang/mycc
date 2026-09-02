@@ -108,6 +108,9 @@ describe('attemptAutoFix', () => {
   beforeEach(() => {
     ctx = createMockContext();
     vi.clearAllMocks();
+    // Reset the controllable config state so tests don't leak into each other.
+    mockDebuggingTp.current = false;
+    mockApiProvider.current = 'ollama';
   });
 
   describe('debug mode', () => {

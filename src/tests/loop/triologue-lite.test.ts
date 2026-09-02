@@ -216,7 +216,10 @@ describe('TriologueLite', () => {
       const all = t.getMessages();
       expect(all[0]).toEqual({ role: 'system', content: 'SYS' });
       expect(all[1].content).toBe('## Platform');
+      expect(all[2].content).toBe('OK');
       expect(all[3].content).toBe('q');
+      // The user query is the LAST message.
+      expect(all[all.length - 1].content).toBe('q');
     });
 
     it('rebuildProjectContext() refreshes populator output', () => {
@@ -265,6 +268,10 @@ describe('TriologueLite', () => {
       expect(t.getTokenThreshold()).toBe(1000);
       t.user('some content');
       expect(t.getTokenCount()).toBeGreaterThan(0);
+      // A longer message yields a strictly larger token count than a short one.
+      const shortCount = t.getTokenCount();
+      t.user('x'.repeat(500));
+      expect(t.getTokenCount()).toBeGreaterThan(shortCount);
     });
   });
 

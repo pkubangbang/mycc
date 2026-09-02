@@ -107,15 +107,21 @@ describe('ESC wrap-up lifecycle (esc-wrap-up.ts state management)', () => {
 
   // [3] evaluateWrapUp returns 'rollback' when within the 3s grace period
   it('should return rollback from evaluateWrapUp when within 3s grace period', async () => {
+    // Pin Date.now to a fixed value so the grace-period check is deterministic
+    // (avoids flakiness if the machine is slow between promise resolution and
+    // the evaluateWrapUp call).
+    const fixedNow = 1_700_000_000_000;
+    Date.now = vi.fn(() => fixedNow) as never;
+
     vi.mocked(retryChat).mockResolvedValueOnce({
       message: { role: 'assistant', content: 'done' },
       done: true,
     } as never);
 
     startWrapUp(triologue);
-    await getWrapUpState().promise; // wait for completion (completedAt = now)
+    await getWrapUpState().promise; // wait for completion (completedAt = fixedNow)
 
-    // Immediately after completion → within grace period
+    // Immediately after completion → within grace period (same timestamp)
     expect(evaluateWrapUp()).toBe('rollback');
   });
 

@@ -162,6 +162,11 @@ describe('handleLlm — ESC during retryChat (escAware cleanup returns null)', (
     const turn = createTurnVars();
     const chat = createChatData();
 
+    // Force an EMPTY tools array so the crossroad block (gated on
+    // tools.length > 0) is genuinely skipped.
+    const { loader } = await import('../../../context/shared/loader.js');
+    vi.mocked(loader.getToolsForScope).mockReturnValue([]);
+
     vi.mocked(retryChat).mockResolvedValueOnce(
       createMockChatResponse({ content: 'response' }) as never,
     );

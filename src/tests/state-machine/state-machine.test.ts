@@ -1,8 +1,9 @@
 /**
  * Tests for state-machine.ts - Agent state machine types and runner
  */
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { AgentStateMachine, AgentState, presentResult } from '../../loop/state-machine.js';
+import { setResultCallback } from '../../utils/letter-box.js';
 import type { TurnVars, ChatData, StateHandler } from '../../loop/state-machine.js';
 import type { Triologue } from '../../loop/triologue.js';
 import type { AgentContext, ToolScope } from '../../types.js';
@@ -443,17 +444,32 @@ describe('AgentStateMachine', () => {
 
     const handlers: Record<AgentState, StateHandler> = {
       [AgentState.PROMPT]: vi.fn(async (env, turn, chat) => {
-        expect(env.triologue).toBeDefined();
-        expect(env.ctx).toBeDefined();
+        // env carries the exact injected dependencies
+        expect(env.triologue).toBe(deps.triologue);
+        expect(env.ctx).toBe(deps.ctx);
         expect(env.scope).toBe('main');
-        expect(env.conditions).toBeDefined();
-        expect(env.sequence).toBeDefined();
-        expect(env.hookExecutor).toBeDefined();
-        expect(env.inputProvider).toBeDefined();
+        expect(env.conditions).toBe(deps.conditions);
+        expect(env.sequence).toBe(deps.sequence);
+        expect(env.hookExecutor).toBe(deps.hookExecutor);
+        expect(env.inputProvider).toBe(deps.inputProvider);
         expect(env.sessionFilePath).toBe('/tmp/session.json');
         expect(env.pendingSlashQuery).toBeNull();
+        expect(env.crossroadOccurred).toBe(false);
+        expect(env.requestEmbeddingTracker).toBe(deps.requestEmbeddingTracker);
+        // turn starts fresh
         expect(turn.isFirstRound).toBe(true);
+        expect(turn.nextTodoNudge).toBe(3);
+        expect(turn.nextBriefNudge).toBe(5);
+        expect(turn.lastTodoState).toBe('');
+        expect(turn.lastUserQuery).toBe('');
+        expect(turn.extractedKeywords).toEqual([]);
+        // chat starts fresh
+        expect(chat.abortController).toBeNull();
         expect(chat.rawToolCalls).toEqual([]);
+        expect(chat.assistantContent).toBe('');
+        expect(chat.augmentedCalls).toEqual([]);
+        expect(chat.hookResult).toBeNull();
+        expect(chat.deferredCompact).toBe(false);
         return null;
       }),
       [AgentState.SLASH]: vi.fn(),
@@ -480,12 +496,25 @@ describe('AgentStateMachine', () => {
 // ============================================================================
 
 describe('presentResult', () => {
+  let displayed: string | null;
+
+  beforeEach(() => {
+    displayed = null;
+    setResultCallback((content: string) => { displayed = content; });
+  });
+
+  afterEach(() => {
+    setResultCallback(null);
+  });
+
   it('should not throw when triologue has no messages', () => {
     const triologue = {
       getMessagesRaw: vi.fn(() => []),
     } as unknown as Triologue;
 
     expect(() => presentResult(triologue)).not.toThrow();
+    // No last message → nothing displayed.
+    expect(displayed).toBeNull();
   });
 
   it('should not throw when last message has no content', () => {
@@ -494,13 +523,43 @@ describe('presentResult', () => {
     } as unknown as Triologue;
 
     expect(() => presentResult(triologue)).not.toThrow();
+    // Empty content → nothing meaningful displayed.
+    expect(displayed).toBeNull();
   });
 
-  it('should not throw when last message has content', () => {
+  it('should display the last message content via the result callback', () => {
     const triologue = {
       getMessagesRaw: vi.fn(() => [{ role: 'assistant', content: 'Hello' }]),
     } as unknown as Triologue;
 
     expect(() => presentResult(triologue)).not.toThrow();
+    // The content is mirrored to the result callback (stripped of markup).
+    expect(displayed).toBe('Hello');
+  });
+
+  it('should display the last message even when it is a tool message', () => {
+    const triologue = {
+      getMessagesRaw: vi.fn(() => [
+        { role: 'assistant', content: 'thinking' },
+        { role: 'tool', tool_name: 'bash', content: 'tool output', tool_call_id: 'c1' },
+      ]),
+    } as unknown as Triologue;
+
+    expect(() => presentResult(triologue)).not.toThrow();
+    // presentResult uses the LAST message regardless of role.
+    expect(displayed).toBe('tool output');
+  });
+
+  it('should strip internal DSML markup before display', () => {
+    const triologue = {
+      getMessagesRaw: vi.fn(() => [{
+        role: 'assistant',
+        content: 'before <\uff5c\uff5cDSML\uff5c\uff5ctag>hidden</\uff5c\uff5cDSML\uff5c\uff5ctag> after',
+      }]),
+    } as unknown as Triologue;
+
+    expect(() => presentResult(triologue)).not.toThrow();
+    // The DSML tag and its content are stripped; surrounding text remains.
+    expect(displayed).toBe('before  after');
   });
 });

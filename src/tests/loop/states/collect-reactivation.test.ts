@@ -12,26 +12,26 @@ describe('parseReactivationResult', () => {
   it('should parse a clean JSON array', () => {
     const raw = '[{"id":2,"hash":"abc12345","reopen":true,"reason":"users table changed"}]';
     const result = parseReactivationResult(raw);
-    expect(result).not.toBeNull();
-    expect(result!.length).toBe(1);
-    expect(result![0]).toEqual({ id: 2, hash: 'abc12345', reopen: true, reason: 'users table changed' });
+    expect(result).toEqual([
+      { id: 2, hash: 'abc12345', reopen: true, reason: 'users table changed' },
+    ]);
   });
 
   it('should parse multiple entries', () => {
     const raw = '[{"id":1,"hash":"h1","reopen":false,"reason":"no change"},{"id":2,"hash":"h2","reopen":true,"reason":"changed"}]';
     const result = parseReactivationResult(raw);
-    expect(result).not.toBeNull();
-    expect(result!.length).toBe(2);
-    expect(result![0].reopen).toBe(false);
-    expect(result![1].reopen).toBe(true);
+    expect(result).toEqual([
+      { id: 1, hash: 'h1', reopen: false, reason: 'no change' },
+      { id: 2, hash: 'h2', reopen: true, reason: 'changed' },
+    ]);
   });
 
   it('should extract a JSON array from surrounding noise text', () => {
     const raw = 'Here is my evaluation:\n[{"id":2,"hash":"abc","reopen":true,"reason":"x"}]\nHope that helps!';
     const result = parseReactivationResult(raw);
-    expect(result).not.toBeNull();
-    expect(result!.length).toBe(1);
-    expect(result![0].id).toBe(2);
+    expect(result).toEqual([
+      { id: 2, hash: 'abc', reopen: true, reason: 'x' },
+    ]);
   });
 
   it('should return null for non-JSON text', () => {
@@ -53,9 +53,9 @@ describe('parseReactivationResult', () => {
   it('should tolerate whitespace around the JSON array', () => {
     const raw = '   \n  [{"id":5,"hash":"h","reopen":false,"reason":"skip"}]  \n  ';
     const result = parseReactivationResult(raw);
-    expect(result).not.toBeNull();
-    expect(result!.length).toBe(1);
-    expect(result![0].id).toBe(5);
+    expect(result).toEqual([
+      { id: 5, hash: 'h', reopen: false, reason: 'skip' },
+    ]);
   });
 
   it('should keep entries even if some fields are missing (caller guards per-entry)', () => {
@@ -63,9 +63,8 @@ describe('parseReactivationResult', () => {
     // by the caller. So a partially-shaped entry passes through the parser.
     const raw = '[{"id":2,"hash":"abc","reopen":true}]';
     const result = parseReactivationResult(raw);
-    expect(result).not.toBeNull();
-    expect(result!.length).toBe(1);
-    // reason missing — caller will handle via optional access
-    expect(result![0].reason).toBeUndefined();
+    expect(result).toEqual([
+      { id: 2, hash: 'abc', reopen: true, reason: undefined },
+    ]);
   });
 });

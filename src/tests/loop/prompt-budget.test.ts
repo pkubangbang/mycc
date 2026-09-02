@@ -22,7 +22,7 @@
  * loader — the prompts are environment-independent by construction.
  */
 
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 import { estimateTextTokens } from '../../utils/token.js';
 import { buildPlanModePrompt, buildNormalModePrompt } from '../../loop/prompts/lead.js';

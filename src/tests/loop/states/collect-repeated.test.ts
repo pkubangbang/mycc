@@ -31,7 +31,6 @@ describe('detectRepeatedActions', () => {
       ev('edit_file', 'Error: old_text not found in file (line 99)'),
     ];
     const result = detectRepeatedActions(events);
-    expect(result).not.toBeNull();
     expect(result).toContain('edit_file');
     expect(result).toMatch(/×3/);
     expect(result).toContain('Error:');
@@ -105,7 +104,6 @@ describe('detectRepeatedActions', () => {
       ev('bash', 'Error: command not found'),
     ];
     const result = detectRepeatedActions(events);
-    expect(result).not.toBeNull();
     // bash group (4) is larger than edit_file group (3)
     expect(result).toContain('bash');
     expect(result).toMatch(/×4/);
@@ -118,7 +116,6 @@ describe('detectRepeatedActions', () => {
       ev('grep', 'No such pattern found in any file'),
     ];
     const result = detectRepeatedActions(events);
-    expect(result).not.toBeNull();
     expect(result).toContain('grep');
     expect(result).toMatch(/×3/);
   });
