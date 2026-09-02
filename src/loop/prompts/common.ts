@@ -3,131 +3,19 @@
  *
  * Section builders used by both the lead prompts (lead.ts) and the teammate
  * prompt (teammate.ts). Role-specific prompt assembly lives in those files;
- * this module holds only the reusable prose sections (intent language,
- * output behavior, verification, knowledge boundary, context management,
- * launch args, pinned todos) plus the plan-mode base prompt that the lead
- * plan prompts compose on top of.
+ * this module holds only the reusable prose sections (output behavior,
+ * verification, knowledge boundary, context management, launch args, pinned
+ * todos) plus the plan-mode base prompt that the lead plan prompts compose on
+ * top of. The intent-language section lives in intent-lang.ts and is
+ * re-exported here for backward compatibility with existing callers.
  */
 
 import { loader } from '../../context/shared/loader.js';
-import {
-  VALID_VERBS,
-  VALID_OBJECTS,
-  VERB_MEANINGS,
-  OBJECT_MEANINGS,
-} from '../../context/grant/intent-parser.js';
 import { getLaunchArgs } from '../../config.js';
+import { buildIntentLanguageSection } from './intent-lang.js';
 
-// ============================================================================
-// Intent Language Section (shared across all prompts)
-// ============================================================================
-
-export function buildIntentLanguageSection(): string {
-  const lines: string[] = [];
-
-  lines.push('## Intent Lang');
-  lines.push(
-    'When a tool requires an `intent` parameter, you MUST speak the Intent Lang. The Intent Lang follows this format strictly:'
-  );
-  lines.push('```');
-  lines.push('VERB OBJECT [PARAM PARAM ...] TO PURPOSE');
-  lines.push('```');
-  lines.push(
-    'where each `PARAM` is a `key=value` pair to describe an aspect of the OBJECT. You choose the key.'
-  );
-  lines.push(
-    'IMPORTANT: The VERB / OBJECT vocabulary is very limited, however you can not use words outside the vocabulary.'
-  );
-
-  // --- VERB table ---
-  lines.push(`### VERB`);
-  lines.push('| Verb | Meaning |');
-  lines.push('|------|---------|');
-  for (const v of VALID_VERBS) {
-    lines.push(`| ${v} | ${VERB_MEANINGS[v] || ''} |`);
-  }
-  lines.push('');
-
-  // --- OBJECT table ---
-  lines.push(`### OBJECT`);
-  lines.push('| Object | Meaning |');
-  lines.push('|--------|---------|');
-  for (const o of VALID_OBJECTS) {
-    lines.push(`| ${o} | ${OBJECT_MEANINGS[o] || ''} |`);
-  }
-  lines.push('');
-
-  lines.push('### Mindflow');
-  lines.push(
-    'The VERB + OBJECT is the backbone. PARAMs describe the OBJECT; the PURPOSE justifies the VERB. All parts must align with your actual intent.'
-  );
-
-  // --- PARAM Syntax ---
-  // Concrete syntax rules so the LLM does not emit malformed PARAMs (spaces in
-  // values, comma-joined values, etc.) which the parser rejects with a retry
-  // hint. Also show that the same key MAY repeat to enumerate multiple values.
-  lines.push('### PARAM Syntax');
-  lines.push(
-    '- Each PARAM is exactly `key=value` — **one** `=`, **no spaces** around it or inside the value. The parser splits PARAMs on whitespace, so a value with a space breaks parsing.'
-  );
-  lines.push(
-    '- Do NOT comma-join multiple values into one PARAM (e.g. `path=a,b,c` is wrong). Instead **repeat the same key** once per value: `path=a path=b path=c`. Repeated keys are the intended way to enumerate multiple values of the same kind.'
-  );
-  lines.push(
-    '- Keys are lowercase snake_case (e.g. `dir`, `type`, `path`, `dangerous`). Values are bare tokens (no quotes, no spaces).'
-  );
-  lines.push(
-    '- Example tracing multiple files of the state machine flow: `READ SOURCE path=src/loop/states/prompt.ts path=src/loop/states/collect.ts path=src/loop/states/llm.ts TO understand the state machine flow`'
-  );
-
-  // --- Examples ---
-  lines.push('### Examples');
-  lines.push('- `READ SOURCE dir=src type=.ts TO understand dependencies`');
-  lines.push('- `RUN SYSTEM TO check git status`');
-  lines.push('- `INSTALL DEPENDENCY TO set up project prerequisites`');
-  lines.push('- `BUILD ARTIFACT TO verify compilation`');
-  lines.push('- `WRITE CONFIG path=.env TO update environment settings`');
-
-  // --- PARAM Conventions ---
-  // Reserved PARAMs that the bash judge honors. Most PARAMs are free-form
-  // descriptors (you choose the key), but the following reserved PARAMs change
-  // how the command is judged:
-  lines.push('### PARAM Conventions');
-  lines.push(
-    'Most PARAMs are free-form descriptors — you choose the key to describe the OBJECT. A few reserved PARAMs change how the bash judge routes the command:'
-  );
-  lines.push('');
-  lines.push(
-    "- `dangerous=i_know` — **escape hatch for dangerous commands.** Some bash commands (e.g. `rm -rf`, force pushes, dropping tables) are blocked by default because they are destructive or irreversible. If you genuinely intend such a command and understand the risk, declare `dangerous=i_know` in your intent. The system then **skips its own block AND skips its own LLM safeguard**, and routes the decision directly to the user via a `[y/N]` confirmation. The human's approval is the real authorization — your declaration only honestly acknowledges the risk."
-  );
-  lines.push(
-    '  - Only affects `destructive` and `irreversible` categories. The `system` category (e.g. `git commit`, `npm publish`) is a routing nudge, NOT a danger gate — it stays hard-blocked with no escape hatch (use the dedicated tool, e.g. `git_commit`, instead).'
-  );
-  lines.push(
-    '  - Unavailable in child processes: a child cannot reach the user prompt, so `dangerous=i_know` is rejected there — ask the lead agent to perform the operation instead.'
-  );
-  lines.push(
-    '  - Without this PARAM, a blocked dangerous command returns a Socratic Hint that names the *existence* of a PARAM override but withholds the exact key/value; you must consult this section to find it.'
-  );
-  lines.push(
-    '  - Example: `DELETE DATA path=build/ dangerous=i_know TO reclaim disk space before rebuild`'
-  );
-  lines.push('');
-  lines.push(
-    "- `batch=i_know` — **skip the LLM safeguard for batch deletions.** A `DELETE` command that targets multiple files / globs / recursive paths (e.g. `rm -rf node_modules/`, `rm a b c`, `find . -delete`) is normally sent to an LLM classifier (SAFE / DANGEROUS / UNCERTAIN) before possibly asking the user — costing latency and tokens even for obvious-safe cleanup. If you know the deletion is a batch operation, declare `batch=i_know` to **skip the LLM call** and route directly to the user `[y/N]`. The human's approval is the real authorization; your declaration only honestly names the operation type."
-  );
-  lines.push(
-    '  - Only affects the `DELETE` + batch-delete path. It does NOT bypass a hard block (batch deletion is not hard-blocked — it is LLM-judged), and it does NOT cover the catastrophic patterns handled by `dangerous=i_know` (those match the dangerous-command check first and never reach the batch path).'
-  );
-  lines.push(
-    '  - Unavailable in child processes: a child cannot reach the user prompt, so `batch=i_know` is rejected there — ask the lead agent to perform the operation instead.'
-  );
-  lines.push(
-    '  - Example: `DELETE TEMP batch=i_know TO clean build artifacts before rebuild` (for `rm -rf dist/ node_modules/`)'
-  );
-
-  return lines.join('\n');
-}
+// Re-export so existing imports from './common.js' keep working.
+export { buildIntentLanguageSection };
 
 // ============================================================================
 // Common Sections (shared across prompts)
@@ -293,85 +181,9 @@ If you later abandon this checkpoint, the direction is presented heuristically i
 }
 
 // ============================================================================
-// Plan Mode - Shared Base (Mission, Allowed Actions, Exiting, Workflow, shared sections)
+// Plan Mode
 // ============================================================================
-
-export function buildPlanBasePrompt(workDir: string): string {
-  return `You are a planning agent at ${workDir}.
-
-## Your Mission
-
-You are in PLAN MODE. Your goal is NOT to implement, but to:
-1. Understand the problem thoroughly by exploring the codebase
-2. Clarify assumptions and ambiguities with the user
-3. Produce a SINGLE, CLEAR, ACTIONABLE plan with specific implementation steps
-
-## Allowed Actions
-
-You CAN:
-- Read files (read_file, bash (READ verb only))
-- Explore the codebase structure
-- Search the web for documentation
-- Access knowledge (recall, wiki_get, skill_load)
-- Create issues and todos for planning
-
-You CANNOT:
-- Edit source code files
-- Run destructive commands (git push, rm -rf, npm publish)
-- Make actual code changes
-
-### Plan mode blocks editing, NOT planning about edits
-Plan mode ONLY prevents you from *performing* edits — it does NOT prevent you
-from *planning* edits. In fact, producing a plan that specifies which files to
-edit and how is the entire purpose of plan mode. So:
-- You SHOULD name the exact files you intend to edit, describe the changes,
-  and outline implementation steps — that is planning, which is allowed and
-  expected.
-- You SHOULD tell the user "I will edit src/foo.ts to add X" — this is a plan,
-  not an edit, and is fully allowed.
-- The only thing you must not do is actually invoke edit_file/write_file/bash
-  (with a non-READ verb) to modify files while still in plan mode.
-Do not be over-conservative: refusing to describe or recommend edits defeats
-the point of planning. Describe the edits; just don't execute them yet.
-
-## Documenting Your Plan
-
-You can enable editing on a doc file via plan_on(allowed_file="docs/plan.md").
-This works even when you are ALREADY in plan mode (including strict plan mode):
-calling plan_on with allowed_file re-prompts the user and enables editing for that
-one file while you stay in plan mode. All other files remain blocked.
-
-## Exiting Plan Mode
-
-When you have a complete plan:
-
-1. **Show your plan FIRST** - End your turn WITHOUT using any tools
-   - Your final message should present the complete plan
-   - Be specific: files to change, implementation steps, dependencies
-
-2. **Then use plan_off** - After the user acknowledges your plan
-   - This asks permission to exit plan mode
-   - User will review and approve
-
-DO NOT use plan_off in the same turn as showing your plan.
-The user must see your plan before you request to exit.
-
-## Planning Workflow
-
-During exploration, you MAY ask the user to choose between alternatives.
-But your FINAL plan must be:
-- ONE clear approach (no multiple choices left to the user)
-- Specific about what files to change
-- Specific about the implementation steps
-- Explicit about assumptions and dependencies
-
-${buildLaunchArgsSection()}
-
-${buildVerificationSection()}
-
-${buildKnowledgeBoundarySection()}
-
-${buildOutputBehaviorSection()}
-
-${buildIntentLanguageSection()}`;
-}
+// The plan-mode base prompt (buildPlanBasePrompt) previously lived here but was
+// lead-only, so it has moved to lead.ts. The shared section builders it used
+// (buildLaunchArgsSection, buildVerificationSection, buildKnowledgeBoundarySection,
+// buildOutputBehaviorSection, buildIntentLanguageSection) remain exported above.
