@@ -255,6 +255,12 @@ class ChildTeam implements TeamModule {
 
 > **注**：IDLE 状态没有固定超时——轮询会持续进行直到收到关闭信号。主进程通过 `removeTeammate`/`dismissTeam` 发送 shutdown 消息或强制 `SIGTERM` 来终止子进程。
 
+### 展示的截止时间（deadline）是建议性快照，非实时倒计时
+
+`tm_print` / `printTeam()` 显示的 `deadline`/`remaining` 是**建议性快照**：在子进程发送 `eta_update` IPC 时设置一次，之后**不会自动刷新**。一个被重新激活的队友（通过收到邮件或自动认领从 `IDLE` 转入 `WORK`）**不会**发送新的 `eta_update`，除非其第一个动作是 `mail_to(lead, eta>0)`（见 `src/context/child/team.ts` 的 `mailTo`）。
+
+因此，`working` 状态的队友显示 `0s remaining` 意味着"先前声明的时间预算已到期"，**而非**"即将终止"。这是正常的预期状态，无需介入。唯一可操作的到期信号是 `awaitTeammate` 中的 "Deadline passed" 警告（`src/context/parent/team.ts` 的 `awaitTeammate` 轮询）；`tm_print` 的 `0s remaining` 不是可操作信号。为避免误读，`printTeam()` 在 `remaining === 0` 时将行标注为 `deadline <time> elapsed (re-activated; no fresh eta)` 而非显示误导性的 `0s remaining`。
+
 ## 自动认领功能
 
 在 IDLE 状态时，子进程会自动扫描并认领未分配的任务：

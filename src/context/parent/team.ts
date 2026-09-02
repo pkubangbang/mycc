@@ -572,7 +572,20 @@ export class TeamManager implements TeamModule {
         const remaining = Math.max(0,
           Math.round((eta.deadlineMs - Date.now()) / 1000));
         const deadlineStr = new Date(eta.deadlineMs).toLocaleTimeString();
-        info += `, deadline ${deadlineStr} (${remaining}s remaining)`;
+        // The displayed deadline is an ADVISORY SNAPSHOT set once on the
+        // child's eta_update IPC and never auto-refreshed. A re-activated
+        // teammate (IDLE → WORK via mail or auto-claim) does NOT send a
+        // fresh eta_update unless its first action is a mail_to(lead, eta>0).
+        // So `remaining === 0` on a `working` teammate means "the previously
+        // declared budget elapsed", NOT "about to terminate" — annotate it
+        // explicitly so the lead does not misread a stale 0s as a live
+        // countdown. Only awaitTeammate's "Deadline passed" warning is an
+        // actionable expiry signal; this row is not.
+        if (remaining > 0) {
+          info += `, deadline ${deadlineStr} (${remaining}s remaining)`;
+        } else {
+          info += `, deadline ${deadlineStr} elapsed (re-activated; no fresh eta)`;
+        }
       }
       lines.push(info);
     }
