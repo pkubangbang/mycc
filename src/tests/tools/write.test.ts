@@ -82,7 +82,9 @@ describe('writeTool', () => {
       content: 'malicious',
     });
 
-    expect(result).toContain('Error:');
+    // Traversal patterns resolve outside the workspace but are not sensitive
+    // system paths, so they reach the requestExternalPathAccess denial.
+    expect(result).toContain('Error: Path escapes workspace');
   });
 
   it('should block absolute path outside workspace', async () => {
@@ -91,7 +93,7 @@ describe('writeTool', () => {
       content: 'malicious',
     });
 
-    expect(result).toContain('Error:');
+    expect(result).toContain('Error: Path escapes workspace');
   });
 
   it('should handle special characters in content', async () => {
@@ -135,8 +137,9 @@ describe('writeTool', () => {
       content: 'content',
     });
 
-    // Should fail because mydir is a directory
+    // Should fail because mydir is a directory (EISDIR from writeFileSync)
     expect(result).toContain('Error:');
+    expect(result).toMatch(/EISDIR|illegal operation on a directory|is a directory/);
   });
 
   it('should handle paths with spaces', async () => {

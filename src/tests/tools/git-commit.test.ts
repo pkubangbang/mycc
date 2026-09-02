@@ -150,20 +150,22 @@ describe('gitCommitTool', () => {
   describe('validation', () => {
     it('should reject empty commit message', async () => {
       const result = await gitCommitTool.handler(ctx, { message: '' });
-      expect(result).toContain('Error:');
-      expect(result).toContain('message');
+      expect(result).toBe('Error: The "message" parameter is required and must be a non-empty string');
     });
 
     it('should reject whitespace-only commit message', async () => {
       const result = await gitCommitTool.handler(ctx, { message: '   ' });
-      expect(result).toContain('Error:');
-      expect(result).toContain('message');
+      expect(result).toBe('Error: The "message" parameter is required and must be a non-empty string');
     });
 
     it('should reject missing commit message', async () => {
       const result = await gitCommitTool.handler(ctx, {});
-      expect(result).toContain('Error:');
-      expect(result).toContain('message');
+      expect(result).toBe('Error: The "message" parameter is required and must be a non-empty string');
+    });
+
+    it('should reject non-string commit message', async () => {
+      const result = await gitCommitTool.handler(ctx, { message: 123 as unknown as string });
+      expect(result).toBe('Error: The "message" parameter is required and must be a non-empty string');
     });
 
     it('should report no staged changes (non-amend)', async () => {
@@ -175,8 +177,7 @@ describe('gitCommitTool', () => {
         timedOut: false,
       });
       const result = await gitCommitTool.handler(ctx, { message: 'test commit' });
-      expect(result).toContain('Error:');
-      expect(result).toContain('No staged changes');
+      expect(result).toBe('Error: No staged changes to commit. Use `git add` to stage changes first.');
       // Should not have prompted the user
       expect(ctx.core.question).not.toHaveBeenCalled();
     });

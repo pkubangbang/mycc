@@ -107,12 +107,14 @@ describe('readPictureTool', () => {
 
   it('should block path traversal attacks', async () => {
     const out = await readPictureTool.handler(ctx, { path: '../../../etc/passwd' });
-    expect(out).toContain('Error:');
+    expect(out).toContain('Error: Path escapes workspace');
+    expect(ctx.core.readPictureCached).not.toHaveBeenCalled();
   });
 
   it('should block absolute path outside workspace', async () => {
     const out = await readPictureTool.handler(ctx, { path: '/etc/passwd' });
-    expect(out).toContain('Error:');
+    expect(out).toContain('Error: Path escapes workspace');
+    expect(ctx.core.readPictureCached).not.toHaveBeenCalled();
   });
 
   it('should expand ~ to home dir and reject it as escaping the workspace', async () => {
@@ -123,15 +125,13 @@ describe('readPictureTool', () => {
     // read/write/edit), so `~/some.png` expands to <home>/some.png, which is
     // outside the temp workdir and is rejected as escaping the workspace.
     const out = await readPictureTool.handler(ctx, { path: '~/some.png' });
-    expect(out).toContain('Error:');
-    expect(out).toContain('escapes workspace');
+    expect(out).toContain('Error: Path escapes workspace: ~/some.png');
     expect(ctx.core.readPictureCached).not.toHaveBeenCalled();
   });
 
   it('should handle non-existent file', async () => {
     const out = await readPictureTool.handler(ctx, { path: 'nope.png' });
-    expect(out).toContain('Error:');
-    expect(out).toContain('not found');
+    expect(out).toBe('Error: Image file not found: nope.png');
     expect(ctx.core.readPictureCached).not.toHaveBeenCalled();
   });
 

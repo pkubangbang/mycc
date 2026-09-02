@@ -38,15 +38,13 @@ describe('webFetchTool', () => {
 
   it('returns an Error when url is missing', async () => {
     const out = await webFetchTool.handler(ctx, {});
-    expect(out).toContain('Error:');
-    expect(out).toContain('url is required');
+    expect(out).toBe('Error: url is required');
     expect(ctx.core.webFetch).not.toHaveBeenCalled();
   });
 
   it('returns an Error for an unparseable URL', async () => {
     const out = await webFetchTool.handler(ctx, { url: 'not a url at all' });
-    expect(out).toContain('Error:');
-    expect(out).toContain('Invalid URL format');
+    expect(out).toBe('Error: Invalid URL format. Please provide a valid URL starting with http:// or https://');
     expect(ctx.core.webFetch).not.toHaveBeenCalled();
   });
 

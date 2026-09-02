@@ -122,7 +122,9 @@ describe('editTool', () => {
       new_text: 'hacked',
     });
 
-    expect(result).toContain('Error:');
+    // Traversal patterns resolve outside the workspace but are not sensitive
+    // system paths, so they reach the requestExternalPathAccess denial.
+    expect(result).toContain('Error: Path escapes workspace');
   });
 
   it('should handle non-existent file', async () => {
@@ -460,8 +462,7 @@ describe('editTool', () => {
       new_text: 'bar',
     });
 
-    expect(result).toContain('Error:');
-    expect(result).toMatch(/path/);
+    expect(result).toBe('Error: `path` argument is required and must be a non-empty string.');
     expect(result).not.toContain('Cannot read properties of undefined');
   });
 
@@ -472,8 +473,7 @@ describe('editTool', () => {
       new_text: 'bar',
     });
 
-    expect(result).toContain('Error:');
-    expect(result).toMatch(/path/);
+    expect(result).toBe('Error: `path` argument is required and must be a non-empty string.');
   });
 
   it('should return a clean Error when old_text arg is missing', async () => {
@@ -485,8 +485,7 @@ describe('editTool', () => {
       new_text: 'bar',
     });
 
-    expect(result).toContain('Error:');
-    expect(result).toMatch(/old_text/);
+    expect(result).toBe('Error: `old_text` argument is required and must be a string.');
   });
 
   it('should return a clean Error when new_text arg is missing', async () => {
@@ -498,8 +497,7 @@ describe('editTool', () => {
       old_text: 'Hello',
     });
 
-    expect(result).toContain('Error:');
-    expect(result).toMatch(/new_text/);
+    expect(result).toBe('Error: `new_text` argument is required and must be a string.');
   });
 
   // ── Line-ending preservation ────────────────────────────────────────

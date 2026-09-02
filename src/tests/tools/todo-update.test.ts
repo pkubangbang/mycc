@@ -92,7 +92,7 @@ describe('todoUpdateTool', () => {
     ]);
 
     const result = todoUpdateTool.handler(ctx, { id: 1, hash: 'wrong!!!!', name: 'Task A', done: true });
-    expect(result).toContain('Error: Hash mismatch');
+    expect(result).toBe('Error: Hash mismatch for todo #1. The item may have been updated since you last read it. Check the current todo list for the latest hash.');
   });
 
   it('should return error on unknown id', () => {
@@ -100,43 +100,43 @@ describe('todoUpdateTool', () => {
     vi.mocked(mockTodo.getItems).mockReturnValue([]);
 
     const result = todoUpdateTool.handler(ctx, { id: 999, hash: 'abc12345', name: 'Task A', done: true });
-    expect(result).toContain('Error: Todo item #999 not found');
+    expect(result).toBe('Error: Todo item #999 not found. Use the current todo list to find the correct id.');
   });
 
   // Input validation
   it('should return error for non-integer id', () => {
     const result = todoUpdateTool.handler(ctx, { id: 1.5, hash: 'abc12345', name: 'Task', done: false });
-    expect(result).toContain('Error: id must be a positive integer');
+    expect(result).toBe('Error: id must be a positive integer.');
   });
 
   it('should return error for non-positive id', () => {
     const result = todoUpdateTool.handler(ctx, { id: 0, hash: 'abc12345', name: 'Task', done: false });
-    expect(result).toContain('Error: id must be a positive integer');
+    expect(result).toBe('Error: id must be a positive integer.');
   });
 
   it('should return error for negative id', () => {
     const result = todoUpdateTool.handler(ctx, { id: -1, hash: 'abc12345', name: 'Task', done: false });
-    expect(result).toContain('Error: id must be a positive integer');
+    expect(result).toBe('Error: id must be a positive integer.');
   });
 
   it('should return error for empty hash', () => {
     const result = todoUpdateTool.handler(ctx, { id: 1, hash: '', name: 'Task', done: false });
-    expect(result).toContain('Error: hash is required');
+    expect(result).toBe('Error: hash is required and must be a non-empty string.');
   });
 
   it('should return error for missing hash', () => {
     const result = todoUpdateTool.handler(ctx, { id: 1, name: 'Task', done: false });
-    expect(result).toContain('Error: hash is required');
+    expect(result).toBe('Error: hash is required and must be a non-empty string.');
   });
 
   it('should return error for empty name', () => {
     const result = todoUpdateTool.handler(ctx, { id: 1, hash: 'abc12345', name: '', done: false });
-    expect(result).toContain('Error: name is required');
+    expect(result).toBe('Error: name is required and must be a non-empty string.');
   });
 
   it('should return error for non-boolean done', () => {
     const result = todoUpdateTool.handler(ctx, { id: 1, hash: 'abc12345', name: 'Task', done: 'yes' as unknown as boolean });
-    expect(result).toContain('Error: done must be a boolean');
+    expect(result).toBe('Error: done must be a boolean.');
   });
 
   it('should trim whitespace from hash', () => {

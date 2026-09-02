@@ -74,7 +74,7 @@ describe('bgCreateTool', () => {
     it('should return default reason when grant has no reason', async () => {
       vi.mocked(ctx.core.requestGrant).mockResolvedValueOnce({ approved: false });
       const result = await bgCreateTool.handler(ctx, { command: 'some command', intent: 'test' });
-      expect(result).toContain('Operation not permitted');
+      expect(result).toBe('Operation not permitted in current mode');
       expect(ctx.bg!.runCommand).not.toHaveBeenCalled();
     });
   });

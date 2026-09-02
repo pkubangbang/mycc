@@ -61,19 +61,23 @@ describe('readTool', () => {
   it('should block path traversal attacks', async () => {
     const result = await readTool.handler(ctx, { path: '../../../etc/passwd' });
 
-    expect(result).toContain('Error:');
+    // read has no sensitive-path guard; every external path goes through
+    // requestExternalPathAccess, which the mock denies with 'Path escapes workspace'.
+    expect(result).toContain('Error: Path escapes workspace');
   });
 
   it('should block absolute path outside workspace', async () => {
     const result = await readTool.handler(ctx, { path: '/etc/passwd' });
 
-    expect(result).toContain('Error:');
+    expect(result).toContain('Error: Path escapes workspace');
   });
 
   it('should block null byte injection', async () => {
     const result = await readTool.handler(ctx, { path: 'test.txt\x00../../../etc/passwd' });
 
-    expect(result).toContain('Error:');
+    // The null-byte path resolves outside the workspace, so it is denied via
+    // requestExternalPathAccess (not silently read).
+    expect(result).toContain('Error: Path escapes workspace');
   });
 
   it('should read file from subdirectory', async () => {

@@ -224,8 +224,7 @@ describe('skillSearchTool - Basics', () => {
 
     const result = await skillSearchTool.handler(ctx, { search: '' });
 
-    expect(result).toContain('ERROR');
-    expect(result).toContain('search');
+    expect(result).toContain('ERROR: The "search" parameter is required and must be a non-empty string.');
   });
 
   it('should handle search with only whitespace', async () => {
@@ -234,7 +233,7 @@ describe('skillSearchTool - Basics', () => {
 
     const result = await skillSearchTool.handler(ctx, { search: '   ' });
 
-    expect(result).toContain('ERROR');
+    expect(result).toContain('ERROR: The "search" parameter is required and must be a non-empty string.');
   });
 
   it('should handle search with no matching keywords', async () => {

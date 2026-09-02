@@ -186,25 +186,15 @@ describe('briefTool', () => {
     });
 
     it('should have message property in input schema as string', () => {
-      const properties = briefTool.input_schema.properties;
+      const properties = briefTool.input_schema.properties as Record<string, { type?: string }>;
       expect(properties?.message).toBeDefined();
-      if (properties && typeof properties === 'object' && 'message' in properties) {
-        const message = properties.message;
-        if (message && typeof message === 'object' && 'type' in message) {
-          expect(message.type).toBe('string');
-        }
-      }
+      expect(properties.message.type).toBe('string');
     });
 
     it('should have confidence property in input schema as number', () => {
-      const properties = briefTool.input_schema.properties;
+      const properties = briefTool.input_schema.properties as Record<string, { type?: string }>;
       expect(properties?.confidence).toBeDefined();
-      if (properties && typeof properties === 'object' && 'confidence' in properties) {
-        const confidence = properties.confidence;
-        if (confidence && typeof confidence === 'object' && 'type' in confidence) {
-          expect(confidence.type).toBe('number');
-        }
-      }
+      expect(properties.confidence.type).toBe('number');
     });
 
     it('should always use info log level', () => {

@@ -58,19 +58,25 @@ describe('todoCreateTool', () => {
 
   it('should return error for empty name', () => {
     const result = todoCreateTool.handler(ctx, { name: '' });
-    expect(result).toContain('Error: name is required');
+    expect(result).toBe('Error: name is required and must be a non-empty string.');
     expect(mockTodo.createTodo).not.toHaveBeenCalled();
   });
 
   it('should return error for missing name', () => {
     const result = todoCreateTool.handler(ctx, {});
-    expect(result).toContain('Error: name is required');
+    expect(result).toBe('Error: name is required and must be a non-empty string.');
     expect(mockTodo.createTodo).not.toHaveBeenCalled();
   });
 
   it('should return error for whitespace-only name', () => {
     const result = todoCreateTool.handler(ctx, { name: '   ' });
-    expect(result).toContain('Error: name is required');
+    expect(result).toBe('Error: name is required and must be a non-empty string.');
+    expect(mockTodo.createTodo).not.toHaveBeenCalled();
+  });
+
+  it('should return error for non-string name', () => {
+    const result = todoCreateTool.handler(ctx, { name: 123 as unknown as string });
+    expect(result).toBe('Error: name is required and must be a non-empty string.');
     expect(mockTodo.createTodo).not.toHaveBeenCalled();
   });
 

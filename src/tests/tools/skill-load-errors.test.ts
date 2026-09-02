@@ -106,8 +106,7 @@ describe('skillLoadTool - Errors', () => {
 
     const result = await skillLoadTool.handler(ctx, { name: '' });
 
-    expect(result).toContain('ERROR');
-    expect(result).toContain('name');
+    expect(result).toContain('ERROR: The "name" parameter is required and must be a non-empty string.');
   });
 
   it('should handle skill name with special characters', async () => {
@@ -116,7 +115,7 @@ describe('skillLoadTool - Errors', () => {
 
     const result = await skillLoadTool.handler(ctx, { name: 'invalid@skill!' });
 
-    expect(result).toContain("Skill 'invalid@skill!' not found by exact name");
+    expect(result).toContain("ERROR: Skill 'invalid@skill!' not found by exact name.");
   });
 
   it('should handle skill name with path traversal attempt', async () => {
@@ -125,7 +124,7 @@ describe('skillLoadTool - Errors', () => {
 
     const result = await skillLoadTool.handler(ctx, { name: '../../../etc/passwd' });
 
-    expect(result).toContain("Skill '../../../etc/passwd' not found by exact name");
+    expect(result).toContain("ERROR: Skill '../../../etc/passwd' not found by exact name.");
   });
 
   it('should handle skill name with only whitespace', async () => {
@@ -134,7 +133,7 @@ describe('skillLoadTool - Errors', () => {
 
     const result = await skillLoadTool.handler(ctx, { name: '   ' });
 
-    expect(result).toContain('ERROR');
+    expect(result).toContain('ERROR: The "name" parameter is required and must be a non-empty string.');
   });
 
   it('should handle numeric skill name', async () => {
@@ -156,8 +155,7 @@ describe('skillLoadTool - Errors', () => {
 
     const result = await skillLoadTool.handler(ctx, {});
 
-    expect(result).toContain('ERROR');
-    expect(result).toContain('name');
+    expect(result).toContain('ERROR: The "name" parameter is required and must be a non-empty string.');
   });
 
   it('should handle invalid name type (number)', async () => {
@@ -166,7 +164,7 @@ describe('skillLoadTool - Errors', () => {
 
     const result = await skillLoadTool.handler(ctx, { name: 123 as unknown as string });
 
-    expect(result).toContain('ERROR');
+    expect(result).toContain('ERROR: The "name" parameter is required and must be a non-empty string.');
   });
 
   it('should handle name with special characters that is valid', async () => {
