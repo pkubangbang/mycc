@@ -1,8 +1,10 @@
 /**
- * hooks.ts - Hook execution engine for hookish skills
+ * hook-executor.ts - Hook execution engine for hookish skills
  *
- * Handles the execution of hook actions (inject_before, inject_after, block, replace, message)
- * with timeout support and duplicate prevention.
+ * Handles the execution of hook actions (inject_before, inject_after, block,
+ * replace, message, compact) with duplicate prevention. Timeout clamping for
+ * inject/replace args is applied at compile/load time (conditions.ts /
+ * condition-validator.ts), not here.
  */
 
 import type { ToolCall } from '../types.js';
@@ -430,7 +432,7 @@ export class HookExecutor {
    * Process all hooks against an array of augmented tool calls.
    *
    * Takes the entire delta (array of tool calls with metadata) and returns a modified delta.
-   * Handles all hook actions: block, replace, inject_before, inject_after, message.
+   * Handles all hook actions: block, replace, inject_before, inject_after, message, compact.
    *
    * This is a pluggable hook system that manipulates tool calls transparently.
    * - Empty calls array → process 'stop' trigger hooks
