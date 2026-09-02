@@ -27,31 +27,25 @@ A CLI coding agent using Ollama-cloud for LLM inference, written in nodejs.
 
 ### Prerequisites
 
-This package includes native dependencies that require build tools:
-
 - **Node.js** >= 18
-- **Python** (for node-gyp)
-- **C++ compiler** (GCC/Clang on Unix, Visual Studio Build Tools on Windows)
 
-On Ubuntu/Debian:
+The native dependencies (`sharp`, `@lancedb/lancedb`, `ripgrep`) ship **prebuilt binaries** (or WASM) for common platforms, so a **C++ compiler is not always required**. You only need build tools (GCC/Clang on Unix, Visual Studio Build Tools on Windows) when installing on a platform without a prebuilt binary, or when building from source.
+
+On Ubuntu/Debian (only if you need to build from source):
 ```bash
 sudo apt install build-essential python3
 ```
 
-On macOS:
+On macOS (only if you need to build from source):
 ```bash
 xcode-select --install
 ```
 
-On Windows, install [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/).
-
-### Install from npm
-
-```bash
-npm install -g @pkubangbang/mycc
-```
+On Windows (only if you need to build from source), install [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/).
 
 ### Install from source
+
+> **Note:** `@pkubangbang/mycc` is **not published** to the npm registry, so there is no `npm install -g` path. You must run mycc from source.
 
 ```bash
 # Clone the repository
@@ -99,13 +93,9 @@ ollama pull nomic-embed-text
 
 Other embedding models like `mxbai-embed-large` or `all-minilm` also work. Make sure to update the `OLLAMA_EMBEDDING_MODEL` environment variable if you use a different model.
 
-### 3. Install tmux (Required)
+### 3. Install tmux (Optional)
 
-**tmux is required** for interactive terminal operations. mycc uses tmux for:
-- Interactive programs (vim, htop, watch, etc.)
-- SSH sessions to remote servers
-- Commands requiring user input (prompts, passwords)
-- Any task needing direct terminal access
+**tmux is optional** — it is only used by the `hand_over` tool for interactive terminal operations (e.g. entering a password, an interactive TUI like vim/htop, or an SSH session). It does **not** block the main agent loop: the core tools (`bash`, `read`, `write`, `edit`, etc.) run without tmux. Install it only if you need the `hand_over` tool.
 
 Install tmux:
 
@@ -180,6 +170,23 @@ Or if you need more debug output, add a `-v` flag, or `--verbose`:
 mycc -v
 ```
 
+#### Auto mode
+
+Run mycc **autonomously** without a human at the terminal. The lead loop runs on its own (no `agent >> ` prompt); press ESC to exit auto mode and return to the prompt.
+
+```bash
+mycc --auto
+```
+
+#### Daemon mode
+
+Run mycc as a **detached, headless background process** (auto mode is forced on, no terminal). Optionally pass a skill name to auto-load it and start its cron timer (if the skill declares `service_cron`):
+
+```bash
+mycc --daemon            # passive daemon, waits for external mail
+mycc --daemon <skill>    # daemon that auto-loads a service skill and starts its cron
+```
+
 ### Configuration Flags
 
 All environment variables can be overridden via CLI flags. These take highest priority, overriding `.env` files and system environment variables.
@@ -199,6 +206,8 @@ All environment variables can be overridden via CLI flags. These take highest pr
 | `--editor` | `EDITOR` | Text editor for file editing |
 | `--skill-match-threshold` | `SKILL_MATCH_THRESHOLD` | Skill similarity threshold 0-1 (default: 0.5) |
 | `--max-upload-mb` | `MYCC_MAX_UPLOAD_MB` | Max single-file upload size (MB) for the `/serve` Web UI (default: 50) |
+| `--auto` | — | Start in autonomous mode (no user prompts) |
+| `--daemon [skill]` | — | Detached headless daemon (forces auto mode); optionally auto-load a service skill and start its cron |
 | `--allow-plan-off` | `MYCC_ALLOW_PLAN_OFF` | In auto mode, auto-approve `plan_off` to exit plan mode without confirmation |
 
 Example usage:
