@@ -22,6 +22,7 @@ import { IpcRegistry } from '../ipc-registry.js';
 import { readSession, writeSession, getSessionId } from '../../session/index.js';
 import { agentIO } from '../../loop/agent-io.js';
 import { stopSpinner } from '../../engine/chat-helpers.js';
+import { getServeHub } from '../../serve/serve-registry.js';
 
 // Project root for resolving paths
 const PROJECT_ROOT = getProjectRoot();
@@ -475,6 +476,15 @@ export class TeamManager implements TeamModule {
         // Check if the teammate sent mail to lead — resolve so lead can read it
         if (this.context.mail.hasNewMails()) {
           resolve(); return; // mail waiting — let lead read and respond
+        }
+
+        // WebUI steering note arrived during the wait — break the await so the
+        // lead returns to COLLECT, whose 2c block drains steering as a REMINDER
+        // (mid-task user direction). We only PEEK here (getSteeringNotes is
+        // non-consuming); the drain happens downstream in COLLECT, keeping a
+        // single consumption point. Same guard as wait.ts eventPending().
+        if (getServeHub().isRunning() && getServeHub().getSteeringNotes().length > 0) {
+          resolve(); return; // steering waiting — let lead consume it via COLLECT
         }
 
         const eta = this.teammateEta.get(name);

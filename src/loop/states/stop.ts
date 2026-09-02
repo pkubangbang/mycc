@@ -26,6 +26,7 @@ import { autoState } from '../auto-state.js';
 import { startWrapUp } from '../esc-wrap-up.js';
 import { loader } from '../../context/shared/loader.js';
 import { stopSpinner } from '../../engine/chat-helpers.js';
+import { getServeHub } from '../../serve/serve-registry.js';
 
 export async function handleStop(
   env: MachineEnv,
@@ -78,9 +79,31 @@ export async function handleStop(
     }
 
     // Normal mode: wait for teammates (each respects their ETA deadline)
+    // Show the final response (letter-box) BEFORE awaiting, so the user sees
+    // the result immediately and doesn't think the lead is frozen while it
+    // waits on teammates. The PROMPT state's `agent >>` is suppressed during
+    // the await (we're blocked here, not at the input prompt); instead we log
+    // an "awaiting teammate(s)" notice so the user knows why there's no prompt.
+    presentResult(triologue);
+
+    const teammates = ctx.team.listTeammates();
+    if (teammates.some((t) => t.status === 'working')) {
+      agentIO.log(
+        chalk.yellow('awaiting teammate(s) — use /team to check status, or ESC to interrupt'),
+      );
+    }
+
     const { result } = await ctx.team.awaitTeam();
 
-    if (result === 'got question' || ctx.mail.hasNewMails()) {
+    // Steering notes queued via the WebUI during the await are NOT mails, so
+    // the mail check below alone would miss them. awaitTeammate's poll loop
+    // now breaks on arriving steering notes (see team.ts), so by the time we
+    // reach here a queued note means the await was interrupted to consume it
+    // — route to COLLECT, whose 2c block drains steering as a REMINDER.
+    const steerPending =
+      getServeHub().isRunning() && getServeHub().getSteeringNotes().length > 0;
+
+    if (result === 'got question' || ctx.mail.hasNewMails() || steerPending) {
       return AgentState.COLLECT;
     }
 
@@ -94,9 +117,7 @@ export async function handleStop(
       return AgentState.COLLECT;
     }
 
-    // 'all done' or 'no teammates'
-    presentResult(triologue);
-
+    // 'all done' or 'no teammates' — letter-box already shown above.
     return AgentState.PROMPT;
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : String(err);
