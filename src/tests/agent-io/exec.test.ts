@@ -88,11 +88,11 @@ describe('agent-io', () => {
 
       const result = await agentIO.exec(options);
       expect(result).toBeDefined();
-      // A 1ms timeout may legitimately time out on a slow machine, so only
-      // assert the flags are present booleans, not their specific values.
+      // A 1ms timeout may legitimately time out before producing output on a
+      // slow machine, so only assert the call is accepted (does not throw a
+      // validation error) and the result is well-formed.
       expect(result.timedOut).toBeTypeOf('boolean');
       expect(result.interrupted).toBeTypeOf('boolean');
-      expect(result.stdout).toContain('test');
     });
 
     it('should accept valid timeout (maximum)', async () => {
