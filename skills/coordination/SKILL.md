@@ -1,8 +1,8 @@
 ---
 name: coordination
 description: >
-  Use when forming or managing a team of multiple agents to accomplish a task that benefits from parallel or coordinated work. Provides named workflow patterns (Divide-and-Conquer, Pipeline, Round-Robin, Broadcast, Peer Review, Funnel, Human-in-the-Loop) that define who talks to whom and in what order. Covers when to form a team, choosing a communication topology, spawning teammates, assigning issues, enforcement of communication rules, and async-first principles. Do NOT use for single-agent work, git worktree management, or quick one-off tasks with no parallelism benefit.
-keywords: ["team", coordination, workflow, parallel, distribute, delegate, teammate, "multi agent", collaborate, "divide and conquer", pipeline, "round robin", "peer review", funnel, "human in the loop"]
+  Use when forming or managing a team of multiple agents to accomplish a task that benefits from parallel or coordinated work. Provides named workflow patterns (Divide-and-Conquer, Pipeline, Round-Robin, Broadcast, Peer Review, Funnel, Human-in-the-Loop, Counterwork/Debate, Delphi, Scratchpad) that define who talks to whom and in what order. Covers when to form a team, choosing a communication topology, spawning teammates, assigning issues, enforcement of communication rules, and async-first principles. Do NOT use for single-agent work, git worktree management, or quick one-off tasks with no parallelism benefit.
+keywords: ["team", coordination, workflow, parallel, distribute, delegate, teammate, "multi agent", collaborate, "divide and conquer", pipeline, "round robin", "peer review", funnel, "human in the loop", counterwork, debate, consensus, delphi, elicitation, scratchpad, notes, memory]
 ---
 
 # Multi-Agent Coordination Workflows
@@ -20,6 +20,9 @@ keywords: ["team", coordination, workflow, parallel, distribute, delegate, teamm
 > - `pattern-peer-review.md` — Pattern 5: All-Channel, lateral enforcement, the post-kickoff verification checklist, stall detection.
 > - `pattern-funnel.md` — Pattern 6: Y topology, explorer→integrator→lead routing, how auto-unblock + the integrator mail work together.
 > - `pattern-human-loop.md` — Pattern 7: Human as authoritative node, explicit turn protocol.
+> - `pattern-counterwork.md` — Pattern 8: Debate topology, competing positions refute each other, lead-conducted convergence to consensus.
+> - `pattern-delphi.md` — Pattern 9: Star with an iterative collection loop; query teammates until N distinct solutions are gathered.
+> - `pattern-scratchpad.md` — Pattern 10: Hub-with-memory; a scratchpad teammate stores the lead's notes and answers broadcast queries against them.
 > - `enforcement.md` — Claim/Closure/Broadcast rules, the Polling Procedure, the Enforcement Checklist, recovery actions, the Communication Constraint Template.
 > - `async-principles.md` — The tm_await decision tree, order() guidance, tm_remove rules, anti-patterns.
 > - `troubleshooting.md` — Teammate-not-responding, issue-blocked, task-too-complex decomposition.
@@ -95,6 +98,9 @@ Match the task to the topology:
 | Same task, multiple perspectives | Lectural / Broadcast | Star (one-to-many) | `pattern-broadcast.md` |
 | Complex, creative, cross-domain negotiation | Peer Review / All-Channel | All-Channel | `pattern-peer-review.md` |
 | Multiple explorations → one decision | Funnel / Y | Y | `pattern-funnel.md` |
+| Competing positions, debate to consensus | Counterwork / Debate | Debate ring (lead-arbitrated) | `pattern-counterwork.md` |
+| Need N distinct candidate solutions | Delphi / Structured Elicitation | Star + iterative collection | `pattern-delphi.md` |
+| Lead's notes accumulate, queried later | Scratchpad / Notes-with-Memory | Wheel (memory-variant) | `pattern-scratchpad.md` |
 | Human is a participant | Human-in-the-Loop | Human as node | `pattern-human-loop.md` |
 
 **Heuristic:** Simple/independent → centralize (Wheel, Chain).
@@ -105,11 +111,14 @@ Convergent decision from parallel inputs → Y.
 ```
 1. Human-in-the-Loop   — if a human is a participant, this always wins.
 2. Pipeline/Chain      — if there are sequential dependencies (blockedBy), this overrides parallel patterns.
-3. Funnel/Y            — if multiple explorations converge to one decision.
-4. Peer Review/All-Channel — if cross-domain negotiation is required AND no dependencies exist.
-5. Divide-and-Conquer  — if 3+ independent slices with no dependencies.
-6. Broadcast/Lectural  — if same input, multiple perspectives, no dependencies.
-7. Round-Robin/Circle  — if single artifact, iterative refinement.
+3. Counterwork/Debate  — if positions genuinely conflict and must converge to ONE consensus.
+4. Funnel/Y            — if multiple explorations converge to one decision.
+5. Peer Review/All-Channel — if cross-domain negotiation is required AND no dependencies exist.
+6. Delphi              — if a specific COUNT of distinct candidate solutions is the goal (vs. one consensus).
+7. Divide-and-Conquer  — if 3+ independent slices with no dependencies.
+8. Broadcast/Lectural  — if same input, multiple perspectives, no dependencies.
+9. Scratchpad/Notes    — if the lead is accumulating notes for later query (often runs ALONGSIDE another pattern as the memory layer).
+10. Round-Robin/Circle — if single artifact, iterative refinement.
 ```
 
 ## Phase Transitions — switching topology as the task evolves
@@ -149,6 +158,9 @@ Each pattern defines **WHO may talk to WHOM**. Enforce the topology:
 | Play-in-Turn / Circle | Circle | Teammates → lead (conductor passes baton). No lateral mail. |
 | Broadcast / Lectural | Star | Lead broadcasts to all; teammates → lead. No lateral mail. |
 | Peer Review / All-Channel | All-Channel | Teammates ↔ teammates laterally; lead only arbitrates. **Must be explicitly instructed.** |
+| Counterwork / Debate | Debate ring | Opponents ↔ opponents laterally (refutation required); lead runs rounds + declares consensus. **Lateral mail must be explicitly instructed.** |
+| Delphi / Structured Elicitation | Star + iterative | Lead ↔ each teammate (collect/dedupe/re-query); NO lateral mail (independence required). |
+| Scratchpad / Notes-with-Memory | Wheel (memory) | Lead → scratchpad (note-drops); lead broadcasts query → all; scratchpad → lead (answer). Scratchpad mails lead ONLY. |
 | Funnel / Y | Y | Explorers → integrator (NOT lead); integrator → lead. |
 
 **State the communication constraint in every `tm_create` prompt.**
@@ -203,3 +215,14 @@ triologue files.
    turn (`pattern-human-loop.md`).
 8. **Phase Transitions** — switch topology when the task's nature changes;
    the lead is the conductor of transitions.
+9. **Delphi feeds Funnel, Debate needs a round limit** — for the
+   convergent-collection patterns: collect N distinct solutions with Delphi
+   *before* picking a winner with Funnel (don't decide inside the
+   collection loop); and always set a round limit + lead-adjudication
+   fallback for Counterwork/Debate so it can't loop forever
+   (`pattern-delphi.md`, `pattern-counterwork.md`).
+10. **Scratchpad can run alongside another pattern** — it is a *memory
+    layer*, not a standalone topology for getting work done. Spawn a
+    scratchpad to persist the lead's notes while the team runs
+    Divide-and-Conquer / Pipeline / etc.; the note-drops are non-blocking
+    one-way writes (`pattern-scratchpad.md`).
