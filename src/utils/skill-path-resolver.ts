@@ -52,7 +52,7 @@ function getPackageRoot(): string {
     return packageRoot;
   }
   // This file is at src/utils/skill-path-resolver.ts
-  // Package root is 2 levels up from dist/utils/ or 3 levels up from src/utils/
+  // Package root is 2 levels up from src/utils/ (or dist/utils/ when compiled)
   const currentDir = __dirname;
   // Check if we're in dist/ (compiled) or src/ (typescript)
   if (currentDir.includes(`${path.sep}dist${path.sep}`)) {

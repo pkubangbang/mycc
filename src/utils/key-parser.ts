@@ -246,7 +246,6 @@ function parseNextKey(data: Buffer, offset: number): { keyInfo: KeyInfo; consume
 }
 
 /**
-/**
  * Check if data represents Ctrl+C
  */
 export function isCtrlC(data: Buffer): boolean {

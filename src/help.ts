@@ -40,7 +40,7 @@ const CONFIG_FLAGS: FlagRow[] = [
   { flag: '--ollama-embedding-model <model>', env: 'OLLAMA_EMBEDDING_MODEL', desc: 'Embedding model for semantic search/RAG' },
   { flag: '--deepseek-host <url>', env: 'DEEPSEEK_HOST', desc: 'DeepSeek API endpoint (default: https://api.deepseek.com)' },
   { flag: '--deepseek-api-key <key>', env: 'DEEPSEEK_API_KEY', desc: 'DeepSeek API key' },
-  { flag: '--deepseek-model <model>', env: 'DEEPSEEK_MODEL', desc: 'DeepSeek model name (default: deepseek-chat)' },
+  { flag: '--deepseek-model <model>', env: 'DEEPSEEK_MODEL', desc: 'DeepSeek model name (default: deepseek-v4-pro)' },
   { flag: '--api-provider <ollama|deepseek>', env: 'API_PROVIDER', desc: 'API provider (default: ollama)' },
   { flag: '--token-threshold <n>', env: 'TOKEN_THRESHOLD', desc: 'Context limit threshold (default: 50000)' },
   { flag: '--editor <cmd>', env: 'EDITOR', desc: 'Text editor for file editing' },
