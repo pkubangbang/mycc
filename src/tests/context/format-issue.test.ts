@@ -122,6 +122,44 @@ describe('formatIssueList', () => {
       expect(result).toContain(markers[index]);
     });
   });
+
+  it('should use [?] marker for an unknown status', () => {
+    const issues: Issue[] = [
+      {
+        id: 1,
+        title: 'Unknown',
+        content: '',
+        status: 'bogus' as Issue['status'],
+        blockedBy: [],
+        blocks: [],
+        comments: [],
+        createdAt: new Date(),
+      },
+    ];
+
+    const result = formatIssueList(issues);
+    expect(result).toContain('[?] #1: Unknown');
+  });
+
+  it('should format issue with both owner and blockedBy', () => {
+    const issues: Issue[] = [
+      {
+        id: 4,
+        title: 'Combined',
+        content: '',
+        status: 'in_progress',
+        owner: 'agent-1',
+        blockedBy: [1, 2],
+        blocks: [],
+        comments: [],
+        createdAt: new Date(),
+      },
+    ];
+
+    const result = formatIssueList(issues);
+    expect(result).toContain('@agent-1');
+    expect(result).toContain('blocked:1,2');
+  });
 });
 
 describe('formatIssueDetail', () => {
@@ -299,5 +337,37 @@ describe('formatIssueDetail', () => {
       const result = formatIssueDetail(issue);
       expect(result).toContain(`Status: ${markers[index]}`);
     });
+  });
+
+  it('should use [?] marker for an unknown status in detail', () => {
+    const issue: Issue = {
+      id: 1,
+      title: 'Test',
+      content: '',
+      status: 'bogus' as Issue['status'],
+      blockedBy: [],
+      blocks: [],
+      comments: [],
+      createdAt: new Date(),
+    };
+
+    const result = formatIssueDetail(issue);
+    expect(result).toContain('Status: [?]');
+  });
+
+  it('should omit owner/content/blockedBy/blocks/comments when absent', () => {
+    const issue: Issue = {
+      id: 1,
+      title: 'Minimal',
+      content: '',
+      status: 'pending',
+      blockedBy: [],
+      blocks: [],
+      comments: [],
+      createdAt: new Date(),
+    };
+
+    const result = formatIssueDetail(issue);
+    expect(result).toBe('Issue #1: Minimal\nStatus: [ ]');
   });
 });

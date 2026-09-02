@@ -1,98 +1,80 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
+import { filterCliXml } from '../../loop/agent-exec.js';
 
-// Mock LineEditor before importing agent-io
-vi.mock('../../utils/line-editor.js', () => {
-  return {
-    LineEditor: vi.fn().mockImplementation(() => ({
-      handleKey: vi.fn(),
-      resize: vi.fn(),
-      getHistory: vi.fn().mockReturnValue([]),
-      close: vi.fn(),
-    })),
-  };
-});
+/**
+ * replay-buffer.test.ts - Tests for the CLIXML noise filter (filterCliXml)
+ *
+ * The previous version of this file tested `Buffer.concat` directly, which
+ * exercised no production code. filterCliXml is the exported, testable piece
+ * of the subprocess-output pipeline: it strips PowerShell CLIXML noise from
+ * stderr chunks while preserving real stderr text.
+ */
 
-// Import after mocking (agentIO mock is set up above via vi.mock; no direct use needed here)
+describe('filterCliXml', () => {
+  it('should return the chunk untouched when there is no CLIXML marker', () => {
+    const chunk = Buffer.from('plain stderr text');
+    const result = filterCliXml(chunk);
+    expect(result.toString('utf-8')).toBe('plain stderr text');
+  });
 
-describe('agent-io', () => {
-  describe('ReplayBuffer', () => {
-    // Access the private ReplayBuffer class through exec's internals
-    // Since ReplayBuffer is a private class, we test it indirectly via exec
-    // or by creating a test instance
+  it('should return the same Buffer instance on the fast path (no CLIXML)', () => {
+    const chunk = Buffer.from('no noise here');
+    expect(filterCliXml(chunk)).toBe(chunk);
+  });
 
-    it('should buffer string data and retrieve as string', async () => {
-      // Test ReplayBuffer indirectly through exec - but we need a simple command
-      // For now, test the buffer-like behavior through the output buffer
-      const testBuffer: Array<Buffer> = [];
+  it('should strip a leading "#< CLIXML" marker', () => {
+    const chunk = Buffer.from('#< CLIXML\nreal error message');
+    const result = filterCliXml(chunk).toString('utf-8');
+    expect(result).toBe('real error message');
+  });
 
-      // Simulate write with string
-      testBuffer.push(Buffer.from('hello'));
+  it('should strip a complete <Objs>...</Objs> block', () => {
+    const chunk = Buffer.from('<Objs Version="1.0"><Obj>noise</Obj></Objs>real text');
+    const result = filterCliXml(chunk).toString('utf-8');
+    expect(result).toBe('real text');
+  });
 
-      const result = Buffer.concat(testBuffer).toString('utf-8');
-      expect(result).toBe('hello');
-    });
+  it('should strip an unterminated trailing <Objs fragment', () => {
+    const chunk = Buffer.from('prefix <Objs Version="1.0"><Obj>unterminated');
+    const result = filterCliXml(chunk).toString('utf-8');
+    expect(result).toBe('prefix ');
+  });
 
-    it('should buffer Buffer data and retrieve as string', async () => {
-      const testBuffer: Array<Buffer> = [];
-      testBuffer.push(Buffer.from('hello', 'utf-8'));
+  it('should preserve real stderr text around CLIXML blocks', () => {
+    const chunk = Buffer.from('warning: something\n#< CLIXML\n<Objs><Obj>x</Obj></Objs>\nstill here');
+    const result = filterCliXml(chunk).toString('utf-8');
+    expect(result).toContain('warning: something');
+    expect(result).toContain('still here');
+    expect(result).not.toContain('<Objs');
+  });
 
-      const result = Buffer.concat(testBuffer).toString('utf-8');
-      expect(result).toBe('hello');
-    });
+  it('should handle a chunk that is only CLIXML noise', () => {
+    const chunk = Buffer.from('#< CLIXML\n<Objs><Obj>a</Obj></Objs>');
+    const result = filterCliXml(chunk).toString('utf-8');
+    expect(result).toBe('');
+  });
 
-    it('should buffer Buffer data and retrieve as base64', async () => {
-      const testBuffer: Array<Buffer> = [];
-      testBuffer.push(Buffer.from('hello', 'utf-8'));
+  it('should handle an empty chunk', () => {
+    const chunk = Buffer.from('');
+    const result = filterCliXml(chunk).toString('utf-8');
+    expect(result).toBe('');
+  });
 
-      const result = Buffer.concat(testBuffer).toString('base64');
-      expect(result).toBe('aGVsbG8='); // base64 of 'hello'
-    });
+  it('should handle a chunk with only the CLIXML marker and no block', () => {
+    const chunk = Buffer.from('#< CLIXML');
+    const result = filterCliXml(chunk).toString('utf-8');
+    expect(result).toBe('');
+  });
 
-    it('should handle multiple chunks', () => {
-      const testBuffer: Array<Buffer> = [];
-      testBuffer.push(Buffer.from('hello'));
-      testBuffer.push(Buffer.from(' '));
-      testBuffer.push(Buffer.from('world'));
+  it('should handle a chunk with only an <Objs marker and no closing tag', () => {
+    const chunk = Buffer.from('<Objs Version="1.0">');
+    const result = filterCliXml(chunk).toString('utf-8');
+    expect(result).toBe('');
+  });
 
-      const result = Buffer.concat(testBuffer).toString('utf-8');
-      expect(result).toBe('hello world');
-    });
-
-    it('should handle empty buffer', () => {
-      const testBuffer: Array<Buffer> = [];
-      const result = Buffer.concat(testBuffer).toString('utf-8');
-      expect(result).toBe('');
-    });
-
-    it('should handle large buffers', () => {
-      const testBuffer: Array<Buffer> = [];
-      const largeString = 'x'.repeat(10000);
-      testBuffer.push(Buffer.from(largeString));
-
-      const result = Buffer.concat(testBuffer).toString('utf-8');
-      expect(result).toBe(largeString);
-      expect(result.length).toBe(10000);
-    });
-
-    it('should handle binary data', () => {
-      const testBuffer: Array<Buffer> = [];
-      // Binary data that isn't valid UTF-8
-      const binaryData = Buffer.from([0x00, 0xff, 0xfe, 0x01, 0x02]);
-      testBuffer.push(binaryData);
-
-      const result = Buffer.concat(testBuffer);
-      expect(result.length).toBe(5);
-      expect(result[0]).toBe(0x00);
-      expect(result[1]).toBe(0xff);
-    });
-
-    it('should handle unicode characters', () => {
-      const testBuffer: Array<Buffer> = [];
-      testBuffer.push(Buffer.from('你好世界'));
-      testBuffer.push(Buffer.from('🌍'));
-
-      const result = Buffer.concat(testBuffer).toString('utf-8');
-      expect(result).toBe('你好世界🌍');
-    });
+  it('should handle unicode text that is not CLIXML', () => {
+    const chunk = Buffer.from('日本語のエラー 🎉');
+    const result = filterCliXml(chunk).toString('utf-8');
+    expect(result).toBe('日本語のエラー 🎉');
   });
 });

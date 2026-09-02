@@ -337,74 +337,46 @@ describe('ChildCore - requestGrant Method', () => {
 // ============================================================================
 
 describe('Grant Evaluator', () => {
-  // These tests will use the evaluateGrant function once implemented
-  // For now, they document the expected behavior
+  let core: Core;
+  let tempDir: string;
+
+  beforeEach(() => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mycc-core-grant-'));
+    core = new Core(tempDir);
+  });
+
+  afterEach(() => {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  });
 
   describe('Plan Mode', () => {
     it('should reject all grants in plan mode', async () => {
-      // When evaluateGrant is implemented:
-      // const result = await evaluateGrant('test-child', {
-      //   type: 'grant_request',
-      //   reqId: 1,
-      //   tool: 'write_file',
-      //   path: '/test/file.ts',
-      // }, core);
-      // expect(result.approved).toBe(false);
-      // expect(result.reason).toContain('plan mode');
-    });
-  });
-
-  describe('Worktree Ownership', () => {
-    it('should auto-grant for files in owned worktree', async () => {
-      // When evaluateGrant is implemented with worktree support:
-      // - Create a worktree owned by 'test-child'
-      // - Request grant for file inside that worktree
-      // - Expect approved: true
-    });
-
-    it('should reject files outside worktree', async () => {
-      // When evaluateGrant is implemented:
-      // - Create a worktree owned by 'test-child'
-      // - Request grant for file outside that worktree
-      // - Expect approved: false with reason
+      core.setMode('plan');
+      const result = await core.requestGrant('write_file', { path: path.join(tempDir, 'src', 'file.ts') });
+      expect(result.approved).toBe(false);
+      expect(result.reason).toContain('plan mode');
     });
   });
 
   describe('Bash Command Restrictions', () => {
     it('should block dangerous commands (rm -rf /)', async () => {
-      // When evaluateGrant is implemented:
-      // const result = await evaluateGrant('test-child', {
-      //   type: 'grant_request',
-      //   reqId: 1,
-      //   tool: 'bash',
-      //   command: 'rm -rf /',
-      // }, core);
-      // expect(result.approved).toBe(false);
-      // expect(result.reason).toContain('Dangerous');
-    });
-
-    it('should block sudo rm commands', async () => {
-      // Similar test for 'sudo rm -rf /something'
-    });
-
-    it('should block mkfs commands', async () => {
-      // Similar test for 'mkfs.ext4 /dev/sda'
-    });
-
-    it('should block dd if= commands', async () => {
-      // Similar test for 'dd if=/dev/zero of=/dev/sda'
+      core.setMode('normal');
+      const result = await core.requestGrant('bash', {
+        command: 'rm -rf /',
+        intent: 'DELETE DATA TO reclaim disk space',
+      });
+      expect(result.approved).toBe(false);
+      expect(result.reason).toContain('blocked');
     });
 
     it('should block git commit (must use git_commit tool)', async () => {
-      // When evaluateGrant is implemented:
-      // const result = await evaluateGrant('test-child', {
-      //   type: 'grant_request',
-      //   reqId: 1,
-      //   tool: 'bash',
-      //   command: 'git commit -m "test"',
-      // }, core);
-      // expect(result.approved).toBe(false);
-      // expect(result.reason).toContain('git_commit tool');
+      core.setMode('normal');
+      const result = await core.requestGrant('bash', {
+        command: 'git commit -m "test"',
+        intent: 'RUN SYSTEM TO commit changes',
+      });
+      expect(result.approved).toBe(false);
+      expect(result.reason).toContain('git_commit tool');
     });
   });
 });

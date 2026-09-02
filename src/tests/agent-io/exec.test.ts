@@ -86,9 +86,11 @@ describe('agent-io', () => {
         timeout: 1,
       };
 
-      // This should not throw validation error (might fail on setsid but that's ok)
       const result = await agentIO.exec(options);
       expect(result).toBeDefined();
+      expect(result.timedOut).toBe(false);
+      expect(result.interrupted).toBe(false);
+      expect(result.stdout).toContain('test');
     });
 
     it('should accept valid timeout (maximum)', async () => {
@@ -100,6 +102,9 @@ describe('agent-io', () => {
 
       const result = await agentIO.exec(options);
       expect(result).toBeDefined();
+      expect(result.timedOut).toBe(false);
+      expect(result.interrupted).toBe(false);
+      expect(result.stdout).toContain('test');
     });
   });
 });

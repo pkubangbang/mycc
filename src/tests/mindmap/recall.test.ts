@@ -365,30 +365,35 @@ describe('get_node', () => {
   });
 
   describe('Return Value Properties', () => {
-    it('should return node with all required properties', () => {
+    it('should return node with all required properties (exact values)', () => {
       const node = get_node(mindmap, '/architecture/core');
       
-      expect(node).toHaveProperty('id');
-      expect(node).toHaveProperty('text');
-      expect(node).toHaveProperty('title');
-      expect(node).toHaveProperty('summary');
-      expect(node).toHaveProperty('level');
-      expect(node).toHaveProperty('children');
-      expect(node).toHaveProperty('links');
+      // Assert exact values, not just property presence — a node with the
+      // right keys but wrong content would otherwise pass.
+      expect(node).toEqual({
+        id: '/architecture/core',
+        text: '### Core\n\nCore content',
+        title: 'Core',
+        summary: 'Core summary',
+        level: 2,
+        children: [],
+        links: [],
+      });
     });
 
     it('should return node with correct children array', () => {
       const node = get_node(mindmap, '/architecture');
       
-      expect(Array.isArray(node?.children)).toBe(true);
       expect(node?.children).toHaveLength(2);
+      // The two children are the known fixture nodes, in order.
+      expect(node?.children.map((c) => c.id)).toEqual(['/architecture/core', '/architecture/utils']);
     });
 
     it('should return leaf node with empty children array', () => {
       const node = get_node(mindmap, '/architecture/core');
       
-      expect(Array.isArray(node?.children)).toBe(true);
-      expect(node?.children).toHaveLength(0);
+      expect(node?.children).toEqual([]);
+      expect(node?.links).toEqual([]);
     });
   });
 });

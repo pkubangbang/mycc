@@ -102,8 +102,7 @@ describe('memory-store', () => {
 
         const teammates = listTeammates();
         expect(teammates).toHaveLength(2);
-        expect(teammates.map((t) => t.name)).toContain('worker-1');
-        expect(teammates.map((t) => t.name)).toContain('worker-2');
+        expect(teammates.map((t) => t.name)).toEqual(['worker-1', 'worker-2']);
       });
     });
 

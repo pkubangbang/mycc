@@ -54,4 +54,25 @@ describe('stripAnsi', () => {
   it('handles mixed ansi and plain text across line breaks', () => {
     expect(stripAnsi('\x1b[33mwarn\x1b[0m\nnext')).toBe('warn\nnext');
   });
+
+  it('strips the ESC] prefix of a truncated OSC fragment (bare-escape fallback)', () => {
+    // A truncated OSC (no BEL/ST terminator) is NOT consumed by the OSC
+    // regex, but the bare-escape regex `\x1b[@-Z\\-_]` matches the leading
+    // `\x1b]` (since ']' falls in the 0x5C-0x5F range) and strips it, leaving
+    // the payload. Pin this exact contract so a future regex change is caught.
+    expect(stripAnsi('\x1b]0;title')).toBe('0;title');
+  });
+
+  it('leaves a bare trailing ESC (no following char) as-is', () => {
+    // The bare-escape regex requires ESC + one char; a lone trailing ESC has
+    // nothing to match and must survive untouched.
+    expect(stripAnsi('text\x1b')).toBe('text\x1b');
+  });
+
+  it('strips a CSI sequence with intermediate bytes (e.g. private-mode params)', () => {
+    // CSI with intermediate bytes (0x20-0x2F) before the final byte, e.g.
+    // ESC[?25l (hide cursor) — the [0-9;?]* + [ -/]* + [@-~] chain must
+    // consume the '?' and 'l'.
+    expect(stripAnsi('\x1b[?25lhidden\x1b[?25h')).toBe('hidden');
+  });
 });

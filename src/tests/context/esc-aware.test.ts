@@ -55,9 +55,11 @@ describe('escAware', () => {
     // Simulate ESC already pressed
     agentIO.setNeglectedMode(true);
 
+    let operationCalled = false;
+
     const result = await ctx.core.escAware(
       async (_abortController) => {
-        // This should not be called
+        operationCalled = true;
         await new Promise(resolve => setTimeout(resolve, 100));
         return 'operation-result';
       },
@@ -65,6 +67,8 @@ describe('escAware', () => {
     );
 
     expect(result).to.equal('cleanup-result');
+    // The operation must NOT run when ESC is already pressed.
+    expect(operationCalled).to.be.false;
   });
 
   test('should return cleanup result when ESC is pressed during operation', async () => {

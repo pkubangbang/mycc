@@ -25,14 +25,37 @@ const discoveryDir = () => path.join(tempDir, 'discovery');
 const channelsDir = () => path.join(discoveryDir(), 'channels');
 const channelFile = (sid: string, cid: string) => path.join(channelsDir(), `${sid}-${cid}.json`);
 
-vi.mock('../../config.js', () => ({
-  getDiscoveryDir: () => discoveryDir(),
-  getIdentityFile: () => path.join(discoveryDir(), 'identity.json'),
-  getHeartbeatDir: () => path.join(discoveryDir(), 'heartbeat'),
-  getHeartbeatFile: (sid: string) => path.join(discoveryDir(), 'heartbeat', `${sid}.json`),
-  getChannelsDir: () => channelsDir(),
-  getChannelFile: (sid: string, cid: string) => channelFile(sid, cid),
-}));
+vi.mock('../../config.js', () => {
+  // Mirror the REAL sanitizeId guard from src/config.ts so the traversal
+  // tests exercise the actual contract (throw on path separators / ".." /
+  // control chars) instead of a naive path.join that silently accepts them.
+  // Without this, the Fix #5 tests below would be tautological (the mock
+  // never rejected anything, so "threw || !escaped" was always true).
+  function sanitizeId(id: string, label: string): string {
+    if (!id || typeof id !== 'string') {
+      throw new Error(`Invalid ${label}: must be a non-empty string`);
+    }
+    if (
+      id.includes('/') || id.includes('\\') || id.includes('..') ||
+      [...id].some((c) => c.codePointAt(0)! < 0x20)
+    ) {
+      throw new Error(`Invalid ${label}: contains path separators, "..", or control characters: ${JSON.stringify(id)}`);
+    }
+    return id;
+  }
+  return {
+    getDiscoveryDir: () => discoveryDir(),
+    getIdentityFile: () => path.join(discoveryDir(), 'identity.json'),
+    getHeartbeatDir: () => path.join(discoveryDir(), 'heartbeat'),
+    getHeartbeatFile: (sid: string) => path.join(discoveryDir(), 'heartbeat', `${sanitizeId(sid, 'sessionId')}.json`),
+    getChannelsDir: () => channelsDir(),
+    getChannelFile: (sid: string, cid: string) => {
+      const s = sanitizeId(sid, 'sessionId');
+      const c = sanitizeId(cid, 'channelId');
+      return path.join(channelsDir(), `${s}-${c}.json`);
+    },
+  };
+});
 
 import { IdentityManager } from '../../peer/identity.js';
 import { ChannelManager } from '../../peer/channel.js';
@@ -69,45 +92,27 @@ afterEach(() => {
 // ---------------------------------------------------------------------------
 
 describe('path traversal guard (Fix #5)', () => {
-  it('joinChannel with channelId="../evil" throws or stays inside channelsDir', () => {
+  it('joinChannel with channelId="../evil" throws (path-traversal rejected)', () => {
     const mailbox = makeMailboxPath(SID_A);
     const idA = new IdentityManager(SID_A, '/work/a', mailbox);
     const ch = new ChannelManager(SID_A, idA, mailbox);
 
-    // AFTER FIX: joinChannel (or getChannelFile) rejects IDs containing ".."
-    // or path separators. Either it throws, or the resolved path stays inside
-    // channelsDir. We accept both contracts.
-    let threw = false;
-    let escaped = false;
-    try {
-      ch.joinChannel('../evil');
-    } catch {
-      threw = true;
-    }
-    // If it did not throw, verify the channel file did NOT escape channelsDir.
-    if (!threw) {
-      const evilPath = path.join(channelsDir(), `${SID_A}-../evil.json`);
-      if (fs.existsSync(evilPath)) {
-        escaped = !evilPath.startsWith(channelsDir());
-      }
-    }
-    // The guard is satisfied if it threw OR the path stayed inside.
-    expect(threw || !escaped).toBe(true);
+    // AFTER FIX: getChannelFile (via the config-layer sanitizeId guard) throws
+    // on IDs containing ".." or path separators, so joinChannel propagates the
+    // rejection. Assert the throw directly — no file may be created anywhere.
+    expect(() => ch.joinChannel('../evil')).toThrow(/Invalid channelId/);
+    // No channel file (safe or escaped) may have been created.
+    expect(fs.existsSync(channelFile(SID_A, '../evil'))).toBe(false);
   });
 
-  it('joinChannel with a channelId containing a path separator throws or stays safe', () => {
+  it('joinChannel with a channelId containing a path separator throws', () => {
     const mailbox = makeMailboxPath(SID_A);
     const idA = new IdentityManager(SID_A, '/work/a', mailbox);
     const ch = new ChannelManager(SID_A, idA, mailbox);
 
-    let threw = false;
-    try {
-      ch.joinChannel('sub/dir');
-    } catch {
-      threw = true;
-    }
-    // Either it throws (rejected), or no file escapes channelsDir.
-    expect(threw).toBe(true);
+    // Both forward and backslash separators are rejected by the guard.
+    expect(() => ch.joinChannel('sub/dir')).toThrow(/Invalid channelId/);
+    expect(() => ch.joinChannel('sub\\dir')).toThrow(/Invalid channelId/);
   });
 
   it('a normal channelId still works (no false positive)', () => {
@@ -128,13 +133,17 @@ describe('path traversal guard (Fix #5)', () => {
     const idA = new IdentityManager(SID_A, '/work/a', mailbox);
     const ch = new ChannelManager(SID_A, idA, mailbox);
 
-    try { ch.joinChannel('..\\evil'); } catch { /* expected */ }
-    try { ch.joinChannel('../../evil'); } catch { /* expected */ }
+    // Each traversal attempt must be rejected by the guard (throw), so no
+    // file is ever written outside channelsDir.
+    expect(() => ch.joinChannel('..\\evil')).toThrow(/Invalid channelId/);
+    expect(() => ch.joinChannel('../../evil')).toThrow(/Invalid channelId/);
 
     // No file should exist outside channelsDir.
     const parentDir = path.dirname(channelsDir());
     const evilOutside = path.join(parentDir, `${SID_A}-..\\evil.json`);
     expect(fs.existsSync(evilOutside)).toBe(false);
+    // And nothing was created inside channelsDir either (the join never ran).
+    expect(fs.readdirSync(channelsDir())).toHaveLength(0);
   });
 });
 

@@ -174,7 +174,6 @@ describe('memory-store edge cases', () => {
 
     it('should start IDs at 1, not 0', () => {
       const id = createIssue('First Issue', 'Content', []);
-      expect(id).toBeGreaterThan(0);
       expect(id).toBe(1);
     });
   });

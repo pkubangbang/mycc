@@ -131,4 +131,20 @@ describe('readUserLog', () => {
     expect(entry.content).toBe('no-ts');
     expect(entry.timestamp).toBeUndefined();
   });
+
+  it('coerces a non-string content value to a string (String() coercion)', () => {
+    // The implementation does `String(entry.content)`, so a numeric content
+    // is kept as its string form and an object becomes "[object Object]".
+    // Pin this contract so a future change to skip non-strings is caught.
+    fs.writeFileSync(
+      logPath,
+      JSON.stringify({ content: 12345, timestamp: 1 }) + '\n' +
+      JSON.stringify({ content: { nested: true }, timestamp: 2 }) + '\n',
+      'utf-8',
+    );
+    const entries = readUserLog(logPath);
+    expect(entries).toHaveLength(2);
+    expect(entries[0].content).toBe('12345');
+    expect(entries[1].content).toBe('[object Object]');
+  });
 });
