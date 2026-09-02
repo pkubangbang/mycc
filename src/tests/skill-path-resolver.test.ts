@@ -16,15 +16,13 @@ describe('skill-path-resolver', () => {
     it('should return absolute path for valid user skill paths', () => {
       const result = getSkillAbsolutePath('user:my-skill.md');
       expect(result).not.toBeNull();
-      expect(result).toContain('.mycc-store');
-      expect(result).toContain('my-skill.md');
+      expect(result).toBe(path.join(os.homedir(), '.mycc-store', 'skills', 'my-skill.md'));
     });
 
     it('should return absolute path for valid project skill paths', () => {
       const result = getSkillAbsolutePath('project:code-review/SKILL.md');
       expect(result).not.toBeNull();
-      expect(result).toContain('code-review');
-      expect(result).toContain('SKILL.md');
+      expect(result).toBe(path.join(process.cwd(), '.mycc', 'skills', 'code-review', 'SKILL.md'));
     });
 
     it('should return absolute path for valid built-in skill paths', () => {
@@ -32,6 +30,7 @@ describe('skill-path-resolver', () => {
       expect(result).not.toBeNull();
       expect(result).toContain('git-workflow');
       expect(result).toContain('SKILL.md');
+      expect(path.isAbsolute(result!)).toBe(true);
     });
 
     it('should return null for invalid paths', () => {

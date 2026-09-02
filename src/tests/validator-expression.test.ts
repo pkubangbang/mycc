@@ -174,10 +174,11 @@ describe("testCondition()", () => {
       expect(result.evaluatedValue).toBe(false);
     });
 
-    it("should handle syntax errors", () => {
+    it("should evaluate to false for a syntax error (no throw)", () => {
       const mockSeq = createMockSequence([]);
       const result = testCondition("turn.count(", mockSeq);
-      // evaluateExpression catches jsep errors and returns false
+      // evaluateExpression catches jsep errors and returns false, so the
+      // condition evaluates to false rather than throwing.
       expect(result.passed).toBe(true);
       expect(result.evaluatedValue).toBe(false);
     });
@@ -235,9 +236,10 @@ describe("smokeTestExpression()", () => {
     expect(result.passed).toBe(true);
   });
 
-  it("should fail for syntax error", () => {
+  it("should evaluate to false for a syntax error (evaluateExpression swallows the jsep error)", () => {
     const result = smokeTestExpression("turn.count(");
-    // evaluateExpression catches jsep errors and returns false
+    // evaluateExpression catches jsep errors and returns false, so the smoke
+    // test reports passed:true with evaluatedValue:false (no throw).
     expect(result.passed).toBe(true);
     expect(result.evaluatedValue).toBe(false);
   });

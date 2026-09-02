@@ -88,7 +88,7 @@ describe('BackgroundTasks.printBgTasks — Fix 1 (output view)', () => {
 });
 
 describe('BackgroundTasks — Fix 3 (output cap at ~100KB)', () => {
-  it('caps accumulated output to the most recent bytes', () => {
+  it('caps accumulated output to the most recent bytes (tail retained, head dropped)', () => {
     const { bg } = makeBg();
     const task = seedTask(bg, 333, 'running', '');
     // Simulate the appendOutput behavior by replicating the cap logic.
@@ -103,7 +103,13 @@ describe('BackgroundTasks — Fix 3 (output cap at ~100KB)', () => {
     task.output = (task.output || '') + tail;
     if (task.output!.length > MAX) task.output = task.output!.slice(-MAX);
     expect(task.output!.length).toBe(MAX);
+    // The tail is retained (most recent bytes win).
     expect(task.output!.endsWith(tail)).toBe(true);
+    // The head of the original chunk is dropped — the retained output is the
+    // tail of the combined stream, not the head.
+    expect(task.output!.startsWith('x'.repeat(MAX))).toBe(false);
+    // The retained output is exactly the last MAX bytes of the combined stream.
+    expect(task.output).toBe(('x'.repeat(MAX) + tail).slice(-MAX));
   });
 });
 
@@ -168,8 +174,8 @@ describe('BackgroundTasks.killTask — Fix 5 (logs failures) + killed status', (
     seedTask(bg, 5, 'running');
     await bg.killTask(5);
     expect(bg.getTask(5)?.status).toBe('killed');
-    // brief is the logging sink; it should not have thrown.
-    expect(core.brief).toBeDefined();
+    // No process entry → no kill attempt → no warning logged.
+    expect(core.brief).not.toHaveBeenCalled();
   });
 
   it('logs a warning when killing a non-existent process entry fails silently', async () => {
@@ -187,8 +193,8 @@ describe('BackgroundTasks.killTask — Fix 5 (logs failures) + killed status', (
     await bg.killTask(6);
     // Task is still marked killed regardless of kill outcome.
     expect(bg.getTask(6)?.status).toBe('killed');
-    // The brief spy should have been called (warn) if kill threw; tolerate either path.
-    expect(core.brief).toBeDefined();
+    // The kill attempt on a bogus pid fails, so a warning is logged via brief.
+    expect(core.brief).toHaveBeenCalledWith('warn', 'bg', expect.stringContaining('Failed to kill pid 6'));
     vi.restoreAllMocks();
   });
 

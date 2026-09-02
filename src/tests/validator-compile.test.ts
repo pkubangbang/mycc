@@ -111,6 +111,7 @@ describe('compileCondition()', () => {
 
       expect(result.success).toBe(false);
       expect(result.error).toBeDefined();
+      expect(result.error).toMatch(/Validation failed|syntax|Expected/i);
     });
   });
 });

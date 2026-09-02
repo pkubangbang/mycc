@@ -105,7 +105,7 @@ describe("ConditionRegistry", () => {
       expect(registry.get("skill1")).toBeUndefined();
     });
 
-    it("should validate and fix empty trigger", async () => {
+    it("should load a condition with an empty trigger (warning only, not rejected)", async () => {
       const conditions: Record<string, Condition> = {
         "test-skill": {
           trigger: [""], // Empty trigger - produces warning but is valid
@@ -117,13 +117,13 @@ describe("ConditionRegistry", () => {
       };
 
       fs.writeFileSync(conditionsFile, JSON.stringify(conditions, null, 2));
-      await registry.load();
+      const result = await registry.load();
 
-      // Empty trigger passes validation (warning only), load may reject if validation fails
-      // The condition is loaded since validation passes
+      // Empty trigger passes validation (warning only), so the condition loads.
       const cond = registry.get("test-skill");
-      // Empty trigger produces a warning about empty string
       expect(cond?.trigger).toEqual([""]);
+      // A warning about the empty trigger is reported.
+      expect(result.warnings.some((w) => w.includes("trigger"))).toBe(true);
     });
 
     it("should clamp invalid timeout values", async () => {
@@ -579,19 +579,26 @@ describe("ConditionRegistry", () => {
       expect(result.legacyConditions).toHaveLength(0);
     });
 
-    it("should handle array instead of object", async () => {
+    it("should handle array instead of object (no conditions loaded)", async () => {
       fs.writeFileSync(conditionsFile, "[]");
-      await registry.load();
+      const result = await registry.load();
+      // An array is not a valid conditions object — Object.entries([]) is
+      // empty, so nothing is loaded and no error is reported.
+      expect(registry.get("any")).toBeUndefined();
+      expect(result.errors).toHaveLength(0);
     });
 
-    it("should handle file write failure gracefully", async () => {
+    it("should handle file write failure gracefully (returns success:false, does not throw)", async () => {
       fs.rmSync(testDir, { recursive: true, force: true });
       fs.writeFileSync(testDir, "not a directory");
       registry.set("test", {
         trigger: ["bash"], when: "test", condition: "true",
         action: { type: "message" }, version: 1,
       });
-      await registry.save();
+      const result = await registry.save();
+      // save() must not throw; it reports the failure via the result object.
+      expect(result.success).toBe(false);
+      expect(result.error).toBeDefined();
       fs.rmSync(testDir, { force: true });
     });
   });

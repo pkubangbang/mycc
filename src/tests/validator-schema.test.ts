@@ -81,11 +81,13 @@ describe("validateSchema()", () => {
     it("should reject undefined condition", () => {
       const result = validateSchema(undefined);
       expect(result.valid).toBe(false);
+      expect(result.errors).toContain("Condition must be a non-null object");
     });
 
     it("should reject non-object condition", () => {
       const result = validateSchema("string");
       expect(result.valid).toBe(false);
+      expect(result.errors).toContain("Condition must be a non-null object");
     });
 
     it("should reject missing trigger", () => {
@@ -99,18 +101,21 @@ describe("validateSchema()", () => {
       const condition = { trigger: ["bash"], condition: "true", action: { type: "message" }, version: 1 };
       const result = validateSchema(condition);
       expect(result.valid).toBe(false);
+      expect(result.errors.some(e => e.includes("when"))).toBe(true);
     });
 
     it("should reject empty when field", () => {
       const condition = { trigger: ["bash"], when: "", condition: "true", action: { type: "message" }, version: 1 };
       const result = validateSchema(condition);
       expect(result.valid).toBe(false);
+      expect(result.errors.some(e => e.includes("when"))).toBe(true);
     });
 
     it("should reject missing condition field", () => {
       const condition = { trigger: ["bash"], when: "test", action: { type: "message" }, version: 1 };
       const result = validateSchema(condition);
       expect(result.valid).toBe(false);
+      expect(result.errors.some(e => e.includes("condition"))).toBe(true);
     });
 
     it("should reject invalid version", () => {

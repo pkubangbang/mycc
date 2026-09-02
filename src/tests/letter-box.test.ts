@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { stripInternalMarkup } from '../../src/utils/letter-box.js';
 
 // Capture stdout for displayLetterBox tests
 let stdoutData: string[] = [];
@@ -33,58 +34,6 @@ function dsmlOpen(name: string): string {
  */
 function dsmlClose(name: string): string {
   return FW_DSML_CLOSE + name + '>';
-}
-
-/**
- * Escape special regex characters in a string.
- */
-function escapeRe(s: string): string {
-  return s.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
-}
-
-// Copy of stripInternalMarkup from letter-box.ts
-function stripInternalMarkup(content: string): string {
-  let result = content;
-
-  if (result.includes(FW_VLINE)) {
-    // Strip full DSML paired tags: <||DSML||tagname>...</||DSML||tagname>
-    const fullTagRe = new RegExp(
-      escapeRe(FW_DSML_OPEN) +
-      '(\\w+)>[\\s\\S]*?' +
-      escapeRe(FW_DSML_CLOSE) +
-      '\\1>',
-      'g'
-    );
-    result = result.replace(fullTagRe, '');
-
-    // Strip self-closing DSML tags: <||DSML||tagname />
-    const selfCloseRe = new RegExp(
-      escapeRe(FW_DSML_OPEN) +
-      '(\\w+)\\s*\\/\\s*>',
-      'g'
-    );
-    result = result.replace(selfCloseRe, '');
-
-    // Strip opening-only DSML tags: <||DSML||tagname>
-    const openTagRe = new RegExp(
-      escapeRe(FW_DSML_OPEN) +
-      '(\\w+)>',
-      'g'
-    );
-    result = result.replace(openTagRe, '');
-
-    // Strip closing-only DSML tags: </||DSML||tagname>
-    const closeTagRe = new RegExp(
-      escapeRe(FW_DSML_CLOSE) +
-      '(\\w+)>',
-      'g'
-    );
-    result = result.replace(closeTagRe, '');
-  }
-
-  // Clean up extra blank lines left by tag removal
-  result = result.replace(/\n{3,}/g, '\n\n');
-  return result.trim();
 }
 
 describe('stripInternalMarkup', () => {

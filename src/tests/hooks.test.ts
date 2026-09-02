@@ -238,7 +238,7 @@ describe('HookExecutor', () => {
       expect(result.newCalls?.[1].function.arguments).toEqual({ command: 'echo test' });
     });
 
-    it('should include skill content reference', async () => {
+    it('should report the injection via core.brief with the trigger and hook name', async () => {
       registry.set('test-hook', {
         trigger: ['bash'],
         when: 'test',
@@ -260,8 +260,13 @@ describe('HookExecutor', () => {
         'Skill content here'
       );
 
-      // Core.brief should be called
-      expect(ctx.core.brief).toHaveBeenCalled();
+      // Core.brief should be called with the injection detail.
+      expect(ctx.core.brief).toHaveBeenCalledWith(
+        'info',
+        'hook',
+        'bash(command=echo test) injected BEFORE bash',
+        'bash → test-hook'
+      );
     });
   });
 
