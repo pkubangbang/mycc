@@ -3,19 +3,16 @@
  *
  * Section builders used by both the lead prompts (lead.ts) and the teammate
  * prompt (teammate.ts). Role-specific prompt assembly lives in those files;
- * this module holds only the reusable prose sections (output behavior,
- * verification, knowledge boundary, context management, launch args, pinned
- * todos) plus the plan-mode base prompt that the lead plan prompts compose on
- * top of. The intent-language section lives in intent-lang.ts and is
- * re-exported here for backward compatibility with existing callers.
+ * this module holds the reusable prose sections (output behavior,
+ * verification, launch args, pinned todos), the Agent Memory section variants
+ * (lead/teammate) built on shared conceptual axes, and the
+ * buildCommonSections assembly used by the normal-mode prompts. The
+ * intent-language section lives in intent-lang.ts.
  */
 
 
 import { getLaunchArgs } from '../../config.js';
 import { buildIntentLanguageSection } from './intent-lang.js';
-
-// Re-export so existing imports from './common.js' keep working.
-export { buildIntentLanguageSection };
 
 // ============================================================================
 // Common Sections (shared across prompts)

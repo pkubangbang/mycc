@@ -4,7 +4,8 @@
  * Unit test for buildPlatformCalendarMessages() in src/loop/prompt-populators.ts.
  *
  * These (## Platform, ## Calendar) sections used to be inlined into the system
- * prompt (prompts/common.ts buildCommonSections/buildPlanBasePrompt) — rebuilt on
+ * prompt (prompts/common.ts buildCommonSections and the lead.ts plan-mode
+ * base prompt) — rebuilt on
  * every LLM call, so the volatile content (date, PIDs) invalidated the
  * prompt-cache prefix every turn. They now live in a projectContext populator
  * registered at startup and rebuilt only at compact/clear boundaries (commit

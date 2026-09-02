@@ -15,13 +15,13 @@ import type { AgentContext } from '../../types.js';
 import type { Core } from '../../context/parent/core.js';
 import {
   buildCommonSections,
-  buildIntentLanguageSection,
   buildLaunchArgsSection,
   buildLeadAgentMemorySection,
   buildOutputBehaviorSection,
   buildPinnedTodoSection,
   buildVerificationSection,
 } from './common.js';
+import { buildIntentLanguageSection } from './intent-lang.js';
 import { buildTeammatePrompt } from './teammate.js';
 
 // ============================================================================

@@ -4,8 +4,8 @@
  * Builds the "## Intent Lang" section that teaches the LLM the
  * `VERB OBJECT [PARAM ...] TO PURPOSE` DSL used by the bash judge. Extracted
  * from common.ts so the section prose (which is large and self-contained)
- * lives in its own module; common.ts re-exports it for backward
- * compatibility with callers that import from the prompts barrel.
+ * lives in its own module. Imported directly by lead.ts and common.ts
+ * (buildCommonSections).
  */
 
 import {
