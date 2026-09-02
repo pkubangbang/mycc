@@ -15,7 +15,9 @@
  *
  * Both paths turn off auto mode (ESC = "give me control back").
  *
- * Normal-mode branch (awaitTeam) is also tested for the "all done" path.
+ * The normal-mode (non-neglected) teammate-wait branch is covered by the
+ * sibling stop-team-event-poll.test.ts (the event-polling loop that replaced
+ * the one-shot awaitTeam call).
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
@@ -253,27 +255,5 @@ describe('handleStop — centralized neglection wrap-up', () => {
     await handleStop(env, turn, chat);
 
     expect(autoState.getAuto()).toBe(false);
-  });
-
-  // ── Normal-mode branch (awaitTeam) ──
-
-  it('should return PROMPT on normal-mode "all done" path (presentResult, no neglected)', async () => {
-    const ctx = createMockContext({
-      team: {
-        awaitTeam: vi.fn(async () => ({ result: 'all done' })) as never,
-      },
-    });
-    const env = createMockMachineEnv({ triologue });
-    env.ctx = ctx;
-    const turn = createTurnVars();
-    const chat = createChatData();
-
-    // NOT in neglected mode — exercises the normal awaitTeam branch
-    agentIO.setNeglectedMode(false);
-
-    const result = await handleStop(env, turn, chat);
-
-    expect(result).toBe(AgentState.PROMPT);
-    expect(presentResult).toHaveBeenCalledWith(triologue);
   });
 });

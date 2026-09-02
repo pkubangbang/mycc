@@ -93,32 +93,70 @@ export async function handleStop(
       );
     }
 
-    const { result } = await ctx.team.awaitTeam();
+    // Event-polling wait: re-read live teammate status + mailbox + steering on
+    // every tick, instead of blocking on a one-shot awaitTeam() that can miss
+    // transitions or misreport 'all done'. This mirrors AWAIT's eventPending()
+    // pattern but works in manual mode (not gated on autoState).
+    // The teammate's heartbeat (30s progress mail), status transitions (IPC),
+    // and watchdog reports ARE the event stream that pumps this loop.
+    const TEAM_POLL_MS = 1000;
+    // Safety valve: if a teammate stays 'working' but never sends mail and
+    // never changes status (e.g. a hung process that emits no watchdog report),
+    // the loop would poll forever. Cap the total wait and fall back to the old
+    // 'timeout' behavior (COLLECT + SYSTEM note) so the lead can't stall.
+    const TEAM_MAX_WAIT_MS = 10 * 60 * 1000; // 10 minutes
+    const waitStart = Date.now();
 
-    // Steering notes queued via the WebUI during the await are NOT mails, so
-    // the mail check below alone would miss them. awaitTeammate's poll loop
-    // now breaks on arriving steering notes (see team.ts), so by the time we
-    // reach here a queued note means the await was interrupted to consume it
-    // — route to COLLECT, whose 2c block drains steering as a REMINDER.
-    const steerPending =
-      getServeHub().isRunning() && getServeHub().getSteeringNotes().length > 0;
+    while (true) {
+      // ESC pressed — return to PROMPT so the user can intervene.
+      if (agentIO.isNeglectedMode()) {
+        return AgentState.PROMPT;
+      }
 
-    if (result === 'got question' || ctx.mail.hasNewMails() || steerPending) {
-      return AgentState.COLLECT;
+      // Re-read live teammate status every tick (not a snapshot).
+      const liveTeammates = ctx.team.listTeammates();
+      const hasWorking = liveTeammates.some((t) => t.status === 'working');
+      const hasHolding = liveTeammates.some((t) => t.status === 'holding');
+
+      // Event 1: a teammate is holding (has a question for the lead).
+      if (hasHolding) {
+        return AgentState.COLLECT;
+      }
+
+      // Event 2: no working teammates AND no holding → all done.
+      // (Idle/shutdown teammates are not events; they are the resting state.)
+      if (!hasWorking) {
+        return AgentState.PROMPT;
+      }
+
+      // Event 3: new mail arrived (teammate heartbeat, watchdog report, etc.).
+      if (ctx.mail.hasNewMails()) {
+        return AgentState.COLLECT;
+      }
+
+      // Event 4: WebUI steering note queued by the user.
+      const steerPending =
+        getServeHub().isRunning() && getServeHub().getSteeringNotes().length > 0;
+      if (steerPending) {
+        return AgentState.COLLECT;
+      }
+
+      // Safety valve: max-wait exceeded while a teammate is still working.
+      if (Date.now() - waitStart >= TEAM_MAX_WAIT_MS) {
+        const teamInfo = ctx.team.printTeam();
+        triologue.note(
+          'SYSTEM',
+          `Timeout waiting for teammates.\n${teamInfo}\n\n` +
+          `Use tm_await to wait longer, or tm_remove to terminate.`,
+        );
+        return AgentState.COLLECT;
+      }
+
+      // No event yet — sleep briefly and re-check. The 1s poll keeps the wait
+      // responsive to teammate transitions without busy-spinning. Teammate
+      // heartbeats (30s) and status IPCs are picked up on the next tick.
+      await new Promise((resolve) => setTimeout(resolve, TEAM_POLL_MS));
     }
-
-    if (result === 'timeout') {
-      const teamInfo = ctx.team.printTeam();
-      triologue.note(
-        'SYSTEM',
-        `Timeout waiting for teammates.\n${teamInfo}\n\n` +
-        `Use tm_await to wait longer, or tm_remove to terminate.`,
-      );
-      return AgentState.COLLECT;
-    }
-
-    // 'all done' or 'no teammates' — letter-box already shown above.
-    return AgentState.PROMPT;
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : String(err);
     ctx.core.brief('error', 'stop', `STOP state error: ${errorMessage}`);
