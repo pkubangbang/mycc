@@ -13,6 +13,7 @@ import { autoState } from '../auto-state.js';
 import { isVerbose } from '../../config.js';
 import { loader } from '../../context/shared/loader.js';
 import { forkChat } from '../../engine/chat-provider.js';
+import { isTransientError } from '../../engine/chat-helpers.js';
 import type { SequenceEvent } from '../../hook/sequence.js';
 import { getSkillTriologueStatus } from '../../utils/skill-dedup.js';
 import { listWorktrees } from '../../context/worktree-store.js';
@@ -26,6 +27,18 @@ import { loopEvents } from '../loop-events.js';
 const CONFUSION_THRESHOLD = 10;
 // Minimum message count before hint generation
 const MIN_MESSAGES_FOR_HINT = 6;
+/**
+ * Max consecutive transient COLLECT errors retried within one turn before the
+ * circuit breaker trips and the turn is abandoned to PROMPT (interactive) /
+ * AWAIT (auto). Without this cap, a truly-down endpoint would spin
+ * COLLECT→transient-error→COLLECT forever in auto mode (the recovery path
+ * returns COLLECT to retry the turn). Each retryChat already does 4 internal
+ * attempts with backoff, so one COLLECT transient failure ≈ 4 failed LLM
+ * POSTs; 3 turns ≈ 12 attempts — enough to ride out a brief cloud hiccup
+ * while still terminating a sustained outage. Mirrors llm.ts MAX_EMPTY_RETRIES
+ * (3) in spirit: a bounded retry-then-bail backstop.
+ */
+const MAX_COLLECT_TRANSIENT_RETRIES = 3;
 
 /**
  * Generate a human-readable breakdown of confusion factors
@@ -454,6 +467,9 @@ export async function handleCollect(
         // of the turn even though session.* counters were reset.
         env.hookExecutor.resetTurn();
         env.crossroadOccurred = false;
+        // Turn recovered via compaction — clear the transient-retry counter
+        // so the next hiccup starts a fresh circuit-breaker count.
+        turn.collectTransientRetries = 0;
         return AgentState.COLLECT;
       }
       // Reset confusion after hint
@@ -610,6 +626,9 @@ export async function handleCollect(
       ctx.core.verbose('collect', `${messageCount} messages, ${tokenCount}/${tokenThreshold} tokens (${utilization}%)`);
     }
 
+    // COLLECT passed cleanly — clear the transient-retry circuit breaker so
+    // the next hiccup (possibly many turns later) starts a fresh count.
+    turn.collectTransientRetries = 0;
     return AgentState.LLM;
   } catch (err) {
     // Defensive: log as much context as possible for this intermittent error.
@@ -628,12 +647,52 @@ export async function handleCollect(
       `COLLECT state error: ${errorMessage}`,
       `messages(raw)=${rawLen} tokens=${tokLen}\n${errorStack}`,
     );
+
     // If the user interrupted (neglected mode), route to STOP for centralized
     // wrap-up instead of dropping into PROMPT (which would prompt mid-
     // interruption). Mirrors the HOOK catch's neglected-mode guard.
     if (agentIO.isNeglectedMode()) {
       return AgentState.STOP;
     }
+
+    // ── Transient-error recovery (mirrors the LLM state's catch) ──
+    // A transient network error (e.g. "net/http: TLS handshake timeout" from
+    // the Ollama cloud endpoint during hint-round generation) is recoverable.
+    // retryChat already retried 4× with backoff internally; if it STILL
+    // failed, the endpoint is briefly unreachable. Previously this catch
+    // unconditionally returned PROMPT — which in auto/daemon mode routes to
+    // AWAIT, BLOCKING forever for an external event (mail/teammate/steering)
+    // that may never arrive. A headless daemon would thus stall silently on a
+    // transient cloud hiccup with no way to self-recover.
+    //
+    // Fix: for transient errors, ask inputProvider.promptRetry whether to
+    // retry the turn. In auto mode promptRetry ALWAYS returns true (it has an
+    // `if (agentIO.getAuto()) return true;` guard — autonomous operation must
+    // never block on a user) → we return COLLECT to re-enter the turn, which
+    // regenerates the hint round (confusionIndex is still ≥ threshold since
+    // the failure was before resetConfusionIndex). In interactive mode the
+    // user is asked "Retry? [Y/n]" just like the LLM state does.
+    //
+    // Circuit breaker: a per-turn counter (turn.collectTransientRetries,
+    // reset to 0 on any clean COLLECT pass) caps consecutive retries at
+    // MAX_COLLECT_TRANSIENT_RETRIES so a truly-down endpoint cannot spin
+    // COLLECT→error→COLLECT forever. When the cap is hit, or the user
+    // declines the retry, fall back to PROMPT (the original behavior).
+    if (isTransientError(err)) {
+      if (turn.collectTransientRetries < MAX_COLLECT_TRANSIENT_RETRIES) {
+        const shouldRetry = await env.inputProvider.promptRetry(errorMessage);
+        if (shouldRetry) {
+          turn.collectTransientRetries++;
+          agentIO.verbose('collect',
+            `Transient COLLECT error, retrying turn (${turn.collectTransientRetries}/${MAX_COLLECT_TRANSIENT_RETRIES}): ${errorMessage}`);
+          return AgentState.COLLECT;
+        }
+      } else {
+        agentIO.verbose('collect',
+          `Transient COLLECT error, circuit breaker tripped after ${MAX_COLLECT_TRANSIENT_RETRIES} retries: ${errorMessage}`);
+      }
+    }
+
     return AgentState.PROMPT;
   }
 }

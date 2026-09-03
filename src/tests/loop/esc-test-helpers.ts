@@ -32,6 +32,7 @@ export function createTurnVars(overrides: Partial<TurnVars> = {}): TurnVars {
     nextBriefNudge: 5,
     lastUserQuery: '',
     extractedKeywords: [],
+    collectTransientRetries: 0,
     ...overrides,
   };
 }

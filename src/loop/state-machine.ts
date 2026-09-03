@@ -85,6 +85,17 @@ export interface TurnVars {
   lastUserQuery: string;
   /** English keywords extracted from user query for skill discovery */
   extractedKeywords: string[];
+  /**
+   * Consecutive transient COLLECT errors within the current turn (circuit
+   * breaker). When a transient error (e.g. a TLS handshake timeout during
+   * hint-round generation) aborts the in-flight turn, handleCollect retries
+   * by returning COLLECT (instead of abandoning the turn to PROMPT→AWAIT,
+   * which blocks the daemon indefinitely). This counter caps those retries
+   * so a truly-down endpoint cannot spin COLLECT→error→COLLECT forever.
+   * Reset to 0 on any successful COLLECT pass (return LLM/compact). Lives on
+   * TurnVars so the PROMPT/AWAIT turn boundary naturally clears it.
+   */
+  collectTransientRetries: number;
 }
 
 /** Pass lifetime — fresh at every COLLECT entry, flows LLM→HOOK→{TOOL|STOP} */
@@ -174,7 +185,7 @@ export class AgentStateMachine {
    * Errors propagate to the caller.
    */
   async run(): Promise<void> {
-    let turn: TurnVars = { isFirstRound: true, nextTodoNudge: 3, lastTodoState: '', nextBriefNudge: 5, lastUserQuery: '', extractedKeywords: [] };
+    let turn: TurnVars = { isFirstRound: true, nextTodoNudge: 3, lastTodoState: '', nextBriefNudge: 5, lastUserQuery: '', extractedKeywords: [], collectTransientRetries: 0 };
     let chat: ChatData = { abortController: null, rawToolCalls: [], assistantContent: '', augmentedCalls: [], hookResult: null, deferredCompact: false };
     // Initial state is always PROMPT. PROMPT is the single decision point for
     // whether to run autonomously: it redirects to AWAIT when auto mode is on
@@ -192,7 +203,7 @@ export class AgentStateMachine {
       // AWAIT is also a turn boundary in auto mode: each autonomous cycle starts a
       // fresh turn (fresh nudges, lastUserQuery cleared). AWAIT never follows SLASH.
       if ((state === AgentState.PROMPT || state === AgentState.AWAIT) && prevState !== AgentState.SLASH) {
-        turn = { isFirstRound: true, nextTodoNudge: 3, lastTodoState: '', nextBriefNudge: 5, lastUserQuery: '', extractedKeywords: [] };
+        turn = { isFirstRound: true, nextTodoNudge: 3, lastTodoState: '', nextBriefNudge: 5, lastUserQuery: '', extractedKeywords: [], collectTransientRetries: 0 };
       }
       // COLLECT = fresh pipeline pass — always reset. Preserve
       // `deferredCompact`: HOOK sets it (e.g. compact-on-intent-trap) and
