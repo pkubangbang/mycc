@@ -77,6 +77,53 @@ describe('stripInternalMarkup', () => {
     expect(result).toBe('textdone');
   });
 
+  // ── Single-vline form: <｜DSML｜tagname> (one U+FF5C per side) ──
+  // Some Ollama-hosted models (e.g. GLM) emit DSML with a SINGLE fullwidth
+  // vline per side instead of DeepSeek's double. Regression guard for the
+  // hook.ts brief leak: "...tester</｜DSML｜parameter>".
+
+  it('should strip single-vline paired DSML tags with content', () => {
+    const input = 'before <' + FW_VLINE + 'DSML' + FW_VLINE + 'tool_calls>hidden</' +
+      FW_VLINE + 'DSML' + FW_VLINE + 'tool_calls> after';
+    const result = stripInternalMarkup(input);
+    expect(result).toBe('before  after');
+  });
+
+  it('should strip single-vline orphaned closing DSML tags (hook.ts brief leak form)', () => {
+    // The exact tail observed leaking into the [assistant] brief:
+    //   editor-tester has been dispatched on #21. Let me await its result.tester</｜DSML｜parameter>
+    const input = 'editor-tester has been dispatched on #21. Let me await its result.tester</' +
+      FW_VLINE + 'DSML' + FW_VLINE + 'parameter>';
+    const result = stripInternalMarkup(input);
+    expect(result).toBe('editor-tester has been dispatched on #21. Let me await its result.tester');
+  });
+
+  it('should strip single-vline opening DSML tags with attributes', () => {
+    const input = 'text <' + FW_VLINE + 'DSML' + FW_VLINE + 'invoke name="mail_to"> more';
+    const result = stripInternalMarkup(input);
+    expect(result).toBe('text  more');
+  });
+
+  it('should strip a full single-vline tool-call block to empty', () => {
+    const input = [
+      '<' + FW_VLINE + 'DSML' + FW_VLINE + 'tool_calls>',
+      '<' + FW_VLINE + 'DSML' + FW_VLINE + 'invoke name="mail_to">',
+      '<' + FW_VLINE + 'DSML' + FW_VLINE + 'parameter name="content">editor-tester dispatched</' +
+        FW_VLINE + 'DSML' + FW_VLINE + 'parameter>',
+      '</' + FW_VLINE + 'DSML' + FW_VLINE + 'invoke>',
+      '</' + FW_VLINE + 'DSML' + FW_VLINE + 'tool_calls>',
+    ].join('\n');
+    const result = stripInternalMarkup(input);
+    expect(result).toBe('');
+  });
+
+  it('should strip mixed single- and double-vline DSML tags', () => {
+    const input = dsmlOpen('tool_calls') + 'A</' + FW_VLINE + 'DSML' + FW_VLINE + 'tool_calls>' +
+      ' keep ' + '<' + FW_VLINE + 'DSML' + FW_VLINE + 'x>B</' + FW_VLINE + 'DSML' + FW_VLINE + 'x>';
+    const result = stripInternalMarkup(input);
+    expect(result).toBe('keep');
+  });
+
   it("should handle the exact example from changelog-todo.md (verbatim)", () => {
     // This matches the raw text from the file:
     // fullwidth vertical bars (U+FF5C) wrapping "DSML" prefix + tag name

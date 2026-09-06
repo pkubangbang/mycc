@@ -18,8 +18,18 @@ function getTimestamp(): string {
  * The "||" in rendered display is actually two U+FF5C characters.
  */
 const FW_VLINE = '\uff5c';
-const FW_DSML_OPEN = `<${FW_VLINE}${FW_VLINE}DSML${FW_VLINE}${FW_VLINE}`;
-const FW_DSML_CLOSE = `</${FW_VLINE}${FW_VLINE}DSML${FW_VLINE}${FW_VLINE}`;
+
+/**
+ * Regex source: ONE or TWO fullwidth vlines per side of "DSML".
+ * Providers differ: DeepSeek emits the double-vline form
+ * (<｜｜DSML｜｜tagname>) while some Ollama-hosted models (e.g. GLM) emit the
+ * single-vline form (<｜DSML｜tagname>). The {1,2} quantifier must stay
+ * OUTSIDE escapeRegex (which escapes braces), so the vline char is escaped
+ * alone and the quantifier is appended as raw regex source.
+ */
+const VLINE_Q = `${escapeRegex(FW_VLINE)}{1,2}`;
+const FW_DSML_OPEN_RE = `<${VLINE_Q}DSML${VLINE_Q}`;
+const FW_DSML_CLOSE_RE = `</${VLINE_Q}DSML${VLINE_Q}`;
 
 /**
  * Escape special regex characters in a string for use in RegExp constructor.
@@ -40,29 +50,27 @@ export function stripInternalMarkup(content: string): string {
   let result = content;
 
   if (result.includes(FW_VLINE)) {
-    const escapedOpen = escapeRegex(FW_DSML_OPEN);
-    const escapedClose = escapeRegex(FW_DSML_CLOSE);
-
     // Strip full DSML paired tags: <||DSML||tagname>...</||DSML||tagname>
+    // (opening tag may carry attributes, e.g. <||DSML||parameter name="m">)
     const fullTagRe = new RegExp(
-      `${escapedOpen  }(\\w+)>[\\s\\S]*?${  escapedClose  }\\1>`,
+      `${FW_DSML_OPEN_RE  }(\\w+)(?:\\s[^>]*)?>[\\s\\S]*?${  FW_DSML_CLOSE_RE  }\\1>`,
       'g'
     );
     result = result.replace(fullTagRe, '');
 
     // Strip self-closing DSML tags: <||DSML||tagname />
     const selfCloseRe = new RegExp(
-      `${escapedOpen  }(\\w+)\\s*/\\s*>`,
+      `${FW_DSML_OPEN_RE  }(\\w+)(?:\\s[^>]*)?\\s*/\\s*>`,
       'g'
     );
     result = result.replace(selfCloseRe, '');
 
-    // Strip opening-only DSML tags: <||DSML||tagname>
-    const openTagRe = new RegExp(`${escapedOpen  }(\\w+)>`, 'g');
+    // Strip opening-only DSML tags: <||DSML||tagname> (with or without attrs)
+    const openTagRe = new RegExp(`${FW_DSML_OPEN_RE  }(\\w+)(?:\\s[^>]*)?>`, 'g');
     result = result.replace(openTagRe, '');
 
     // Strip closing-only DSML tags: </||DSML||tagname>
-    const closeTagRe = new RegExp(`${escapedClose  }(\\w+)>`, 'g');
+    const closeTagRe = new RegExp(`${FW_DSML_CLOSE_RE  }(\\w+)>`, 'g');
     result = result.replace(closeTagRe, '');
   }
 

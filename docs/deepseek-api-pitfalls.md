@@ -84,14 +84,22 @@ tmux kill-session -t mycc-test
 
 ### 6. DSML tags (fullwidth vertical lines U+FF5C) leak into content stream
 
-**Symptom:** DeepSeek sometimes emits internal markup tags directly into the text content stream. These tags use fullwidth vertical lines (U+FF5C) instead of ASCII pipes, appearing as `<||DSML||tagname>...</||DSML||tagname>` where `||` is two U+FF5C characters.
+**Symptom:** DeepSeek sometimes emits internal markup tags directly into the text content stream. These tags use fullwidth vertical lines (U+FF5C) instead of ASCII pipes, and appear in **two forms**:
+- double-vline: `<｜｜DSML｜｜tagname>...</｜｜DSML｜｜tagname>` (two U+FF5C per side)
+- single-vline: `<｜DSML｜tagname>...</｜DSML｜tagname>` (one U+FF5C per side)
 
-**Cause:** DeepSeek's API occasionally injects DeepSeek Markup Language (DSML) tags (e.g. `<||DSML||tool_calls>`, `<||DSML||safety>`, `<||DSML||thinking>`) into the `content` field of assistant messages. If not stripped, these raw tags appear in the user-facing display.
+Opening tags may also carry attributes, e.g. `<｜DSML｜invoke name="brief">`.
 
-**Fix:** The letter-box (`src/utils/letter-box.ts`) strips all DSML markup before display. The `stripInternalMarkup()` function handles four patterns:
-- Full paired tags: `<||DSML||tagname>...</||DSML||tagname>`
-- Self-closing tags: `<||DSML||tagname />`
-- Opening-only tags: `<||DSML||tagname>`
-- Closing-only tags: `</||DSML||tagname>`
+**Cause:** DeepSeek's API occasionally injects DeepSeek Markup Language (DSML) tags (e.g. `<｜DSML｜tool_calls>`, `<｜DSML｜safety>`, `<｜DSML｜thinking>`) into the `content` field of assistant messages. If not stripped, these raw tags appear in the user-facing display. Two display paths existed:
+1. The letter-box (STOP state) already stripped DSML — but only matched the double-vline form, so the single-vline form leaked through.
+2. Mid-loop `brief('info', 'assistant', chat.assistantContent)` calls in `hook.ts` displayed raw content with **no** stripping at all.
 
-**File:** `src/utils/letter-box.ts` — `stripInternalMarkup()`. Tests in `src/tests/letter-box.test.ts`.
+**Fix:** Two choke points, display-only (raw content stays in the triologue):
+- `stripInternalMarkup()` now matches **both** vline forms via a `{1,2}` quantifier on U+FF5C and tolerates attributes on opening tags. Four pattern shapes are handled:
+  - Full paired tags: `<｜DSML｜tagname>...</｜DSML｜tagname>`
+  - Self-closing tags: `<｜DSML｜tagname />`
+  - Opening-only tags: `<｜DSML｜tagname ...>`
+  - Closing-only tags: `</｜DSML｜tagname>`
+- All mid-loop brief sites in `hook.ts` (checkpoint, recap, crossroad, normal path) route content through a `briefAssistantContent()` helper that strips DSML first and skips the brief if nothing displayable remains.
+
+**Files:** `src/utils/letter-box.ts` — `stripInternalMarkup()`; `src/loop/states/hook.ts` — `briefAssistantContent()`. Tests in `src/tests/letter-box.test.ts` (single-vline cases included).

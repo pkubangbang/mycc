@@ -32,6 +32,26 @@ import {
 import { applyPatchAction } from '../../mindmap/patch.js';
 import { appendPatch, getPatchPath } from '../../mindmap/patch-jsonl.js';
 import { loopEvents } from '../loop-events.js';
+import { stripInternalMarkup } from '../../utils/letter-box.js';
+
+/**
+ * Display the assistant's text content mid-loop via brief, stripping internal
+ * DSML markup first. The LLM sometimes leaks DSML tool-call markup into the
+ * content stream (see docs/deepseek-api-pitfalls.md §6). The letter-box strips
+ * at STOP, but these mid-loop briefs bypass it — without stripping here the
+ * raw markup reaches the terminal. Content that is ENTIRELY DSML strips to
+ * empty and is skipped (nothing displayable).
+ */
+function briefAssistantContent(
+  ctx: MachineEnv['ctx'],
+  content: string | undefined,
+): void {
+  if (!content) return;
+  const stripped = stripInternalMarkup(content);
+  if (stripped) {
+    ctx.core.brief('info', 'assistant', stripped);
+  }
+}
 
 /**
  * Create checkpoint context from machine environment
@@ -70,9 +90,7 @@ async function handleCheckpointCall(
   // Add tool response (checkpoint info is in the tool result — no note needed)
   triologue.tool('checkpoint', result.result, call.id);
 
-  if (chat.assistantContent) {
-    ctx.core.brief('info', 'assistant', chat.assistantContent);
-  }
+  briefAssistantContent(ctx, chat.assistantContent);
 
   turn.isFirstRound = false;
   return AgentState.COLLECT;
@@ -93,9 +111,7 @@ async function handleRecapCall(
   const { triologue, ctx } = env;
 
   // Show assistant text content if any
-  if (chat.assistantContent) {
-    ctx.core.brief('info', 'assistant', chat.assistantContent);
-  }
+  briefAssistantContent(ctx, chat.assistantContent);
 
   // Validate and extract checkpoint
   const recapArgs = call.function.arguments as Record<string, unknown>;
@@ -447,9 +463,7 @@ export async function handleHook(
       // collected, not printed live, and this branch returns before the
       // normal assistant brief at the bottom of the handler). Then show the
       // resolved continuation (the new direction).
-      if (chat.assistantContent) {
-        ctx.core.brief('info', 'assistant', chat.assistantContent);
-      }
+      briefAssistantContent(ctx, chat.assistantContent);
       ctx.core.brief('info', 'crossroad', `Resolved: ${chat.crossroadContinuation}`);
 
       // Inject deferred hook messages so the LLM sees them in the next round.
@@ -506,9 +520,7 @@ export async function handleHook(
       return AgentState.STOP;
     }
 
-    if (chat.assistantContent) {
-      ctx.core.brief('info', 'assistant', chat.assistantContent);
-    }
+    briefAssistantContent(ctx, chat.assistantContent);
 
     // From the second round onward, mute LLM text responses
     turn.isFirstRound = false;
