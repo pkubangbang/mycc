@@ -26,6 +26,7 @@ import { autoState } from '../auto-state.js';
 import { startWrapUp } from '../esc-wrap-up.js';
 import { loader } from '../../context/shared/loader.js';
 import { stopSpinner } from '../../engine/chat-helpers.js';
+import { getServeHub } from '../../serve/serve-registry.js';
 
 export async function handleStop(
   env: MachineEnv,
@@ -46,6 +47,24 @@ export async function handleStop(
       if (autoState.getAuto()) {
         autoState.setAuto(false);
         console.log(chalk.gray('auto mode is off. Prompt resumed.'));
+      }
+
+      // Drain any steering notes queued during the interrupted run. The run
+      // they were steering is now gone (停止/ESC aborted it), so they are
+      // stale actionable direction. If left in the queue, they would linger
+      // and, on the next auto re-engagement, immediately re-wake AWAIT →
+      // COLLECT → hint round → ... a tight loop that never drains them
+      // (each COLLECT drains the note but the hint round re-runs and the
+      // loop keeps cycling). Draining here discards the stale notes so the
+      // loop returns to a clean PROMPT. This mirrors the PROMPT steering
+      // synthesis path, which also treats post-interrupt notes as stale.
+      // Best-effort: no-op when serve isn't running.
+      try {
+        if (getServeHub().isRunning()) {
+          getServeHub().drainSteering();
+        }
+      } catch {
+        // serve not running / import cycle — best-effort, no throw
       }
 
       // Branch on the last triologue role:
