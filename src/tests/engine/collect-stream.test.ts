@@ -213,10 +213,16 @@ describe('collectStream — abort race condition', () => {
     expect(abortCalled).to.be.true;
   });
 
-  test('should throw StreamTimeoutError on response timeout (not raw cancel error)', async () => {
-    // Companion to the first-token timeout test: the response timeout fires
-    // after the first token arrived but before the stream completed. The
-    // catch block must convert the raw cancel into a StreamTimeoutError too.
+  test('should throw StreamTimeoutError on liveness timeout (not raw cancel error)', async () => {
+    // Companion to the first-token timeout test: the liveness timeout fires
+    // after the first token arrived but then NO further chunk arrives within
+    // the liveness window. The catch block must convert the raw cancel into
+    // a StreamTimeoutError too.
+    //
+    // Semantics: the liveness timer is reset on EVERY chunk, so a slow-but-
+    // steady stream never trips it — only a genuine stall (no chunk for the
+    // window) fires. This replaced the former one-shot total cap
+    // (responseTimeoutMs) that killed slow streams mid-generation.
     const controller = new AbortController();
 
     // A stream that yields one chunk (first token) then hangs forever. Its
@@ -239,7 +245,7 @@ describe('collectStream — abort race condition', () => {
     const resultPromise = collectStream(oneThenHangStream(), abortFn, {
       signal: controller.signal,
       firstTokenTimeoutMs: 10000, // large so first-token timeout does not fire
-      responseTimeoutMs: 20,      // short so response timeout fires quickly
+      tokenLivenessTimeoutMs: 20, // short so liveness timeout fires quickly
     });
 
     try {
@@ -247,7 +253,7 @@ describe('collectStream — abort race condition', () => {
       expect.fail('Expected collectStream to throw StreamTimeoutError');
     } catch (err) {
       expect(err).to.be.instanceOf(StreamTimeoutError);
-      expect((err as StreamTimeoutError).message).to.include('Response');
+      expect((err as StreamTimeoutError).message).to.include('stalled');
     }
     expect(abortCalled).to.be.true;
   });

@@ -325,12 +325,27 @@ export function stopSpinner(): void {
 export class StreamTimeoutError extends Error {
   constructor(
     message: string,
-    public readonly reason: 'first-token' | 'response',
+    public readonly reason: 'first-token' | 'liveness',
   ) {
     super(message);
     this.name = 'StreamTimeoutError';
   }
 }
+
+/**
+ * Default inter-token liveness window. The liveness timer is reset on every
+ * streamed chunk; if no chunk arrives within this window the stream is
+ * considered stalled and aborted. This replaces the former hard total-cap
+ * (responseTimeoutMs=120s) so a slow-but-steady stream that keeps producing
+ * tokens can finish in the long run instead of being killed mid-generation
+ * at an arbitrary wall-clock ceiling.
+ *
+ * `responseTimeoutMs` on {@link RetryConfig} is retained, but only as the
+ * escalation ceiling for {@link escalateFirstTokenTimeout} (the first-token
+ * timeout doubles per retry attempt, capped at responseTimeoutMs). It is no
+ * longer a total-response cap inside collectStream.
+ */
+const DEFAULT_TOKEN_LIVENESS_TIMEOUT_MS = 10_000;
 
 export class StreamAbortedError extends Error {
   constructor(cause?: unknown) {
@@ -345,7 +360,13 @@ export async function collectStream<T>(
   abort: (() => void) | undefined,
   config: {
     firstTokenTimeoutMs?: number;
-    responseTimeoutMs?: number;
+    /**
+     * Inter-token liveness window. The timer is reset on every chunk; if no
+     * chunk arrives within this window the stream is considered stalled and
+     * aborted. Defaults to {@link DEFAULT_TOKEN_LIVENESS_TIMEOUT_MS} (10s).
+     * A slow-but-steady stream keeps resetting the timer and never trips.
+     */
+    tokenLivenessTimeoutMs?: number;
     signal?: AbortSignal;
     /** Optional per-chunk callback invoked right after each chunk is
      *  collected. Used by the LLM providers to feed incremental token
@@ -355,17 +376,26 @@ export async function collectStream<T>(
     onChunk?: (chunk: T) => void;
   },
 ): Promise<T[]> {
-  const { firstTokenTimeoutMs, responseTimeoutMs, signal, onChunk } = config;
+  const { firstTokenTimeoutMs, tokenLivenessTimeoutMs, signal, onChunk } = config;
+  const livenessMs = tokenLivenessTimeoutMs ?? DEFAULT_TOKEN_LIVENESS_TIMEOUT_MS;
 
   let firstTokenTimeoutId: ReturnType<typeof setTimeout> | null = null;
-  let responseTimeoutId: ReturnType<typeof setTimeout> | null = null;
+  let livenessTimeoutId: ReturnType<typeof setTimeout> | null = null;
   let firstTokenReceived = false;
   let firstTokenTimeoutFired = false;
-  let responseTimeoutFired = false;
+  let livenessTimeoutFired = false;
+
+  const armLiveness = () => {
+    if (livenessTimeoutId) clearTimeout(livenessTimeoutId);
+    livenessTimeoutId = setTimeout(() => {
+      livenessTimeoutFired = true;
+      abort?.();
+    }, livenessMs);
+  };
 
   const cleanup = () => {
     if (firstTokenTimeoutId) clearTimeout(firstTokenTimeoutId);
-    if (responseTimeoutId) clearTimeout(responseTimeoutId);
+    if (livenessTimeoutId) clearTimeout(livenessTimeoutId);
     if (signal) signal.removeEventListener('abort', onAbort);
   };
 
@@ -388,12 +418,12 @@ export async function collectStream<T>(
     }, firstTokenTimeoutMs);
   }
 
-  if (responseTimeoutMs) {
-    responseTimeoutId = setTimeout(() => {
-      responseTimeoutFired = true;
-      abort?.();
-    }, responseTimeoutMs);
-  }
+  // Arm the liveness timer at stream start. It is reset on every chunk below
+  // so a stream that keeps producing tokens (even slowly) never trips it;
+  // only a genuine stall (no chunk for `livenessMs`) fires it. This replaces
+  // the former one-shot total cap (responseTimeoutMs) that killed slow
+  // streams mid-generation at an arbitrary wall-clock ceiling.
+  armLiveness();
 
   // Sentinel value for the abort promise — resolves instead of rejects
   // to avoid unhandled Promise rejections when abort wins the race.
@@ -421,6 +451,11 @@ export async function collectStream<T>(
         chunks.push(chunk);
         onChunk?.(chunk);
 
+        // Reset the liveness timer on every chunk — a stream that keeps
+        // producing tokens (even slowly) never trips it. Only a genuine
+        // stall (no chunk for `livenessMs`) fires it.
+        armLiveness();
+
         if (signal?.aborted) throw new StreamAbortedError();
       }
 
@@ -430,10 +465,10 @@ export async function collectStream<T>(
           'first-token',
         );
       }
-      if (responseTimeoutFired) {
+      if (livenessTimeoutFired) {
         throw new StreamTimeoutError(
-          `Response timed out after ${responseTimeoutMs}ms`,
-          'response',
+          `Stream stalled: no token received for ${livenessMs}ms`,
+          'liveness',
         );
       }
 
@@ -470,10 +505,10 @@ export async function collectStream<T>(
         'first-token',
       );
     }
-    if (responseTimeoutFired) {
+    if (livenessTimeoutFired) {
       throw new StreamTimeoutError(
-        `Response timed out after ${responseTimeoutMs}ms`,
-        'response',
+        `Stream stalled: no token received for ${livenessMs}ms`,
+        'liveness',
       );
     }
     if (signal?.aborted) throw new StreamAbortedError(err instanceof Error ? err : undefined);

@@ -468,11 +468,14 @@ export async function retryChat(
           () => stream.abort(),
           {
             firstTokenTimeoutMs: attemptTimeoutMs,
-            responseTimeoutMs: cfg.responseTimeoutMs,
             signal,
             // Feed each chunk's content + reasoning_content text into the
             // spinner's live token counter so the "thinking... (Xs, Y tokens)"
-            // suffix updates every frame.
+            // suffix updates every frame. The inter-token liveness window
+            // (DEFAULT_TOKEN_LIVENESS_TIMEOUT_MS = 10s) is applied by
+            // collectStream itself; responseTimeoutMs is no longer a total
+            // cap — it remains only as the first-token escalation ceiling
+            // (see escalateFirstTokenTimeout above).
             onChunk: (chunk) => {
               const delta = chunk.choices?.[0]?.delta;
               if (!delta) return;
