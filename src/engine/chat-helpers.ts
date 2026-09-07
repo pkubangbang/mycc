@@ -116,12 +116,56 @@ export function classifyError(err: unknown): ErrorType {
 // Retry Configuration
 // ============================================================================
 
+/**
+ * Default inter-token liveness window for RESPONSE chunks. The liveness
+ * timer is reset on every streamed chunk; if no chunk arrives within this
+ * window the stream is considered stalled and aborted. This replaces the
+ * former hard total-cap (responseTimeoutMs=120s) so a slow-but-steady
+ * stream that keeps producing tokens can finish in the long run instead of
+ * being killed mid-generation at an arbitrary wall-clock ceiling.
+ *
+ * `responseTimeoutMs` on {@link RetryConfig} is retained, but only as the
+ * escalation ceiling for {@link escalateFirstTokenTimeout} (the first-token
+ * timeout doubles per retry attempt, capped at responseTimeoutMs). It is no
+ * longer a total-response cap inside collectStream.
+ */
+export const DEFAULT_TOKEN_LIVENESS_TIMEOUT_MS = 10_000;
+
+/**
+ * Default inter-token liveness window for THINKING chunks (reasoning_content
+ * / thinking). The thinking process is by design slower than the real
+ * responding process and has a bigger spur — more tokens between longer
+ * intermissions. A cloud server may pause scheduling during a long reasoning
+ * chain for longer than the response window without the stream being dead.
+ * This wider window (30s) tolerates such a normal thinking-phase pause so the
+ * stream is not killed mid-reasoning, losing all streamed thinking tokens and
+ * forcing a from-scratch retry. A genuine stall (no chunk of any kind for 30s
+ * during thinking) still trips.
+ */
+export const DEFAULT_THINKING_LIVENESS_TIMEOUT_MS = 30_000;
+
 export interface RetryConfig {
   maxRetries: number;
   baseDelayMs: number;
   maxDelayMs: number;
   firstTokenTimeoutMs?: number;
   responseTimeoutMs?: number;
+  /**
+   * Inter-token liveness window for RESPONSE chunks (content, not thinking).
+   * Response generation should produce tokens steadily; a gap longer than
+   * this is a genuine stall. Defaults to
+   * {@link DEFAULT_TOKEN_LIVENESS_TIMEOUT_MS} (10s).
+   */
+  tokenLivenessTimeoutMs?: number;
+  /**
+   * Inter-token liveness window for THINKING chunks (reasoning_content /
+   * thinking). The thinking process is by design slower than responding and
+   * has a bigger spur — more tokens between longer intermissions — so it
+   * gets a more tolerant window. A normal server-side scheduling pause
+   * during a long reasoning chain should not kill the stream. Defaults to
+   * {@link DEFAULT_THINKING_LIVENESS_TIMEOUT_MS} (30s).
+   */
+  thinkingLivenessTimeoutMs?: number;
 }
 
 export const DEFAULT_RETRY_CONFIG: RetryConfig = {
@@ -130,6 +174,8 @@ export const DEFAULT_RETRY_CONFIG: RetryConfig = {
   maxDelayMs: 10000,
   firstTokenTimeoutMs: 20000,
   responseTimeoutMs: 120000,
+  tokenLivenessTimeoutMs: DEFAULT_TOKEN_LIVENESS_TIMEOUT_MS,
+  thinkingLivenessTimeoutMs: DEFAULT_THINKING_LIVENESS_TIMEOUT_MS,
 };
 
 /** Standard retryChat request shape used by all providers. */
@@ -332,21 +378,6 @@ export class StreamTimeoutError extends Error {
   }
 }
 
-/**
- * Default inter-token liveness window. The liveness timer is reset on every
- * streamed chunk; if no chunk arrives within this window the stream is
- * considered stalled and aborted. This replaces the former hard total-cap
- * (responseTimeoutMs=120s) so a slow-but-steady stream that keeps producing
- * tokens can finish in the long run instead of being killed mid-generation
- * at an arbitrary wall-clock ceiling.
- *
- * `responseTimeoutMs` on {@link RetryConfig} is retained, but only as the
- * escalation ceiling for {@link escalateFirstTokenTimeout} (the first-token
- * timeout doubles per retry attempt, capped at responseTimeoutMs). It is no
- * longer a total-response cap inside collectStream.
- */
-const DEFAULT_TOKEN_LIVENESS_TIMEOUT_MS = 10_000;
-
 export class StreamAbortedError extends Error {
   constructor(cause?: unknown) {
     super('Request aborted');
@@ -365,8 +396,30 @@ export async function collectStream<T>(
      * chunk arrives within this window the stream is considered stalled and
      * aborted. Defaults to {@link DEFAULT_TOKEN_LIVENESS_TIMEOUT_MS} (10s).
      * A slow-but-steady stream keeps resetting the timer and never trips.
+     *
+     * This is the BASE/fallback window. When {@link livenessMsForChunk} is
+     * also supplied, it is called on each chunk to pick a per-chunk window
+     * (e.g. a wider window for thinking chunks, a tighter one for response
+     * chunks); the value returned overrides this for the window that
+     * follows that chunk. The initial window (before the first chunk) is
+     * always this base value.
      */
     tokenLivenessTimeoutMs?: number;
+    /**
+     * Optional per-chunk liveness classifier. Called on every chunk right
+     * before the liveness timer is (re)armed; its return value becomes the
+     * liveness window for the gap that follows this chunk. Return
+     * `undefined` to keep the current window unchanged (e.g. for a chunk
+     * that carries neither thinking nor response text).
+     *
+     * This lets a provider apply a MORE TOLERANT window during the thinking
+     * phase (reasoning is slower with longer intermissions) and a TIGHTER
+     * window during the response phase, without collectStream needing to
+     * know provider-specific chunk field names. The provider already
+     * inspects each chunk's fields in its `onChunk` callback, so the
+     * classifier is a small lambda delegating to the same field checks.
+     */
+    livenessMsForChunk?: (chunk: T) => number | undefined;
     signal?: AbortSignal;
     /** Optional per-chunk callback invoked right after each chunk is
      *  collected. Used by the LLM providers to feed incremental token
@@ -376,8 +429,13 @@ export async function collectStream<T>(
     onChunk?: (chunk: T) => void;
   },
 ): Promise<T[]> {
-  const { firstTokenTimeoutMs, tokenLivenessTimeoutMs, signal, onChunk } = config;
-  const livenessMs = tokenLivenessTimeoutMs ?? DEFAULT_TOKEN_LIVENESS_TIMEOUT_MS;
+  const { firstTokenTimeoutMs, tokenLivenessTimeoutMs, livenessMsForChunk, signal, onChunk } = config;
+  const baseLivenessMs = tokenLivenessTimeoutMs ?? DEFAULT_TOKEN_LIVENESS_TIMEOUT_MS;
+  // The currently-active liveness window. Initialized to the base; updated
+  // per chunk by livenessMsForChunk (e.g. widened for thinking chunks,
+  // tightened for response chunks). Used in armLiveness() and in the
+  // StreamTimeoutError messages.
+  let currentLivenessMs = baseLivenessMs;
 
   let firstTokenTimeoutId: ReturnType<typeof setTimeout> | null = null;
   let livenessTimeoutId: ReturnType<typeof setTimeout> | null = null;
@@ -390,7 +448,7 @@ export async function collectStream<T>(
     livenessTimeoutId = setTimeout(() => {
       livenessTimeoutFired = true;
       abort?.();
-    }, livenessMs);
+    }, currentLivenessMs);
   };
 
   const cleanup = () => {
@@ -451,9 +509,19 @@ export async function collectStream<T>(
         chunks.push(chunk);
         onChunk?.(chunk);
 
+        // Per-chunk liveness classification: the provider's classifier (if
+        // supplied) picks the window for the gap that follows this chunk —
+        // e.g. a wider window for a thinking chunk, a tighter one for a
+        // response chunk. `undefined` keeps the current window (e.g. for a
+        // done-only chunk carrying neither thinking nor response text).
+        if (livenessMsForChunk) {
+          const ms = livenessMsForChunk(chunk);
+          if (ms !== undefined) currentLivenessMs = ms;
+        }
+
         // Reset the liveness timer on every chunk — a stream that keeps
         // producing tokens (even slowly) never trips it. Only a genuine
-        // stall (no chunk for `livenessMs`) fires it.
+        // stall (no chunk for the current window) fires it.
         armLiveness();
 
         if (signal?.aborted) throw new StreamAbortedError();
@@ -467,7 +535,7 @@ export async function collectStream<T>(
       }
       if (livenessTimeoutFired) {
         throw new StreamTimeoutError(
-          `Stream stalled: no token received for ${livenessMs}ms`,
+          `Stream stalled: no token received for ${currentLivenessMs}ms`,
           'liveness',
         );
       }
@@ -507,7 +575,7 @@ export async function collectStream<T>(
     }
     if (livenessTimeoutFired) {
       throw new StreamTimeoutError(
-        `Stream stalled: no token received for ${livenessMs}ms`,
+        `Stream stalled: no token received for ${currentLivenessMs}ms`,
         'liveness',
       );
     }

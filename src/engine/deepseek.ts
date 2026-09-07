@@ -25,6 +25,8 @@ import {
   StreamAbortedError,
   StreamTimeoutError,
   DEFAULT_RETRY_CONFIG,
+  DEFAULT_TOKEN_LIVENESS_TIMEOUT_MS,
+  DEFAULT_THINKING_LIVENESS_TIMEOUT_MS,
   type RetryConfig,
   type RetryChatRequest,
   type RetryChatConfig,
@@ -400,8 +402,27 @@ export async function retryChat(
         cfg.responseTimeoutMs ?? 120000,
         previousWasTimeout,
       );
+      // Escalate BOTH liveness windows (response + thinking) on the same
+      // previousWasTimeout trigger. The thinking window is wider than the
+      // response window (reasoning is slower with longer intermissions), and
+      // both double per attempt so a model that stalls mid-stream gets
+      // progressively more room to ride through a pause on each retry instead
+      // of hitting the same fixed wall 4× in a row (the bug: a stalled LLM
+      // never resumed because every retry used the identical liveness timeout).
+      const attemptLivenessMs = escalateFirstTokenTimeout(
+        cfg.tokenLivenessTimeoutMs ?? DEFAULT_TOKEN_LIVENESS_TIMEOUT_MS,
+        attempt,
+        cfg.responseTimeoutMs ?? 120000,
+        previousWasTimeout,
+      );
+      const attemptThinkingLivenessMs = escalateFirstTokenTimeout(
+        cfg.thinkingLivenessTimeoutMs ?? DEFAULT_THINKING_LIVENESS_TIMEOUT_MS,
+        attempt,
+        cfg.responseTimeoutMs ?? 120000,
+        previousWasTimeout,
+      );
       if (previousWasTimeout && attempt > 1) {
-        agentIO.verbose('deepseek', `Escalating first-token timeout to ${attemptTimeoutMs}ms for attempt ${attempt}`);
+        agentIO.verbose('deepseek', `Escalating first-token timeout to ${attemptTimeoutMs}ms, liveness (response) to ${attemptLivenessMs}ms, liveness (thinking) to ${attemptThinkingLivenessMs}ms for attempt ${attempt}`);
       }
 
       try {
@@ -468,14 +489,33 @@ export async function retryChat(
           () => stream.abort(),
           {
             firstTokenTimeoutMs: attemptTimeoutMs,
+            tokenLivenessTimeoutMs: attemptLivenessMs,
             signal,
+            // Phase-aware liveness: thinking chunks (delta.reasoning_content
+            // only) get a wider window than response chunks (delta.content).
+            // The thinking process is slower with longer intermissions, so a
+            // normal server-side scheduling pause during reasoning should not
+            // kill the stream. A chunk carrying response content (with or
+            // without reasoning) uses the tighter response window — the model
+            // is producing visible output and should keep flowing. A chunk
+            // carrying neither returns undefined so the current window is
+            // preserved.
+            livenessMsForChunk: (chunk) => {
+              const delta = chunk.choices?.[0]?.delta;
+              if (!delta) return undefined;
+              const hasResponse = !!delta.content;
+              const hasThinking = !!delta.reasoning_content;
+              if (hasResponse) return attemptLivenessMs;
+              if (hasThinking) return attemptThinkingLivenessMs;
+              return undefined;
+            },
             // Feed each chunk's content + reasoning_content text into the
             // spinner's live token counter so the "thinking... (Xs, Y tokens)"
-            // suffix updates every frame. The inter-token liveness window
-            // (DEFAULT_TOKEN_LIVENESS_TIMEOUT_MS = 10s) is applied by
-            // collectStream itself; responseTimeoutMs is no longer a total
-            // cap — it remains only as the first-token escalation ceiling
-            // (see escalateFirstTokenTimeout above).
+            // suffix updates every frame. The inter-token liveness window is
+            // applied by collectStream itself (phase-aware via
+            // livenessMsForChunk above); responseTimeoutMs is no longer a
+            // total cap — it remains only as the first-token escalation
+            // ceiling (see escalateFirstTokenTimeout above).
             onChunk: (chunk) => {
               const delta = chunk.choices?.[0]?.delta;
               if (!delta) return;
