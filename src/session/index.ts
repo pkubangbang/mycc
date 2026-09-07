@@ -13,7 +13,7 @@ import * as os from 'os';
 import chalk from 'chalk';
 import type { Session, SessionDisplay, SessionInit } from './types.js';
 import { prepareRestoration, readDosq, extractFirstQuery } from './restoration.js';
-import { setSessionContext, getSessionArg } from '../config.js';
+import { setSessionContext, getSessionArg, getSessionsDir } from '../config.js';
 import { clearAll } from '../context/memory-store.js';
 import { agentIO } from '../loop/agent-io.js';
 import { openEditor } from '../utils/open-editor.js';
@@ -128,13 +128,6 @@ export class AmbiguousSessionError extends Error {
     super(`Ambiguous session ID: ${sessionId}. Multiple matches found.`);
     this.name = 'AmbiguousSessionError';
   }
-}
-
-/**
- * Get the project sessions directory path
- */
-export function getSessionsDir(): string {
-  return path.join('.mycc', 'sessions');
 }
 
 /**
