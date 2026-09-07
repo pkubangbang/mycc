@@ -20,6 +20,7 @@ import {
   sleep,
   startSpinner,
   stopSpinner,
+  updateSpinnerTokens,
   retryWithBackoff,
   StreamAbortedError,
   StreamTimeoutError,
@@ -28,6 +29,7 @@ import {
   type RetryChatRequest,
   type RetryChatConfig,
 } from './chat-helpers.js';
+import { estimateTextTokens } from '../utils/token.js';
 
 // ============================================================================
 // Configuration
@@ -468,6 +470,17 @@ export async function retryChat(
             firstTokenTimeoutMs: attemptTimeoutMs,
             responseTimeoutMs: cfg.responseTimeoutMs,
             signal,
+            // Feed each chunk's content + reasoning_content text into the
+            // spinner's live token counter so the "thinking... (Xs, Y tokens)"
+            // suffix updates every frame.
+            onChunk: (chunk) => {
+              const delta = chunk.choices?.[0]?.delta;
+              if (!delta) return;
+              let tokens = 0;
+              if (delta.content) tokens += estimateTextTokens(delta.content);
+              if (delta.reasoning_content) tokens += estimateTextTokens(delta.reasoning_content);
+              if (tokens > 0) updateSpinnerTokens(tokens);
+            },
           },
         );
 

@@ -258,17 +258,55 @@ export async function retryWithBackoff<T>(
 const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 let spinnerInterval: ReturnType<typeof setInterval> | null = null;
 let spinnerFrame = 0;
+// Time + token statistics for the "thinking..." spinner. Reset in
+// startSpinner, incremented via updateSpinnerTokens by the LLM stream's
+// onChunk callback, and read every frame to render the live suffix
+// "(27s, 4505 tokens)" once the wait exceeds 5 seconds.
+let spinnerStartTime = 0;
+let spinnerTokenCount = 0;
+const SPINNER_STATS_THRESHOLD_S = 5;
 
 export function startSpinner(prefix: string = 'Thinking'): void {
   if (spinnerInterval) return;
 
   process.stderr.write('\x1b[?25l');
   spinnerFrame = 0;
+  spinnerStartTime = Date.now();
+  spinnerTokenCount = 0;
   spinnerInterval = setInterval(() => {
     const frame = SPINNER_FRAMES[spinnerFrame % SPINNER_FRAMES.length];
-    process.stderr.write(`\r${frame} ${prefix}...`);
+    const elapsedS = Math.floor((Date.now() - spinnerStartTime) / 1000);
+    // Only show time/token stats after the wait exceeds the threshold so
+    // short responses keep the clean "⠋ thinking..." line. When stats are
+    // shown, omit the token count if it is still 0 (e.g. health-check
+    // spinners that have no LLM stream feeding tokens) to avoid a
+    // misleading "(0 tokens)".
+    let line: string;
+    if (elapsedS >= SPINNER_STATS_THRESHOLD_S) {
+      line = spinnerTokenCount > 0
+        ? `\r${frame} ${prefix}... (${elapsedS}s, ${spinnerTokenCount.toLocaleString()} tokens)`
+        : `\r${frame} ${prefix}... (${elapsedS}s)`;
+    } else {
+      line = `\r${frame} ${prefix}...`;
+    }
+    process.stderr.write(line);
     spinnerFrame++;
   }, 80);
+}
+
+/**
+ * Increment the running spinner's token counter by `delta`.
+ *
+ * Called by the LLM stream's per-chunk callback (wired in ollama.ts /
+ * deepseek.ts via collectStream's onChunk option) so each streamed chunk's
+ * text is estimated and the spinner's live "(N tokens)" suffix updates
+ * every frame. Safe to call when no spinner is running (noSpinner path or
+ * before startSpinner): it only mutates the module-level counter, which
+ * startSpinner resets to 0 on the next spin, so stray increments are
+ * harmless.
+ */
+export function updateSpinnerTokens(delta: number): void {
+  if (delta > 0) spinnerTokenCount += delta;
 }
 
 export function stopSpinner(): void {
@@ -309,9 +347,15 @@ export async function collectStream<T>(
     firstTokenTimeoutMs?: number;
     responseTimeoutMs?: number;
     signal?: AbortSignal;
+    /** Optional per-chunk callback invoked right after each chunk is
+     *  collected. Used by the LLM providers to feed incremental token
+     *  estimates into the spinner's live "(N tokens)" counter via
+     *  updateSpinnerTokens. Receives the raw chunk; the provider decides
+     *  which fields to estimate. Not invoked on abort or timeout. */
+    onChunk?: (chunk: T) => void;
   },
 ): Promise<T[]> {
-  const { firstTokenTimeoutMs, responseTimeoutMs, signal } = config;
+  const { firstTokenTimeoutMs, responseTimeoutMs, signal, onChunk } = config;
 
   let firstTokenTimeoutId: ReturnType<typeof setTimeout> | null = null;
   let responseTimeoutId: ReturnType<typeof setTimeout> | null = null;
@@ -375,6 +419,7 @@ export async function collectStream<T>(
         }
 
         chunks.push(chunk);
+        onChunk?.(chunk);
 
         if (signal?.aborted) throw new StreamAbortedError();
       }

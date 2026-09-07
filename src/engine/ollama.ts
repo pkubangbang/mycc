@@ -20,6 +20,7 @@ import {
   sleep,
   startSpinner,
   stopSpinner,
+  updateSpinnerTokens,
   retryWithBackoff,
   StreamAbortedError,
   StreamTimeoutError,
@@ -28,6 +29,7 @@ import {
   type RetryChatRequest,
   type RetryChatConfig,
 } from './chat-helpers.js';
+import { estimateTextTokens } from '../utils/token.js';
 
 export const MODEL = getOllamaModel();
 
@@ -270,6 +272,17 @@ export async function retryChat(
             firstTokenTimeoutMs: attemptTimeoutMs,
             responseTimeoutMs: cfg.responseTimeoutMs,
             signal,
+            // Feed each chunk's content + thinking text into the spinner's
+            // live token counter so the "thinking... (Xs, Y tokens)" suffix
+            // updates every frame.
+            onChunk: (chunk) => {
+              const msg = chunk.message;
+              if (!msg) return;
+              let delta = 0;
+              if (msg.content) delta += estimateTextTokens(msg.content);
+              if (msg.thinking) delta += estimateTextTokens(msg.thinking as string);
+              if (delta > 0) updateSpinnerTokens(delta);
+            },
           },
         );
 
