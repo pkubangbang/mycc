@@ -254,6 +254,11 @@ export async function retryChat(
 
         const postTimeoutMs = attemptTimeoutMs;
         let postTimeoutId: ReturnType<typeof setTimeout> | undefined;
+        // Track the abort listener so the finally block can remove it on the
+        // normal chatPromise-wins path. { once: true } only auto-removes on
+        // actual abort; without this the listener stays on the retryChat-
+        // reused signal and accumulates across attempts / hint-round retries.
+        let postAbortListener: (() => void) | undefined;
         const postRacePromise = new Promise<never>((_, reject) => {
           postTimeoutId = setTimeout(() => {
             reject(new StreamTimeoutError(
@@ -262,10 +267,11 @@ export async function retryChat(
             ));
           }, postTimeoutMs);
           if (signal) {
-            signal.addEventListener('abort', () => {
+            postAbortListener = () => {
               if (postTimeoutId) clearTimeout(postTimeoutId);
               reject(new StreamAbortedError());
-            }, { once: true });
+            };
+            signal.addEventListener('abort', postAbortListener, { once: true });
           }
         });
 
@@ -284,6 +290,7 @@ export async function retryChat(
           throw raceErr;
         } finally {
           if (postTimeoutId) clearTimeout(postTimeoutId);
+          if (signal && postAbortListener) signal.removeEventListener('abort', postAbortListener);
         }
 
         const chunks = await collectStream<ChatResponse>(

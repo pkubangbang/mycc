@@ -7,8 +7,10 @@
 
 import { describe, test, afterEach } from 'vitest';
 import { expect } from 'chai';
+import { EventEmitter } from 'node:events';
 import {
   collectStream,
+  sleep,
   StreamAbortedError,
   StreamTimeoutError,
   DEFAULT_TOKEN_LIVENESS_TIMEOUT_MS,
@@ -400,5 +402,123 @@ describe('collectStream — abort race condition', () => {
     expect(DEFAULT_THINKING_LIVENESS_TIMEOUT_MS).to.be.greaterThan(
       DEFAULT_TOKEN_LIVENESS_TIMEOUT_MS,
     );
+  });
+
+  // ─── Abort-listener cleanup (regression for un-removed listeners) ──────
+  //
+  // collectStream registers TWO 'abort' listeners on the signal: the named
+  // onAbort (removed in cleanup) and an anonymous one inside abortPromise
+  // (previously NOT removed). { once: true } only auto-removes when the
+  // signal actually fires 'abort'; on the normal-completion path both stayed
+  // attached. Since retryChat reuses the same signal across retry attempts,
+  // and hint-round.ts reuses one signal across malformed-JSON retries, the
+  // leaked listeners accumulated. These tests verify cleanup() now removes
+  // ALL listeners on every exit path.
+
+  /**
+   * Count 'abort' listeners on an AbortSignal. AbortSignal inherits from
+   * EventEmitter in Node, so EventEmitter.listenerCount works across
+   * versions (some Node versions don't expose AbortSignal.listenerCount).
+   */
+  function abortListenerCount(signal: AbortSignal): number {
+    return EventEmitter.listenerCount(signal as unknown as EventEmitter, 'abort');
+  }
+
+  test('collectStream removes all abort listeners on normal stream completion', async () => {
+    const controller = new AbortController();
+    const baseline = abortListenerCount(controller.signal);
+
+    async function* simpleStream() {
+      yield 'a';
+      yield 'b';
+    }
+
+    await collectStream(simpleStream(), () => {}, {
+      signal: controller.signal,
+    });
+
+    expect(abortListenerCount(controller.signal)).to.equal(baseline,
+      'abort listeners leaked after normal collectStream completion');
+  });
+
+  test('collectStream removes all abort listeners on first-token timeout', async () => {
+    const controller = new AbortController();
+    const baseline = abortListenerCount(controller.signal);
+
+    let cancelFn: (() => void) | null = null;
+    async function* hangingStream(): AsyncIterable<string> {
+      await new Promise<void>((_, reject) => {
+        cancelFn = () => reject(new Error('The reader has been cancelled'));
+      });
+    }
+
+    const resultPromise = collectStream(hangingStream(), () => cancelFn?.(), {
+      signal: controller.signal,
+      firstTokenTimeoutMs: 20,
+    });
+
+    try {
+      await resultPromise;
+      expect.fail('Expected collectStream to throw StreamTimeoutError');
+    } catch (err) {
+      expect(err).to.be.instanceOf(StreamTimeoutError);
+    }
+
+    expect(abortListenerCount(controller.signal)).to.equal(baseline,
+      'abort listeners leaked after first-token timeout');
+  });
+
+  test('sleep removes its abort listener on normal resolve', async () => {
+    const controller = new AbortController();
+    const baseline = abortListenerCount(controller.signal);
+
+    await sleep(10, controller.signal);
+
+    expect(abortListenerCount(controller.signal)).to.equal(baseline,
+      'abort listener leaked after sleep normal resolve');
+  });
+
+  test('sleep removes its abort listener even on the abort path (no double-removal error)', async () => {
+    const controller = new AbortController();
+    const baseline = abortListenerCount(controller.signal);
+
+    const sleepPromise = sleep(10000, controller.signal);
+    // Abort immediately so onAbort fires (clears timeout, rejects).
+    controller.abort();
+
+    try {
+      await sleepPromise;
+      expect.fail('Expected sleep to reject with StreamAbortedError');
+    } catch (err) {
+      expect(err).to.be.instanceOf(StreamAbortedError);
+    }
+
+    // { once: true } auto-removes on abort; the explicit removeEventListener
+    // in the resolve path is not reached (the timeout was cleared). Either
+    // way the listener count must be back to baseline.
+    expect(abortListenerCount(controller.signal)).to.equal(baseline,
+      'abort listener leaked after sleep abort');
+  });
+
+  test('repeated collectStream calls on the same signal do not accumulate listeners', async () => {
+    // The hint-round.ts scenario: retryLoop reuses one AbortController.signal
+    // across many iterations. Before the fix, each collectStream call left an
+    // anonymous abortPromise listener, so a pathological round (many
+    // malformed-JSON retries) accumulated unbounded listeners on one signal.
+    const controller = new AbortController();
+    const baseline = abortListenerCount(controller.signal);
+
+    async function* simpleStream() {
+      yield 'x';
+    }
+
+    for (let i = 0; i < 10; i++) {
+      await collectStream(simpleStream(), () => {}, {
+        signal: controller.signal,
+      });
+    }
+
+    expect(abortListenerCount(controller.signal)).to.equal(baseline,
+      'listeners accumulated across repeated collectStream calls on the same signal');
   });
 });

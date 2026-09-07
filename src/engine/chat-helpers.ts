@@ -212,12 +212,19 @@ export function sleep(ms: number, signal?: AbortSignal): Promise<void> {
       reject(new StreamAbortedError());
       return;
     }
-    const timeoutId = setTimeout(resolve, ms);
+    // Declare onAbort before timeoutId so the resolve callback can reference
+    // it for removeEventListener. { once: true } only auto-removes on abort;
+    // on the normal setTimeout-resolve path the listener would otherwise stay
+    // attached to the (shared, retryChat-reused) signal and accumulate.
+    const onAbort = () => {
+      clearTimeout(timeoutId);
+      reject(new StreamAbortedError());
+    };
+    const timeoutId = setTimeout(() => {
+      if (signal) signal.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
     if (signal) {
-      const onAbort = () => {
-        clearTimeout(timeoutId);
-        reject(new StreamAbortedError());
-      };
       signal.addEventListener('abort', onAbort, { once: true });
     }
   });
@@ -451,10 +458,22 @@ export async function collectStream<T>(
     }, currentLivenessMs);
   };
 
+  // Handle for the abortPromise's anonymous listener, so cleanup() can
+  // remove it on the normal-completion path. { once: true } only auto-removes
+  // when the signal actually fires 'abort'; on a normal stream completion the
+  // listener stays attached and (since retryChat reuses the same signal across
+  // attempts, and hint-round.ts reuses one signal across malformed-JSON
+  // retries) accumulates. Tracking + removing it here bounds the retention to
+  // one collectStream call.
+  let abortPromiseListener: (() => void) | null = null;
+
   const cleanup = () => {
     if (firstTokenTimeoutId) clearTimeout(firstTokenTimeoutId);
     if (livenessTimeoutId) clearTimeout(livenessTimeoutId);
-    if (signal) signal.removeEventListener('abort', onAbort);
+    if (signal) {
+      signal.removeEventListener('abort', onAbort);
+      if (abortPromiseListener) signal.removeEventListener('abort', abortPromiseListener);
+    }
   };
 
   const onAbort = () => {
@@ -489,7 +508,8 @@ export async function collectStream<T>(
 
   const abortPromise = signal
     ? new Promise<typeof ABORT_SENTINEL>((resolve) => {
-        signal.addEventListener('abort', () => resolve(ABORT_SENTINEL), { once: true });
+        abortPromiseListener = () => resolve(ABORT_SENTINEL);
+        signal.addEventListener('abort', abortPromiseListener, { once: true });
       })
     : null;
 
