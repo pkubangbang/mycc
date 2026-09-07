@@ -13,6 +13,7 @@ import { parse_markdown, build_node, extract_links, collect_nodes_bottom_up, Pro
 import { get_node, get_ancestors } from './get-node.js';
 import { remove_node } from './patch.js';
 import { summarizeWithExplorer } from './explorer-agent.js';
+import { atomicWrite } from '../utils/atomic-write.js';
 
 /**
  * Result of diffing old and new node trees
@@ -289,12 +290,12 @@ export async function incremental_compile(
 
 /**
  * Save mindmap atomically (copy-on-write)
- * Writes to temp file first, then renames to ensure concurrent readers see valid data
+ * Writes to a temp file first, then renames to ensure concurrent readers see
+ * valid data. Delegates to the shared atomicWrite (Windows-EPERM retry +
+ * orphan cleanup + PID-suffixed temp).
  * @param mindmap - The mindmap to save
  * @param outPath - Output file path
  */
 export function save_mindmap_atomic(mindmap: MindmapJSON, outPath: string): void {
-  const tempPath = `${outPath}.tmp`;
-  fs.writeFileSync(tempPath, JSON.stringify(mindmap, null, 2), 'utf-8');
-  fs.renameSync(tempPath, outPath);
+  atomicWrite(outPath, JSON.stringify(mindmap, null, 2));
 }

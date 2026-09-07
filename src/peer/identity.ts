@@ -20,10 +20,10 @@
  */
 
 import * as fs from 'fs';
-import * as path from 'path';
 import type { IdentityEntry } from '../types.js';
 import { getIdentityFile, getHeartbeatFile } from '../config.js';
 import { truncateToTokens } from '../utils/token.js';
+import { atomicWrite } from '../utils/atomic-write.js';
 
 const HEARTBEAT_INTERVAL_MS = 30_000;
 const MAX_HEARTBEATS = 3;
@@ -45,69 +45,6 @@ const FRESHNESS_WINDOW_MS = 90_000;
  * so an entry is pruned exactly when it stops appearing in the listing.
  */
 const IDENTITY_PRUNE_CUTOFF_MS = 60 * 60 * 1000;
-
-/**
- * Transient fs errors on Windows that warrant a retry. On Windows, renaming
- * a temp file over an existing destination (`fs.renameSync`) can fail with
- * EPERM/EBUSY when the destination is briefly locked by a concurrent reader
- * (another mycc instance calling readIdentityMap(), Windows Defender/antivirus
- * scanning the just-written temp file, or a search-indexer). These are
- * transient — the lock is released within milliseconds — so a short retry
- * loop resolves them. Without the retry, the rename throws and the temp file
- * is left orphaned (`.tmp.<pid>`), which has been observed accumulating in
- * the discovery directory across multiple failed PIDs.
- */
-const TRANSIENT_RENAME_ERRORS = new Set(['EPERM', 'EBUSY', 'ENOTEMPTY', 'EACCES']);
-const RENAME_RETRIES = 5;
-const RENAME_RETRY_DELAY_MS = 50;
-
-/**
- * Atomic file write: write to temp file then rename.
- * Matches the WAL-safe pattern used elsewhere in the codebase.
- *
- * On Windows the final rename over an existing destination can fail with a
- * transient EPERM/EBUSY (destination locked by a concurrent reader or
- * antivirus). We retry a handful of times with a short backoff, and always
- * clean up the temp file if the rename ultimately fails so we do not leave
- * `.tmp.<pid>` orphans in the discovery directory.
- */
-function atomicWrite(filePath: string, data: string): void {
-  const dir = path.dirname(filePath);
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
-  const tmp = `${filePath}.tmp.${process.pid}`;
-  fs.writeFileSync(tmp, data, 'utf-8');
-  try {
-    for (let attempt = 0; attempt < RENAME_RETRIES; attempt++) {
-      try {
-        fs.renameSync(tmp, filePath);
-        return; // success
-      } catch (err) {
-        const code = (err as NodeJS.ErrnoException).code;
-        // Only retry on transient Windows lock errors; rethrow anything else
-        // (e.g. ENOENT if the temp file vanished, ENOSPC, real permission loss).
-        if (code && TRANSIENT_RENAME_ERRORS.has(code) && attempt < RENAME_RETRIES - 1) {
-          // Brief backoff before retrying — the lock is typically gone by the
-          // next event-loop tick, but a small sleep smooths antivirus scans.
-          const delay = RENAME_RETRY_DELAY_MS * (attempt + 1);
-          const end = Date.now() + delay;
-          while (Date.now() < end) { /* busy-wait: synchronous context */ }
-          continue;
-        }
-        throw err;
-      }
-    }
-  } finally {
-    // If the rename never succeeded (thrown above), remove the orphaned temp
-    // file so it does not accumulate in the discovery directory across crashes.
-    try {
-      if (fs.existsSync(tmp)) fs.unlinkSync(tmp);
-    } catch {
-      // best-effort cleanup; ignore
-    }
-  }
-}
 
 /**
  * A recorded brief entry, stored alongside heartbeats in the heartbeat file.

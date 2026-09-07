@@ -22,55 +22,7 @@ import * as path from 'path';
 import type { ChannelFile } from '../types.js';
 import { getChannelsDir, getChannelFile } from '../config.js';
 import { IdentityManager } from './identity.js';
-
-/**
- * Transient fs errors on Windows that warrant a retry. See the matching
- * constant in identity.ts for the full rationale.
- */
-const TRANSIENT_RENAME_ERRORS = new Set(['EPERM', 'EBUSY', 'ENOTEMPTY', 'EACCES']);
-const RENAME_RETRIES = 5;
-const RENAME_RETRY_DELAY_MS = 50;
-
-/**
- * Atomic file write: write to temp file then rename.
- *
- * On Windows the final rename over an existing destination can fail with a
- * transient EPERM/EBUSY (destination locked by a concurrent reader or
- * antivirus). We retry a handful of times with a short backoff, and always
- * clean up the temp file if the rename ultimately fails so we do not leave
- * `.tmp.<pid>` orphans. See identity.ts for the detailed rationale.
- */
-function atomicWrite(filePath: string, data: string): void {
-  const dir = path.dirname(filePath);
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
-  const tmp = `${filePath}.tmp.${process.pid}`;
-  fs.writeFileSync(tmp, data, 'utf-8');
-  try {
-    for (let attempt = 0; attempt < RENAME_RETRIES; attempt++) {
-      try {
-        fs.renameSync(tmp, filePath);
-        return; // success
-      } catch (err) {
-        const code = (err as NodeJS.ErrnoException).code;
-        if (code && TRANSIENT_RENAME_ERRORS.has(code) && attempt < RENAME_RETRIES - 1) {
-          const delay = RENAME_RETRY_DELAY_MS * (attempt + 1);
-          const end = Date.now() + delay;
-          while (Date.now() < end) { /* busy-wait: synchronous context */ }
-          continue;
-        }
-        throw err;
-      }
-    }
-  } finally {
-    try {
-      if (fs.existsSync(tmp)) fs.unlinkSync(tmp);
-    } catch {
-      // best-effort cleanup; ignore
-    }
-  }
-}
+import { atomicWrite } from '../utils/atomic-write.js';
 
 /**
  * Read and parse a channel file. Returns null if missing or malformed.

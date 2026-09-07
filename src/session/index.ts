@@ -17,6 +17,7 @@ import { setSessionContext, getSessionArg } from '../config.js';
 import { clearAll } from '../context/memory-store.js';
 import { agentIO } from '../loop/agent-io.js';
 import { openEditor } from '../utils/open-editor.js';
+import { atomicWrite } from '../utils/atomic-write.js';
 
 /**
  * Marker seeded into `first_query` for every session that BOOTSTRAPS into
@@ -230,11 +231,11 @@ export function writeSession(filePath: string, session: Session): void {
   };
   const content = JSON.stringify(sessionFile, null, 2);
 
-  // Write to a temp file in the SAME directory as the target (avoids
-  // cross-device rename issues), then atomically rename into place.
-  const tempFile = `${filePath}.tmp.${Date.now()}`;
-  fs.writeFileSync(tempFile, content, 'utf-8');
-  fs.renameSync(tempFile, filePath);
+  // Atomic write (temp-file + rename with Windows-EPERM retry). See
+  // utils/atomic-write.ts. A crash mid-write leaves the temp file orphaned
+  // but the main session file intact — never a truncated/corrupt session
+  // JSON that would make the session unreadable on the next start.
+  atomicWrite(filePath, content);
 }
 
 /**
