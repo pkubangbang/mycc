@@ -119,8 +119,8 @@ export class Core extends BaseCore implements CoreModule {
    * Thread-safe: console.log is atomic in Node.js
    * @param detail - Optional greyed text to show after tool name (for showing intent)
    */
-  brief(level: 'info' | 'warn' | 'error', tool: string, message: string, detail?: string): void {
-    agentIO.brief(level, tool, message, detail);
+  brief(level: 'info' | 'warn' | 'error', tool: string, message: string, detail?: string, opts?: { synthetic?: boolean }): void {
+    agentIO.brief(level, tool, message, detail, opts);
   }
 
   /**

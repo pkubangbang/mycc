@@ -32,6 +32,10 @@ export interface ChatMessage {
   /** Tool intent/description (e.g. "RUN USER TO list project files" for bash).
    *  When present, rendered as an outlined box above the bubble content. */
   detail?: string;
+  /** Machine-originated brief (hook engine, debug evaluator, checkpoint
+   *  bookkeeping) — hidden from the chat log by the synthetic filter in
+   *  message-dispatch.ts / fetchHistory(). Omitted for normal messages. */
+  synthetic?: boolean;
   /** Card payload — present when type === 'card'. Drives CardItem.vue.
    *  Populated by applyServerMessage when a card wire message arrives (see
    *  the top-level cardId/query/kind fields below); persisted onto messages

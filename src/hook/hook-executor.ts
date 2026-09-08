@@ -184,7 +184,8 @@ export class HookExecutor {
       case 'compact':
         ctx.core.brief('info', 'hook',
           `COMPACT requested`,
-          `${pendingCalls[0]?.function.name ?? 'stop'} → ${skillName}`
+          `${pendingCalls[0]?.function.name ?? 'stop'} → ${skillName}`,
+          { synthetic: true }
         );
         return { action: 'compact' };
     }
@@ -218,7 +219,8 @@ export class HookExecutor {
     // Verbose: action description, when, and condition
     ctx.core.brief('info', 'hook',
       `${action.tool}${argsPreview} injected BEFORE ${triggerTool}`,
-      `${triggerTool} → ${skillName}`
+      `${triggerTool} → ${skillName}`,
+      { synthetic: true }
     );
     ctx.core.verbose('hook',
       `When: "${whenText}"\nExpr: ${conditionExpr}`
@@ -263,7 +265,8 @@ export class HookExecutor {
     // Verbose: action description, when, and condition
     ctx.core.brief('info', 'hook',
       `${action.tool}${argsPreview} injected AFTER ${triggerTool}`,
-      `${triggerTool} → ${skillName}`
+      `${triggerTool} → ${skillName}`,
+      { synthetic: true }
     );
     ctx.core.verbose('hook',
       `When: "${whenText}"\nExpr: ${conditionExpr}`
@@ -302,7 +305,8 @@ export class HookExecutor {
     // Verbose: action description, when, and condition
     ctx.core.brief('info', 'hook',
       `BLOCKED: ${reason}`,
-      `${trigger} → ${skillName}`
+      `${trigger} → ${skillName}`,
+      { synthetic: true }
     );
     ctx.core.verbose('hook',
       `When: "${whenText}"\nExpr: ${conditionExpr}`
@@ -349,7 +353,8 @@ export class HookExecutor {
 
       ctx.core.brief('info', 'hook',
         `REPLACED stop → ${action.tool}${argsPreview}`,
-        `stop → ${skillName}`
+        `stop → ${skillName}`,
+        { synthetic: true }
       );
       ctx.core.verbose('hook',
         `When: "${whenText}"\nExpr: ${conditionExpr}`
@@ -376,7 +381,8 @@ export class HookExecutor {
     // Verbose: action description, when, and condition
     ctx.core.brief('info', 'hook',
       `REPLACED ${originalTool} → ${action.tool}${argsPreview}`,
-      `${originalTool} → ${skillName}`
+      `${originalTool} → ${skillName}`,
+      { synthetic: true }
     );
     ctx.core.verbose('hook',
       `When: "${whenText}"\nExpr: ${conditionExpr}`
@@ -409,7 +415,8 @@ export class HookExecutor {
     // Detail (always shown): trigger → hook name
     ctx.core.brief('info', 'hook',
       `MESSAGE: suggested using ${skillName}`,
-      `${triggerTool} → ${skillName}`
+      `${triggerTool} → ${skillName}`,
+      { synthetic: true }
     );
     if (cond) {
       ctx.core.verbose('hook',

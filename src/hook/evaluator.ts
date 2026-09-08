@@ -367,7 +367,7 @@ export function evaluateExpression(expression: string, ctx: EvalContext): boolea
 
     // Print debug output
     if (isDebuggingEval()) {
-      agentIO.brief('info', 'eval', printJsepTree(result));
+      agentIO.brief('info', 'eval', printJsepTree(result), undefined, { synthetic: true });
     }
 
     // Coerce to boolean

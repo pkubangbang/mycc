@@ -329,6 +329,42 @@ describe('applyServerMessage — routing', () => {
   });
 });
 
+describe('applyServerMessage — synthetic filter (machine-originated briefs)', () => {
+  it('does NOT push a synthetic message into messages or teammateMessages', () => {
+    const state = makeState();
+    const ctx = makeCtx();
+    applyServerMessage(state, { type: 'log', content: 'hook brief', label: 'hook', synthetic: true }, ctx);
+    applyServerMessage(state, { type: 'log', content: 'hook @team', label: '@bob/hook', synthetic: true }, ctx);
+    expect(state.messages).toHaveLength(0);
+    expect(state.teammateMessages).toHaveLength(0);
+  });
+
+  it('synthetic message still transitions prompt/card → working (phase semantics intact)', () => {
+    const state = makeState();
+    const ctx = makeCtx();
+    applyServerMessage(state, { type: 'prompt', content: '' }, ctx);
+    expect(state.phase).toBe('prompt');
+    applyServerMessage(state, { type: 'log', content: 'hook brief', label: 'hook', synthetic: true }, ctx);
+    expect(state.phase).toBe('working');
+    expect(state.messages).toHaveLength(0);
+  });
+
+  it('synthetic message is still recorded in lastServerMsg (diagnostic)', () => {
+    const state = makeState();
+    const ctx = makeCtx();
+    applyServerMessage(state, { type: 'log', content: 'hook brief', label: 'hook', synthetic: true }, ctx);
+    expect(state.lastServerMsg?.type).toBe('log');
+  });
+
+  it('non-synthetic messages are unaffected by the filter', () => {
+    const state = makeState();
+    const ctx = makeCtx();
+    applyServerMessage(state, { type: 'log', content: 'normal brief', label: 'bash' }, ctx);
+    applyServerMessage(state, { type: 'log', content: 'normal brief no synthetic flag', label: 'hook', synthetic: false }, ctx);
+    expect(state.messages).toHaveLength(2);
+  });
+});
+
 describe('applyServerMessage — lastServerMsg diagnostic recording', () => {
   it('records type+timestamp for explicitly handled messages', () => {
     const state = makeState();

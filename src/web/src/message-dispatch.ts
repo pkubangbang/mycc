@@ -262,6 +262,12 @@ export function applyServerMessage(
   if (state.phase === 'prompt' || state.phase === 'card') {
     state.setPhase('working');
   }
+  // Synthetic messages (machine-originated briefs: hook engine, debug
+  // evaluator, checkpoint bookkeeping) update the phase (a hook brief still
+  // proves the agent is working) but are NOT pushed into the chat log —
+  // they are routine machinery output, not LLM/user content. The /history
+  // path filters them identically in main.ts fetchHistory().
+  if (msg.synthetic) return;
   if (msg.label?.startsWith('@')) {
     state.teammateMessages.push(msg);
   } else {

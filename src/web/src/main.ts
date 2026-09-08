@@ -129,12 +129,16 @@ async function fetchHistory(): Promise<void> {
     // Drop them from the visible record; non-empty prompts (e.g. 'Retry? [Y/n]')
     // remain visible. Also drop steer-echo/steer-flush entries — those belong
     // in the buffer bar (restored separately below), not the chat log.
+    // Synthetic messages (machine-originated briefs: hook engine, debug
+    // evaluator, checkpoint bookkeeping) are dropped too — the live WS path
+    // filters them in applyServerMessage; this mirrors that for /history.
     const visible = data.messages.filter(
       m => !(m.type === 'prompt' && !m.content)
         && m.type !== 'steer-echo'
         && m.type !== 'steer-flush'
         && m.type !== 'file-upload'
-        && m.type !== 'file-flush',
+        && m.type !== 'file-flush'
+        && !m.synthetic,
     );
     // Split teammate messages from the main chat log by the @-prefix label
     // convention. Teammate messages (@name/tool) go to teammateMessages for

@@ -16,7 +16,7 @@ import { forkChat } from '../engine/chat-provider.js';
  * Core module interface (common between AgentContext and ChildContext)
  */
 interface CoreModule {
-  brief(level: 'info' | 'warn' | 'error', tool: string, message: string, detail?: string): void;
+  brief(level: 'info' | 'warn' | 'error', tool: string, message: string, detail?: string, opts?: { synthetic?: boolean }): void;
 }
 
 /**
@@ -170,7 +170,8 @@ export function handleCheckpoint(
   const coloredThreshold = chalk.gray(`${tokenThreshold.toLocaleString()}`);
   ctx.core.brief('info', 'checkpoint',
     `${description} (${coloredTokens}/${coloredThreshold} tokens)`,
-    `id: ${coloredId}`
+    `id: ${coloredId}`,
+    { synthetic: true }
   );
 
   return {

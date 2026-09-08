@@ -348,7 +348,7 @@ export interface CoreModule {
   getWorkDir(): string;
   setWorkDir(dir: string): void;
   getName(): string;
-  brief(level: 'info' | 'warn' | 'error', tool: string, message: string, detail?: string): void;
+  brief(level: 'info' | 'warn' | 'error', tool: string, message: string, detail?: string, opts?: { synthetic?: boolean }): void;
   /**
    * Get current confusion index (0-20 range)
    */
