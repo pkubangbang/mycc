@@ -502,12 +502,12 @@ function fmtTime(at: number): string {
     ></div>
     <!-- State-machine stage tag row (diagnostic) — visible ONLY in
          detailed-logs (详细日志) mode. Sits inside .chat-input, below the top
-         divider, above the input row, as a full-width strip. Surfaces the
-         frontend-owned flags that drive send()'s input/steer routing so the
-         user can see exactly why a message will be submitted as a query vs
-         buffered as a steering note — and catch desync (e.g. the backend is
-         blocked at PROMPT while the frontend believes otherwise) in flows
-         like 停止-button → submit. -->
+         divider, above the input row, as a full-width strip. Since the phase
+         enum became the single source of truth, the row shows the derived
+         stage label (which already encodes phase/isWaiting/isRunning —
+         isWaiting ⟺ stage is 卡片待回复/PROMPT 等待输入, isRunning ⟺ 运行中/已提交)
+         plus only the state the phase cannot express: the orthogonal auto
+         flag, the two queue sizes, and the last server message. -->
     <div
       v-if="state.verboseLogs"
       class="stage-row"
@@ -517,9 +517,6 @@ function fmtTime(at: number): string {
         class="stage-chip stage-chip--phase"
         :class="{ 'stage-chip--warn': isVacuumStage }"
       >{{ stage }}</span>
-      <span class="stage-chip stage-chip--phase">phase={{ state.phase }}</span>
-      <span class="stage-chip" :class="{ 'stage-chip--on': state.isWaiting }">isWaiting={{ state.isWaiting }}</span>
-      <span class="stage-chip" :class="{ 'stage-chip--on': state.isRunning }">isRunning={{ state.isRunning }}</span>
       <span class="stage-chip" :class="{ 'stage-chip--on': state.isAutoMode }">auto={{ state.isAutoMode }}</span>
       <span class="stage-chip">steerBuffer={{ state.steeringBuffer.length }}</span>
       <span class="stage-chip">review={{ state.pendingSteeringReview.length }}</span>
