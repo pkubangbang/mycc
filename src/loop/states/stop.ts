@@ -26,7 +26,6 @@ import { autoState } from '../auto-state.js';
 import { startWrapUp } from '../esc-wrap-up.js';
 import { loader } from '../../context/shared/loader.js';
 import { stopSpinner } from '../../engine/chat-helpers.js';
-import { getServeHub } from '../../serve/serve-registry.js';
 
 export async function handleStop(
   env: MachineEnv,
@@ -49,23 +48,22 @@ export async function handleStop(
         console.log(chalk.gray('auto mode is off. Prompt resumed.'));
       }
 
-      // Drain any steering notes queued during the interrupted run. The run
-      // they were steering is now gone (停止/ESC aborted it), so they are
-      // stale actionable direction. If left in the queue, they would linger
-      // and, on the next auto re-engagement, immediately re-wake AWAIT →
-      // COLLECT → hint round → ... a tight loop that never drains them
-      // (each COLLECT drains the note but the hint round re-runs and the
-      // loop keeps cycling). Draining here discards the stale notes so the
-      // loop returns to a clean PROMPT. This mirrors the PROMPT steering
-      // synthesis path, which also treats post-interrupt notes as stale.
-      // Best-effort: no-op when serve isn't running.
-      try {
-        if (getServeHub().isRunning()) {
-          getServeHub().drainSteering();
-        }
-      } catch {
-        // serve not running / import cycle — best-effort, no throw
-      }
+      // Steering notes queued during the interrupted run are NOT drained
+      // here. They stay in both the backend steeringQueue and the frontend
+      // steeringBuffer. When STOP returns PROMPT, web-input-provider.ts
+      // broadcasts 'prompt', and the frontend's prompt handler
+      // (message-dispatch.ts) moves any non-empty steeringBuffer into
+      // pendingSteeringReview — surfacing a "继续…" review card so the user
+      // can send them as a fresh query or discard them. Draining here (the
+      // old behavior) broadcast steer-flush BEFORE the prompt broadcast,
+      // clearing the frontend buffer before the review-card path could read
+      // it — silently losing the notes.
+      //
+      // Tight-loop safety: STOP turns auto OFF above, and auto re-engagement
+      // requires streak >= threshold (default 3) LLM stages in a turn —
+      // impossible at PROMPT (streak was just reset). If the user re-clicks
+      // auto with notes queued, AWAIT re-wakes → COLLECT drains them (one
+      // cycle) → queue empty → AWAIT blocks. One cycle, not a tight loop.
 
       // Branch on the last triologue role:
       // - 'assistant' → HOOK→STOP path: the LLM ran in neglected mode (empty
