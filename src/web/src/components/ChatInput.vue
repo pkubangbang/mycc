@@ -692,22 +692,13 @@ function fmtTime(at: number): string {
   white-space: nowrap;
   font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
 }
-.stage-chip--on {
-  background: color-mix(in srgb, #07c160 14%, var(--bg-input-field));
-  color: #07c160;
-  border-color: color-mix(in srgb, #07c160 45%, transparent);
-}
 /* Fixed-width value chips: anti-jitter. min-width (NOT width) + a ch budget
    that INCLUDES the 18px border-box chrome (2×8px padding + 2×1px border):
-   the widest realistic value (auto=false=10ch, steerBuffer=99=14ch,
-   review=99=9ch) fills the box exactly; narrower values stay centered.
+   the widest realistic value (steerBuffer=99=14ch, review=99=9ch) fills the
+   box exactly; narrower values stay centered.
    min-width over width: an underestimated budget makes the chip grow ~1ch
    (harmless reflow) instead of spilling glyphs past the pill. Keep the 18px
    in sync with .stage-chip's horizontal padding (2×8px) + border (2×1px). */
-.stage-chip--auto {
-  min-width: calc(10ch + 18px);
-  justify-content: center;
-}
 .stage-chip--steer {
   min-width: calc(14ch + 18px);
   justify-content: center;
