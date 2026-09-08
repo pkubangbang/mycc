@@ -116,12 +116,56 @@ export function classifyError(err: unknown): ErrorType {
 // Retry Configuration
 // ============================================================================
 
+/**
+ * Default inter-token liveness window for RESPONSE chunks. The liveness
+ * timer is reset on every streamed chunk; if no chunk arrives within this
+ * window the stream is considered stalled and aborted. This replaces the
+ * former hard total-cap (responseTimeoutMs=120s) so a slow-but-steady
+ * stream that keeps producing tokens can finish in the long run instead of
+ * being killed mid-generation at an arbitrary wall-clock ceiling.
+ *
+ * `responseTimeoutMs` on {@link RetryConfig} is retained, but only as the
+ * escalation ceiling for {@link escalateFirstTokenTimeout} (the first-token
+ * timeout doubles per retry attempt, capped at responseTimeoutMs). It is no
+ * longer a total-response cap inside collectStream.
+ */
+export const DEFAULT_TOKEN_LIVENESS_TIMEOUT_MS = 10_000;
+
+/**
+ * Default inter-token liveness window for THINKING chunks (reasoning_content
+ * / thinking). The thinking process is by design slower than the real
+ * responding process and has a bigger spur — more tokens between longer
+ * intermissions. A cloud server may pause scheduling during a long reasoning
+ * chain for longer than the response window without the stream being dead.
+ * This wider window (30s) tolerates such a normal thinking-phase pause so the
+ * stream is not killed mid-reasoning, losing all streamed thinking tokens and
+ * forcing a from-scratch retry. A genuine stall (no chunk of any kind for 30s
+ * during thinking) still trips.
+ */
+export const DEFAULT_THINKING_LIVENESS_TIMEOUT_MS = 30_000;
+
 export interface RetryConfig {
   maxRetries: number;
   baseDelayMs: number;
   maxDelayMs: number;
   firstTokenTimeoutMs?: number;
   responseTimeoutMs?: number;
+  /**
+   * Inter-token liveness window for RESPONSE chunks (content, not thinking).
+   * Response generation should produce tokens steadily; a gap longer than
+   * this is a genuine stall. Defaults to
+   * {@link DEFAULT_TOKEN_LIVENESS_TIMEOUT_MS} (10s).
+   */
+  tokenLivenessTimeoutMs?: number;
+  /**
+   * Inter-token liveness window for THINKING chunks (reasoning_content /
+   * thinking). The thinking process is by design slower than responding and
+   * has a bigger spur — more tokens between longer intermissions — so it
+   * gets a more tolerant window. A normal server-side scheduling pause
+   * during a long reasoning chain should not kill the stream. Defaults to
+   * {@link DEFAULT_THINKING_LIVENESS_TIMEOUT_MS} (30s).
+   */
+  thinkingLivenessTimeoutMs?: number;
 }
 
 export const DEFAULT_RETRY_CONFIG: RetryConfig = {
@@ -130,6 +174,8 @@ export const DEFAULT_RETRY_CONFIG: RetryConfig = {
   maxDelayMs: 10000,
   firstTokenTimeoutMs: 20000,
   responseTimeoutMs: 120000,
+  tokenLivenessTimeoutMs: DEFAULT_TOKEN_LIVENESS_TIMEOUT_MS,
+  thinkingLivenessTimeoutMs: DEFAULT_THINKING_LIVENESS_TIMEOUT_MS,
 };
 
 /** Standard retryChat request shape used by all providers. */
@@ -166,12 +212,19 @@ export function sleep(ms: number, signal?: AbortSignal): Promise<void> {
       reject(new StreamAbortedError());
       return;
     }
-    const timeoutId = setTimeout(resolve, ms);
+    // Declare onAbort before timeoutId so the resolve callback can reference
+    // it for removeEventListener. { once: true } only auto-removes on abort;
+    // on the normal setTimeout-resolve path the listener would otherwise stay
+    // attached to the (shared, retryChat-reused) signal and accumulate.
+    const onAbort = () => {
+      clearTimeout(timeoutId);
+      reject(new StreamAbortedError());
+    };
+    const timeoutId = setTimeout(() => {
+      if (signal) signal.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
     if (signal) {
-      const onAbort = () => {
-        clearTimeout(timeoutId);
-        reject(new StreamAbortedError());
-      };
       signal.addEventListener('abort', onAbort, { once: true });
     }
   });
@@ -258,17 +311,55 @@ export async function retryWithBackoff<T>(
 const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 let spinnerInterval: ReturnType<typeof setInterval> | null = null;
 let spinnerFrame = 0;
+// Time + token statistics for the "thinking..." spinner. Reset in
+// startSpinner, incremented via updateSpinnerTokens by the LLM stream's
+// onChunk callback, and read every frame to render the live suffix
+// "(27s, 4505 tokens)" once the wait exceeds 5 seconds.
+let spinnerStartTime = 0;
+let spinnerTokenCount = 0;
+const SPINNER_STATS_THRESHOLD_S = 5;
 
 export function startSpinner(prefix: string = 'Thinking'): void {
   if (spinnerInterval) return;
 
   process.stderr.write('\x1b[?25l');
   spinnerFrame = 0;
+  spinnerStartTime = Date.now();
+  spinnerTokenCount = 0;
   spinnerInterval = setInterval(() => {
     const frame = SPINNER_FRAMES[spinnerFrame % SPINNER_FRAMES.length];
-    process.stderr.write(`\r${frame} ${prefix}...`);
+    const elapsedS = Math.floor((Date.now() - spinnerStartTime) / 1000);
+    // Only show time/token stats after the wait exceeds the threshold so
+    // short responses keep the clean "⠋ thinking..." line. When stats are
+    // shown, omit the token count if it is still 0 (e.g. health-check
+    // spinners that have no LLM stream feeding tokens) to avoid a
+    // misleading "(0 tokens)".
+    let line: string;
+    if (elapsedS >= SPINNER_STATS_THRESHOLD_S) {
+      line = spinnerTokenCount > 0
+        ? `\r${frame} ${prefix}... (${elapsedS}s, ${spinnerTokenCount.toLocaleString()} tokens)`
+        : `\r${frame} ${prefix}... (${elapsedS}s)`;
+    } else {
+      line = `\r${frame} ${prefix}...`;
+    }
+    process.stderr.write(line);
     spinnerFrame++;
   }, 80);
+}
+
+/**
+ * Increment the running spinner's token counter by `delta`.
+ *
+ * Called by the LLM stream's per-chunk callback (wired in ollama.ts /
+ * deepseek.ts via collectStream's onChunk option) so each streamed chunk's
+ * text is estimated and the spinner's live "(N tokens)" suffix updates
+ * every frame. Safe to call when no spinner is running (noSpinner path or
+ * before startSpinner): it only mutates the module-level counter, which
+ * startSpinner resets to 0 on the next spin, so stray increments are
+ * harmless.
+ */
+export function updateSpinnerTokens(delta: number): void {
+  if (delta > 0) spinnerTokenCount += delta;
 }
 
 export function stopSpinner(): void {
@@ -287,7 +378,7 @@ export function stopSpinner(): void {
 export class StreamTimeoutError extends Error {
   constructor(
     message: string,
-    public readonly reason: 'first-token' | 'response',
+    public readonly reason: 'first-token' | 'liveness',
   ) {
     super(message);
     this.name = 'StreamTimeoutError';
@@ -307,22 +398,82 @@ export async function collectStream<T>(
   abort: (() => void) | undefined,
   config: {
     firstTokenTimeoutMs?: number;
-    responseTimeoutMs?: number;
+    /**
+     * Inter-token liveness window. The timer is reset on every chunk; if no
+     * chunk arrives within this window the stream is considered stalled and
+     * aborted. Defaults to {@link DEFAULT_TOKEN_LIVENESS_TIMEOUT_MS} (10s).
+     * A slow-but-steady stream keeps resetting the timer and never trips.
+     *
+     * This is the BASE/fallback window. When {@link livenessMsForChunk} is
+     * also supplied, it is called on each chunk to pick a per-chunk window
+     * (e.g. a wider window for thinking chunks, a tighter one for response
+     * chunks); the value returned overrides this for the window that
+     * follows that chunk. The initial window (before the first chunk) is
+     * always this base value.
+     */
+    tokenLivenessTimeoutMs?: number;
+    /**
+     * Optional per-chunk liveness classifier. Called on every chunk right
+     * before the liveness timer is (re)armed; its return value becomes the
+     * liveness window for the gap that follows this chunk. Return
+     * `undefined` to keep the current window unchanged (e.g. for a chunk
+     * that carries neither thinking nor response text).
+     *
+     * This lets a provider apply a MORE TOLERANT window during the thinking
+     * phase (reasoning is slower with longer intermissions) and a TIGHTER
+     * window during the response phase, without collectStream needing to
+     * know provider-specific chunk field names. The provider already
+     * inspects each chunk's fields in its `onChunk` callback, so the
+     * classifier is a small lambda delegating to the same field checks.
+     */
+    livenessMsForChunk?: (chunk: T) => number | undefined;
     signal?: AbortSignal;
+    /** Optional per-chunk callback invoked right after each chunk is
+     *  collected. Used by the LLM providers to feed incremental token
+     *  estimates into the spinner's live "(N tokens)" counter via
+     *  updateSpinnerTokens. Receives the raw chunk; the provider decides
+     *  which fields to estimate. Not invoked on abort or timeout. */
+    onChunk?: (chunk: T) => void;
   },
 ): Promise<T[]> {
-  const { firstTokenTimeoutMs, responseTimeoutMs, signal } = config;
+  const { firstTokenTimeoutMs, tokenLivenessTimeoutMs, livenessMsForChunk, signal, onChunk } = config;
+  const baseLivenessMs = tokenLivenessTimeoutMs ?? DEFAULT_TOKEN_LIVENESS_TIMEOUT_MS;
+  // The currently-active liveness window. Initialized to the base; updated
+  // per chunk by livenessMsForChunk (e.g. widened for thinking chunks,
+  // tightened for response chunks). Used in armLiveness() and in the
+  // StreamTimeoutError messages.
+  let currentLivenessMs = baseLivenessMs;
 
   let firstTokenTimeoutId: ReturnType<typeof setTimeout> | null = null;
-  let responseTimeoutId: ReturnType<typeof setTimeout> | null = null;
+  let livenessTimeoutId: ReturnType<typeof setTimeout> | null = null;
   let firstTokenReceived = false;
   let firstTokenTimeoutFired = false;
-  let responseTimeoutFired = false;
+  let livenessTimeoutFired = false;
+
+  const armLiveness = () => {
+    if (livenessTimeoutId) clearTimeout(livenessTimeoutId);
+    livenessTimeoutId = setTimeout(() => {
+      livenessTimeoutFired = true;
+      abort?.();
+    }, currentLivenessMs);
+  };
+
+  // Handle for the abortPromise's anonymous listener, so cleanup() can
+  // remove it on the normal-completion path. { once: true } only auto-removes
+  // when the signal actually fires 'abort'; on a normal stream completion the
+  // listener stays attached and (since retryChat reuses the same signal across
+  // attempts, and hint-round.ts reuses one signal across malformed-JSON
+  // retries) accumulates. Tracking + removing it here bounds the retention to
+  // one collectStream call.
+  let abortPromiseListener: (() => void) | null = null;
 
   const cleanup = () => {
     if (firstTokenTimeoutId) clearTimeout(firstTokenTimeoutId);
-    if (responseTimeoutId) clearTimeout(responseTimeoutId);
-    if (signal) signal.removeEventListener('abort', onAbort);
+    if (livenessTimeoutId) clearTimeout(livenessTimeoutId);
+    if (signal) {
+      signal.removeEventListener('abort', onAbort);
+      if (abortPromiseListener) signal.removeEventListener('abort', abortPromiseListener);
+    }
   };
 
   const onAbort = () => {
@@ -344,12 +495,12 @@ export async function collectStream<T>(
     }, firstTokenTimeoutMs);
   }
 
-  if (responseTimeoutMs) {
-    responseTimeoutId = setTimeout(() => {
-      responseTimeoutFired = true;
-      abort?.();
-    }, responseTimeoutMs);
-  }
+  // Arm the liveness timer at stream start. It is reset on every chunk below
+  // so a stream that keeps producing tokens (even slowly) never trips it;
+  // only a genuine stall (no chunk for `livenessMs`) fires it. This replaces
+  // the former one-shot total cap (responseTimeoutMs) that killed slow
+  // streams mid-generation at an arbitrary wall-clock ceiling.
+  armLiveness();
 
   // Sentinel value for the abort promise — resolves instead of rejects
   // to avoid unhandled Promise rejections when abort wins the race.
@@ -357,7 +508,8 @@ export async function collectStream<T>(
 
   const abortPromise = signal
     ? new Promise<typeof ABORT_SENTINEL>((resolve) => {
-        signal.addEventListener('abort', () => resolve(ABORT_SENTINEL), { once: true });
+        abortPromiseListener = () => resolve(ABORT_SENTINEL);
+        signal.addEventListener('abort', abortPromiseListener, { once: true });
       })
     : null;
 
@@ -375,6 +527,22 @@ export async function collectStream<T>(
         }
 
         chunks.push(chunk);
+        onChunk?.(chunk);
+
+        // Per-chunk liveness classification: the provider's classifier (if
+        // supplied) picks the window for the gap that follows this chunk —
+        // e.g. a wider window for a thinking chunk, a tighter one for a
+        // response chunk. `undefined` keeps the current window (e.g. for a
+        // done-only chunk carrying neither thinking nor response text).
+        if (livenessMsForChunk) {
+          const ms = livenessMsForChunk(chunk);
+          if (ms !== undefined) currentLivenessMs = ms;
+        }
+
+        // Reset the liveness timer on every chunk — a stream that keeps
+        // producing tokens (even slowly) never trips it. Only a genuine
+        // stall (no chunk for the current window) fires it.
+        armLiveness();
 
         if (signal?.aborted) throw new StreamAbortedError();
       }
@@ -385,10 +553,10 @@ export async function collectStream<T>(
           'first-token',
         );
       }
-      if (responseTimeoutFired) {
+      if (livenessTimeoutFired) {
         throw new StreamTimeoutError(
-          `Response timed out after ${responseTimeoutMs}ms`,
-          'response',
+          `Stream stalled: no token received for ${currentLivenessMs}ms`,
+          'liveness',
         );
       }
 
@@ -425,10 +593,10 @@ export async function collectStream<T>(
         'first-token',
       );
     }
-    if (responseTimeoutFired) {
+    if (livenessTimeoutFired) {
       throw new StreamTimeoutError(
-        `Response timed out after ${responseTimeoutMs}ms`,
-        'response',
+        `Stream stalled: no token received for ${currentLivenessMs}ms`,
+        'liveness',
       );
     }
     if (signal?.aborted) throw new StreamAbortedError(err instanceof Error ? err : undefined);

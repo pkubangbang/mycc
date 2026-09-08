@@ -20,10 +20,10 @@
  */
 
 import * as fs from 'fs';
-import * as path from 'path';
 import type { IdentityEntry } from '../types.js';
 import { getIdentityFile, getHeartbeatFile } from '../config.js';
 import { truncateToTokens } from '../utils/token.js';
+import { atomicWrite } from '../utils/atomic-write.js';
 
 const HEARTBEAT_INTERVAL_MS = 30_000;
 const MAX_HEARTBEATS = 3;
@@ -45,20 +45,6 @@ const FRESHNESS_WINDOW_MS = 90_000;
  * so an entry is pruned exactly when it stops appearing in the listing.
  */
 const IDENTITY_PRUNE_CUTOFF_MS = 60 * 60 * 1000;
-
-/**
- * Atomic file write: write to temp file then rename.
- * Matches the WAL-safe pattern used elsewhere in the codebase.
- */
-function atomicWrite(filePath: string, data: string): void {
-  const dir = path.dirname(filePath);
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
-  const tmp = `${filePath}.tmp.${process.pid}`;
-  fs.writeFileSync(tmp, data, 'utf-8');
-  fs.renameSync(tmp, filePath);
-}
 
 /**
  * A recorded brief entry, stored alongside heartbeats in the heartbeat file.

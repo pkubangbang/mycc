@@ -59,7 +59,6 @@ vi.mock('../../../serve/serve-registry.js', () => ({
 import { handleWait } from '../../../loop/states/await.js';
 import { AgentState } from '../../../loop/state-machine.js';
 import { agentIO } from '../../../loop/agent-io.js';
-import { autoState } from '../../../loop/auto-state.js';
 import { getServeHub } from '../../../serve/serve-registry.js';
 import { createTurnVars, createChatData, createMockMachineEnv } from '../esc-test-helpers.js';
 

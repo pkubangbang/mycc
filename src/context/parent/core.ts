@@ -14,6 +14,7 @@ import { getVisionModel, isVisionEnabled, getImgCacheDir } from '../../config.js
 import { BaseCore } from '../shared/base-core.js';
 import { evaluateGrant, isPlanModeWritablePath } from '../grant/grant-evaluator.js';
 import { getServeHub } from '../../serve/serve-registry.js';
+import { atomicWrite } from '../../utils/atomic-write.js';
 
 /**
  * Grant scope for external path access
@@ -118,8 +119,8 @@ export class Core extends BaseCore implements CoreModule {
    * Thread-safe: console.log is atomic in Node.js
    * @param detail - Optional greyed text to show after tool name (for showing intent)
    */
-  brief(level: 'info' | 'warn' | 'error', tool: string, message: string, detail?: string): void {
-    agentIO.brief(level, tool, message, detail);
+  brief(level: 'info' | 'warn' | 'error', tool: string, message: string, detail?: string, opts?: { synthetic?: boolean }): void {
+    agentIO.brief(level, tool, message, detail, opts);
   }
 
   /**
@@ -359,18 +360,13 @@ export class Core extends BaseCore implements CoreModule {
   }
 
   /**
-   * Atomically write a cache entry. Uses a PID-suffixed temp file then
-   * fs.renameSync (atomic on both POSIX and NTFS) so concurrent writers from
-   * different processes never observe a torn write.
+   * Atomically write a cache entry. Delegates to the shared atomicWrite
+   * (PID-suffixed temp + rename with Windows-EPERM retry + orphan cleanup),
+   * so concurrent writers from different processes never observe a torn
+   * write.
    */
   private writeCacheFile(filePath: string, entry: PictureCacheEntry): void {
-    // Ensure the cache directory exists (defensive — ensureDirs() also covers it)
-    if (!fs.existsSync(this.pictureCacheDir)) {
-      fs.mkdirSync(this.pictureCacheDir, { recursive: true });
-    }
-    const tempPath = `${filePath}.${process.pid}.tmp`;
-    fs.writeFileSync(tempPath, JSON.stringify(entry, null, 2));
-    fs.renameSync(tempPath, filePath);
+    atomicWrite(filePath, JSON.stringify(entry, null, 2));
   }
 
   /**

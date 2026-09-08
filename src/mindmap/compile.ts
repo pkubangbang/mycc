@@ -14,6 +14,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import type { MindmapJSON, Node } from './types.js';
 import { compute_file_hash } from './validate.js';
+import { atomicWrite } from '../utils/atomic-write.js';
 import {
   parse_markdown,
   build_node,
@@ -180,12 +181,12 @@ async function summarize_with_explorer(
 
 /**
  * Save mindmap atomically (copy-on-write)
- * Writes to temp file first, then renames to ensure concurrent readers see valid data
+ * Writes to a temp file first, then renames to ensure concurrent readers see
+ * valid data. Delegates to the shared atomicWrite (Windows-EPERM retry +
+ * orphan cleanup + PID-suffixed temp).
  */
 function save_mindmap_atomic(mindmap: MindmapJSON, outPath: string): void {
-  const tempPath = `${outPath}.tmp`;
-  fs.writeFileSync(tempPath, JSON.stringify(mindmap, null, 2));
-  fs.renameSync(tempPath, outPath);
+  atomicWrite(outPath, JSON.stringify(mindmap, null, 2));
 }
 
 /**

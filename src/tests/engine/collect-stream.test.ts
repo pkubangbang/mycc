@@ -7,7 +7,27 @@
 
 import { describe, test, afterEach } from 'vitest';
 import { expect } from 'chai';
-import { collectStream, StreamAbortedError, StreamTimeoutError } from '../../engine/chat-helpers.js';
+import { EventEmitter } from 'node:events';
+import {
+  collectStream,
+  sleep,
+  StreamAbortedError,
+  StreamTimeoutError,
+  DEFAULT_TOKEN_LIVENESS_TIMEOUT_MS,
+  DEFAULT_THINKING_LIVENESS_TIMEOUT_MS,
+} from '../../engine/chat-helpers.js';
+
+/**
+ * A chunk shape that mirrors both providers: a `phase` tag identifies
+ * whether the chunk carries thinking text, response text, both, or neither.
+ * The livenessMsForChunk classifier below maps phase → window, exactly as
+ * ollama.ts (message.thinking / message.content) and deepseek.ts
+ * (delta.reasoning_content / delta.content) do.
+ */
+interface PhaseChunk {
+  phase: 'thinking' | 'response' | 'both' | 'neither';
+  text: string;
+}
 
 /**
  * Create an async iterable that yields items then rejects after a delay.
@@ -213,10 +233,16 @@ describe('collectStream — abort race condition', () => {
     expect(abortCalled).to.be.true;
   });
 
-  test('should throw StreamTimeoutError on response timeout (not raw cancel error)', async () => {
-    // Companion to the first-token timeout test: the response timeout fires
-    // after the first token arrived but before the stream completed. The
-    // catch block must convert the raw cancel into a StreamTimeoutError too.
+  test('should throw StreamTimeoutError on liveness timeout (not raw cancel error)', async () => {
+    // Companion to the first-token timeout test: the liveness timeout fires
+    // after the first token arrived but then NO further chunk arrives within
+    // the liveness window. The catch block must convert the raw cancel into
+    // a StreamTimeoutError too.
+    //
+    // Semantics: the liveness timer is reset on EVERY chunk, so a slow-but-
+    // steady stream never trips it — only a genuine stall (no chunk for the
+    // window) fires. This replaced the former one-shot total cap
+    // (responseTimeoutMs) that killed slow streams mid-generation.
     const controller = new AbortController();
 
     // A stream that yields one chunk (first token) then hangs forever. Its
@@ -239,7 +265,7 @@ describe('collectStream — abort race condition', () => {
     const resultPromise = collectStream(oneThenHangStream(), abortFn, {
       signal: controller.signal,
       firstTokenTimeoutMs: 10000, // large so first-token timeout does not fire
-      responseTimeoutMs: 20,      // short so response timeout fires quickly
+      tokenLivenessTimeoutMs: 20, // short so liveness timeout fires quickly
     });
 
     try {
@@ -247,8 +273,252 @@ describe('collectStream — abort race condition', () => {
       expect.fail('Expected collectStream to throw StreamTimeoutError');
     } catch (err) {
       expect(err).to.be.instanceOf(StreamTimeoutError);
-      expect((err as StreamTimeoutError).message).to.include('Response');
+      expect((err as StreamTimeoutError).message).to.include('stalled');
     }
     expect(abortCalled).to.be.true;
+  });
+
+  // ─── Phase-aware liveness (thinking vs response) ───────────────────────
+  //
+  // The user-reported bug: thinking/reasoning tokens are inherently slower
+  // with longer intermissions between larger spurts. A fixed 10s liveness
+  // window (the response default) kills a normal thinking-phase pause on
+  // every retry, so a stalled-during-thinking LLM can never resume. The fix
+  // gives thinking chunks a wider window (30s default) via the per-chunk
+  // livenessMsForChunk classifier, while response chunks keep the tight 10s
+  // window. These two tests pin that behavior:
+  //   1. A thinking-phase gap that exceeds the RESPONSE window but is under
+  //      the THINKING window SURVIVES — the stream is not killed mid-reasoning.
+  //   2. A response-phase gap that exceeds the RESPONSE window TRIPS — the
+  //      model is producing visible output and a gap here is a genuine stall.
+
+  /**
+   * Build a stream that yields an initial chunk, then waits `gapMs` before
+   * the next chunk. The initial chunk's `phase` sets the active liveness
+   * window (via the classifier); the gap is what the test exercises.
+   */
+  function makeStreamWithGap(
+    firstPhase: PhaseChunk['phase'],
+    gapMs: number,
+  ): { stream: AsyncIterable<PhaseChunk>; cancelFn: () => void } {
+    let cancelFn: () => void = () => {};
+    async function* gen(): AsyncIterable<PhaseChunk> {
+      yield { phase: firstPhase, text: 'first' };
+      // Hold the gap; if abort fires during it, reject with a raw cancel
+      // error (mirrors reader.cancel propagating through the async iterator).
+      await new Promise<void>((resolve, reject) => {
+        const t = setTimeout(resolve, gapMs);
+        cancelFn = () => {
+          clearTimeout(t);
+          reject(new Error('The reader has been cancelled'));
+        };
+      });
+      yield { phase: firstPhase, text: 'second' };
+    }
+    return { stream: gen(), cancelFn: () => cancelFn() };
+  }
+
+  /**
+   * The phase classifier used by both tests — mirrors ollama.ts
+   * (message.thinking / message.content) and deepseek.ts
+   * (delta.reasoning_content / delta.content): a chunk carrying response
+   * content gets the tight window; a chunk carrying only thinking gets the
+   * wide window; neither preserves the current window.
+   */
+  function phaseClassifier(
+    chunk: PhaseChunk,
+    responseMs: number,
+    thinkingMs: number,
+  ): number | undefined {
+    if (chunk.phase === 'response' || chunk.phase === 'both') return responseMs;
+    if (chunk.phase === 'thinking') return thinkingMs;
+    return undefined;
+  }
+
+  test('phase-aware liveness: a thinking gap under the THINKING window survives (would trip the RESPONSE window)', async () => {
+    // A gap of 60ms. The RESPONSE window is 30ms (would trip); the THINKING
+    // window is 200ms (survives). With phase-aware liveness the thinking
+    // chunk widens the window to 200ms, so the 60ms gap does NOT trip and
+    // the stream completes. This is the core fix: a normal thinking-phase
+    // pause is no longer killed mid-reasoning.
+    const controller = new AbortController();
+    const { stream, cancelFn } = makeStreamWithGap('thinking', 60);
+
+    const abortFn = () => cancelFn();
+    const result = await collectStream(stream, abortFn, {
+      signal: controller.signal,
+      firstTokenTimeoutMs: 10000, // large; first token arrives immediately anyway
+      tokenLivenessTimeoutMs: 30, // base/response window (tight)
+      livenessMsForChunk: (c: PhaseChunk) =>
+        phaseClassifier(c, 30, 200), // thinking → 200ms wide window
+    });
+
+    // Stream completed: both chunks collected, no liveness trip.
+    expect(result).to.have.lengthOf(2);
+    expect(result[0].text).to.equal('first');
+    expect(result[1].text).to.equal('second');
+  });
+
+  test('phase-aware liveness: a response gap over the RESPONSE window trips (tight window enforced)', async () => {
+    // Same 60ms gap, but now the chunk is a RESPONSE chunk. The classifier
+    // applies the tight 30ms window, so the 60ms gap EXCEEDS it and the
+    // liveness timer fires → StreamTimeoutError. This guards the other half:
+    // response generation should flow steadily; a gap here is a real stall.
+    const controller = new AbortController();
+    const { stream, cancelFn } = makeStreamWithGap('response', 60);
+
+    let abortCalled = false;
+    const abortFn = () => {
+      abortCalled = true;
+      cancelFn();
+    };
+
+    const resultPromise = collectStream(stream, abortFn, {
+      signal: controller.signal,
+      firstTokenTimeoutMs: 10000, // large; first token arrives immediately
+      tokenLivenessTimeoutMs: 30, // base/response window (tight)
+      livenessMsForChunk: (c: PhaseChunk) =>
+        phaseClassifier(c, 30, 200), // response → 30ms tight window
+    });
+
+    try {
+      await resultPromise;
+      expect.fail('Expected collectStream to throw StreamTimeoutError');
+    } catch (err) {
+      expect(err).to.be.instanceOf(StreamTimeoutError);
+      expect((err as StreamTimeoutError).message).to.include('stalled');
+      // The stalled window reported is the active RESPONSE window (30ms),
+      // not the thinking window — confirms the classifier selected tight.
+      expect((err as StreamTimeoutError).message).to.include('30ms');
+    }
+    expect(abortCalled).to.be.true;
+  });
+
+  test('DEFAULT_THINKING_LIVENESS_TIMEOUT_MS is wider than DEFAULT_TOKEN_LIVENESS_TIMEOUT_MS', async () => {
+    // Guard constant: the thinking window must be strictly wider than the
+    // response window, or the phase-aware fix is a no-op. If someone
+    // accidentally equalizes them, the thinking-phase pause protection
+    // disappears and the original bug returns.
+    expect(DEFAULT_THINKING_LIVENESS_TIMEOUT_MS).to.be.greaterThan(
+      DEFAULT_TOKEN_LIVENESS_TIMEOUT_MS,
+    );
+  });
+
+  // ─── Abort-listener cleanup (regression for un-removed listeners) ──────
+  //
+  // collectStream registers TWO 'abort' listeners on the signal: the named
+  // onAbort (removed in cleanup) and an anonymous one inside abortPromise
+  // (previously NOT removed). { once: true } only auto-removes when the
+  // signal actually fires 'abort'; on the normal-completion path both stayed
+  // attached. Since retryChat reuses the same signal across retry attempts,
+  // and hint-round.ts reuses one signal across malformed-JSON retries, the
+  // leaked listeners accumulated. These tests verify cleanup() now removes
+  // ALL listeners on every exit path.
+
+  /**
+   * Count 'abort' listeners on an AbortSignal. AbortSignal inherits from
+   * EventEmitter in Node, so EventEmitter.listenerCount works across
+   * versions (some Node versions don't expose AbortSignal.listenerCount).
+   */
+  function abortListenerCount(signal: AbortSignal): number {
+    return EventEmitter.listenerCount(signal as unknown as EventEmitter, 'abort');
+  }
+
+  test('collectStream removes all abort listeners on normal stream completion', async () => {
+    const controller = new AbortController();
+    const baseline = abortListenerCount(controller.signal);
+
+    async function* simpleStream() {
+      yield 'a';
+      yield 'b';
+    }
+
+    await collectStream(simpleStream(), () => {}, {
+      signal: controller.signal,
+    });
+
+    expect(abortListenerCount(controller.signal)).to.equal(baseline,
+      'abort listeners leaked after normal collectStream completion');
+  });
+
+  test('collectStream removes all abort listeners on first-token timeout', async () => {
+    const controller = new AbortController();
+    const baseline = abortListenerCount(controller.signal);
+
+    let cancelFn: (() => void) | null = null;
+    async function* hangingStream(): AsyncIterable<string> {
+      await new Promise<void>((_, reject) => {
+        cancelFn = () => reject(new Error('The reader has been cancelled'));
+      });
+    }
+
+    const resultPromise = collectStream(hangingStream(), () => cancelFn?.(), {
+      signal: controller.signal,
+      firstTokenTimeoutMs: 20,
+    });
+
+    try {
+      await resultPromise;
+      expect.fail('Expected collectStream to throw StreamTimeoutError');
+    } catch (err) {
+      expect(err).to.be.instanceOf(StreamTimeoutError);
+    }
+
+    expect(abortListenerCount(controller.signal)).to.equal(baseline,
+      'abort listeners leaked after first-token timeout');
+  });
+
+  test('sleep removes its abort listener on normal resolve', async () => {
+    const controller = new AbortController();
+    const baseline = abortListenerCount(controller.signal);
+
+    await sleep(10, controller.signal);
+
+    expect(abortListenerCount(controller.signal)).to.equal(baseline,
+      'abort listener leaked after sleep normal resolve');
+  });
+
+  test('sleep removes its abort listener even on the abort path (no double-removal error)', async () => {
+    const controller = new AbortController();
+    const baseline = abortListenerCount(controller.signal);
+
+    const sleepPromise = sleep(10000, controller.signal);
+    // Abort immediately so onAbort fires (clears timeout, rejects).
+    controller.abort();
+
+    try {
+      await sleepPromise;
+      expect.fail('Expected sleep to reject with StreamAbortedError');
+    } catch (err) {
+      expect(err).to.be.instanceOf(StreamAbortedError);
+    }
+
+    // { once: true } auto-removes on abort; the explicit removeEventListener
+    // in the resolve path is not reached (the timeout was cleared). Either
+    // way the listener count must be back to baseline.
+    expect(abortListenerCount(controller.signal)).to.equal(baseline,
+      'abort listener leaked after sleep abort');
+  });
+
+  test('repeated collectStream calls on the same signal do not accumulate listeners', async () => {
+    // The hint-round.ts scenario: retryLoop reuses one AbortController.signal
+    // across many iterations. Before the fix, each collectStream call left an
+    // anonymous abortPromise listener, so a pathological round (many
+    // malformed-JSON retries) accumulated unbounded listeners on one signal.
+    const controller = new AbortController();
+    const baseline = abortListenerCount(controller.signal);
+
+    async function* simpleStream() {
+      yield 'x';
+    }
+
+    for (let i = 0; i < 10; i++) {
+      await collectStream(simpleStream(), () => {}, {
+        signal: controller.signal,
+      });
+    }
+
+    expect(abortListenerCount(controller.signal)).to.equal(baseline,
+      'listeners accumulated across repeated collectStream calls on the same signal');
   });
 });

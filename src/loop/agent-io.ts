@@ -53,7 +53,7 @@ export class PromptAbortError extends Error {
  *               [HH:MM:SS] [tool] header as the terminal. Plain log/warn/error
  *               leave it undefined (treated as a raw verbose log line).
  */
-type OutputCallback = (method: 'log' | 'warn' | 'error', args: unknown[], label?: string, detail?: string) => void;
+type OutputCallback = (method: 'log' | 'warn' | 'error', args: unknown[], label?: string, detail?: string, synthetic?: boolean) => void;
 
 /**
  * Subcommand hints for slash commands.
@@ -448,7 +448,7 @@ class AgentIO {
    * @param message - Main message text
    * @param detail - Optional greyed detail shown after the tool tag
    */
-  brief(level: 'info' | 'warn' | 'error', tool: string, message: string, detail?: string): void {
+  brief(level: 'info' | 'warn' | 'error', tool: string, message: string, detail?: string, opts?: { synthetic?: boolean }): void {
     const now = new Date();
     const timestamp = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
     const colorFn = getToolColor(tool);
@@ -474,10 +474,12 @@ class AgentIO {
 
     // Mirror to web UI (serve mode) — send the clean message text once,
     // carrying the tool label so the web UI can render the same
-    // [HH:MM:SS] [tool] header as the terminal.
+    // [HH:MM:SS] [tool] header as the terminal. `synthetic` marks machine-
+    // originated briefs (hook engine, debug evaluator, checkpoint bookkeeping)
+    // so the WebUI can hide them from the chat log (terminal keeps them).
     if (this.outputCallback) {
       const method: 'log' | 'warn' | 'error' = level === 'error' ? 'error' : level === 'warn' ? 'warn' : 'log';
-      this.outputCallback(method, [message], tool, detail);
+      this.outputCallback(method, [message], tool, detail, opts?.synthetic);
     }
   }
 

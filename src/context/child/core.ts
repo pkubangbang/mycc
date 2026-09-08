@@ -24,16 +24,19 @@ export class ChildCore extends BaseCore implements CoreModule {
     return this.name;
   }
 
-  brief(level: 'info' | 'warn' | 'error', tool: string, message: string, detail?: string): void {
+  brief(level: 'info' | 'warn' | 'error', tool: string, message: string, detail?: string, opts?: { synthetic?: boolean }): void {
     if (level === 'error') {
-      ipc.sendNotification('error', { error: message, detail, tool });
+      ipc.sendNotification('error', { error: message, detail, tool, synthetic: opts?.synthetic ?? false });
     } else {
       // Forward `tool` so the parent can build the @-prefix teammate label
       // (@sender/tool) for the WebUI teammate timeline. Without this, the
       // tool tag is lost at the IPC boundary and all teammate messages end
       // up labeled only with the sender name in the main chat log. See the
       // "@-prefix teammate label convention" section in MYCC.md.
-      ipc.sendNotification('log', { message, detail, tool });
+      // `synthetic` rides along so machine-originated briefs emitted inside
+      // the child (hook engine, debug evaluator) stay hidden in the WebUI
+      // after the parent re-briefs them under the @label.
+      ipc.sendNotification('log', { message, detail, tool, synthetic: opts?.synthetic ?? false });
     }
   }
 

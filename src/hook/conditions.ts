@@ -15,6 +15,7 @@ import * as path from 'path';
 import { getMyccDir } from '../config.js';
 import { Sequence } from './sequence.js';
 import { structuredChat } from '../engine/chat-provider.js';
+import { atomicWrite } from '../utils/atomic-write.js';
 import {
   validateCondition,
   compileCondition,
@@ -322,25 +323,15 @@ export class ConditionRegistry {
     }
     
     try {
-      const dir = path.dirname(this.filePath);
-      if (!fs.existsSync(dir)) {
-        fs.mkdirSync(dir, { recursive: true });
-      }
-
       // Backup existing file if it exists
       if (fs.existsSync(this.filePath)) {
         const backupPath = `${this.filePath}.backup`;
         fs.copyFileSync(this.filePath, backupPath);
       }
 
-      // Write to temp file in SAME directory (avoids cross-device rename issues)
-      const tempFile = `${this.filePath}.tmp.${Date.now()}`;
-      
+      // Atomic write (temp-file + rename with Windows-EPERM retry).
       const content = JSON.stringify(data, null, 2);
-      fs.writeFileSync(tempFile, content, 'utf-8');
-
-      // Atomic rename (works within same filesystem)
-      fs.renameSync(tempFile, this.filePath);
+      atomicWrite(this.filePath, content);
 
       return { success: true };
     } catch (err) {

@@ -492,8 +492,8 @@ export class ServeHub implements HubHandler {
   // Output bridge (called by agentIO output callback)
   // ===========================================================================
 
-  broadcast(type: string, content: string, label?: string, detail?: string): void {
-    this.clients.broadcast(type, content, label, detail, this.messageLog);
+  broadcast(type: string, content: string, label?: string, detail?: string, synthetic?: boolean): void {
+    this.clients.broadcast(type, content, label, detail, synthetic, this.messageLog);
   }
 
   /** Broadcast to all clients EXCEPT the sender (multi-browser user-bubble sync). */

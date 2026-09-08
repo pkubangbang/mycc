@@ -4,9 +4,9 @@
  *
  * When the agent reaches PROMPT with steering notes STILL PENDING in the
  * backend queue (notes the agent never consumed — they were neither drained
- * at COLLECT nor synthesized at PROMPT), main.ts moves them from
- * `state.steeringBuffer` into `state.pendingSteeringReview` at the moment
- * the 'prompt' message flips isWaiting true. This card then renders at the
+ * at COLLECT nor synthesized at PROMPT), message-dispatch.ts moves them from
+ * `store.steeringBuffer` into `store.pendingSteeringReview` at the moment
+ * the 'prompt' message transitions the phase to `prompt`. This card then
  * tail of the chat log flow — in the same visual spot as other question
  * cards — and asks the user to decide what to do with those notes:
  *

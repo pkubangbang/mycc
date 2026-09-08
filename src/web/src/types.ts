@@ -32,6 +32,10 @@ export interface ChatMessage {
   /** Tool intent/description (e.g. "RUN USER TO list project files" for bash).
    *  When present, rendered as an outlined box above the bubble content. */
   detail?: string;
+  /** Machine-originated brief (hook engine, debug evaluator, checkpoint
+   *  bookkeeping) — hidden from the chat log by the synthetic filter in
+   *  message-dispatch.ts / fetchHistory(). Omitted for normal messages. */
+  synthetic?: boolean;
   /** Card payload — present when type === 'card'. Drives CardItem.vue.
    *  Populated by applyServerMessage when a card wire message arrives (see
    *  the top-level cardId/query/kind fields below); persisted onto messages
@@ -58,6 +62,22 @@ export interface ChatMessage {
 
 export type ConnectionStatus = 'connected' | 'disconnected' | 'reconnecting';
 
+/** The 6 phases of the web UI interaction state machine. Re-exported here
+ *  (canonical definition in `stores/chat-store.ts`) so components importing
+ *  from `types.ts` can type-check against it without a circular import.
+ *
+ *  | Phase       | Meaning                                       | Server signal(s)         |
+ *  |-------------|-----------------------------------------------|--------------------------|
+ *  | `idle`      | Transient vacuum between `running:off` & next  | (gap)                    |
+ *  | `submitted` | Send→running gap; backend doing post-input LLM | (client optimistic)      |
+ *  | `working`   | Agent actively processing (running:on)        | `running:on`             |
+ *  | `prompt`    | Waiting for user input                        | `prompt` + `running:off` |
+ *  | `card`      | Interactive card pending response             | `card`                   |
+ *  | `await`     | Auto mode, idle, waiting for events           | `auto:on` (no running)   |
+ *
+ *  See `docs/webui-phase-fsm-design.md` §2.2. */
+export type WebuiPhase = 'idle' | 'submitted' | 'working' | 'prompt' | 'card' | 'await';
+
 /** A steering note with a stable id, so duplicate text can be targeted
  *  individually (per-note discard/send keyed by id, not text). */
 export interface SteeringNote {
@@ -65,29 +85,52 @@ export interface SteeringNote {
   text: string;
 }
 
+/**
+ * The reactive state surface exposed to components. This mirrors the Pinia
+ * store's state + derived getters (`stores/chat-store.ts`). The `phase` enum
+ * is the single source of truth; `isWaiting` / `isRunning` / `hasPendingCard`
+ * / `hasReview` are **derived** from it (read-only projections that can never
+ * reach an invalid combination). `isAutoMode` is an **orthogonal boolean**
+ * (not derived from `phase === 'await'`).
+ *
+ * Components receive this as a `state` prop (typed `ChatState`). In practice
+ * the prop is the Pinia store instance, whose reactive refs/computeds satisfy
+ * this interface. The store's `setPhase` / `setAutoMode` actions are NOT part
+ * of this interface — components read state and call `chatApi` to mutate; only
+ * `applyServerMessage` and `chatApi` call the store actions directly.
+ */
 export interface ChatState {
   messages: ChatMessage[];
   inputText: string;
-  /** true when a prompt is pending user input (input box enabled) */
+  /** The single source of truth for the interaction state machine. */
+  phase: WebuiPhase;
+  /** Derived: `phase === 'prompt' || phase === 'card'`. True when a prompt OR
+   *  card is pending user input (input box enabled). Read-only projection. */
   isWaiting: boolean;
-  /** true while the agent is actively working (between submit and next prompt) */
+  /** Derived: `phase === 'working' || phase === 'submitted'`. True while the
+   *  agent is actively working, INCLUDING the send→running gap. Read-only. */
   isRunning: boolean;
-  /** true while the lead is in autonomous (auto) mode. The PROMPT stage is
-   *  replaced by an AWAIT stage that blocks for mail/teammate/steering events
-   *  instead of prompting, so the chat input box stays ENABLED for steering
-   *  even when neither isWaiting nor isRunning is true (the steady AWAIT
-   *  state broadcasts neither). Input in auto mode is always a steering
-   *  note (queued, consumed at the next COLLECT) — never a fresh prompt.
-   *  Set by a backend 'auto' broadcast on every flag flip + on WS connect. */
+  /** Orthogonal boolean (NOT derived from phase): true while the lead is in
+   *  autonomous (auto) mode. The PROMPT stage is replaced by an AWAIT stage
+   *  that blocks for mail/teammate/steering events instead of prompting, so
+   *  the chat input box stays ENABLED for steering even when neither
+   *  isWaiting nor isRunning are true (the steady AWAIT state broadcasts
+   *  neither). Input in auto mode is always a steering note (queued, consumed
+   *  at the next COLLECT) — never a fresh prompt. Set by a backend 'auto'
+   *  broadcast on every flag flip + on WS connect. */
   isAutoMode: boolean;
   connectionStatus: ConnectionStatus;
   /** true when a retry prompt is pending (network failure / error recovery) */
   showRetry: boolean;
-  /** true when an interactive card (ask()) is pending a response. While true,
-   *  the main chat input box is disabled so the user replies on the card
-   *  itself — otherwise dialog input would be silently dropped (the agent is
-   *  blocked in TOOL state awaiting the card resolver, not PROMPT state). */
+  /** Derived: `phase === 'card'`. True when an interactive card (ask()) is
+   *  pending a response. While true, the main chat input box is disabled so
+   *  the user replies on the card itself — otherwise dialog input would be
+   *  silently dropped (the agent is blocked in TOOL state awaiting the card
+   *  resolver, not PROMPT state). Read-only projection. */
   hasPendingCard: boolean;
+  /** Derived: `pendingSteeringReview.length > 0`. True when the steering
+   *  review "继续…" card has notes pending. Read-only projection. */
+  hasReview: boolean;
   /** 详细日志 toggle (default off). When off, only user-facing lines are shown
    *  (user, result/assistant, brief, question, prompt). When on, all logs
    *  (verbose tool output, warnings, errors) are shown too. */

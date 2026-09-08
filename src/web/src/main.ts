@@ -2,44 +2,38 @@
  * main.ts - Web UI entry point (HMR-persistent layer)
  *
  * This module is NEVER hot-replaced by Vite. It owns:
- * - The reactive ChatState (module-level, survives component HMR)
+ * - The Pinia chat store (module-level, survives component HMR)
  * - The WebSocket connection (module-level)
  * - The chatApi object exposed to components
  *
  * Vue components (App.vue + children) auto-HMR via @vitejs/plugin-vue:
- * their render functions are replaced while ref/reactive state is preserved.
- * Because the state lives here (not in any component), editing a component
+ * their render functions are replaced while the Pinia store is preserved.
+ * Because the store lives here (not in any component), editing a component
  * while the Web UI is running is safe — the WebSocket stays connected and
  * the chat history is not lost.
  */
 
-import { createApp, reactive } from 'vue';
+import { createApp } from 'vue';
+import { createPinia, setActivePinia } from 'pinia';
 import type { App as VueApp } from 'vue';
 import App from './App.vue';
-import type { ChatMessage, ChatState, CardOption, FileInfo, SteeringNote } from './types';
+import type { ChatMessage, CardOption, FileInfo, SteeringNote } from './types';
 import { applyServerMessage } from './message-dispatch';
 import { registerDebugSeam } from './debug';
 import { ensureHighlighterReady } from './highlight';
+import { useChatStore } from './stores/chat-store';
 import './style.css';
 
-// Reactive state — survives HMR (module-level, not in any component)
-const state = reactive<ChatState>({
-  messages: [],
-  inputText: '',
-  isWaiting: false,
-  isRunning: false,
-  isAutoMode: false,
-  connectionStatus: 'disconnected',
-  showRetry: false,
-  hasPendingCard: false,
-  verboseLogs: false,
-  steeringBuffer: [],
-  pendingSteeringReview: [],
-  pendingFiles: [],
-  teammateMessages: [],
-  darkMode: localStorage.getItem('mycc-theme') === 'dark',
-  debugMode: false,
-});
+// Pinia + chat store — survives HMR (module-level, not in any component).
+// useChatStore() runs here OUTSIDE any component setup, so Pinia requires an
+// explicitly-activated instance: createPinia() only *creates* the pinia —
+// the "active pinia" is installed by app.use(pinia) (bottom of this file,
+// too late for this module-level call) or by setActivePinia(). Without the
+// activation, getActivePinia() throws "no active Pinia" at page load and the
+// whole Web UI fails to boot.
+const pinia = createPinia();
+setActivePinia(pinia);
+const store = useChatStore();
 
 // Monotonic id counter for stable v-for keys (avoids array-index keys that
 // break when messages are filtered/inserted). See ChatLog.vue.
@@ -51,13 +45,13 @@ function nextId(): number {
 // pendingSteeringReview lifecycle: notes surfaced as the "继续…" card persist
 // across PROMPT cycles until the user explicitly acts on the card (send as
 // query / discard). They are populated ONLY from steeringBuffer at the moment
-// a 'prompt' message flips isWaiting true (notes still pending in the backend
-// queue — the agent never consumed them), NOT from the 'steer-flush' event
-// (which fires AFTER the agent already consumed the notes, so capturing there
-// would resurface already-received notes — the original bug). The array is
-// cleared only at explicit abandon events (auto-mode entry and the ws.onclose
-// handler below), so unhandled notes resurface at the next PROMPT instead of
-// being silently lost.
+// a 'prompt' message transitions to the `prompt` phase (notes still pending in
+// the backend queue — the agent never consumed them), NOT from the
+// 'steer-flush' event (which fires AFTER the agent already consumed the
+// notes, so capturing there would resurface already-received notes — the
+// original bug). The array is cleared only at explicit abandon events
+// (auto-mode entry via setAutoMode, and the ws.onclose handler below), so
+// unhandled notes resurface at the next PROMPT instead of being silently lost.
 
 /**
  * Whether a given message should be shown given the current 详细日志 setting.
@@ -105,16 +99,16 @@ function wsSend(data: object): boolean {
     try {
       ws.send(JSON.stringify(data));
       // Clear any prior send-error on a successful send
-      if (state.connectionError) state.connectionError = undefined;
+      if (store.connectionError) store.connectionError = undefined;
       return true;
     } catch {
       // fall through to failure path
     }
   }
-  state.connectionError = '连接已断开，消息未发送';
+  store.connectionError = '连接已断开，消息未发送';
   // Auto-clear the error after 3s so it doesn't linger forever
   setTimeout(() => {
-    state.connectionError = undefined;
+    store.connectionError = undefined;
   }, 3000);
   return false;
 }
@@ -135,12 +129,16 @@ async function fetchHistory(): Promise<void> {
     // Drop them from the visible record; non-empty prompts (e.g. 'Retry? [Y/n]')
     // remain visible. Also drop steer-echo/steer-flush entries — those belong
     // in the buffer bar (restored separately below), not the chat log.
+    // Synthetic messages (machine-originated briefs: hook engine, debug
+    // evaluator, checkpoint bookkeeping) are dropped too — the live WS path
+    // filters them in applyServerMessage; this mirrors that for /history.
     const visible = data.messages.filter(
       m => !(m.type === 'prompt' && !m.content)
         && m.type !== 'steer-echo'
         && m.type !== 'steer-flush'
         && m.type !== 'file-upload'
-        && m.type !== 'file-flush',
+        && m.type !== 'file-flush'
+        && !m.synthetic,
     );
     // Split teammate messages from the main chat log by the @-prefix label
     // convention. Teammate messages (@name/tool) go to teammateMessages for
@@ -149,16 +147,16 @@ async function fetchHistory(): Promise<void> {
     const teammateMsgs = visible.filter(m => m.label?.startsWith('@'));
     const mainMsgs = visible.filter(m => !m.label?.startsWith('@'));
     // Replace, not append — on reconnect we want a clean, authoritative snapshot.
-    state.messages.splice(0, state.messages.length, ...mainMsgs);
-    state.teammateMessages.splice(0, state.teammateMessages.length, ...teammateMsgs);
+    store.messages.splice(0, store.messages.length, ...mainMsgs);
+    store.teammateMessages.splice(0, store.teammateMessages.length, ...teammateMsgs);
     // Restore the steering buffer bar from the server's current queue (peek,
     // not consume). Survives a page refresh within the same serve session.
     const queued = data.steeringBuffer ?? [];
-    state.steeringBuffer.splice(0, state.steeringBuffer.length, ...queued);
+    store.steeringBuffer.splice(0, store.steeringBuffer.length, ...queued);
     // Restore the agent running state from the server. The backend owns the
-    // single source of truth — we never set isRunning locally.
+    // single source of truth — we set the phase, never a loose flag.
     if (typeof data.isRunning === 'boolean') {
-      state.isRunning = data.isRunning;
+      store.setPhase(data.isRunning ? 'working' : 'idle');
     }
   } catch {
     // Network failure — leave existing messages; WS reconnect will retry.
@@ -181,7 +179,7 @@ function connectWebSocket(): void {
   ws = new WebSocket(`${protocol}//${location.host}/ws`);
 
   ws.onopen = () => {
-    state.connectionStatus = 'connected';
+    store.connectionStatus = 'connected';
   };
 
   ws.onmessage = (event) => {
@@ -192,19 +190,19 @@ function connectWebSocket(): void {
       return; // ignore malformed messages
     }
     // Delegate the pure state-transition logic to the DOM-free dispatch module.
-    applyServerMessage(state, msg, { nextId, chatApi });
+    // The store is the single mutation surface; applyServerMessage calls
+    // store.setPhase() / store.setAutoMode() per the transition table.
+    applyServerMessage(store, msg, { nextId, chatApi });
   };
 
   ws.onclose = () => {
-    state.connectionStatus = 'reconnecting';
+    store.connectionStatus = 'reconnecting';
     // Reset stale interaction state so the UI doesn't leave a dead Retry
     // button or spinner while disconnected. The server re-sends a 'prompt'
     // (or 'card') on reconnect if the agent is still waiting, so these
     // get restored correctly after reconnection — no permanent dead-end.
-    state.isWaiting = false;
-    state.isRunning = false;
-    state.showRetry = false;
-    state.hasPendingCard = false;
+    store.setPhase('idle');
+    store.showRetry = false;
     // Disconnect abandons any pending steering review: the review card is
     // PROMPT-gated (isWaiting), which is now false, and the user can't act
     // on it while disconnected. On reconnect the server re-sends 'prompt' if
@@ -212,7 +210,7 @@ function connectWebSocket(): void {
     // the (still-pending) steeringBuffer at that point — but stale notes
     // captured before the drop may have since been consumed by the agent, so
     // resurfacing them would be misleading. Drop them.
-    state.pendingSteeringReview.splice(0);
+    store.pendingSteeringReview.splice(0);
     // Do NOT reset isAutoMode here: it is a durable session-level flag the
     // server resends on reconnect (see the on-connect broadcast in
     // serve-hub.ts). Clearing it would flicker the chat input box disabled
@@ -230,7 +228,7 @@ function connectWebSocket(): void {
 
   ws.onerror = () => {
     // Let onclose handle the reconnect scheduling; just update status.
-    state.connectionStatus = 'reconnecting';
+    store.connectionStatus = 'reconnecting';
   };
 }
 
@@ -256,7 +254,7 @@ window.addEventListener('beforeunload', () => {
 // highlighter init is non-blocking to the WS (it resolves quickly and only
 // gates rendering, which happens at mount below).
 void (async () => {
-  state.connectionStatus = 'reconnecting';
+  store.connectionStatus = 'reconnecting';
   await ensureHighlighterReady();
   await fetchHistory();
   connectWebSocket();
@@ -264,18 +262,22 @@ void (async () => {
 
 // Apply the persisted (or default) theme class on startup so the page
 // renders in the correct theme immediately — no flash of wrong colors.
-document.documentElement.classList.toggle('dark', state.darkMode);
+document.documentElement.classList.toggle('dark', store.darkMode);
 
 // Expose for components (send messages, exit, retry)
 export const chatApi = {
   sendInput(text: string, files?: FileInfo[]): void {
     if (!text.trim() && (!files || files.length === 0)) return;
     // Echo the user's input as a local message for immediate feedback
-    state.messages.push({ type: 'user', content: text || '(uploaded files)', timestamp: Date.now(), id: nextId() });
-    state.inputText = '';
-    state.pendingFiles = [];
-    state.isWaiting = false;
-    state.showRetry = false;
+    store.messages.push({ type: 'user', content: text || '(uploaded files)', timestamp: Date.now(), id: nextId() });
+    store.inputText = '';
+    store.pendingFiles = [];
+    // Optimistic: phase → submitted (send→running gap). The backend is now
+    // inside the PROMPT handler doing post-input LLM work before it
+    // broadcasts 'running on'. The 15s expiry safety net lives in
+    // ChatInput.vue's justSubmitted latch (kept as a UI diagnostic).
+    store.setPhase('submitted');
+    store.showRetry = false;
     wsSend({ type: 'input', text: text || undefined, files: files && files.length > 0 ? files : undefined });
   },
   /**
@@ -287,13 +289,13 @@ export const chatApi = {
    * server's 'steer-echo' broadcast is the single source of truth for the
    * buffer bar (it populates the bar for all clients, including this one).
    * Pushing locally would double-count on the originating client. Also DO
-   * NOT flip isWaiting/isRunning: the LLM is still working.
+   * NOT change phase: the LLM is still working.
    */
   sendSteer(text: string, files?: FileInfo[]): void {
     if (!text.trim() && (!files || files.length === 0)) return;
-    state.messages.push({ type: 'user', content: text || '(uploaded files)', timestamp: Date.now(), id: nextId() });
-    state.inputText = '';
-    state.pendingFiles = [];
+    store.messages.push({ type: 'user', content: text || '(uploaded files)', timestamp: Date.now(), id: nextId() });
+    store.inputText = '';
+    store.pendingFiles = [];
     wsSend({ type: 'steer', text: text || undefined, files: files && files.length > 0 ? files : undefined });
   },
   /**
@@ -310,14 +312,23 @@ export const chatApi = {
    */
   resolveSteering(sendIds: number[]): void {
     // Local optimistic clear: the card disappears and the input box re-enables.
-    state.pendingSteeringReview.splice(0);
-    state.steeringBuffer.splice(0);
+    store.pendingSteeringReview.splice(0);
+    store.steeringBuffer.splice(0);
     // The backend owns the authoritative queue; this is a single positive
     // message (no separate discard-then-input ordering problem).
     wsSend({ type: 'steer-resolve', sendIds });
   },
   sendExit(): void {
     wsSend({ type: 'exit' });
+  },
+  /** Safety-net expiry for the `submitted` phase. Called by ChatInput.vue's
+   *  15s latch when no server message (running:on / prompt / card) transitioned
+   *  the phase away from `submitted` in time — a sign the backend is genuinely
+   *  desynced (e.g. the input was silently dropped by a stale-client race).
+   *  Falls back to `idle` so the vacuum diagnostic surfaces instead of being
+   *  masked forever. No WS message — purely a frontend recovery. */
+  expireSubmitted(): void {
+    store.setPhase('idle');
   },
   sendInterrupt(): void {
     wsSend({ type: 'interrupt' });
@@ -336,33 +347,42 @@ export const chatApi = {
   sendRetry(answer: string): void {
     // Echo the chosen retry answer as a user bubble so the user sees their
     // choice reflected in the chat record (matches sendInput feedback).
-    state.messages.push({ type: 'user', content: answer, timestamp: Date.now(), id: nextId() });
-    state.showRetry = false;
-    state.inputText = '';
-    state.isWaiting = false;
+    store.messages.push({ type: 'user', content: answer, timestamp: Date.now(), id: nextId() });
+    store.showRetry = false;
+    store.inputText = '';
+    // Optimistic: the retry answer is a fresh input → submitted phase.
+    store.setPhase('submitted');
     wsSend({ type: 'input', text: answer });
   },
   /** Respond to an interactive card. Called by CardItem.vue. */
   sendCardResponse(cardId: string, value: string): void {
-    state.isWaiting = false;
-    state.hasPendingCard = false;
+    // Optimistic: card-response → working always (agent resumes TOOL→LLM).
+    // Matches the transition table; the server confirms via subsequent
+    // broadcasts (running:on / prompt).
+    store.setPhase('working');
     wsSend({ type: 'card-response', cardId, value });
   },
   toggleVerboseLogs(): void {
-    state.verboseLogs = !state.verboseLogs;
+    store.verboseLogs = !store.verboseLogs;
   },
   toggleTheme(): void {
-    state.darkMode = !state.darkMode;
-    document.documentElement.classList.toggle('dark', state.darkMode);
-    localStorage.setItem('mycc-theme', state.darkMode ? 'dark' : 'light');
+    store.darkMode = !store.darkMode;
+    document.documentElement.classList.toggle('dark', store.darkMode);
+    localStorage.setItem('mycc-theme', store.darkMode ? 'dark' : 'light');
   },
 };
 
 // Install the debug seam so reproducible tests (and the debug panel) can
 // inject synthetic server messages through the same dispatch path as the real
 // WS handler. Registered only under import.meta.env.DEV; a no-op otherwise.
-registerDebugSeam(state, { nextId, chatApi });
+registerDebugSeam(store, { nextId, chatApi });
 
-// Create Vue app
-mountedApp = createApp(App, { state });
+// Create Vue app — install Pinia, then pass the store as the `state` prop.
+// The store satisfies the `ChatState` interface (its reactive refs/computeds
+// are unwrapped by Vue's template renderer, and the prop typing accepts the
+// store's shape). Components read `state.phase` / `state.isWaiting` etc. and
+// call `chatApi` to mutate; only applyServerMessage and chatApi call the
+// store actions directly.
+mountedApp = createApp(App, { state: store });
+mountedApp.use(pinia);
 mountedApp.mount('#app');

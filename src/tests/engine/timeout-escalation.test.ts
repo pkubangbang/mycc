@@ -18,6 +18,13 @@
  *     attempts when early attempts throw StreamTimeoutError.
  *  3. ollama.ts retryChat keeps the base timeout when early attempts throw
  *     a non-timeout transient error (ECONNRESET).
+ *  4. ollama.ts retryChat escalates BOTH liveness windows (response +
+ *     thinking) across attempts when early attempts throw StreamTimeoutError,
+ *     mirroring the first-token escalation. The thinking window is wider
+ *     than the response window and both double per attempt (capped at
+ *     responseTimeoutMs). Regression for the bug where a stalled-during-
+ *     stream LLM hit the identical fixed liveness wall on every retry and
+ *     could never resume.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -83,10 +90,24 @@ import {
   DEFAULT_RETRY_CONFIG,
 } from '../../engine/chat-helpers.js';
 
-// Collect the per-attempt firstTokenTimeoutMs values that ollama.ts's
-// retryChat passes into collectStream, by mocking collectStream to record
-// the config it receives and throw a controlled error per attempt.
-const collectStreamCalls: Array<{ firstTokenTimeoutMs?: number }> = [];
+// Collect the per-attempt config values that ollama.ts's retryChat passes
+// into collectStream, by mocking collectStream to record the config it
+// receives and throw a controlled error per attempt. We capture:
+//  - firstTokenTimeoutMs: the per-attempt first-token wait (escalated).
+//  - tokenLivenessTimeoutMs: the per-attempt RESPONSE liveness window
+//    (escalated; passed as a direct config field by ollama.ts).
+//  - livenessMsForChunk: the per-chunk classifier closure. ollama.ts does
+//    NOT pass the THINKING liveness window as a direct config field — it
+//    bakes the escalated thinking value into the classifier closure
+//    (returns attemptThinkingLivenessMs for thinking-only chunks). So to
+//    observe the thinking window we capture the classifier and invoke it
+//    with a synthetic thinking-only chunk (mirrors ollama.ts's own field
+//    check: message.thinking set, message.content empty).
+const collectStreamCalls: Array<{
+  firstTokenTimeoutMs?: number;
+  tokenLivenessTimeoutMs?: number;
+  livenessMsForChunk?: (chunk: unknown) => number | undefined;
+}> = [];
 
 // We import retryChat fresh per test by isolating the module registry so the
 // collectStream mock can be (re)installed with a new behavior. Vitest's
@@ -100,7 +121,11 @@ const collectStreamCalls: Array<{ firstTokenTimeoutMs?: number }> = [];
 // false → no escalation. So loadOllamaRetryChat also returns the mocked
 // module's StreamTimeoutError, and the test throws THAT class.
 async function loadOllamaRetryChat(
-  collectStreamImpl: (config: { firstTokenTimeoutMs?: number }) => Promise<unknown[]>,
+  collectStreamImpl: (config: {
+    firstTokenTimeoutMs?: number;
+    tokenLivenessTimeoutMs?: number;
+    livenessMsForChunk?: (chunk: unknown) => number | undefined;
+  }) => Promise<unknown[]>,
 ): Promise<{
   retryChat: typeof import('../../engine/ollama.js')['retryChat'];
   StreamTimeoutError: typeof import('../../engine/chat-helpers.js')['StreamTimeoutError'];
@@ -112,11 +137,30 @@ async function loadOllamaRetryChat(
     exposedStreamTimeoutError = actual.StreamTimeoutError as typeof import('../../engine/chat-helpers.js')['StreamTimeoutError'];
     return {
       ...actual,
-      // Override collectStream to record the timeout and delegate to the
-      // per-test behavior. Keep all other real exports (escalateFirstTokenTimeout,
-      // StreamTimeoutError, calculateDelay, sleep, etc.) from the original.
-      collectStream: vi.fn(async (_stream: unknown, _abort: unknown, config: { firstTokenTimeoutMs?: number }) => {
-        collectStreamCalls.push({ firstTokenTimeoutMs: config.firstTokenTimeoutMs });
+      // Override collectStream to record the per-attempt timeouts and delegate
+      // to the per-test behavior. Keep all other real exports
+      // (escalateFirstTokenTimeout, StreamTimeoutError, calculateDelay, sleep,
+      // etc.) from the original. ollama.ts passes tokenLivenessTimeoutMs (the
+      // escalated RESPONSE window) as a direct config field, and bakes the
+      // escalated THINKING window into the livenessMsForChunk closure (it is
+      // NOT a separate config field — the classifier returns it for
+      // thinking-only chunks). We capture the classifier so the tests can
+      // invoke it with a synthetic thinking-only chunk and read out the
+      // thinking window, exactly as collectStream does at runtime.
+      collectStream: vi.fn(async (
+        _stream: unknown,
+        _abort: unknown,
+        config: {
+          firstTokenTimeoutMs?: number;
+          tokenLivenessTimeoutMs?: number;
+          livenessMsForChunk?: (chunk: unknown) => number | undefined;
+        },
+      ) => {
+        collectStreamCalls.push({
+          firstTokenTimeoutMs: config.firstTokenTimeoutMs,
+          tokenLivenessTimeoutMs: config.tokenLivenessTimeoutMs,
+          livenessMsForChunk: config.livenessMsForChunk,
+        });
         return collectStreamImpl(config);
       }),
     };
@@ -131,6 +175,25 @@ async function loadOllamaRetryChat(
     exposedStreamTimeoutError = (helpers as unknown as { StreamTimeoutError: typeof import('../../engine/chat-helpers.js')['StreamTimeoutError'] }).StreamTimeoutError;
   }
   return { retryChat: mod.retryChat, StreamTimeoutError: exposedStreamTimeoutError };
+}
+
+/**
+ * Read the THINKING liveness window that ollama.ts baked into a captured
+ * livenessMsForChunk classifier, by invoking it with a synthetic thinking-
+ * only chunk (message.thinking set, message.content empty) — the exact
+ * field shape ollama.ts's classifier checks. Returns undefined if no
+ * classifier was captured for that call (should not happen for retryChat).
+ */
+function thinkingWindowFromCall(call: { livenessMsForChunk?: (chunk: unknown) => number | undefined }): number | undefined {
+  return call.livenessMsForChunk?.({ message: { thinking: 'reasoning', content: '' } });
+}
+
+/**
+ * Read the RESPONSE liveness window from a captured classifier, by invoking
+ * it with a synthetic response-only chunk (message.content set, no thinking).
+ */
+function responseWindowFromCall(call: { livenessMsForChunk?: (chunk: unknown) => number | undefined }): number | undefined {
+  return call.livenessMsForChunk?.({ message: { content: 'response' } });
 }
 
 describe('escalateFirstTokenTimeout()', () => {
@@ -234,5 +297,123 @@ describe('ollama.ts retryChat — escalating first-token timeout across attempts
     for (const call of collectStreamCalls) {
       expect(call.firstTokenTimeoutMs).toBe(20000);
     }
+  });
+
+  it('should escalate BOTH liveness windows (response + thinking) across attempts when early attempts time out', async () => {
+    // Regression for the streaming-liveness bug: the inter-token liveness
+    // timeout was FIXED across retry attempts (unlike the first-token timeout
+    // which IS escalated). Once a cloud model stalled mid-stream for >10s,
+    // all 4 retries hit the identical 10s wall and the LLM could never
+    // resume. The fix escalates BOTH liveness windows per attempt (mirroring
+    // escalateFirstTokenTimeout), with the thinking window wider than the
+    // response window (reasoning is slower with longer intermissions).
+    const { retryChat, StreamTimeoutError: MockedSTE } = await loadOllamaRetryChat(async (config) => {
+      // First two attempts: liveness timeout (reason 'liveness'). Third: succeed.
+      const idx = collectStreamCalls.length;
+      if (idx <= 2) {
+        throw new MockedSTE(
+          `Stream stalled: no token received for ${config.tokenLivenessTimeoutMs}ms`,
+          'liveness',
+        );
+      }
+      return [{ message: { content: 'ok' }, done: true, done_reason: 'stop' }];
+    });
+
+    const response = await retryChat(
+      { model: 'test-model', messages: [] },
+      { baseDelayMs: 0, maxDelayMs: 0, noSpinner: true },
+    );
+
+    // 3 collectStream calls across attempts 1, 2, 3.
+    expect(collectStreamCalls).toHaveLength(3);
+
+    // Response liveness window: 10s → 20s → 40s (doubles per attempt).
+    // Read directly from the config field ollama.ts passes.
+    expect(collectStreamCalls[0].tokenLivenessTimeoutMs).toBe(10000);
+    expect(collectStreamCalls[1].tokenLivenessTimeoutMs).toBe(20000);
+    expect(collectStreamCalls[2].tokenLivenessTimeoutMs).toBe(40000);
+    // Cross-check: the classifier returns the same value for a response chunk.
+    expect(responseWindowFromCall(collectStreamCalls[0])).toBe(10000);
+
+    // Thinking liveness window: 30s → 60s → 120s (doubles per attempt, and is
+    // ALWAYS wider than the response window on the same attempt). ollama.ts
+    // bakes the escalated thinking value into the livenessMsForChunk closure
+    // (it is NOT a separate config field), so we read it by invoking the
+    // classifier with a synthetic thinking-only chunk.
+    expect(thinkingWindowFromCall(collectStreamCalls[0])).toBe(30000);
+    expect(thinkingWindowFromCall(collectStreamCalls[1])).toBe(60000);
+    expect(thinkingWindowFromCall(collectStreamCalls[2])).toBe(120000);
+
+    // Invariant: the thinking window is strictly wider than the response
+    // window on every attempt (the phase-aware fix is meaningful only if
+    // this holds — otherwise thinking chunks get no extra tolerance).
+    for (const call of collectStreamCalls) {
+      expect(thinkingWindowFromCall(call)).toBeGreaterThan(
+        call.tokenLivenessTimeoutMs!,
+      );
+    }
+
+    expect(response.message?.content).toBe('ok');
+  });
+
+  it('should keep BOTH liveness windows at the base when early attempts fail with a non-timeout transient error', async () => {
+    // Companion to the non-timeout first-token test: a connectivity error
+    // (ECONNRESET) must NOT escalate the liveness windows either — more
+    // time won't help a connectivity issue. All attempts stay at the base
+    // (response 10s, thinking 30s).
+    const { retryChat } = await loadOllamaRetryChat(async (_config) => {
+      throw new Error('fetch failed: ECONNRESET');
+    });
+
+    await expect(
+      retryChat(
+        { model: 'test-model', messages: [] },
+        { baseDelayMs: 0, maxDelayMs: 0, noSpinner: true },
+      ),
+    ).rejects.toThrow(/ECONNRESET/);
+
+    expect(collectStreamCalls).toHaveLength(4);
+    for (const call of collectStreamCalls) {
+      expect(call.tokenLivenessTimeoutMs).toBe(10000);
+      // Thinking window read from the classifier closure (base 30s, not escalated).
+      expect(thinkingWindowFromCall(call)).toBe(30000);
+    }
+  });
+
+  it('should cap the liveness windows at responseTimeoutMs on later attempts', async () => {
+    // With the default cap (120s), the response liveness doubles 10→20→40→80s
+    // across 4 attempts (never hits the cap). But the thinking liveness
+    // doubles 30→60→120→240s — attempt 4 (240s) exceeds the 120s cap and must
+    // be clamped. Verify the cap is respected so liveness never exceeds the
+    // first-token escalation ceiling (which would let a stalled stream run
+    // far longer than the configured response budget).
+    const { retryChat, StreamTimeoutError: MockedSTE } = await loadOllamaRetryChat(async (_config) => {
+      // All 4 attempts fail with a liveness timeout.
+      throw new MockedSTE(
+        'Stream stalled: no token received',
+        'liveness',
+      );
+    });
+
+    await expect(
+      retryChat(
+        { model: 'test-model', messages: [] },
+        { baseDelayMs: 0, maxDelayMs: 0, noSpinner: true },
+      ),
+    ).rejects.toThrow(/stalled/);
+
+    // 4 attempts: response 10→20→40→80 (under cap); thinking 30→60→120→120 (capped).
+    expect(collectStreamCalls).toHaveLength(4);
+    expect(collectStreamCalls[0].tokenLivenessTimeoutMs).toBe(10000);
+    expect(collectStreamCalls[1].tokenLivenessTimeoutMs).toBe(20000);
+    expect(collectStreamCalls[2].tokenLivenessTimeoutMs).toBe(40000);
+    expect(collectStreamCalls[3].tokenLivenessTimeoutMs).toBe(80000);
+
+    // Thinking window read from the classifier closure (baked in by ollama.ts).
+    expect(thinkingWindowFromCall(collectStreamCalls[0])).toBe(30000);
+    expect(thinkingWindowFromCall(collectStreamCalls[1])).toBe(60000);
+    expect(thinkingWindowFromCall(collectStreamCalls[2])).toBe(120000);
+    // Attempt 4: 30 * 2^3 = 240s, capped at responseTimeoutMs (120s).
+    expect(thinkingWindowFromCall(collectStreamCalls[3])).toBe(120000);
   });
 });

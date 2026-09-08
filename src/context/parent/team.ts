@@ -257,12 +257,15 @@ export class TeamManager implements TeamModule {
       const message = msg.message as string;
       const detail = msg.detail as string | undefined;
       const tool = msg.tool as string | undefined;
+      const synthetic = msg.synthetic as boolean | undefined;
       // Build the @-prefix teammate label for the WebUI teammate timeline.
       // @sender/tool routes the message into state.teammateMessages instead
       // of the main chat log. Without a tool tag (rare), fall back to
       // @sender. See the "@-prefix teammate label convention" in MYCC.md.
+      // `synthetic` (machine-originated brief from the child) is forwarded
+      // so the WebUI keeps hiding it after the re-brief.
       const label = tool ? `@${sender}/${tool}` : `@${sender}`;
-      this.context.core.brief('info', label, message, detail);
+      this.context.core.brief('info', label, message, detail, { synthetic });
       return;
     }
 
@@ -270,10 +273,11 @@ export class TeamManager implements TeamModule {
       const error = msg.error as string;
       const detail = msg.detail as string | undefined;
       const tool = msg.tool as string | undefined;
+      const synthetic = msg.synthetic as boolean | undefined;
       // Same @-prefix routing as the log handler above — teammate errors go
       // to the teammate timeline, not the main chat log.
       const label = tool ? `@${sender}/${tool}` : `@${sender}`;
-      this.context.core.brief('error', label, error, detail);
+      this.context.core.brief('error', label, error, detail, { synthetic });
       return;
     }
 

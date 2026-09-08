@@ -20,14 +20,18 @@ import {
   sleep,
   startSpinner,
   stopSpinner,
+  updateSpinnerTokens,
   retryWithBackoff,
   StreamAbortedError,
   StreamTimeoutError,
   DEFAULT_RETRY_CONFIG,
+  DEFAULT_TOKEN_LIVENESS_TIMEOUT_MS,
+  DEFAULT_THINKING_LIVENESS_TIMEOUT_MS,
   type RetryConfig,
   type RetryChatRequest,
   type RetryChatConfig,
 } from './chat-helpers.js';
+import { estimateTextTokens } from '../utils/token.js';
 
 export const MODEL = getOllamaModel();
 
@@ -208,8 +212,27 @@ export async function retryChat(
         cfg.responseTimeoutMs ?? 120000,
         previousWasTimeout,
       );
+      // Escalate BOTH liveness windows (response + thinking) on the same
+      // previousWasTimeout trigger. The thinking window is wider than the
+      // response window (reasoning is slower with longer intermissions), and
+      // both double per attempt so a model that stalls mid-stream gets
+      // progressively more room to ride through a pause on each retry instead
+      // of hitting the same fixed wall 4× in a row (the bug: a stalled LLM
+      // never resumed because every retry used the identical liveness timeout).
+      const attemptLivenessMs = escalateFirstTokenTimeout(
+        cfg.tokenLivenessTimeoutMs ?? DEFAULT_TOKEN_LIVENESS_TIMEOUT_MS,
+        attempt,
+        cfg.responseTimeoutMs ?? 120000,
+        previousWasTimeout,
+      );
+      const attemptThinkingLivenessMs = escalateFirstTokenTimeout(
+        cfg.thinkingLivenessTimeoutMs ?? DEFAULT_THINKING_LIVENESS_TIMEOUT_MS,
+        attempt,
+        cfg.responseTimeoutMs ?? 120000,
+        previousWasTimeout,
+      );
       if (previousWasTimeout && attempt > 1) {
-        agentIO.verbose('ollama', `Escalating first-token timeout to ${attemptTimeoutMs}ms for attempt ${attempt}`);
+        agentIO.verbose('ollama', `Escalating first-token timeout to ${attemptTimeoutMs}ms, liveness (response) to ${attemptLivenessMs}ms, liveness (thinking) to ${attemptThinkingLivenessMs}ms for attempt ${attempt}`);
       }
 
       try {
@@ -231,6 +254,11 @@ export async function retryChat(
 
         const postTimeoutMs = attemptTimeoutMs;
         let postTimeoutId: ReturnType<typeof setTimeout> | undefined;
+        // Track the abort listener so the finally block can remove it on the
+        // normal chatPromise-wins path. { once: true } only auto-removes on
+        // actual abort; without this the listener stays on the retryChat-
+        // reused signal and accumulates across attempts / hint-round retries.
+        let postAbortListener: (() => void) | undefined;
         const postRacePromise = new Promise<never>((_, reject) => {
           postTimeoutId = setTimeout(() => {
             reject(new StreamTimeoutError(
@@ -239,10 +267,11 @@ export async function retryChat(
             ));
           }, postTimeoutMs);
           if (signal) {
-            signal.addEventListener('abort', () => {
+            postAbortListener = () => {
               if (postTimeoutId) clearTimeout(postTimeoutId);
               reject(new StreamAbortedError());
-            }, { once: true });
+            };
+            signal.addEventListener('abort', postAbortListener, { once: true });
           }
         });
 
@@ -261,6 +290,7 @@ export async function retryChat(
           throw raceErr;
         } finally {
           if (postTimeoutId) clearTimeout(postTimeoutId);
+          if (signal && postAbortListener) signal.removeEventListener('abort', postAbortListener);
         }
 
         const chunks = await collectStream<ChatResponse>(
@@ -268,8 +298,40 @@ export async function retryChat(
           () => stream.abort(),
           {
             firstTokenTimeoutMs: attemptTimeoutMs,
-            responseTimeoutMs: cfg.responseTimeoutMs,
+            tokenLivenessTimeoutMs: attemptLivenessMs,
             signal,
+            // Phase-aware liveness: thinking chunks (message.thinking only)
+            // get a wider window than response chunks (message.content).
+            // The thinking process is slower with longer intermissions, so a
+            // normal server-side scheduling pause during reasoning should not
+            // kill the stream. A chunk carrying response content (with or
+            // without thinking) uses the tighter response window — the model
+            // is producing visible output and should keep flowing. A chunk
+            // carrying neither (e.g. a done-only terminator) returns undefined
+            // so the current window is preserved.
+            livenessMsForChunk: (chunk) => {
+              const msg = chunk.message;
+              if (!msg) return undefined;
+              const hasResponse = !!msg.content;
+              const hasThinking = !!(msg.thinking as string | undefined);
+              if (hasResponse) return attemptLivenessMs;
+              if (hasThinking) return attemptThinkingLivenessMs;
+              return undefined;
+            },
+            // Feed each chunk's content + thinking text into the spinner's
+            // live token counter so the "thinking... (Xs, Y tokens)" suffix
+            // updates every frame. The inter-token liveness window is applied
+            // by collectStream itself (phase-aware via livenessMsForChunk
+            // above); responseTimeoutMs is no longer a total cap — it remains
+            // only as the first-token escalation ceiling.
+            onChunk: (chunk) => {
+              const msg = chunk.message;
+              if (!msg) return;
+              let delta = 0;
+              if (msg.content) delta += estimateTextTokens(msg.content);
+              if (msg.thinking) delta += estimateTextTokens(msg.thinking as string);
+              if (delta > 0) updateSpinnerTokens(delta);
+            },
           },
         );
 

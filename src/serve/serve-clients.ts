@@ -89,6 +89,7 @@ export class ClientRegistry {
     content: string,
     label?: string,
     detail?: string,
+    synthetic?: boolean,
     log?: MessageLogHolder,
   ): void {
     const cleanContent = stripAnsi(content);
@@ -101,12 +102,21 @@ export class ClientRegistry {
       const entry: LogEntry = { type, content: cleanContent, timestamp };
       if (label) entry.label = label;
       if (cleanDetail) entry.detail = cleanDetail;
+      // `synthetic` marks machine-originated briefs (hook engine, debug
+      // evaluator, checkpoint bookkeeping) that the WebUI hides from the
+      // chat log. Omitted when falsy so the wire format and /history replay
+      // stay unchanged for all normal messages.
+      if (synthetic) entry.synthetic = true;
       log.push(entry);
       if (log.length > MAX_LOG_SIZE) {
         log.shift();
       }
     }
-    const payload = JSON.stringify({ type, content: cleanContent, label, timestamp, detail: cleanDetail || undefined });
+    const payload = JSON.stringify({
+      type, content: cleanContent, label, timestamp,
+      detail: cleanDetail || undefined,
+      synthetic: synthetic || undefined,
+    });
     for (const ws of this.clients) {
       this.sendTo(ws, payload);
     }

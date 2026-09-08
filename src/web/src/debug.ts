@@ -20,12 +20,15 @@
  */
 
 import type { ChatState, ChatMessage, SteeringNote } from './types';
-import { applyServerMessage, type DispatchContext } from './message-dispatch';
+import { applyServerMessage, type DispatchContext, type DispatchState } from './message-dispatch';
 
 export interface DebugSnapshot {
+  phase: string;
   isWaiting: boolean;
   isRunning: boolean;
   isAutoMode: boolean;
+  hasPendingCard: boolean;
+  hasReview: boolean;
   debugMode: boolean;
   steeringBuffer: SteeringNote[];
   pendingSteeringReview: SteeringNote[];
@@ -33,7 +36,7 @@ export interface DebugSnapshot {
   teammateMessageCount: number;
   /** Type + timestamp of the last server message dispatched (diagnostic —
    *  mirrors state.lastServerMsg so the debug panel/agents can see which
-   *  wire message last flipped the flags). */
+   *  wire message last flipped the phase). */
   lastServerMsg?: { type: string; at: number };
 }
 
@@ -47,11 +50,14 @@ export interface MyccDebug {
 }
 
 /**
- * Install the debug seam. Called once from main.ts after `state` exists and
+ * Install the debug seam. Called once from main.ts after the store exists and
  * before (or after) mount; it only touches the global if DEV + free.
+ *
+ * The `state` param is the Pinia store instance (satisfies `DispatchState` for
+ * `applyServerMessage` and `ChatState` for component prop typing).
  */
 export function registerDebugSeam(
-  state: ChatState,
+  state: DispatchState & ChatState,
   ctx: DispatchContext,
 ): void {
   if (typeof window === 'undefined') return;
@@ -67,9 +73,12 @@ export function registerDebugSeam(
     },
     snapshot(): DebugSnapshot {
       return {
+        phase: state.phase,
         isWaiting: state.isWaiting,
         isRunning: state.isRunning,
         isAutoMode: state.isAutoMode,
+        hasPendingCard: state.hasPendingCard,
+        hasReview: state.hasReview,
         debugMode: state.debugMode,
         steeringBuffer: [...state.steeringBuffer],
         pendingSteeringReview: [...state.pendingSteeringReview],
@@ -92,9 +101,9 @@ export function registerDebugSeam(
     reset(): void {
       state.steeringBuffer.splice(0);
       state.pendingSteeringReview.splice(0);
-      state.isWaiting = false;
-      state.isRunning = false;
-      state.isAutoMode = false;
+      state.setPhase('idle');
+      state.setAutoMode(false);
+      state.showRetry = false;
       state.debugMode = false;
     },
   };

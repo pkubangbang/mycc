@@ -42,9 +42,9 @@ export async function activateServe(port: number, host?: string | null): Promise
   // [HH:MM:SS] [tool] header as the terminal; plain verbose logs have no
   // label. The detail parameter carries the tool's intent (e.g. bash command
   // description) for display in an outlined box inside the bubble.
-  agentIO.setOutputCallback((method, args, label, detail) => {
+  agentIO.setOutputCallback((method, args, label, detail, synthetic) => {
     const text = args.map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(' ');
-    hub.broadcast(method, text, label, detail);
+    hub.broadcast(method, text, label, detail, synthetic);
   });
   // Set up result mirroring (final assistant response via letter-box).
   // Labeled 'assistant' so the Web UI renders the [assistant] tag, matching

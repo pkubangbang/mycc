@@ -394,64 +394,87 @@ const inputAreaStyle = computed(() =>
 // A full-width row of chips, rendered as the FIRST element inside
 // .chat-input (below the top border/divider, above the input row), visible
 // ONLY when 详细日志 (state.verboseLogs) is on. It surfaces the frontend-
-// owned state used by send()'s routing decision, so the user can see at a
+// owned phase used by send()'s routing decision, so the user can see at a
 // glance WHY a submitted message will be routed as type:'input' (query) vs
 // type:'steer' (buffered) — and catch desync (e.g. backend blocked at PROMPT
 // while the frontend believes otherwise) in flows like 停止-button → submit.
 //
-// The stage label is derived from the SAME flags send() uses, evaluated in
-// the same priority order:
-//   1. 断线        — connection not established; nothing is sent anyway.
-//   2. 卡片待回复  — hasPendingCard; routing is blocked by the card gate.
+// Labels use the unified uppercase vocabulary requested by the user
+// (PROMPT / RUNNING / AWAIT / PARSING / QCARD / IDLE / OFFLINE). Each maps
+// 1:1 onto a distinct phase, so routing semantics are unchanged:
+//   1. OFFLINE     — connection not established; nothing is sent anyway.
+//   2. QCARD       — card phase; routing is blocked by the card gate.
 //   3. PROMPT      — isWaiting true with no pending card → sendInput (query).
-//   4. 运行中      — isRunning → sendSteer (COLLECT will drain as REMINDER).
-//   5. AWAIT 自动待命 — auto mode idle (steady AWAIT broadcasts neither prompt
-//                     nor running) → sendSteer (await.ts polls the queue).
-//   6. 已提交·后端处理中 — a query was JUST submitted (sendInput) and the
-//                     backend is still inside the PROMPT handler doing
-//                     post-input processing (keyword extraction / steering
-//                     synthesis — LLM calls!) before transitioning to
-//                     COLLECT. The frontend optimistically flipped
-//                     isWaiting=false at send, so without this latch the
-//                     window would read as the vacuum stage — a false
-//                     positive. Messages sent during this window go to the
-//                     steer buffer AND ARE consumed at the imminent COLLECT.
-//   7. 空窗(疑似失同步) — none of the above: send() would route to sendSteer
-//                     while the state machine has no consumer scheduled for
-//                     the buffer (the 停止-button vacuum). Amber warning.
+//   4. RUNNING     — isRunning (working) → sendSteer (COLLECT drains as
+//                    REMINDER).
+//   5. AWAIT       — auto mode idle (steady AWAIT broadcasts neither prompt
+//                    nor running; ALSO the post-turn resting state in auto:
+//                    running:off routes working→await when isAutoMode, since
+//                    the backend returns to AWAIT with no 'prompt' to follow)
+//                    → sendSteer (await.ts polls the queue).
+//   6. PARSING     — the send→running gap (submitted): a query was JUST
+//                    submitted (sendInput) and the backend is still inside
+//                    the PROMPT handler doing post-input processing (keyword
+//                    extraction / steering synthesis — LLM calls!) before
+//                    transitioning to COLLECT. Messages sent during this
+//                    window go to the steer buffer AND ARE consumed at the
+//                    imminent COLLECT.
+//   7. IDLE        — none of the above (the phase-enum `idle` vacuum):
+//                    send() would route to sendSteer while the state machine
+//                    has no consumer scheduled for the buffer (the 停止-button
+//                    vacuum). Amber warning.
 const stage = computed(() => {
-  if (props.state.connectionStatus !== 'connected') return '未连接';
-  if (props.state.hasPendingCard) return '卡片待回复';
-  if (props.state.isWaiting) return 'PROMPT 等待输入';
-  if (props.state.isRunning) return '运行中';
-  if (props.state.isAutoMode) return 'AWAIT 自动待命';
-  if (justSubmitted.value) return '已提交·后端处理中';
-  return '空窗(疑似失同步)';
+  if (props.state.connectionStatus !== 'connected') return 'OFFLINE';
+  const phase = props.state.phase;
+  if (phase === 'card') return 'QCARD';
+  if (phase === 'prompt') return 'PROMPT';
+  if (phase === 'working') return 'RUNNING';
+  if (phase === 'await') return 'AWAIT';
+  if (phase === 'submitted') return 'PARSING';
+  return 'IDLE';
 });
-// The 空窗 stage is the smoking-gun state — flag it so it renders amber.
-const isVacuumStage = computed(() => stage.value === '空窗(疑似失同步)');
+// The IDLE vacuum is the smoking-gun state — flag it so it renders amber.
+const isVacuumStage = computed(() => stage.value === 'IDLE');
 
-// Send→running latch: set when a query is submitted as type:'input'; cleared
-// as soon as the backend signals a stage transition (running on / prompt /
-// card) or disconnected. The 15s timer is a safety net: if the backend is
-// actually desynced (e.g. the input was silently dropped by a stale-client
-// race in submitInput), the latch MUST expire so the genuine vacuum stage
-// re-surfaces instead of being masked forever.
+// Send→running latch: the `submitted` phase is now set by chatApi.sendInput
+// (store.setPhase('submitted')). This latch is the 15s expiry safety net: if
+// the backend is genuinely desynced (e.g. the input was silently dropped by a
+// stale-client race in submitInput), the `submitted` phase MUST expire back to
+// `idle` so the genuine vacuum stage re-surfaces instead of being masked
+// forever. The latch watches the phase: as long as it stays `submitted`, the
+// timer is armed; the moment any server message transitions the phase away
+// (running:on → working, prompt → prompt, card → card, disconnect → idle),
+// the timer is cleared.
 const justSubmitted = ref(false);
 let submitLatchTimer: ReturnType<typeof setTimeout> | null = null;
+/** Arm the 15s expiry for the `submitted` phase. Called by send() right after
+ *  chatApi.sendInput optimistically sets phase='submitted'. If no server
+ *  message transitions the phase within 15s, fall back to `idle`. */
 function latchSubmitted(): void {
   justSubmitted.value = true;
   if (submitLatchTimer) clearTimeout(submitLatchTimer);
-  submitLatchTimer = setTimeout(() => { justSubmitted.value = false; }, 15000);
+  submitLatchTimer = setTimeout(() => {
+    justSubmitted.value = false;
+    // Only fall back if we're STILL in the submitted phase — a server message
+    // may have already transitioned us (the watcher below clears the timer,
+    // but this guards against a race where the timer fired first). Route
+    // through chatApi to keep the store-action mutation surface single.
+    if (props.state.phase === 'submitted') {
+      chatApi.expireSubmitted();
+    }
+  }, 15000);
 }
 function clearSubmitLatch(): void {
   justSubmitted.value = false;
   if (submitLatchTimer) { clearTimeout(submitLatchTimer); submitLatchTimer = null; }
 }
 watch(
-  () => [props.state.isRunning, props.state.isWaiting, props.state.connectionStatus] as const,
-  ([running, waiting, conn]) => {
-    if (justSubmitted.value && (running || waiting || conn !== 'connected')) {
+  () => [props.state.phase, props.state.connectionStatus] as const,
+  ([newPhase, conn]) => {
+    // Clear the latch the moment the phase leaves `submitted` (via any server
+    // message) OR the connection drops. The `submitted` phase is the only one
+    // this latch tracks; all other phases mean the backend caught up.
+    if (justSubmitted.value && (newPhase !== 'submitted' || conn !== 'connected')) {
       clearSubmitLatch();
     }
   },
@@ -486,12 +509,12 @@ function fmtTime(at: number): string {
     ></div>
     <!-- State-machine stage tag row (diagnostic) — visible ONLY in
          detailed-logs (详细日志) mode. Sits inside .chat-input, below the top
-         divider, above the input row, as a full-width strip. Surfaces the
-         frontend-owned flags that drive send()'s input/steer routing so the
-         user can see exactly why a message will be submitted as a query vs
-         buffered as a steering note — and catch desync (e.g. the backend is
-         blocked at PROMPT while the frontend believes otherwise) in flows
-         like 停止-button → submit. -->
+         divider, above the input row, as a full-width strip. Since the phase
+         enum became the single source of truth, the row shows the derived
+         stage label (unified uppercase vocabulary; isWaiting ⟺ stage is
+         QCARD/PROMPT, isRunning ⟺ RUNNING/PARSING) plus only the state the
+         phase cannot express: the two queue sizes and the last server
+         message. -->
     <div
       v-if="state.verboseLogs"
       class="stage-row"
@@ -501,11 +524,8 @@ function fmtTime(at: number): string {
         class="stage-chip stage-chip--phase"
         :class="{ 'stage-chip--warn': isVacuumStage }"
       >{{ stage }}</span>
-      <span class="stage-chip" :class="{ 'stage-chip--on': state.isWaiting }">isWaiting={{ state.isWaiting }}</span>
-      <span class="stage-chip" :class="{ 'stage-chip--on': state.isRunning }">isRunning={{ state.isRunning }}</span>
-      <span class="stage-chip" :class="{ 'stage-chip--on': state.isAutoMode }">auto={{ state.isAutoMode }}</span>
-      <span class="stage-chip">steerBuffer={{ state.steeringBuffer.length }}</span>
-      <span class="stage-chip">review={{ state.pendingSteeringReview.length }}</span>
+      <span class="stage-chip stage-chip--steer">steerBuffer={{ state.steeringBuffer.length }}</span>
+      <span class="stage-chip stage-chip--review">review={{ state.pendingSteeringReview.length }}</span>
       <span
         v-if="state.lastServerMsg"
         class="stage-chip stage-chip--msg"
@@ -645,7 +665,7 @@ function fmtTime(at: number): string {
 }
 /* ── State-machine stage tag row (diagnostic, detailed-logs only) ──
    A full-width chip strip above the input row. Amber accent when the
-   stage is the 空窗 vacuum state (the smoke-gun for the isWaiting desync). */
+   stage is the IDLE vacuum state (the smoke-gun for the isWaiting desync). */
 .stage-row {
   display: flex;
   flex-wrap: wrap;
@@ -672,10 +692,31 @@ function fmtTime(at: number): string {
   white-space: nowrap;
   font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
 }
-.stage-chip--on {
-  background: color-mix(in srgb, #07c160 14%, var(--bg-input-field));
-  color: #07c160;
-  border-color: color-mix(in srgb, #07c160 45%, transparent);
+/* Fixed-width value chips: anti-jitter. min-width (NOT width) + a ch budget
+   that INCLUDES the 18px border-box chrome (2×8px padding + 2×1px border):
+   the widest realistic value (steerBuffer=99=14ch, review=99=9ch) fills the
+   box exactly; narrower values stay centered.
+   min-width over width: an underestimated budget makes the chip grow ~1ch
+   (harmless reflow) instead of spilling glyphs past the pill. Keep the 18px
+   in sync with .stage-chip's horizontal padding (2×8px) + border (2×1px). */
+.stage-chip--steer {
+  min-width: calc(14ch + 18px);
+  justify-content: center;
+}
+.stage-chip--review {
+  min-width: calc(9ch + 18px);
+  justify-content: center;
+}
+/* The FIRST (stage/phase) chip carries the unified uppercase vocabulary
+   PROMPT / RUNNING / AWAIT / PARSING / QCARD / IDLE / OFFLINE — the widest
+   label is 7ch (PARSING / OFFLINE / RUNNING). Same recipe as the value
+   chips above: min-width = 7ch content budget + 18px border-box chrome, so
+   the pill's width is CONSTANT across label flips (no reflow as the phase
+   changes) while always containing its text (min-width grows rather than
+   clips if a future label ever exceeds 7ch). */
+.stage-chip--phase {
+  min-width: calc(7ch + 18px);
+  justify-content: center;
 }
 .stage-chip--warn {
   background: color-mix(in srgb, #f59e0b 18%, var(--bg-input-field));

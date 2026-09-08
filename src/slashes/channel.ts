@@ -17,6 +17,7 @@ import chalk from 'chalk';
 import { autoState } from '../loop/auto-state.js';
 import * as fs from 'fs';
 import { getChannelFile } from '../config.js';
+import { atomicWrite } from '../utils/atomic-write.js';
 
 export const channelCommand: SlashCommand = {
   name: 'channel',
@@ -72,10 +73,8 @@ export const channelCommand: SlashCommand = {
         const content = fs.readFileSync(filePath, 'utf-8');
         const channel = JSON.parse(content);
         channel.joined = false;
-        // Atomic write
-        const tmp = `${filePath}.tmp.${process.pid}`;
-        fs.writeFileSync(tmp, JSON.stringify(channel, null, 2), 'utf-8');
-        fs.renameSync(tmp, filePath);
+        // Atomic write (shared util: Windows-EPERM retry + orphan cleanup)
+        atomicWrite(filePath, JSON.stringify(channel, null, 2));
         console.log(chalk.green(`Disconnected from channel ${channelId}.`));
         // If no active channels remain, exit auto mode so the loop prompts again.
         if (!ctx.peer.hasActiveChannel()) {

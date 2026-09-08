@@ -22,19 +22,7 @@ import * as path from 'path';
 import type { ChannelFile } from '../types.js';
 import { getChannelsDir, getChannelFile } from '../config.js';
 import { IdentityManager } from './identity.js';
-
-/**
- * Atomic file write: write to temp file then rename.
- */
-function atomicWrite(filePath: string, data: string): void {
-  const dir = path.dirname(filePath);
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
-  const tmp = `${filePath}.tmp.${process.pid}`;
-  fs.writeFileSync(tmp, data, 'utf-8');
-  fs.renameSync(tmp, filePath);
-}
+import { atomicWrite } from '../utils/atomic-write.js';
 
 /**
  * Read and parse a channel file. Returns null if missing or malformed.

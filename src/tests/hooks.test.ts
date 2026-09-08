@@ -260,12 +260,15 @@ describe('HookExecutor', () => {
         'Skill content here'
       );
 
-      // Core.brief should be called with the injection detail.
+      // Core.brief should be called with the injection detail. The final
+      // opts arg carries synthetic:true — hook briefs are machine-originated
+      // and hidden from the WebUI chat log.
       expect(ctx.core.brief).toHaveBeenCalledWith(
         'info',
         'hook',
         'bash(command=echo test) injected BEFORE bash',
-        'bash → test-hook'
+        'bash → test-hook',
+        { synthetic: true }
       );
     });
   });
