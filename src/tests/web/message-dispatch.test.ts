@@ -201,6 +201,57 @@ describe('applyServerMessage — phase transitions', () => {
     expect(state.isAutoMode).toBe(true);
   });
 
+  it('running:off routes working → await when auto mode is on (空窗 vacuum fix)', () => {
+    const state = makeState();
+    const ctx = makeCtx();
+    // Auto mode turn in progress: auto:on, then running:on as work starts.
+    applyServerMessage(state, { type: 'auto', content: 'on' }, ctx);
+    applyServerMessage(state, { type: 'running', content: 'on' }, ctx);
+    expect(state.phase).toBe('working');
+    // Turn ends: running:off fires (state_transition STOP→prompt), but the
+    // auto loop redirects to AWAIT — no 'prompt' broadcast ever follows
+    // (prompt.ts returns AWAIT before getInput(), and the idempotent
+    // setAuto(true) fires no corrective auto:on). The client must rest at
+    // 'await', NOT 'idle' — idle+auto would light the 空窗(疑似失同步) vacuum
+    // warning forever (the long-lived-client bug from the 09:44 screenshot).
+    applyServerMessage(state, { type: 'running', content: 'off' }, ctx);
+    expect(state.phase).toBe('await');
+    expect(state.isAutoMode).toBe(true);
+    expect(state.isRunning).toBe(false);
+    expect(state.isWaiting).toBe(false);
+    // The next auto-mode turn still transitions correctly from await:
+    applyServerMessage(state, { type: 'running', content: 'on' }, ctx);
+    expect(state.phase).toBe('working');
+  });
+
+  it('running:off routes submitted → await when auto mode is on', () => {
+    const state = makeState();
+    const ctx = makeCtx();
+    applyServerMessage(state, { type: 'auto', content: 'on' }, ctx);
+    // Simulate the optimistic submitted phase (chatApi.sendInput latch).
+    state.setPhase('submitted');
+    applyServerMessage(state, { type: 'running', content: 'off' }, ctx);
+    expect(state.phase).toBe('await');
+  });
+
+  it('running:off still routes working → idle when auto mode is off (manual regression guard)', () => {
+    const state = makeState();
+    const ctx = makeCtx();
+    applyServerMessage(state, { type: 'running', content: 'on' }, ctx);
+    applyServerMessage(state, { type: 'running', content: 'off' }, ctx);
+    expect(state.phase).toBe('idle');
+  });
+
+  it('reconnect replay [auto:on, running:off] from fresh store settles at await', () => {
+    const state = makeState();
+    const ctx = makeCtx();
+    // serve-hub.ts onWsConnection replay order: auto:on (if auto) first,
+    // then running:off (agentRunning=false in AWAIT).
+    applyServerMessage(state, { type: 'auto', content: 'on' }, ctx);
+    applyServerMessage(state, { type: 'running', content: 'off' }, ctx);
+    expect(state.phase).toBe('await');
+  });
+
   it('auto:on while working stays working (flips boolean only)', () => {
     const state = makeState();
     const ctx = makeCtx();

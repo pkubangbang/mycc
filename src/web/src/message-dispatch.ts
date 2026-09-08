@@ -23,20 +23,24 @@
  * mutated here.
  *
  * ```
- *                + running:on    + running:off       + prompt        + card     + auto:on          + auto:off    + card-response
+ *                + running:on    + running:off        + prompt        + card     + auto:on          + auto:off    + card-response
  * idle            → working        (no-op)             → prompt        → card      → await            (no-op)       (n/a)
- * submitted       → working        (no-op)             → prompt        → card      → await            (no-op)       (n/a)
- * working         (no-op)          → idle               → prompt        → card      (stay, flip auto) (no-op)       (n/a)
+ * submitted       → working        → auto?await:idle   → prompt        → card      → await            (no-op)       (n/a)
+ * working         (no-op)          → auto?await:idle   → prompt        → card      (stay, flip auto) (no-op)       (n/a)
  * prompt          → working        (no-op)             (stay prompt)   → card      → await            (no-op)       (n/a)
  * card            → working        (no-op)             → prompt        (n/a)      (n/a)              (no-op)       → working
  * await           → working        (no-op)             → prompt        → card      (stay await)       → idle        (n/a)
  * ```
  *
+ * running:off from working/submitted routes to `await` when isAutoMode (the
+ * backend returns to AWAIT after a turn in auto mode — no 'prompt' broadcast
+ * follows), else to `idle` (manual mode: the imminent 'prompt' corrects it).
+ *
  * Key rules (from peer review):
- *  - `running:off` is a NO-OP unless `phase === 'working'` (→ `idle`) or
- *    `phase === 'submitted'` (→ `idle`). Prevents reconnect reordering from
- *    clobbering a stable `prompt`/`card`/`await` (serve-hub.ts sends `prompt`
- *    BEFORE `running:off` on reconnect).
+ *  - `running:off` is a NO-OP unless `phase === 'working'` (→ auto?await:idle)
+ *    or `phase === 'submitted'` (→ auto?await:idle). Prevents reconnect
+ *    reordering from clobbering a stable `prompt`/`card`/`await` (serve-hub.ts
+ *    sends `prompt` BEFORE `running:off` on reconnect).
  *  - `auto:off` is a NO-OP unless `phase === 'await'` (→ `idle`, then corrected
  *    by imminent `prompt`). Does NOT clear `pendingSteeringReview` (only
  *    `auto:on` abandons review).
@@ -225,11 +229,21 @@ export function applyServerMessage(
       // staying working is a harmless no-op).
       state.setPhase('working');
     } else {
-      // running:off is a NO-OP unless phase === 'working' or 'submitted'
-      // (→ idle). Prevents reconnect reordering from clobbering a stable
+      // running:off is a NO-OP unless phase === 'working' or 'submitted'.
+      // Prevents reconnect reordering from clobbering a stable
       // prompt/card/await (serve-hub sends prompt BEFORE running:off).
+      //
+      // Destination is auto-aware (peer-reviewed fix for the 空窗 vacuum):
+      // in auto mode the loop returns to AWAIT after a turn — prompt.ts
+      // redirects to AWAIT BEFORE getInput(), so no 'prompt' broadcast
+      // follows, and the idempotent setAuto(true) fires no corrective
+      // 'auto:on'. Routing to 'idle' here stranded long-lived clients at
+      // idle+auto → the stage row flagged 空窗(疑似失同步) forever. 'await'
+      // is the backend's true resting phase when isAutoMode. Manual mode
+      // keeps 'idle': PROMPT DOES call getInput() → the imminent 'prompt'
+      // broadcast corrects idle→prompt (self-healing within milliseconds).
       if (state.phase === 'working' || state.phase === 'submitted') {
-        state.setPhase('idle');
+        state.setPhase(state.isAutoMode ? 'await' : 'idle');
       }
     }
     return;
