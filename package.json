@@ -39,6 +39,7 @@
     "markdown-it": "^15.0.0",
     "minimist": "^1.2.8",
     "ollama": "^0.6.3",
+    "pinia": "^4.0.3",
     "ripgrep": "^0.3.1",
     "sharp": "^0.35.0",
     "shiki": "^4.4.3",

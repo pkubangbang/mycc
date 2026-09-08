@@ -394,64 +394,80 @@ const inputAreaStyle = computed(() =>
 // A full-width row of chips, rendered as the FIRST element inside
 // .chat-input (below the top border/divider, above the input row), visible
 // ONLY when 详细日志 (state.verboseLogs) is on. It surfaces the frontend-
-// owned state used by send()'s routing decision, so the user can see at a
+// owned phase used by send()'s routing decision, so the user can see at a
 // glance WHY a submitted message will be routed as type:'input' (query) vs
 // type:'steer' (buffered) — and catch desync (e.g. backend blocked at PROMPT
 // while the frontend believes otherwise) in flows like 停止-button → submit.
 //
-// The stage label is derived from the SAME flags send() uses, evaluated in
-// the same priority order:
+// The stage label is derived from the store's `phase` enum (the single source
+// of truth), evaluated in the same priority order send() uses:
 //   1. 断线        — connection not established; nothing is sent anyway.
-//   2. 卡片待回复  — hasPendingCard; routing is blocked by the card gate.
-//   3. PROMPT      — isWaiting true with no pending card → sendInput (query).
-//   4. 运行中      — isRunning → sendSteer (COLLECT will drain as REMINDER).
-//   5. AWAIT 自动待命 — auto mode idle (steady AWAIT broadcasts neither prompt
-//                     nor running) → sendSteer (await.ts polls the queue).
-//   6. 已提交·后端处理中 — a query was JUST submitted (sendInput) and the
-//                     backend is still inside the PROMPT handler doing
-//                     post-input processing (keyword extraction / steering
-//                     synthesis — LLM calls!) before transitioning to
-//                     COLLECT. The frontend optimistically flipped
-//                     isWaiting=false at send, so without this latch the
-//                     window would read as the vacuum stage — a false
-//                     positive. Messages sent during this window go to the
-//                     steer buffer AND ARE consumed at the imminent COLLECT.
-//   7. 空窗(疑似失同步) — none of the above: send() would route to sendSteer
-//                     while the state machine has no consumer scheduled for
-//                     the buffer (the 停止-button vacuum). Amber warning.
+//   2. card        — hasPendingCard; routing is blocked by the card gate.
+//   3. prompt      — isWaiting true with no pending card → sendInput (query).
+//   4. working     — isRunning → sendSteer (COLLECT will drain as REMINDER).
+//   5. await       — auto mode idle (steady AWAIT broadcasts neither prompt
+//                    nor running) → sendSteer (await.ts polls the queue).
+//   6. submitted   — a query was JUST submitted (sendInput) and the backend
+//                    is still inside the PROMPT handler doing post-input
+//                    processing (keyword extraction / steering synthesis —
+//                    LLM calls!) before transitioning to COLLECT. Messages
+//                    sent during this window go to the steer buffer AND ARE
+//                    consumed at the imminent COLLECT.
+//   7. idle 空窗(疑似失同步) — none of the above: send() would route to sendSteer
+//                    while the state machine has no consumer scheduled for
+//                    the buffer (the 停止-button vacuum). Amber warning.
 const stage = computed(() => {
   if (props.state.connectionStatus !== 'connected') return '未连接';
-  if (props.state.hasPendingCard) return '卡片待回复';
-  if (props.state.isWaiting) return 'PROMPT 等待输入';
-  if (props.state.isRunning) return '运行中';
-  if (props.state.isAutoMode) return 'AWAIT 自动待命';
-  if (justSubmitted.value) return '已提交·后端处理中';
+  const phase = props.state.phase;
+  if (phase === 'card') return '卡片待回复';
+  if (phase === 'prompt') return 'PROMPT 等待输入';
+  if (phase === 'working') return '运行中';
+  if (phase === 'await') return 'AWAIT 自动待命';
+  if (phase === 'submitted') return '已提交·后端处理中';
   return '空窗(疑似失同步)';
 });
 // The 空窗 stage is the smoking-gun state — flag it so it renders amber.
 const isVacuumStage = computed(() => stage.value === '空窗(疑似失同步)');
 
-// Send→running latch: set when a query is submitted as type:'input'; cleared
-// as soon as the backend signals a stage transition (running on / prompt /
-// card) or disconnected. The 15s timer is a safety net: if the backend is
-// actually desynced (e.g. the input was silently dropped by a stale-client
-// race in submitInput), the latch MUST expire so the genuine vacuum stage
-// re-surfaces instead of being masked forever.
+// Send→running latch: the `submitted` phase is now set by chatApi.sendInput
+// (store.setPhase('submitted')). This latch is the 15s expiry safety net: if
+// the backend is genuinely desynced (e.g. the input was silently dropped by a
+// stale-client race in submitInput), the `submitted` phase MUST expire back to
+// `idle` so the genuine vacuum stage re-surfaces instead of being masked
+// forever. The latch watches the phase: as long as it stays `submitted`, the
+// timer is armed; the moment any server message transitions the phase away
+// (running:on → working, prompt → prompt, card → card, disconnect → idle),
+// the timer is cleared.
 const justSubmitted = ref(false);
 let submitLatchTimer: ReturnType<typeof setTimeout> | null = null;
+/** Arm the 15s expiry for the `submitted` phase. Called by send() right after
+ *  chatApi.sendInput optimistically sets phase='submitted'. If no server
+ *  message transitions the phase within 15s, fall back to `idle`. */
 function latchSubmitted(): void {
   justSubmitted.value = true;
   if (submitLatchTimer) clearTimeout(submitLatchTimer);
-  submitLatchTimer = setTimeout(() => { justSubmitted.value = false; }, 15000);
+  submitLatchTimer = setTimeout(() => {
+    justSubmitted.value = false;
+    // Only fall back if we're STILL in the submitted phase — a server message
+    // may have already transitioned us (the watcher below clears the timer,
+    // but this guards against a race where the timer fired first). Route
+    // through chatApi to keep the store-action mutation surface single.
+    if (props.state.phase === 'submitted') {
+      chatApi.expireSubmitted();
+    }
+  }, 15000);
 }
 function clearSubmitLatch(): void {
   justSubmitted.value = false;
   if (submitLatchTimer) { clearTimeout(submitLatchTimer); submitLatchTimer = null; }
 }
 watch(
-  () => [props.state.isRunning, props.state.isWaiting, props.state.connectionStatus] as const,
-  ([running, waiting, conn]) => {
-    if (justSubmitted.value && (running || waiting || conn !== 'connected')) {
+  () => [props.state.phase, props.state.connectionStatus] as const,
+  ([newPhase, conn]) => {
+    // Clear the latch the moment the phase leaves `submitted` (via any server
+    // message) OR the connection drops. The `submitted` phase is the only one
+    // this latch tracks; all other phases mean the backend caught up.
+    if (justSubmitted.value && (newPhase !== 'submitted' || conn !== 'connected')) {
       clearSubmitLatch();
     }
   },
@@ -501,6 +517,7 @@ function fmtTime(at: number): string {
         class="stage-chip stage-chip--phase"
         :class="{ 'stage-chip--warn': isVacuumStage }"
       >{{ stage }}</span>
+      <span class="stage-chip stage-chip--phase">phase={{ state.phase }}</span>
       <span class="stage-chip" :class="{ 'stage-chip--on': state.isWaiting }">isWaiting={{ state.isWaiting }}</span>
       <span class="stage-chip" :class="{ 'stage-chip--on': state.isRunning }">isRunning={{ state.isRunning }}</span>
       <span class="stage-chip" :class="{ 'stage-chip--on': state.isAutoMode }">auto={{ state.isAutoMode }}</span>
