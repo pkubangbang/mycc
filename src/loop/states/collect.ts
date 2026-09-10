@@ -243,7 +243,18 @@ async function checkReactivation(env: MachineEnv): Promise<void> {
 
   let result: string;
   try {
-    result = await forkChat(fullMessages, allTools, prompt, undefined, 'none');
+    // Wrap in escAware so ESC (WebUI "停止" button / terminal ESC) aborts the
+    // forkChat immediately. Without this, a slow endpoint keeps the state
+    // machine stuck in COLLECT for the full call duration, and every
+    // subsequent click is a no-op (triggerNeglection() guards with
+    // isNeglectedMode()). On ESC, return '' so parseReactivationResult()
+    // yields null → function returns early → COLLECT routes to STOP.
+    result = await ctx.core.escAware(
+      async (abortController) => {
+        return await forkChat(fullMessages, allTools, prompt, abortController.signal, 'none');
+      },
+      () => '' as const,
+    );
   } catch (err) {
     ctx.core.verbose('reactivate', `forkChat failed: ${(err as Error).message}, skipping reactivation this turn`);
     return;

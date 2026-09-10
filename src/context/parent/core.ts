@@ -654,8 +654,16 @@ export class Core extends BaseCore implements CoreModule {
       return onCleanUp();
     }
 
-    // Create abort controller for this operation
-    const abortController = new AbortController();
+    // Create abort controller for this operation and register it on agentIO's
+    // global slot so triggerNeglection()'s getLlmAbortController()?.abort()
+    // can reach it. This revives the dead-code abort path in triggerNeglection()
+    // — previously the slot was never populated because escAware used a purely
+    // local controller. The onNeglected callback below still fires too (it also
+    // aborts + runs onCleanUp + resolves escPromise); both paths abort the same
+    // controller, so they compose harmlessly. Belt-and-suspenders: the global
+    // slot is a redundant backup that makes triggerNeglection()'s existing
+    // abort call actually do something.
+    const abortController = agentIO.createLlmAbortController();
 
     // Create a deferred promise that can be resolved when ESC is pressed
     let escResolver: ((value: T) => void) | null = null;
@@ -692,6 +700,9 @@ export class Core extends BaseCore implements CoreModule {
       // MUST use await so finally runs after the race completes, not immediately
       return await Promise.race([operationPromise, escPromise]);
     } finally {
+      // Release the global slot so the next escAware call (or a concurrent
+      // self-registering retryChat) can register its own controller.
+      agentIO.clearLlmAbortController();
       unsubscribe();
     }
   }
