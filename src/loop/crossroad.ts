@@ -16,6 +16,45 @@ import { forkChat } from '../engine/chat-provider.js';
 import { startSpinner, stopSpinner, sleep } from '../engine/chat-helpers.js';
 import { agentIO } from './agent-io.js';
 import { stripInternalMarkup } from '../utils/letter-box.js';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
+
+// ============================================================================
+// Semantic detector (optional, from @pkubangbang/crossroad-detector)
+// ============================================================================
+
+/**
+ * Lazy singleton for the semantic crossroad detector. The package is an
+ * optional dependency: if it is not installed (or the server fails to start),
+ * detection falls back to the regex detectTurningWord below.
+ *
+ * The detector spawns a detached HTTP server (hosting the v6 ONNX DistilBERT)
+ * on first use, managed via a lockfile at ~/.mycc-store/crossroad.lock.
+ */
+type Detector = { detect: (content: string) => Promise<{ word: string; index: number; score: number } | null> };
+let detector: Detector | null = null;
+let detectorInitFailed = false;
+
+async function getDetector(): Promise<Detector | null> {
+  if (detector) return detector;
+  if (detectorInitFailed) return null;
+  // Allow disabling the semantic detector (tests, environments without the
+  // package, or when the user prefers the regex detector). When disabled,
+  // detection falls back to the regex detectTurningWord below.
+  if (process.env.MYCC_CROSSROAD_DISABLE_SEMANTIC) {
+    detectorInitFailed = true;
+    return null;
+  }
+  try {
+    const mod = await import('@pkubangbang/crossroad-detector');
+    const lockPath = join(homedir(), '.mycc-store', 'crossroad.lock');
+    detector = new mod.CrossroadDetector(lockPath, { threshold: 0.5 });
+    return detector;
+  } catch {
+    detectorInitFailed = true;
+    return null;
+  }
+}
 
 // ============================================================================
 // Turning Words
@@ -505,7 +544,20 @@ export async function handleCrossroad(
   signal?: AbortSignal,
 ): Promise<CrossroadResult | null> {
   // Step 1: Detect turning word
-  const match = detectTurningWord(originalContent);
+  // Try the semantic detector first (v6 ONNX DistilBERT via @pkubangbang/
+  // crossroad-detector). Falls back to the regex detectTurningWord if the
+  // package is unavailable or the server fails.
+  let match: TurningWordMatch | null = null;
+  const det = await getDetector();
+  if (det) {
+    const semMatch = await det.detect(originalContent);
+    if (semMatch) {
+      match = { word: semMatch.word, index: semMatch.index };
+    }
+  }
+  if (!match) {
+    match = detectTurningWord(originalContent);
+  }
   if (!match) {
     return null;
   }

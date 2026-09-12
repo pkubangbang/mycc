@@ -19,6 +19,11 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
+// Disable the semantic detector (from @pkubangbang/crossroad-detector) in tests
+// so handleCrossroad uses the regex detectTurningWord, which the tests mock
+// against. Without this, the real detector would try to spawn an HTTP server.
+process.env.MYCC_CROSSROAD_DISABLE_SEMANTIC = '1';
+
 // --- Mocks ------------------------------------------------------------------
 
 vi.mock('../../engine/chat-provider.js', () => ({

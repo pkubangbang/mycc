@@ -1,6 +1,16 @@
 allowBuilds:
   esbuild: true
+  onnxruntime-node: true
+  protobufjs: true
   sharp: true
+
+# Local override for dev: @pkubangbang/crossroad-detector is not yet published
+# to npm. package.json declares "^0.1.0" for other users (who install from the
+# registry once published); this override makes pnpm resolve it from the local
+# sibling repo so pnpm-lock.yaml and pnpm install work in dev. Remove this
+# override after the package is published.
+overrides:
+  "@pkubangbang/crossroad-detector": "link:../crossroad-detector"
 
 # pnpm configuration (non-auth settings live here on pnpm v11+; see note below).
 #

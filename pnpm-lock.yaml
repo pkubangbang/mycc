@@ -4,6 +4,9 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+overrides:
+  '@pkubangbang/crossroad-detector': link:../crossroad-detector
+
 importers:
 
   .:
@@ -11,6 +14,9 @@ importers:
       '@lancedb/lancedb':
         specifier: ^0.27.2
         version: 0.27.2(apache-arrow@18.1.0)
+      '@pkubangbang/crossroad-detector':
+        specifier: link:../crossroad-detector
+        version: link:../crossroad-detector
       '@vitejs/plugin-vue':
         specifier: ^6.0.0
         version: 6.0.8(vite@8.2.1(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.11))(vue@3.5.38(typescript@5.9.3))
