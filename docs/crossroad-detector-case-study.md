@@ -1,6 +1,6 @@
 # Crossroad Detector — A Case Study
 
-> **Status:** Integrated. Semantic detector (`@pkubangbang/crossroad-detector` v6) is the primary path; tiered regex is the zero-dependency fallback. Live smoke-tested 2026-09-12.
+> **Status:** Integrated. Semantic detector (`@pkubangbang/crossroad-detector`, installed `0.1.1`) is the primary path; tiered regex is the zero-dependency fallback. Live smoke-tested 2026-09-12 (then model v6; the package has since shipped v7).
 >
 > **Scope:** This document is a retrospective case study — the model journey, the failed FSM detour, the extraction into a standalone package, and a live smoke test that captured a real false positive. For the feature's runtime mechanics (truncation, fork, selection), see [`crossroad-design.md`](crossroad-design.md). For cooldown behavior, see [`crossroad-cooldown.md`](crossroad-cooldown.md).
 
@@ -73,7 +73,7 @@ The two FSM commits were removed via `git reset --soft`. A backup branch (`backu
 
 ## 4. Extracting the Detector into a Package
 
-The ONNX encoder is a **per-machine** resource, not per-instance: one 393 MB model shared across all mycc processes on a host. Architecture: a Node.js HTTP lambda server in a standalone npm package, `@pkubangbang/crossroad-detector`.
+The ONNX encoder is a **per-machine** resource, not per-instance: one ~129 MB model shared across all mycc processes on a host. Architecture: a Node.js HTTP lambda server in a standalone npm package, `@pkubangbang/crossroad-detector`.
 
 ### Design decisions
 
@@ -81,7 +81,7 @@ The ONNX encoder is a **per-machine** resource, not per-instance: one 393 MB mod
 |----------|-----------|
 | **Standalone npm package** | Self-contained: `npm install` gets the model + tokenizer + server + client. No `~/.mycc-store/` coupling. |
 | **Detached HTTP server, random localhost port** | One process per machine; PID + port recorded in a lockfile so late-spawning clients find the existing server. |
-| **15-min idle auto-shutdown** | The model is only needed during active generation; no point keeping 393 MB resident between sessions. |
+| **15-min idle auto-shutdown** | The model is only needed during active generation; no point keeping the model resident between sessions. |
 | **Server is mycc-agnostic** | The server receives its lockfile path via `--lockfile` CLI arg. The `CrossroadDetector` client (in mycc) owns the `~/.mycc-store/crossroad.lock` path. |
 | **Model + tokenizer vendored in the package** | Not stored in `~/.mycc-store/`. The package is the unit of distribution. |
 | **Env-gated fallback** | `MYCC_CROSSROAD_DISABLE_SEMANTIC=1` skips the semantic detector → regex fallback. Tests set this to avoid spawning a real server. |
@@ -94,7 +94,9 @@ The ONNX encoder is a **per-machine** resource, not per-instance: one 393 MB mod
 
 ### Local dev resolution
 
-The package is not yet published to npm. mycc's `pnpm-workspace.yaml` declares a `pnpm.overrides` entry pointing `@pkubangbang/crossroad-detector` to `link:../crossroad-detector`, so `pnpm install` resolves it locally. An `npm link` symlink also exists for dev. Once published, the override is removed and normal registry resolution takes over.
+The package is published to npm as `@pkubangbang/crossroad-detector` (current: `0.1.1`), so mycc resolves it via normal registry lookup — `package.json` declares `"@pkubangbang/crossroad-detector": "^0.1.1"` and `pnpm install` fetches it like any other dependency. No `pnpm.overrides` / `link:` entry is needed.
+
+> Historical note: while the package was unpublished, `pnpm-workspace.yaml` carried a `pnpm.overrides` entry pointing `@pkubangbang/crossroad-detector` to `link:../crossroad-detector` so `pnpm install` resolved it from the local sibling repo. That override was removed once the package was published.
 
 ---
 
@@ -168,11 +170,12 @@ The regex fallback, the semantic detector, the fork directions, and the selectio
 |----------|----------|
 | mycc integration | `src/loop/crossroad.ts` (`handleCrossroad`, ~line 508) |
 | Regex fallback | `src/loop/crossroad.ts` (`detectTurningWord`, tiered STRONG / SENTENCE_BOUNDARY / SPECIAL patterns) |
-| Detector package | `C:\Proj\crossroad-detector\` (`src/server.ts`, `src/client.ts`, `src/lockfile.ts`) |
-| Vendored model | `C:\Proj\crossroad-detector\model\model.onnx` (393 MB) + `tokenizer.json` (2.8 MB) |
+| Detector package (source) | `C:\Proj\crossroad-detector\` (`src/server.ts`, `src/client.ts`, `src/lockfile.ts`) |
+| Detector package (installed) | `node_modules/@pkubangbang/crossroad-detector@0.1.1` (from npm registry) |
+| Vendored model | `node_modules/@pkubangbang/crossroad-detector/model/model.onnx` (~129 MB, INT8) + `tokenizer.json` |
 | Trainer harness | `C:\Proj\crossroad-detector\trainer\` (`train.py`, `chunker_v2.py`, `export_onnx.py`, `validate_corpus.py`, ...) |
 | Corpus farmer skill | `C:\Proj\crossroad-detector\.mycc\skills\crossroad-corpus-farmer\` |
-| pnpm override | `C:\Proj\mycc\pnpm-workspace.yaml` (`pnpm.overrides` → `link:../crossroad-detector`) |
+| Dependency declaration | `C:\Proj\mycc\package.json` (`"@pkubangbang/crossroad-detector": "^0.1.1"`, registry resolution) |
 | FSM backup branch | `backup/pre-fsm-cleanup-37eabe4` (preserves the retired FSM commits) |
 
 ### Commits (not pushed)
@@ -183,4 +186,4 @@ The regex fallback, the semantic detector, the fork directions, and the selectio
 ### Recorded pitfalls (wiki, domain `pitfall`)
 
 1. **"Semantic crossroad detector spawns real HTTP server in tests"** — gate tests with `MYCC_CROSSROAD_DISABLE_SEMANTIC=1`.
-2. **"pnpm install fails for unpublished package"** — use `pnpm.overrides` in `pnpm-workspace.yaml` with `link:../path` for local resolution.
+2. **"pnpm install fails for an unpublished package"** — while the detector was unpublished, local resolution used a `pnpm.overrides` entry in `pnpm-workspace.yaml` with `link:../path`. Now that the package is published (`0.1.1`), the override is gone and normal registry resolution applies.

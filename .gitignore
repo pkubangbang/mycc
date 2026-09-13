@@ -5,10 +5,6 @@ sigma/
 *.log
 .worktrees/
 
-# ONNX model artifacts (large, vendored in @pkubangbang/crossroad-detector)
-*.onnx
-*.onnx.data
-
 /.mycc/*
 # .mycc/skills/ is a project-level prototype sandbox for skills. It is NOT
 # tracked by git — skills here are local experiments. Approved skills are

@@ -28,7 +28,7 @@ import { join } from 'node:path';
  * optional dependency: if it is not installed (or the server fails to start),
  * detection falls back to the regex detectTurningWord below.
  *
- * The detector spawns a detached HTTP server (hosting the v6 ONNX DistilBERT)
+ * The detector spawns a detached HTTP server (hosting the INT8 ONNX DistilBERT)
  * on first use, managed via a lockfile at ~/.mycc-store/crossroad.lock.
  */
 type Detector = { detect: (content: string) => Promise<{ word: string; index: number; score: number } | null> };
@@ -544,7 +544,7 @@ export async function handleCrossroad(
   signal?: AbortSignal,
 ): Promise<CrossroadResult | null> {
   // Step 1: Detect turning word
-  // Try the semantic detector first (v6 ONNX DistilBERT via @pkubangbang/
+  // Try the semantic detector first (INT8 ONNX DistilBERT via @pkubangbang/
   // crossroad-detector). Falls back to the regex detectTurningWord if the
   // package is unavailable or the server fails.
   let match: TurningWordMatch | null = null;
