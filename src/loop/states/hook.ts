@@ -224,6 +224,10 @@ async function handleRecapCall(
   // ── Concurrent recap + patch via Promise.all ──
   // forkChat #1 (summary) and forkChat #2 (patch) fork from the same triologue
   // messages and run concurrently. See handleRecapWithPatch in checkpoint-recap.ts.
+  // The durable one-line trace: the spinner started inside handleRecapWithPatch
+  // is terminal-only (and cleared by its finally{}), so this brief is what
+  // survives in the logs / Web UI as the record of the recap's silent wait.
+  ctx.core.brief('info', 'recap', 'Summarizing checkpoint span...');
   const mindmap = ctx.core.getMindmap();
   const { summary, patch } = await handleRecapWithPatch(
     fullMessages,

@@ -11,6 +11,7 @@ import type { Mindmap, MindmapPatchAction, Node } from '../mindmap/types.js';
 import { get_node } from '../mindmap/get-node.js';
 import type { Triologue } from './triologue.js';
 import { forkChat } from '../engine/chat-provider.js';
+import { startSpinner, stopSpinner } from '../engine/chat-helpers.js';
 
 /**
  * Core module interface (common between AgentContext and ChildContext)
@@ -679,16 +680,42 @@ export async function handleRecapWithPatch(
   lastUserQuery?: string,
   checkpointResult?: string,
 ): Promise<RecapWithPatchResult> {
-  // ── Launch both forkChats concurrently via Promise.all ──
-  // Both fork from the same triologue messages — neither depends on the other's output.
-  const [summary, patch] = await Promise.all([
-    // forkChat #1: Recap Summary (unchanged from current handleRecap)
-    handleRecap(fullMessages, allTools, description, escAware, comment, lastUserQuery, checkpointResult),
-    // forkChat #2: Patch Decision (independent, concurrent) — skip if no mindmap
-    mindmap
-      ? generatePatchAction(fullMessages, allTools, description, mindmap, checkpointId, escAware)
-      : Promise.resolve(null),
-  ]);
+  // ── SPINNER: the caller owns the wait indicator ──
+  // forkChat is permanently noSpinner (see its header), so retryChat paints
+  // NOTHING for these forks. Without a spinner here the terminal is silent for
+  // the entire recap (~10-60s of LLM time) and mycc looks hung even though the
+  // two forks are running normally. This is the same contract crossroad.ts
+  // follows: one startSpinner/stopSpinner pair around the fork group.
+  //
+  // ONE pair for BOTH forks — not one per fork. The spinner is a NON-refcounted
+  // module-global (chat-helpers.ts): a second startSpinner while one is running
+  // is a no-op, and stopSpinner by whichever fork finished first would clear the
+  // line while the other is still streaming. Wrapping each fork individually
+  // would make the spinner die mid-recap.
+  //
+  // The forks are already safe to reveal visually: updateSpinnerTokens() is
+  // called unconditionally by the providers' onChunk (it is NOT gated by
+  // noSpinner), so the live "(Xs, N tokens)" suffix works here for free.
+  // finally{} guarantees the line is cleared on success, on ESC (escAware
+  // resolves null — it only logs verbosely, so the spinner never hides an ESC
+  // hint) and on a thrown error.
+  startSpinner('Recapping checkpoint');
+  let summary: string;
+  let patch: MindmapPatchAction | null;
+  try {
+    // ── Launch both forkChats concurrently via Promise.all ──
+    // Both fork from the same triologue messages — neither depends on the other's output.
+    [summary, patch] = await Promise.all([
+      // forkChat #1: Recap Summary (unchanged from current handleRecap)
+      handleRecap(fullMessages, allTools, description, escAware, comment, lastUserQuery, checkpointResult),
+      // forkChat #2: Patch Decision (independent, concurrent) — skip if no mindmap
+      mindmap
+        ? generatePatchAction(fullMessages, allTools, description, mindmap, checkpointId, escAware)
+        : Promise.resolve(null),
+    ]);
+  } finally {
+    stopSpinner();
+  }
 
   return { summary, patch };
 }

@@ -114,7 +114,7 @@ export class MockHarness {
    *  - loop/agent-io.js (neglected mode toggle)
    *  - loop/esc-wrap-up.js (startWrapUp, evaluateWrapUp, clearWrapUp)
    *  - loop/crossroad.js (handleCrossroad)
-   *  - engine/chat-helpers.js (stopSpinner)
+   *  - engine/chat-helpers.js (startSpinner, stopSpinner)
    *  - loop/prompts/lead.js (buildPlanModePrompt, buildNormalModePrompt, isInPlanMode)
    *  - context/shared/loader.js (getToolsForScope, execute)
    *  - loop/triologue.js (Triologue stub class)
@@ -166,7 +166,11 @@ export class MockHarness {
     }));
 
     // --- chat-helpers ---
+    // startSpinner included because hook.ts → checkpoint-recap.ts now starts
+    // the recap spinner from this (transitive) import chain; a mock that omits
+    // it fails with "No 'startSpinner' export is defined on the mock".
     vi.mock('../../../engine/chat-helpers.js', () => ({
+      startSpinner: vi.fn(),
       stopSpinner: vi.fn(),
     }));
 
