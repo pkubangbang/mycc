@@ -46,6 +46,7 @@
 import type { SlashCommand } from '../types.js';
 import { getServeHub } from '../serve/serve-registry.js';
 import { shouldDaemon } from '../config.js';
+import { sendToParent } from '../utils/parent-ipc.js';
 import chalk from 'chalk';
 
 export const reloadCommand: SlashCommand = {
@@ -77,13 +78,12 @@ export const reloadCommand: SlashCommand = {
 
     // Send reload IPC to coordinator with the current serve state so the
     // respawned lead can re-activate the web UI on the same port.
-    if (process.send) {
-      process.send({
-        type: 'reload',
-        serveActive: wasServeActive,
-        servePort,
-        serveHost,
-      });
+    if (sendToParent({
+      type: 'reload',
+      serveActive: wasServeActive,
+      servePort,
+      serveHost,
+    })) {
       // Wait forever — the Coordinator will SIGTERM this process.
       // Same pattern as /load (src/slashes/load.ts line 69-71).
       await new Promise(() => {});

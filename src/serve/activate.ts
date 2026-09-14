@@ -9,6 +9,7 @@
 import { getServeHub } from './serve-registry.js';
 import { agentIO } from '../loop/agent-io.js';
 import { setResultCallback } from '../utils/letter-box.js';
+import { sendToParent } from '../utils/parent-ipc.js';
 import chalk from 'chalk';
 
 /**
@@ -52,18 +53,19 @@ export async function activateServe(port: number, host?: string | null): Promise
     // again. Critical for the --serve CLI flag path: the Coordinator set
     // serveMode=true at startup (index.ts), and without this IPC it stays
     // true — the stdin filter (index.ts) drops all keys except ESC/Ctrl+C,
-    // locking the terminal even though the REPL is alive.
-    if (process.send) process.send({ type: 'serve_mode', active: false });
+    // locking the terminal even though the REPL is alive. In --daemon mode
+    // there is no Coordinator (it has exited), so sendToParent no-ops.
+    sendToParent({ type: 'serve_mode', active: false });
     return;
   }
 
   // Set up output + result mirroring to WebSocket (shared with restartServe).
   wireOutputMirroring(hub);
 
-  // Notify Coordinator that serve mode is active (filter stdin)
-  if (process.send) {
-    process.send({ type: 'serve_mode', active: true });
-  }
+  // Notify Coordinator that serve mode is active (filter stdin). In --daemon
+  // mode there is no Coordinator (it has exited), so sendToParent no-ops;
+  // a daemon Lead runs headless with no terminal stdin to lock anyway.
+  sendToParent({ type: 'serve_mode', active: true });
 
   console.log(chalk.cyan(`\n🌐 Web UI started`));
   const urls = hub.getUrls();

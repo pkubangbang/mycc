@@ -26,6 +26,7 @@ import { agentIO } from '../loop/agent-io.js';
 import { PromptAbortError } from '../loop/agent-io.js';
 import { setResultCallback } from '../utils/letter-box.js';
 import { getMaxUploadMb, shouldDaemon, getApiProvider } from '../config.js';
+import { sendToParent } from '../utils/parent-ipc.js';
 import { type SteeringNote, resolveSteeringQueue, joinSteeringNotes } from './steering-queue.js';
 import type { LogEntry, FileUploadEntry, CardMessage } from './serve-types.js';
 export type { CardMessage } from './serve-types.js';
@@ -323,7 +324,7 @@ export class ServeHub implements HubHandler {
     try {
       this.running = false; // isRunning() immediately returns false
       this.agentRunning = false;
-      if (process.send) process.send({ type: 'serve_mode', active: false }); // restore stdin filtering
+      sendToParent({ type: 'serve_mode', active: false }); // restore stdin filtering
       if (!skipAbortInput) { this.abortInput(); }
       this.disconnectTimer.cancel();
       this.clients.closeAll();
@@ -613,7 +614,7 @@ export class ServeHub implements HubHandler {
     await this.stop(true);
     agentIO.setOutputCallback(null);
     setResultCallback(null);
-    if (process.send) { process.send({ type: 'serve_mode', active: false }); }
+    sendToParent({ type: 'serve_mode', active: false });
     console.log(chalk.yellow('\nWeb UI stopped. Terminal input restored.'));
     this.abortInput(); // now unblock the fallback terminal prompt
   }

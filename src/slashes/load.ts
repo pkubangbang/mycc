@@ -14,6 +14,7 @@ import { prepareRestoration, readDosq, extractFirstQuery } from '../session/rest
 import { Triologue } from '../loop/triologue.js';
 import { agentIO } from '../loop/agent-io.js';
 import { getSessionContext, shouldDaemon } from '../config.js';
+import { sendToParent } from '../utils/parent-ipc.js';
 
 export const loadCommand: SlashCommand = {
   name: 'load',
@@ -76,8 +77,7 @@ export const loadCommand: SlashCommand = {
         }
 
         // Request Coordinator to restart in target directory
-        if (process.send) {
-          process.send({ type: 'restart', sessionId: session.id, cwd: session.project_dir });
+        if (sendToParent({ type: 'restart', sessionId: session.id, cwd: session.project_dir })) {
           // Wait forever - Coordinator will kill this process
           await new Promise(() => {});
         } else {

@@ -17,6 +17,7 @@ import { slashRegistry } from '../slashes/index.js';
 import { getServeHub } from '../serve/serve-registry.js';
 import { autoState } from './auto-state.js';
 import { setResultCallback } from '../utils/letter-box.js';
+import { sendToParent } from '../utils/parent-ipc.js';
 import { runExec } from './agent-exec.js';
 import type { ExecOptions, ExecResult } from './agent-exec.js';
 
@@ -281,10 +282,10 @@ class AgentIO {
           try { if (hub.isRunning()) await hub.stop(); } catch { /* best effort */ }
           this.setOutputCallback(null);
           setResultCallback(null);
-          if (process.send) process.send({ type: 'serve_shutdown_done' });
+          sendToParent({ type: 'serve_shutdown_done' });
         })().catch(() => {
           // Even if shutdown fails, tell the Coordinator we tried
-          if (process.send) process.send({ type: 'serve_shutdown_done' });
+          sendToParent({ type: 'serve_shutdown_done' });
         });
       }
     });

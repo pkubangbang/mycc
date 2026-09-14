@@ -59,6 +59,7 @@ function debounce<T extends (...args: Parameters<T>) => void>(
 const packageRoot = path.resolve(fileURLToPath(import.meta.url), '..', '..', '..', '..');
 import type { DynamicLoader, ToolDefinition, Skill, Tool, ToolScope, AgentContext, SkillModule, WikiDocument, SkillIndexEntry } from '../../types.js';
 import { getToolsDir, getSkillsDir, getUserToolsDir, getUserSkillsDir, ensureDirs } from '../../config.js';
+import { sendToParent } from '../../utils/parent-ipc.js';
 import * as crypto from 'crypto';
 
 /**
@@ -467,9 +468,7 @@ export class Loader implements DynamicLoader, SkillModule {
     // no-op.
     const debouncedReindex = debounce(
       () => {
-        if (process.send) {
-          process.send({ type: 'skill_reindex' });
-        }
+        sendToParent({ type: 'skill_reindex' });
       },
       120000,
     );
@@ -700,8 +699,8 @@ export class Loader implements DynamicLoader, SkillModule {
     );
 
     // Persist succeeded → ask the Lead to reload its runtime registry from disk
-    if (!result.error && process.send) {
-      process.send({ type: 'condition_replace', skillName });
+    if (!result.error) {
+      sendToParent({ type: 'condition_replace', skillName });
     }
     return result;
   }
