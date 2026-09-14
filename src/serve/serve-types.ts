@@ -36,7 +36,7 @@ export interface FileUploadMeta {
 
 /** Incoming WebSocket message from a client (the parsed WsMessage shape). */
 export interface WsMessage {
-  type: 'input' | 'exit' | 'interrupt' | 'card-response' | 'steer' | 'steer-resolve' | 'auto';
+  type: 'input' | 'exit' | 'restart-webui' | 'interrupt' | 'card-response' | 'steer' | 'steer-resolve' | 'auto';
   text?: string;
   cardId?: string;
   value?: string;

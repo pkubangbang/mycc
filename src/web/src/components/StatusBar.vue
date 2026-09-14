@@ -25,6 +25,17 @@ function onExit(): void {
     chatApi.sendExit();
   }
 }
+
+/** Persistent (headless daemon) mode: the 退出 button becomes a 重启 button.
+ *  Clicking sends the 'restart-webui' WS message so the backend recycles the
+ *  Vite dev server on the same port WITHOUT killing the daemon process — a
+ *  plain exit would terminate the daemon and take the Web UI down for good
+ *  (no terminal to restart it from). The confirm wording reflects this. */
+function onRestart(): void {
+  if (window.confirm('确定要重启 Web UI 吗？')) {
+    chatApi.sendRestartWebui();
+  }
+}
 </script>
 
 <template>
@@ -82,6 +93,13 @@ function onExit(): void {
         <span>详细日志</span>
       </button>
       <button
+        v-if="state.persistent"
+        class="exit-btn"
+        :disabled="state.connectionStatus !== 'connected'"
+        @click="onRestart"
+      >重启</button>
+      <button
+        v-else
         class="exit-btn"
         :disabled="state.connectionStatus !== 'connected'"
         @click="onExit"

@@ -135,6 +135,14 @@ export interface ChatState {
    *  (user, result/assistant, brief, question, prompt). When on, all logs
    *  (verbose tool output, warnings, errors) are shown too. */
   verboseLogs: boolean;
+  /** Whether this serve instance is persistent (headless daemon — no
+   *  terminal fallback). When true, the StatusBar renders 重启 (restart-webui)
+   *  instead of 退出 (exit); fetched from /config at app load. Defaults to
+   *  false so a fetch failure degrades to the safe 退出 button. */
+  persistent: boolean;
+  /** Per-file upload size cap (MB), fetched from the server's /config
+   *  endpoint at app load. Defaults to 50 when /config is unreachable. */
+  maxUploadMb: number;
   /** Transient error string shown in the StatusBar when a send fails (e.g.
    *  input submitted while the socket isn't OPEN). Cleared on next success. */
   connectionError?: string;

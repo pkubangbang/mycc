@@ -164,6 +164,36 @@ async function fetchHistory(): Promise<void> {
 }
 
 /**
+ * Fetch the server config (/config) at app load. Populates two store fields:
+ *   - `maxUploadMb` — the per-file upload size cap (MB), driven server-side
+ *     by --max-upload-mb / MYCC_MAX_UPLOAD_MB (default 50). ChatInput.vue
+ *     reads this from the store instead of its own inline fetch, so the cap
+ *     is fetched once app-level and shared by all components.
+ *   - `persistent` — whether this serve instance is a headless daemon with
+ *     no terminal fallback (shouldDaemon(), i.e. launched with --daemon).
+ *     When true, the StatusBar renders 重启 (restart-webui) instead of 退出
+ *     (exit); a fetch failure degrades to the safe 退出 button (default false).
+ *
+ * Called in the load sequence alongside fetchHistory() — before the WS
+ * connects — so the store is populated before the first render.
+ */
+async function fetchConfig(): Promise<void> {
+  try {
+    const res = await fetch('/config');
+    if (!res.ok) return;
+    const data = await res.json() as { maxUploadMb?: number; persistent?: boolean };
+    if (Number.isFinite(data.maxUploadMb) && (data.maxUploadMb as number) > 0) {
+      store.maxUploadMb = data.maxUploadMb as number;
+    }
+    if (typeof data.persistent === 'boolean') {
+      store.persistent = data.persistent;
+    }
+  } catch {
+    // /config unreachable — keep defaults (maxUploadMb=50, persistent=false)
+  }
+}
+
+/**
  * Establish the WebSocket connection. Called only AFTER history has been
  * fetched (or the fetch attempt completed), so live updates never overtake
  * the historical record.
@@ -235,6 +265,10 @@ function connectWebSocket(): void {
 /** Reconnect sequence: refresh history, then re-establish the WS. */
 async function reconnect(): Promise<void> {
   await fetchHistory();
+  // Re-fetch config too — a serve restart could have flipped persistent or
+  // changed the upload cap, so don't trust the prior values across a
+  // disconnect/reconnect boundary.
+  await fetchConfig();
   connectWebSocket();
 }
 
@@ -256,6 +290,11 @@ window.addEventListener('beforeunload', () => {
 void (async () => {
   store.connectionStatus = 'reconnecting';
   await ensureHighlighterReady();
+  // Fetch config before history: maxUploadMb + persistent feed the first
+  // render (the StatusBar button label and the upload size guard), so they
+  // must be populated before the components mount and start reading the
+  // store. fetchHistory() and the WS connection follow.
+  await fetchConfig();
   await fetchHistory();
   connectWebSocket();
 })();
@@ -320,6 +359,15 @@ export const chatApi = {
   },
   sendExit(): void {
     wsSend({ type: 'exit' });
+  },
+  /** Send a "restart Web UI" request — only meaningful in persistent (headless
+   *  daemon) mode, where the StatusBar renders 重启 instead of 退出. The
+   *  backend's restart-webui handler calls ServeHub.restartServe(), which
+   *  stops and re-starts the Vite dev server on the same port without killing
+   *  the daemon process. The WS closes during the swap and the client's
+   *  normal reconnect logic re-establishes it once the new server is up. */
+  sendRestartWebui(): void {
+    wsSend({ type: 'restart-webui' });
   },
   /** Safety-net expiry for the `submitted` phase. Called by ChatInput.vue's
    *  15s latch when no server message (running:on / prompt / card) transitioned

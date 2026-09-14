@@ -45,12 +45,24 @@
 
 import type { SlashCommand } from '../types.js';
 import { getServeHub } from '../serve/serve-registry.js';
+import { shouldDaemon } from '../config.js';
 import chalk from 'chalk';
 
 export const reloadCommand: SlashCommand = {
   name: 'reload',
   description: 'Restart mycc with fresh code (reuses coordinator, clears context). Web UI auto-reconnects if active.',
   handler: async () => {
+    // In --daemon mode the Coordinator has already exited (startDaemonLead →
+    // child.unref() → process.exit(0)), so there is nothing to reuse. Worse,
+    // on Unix the daemon Lead still receives an IPC channel
+    // (stdio ['ignore','ignore','ignore','ipc']), so process.send is truthy
+    // while no listener exists — the `await new Promise(() => {})` below
+    // would hang FOREVER. Guard early and return instead.
+    if (shouldDaemon()) {
+      console.log(chalk.yellow('Not available in daemon mode (no coordinator to reuse).'));
+      return;
+    }
+
     const hub = getServeHub();
     const wasServeActive = hub.isRunning();
     const servePort = hub.getPort();

@@ -61,6 +61,14 @@ export const useChatStore = defineStore('chat', () => {
   const connectionStatus = ref<ConnectionStatus>('disconnected');
   const showRetry = ref(false);
   const verboseLogs = ref(false);
+  /** Whether this serve instance is persistent (headless daemon). Defaults
+   *  to false so a /config fetch failure degrades to the safe 退出 button. */
+  const persistent = ref(false);
+  /** Per-file upload size cap (MB), fetched from the server's /config
+   *  endpoint. Defaults to 50 so the UI is still usable when /config is
+   *  unreachable. Moved here from ChatInput.vue so the fetch is app-level
+   *  (alongside persistent) and shared by all components. */
+  const maxUploadMb = ref(50);
   /** Transient error string shown in the StatusBar when a send fails (e.g.
    *  input submitted while the socket isn't OPEN). Cleared on next success.
    *  Set by `wsSend` in main.ts; not part of the phase FSM. */
@@ -124,6 +132,8 @@ export const useChatStore = defineStore('chat', () => {
     darkMode,
     debugMode,
     lastServerMsg,
+    persistent,
+    maxUploadMb,
     // derived
     isWaiting,
     isRunning,

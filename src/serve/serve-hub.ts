@@ -25,7 +25,7 @@ import chalk from 'chalk';
 import { agentIO } from '../loop/agent-io.js';
 import { PromptAbortError } from '../loop/agent-io.js';
 import { setResultCallback } from '../utils/letter-box.js';
-import { getMaxUploadMb } from '../config.js';
+import { getMaxUploadMb, shouldDaemon, getApiProvider } from '../config.js';
 import { type SteeringNote, resolveSteeringQueue, joinSteeringNotes } from './steering-queue.js';
 import type { LogEntry, FileUploadEntry, CardMessage } from './serve-types.js';
 export type { CardMessage } from './serve-types.js';
@@ -34,6 +34,8 @@ import { ClientRegistry } from './serve-clients.js';
 import { readHistory } from './serve-history.js';
 import { DisconnectTimer } from './serve-disconnect-timer.js';
 import { handleWsMessage, type HubHandler } from './serve-ws-handler.js';
+import { wireOutputMirroring } from './activate.js';
+import pkg from '../../package.json';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -83,6 +85,17 @@ export class ServeHub implements HubHandler {
   private userLogPath: string | null = null;
 
   // ── Disconnect-reconnect (encapsulated in DisconnectTimer) ──
+  //
+  // Lifecycle contract: the timer's `persist` predicate (shouldDaemon())
+  // guarantees `start()` is a no-op in a daemon, so the timer can NEVER arm
+  // and `onGenuineDisconnect` can NEVER fire in persistent mode. The callback
+  // therefore has exactly ONE reachable branch — gracefulShutdown() — and
+  // does NOT re-check shouldDaemon() to pick restart-vs-shutdown. (An
+  // earlier version had a dead `if (shouldDaemon()) restartServe()` branch
+  // here; it was unreachable by the timer's own contract and leaked the
+  // hub's lifecycle policy into a callback whose firing condition already
+  // excluded it.) The "restart instead of kill when persistent" intent now
+  // lives entirely in restartServe(), the 重启 button path.
   private disconnectTimer = new DisconnectTimer({
     onGenuineDisconnect: () => {
       this.gracefulShutdown().catch((err) => {
@@ -90,7 +103,7 @@ export class ServeHub implements HubHandler {
       });
     },
     onSuspend: () => { this.clients.closeAll(); },
-  });
+  }, () => shouldDaemon());
 
   // ── Auto-mode providers (callbacks to avoid a module-load cycle with agent-io) ──
   private autoStateProvider: (() => boolean) | null = null;
@@ -101,6 +114,21 @@ export class ServeHub implements HubHandler {
   private agentRunning = false;
   // Re-entrancy guard for stop().
   private stopping = false;
+  // Re-entrancy flag for restartServe(): true while the HTTP/Vite/WS stack is
+  // being recycled in-process on the same port. During this window `running`
+  // is transiently false, so WebInputProvider's three-way guard treats this as
+  // "still mine, keep waiting" rather than "serve is gone → exit" (which would
+  // kill a headless daemon on a Restart click). Section 3 ships it returning
+  // false; Section 2 wires the real implementation.
+  private restarting = false;
+
+  /**
+   * Whether the serve stack is mid-restart (stop(true) → start(same port)).
+   * WebInputProvider reads this in its three-way fallback so a blocked
+   * waitForInput() survives a restartServe() cycle instead of falling through
+   * to the headless-exit branch.
+   */
+  isRestarting(): boolean { return this.restarting; }
 
   /** Set the durable triologue transcript path (read by /history). */
   setTranscriptPath(p: string | null): void { this.transcriptPath = p; }
@@ -193,6 +221,30 @@ export class ServeHub implements HubHandler {
       appType: 'custom',
       configFile: false, // inline config only — avoid parent vite.config
     });
+
+    // GET /health — registered BEFORE viteServer.middlewares so it answers
+    // while Vite is still compiling (a watchdog polling every 30 s must never
+    // mistake "still warming up" for "dead"). Deliberately cheap: no
+    // provider/embedding probe (those hit Ollama on every poll). A deep check
+    // (?deep=1) can be added later if wanted.
+    this.expressApp.get('/health', (_req, res) => {
+      res.status(200).set({ 'Content-Type': 'application/json' }).end(JSON.stringify({
+        status: this.running ? 'ok' : 'stopping',
+        pid: process.pid,
+        uptimeMs: Math.round(process.uptime() * 1000),
+        version: pkg.version,
+        serve: {
+          port: this.port,
+          host: this.host,
+          clients: this.clients.size,
+          persistent: shouldDaemon(),
+          agentRunning: this.agentRunning,
+          auto: this.getAutoState(),
+        },
+        provider: getApiProvider(),
+      }));
+    });
+
     this.expressApp.use(this.viteServer.middlewares);
 
     // GET / → serve index.html via Vite HTML transforms (injects HMR client).
@@ -220,10 +272,11 @@ export class ServeHub implements HubHandler {
       res.status(200).set({ 'Content-Type': 'application/json' }).end(payload);
     });
 
-    // GET /config → client-facing runtime config (per-file upload cap).
+    // GET /config → client-facing runtime config (per-file upload cap +
+    // persistent flag so the Web UI renders 重启 vs 退出 correctly).
     this.expressApp.get('/config', (_req, res) => {
       res.status(200).set({ 'Content-Type': 'application/json' }).end(
-        JSON.stringify({ maxUploadMb: getMaxUploadMb() }),
+        JSON.stringify({ maxUploadMb: getMaxUploadMb(), persistent: shouldDaemon() }),
       );
     });
 
@@ -563,5 +616,42 @@ export class ServeHub implements HubHandler {
     if (process.send) { process.send({ type: 'serve_mode', active: false }); }
     console.log(chalk.yellow('\nWeb UI stopped. Terminal input restored.'));
     this.abortInput(); // now unblock the fallback terminal prompt
+  }
+
+  /**
+   * Recycle the HTTP/Vite/WS stack in-process on the same port (the 重启
+   * button in persistent mode). Distinct from gracefulShutdown(): this does
+   * NOT unblock the input resolver (stop(true) skips abortInput), does NOT
+   * clear the output/result callbacks until re-wired, and does NOT print the
+   * "Terminal input restored" message — the terminal is never touched.
+   *
+   * Build-order contract: `isRestarting()` is read at arm time by
+   * WebInputProvider's three-way guard, so a blocked waitForInput() across
+   * the stop→start window treats the gap as "still mine, keep waiting" rather
+   * than "serve is gone → headless exit" (which would kill a daemon on a
+   * Restart click). `restarting` is set BEFORE stop() (which flips running
+   * to false) and cleared in a finally AFTER start() flips it back to true.
+   */
+  async restartServe(): Promise<void> {
+    if (this.restarting) return; // re-entrancy guard
+    const port = this.getPort();
+    const host = this.getHost();
+    this.restarting = true;
+    try {
+      // stop(skipAbortInput=true): tear down the stack and set running=false
+      // WITHOUT resolving a blocked waitForInput() with null — a null would
+      // send WebInputProvider down its terminal-fallback / headless-exit path
+      // mid-restart. The pending input resolver survives the cycle (start()
+      // does not clear inputResolver) and is resubmitted against the fresh hub.
+      await this.stop(true);
+      await this.start(port, host);
+      // Re-wire output + result mirroring (stop() does not clear the callbacks,
+      // but a fresh start means the hub is a clean slate — re-wire explicitly
+      // so the Web UI keeps receiving live updates after the recycle).
+      wireOutputMirroring(this);
+      agentIO.verbose('serve', `Web UI restarted on port ${port}`);
+    } finally {
+      this.restarting = false;
+    }
   }
 }

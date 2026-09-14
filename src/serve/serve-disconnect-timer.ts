@@ -40,10 +40,16 @@ export class DisconnectTimer {
   private wallBaseline: bigint | null = null;
   private cpuBaseline: { user: number; system: number } | null = null;
 
-  constructor(private readonly cb: DisconnectTimerCallbacks) {}
+  constructor(
+    private readonly cb: DisconnectTimerCallbacks,
+    private readonly persist: () => boolean,
+  ) {}
 
-  /** Start the 30s countdown (no-op if already counting). */
+  /** Start the 30s countdown (no-op if already counting, or if persistent). */
   start(): void {
+    // No human to fall back to — never arm the timer. Read at arm time (not
+    // construction) so the predicate reflects current process state.
+    if (this.persist()) return;
     if (this.timer) return; // already counting
     // Capture wall-clock + CPU baselines so the timeout handler can detect a
     // system suspend/hibernate that froze this process during the wait.

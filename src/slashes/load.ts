@@ -13,7 +13,7 @@ import { listSessions, loadSessionById, SessionNotFoundError, AmbiguousSessionEr
 import { prepareRestoration, readDosq, extractFirstQuery } from '../session/restoration.js';
 import { Triologue } from '../loop/triologue.js';
 import { agentIO } from '../loop/agent-io.js';
-import { getSessionContext } from '../config.js';
+import { getSessionContext, shouldDaemon } from '../config.js';
 
 export const loadCommand: SlashCommand = {
   name: 'load',
@@ -63,6 +63,17 @@ export const loadCommand: SlashCommand = {
         console.log(chalk.gray(`  Current: ${currentDir}`));
         console.log(chalk.gray(`  Session expects: ${session.project_dir}`));
         console.log(chalk.cyan(`Spawning new agent in correct directory...`));
+
+        // In --daemon mode there is no Coordinator to restart in the target
+        // directory (it has already exited). On Unix the daemon Lead still
+        // receives an IPC channel, so process.send is truthy while no
+        // listener exists — the `await new Promise(() => {})` below would
+        // hang FOREVER. Refuse instead of hanging.
+        if (shouldDaemon()) {
+          console.log(chalk.yellow('Not available in daemon mode (no coordinator to restart).'));
+          console.log(chalk.gray(`  cd "${session.project_dir}" && mycc --from ${session.id}`));
+          return;
+        }
 
         // Request Coordinator to restart in target directory
         if (process.send) {

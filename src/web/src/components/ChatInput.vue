@@ -11,28 +11,12 @@ const localFiles = ref<FileInfo[]>([]);
 const dragOver = ref(false);
 let dragCounter = 0;
 
-// Per-file upload size cap (MB), fetched from the server's /config endpoint
-// (driven by --max-upload-mb / MYCC_MAX_UPLOAD_MB, default 50). Falls back to
-// 50 if the fetch fails so the UI is still usable when /config is unreachable.
-const maxUploadMb = ref(50);
+// Per-file upload size cap (MB), read from the store (state.maxUploadMb).
+// The store is populated app-level by fetchConfig() in main.ts (driven by
+// --max-upload-mb / MYCC_MAX_UPLOAD_MB, default 50). This component no longer
+// fetches /config itself — it reads the shared store value so there's one
+// source of truth. The store defaults to 50 when /config is unreachable.
 const uploadError = ref('');
-
-// Fetch the server-imposed upload cap once. /config is served on the same
-// origin as the Web UI, so a relative URL works and reuses the live socket's
-// host/port. A failure is non-fatal — the default cap still applies.
-void (async () => {
-  try {
-    const res = await fetch('/config');
-    if (res.ok) {
-      const data = await res.json() as { maxUploadMb?: number };
-      if (Number.isFinite(data.maxUploadMb) && (data.maxUploadMb as number) > 0) {
-        maxUploadMb.value = data.maxUploadMb as number;
-      }
-    }
-  } catch {
-    // /config unreachable — keep default cap
-  }
-})();
 
 watch(
   () => props.state.inputText,
@@ -67,10 +51,10 @@ function formatBytes(bytes: number): string {
 // Shared by drag/drop, file picker, and clipboard paste so the validation
 // and reading logic stays DRY.
 function processFile(file: File): void {
-  const maxBytes = maxUploadMb.value * 1024 * 1024;
+  const maxBytes = props.state.maxUploadMb * 1024 * 1024;
   // Size guard (client-side; the server re-checks for defense in depth).
   if (file.size > maxBytes) {
-    uploadError.value = `「${file.name}」(${formatBytes(file.size)})超过 ${maxUploadMb.value}MB 上传限制，已跳过`;
+    uploadError.value = `「${file.name}」(${formatBytes(file.size)})超过 ${props.state.maxUploadMb}MB 上传限制，已跳过`;
     // Auto-clear the error after 4s
     setTimeout(() => {
       if (uploadError.value.startsWith(`「${file.name}」`)) uploadError.value = '';

@@ -29,6 +29,8 @@ export interface HubHandler {
   pushFileUpload(entry: FileUploadEntry): void;
   resolveSteering(sendIds: number[]): void;
   gracefulShutdown(): Promise<void>;
+  /** Recycle the HTTP/Vite/WS stack in-process on the same port. */
+  restartServe(): Promise<void>;
   broadcast(type: string, content: string, label?: string): void;
   /**
    * Broadcast a message to all clients EXCEPT the sender. Used for user-bubble
@@ -96,6 +98,16 @@ export function handleWsMessage(hub: HubHandler, ws: WebSocket, data: string): v
     case 'exit':
       hub.gracefulShutdown().catch((err) => {
         agentIO.verbose('serve', `exit shutdown error: ${String(err)}`);
+      });
+      break;
+    case 'restart-webui':
+      // Recycle the HTTP/Vite/WS stack in-process, on the same port. Sent
+      // only by a client that read `persistent: true` from /config (Section 5).
+      // Never sent in a terminal session — the WebUI renders 退出 there, not
+      // 重启. Distinct from 'exit' (which is the real "done with this session"
+      // path used by an interactive terminal).
+      hub.restartServe().catch((err) => {
+        agentIO.verbose('serve', `restart-webui error: ${String(err)}`);
       });
       break;
     case 'interrupt':

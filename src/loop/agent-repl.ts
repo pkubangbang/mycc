@@ -43,6 +43,7 @@ import pkg from '../../package.json';
 import { loadProjectMindmap } from './mindmap-loader.js';
 import { registerSignalHandlers } from './signal-handlers.js';
 import { initDaemonMode } from './daemon-init.js';
+import { ServeDetachedExitError } from '../serve/serve-errors.js';
 import { initHookSystem, buildHookInfoMessages } from './hook-bootstrap.js';
 import { buildPlatformCalendarMessages, buildNodeModulesReminderMessages, buildSkillKeywordsMessages } from './prompt-populators.js';
 import { wireServeCallbacks } from './serve-wiring.js';
@@ -430,6 +431,13 @@ export async function main(): Promise<void> {
       // machine.run() returned normally — user typed exit/empty/q/quit
       break;
     } catch (err) {
+      // Serve stopped with no terminal to fall back to (headless daemon). The
+      // terminal fallback can never resolve, so unwind to the exit path so a
+      // supervisor (systemd) observes a clean termination and restarts us.
+      if (err instanceof ServeDetachedExitError) {
+        console.log(chalk.yellow('Web UI unavailable and no terminal — exiting for restart.'));
+        break;
+      }
       // Readline closed (race condition on SIGINT/SIGTERM) — clean exit
       if (err instanceof Error && err.message === 'readline was closed') {
         break;
@@ -513,4 +521,10 @@ export async function main(): Promise<void> {
 
   // Signal Coordinator to exit
   process.send?.({ type: 'exit' });
+
+  // A detached daemon has no Coordinator to honour the 'exit' IPC (the
+  // Coordinator exited at startup via child.unref() + process.exit(0)). Exit
+  // explicitly so the supervisor (systemd) observes a clean termination and
+  // restarts us via Restart=always.
+  if (shouldDaemon()) process.exit(0);
 }

@@ -15,6 +15,8 @@ import type { InputProvider } from '../loop/input-provider.js';
 import { UserInputProvider } from '../loop/input-provider.js';
 import { ServeHub } from './serve-hub.js';
 import { agentIO } from '../loop/agent-io.js';
+import { ServeDetachedExitError } from './serve-errors.js';
+import { shouldDaemon } from '../config.js';
 
 export class WebInputProvider implements InputProvider {
   readonly name = 'web';
@@ -28,7 +30,24 @@ export class WebInputProvider implements InputProvider {
 
   async getInput(initialContent?: string): Promise<string | null> {
     if (!this.hub.isRunning()) {
-      // Serve not running — delegate to terminal
+      // (2) A restart-webui click transiently has running === false. Keep
+      //     waiting: the same hub is coming back on the same port, and
+      //     treating the gap as "serve is gone" would kill the daemon.
+      if (this.hub.isRestarting()) return this.hub.waitForInput();
+      // (1) Headless daemon with serve as the intended input mode — the
+      //     terminal fallback can never resolve. Throwing is the only safe
+      //     signal: null would be read as "autonomous skip" by prompt.ts and
+      //     run a turn with no query. Gated on shouldDaemon() (the --daemon
+      //     CLI flag) so a NON-daemon session (plain `mycc`, or `mycc
+      //     --serve` in a real terminal) still uses the terminal fallback
+      //     even when stdin is not a TTY: the Coordinator proxies key
+      //     events via IPC, so UserInputProvider resolves fine without a
+      //     real TTY. The old `!process.stdin.isTTY` gate threw in every
+      //     non-TTY lead (i.e. ALL leads under the Coordinator, whose stdin
+      //     is piped), killing plain `mycc` with "Web UI unavailable and no
+      //     terminal".
+      if (shouldDaemon()) throw new ServeDetachedExitError();
+      // (0) Interactive terminal — today's behaviour, unchanged.
       return this.userProvider.getInput(initialContent);
     }
 
@@ -44,8 +63,15 @@ export class WebInputProvider implements InputProvider {
     const result = await this.hub.waitForInput();
 
     // After await, check if serve was stopped during the wait.
-    // abortInput() resolved waitForInput() with null — fall back to terminal.
+    // abortInput() resolved waitForInput() with null — fall back to terminal
+    // (with the same three-way guard as getInput's entry: a restart-webui
+    // click must keep waiting, and a headless daemon must exit, not hang).
     if (!this.hub.isRunning()) {
+      if (this.hub.isRestarting()) return this.hub.waitForInput();
+      // Gated on shouldDaemon() — see getInput() entry guard: a non-daemon
+      // session must use the terminal fallback even without a real TTY (the
+      // Coordinator proxies keys via IPC).
+      if (shouldDaemon()) throw new ServeDetachedExitError();
       return this.userProvider.getInput(initialContent);
     }
     return result;
@@ -59,7 +85,24 @@ export class WebInputProvider implements InputProvider {
       return true;
     }
     if (!this.hub.isRunning()) {
-      return this.userProvider.promptRetry(errorMessage);
+      // Three-way guard (mirrors getInput): a restart in progress must keep
+      // waiting for the hub to come back, and a headless daemon must exit
+      // rather than hang on a terminal that does not exist.
+      if (this.hub.isRestarting()) {
+        // The hub is recycling on the same port — wait for it to come back,
+        // then proceed to the card path below. Poll isRunning() by awaiting
+        // a fresh input cycle (which resolves once start() flips running back
+        // to true and re-arms the input resolver). This is an edge case; the
+        // common restart path does not intersect promptRetry.
+        await this.hub.waitForInput();
+      } else if (shouldDaemon()) {
+        // Gated on shouldDaemon() — see getInput() entry guard: a non-daemon
+        // session must use the terminal fallback even without a real TTY
+        // (the Coordinator proxies keys via IPC).
+        throw new ServeDetachedExitError();
+      } else {
+        return this.userProvider.promptRetry(errorMessage);
+      }
     }
 
     // Same neglection reset as getInput() — see comment there.
@@ -90,6 +133,21 @@ export class WebInputProvider implements InputProvider {
     const answer = await this.hub.waitForCardResponse(cardId);
 
     if (!this.hub.isRunning()) {
+      // Three-way guard (mirrors getInput): a restart in progress must keep
+      // waiting for the same card; a headless daemon must exit, not hang.
+      if (this.hub.isRestarting()) {
+        // The hub is recycling on the same port — re-await the same card
+        // (the resolver survives the restart cycle) and re-evaluate.
+        const reAnswer = await this.hub.waitForCardResponse(cardId);
+        if (this.hub.isRestarting()) return true; // still cycling — default retry
+        // Gated on shouldDaemon() — see getInput() entry guard.
+        if (shouldDaemon() && !this.hub.isRunning()) throw new ServeDetachedExitError();
+        return reAnswer !== null &&
+          reAnswer.toLowerCase() !== 'n' &&
+          reAnswer.toLowerCase() !== 'no';
+      }
+      // Gated on shouldDaemon() — see getInput() entry guard.
+      if (shouldDaemon()) throw new ServeDetachedExitError();
       return this.userProvider.promptRetry(errorMessage);
     }
     return answer !== null &&

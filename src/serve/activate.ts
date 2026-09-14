@@ -11,6 +11,26 @@ import { agentIO } from '../loop/agent-io.js';
 import { setResultCallback } from '../utils/letter-box.js';
 import chalk from 'chalk';
 
+/**
+ * Wire output + result mirroring to the WebSocket clients. Shared by
+ * `activateServe()` (initial start) and `ServeHub.restartServe()` (in-process
+ * recycle) so both paths mirror identically without duplicating the wiring.
+ *
+ * brief() passes its tool tag as the label so the Web UI shows the same
+ * [HH:MM:SS] [tool] header as the terminal; plain verbose logs have no
+ * label. The detail parameter carries the tool's intent (e.g. bash command
+ * description) for display in an outlined box inside the bubble. The result
+ * callback is labeled 'assistant' so the Web UI renders the [assistant] tag,
+ * matching the terminal-style header the user requested.
+ */
+export function wireOutputMirroring(hub: ReturnType<typeof getServeHub>): void {
+  agentIO.setOutputCallback((method, args, label, detail, synthetic) => {
+    const text = args.map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(' ');
+    hub.broadcast(method, text, label, detail, synthetic);
+  });
+  setResultCallback((content) => hub.broadcast('result', content, 'assistant'));
+}
+
 export async function activateServe(port: number, host?: string | null): Promise<void> {
   const hub = getServeHub();
 
@@ -37,19 +57,8 @@ export async function activateServe(port: number, host?: string | null): Promise
     return;
   }
 
-  // Set up output mirroring to WebSocket (log/warn/error)
-  // brief() passes its tool tag as the label so the Web UI shows the same
-  // [HH:MM:SS] [tool] header as the terminal; plain verbose logs have no
-  // label. The detail parameter carries the tool's intent (e.g. bash command
-  // description) for display in an outlined box inside the bubble.
-  agentIO.setOutputCallback((method, args, label, detail, synthetic) => {
-    const text = args.map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(' ');
-    hub.broadcast(method, text, label, detail, synthetic);
-  });
-  // Set up result mirroring (final assistant response via letter-box).
-  // Labeled 'assistant' so the Web UI renders the [assistant] tag, matching
-  // the terminal-style header the user requested.
-  setResultCallback((content) => hub.broadcast('result', content, 'assistant'));
+  // Set up output + result mirroring to WebSocket (shared with restartServe).
+  wireOutputMirroring(hub);
 
   // Notify Coordinator that serve mode is active (filter stdin)
   if (process.send) {
