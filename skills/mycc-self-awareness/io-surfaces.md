@@ -49,7 +49,7 @@ scopes: **project-level** (inside the working directory's `.mycc/`) and
 |------|-----------|---------|
 | `.mycc/sessions/<uuid>/` | session creation | Per-session triologue + metadata (sealed on exit; never written again) |
 | `.mycc/mindmap.json` | mindmap compile | Compiled knowledge tree from `MYCC.md` |
-| `.mycc/mindmap-patch.jsonl` | mindmap patch | Incremental mindmap edits |
+| `.mycc/mindmap-patch.jsonl` | mindmap patch | Incremental mindmap edits. **Written automatically by `recap`** (one add/update/delete per recap, via a hidden second LLM fork) — *not* only when the agent explicitly edits the mindmap. See the "Known Blind Spot" section in `SKILL.md`. |
 | `.mycc/imgcache/` | `read_picture` / `screen` | On-disk image description cache (parent process only) |
 | `.mycc/longtext/` | longtext dump | Oversized tool results stored for `read_read` summarization |
 | `.mycc/skills/` | user / setup | Project-level custom skills (overrides user-level) |
@@ -72,6 +72,12 @@ scopes: **project-level** (inside the working directory's `.mycc/`) and
 
 - **No SQLite database** — session storage is purely file-based (JSON +
   JSONL). There are no WAL files, locks, or table corruption to worry about.
+- **The mindmap on disk is two lines, merged only in memory.** At startup
+  mycc loads `.mycc/mindmap.json` (the `MYCC.md` base) and then replays
+  every action in `.mycc/mindmap-patch.jsonl` on top. `recall` reads the
+  merged in-memory tree. Because `recap` appends to that patch log on its
+  own, **the knowledge tree can change without the agent (or user) asking**
+  — a documented blind spot; see `SKILL.md`.
 - **`.mycc/imgcache/` and `.mycc/longtext/`** hold transient analysis
   artifacts, not project source — they are safe to clean up.
 - **Skill layer priority:** built-in (`skills/` in the package) > project

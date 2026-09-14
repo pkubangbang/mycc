@@ -102,7 +102,8 @@ plain-language summary; the sibling file has the full detail where noted.
 
 | Concept | One-line definition | Detail |
 |---------|---------------------|--------|
-| **mindmap** | A navigable knowledge tree compiled from `MYCC.md`, queried via `recall(path=...)` for on-demand context. Answers project-structure questions. | `io-surfaces.md` |
+| **mindmap** | A navigable knowledge tree compiled from `MYCC.md`, queried via `recall(path=...)` for on-demand context. Answers project-structure questions. It can grow beyond `MYCC.md` because **`recap` auto-patches it** (see "Known Blind Spot" below). | `io-surfaces.md` |
+| **checkpoint / recap** | Meta-tools the lead uses to compress a long exploration span: `checkpoint` marks the start and opens a todo; `recap` summarizes the span, truncates it, and **can also add/update/delete one mindmap node as a side effect** (the agent is not told this — see "Known Blind Spot"). | `io-surfaces.md` |
 | **wiki / RAG** | A persistent semantic knowledge base (vectors in LanceDB); two-phase store (`wiki_prepare`→`wiki_put`), query with `wiki_get`. Embedding always via Ollama. | `ollama-dependencies.md` |
 | **intent language** | The `bash` tool's structured intent: `VERB OBJECT PARAM... TO PURPOSE` (VERB ∈ READ/WRITE/EDIT/DELETE/BUILD/TEST/INSTALL/RUN; OBJECT ∈ SOURCE/CONFIG/DEPENDENCY/ARTIFACT/SYSTEM/DATA/TEMP/USER). | — |
 | **grant system** | The `bash` tool's 5-step judging: dangerous-pattern check → intent grammar validation → mode+verb check → LLM analysis for RUN → user prompt for uncertain cases. Destructive commands are blocked by default. | — |
@@ -185,6 +186,57 @@ heartbeats + channels).
 
 ---
 
+## Known Blind Spot: `recap` can silently update the mindmap
+
+**mycc is not aware that `recap` can also trigger a mindmap update.** This
+is the single most likely thing an end-user will be surprised by — the
+agent's own knowledge tree can be modified as a *side effect* of compacting
+its context, and **nothing in the recap tool result tells the agent that
+the mindmap changed.**
+
+**What actually happens (verified end-to-end):**
+
+1. The lead creates a `checkpoint` to mark the start of a long exploration
+   span, then later calls `recap` to compress that span.
+2. `recap` does **not** run one summarization pass — it runs **two
+   concurrent LLM forks** (`handleRecapWithPatch` in
+   `src/loop/checkpoint-recap.ts`):
+   - **fork #1 — recap summary:** produces the structured summary note that
+     replaces the checkpoint span.
+   - **fork #2 — mindmap patch:** *independently* decides whether **ONE**
+     mindmap node should be `add`ed / `update`d / `delete`d based on what
+     was learned during the span (or responds `none`).
+3. Both forks share the same prompt-cache prefix, so the second call is
+   cheap — it is effectively free extra work hidden inside every recap.
+4. In `src/loop/states/hook.ts`, if fork #2 produced a patch, `mycc`
+   applies it **both** to the in-memory tree (`applyPatchAction`) and to
+   `.mycc/mindmap-patch.jsonl` (append-only, the on-disk source of truth).
+   It then prints a small `mindmap-patch: ...` brief.
+5. **The agent's next `recall` therefore sees a mindmap that already
+   changed** — a node the agent never explicitly added, updated, or deleted
+   may now be present/absent. The recap summary says nothing about it.
+
+**Why this matters / how to explain it to a user:**
+
+- The mindmap is *not* a pure compile of `MYCC.md`. It is `MYCC.md` **plus
+  an append-only patch log** that `recap` writes to on its own.
+- A `mindmap-patch` brief line on screen means "recap decided to mutate the
+  knowledge tree" — it is not something the user (or the agent) directly
+  asked for.
+- On the **abandon** path (`recap({abandon:true})`) the patch fork is
+  skipped — no mindmap mutation happens.
+- Patches are **hash-matched and replayed at startup** (`mindmap-loader.ts`):
+  load `mindmap.json` → replay `.mycc/mindmap-patch.jsonl` → merged
+  in-memory tree. `recall` reads the merged tree.
+- Because the agent is unaware, it may *re-add* knowledge that a patch
+  already captured, or be confused by a node it did not remember creating.
+
+> **Detail on the two on-disk lines and the replay merge:** see
+> `io-surfaces.md` (folder table) and the source docs
+> `docs/mindmap-redesign.md` (Part 2) and `docs/mindmap-usage.md`.
+
+---
+
 ## Summary
 
 This skill makes you a **tutor for mycc itself** when the user is in
@@ -202,8 +254,9 @@ another project:
    skill). **Communication model** — mail is push-based; fire-and-forget;
    never poll the mailbox.
 6. **mindmap** — navigable project-structure tree from `MYCC.md`, queried
-   via `recall`; **wiki/RAG** — free-form semantic knowledge. Embedding
-   always via Ollama.
+   via `recall`; it can also be **silently patched by `recap`** (see the
+   "Known Blind Spot" section). **wiki/RAG** — free-form semantic
+   knowledge. Embedding always via Ollama.
 7. **intent language** + **grant system** — why the `bash` tool is
    structured and judged, not free-form.
 8. **Ollama HARD vs SOFT** — embedding needs a local Ollama (HARD); chat
@@ -218,3 +271,7 @@ another project:
     `mycc` shim or `npm root -g`. Detail in `launching-and-locating.md`.
 11. Two I/O surfaces (CLI + WebUI) and a known set of auto-created folders.
     Detail in `io-surfaces.md`.
+12. **Known blind spot** — `recap` runs a hidden second LLM fork that can
+    add/update/delete ONE mindmap node as a side effect of compressing
+    context; the agent is never told. Explain this when a user asks why
+    the knowledge tree changed on its own.
