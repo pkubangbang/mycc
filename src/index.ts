@@ -16,16 +16,16 @@
  * - Coordinator only intercepts coordinator-level commands (Ctrl+C, Ctrl+D, ESC)
  */
 
-import { ChildProcess, spawn } from 'child_process';
+import { ChildProcess } from 'child_process';
 import { resolve } from 'path';
-import { existsSync } from 'fs';
 import chalk from 'chalk';
 import { isVerbose, validateEnv, ensureToolTypeImports, shouldRunSetup, loadEnv, shouldServe, shouldDaemon } from './config.js';
 import { agentIO } from './loop/agent-io.js';
 import { parseKeys, isCtrlC, isEscape } from './utils/key-parser.js';
-import { getProjectRoot, spawnTsx, getTsxLoaderPath } from './utils/tsx-run.js';
+import { getProjectRoot, spawnTsx } from './utils/tsx-run.js';
 import { printHelp } from './help.js';
 import { installVerboseLog } from './utils/verbose-log.js';
+import { spawnDaemonLead, finishDaemonExit } from './utils/daemon-launch.js';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -613,160 +613,41 @@ function runCoordinator(): void {
   }, 300);
 
   /**
-   * Spawn the Lead as a detached background process (daemon mode).
+   * Spawn the Lead as a detached background process (daemon mode) and exit.
    *
-   * `--daemon` makes the Coordinator spawn the Lead with stdout/stderr/stdin
-   * disconnected (no terminal), detached from the parent process group, then
-   * `child.unref()` so the Coordinator can exit without waiting. The
-   * Coordinator prints the daemon PID and exits 0 immediately.
+   * `--daemon` makes the Coordinator spawn the Lead detached from the
+   * parent process group, then exit 0. The Lead runs headless in auto mode.
    *
-   * IPC is kept (`stdio: ['ignore','ignore','ignore','ipc']`) so the Lead's
-   * `process.send` guard passes and it can start — without IPC, agent-repl.ts
-   * refuses to boot. The Lead sends 'ready'/'exit' IPC messages after the
-   * Coordinator has already exited; they are harmlessly dropped (no listener).
-   * The loader's `skill_reindex` IPC signal is also dropped (no Coordinator to
-   * relay it), but the loader guards on `process.send` so it no-ops safely.
+   * The spawning, wrapper-vs-fallback branching, PID resolution, verbose
+   * logging, and stdout-draining exit live in `src/utils/daemon-launch.ts`;
+   * this function is a thin orchestrator that awaits the spawn, prints the
+   * resolved Lead PID, and exits.
    *
-   * The Lead receives all original CLI args (including `--daemon <skill>`
-   * and `--skip-healthcheck`) and runs headless in auto mode — no raw-mode
-   * stdin setup, no resize forwarding, no IPC forwarding loop.
-   *
-   * ── Verbose capture under -v ──
-   * stdio stays 'ignore' even in verbose mode: the Lead installs its OWN
-   * `installVerboseLog('lead')` tee (lead.ts), which intercepts
-   * `process.stdout.write` and writes to `.mycc/verbose-lead-<ts>.log`
-   * *before* forwarding to the (black-hole) stdout. So the file captures
-   * the Lead's output regardless of stdio. We do NOT switch to 'pipe'
-   * here because the Coordinator exits immediately after spawning — an
-   * undrained pipe would fill its buffer and block the Lead.
-   *
-   * To diagnose a daemon that exits silently, attach listeners (only in
-   * verbose mode) for the child's 'exit'/'error'/'message' events and log
-   * them to the coordinator log BEFORE calling process.exit(0). This gives
-   * a small window (the listeners fire asynchronously after unref) during
-   * which an early exit code is captured — though once the Coordinator
-   * exits, later events are lost. The Lead's own log file is the durable
-   * record; this coordinator-side logging is a best-effort supplement.
+   * On Windows the spawn chain is Coordinator → Go wrapper → Lead, so the
+   * wrapper's PID is NOT the Lead's — the util reads the wrapper's stdout
+   * to obtain the Lead's real PID. On Unix / fallback, `child.pid` is the
+   * Lead PID directly.
    */
-  function startDaemonLead(): void {
-    const tsxScript = resolve(PROJECT_ROOT, 'src', 'lead.ts');
-
-    // Forward all original CLI args (they already include --daemon/--skip-healthcheck).
+  async function startDaemonLead(): Promise<void> {
     const forwardedArgs = process.argv.slice(2);
 
     const env = { ...process.env };
     env.COLUMNS = process.env.COLUMNS || '120';
     env.MYCC_COORDINATOR_PID = String(process.pid);
 
-    // On Windows, spawn the native Go wrapper (bin/mycc-daemon.exe) which
-    // calls CreateProcessW with CREATE_NEW_CONSOLE + STARTF_USESHOWWINDOW +
-    // SW_HIDE. This gives the Lead a HIDDEN console that all its child
-    // processes (cmd.exe from execSync) inherit — eliminating the console
-    // window flashing that occurs when a detached Lead (DETACHED_PROCESS =
-    // no console) spawns cmd.exe which self-allocates a visible console.
-    //
-    // The wrapper is a one-shot launcher: it spawns the Lead and exits
-    // immediately. The Lead survives because CREATE_NEW_CONSOLE puts it in
-    // its own console process group. No IPC is used (the daemon Lead's IPC
-    // is fire-and-forget — the Coordinator exits right after, so messages
-    // are harmlessly dropped). See docs/lead-detach-issue-solution.md.
-    //
-    // Fallback: when the wrapper binary is missing (e.g. built from source
-    // without Go, or on a non-Windows platform), use the existing spawnTsx
-    // approach. The flash issue is Windows-only; Unix uses process groups,
-    // not consoles, so spawnTsx is correct there.
-    const wrapperPath = resolve(PROJECT_ROOT, 'bin', 'mycc-daemon.exe');
-    const useWrapper = process.platform === 'win32' && existsSync(wrapperPath);
+    const { pid, child, error, warning } = await spawnDaemonLead(forwardedArgs, env);
 
-    let child: ChildProcess;
-    if (useWrapper) {
-      const loaderPath = getTsxLoaderPath();
-      child = spawn(wrapperPath, [
-        process.execPath,           // node.exe path
-        loaderPath,                 // tsx ESM loader (file:// URL)
-        tsxScript,                  // src/lead.ts
-        ...forwardedArgs,           // --daemon, --skip-healthcheck, etc.
-      ], {
-        cwd: process.cwd(),
-        // stdio: no IPC channel — the Go wrapper can't do Node.js IPC, and
-        // the daemon Lead's IPC is fire-and-forget anyway (Coordinator exits
-        // immediately). The Lead's IPC guard is relaxed for daemon mode
-        // (agent-repl.ts) so it boots without process.send.
-        stdio: ['ignore', 'pipe', 'pipe'],
-        env,
-        // detached: true so the wrapper survives the Coordinator's exit.
-        // The wrapper itself is a one-shot launcher (exits right after
-        // CreateProcessW), but detached keeps it from being killed by the
-        // Coordinator's CTRL_CLOSE_EVENT before it can spawn the Lead.
-        detached: true,
-      });
-    } else {
-      child = spawnTsx({
-        script: tsxScript,
-        args: forwardedArgs,
-        cwd: process.cwd(),
-        stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
-        env,
-        // Detach the daemon Lead into its own process group so it survives the
-        // Coordinator's exit. Without `detached: true`, Windows sends a
-        // CTRL_CLOSE_EVENT to the whole console group when the Coordinator
-        // exits, killing the Lead — this was the root cause of the daemon's
-        // silent exit within seconds of startup. On Unix, detached makes the
-        // child a new process-group leader so it is not reached by a SIGINT
-        // sent to the parent's group. Combined with child.unref() below, the
-        // Coordinator can exit 0 immediately while the Lead keeps running.
-        detached: true,
-      });
-    }
-
-    // Verbose-mode diagnostics: log daemon lifecycle events to the
-    // coordinator log. These fire asynchronously; since the Coordinator
-    // exits right after this, only events that arrive in the brief window
-    // before exit are captured. The durable record is the Lead's own
-    // verbose-lead-<ts>.log (installed inside the Lead process).
-    if (isVerbose()) {
-      console.log(`[verbose] spawning daemon lead: script=${tsxScript} args=${JSON.stringify(forwardedArgs)} pid=${child.pid}`);
-      child.on('exit', (code, signal) => {
-        console.log(`[verbose] daemon lead exited: code=${code} signal=${signal}`);
-      });
-      child.on('error', (err) => {
-        console.log(`[verbose] daemon lead error: ${err.stack || err.message}`);
-      });
-      child.on('message', (msg) => {
-        console.log(`[verbose] daemon lead IPC: ${JSON.stringify(msg)}`);
-      });
-    }
-
-    // Detach so the daemon survives the Coordinator's exit.
-    // On Unix, stdio:'ignore' + unref() is sufficient — the child becomes
-    // orphaned (reparented to init) and keeps running. On Windows, the child
-    // has no console window because stdout/stderr are ignored.
-    child.unref();
-
-    console.log(chalk.green(`Daemon started (pid: ${child.pid}).`));
-
-    // In verbose mode, hold the Coordinator alive briefly so the daemon's
-    // early lifecycle events (exit/error/ready IPC) are captured in the
-    // coordinator log before we exit. If the daemon exits within this
-    // window (the silent-exit bug), the 'exit' listener above logs the code
-    // and we exit immediately. Otherwise we exit after the grace period and
-    // let the daemon run on. The durable record is the Lead's own
-    // verbose-lead-<ts>.log.
-    if (isVerbose()) {
-      let exited = false;
-      child.on('exit', () => { exited = true; });
-      const graceMs = 2000;
-      setTimeout(() => {
-        if (!exited) {
-          console.log(`[verbose] daemon still alive after ${graceMs}ms — coordinator exiting, daemon continues (pid=${child.pid})`);
-        } else {
-          console.log(`[verbose] daemon exited within grace window — see verbose-lead-<ts>.log for the reason`);
-        }
-        process.exit(0);
-      }, graceMs).unref?.();
+    if (error) {
+      console.error(chalk.red(error));
+      process.exit(1);
       return;
     }
 
-    process.exit(0);
+    console.log(chalk.green(`Daemon started (pid: ${pid}).`));
+    if (warning) {
+      console.error(chalk.yellow(`Warning: ${warning}`));
+    }
+
+    finishDaemonExit(child);
   }
 }
