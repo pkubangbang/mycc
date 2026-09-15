@@ -66,6 +66,7 @@ import {
   findBySid,
   findByEndpoint,
   endpointOfSid,
+  endpointsForSid,
   hasLiveWireForEndpoint,
   listRemotePeers,
   sendWireMail,
@@ -819,10 +820,18 @@ describe('peer wire — review round-2 regressions (Tests A, B, D)', () => {
   });
 
   it('Test D: peer_disconnect after convergence tears down BOTH endpoints and leaves no redial', async () => {
-    // A convergence window leaves two endpoint entries for one peer sid
-    // (the dialed URL key + the accepted announced-endpoint key). A
-    // peer_disconnect resolved by sid must tear down the WHOLE pair — both
-    // endpoint entries gone, the sid lookup gone — and cancel any redial.
+    // THE REAL RACE (review round-2 finding 2): the prior Test D manually
+    // pruned the loser before the disconnect logic, so it never tested the
+    // two-live-endpoints state in which the round-2 bug occurs. This version
+    // leaves BOTH sockets registered when the whole-pair teardown runs — a
+    // genuine convergence window where one peer sid spans two endpoint keys.
+    //
+    // A simultaneous mutual dial: the socket WE dialed is keyed by the URL
+    // we typed (survivorEndpoint); the socket we ACCEPTED is keyed by the
+    // endpoint the peer announced (loserEndpoint). Both announce the same
+    // peer sid. sidIndex points at the most-recent announce (loserEndpoint),
+    // so a single-endpoint disconnect would visit ONLY loserEndpoint and
+    // leave survivorEndpoint's socket live.
     const survivorEndpoint = '127.0.0.1:3195';
     const loserEndpoint = '192.168.1.20:3195';
     const peerSid = 'peer-disconnect-both';
@@ -831,39 +840,93 @@ describe('peer wire — review round-2 regressions (Tests A, B, D)', () => {
     const sockB = { readyState: 1, OPEN: 1, close: vi.fn() } as unknown as WebSocket;
     recordAnnounce({ endpoint: survivorEndpoint, dialed: true, socket: sockA, sid: peerSid, initiatorSid: SID_SELF, meta: {} });
     recordAnnounce({ endpoint: loserEndpoint, dialed: false, socket: sockB, sid: peerSid, initiatorSid: peerSid, meta: {} });
-    convergePairBySid(peerSid); // elects sockA (smaller initiatorSid); closes sockB
+    // Convergence elects sockA (smaller initiatorSid) and closes sockB with
+    // 4000 — but its close event has NOT run yet (the race window), so BOTH
+    // endpoint entries are still live in the registry.
+    convergePairBySid(peerSid);
 
-    // Disconnect by SID (the form peer_list displays). disconnectPeer
-    // resolves sid-first: it must find the survivor's endpoint via the sid
-    // index (the loser's teardown re-pointed it back to the survivor after
-    // Fix #1), send bye on every live socket, and tear down the survivor's
-    // endpoint. The loser's endpoint entry was already removed by its
-    // teardown; after disconnect, NEITHER endpoint nor the sid lookup
-    // remains.
-    //
-    // We cannot call the real disconnectPeer here (it dials a live server);
-    // instead drive the same teardown path it uses: teardownPair on the
-    // survivor endpoint (the entry disconnectPeer resolves via the sid
-    // index), after first pruning both sockets as their close handlers would.
-    pruneSocket(sockB);
-    teardownPair(loserEndpoint); // loser's close path (Fix #1-guarded)
-    // disconnectPeer resolves the survivor endpoint via findBySid, sends bye
-    // on its live socket, then teardownPair(survivorEndpoint).
-    const resolved = findBySid(peerSid);
-    expect(resolved).not.toBeNull();
-    expect(resolved!.endpoint).toBe(survivorEndpoint);
-    pruneSocket(sockA);
-    teardownPair(survivorEndpoint);
+    // PRE-CONDITION: the genuine two-endpoint state. Both endpoints hold the
+    // peer sid; sidIndex points at the loser (most-recent announce); BOTH
+    // sockets are still registered.
+    expect(findByEndpoint(survivorEndpoint)).not.toBeNull();
+    expect(findByEndpoint(loserEndpoint)).not.toBeNull();
+    expect(hasLiveWireForEndpoint(survivorEndpoint)).toBe(true);
+    expect(hasLiveWireForEndpoint(loserEndpoint)).toBe(true);
+    expect(endpointOfSid(peerSid)).toBe(loserEndpoint); // sidIndex → loser
+    // endpointsForSid MUST see BOTH endpoints (the whole logical peer),
+    // not just the one sidIndex points at — this is the primitive
+    // disconnectPeer now relies on.
+    const allEndpoints = endpointsForSid(peerSid).sort();
+    expect(allEndpoints).toEqual([loserEndpoint, survivorEndpoint].sort());
+    expect(allEndpoints.length).toBe(2);
 
-    // BOTH endpoint entries gone.
+    // WHOLE-PAIR teardown (the path disconnectPeer now drives): for every
+    // endpoint holding the sid, bye each live socket then teardownPair.
+    // pruneSocket is NOT called first — the sockets are still registered,
+    // exactly as in the race. teardownPair removes the entry + its sockets
+    // from the census regardless of socket identity (pair gone by
+    // declaration).
+    let sentBye = 0;
+    for (const ep of allEndpoints) {
+      const pair = findByEndpoint(ep);
+      if (!pair) continue;
+      for (const s of [...pair.sockets]) {
+        if (s.socket.readyState === s.socket.OPEN) {
+          try { s.socket.close(WIRE_CLOSE_BYE, 'bye'); sentBye++; } catch { /* closing */ }
+        }
+      }
+      teardownPair(ep);
+    }
+    expect(sentBye).toBe(2); // bye reached BOTH live sockets
+
+    // POST-CONDITION: BOTH endpoint entries gone, sid lookup gone, no live
+    // wire anywhere — the whole logical peer is terminated from a state
+    // where two endpoints were simultaneously live.
     expect(findByEndpoint(survivorEndpoint)).toBeNull();
     expect(findByEndpoint(loserEndpoint)).toBeNull();
-    // The sid lookup is gone (no surviving index mapping either endpoint).
     expect(findBySid(peerSid)).toBeNull();
     expect(endpointOfSid(peerSid)).toBeUndefined();
-    // No live wire anywhere for the peer.
+    expect(endpointsForSid(peerSid)).toEqual([]);
     expect(hasLiveWireForEndpoint(survivorEndpoint)).toBe(false);
     expect(hasLiveWireForEndpoint(loserEndpoint)).toBe(false);
     expect(listRemotePeers().length).toBe(0);
   });
+
+  it('Test D (API path): disconnectPeer by sid tears down a convergence-window pair end-to-end', async () => {
+    // End-to-end coverage of the actual disconnectPeer API (bye-send +
+    // loop-disposal + whole-pair teardown) in a two-socket convergence
+    // setup. The first dial establishes the survivor; a second accepted
+    // socket announces the SAME remote sid under a different endpoint,
+    // creating the two-endpoint state. disconnectPeer(SID) must close bye
+    // on both live sockets, dispose both loops, and tear down both pairs.
+    await connectPeer(remote.endpoint); // establishes the survivor (dialed)
+    expect(hasLiveWireForEndpoint(remote.endpoint)).toBe(true);
+
+    // Inject a second socket for the SAME remote sid under a different
+    // endpoint (the accepted half of a mutual dial). Both sockets are live.
+    const secondEndpoint = '10.0.0.99:3195';
+    const sock2 = { readyState: 1, OPEN: 1, close: vi.fn() } as unknown as WebSocket;
+    recordAnnounce({ endpoint: secondEndpoint, dialed: false, socket: sock2, sid: SID_REMOTE, initiatorSid: SID_REMOTE, meta: {} });
+    expect(hasLiveWireForEndpoint(secondEndpoint)).toBe(true);
+    expect(endpointsForSid(SID_REMOTE).sort()).toEqual([remote.endpoint, secondEndpoint].sort());
+
+    const result = await disconnectPeer(SID_REMOTE);
+    expect(result).toContain('hung up');
+    expect(result).toContain(SID_REMOTE);
+    // The message reports the multi-endpoint teardown (both pairs torn down).
+    expect(result).toContain('2 pairs torn down');
+
+    // Both endpoints gone; sid lookup gone; no live wire.
+    expect(findByEndpoint(remote.endpoint)).toBeNull();
+    expect(findByEndpoint(secondEndpoint)).toBeNull();
+    expect(findBySid(SID_REMOTE)).toBeNull();
+    expect(hasLiveWireForEndpoint(remote.endpoint)).toBe(false);
+    expect(hasLiveWireForEndpoint(secondEndpoint)).toBe(false);
+    // The injected second socket received a bye (4001).
+    expect(sock2.close).toHaveBeenCalledWith(WIRE_CLOSE_BYE, 'bye');
+    // The real dialed socket was also closed by the disconnect.
+    await vi.waitFor(() => {
+      expect(remote.sockets[0].readyState).toBe(remote.sockets[0].CLOSED);
+    });
+  }, 20_000);
 });

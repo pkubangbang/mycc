@@ -439,6 +439,37 @@ export function endpointOfSid(sid: string): string | undefined {
   return sidIndex.get(sid);
 }
 
+/**
+ * Resolve EVERY endpoint key whose pair entry currently holds the given peer
+ * sid — the WHOLE logical peer, not just the endpoint `sidIndex` happens to
+ * point at. Used by `peer_disconnect`'s whole-pair teardown (review round-2
+ * finding 1, BLOCKER): during a simultaneous mutual dial's convergence
+ * window one peer sid can transiently span TWO endpoint keys (the dialed URL
+ * vs the peer's announced endpoint), and `sidIndex[sid]` holds only the
+ * MOST-RECENT announce's endpoint. A terminal disconnect that visits only
+ * that one endpoint would leave the sibling socket live — violating the
+ * documented "whole pair, including a simultaneous-dial window's sibling"
+ * promise. The `socketsBySid` census is the authoritative "who still holds
+ * this sid" view, so the endpoint set is derived from it (each surviving
+ * socket's owning pair entry contributes its endpoint key), not from
+ * `sidIndex`. The API stays endpoint-addressed (the caller passes one
+ * endpoint/sid); the registry handles the multiplicity internally.
+ *
+ * @returns a deduped array of endpoint keys (empty when no pair holds the
+ * sid). Stable order is not guaranteed.
+ */
+export function endpointsForSid(sid: string): string[] {
+  const sockets = socketsBySid.get(sid);
+  if (!sockets || sockets.length === 0) return [];
+  const endpoints = new Set<string>();
+  for (const s of sockets) {
+    for (const p of pairs.values()) {
+      if (p.sockets.includes(s)) endpoints.add(p.endpoint);
+    }
+  }
+  return [...endpoints];
+}
+
 /** All pairs with at least one live socket (peer_list remote section). */
 export function listRemotePeers(): RemotePairEntry[] {
   return [...pairs.values()].filter((e) => e.sockets.length > 0);

@@ -76,6 +76,7 @@ import {
   findByEndpoint,
   findBySid,
   endpointOfSid,
+  endpointsForSid,
   hasLiveWireForEndpoint,
   ensurePendingPair,
   getEpoch,
@@ -663,10 +664,22 @@ export async function connectPeer(rawUrl: string): Promise<string> {
 }
 
 /**
- * peer_disconnect: terminal hang-up. Resolves the pair sid-first (url
- * fallback), sends close 4001 (bye) on every live socket, tears down the
- * whole pair, cancels the redial loop, and bumps the epoch so a mid-flight
- * dial aborts. The remote side's 4001 handling is terminal for its loop too.
+ * peer_disconnect: terminal hang-up. The API stays endpoint-addressed (the
+ * caller passes a sid OR a url — mirroring peer_connect), but the terminal
+ * operation is LOGICALLY PEER-SCOPED: it tears down the WHOLE pair, every
+ * endpoint key that currently holds the resolved peer sid. This matters
+ * during a simultaneous mutual dial's convergence window, when one peer sid
+ * transiently spans TWO endpoint keys (the dialed URL vs the peer's
+ * announced endpoint); visiting only the endpoint `sidIndex` points at would
+ * leave the sibling socket live (review round-2 finding 1, BLOCKER). The
+ * registry's `endpointsForSid(sid)` derives the full endpoint set from the
+ * `socketsBySid` census, so this function is unaware of the internal
+ * endpoint multiplicity.
+ *
+ * For each endpoint holding the sid: sends close 4001 (bye) on every live
+ * socket, disposes the redial loop, and tears down the pair entry (bumps the
+ * epoch so a mid-flight dial aborts). The remote side's 4001 handling is
+ * terminal for its loop too.
  */
 export async function disconnectPeer(urlOrSid: string): Promise<string> {
   const arg = urlOrSid.trim();
@@ -692,24 +705,47 @@ export async function disconnectPeer(urlOrSid: string): Promise<string> {
 
   const sid = entry.sid || '(unknown sid)';
 
-  // Bye on every live socket of the pair (4001 tears down the WHOLE pair —
-  // plan §2 disconnect, including a simultaneous-dial window's sibling).
-  let sentBye = 0;
-  for (const s of [...entry.sockets]) {
-    if (s.socket.readyState === s.socket.OPEN) {
-      try {
-        s.socket.close(WIRE_CLOSE_BYE, 'bye');
-        sentBye++;
-      } catch { /* closing */ }
-    }
+  // WHOLE-PAIR teardown (review round-2 finding 1): collect EVERY endpoint
+  // key holding this peer sid — not just the one `sidIndex` resolved above.
+  // During a convergence window the sid may span two endpoint keys; a
+  // single-endpoint teardown would leave the sibling socket live. The set
+  // always includes the resolved endpoint (it holds the sid), so the
+  // common single-endpoint case is unchanged.
+  const endpoints = endpointsForSid(sid);
+  if (endpoints.length === 0) {
+    // Defensive: the entry existed but the census has no sockets for the sid
+    // (e.g. a pending pair with no announced socket yet). Fall back to the
+    // resolved endpoint so the disconnect still tears down what we found.
+    endpoints.push(endpoint);
   }
 
-  // Local teardown: removes the entry, bumps the epoch (mid-flight dial
-  // aborts on its completion check), marks the reminder todo done.
-  disposeLoop(endpoint); // terminal: cancel + drop the loop state (review finding 3)
-  teardownPair(endpoint);
+  let sentBye = 0;
+  let tornDown = 0;
+  for (const ep of endpoints) {
+    const pair = findByEndpoint(ep);
+    if (!pair) continue; // already gone (a prior iteration's teardown may have re-pointed/cleared it)
+    // Bye on every live socket of THIS endpoint's pair (4001 tears down the
+    // WHOLE pair — plan §2 disconnect, including a simultaneous-dial
+    // window's sibling).
+    for (const s of [...pair.sockets]) {
+      if (s.socket.readyState === s.socket.OPEN) {
+        try {
+          s.socket.close(WIRE_CLOSE_BYE, 'bye');
+          sentBye++;
+        } catch { /* closing */ }
+      }
+    }
+    // Local teardown: removes the entry, bumps the epoch (mid-flight dial
+    // aborts on its completion check), marks the reminder todo done.
+    disposeLoop(ep); // terminal: cancel + drop the loop state (review finding 3)
+    teardownPair(ep);
+    tornDown++;
+  }
 
-  return `Wire to ${sid} at ${endpoint} hung up (resolved by ${via}, bye sent on ${sentBye} socket${sentBye === 1 ? '' : 's'}). The redial loop is cancelled — re-run peer_connect to reconnect.`;
+  const epList = endpoints.length <= 1
+    ? endpoint
+    : `${endpoints.length} endpoints (${endpoints.join(', ')})`;
+  return `Wire to ${sid} at ${epList} hung up (resolved by ${via}, bye sent on ${sentBye} socket${sentBye === 1 ? '' : 's'}, ${tornDown} pair${tornDown === 1 ? '' : 's'} torn down). The redial loop is cancelled — re-run peer_connect to reconnect.`;
 }
 
 /**
