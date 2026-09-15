@@ -358,7 +358,14 @@ handler appends to its **own** mailbox on an inbound `mail` frame.
   When `MYCC_WIRE_TOKEN` is set on the acceptor, a missing/mismatched token
   destroys the upgrade (HTTP 401); when unset on the acceptor, the
   endpoint is open and the operator is responsible for network-layer
-  access control. The dialer sends the token only when it is set. An
+  access control. The dialer sends the token only when it is set.
+  **Token transport (review finding 3)**: the token travels as the
+  `X-MYCC-Wire-Token` REQUEST HEADER on the WS upgrade, NOT a `?token=`
+  query string — a query param would leak the shared secret into
+  reverse-proxy access logs, HTTP debugging middleware, observability/
+  tracing systems, and request-URL diagnostics, while a header is not
+  echoed in request-URL diagnostics and is not logged by default in most
+  access-log formats. An
   open `/peer/ws` IS a mailbox-injection surface if exposed
   uncontrolled — that is the operator's decision, not a mycc default
   failure. `/health` stays unauthenticated but only reveals the `peer`

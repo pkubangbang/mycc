@@ -362,7 +362,48 @@ export function teardownPair(endpoint: string): RemotePairEntry | null {
   bumpEpoch(endpoint);
   if (!entry) return null;
   pairs.delete(endpoint);
-  sidIndex.delete(entry.sid);
+  // Sid-index ownership + survivor re-point (review finding 1, CRITICAL):
+  // one peer sid can transiently span MULTIPLE endpoint keys (a simultaneous
+  // mutual dial: the socket we dialed is keyed by the URL we typed; the
+  // socket we accepted by the peer's announced endpoint). `sidIndex[sid]`
+  // holds the MOST-RECENT announce's endpoint — which may be the endpoint
+  // being torn down right now, OR a DIFFERENT (surviving) endpoint. Two
+  // cases must both end with `sidIndex[sid]` pointing at a LIVE pair entry
+  // for that sid (if any), never dangling and never orphaning a survivor:
+  //   (a) sidIndex[sid] === this endpoint (the common case — most-recent
+  //       announce was on the socket being torn down): drop this mapping,
+  //       then re-point at any OTHER pair entry still holding the same sid
+  //       (the convergence survivor keyed under a different endpoint).
+  //   (b) sidIndex[sid] !== this endpoint (a later announce re-pointed the
+  //       index at a survivor): leave it untouched — this teardown must not
+  //       corrupt the survivor's index.
+  // The invariant: SID = logical peer identity, endpoint = connection
+  // locator — cleanup must never assume the sid index belongs to the
+  // endpoint being torn down, and must keep it honest when a survivor
+  // remains. Without the re-point, findBySid() returns null for a LIVE
+  // wire after the loser's teardown → sendWireMail fails.
+  if (entry.sid) {
+    if (sidIndex.get(entry.sid) === endpoint) {
+      sidIndex.delete(entry.sid);
+      // Re-point at a surviving pair entry holding the same sid, if any
+      // (the convergence survivor keyed under a different endpoint). The
+      // socketsBySid census is the authoritative "who still holds this sid"
+      // view — re-derive the index from it rather than scanning all pairs.
+      const survivors = socketsBySid.get(entry.sid);
+      if (survivors && survivors.length > 0) {
+        // Find the pair entry that still contains one of the surviving
+        // sockets and re-point the sid index at its endpoint key.
+        for (const s of survivors) {
+          for (const p of pairs.values()) {
+            if (p.sockets.includes(s)) {
+              sidIndex.set(entry.sid, p.endpoint);
+              break;
+            }
+          }
+        }
+      }
+    }
+  }
   // Drop the torn-down pair's sockets from the sid census (convergence
   // grouping) — the pair is gone by declaration, not observation.
   if (entry.sid) {
@@ -524,26 +565,18 @@ export function ensurePendingPair(endpoint: string, sid: string): RemotePairEntr
 export function sendWireMail(targetSid: string, title: string, content: string): boolean {
   const hooks = getWireHooks();
   if (!hooks) return false;
-  // Sender-side size cap (plan §5, finding G2; review finding: BYTE-aware).
-  // Fail fast WITHOUT sending when the frame would exceed the dedicated
-  // server's maxPayload. Content length in CHARACTERS under-counts a
-  // multi-byte payload (CJK/emoji) — the serialized frame can exceed the
-  // cap while the char count passes, and the REMOTE side would 1009-close
-  // the connection — a network-class close the redial loop would misread
-  // as a transient failure and re-dial forever for one undeliverable
-  // mail. Measure the SERIALIZED frame's UTF-8 byte length instead.
-  const approxFrameBytes = Buffer.byteLength(
-    JSON.stringify({ content, title, targetSid }),
-    'utf-8',
-  ) + 256;
-  if (approxFrameBytes > WIRE_MAX_PAYLOAD_BYTES) {
-    hooks.verbose('wire', `refusing to send oversize mail frame (~${approxFrameBytes} bytes > ${WIRE_MAX_PAYLOAD_BYTES} cap)`);
-    return false;
-  }
   const entry = findBySid(targetSid);
   if (!entry) return false;
   const socket = entry.sockets.find((s) => s.socket.readyState === s.socket.OPEN)?.socket;
   if (!socket) return false;
+  // Construct the ACTUAL frame first (review finding 5: the prior guard
+  // measured a PARTIAL frame — {content, title, targetSid} — plus a +256
+  // magic constant, an approximation of the real {type, id, from, title,
+  // content, timestamp} wire frame). Measuring the serialized REAL frame
+  // gives a hard invariant — bytes(frame sent) <= maxPayload — rather than
+  // bytes(partial frame) + magic constant <= maxPayload. The id and
+  // timestamp are generated here so the measured bytes are the bytes that go
+  // on the wire (no field is added after the check).
   const frame: MailFrame = {
     type: 'mail',
     id: generateWireMailId(hooks.getSessionId()),
@@ -552,5 +585,18 @@ export function sendWireMail(targetSid: string, title: string, content: string):
     content,
     timestamp: Date.now(),
   };
+  // Sender-side size cap (plan §5, finding G2; review finding: BYTE-aware).
+  // Fail fast WITHOUT sending when the frame would exceed the dedicated
+  // server's maxPayload. Content length in CHARACTERS under-counts a
+  // multi-byte payload (CJK/emoji) — the serialized frame can exceed the
+  // cap while the char count passes, and the REMOTE side would 1009-close
+  // the connection — a network-class close the redial loop would misread
+  // as a transient failure and re-dial forever for one undeliverable
+  // mail. Measure the SERIALIZED frame's UTF-8 byte length instead.
+  const frameBytes = Buffer.byteLength(JSON.stringify(frame), 'utf-8');
+  if (frameBytes > WIRE_MAX_PAYLOAD_BYTES) {
+    hooks.verbose('wire', `refusing to send oversize mail frame (${frameBytes} bytes > ${WIRE_MAX_PAYLOAD_BYTES} cap)`);
+    return false;
+  }
   return sendFrame(socket, frame);
 }

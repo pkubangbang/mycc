@@ -211,7 +211,7 @@ mycc instances on **different machines** can be wired together so they exchange 
 `MYCC_WIRE_TOKEN` is an **optional** shared secret that gates the `/peer/ws` upgrade endpoint when configured.
 
 - **Unset on both instances (default)** — the wire endpoint is **open**: any peer that can reach the serving port may connect. Security is the **operator's responsibility at OSI L3** — bind the serve port to a private interface, put it behind a firewall, front it with a TLS reverse proxy, or restrict it to a VPN / SSH tunnel. mycc intentionally does not impose an in-app auth gate by default.
-- **Set to the same value on both instances** — the dialer sends the token as a query parameter on the WS upgrade, and the acceptor refuses any upgrade whose token is missing or mismatched (HTTP 401). Use this if you want an in-app auth layer in addition to (or instead of) network-layer controls.
+- **Set to the same value on both instances** — the dialer sends the token as the `X-MYCC-Wire-Token` request header on the WS upgrade, and the acceptor refuses any upgrade whose token is missing or mismatched (HTTP 401). Use this if you want an in-app auth layer in addition to (or instead of) network-layer controls. (The token travels as a request header rather than a `?token=` query string so it does not leak into reverse-proxy access logs, HTTP debugging middleware, or request-URL diagnostics.)
 
 > **Note:** `MYCC_WIRE_TOKEN` is **not** part of the `--setup` wizard (it is an advanced/optional knob). Set it directly in your environment or `.env` file (`~/.mycc-store/.env` user-level or `./mycc/.env` project-level) on **both** instances if you want the gate, or pass it as a CLI flag (`--wire-token <value>`) on either instance.
 

@@ -24,9 +24,10 @@
  *       smoke test).
  *   2.  Registry pre-check (pair-dedupe layer 1): a live wire for this
  *       endpoint — or for the probed sid — means "already connected".
- *   3.  Dial ws://<host>:<port>/peer/ws (with ?token=MYCC_WIRE_TOKEN when that
- *       env is set — the token is OPTIONAL; when unset the dial carries no
- *       token and an acceptor with no token configured accepts openly).
+ *   3.  Dial ws://<host>:<port>/peer/ws (with the X-MYCC-Wire-Token request
+ *       header set to MYCC_WIRE_TOKEN when that env is set — the token is
+ *       OPTIONAL; when unset the dial carries no token header and an
+ *       acceptor with no token configured accepts openly).
  *       Send our announce on open, record the pair when the acceptor's
  *       announce reply arrives. The acceptor's reply is the identity
  *       evidence — the probed sid is used only for the pre-checks (a remote
@@ -317,13 +318,22 @@ interface DialCallbacks {
  */
 function dialSocket(endpoint: string, dialBase: string, epoch0: number, cb: DialCallbacks): WebSocket {
   // Token is OPTIONAL (plan §5 Security): when MYCC_WIRE_TOKEN is set on
-  // this dialer, send it as the upgrade query param so an acceptor that
-  // also configured a token can verify it. When unset, dial with no token
-  // — the acceptor treats a missing token as "open" when it too has no
-  // token configured (security delegated to OSI L3 by the operator).
+  // this dialer, send it as a REQUEST HEADER (X-MYCC-Wire-Token) so an
+  // acceptor that also configured a token can verify it. When unset, dial
+  // with no token header — the acceptor treats a missing token as "open"
+  // when it too has no token configured (security delegated to OSI L3 by
+  // the operator).
+  //
+  // Header, NOT query string (review finding 3, MEDIUM): a ?token= query
+  // param becomes part of the HTTP/WebSocket request URL and can leak into
+  // reverse-proxy access logs, HTTP debugging middleware, observability/
+  // tracing systems, and error messages. A shared secret in the URL is a
+  // leakage vector a header avoids (headers are not logged by default in
+  // most access-log formats and are not echoed in request-URL diagnostics).
   const token = process.env.MYCC_WIRE_TOKEN;
-  const url = token ? `${dialBase}?token=${encodeURIComponent(token)}` : dialBase;
-  const ws = new WebSocket(url, { handshakeTimeout: HANDSHAKE_TIMEOUT_MS });
+  const headers: Record<string, string> = token ? { 'X-MYCC-Wire-Token': token } : {};
+  const url = dialBase; // token travels via header, never the query string
+  const ws = new WebSocket(url, { handshakeTimeout: HANDSHAKE_TIMEOUT_MS, headers });
 
   let replyTimer: ReturnType<typeof setTimeout> | null = null;
   let failed = false;
@@ -435,23 +445,23 @@ function dialSocket(endpoint: string, dialBase: string, epoch0: number, cb: Dial
     // Survivor check first; otherwise arm the capped-exponential loop. The
     // pending pair entry (empty sockets, sid preserved) stays so mail_to
     // reports "not connected, retrying" rather than "unknown peer".
+    //
+    // Scheme retention (review finding 2, HIGH): the redial MUST reuse the
+    // ORIGINAL dialBase that parseWireTarget derived (ws:// OR wss://). The
+    // closed-over `dialBase` — not a reconstruction from the bare endpoint
+    // key — is the single source of truth. A `host:port` key cannot recover
+    // the scheme, so a reconnect to a wss:// (TLS-only) deployment would
+    // silently fall back to ws:// and fail forever (the initial dial
+    // succeeded, so the bug only surfaces on failure recovery).
     if (hasLiveWireForEndpoint(pairEndpoint)) {
       cancelLoop(pairEndpoint);
       verbose(`socket to ${pairEndpoint} died; live survivor carries the pair`);
       return;
     }
-    scheduleRedial(pairEndpoint, dialBaseOf(pairEndpoint));
+    scheduleRedial(pairEndpoint, dialBase);
   });
 
   return ws;
-}
-
-/** Recover the dial base URL for an endpoint on close (loop re-arming).
- *  Scheme note: parseWireTarget derives ws/wss from the ORIGINAL url; on
- *  close we re-derive from the endpoint key alone — http/ws is the default
- *  (TLS via reverse proxy is the documented production path, plan §5). */
-function dialBaseOf(endpoint: string): string {
-  return `ws://${endpoint}/peer/ws`;
 }
 
 /** Announce reply handling: self-dial backstop, registry record, convergence. */
@@ -616,12 +626,13 @@ export async function connectPeer(rawUrl: string): Promise<string> {
 
   // Token is OPTIONAL (plan §5 Security): no pre-dial gate here. When
   // MYCC_WIRE_TOKEN is set on this dialer, dialSocket sends it as the
-  // upgrade query param; when unset, the dial proceeds with no token and
-  // the acceptor treats a missing token as "open" when it too has none
-  // configured. A 401 from an acceptor that DOES enforce a token surfaces
-  // via the dial failure path (describeCloseCode). Security is the
-  // operator's responsibility at OSI L3 (firewall / TLS reverse proxy /
-  // VPN / SSH tunnel); mycc does not impose an in-app auth gate by default.
+  // X-MYCC-Wire-Token request header; when unset, the dial proceeds with no
+  // token header and the acceptor treats a missing token as "open" when it
+  // too has none configured. A 401 from an acceptor that DOES enforce a
+  // token surfaces via the dial failure path (describeCloseCode). Security
+  // is the operator's responsibility at OSI L3 (firewall / TLS reverse
+  // proxy / VPN / SSH tunnel); mycc does not impose an in-app auth gate by
+  // default.
 
   // Step 3 — dial. Pending pair entry FIRST (plan §5): the placeholder keeps
   // the facade's "not connected, retrying" semantics during the handshake

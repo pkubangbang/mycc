@@ -19,7 +19,9 @@
  *
  * Token verification is OPTIONAL (plan §5 Security): the token is a shared
  * secret exchanged out-of-band (env `MYCC_WIRE_TOKEN`, same value on both
- * ends), supplied by the dialer as a query parameter on the WS upgrade. When
+ * ends), supplied by the dialer as the `X-MYCC-Wire-Token` REQUEST HEADER on
+ * the WS upgrade (NOT a query param — a query string would leak the secret
+ * into proxy/access logs and request-URL diagnostics; review finding 3). When
  * MYCC_WIRE_TOKEN is configured on the acceptor, a missing/mismatched token
  * destroys the underlying TCP socket immediately. When it is NOT configured,
  * the upgrade is accepted with no token check — security is the operator's
@@ -124,9 +126,12 @@ export class PeerWireAcceptor {
    * Handle an upgrade request to /peer/ws. Called by ServeHub's
    * upgradeHandler when req.url starts with /peer/ws.
    *
-   * Token verification (OPTIONAL, plan §5 Security): the dialer passes
-   * ?token=<shared-secret>. The token is a shared secret exchanged
-   * out-of-band (env `MYCC_WIRE_TOKEN`). It is OPTIONAL:
+   * Token verification (OPTIONAL, plan §5 Security): the dialer passes the
+   * shared secret as the `X-MYCC-Wire-Token` REQUEST HEADER (review finding
+   * 3: a header avoids leaking the secret into proxy/access logs and
+   * request-URL diagnostics the way a ?token= query param would). The token
+   * is a shared secret exchanged out-of-band (env `MYCC_WIRE_TOKEN`). It is
+   * OPTIONAL:
    *   - If MYCC_WIRE_TOKEN is NOT configured on this acceptor → the upgrade
    *     is accepted with NO token check (open). Security is the operator's
    *     responsibility at OSI L3 (firewall / TLS reverse proxy / VPN / SSH
@@ -138,10 +143,18 @@ export class PeerWireAcceptor {
   handleUpgrade(req: import('http').IncomingMessage, socket: import('stream').Duplex, head: Buffer): void {
     const expected = process.env.MYCC_WIRE_TOKEN;
     if (expected) {
-      // Token configured → enforce it (the optional in-app auth gate).
-      const url = new URL(req.url ?? '/peer/ws', 'http://localhost');
-      const token = url.searchParams.get('token');
-      if (!token || token !== expected) {
+      // Token configured → enforce it (the optional in-app auth gate). The
+      // dialer sends the shared secret as the X-MYCC-Wire-Token REQUEST
+      // HEADER (review finding 3, MEDIUM): a ?token= query param would leak
+      // the secret into reverse-proxy access logs, HTTP debugging
+      // middleware, observability/tracing systems, and error messages — a
+      // header avoids that (headers are not echoed in request-URL
+      // diagnostics and are not logged by default in most access-log
+      // formats). Node lowercases request header names, so read via the
+      // lowercased key.
+      const token = req.headers['x-mycc-wire-token'];
+      const presented = Array.isArray(token) ? token[0] : token;
+      if (!presented || presented !== expected) {
         this.refuseUpgrade(socket, 'unauthorized (bad or missing wire token)');
         return;
       }

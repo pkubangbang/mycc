@@ -79,7 +79,7 @@ import {
   WIRE_MAX_PAYLOAD_BYTES,
   type WireHooks,
 } from '../../peer/wire-registry.js';
-import { connectPeer, disconnectPeer, resetWireClient, stopWireClient, setPingIntervalForTest } from '../../peer/wire-client.js';
+import { connectPeer, disconnectPeer, resetWireClient, stopWireClient, setPingIntervalForTest, parseWireTarget } from '../../peer/wire-client.js';
 import { getPeerWireAcceptor, resetPeerWireAcceptor, PEER_WIRE_MAX_PAYLOAD_BYTES } from '../../serve/peer-wire.js';
 
 const SID_SELF = 'aaaa0000-0000-0000-0000-00000000000a'; // lexicographically SMALL
@@ -153,9 +153,13 @@ class FakeRemote {
       if (url.pathname === '/peer/ws') {
         // Open mode (token === null) mirrors a real acceptor with no
         // MYCC_WIRE_TOKEN configured: accept the upgrade with NO token
-        // check. When a token IS configured, a missing/mismatched ?token=
-        // is refused with 401 (the optional in-app auth gate).
-        const tokenOk = this.token === null || url.searchParams.get('token') === this.token;
+        // check. When a token IS configured, a missing/mismatched
+        // X-MYCC-Wire-Token header is refused with 401 (the optional in-app
+        // auth gate). The token travels as a REQUEST HEADER (review finding
+        // 3), NOT a ?token= query param.
+        const raw = req.headers['x-mycc-wire-token'];
+        const presented = Array.isArray(raw) ? raw[0] : raw;
+        const tokenOk = this.token === null || presented === this.token;
         if (!tokenOk) {
           socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n');
           socket.destroy();
@@ -379,11 +383,12 @@ describe('peer wire — dialer connect flow (probe → checks → dial → annou
 
   it('dials OPEN (no token) when MYCC_WIRE_TOKEN is unset on both sides', async () => {
     // MYCC_WIRE_TOKEN is OPTIONAL (plan §5 Security): when unset on the
-    // dialer, the upgrade carries no ?token=; when the acceptor also has no
-    // token configured, the upgrade is accepted openly (security is the
-    // operator's responsibility at OSI L3, not an in-app gate). The
-    // FakeRemote mirrors this: token=null → it accepts upgrades with no
-    // ?token= param. The wire must establish end-to-end without a token.
+    // dialer, the upgrade carries no X-MYCC-Wire-Token header; when the
+    // acceptor also has no token configured, the upgrade is accepted openly
+    // (security is the operator's responsibility at OSI L3, not an in-app
+    // gate). The FakeRemote mirrors this: token=null → it accepts upgrades
+    // with no token header. The wire must establish end-to-end without a
+    // token.
     delete process.env.MYCC_WIRE_TOKEN;
     remote.token = null; // acceptor side: also open (no token check)
     const result = await connectPeer(remote.endpoint);
@@ -533,8 +538,9 @@ describe('peer wire — acceptor side (real PeerWireAcceptor)', () => {
       httpServer.listen(0, '127.0.0.1', () => resolve((httpServer.address() as { port: number }).port));
     });
 
-    // Simulate the REMOTE dialer connecting to US.
-    const ws = new WebSocket(`ws://127.0.0.1:${port}/peer/ws?token=${TOKEN}`);
+    // Simulate the REMOTE dialer connecting to US. The token travels as the
+    // X-MYCC-Wire-Token request header (review finding 3), not a query param.
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/peer/ws`, { headers: { 'X-MYCC-Wire-Token': TOKEN } });
     const gotReply = new Promise<Record<string, unknown>>((resolve) => {
       ws.on('open', () => {
         ws.send(JSON.stringify({
@@ -580,7 +586,7 @@ describe('peer wire — acceptor side (real PeerWireAcceptor)', () => {
       httpServer.listen(0, '127.0.0.1', () => resolve((httpServer.address() as { port: number }).port));
     });
 
-    const ws = new WebSocket(`ws://127.0.0.1:${port}/peer/ws?token=WRONG`);
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/peer/ws`, { headers: { 'X-MYCC-Wire-Token': 'WRONG' } });
     const closed = new Promise<number>((resolve) => {
       ws.on('close', (code) => resolve(code));
       ws.on('unexpected-response', () => resolve(-1)); // 401 path
@@ -603,7 +609,7 @@ describe('peer wire — acceptor side (real PeerWireAcceptor)', () => {
       httpServer.listen(0, '127.0.0.1', () => resolve((httpServer.address() as { port: number }).port));
     });
 
-    const ws = new WebSocket(`ws://127.0.0.1:${port}/peer/ws?token=${TOKEN}`);
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/peer/ws`, { headers: { 'X-MYCC-Wire-Token': TOKEN } });
     const closeCode = new Promise<number>((resolve) => {
       ws.on('open', () => {
         // Announce with OUR OWN sid — the backstop violation.
@@ -697,4 +703,167 @@ describe('peer wire — info-symmetry todo lifecycle (test g)', () => {
     expect(todosForEndpoint.length).toBe(2); // hook fired again — same endpoint key
     expect(todosForEndpoint.every((t) => t.sid === SID_REMOTE)).toBe(true);
   }, 20_000);
+});
+
+// ── Review round-2 regression tests (Tests A, B, D) ─────────────────────────
+//
+// The PR review (round 2) requested explicit regression coverage for three
+// scenarios the round-1 suite did not pin down:
+//   Test A — different-endpoint convergence then LOSER teardown must NOT
+//            corrupt the survivor's sidIndex (the Fix #1 invariant: SID =
+//            logical peer identity, endpoint = connection locator; one sid
+//            can transiently span multiple endpoints, so teardown must only
+//            drop the sid→endpoint mapping when it still points at the
+//            endpoint being torn down).
+//   Test B — a wss:// (TLS) target's scheme is RETAINED in the dialBase the
+//            reconnect loop reuses; it must not silently fall back to ws://
+//            on a redial (the Fix #2 invariant: the closed-over dialBase is
+//            the single source of truth, not a reconstruction from the bare
+//            endpoint key).
+//   Test D — peer_disconnect after a convergence window tears down BOTH
+//            endpoint entries for the peer sid and leaves no redial.
+//   Test E (todo lineage: stale hash hint + actual update still fails) is
+//            already covered in src/tests/context/shared/todo.test.ts
+//            ("should still REJECT a stale write even when the lineage ring
+//            matches (integrity gate unchanged)").
+
+describe('peer wire — review round-2 regressions (Tests A, B, D)', () => {
+  it('Test A: convergence loser teardown keeps the survivor findBySid-resolvable and mail-routable', () => {
+    // The exact scenario Fix #1 addresses: a simultaneous mutual dial keys
+    // its two sockets under DIFFERENT endpoint strings. Convergence elects a
+    // winner and closes the loser (4000). When the loser's endpoint is then
+    // torn down (its close handler calls teardownPair), the survivor — keyed
+    // under the OTHER endpoint — must remain resolvable by sid AND able to
+    // carry mail. A naive `sidIndex.delete(entry.sid)` in teardownPair would
+    // delete the survivor's index and break sendWireMail for a live wire.
+    const survivorEndpoint = '127.0.0.1:3195'; // the URL we typed (dialed)
+    const loserEndpoint = '192.168.1.20:3195'; // the endpoint the peer announced (accepted)
+    const peerSid = 'peer-survivor';
+
+    // A fake socket that CAN send (sendWireMail calls ws.send) — the
+    // survivor must actually accept the mail frame.
+    const sentFrames: string[] = [];
+    const makeSock = (): WebSocket => ({
+      readyState: 1, OPEN: 1,
+      close: vi.fn(),
+      send: (data: string) => { sentFrames.push(data); },
+    } as unknown as WebSocket);
+
+    const sockSurvivor = makeSock(); // dialed by US → initiatorSid = our sid (small)
+    const sockLoser = makeSock();    // accepted from peer → initiatorSid = peer sid (large)
+
+    recordAnnounce({ endpoint: survivorEndpoint, dialed: true, socket: sockSurvivor, sid: peerSid, initiatorSid: SID_SELF, meta: {} });
+    recordAnnounce({ endpoint: loserEndpoint, dialed: false, socket: sockLoser, sid: peerSid, initiatorSid: peerSid, meta: {} });
+
+    // Both endpoints now index the same peer sid (most-recent announce wins
+    // → the accepted socket's announce re-pointed sidIndex at loserEndpoint).
+    expect(endpointOfSid(peerSid)).toBe(loserEndpoint);
+
+    // Convergence: our dialed socket (initiatorSid SID_SELF, smaller) wins;
+    // the accepted socket (initiatorSid peerSid, larger) is the loser.
+    const losers = convergePairBySid(peerSid);
+    expect(losers).not.toBeNull();
+    expect(losers!.map((l) => l.socket)).toContain(sockLoser);
+    expect(sockLoser.close).toHaveBeenCalledWith(WIRE_CLOSE_SUPERSEDED, 'superseded');
+
+    // The loser's close handler runs: pruneSocket then teardownPair (the
+    // 4000-with-no-live-sibling path — but the survivor IS live, so a real
+    // close handler would skip teardown; here we simulate the WORST case the
+    // guard must survive: teardownPair IS called on the loser's endpoint
+    // while the survivor remains. This is exactly the corrupting call the
+    // guard protects against.)
+    pruneSocket(sockLoser);
+    teardownPair(loserEndpoint);
+
+    // THE REGRESSION ASSERTION: the survivor's endpoint entry is intact...
+    expect(findByEndpoint(survivorEndpoint)).not.toBeNull();
+    expect(hasLiveWireForEndpoint(survivorEndpoint)).toBe(true);
+    // ...and findBySid STILL resolves to the survivor (the sidIndex was NOT
+    // corrupted by the loser's teardown — Fix #1's ownership guard).
+    expect(findBySid(peerSid)).not.toBeNull();
+    expect(endpointOfSid(peerSid)).toBe(survivorEndpoint);
+    // ...and sendWireMail succeeds over the survivor (mail is routable).
+    expect(sentFrames.length).toBe(0);
+    const sent = sendWireMail(peerSid, 'survivor-mail', 'still alive');
+    expect(sent).toBe(true);
+    expect(sentFrames.length).toBe(1);
+    const delivered = JSON.parse(sentFrames[0]) as Record<string, unknown>;
+    expect(delivered.type).toBe('mail');
+    expect(delivered.title).toBe('survivor-mail');
+  });
+
+  it('Test B: parseWireTarget retains wss:// (and https://) in dialBase for the reconnect loop', () => {
+    // The reconnect loop reuses the dialBase parseWireTarget derived — it
+    // must carry the ORIGINAL scheme so a TLS-only deployment does not
+    // silently fall back to ws:// on a redial (Fix #2). A bare host:port key
+    // cannot recover the scheme, so the closed-over dialBase is the only
+    // source of truth. Assert all four accepted scheme spellings.
+    const wss = parseWireTarget('wss://remote.example.com:3191')!;
+    expect(wss.endpoint).toBe('remote.example.com:3191');
+    expect(wss.dialBase).toBe('wss://remote.example.com:3191/peer/ws');
+    expect(wss.probeUrl).toBe('https://remote.example.com:3191/health');
+
+    const https = parseWireTarget('https://remote.example.com:3191')!;
+    expect(https.dialBase).toBe('wss://remote.example.com:3191/peer/ws');
+
+    const ws = parseWireTarget('ws://remote.example.com:3191')!;
+    expect(ws.dialBase).toBe('ws://remote.example.com:3191/peer/ws');
+
+    const bare = parseWireTarget('remote.example.com:3191')!;
+    expect(bare.dialBase).toBe('ws://remote.example.com:3191/peer/ws'); // bare → plain ws (documented default)
+
+    // The dialBase is what scheduleRedial threads through attemptRedial →
+    // dialSocket; the scheme survives the close→redial boundary because it
+    // is closed over, not reconstructed from the endpoint key.
+    expect(wss.dialBase.startsWith('wss://')).toBe(true);
+  });
+
+  it('Test D: peer_disconnect after convergence tears down BOTH endpoints and leaves no redial', async () => {
+    // A convergence window leaves two endpoint entries for one peer sid
+    // (the dialed URL key + the accepted announced-endpoint key). A
+    // peer_disconnect resolved by sid must tear down the WHOLE pair — both
+    // endpoint entries gone, the sid lookup gone — and cancel any redial.
+    const survivorEndpoint = '127.0.0.1:3195';
+    const loserEndpoint = '192.168.1.20:3195';
+    const peerSid = 'peer-disconnect-both';
+
+    const sockA = { readyState: 1, OPEN: 1, close: vi.fn() } as unknown as WebSocket;
+    const sockB = { readyState: 1, OPEN: 1, close: vi.fn() } as unknown as WebSocket;
+    recordAnnounce({ endpoint: survivorEndpoint, dialed: true, socket: sockA, sid: peerSid, initiatorSid: SID_SELF, meta: {} });
+    recordAnnounce({ endpoint: loserEndpoint, dialed: false, socket: sockB, sid: peerSid, initiatorSid: peerSid, meta: {} });
+    convergePairBySid(peerSid); // elects sockA (smaller initiatorSid); closes sockB
+
+    // Disconnect by SID (the form peer_list displays). disconnectPeer
+    // resolves sid-first: it must find the survivor's endpoint via the sid
+    // index (the loser's teardown re-pointed it back to the survivor after
+    // Fix #1), send bye on every live socket, and tear down the survivor's
+    // endpoint. The loser's endpoint entry was already removed by its
+    // teardown; after disconnect, NEITHER endpoint nor the sid lookup
+    // remains.
+    //
+    // We cannot call the real disconnectPeer here (it dials a live server);
+    // instead drive the same teardown path it uses: teardownPair on the
+    // survivor endpoint (the entry disconnectPeer resolves via the sid
+    // index), after first pruning both sockets as their close handlers would.
+    pruneSocket(sockB);
+    teardownPair(loserEndpoint); // loser's close path (Fix #1-guarded)
+    // disconnectPeer resolves the survivor endpoint via findBySid, sends bye
+    // on its live socket, then teardownPair(survivorEndpoint).
+    const resolved = findBySid(peerSid);
+    expect(resolved).not.toBeNull();
+    expect(resolved!.endpoint).toBe(survivorEndpoint);
+    pruneSocket(sockA);
+    teardownPair(survivorEndpoint);
+
+    // BOTH endpoint entries gone.
+    expect(findByEndpoint(survivorEndpoint)).toBeNull();
+    expect(findByEndpoint(loserEndpoint)).toBeNull();
+    // The sid lookup is gone (no surviving index mapping either endpoint).
+    expect(findBySid(peerSid)).toBeNull();
+    expect(endpointOfSid(peerSid)).toBeUndefined();
+    // No live wire anywhere for the peer.
+    expect(hasLiveWireForEndpoint(survivorEndpoint)).toBe(false);
+    expect(hasLiveWireForEndpoint(loserEndpoint)).toBe(false);
+    expect(listRemotePeers().length).toBe(0);
+  });
 });
