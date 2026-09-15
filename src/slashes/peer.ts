@@ -4,7 +4,9 @@
  * Usage:
  *   /peer                - List online (fresh-heartbeat) peers only. The
  *                           local instance is omitted by default (you don't
- *                           need to discover yourself).
+ *                           need to discover yourself). A REMOTE wire peers
+ *                           section is appended when cross-machine wires are
+ *                           live (added by peer_connect / accepted on /peer/ws).
  *   /peer --all          - Include all peers regardless of heartbeat
  *                           freshness (each marked online/offline). Peers
  *                           whose latest heartbeat is older than 1 hour are
@@ -23,11 +25,18 @@
  * the identity entry's `startedAt` registration time. A peer that started
  * hours ago but is actively heartbeating is online; a peer that started
  * recently but died (stale heartbeat) is offline.
+ *
+ * The REMOTE wire peers section mirrors the peer_list tool (src/tools/
+ * peer_list.ts) — cross-machine peers established via peer_connect (dialed)
+ * or accepted on /peer/ws, read from the in-memory wire registry (process-
+ * lifetime; NOT in discovery files). mail_to works the same as for local
+ * peers; hang up with peer_disconnect.
  */
 
 import type { SlashCommand } from '../types.js';
 import chalk from 'chalk';
 import { formatLocalDateTime } from '../utils/time.js';
+import { listRemotePeers, liveSocketOf } from '../peer/wire-registry.js';
 
 /**
  * Hard cutoff for the listing: a peer whose latest heartbeat is older than
@@ -50,8 +59,47 @@ export const peerCommand: SlashCommand = {
     const selfId = ctx.peer.getSelfSessionId();
     const identities = ctx.peer.listIdentities();
 
+    // Remotes are read up-front so the early-return (no local identities)
+    // can still surface a remote-only wire state — a lead that has ONLY
+    // dialed cross-machine peers (no other local instances registered) must
+    // still see them in /peer.
+    const remotes = listRemotePeers();
+    const remoteRows: string[] = [];
+    let remoteLive = 0;
+    for (const pair of remotes) {
+      const alive = liveSocketOf(pair) !== null;
+      if (alive) remoteLive++;
+      const socketCount = pair.sockets.length;
+      const state = alive
+        ? chalk.green('connected')
+        : socketCount > 0
+          ? chalk.yellow('half-open (closing)')
+          : chalk.gray('connecting/redialing');
+      const dialTag = pair.dialed ? 'dialed' : 'accepted';
+      const meta = pair.sockets[0]?.meta;
+      const daemonTag = meta?.daemon ? `\n    daemon: true` : '';
+      const roleTag = meta?.role ? `\n    role: ${meta.role}` : '';
+      const workDirTag = meta?.workDir ? `\n    workDir: ${meta.workDir}` : '';
+      remoteRows.push(
+        `  ${chalk.bold(pair.sid || '(pending)')} [remote wire]\n` +
+        `    endpoint: ${pair.endpoint}\n` +
+        `    status: ${state}\n` +
+        `    direction: ${dialTag}${daemonTag}${roleTag}${workDirTag}`,
+      );
+    }
+    const remoteSection = remoteRows.length > 0
+      ? `\n${chalk.magenta(`Remote wire peers (${remoteLive}/${remoteRows.length} connected) — cross-machine, via the peer wire (mail_to("<sessionId>/lead") works the same; hang up with peer_disconnect):`)}\n${remoteRows.join('\n')}`
+      : '';
+
     if (identities.length === 0) {
-      console.log(chalk.gray('No mycc instances registered for peer discovery. (Run `mycc` in another directory on this machine to register an instance; peer discovery is via ~/.mycc-store/discovery/identity.json + heartbeats.)'));
+      if (remoteRows.length > 0) {
+        // No local peers, but remote wires exist — show the remote section.
+        console.log(chalk.cyan(`Peers (no local peers registered; ${remoteLive}/${remoteRows.length} remote connected):`));
+        console.log(remoteSection);
+        console.log(chalk.gray('Connect to a cross-machine peer via peer_connect, then mail_to(name="<session-id>/lead", ...).'));
+      } else {
+        console.log(chalk.gray('No mycc instances registered for peer discovery. (Run `mycc` in another directory on this machine to register an instance; peer discovery is via ~/.mycc-store/discovery/identity.json + heartbeats.)'));
+      }
       return;
     }
 
@@ -114,7 +162,17 @@ export const peerCommand: SlashCommand = {
       );
     }
 
-    if (rows.length === 0) {
+    // ── Section 2: REMOTE wire peers (built up-front, above, so the no-
+    // local-identities early-return can still surface a remote-only wire
+    // state). Cross-machine peers established via peer_connect (dialed) or
+    // accepted on /peer/ws, read from the in-memory wire registry (process-
+    // lifetime; NOT in discovery files). Distinct section + explicit
+    // [remote wire] marker so the user knows these route through the WIRE
+    // (mail_to works the same as for local peers). Entries with no live
+    // socket (pending/redialing) are listed with status
+    // "connecting/redialing" — mail_to reports "retrying" for them.
+
+    if (rows.length === 0 && remoteRows.length === 0) {
       if (omitted > 0) {
         console.log(chalk.gray(
           includeAll
@@ -124,18 +182,26 @@ export const peerCommand: SlashCommand = {
       } else {
         console.log(chalk.gray(
           includeAll
-            ? 'No mycc instances registered for peer discovery.'
-            : 'No other online mycc instances found. (Use /peer --all to include offline/stale instances.)',
+            ? 'No mycc instances registered for peer discovery, and no remote wire peers connected.'
+            : 'No other online mycc instances found. (Use /peer --all to include offline/stale instances; use peer_connect to reach a cross-machine instance.)',
         ));
       }
       return;
     }
 
-    const summary = `${online} online, ${rows.length} listed${includeSelf ? ' (incl. self)' : ''}${omitted > 0 ? `, ${omitted} older than 1h omitted` : ''}`;
-    console.log(chalk.cyan(`Peers (${summary}):`));
-    for (const row of rows) {
-      console.log(row);
+    const summary = `${online} local online, ${rows.length} local listed${includeSelf ? ' (incl. self)' : ''}${omitted > 0 ? `, ${omitted} older than 1h omitted` : ''}${remoteRows.length > 0 ? `, ${remoteLive}/${remoteRows.length} remote connected` : ''}`;
+    if (rows.length === 0) {
+      // Only remote peers — print the remote section alone.
+      console.log(chalk.cyan(`Peers (no local peers listed; ${remoteLive}/${remoteRows.length} remote connected):`));
+    } else {
+      console.log(chalk.cyan(`Peers (${summary}):`));
+      for (const row of rows) {
+        console.log(row);
+      }
     }
-    console.log(chalk.gray('Connect to a peer by creating a channel file pair (see the mediator skill), or mail_to(name="<session-id>/lead", ...).'));
+    if (remoteSection) {
+      console.log(remoteSection);
+    }
+    console.log(chalk.gray('Connect to a peer by creating a channel file pair (see the mediator skill), or mail_to(name="<session-id>/lead", ...). For a cross-machine peer, use peer_connect first.'));
   },
 };

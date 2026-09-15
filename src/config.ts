@@ -104,12 +104,13 @@ const args = minimist(process.argv.slice(2), {
   //   (absent)           -> undefined (serve mode OFF)
   // Putting it in `string` would break bare `--serve` (yields "" not true);
   // putting it in `boolean` would swallow `--serve 9000` (port ignored).
-  boolean: ['v', 'verbose', 'skip-healthcheck', 'setup', 'debug-eval', 'debug-tp', 'debug-prompt', 'disable-crossroad', 'auto', 'debug-autofly', 'allow-plan-off'],
+  boolean: ['v', 'verbose', 'skip-healthcheck', 'setup', 'debug-eval', 'debug-tp', 'debug-prompt', 'disable-crossroad', 'auto', 'debug-autofly', 'allow-plan-off', 'debug-wire'],
   string: [
     'from', 'port', 'host', 'max-upload-mb', 'autofly', 'daemon',
     'ollama-host', 'ollama-api-key', 'ollama-model', 'ollama-vision-model', 'ollama-embedding-model',
     'deepseek-host', 'deepseek-api-key', 'deepseek-model',
     'api-provider', 'token-threshold', 'editor', 'skill-match-threshold',
+    'wire-token',
   ],
   alias: { v: 'verbose' },
   default: {
@@ -150,6 +151,12 @@ function buildCmdArgsEnv(parsed: typeof args): Record<string, string> {
     'token-threshold': 'TOKEN_THRESHOLD',
     'editor': 'EDITOR',
     'skill-match-threshold': 'SKILL_MATCH_THRESHOLD',
+    // Remote peer wire (plan §5 Security): --wire-token mirrors the
+    // MYCC_WIRE_TOKEN env var (OPTIONAL shared secret); --debug-wire mirrors
+    // the MYCC_WIRE_ALLOW_LOCAL=1 escape hatch (test-only; allows same-store
+    // / self wire connects). Neither is part of the --setup wizard.
+    'wire-token': 'MYCC_WIRE_TOKEN',
+    'debug-wire': 'MYCC_WIRE_ALLOW_LOCAL',
   };
   for (const [argKey, envKey] of Object.entries(map)) {
     const value = parsed[argKey];
@@ -303,7 +310,7 @@ export function shouldDaemon(): boolean {
  * Secret-bearing flags that must NEVER appear in the system prompt.
  * Used by {@link getLaunchArgs} to redact their values to `***`.
  */
-const SECRET_FLAGS = ['ollama-api-key', 'deepseek-api-key'];
+const SECRET_FLAGS = ['ollama-api-key', 'deepseek-api-key', 'wire-token'];
 
 /**
  * Return a sanitized summary of the CLI flags this instance was launched with,
@@ -444,6 +451,23 @@ export function getMaxUploadMb(): number {
   const raw = args['max-upload-mb'] ?? process.env.MYCC_MAX_UPLOAD_MB;
   const p = Number(raw);
   return Number.isFinite(p) && p > 0 ? p : DEFAULT_MAX_UPLOAD_MB;
+}
+
+/**
+ * Check if the remote peer wire same-store/self escape hatch is enabled.
+ *
+ * Set via the `--debug-wire` CLI flag (which populates
+ * MYCC_WIRE_ALLOW_LOCAL='true') OR the legacy `MYCC_WIRE_ALLOW_LOCAL=1` env
+ * var. Both truthy spellings are accepted so the flag and the env var stay
+ * interchangeable. This is a TEST-ONLY escape hatch: it lets a
+ * same-machine instance wire to a peer whose sid is registered in the LOCAL
+ * discovery store (identity.json) — e.g. the in-process and two-instance
+ * smoke tests. In production a same-store peer is already reachable via
+ * discovery mail + channel files, so the wire is refused (plan §2 step 1.5).
+ */
+export function isWireDebugLocal(): boolean {
+  const v = process.env.MYCC_WIRE_ALLOW_LOCAL;
+  return v === '1' || v === 'true';
 }
 
 /**

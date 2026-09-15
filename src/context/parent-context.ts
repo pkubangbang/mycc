@@ -11,6 +11,10 @@ import { BackgroundTasks } from './shared/bg.js';
 import { TeamManager } from './parent/team.js';
 import { WikiManager } from './parent/wiki.js';
 import { PeerManager } from '../peer/peer.js';
+import { setWireHooks, type WireHooks } from '../peer/wire-registry.js';
+import { getServeHub } from '../serve/serve-registry.js';
+import { detectLanIpv4 } from '../serve/serve-utils.js';
+import { agentIO } from '../loop/agent-io.js';
 import { loader } from './shared/loader.js';
 import { evaluateGrant } from './grant/index.js';
 import { getSessionDir, getDaemonSkill, shouldDaemon } from '../config.js';
@@ -35,6 +39,9 @@ export class ParentContext implements AgentContext {
   private teamModule: TeamManager;
   private wikiModule: WikiManager;
   private peerModule: PeerManager;
+  /** Info-symmetry reminder todo refs, deduped by wire endpoint key
+   *  (docs/remote-peer-protocol.md §2 step 3): endpoint → {id, hash}. */
+  private wireRemoteTodoIds: Map<string, { id: number; hash: string }>;
 
   constructor(sessionFilePath: string) {
     this.coreModule = new Core(); // Uses process.cwd() by default
@@ -53,6 +60,77 @@ export class ParentContext implements AgentContext {
     const peerWorkDir = process.cwd();
     const peerMailboxPath = path.resolve(getSessionDir(peerSessionId), 'unread-lead.jsonl');
     this.peerModule = new PeerManager(peerSessionId, peerWorkDir, peerMailboxPath, getDaemonSkill(), shouldDaemon());
+    // Remote peer wire hooks (docs/remote-peer-protocol.md §2 step 3, G3):
+    // the wire plane (acceptor in src/serve/peer-wire.ts + dialer in
+    // src/peer/wire-client.ts + registry in src/peer/wire-registry.ts)
+    // reaches BACK into the agent context ONLY through this injected
+    // interface — src/serve never imports ctx, and src/peer stays
+    // module-level (no context imports), which keeps the import graph acyclic.
+    this.wireRemoteTodoIds = new Map();
+    const wireHooks: WireHooks = {
+      getSessionId: () => peerSessionId,
+      getWorkDir: () => peerWorkDir,
+      getDaemon: () => shouldDaemon(),
+      getRole: () => getDaemonSkill(),
+      // Our serving endpoint for the announce frame: the webui's bound
+      // host (LAN IP when bound to all interfaces) + port; null when the
+      // serve stack is down (a NAT'd/non-serving instance announces no
+      // endpoint and gets keyed "sid:<sid>" on the remote side).
+      getServingEndpoint: () => {
+        const hub = getServeHub();
+        if (!hub.isRunning()) return null;
+        const host = hub.getHost();
+        const displayHost = host && host !== '0.0.0.0' ? host : (detectLanIpv4() ?? 'localhost');
+        return `${displayHost}:${hub.getPort()}`;
+      },
+      // Info-symmetry reminder (plan §2 step 3, steering round-3): a pinned
+      // todo per remote PAIR, deduped by endpoint. recordAnnounce fires
+      // done=false (establishment — refreshes instead of duplicating);
+      // teardownPair fires done=true (annotated "re-run peer_connect", so
+      // the hint stays visible in /todos without nagging). Never throws —
+      // the reminder is best-effort and must not break the wire.
+      recordRemotePeerTodo: ({ sid, endpoint, done }) => {
+        try {
+          const openName = `remote peer ${sid} at ${endpoint} — wire, mail_to("${sid}/lead")`;
+          const doneName = `remote peer ${sid} at ${endpoint} — wire disconnected (re-run peer_connect to reconnect)`;
+          const existing = this.wireRemoteTodoIds.get(endpoint);
+          if (done) {
+            if (!existing) return;
+            const updated = this.todoModule.updateTodo(existing.id, existing.hash, doneName, true, 'terminal close');
+            if (updated) this.wireRemoteTodoIds.set(endpoint, { id: updated.id, hash: updated.hash });
+            return;
+          }
+          if (existing) {
+            const refreshed = this.todoModule.updateTodo(existing.id, existing.hash, openName, false, 'cross-machine peer wire — pinned reminder');
+            if (refreshed) {
+              this.wireRemoteTodoIds.set(endpoint, { id: refreshed.id, hash: refreshed.hash });
+              return;
+            }
+            // Stale hash (todo was cleared externally) — fall through and
+            // create a fresh one.
+          }
+          const created = this.todoModule.createTodo(openName, 'cross-machine peer wire — pinned reminder');
+          const pinned = this.todoModule.pinTodo(created.id, created.hash, true);
+          const item = pinned ?? created;
+          this.wireRemoteTodoIds.set(endpoint, { id: item.id, hash: item.hash });
+        } catch { /* best-effort — never break the wire */ }
+      },
+      // Single mailbox writer (plan §5): inbound wire mail appends via
+      // MailBox.appendMail — never a hand-rolled writer. The existing 1s
+      // awaitTeammates poll rouses AWAIT → COLLECT; zero agent-loop changes.
+      appendLocalMail: (from, title, content) => {
+        try {
+          this.mailModule.appendMail(from, title, content);
+        } catch { /* never break the wire */ }
+      },
+      // Verbose-only logging (agentIO is process-global, no ctx needed).
+      verbose: (tool, message, data) => {
+        try {
+          agentIO.verbose(tool, message, data);
+        } catch { /* ignore */ }
+      },
+    };
+    setWireHooks(wireHooks);
   }
 
   // Getters for each module

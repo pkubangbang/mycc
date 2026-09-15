@@ -1,5 +1,7 @@
 /**
- * peers.test.ts - Tests for the peers tool (cross-instance discovery listing)
+ * peer_list.test.ts - Tests for the peer_list tool (cross-instance discovery
+ * listing) — renamed from peers.test.ts with the v0.12 peer tool family
+ * (peer_connect/peer_disconnect/peer_list).
  *
  * Focus: the 1-hour cutoff. Peers whose latest heartbeat is older than 1h are
  * omitted entirely (even with all=true) so the listing doesn't grow unbounded
@@ -9,7 +11,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { peersTool } from '../../tools/peers.js';
+import { peersTool } from '../../tools/peer_list.js';
 import { createFullMockContext } from './test-utils.js';
 import type { AgentContext, IdentityEntry } from '../../types.js';
 

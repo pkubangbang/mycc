@@ -217,4 +217,115 @@ describe('Todo', () => {
     expect(printed).toContain('📌');
     expect(printed).toContain('[reactivate: when users table changes]');
   });
+
+  // ── Previous-hash lineage ring & warm-hint resolution ───────────────────
+  //
+  // The lineage ring records each todo's last 3 hashes so a stale hash the
+  // LLM still holds can be resolved to the CURRENT item (for a warm hint)
+  // WITHOUT accepting the stale write.
+
+  it('should record the old hash in the lineage ring when updateTodo recomputes', () => {
+    const todo = new Todo();
+    const a = todo.createTodo('Task A');
+    // Companion open item keeps `a` alive when we flip it done (auto-clear
+    // only drops non-pinned items once EVERY non-pinned item is done).
+    todo.createTodo('Task B');
+    const oldHash = a.hash;
+    const updated = todo.updateTodo(a.id, a.hash, 'Renamed', true);
+    expect(updated).not.toBeNull();
+    const stored = todo.getItems().find((i) => i.id === a.id)!;
+    expect(stored.previousHashes).toEqual([oldHash]);
+  });
+
+  it('should cap the lineage ring at 3 (oldest dropped first)', () => {
+    const todo = new Todo();
+    const a = todo.createTodo('Task A');
+    // Companion open item so `a` is never auto-cleared (we keep done=false
+    // throughout and only vary the name → the hash changes each iteration).
+    todo.createTodo('Task B');
+    const hashes: string[] = [a.hash];
+    let cur = todo.getItems().find((i) => i.id === a.id)!.hash;
+    // Drive 4 hash-changing updates (name-only) → ring keeps the last 3 olds.
+    for (let i = 0; i < 4; i++) {
+      const prev = cur;
+      todo.updateTodo(a.id, cur, `name${i}`, false);
+      cur = todo.getItems().find((i) => i.id === a.id)!.hash;
+      hashes.push(prev);
+    }
+    const stored = todo.getItems().find((i) => i.id === a.id)!;
+    // `hashes` = [h0, prev1, prev2, prev3, prev4] (initial + 4 pushed olds).
+    // The ring keeps the 3 MOST-RECENT olds = [prev2, prev3, prev4]; the
+    // oldest (prev1, which is h0 after the first rename) was shifted out.
+    const expectedRing = hashes.slice(-3);
+    expect(stored.previousHashes).toEqual(expectedRing);
+    expect(stored.previousHashes!.length).toBe(3);
+    // The very first old hash was evicted once the 5th distinct hash appeared.
+    expect(stored.previousHashes).not.toContain(hashes[1]);
+  });
+
+  it('findByPreviousHash should resolve a stale hash to the CURRENT item', () => {
+    const todo = new Todo();
+    const a = todo.createTodo('Task A');
+    // Companion open item keeps `a` alive after the done flip below.
+    todo.createTodo('Task B');
+    const oldHash = a.hash;
+    const updated = todo.updateTodo(a.id, a.hash, 'Renamed', true);
+    expect(updated).not.toBeNull();
+    const currentHash = updated!.hash;
+
+    const resolved = todo.findByPreviousHash(oldHash);
+    expect(resolved).not.toBeNull();
+    expect(resolved!.id).toBe(a.id);
+    // Returns the CURRENT hash, not the stale one
+    expect(resolved!.hash).toBe(currentHash);
+    expect(resolved!.hash).not.toBe(oldHash);
+  });
+
+  it('findByPreviousHash should return null for a hash not in any ring (silent otherwise)', () => {
+    const todo = new Todo();
+    const a = todo.createTodo('Task A');
+    todo.createTodo('Task B');
+    todo.updateTodo(a.id, a.hash, 'Renamed', false);
+    expect(todo.findByPreviousHash('neverseen')).toBeNull();
+  });
+
+  it('should NOT push to the lineage ring on a no-op update (hash unchanged)', () => {
+    const todo = new Todo();
+    const a = todo.createTodo('Task A');
+    // updateTodo with identical name|done|note → hash identical → no ring entry
+    todo.updateTodo(a.id, a.hash, a.name, false);
+    const stored = todo.getItems().find((i) => i.id === a.id)!;
+    expect(stored.previousHashes ?? []).toEqual([]);
+  });
+
+  it('should still REJECT a stale write even when the lineage ring matches (integrity gate unchanged)', () => {
+    const todo = new Todo();
+    const a = todo.createTodo('Task A');
+    todo.createTodo('Task B');
+    const oldHash = a.hash;
+    todo.updateTodo(a.id, a.hash, 'Renamed', false);
+    // Re-using the OLD hash must fail the integrity gate — the lineage ring
+    // is observation-only metadata, never a second-chance update path.
+    const result = todo.updateTodo(a.id, oldHash, 'Renamed again', false);
+    expect(result).toBeNull();
+  });
+
+  it('closeCheckpointTodo should push the old hash into the lineage ring', () => {
+    const todo = new Todo();
+    const cp = todo.createTodo('checkpoint: abc12345', 'abc12345');
+    // Companion open non-checkpoint item so closing the checkpoint does NOT
+    // auto-clear it away (auto-clear only fires once EVERY non-pinned item is
+    // done; the companion stays open).
+    todo.createTodo('Companion open task');
+    const oldHash = cp.hash;
+    todo.closeCheckpointTodo('abc12345');
+    const stored = todo.getItems().find((i) => i.note === 'abc12345')!;
+    expect(stored.done).toBe(true);
+    expect(stored.hash).not.toBe(oldHash);
+    expect(stored.previousHashes).toEqual([oldHash]);
+    // And the stale hash resolves to the (now done) current item
+    const resolved = todo.findByPreviousHash(oldHash);
+    expect(resolved).not.toBeNull();
+    expect(resolved!.done).toBe(true);
+  });
 });

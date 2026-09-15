@@ -54,7 +54,9 @@ import { recallTool } from '../../tools/recall.js';
 import { planOffTool } from '../../tools/plan_off.js';
 import { checkpointTool } from '../../tools/checkpoint.js';
 import { recapTool } from '../../tools/recap.js';
-import { peersTool } from '../../tools/peers.js';
+import { peersTool } from '../../tools/peer_list.js';
+import { peerConnectTool } from '../../tools/peer_connect.js';
+import { peerDisconnectTool } from '../../tools/peer_disconnect.js';
 
 /**
  * Built-in tool definitions array.
@@ -109,4 +111,6 @@ export const builtInTools: ToolDefinition[] = [
   checkpointTool,
   recapTool,
   peersTool,
+  peerConnectTool,
+  peerDisconnectTool,
 ];

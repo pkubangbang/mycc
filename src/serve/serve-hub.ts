@@ -35,6 +35,8 @@ import { ClientRegistry } from './serve-clients.js';
 import { readHistory } from './serve-history.js';
 import { DisconnectTimer } from './serve-disconnect-timer.js';
 import { handleWsMessage, type HubHandler } from './serve-ws-handler.js';
+import { getPeerWireAcceptor } from './peer-wire.js';
+import { getWireHooks } from '../peer/wire-registry.js';
 import { wireOutputMirroring } from './activate.js';
 import pkg from '../../package.json';
 
@@ -242,6 +244,20 @@ export class ServeHub implements HubHandler {
           agentRunning: this.agentRunning,
           auto: this.getAutoState(),
         },
+        peer: (() => {
+          // Remote peer wire identity (docs/remote-peer-protocol.md §2 step 1):
+          // the dialer probes /health BEFORE dialing — the peer block tells it
+          // who answers (sid) and whether the webui is daemon-backed (so the
+          // dialer can refuse/flag an interactive instance whose webui will
+          // auto-shutdown in 30s). Values come from the wire hooks (G3); a
+          // null hooks means the agent context never started (unreachable in
+          // practice — serve starts from the lead loop).
+          const wireHooks = getWireHooks();
+          return {
+            sessionId: wireHooks?.getSessionId() ?? null,
+            daemon: wireHooks?.getDaemon() ?? false,
+          };
+        })(),
         provider: getApiProvider(),
       }));
     });
@@ -290,7 +306,16 @@ export class ServeHub implements HubHandler {
     const maxPayloadBytes = getMaxUploadMb() * 1024 * 1024;
     this.wsServer = new WebSocketServer({ noServer: true, maxPayload: maxPayloadBytes });
     this.wsServer.on('connection', (ws) => this.onWsConnection(ws));
+    // Remote peer wire on /peer/ws (docs/remote-peer-protocol.md). Dedicated
+    // WebSocketServer with its OWN maxPayload (4 MB, decoupled from the webui
+    // upload cap); the acceptor NEVER touches this.clients or the
+    // disconnectTimer (G1: peer wires must not sustain the webui lifetime).
+    try { getPeerWireAcceptor().createServer(); } catch { /* start() is re-entrant via restartServe */ }
     this.upgradeHandler = (req, socket, head) => {
+      if (req.url && req.url.split('?')[0] === '/peer/ws') {
+        getPeerWireAcceptor().handleUpgrade(req, socket, head);
+        return;
+      }
       if (req.url === '/ws') {
         this.wsServer!.handleUpgrade(req, socket, head, (ws) => {
           this.wsServer!.emit('connection', ws, req);
@@ -333,6 +358,12 @@ export class ServeHub implements HubHandler {
         this.upgradeHandler = null;
       }
       if (this.wsServer) { try { this.wsServer.close(); } catch { /* ignore */ } this.wsServer = null; }
+      // Peer wire acceptor teardown (docs/remote-peer-protocol.md §2
+      // disconnect): abnormal close so the DIALER side fails fast / redials
+      // per its loop policy. Sockets are unref'd so the httpServer close
+      // promise below cannot hang on a live peer wire. MUST NOT touch the
+      // disconnectTimer (G1). Also safe when no wire server was created.
+      try { await getPeerWireAcceptor().stop(); } catch { /* ignore */ }
       if (this.viteServer) { try { await this.viteServer.close(); } catch { /* ignore */ } this.viteServer = null; }
       if (this.httpServer) {
         await new Promise<void>((resolve) => { this.httpServer!.close(() => resolve()); });

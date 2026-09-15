@@ -8,6 +8,12 @@
 import type { PeerModule, IdentityEntry, ChannelFile } from '../types.js';
 import { IdentityManager } from './identity.js';
 import { ChannelManager } from './channel.js';
+import {
+  findBySid,
+  liveSocketOf,
+  sendWireMail,
+} from './wire-registry.js';
+import { stopWireClient } from './wire-client.js';
 
 export class PeerManager implements PeerModule {
   private identity: IdentityManager;
@@ -22,8 +28,21 @@ export class PeerManager implements PeerModule {
     return this.identity.listIdentities();
   }
 
+  /**
+   * Route-aware freshness (docs/remote-peer-protocol.md §4): LOCAL branch =
+   * identity.json + heartbeat window (unchanged); REMOTE branch = the wire
+   * registry's socket state (open = alive — missed-pong terminate in the
+   * dialer/acceptor keeps "OPEN" honest). Same signature, so mail_to's
+   * fail-fast validation carries over unmodified. Local is authoritative:
+   * a same-store sid is checked the way it always was; the remote registry
+   * is consulted only when the sid is not a registered local identity.
+   */
   isFresh(sessionId: string): boolean {
-    return this.identity.isFresh(sessionId);
+    const local = this.identity.isFresh(sessionId);
+    if (local) return true;
+    const remotePair = findBySid(sessionId);
+    if (!remotePair) return false;
+    return liveSocketOf(remotePair) !== null;
   }
 
   listChannels(): ChannelFile[] {
@@ -38,8 +57,20 @@ export class PeerManager implements PeerModule {
     return this.channel.sendMail(channelId, sessionId, topic, content);
   }
 
+  /**
+   * Route-aware sendPeerMail (docs/remote-peer-protocol.md §4, local-first):
+   * the LOCAL branch is today's path, untouched — discovery mailbox append
+   * gated on heartbeat freshness. Only when the sid is NOT local does the
+   * REMOTE branch run: resolve the pair in the wire registry, check OPEN
+   * before every send (queued-but-not-OPEN → false), and send the mail
+   * frame — the receiver's WS handler appends to its OWN mailbox via
+   * MailBox.appendMail. At-most-once: a send failure is LOSS; the sending
+   * agent re-issues (no offline queue, no ack layer — plan §5).
+   */
   sendPeerMail(sessionId: string, title: string, content: string): boolean {
-    return this.channel.sendPeerMail(sessionId, title, content);
+    const local = this.channel.sendPeerMail(sessionId, title, content);
+    if (local) return true;
+    return sendWireMail(sessionId, title, content);
   }
 
   /**
@@ -69,9 +100,15 @@ export class PeerManager implements PeerModule {
   }
 
   /**
-   * Stop the peer subsystem: stop heartbeat + stop channel poll + unregister identity.
+   * Stop the peer subsystem: stop heartbeat + stop channel poll + unregister
+   * identity + tear down the remote wire plane (plan §5): every DIALED
+   * socket closed AND unref'd so process-exit semantics are unchanged (the
+   * ref'd wire would otherwise keep a headless instance alive), all redial
+   * timers cancelled. Accepted sockets are the acceptor's — ServeHub.stop
+   * closes them; if the serve stack is already down there are none.
    */
   stop(): void {
+    stopWireClient();
     this.identity.stopHeartbeat();
     this.channel.stopChannelPoll();
     this.identity.unregister();

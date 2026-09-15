@@ -68,6 +68,17 @@ export const todoUpdateTool: ToolDefinition = {
       if (!exists) {
         return `Error: Todo item #${id} not found. Use the current todo list to find the correct id.`;
       }
+      // Hash mismatch — the item exists but was updated since the LLM last
+      // read it. Try to resolve the stale hash against the item's lineage
+      // ring: if the stale hash was a PREVIOUS hash of this (or another live)
+      // item, emit a warm hint with the CURRENT hash so the LLM can retry this
+      // same turn instead of waiting for the next nudge to re-surface it.
+      // The WRITE was already rejected by updateTodo — the lineage lookup is
+      // observation-only and does NOT apply the stale write.
+      const lineageMatch = ctx.todo.findByPreviousHash(hash.trim());
+      if (lineageMatch) {
+        return `Error: Hash mismatch for todo #${id}. This item was updated since you last saw it — the current hash is ${lineageMatch.hash}. Retry todo_update with the current hash.`;
+      }
       return `Error: Hash mismatch for todo #${id}. The item may have been updated since you last read it. Check the current todo list for the latest hash.`;
     }
 

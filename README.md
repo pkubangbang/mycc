@@ -12,6 +12,8 @@ A CLI coding agent using Ollama-cloud for LLM inference, written in nodejs.
 
 - **team collaboration**: mycc starts with a single `lead`; teammates can be spawned by you or the `lead` to enable collaboration.
 
+- **cross-machine peers**: connect mycc instances running on **different machines** over a peer wire so they can exchange mail via the same `mail_to` interface used for same-machine peers. Use `peer_connect` to add a remote instance by its serve URL, `peer_list` to see all reachable peers (local and remote) with a liveness indicator, and `peer_disconnect` to hang up. See [Cross-machine peer wire](#cross-machine-peer-wire) below.
+
 - **skill use**: describe the specialist knowledge using markdown, and LLM will learn it when needed.
 
 - **mindmap**: compile your `MYCC.md` into a navigable knowledge tree; agents retrieve context on-demand via `get_node` tool for efficient knowledge navigation.
@@ -187,6 +189,34 @@ mycc --daemon            # passive daemon, waits for external mail
 mycc --daemon <skill>    # daemon that auto-loads a service skill and starts its cron
 ```
 
+### 6. Cross-machine peer wire (Optional)
+
+mycc instances on **different machines** can be wired together so they exchange mail exactly like same-machine peers — `mail_to(name="<sessionId>/lead", ...)` works unchanged whether the peer is local or remote. The remote plane is a single dialed WebSocket per peer pair (one outbound connection gives a bidirectional pipe, so a NAT'd/firewalled instance can dial out even with no inbound port).
+
+**Setup:**
+
+1. On the **remote** machine, start mycc with its web UI serving (so it can accept a wire):
+   ```bash
+   mycc --serve 3191            # or: mycc --daemon (persistent, headless)
+   ```
+2. On the **local** machine, add the remote by its serve URL:
+   ```bash
+   # inside the mycc prompt, or instruct the LLM:
+   peer_connect 192.168.1.20:3191
+   ```
+3. Discover reachable peers (both same-machine and remote) with `peer_list`; send mail to any of them with `mail_to(name="<sessionId>/lead", ...)`; hang up a remote with `peer_disconnect`.
+
+**The `MYCC_WIRE_TOKEN` environment variable (optional):**
+
+`MYCC_WIRE_TOKEN` is an **optional** shared secret that gates the `/peer/ws` upgrade endpoint when configured.
+
+- **Unset on both instances (default)** — the wire endpoint is **open**: any peer that can reach the serving port may connect. Security is the **operator's responsibility at OSI L3** — bind the serve port to a private interface, put it behind a firewall, front it with a TLS reverse proxy, or restrict it to a VPN / SSH tunnel. mycc intentionally does not impose an in-app auth gate by default.
+- **Set to the same value on both instances** — the dialer sends the token as the `X-MYCC-Wire-Token` request header on the WS upgrade, and the acceptor refuses any upgrade whose token is missing or mismatched (HTTP 401). Use this if you want an in-app auth layer in addition to (or instead of) network-layer controls. (The token travels as a request header rather than a `?token=` query string so it does not leak into reverse-proxy access logs, HTTP debugging middleware, or request-URL diagnostics.)
+
+> **Note:** `MYCC_WIRE_TOKEN` is **not** part of the `--setup` wizard (it is an advanced/optional knob). Set it directly in your environment or `.env` file (`~/.mycc-store/.env` user-level or `./mycc/.env` project-level) on **both** instances if you want the gate, or pass it as a CLI flag (`--wire-token <value>`) on either instance.
+
+> **See also:** [`docs/remote-peer-protocol.md`](docs/remote-peer-protocol.md) — the full design: dialer/acceptor roles, connect/disconnect workflow, pair-dedupe invariant, convergence, mail routing, liveness.
+
 ### Configuration Flags
 
 All environment variables can be overridden via CLI flags. These take highest priority, overriding `.env` files and system environment variables.
@@ -209,6 +239,8 @@ All environment variables can be overridden via CLI flags. These take highest pr
 | `--auto` | — | Start in autonomous mode (no user prompts) |
 | `--daemon [skill]` | — | Detached headless daemon (forces auto mode); optionally auto-load a service skill and start its cron |
 | `--allow-plan-off` | `MYCC_ALLOW_PLAN_OFF` | In auto mode, auto-approve `plan_off` to exit plan mode without confirmation |
+| `--wire-token` | `MYCC_WIRE_TOKEN` | Optional shared secret for the `/peer/ws` peer-wire upgrade (set the same value on both instances to enable the in-app auth gate; unset on both to run the wire open — see [Cross-machine peer wire](#cross-machine-peer-wire)) |
+| `--debug-wire` | `MYCC_WIRE_ALLOW_LOCAL` | Test-only escape hatch: allow `peer_connect` to a same-store / self peer (same-machine smoke test). Not for production. |
 
 Example usage:
 ```bash
@@ -258,6 +290,7 @@ See the following documentation for detailed explanations:
 - **Child Process Teammates**: `docs/child-context.md` - IPC, state machine, auto-claim
 - **Dynamic Loading**: `docs/dynamic-loading.md` - Hot-reload, tool scopes, skill format
 - **Mindmap**: `docs/mindmap-design.md` - Knowledge navigation, A-N-C-E summarization, process isolation
+- **Remote Peer Wire**: `docs/remote-peer-protocol.md` - Cross-machine peer connections, dialer/acceptor, pair-dedupe, optional wire token
 
 ## Day-to-day Workflow as a user
 

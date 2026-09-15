@@ -82,8 +82,13 @@ interface HeartbeatData {
 /**
  * Read identity.json and parse into a session-keyed map.
  * Returns {} if file does not exist or is malformed.
+ * (Exported for the remote-wire locality check, wire-client.ts: the dialer
+ * refuses same-store targets — a sid present here is a LOCAL peer already
+ * reachable via discovery + channel files, docs/remote-peer-protocol.md §2
+ * step 1.5. Reading the same map the IdentityManager uses keeps the check
+ * consistent with listIdentities.)
  */
-function readIdentityMap(): Record<string, IdentityEntry> {
+export function readIdentityMap(): Record<string, IdentityEntry> {
   const identityFile = getIdentityFile();
   if (!fs.existsSync(identityFile)) return {};
   try {
