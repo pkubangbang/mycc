@@ -21,6 +21,7 @@ function createMockTodoContext(): { ctx: AgentContext; mockTodo: TodoModule } {
     findCheckpointTodo: vi.fn(() => null),
     closeCheckpointTodo: vi.fn(),
     pinTodo: vi.fn(() => null),
+    findByPreviousHash: vi.fn(() => null),
     getReactivationCandidates: vi.fn(() => []),
   };
   const ctx = createMockContext('/tmp/test');
@@ -92,6 +93,35 @@ describe('todoUpdateTool', () => {
     ]);
 
     const result = todoUpdateTool.handler(ctx, { id: 1, hash: 'wrong!!!!', name: 'Task A', done: true });
+    expect(result).toBe('Error: Hash mismatch for todo #1. The item may have been updated since you last read it. Check the current todo list for the latest hash.');
+  });
+
+  it('should emit a warm hint with the current hash on a lineage match (stale write still rejected)', () => {
+    // The write is rejected (updateTodo returns null) but the stale hash
+    // resolves to the current item via findByPreviousHash → the error carries
+    // the CURRENT hash so the LLM can retry this same turn.
+    vi.mocked(mockTodo.updateTodo).mockReturnValue(null);
+    vi.mocked(mockTodo.getItems).mockReturnValue([
+      { id: 1, name: 'Renamed', done: true, hash: 'curr00099' },
+    ]);
+    vi.mocked(mockTodo.findByPreviousHash).mockReturnValue({
+      id: 1, name: 'Renamed', done: true, hash: 'curr00099',
+    });
+
+    const result = todoUpdateTool.handler(ctx, { id: 1, hash: 'old12345', name: 'Renamed', done: true });
+    expect(mockTodo.updateTodo).toHaveBeenCalledWith(1, 'old12345', 'Renamed', true, undefined);
+    expect(mockTodo.findByPreviousHash).toHaveBeenCalledWith('old12345');
+    expect(result).toBe('Error: Hash mismatch for todo #1. This item was updated since you last saw it — the current hash is curr00099. Retry todo_update with the current hash.');
+  });
+
+  it('should stay silent (generic mismatch) when the stale hash is not in any lineage ring', () => {
+    vi.mocked(mockTodo.updateTodo).mockReturnValue(null);
+    vi.mocked(mockTodo.getItems).mockReturnValue([
+      { id: 1, name: 'Task A', done: false, hash: 'abc12345' },
+    ]);
+    vi.mocked(mockTodo.findByPreviousHash).mockReturnValue(null);
+
+    const result = todoUpdateTool.handler(ctx, { id: 1, hash: 'totallyunknown', name: 'Task A', done: true });
     expect(result).toBe('Error: Hash mismatch for todo #1. The item may have been updated since you last read it. Check the current todo list for the latest hash.');
   });
 

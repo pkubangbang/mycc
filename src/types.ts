@@ -187,6 +187,18 @@ export interface TodoItem {
    * if the condition is met, the todo is automatically reopened.
    */
   reactivate?: string;
+  /**
+   * Lineage ring of previous integrity hashes (cap 3, oldest dropped first).
+   * Read-only metadata: every time a field in the hash signature (name|done|note)
+   * changes and the hash is recomputed, the OLD hash is pushed here before the
+   * new one is assigned. It lets `todo_update` resolve a stale hash the LLM still
+   * holds to the CURRENT item and emit a warm hint with the current hash —
+   * WITHOUT accepting the stale write (the integrity gate is unchanged; this
+   * ring is observation-only).
+   *
+   * `pinTodo` does NOT recompute the hash, so it never pushes here.
+   */
+  previousHashes?: string[];
 }
 
 // ============================================================================
@@ -535,6 +547,16 @@ export interface TodoModule {
    * Returns null if id not found or hash mismatch.
    */
   pinTodo(id: number, hash: string, pinned: boolean, reactivate?: string): TodoItem | null;
+  /**
+   * Resolve a stale hash to the CURRENT item whose lineage ring contains it.
+   * Returns null if no item's `previousHashes` includes the hash.
+   *
+   * Observation-only: used by `todo_update` to enrich a hash-mismatch error
+   * with the current hash (a warm hint) when the stale hash was a PREVIOUS
+   * hash of a live item. It never mutates state and never accepts a stale
+   * write — the integrity gate in `updateTodo` is unchanged.
+   */
+  findByPreviousHash(hash: string): TodoItem | null;
   /** Completed pinned todos carrying a reactivation condition — candidates for auto-reactivation. */
   getReactivationCandidates(): TodoItem[];
 }

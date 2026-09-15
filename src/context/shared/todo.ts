@@ -14,6 +14,30 @@ function computeHash(name: string, done: boolean, note?: string): string {
   return createHash('sha256').update(payload).digest('hex').substring(0, 8);
 }
 
+/** Maximum number of previous hashes retained per item (lineage ring cap). */
+const LINEAGE_RING_CAP = 3;
+
+/**
+ * Record the item's CURRENT hash in its lineage ring (cap 3, oldest dropped
+ * first), in-place on `item.previousHashes`. Call AFTER computing the new
+ * hash but BEFORE assigning it to `item.hash`, passing the new hash in
+ * `newHash`. A no-op when the hash does not actually change (identical
+ * name|done|note), keeping the ring meaningful.
+ *
+ * Observation-only metadata: the ring is read by `findByPreviousHash` to
+ * resolve a stale hash to the current item for a warm hint; it never gates a
+ * write (the integrity check in `updateTodo`/`pinTodo` is unchanged).
+ */
+function pushPreviousHash(item: TodoItem, newHash: string): void {
+  if (newHash === item.hash) return; // no-op transition, hash unchanged
+  const ring = item.previousHashes ?? [];
+  ring.push(item.hash);
+  while (ring.length > LINEAGE_RING_CAP) {
+    ring.shift();
+  }
+  item.previousHashes = ring;
+}
+
 /**
  * Todo module implementation
  */
@@ -54,7 +78,13 @@ export class Todo implements TodoModule {
     existing.name = name;
     existing.done = done;
     existing.note = note;
-    existing.hash = computeHash(name, done, note);
+    // Record the pre-update hash in the lineage ring (cap 3) BEFORE assigning
+    // the new one, so a stale hash the LLM still holds can be resolved to this
+    // item via findByPreviousHash. Observation-only — does not accept the
+    // stale write (the gate above already rejected it if it didn't match).
+    const newHash = computeHash(name, done, note);
+    pushPreviousHash(existing, newHash);
+    existing.hash = newHash;
 
     // Auto-clear: when every NON-PINNED item is done, drop only the non-pinned
     // items so the prompt stops showing a fully-checked checklist of ephemeral
@@ -132,8 +162,11 @@ export class Todo implements TodoModule {
   closeCheckpointTodo(checkpointId: string): void {
     const item = this.items.find((i) => i.note === checkpointId && !i.done);
     if (item) {
+      // done flips false→true, so the hash changes — record the old one first.
+      const newHash = computeHash(item.name, true, item.note);
+      pushPreviousHash(item, newHash);
       item.done = true;
-      item.hash = computeHash(item.name, true, item.note);
+      item.hash = newHash;
     }
   }
 
@@ -153,6 +186,22 @@ export class Todo implements TodoModule {
     // Clear reactivate when un-pinning; set/overwrite when pinning.
     existing.reactivate = pinned ? reactivate : undefined;
     return { ...existing };
+  }
+
+  /**
+   * Resolve a stale hash to the CURRENT item whose lineage ring contains it.
+   * Scans `this.items` for one whose `previousHashes` includes `hash` and
+   * returns a copy of that item (carrying its CURRENT hash). Returns null if
+   * no item's lineage ring contains the hash.
+   *
+   * Observation-only: never mutates state, never accepts a stale write. Used
+   * by `todo_update` to emit a warm hint with the current hash on a lineage
+   * match; the integrity gate in `updateTodo` is unchanged.
+   */
+  findByPreviousHash(hash: string): TodoItem | null {
+    const item = this.items.find((i) => i.previousHashes?.includes(hash));
+    if (!item) return null;
+    return { ...item };
   }
 
   /**
