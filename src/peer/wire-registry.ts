@@ -211,6 +211,29 @@ export function getEpoch(endpoint: string): number {
 
 // ── Registry operations ─────────────────────────────────────────────────────
 
+/**
+ * Remove a socket's info from the `socketsBySid` census under a given sid
+ * (convergence grouping). Shared census-maintenance primitive: BOTH
+ * `pruneSocket` (a socket closed) and `recordAnnounce`'s SID-migration path
+ * (a socket re-announces under a NEW sid, review round-3 finding 1) must keep
+ * the census honest — `endpointsForSid()` and `convergePairBySid()` treat it
+ * as the authoritative "who still holds this sid" view, so a stale entry
+ * would make a superseded sid operate on the socket's CURRENT peer.
+ *
+ * - filters the sid's group by socket identity (socket-identity-guarded,
+ *   matching pruneSocket's rule — a stale close/migration never touches a
+ *   fresh socket's entry);
+ * - deletes the group when it becomes empty (no dangling empty arrays);
+ * - no-op when the sid/socket pair was never registered.
+ */
+function removeSocketFromSidCensus(socket: WebSocket, sid: string): void {
+  const group = socketsBySid.get(sid);
+  if (!group) return;
+  const remaining = group.filter((s) => s.socket !== socket);
+  if (remaining.length === 0) socketsBySid.delete(sid);
+  else if (remaining.length !== group.length) socketsBySid.set(sid, remaining);
+}
+
 /** Find (or lazily create) the pair entry for an endpoint key. */
 function ensurePair(endpoint: string, dialed: boolean): RemotePairEntry {
   let entry = pairs.get(endpoint);
@@ -244,14 +267,39 @@ export function recordAnnounce(params: {
   const { endpoint, dialed, socket, sid, initiatorSid, meta } = params;
   const entry = ensurePair(endpoint, dialed);
 
-  // Sid re-key: drop the previous index mapping when the peer restarted
-  // with a new sid. Old-sid lookups then fail fast (mail_to error points at
-  // peer_list, plan §5 edge cases).
-  if (entry.sid && entry.sid !== sid) sidIndex.delete(entry.sid);
+  // Resolve the existing socket info EARLY — its stored `sid` is the source
+  // of truth for whether this announce is a SID migration (a re-announce
+  // under a new sid from a peer restart). Resolving before the re-key block
+  // keeps the order: detect migration → migrate the OLD sid's bookkeeping
+  // → install the NEW sid.
+  let info = entry.sockets.find((s) => s.socket === socket);
+
+  // Sid re-key when the peer restarted with a new sid (the mutable-sid
+  // migration, plan §5). TWO indexes must stay coherent — sidIndex (sid →
+  // endpoint) AND socketsBySid (sid → socket census) — plus the per-socket
+  // info.sid. A re-announce under a new sid must not leave the socket
+  // present under the OLD sid, or endpointsForSid(oldSid)/convergePairBySid
+  // (oldSid) would operate on a socket that no longer belongs to that sid
+  // (review round-3 finding 1, BLOCKER).
+  const previousSid = info?.sid;
+  const migratingSid = previousSid && previousSid !== sid;
+
+  if (migratingSid) {
+    // (1) Census migration: drop this socket from the OLD sid's group (it
+    //     now belongs to the new sid). Shared with pruneSocket via
+    //     removeSocketFromSidCensus so the rules match.
+    removeSocketFromSidCensus(socket, previousSid);
+    // (2) sidIndex ownership guard (review round-3 finding 2): delete the
+    //     OLD sid's index ONLY when it points at THIS endpoint. During a
+    //     simultaneous mutual dial one sid can transiently span TWO
+    //     endpoint keys; a sibling endpoint may still legitimately own the
+    //     old index. Unconditional deletion would orphan a live sibling —
+    //     the same ownership rule teardownPair already applies.
+    if (sidIndex.get(previousSid) === endpoint) sidIndex.delete(previousSid);
+  }
   entry.sid = sid;
   sidIndex.set(sid, endpoint);
 
-  let info = entry.sockets.find((s) => s.socket === socket);
   if (info) {
     info.sid = sid;
     info.initiatorSid = initiatorSid;

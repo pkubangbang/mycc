@@ -307,6 +307,82 @@ describe('peer wire — registry invariants', () => {
     expect(findBySid('new-sid')).not.toBeNull();
     expect(findBySid('old-sid')).toBeNull(); // re-keyed away
     expect(endpointOfSid('new-sid')).toBe('h:1');
+    // REGRESSION (review round-3 finding 1): the socketsBySid census MUST
+    // migrate with the socket — the same socket re-announcing under a new
+    // sid must NOT linger under the old sid's group, or
+    // endpointsForSid(oldSid)/convergePairBySid(oldSid) would operate on a
+    // socket that no longer belongs to that sid.
+    expect(endpointsForSid('old-sid')).toEqual([]); // old sid holds no socket
+    expect(endpointsForSid('new-sid')).toEqual(['h:1']); // new sid holds it
+  });
+
+  it('REGRESSION (review round-3 finding 1): re-announce under a new sid drops the socket from the OLD sid census (no stale convergence)', () => {
+    // The precise scenario finding 1 calls out: a socket re-announces under
+    // a NEW sid (peer restart). The old sid's socketsBySid group MUST lose
+    // the socket — otherwise convergePairBySid(oldSid) would discover a
+    // socket now announcing newSid and try to converge against it (operating
+    // on the wrong logical peer). The new sid's group must hold exactly the
+    // one migrated socket.
+    const sock = { readyState: 1, OPEN: 1, close: vi.fn() } as unknown as WebSocket;
+    recordAnnounce({ endpoint: 'h:1', dialed: true, socket: sock, sid: 'old-sid', initiatorSid: 'me', meta: {} });
+    expect(endpointsForSid('old-sid')).toEqual(['h:1']);
+
+    // Re-announce the SAME socket under a new sid (the restart).
+    recordAnnounce({ endpoint: 'h:1', dialed: true, socket: sock, sid: 'new-sid', initiatorSid: 'me', meta: {} });
+
+    // OLD sid census is now EMPTY — no socket still announces it.
+    expect(endpointsForSid('old-sid')).toEqual([]);
+    // Convergence against the old sid finds nothing (group length < 2 → null)
+    // and crucially does NOT close the migrated socket.
+    expect(convergePairBySid('old-sid')).toBeNull();
+    expect(sock.close).not.toHaveBeenCalled();
+    // The new sid census holds exactly the migrated socket, keyed at h:1.
+    expect(endpointsForSid('new-sid')).toEqual(['h:1']);
+    // The pair entry's sid field reflects the new sid, and the socket info
+    // carries the new sid (the per-socket field is the source of truth for
+    // the NEXT migration detection).
+    const pair = findByEndpoint('h:1');
+    expect(pair!.sid).toBe('new-sid');
+    expect(pair!.sockets[0].sid).toBe('new-sid');
+  });
+
+  it('REGRESSION (review round-3 finding 2): re-key away does NOT erase a sibling endpoint\'s sidIndex (ownership guard)', () => {
+    // The precise scenario finding 2 calls out: during a simultaneous
+    // mutual dial one sid transiently spans TWO endpoint keys. When ONE
+    // endpoint's socket re-announces under a new sid, the old sid's
+    // sidIndex mapping must NOT be deleted when it currently points at the
+    // OTHER (still-live, still-old-sid) endpoint. The re-key deletion must
+    // be OWNERSHIP-GUARDED, exactly like teardownPair's survivor re-point.
+    const endpointA = '127.0.0.1:3195'; // holds socketA under oldSid
+    const endpointB = '192.168.1.20:3195'; // holds socketB under oldSid
+    const oldSid = 'peer-old';
+    const newSid = 'peer-new';
+
+    const sockA = { readyState: 1, OPEN: 1, close: vi.fn() } as unknown as WebSocket;
+    const sockB = { readyState: 1, OPEN: 1, close: vi.fn() } as unknown as WebSocket;
+    recordAnnounce({ endpoint: endpointA, dialed: true, socket: sockA, sid: oldSid, initiatorSid: SID_SELF, meta: {} });
+    recordAnnounce({ endpoint: endpointB, dialed: false, socket: sockB, sid: oldSid, initiatorSid: oldSid, meta: {} });
+    // sidIndex points at the most-recent announce (endpointB). Both
+    // endpoints legitimately still hold oldSid.
+    expect(endpointOfSid(oldSid)).toBe(endpointB);
+    expect(endpointsForSid(oldSid).sort()).toEqual([endpointA, endpointB].sort());
+
+    // Now endpointA's socket re-announces under newSid (A restarted).
+    recordAnnounce({ endpoint: endpointA, dialed: true, socket: sockA, sid: newSid, initiatorSid: SID_SELF, meta: {} });
+
+    // THE REGRESSION ASSERTION: oldSid's index still resolves (to endpointB,
+    // the surviving holder) — A's re-key did NOT delete it because it did not
+    // own it. B remains fully reachable by oldSid and mail-routable.
+    expect(findBySid(oldSid)).not.toBeNull();
+    expect(endpointOfSid(oldSid)).toBe(endpointB); // untouched — A didn't own it
+    expect(endpointsForSid(oldSid)).toEqual([endpointB]); // A dropped, B remains
+    // A is now reachable by the NEW sid.
+    expect(findBySid(newSid)).not.toBeNull();
+    expect(endpointOfSid(newSid)).toBe(endpointA);
+    expect(endpointsForSid(newSid)).toEqual([endpointA]);
+    // No socket was closed — this is a pure index migration, not teardown.
+    expect(sockA.close).not.toHaveBeenCalled();
+    expect(sockB.close).not.toHaveBeenCalled();
   });
 
   it('teardownPair bumps the epoch so a mid-flight dial aborts', () => {
