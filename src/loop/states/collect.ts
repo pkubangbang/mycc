@@ -297,6 +297,462 @@ async function checkReactivation(env: MachineEnv): Promise<void> {
   }
 }
 
+/**
+ * Steps 1–2: drain all external inputs into the triologue.
+ *
+ * Collects (in order): pending child questions, mails, team-status overview,
+ * steering notes (webui-only), the headless first-query marker, and uploaded
+ * files (webui-only). Each is injected as a triologue note (MAIL / URGENT /
+ * SYSTEM / REMINDER) relying on auto-fix for TP-safe injection.
+ *
+ * @returns the freshest steering note drained this pass (`firstSteerNote`),
+ *          or null if none. This is the Y source for runKeywordExtraction
+ *          (step 6) — steering notes take priority over lastUserQuery as the
+ *          freshest mid-task direction.
+ */
+async function collectMailsAndInput(env: MachineEnv): Promise<{ firstSteerNote: string | null }> {
+  const { triologue, ctx } = env;
+
+  // 1. Handle pending questions from children
+  await ctx.team.handlePendingQuestions();
+
+  // 2. Collect mails — relies on auto-fix for TP-safe injection
+  //    The MAIL note carries pure mail content only. Reply guidance (who to
+  //    contact and how) lives in the todo/peer-channels nudge below, not
+  //    here — keeping each note lightweight. The sender's identity is in
+  //    `mail.from` (a teammate name, or a peer identity "<session-id>/lead"),
+  //    which the mail_to tool accepts as its `name` argument; the nudge tells
+  //    the agent that.
+  const mails = ctx.mail.collectMails();
+  if (mails.length > 0) {
+    const parts: string[] = [];
+    for (const mail of mails) {
+      parts.push(`Mail from ${mail.from}: ${mail.title}\n${mail.content}`);
+    }
+    const mailContent = parts.join('\n\n---\n\n');
+    if (agentIO.isNeglectedMode()) {
+      triologue.note('URGENT', `user interrupted - wrap up quickly\n${mailContent}`);
+    } else {
+      triologue.note('MAIL', mailContent);
+    }
+  }
+
+  // 2b. Inject team status overview so lead sees deadlines without calling tm_print
+  const teamStatus = await ctx.team.printTeam();
+  if (teamStatus !== 'No teammates.') {
+    triologue.note('SYSTEM', teamStatus);
+  }
+
+  // 2c. Drain steering queue (webui-only): if serve is running, consume any
+  //     steering notes the user queued during this run and inject them as a
+  //     REMINDER note. Unlike the PROMPT synthesis path (which merges stale
+  //     notes with a fresh query after an interrupt), this is the in-flight
+  //     path: the LLM reached COLLECT mid-run with notes still queued, so
+  //     they are current direction for the ongoing work and injected as-is.
+  //     Reuses the REMINDER NoteCategory — no new category needed.
+  let firstSteerNote: string | null = null;
+  if (getServeHub().isRunning()) {
+    const steerNotes = getServeHub().drainSteering();
+    if (steerNotes.length > 0) {
+      const steerContent = steerNotes.map((n, i) => `(${i + 1}) ${n}`).join('\n');
+      triologue.note('REMINDER', `Steering notes from the user (mid-task direction):\n${steerContent}`);
+      agentIO.verbose('steer', `Drained ${steerNotes.length} steering note(s) at COLLECT`);
+      // Mid-task user direction is a user intervention — reset the autofly
+      // streak so the LLM stages that follow aren't counted as "consecutive
+      // successful since last user input". An empty drain (no notes) is NOT
+      // user input, so the reset stays inside this guard.
+      autoState.resetStreak();
+      firstSteerNote = steerNotes[0];
+    }
+  }
+
+  // 2d. Headless first_query marker reset: a session that bootstrapped into
+  //     auto mode (--auto / --daemon) carries the HEADLESS_FIRST_QUERY_MARKER
+  //     in first_query (see markHeadlessSession). The first real wake event
+  //     processed HERE is that session's actual first query — mail covers a
+  //     channel first-query (delivered to the local mailbox), peer mail, and
+  //     cron nudges; a steering note covers a webui/user hint; a teammate
+  //     question lands as the Q&A mail appended by handlePendingQuestions()
+  //     in step 1, so it is collected by the same collectMails() above.
+  //     resolveHeadlessFirstQuery no-ops unless the value is still exactly
+  //     the marker, so later events never overwrite a real first query.
+  //     (A marker left by a user who ESC-ed out of a fresh --auto session
+  //     and typed interactively is resolved by the PROMPT bookmark capture
+  //     in prompt.ts — see the HEADLESS_FIRST_QUERY_MARKER branch there.)
+  const firstEvent = mails.length > 0
+    ? `Mail from ${mails[0].from}: ${mails[0].title}\n${mails[0].content}`
+    : firstSteerNote;
+  if (firstEvent) {
+    resolveHeadlessFirstQuery(env.sessionFilePath, firstEvent);
+  }
+
+  // 2e. Drain file upload queue (webui-only): if serve is running, save any
+  //     uploaded files to ./.mycc/uploaded/ and mention them via a REMINDER
+  //     note so the LLM can reference them (e.g. via read_picture).
+  if (getServeHub().isRunning()) {
+    const files = getServeHub().drainFileUploads();
+    if (files.length > 0) {
+      const uploadDir = path.join(process.cwd(), '.mycc', 'uploaded');
+      if (!fs.existsSync(uploadDir)) {
+        fs.mkdirSync(uploadDir, { recursive: true });
+      }
+      const fileInfos: string[] = [];
+      for (const file of files) {
+        const safeName = `${Date.now()}_${file.filename}`;
+        const filePath = path.join(uploadDir, safeName);
+        fs.writeFileSync(filePath, Buffer.from(file.data, 'base64'));
+        const relPath = path.relative(process.cwd(), filePath);
+        fileInfos.push(`- ${file.filename} → ${relPath} (${file.mimeType})${file.text ? `\n  Text: "${file.text.slice(0, 200)}${file.text.length > 200 ? '...' : ''}"` : ''}`);
+      }
+      triologue.note('REMINDER', `User uploaded file(s):\n${fileInfos.join('\n')}`);
+      agentIO.verbose('serve', `Saved ${files.length} uploaded file(s) to ${uploadDir}`);
+    }
+  }
+
+  return { firstSteerNote };
+}
+
+/** Signal returned by runHintRound to steer the orchestrator. */
+type HintSignal = 'continue' | 'stop' | 'collect';
+
+/**
+ * Step 3: generate a hint round when confusion is high, and handle its
+ * three outcomes.
+ *
+ * @returns `'stop'` if ESC aborted the hint round (caller returns STOP for
+ *          centralized wrap-up); `'collect'` if the hint round signalled a
+ *          dead-loop compaction (caller returns COLLECT to continue on
+ *          compacted context); `'continue'` for a normal pass (or when the
+ *          hint block was skipped).
+ *
+ * Side effects on `turn`: captures `lastHintFocus` (the Z source) on a
+ * successful hint round; clears `collectTransientRetries` on compaction.
+ */
+async function runHintRound(env: MachineEnv, turn: TurnVars): Promise<HintSignal> {
+  const { triologue, ctx } = env;
+  const confusionIndex = ctx.core.getConfusionIndex();
+  const messageCount = triologue.getMessagesRaw().length;
+
+  if (confusionIndex < CONFUSION_THRESHOLD || messageCount < MIN_MESSAGES_FOR_HINT) {
+    return 'continue';
+  }
+
+  // Use brief for hint round notification (user-facing)
+  ctx.core.brief('info', 'loop', 'Generating hint...');
+  const pendingSkills = env.conditions.getPending();
+  const breakdown = generateBreakdown(confusionIndex, env.sequence.getEvents());
+
+  // Use escAware for ESC-interruptible hint generation
+  const result = await ctx.core.escAware(
+    async (abortController) => {
+      return await triologue.generateHintRound(abortController, confusionIndex, breakdown, pendingSkills);
+    },
+    () => {
+      // ESC pressed during hint generation — return 'aborted' so the
+      // caller returns STOP for centralized wrap-up (stop.ts handles
+      // startWrapUp + auto-off + setNeglectedMode).
+      return 'aborted' as const;
+    }
+  );
+
+  // If aborted (ESC pressed), return STOP for centralized wrap-up.
+  // Neglected mode is NOT cleared here — stop.ts handles that.
+  if (result === 'aborted') {
+    return 'stop';
+  }
+  // Capture focus_on from a successful hint round (Z source for the
+  // composite keyword extraction below). The discriminated union
+  // carries focusOn only on the success path.
+  if (result !== 'compact' && result.status === 'success') {
+    turn.lastHintFocus = result.focusOn;
+  }
+  // If the LLM signalled should_compact (dead-loop or context stress),
+  // trigger compaction now and CONTINUE the loop on fresh, compacted
+  // context. Compaction is a mid-turn intervention (not a turn boundary),
+  // so we return COLLECT (not STOP): COLLECT → LLM will retryChat on the
+  // now-compacted triologue within the same turn. Returning STOP here was
+  // the bug — STOP → PROMPT ends the turn and waits for user input, so the
+  // loop stalled at PROMPT after a hint-compact. This mirrors the
+  // hook-deferred compaction path (hook.ts sets deferredCompact → llm.ts
+  // compacts and continues the while-loop).
+  //
+  // TP parity: compact() replaces the conversation with a 2-message
+  // [summary_user, summary_assistant] pair, so getLastRole() is
+  // 'assistant' — any note/user/tool the following states inject starts
+  // from a legal role sequence. No special TP handling needed here.
+  //
+  // Stat reset MUST mirror the llm.ts auto-compact branch: the stale
+  // sequence events, embedding tracker, hook dedup cap, and crossroad
+  // cooldown were all computed against the pre-compact history that no
+  // longer exists. Without these resets, the continued loop would run on
+  // corrupted stats (e.g. sequence events inflating the next confusion
+  // score, hook dedup cap suppressing the next turn's hooks).
+  if (result === 'compact') {
+    ctx.core.brief('info', 'loop', 'Hint round signalled compaction (dead-loop / context stress); compacting...');
+    const tools = loader.getToolsForScope(env.scope);
+    await triologue.compact(undefined, undefined, tools);
+    ctx.core.resetConfusionIndex();
+    env.requestEmbeddingTracker.clear();
+    env.sequence.clear();
+    env.hookExecutor.resetTurn();
+    env.crossroadOccurred = false;
+    // Turn recovered via compaction — clear the transient-retry counter
+    // so the next hiccup starts a fresh circuit-breaker count.
+    turn.collectTransientRetries = 0;
+    return 'collect';
+  }
+  // Reset confusion after hint
+  ctx.core.resetConfusionIndex();
+  return 'continue';
+}
+
+/**
+ * Step 4: todo + peer-channel nudging with state tracking.
+ *
+ * The guard fires when there are open todos OR an active peer channel (a
+ * joined channel with a fresh peer). Channel state is appended to the same
+ * nudge so the LLM sees peer context without a separate mechanism (keeps
+ * todo.ts pure — channel info comes from ctx.peer). When the throttle
+ * counter hits 0, reactivation runs FIRST (so the nudge prints the
+ * already-updated list — no "closed then reopened" flicker), then the
+ * nudge is injected.
+ *
+ * Side effects on `turn`: `nextTodoNudge` (decremented / reset) and
+ * `lastTodoState` (dedup cursor for the nudge).
+ */
+async function runTodoNudge(env: MachineEnv, turn: TurnVars): Promise<void> {
+  const { triologue, ctx } = env;
+  const activeChannels = ctx.peer.listChannels().filter(
+    ch => ch.joined && ch.peerSessionId && ctx.peer.isFresh(ch.peerSessionId)
+  );
+  // Look up each peer's workDir from the identity registry (ChannelFile does
+  // not carry workDir; it lives on IdentityEntry). Falls back to '?' if the
+  // peer unregistered between listChannels() and now (shouldn't happen for a
+  // fresh peer, but be defensive).
+  const peerWorkDirs = new Map<string, string>();
+  for (const id of ctx.peer.listIdentities()) {
+    peerWorkDirs.set(id.sessionId, id.workDir);
+  }
+  const channelLine = (ch: typeof activeChannels[number]): string => {
+    const workDir = peerWorkDirs.get(ch.peerSessionId!) ?? '?';
+    // `topic` is the channel's static `title` theme; mail_to routes a peer
+    // reply by name="<peerSessionId>/lead". The `title=` value convention is
+    // "<topic>:<subject>" so the recipient sees which channel the reply is on.
+    return `- peer=${ch.peerSessionId}\n` +
+      `  workdir=${workDir}\n` +
+      `  channel=${ch.channelId}, topic=${ch.title ?? '(none)'}\n` +
+      `  use mail_to(name="${ch.peerSessionId}/lead", title="${ch.title ?? ''}:<subject>") to communicate`;
+  };
+  if (ctx.todo.hasOpenTodo() || activeChannels.length > 0) {
+    const currentTodoState = ctx.todo.printTodoList();
+    const channelState = activeChannels.length > 0
+      ? activeChannels.map(ch => `  [channel ${ch.channelId}] peer=${ch.peerSessionId} fresh=${ctx.peer.isFresh(ch.peerSessionId!)} title="${ch.title}"`).join('\n')
+      : '';
+    const compositeState = `${currentTodoState}\n${channelState}`;
+    if (compositeState !== turn.lastTodoState) {
+      turn.nextTodoNudge = 3;
+      turn.lastTodoState = compositeState;
+    }
+    turn.nextTodoNudge--;
+    if (turn.nextTodoNudge === 0) {
+      // (4a) Reactivation FIRST — reopen pinned todos whose condition is met.
+      await checkReactivation(env);
+      // (4b) Nudge SECOND — prints the now-up-to-date todo list + channels.
+      const nudgeParts = [`Update your todos. ${ctx.todo.printTodoList()}`];
+      if (activeChannels.length > 0) {
+        nudgeParts.push(`Active channels:\n${activeChannels.map(channelLine).join('\n\n')}`);
+      }
+      triologue.note('REMINDER', nudgeParts.join('\n'));
+      turn.nextTodoNudge = 3;
+    }
+  }
+}
+
+/**
+ * Steps 5 + 5b: brief nudging and worktree cleanup nudging.
+ *
+ * Side effects on `turn`: `nextBriefNudge` (decremented / reset to 5).
+ * Side effects on `env`: `nextWtNudge` (the worktree check sentinel).
+ */
+async function runBriefAndWorktreeNudges(env: MachineEnv, turn: TurnVars): Promise<void> {
+  const { triologue } = env;
+
+  // 5. Brief nudging - remind agent to use brief tool
+  turn.nextBriefNudge--;
+  if (turn.nextBriefNudge <= 0) {
+    triologue.note('REMINDER', 'Provide a brief status update using the brief tool. Example: brief("Working on X", 7)');
+    turn.nextBriefNudge = 5;
+  }
+
+  // 5b. Worktree cleanup nudge.
+  //     nextWtNudge == 0 is the "check now" sentinel: cheaply call
+  //     listWorktrees() (async git query) each chat. If worktrees exist,
+  //     inject a REMINDER and arm the counter to N so we don't nag every
+  //     turn. If none, leave the counter at 0 (re-checkes next pass).
+  //     When the counter is nonzero, just decrement it.
+  if (env.nextWtNudge === 0) {
+    const worktrees = await listWorktrees(process.cwd());
+    if (worktrees.length > 0) {
+      const lines = worktrees.map(w => `- ${w.name} at ${w.path} (branch: ${w.branch})`);
+      triologue.note(
+        'REMINDER',
+        `Stale worktrees detected. Consider cleaning them up with bash (git worktree remove <path>) once the work is merged:\n${lines.join('\n')}`
+      );
+      env.nextWtNudge = 5;
+    }
+  } else {
+    env.nextWtNudge--;
+  }
+}
+
+/**
+ * Step 6: composite keyword extraction for proactive skill discovery.
+ *
+ * Composes a composite text from three sources:
+ *   X = turn.lastBriefMessage  (agent's self-reported focus, set in TOOL)
+ *   Y = firstSteerNote ?? turn.lastUserQuery  (the trigger source)
+ *   Z = turn.lastHintFocus  (hint round focus_on, captured in step 3)
+ * Extraction is TRIGGERED only by a change in Y (new user query or new
+ * steering note). X and Z enrich the composite but never trigger.
+ * A 3-pass cooldown suppresses re-triggering from consecutive user messages.
+ * See docs/plan-composite-keyword-extraction.md.
+ *
+ * @param firstSteerNote - the freshest steering note drained this pass
+ *        (from collectMailsAndInput), or null.
+ *
+ * Side effects on `turn`: `lastSkillY` (Y dedup cursor) and
+ * `skillDiscoveryCooldown` — armed ONLY on a success/skipped outcome; a
+ * `failed` outcome (ESC / transient) leaves Y eligible for retry.
+ */
+async function runKeywordExtraction(env: MachineEnv, turn: TurnVars, firstSteerNote: string | null): Promise<void> {
+  const { triologue, ctx } = env;
+
+  if (turn.skillDiscoveryCooldown > 0) turn.skillDiscoveryCooldown--;
+
+  const ySource = firstSteerNote ?? (turn.lastUserQuery || null);
+  const yChanged = ySource !== null && ySource !== turn.lastSkillY;
+
+  // Build the composite text (X + Y + Z). Y is the trigger; X and Z enrich.
+  const compositeParts: string[] = [];
+  if (turn.lastBriefMessage) compositeParts.push(turn.lastBriefMessage);
+  if (ySource) compositeParts.push(ySource);
+  if (turn.lastHintFocus) compositeParts.push(turn.lastHintFocus);
+  const compositeText = compositeParts.join('\n');
+
+  if (!yChanged || turn.skillDiscoveryCooldown !== 0 || compositeText.trim().length < 4) {
+    return;
+  }
+
+  // Extract English keywords from the composite via LLM (ESC-safe).
+  // extractKeywords returns a discriminated union so we can distinguish a
+  // completed extraction (success/skipped) from a failed/aborted one:
+  //   - success: the LLM ran; keywords may be empty. Arm the cooldown and
+  //     mark Y as seen.
+  //   - skipped: the composite was trivial (greeting/ack). Mark Y as seen
+  //     so a trivial "hello" doesn't re-trigger every pass — but a
+  //     subsequent meaningful query (different Y content) still triggers.
+  //   - failed: the call threw (transient network error or ESC abort).
+  //     Do NOT arm the cooldown or mark Y as seen: Y stays eligible for a
+  //     retry on a subsequent pass.
+  // The escAware cleanup returns { status: 'failed' } on ESC, so the
+  // abort path is handled by the same `failed` branch (preserving the
+  // documented "ESC does not consume the discovery opportunity" retry
+  // behavior that the old `[]`-returning API silently broke).
+  const result = await ctx.core.escAware(
+    async (ac) => extractKeywords(compositeText, ac.signal),
+    () => ({ status: 'failed' } as const),
+  );
+
+  if (result.status === 'failed') {
+    // Y stays eligible for retry — do not touch lastSkillY or cooldown.
+    // (The cooldown was already decremented at the top of step 6, which is
+    // fine: a failed attempt does not extend suppression.)
+    return;
+  }
+
+  // success or skipped: mark the Y source as "seen" so it doesn't
+  // re-trigger. When a steering note was the trigger, ALSO mark the
+  // fallback lastUserQuery as seen so it doesn't spuriously re-trigger
+  // after the steering note is consumed on subsequent passes
+  // (Review BUG 1 — spurious double-trigger).
+  turn.lastSkillY = ySource;
+  if (firstSteerNote && turn.lastUserQuery) {
+    turn.lastSkillY = turn.lastUserQuery;
+  }
+  turn.skillDiscoveryCooldown = 3;
+
+  // Only a successful extraction with real keywords can surface skills.
+  // A `skipped` (trivial) outcome has no keywords, and a `success` with
+  // an empty keywords array means the LLM found nothing relevant — both
+  // fall through here without injecting a HINT note.
+  const keywords = result.status === 'success' ? result.keywords : [];
+  if (keywords.length === 0) return;
+
+  const allSkills = ctx.skill.listSkills();
+  const matched = allSkills.filter(s => {
+    const nameLower = s.name.toLowerCase();
+    const kwLower = s.keywords.map(k => k.toLowerCase());
+    return keywords.some(kw =>
+      nameLower.includes(kw) ||
+      kwLower.some(k => k.includes(kw) || kw.includes(k)),
+    );
+  });
+
+  if (matched.length === 0) return;
+
+  const newSkills: string[] = [];
+  const suggestedSkills: string[] = [];
+  const loadedSkills: string[] = [];
+
+  for (const skill of matched) {
+    const status = getSkillTriologueStatus(triologue, skill);
+    switch (status) {
+      case 'new': {
+        const desc = skill.description ? ` (${skill.description})` : '';
+        newSkills.push(`${skill.name}${desc}`);
+        break;
+      }
+      case 'suggested':
+        suggestedSkills.push(skill.name);
+        break;
+      case 'loaded':
+        loadedSkills.push(skill.name);
+        break;
+    }
+  }
+
+  const lines: string[] = [];
+  if (newSkills.length > 0) {
+    lines.push(`New relevant skills: ${newSkills.join(', ')}. Use skill_load(name="<exact_name>") to load them.`);
+  }
+  if (suggestedSkills.length > 0) {
+    lines.push(`Also suggesting: ${suggestedSkills.join(', ')}. Use skill_load(name="<exact_name>") to load it.`);
+  }
+  if (loadedSkills.length > 0) {
+    lines.push(`The below skills are loaded and also relevant: ${loadedSkills.join(', ')}.`);
+  }
+  lines.push('Note: you can also use skill_search to search for skills semantically.');
+  // This is a silent nudge: either load a skill that genuinely helps the
+  // current task (via skill_load), or ignore it and keep working. Do NOT
+  // write a prose reply explaining why you are/aren't loading a skill —
+  // that clutters the conversation and re-triggers the same nudge.
+  lines.push('Discipline: this is a silent nudge. If a skill helps the current task, load it with skill_load; otherwise stay silent and continue. Do NOT narrate your decision.');
+
+  triologue.note('HINT', lines.join('\n'));
+}
+
+/**
+ * Step 7: log message count and token consumption in verbose mode.
+ */
+function logVerboseStats(env: MachineEnv, messageCount: number): void {
+  if (!isVerbose()) return;
+  const { triologue, ctx } = env;
+  const tokenCount = triologue.getTokenCount();
+  const tokenThreshold = triologue.getTokenThreshold();
+  const utilization = ((tokenCount / tokenThreshold) * 100).toFixed(1);
+  ctx.core.verbose('collect', `${messageCount} messages, ${tokenCount}/${tokenThreshold} tokens (${utilization}%)`);
+}
+
 export async function handleCollect(
   env: MachineEnv,
   turn: TurnVars,
@@ -305,401 +761,34 @@ export async function handleCollect(
   const { triologue, ctx } = env;
 
   try {
-    // 1. Handle pending questions from children
-    await ctx.team.handlePendingQuestions();
-
     // Observability: emit confusion_score at COLLECT entry (silent when no listeners)
     const confusionScoreEntry = ctx.core.getConfusionIndex();
     if (confusionScoreEntry > 0) {
       loopEvents.emit('confusion_score', { score: confusionScoreEntry });
     }
 
-    // 2. Collect mails — relies on auto-fix for TP-safe injection
-    //    The MAIL note carries pure mail content only. Reply guidance (who to
-    //    contact and how) lives in the todo/peer-channels nudge below, not
-    //    here — keeping each note lightweight. The sender's identity is in
-    //    `mail.from` (a teammate name, or a peer identity "<session-id>/lead"),
-    //    which the mail_to tool accepts as its `name` argument; the nudge tells
-    //    the agent that.
-    const mails = ctx.mail.collectMails();
-    if (mails.length > 0) {
-      const parts: string[] = [];
+    // 1–2. Drain all external inputs (child questions, mail, team status,
+    //      steering notes, headless first-query marker, file uploads).
+    //      Returns the freshest steering note (the Y source for step 6).
+    const { firstSteerNote } = await collectMailsAndInput(env);
 
-      // Standard mail format
-      for (const mail of mails) {
-        parts.push(`Mail from ${mail.from}: ${mail.title}\n${mail.content}`);
-      }
+    // 3. Hint round + compaction. May short-circuit the pass.
+    const hintSignal = await runHintRound(env, turn);
+    if (hintSignal === 'stop') return AgentState.STOP;
+    if (hintSignal === 'collect') return AgentState.COLLECT;
 
-      const mailContent = parts.join('\n\n---\n\n');
+    // 4. Todo + peer-channel nudging (with reactivation on the same cycle).
+    await runTodoNudge(env, turn);
 
-      if (agentIO.isNeglectedMode()) {
-        triologue.note('URGENT', `user interrupted - wrap up quickly\n${mailContent}`);
-      } else {
-        triologue.note('MAIL', mailContent);
-      }
-    }
-
-    // 2b. Inject team status overview so lead sees deadlines without calling tm_print
-    const teamStatus = await ctx.team.printTeam();
-    if (teamStatus !== 'No teammates.') {
-      triologue.note('SYSTEM', teamStatus);
-    }
-
-    // 2c. Drain steering queue (webui-only): if serve is running, consume any
-    //     steering notes the user queued during this run and inject them as a
-    //     REMINDER note. Unlike the PROMPT synthesis path (which merges stale
-    //     notes with a fresh query after an interrupt), this is the in-flight
-    //     path: the LLM reached COLLECT mid-run with notes still queued, so
-    //     they are current direction for the ongoing work and injected as-is.
-    //     Reuses the REMINDER NoteCategory — no new category needed.
-    let firstSteerNote: string | null = null;
-    if (getServeHub().isRunning()) {
-      const steerNotes = getServeHub().drainSteering();
-      if (steerNotes.length > 0) {
-        const steerContent = steerNotes.map((n, i) => `(${i + 1}) ${n}`).join('\n');
-        triologue.note('REMINDER', `Steering notes from the user (mid-task direction):\n${steerContent}`);
-        agentIO.verbose('steer', `Drained ${steerNotes.length} steering note(s) at COLLECT`);
-        // Mid-task user direction is a user intervention — reset the autofly
-        // streak so the LLM stages that follow aren't counted as "consecutive
-        // successful since last user input". An empty drain (no notes) is NOT
-        // user input, so the reset stays inside this guard.
-        autoState.resetStreak();
-        firstSteerNote = steerNotes[0];
-      }
-    }
-
-    // 2d. Headless first_query marker reset: a session that bootstrapped into
-    //     auto mode (--auto / --daemon) carries the HEADLESS_FIRST_QUERY_MARKER
-    //     in first_query (see markHeadlessSession). The first real wake event
-    //     processed HERE is that session's actual first query — mail covers a
-    //     channel first-query (delivered to the local mailbox), peer mail, and
-    //     cron nudges; a steering note covers a webui/user hint; a teammate
-    //     question lands as the Q&A mail appended by handlePendingQuestions()
-    //     in step 1, so it is collected by the same collectMails() above.
-    //     resolveHeadlessFirstQuery no-ops unless the value is still exactly
-    //     the marker, so later events never overwrite a real first query.
-    //     (A marker left by a user who ESC-ed out of a fresh --auto session
-    //     and typed interactively is resolved by the PROMPT bookmark capture
-    //     in prompt.ts — see the HEADLESS_FIRST_QUERY_MARKER branch there.)
-    const firstEvent = mails.length > 0
-      ? `Mail from ${mails[0].from}: ${mails[0].title}\n${mails[0].content}`
-      : firstSteerNote;
-    if (firstEvent) {
-      resolveHeadlessFirstQuery(env.sessionFilePath, firstEvent);
-    }
-
-    // 2e. Drain file upload queue (webui-only): if serve is running, save any
-    //     uploaded files to ./.mycc/uploaded/ and mention them via a REMINDER
-    //     note so the LLM can reference them (e.g. via read_picture).
-    if (getServeHub().isRunning()) {
-      const files = getServeHub().drainFileUploads();
-      if (files.length > 0) {
-        const uploadDir = path.join(process.cwd(), '.mycc', 'uploaded');
-        if (!fs.existsSync(uploadDir)) {
-          fs.mkdirSync(uploadDir, { recursive: true });
-        }
-        const fileInfos: string[] = [];
-        for (const file of files) {
-          const safeName = `${Date.now()}_${file.filename}`;
-          const filePath = path.join(uploadDir, safeName);
-          fs.writeFileSync(filePath, Buffer.from(file.data, 'base64'));
-          const relPath = path.relative(process.cwd(), filePath);
-          fileInfos.push(`- ${file.filename} → ${relPath} (${file.mimeType})${file.text ? `\n  Text: "${file.text.slice(0, 200)}${file.text.length > 200 ? '...' : ''}"` : ''}`);
-        }
-        triologue.note('REMINDER', `User uploaded file(s):\n${fileInfos.join('\n')}`);
-        agentIO.verbose('serve', `Saved ${files.length} uploaded file(s) to ${uploadDir}`);
-      }
-    }
-
-    // 3. Generate hint round if confusion threshold reached
-    const confusionIndex = ctx.core.getConfusionIndex();
-    const messageCount = triologue.getMessagesRaw().length;
-
-    if (confusionIndex >= CONFUSION_THRESHOLD && messageCount >= MIN_MESSAGES_FOR_HINT) {
-      // Use brief for hint round notification (user-facing)
-      ctx.core.brief('info', 'loop', 'Generating hint...');
-      // Get pending skills (skills with 'when' but no compiled condition)
-      const pendingSkills = env.conditions.getPending();
-      // Generate confusion breakdown from sequence events
-      const breakdown = generateBreakdown(confusionIndex, env.sequence.getEvents());
-
-      // Use escAware for ESC-interruptible hint generation
-      const result = await ctx.core.escAware(
-        async (abortController) => {
-          return await triologue.generateHintRound(abortController, confusionIndex, breakdown, pendingSkills);
-        },
-        () => {
-          // ESC pressed during hint generation — return 'aborted' so the
-          // caller returns STOP for centralized wrap-up (stop.ts handles
-          // startWrapUp + auto-off + setNeglectedMode).
-          return 'aborted' as const;
-        }
-      );
-      
-      // If aborted (ESC pressed), return STOP for centralized wrap-up.
-      // Neglected mode is NOT cleared here — stop.ts handles that.
-      if (result === 'aborted') {
-        return AgentState.STOP;
-      }
-      // Capture focus_on from a successful hint round (Z source for the
-      // composite keyword extraction below). The discriminated union
-      // carries focusOn only on the success path.
-      if (result !== 'compact' && result.status === 'success') {
-        turn.lastHintFocus = result.focusOn;
-      }
-      // If the LLM signalled should_compact (dead-loop or context stress),
-      // trigger compaction now and CONTINUE the loop on fresh, compacted
-      // context. Compaction is a mid-turn intervention (not a turn boundary),
-      // so we return COLLECT (not STOP): COLLECT → LLM will retryChat on the
-      // now-compacted triologue within the same turn. Returning STOP here was
-      // the bug — STOP → PROMPT ends the turn and waits for user input, so the
-      // loop stalled at PROMPT after a hint-compact. This mirrors the
-      // hook-deferred compaction path (hook.ts sets deferredCompact → llm.ts
-      // compacts and continues the while-loop).
-      //
-      // TP parity: compact() replaces the conversation with a 2-message
-      // [summary_user, summary_assistant] pair, so getLastRole() is
-      // 'assistant' — any note/user/tool the following states inject starts
-      // from a legal role sequence. No special TP handling needed here.
-      //
-      // Stat reset MUST mirror the llm.ts auto-compact branch: the stale
-      // sequence events, embedding tracker, hook dedup cap, and crossroad
-      // cooldown were all computed against the pre-compact history that no
-      // longer exists. Without these resets, the continued loop would run on
-      // corrupted stats (e.g. sequence events inflating the next confusion
-      // score, hook dedup cap suppressing the next turn's hooks).
-      if (result === 'compact') {
-        ctx.core.brief('info', 'loop', 'Hint round signalled compaction (dead-loop / context stress); compacting...');
-        // Drain the per-turn tool scope so compact()'s optional working-memory
-        // fork sees the tools the NEXT LLM call will use (preserves prompt cache).
-        const tools = loader.getToolsForScope(env.scope);
-        await triologue.compact(undefined, undefined, tools);
-        // Reset ALL stale stat counts — old context is summarized away.
-        ctx.core.resetConfusionIndex();
-        env.requestEmbeddingTracker.clear();
-        env.sequence.clear();
-        // Reset hook dedup so a stop+replace hook suppressed by the per-turn
-        // cap can re-fire after this mid-turn compact. The llm.ts branch has
-        // the same comment: auto-compact fires mid-turn with no PROMPT/resetTurn
-        // boundary, so without this the dedup cap would persist for the rest
-        // of the turn even though session.* counters were reset.
-        env.hookExecutor.resetTurn();
-        env.crossroadOccurred = false;
-        // Turn recovered via compaction — clear the transient-retry counter
-        // so the next hiccup starts a fresh circuit-breaker count.
-        turn.collectTransientRetries = 0;
-        return AgentState.COLLECT;
-      }
-      // Reset confusion after hint
-      ctx.core.resetConfusionIndex();
-    }
-
-    // 4. Todo nudging with state tracking.
-    //    The guard fires when there are open todos OR an active peer channel
-    //    (a joined channel with a fresh peer). Channel state is appended to
-    //    the same nudge so the LLM sees peer context without a separate
-    //    mechanism (keeps todo.ts pure — channel info comes from ctx.peer).
-    const activeChannels = ctx.peer.listChannels().filter(
-      ch => ch.joined && ch.peerSessionId && ctx.peer.isFresh(ch.peerSessionId)
-    );
-    // Look up each peer's workDir from the identity registry (ChannelFile does
-    // not carry workDir; it lives on IdentityEntry). Falls back to '?' if the
-    // peer unregistered between listChannels() and now (shouldn't happen for a
-    // fresh peer, but be defensive).
-    const peerWorkDirs = new Map<string, string>();
-    for (const id of ctx.peer.listIdentities()) {
-      peerWorkDirs.set(id.sessionId, id.workDir);
-    }
-    const channelLine = (ch: typeof activeChannels[number]): string => {
-      const workDir = peerWorkDirs.get(ch.peerSessionId!) ?? '?';
-      // `topic` is the channel's static `title` theme; mail_to routes a peer
-      // reply by name="<peerSessionId>/lead". The `title=` value convention is
-      // "<topic>:<subject>" so the recipient sees which channel the reply is on.
-      return `- peer=${ch.peerSessionId}\n` +
-        `  workdir=${workDir}\n` +
-        `  channel=${ch.channelId}, topic=${ch.title ?? '(none)'}\n` +
-        `  use mail_to(name="${ch.peerSessionId}/lead", title="${ch.title ?? ''}:<subject>") to communicate`;
-    };
-    if (ctx.todo.hasOpenTodo() || activeChannels.length > 0) {
-      const currentTodoState = ctx.todo.printTodoList();
-      const channelState = activeChannels.length > 0
-        ? activeChannels.map(ch => `  [channel ${ch.channelId}] peer=${ch.peerSessionId} fresh=${ctx.peer.isFresh(ch.peerSessionId!)} title="${ch.title}"`).join('\n')
-        : '';
-      const compositeState = `${currentTodoState}\n${channelState}`;
-      if (compositeState !== turn.lastTodoState) {
-        turn.nextTodoNudge = 3;
-        turn.lastTodoState = compositeState;
-      }
-      turn.nextTodoNudge--;
-      if (turn.nextTodoNudge === 0) {
-        // (4a) Reactivation FIRST — reopen pinned todos whose condition is met.
-        // Runs on the same throttle cycle as the nudge so the nudge below
-        // prints the already-updated list (no "closed then reopened" flicker).
-        await checkReactivation(env);
-        // (4b) Nudge SECOND — prints the now-up-to-date todo list + channels.
-        const nudgeParts = [`Update your todos. ${ctx.todo.printTodoList()}`];
-        if (activeChannels.length > 0) {
-          nudgeParts.push(`Active channels:\n${activeChannels.map(channelLine).join('\n\n')}`);
-        }
-        triologue.note('REMINDER', nudgeParts.join('\n'));
-        turn.nextTodoNudge = 3;
-      }
-    }
-
-    // 5. Brief nudging - remind agent to use brief tool
-    turn.nextBriefNudge--;
-    if (turn.nextBriefNudge <= 0) {
-      triologue.note('REMINDER', 'Provide a brief status update using the brief tool. Example: brief("Working on X", 7)');
-      turn.nextBriefNudge = 5;
-    }
-
-    // 5b. Worktree cleanup nudge.
-    //     nextWtNudge == 0 is the "check now" sentinel: cheaply call
-    //     listWorktrees() (async git query) each chat. If worktrees exist,
-    //     inject a REMINDER and arm the counter to N so we don't nag every
-    //     turn. If none, leave the counter at 0 (re-checks next pass).
-    //     When the counter is nonzero, just decrement it.
-    if (env.nextWtNudge === 0) {
-      const worktrees = await listWorktrees(process.cwd());
-      if (worktrees.length > 0) {
-        const lines = worktrees.map(w => `- ${w.name} at ${w.path} (branch: ${w.branch})`);
-        triologue.note(
-          'REMINDER',
-          `Stale worktrees detected. Consider cleaning them up with bash (git worktree remove <path>) once the work is merged:\n${lines.join('\n')}`
-        );
-        env.nextWtNudge = 5;
-      }
-      // else: no worktrees — leave at 0, re-check next pass
-    } else {
-      env.nextWtNudge--;
-    }
+    // 5. Brief + worktree cleanup nudges.
+    await runBriefAndWorktreeNudges(env, turn);
 
     // 6. Composite keyword extraction for proactive skill discovery.
-    //    Composes a composite text from three sources:
-    //      X = turn.lastBriefMessage  (agent's self-reported focus, set in TOOL)
-    //      Y = firstSteerNote ?? turn.lastUserQuery  (the trigger source)
-    //      Z = turn.lastHintFocus  (hint round focus_on, captured in step 3)
-    //    Extraction is TRIGGERED only by a change in Y (new user query or new
-    //    steering note). X and Z enrich the composite but never trigger.
-    //    A 3-pass cooldown suppresses re-triggering from consecutive user
-    //    messages. See docs/plan-composite-keyword-extraction.md.
-    if (turn.skillDiscoveryCooldown > 0) turn.skillDiscoveryCooldown--;
+    await runKeywordExtraction(env, turn, firstSteerNote);
 
-    const ySource = firstSteerNote ?? (turn.lastUserQuery || null);
-    const yChanged = ySource !== null && ySource !== turn.lastSkillY;
-
-    // Build the composite text (X + Y + Z). Y is the trigger; X and Z enrich.
-    const compositeParts: string[] = [];
-    if (turn.lastBriefMessage) compositeParts.push(turn.lastBriefMessage);
-    if (ySource) compositeParts.push(ySource);
-    if (turn.lastHintFocus) compositeParts.push(turn.lastHintFocus);
-    const compositeText = compositeParts.join('\n');
-
-    if (yChanged && turn.skillDiscoveryCooldown === 0 && compositeText.trim().length >= 4) {
-      // Extract English keywords from the composite via LLM (ESC-safe).
-      // extractKeywords returns a discriminated union so we can distinguish a
-      // completed extraction (success/skipped) from a failed/aborted one:
-      //   - success: the LLM ran; keywords may be empty. Arm the cooldown and
-      //     mark Y as seen.
-      //   - skipped: the composite was trivial (greeting/ack). Mark Y as seen
-      //     so a trivial "hello" doesn't re-trigger every pass — but a
-      //     subsequent meaningful query (different Y content) still triggers.
-      //   - failed: the call threw (transient network error or ESC abort).
-      //     Do NOT arm the cooldown or mark Y as seen: Y stays eligible for a
-      //     retry on a subsequent pass.
-      // The escAware cleanup returns { status: 'failed' } on ESC, so the
-      // abort path is handled by the same `failed` branch (preserving the
-      // documented "ESC does not consume the discovery opportunity" retry
-      // behavior that the old `[]`-returning API silently broke).
-      const result = await ctx.core.escAware(
-        async (ac) => extractKeywords(compositeText, ac.signal),
-        () => ({ status: 'failed' } as const),
-      );
-
-      if (result.status === 'failed') {
-        // Y stays eligible for retry — do not touch lastSkillY or cooldown.
-        // (The cooldown was already decremented at the top of step 6, which is
-        // fine: a failed attempt does not extend suppression.)
-      } else {
-        // success or skipped: mark the Y source as "seen" so it doesn't
-        // re-trigger. When a steering note was the trigger, ALSO mark the
-        // fallback lastUserQuery as seen so it doesn't spuriously re-trigger
-        // after the steering note is consumed on subsequent passes
-        // (Review BUG 1 — spurious double-trigger).
-        turn.lastSkillY = ySource;
-        if (firstSteerNote && turn.lastUserQuery) {
-          turn.lastSkillY = turn.lastUserQuery;
-        }
-        turn.skillDiscoveryCooldown = 3;
-
-        // Only a successful extraction with real keywords can surface skills.
-        // A `skipped` (trivial) outcome has no keywords, and a `success` with
-        // an empty keywords array means the LLM found nothing relevant — both
-        // fall through here without injecting a HINT note.
-        const keywords = result.status === 'success' ? result.keywords : [];
-        if (keywords.length > 0) {
-          const allSkills = ctx.skill.listSkills();
-          const matched = allSkills.filter(s => {
-            const nameLower = s.name.toLowerCase();
-            const kwLower = s.keywords.map(k => k.toLowerCase());
-            return keywords.some(kw =>
-              nameLower.includes(kw) ||
-              kwLower.some(k => k.includes(kw) || kw.includes(k)),
-            );
-          });
-
-          if (matched.length > 0) {
-            const newSkills: string[] = [];
-            const suggestedSkills: string[] = [];
-            const loadedSkills: string[] = [];
-
-            for (const skill of matched) {
-              const status = getSkillTriologueStatus(triologue, skill);
-              switch (status) {
-                case 'new': {
-                  const desc = skill.description ? ` (${skill.description})` : '';
-                  newSkills.push(`${skill.name}${desc}`);
-                  break;
-                }
-                case 'suggested':
-                  suggestedSkills.push(skill.name);
-                  break;
-                case 'loaded':
-                  loadedSkills.push(skill.name);
-                  break;
-              }
-            }
-
-            const lines: string[] = [];
-            if (newSkills.length > 0) {
-              lines.push(`New relevant skills: ${newSkills.join(', ')}. Use skill_load(name="<exact_name>") to load them.`);
-            }
-            if (suggestedSkills.length > 0) {
-              lines.push(`Also suggesting: ${suggestedSkills.join(', ')}. Use skill_load(name="<exact_name>") to load it.`);
-            }
-            if (loadedSkills.length > 0) {
-              lines.push(`The below skills are loaded and also relevant: ${loadedSkills.join(', ')}.`);
-            }
-            lines.push('Note: you can also use skill_search to search for skills semantically.');
-            // This is a silent nudge: either load a skill that genuinely helps the
-            // current task (via skill_load), or ignore it and keep working. Do NOT
-            // write a prose reply explaining why you are/aren't loading a skill —
-            // that clutters the conversation and re-triggers the same nudge.
-            lines.push('Discipline: this is a silent nudge. If a skill helps the current task, load it with skill_load; otherwise stay silent and continue. Do NOT narrate your decision.');
-
-            triologue.note('HINT', lines.join('\n'));
-          }
-        }
-      }
-    }
-
-    // 7. Log message count and token consumption in verbose mode
-    if (isVerbose()) {
-      const tokenCount = triologue.getTokenCount();
-      const tokenThreshold = triologue.getTokenThreshold();
-      const utilization = ((tokenCount / tokenThreshold) * 100).toFixed(1);
-      ctx.core.verbose('collect', `${messageCount} messages, ${tokenCount}/${tokenThreshold} tokens (${utilization}%)`);
-    }
+    // 7. Verbose token/message logging.
+    const messageCount = triologue.getMessagesRaw().length;
+    logVerboseStats(env, messageCount);
 
     // COLLECT passed cleanly — clear the transient-retry circuit breaker so
     // the next hiccup (possibly many turns later) starts a fresh count.
