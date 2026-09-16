@@ -83,8 +83,14 @@ export interface TurnVars {
   nextBriefNudge: number;
   /** User's last real query, stored for recap to preserve across compression */
   lastUserQuery: string;
-  /** English keywords extracted from user query for skill discovery */
-  extractedKeywords: string[];
+  /** Last brief message (X source) — agent's self-reported focus, set in TOOL state */
+  lastBriefMessage: string;
+  /** Last hint round focus_on (Z source) — recovery guidance, captured in COLLECT */
+  lastHintFocus: string;
+  /** Y source value used in the last skill-discovery extraction, for change detection */
+  lastSkillY: string;
+  /** Cooldown counter: suppresses skill-discovery extraction for N COLLECT passes after firing */
+  skillDiscoveryCooldown: number;
   /**
    * Consecutive transient COLLECT errors within the current turn (circuit
    * breaker). When a transient error (e.g. a TLS handshake timeout during
@@ -185,7 +191,7 @@ export class AgentStateMachine {
    * Errors propagate to the caller.
    */
   async run(): Promise<void> {
-    let turn: TurnVars = { isFirstRound: true, nextTodoNudge: 3, lastTodoState: '', nextBriefNudge: 5, lastUserQuery: '', extractedKeywords: [], collectTransientRetries: 0 };
+    let turn: TurnVars = { isFirstRound: true, nextTodoNudge: 3, lastTodoState: '', nextBriefNudge: 5, lastUserQuery: '', lastBriefMessage: '', lastHintFocus: '', lastSkillY: '', skillDiscoveryCooldown: 0, collectTransientRetries: 0 };
     let chat: ChatData = { abortController: null, rawToolCalls: [], assistantContent: '', augmentedCalls: [], hookResult: null, deferredCompact: false };
     // Initial state is always PROMPT. PROMPT is the single decision point for
     // whether to run autonomously: it redirects to AWAIT when auto mode is on
@@ -203,7 +209,7 @@ export class AgentStateMachine {
       // AWAIT is also a turn boundary in auto mode: each autonomous cycle starts a
       // fresh turn (fresh nudges, lastUserQuery cleared). AWAIT never follows SLASH.
       if ((state === AgentState.PROMPT || state === AgentState.AWAIT) && prevState !== AgentState.SLASH) {
-        turn = { isFirstRound: true, nextTodoNudge: 3, lastTodoState: '', nextBriefNudge: 5, lastUserQuery: '', extractedKeywords: [], collectTransientRetries: 0 };
+        turn = { isFirstRound: true, nextTodoNudge: 3, lastTodoState: '', nextBriefNudge: 5, lastUserQuery: '', lastBriefMessage: '', lastHintFocus: '', lastSkillY: '', skillDiscoveryCooldown: 0, collectTransientRetries: 0 };
       }
       // COLLECT = fresh pipeline pass — always reset. Preserve
       // `deferredCompact`: HOOK sets it (e.g. compact-on-intent-trap) and

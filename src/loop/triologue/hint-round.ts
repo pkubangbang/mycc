@@ -143,15 +143,17 @@ export class HintRoundManager {
    * @param confusionScore - Current confusion score
    * @param confusionBreakdown - Human-readable breakdown of confusion factors
    * @param pendingSkills - Skills with 'when' but no compiled condition
-   * @returns 'aborted' if ESC was pressed, 'success' if the hint was injected,
-   *   'compact' if the LLM signalled should_compact (caller triggers compaction).
+   * @returns 'aborted' if ESC was pressed, 'compact' if the LLM signalled
+   *   should_compact (caller triggers compaction), or
+   *   `{ status: 'success', focusOn }` carrying the parsed focus_on string
+   *   (used by COLLECT's composite keyword extraction as the Z source).
    */
   async generate(
     abortController: AbortController,
     confusionScore: number,
     confusionBreakdown: string,
     pendingSkills?: string[],
-  ): Promise<'aborted' | 'success' | 'compact'> {
+  ): Promise<'aborted' | 'compact' | { status: 'success'; focusOn: string }> {
     if (agentIO.isNeglectedMode()) return 'aborted';
 
     // Build compact conversation context for analysis
@@ -227,7 +229,7 @@ export class HintRoundManager {
     abortController: AbortController,
     userPrompt: string,
     pendingSkills?: string[],
-  ): Promise<'aborted' | 'success' | 'retry' | 'compact'> {
+  ): Promise<'aborted' | 'retry' | 'compact' | { status: 'success'; focusOn: string }> {
     try {
       agentIO.verbose('triologue', 'Hint round request');
       const truncatedPrompt = `${userPrompt.split(ANALYSIS_INSTRUCTION)[0]}${ANALYSIS_INSTRUCTION}\n...`;
@@ -303,7 +305,7 @@ export class HintRoundManager {
 
       this.deps.note('HINT', hintLines.join('\n'));
 
-      return 'success';
+      return { status: 'success', focusOn: hintData.focus_on };
     } catch (err) {
       if (err instanceof Error && err.message === 'Request aborted') {
         return 'aborted';

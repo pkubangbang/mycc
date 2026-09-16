@@ -16,6 +16,7 @@ import { forkChat } from '../../engine/chat-provider.js';
 import { isTransientError } from '../../engine/chat-helpers.js';
 import type { SequenceEvent } from '../../hook/sequence.js';
 import { getSkillTriologueStatus } from '../../utils/skill-dedup.js';
+import { extractKeywords } from '../keyword-extractor.js';
 import { listWorktrees } from '../../context/worktree-store.js';
 import { getServeHub } from '../../serve/serve-registry.js';
 import { resolveHeadlessFirstQuery } from '../../session/index.js';
@@ -440,6 +441,12 @@ export async function handleCollect(
       if (result === 'aborted') {
         return AgentState.STOP;
       }
+      // Capture focus_on from a successful hint round (Z source for the
+      // composite keyword extraction below). The discriminated union
+      // carries focusOn only on the success path.
+      if (result !== 'compact' && result.status === 'success') {
+        turn.lastHintFocus = result.focusOn;
+      }
       // If the LLM signalled should_compact (dead-loop or context stress),
       // trigger compaction now and CONTINUE the loop on fresh, compacted
       // context. Compaction is a mid-turn intervention (not a turn boundary),
@@ -567,65 +574,98 @@ export async function handleCollect(
       env.nextWtNudge--;
     }
 
-    // 6. Consume extracted keywords for proactive skill discovery.
-    //    Matches extracted English keywords against loaded skill names and keywords.
-    //    Injects a HINT note with skill names and descriptions so the LLM can
-    //    decide which skills to load without needing an extra skill_search step.
-    //    Dedups against skills already loaded or suggested in the triologue.
-    if (turn.extractedKeywords.length > 0) {
-      const keywords = turn.extractedKeywords;
-      turn.extractedKeywords = []; // consume — only fire once per turn
+    // 6. Composite keyword extraction for proactive skill discovery.
+    //    Composes a composite text from three sources:
+    //      X = turn.lastBriefMessage  (agent's self-reported focus, set in TOOL)
+    //      Y = firstSteerNote ?? turn.lastUserQuery  (the trigger source)
+    //      Z = turn.lastHintFocus  (hint round focus_on, captured in step 3)
+    //    Extraction is TRIGGERED only by a change in Y (new user query or new
+    //    steering note). X and Z enrich the composite but never trigger.
+    //    A 3-pass cooldown suppresses re-triggering from consecutive user
+    //    messages. See docs/plan-composite-keyword-extraction.md.
+    if (turn.skillDiscoveryCooldown > 0) turn.skillDiscoveryCooldown--;
 
-      const allSkills = ctx.skill.listSkills();
-      const matched = allSkills.filter(s => {
-        const nameLower = s.name.toLowerCase();
-        const kwLower = s.keywords.map(k => k.toLowerCase());
-        return keywords.some(kw =>
-          nameLower.includes(kw) ||
-          kwLower.some(k => k.includes(kw) || kw.includes(k)),
-        );
-      });
+    const ySource = firstSteerNote ?? (turn.lastUserQuery || null);
+    const yChanged = ySource !== null && ySource !== turn.lastSkillY;
 
-      if (matched.length > 0) {
-        const newSkills: string[] = [];
-        const suggestedSkills: string[] = [];
-        const loadedSkills: string[] = [];
+    // Build the composite text (X + Y + Z). Y is the trigger; X and Z enrich.
+    const compositeParts: string[] = [];
+    if (turn.lastBriefMessage) compositeParts.push(turn.lastBriefMessage);
+    if (ySource) compositeParts.push(ySource);
+    if (turn.lastHintFocus) compositeParts.push(turn.lastHintFocus);
+    const compositeText = compositeParts.join('\n');
 
-        for (const skill of matched) {
-          const status = getSkillTriologueStatus(triologue, skill);
-          switch (status) {
-            case 'new': {
-              const desc = skill.description ? ` (${skill.description})` : '';
-              newSkills.push(`${skill.name}${desc}`);
-              break;
+    if (yChanged && turn.skillDiscoveryCooldown === 0 && compositeText.trim().length >= 4) {
+      // Extract English keywords from the composite via LLM (ESC-safe).
+      // On ESC, escAware returns [] — cooldown and lastSkillY are NOT set,
+      // so the next pass retries if Y is still "changed".
+      const keywords = await ctx.core.escAware(
+        async (ac) => extractKeywords(compositeText, ac.signal),
+        () => [] as string[],
+      );
+
+      // Mark the Y source as "seen" so it doesn't re-trigger. When a steering
+      // note was the trigger, ALSO mark the fallback lastUserQuery as seen so
+      // it doesn't spuriously re-trigger after the steering note is consumed
+      // on subsequent passes (Review BUG 1 — spurious double-trigger).
+      turn.lastSkillY = ySource;
+      if (firstSteerNote && turn.lastUserQuery) {
+        turn.lastSkillY = turn.lastUserQuery;
+      }
+      turn.skillDiscoveryCooldown = 3;
+
+      if (keywords.length > 0) {
+        const allSkills = ctx.skill.listSkills();
+        const matched = allSkills.filter(s => {
+          const nameLower = s.name.toLowerCase();
+          const kwLower = s.keywords.map(k => k.toLowerCase());
+          return keywords.some(kw =>
+            nameLower.includes(kw) ||
+            kwLower.some(k => k.includes(kw) || kw.includes(k)),
+          );
+        });
+
+        if (matched.length > 0) {
+          const newSkills: string[] = [];
+          const suggestedSkills: string[] = [];
+          const loadedSkills: string[] = [];
+
+          for (const skill of matched) {
+            const status = getSkillTriologueStatus(triologue, skill);
+            switch (status) {
+              case 'new': {
+                const desc = skill.description ? ` (${skill.description})` : '';
+                newSkills.push(`${skill.name}${desc}`);
+                break;
+              }
+              case 'suggested':
+                suggestedSkills.push(skill.name);
+                break;
+              case 'loaded':
+                loadedSkills.push(skill.name);
+                break;
             }
-            case 'suggested':
-              suggestedSkills.push(skill.name);
-              break;
-            case 'loaded':
-              loadedSkills.push(skill.name);
-              break;
           }
-        }
 
-        const lines: string[] = [];
-        if (newSkills.length > 0) {
-          lines.push(`New relevant skills: ${newSkills.join(', ')}. Use skill_load(name="<exact_name>") to load them.`);
-        }
-        if (suggestedSkills.length > 0) {
-          lines.push(`Also suggesting: ${suggestedSkills.join(', ')}. Use skill_load(name="<exact_name>") to load it.`);
-        }
-        if (loadedSkills.length > 0) {
-          lines.push(`The below skills are loaded and also relevant: ${loadedSkills.join(', ')}.`);
-        }
-        lines.push('Note: you can also use skill_search to search for skills semantically.');
-        // This is a silent nudge: either load a skill that genuinely helps the
-        // current task (via skill_load), or ignore it and keep working. Do NOT
-        // write a prose reply explaining why you are/aren't loading a skill —
-        // that clutters the conversation and re-triggers the same nudge.
-        lines.push('Discipline: this is a silent nudge. If a skill helps the current task, load it with skill_load; otherwise stay silent and continue. Do NOT narrate your decision.');
+          const lines: string[] = [];
+          if (newSkills.length > 0) {
+            lines.push(`New relevant skills: ${newSkills.join(', ')}. Use skill_load(name="<exact_name>") to load them.`);
+          }
+          if (suggestedSkills.length > 0) {
+            lines.push(`Also suggesting: ${suggestedSkills.join(', ')}. Use skill_load(name="<exact_name>") to load it.`);
+          }
+          if (loadedSkills.length > 0) {
+            lines.push(`The below skills are loaded and also relevant: ${loadedSkills.join(', ')}.`);
+          }
+          lines.push('Note: you can also use skill_search to search for skills semantically.');
+          // This is a silent nudge: either load a skill that genuinely helps the
+          // current task (via skill_load), or ignore it and keep working. Do NOT
+          // write a prose reply explaining why you are/aren't loading a skill —
+          // that clutters the conversation and re-triggers the same nudge.
+          lines.push('Discipline: this is a silent nudge. If a skill helps the current task, load it with skill_load; otherwise stay silent and continue. Do NOT narrate your decision.');
 
-        triologue.note('HINT', lines.join('\n'));
+          triologue.note('HINT', lines.join('\n'));
+        }
       }
     }
 

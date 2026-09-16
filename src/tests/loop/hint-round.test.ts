@@ -119,7 +119,7 @@ describe('Hint Round JSON Output', () => {
       'confusion breakdown',
     );
 
-    expect(result).toBe('success');
+    expect(result).toEqual({ status: 'success', focusOn: 'intent-language syntax' });
     // The HINT note was injected as a user message with the [HINT] prefix.
     const messages = triologue.getMessagesRaw();
     const hintMsg = messages.find((m) => m.content?.startsWith('[HINT]'));
@@ -231,7 +231,7 @@ describe('Hint Round JSON Output', () => {
 
     const result = await triologue.generateHintRound(new AbortController(), 10, 'breakdown');
 
-    expect(result).toBe('success');
+    expect(result).toEqual({ status: 'success', focusOn: 'intent-language syntax' });
     expect(retryChat).toHaveBeenCalledTimes(2);
   });
 
@@ -252,7 +252,7 @@ describe('Hint Round JSON Output', () => {
 
     const result = await triologue.generateHintRound(new AbortController(), 10, 'breakdown');
 
-    expect(result).toBe('success');
+    expect(result).toEqual({ status: 'success', focusOn: 'intent-language syntax' });
     expect(retryChat).toHaveBeenCalledTimes(2);
   });
 
@@ -263,8 +263,34 @@ describe('Hint Round JSON Output', () => {
 
     const result = await triologue.generateHintRound(new AbortController(), 10, 'breakdown');
 
-    expect(result).toBe('success');
+    expect(result).toEqual({ status: 'success', focusOn: 'intent-language syntax' });
     expect(retryChat).toHaveBeenCalledTimes(2);
+  });
+
+  // ---------------------------------------------------------------------------
+  // focus_on exposure (Z source for composite keyword extraction)
+  // ---------------------------------------------------------------------------
+
+  it('exposes focus_on in the success return value', async () => {
+    vi.mocked(retryChat).mockResolvedValueOnce(
+      validHintResponse({ focus_on: 'finding the auto-mode activation handler' }) as never,
+    );
+
+    const result = await triologue.generateHintRound(new AbortController(), 10, 'breakdown');
+
+    expect(result).toEqual({ status: 'success', focusOn: 'finding the auto-mode activation handler' });
+  });
+
+  it('does not expose focusOn on the compact path', async () => {
+    vi.mocked(retryChat).mockResolvedValueOnce(
+      validHintResponse({ should_compact: true }) as never,
+    );
+
+    const result = await triologue.generateHintRound(new AbortController(), 10, 'breakdown');
+
+    expect(result).toBe('compact');
+    // The compact path returns a plain string, not a { status, focusOn } object.
+    expect(result).not.toHaveProperty('focusOn');
   });
 
   // ---------------------------------------------------------------------------
