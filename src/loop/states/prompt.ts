@@ -28,8 +28,7 @@ import { openMultilineEditor } from '../../utils/multiline-input.js';
 import { resolveHeadlessFirstQuery } from '../../session/index.js';
 import { setSlashQuery } from './slash.js';
 import { evaluateWrapUp, clearWrapUp } from '../esc-wrap-up.js';
-import { extractKeywords } from '../keyword-extractor.js';
-import { isDebuggingPrompt, isDebugAutofly } from '../../config.js';
+import { isDebugAutofly } from '../../config.js';
 import { forkChat } from '../../engine/chat-provider.js';
 import type { RetryConfig } from '../../engine/chat-helpers.js';
 import { getServeHub } from '../../serve/serve-registry.js';
@@ -450,16 +449,9 @@ export async function handlePrompt(
     }
   }
 
-  // Extract English keywords from user query for proactive skill discovery.
-  // Runs asynchronously with ESC support — on interrupt, silently yields empty.
-  turn.extractedKeywords = await env.ctx.core.escAware(
-    async (ac) => extractKeywords(query, ac.signal),
-    () => [] as string[],
-  );
-
-  if (isDebuggingPrompt() && turn.extractedKeywords.length > 0) {
-    console.log(chalk.yellow(`[debug-prompt] keywords: ${turn.extractedKeywords.join(', ')}`));
-  }
+  // Keyword extraction has moved to the COLLECT state, where it composes
+  // a composite of X (last brief) + Y (this query or steering note) + Z
+  // (hint round focus_on). See docs/plan-composite-keyword-extraction.md.
 
   return AgentState.COLLECT;
 }

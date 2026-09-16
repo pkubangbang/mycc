@@ -12,7 +12,6 @@ import { agentIO } from '../agent-io.js';
 import { ResultTooLargeError } from '../../types.js';
 import { loader } from '../../context/shared/loader.js';
 import { isVerbose } from '../../config.js';
-import { extractKeywords } from '../keyword-extractor.js';
 import { loopEvents } from '../loop-events.js';
 
 // Tools that are purely exploratory (information gathering)
@@ -153,34 +152,20 @@ export async function handleTool(
       if (toolName === 'brief') {
         turn.nextBriefNudge = 5;
 
-        // Brief-triggered skill discovery: synchronously extract keywords
-        // from the brief message and stash them for the next COLLECT pass
-        // to consume (same pipeline as the user-query trigger in prompt.ts).
-        // No confidence filter — a low-confidence brief ("I'm stuck") is a
-        // valid, arguably more valuable trigger for skill discovery.
-        // Guard: only if no keywords already stashed (max one extraction
-        // between COLLECT consumptions, for cost).
-        if (turn.extractedKeywords.length === 0) {
-          try {
-            const briefArgs = typeof toolCall.function.arguments === 'string'
-              ? JSON.parse(toolCall.function.arguments)
-              : toolCall.function.arguments as Record<string, unknown>;
-            const briefMessage = briefArgs?.message as string;
-            if (briefMessage && typeof briefMessage === 'string') {
-              // On ESC, escAware returns [] (the fallback). Assigning that
-              // would overwrite any value — so only adopt the result when it
-              // is non-empty, leaving turn.extractedKeywords intact on ESC.
-              const kws = await ctx.core.escAware(
-                async (ac) => extractKeywords(briefMessage, ac.signal),
-                () => [] as string[],
-              );
-              if (kws.length > 0) {
-                turn.extractedKeywords = kws;
-              }
-            }
-          } catch {
-            // Swallow — brief-triggered keyword extraction is best-effort.
+        // Store the brief message for the COLLECT skill-discovery composite
+        // (X source). Keyword extraction itself has moved to COLLECT, which
+        // composes X (this brief) + Y (user query / steering note) + Z
+        // (hint round focus_on). See docs/plan-composite-keyword-extraction.md.
+        try {
+          const briefArgs = typeof toolCall.function.arguments === 'string'
+            ? JSON.parse(toolCall.function.arguments)
+            : toolCall.function.arguments as Record<string, unknown>;
+          const briefMessage = briefArgs?.message as string;
+          if (briefMessage && typeof briefMessage === 'string') {
+            turn.lastBriefMessage = briefMessage;
           }
+        } catch {
+          // Swallow — brief message capture is best-effort.
         }
       }
 

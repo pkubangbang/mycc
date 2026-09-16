@@ -442,15 +442,17 @@ export class Triologue {
    * @param confusionScore - Current confusion score
    * @param confusionBreakdown - Breakdown of confusion factors
    * @param pendingSkills - Skills with 'when' but no compiled condition (for notification)
-   * @returns 'aborted' if ESC was pressed, 'success' if the hint was injected,
-   *   'compact' if the LLM signalled should_compact (caller triggers compaction).
+   * @returns 'aborted' if ESC was pressed, 'compact' if the LLM signalled
+   *   should_compact (caller triggers compaction), or
+   *   `{ status: 'success', focusOn }` carrying the parsed focus_on string
+   *   (used by COLLECT's composite keyword extraction as the Z source).
    */
   async generateHintRound(
     abortController: AbortController,
     confusionScore: number,
     confusionBreakdown: string,
     pendingSkills?: string[]
-  ): Promise<'aborted' | 'success' | 'compact'> {
+  ): Promise<'aborted' | 'compact' | { status: 'success'; focusOn: string }> {
     return this.getHintRoundManager().generate(abortController, confusionScore, confusionBreakdown, pendingSkills);
   }
 
