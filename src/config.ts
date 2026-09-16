@@ -104,7 +104,7 @@ const args = minimist(process.argv.slice(2), {
   //   (absent)           -> undefined (serve mode OFF)
   // Putting it in `string` would break bare `--serve` (yields "" not true);
   // putting it in `boolean` would swallow `--serve 9000` (port ignored).
-  boolean: ['v', 'verbose', 'skip-healthcheck', 'setup', 'debug-eval', 'debug-tp', 'debug-prompt', 'disable-crossroad', 'auto', 'debug-autofly', 'allow-plan-off', 'debug-wire'],
+  boolean: ['v', 'verbose', 'skip-healthcheck', 'setup', 'debug-eval', 'debug-tp', 'disable-crossroad', 'auto', 'debug-autofly', 'allow-plan-off', 'debug-wire'],
   string: [
     'from', 'port', 'host', 'max-upload-mb', 'autofly', 'daemon',
     'ollama-host', 'ollama-api-key', 'ollama-model', 'ollama-vision-model', 'ollama-embedding-model',
@@ -116,7 +116,7 @@ const args = minimist(process.argv.slice(2), {
   default: {
     v: false, from: null, port: null,
     'skip-healthcheck': false, setup: false,
-    'debug-eval': false, 'debug-tp': false, 'debug-prompt': false, 'disable-crossroad': false, 'debug-autofly': false,
+    'debug-eval': false, 'debug-tp': false, 'disable-crossroad': false, 'debug-autofly': false,
     'allow-plan-off': false,
   },
 });
@@ -134,7 +134,6 @@ function buildCmdArgsEnv(parsed: typeof args): Record<string, string> {
     'setup': 'MYCC_SETUP',
     'debug-eval': 'MYCC_DEBUG_EVAL',
     'debug-tp': 'MYCC_DEBUG_TP',
-    'debug-prompt': 'MYCC_DEBUG_PROMPT',
     'disable-crossroad': 'MYCC_DISABLE_CROSSROAD',
     'debug-autofly': 'MYCC_DEBUG_AUTOfLY',
     'allow-plan-off': 'MYCC_ALLOW_PLAN_OFF',
@@ -248,14 +247,6 @@ export function isDebuggingTp(): boolean {
  */
 export function isCrossroadDisabled(): boolean {
   return process.env.MYCC_DISABLE_CROSSROAD === 'true';
-}
-
-/**
- * Check if debug-prompt mode is enabled (--debug-prompt flag)
- * When enabled, extracted keywords are printed to the console during prompt stage.
- */
-export function isDebuggingPrompt(): boolean {
-  return process.env.MYCC_DEBUG_PROMPT === 'true';
 }
 
 /**

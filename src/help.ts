@@ -64,10 +64,10 @@ const STARTUP_FLAGS: FlagRow[] = [
 
 const DEBUG_FLAGS: FlagRow[] = [
   { flag: '--debug-tp', desc: 'Triologue Parity: throw on role-transition violations instead of auto-recovering' },
-  { flag: '--debug-suggest', desc: 'Log the SUGGEST background task (LLM response + feedback)' },
   { flag: '--debug-eval', desc: 'Print the parsed jsep AST for each hook condition expression' },
-  { flag: '--debug-prompt', desc: 'Show extracted keywords + "Parsing..." spinner in the PROMPT state' },
   { flag: '--disable-crossroad', desc: 'Skip crossroad turning-word detection (no truncation, no continuation generation)' },
+  { flag: '--debug-autofly', desc: 'Arm the autofly gate so auto mode engages on the LLM-stage streak threshold without an active peer channel' },
+  { flag: '--debug-wire', desc: 'Test-only escape hatch: allow peer_connect to a same-store / self peer (same-machine smoke test)' },
 ];
 
 /** Pad a flag column to a fixed width for aligned columns. */
@@ -119,7 +119,7 @@ export function printHelp(): void {
   out.push(chalkTitle('Examples:'));
   out.push('  mycc --ollama-model gemma4:31b-cloud --token-threshold 80000');
   out.push('  mycc --skip-healthcheck -v');
-  out.push('  mycc -v --debug-tp --debug-suggest');
+  out.push('  mycc -v --debug-tp --debug-eval');
   out.push('  mycc --serve 9000 --host');
   out.push('');
 

@@ -142,7 +142,7 @@ The wizard will guide you through configuring:
 The wizard will guide you through configuring:
 - **DEEPSEEK_HOST** - DeepSeek API endpoint (default: https://api.deepseek.com)
 - **DEEPSEEK_API_KEY** - Your DeepSeek API key (required)
-- **DEEPSEEK_MODEL** - DeepSeek model name (default: deepseek-chat)
+- **DEEPSEEK_MODEL** - DeepSeek model name (default: deepseek-v4-pro)
 - **OLLAMA_EMBEDDING_MODEL** - Embedding model for semantic search (always uses Ollama)
 - **TOKEN_THRESHOLD** - Context limit threshold (default: 50000)
 - **EDITOR** - Text editor for file editing
@@ -230,7 +230,7 @@ All environment variables can be overridden via CLI flags. These take highest pr
 | `--ollama-embedding-model` | `OLLAMA_EMBEDDING_MODEL` | Embedding model for semantic search/RAG |
 | `--deepseek-host` | `DEEPSEEK_HOST` | DeepSeek API endpoint (default: https://api.deepseek.com) |
 | `--deepseek-api-key` | `DEEPSEEK_API_KEY` | DeepSeek API key |
-| `--deepseek-model` | `DEEPSEEK_MODEL` | DeepSeek model name (default: deepseek-chat) |
+| `--deepseek-model` | `DEEPSEEK_MODEL` | DeepSeek model name (default: deepseek-v4-pro) |
 | `--api-provider` | `API_PROVIDER` | API provider: "ollama" or "deepseek" (default: ollama) |
 | `--token-threshold` | `TOKEN_THRESHOLD` | Context limit threshold (default: 50000) |
 | `--editor` | `EDITOR` | Text editor for file editing |
@@ -240,7 +240,6 @@ All environment variables can be overridden via CLI flags. These take highest pr
 | `--daemon [skill]` | — | Detached headless daemon (forces auto mode); optionally auto-load a service skill and start its cron |
 | `--allow-plan-off` | `MYCC_ALLOW_PLAN_OFF` | In auto mode, auto-approve `plan_off` to exit plan mode without confirmation |
 | `--wire-token` | `MYCC_WIRE_TOKEN` | Optional shared secret for the `/peer/ws` peer-wire upgrade (set the same value on both instances to enable the in-app auth gate; unset on both to run the wire open — see [Cross-machine peer wire](#cross-machine-peer-wire)) |
-| `--debug-wire` | `MYCC_WIRE_ALLOW_LOCAL` | Test-only escape hatch: allow `peer_connect` to a same-store / self peer (same-machine smoke test). Not for production. |
 
 Example usage:
 ```bash
@@ -273,13 +272,14 @@ mycc provides several `--debug-*` flags for investigating specific subsystems:
 | Flag | Effect |
 |------|--------|
 | `--debug-tp` | **Triologue Parity** — when a role transition violation occurs (e.g., `tool → user` without an `assistant` bridge), throw an error with a stack trace instead of auto-recovering. Useful when developing the auto-fixer or debugging `triologue.ts`. |
-| `--debug-suggest` | **SUGGEST Background Task** — logs the LLM response and feedback of the background suggest task to the terminal via `ctx.core.brief()`. The SUGGEST task runs after each turn to proactively discover relevant tools/skills for the next user query. |
 | `--debug-eval` | **Expression Evaluation** — prints the parsed AST tree for each hook condition expression during evaluation. Useful when developing hookish skills with custom `when` conditions in `evaluator.ts`. |
 | `--disable-crossroad` | **Skip Crossroad** — disables turning-word detection entirely. No truncation, no continuation generation. Use when crossroad fires false positives (e.g. when the LLM's output legitimately mentions a word matching a turning pattern, such as a state name). |
+| `--debug-autofly` | **Autofly Debug** — arms the autofly gate at the PROMPT stage so auto mode engages once the per-turn LLM-stage streak meets the threshold (`--autofly=N`, default 3), without requiring an active peer channel. Useful for testing auto-mode engagement in isolation. |
+| `--debug-wire` | **Wire Debug** — test-only escape hatch (`MYCC_WIRE_ALLOW_LOCAL`): allows `peer_connect` to a same-store / self peer (same-machine smoke test). Not for production. |
 
 Combine with `-v` (verbose) for maximum detail:
 ```bash
-mycc -v --debug-tp --debug-suggest
+mycc -v --debug-tp --debug-eval
 ```
 
 ## Key Concepts

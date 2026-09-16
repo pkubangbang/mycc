@@ -55,7 +55,6 @@ vi.mock('../../config.js', async () => {
     shouldSkipHealthCheck: () => true,
     shouldRunSetup: () => false,
     isDebuggingEval: () => false,
-    isDebuggingPrompt: () => false,
     isDebuggingTp: () => false,
     getApiProvider: () => 'ollama',
     getMyccDir: () => tmpBase,

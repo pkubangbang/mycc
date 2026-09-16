@@ -40,7 +40,6 @@ vi.mock('../../config.js', () => ({
   shouldSkipHealthCheck: () => true,
   shouldRunSetup: () => false,
   isDebuggingEval: () => false,
-  isDebuggingPrompt: () => false,
   getSkillMatchThreshold: () => 0.5,
   validateEnv: () => ({ ok: true }),
   MYCC_DIR: '.mycc',

@@ -23,9 +23,8 @@ import * as path from 'path';
 
 // --- Mocks (paths relative to this test file: src/tests/loop/states/) --------
 
-// config.js: controllable isDebuggingPrompt / isDebugAutofly.
+// config.js: controllable isDebugAutofly.
 vi.mock('../../../config.js', () => ({
-  isDebuggingPrompt: vi.fn(() => false),
   isDebugAutofly: vi.fn(() => false),
 }));
 

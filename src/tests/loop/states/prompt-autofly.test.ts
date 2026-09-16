@@ -36,9 +36,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // --- Mocks (paths relative to this test file: src/tests/loop/states/) --------
 
-// config.js: controllable isDebugAutofly / isDebuggingPrompt.
+// config.js: controllable isDebugAutofly.
 vi.mock('../../../config.js', () => ({
-  isDebuggingPrompt: vi.fn(() => false),
   isDebugAutofly: vi.fn(() => false),
 }));
 
@@ -152,7 +151,7 @@ import { handlePrompt, setInitialQuery } from '../../../loop/states/prompt.js';
 import { AgentState } from '../../../loop/state-machine.js';
 import { autoState } from '../../../loop/auto-state.js';
 import { PromptAbortError } from '../../../loop/agent-io.js';
-import { isDebugAutofly, isDebuggingPrompt } from '../../../config.js';
+import { isDebugAutofly } from '../../../config.js';
 import { createTurnVars, createChatData, createMockMachineEnv } from '../esc-test-helpers.js';
 import { Triologue } from '../../../loop/triologue.js';
 
@@ -175,7 +174,6 @@ function resetState() {
   vi.mocked(autoState.getStreak).mockReturnValue(0);
   vi.mocked(autoState.getAutoflyThreshold).mockReturnValue(3);
   vi.mocked(isDebugAutofly).mockReturnValue(false);
-  vi.mocked(isDebuggingPrompt).mockReturnValue(false);
   // Clear the internal auto flag by setting via the mock
   autoState.setAuto(false);
   vi.mocked(autoState.setAuto).mockClear();
