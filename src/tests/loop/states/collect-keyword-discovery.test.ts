@@ -7,18 +7,23 @@
  *   Y = firstSteerNote ?? turn.lastUserQuery  (the trigger source)
  *   Z = turn.lastHintFocus  (hint round focus_on)
  * Extraction is triggered only by a change in Y. A 3-pass cooldown suppresses
- * re-triggering. These tests verify the trigger logic, cooldown, composite
- * construction, and the BUG 1 fix (spurious double-trigger after steering
- * note exhaustion).
+ * re-triggering.
  *
- * The composite text construction and Y-change detection are pure functions
- * of TurnVars + the steering note, so we test them directly without driving
- * the full handleCollect() (which requires heavy mocking of the LLM and
- * skill layer). The trigger/cooldown logic is extracted into a helper for
- * testability.
+ * extractKeywords() now returns a discriminated union
+ * ({status:'success'|'skipped'|'failed'}) so COLLECT can distinguish a
+ * completed extraction from a trivially-skipped input and a failed/aborted
+ * call. The throttle state (lastSkillY + cooldown) is armed ONLY on
+ * 'success' or 'skipped'; a 'failed' outcome leaves Y eligible for retry.
+ *
+ * These tests verify the trigger logic, cooldown, composite construction, the
+ * success/skipped/failed gating, and the BUG 1 fix (spurious double-trigger
+ * after steering note exhaustion) as PURE functions of TurnVars + the
+ * steering note + the extraction outcome. Integration tests that drive the
+ * real handleCollect() live in collect-keyword-integration.test.ts.
  */
 import { describe, it, expect } from 'vitest';
 import type { TurnVars } from '../../../loop/state-machine.js';
+import type { KeywordExtractionResult } from '../../../loop/keyword-extractor.js';
 
 /**
  * Compute the Y source for a COLLECT pass.
@@ -66,17 +71,30 @@ function shouldExtract(
 }
 
 /**
- * Apply the post-extraction state update including the BUG 1 fix.
- * When a steering note was the trigger, ALSO mark the fallback lastUserQuery
- * as seen so it doesn't spuriously re-trigger after the steering note is
- * consumed on subsequent passes.
+ * Apply the post-extraction state update, gated by the extraction outcome.
+ *
+ * Mirrors the logic in collect.ts step 6:
+ *  - 'failed' (ESC / transient error): do NOT touch lastSkillY or cooldown —
+ *    Y stays eligible for a retry on a subsequent pass.
+ *  - 'success' or 'skipped': mark the Y source as seen (with the BUG 1 fix —
+ *    when a steering note was the trigger, mark the fallback lastUserQuery as
+ *    seen instead) and arm the 3-pass cooldown.
+ *
+ * `firstSteerNote` is the steering note for THIS pass (null if none); it
+ * drives the BUG 1 fallback.
  */
 function applyPostExtraction(
   turn: TurnVars,
   firstSteerNote: string | null,
+  ySource: string,
+  outcome: KeywordExtractionResult,
 ): void {
-  const ySource = computeYSource(firstSteerNote, turn.lastUserQuery);
-  turn.lastSkillY = ySource ?? '';
+  if (outcome.status === 'failed') {
+    // Y stays eligible for retry — do not touch throttle state.
+    return;
+  }
+  // success or skipped: mark Y as seen.
+  turn.lastSkillY = ySource;
   if (firstSteerNote && turn.lastUserQuery) {
     turn.lastSkillY = turn.lastUserQuery;
   }
@@ -221,8 +239,9 @@ describe('Composite keyword extraction — BUG 1 (spurious double-trigger)', () 
     const composite1 = buildCompositeText(turn.lastBriefMessage, y1, turn.lastHintFocus);
     expect(shouldExtract(yChanged1, turn.skillDiscoveryCooldown, composite1)).toBe(true);
 
-    // Apply post-extraction (includes BUG 1 fix).
-    applyPostExtraction(turn, firstSteerNote);
+    // Apply post-extraction (includes BUG 1 fix) — success outcome arms the
+    // throttle and marks Y as seen.
+    applyPostExtraction(turn, firstSteerNote, y1!, { status: 'success', keywords: [] });
     expect(turn.skillDiscoveryCooldown).toBe(3);
     // lastSkillY is set to the FALLBACK (lastUserQuery), not the steering note.
     expect(turn.lastSkillY).toBe('original user query');
@@ -238,8 +257,9 @@ describe('Composite keyword extraction — BUG 1 (spurious double-trigger)', () 
     });
     const firstSteerNote = 'focus on tests';
 
-    // Pass 1: steering note triggers, apply fix.
-    applyPostExtraction(turn, firstSteerNote);
+    // Pass 1: steering note triggers, apply fix (success outcome).
+    const y1 = computeYSource(firstSteerNote, turn.lastUserQuery)!;
+    applyPostExtraction(turn, firstSteerNote, y1, { status: 'success', keywords: [] });
     // Cooldown decrements over passes 2, 3, 4.
     for (let i = 0; i < 3; i++) {
       if (turn.skillDiscoveryCooldown > 0) turn.skillDiscoveryCooldown--;
@@ -283,5 +303,107 @@ describe('Composite keyword extraction — steering note then new user query', (
     const y = computeYSource(null, turn.lastUserQuery);
     const yChanged = computeYChanged(y, turn.lastSkillY);
     expect(yChanged).toBe(true); // genuinely new — should trigger
+  });
+});
+
+describe('Composite keyword extraction — outcome-gated throttle (P1 fix)', () => {
+  // The P1 review bug: the old code unconditionally armed lastSkillY + cooldown
+  // after extractKeywords(), which collapsed success/skipped/failed into a
+  // single []. The fix arms the throttle ONLY on 'success' or 'skipped'; a
+  // 'failed' outcome (ESC / transient error) leaves Y eligible for retry.
+
+  it('arms the cooldown and marks Y as seen on a SUCCESSFUL extraction', () => {
+    const turn = createTurnVars({
+      lastUserQuery: 'help me test the parser',
+      lastSkillY: '',
+      skillDiscoveryCooldown: 0,
+    });
+    const y = computeYSource(null, turn.lastUserQuery)!;
+    applyPostExtraction(turn, null, y, { status: 'success', keywords: ['parser', 'test'] });
+    expect(turn.lastSkillY).toBe('help me test the parser');
+    expect(turn.skillDiscoveryCooldown).toBe(3);
+  });
+
+  it('arms the cooldown and marks Y as seen on a SKIPPED (trivial) extraction', () => {
+    // A trivial "hello" is marked seen so it doesn't re-trigger every pass,
+    // but a subsequent meaningful query (different Y) still triggers.
+    const turn = createTurnVars({
+      lastUserQuery: 'hello',
+      lastSkillY: '',
+      skillDiscoveryCooldown: 0,
+    });
+    const y = computeYSource(null, turn.lastUserQuery)!;
+    applyPostExtraction(turn, null, y, { status: 'skipped' });
+    expect(turn.lastSkillY).toBe('hello');
+    expect(turn.skillDiscoveryCooldown).toBe(3);
+  });
+
+  it('does NOT arm the cooldown or mark Y as seen on a FAILED extraction (retry eligible)', () => {
+    const turn = createTurnVars({
+      lastUserQuery: 'help me test the parser',
+      lastSkillY: '',
+      skillDiscoveryCooldown: 0,
+    });
+    const y = computeYSource(null, turn.lastUserQuery)!;
+    applyPostExtraction(turn, null, y, { status: 'failed' });
+    // Y stays eligible for retry — neither field is touched.
+    expect(turn.lastSkillY).toBe('');
+    expect(turn.skillDiscoveryCooldown).toBe(0);
+  });
+
+  it('a FAILED extraction leaves Y re-triggerable on the very next pass (no cooldown)', () => {
+    const turn = createTurnVars({
+      lastUserQuery: 'help me test the parser',
+      lastSkillY: '',
+      skillDiscoveryCooldown: 0,
+    });
+    const y = computeYSource(null, turn.lastUserQuery)!;
+    applyPostExtraction(turn, null, y, { status: 'failed' });
+
+    // Next pass: Y is unchanged but lastSkillY is still '' (not marked seen),
+    // and cooldown is still 0 — so yChanged is TRUE and the gate fires again.
+    const yNext = computeYSource(null, turn.lastUserQuery);
+    const yChangedNext = computeYChanged(yNext, turn.lastSkillY);
+    expect(yChangedNext).toBe(true);
+    expect(turn.skillDiscoveryCooldown).toBe(0);
+    expect(shouldExtract(yChangedNext, turn.skillDiscoveryCooldown, yNext!)).toBe(true);
+  });
+
+  it('a SKIPPED trivial query does NOT suppress a subsequent meaningful query', () => {
+    // Reviewer concern C: a trivial query should not consume the discovery
+    // opportunity for a later meaningful query. Since lastSkillY tracks Y
+    // CONTENT, a new meaningful query differs from "hello" and re-triggers.
+    const turn = createTurnVars({
+      lastUserQuery: 'hello',
+      lastSkillY: '',
+      skillDiscoveryCooldown: 0,
+    });
+    const y1 = computeYSource(null, turn.lastUserQuery)!;
+    applyPostExtraction(turn, null, y1, { status: 'skipped' });
+    // Cooldown decrements over the next 3 passes.
+    for (let i = 0; i < 3; i++) {
+      if (turn.skillDiscoveryCooldown > 0) turn.skillDiscoveryCooldown--;
+    }
+    expect(turn.skillDiscoveryCooldown).toBe(0);
+
+    // A new meaningful query arrives (PROMPT updates lastUserQuery).
+    turn.lastUserQuery = 'help me debug the state machine';
+    const y2 = computeYSource(null, turn.lastUserQuery);
+    const yChanged2 = computeYChanged(y2, turn.lastSkillY);
+    expect(yChanged2).toBe(true); // genuinely new content — triggers
+  });
+
+  it('a SUCCESSFUL extraction with empty keywords still arms the cooldown', () => {
+    // The LLM ran but found nothing relevant. The operation completed, so the
+    // throttle advances (no point re-running the same query every pass).
+    const turn = createTurnVars({
+      lastUserQuery: 'some non-trivial query with no skill match',
+      lastSkillY: '',
+      skillDiscoveryCooldown: 0,
+    });
+    const y = computeYSource(null, turn.lastUserQuery)!;
+    applyPostExtraction(turn, null, y, { status: 'success', keywords: [] });
+    expect(turn.lastSkillY).toBe('some non-trivial query with no skill match');
+    expect(turn.skillDiscoveryCooldown).toBe(3);
   });
 });

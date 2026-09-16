@@ -14,6 +14,32 @@ import { retryChat, MODEL, stopSpinner } from '../engine/chat-provider.js';
 import { startSpinner } from '../engine/chat-helpers.js';
 import type { Tool } from '../types.js';
 
+/**
+ * Outcome of a keyword extraction attempt.
+ *
+ * Three semantically distinct cases that the old `string[]` return value
+ * conflated into a single `[]`:
+ *  - `success` — the LLM call ran to completion. `keywords` may be empty
+ *    (the model found nothing relevant), but the operation itself succeeded,
+ *    so the caller MAY advance its throttle/dedup state.
+ *  - `skipped` — the input was trivial (too short, or a greeting/ack). No LLM
+ *    call was made. The caller SHOULD mark the Y source as seen (so a trivial
+ *    "hello" doesn't re-trigger every pass) but this is NOT a failure.
+ *  - `failed` — the LLM call threw (transient network error, or ESC abort).
+ *    The caller MUST NOT advance throttle/dedup state: Y stays eligible for
+ *    a retry on a subsequent pass.
+ *
+ * This distinction matters because the COLLECT state mutates a cooldown and a
+ * dedup cursor (`lastSkillY`) based on the extraction result. Treating a
+ * `failed` or `skipped` outcome the same as `success` would either suppress a
+ * retry after a transient failure (failed) or — in the old code — consume the
+ * discovery opportunity for a trivial query (the catch-all `[]`).
+ */
+export type KeywordExtractionResult =
+  | { status: 'success'; keywords: string[] }
+  | { status: 'skipped' }
+  | { status: 'failed' };
+
 /** Tool definition for structured keyword extraction */
 const EXTRACT_KEYWORDS_TOOL: Tool = {
   type: 'function',
@@ -40,22 +66,32 @@ const EXTRACT_KEYWORDS_TOOL: Tool = {
  * The LLM is forced to use the extract_keywords tool (tool_choice: 'required'),
  * guaranteeing structured JSON output without fragile text parsing.
  *
+ * Returns a discriminated union so the caller can distinguish a completed
+ * extraction (`success`, keywords possibly empty) from a trivially-skipped
+ * input (`skipped`) and a failed/aborted call (`failed`). Only `success` and
+ * `skipped` allow the caller to advance its throttle/dedup state; `failed`
+ * must leave the caller's state untouched so the Y source stays eligible for
+ * a retry (e.g. after a transient network error or an ESC abort).
+ *
  * @param query - User query in any language
  * @param signal - Optional AbortSignal for ESC interruption
- * @returns Array of extracted English keywords, or empty array on failure
+ * @returns A {@link KeywordExtractionResult} describing the outcome.
  */
 export async function extractKeywords(
   query: string,
   signal?: AbortSignal,
-): Promise<string[]> {
+): Promise<KeywordExtractionResult> {
   const trimmed = query.trim();
 
-  // Skip extraction for very short or trivial queries
-  if (trimmed.length < 4) return [];
+  // Skip extraction for very short or trivial queries. This is a deliberate
+  // no-op (not a failure): the caller marks the Y source as seen so a trivial
+  // "hello" doesn't re-trigger every pass, but a subsequent meaningful query
+  // (which differs in content) still triggers normally.
+  if (trimmed.length < 4) return { status: 'skipped' };
 
-  // Skip extraction for common greetings and simple acknowledgments
+  // Skip extraction for common greetings and simple acknowledgments.
   const trivialPatterns = /^(hi|hello|hey|ok|okay|yes|no|y|n|bye|goodbye|thanks|thank you|继续|好的|嗯|你好|谢谢|再见|hi|hello|hey)$/i;
-  if (trivialPatterns.test(trimmed)) return [];
+  if (trivialPatterns.test(trimmed)) return { status: 'skipped' };
 
   try {
     startSpinner('Parsing');
@@ -84,19 +120,29 @@ Query: ${trimmed}`,
     stopSpinner();
 
     const toolCalls = response.message.tool_calls;
-    if (!toolCalls || toolCalls.length === 0) return [];
+    if (!toolCalls || toolCalls.length === 0) {
+      // The LLM responded but produced no tool call. The operation completed
+      // (no throw), so this is a successful extraction with zero keywords,
+      // not a failure — the caller may advance its throttle state.
+      return { status: 'success', keywords: [] };
+    }
 
     const args = toolCalls[0].function.arguments;
     const parsed = typeof args === 'string' ? JSON.parse(args) : args;
     const keywords: string[] = parsed.keywords || [];
 
     // Filter out empty strings and trim whitespace
-    return keywords
+    const cleaned = keywords
       .map((kw: unknown) => String(kw).trim().toLowerCase())
       .filter((kw: string) => kw.length > 0);
+
+    return { status: 'success', keywords: cleaned };
   } catch {
     stopSpinner();
-    // Silent degradation — empty result means "no keywords extracted"
-    return [];
+    // A throw here covers both transient network errors and ESC aborts
+    // (retryChat rejects with 'Request aborted' on signal abort). Either way
+    // the operation did NOT complete, so the caller must NOT advance its
+    // throttle/dedup state — Y stays eligible for a retry.
+    return { status: 'failed' };
   }
 }

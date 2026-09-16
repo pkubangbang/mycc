@@ -597,74 +597,98 @@ export async function handleCollect(
 
     if (yChanged && turn.skillDiscoveryCooldown === 0 && compositeText.trim().length >= 4) {
       // Extract English keywords from the composite via LLM (ESC-safe).
-      // On ESC, escAware returns [] — cooldown and lastSkillY are NOT set,
-      // so the next pass retries if Y is still "changed".
-      const keywords = await ctx.core.escAware(
+      // extractKeywords returns a discriminated union so we can distinguish a
+      // completed extraction (success/skipped) from a failed/aborted one:
+      //   - success: the LLM ran; keywords may be empty. Arm the cooldown and
+      //     mark Y as seen.
+      //   - skipped: the composite was trivial (greeting/ack). Mark Y as seen
+      //     so a trivial "hello" doesn't re-trigger every pass — but a
+      //     subsequent meaningful query (different Y content) still triggers.
+      //   - failed: the call threw (transient network error or ESC abort).
+      //     Do NOT arm the cooldown or mark Y as seen: Y stays eligible for a
+      //     retry on a subsequent pass.
+      // The escAware cleanup returns { status: 'failed' } on ESC, so the
+      // abort path is handled by the same `failed` branch (preserving the
+      // documented "ESC does not consume the discovery opportunity" retry
+      // behavior that the old `[]`-returning API silently broke).
+      const result = await ctx.core.escAware(
         async (ac) => extractKeywords(compositeText, ac.signal),
-        () => [] as string[],
+        () => ({ status: 'failed' } as const),
       );
 
-      // Mark the Y source as "seen" so it doesn't re-trigger. When a steering
-      // note was the trigger, ALSO mark the fallback lastUserQuery as seen so
-      // it doesn't spuriously re-trigger after the steering note is consumed
-      // on subsequent passes (Review BUG 1 — spurious double-trigger).
-      turn.lastSkillY = ySource;
-      if (firstSteerNote && turn.lastUserQuery) {
-        turn.lastSkillY = turn.lastUserQuery;
-      }
-      turn.skillDiscoveryCooldown = 3;
+      if (result.status === 'failed') {
+        // Y stays eligible for retry — do not touch lastSkillY or cooldown.
+        // (The cooldown was already decremented at the top of step 6, which is
+        // fine: a failed attempt does not extend suppression.)
+      } else {
+        // success or skipped: mark the Y source as "seen" so it doesn't
+        // re-trigger. When a steering note was the trigger, ALSO mark the
+        // fallback lastUserQuery as seen so it doesn't spuriously re-trigger
+        // after the steering note is consumed on subsequent passes
+        // (Review BUG 1 — spurious double-trigger).
+        turn.lastSkillY = ySource;
+        if (firstSteerNote && turn.lastUserQuery) {
+          turn.lastSkillY = turn.lastUserQuery;
+        }
+        turn.skillDiscoveryCooldown = 3;
 
-      if (keywords.length > 0) {
-        const allSkills = ctx.skill.listSkills();
-        const matched = allSkills.filter(s => {
-          const nameLower = s.name.toLowerCase();
-          const kwLower = s.keywords.map(k => k.toLowerCase());
-          return keywords.some(kw =>
-            nameLower.includes(kw) ||
-            kwLower.some(k => k.includes(kw) || kw.includes(k)),
-          );
-        });
+        // Only a successful extraction with real keywords can surface skills.
+        // A `skipped` (trivial) outcome has no keywords, and a `success` with
+        // an empty keywords array means the LLM found nothing relevant — both
+        // fall through here without injecting a HINT note.
+        const keywords = result.status === 'success' ? result.keywords : [];
+        if (keywords.length > 0) {
+          const allSkills = ctx.skill.listSkills();
+          const matched = allSkills.filter(s => {
+            const nameLower = s.name.toLowerCase();
+            const kwLower = s.keywords.map(k => k.toLowerCase());
+            return keywords.some(kw =>
+              nameLower.includes(kw) ||
+              kwLower.some(k => k.includes(kw) || kw.includes(k)),
+            );
+          });
 
-        if (matched.length > 0) {
-          const newSkills: string[] = [];
-          const suggestedSkills: string[] = [];
-          const loadedSkills: string[] = [];
+          if (matched.length > 0) {
+            const newSkills: string[] = [];
+            const suggestedSkills: string[] = [];
+            const loadedSkills: string[] = [];
 
-          for (const skill of matched) {
-            const status = getSkillTriologueStatus(triologue, skill);
-            switch (status) {
-              case 'new': {
-                const desc = skill.description ? ` (${skill.description})` : '';
-                newSkills.push(`${skill.name}${desc}`);
-                break;
+            for (const skill of matched) {
+              const status = getSkillTriologueStatus(triologue, skill);
+              switch (status) {
+                case 'new': {
+                  const desc = skill.description ? ` (${skill.description})` : '';
+                  newSkills.push(`${skill.name}${desc}`);
+                  break;
+                }
+                case 'suggested':
+                  suggestedSkills.push(skill.name);
+                  break;
+                case 'loaded':
+                  loadedSkills.push(skill.name);
+                  break;
               }
-              case 'suggested':
-                suggestedSkills.push(skill.name);
-                break;
-              case 'loaded':
-                loadedSkills.push(skill.name);
-                break;
             }
-          }
 
-          const lines: string[] = [];
-          if (newSkills.length > 0) {
-            lines.push(`New relevant skills: ${newSkills.join(', ')}. Use skill_load(name="<exact_name>") to load them.`);
-          }
-          if (suggestedSkills.length > 0) {
-            lines.push(`Also suggesting: ${suggestedSkills.join(', ')}. Use skill_load(name="<exact_name>") to load it.`);
-          }
-          if (loadedSkills.length > 0) {
-            lines.push(`The below skills are loaded and also relevant: ${loadedSkills.join(', ')}.`);
-          }
-          lines.push('Note: you can also use skill_search to search for skills semantically.');
-          // This is a silent nudge: either load a skill that genuinely helps the
-          // current task (via skill_load), or ignore it and keep working. Do NOT
-          // write a prose reply explaining why you are/aren't loading a skill —
-          // that clutters the conversation and re-triggers the same nudge.
-          lines.push('Discipline: this is a silent nudge. If a skill helps the current task, load it with skill_load; otherwise stay silent and continue. Do NOT narrate your decision.');
+            const lines: string[] = [];
+            if (newSkills.length > 0) {
+              lines.push(`New relevant skills: ${newSkills.join(', ')}. Use skill_load(name="<exact_name>") to load them.`);
+            }
+            if (suggestedSkills.length > 0) {
+              lines.push(`Also suggesting: ${suggestedSkills.join(', ')}. Use skill_load(name="<exact_name>") to load it.`);
+            }
+            if (loadedSkills.length > 0) {
+              lines.push(`The below skills are loaded and also relevant: ${loadedSkills.join(', ')}.`);
+            }
+            lines.push('Note: you can also use skill_search to search for skills semantically.');
+            // This is a silent nudge: either load a skill that genuinely helps the
+            // current task (via skill_load), or ignore it and keep working. Do NOT
+            // write a prose reply explaining why you are/aren't loading a skill —
+            // that clutters the conversation and re-triggers the same nudge.
+            lines.push('Discipline: this is a silent nudge. If a skill helps the current task, load it with skill_load; otherwise stay silent and continue. Do NOT narrate your decision.');
 
-          triologue.note('HINT', lines.join('\n'));
+            triologue.note('HINT', lines.join('\n'));
+          }
         }
       }
     }

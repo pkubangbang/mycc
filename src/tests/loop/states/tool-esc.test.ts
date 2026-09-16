@@ -53,9 +53,10 @@ vi.mock('../../../context/shared/loader.js', () => ({
 vi.mock('../../../config.js', () => ({ isVerbose: vi.fn(() => false) }));
 
 // keyword-extractor.js: stub extractKeywords so the real module (which imports
-// chat-provider.ts → config chain) never loads.
+// chat-provider.ts → config chain) never loads. Returns the new
+// discriminated-union shape (vestigial — handleTool no longer calls it).
 vi.mock('../../../loop/keyword-extractor.js', () => ({
-  extractKeywords: vi.fn(async () => []),
+  extractKeywords: vi.fn(async () => ({ status: 'success', keywords: [] })),
 }));
 
 // engine/chat-provider.js: stub to prevent the config chain from loading.
