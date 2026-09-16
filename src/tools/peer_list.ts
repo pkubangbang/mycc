@@ -19,6 +19,7 @@
  * mail_to plane each entry routes through.
  */
 
+import chalk from 'chalk';
 import type { ToolDefinition, AgentContext } from '../types.js';
 import { formatLocalDateTime } from '../utils/time.js';
 import { listRemotePeers, liveSocketOf } from '../peer/wire-registry.js';
@@ -59,8 +60,49 @@ export const peersTool: ToolDefinition = {
     const selfId = ctx.peer.getSelfSessionId();
     const identities = ctx.peer.listIdentities();
 
+    // ── Section 2: REMOTE peers (the in-memory wire registry; plan §3) ──
+    // Built UP-FRONT so the early-returns below (no local identities, or no
+    // rows) can still surface a remote-only wire state — a lead that has
+    // ONLY dialed cross-machine peers (no other local instances registered)
+    // must still see them. Cross-machine peers established via peer_connect
+    // (dialed) or accepted on /peer/ws. Distinct section + explicit
+    // [remote wire] marker so the LLM knows these route through the WIRE
+    // (mail_to works the same), and that they live in ctx
+    // (process-lifetime), NOT in discovery files. Entries with no live
+    // socket (pending/redialing) are listed with status
+    // "connecting/redialing" — mail_to reports "retrying" for them.
+    const remotes = listRemotePeers();
+    const remoteRows: string[] = [];
+    let remoteLive = 0;
+    for (const pair of remotes) {
+      const alive = liveSocketOf(pair) !== null;
+      if (alive) remoteLive++;
+      const socketCount = pair.sockets.length;
+      const state = alive
+        ? chalk.green('connected')
+        : socketCount > 0
+          ? chalk.yellow('half-open (closing)')
+          : chalk.gray('connecting/redialing');
+      const dialTag = pair.dialed ? 'dialed' : 'accepted';
+      const remoteNote = pair.sockets[0]?.meta.daemon ? '\n    daemon: true' : '';
+      remoteRows.push(
+        `- session=${chalk.bold(pair.sid || '(pending)')} [remote wire]\n    endpoint: ${pair.endpoint}\n    status: ${state}\n    direction: ${dialTag}${remoteNote}`,
+      );
+    }
+    const remoteSection = remoteRows.length > 0
+      ? `\n\n${chalk.magenta(`Remote wire peers (${remoteLive}/${remoteRows.length} connected) — cross-machine, via the peer wire (mail_to("<sessionId>/lead") works the same as for local peers; hang up with peer_disconnect):`)}\n${remoteRows.join('\n')}`
+      : '';
+
     if (identities.length === 0) {
-      return 'No other mycc instances registered for peer discovery. (Run `mycc` in another directory on this machine to register an instance; peer discovery is via ~/.mycc-store/discovery/identity.json + heartbeats.)';
+      if (remoteRows.length > 0) {
+        // No local identities, but remote wires exist — still show the
+        // remote section (a lead with ONLY cross-machine peers).
+        const remoteSummary = `remote wire peers: ${remoteLive}/${remoteRows.length} connected`;
+        ctx.core.brief('info', 'peer_list', `${remoteSummary}`);
+        return `${chalk.cyan(`mycc instances (no local peers registered; ${remoteSummary}):`)}${remoteSection}`;
+      }
+      ctx.core.brief('info', 'peer_list', 'no peers registered for discovery');
+      return chalk.gray('No other mycc instances registered for peer discovery. (Run `mycc` in another directory on this machine to register an instance; peer discovery is via ~/.mycc-store/discovery/identity.json + heartbeats.)');
     }
 
     const rows: string[] = [];
@@ -87,7 +129,7 @@ export const peersTool: ToolDefinition = {
 
       const started = formatLocalDateTime(id.startedAt);
       const tag = isSelf ? ' (self)' : '';
-      const state = fresh ? 'online' : 'offline';
+      const state = fresh ? chalk.green('online') : chalk.gray('offline');
       const roleTag = id.role ? `\n    role: ${id.role}` : '';
       const daemonTag = id.daemon ? `\n    daemon: true` : '';
       // Surface the OS PID so another MYCC can terminate the instance
@@ -107,59 +149,34 @@ export const peersTool: ToolDefinition = {
           }).join('\n')}`
         : '';
       rows.push(
-        `- session=${id.sessionId}${tag}\n    workDir: ${id.workDir}\n    status: ${state}\n    started: ${started}${roleTag}${daemonTag}${pidTag}${briefLine}`,
+        `- session=${chalk.bold(id.sessionId)}${tag}\n    workDir: ${id.workDir}\n    status: ${state}\n    started: ${started}${roleTag}${daemonTag}${pidTag}${briefLine}`,
       );
     }
 
-    // ── Section 2: REMOTE peers (the in-memory wire registry; plan §3) ──
-    // Cross-machine peers established via peer_connect (dialed) or accepted
-    // on /peer/ws. Distinct section + explicit [remote wire] marker so the
-    // LLM knows these route through the WIRE (mail_to works the same), and
-    // that they live in ctx (process-lifetime), NOT in discovery files.
-    // Entries with no live socket (pending/redialing) are listed with
-    // status "connecting/redialing" — mail_to reports "retrying" for them.
-    const remotes = listRemotePeers();
-    const remoteRows: string[] = [];
-    let remoteLive = 0;
-    for (const pair of remotes) {
-      const alive = liveSocketOf(pair) !== null;
-      if (alive) remoteLive++;
-      const socketCount = pair.sockets.length;
-      const state = alive
-        ? 'connected'
-        : socketCount > 0
-          ? 'half-open (closing)'
-          : 'connecting/redialing';
-      const dialTag = pair.dialed ? 'dialed' : 'accepted';
-      const remoteNote = pair.sockets[0]?.meta.daemon ? '\n    daemon: true' : '';
-      remoteRows.push(
-        `- session=${pair.sid || '(pending)'} [remote wire]\n    endpoint: ${pair.endpoint}\n    status: ${state}\n    direction: ${dialTag}${remoteNote}`,
-      );
-    }
-    const remoteSection = remoteRows.length > 0
-      ? `\n\nRemote wire peers (${remoteLive}/${remoteRows.length} connected) — cross-machine, via the peer wire (mail_to("<sessionId>/lead") works the same as for local peers; hang up with peer_disconnect):\n${remoteRows.join('\n')}`
-      : '';
+    // ── Section 2 (remote) was built up-front above; nothing to do here. ──
 
     if (rows.length === 0 && remoteRows.length === 0) {
       if (omitted > 0) {
-        return all
+        ctx.core.brief('info', 'peer_list', `${omitted} peer(s) older than 1h omitted`);
+        return chalk.gray(all
           ? `No mycc instances listed; ${omitted} registered peer${omitted === 1 ? ' is' : 's are'} older than 1h and omitted.`
-          : `No online mycc instances found; ${omitted} older than 1h omitted. (Use peer_list(all=true) to include recent offline/stale instances.)`;
+          : `No online mycc instances found; ${omitted} older than 1h omitted. (Use peer_list(all=true) to include recent offline/stale instances.)`);
       }
-      return all
+      ctx.core.brief('info', 'peer_list', 'no online instances found');
+      return chalk.gray(all
         ? 'No mycc instances registered for peer discovery, and no remote wire peers connected.'
-        : 'No other online mycc instances found. (Use peer_list(all=true) to include offline/stale instances; use peer_connect to reach a cross-machine instance.)';
+        : 'No other online mycc instances found. (Use peer_list(all=true) to include offline/stale instances; use peer_connect to reach a cross-machine instance.)');
     }
 
     if (rows.length === 0) {
       // Only remote peers — return the remote section alone.
       const remoteSummary = `remote wire peers: ${remoteLive}/${remoteRows.length} connected`;
       ctx.core.brief('info', 'peer_list', `${remoteSummary}`);
-      return `mycc instances (no local peers listed; ${remoteSummary}):${remoteSection}`;
+      return `${chalk.cyan(`mycc instances (no local peers listed; ${remoteSummary}):`)}${remoteSection}`;
     }
 
     const summary = `${online} local online, ${rows.length} local listed${includeSelf ? ' (incl. self)' : ''}${omitted > 0 ? `, ${omitted} older than 1h omitted` : ''}${remoteRows.length > 0 ? `, ${remoteLive}/${remoteRows.length} remote connected` : ''}`;
     ctx.core.brief('info', 'peer_list', `${summary}`);
-    return `Local mycc instances (${summary}):\n${rows.join('\n')}${remoteSection}`;
+    return `${chalk.cyan(`Local mycc instances (${summary}):`)}\n${rows.join('\n')}${remoteSection}`;
   },
 };

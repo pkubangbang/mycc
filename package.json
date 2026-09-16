@@ -30,7 +30,7 @@
     "format:check": "prettier --check \"src/**/*.ts\""
   },
   "dependencies": {
-    "@pkubangbang/crossroad-detector": "^0.1.1",
+    "@pkubangbang/crossroad-detector": "^0.1.3",
     "@lancedb/lancedb": "^0.27.2",
     "@vitejs/plugin-vue": "^6.0.0",
     "chalk": "^6.0.0",

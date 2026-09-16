@@ -16,6 +16,7 @@
  * fallback (round-1 finding S3).
  */
 
+import chalk from 'chalk';
 import type { ToolDefinition, AgentContext } from '../types.js';
 import { disconnectPeer } from '../peer/wire-client.js';
 
@@ -37,14 +38,23 @@ export const peerDisconnectTool: ToolDefinition = {
     required: ['peer'],
   },
   scope: ['main'],
-  handler: async (_ctx: AgentContext, args: Record<string, unknown>): Promise<string> => {
+  handler: async (ctx: AgentContext, args: Record<string, unknown>): Promise<string> => {
     const peer = typeof args.peer === 'string' ? args.peer : '';
     if (!peer) {
+      ctx.core.brief('error', 'peer_disconnect', 'peer is required — the remote sessionId (see peer_list) or the url used for peer_connect.');
       return 'Error: peer is required — the remote sessionId (see peer_list) or the url used for peer_connect.';
     }
+    ctx.core.brief('info', 'peer_disconnect', `Hanging up remote peer ${chalk.cyan(peer)} …`);
     try {
-      return await disconnectPeer(peer);
+      const result = await disconnectPeer(peer);
+      if (result.startsWith('Error:')) {
+        ctx.core.brief('error', 'peer_disconnect', chalk.red(result.slice('Error:'.length).trim()));
+      } else {
+        ctx.core.brief('info', 'peer_disconnect', chalk.yellow(`○ ${result}`));
+      }
+      return result;
     } catch (err) {
+      ctx.core.brief('error', 'peer_disconnect', chalk.red(`failed unexpectedly: ${(err as Error).message}`));
       return `Error: peer_disconnect failed unexpectedly: ${(err as Error).message}`;
     }
   },

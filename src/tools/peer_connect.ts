@@ -23,6 +23,7 @@
  * it), so mail_to keeps reporting "not connected, retrying".
  */
 
+import chalk from 'chalk';
 import type { ToolDefinition, AgentContext } from '../types.js';
 import { connectPeer } from '../peer/wire-client.js';
 
@@ -47,14 +48,23 @@ export const peerConnectTool: ToolDefinition = {
     required: ['url'],
   },
   scope: ['main'],
-  handler: async (_ctx: AgentContext, args: Record<string, unknown>): Promise<string> => {
+  handler: async (ctx: AgentContext, args: Record<string, unknown>): Promise<string> => {
     const url = typeof args.url === 'string' ? args.url : '';
     if (!url) {
+      ctx.core.brief('error', 'peer_connect', 'url is required — pass the remote instance\'s serve base (e.g. "192.168.1.20:3191").');
       return 'Error: url is required — the remote instance\'s serve base (e.g. "192.168.1.20:3191").';
     }
+    ctx.core.brief('info', 'peer_connect', `Dialing remote peer ${chalk.cyan(url)} …`);
     try {
-      return await connectPeer(url);
+      const result = await connectPeer(url);
+      if (result.startsWith('Error:')) {
+        ctx.core.brief('error', 'peer_connect', chalk.red(result.slice('Error:'.length).trim()));
+      } else {
+        ctx.core.brief('info', 'peer_connect', chalk.green(`✓ ${result}`));
+      }
+      return result;
     } catch (err) {
+      ctx.core.brief('error', 'peer_connect', chalk.red(`failed unexpectedly: ${(err as Error).message}`));
       return `Error: peer_connect failed unexpectedly: ${(err as Error).message}`;
     }
   },

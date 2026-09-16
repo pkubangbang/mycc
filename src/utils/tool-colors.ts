@@ -97,6 +97,9 @@ const TOOL_COLORS: Record<string, (text: string) => string> = {
   mail_to: chalk.cyanBright,
   broadcast: chalk.cyanBright,
   peers: chalk.cyanBright,
+  peer_list: chalk.cyanBright,
+  peer_connect: chalk.cyanBright,
+  peer_disconnect: chalk.cyanBright,
 
   // Background tasks
   bg: chalk.gray,

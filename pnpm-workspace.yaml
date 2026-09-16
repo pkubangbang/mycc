@@ -5,7 +5,7 @@ allowBuilds:
   sharp: true
 
 minimumReleaseAgeExclude:
-  - '@pkubangbang/crossroad-detector@0.1.1'
+  - '@pkubangbang/crossroad-detector@0.1.1 || 0.1.3'
 
 # pnpm configuration (non-auth settings live here on pnpm v11+; see note below).
 #
