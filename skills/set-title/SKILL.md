@@ -1,15 +1,17 @@
 ---
 name: set-title
 description: >
-  Reminds the agent to set the terminal window title via mycc_title tool
-  after the session has accumulated meaningful work. Fires after brief or
-  recap is called when total tool calls exceed 10 and mycc_title has not
-  been used yet this session. Also prompts updating the title when the
-  conversation topic has shifted to a different task or focus area.
+  Labels the terminal window so the user can tell which mycc session is which
+  across multiple windows/tabs — call `mycc_title` with a short (under 40 char)
+  description of the current task once the session has meaningful work, and
+  again whenever the topic shifts. Use this for multi-window session
+  identification and tab management. Fires as a silent nudge after `brief` or
+  `recap` once total tool calls exceed 10 and `mycc_title` has not been used
+  yet this session (it may re-fire after auto-compaction wipes the tally —
+  that is intentional; just set the title or stay silent).
   Guidelines for titles: keep under 40 characters, describe the current
   task or focus area, prefix with project name if useful (e.g., "mycc:
-  fixing bash tool"). Helps users identify which mycc session is which
-  across multiple terminal windows or tabs.
+  fixing bash tool").
   IMPORTANT discipline: this is a silent nudge. If you receive this
   reminder and judge it is NOT the time to set/update the title (e.g. the
   title was already set this session and the topic has not shifted, or the

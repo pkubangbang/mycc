@@ -1,21 +1,19 @@
 ---
 name: learn-from-past
 description: >
-  Hookish skill that triggers when the agent calls brief with confidence 10
-  (100%), indicating a completed task. Suggests capturing successful experience
-  into a deferred lfplater doc. Asks the user a binary choice: yes (create a
-  pointer doc in .mycc/lfplater/ for future processing by the skill-manager
-  peer) or no (decline summarizing and continue). Guards against false
-  triggers: only fires in normal mode (not plan mode), after 5+ total tool
-  calls in the session, and when real work tools (edit_file, write_file, or
-  bash) were used at any point in this session (not just the current turn).
-  Use when a task has been completed successfully and the experience could be
-  distilled into a reusable skill. The hook uses a message action — the
-  weakest, non-blocking hook action that injects a REMINDER note the agent
-  sees in its next round. The message is autonomy-supportive (self-determination
-  theory), affirms the user's freedom to decline (reactance theory), and frames
-  the experience as already-owned value at risk of being lost (endowment
-  effect).
+  When you mark a task complete with `brief` confidence 10, offers you a
+  one-line yes/no choice to save that experience as a reusable skill for
+  later: **yes** drops a pointer doc in `.mycc/lfplater/` for the skill-manager
+  daemon to process; **no** declines and you continue. Use this to preserve a
+  successful experience at the moment of success, before context moves on and
+  it is lost. Fires only on `brief` confidence=10, in normal (non-plan) mode,
+  after 5+ tool calls this session, and only when real work tools
+  (`edit_file`/`write_file`/`bash`) were used at some point this session — so
+  plan-mode confidence, premature optimism, and read-only sessions do not
+  trigger it. The hook uses a non-blocking message action that injects a
+  REMINDER the agent sees on its next round; the message is autonomy-
+  supportive (affirms the user's freedom to decline; frames the experience as
+  already-owned value at risk of being lost).
 keywords: [learn, past, experience, success, skill, create, optimize, lfp,
   summary, capture, knowledge, distill, brief, confidence, completed,
   reusable, lesson, lfplater, deferred, autonomy, nudge, suggestion, preserve]

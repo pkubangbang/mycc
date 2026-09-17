@@ -1,21 +1,17 @@
 ---
 name: pdf
 description: >
-  Use when working with PDF files — extracting text, performing OCR on
-  scanned documents, or processing PDF content. Covers two main workflows:
-  text-based PDF extraction using unpdf (modern, zero-dependency library)
-  and image-based PDF OCR using pdf-to-img + tesseract.js. For text-based
-  PDFs: create an isolated working directory, install unpdf, use
-  extractText with getDocumentProxy, and verify extraction quality. For
-  scanned/image-based PDFs: convert pages to images with pdf-to-img at
-  scale 3.0 for better recognition, then run tesseract.js OCR with
-  reusable workers for performance. Supports multiple languages via
-  tesseract.js language packs: English (eng), Simplified Chinese
-  (chi_sim), Traditional Chinese (chi_tra), and combined (eng+chi_sim).
-  Always uses isolated temp directories (cd <dir> && npm install) to
-  avoid polluting the project. Use for reading PDFs, extracting text
-  from documents, processing scanned files, OCR of image-based PDFs,
-  or converting PDF content to plain text for analysis.
+  Reads PDF files into text — extracting text from text-based PDFs, or
+  running OCR on scanned/image-based PDFs. Use this when you need to read a
+  PDF, extract its text, or convert PDF content to plain text for analysis.
+  Two workflows: text-based PDFs use `unpdf` (a modern zero-dependency
+  library — create an isolated work dir, install it, run `extractText` with
+  `getDocumentProxy`, verify the output); scanned/image-based PDFs use
+  `pdf-to-img` (scale 3.0 for recognition) + `tesseract.js` OCR with reused
+  workers. OCR supports English (eng), Simplified Chinese (chi_sim),
+  Traditional Chinese (chi_tra), and combined (eng+chi_sim). Always uses
+  isolated temp directories (`cd <dir> && npm install`) to avoid polluting
+  the project.
 keywords: [pdf, document, extraction, ocr, scan, text, image, unpdf, tesseract, read, parse, convert, processing]
 ---
 

@@ -1,19 +1,18 @@
 ---
 name: mediator
 description: >
-  Use when the task is to compose MULTIPLE SEPARATE mycc instances (different
-  processes, possibly different working directories) into a workflow — NOT
-  the lead/teammate child-process team (that is the "coordination" skill).
-  A mediator is an outside orchestrator: it is NOT itself a mycc agent but
-  a process/script/operator that wires instances together by writing channel
-  files, seeding first queries, and routing mail. Covers the cross-instance
-  peer-discovery model (identity.json + heartbeats + channels), how to
-  discover online instances with the peers tool, how to author channel
-  files to connect two instances, the firstQuery seeding mechanism, and
-  the reply discipline (instances reply via mail_to with the peer identity
-  "<session-id>/lead", NOT by writing prose). Use when the user asks to
-  "connect two mycc instances", "make these two agents talk", "set up a
-  multi-instance pipeline/workflow", or "act as a mediator".
+  Wires MULTIPLE SEPARATE mycc instances (different processes, possibly
+  different working directories) into a coordinated workflow — use this when
+  the user asks to "connect two mycc instances", "make these two agents
+  talk", or "set up a multi-instance pipeline/workflow". A mediator is an
+  outside orchestrator (a script/operator, NOT itself a mycc agent) that
+  connects instances purely by creating channel files on disk and seeding
+  first queries; the instances' existing peer-discovery + mail machinery
+  does the rest. Covers discovering online instances with the `peers` tool,
+  authoring channel-file pairs, the firstQuery seeding mechanism, and the
+  reply discipline (instances reply via `mail_to(name="<session-id>/lead")`,
+  not by writing prose). Do NOT use this for the lead/teammate child-process
+  team inside ONE instance — that is the `coordination` skill.
 keywords: ["cross-instance", "multi-instance", "channel files", "channel file pair", firstQuery, "wire instances", "connect mycc instances", "two mycc instances", "peer discovery", mediator, "mail_to peer", "session-id routing", "headless peer", identity, heartbeat]
 ---
 

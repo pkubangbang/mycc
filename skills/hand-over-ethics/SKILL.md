@@ -1,28 +1,18 @@
 ---
 name: hand-over-ethics
 description: >
-  Hookish skill that fires the FIRST time hand_over is called in the current
-  livelog window (i.e. since the last compaction). It REPLACES that hand_over
-  call with a skill_load of this skill, so the decision rule and concrete
-  misuse examples enter context BEFORE the popup would open — giving the
-  agent a chance to self-correct (re-issue via bash+tmux, or re-confirm it
-  truly needs a human) on the next turn instead of committing to an
-  irreversible popup. It fires at most once per compaction window: the
-  condition session.count('skill_load#hand-over-ethics') == 0 is reset to
-  true by sequence.clear(), which is co-called with triologue.compact(), so
-  after a compaction submerges the earlier skill_load result the hook
-  re-fires on the next hand_over. Use to prevent the recurring hand_over
-  misuses: issuing a non-interactive command (a one-shot read/build/test,
-  an ssh one-liner) through hand_over when bash (or bash+tmux for a
-  persistent remote session) is the right tool; driving a persistent
-  session via a popup instead of bash+tmux send-keys; running a command
-  that belongs on a remote or in another cwd through a LOCAL hand_over
-  popup (which executes in THIS machine's cwd, not where the agent
-  thinks); or issuing an empty command when a specific one was meant.
-  On Windows, hand_over opens a PowerShell 7 (pwsh) popup — so Windows
-  executable-path and call-operator quirks (ssh.exe not on pwsh PATH,
-  quoted exe paths need the & call operator) apply and are covered in
-  the misuse examples below.
+  Gate that catches `hand_over` misuse BEFORE an irreversible popup opens —
+  when the command needs no human at the TTY (a one-shot read/build/test, an
+  ssh one-liner), or belongs on a remote / in another cwd, or was meant to be
+  a specific command but came in blank, it redirects you to `bash` (or `bash`
+  + `tmux send-keys` for a persistent session) instead. Use this whenever you
+  are about to call `hand_over` and want the decision rule and concrete
+  misuse examples in context before committing to the popup. Fires once per
+  compaction window: it replaces the first `hand_over` call in the window
+  with a `skill_load` of itself, so the rule is reviewed before the popup
+  opens (session-scoped `skill_load#hand-over-ethics` counter, reset by
+  compaction). On Windows the popup is PowerShell 7 (pwsh), so ssh.exe-not-
+  on-PATH and the `&` call-operator quirks are covered in the examples below.
 keywords: [hand_over, hand-over, ethics, popup, interactive, tty, password, oauth, ssh, remote, tmux, bash, misuse, replace, hook, once, session, compaction, "no human", "wrong place", blank, shell, elevation, pwsh, psmux, windows, cross-platform, redirect, defer]
 when: "when hand_over is about to be called for the first time since the last compaction (session.count('skill_load#hand-over-ethics') == 0), replace the hand_over call with a skill_load of this skill so the decision rule and misuse examples are reviewed before the popup opens; do not fire again until a compaction resets the session counter"
 ---

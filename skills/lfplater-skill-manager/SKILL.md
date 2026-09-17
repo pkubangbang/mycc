@@ -1,15 +1,18 @@
 ---
 name: lfplater-skill-manager
 description: >
-  Background skill-management workflow for a headless mycc daemon launched with
-  --daemon lfplater-skill-manager. Reviews each .mycc/lfplater/ file, searches
-  for existing skills via skill_search, creates new skills (via the create-skill
-  workflow) or optimizes existing ones (via edit_file), merges duplicated skills
-  conservatively, deletes consumed lfplater files, and reports completion back
-  to the sender via mail_to. Runs autonomously in daemon auto mode with no human
-  at the terminal. Triggered by cron-scheduled self-nudge mail (service_cron)
-  — deterministic infrastructure, NOT LLM-driven, so the skill-manager is
-  triggered reliably without relying on the LLM's self-identification.
+  Turns captured success-notes into reusable skills, headlessly. A daemon
+  (launched with `--daemon lfplater-skill-manager`) reads each
+  `.mycc/lfplater/` file left by the `learn-from-past` hook, searches for
+  existing skills via `skill_search`, creates new skills (via the
+  `create-skill` workflow) or optimizes existing ones (via `edit_file`),
+  merges duplicates conservatively, deletes consumed lfplater files, and
+  reports completion back to the sender via `mail_to`. Use this to run the
+  closed knowledge-capture loop without a human at the terminal. Runs
+  autonomously in daemon auto mode; triggered by cron-scheduled self-nudge
+  mail (`service_cron`, every 10 min) — deterministic infrastructure, NOT
+  LLM-driven, so the skill-manager fires reliably without relying on the
+  LLM's self-identification.
 keywords: [skill-manager, lfplater, background, autonomous, headless, hermes,
   skill, create, optimize, merge, review, mail_to, cross-instance, peer,
   closed-learning-loop, daemon, periodic, --daemon, service]

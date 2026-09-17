@@ -1,25 +1,18 @@
 ---
 name: plan-quality
 description: >
-  Hookish skill that fires when mycc is about to give a plan in plan mode (it
-  has stopped with no pending tool calls). It replaces the stop with a
-  skill_load of this skill BEFORE presenting the plan, so the plan is
-  strengthened in three ways. Part 1: search the "pitfall" wiki domain for
-  known traps already stepped into, to verify basic assumptions against
-  history — the "pitfall" domain may not exist yet, so the guidance is
-  compatibility-aware (suggest "/domain add pitfall" if missing) and also
-  covers collecting user feedback to maintain the pitfall domain. Part 2:
-  how to present the plan — if the content is large, describe it section by
-  section and let the user confirm each part, rather than dumping a wall of
-  text. Part 3: a per-section design review train-of-thought — for each
-  part of the change, ask (a) can the work be done at a higher level so the
-  design is much simplified, and (b) how do the changes in this section
-  interact with changes in other sections; report non-trivial findings as a
-  note on each section. The hook uses a replace action on the stop trigger;
-  this is necessary because the LLM has a known planning-overconfidence
-  blind-spot and will not voluntarily seek planning help (recorded in the
-  pitfall domain itself, commit c9c4f7b). Use whenever the agent enters plan
-  mode to design an approach and is about to present the plan.
+  Strengthens a plan BEFORE you present it, in three passes: (1) check the
+  "pitfall" wiki domain for traps already stepped into, and adjust
+  assumptions against history (the domain may not exist yet — guidance is
+  compatibility-aware); (2) present a large plan section-by-section with
+  per-section confirmation instead of a wall of text; (3) for each part, run
+  a design review — can the work be done at a higher level (simpler), and
+  how do the parts interact (ordering, shared state, contract shifts)? Use
+  this whenever you are in plan mode and about to give a plan. Fires as a
+  mandatory hook: it replaces the stop with a `skill_load` of itself
+  (session-scoped `skill_load#plan-quality` guard), because the LLM has a
+  known planning-overconfidence blind-spot and will not voluntarily seek
+  planning help (recorded in the pitfall domain, commit c9c4f7b).
 keywords: [plan, quality, pitfall, presentation, section, confirm, stop,
   hook, reminder, blind-spot, overconfidence, wiki, domain, feedback,
   assumption, verify, before-plan, plan_on, knowledge, check, validate,

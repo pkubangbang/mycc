@@ -1,19 +1,17 @@
 ---
 name: install-from-zip
 description: >
-  Guide for installing a skill from a .zip archive. Use when the user
-  provides a zip file path and asks to install, import, or load a skill
-  from it. Covers cross-platform extraction (Expand-Archive on Windows,
-  unzip/tar on Linux/macOS), skill package detection (validates SKILL.md
-  or *.md with YAML frontmatter containing a name field), summarizing the
-  skill's purpose from its frontmatter description and content, asking
-  user consent for installation level (user-level ~/.mycc-store/skills/,
-  project-level .mycc/skills/, or temporary one-time use), executing the
-  copy via dedicated per-destination action files, and verifying the skill
-  loads correctly afterward with skill_load. Handles single-file skills,
-  folder skills with SKILL.md, and multi-skill packages. Includes name
-  conflict detection with overwrite confirmation, hookish skill condition
-  compilation via skill_compile, and mandatory temp directory cleanup.
+  Installs a skill from a `.zip` archive into mycc, end to end — extract it
+  (cross-platform: Expand-Archive on Windows, unzip/tar on Linux/macOS),
+  detect the skill entrypoint (a `.md` with `name:` frontmatter, or a folder
+  with `SKILL.md`, or a multi-skill package), summarize its purpose, ask the
+  user where to install it (user-level `~/.mycc-store/skills/`, project-level
+  `.mycc/skills/`, or temporary one-session use), copy it there, compile any
+  hookish `when` condition via `skill_compile`, verify it loads with
+  `skill_load`, and clean up the temp directory. Use this when the user
+  provides a zip file path and asks to install, import, or load a skill from
+  it. Handles name-conflict detection with overwrite confirmation and
+  mandatory temp-dir cleanup in all outcomes.
 keywords: [install, zip, archive, extract, skill, package, import,
   unzip, Expand-Archive, tar, user-level, project-level, temporary,
   ad-hoc, SKILL.md, frontmatter, install-from-zip, consent, conflict,

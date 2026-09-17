@@ -75,6 +75,18 @@ when: trigger condition (only for hookish skills)
 - `description` is for **RAG search**, not a brief summary. Cover concepts and use cases, include related keywords naturally, stay under 800 tokens.
 - `keywords` aid discoverability via `skill_search`.
 
+> **⚠️ Lead with FUNCTION, not mechanics.** The `description` is surfaced to
+> the agent (and the user) in `[HINT] New relevant skills:` nudges, so its
+> framing directly shapes how the skill is understood and reached for. Open
+> with one sentence stating **what the skill does for the user/agent and when
+> to reach for it** — the *function*. Demote internal trigger mechanics
+> (guards, counters, hook actions, `session.count(...)` predicates, scoping)
+> to a trailing clause ("Fires when…"). A description that leads with
+> "Hookish skill that fires when X and guards against Y…" teaches the reader
+> the skill's plumbing, not its purpose; the reader then mirrors that
+> mechanics frame instead of acting on the function. Function-first;
+> mechanics-as-detail. Keep all factual content — reorder, don't delete.
+
 ### Hookish `when` field
 
 The `when` field defines WHEN the skill triggers — it must contain ONLY the
@@ -107,6 +119,9 @@ structure details, see [File Organization](./skill-file-organization.md).
 
 - [ ] Created in `.mycc/skills/` (or `~/.mycc-store/skills/` for user-level)
 - [ ] Clear frontmatter: name, description (< 800 tokens), keywords
+- [ ] **Description leads with FUNCTION (what it does / when to reach for it),
+      not mechanics** — trigger guards, counters, and hook actions are demoted
+      to a trailing "Fires when…" clause, not the lead sentence
 - [ ] Matches the appropriate template structure
 - [ ] Specific, actionable advice with code examples
 - [ ] Common pitfalls documented
