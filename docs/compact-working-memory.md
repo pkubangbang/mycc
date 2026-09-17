@@ -62,7 +62,12 @@ HOOK: compactRequested? → compact()                            HOOK: compactRe
            + '\n\n### Recent Working Memory\n<focus>'
            + '\n\n**Previous user instruction:** …' },
   { role: 'assistant',
-    content: 'Understood. I have the context from the summary. Continuing.' },
+    // Synthetic message signals idle→work RESUMPTION, not approval/affirmation.
+    // A declarative "Continuing." reads as consent to drift forward; the LLM
+    // then treats it as approval instead of actively re-orienting on the
+    // in-flight task. Naming the summary sections (Current State, Recent
+    // Working Memory) directs the next move to re-engaging unfinished work.
+    content: 'I have the compressed context above. Let me re-orient on the in-flight task — reviewing "Current State" and "Recent Working Memory" — and resume the unfinished work.' },
 ]
 ```
 

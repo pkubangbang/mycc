@@ -183,6 +183,13 @@ export async function runAutoCompact(deps: CompactDeps, focus?: string, signal?:
 
   const summaryPrefix = `[Conversation compressed. ${focusPrefix}Transcript: ${transcriptPath}]\n\n`;
 
+  // The synthetic assistant message must signal an idle→work RESUMPTION,
+  // NOT an approval/affirmation. A declarative "Continuing." reads as the
+  // agent having already committed to going forward — the LLM then treats
+  // it as consent to drift instead of actively re-orienting on the in-flight
+  // task. We name the summary sections explicitly (Current State, Recent
+  // Working Memory) so the agent's next move is to re-engage with the
+  // unfinished work recorded there, not to blandly affirm and continue.
   return [
     {
       role: 'user',
@@ -190,7 +197,7 @@ export async function runAutoCompact(deps: CompactDeps, focus?: string, signal?:
     },
     {
       role: 'assistant',
-      content: 'Understood. I have the context from the summary. Continuing.',
+      content: 'I have the compressed context above. Let me re-orient on the in-flight task by reviewing "Current State" and "Recent Working Memory" to decide the next step.',
     },
   ];
 }

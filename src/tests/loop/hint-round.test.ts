@@ -207,6 +207,55 @@ describe('Hint Round JSON Output', () => {
   });
 
   // ---------------------------------------------------------------------------
+  // "no blockers" suppression (regression: do not sanction auto-progression)
+  // ---------------------------------------------------------------------------
+  // When the analysis finds no real blocker, injecting a [HINT] note with
+  // "no blockers / Continue ..." misleads the agent into treating its own
+  // note as approval to keep auto-progressing past review points. The fix:
+  // suppress the note (return success + focusOn for the keyword-extraction
+  // Z-source, but inject NO [HINT] message). This locks in the fix against
+  // regression.
+  // ---------------------------------------------------------------------------
+
+  it('suppresses the [HINT] note when blocker is "no blockers" (no auto-progression sanction)', async () => {
+    vi.mocked(retryChat).mockResolvedValueOnce(
+      validHintResponse({
+        blocker: 'no blockers',
+        next_step: 'Continue implementing the remaining test cases',
+        focus_on: 'completing test coverage',
+      }) as never,
+    );
+
+    const result = await triologue.generateHintRound(
+      new AbortController(),
+      10,
+      'breakdown',
+    );
+
+    // focusOn is still returned so the composite keyword-extraction Z-source
+    // in collect.ts keeps working.
+    expect(result).toEqual({ status: 'success', focusOn: 'completing test coverage' });
+    // NO [HINT] note injected — the round is a silent no-op.
+    const messages = triologue.getMessagesRaw();
+    expect(messages.find((m) => m.content?.startsWith('[HINT]'))).toBeUndefined();
+  });
+
+  it('still injects the [HINT] note for a real (non-"no blockers") blocker', async () => {
+    // Regression guard: the suppression must be EXACT — only the literal
+    // "no blockers" blocker is suppressed. Any other blocker (even one
+    // containing the word "no") still injects the note.
+    vi.mocked(retryChat).mockResolvedValueOnce(
+      validHintResponse({ blocker: 'no such file: config.json' }) as never,
+    );
+
+    const result = await triologue.generateHintRound(new AbortController(), 10, 'breakdown');
+
+    expect(result.status).toBe('success');
+    const messages = triologue.getMessagesRaw();
+    expect(messages.find((m) => m.content?.startsWith('[HINT]'))).toBeDefined();
+  });
+
+  // ---------------------------------------------------------------------------
   // aborted path
   // ---------------------------------------------------------------------------
 
