@@ -10,7 +10,7 @@ import { classifyError } from '../engine/chat-helpers.js';
 import { ParentContext } from '../context/parent-context.js';
 import { getSessionId, markHeadlessSession } from '../session/index.js';
 import { slashRegistry } from '../slashes/index.js';
-import { getTokenThreshold, shouldServe, getServePort, getServeHost, shouldAuto, shouldDaemon, getAutoflyThresholdArg, getDiscoveryDir } from '../config.js';
+import { getTokenThreshold, shouldServe, getServePort, getServeHost, shouldAuto, shouldDaemon, getAutoflyThresholdArg, getDiscoveryDir, isPlainOutput } from '../config.js';
 import { Triologue } from './triologue.js';
 import { agentIO } from './agent-io.js';
 import { autoState } from './auto-state.js';
@@ -63,8 +63,13 @@ export async function main(): Promise<void> {
     process.exit(1);
   }
 
-  // Force colors since stdout is piped through Coordinator (not a TTY)
-  chalk.level = 1;
+  // Force colors when output is decorated. The Lead's stdout is a pipe (the
+  // Coordinator mirrors it), so chalk's own TTY detection would otherwise
+  // report level 0 and strip colour even on a real terminal. But when the
+  // Coordinator has determined the output is plain — stdout piped/redirected
+  // at the top level, or --debug-ansi — leave chalk at 0 so no escape codes
+  // reach the captured stream.
+  chalk.level = isPlainOutput() ? 0 : 1;
 
   // Get token threshold once (env value, doesn't change during execution)
   const tokenThreshold = getTokenThreshold();

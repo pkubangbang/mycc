@@ -7,6 +7,7 @@
 
 import type { ChatRequest } from 'ollama';
 import { agentIO } from '../loop/agent-io.js';
+import { isPlainOutput } from '../config.js';
 
 // ============================================================================
 // Error Helpers
@@ -307,6 +308,25 @@ export async function retryWithBackoff<T>(
 // ============================================================================
 // Spinner
 // ============================================================================
+//
+// The spinner is an in-place animation (`\r` + frame, cursor hidden) and is
+// written to STDOUT — the same stream as the progress bars (`RebuildProgressBar`
+// in slashes/wiki.ts, mindmap `ProgressTracker` in mindmap/compile-utils.ts).
+//
+// Why stdout and not stderr: the Lead does not own a terminal. The Coordinator
+// spawns it with piped stdio (src/index.ts startLead, `stdio: ['pipe','pipe',
+// 'pipe','ipc']`) and mirrors each pipe independently — stdout at :184-186,
+// stderr at :189-191. Two separate OS pipes carry no ordering guarantee
+// relative to each other, so a spinner on stderr and a bar on stdout could be
+// delivered interleaved *inside* one escape sequence, and the terminal would
+// then see a truncated `\x1b[1A` and misparse the screen. Keeping every
+// in-place animation on ONE stream gives the bytes a single ordering domain.
+//
+// Suppression: `isPlainOutput()` (see config.ts) is the single gate. It is
+// true when the Coordinator detected a non-TTY stdout, or when the user forced
+// it with --debug-ansi. Never derive this from `process.stdout.isTTY` here —
+// inside the Lead that value is always falsy, so such a check is dead code
+// (see the /wiki rebuild progress-bar regression at slashes/wiki.ts).
 
 const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 let spinnerInterval: ReturnType<typeof setInterval> | null = null;
@@ -321,8 +341,10 @@ const SPINNER_STATS_THRESHOLD_S = 5;
 
 export function startSpinner(prefix: string = 'Thinking'): void {
   if (spinnerInterval) return;
+  // Plain output (piped stdout, or --debug-ansi): no spinner at all.
+  if (isPlainOutput()) return;
 
-  process.stderr.write('\x1b[?25l');
+  process.stdout.write('\x1b[?25l');
   spinnerFrame = 0;
   spinnerStartTime = Date.now();
   spinnerTokenCount = 0;
@@ -342,7 +364,7 @@ export function startSpinner(prefix: string = 'Thinking'): void {
     } else {
       line = `\r${frame} ${prefix}...`;
     }
-    process.stderr.write(line);
+    process.stdout.write(line);
     spinnerFrame++;
   }, 80);
 }
@@ -367,8 +389,8 @@ export function stopSpinner(): void {
 
   clearInterval(spinnerInterval);
   spinnerInterval = null;
-  process.stderr.write('\r\x1b[K');
-  process.stderr.write('\x1b[?25h');
+  process.stdout.write('\r\x1b[K');
+  process.stdout.write('\x1b[?25h');
 }
 
 // ============================================================================

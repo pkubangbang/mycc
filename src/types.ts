@@ -505,6 +505,20 @@ export interface CoreModule {
    */
   getMindmap(): Mindmap | null;
   /**
+   * Whether stdout decoration (spinner, progress bars, colour, title escapes)
+   * must be suppressed because the output is plain — piped/redirected, or the
+   * user forced it with `--debug-ansi`.
+   *
+   * Tools must consult THIS rather than a local `process.stdout.isTTY` check:
+   * the Lead never owns a TTY (its stdio is piped through the Coordinator), so
+   * an in-process isTTY gate is permanently false and silently disables the
+   * feature it guards. The verdict is derived once in the Coordinator — the
+   * only process that owns the real terminal — and delivered through the
+   * environment (`MYCC_PLAIN`), which both the parent and child processes
+   * inherit, so this is a cheap process-local read and never an IPC hop.
+   */
+  isPlainOutput(): boolean;
+  /**
    * Set the mindmap data
    */
   setMindmap(mindmap: Mindmap | null): void;

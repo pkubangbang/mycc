@@ -57,6 +57,7 @@ export function createMockContext(workdir: string): AgentContext {
     getAuto: vi.fn(() => false),
     setAuto: vi.fn(),
     getMindmap: vi.fn(() => null),
+    isPlainOutput: vi.fn(() => false),
     setMindmap: vi.fn(),
     getConfusionIndex: vi.fn(() => 0),
     increaseConfusionIndex: vi.fn(),

@@ -9,7 +9,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import type { Node, MindmapJSON } from './types.js';
 import { compute_hash } from './validate.js';
-import { parse_markdown, build_node, extract_links, collect_nodes_bottom_up, ProgressTracker } from './compile-utils.js';
+import { parse_markdown, build_node, extract_links, collect_nodes_bottom_up, ProgressTracker, beginProgressDisplay, endProgressDisplay } from './compile-utils.js';
 import { get_node, get_ancestors } from './get-node.js';
 import { remove_node } from './patch.js';
 import { summarizeWithExplorer } from './explorer-agent.js';
@@ -218,7 +218,7 @@ export async function incremental_compile(
   const tracker = new ProgressTracker(totalNodes, 3);
 
   // Print initial empty lines for progress display
-  process.stdout.write('\n\n\n\n');
+  beginProgressDisplay();
 
   // Second pass: re-summarize nodes that need it
   let processedCount = 0;
@@ -274,7 +274,7 @@ export async function incremental_compile(
 
   // Clean up progress display
   tracker.finish();
-  process.stdout.write('\x1b[4A\x1b[J');
+  endProgressDisplay();
 
   // 7. Update metadata and persist to disk
   existingMindmap.hash = compute_hash(content);

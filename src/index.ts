@@ -45,6 +45,28 @@ if (process.argv.slice(2).some(a => a === '--help' || a === '-h')) {
   process.exit(0);
 }
 
+// ---------------------------------------------------------------------------
+// Plain-output verdict (piped stdout)
+// ---------------------------------------------------------------------------
+// The Coordinator is the ONLY mycc process that owns the caller's real stdout
+// handle: bin/mycc.js spawns it with `stdio: 'inherit'`, whereas it spawns the
+// Lead with piped stdio (see startLead below). So `process.stdout.isTTY` is
+// meaningful here and nowhere else — inside the Lead it is always falsy.
+//
+// When the caller piped or redirected us (`mycc > out.txt`, `prog | mycc |
+// prog`), the in-place animations (thinking spinner, `/wiki rebuild` bar,
+// mindmap tracker, window-title OSC) would corrupt the stream with cursor
+// movement and clear-screen escapes. Publish the verdict as MYCC_PLAIN and
+// every decoration writer gates on it via config.isPlainOutput().
+//
+// stdout only, deliberately: stdin may still be the real terminal while
+// stdout is piped, and that combination must NOT be treated as "no user at
+// the keyboard" — mycc stays an interactive REPL in that case. (Deriving the
+// verdict from stdin.isTTY is the trap that once killed plain `mycc`.)
+if (!process.stdout.isTTY) {
+  process.env.MYCC_PLAIN = '1';
+}
+
 // Set process title so it shows as 'mycc' in process list (ps, top, etc.)
 process.title = 'mycc';
 

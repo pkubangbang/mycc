@@ -104,7 +104,7 @@ const args = minimist(process.argv.slice(2), {
   //   (absent)           -> undefined (serve mode OFF)
   // Putting it in `string` would break bare `--serve` (yields "" not true);
   // putting it in `boolean` would swallow `--serve 9000` (port ignored).
-  boolean: ['v', 'verbose', 'skip-healthcheck', 'setup', 'debug-eval', 'debug-tp', 'disable-crossroad', 'auto', 'debug-autofly', 'allow-plan-off', 'debug-wire'],
+  boolean: ['v', 'verbose', 'skip-healthcheck', 'setup', 'debug-eval', 'debug-tp', 'disable-crossroad', 'auto', 'debug-autofly', 'allow-plan-off', 'debug-wire', 'debug-ansi'],
   string: [
     'from', 'port', 'host', 'max-upload-mb', 'autofly', 'daemon',
     'ollama-host', 'ollama-api-key', 'ollama-model', 'ollama-vision-model', 'ollama-embedding-model',
@@ -137,6 +137,11 @@ function buildCmdArgsEnv(parsed: typeof args): Record<string, string> {
     'disable-crossroad': 'MYCC_DISABLE_CROSSROAD',
     'debug-autofly': 'MYCC_DEBUG_AUTOfLY',
     'allow-plan-off': 'MYCC_ALLOW_PLAN_OFF',
+    // --debug-ansi: force the plain (no-TTY) output path while in a terminal,
+    // so the piped-rendering path can be reproduced without a second shell.
+    // Mirrored into env like the other debug flags so it survives the
+    // restart/reload spawns, which do not carry the original argv.
+    'debug-ansi': 'MYCC_DEBUG_ANSI',
     // Env-configurable vars (override .env files)
     'ollama-host': 'OLLAMA_HOST',
     'ollama-api-key': 'OLLAMA_API_KEY',
@@ -247,6 +252,40 @@ export function isDebuggingTp(): boolean {
  */
 export function isCrossroadDisabled(): boolean {
   return process.env.MYCC_DISABLE_CROSSROAD === 'true';
+}
+
+/**
+ * Check whether decorated console output must be suppressed ("plain output").
+ *
+ * Returns true when either:
+ *   - `MYCC_PLAIN` is '1' — set by the Coordinator when it detected that its
+ *     own stdout is NOT a TTY (a pipe, a redirect to a file, or another
+ *     program on the other end), or
+ *   - `MYCC_DEBUG_ANSI` is 'true' — the user forced the plain path with
+ *     `--debug-ansi` while sitting in a real terminal, to reproduce the
+ *     piped rendering without leaving their shell.
+ *
+ * "Decorated output" means every writer that draws in place or repaints the
+ * screen: the thinking spinner (engine/chat-helpers.ts), the `/wiki rebuild`
+ * progress bar (slashes/wiki.ts), the mindmap compile/diff ProgressTracker
+ * (mindmap/compile-utils.ts), the window-title OSC sequence and banner
+ * (tools/mycc_title.ts), and ANSI colour (chalk level, loop/agent-repl.ts).
+ *
+ * CRITICAL — never derive this from `process.stdout.isTTY` inside the Lead:
+ * the Lead is spawned by the Coordinator with piped stdio
+ * (src/index.ts startLead, `stdio: ['pipe','pipe','pipe','ipc']`), so its
+ * `isTTY` is ALWAYS falsy and such a check is dead code in the always-plain
+ * direction. Only the Coordinator may inspect `isTTY` (it inherits the real
+ * terminal via bin/mycc.js `stdio: 'inherit'`); it publishes the verdict as
+ * `MYCC_PLAIN` and every writer consults THIS predicate instead. The same
+ * class of mistake once disabled the `/wiki rebuild` progress bar entirely
+ * and killed plain `mycc` with "Web UI unavailable and no terminal".
+ *
+ * The verdict is recomputed on every spawn (env is re-read as
+ * `{...process.env}`), so `/load` and `/reload` keep the correct value.
+ */
+export function isPlainOutput(): boolean {
+  return process.env.MYCC_PLAIN === '1' || process.env.MYCC_DEBUG_ANSI === 'true';
 }
 
 /**

@@ -30,6 +30,8 @@ import {
   ProgressTracker,
   LockExistsError,
   get_lock_path,
+  beginProgressDisplay,
+  endProgressDisplay,
 } from './compile-utils.js';
 import { summarizeWithExplorer } from './explorer-agent.js';
 
@@ -422,20 +424,20 @@ export async function compile_mindmap(
   };
 
   // Print initial empty lines for progress display
-  process.stdout.write('\n\n\n\n');
+  beginProgressDisplay();
 
   try {
     await summarize_with_explorer(root, workDir, onProgress, onNodeStart, onNodeComplete, oldNodeMap);
   } catch (err) {
     tracker.finish();
-    process.stdout.write('\x1b[4A\x1b[J');
+    endProgressDisplay();
     remove_lock(outFile);
     throw err;
   }
 
   // Clean up and finalize
   tracker.finish();
-  process.stdout.write('\x1b[4A\x1b[J');
+  endProgressDisplay();
 
   mindmap.updated_at = new Date().toISOString();
   // Save final state to .new file
@@ -515,10 +517,10 @@ export async function compile_mindmap_from_content(
     const onProgress = (nodeTitle: string, level: number, round: number, tool: string, args: Record<string, unknown>, roundTools?: number) => {
       tracker.onProgress(nodeTitle, level, round, tool, args, roundTools);
     };
-    process.stdout.write('\n\n\n\n');
+    beginProgressDisplay();
     await summarize_with_explorer(root, process.cwd(), onProgress, onNodeStart);
     tracker.finish();
-    process.stdout.write('\x1b[4A\x1b[J');
+    endProgressDisplay();
   } else {
     await summarize_with_explorer(root, process.cwd());
   }

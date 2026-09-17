@@ -68,6 +68,7 @@ const DEBUG_FLAGS: FlagRow[] = [
   { flag: '--disable-crossroad', desc: 'Skip crossroad turning-word detection (no truncation, no continuation generation)' },
   { flag: '--debug-autofly', desc: 'Arm the autofly gate so auto mode engages on the LLM-stage streak threshold without an active peer channel' },
   { flag: '--debug-wire', desc: 'Test-only escape hatch: allow peer_connect to a same-store / self peer (same-machine smoke test)' },
+  { flag: '--debug-ansi', desc: 'Force the plain (no-TTY) output path: hide the spinner, progress bars and colour, as if stdout were piped' },
 ];
 
 /** Pad a flag column to a fixed width for aligned columns. */
