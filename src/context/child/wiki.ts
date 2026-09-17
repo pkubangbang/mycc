@@ -2,7 +2,7 @@
  * wiki.ts - ChildWiki implementation for IPC-based wiki operations
  */
 
-import type { WikiModule, WikiDocument, WikiDomain, PrepareResult, PutResult, GetOptions, SearchResult, WALEntry, RebuildResult, SkillIndexEntry } from '../../types.js';
+import type { WikiModule, WikiDocument, WikiDomain, PrepareResult, PutResult, GetOptions, SearchResult, WALEntry, RebuildResult, RebuildProgress, SkillIndexEntry } from '../../types.js';
 import { ipc } from './ipc-helpers.js';
 
 /**
@@ -148,7 +148,9 @@ export class ChildWiki implements WikiModule {
     await ipc.sendRequest<void>('wiki_wal_append', { entry });
   }
 
-  async rebuild(): Promise<RebuildResult> {
+  async rebuild(_onProgress?: (progress: RebuildProgress) => void): Promise<RebuildResult> {
+    // Progress is parent-side only: the callback is a local terminal UI hook
+    // and does not survive the IPC hop, so a child rebuild simply omits it.
     const result = await ipc.sendRequest<RebuildResult>('wiki_rebuild', {});
     return result;
   }

@@ -978,6 +978,23 @@ export interface RebuildResult {
 }
 
 /**
+ * Incremental progress signal emitted by WikiModule.rebuild() once per embed
+ * batch. `processed` counts entries fully inserted so far; `total` is the
+ * deduplicated entry count for the whole rebuild. `batchSize` is the number
+ * of entries embedded in the batch just completed (0 during the merge/filter
+ * phase). Terminal UIs render a bar from processed/total.
+ */
+export interface RebuildProgress {
+  processed: number;
+  total: number;
+  batchSize: number;
+  /** 1-based index of the batch just completed. */
+  batchIndex: number;
+  /** Total number of batches this rebuild will run. */
+  batchCount: number;
+}
+
+/**
  * Wiki module interface for persistent memory
  */
 export interface WikiModule {
@@ -1003,7 +1020,15 @@ export interface WikiModule {
   parseWAL(asciiContent: string): WALEntry[];
   formatWAL(entries: WALEntry[]): string;
   appendWAL(entry: WALEntry): Promise<void>;
-  rebuild(): Promise<RebuildResult>;
+  /**
+   * Rebuild the vector store from all WAL files.
+   *
+   * @param onProgress - Optional progress callback, invoked once per embed
+   *   batch with the running/most-recent batch counts so a terminal UI can
+   *   render a progress bar. Purely informational — the result is identical
+   *   whether or not it is supplied.
+   */
+  rebuild(onProgress?: (progress: RebuildProgress) => void): Promise<RebuildResult>;
   // Domain management
   listDomains(): Promise<WikiDomain[]>;
   getDomain(name: string): Promise<WikiDomain | undefined>;

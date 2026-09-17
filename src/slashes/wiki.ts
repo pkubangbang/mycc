@@ -13,7 +13,7 @@
  *   /wiki import <file>        - Import wiki entries from JSON
  */
 
-import type { SlashCommand, WikiModule, WALEntry, WikiDocument, WikiDomain } from '../types.js';
+import type { SlashCommand, WikiModule, WALEntry, WikiDocument, WikiDomain, RebuildProgress } from '../types.js';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
@@ -117,7 +117,13 @@ async function handleEdit(wiki: WikiModule, date: string): Promise<void> {
 async function handleRebuild(wiki: WikiModule): Promise<void> {
   console.log(chalk.cyan('\nRebuilding vector store from WAL files...\n'));
 
-  const result = await wiki.rebuild();
+  // Live progress bar (modeled on the mindmap compile ProgressTracker): a
+  // single line rewritten in place via ANSI cursor-up + clear-line, driven by
+  // the WikiManager's per-batch onProgress callback. Non-TTY output (piped,
+  // redirected, or tests) skips the ANSI dance and just prints the final line.
+  const bar = new RebuildProgressBar();
+  const result = await wiki.rebuild((p) => bar.update(p));
+  bar.finish(result.documentsProcessed);
 
   if (result.success) {
     console.log(chalk.green(`\nRebuild complete: ${result.documentsProcessed} documents processed`));
@@ -133,6 +139,53 @@ async function handleRebuild(wiki: WikiModule): Promise<void> {
     for (const error of result.errors) {
       console.log(chalk.red(`  - ${error}`));
     }
+  }
+}
+
+/**
+ * Renders a single-line "[wiki] [████░░░░] 1234/2000  batch 5/16" progress
+ * bar that is rewritten in place.
+ *
+ * Writes unconditionally — modeled directly on the mindmap compile
+ * ProgressTracker (compile-utils.ts), which likewise never probes the stream.
+ * This matters because the Lead process does NOT own a real TTY: the
+ * Coordinator spawns it with stdio piped (see src/index.ts startLead,
+ * `stdio: ['pipe','pipe','pipe','ipc']`) and forwards the bytes to the user's
+ * terminal verbatim. So `process.stdout.isTTY` is always falsy inside the
+ * Lead, and an `isTTY` gate here would permanently suppress the bar — which is
+ * exactly the bug this replaces. The ANSI cursor-up/clear-line sequence is
+ * interpreted by the real terminal at the end of the pipe.
+ */
+class RebuildProgressBar {
+  private rendered = false;
+  private lastLine = '';
+
+  update(p: RebuildProgress): void {
+    if (p.total <= 0) return;
+    this.lastLine = this.format(p);
+
+    if (!this.rendered) {
+      this.rendered = true;
+      process.stdout.write(`${this.lastLine}\n`);
+    } else {
+      // Move up 1 line, clear it, rewrite.
+      process.stdout.write(`\x1b[1A\x1b[2K${this.lastLine}\n`);
+    }
+  }
+
+  /** Erase the in-place line (so the caller's summary prints cleanly). */
+  finish(_processed: number): void {
+    if (this.rendered) {
+      process.stdout.write('\x1b[1A\x1b[2K');
+    }
+  }
+
+  private format(p: RebuildProgress): string {
+    const percent = Math.round((p.processed / p.total) * 100);
+    const filled = Math.floor(percent / 5);
+    const bar = '█'.repeat(filled) + '░'.repeat(20 - filled);
+    const batch = p.batchCount > 0 ? `  batch ${p.batchIndex}/${p.batchCount}` : '';
+    return `[wiki] [${bar}] ${p.processed}/${p.total}${batch}`;
   }
 }
 
