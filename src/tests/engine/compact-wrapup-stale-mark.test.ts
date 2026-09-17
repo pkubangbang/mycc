@@ -181,8 +181,10 @@ describe('compact() resets wrapUpMark — stale-mark sparse-hole crash', () => {
       t.rollbackWrapUp();
     }
 
-    // Array must NOT be stretched: length stays at the compacted size (<=2).
-    expect(internals(t).messageCount()).toBeLessThanOrEqual(2);
+    // Array must NOT be stretched: length stays at the compacted size (<=3:
+    // compact now produces a 3-message user+assistant(brief)+tool resume
+    // sequence instead of the historical 2-message pair).
+    expect(internals(t).messageCount()).toBeLessThanOrEqual(3);
     // No undefined/null/non-object holes — the crash seed.
     const messages = t.getMessagesRaw();
     for (let i = 0; i < messages.length; i++) {

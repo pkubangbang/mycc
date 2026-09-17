@@ -332,8 +332,19 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
       // Ensure we have a valid message sequence before calling LLM
       if (lastRole === 'assistant') {
         // Last message was assistant with no tool calls - need user message before next LLM call
-        // This can happen after resuming from idle without new input
-        triologue.note('REMINDER', 'Continue with your task.');
+        // This can happen after resuming from idle without new input.
+        //
+        // Do NOT blanket-inject "Continue with your task." — that is a
+        // synthetic "continue" directive the teammate reads as sanction to
+        // auto-progress without review. Only bridge when there is genuinely
+        // in-flight work to resume (an open todo), and frame it as
+        // re-orienting on that specific task rather than drifting forward.
+        // When there is no open todo, there is nothing to resume — injecting
+        // "continue" would push the teammate to fabricate work instead of
+        // idling or reporting completion.
+        if (ctx.todo.hasOpenTodo()) {
+          triologue.note('REMINDER', `Re-orient on your open todos and decide the next step:\n${ctx.todo.printTodoList()}`);
+        }
       }
 
       triologue.setSystemPrompt(buildNormalModePrompt(WORKDIR, { name: teammateName, role: teammateRole }));
@@ -395,8 +406,8 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
           reportStuckTurn('LLM turn watchdog', elapsed);
           triologue.note('SYSTEM',
             `Previous LLM turn was aborted by the stuck-teammate watchdog after ${Math.round(elapsed / 1000)}s ` +
-            `(likely the LLM endpoint hung). No response was received. Continue your task; ` +
-            `check mailbox for any new instructions from lead.`);
+            `(likely the LLM endpoint hung). No response was received. ` +
+            `Check mailbox for any new instructions from lead and re-orient on your open todos before proceeding.`);
           continue;
         }
         // Non-watchdog error: rethrow into the outer try/catch (briefs + 1s pause + retry).
@@ -571,8 +582,11 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
       const errorMsg = (err as Error).message;
       ctx.core.brief('error', 'loop', `Error in main loop: ${errorMsg}. Recovering...`);
 
-      // Add error to triologue so LLM knows what happened
-      triologue.note('SYSTEM', `An error occurred: ${errorMsg}. Please continue with your task.`);
+      // Add error to triologue so LLM knows what happened. Report the error
+      // fact only — do NOT append a "Please continue with your task." trailer,
+      // which the teammate reads as sanction to auto-progress past the error
+      // instead of re-orienting on its open todos.
+      triologue.note('SYSTEM', `An error occurred: ${errorMsg}. Re-orient on your open todos to decide the next step.`);
 
       consecutiveFailures++;
 
