@@ -55,6 +55,7 @@ export const contextFactories = {
       getAuto: () => false,
       setAuto: () => {},
       getMindmap: () => null,
+      isPlainOutput: () => false,
       setMindmap: () => {},
       getConfusionIndex: () => 0,
       increaseConfusionIndex: () => {},

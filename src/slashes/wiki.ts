@@ -19,7 +19,7 @@ import * as path from 'path';
 import * as os from 'os';
 import * as crypto from 'crypto';
 import chalk from 'chalk';
-import { getWikiLogsDir, getWikiDomainsFile, ensureDirs } from '../config.js';
+import { getWikiLogsDir, getWikiDomainsFile, ensureDirs, isPlainOutput } from '../config.js';
 import { openEditor } from '../utils/open-editor.js';
 
 function formatDate(date: Date): string {
@@ -146,21 +146,24 @@ async function handleRebuild(wiki: WikiModule): Promise<void> {
  * Renders a single-line "[wiki] [████░░░░] 1234/2000  batch 5/16" progress
  * bar that is rewritten in place.
  *
- * Writes unconditionally — modeled directly on the mindmap compile
- * ProgressTracker (compile-utils.ts), which likewise never probes the stream.
- * This matters because the Lead process does NOT own a real TTY: the
- * Coordinator spawns it with stdio piped (see src/index.ts startLead,
- * `stdio: ['pipe','pipe','pipe','ipc']`) and forwards the bytes to the user's
- * terminal verbatim. So `process.stdout.isTTY` is always falsy inside the
- * Lead, and an `isTTY` gate here would permanently suppress the bar — which is
- * exactly the bug this replaces. The ANSI cursor-up/clear-line sequence is
- * interpreted by the real terminal at the end of the pipe.
+ * Suppressed under `isPlainOutput()` (piped stdout, or --debug-ansi): an
+ * in-place bar is a terminal affordance and would corrupt a piped stream with
+ * cursor-up / clear-line escapes.
+ *
+ * Do NOT gate this on `process.stdout.isTTY`. The Lead does NOT own a real
+ * TTY — the Coordinator spawns it with stdio piped (see src/index.ts
+ * startLead, `stdio: ['pipe','pipe','pipe','ipc']`) and forwards the bytes to
+ * the user's terminal verbatim — so `isTTY` here is ALWAYS falsy and an
+ * `isTTY` gate would permanently suppress the bar (the bug commit 999a463
+ * fixed). The Coordinator publishes the real verdict as MYCC_PLAIN; consult
+ * it through `isPlainOutput()`.
  */
 class RebuildProgressBar {
   private rendered = false;
   private lastLine = '';
 
   update(p: RebuildProgress): void {
+    if (isPlainOutput()) return;
     if (p.total <= 0) return;
     this.lastLine = this.format(p);
 
@@ -175,6 +178,7 @@ class RebuildProgressBar {
 
   /** Erase the in-place line (so the caller's summary prints cleanly). */
   finish(_processed: number): void {
+    if (isPlainOutput()) return;
     if (this.rendered) {
       process.stdout.write('\x1b[1A\x1b[2K');
     }

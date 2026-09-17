@@ -97,7 +97,7 @@ export const myccTitleTool: ToolDefinition = {
     required: ['title'],
   },
   scope: ['main', 'child'],
-  handler: (_ctx: AgentContext, args: Record<string, unknown>): string => {
+  handler: (ctx: AgentContext, args: Record<string, unknown>): string => {
     const rawTitle = args.title as string;
 
     if (!rawTitle || typeof rawTitle !== 'string') {
@@ -108,10 +108,20 @@ export const myccTitleTool: ToolDefinition = {
     // then apply the canonical "mycc: " prefix consistently.
     const title = normalizeTitle(rawTitle);
 
-    // ANSI OSC 0 escape sequence — sets both window title and icon/tab title
-    // Format: ESC ] 0 ; <title> BEL
-    // Supported by: GNOME Terminal, iTerm2, Windows Terminal, tmux, screen, etc.
-    process.stdout.write(`\x1b]0;${title}\x07`);
+    // Decoration gate: the plain-output verdict is relayed through the context
+    // (ctx.core.isPlainOutput()) instead of reading config's env predicate
+    // directly, so the tool depends only on its declared ctx contract and stays
+    // testable with a stub context. When plain, skip the OSC escape and the
+    // banner — but `process.title` below is still set, because it is process
+    // state (what Task Manager shows), not terminal output.
+    const plain = ctx.core.isPlainOutput();
+
+    if (!plain) {
+      // ANSI OSC 0 escape sequence — sets both window title and icon/tab title
+      // Format: ESC ] 0 ; <title> BEL
+      // Supported by: GNOME Terminal, iTerm2, Windows Terminal, tmux, screen, etc.
+      process.stdout.write(`\x1b]0;${title}\x07`);
+    }
 
     // Windows fallback for legacy conhost without VT support
     // process.title also changes the title shown in task manager
@@ -120,7 +130,9 @@ export const myccTitleTool: ToolDefinition = {
     }
 
     // Print prominent banner so user can quickly identify the session
-    printBanner(title);
+    if (!plain) {
+      printBanner(title);
+    }
 
     return 'OK';
   },

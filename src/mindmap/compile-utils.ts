@@ -5,6 +5,7 @@
 import * as fs from 'fs';
 import type { Node, MarkdownSection, Link, MindmapJSON } from './types.js';
 import { safeNodeId } from '../utils/sanitize.js';
+import { isPlainOutput } from '../config.js';
 
 /**
  * Regular expressions for markdown parsing
@@ -461,6 +462,14 @@ export class ProgressTracker {
    * Render the fixed 4-line display
    */
   private render(): void {
+    // Decoration gate: in plain mode (stdout piped/redirected, or --debug-ansi)
+    // draw nothing at all. Note this is NOT `process.stdout.isTTY` — the Lead
+    // never owns a TTY (its stdio is piped by the Coordinator at
+    // src/index.ts:179), so an isTTY gate here would suppress the tracker
+    // permanently even on a real terminal. The verdict is derived by the
+    // Coordinator and delivered via MYCC_PLAIN (see isPlainOutput()).
+    if (isPlainOutput()) return;
+
     const percent = Math.round((this.processed / this.total) * 100);
     const bar = '█'.repeat(Math.floor(percent / 5)) + '░'.repeat(20 - Math.floor(percent / 5));
 
@@ -490,6 +499,40 @@ export class ProgressTracker {
     // Move cursor up 4 lines, clear, then write all lines
     process.stdout.write(`\x1b[4A${lines.map((l) => `\x1b[2K${l}`).join('\n')}\n`);
   }
+}
+
+/**
+ * Reserve the 4-line region used by {@link ProgressTracker}.
+ *
+ * Emits the four newlines that create the vertical space the tracker then
+ * overwrites in place. No-op in plain mode (see {@link isPlainOutput}).
+ *
+ * MUST be paired with {@link endProgressDisplay}: if the reserve is emitted
+ * but the erase is not (or vice versa), plain output gains four stray blank
+ * lines or loses four lines of real content. Never gate one without the other.
+ */
+export function beginProgressDisplay(): void {
+  if (isPlainOutput()) return;
+  // THE reserve write: four newlines create the vertical space the tracker
+  // overwrites in place. Callers must NOT emit this themselves — the raw
+  // `\n\n\n\n` used to be duplicated around these helpers, which bypassed
+  // the plain-mode gate and added four stray blank lines to piped output.
+  process.stdout.write('\n\n\n\n');
+}
+
+/**
+ * Erase the 4-line region reserved by {@link beginProgressDisplay}.
+ *
+ * Moves the cursor up 4 lines and clears to the end of the screen, removing
+ * the tracker display. No-op in plain mode — see {@link beginProgressDisplay}
+ * for the pairing invariant.
+ */
+export function endProgressDisplay(): void {
+  if (isPlainOutput()) return;
+  // THE erase write (see {@link beginProgressDisplay}): callers must not
+  // duplicate this raw escape, which previously leaked cursor-control bytes
+  // into piped output.
+  process.stdout.write('\x1b[4A\x1b[J');
 }
 
 /**

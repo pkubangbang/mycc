@@ -23,13 +23,13 @@ describe('myccTitleTool', () => {
   });
 
   it('should return error for missing title', () => {
-    const ctx = { core: { getWorkDir: () => '/tmp' } } as any;
+    const ctx = { core: { getWorkDir: () => '/tmp', isPlainOutput: () => false } } as any;
     const result = myccTitleTool.handler(ctx, {});
     expect(result).toBe('Error: title parameter is required and must be a string');
   });
 
   it('should return error for non-string title', () => {
-    const ctx = { core: { getWorkDir: () => '/tmp' } } as any;
+    const ctx = { core: { getWorkDir: () => '/tmp', isPlainOutput: () => false } } as any;
     const result = myccTitleTool.handler(ctx, { title: 123 });
     expect(result).toBe('Error: title parameter is required and must be a string');
   });
@@ -59,13 +59,13 @@ describe('myccTitleTool', () => {
     });
 
     it('should return OK for a valid title', () => {
-      const ctx = { core: { getWorkDir: () => '/tmp' } } as any;
+      const ctx = { core: { getWorkDir: () => '/tmp', isPlainOutput: () => false } } as any;
       const result = myccTitleTool.handler(ctx, { title: 'test title' });
       expect(result).toBe('OK');
     });
 
     it('should write the ANSI OSC 0 escape sequence with the normalized title', () => {
-      const ctx = { core: { getWorkDir: () => '/tmp' } } as any;
+      const ctx = { core: { getWorkDir: () => '/tmp', isPlainOutput: () => false } } as any;
       myccTitleTool.handler(ctx, { title: 'fixing bash tool' });
       // The OSC 0 sequence: ESC ] 0 ; <title> BEL. The normalized title gets the
       // canonical "mycc: " prefix applied.
@@ -75,7 +75,7 @@ describe('myccTitleTool', () => {
     });
 
     it('should also write a visible banner to stdout', () => {
-      const ctx = { core: { getWorkDir: () => '/tmp' } } as any;
+      const ctx = { core: { getWorkDir: () => '/tmp', isPlainOutput: () => false } } as any;
       myccTitleTool.handler(ctx, { title: 'demo' });
       // The banner is multi-line: at least the OSC line + banner lines. Joining
       // all writes, the normalized title must appear in the banner text too.
@@ -84,7 +84,7 @@ describe('myccTitleTool', () => {
     });
 
     it('should NOT write the OSC sequence when the title is missing (early return)', () => {
-      const ctx = { core: { getWorkDir: () => '/tmp' } } as any;
+      const ctx = { core: { getWorkDir: () => '/tmp', isPlainOutput: () => false } } as any;
       myccTitleTool.handler(ctx, {});
       expect(writes.some(w => w.includes('\x1b]0;'))).toBe(false);
     });
@@ -92,7 +92,7 @@ describe('myccTitleTool', () => {
     // --- normalizeTitle prefix-stripping coverage ---
 
     it('normalizeTitle: strips an existing "mycc: " prefix and re-applies the canonical one', () => {
-      const ctx = { core: { getWorkDir: () => '/tmp' } } as any;
+      const ctx = { core: { getWorkDir: () => '/tmp', isPlainOutput: () => false } } as any;
       myccTitleTool.handler(ctx, { title: 'mycc: fixing bash' });
       const osc = writes.find(w => w.includes('\x1b]0;'))!;
       expect(osc).toContain('\x1b]0;mycc: fixing bash\x07');
@@ -101,24 +101,59 @@ describe('myccTitleTool', () => {
     });
 
     it('normalizeTitle: strips "mycc - " separator variant', () => {
-      const ctx = { core: { getWorkDir: () => '/tmp' } } as any;
+      const ctx = { core: { getWorkDir: () => '/tmp', isPlainOutput: () => false } } as any;
       myccTitleTool.handler(ctx, { title: 'mycc - peer work' });
       const osc = writes.find(w => w.includes('\x1b]0;'))!;
       expect(osc).toContain('\x1b]0;mycc: peer work\x07');
     });
 
     it('normalizeTitle: strips a case-insensitive "MyCC:" prefix', () => {
-      const ctx = { core: { getWorkDir: () => '/tmp' } } as any;
+      const ctx = { core: { getWorkDir: () => '/tmp', isPlainOutput: () => false } } as any;
       myccTitleTool.handler(ctx, { title: 'MyCC: session work' });
       const osc = writes.find(w => w.includes('\x1b]0;'))!;
       expect(osc).toContain('\x1b]0;mycc: session work\x07');
     });
 
     it('normalizeTitle: collapses to bare "mycc" when only the prefix is given', () => {
-      const ctx = { core: { getWorkDir: () => '/tmp' } } as any;
+      const ctx = { core: { getWorkDir: () => '/tmp', isPlainOutput: () => false } } as any;
       myccTitleTool.handler(ctx, { title: 'mycc' });
       const osc = writes.find(w => w.includes('\x1b]0;'))!;
       expect(osc).toContain('\x1b]0;mycc\x07');
+    });
+  });
+
+  // --- plain-output relay ---
+  // The verdict comes from ctx.core.isPlainOutput() (relayed from the
+  // Coordinator), NOT from a config import. A stub context drives both paths.
+  describe('plain-output suppression (via ctx.core.isPlainOutput())', () => {
+    let writes: string[];
+    let stdoutSpy: ReturnType<typeof vi.spyOn>;
+
+    beforeEach(() => {
+      writes = [];
+      stdoutSpy = vi.spyOn(process.stdout, 'write').mockImplementation((chunk: unknown) => {
+        writes.push(String(chunk));
+        return true;
+      });
+    });
+
+    afterEach(() => {
+      stdoutSpy.mockRestore();
+    });
+
+    it('writes the OSC escape and banner when ctx reports decorated output', () => {
+      const ctx = { core: { isPlainOutput: () => false } } as any;
+      myccTitleTool.handler(ctx, { title: 'decorated' });
+      expect(writes.some(w => w.includes('\x1b]0;mycc: decorated\x07'))).toBe(true);
+      expect(writes.join('')).toContain('mycc: decorated');
+    });
+
+    it('writes NOTHING to stdout when ctx reports plain output', () => {
+      const ctx = { core: { isPlainOutput: () => true } } as any;
+      const result = myccTitleTool.handler(ctx, { title: 'piped run' });
+      expect(result).toBe('OK');
+      // No OSC escape, no banner — the tool still succeeds.
+      expect(writes.join('')).toBe('');
     });
   });
 });

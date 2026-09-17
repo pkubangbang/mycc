@@ -7,6 +7,7 @@
 
 import type { Mindmap } from '../../mindmap/types.js';
 import { webSearch as engineWebSearch, webFetch as engineWebFetch } from '../../engine/chat-provider.js';
+import { isPlainOutput as configIsPlainOutput } from '../../config.js';
 import { WebFetchResponse, WebSearchResult } from 'ollama';
 
 /**
@@ -46,6 +47,25 @@ export abstract class BaseCore {
    */
   getMindmap(): Mindmap | null {
     return this.mindmap;
+  }
+
+  /**
+   * Whether stdout decoration (spinner, progress bars, colour, title escapes)
+   * must be suppressed because the output is plain — i.e. it is being piped or
+   * redirected, or the user forced the plain path with `--debug-ansi`.
+   *
+   * This is the SINGLE verdict every decoration writer should consult rather
+   * than deriving a TTY check of its own: the verdict is computed in the
+   * Coordinator (the only process that owns the real terminal) and delivered
+   * through the environment as `MYCC_PLAIN`; `isPlainOutput()` in config.ts is
+   * the one predicate that reads it.
+   *
+   * Process-local and uniform: unlike the IPC-backed members, this needs no
+   * round-trip — the env var is inherited by both the parent and every child
+   * (teammate) process, so both observe the same answer.
+   */
+  isPlainOutput(): boolean {
+    return configIsPlainOutput();
   }
 
   /**
