@@ -22,6 +22,7 @@
   "scripts": {
     "start": "tsx src/index.ts",
     "test": "npm run typecheck && npm run typecheck:test && npm run typecheck:web && vitest run",
+    "test:tty": "cross-env MYCC_TTY_TESTS=1 vitest run src/tests/plain-output-tty.test.ts",
     "typecheck": "tsc --noEmit",
     "typecheck:test": "tsc --noEmit -p tsconfig.test.json",
     "typecheck:web": "vue-tsc --noEmit -p src/web/tsconfig.json",
