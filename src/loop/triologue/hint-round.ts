@@ -30,7 +30,7 @@ const HINT_SCHEMA = {
     },
     next_step: {
       type: 'string',
-      description: 'Concrete, actionable next step. If no blockers, suggest continuing current work. May also carry efficiency guidance (e.g. batch independent tool calls) when the agent is making cautious single-tool turns.',
+      description: 'Concrete, actionable next step describing what the remaining task IS (not a "Continue ..." authorization to progress past a review point). May also carry efficiency guidance (e.g. batch independent tool calls) when the agent is making cautious single-tool turns.',
     },
     focus_on: {
       type: 'string',
@@ -56,7 +56,7 @@ const HINT_SYSTEM_PROMPT = `You are a problem-analysis assistant. Your task is t
 
 CRITICAL INSTRUCTIONS:
 1. If there are NO REAL blockers preventing progress, set blocker to exactly: "no blockers"
-2. Do NOT fabricate blockers. "no blockers" means there is no real obstacle — the hint-round itself will then be a SILENT no-op (no [HINT] note is injected), so the next_step you supply here will NOT be shown to the agent. Still fill next_step / focus_on / wiki_query with a genuine description of the current task for the downstream keyword-extraction, but do NOT frame next_step as a "Continue ..." instruction — there is no blocker to authorize progress past.
+2. Do NOT fabricate blockers. "no blockers" means there is no real obstacle. In that case still fill next_step / focus_on / wiki_query with a genuine description of the current task. IMPORTANT: never frame next_step as a "Continue ..." or "you're fine, keep going" authorization to progress — describe what the remaining task IS (e.g. "The remaining work is completing test coverage for the compact module"), not a sanction to move past a review point. The [HINT] note is always injected when should_compact is false, so the agent will read whatever you write here.
 3. When the blocker involves errors, unfamiliar tools, or missing knowledge, ALWAYS suggest a wiki search by setting wiki_domain and wiki_query. The available domains are listed below. Only leave both empty if the blocker is purely about code logic or syntax.
 4. wiki_query construction:
    - Use 3-8 keywords extracted from the error message, tool name, or concept causing the blocker.
@@ -79,7 +79,7 @@ EXAMPLE A — blocker involves an unfamiliar tool error:
 EXAMPLE B — blocker is a missing API pattern:
 {"blocker":"Agent doesn't know how to register a new wiki domain programmatically","next_step":"Search wiki for domain registration API and follow the documented pattern","focus_on":"wiki domain registration API","wiki_domain":"api","wiki_query":"wiki domain register create API","should_compact":false}
 
-EXAMPLE C — no real blocker (no [HINT] note will be injected; next_step still describes the active task for keyword extraction):
+EXAMPLE C — no real blocker (describe the remaining task; do NOT frame this as a "Continue ..." authorization):
 {"blocker":"no blockers","next_step":"The remaining work is completing test coverage for the compact module","focus_on":"completing test coverage","wiki_domain":"project","wiki_query":"test coverage remaining cases","should_compact":false}
 
 EXAMPLE D — cautious moves (single-tool turns, encourage batching):
@@ -282,23 +282,6 @@ export class HintRoundManager {
       if (hintData.should_compact) {
         agentIO.verbose('triologue', `Hint round signalled compaction: ${hintData.blocker}`);
         return 'compact';
-      }
-
-      // ── "no blockers" suppression ──
-      // When the analysis finds NO real blocker, the hint-round has nothing
-      // actionable to say. Injecting a [HINT] note with "no blockers / Continue
-      // ..." is actively HARMFUL: the agent reads its own [HINT] note as a
-      // sanction to keep auto-progressing past points where the user should
-      // review — it treats the synthetic "Continue ..." next_step as approval
-      // to go forward instead of pausing. A hint that finds no blocker must
-      // be a SILENT no-op: return success with focusOn (so the composite
-      // keyword-extraction Z-source in collect.ts still works) but inject NO
-      // note. The confusion index is reset by the caller (runHintRound in
-      // collect.ts) regardless, so the round still serves its throttle
-      // purpose without broadcasting a "you're fine, keep going" message.
-      if (hintData.blocker === 'no blockers') {
-        agentIO.verbose('triologue', 'Hint round found no blockers — suppressing [HINT] note to avoid sanctioning auto-progression');
-        return { status: 'success', focusOn: hintData.focus_on };
       }
 
       // Format hint data for better readability

@@ -207,21 +207,25 @@ describe('Hint Round JSON Output', () => {
   });
 
   // ---------------------------------------------------------------------------
-  // "no blockers" suppression (regression: do not sanction auto-progression)
+  // "no blockers" note injection (the note is NEVER silently suppressed)
   // ---------------------------------------------------------------------------
-  // When the analysis finds no real blocker, injecting a [HINT] note with
-  // "no blockers / Continue ..." misleads the agent into treating its own
-  // note as approval to keep auto-progressing past review points. The fix:
-  // suppress the note (return success + focusOn for the keyword-extraction
-  // Z-source, but inject NO [HINT] message). This locks in the fix against
-  // regression.
+  // The hint-round always injects a [HINT] note when should_compact is false,
+  // INCLUDING the "no blockers" case. Suppressing the note on "no blockers"
+  // was a hazard: it swallowed genuinely valuable guidance (e.g. EXAMPLE D's
+  // batch-encouragement coaching, which carries blocker:"no blockers") just
+  // because the blocker label was the magic string "no blockers". The
+  // anti-auto-progression concern that motivated the old suppression is now
+  // handled in the PROMPT: instruction #2 and EXAMPLE C forbid framing
+  // next_step as a "Continue ..." authorization. These tests lock in that the
+  // note is always injected (no silent no-op), so a regression that re-adds
+  // the suppression is caught.
   // ---------------------------------------------------------------------------
 
-  it('suppresses the [HINT] note when blocker is "no blockers" (no auto-progression sanction)', async () => {
+  it('injects the [HINT] note when blocker is "no blockers" (note is never silently suppressed)', async () => {
     vi.mocked(retryChat).mockResolvedValueOnce(
       validHintResponse({
         blocker: 'no blockers',
-        next_step: 'Continue implementing the remaining test cases',
+        next_step: 'The remaining work is completing test coverage for the compact module',
         focus_on: 'completing test coverage',
       }) as never,
     );
@@ -235,15 +239,19 @@ describe('Hint Round JSON Output', () => {
     // focusOn is still returned so the composite keyword-extraction Z-source
     // in collect.ts keeps working.
     expect(result).toEqual({ status: 'success', focusOn: 'completing test coverage' });
-    // NO [HINT] note injected — the round is a silent no-op.
+    // The [HINT] note IS injected — "no blockers" is no longer a silent no-op.
+    // This is the key inversion of the old suppression behavior.
     const messages = triologue.getMessagesRaw();
-    expect(messages.find((m) => m.content?.startsWith('[HINT]'))).toBeUndefined();
+    const hintMsg = messages.find((m) => m.content?.startsWith('[HINT]'));
+    expect(hintMsg).toBeDefined();
+    expect(hintMsg!.content).toContain('**Blocker:** no blockers');
+    expect(hintMsg!.content).toContain('**Next Step:** The remaining work is completing test coverage for the compact module');
+    expect(hintMsg!.content).toContain('**Focus On:** completing test coverage');
   });
 
   it('still injects the [HINT] note for a real (non-"no blockers") blocker', async () => {
-    // Regression guard: the suppression must be EXACT — only the literal
-    // "no blockers" blocker is suppressed. Any other blocker (even one
-    // containing the word "no") still injects the note.
+    // Guard: a blocker that merely contains the word "no" (but is not the
+    // literal "no blockers") injects the note just like any real blocker.
     vi.mocked(retryChat).mockResolvedValueOnce(
       validHintResponse({ blocker: 'no such file: config.json' }) as never,
     );
