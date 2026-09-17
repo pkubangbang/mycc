@@ -476,10 +476,12 @@ async function runHintRound(env: MachineEnv, turn: TurnVars): Promise<HintSignal
   // hook-deferred compaction path (hook.ts sets deferredCompact → llm.ts
   // compacts and continues the while-loop).
   //
-  // TP parity: compact() replaces the conversation with a 2-message
-  // [summary_user, summary_assistant] pair, so getLastRole() is
-  // 'assistant' — any note/user/tool the following states inject starts
-  // from a legal role sequence. No special TP handling needed here.
+  // TP parity: compact() replaces the conversation with a 3-message
+  // [summary_user, brief_assistant, brief_tool] resume sequence, so
+  // getLastRole() is 'tool' — the next agent() (the real LLM response) is a
+  // natural tool→assistant transition. Any note/user/tool the following
+  // states inject starts from a legal role sequence. No special TP handling
+  // needed here.
   //
   // Stat reset MUST mirror the llm.ts auto-compact branch: the stale
   // sequence events, embedding tracker, hook dedup cap, and crossroad

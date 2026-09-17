@@ -282,7 +282,7 @@ describe('TriologueLite', () => {
       expect(t.needsCompact()).toBe(true);
     });
 
-    it('compact() replaces the conversation with a summary pair', async () => {
+    it('compact() replaces the conversation with a summary + brief tool-call resume', async () => {
       t.user('fix the login bug');
       t.agent('done');
       // Force over threshold via a TOOL result (a tool result does NOT update
@@ -292,11 +292,54 @@ describe('TriologueLite', () => {
       t.tool('bash', 'y'.repeat(5000), 'over-threshold-id');
       expect(t.needsCompact()).toBe(true);
       await t.compact();
-      // Post-compact pair is tiny (mocked summary + small lastUserQuery).
+      // Post-compact sequence is tiny (mocked summary + small lastUserQuery).
       expect(t.needsCompact()).toBe(false);
       const raw = t.getMessagesRaw();
-      expect(raw.length).toBeGreaterThanOrEqual(2);
+      // 3-message resume shape: user(summary) + assistant(brief tool_call) + tool(brief result).
+      expect(raw.length).toBe(3);
       expect(raw[0].role).toBe('user');
+      expect(raw[1].role).toBe('assistant');
+      expect(raw[1].tool_calls).toBeDefined();
+      expect(raw[1].tool_calls!.length).toBe(1);
+      expect((raw[1].tool_calls![0] as ToolCall).function.name).toBe('brief');
+      expect(raw[2].role).toBe('tool');
+      expect(raw[2].tool_name).toBe('brief');
+      expect(raw[2].tool_call_id).toBe((raw[1].tool_calls![0] as ToolCall).id);
+    });
+
+    it('compact() leaves lastRole === "tool" so the next agent() is a TP-valid tool→assistant transition (no duplicate_assistant fix)', async () => {
+      // Regression guard for the compact→LLM TP parity boundary.
+      // Root cause this locks in: a synthetic assistant after compact left
+      // lastRole === 'assistant', so the next real agent() tripped the
+      // duplicate_assistant TP auto-fixer — normal control flow depended on
+      // structural-violation recovery. The fix returns a 3-message brief
+      // tool-call round-trip ending in 'tool', so the next agent() is a
+      // natural tool→assistant transition with no TP violation.
+      t.user('fix the login bug');
+      t.agent('done');
+      t.tool('bash', 'y'.repeat(5000), 'over-threshold-id');
+      expect(t.needsCompact()).toBe(true);
+      await t.compact();
+
+      // Post-compact last role is 'tool' (the brief tool result), NOT 'assistant'.
+      expect(t.getLastRole()).toBe('tool');
+
+      // The next agent() (the real LLM response) is a clean tool→assistant
+      // transition: no duplicate_assistant TP recovery message is injected.
+      const beforeLen = t.getMessagesRaw().length;
+      t.agent('the real LLM response after compact');
+      const afterLen = t.getMessagesRaw().length;
+      // Exactly one message appended (the assistant) — no TP bridge injected.
+      expect(afterLen - beforeLen).toBe(1);
+      // Final shape is the 3-message resume + 1 real assistant = 4 messages.
+      expect(t.getMessagesRaw().length).toBe(4);
+      // No synthetic TP-recovery tool message (role:'tool' with tool_name
+      // '__tp_recovery_unknown_tool__' or content starting '[TP_RECOVERY]')
+      // was injected between the compact and the real assistant.
+      const tpRecovery = t.getMessagesRaw().find(
+        (m) => m.role === 'tool' && (m.tool_name === '__tp_recovery_unknown_tool__' || (m.content ?? '').startsWith('[TP_RECOVERY]')),
+      );
+      expect(tpRecovery).toBeUndefined();
     });
 
     it('compact() rebuilds project context at the boundary', async () => {

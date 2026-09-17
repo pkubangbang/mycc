@@ -13,7 +13,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { retryChat, MODEL, forkChat } from '../../engine/chat-provider.js';
-import type { Message, Tool } from '../../types.js';
+import type { Message, Tool, ToolCall } from '../../types.js';
 import { minifyMessages } from '../../utils/llm-chat-minifier.js';
 import { getSessionContext, getSessionDir } from '../../config.js';
 
@@ -183,21 +183,61 @@ export async function runAutoCompact(deps: CompactDeps, focus?: string, signal?:
 
   const summaryPrefix = `[Conversation compressed. ${focusPrefix}Transcript: ${transcriptPath}]\n\n`;
 
-  // The synthetic assistant message must signal an idle→work RESUMPTION,
-  // NOT an approval/affirmation. A declarative "Continuing." reads as the
-  // agent having already committed to going forward — the LLM then treats
-  // it as consent to drift instead of actively re-orienting on the in-flight
-  // task. We name the summary sections explicitly (Current State, Recent
-  // Working Memory) so the agent's next move is to re-engage with the
-  // unfinished work recorded there, not to blandly affirm and continue.
+  // Resume instruction appended to the user summary so the agent re-engages
+  // with the unfinished work recorded there rather than blandly affirming.
+  const reorientInstruction =
+    '\n\n--- Resume: review "Current State" and "Recent Working Memory" above to re-orient on the in-flight task and decide the next step.';
+
+  // The post-compact sequence is a 3-message brief tool-call round-trip:
+  //
+  //   user      → [summary + resume instruction]
+  //   assistant → (empty content + brief tool_call)
+  //   tool      → (brief tool result)
+  //
+  // This ends the store with lastRole === 'tool', so the NEXT agent() (the
+  // real LLM response in the LLM→HOOK stage) is a natural tool → assistant
+  // transition — the same transition every TOOL→COLLECT→LLM→HOOK cycle uses.
+  // No TP violation, no dependence on the duplicate_assistant auto-fixer.
+  //
+  // Why a brief tool call instead of a synthetic assistant "Continuing." /
+  // "re-orient..." text: a synthetic assistant message is infrastructure
+  // pretending to be a model turn — it reads as authorization to drift
+  // forward, and (worse) it leaves lastRole === 'assistant', so the next
+  // real agent() trip the duplicate_assistant TP fixer, making normal
+  // control flow depend on structural-violation recovery. The brief tool
+  // call instead gives the LLM its established thinking step (the same
+  // pattern llm.ts uses for empty-output recovery and hook.ts uses for
+  // crossroad), and the round-trip ends in 'tool' — the cleanest possible
+  // handoff to the next real assistant turn. The model's next response is
+  // then a genuine reaction to its own brief + the summary, not a
+  // continuation of a fabricated assertion.
+  const briefCallId = `compact_resume_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
   return [
     {
       role: 'user',
-      content: `${summaryPrefix}${summary}${focusSection}${userQueryNote}`,
+      content: `${summaryPrefix}${summary}${focusSection}${userQueryNote}${reorientInstruction}`,
     },
     {
       role: 'assistant',
-      content: 'I have the compressed context above. Let me re-orient on the in-flight task by reviewing "Current State" and "Recent Working Memory" to decide the next step.',
+      content: '',
+      tool_calls: [
+        {
+          id: briefCallId,
+          function: {
+            name: 'brief',
+            arguments: {
+              message: 'Re-orienting on the compacted summary to resume the in-flight task.',
+              confidence: 7,
+            },
+          },
+        },
+      ] as ToolCall[],
+    },
+    {
+      role: 'tool',
+      tool_name: 'brief',
+      content: 'OK',
+      tool_call_id: briefCallId,
     },
   ];
 }

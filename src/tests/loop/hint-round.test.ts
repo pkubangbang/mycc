@@ -250,7 +250,14 @@ describe('Hint Round JSON Output', () => {
 
     const result = await triologue.generateHintRound(new AbortController(), 10, 'breakdown');
 
-    expect(result.status).toBe('success');
+    // Narrow the discriminated union: only the { status, focusOn } variant
+    // carries .status. The 'aborted'/'compact' string variants do not, so
+    // accessing result.status directly is a TS error on the union.
+    expect(result).not.toBe('aborted');
+    expect(result).not.toBe('compact');
+    if (typeof result === 'object') {
+      expect(result.status).toBe('success');
+    }
     const messages = triologue.getMessagesRaw();
     expect(messages.find((m) => m.content?.startsWith('[HINT]'))).toBeDefined();
   });

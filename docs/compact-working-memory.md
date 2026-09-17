@@ -10,7 +10,7 @@ Two issues with the current auto-compact:
 
 ### 1.1 Lost recent focus
 
-`Triologue.runAutoCompact` (in `src/loop/triologue.ts`) minifies ALL messages via `minifyMessages()` (truncating content to 500 chars, args to 200), feeds the lossy text to a fresh `retryChat` (no tools, no prompt cache), and replaces the entire history with `[summary, ack]`. The agent loses its *recent focus* — actual tool results it just produced, the file it was editing, the decision it was about to make. After compact, the agent must re-orient from the summary alone, often re-reading files or re-running commands it just touched.
+`Triologue.runAutoCompact` (in `src/loop/triologue.ts`) minifies ALL messages via `minifyMessages()` (truncating content to 500 chars, args to 200), feeds the lossy text to a fresh `retryChat` (no tools, no prompt cache), and replaces the entire history with `[summary, ack]` (now a 3-message `[summary, brief-call, brief-result]` resume sequence — see §3.2). The agent loses its *recent focus* — actual tool results it just produced, the file it was editing, the decision it was about to make. After compact, the agent must re-orient from the summary alone, often re-reading files or re-running commands it just touched.
 
 ### 1.2 Compact can happen anywhere — no tools available
 
@@ -31,7 +31,7 @@ Because compact can fire mid-tool-execution, the `toolsProvider` callback needed
 - `triologue.getMessages()` is the exact prefix the LLM is about to use
 - A `forkChat` from that prefix with those tools is a **guaranteed cache hit**
 
-Then add a dedicated `forkChat` that extracts recent working memory from the full un-minified conversation. The focus text is concatenated into the summary user message. The post-compact shape stays two messages: `[(summary + focus), ack]`.
+Then add a dedicated `forkChat` that extracts recent working memory from the full un-minified conversation. The focus text is concatenated into the summary user message. The post-compact shape is a 3-message brief tool-call resume sequence: `[(summary + focus), brief-assistant, brief-tool]` (see §3.2 for why the third message makes the next `agent()` a TP-valid tool→assistant transition).
 
 ## 3. Architecture
 
@@ -52,7 +52,7 @@ HOOK: compactRequested? → compact()                            HOOK: compactRe
 
 **Teammate** (`src/context/teammate-worker.ts`): Insert the compact check at the top of the main loop body, right after mail collection and before `retryChat`. `tools` is already computed and `triologue.getMessages()` is the exact array about to be sent.
 
-### 3.2 Post-compact message shape (unchanged)
+### 3.2 Post-compact message shape (3-message brief tool-call resume)
 
 ```
 [
@@ -60,18 +60,29 @@ HOOK: compactRequested? → compact()                            HOOK: compactRe
     content: '[Conversation compressed. …]\n\n'
            + '<summary>'
            + '\n\n### Recent Working Memory\n<focus>'
-           + '\n\n**Previous user instruction:** …' },
+           + '\n\n**Previous user instruction:** …'
+           + '\n\n--- Resume: review "Current State" and "Recent Working Memory" above to re-orient on the in-flight task and decide the next step.' },
   { role: 'assistant',
-    // Synthetic message signals idle→work RESUMPTION, not approval/affirmation.
-    // A declarative "Continuing." reads as consent to drift forward; the LLM
-    // then treats it as approval instead of actively re-orienting on the
-    // in-flight task. Naming the summary sections (Current State, Recent
-    // Working Memory) directs the next move to re-engaging unfinished work.
-    content: 'I have the compressed context above. Let me re-orient on the in-flight task — reviewing "Current State" and "Recent Working Memory" — and resume the unfinished work.' },
+    // Empty content + a brief tool_call. This is a real tool-call round-trip
+    // (the same pattern llm.ts uses for empty-output recovery and hook.ts
+    // uses for crossroad), NOT a synthetic "Continuing." assertion. It gives
+    // the LLM its thinking step after the summary without fabricating a
+    // model turn that pretends to have already responded.
+    content: '',
+    tool_calls: [{ id: 'compact_resume_…',
+                   function: { name: 'brief',
+                               arguments: { message: 'Re-orienting on the compacted summary to resume the in-flight task.',
+                                            confidence: 7 } } }] },
+  { role: 'tool',
+    tool_name: 'brief',
+    content: 'OK',
+    tool_call_id: 'compact_resume_…' },
 ]
 ```
 
-Two messages. No structural change. The focus is a new **section inside the existing user message**, not a third message.
+Three messages ending in `tool`, so `getLastRole()` is `'tool'` after compact. The next real `agent()` (the LLM response in the LLM→HOOK stage) is a natural **tool → assistant** transition — the same transition every TOOL→COLLECT→LLM→HOOK cycle uses. No TP violation, no dependence on the `duplicate_assistant` auto-fixer.
+
+This replaces the previous 2-message `[summary, ack-assistant]` shape, where the synthetic assistant left `getLastRole() === 'assistant'`, so the next real `agent()` tripped `duplicate_assistant` and normal control flow depended on structural-violation recovery. The focus is a **section inside the existing user message**, not a fourth message.
 
 ### 3.3 Two concurrent LLM calls
 
