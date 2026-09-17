@@ -729,7 +729,7 @@ Explore now, batching independent tool calls. When ready, call final with your s
  * @param nodeText - The text content of the section
  * @param ancestorContext - Combined text from parent sections
  * @param workDir - The working directory for file operations
- * @param onProgress - Optional progress callback (round, tool name, tool args)
+ * @param onProgress - Optional progress callback (round, tool name, tool args, round tools)
  * @param existingNode - Optional node from previous compilation for pre-population
  * @returns Exploration result with summary and marked files
  */
@@ -738,7 +738,7 @@ export async function summarizeWithExplorer(
   nodeText: string,
   ancestorContext: string,
   workDir: string,
-  onProgress?: (round: number, tool: string, args: Record<string, unknown>) => void,
+  onProgress?: (round: number, tool: string, args: Record<string, unknown>, roundTools?: number) => void,
   existingNode?: Node
 ): Promise<ExplorationResult> {
   const maxRounds = MAX_ROUNDS_DEFAULT;
@@ -847,7 +847,7 @@ export async function summarizeWithExplorer(
       }
 
       if (onProgress) {
-        onProgress(rounds, toolName, tc.function.arguments as Record<string, unknown>);
+        onProgress(rounds, toolName, tc.function.arguments as Record<string, unknown>, calls.length);
       }
       let output: string;
       try {

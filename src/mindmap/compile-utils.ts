@@ -380,6 +380,8 @@ export interface ActiveOp {
   round: number;
   tool: string;
   args: Record<string, unknown>;
+  /** Number of tool calls issued in the current round (batch size). */
+  roundTools: number;
 }
 
 /**
@@ -408,9 +410,11 @@ export class ProgressTracker {
 
   /**
    * Called when progress is reported for a node
+   * @param roundTools - Number of tool calls in the current round (batch size).
+   *                     Defaults to 1 (single-call round).
    */
-  onProgress(nodeTitle: string, level: number, round: number, tool: string, args: Record<string, unknown>): void {
-    this.activeOps.set(nodeTitle, { nodeTitle, level, round, tool, args });
+  onProgress(nodeTitle: string, level: number, round: number, tool: string, args: Record<string, unknown>, roundTools: number = 1): void {
+    this.activeOps.set(nodeTitle, { nodeTitle, level, round, tool, args, roundTools });
     this.queueRender();
   }
 
@@ -473,8 +477,11 @@ export class ProgressTracker {
         // Pad title to align round column: total heading+title width = 22
         const title = op.nodeTitle.slice(0, 22 - op.level).padEnd(22 - op.level);
         const round = op.round.toString().padEnd(2);
+        // Append batch size only when the round issued more than one tool call,
+        // e.g. "r3 (x12)" for a 12-call round; single-call rounds stay "r3 ".
+        const batch = op.roundTools > 1 ? ` (x${op.roundTools})` : '';
         const argDisplay = formatToolArg(op.tool, op.args).slice(0, 30);
-        lines.push(`${heading} ${title} r${round}  ${op.tool}(${argDisplay})`);
+        lines.push(`${heading} ${title} r${round}${batch}  ${op.tool}(${argDisplay})`);
       } else {
         lines.push('');
       }
@@ -531,8 +538,9 @@ export function renderProgress(
       const heading = '#'.repeat(op.level);
       const title = op.nodeTitle.slice(0, 22 - op.level).padEnd(22 - op.level);
       const round = op.round.toString().padEnd(2);
+      const batch = op.roundTools > 1 ? ` (x${op.roundTools})` : '';
       const argDisplay = formatToolArg(op.tool, op.args).slice(0, 30);
-      lines.push(`${heading} ${title} r${round}  ${op.tool}(${argDisplay})`);
+      lines.push(`${heading} ${title} r${round}${batch}  ${op.tool}(${argDisplay})`);
     } else {
       lines.push('');
     }

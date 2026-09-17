@@ -230,8 +230,8 @@ export async function incremental_compile(
       const ancestorTexts = ancestors.map((a) => a.text).join('\n\n---\n\n');
 
       // Create progress callback that wraps tracker with node info
-      const onProgress = (round: number, tool: string, args: Record<string, unknown>) => {
-        tracker.onProgress(node.title, node.level, round, tool, args);
+      const onProgress = (round: number, tool: string, args: Record<string, unknown>, roundTools?: number) => {
+        tracker.onProgress(node.title, node.level, round, tool, args, roundTools);
       };
 
       const result = await summarizeWithExplorer(node.title, node.text, ancestorTexts, workDir, onProgress);

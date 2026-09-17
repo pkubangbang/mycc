@@ -84,7 +84,7 @@ class Semaphore {
 async function summarize_with_explorer(
   root: Node,
   workDir: string,
-  onProgress?: (nodeTitle: string, level: number, round: number, tool: string, args: Record<string, unknown>) => void,
+  onProgress?: (nodeTitle: string, level: number, round: number, tool: string, args: Record<string, unknown>, roundTools?: number) => void,
   onNodeStart?: (nodeTitle: string) => void,
   onNodeComplete?: (nodeTitle: string) => void,
   oldNodeMap?: Map<string, Node>
@@ -121,8 +121,8 @@ async function summarize_with_explorer(
 
         const ancestorContext = ancestorTextsMap.get(node)!.join('\n\n---\n\n');
         const wrappedOnProgress = onProgress
-          ? (round: number, tool: string, args: Record<string, unknown>) =>
-              onProgress(node.title, node.level, round, tool, args)
+          ? (round: number, tool: string, args: Record<string, unknown>, roundTools?: number) =>
+              onProgress(node.title, node.level, round, tool, args, roundTools)
           : undefined;
 
         // Look up existing node for pre-population
@@ -410,8 +410,8 @@ export async function compile_mindmap(
     tracker.onNodeStart(nodeTitle);
   };
 
-  const onProgress = (nodeTitle: string, level: number, round: number, tool: string, args: Record<string, unknown>) => {
-    tracker.onProgress(nodeTitle, level, round, tool, args);
+  const onProgress = (nodeTitle: string, level: number, round: number, tool: string, args: Record<string, unknown>, roundTools?: number) => {
+    tracker.onProgress(nodeTitle, level, round, tool, args, roundTools);
   };
 
   const onNodeComplete = (nodeTitle: string) => {
@@ -512,8 +512,8 @@ export async function compile_mindmap_from_content(
     const onNodeStart = (nodeTitle: string) => {
       tracker.onNodeStart(nodeTitle);
     };
-    const onProgress = (nodeTitle: string, level: number, round: number, tool: string, args: Record<string, unknown>) => {
-      tracker.onProgress(nodeTitle, level, round, tool, args);
+    const onProgress = (nodeTitle: string, level: number, round: number, tool: string, args: Record<string, unknown>, roundTools?: number) => {
+      tracker.onProgress(nodeTitle, level, round, tool, args, roundTools);
     };
     process.stdout.write('\n\n\n\n');
     await summarize_with_explorer(root, process.cwd(), onProgress, onNodeStart);
