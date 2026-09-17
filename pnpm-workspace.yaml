@@ -6,6 +6,7 @@ allowBuilds:
 
 minimumReleaseAgeExclude:
   - '@pkubangbang/crossroad-detector@0.1.1 || 0.1.3'
+  - prettier@3.9.7
 
 # pnpm configuration (non-auth settings live here on pnpm v11+; see note below).
 #
