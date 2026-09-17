@@ -217,13 +217,13 @@ export async function incremental_compile(
   // Progress tracking
   const tracker = new ProgressTracker(totalNodes, 3);
 
-    // Reuse the SAME reserve/erase protocol as the compilation entry points
-    // (beginProgressDisplay/endProgressDisplay) so this deprecated path cannot
-    // drift back to ungated raw writes.
-    beginProgressDisplay();
+  // Reuse the SAME reserve/erase protocol as the compilation entry points
+  // (beginProgressDisplay/endProgressDisplay) so this deprecated path cannot
+  // drift back to ungated raw writes.
+  beginProgressDisplay();
 
-    // Second pass: re-summarize nodes that need it
-    let processedCount = 0;
+  // Second pass: re-summarize nodes that need it
+  let processedCount = 0;
   for (const node of allNodes) {
     if (needsUpdate.has(node.id)) {
       tracker.onNodeStart(node.title);
