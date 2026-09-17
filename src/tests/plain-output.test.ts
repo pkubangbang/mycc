@@ -30,6 +30,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
+import { execFileSync } from 'child_process';
 
 // agentIO is imported by chat-helpers at module load; stub it so the spinner
 // tests do not touch the real I/O singleton.
@@ -39,6 +40,7 @@ vi.mock('../loop/agent-io.js', () => ({
 
 import { isPlainOutput } from '../config.js';
 import { startSpinner, stopSpinner } from '../engine/chat-helpers.js';
+import { beginProgressDisplay, endProgressDisplay, ProgressTracker } from '../mindmap/compile-utils.js';
 import { BaseCore } from '../context/shared/base-core.js';
 
 /** Concrete BaseCore subclass so we can instantiate the abstract class. */
@@ -152,6 +154,117 @@ describe('startSpinner() stream + suppression', () => {
   });
 });
 
+describe('decoration writers are clean in plain mode (integration)', () => {
+  const saved = { MYCC_PLAIN: process.env.MYCC_PLAIN, MYCC_DEBUG_ANSI: process.env.MYCC_DEBUG_ANSI };
+
+  /** Run `fn` with both stdout and stderr captured; return the captured text. */
+  function capture(fn: () => void): { out: string; err: string } {
+    const out: string[] = [];
+    const err: string[] = [];
+    const so = vi.spyOn(process.stdout, 'write').mockImplementation((c: unknown) => { out.push(String(c)); return true; });
+    const se = vi.spyOn(process.stderr, 'write').mockImplementation((c: unknown) => { err.push(String(c)); return true; });
+    try {
+      fn();
+    } finally {
+      so.mockRestore();
+      se.mockRestore();
+    }
+    return { out: out.join(''), err: err.join('') };
+  }
+
+  afterEach(() => {
+    if (saved.MYCC_PLAIN === undefined) delete process.env.MYCC_PLAIN;
+    else process.env.MYCC_PLAIN = saved.MYCC_PLAIN;
+    if (saved.MYCC_DEBUG_ANSI === undefined) delete process.env.MYCC_DEBUG_ANSI;
+    else process.env.MYCC_DEBUG_ANSI = saved.MYCC_DEBUG_ANSI;
+  });
+
+  it('beginProgressDisplay/endProgressDisplay emit nothing in plain mode (no reserve, no stray blanks)', () => {
+    process.env.MYCC_PLAIN = '1';
+    const { out, err } = capture(() => { beginProgressDisplay(); endProgressDisplay(); });
+    expect(out).toBe('');
+    expect(err).toBe('');
+  });
+
+  it('beginProgressDisplay/endProgressDisplay emit the reserve + erase when decorated', () => {
+    delete process.env.MYCC_PLAIN;
+    delete process.env.MYCC_DEBUG_ANSI;
+    const { out } = capture(() => { beginProgressDisplay(); endProgressDisplay(); });
+    expect(out).toContain('\n\n\n\n');
+    expect(out).toContain('\x1b[4A\x1b[J');
+  });
+
+  it('ProgressTracker.update() writes nothing in plain mode', () => {
+    process.env.MYCC_PLAIN = '1';
+    const tracker = new ProgressTracker(4, 3);
+    const { out, err } = capture(() => {
+      tracker.onNodeStart('node-a');
+      tracker.onProgress('node-a', 1, 1, 'read_file', { path: 'a.ts' });
+      tracker.onNodeComplete('node-a');
+    });
+    expect(out).toBe('');
+    expect(err).toBe('');
+  });
+
+  it('ProgressTracker.update() paints the bar when decorated', () => {
+    delete process.env.MYCC_PLAIN;
+    delete process.env.MYCC_DEBUG_ANSI;
+    const tracker = new ProgressTracker(4, 3);
+    const { out } = capture(() => {
+      tracker.onNodeStart('node-a');
+      tracker.onProgress('node-a', 1, 1, 'read_file', { path: 'a.ts' });
+    });
+    // The tracker's in-place render is the cursor-up + clear-line escape.
+    expect(out).toContain('\x1b[4A');
+    expect(out).toContain('\x1b[2K');
+  });
+
+  it('the mindmap decorate-then-plain boundary never leaves four reserved blanks', () => {
+    // Simulates the real compile flow: reserve, then (if plain) erase is also
+    // skipped — so net output must be empty. This is the invariant the old
+    // direct writes violated when only one of the pair was gated.
+    process.env.MYCC_PLAIN = '1';
+    const { out } = capture(() => {
+      beginProgressDisplay();
+      const tracker = new ProgressTracker(2, 3);
+      tracker.onNodeStart('a');
+      tracker.onNodeComplete('a');
+      tracker.finish();
+      endProgressDisplay();
+    });
+    expect(out).toBe('');
+  });
+});
+
+describe('--help honours the plain-output contract (real subprocess)', () => {
+  it('mycc --help with piped stdout contains no ANSI escape sequences', () => {
+    const repoRoot = path.resolve(__dirname, '../..');
+    const myccBin = path.join(repoRoot, 'bin', 'mycc.js');
+    if (!fs.existsSync(myccBin)) {
+      // The launcher is expected in-repo; if it is missing, fail loudly rather
+      // than silently pass — the contract is untested otherwise.
+      throw new Error(`bin/mycc.js not found at ${myccBin}`);
+    }
+
+    // Run with stdout captured (a pipe, never a TTY) — exactly the
+    // `mycc --help > help.txt` case. Force color vars OFF-compatible by NOT
+    // setting FORCE_COLOR; the Coordinator's stdout.isTTY is false in a pipe.
+    const out = execFileSync(process.execPath, [myccBin, '--help'], {
+      cwd: repoRoot,
+      encoding: 'utf-8',
+      env: { ...process.env, FORCE_COLOR: '1' },
+      timeout: 20000,
+    });
+
+    // Sanity: help actually printed.
+    expect(out).toContain('Usage:');
+    // The contract: no ESC (0x1b) anywhere in the redirected dump. FORCE_COLOR
+    // is deliberately set to prove the verdict, not chalk's own detection,
+    // suppresses the styling.
+    expect(out).not.toMatch(/\x1b/);
+  });
+});
+
 // ═══════════════════════════════════════════════════════════════════════════
 // Drift guards
 // ═══════════════════════════════════════════════════════════════════════════
@@ -169,6 +282,23 @@ describe('drift guards (plain-output contract)', () => {
     const plainIdx = src.indexOf('MYCC_PLAIN');
     const prelude = src.slice(Math.max(0, plainIdx - 400), plainIdx);
     expect(prelude).not.toMatch(/process\.stdin\.isTTY/);
+  });
+
+  it('the verdict is derived BEFORE the --help intercept (redirected help stays plain)', () => {
+    const src = read('../index.ts');
+    const verdictIdx = src.indexOf("process.env.MYCC_PLAIN = '1'");
+    const helpIdx = src.indexOf('printHelp()');
+    expect(verdictIdx).toBeGreaterThan(-1);
+    expect(helpIdx).toBeGreaterThan(-1);
+    // The `--help > help.txt` hole: if printHelp() ran first, the chalk-styled
+    // help would be emitted before MYCC_PLAIN was ever set.
+    expect(verdictIdx).toBeLessThan(helpIdx);
+  });
+
+  it('printHelp consults isPlainOutput() (no unconditional chalk styling)', () => {
+    const src = read('../help.ts');
+    const fn = src.slice(src.indexOf('export function printHelp'), src.indexOf('Coloring —'));
+    expect(fn).toContain('isPlainOutput()');
   });
 
   it('no Lead-side writer gates the spinner on a bare isTTY check', () => {

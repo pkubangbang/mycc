@@ -12,6 +12,7 @@ import { readFileSync } from 'fs';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import chalk from 'chalk';
+import { isPlainOutput } from './config.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -88,14 +89,24 @@ function renderTable(rows: FlagRow[]): string {
 /**
  * Print the full `mycc --help` usage to stdout.
  * Pure output — no process.exit (the caller decides to exit).
+ *
+ * Honours the plain-output verdict: `mycc --help > help.txt` must not leak
+ * ANSI escapes into the redirected file. The Coordinator derives MYCC_PLAIN
+ * from `process.stdout.isTTY` BEFORE the --help intercept in index.ts, so
+ * isPlainOutput() is already correct here.
  */
 export function printHelp(): void {
   const version = readVersion();
   const out: string[] = [];
 
+  // Chalk auto-detects colour from stdout; when redirected it already returns
+  // plain text. Force level 0 in plain mode anyway so the contract holds even
+  // when chalk's detection is off (e.g. FORCE_COLOR set by the caller).
+  const title = isPlainOutput() ? (s: string): string => s : chalkTitle;
+
   out.push(`mycc ${version} — a CLI coding agent using Ollama / DeepSeek for LLM inference.`);
   out.push('');
-  out.push(chalkTitle('Usage:'));
+  out.push(title('Usage:'));
   out.push('  mycc [flags]');
   out.push('  mycc --setup             # configure environment, then exit');
   out.push('  mycc --serve [port]      # start the Web UI');
@@ -105,19 +116,19 @@ export function printHelp(): void {
   out.push('  mycc --help | -h         # show this help and exit');
   out.push('');
 
-  out.push(chalkTitle('Startup flags:'));
+  out.push(title('Startup flags:'));
   out.push(renderTable(STARTUP_FLAGS));
   out.push('');
 
-  out.push(chalkTitle('Configuration flags (override .env files & system env vars):'));
+  out.push(title('Configuration flags (override .env files & system env vars):'));
   out.push(renderTable(CONFIG_FLAGS));
   out.push('');
 
-  out.push(chalkTitle('Debug flags (combine with -v for max detail):'));
+  out.push(title('Debug flags (combine with -v for max detail):'));
   out.push(renderTable(DEBUG_FLAGS));
   out.push('');
 
-  out.push(chalkTitle('Examples:'));
+  out.push(title('Examples:'));
   out.push('  mycc --ollama-model gemma4:31b-cloud --token-threshold 80000');
   out.push('  mycc --skip-healthcheck -v');
   out.push('  mycc -v --debug-tp --debug-eval');

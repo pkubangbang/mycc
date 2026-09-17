@@ -34,18 +34,6 @@ import { spawnDaemonLead, finishDaemonExit } from './utils/daemon-launch.js';
 const PROJECT_ROOT = getProjectRoot();
 
 // ---------------------------------------------------------------------------
-// Help / Version (handled before anything else, no side effects)
-// ---------------------------------------------------------------------------
-
-// --help / -h: print usage and exit 0 (before setting process title, raw mode,
-// or spawning any child). Minimist would also pick these up, but we intercept
-// them here to avoid the cost of loading config / spawning the lead process.
-if (process.argv.slice(2).some(a => a === '--help' || a === '-h')) {
-  printHelp();
-  process.exit(0);
-}
-
-// ---------------------------------------------------------------------------
 // Plain-output verdict (piped stdout)
 // ---------------------------------------------------------------------------
 // The Coordinator is the ONLY mycc process that owns the caller's real stdout
@@ -63,8 +51,26 @@ if (process.argv.slice(2).some(a => a === '--help' || a === '-h')) {
 // stdout is piped, and that combination must NOT be treated as "no user at
 // the keyboard" — mycc stays an interactive REPL in that case. (Deriving the
 // verdict from stdin.isTTY is the trap that once killed plain `mycc`.)
+//
+// This MUST run BEFORE the --help intercept below: `mycc --help > help.txt`
+// still writes through the same stdout, and the help text is chalk-styled, so
+// it must honour the same verdict. Deriving it first closes that hole.
 if (!process.stdout.isTTY) {
   process.env.MYCC_PLAIN = '1';
+}
+
+// ---------------------------------------------------------------------------
+// Help / Version (handled before anything else, no side effects)
+// ---------------------------------------------------------------------------
+
+// --help / -h: print usage and exit 0 (before setting process title, raw mode,
+// or spawning any child). Minimist would also pick these up, but we intercept
+// them here to avoid the cost of loading config / spawning the lead process.
+// The plain-output verdict above is already in place, so a redirected help
+// dump is plain too (printHelp consults isPlainOutput()).
+if (process.argv.slice(2).some(a => a === '--help' || a === '-h')) {
+  printHelp();
+  process.exit(0);
 }
 
 // Set process title so it shows as 'mycc' in process list (ps, top, etc.)
