@@ -34,7 +34,7 @@ import { spawnDaemonLead, finishDaemonExit } from './utils/daemon-launch.js';
 const PROJECT_ROOT = getProjectRoot();
 
 // ---------------------------------------------------------------------------
-// Plain-output verdict (piped stdout)
+// Plain-output verdict (piped stdout OR forced via --debug-ansi)
 // ---------------------------------------------------------------------------
 // The Coordinator is the ONLY mycc process that owns the caller's real stdout
 // handle: bin/mycc.js spawns it with `stdio: 'inherit'`, whereas it spawns the
@@ -52,10 +52,19 @@ const PROJECT_ROOT = getProjectRoot();
 // the keyboard" — mycc stays an interactive REPL in that case. (Deriving the
 // verdict from stdin.isTTY is the trap that once killed plain `mycc`.)
 //
+// --debug-ansi forces the SAME verdict inside a real terminal. We recognise
+// the raw argv HERE (not via the env merge in loadEnv(), which has not run
+// yet) so the verdict is established for the early, side-effect-free handling
+// below: the window-title OSC write and the --help intercept. Both of those
+// otherwise leak decoration when `mycc --debug-ansi [--help]` runs in a TTY,
+// because MYCC_DEBUG_ANSI would only be merged into process.env much later
+// inside runCoordinator(). Recognising the flag by its literal spelling is
+// sufficient — a debug flag never needs `--debug-ansi=true`/quoting support.
+//
 // This MUST run BEFORE the --help intercept below: `mycc --help > help.txt`
 // still writes through the same stdout, and the help text is chalk-styled, so
 // it must honour the same verdict. Deriving it first closes that hole.
-if (!process.stdout.isTTY) {
+if (!process.stdout.isTTY || process.argv.slice(2).some(a => a === '--debug-ansi')) {
   process.env.MYCC_PLAIN = '1';
 }
 
@@ -78,7 +87,10 @@ process.title = 'mycc';
 
 // Set terminal window title to 'mycc' (works in most terminal emulators)
 // ANSI escape sequence: ESC ] 0 ; <title> BEL
-if (process.stdout.isTTY) {
+// Gated on the plain verdict (not isTTY alone): `mycc --debug-ansi` in a real
+// terminal must not emit the OSC either, since the verdict above already set
+// MYCC_PLAIN for it.
+if (process.stdout.isTTY && process.env.MYCC_PLAIN !== '1') {
   process.stdout.write('\x1b]0;mycc\x07');
 }
 

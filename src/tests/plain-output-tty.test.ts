@@ -109,6 +109,35 @@ describe.skipIf(!ENABLED || !tmuxOk)('TTY: real terminal still decorates (tmux)'
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
+// A3. --debug-ansi forces plain output INSIDE a real terminal
+// ═══════════════════════════════════════════════════════════════════════════
+describe.skipIf(!ENABLED || !tmuxOk)('TTY: --debug-ansi forces plain output in a real terminal (tmux)', () => {
+  const SESSION = 'mycc-tty-debugansi';
+
+  it('`mycc --debug-ansi --help` emits NO ESC even though stdout is a TTY', () => {
+    try { execSync(`tmux kill-session -t ${SESSION}`, { stdio: 'ignore' }); } catch { /* no prior session */ }
+    try {
+      execSync(`tmux new-session -s ${SESSION} -d -x 120 -y 40`, { stdio: 'ignore' });
+      // Send text, pause, then Enter (mycc's Enter throttle).
+      execSync(`tmux send-keys -t ${SESSION} "node bin/mycc.js --debug-ansi --help"`, { stdio: 'ignore' });
+      waitMs(1500);
+      execSync(`tmux send-keys -t ${SESSION} Enter`, { stdio: 'ignore' });
+      waitMs(3000);
+
+      // `-e` includes escape sequences in capture-pane output.
+      const pane = execSync(`tmux capture-pane -t ${SESSION} -p -e -S -60`, { encoding: 'utf-8' });
+      // Sanity: help actually printed.
+      expect(pane).toContain('Usage:');
+      // The contract: --debug-ansi forces the plain path even in a TTY, so the
+      // help must carry no ANSI escapes at all.
+      expect(pane, '--debug-ansi must suppress ALL decoration in a TTY').not.toMatch(/\x1b\[/);
+    } finally {
+      try { execSync(`tmux kill-session -t ${SESSION}`, { stdio: 'ignore' }); } catch { /* already gone */ }
+    }
+  }, 30_000);
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
 // B. Coordinator pipe-mirroring: cross-stream ordering / no tear
 // ═══════════════════════════════════════════════════════════════════════════
 describe.skipIf(!ENABLED)('TTY: Coordinator pipe mirroring preserves decoration ordering', () => {

@@ -423,7 +423,9 @@ export async function compile_mindmap(
     save_mindmap_atomic(mindmap, newFile);
   };
 
-  // Print initial empty lines for progress display
+  // Reserve the 4-line region for the progress display. Gated inside the
+  // helper (no-op in plain mode) — do NOT emit a raw reserve here, or plain
+  // output gains four stray blank lines (see compile-utils.ts pairing invariant).
   beginProgressDisplay();
 
   try {

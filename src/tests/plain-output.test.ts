@@ -284,6 +284,65 @@ describe('drift guards (plain-output contract)', () => {
     expect(prelude).not.toMatch(/process\.stdin\.isTTY/);
   });
 
+  it('the Coordinator recognises --debug-ansi in argv before the early help/title handling', () => {
+    // P2 regression guard: `--debug-ansi` must flip the verdict BEFORE the
+    // --help intercept and the window-title OSC write, both of which live
+    // outside runCoordinator() and therefore cannot rely on loadEnv() having
+    // merged MYCC_DEBUG_ANSI into process.env yet.
+    const src = read('../index.ts');
+
+    // The argv recognition must exist in the early verdict block.
+    expect(src).toMatch(/process\.argv[\s\S]{0,80}--debug-ansi/);
+
+    const verdictIdx = src.indexOf("process.env.MYCC_PLAIN = '1'");
+    const helpIdx = src.indexOf('printHelp()');
+    // The window-title OSC write (early, side-effecting decoration).
+    const titleIdx = src.indexOf("process.stdout.write('\\x1b]0;mycc\\x07')");
+
+    expect(verdictIdx).toBeGreaterThan(-1);
+    expect(helpIdx).toBeGreaterThan(-1);
+    expect(titleIdx).toBeGreaterThan(-1);
+
+    // The verdict must be established before BOTH early writers.
+    expect(verdictIdx).toBeLessThan(helpIdx);
+    expect(verdictIdx).toBeLessThan(titleIdx);
+
+    // The title write must consult the plain verdict, not isTTY alone — or
+    // `mycc --debug-ansi` in a real terminal still emits the OSC.
+    const titleLine = src.slice(titleIdx - 120, titleIdx + 60);
+    expect(titleLine).toMatch(/MYCC_PLAIN/);
+  });
+
+  it('the raw progress-display bytes live ONLY inside the gated helpers (no duplicated writes)', () => {
+    // P1 regression guard (the review's blocking finding): compile.ts and
+    // diff-mindmap.ts must NOT re-emit the raw reserve/erase bytes around the
+    // helpers. Duplicated raw writes bypass isPlainOutput() and corrupt piped
+    // output with four stray blanks + cursor-control bytes.
+    //
+    // The reserve/erase escapes are permitted ONLY in compile-utils.ts, and
+    // there ONLY inside beginProgressDisplay()/endProgressDisplay(), which are
+    // isPlainOutput()-gated.
+    const rawReserve = "write('\\n\\n\\n\\n')";
+    const rawErase = "write('\\x1b[4A\\x1b[J')";
+
+    for (const rel of ['../mindmap/compile.ts', '../mindmap/diff-mindmap.ts']) {
+      const src = read(rel);
+      expect(src, `${rel} must not contain a raw reserve write`).not.toContain(rawReserve);
+      expect(src, `${rel} must not contain a raw erase write`).not.toContain(rawErase);
+    }
+
+    const utils = read('../mindmap/compile-utils.ts');
+    // The escapes exist (the helper is the single ownership point)…
+    expect(utils).toContain(rawReserve);
+    expect(utils).toContain(rawErase);
+    // …and each is inside its gated helper (immediately preceded by the
+    // isPlainOutput() guard within the same function body).
+    const beginIdx = utils.indexOf('export function beginProgressDisplay');
+    const endIdx = utils.indexOf('export function endProgressDisplay');
+    expect(utils.slice(beginIdx, endIdx)).toMatch(/isPlainOutput\(\)/);
+    expect(utils.slice(endIdx, endIdx + 400)).toMatch(/isPlainOutput\(\)/);
+  });
+
   it('the verdict is derived BEFORE the --help intercept (redirected help stays plain)', () => {
     const src = read('../index.ts');
     const verdictIdx = src.indexOf("process.env.MYCC_PLAIN = '1'");
