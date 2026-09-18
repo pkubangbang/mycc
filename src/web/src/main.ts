@@ -22,6 +22,12 @@ import { applyServerMessage } from './message-dispatch';
 import { registerDebugSeam } from './debug';
 import { ensureHighlighterReady } from './highlight';
 import { useChatStore } from './stores/chat-store';
+import {
+  readCachedChatlog,
+  writeCachedChatlog,
+  buildCacheKey,
+} from './chatlog-cache';
+import type { ChatlogCacheRecord } from './chatlog-cache';
 import './style.css';
 
 // Pinia + chat store — survives HMR (module-level, not in any component).
@@ -87,6 +93,54 @@ let ws: WebSocket | null = null;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let mountedApp: VueApp | null = null;
 
+// ── Chatlog cache (lock-screen instant wake) ──
+// The current wire session id (the IndexedDB cache key). Set from /config at
+// load; null when no wire session (caching is skipped — no stable key to bind
+// a log to, and a foreign log must never be shown).
+let sessionId: string | null = null;
+// The ETag the server last sent for /history. Sent back as If-None-Match on
+// the next fetch so an unchanged history returns 304 (0 bytes) and the
+// hydrated-from-cache copy stays on screen. Null until the first successful
+// /history response sets it.
+let lastHistoryEtag: string | null = null;
+
+/**
+ * Persist the current store chatlog (messages + teammateMessages) to the
+ * IndexedDB cache under `sessionId`. No-op when there is no session key
+ * (buildCacheKey returns null). Fire-and-forget: the write is failure-
+ * tolerant (resolves void on any error) and never blocks the caller, so it
+ * is safe to call from the hide/unload/disconnect paths.
+ */
+function persistChatlog(): void {
+  const key = buildCacheKey(sessionId);
+  if (!key) return;
+  // Slice to snapshot the current arrays — the I/O is async and the store
+  // may keep mutating; we want to persist the state AT this call site.
+  void writeCachedChatlog(key, store.messages.slice(), store.teammateMessages.slice());
+}
+
+/**
+ * Hydrate the store from the IndexedDB cache BEFORE the first render, so a
+ * lock-screen wake shows the prior chatlog instantly instead of a blank
+ * screen + full re-fetch. No-op when there is no session key or no cached
+ * record (the first render then waits for /history as before).
+ *
+ * Only the durable chat arrays are restored here — NOT the transient phase
+ * / steering buffer / running state. Those come from /history (which runs
+ * next) and the live WS; restoring them from a stale cache would show a
+ * dead "停止" button or stale buffer bar until the server responds.
+ */
+async function hydrateFromCache(): Promise<void> {
+  const key = buildCacheKey(sessionId);
+  if (!key) return;
+  const record: ChatlogCacheRecord | null = await readCachedChatlog(key);
+  if (!record) return;
+  // Replace the store arrays with the cached snapshot. Splice (not
+  // reassignment) so Pinia reactivity propagates to mounted components.
+  store.messages.splice(0, store.messages.length, ...record.messages);
+  store.teammateMessages.splice(0, store.teammateMessages.length, ...record.teammateMessages);
+}
+
 /**
  * Send a JSON object over the WebSocket, guarding against a non-OPEN
  * readyState. Returns true on success, false if the socket isn't usable
@@ -119,11 +173,28 @@ function wsSend(data: object): boolean {
  * top with no race and no duplication. On reconnect after a WS drop, this is
  * called again to restore the full record (the server log is the source of
  * truth, not the socket).
+ *
+ * Caching: sends the last-seen ETag as `If-None-Match`. A 304 response means
+ * the server's history is unchanged since that ETag — the already-hydrated
+ * (from IndexedDB cache) record stays on screen and we do NOT touch the
+ * store (avoids a blank flash + full re-fetch on lock-screen wake). A 200
+ * replaces the record authoritatively and updates `lastHistoryEtag`. Network
+ * failure leaves the hydrated record in place (the WS reconnect retries).
  */
 async function fetchHistory(): Promise<void> {
   try {
-    const res = await fetch('/history');
+    const headers: Record<string, string> = {};
+    if (lastHistoryEtag) headers['If-None-Match'] = lastHistoryEtag;
+    const res = await fetch('/history', { headers });
+    // 304 Not Modified — the hydrated-from-cache record is still current.
+    // Keep it on screen; do not touch the store. Just refresh the steering
+    // buffer + running state? No — a 304 means the WHOLE payload (messages
+    // + steeringBuffer + isRunning) is unchanged, so there is nothing to do.
+    if (res.status === 304) return;
     if (!res.ok) return;
+    // Capture the ETag for the next If-None-Match revalidation.
+    const etag = res.headers.get('ETag');
+    if (etag) lastHistoryEtag = etag;
     const data = await res.json() as { messages: ChatMessage[]; steeringBuffer?: SteeringNote[]; isRunning?: boolean };
     // Empty-content prompts are "waiting for input" signals, not chat content.
     // Drop them from the visible record; non-empty prompts (e.g. 'Retry? [Y/n]')
@@ -158,6 +229,10 @@ async function fetchHistory(): Promise<void> {
     if (typeof data.isRunning === 'boolean') {
       store.setPhase(data.isRunning ? 'working' : 'idle');
     }
+    // Persist the authoritative snapshot to the cache so the next lock-screen
+    // wake hydrates from it. Only on a 200 (we returned early on 304 above,
+    // which means the cache is already current). Fire-and-forget.
+    persistChatlog();
   } catch {
     // Network failure — leave existing messages; WS reconnect will retry.
   }
@@ -181,12 +256,23 @@ async function fetchConfig(): Promise<void> {
   try {
     const res = await fetch('/config');
     if (!res.ok) return;
-    const data = await res.json() as { maxUploadMb?: number; persistent?: boolean };
+    const data = await res.json() as { maxUploadMb?: number; persistent?: boolean; sessionId?: string | null };
     if (Number.isFinite(data.maxUploadMb) && (data.maxUploadMb as number) > 0) {
       store.maxUploadMb = data.maxUploadMb as number;
     }
     if (typeof data.persistent === 'boolean') {
       store.persistent = data.persistent;
+    }
+    // Capture the wire session id — the IndexedDB cache key. null when no
+    // wire session (caching is skipped). When it changes across a reconnect
+    // (a serve restart started a new session), reset the last ETag so the
+    // next /history fetch does NOT send a stale If-None-Match from a
+    // previous session (which would 304 against the wrong session's history
+    // and freeze the UI on a foreign/empty log).
+    const newSid = typeof data.sessionId === 'string' ? data.sessionId : null;
+    if (newSid !== sessionId) {
+      sessionId = newSid;
+      lastHistoryEtag = null;
     }
   } catch {
     // /config unreachable — keep defaults (maxUploadMb=50, persistent=false)
@@ -227,6 +313,12 @@ function connectWebSocket(): void {
 
   ws.onclose = () => {
     store.connectionStatus = 'reconnecting';
+    // Persist the chatlog on disconnect — a WS drop is often a precursor to
+    // the user locking the screen / the tab being backgrounded, so capture
+    // the visible log now (the IndexedDB write is fire-and-forget). On
+    // reconnect, fetchHistory revalidates with If-None-Match; a 304 keeps
+    // this snapshot, a 200 replaces it.
+    persistChatlog();
     // Reset stale interaction state so the UI doesn't leave a dead Retry
     // button or spinner while disconnected. The server re-sends a 'prompt'
     // (or 'card') on reconnect if the agent is still waiting, so these
@@ -272,12 +364,27 @@ async function reconnect(): Promise<void> {
   connectWebSocket();
 }
 
-// Stop reconnecting when the page is unloaded (avoids a final stale socket)
+// Stop reconnecting when the page is unloaded (avoids a final stale socket).
+// Also persist the chatlog to the IndexedDB cache so the next load (incl. a
+// lock-screen wake) hydrates instantly. The write is fire-and-forget and
+// failure-tolerant; on mobile the pagehide/visibilitychange(hidden) paths
+// below are more reliable than beforeunload, so we persist on all three.
 window.addEventListener('beforeunload', () => {
+  persistChatlog();
   if (reconnectTimer) {
     clearTimeout(reconnectTimer);
     reconnectTimer = null;
   }
+});
+
+// Mobile lock-screen / tab-switch: when the page becomes hidden, persist the
+// chatlog immediately. visibilitychange(hidden) is the signal iOS/Android
+// fire on lock-screen — beforeunload is unreliable there. pagehide covers
+// older browsers / the bfcache path. Both are cheap (the write is async and
+// failure-tolerant) and idempotent, so registering both is safe.
+window.addEventListener('pagehide', () => { persistChatlog(); });
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') persistChatlog();
 });
 
 // Page load sequence: initialize the Shiki highlighter, fetch history, then
@@ -293,8 +400,14 @@ void (async () => {
   // Fetch config before history: maxUploadMb + persistent feed the first
   // render (the StatusBar button label and the upload size guard), so they
   // must be populated before the components mount and start reading the
-  // store. fetchHistory() and the WS connection follow.
+  // store. fetchConfig() also captures the wire sessionId (the IndexedDB
+  // cache key). fetchHistory() and the WS connection follow.
   await fetchConfig();
+  // Hydrate the chatlog from the IndexedDB cache BEFORE the first render +
+  // before fetchHistory, so a lock-screen wake shows the prior chatlog
+  // instantly. fetchHistory then revalidates with If-None-Match — a 304
+  // keeps this hydrated state; a 200 replaces it authoritatively.
+  await hydrateFromCache();
   await fetchHistory();
   connectWebSocket();
 })();

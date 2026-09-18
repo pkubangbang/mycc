@@ -14,6 +14,26 @@ const scrollContainer = ref<HTMLElement | null>(null);
 const showScrollButton = ref(false);
 let userScrolledUp = false;
 
+// ── Chatlog collapse + infinite scroll up ──
+//
+// To keep the first render cheap and the tail in view (especially on mobile,
+// where a long history pushes the latest exchange below the fold and slows
+// the initial paint), only the LAST `INITIAL_VISIBLE` messages render at
+// first. Older messages are collapsed; the user scrolls UP to reveal more in
+// batches (`SCROLL_BATCH`), capped at `MAX_VISIBLE` (a hard ceiling that
+// matches the server's MAX_LOG_SIZE so the client never tries to render more
+// than the server can send).
+//
+// `visibleCount` is a local ref (NOT in the Pinia store) because it is pure
+// view state — it does not survive a refresh (the cache hydrates the log, and
+// the collapse re-applies from INITIAL_VISIBLE), and it has no meaning to any
+// other component. Keeping it local avoids store churn and keeps the feature
+// fully self-contained in ChatLog.
+const INITIAL_VISIBLE = 10;
+const SCROLL_BATCH = 20;
+const MAX_VISIBLE = 1000;
+const visibleCount = ref(INITIAL_VISIBLE);
+
 // The auto-mode stop button's "hyperspace jump" visuals (rocket + meteor
 // starfield) now live in two dedicated components — RocketIcon and
 // MeteorField — imported above. ChatLog only passes the `warping` prop
@@ -25,8 +45,25 @@ let userScrolledUp = false;
 // Visible messages: filtered by the 详细日志 toggle. When off, only
 // user-facing lines (user/result/assistant/brief/question/prompt) show;
 // when on, all logs are visible.
-const visibleMessages = computed(() =>
+const filteredMessages = computed(() =>
   props.messages.filter(m => isMessageVisible(m, props.state.verboseLogs)),
+);
+
+// The collapse window: the LAST `visibleCount` of the filtered list. When
+// the list is shorter than visibleCount, all of them show (no collapse
+// affordance). `visibleCount` is clamped to MAX_VISIBLE so a huge log can
+// never render more than the cap in one go.
+const visibleMessages = computed(() => {
+  const all = filteredMessages.value;
+  const count = Math.min(visibleCount.value, MAX_VISIBLE, all.length);
+  return all.slice(all.length - count);
+});
+
+// Whether older messages are collapsed (drives the "加载更多" affordance at
+// the top). True only when there are filtered messages the window does NOT
+// show.
+const hasCollapsedAbove = computed(
+  () => filteredMessages.value.length > visibleMessages.value.length,
 );
 
 // v-for key for each visible message: "<raw-timestamp> <label>"
@@ -63,6 +100,41 @@ function isAtBottom(): boolean {
   return el.scrollHeight - el.scrollTop - el.clientHeight < 50;
 }
 
+// Near the TOP of the scroll container — used to trigger infinite-scroll-up
+// loading. A small threshold (px) so the next batch loads just before the
+// user hits the very top, avoiding a visible "blank then pop" gap.
+const TOP_LOAD_THRESHOLD = 60;
+
+function isNearTop(): boolean {
+  const el = scrollContainer.value;
+  if (!el) return false;
+  return el.scrollTop <= TOP_LOAD_THRESHOLD;
+}
+
+/**
+ * Reveal one more batch of collapsed messages (infinite scroll up). Clamped
+ * to MAX_VISIBLE so the client never renders more than the cap. After the
+ * window grows, the scroll position is adjusted so the user stays at roughly
+ * the same visible spot (the newly prepended messages appear ABOVE the
+// current viewport, not pushing the user down). No-op if nothing is collapsed.
+ */
+function loadMore(): void {
+  if (!hasCollapsedAbove.value) return;
+  const el = scrollContainer.value;
+  // Capture the scroll geometry BEFORE the window grows so we can offset the
+  // new scrollTop by the height added (the prepended messages).
+  const prevHeight = el ? el.scrollHeight : 0;
+  const prevTop = el ? el.scrollTop : 0;
+  visibleCount.value = Math.min(visibleCount.value + SCROLL_BATCH, MAX_VISIBLE);
+  // nextTick: wait for the DOM to reflect the larger window, then keep the
+  // user at the same content position by adding the newly prepended height.
+  nextTick(() => {
+    if (!el) return;
+    const added = el.scrollHeight - prevHeight;
+    el.scrollTop = prevTop + added;
+  });
+}
+
 function scrollToBottom(): void {
   const el = scrollContainer.value;
   if (el) {
@@ -79,6 +151,12 @@ function onScroll(): void {
   } else {
     userScrolledUp = true;
     showScrollButton.value = true;
+  }
+  // Infinite scroll up: when the user scrolls near the top and older
+  // messages are collapsed, reveal the next batch. This makes "scroll up
+  // for more" work without an explicit button click, capped at MAX_VISIBLE.
+  if (isNearTop() && hasCollapsedAbove.value) {
+    loadMore();
   }
 }
 
@@ -132,13 +210,47 @@ function onDiscardAllSteering(): void {
   chatApi.resolveSteering([]);
 }
 
-// Watch for new messages — auto-scroll only if user is already at bottom
+// Watch for new messages — auto-scroll only if user is already at bottom.
+// Also grows the collapse window so the newly appended message is visible
+// when the user is following the tail: if the window already shows the whole
+// tail (visibleCount >= filtered length before the append), bump visibleCount
+// so the new last message renders. If the user has scrolled up (collapsed
+// history in view), do NOT grow — the new tail arriving should not yank the
+// window and re-collapse what they revealed.
 watch(
   () => visibleMessages.value.length,
   () => {
     if (!userScrolledUp) {
       nextTick(() => scrollToBottom());
     }
+  },
+);
+
+// Keep the collapse window in sync with the filtered list size. When the
+// filtered list GROWS by appends AND the user is at the bottom (following the
+// tail), grow visibleCount so the new message shows instead of being hidden
+// behind the collapse. When the list SHRINKS (a 200 replace on reconnect
+// resets the store), or the filtered set changes identity (verbose toggle),
+// reset to INITIAL_VISIBLE so the collapse re-applies from the tail.
+watch(
+  () => filteredMessages.value.length,
+  (newLen, oldLen) => {
+    if (oldLen === undefined) return; // initial — leave INITIAL_VISIBLE
+    if (newLen > oldLen) {
+      // Appends: grow the window only if the user is at the bottom (the
+      // previous tail was fully in view). Otherwise leave the window — the
+      // user is reading older history and a tail arrival must not re-collapse it.
+      if (!userScrolledUp) {
+        // Bump by the delta so the newly appended messages render instead of
+        // being hidden behind the collapse. Clamped to MAX_VISIBLE.
+        visibleCount.value = Math.min(visibleCount.value + (newLen - oldLen), MAX_VISIBLE);
+      }
+    } else if (newLen < oldLen) {
+      // Shrink / replace: reset to the initial window so the collapse
+      // re-applies from the new tail (e.g. after a reconnect 200).
+      visibleCount.value = INITIAL_VISIBLE;
+    }
+    // newLen === oldLen: no size change (e.g. a content edit) — leave the window.
   },
 );
 
@@ -179,6 +291,16 @@ onMounted(() => {
 
 <template>
   <div class="chat-log" ref="scrollContainer" @scroll="onScroll">
+    <!-- Collapse affordance: when older messages are hidden behind the
+         window, show a "加载更多" button at the top. Clicking reveals one
+         batch (SCROLL_BATCH); scrolling to the top also triggers it via
+         onScroll's isNearTop() check. The count tells the user how many
+         collapsed messages remain above. -->
+    <div v-if="hasCollapsedAbove" class="load-more-row">
+      <button class="load-more-btn" @click="loadMore" title="向上滚动或点击加载更早的消息">
+        加载更多…
+      </button>
+    </div>
     <template
       v-for="(msg, index) in visibleMessages"
       :key="messageKey(msg, index)"
@@ -277,6 +399,31 @@ onMounted(() => {
   overflow-y: auto;
   padding: 12px 0;
   position: relative;
+}
+/* Collapse affordance at the top of the chat log. Rendered only when older
+   messages are hidden behind the collapse window (hasCollapsedAbove). The
+   button also fires when the user scrolls to the top (onScroll's isNearTop
+   path), so this is a secondary, explicit trigger. */
+.load-more-row {
+  display: flex;
+  justify-content: center;
+  padding: 4px 0 8px;
+}
+.load-more-btn {
+  background: var(--bg-scroll-btn);
+  border: 1px solid var(--border-scroll);
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 4px 14px;
+  border-radius: 12px;
+  box-shadow: var(--scroll-shadow);
+  transition: background 0.15s, transform 0.15s;
+  backdrop-filter: blur(4px);
+}
+.load-more-btn:hover {
+  background: var(--bg-scroll-btn-hover);
+  transform: scale(1.04);
 }
 .scroll-bottom-btn {
   position: sticky;
