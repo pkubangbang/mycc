@@ -172,3 +172,55 @@ export function onShrink(): CollapseState {
 export function onFilterChange(): CollapseState {
   return initialCollapseState();
 }
+
+/** The kind of change a filtered-list observation represents.
+ *
+ *  `classifyChange` is the PURE decision the ChatLog watcher must make each
+ *  time it observes a new (verboseLogs, filteredLength) pair, so the
+ *  verbose-toggle-vs-append distinction is unit-testable instead of living
+ *  only in watcher choreography. */
+export type ChangeKind = 'filter' | 'append' | 'shrink' | 'none';
+
+/**
+ * classifyChange — decide which collapse transition applies given the
+ * PREVIOUS and CURRENT (verboseLogs, filteredLength) observations.
+ *
+ *   verboseLogs changed  → 'filter'   (the visible set's membership changed;
+ *                                      onFilterChange regardless of any
+ *                                      length delta — a toggle that happens
+ *                                      to leave length identical is STILL a
+ *                                      filter change, NOT 'none', so the
+ *                                      window resets and the NEXT real
+ *                                      append is not swallowed by a stale
+ *                                      guard flag)
+ *   verboseLogs unchanged & grew      → 'append'   (genuine tail arrivals)
+ *   verboseLogs unchanged & shrank    → 'shrink'   (200-replace store reset)
+ *   verboseLogs unchanged & same      → 'none'     (content edit; leave the
+ *                                      window alone)
+ *
+ * `prevVerbose === undefined` / `prevFilteredLength === undefined` signal
+ * the FIRST observation (the watcher's initial run) — classify as 'none' so
+ * the initial render keeps INITIAL_VISIBLE (mirrors the old `oldLen ===
+ * undefined` early-return).
+ *
+ * This replaces the prior two-watcher + filterChangePending design, which
+ * had two bugs: (1) a verbose toggle that left filteredLength identical
+ * never fired the length watcher, so the flag stayed set and swallowed the
+ * next real append; (2) checking trackingTail AFTER onFilterChange (which
+ * forces trackingTail=true) made the re-scroll unconditional. Folding both
+ * signals into one pure classifier removes the cross-watcher synchronization
+ * entirely — there is no flag whose lifetime depends on another watcher
+ * firing.
+ */
+export function classifyChange(
+  prevVerbose: boolean | undefined,
+  nextVerbose: boolean,
+  prevFilteredLength: number | undefined,
+  nextFilteredLength: number,
+): ChangeKind {
+  if (prevVerbose === undefined || prevFilteredLength === undefined) return 'none';
+  if (prevVerbose !== nextVerbose) return 'filter';
+  if (nextFilteredLength > prevFilteredLength) return 'append';
+  if (nextFilteredLength < prevFilteredLength) return 'shrink';
+  return 'none';
+}

@@ -32,7 +32,7 @@ import type { LogEntry, FileUploadEntry, CardMessage } from './serve-types.js';
 export type { CardMessage } from './serve-types.js';
 import { stripAnsi, detectLanIpv4, detectAllLanIpv4 } from './serve-utils.js';
 import { ClientRegistry } from './serve-clients.js';
-import { readHistory, computeHistoryVersion } from './serve-history.js';
+import { readHistory, computeHistoryVersion, etagMatchesIfNoneMatch } from './serve-history.js';
 import { DisconnectTimer } from './serve-disconnect-timer.js';
 import { handleWsMessage, type HubHandler } from './serve-ws-handler.js';
 import { getPeerWireAcceptor } from './peer-wire.js';
@@ -307,11 +307,16 @@ export class ServeHub implements HubHandler {
       res.set('ETag', etag);
       res.set('Cache-Control', 'no-cache');
       // If-None-Match match → 304 Not Modified, empty body. The client's
-      // hydrated copy stays on screen (lock-screen instant wake). Express
-      // compares strong/weak tags per RFC 7232; a weak `W/"..."` tag matches
-      // an identical weak tag in If-None-Match.
+      // hydrated copy stays on screen (lock-screen instant wake). The match
+      // uses RFC 7232 §3.2 conditional semantics (weak comparison) via
+      // etagMatchesIfNoneMatch: it handles a comma-separated list of
+      // entity-tags and the `*` wildcard, and compares the opaque tags
+      // ignoring the weak/strong distinction (correct for If-None-Match).
+      // The prior `inm === etag` equality only handled the single-tag
+      // exact-string case and silently failed on multi-tag or
+      // strong/weak-equivalent headers.
       const inm = req.headers['if-none-match'];
-      if (inm && inm === etag) {
+      if (etagMatchesIfNoneMatch(typeof inm === 'string' ? inm : undefined, etag)) {
         res.status(304).end();
         return;
       }

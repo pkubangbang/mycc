@@ -103,6 +103,68 @@ export function computeHistoryVersion(
   return `W/"h${djb2(parts.join('|'))}"`;
 }
 
+/**
+ * Parse a single entity-tag token (as it appears in an If-None-Match list or
+ * as a response ETag) into its opaque-tag string for WEAK comparison,
+ * per RFC 7232 §2.3. Weak comparison (§2.3.2) ignores the weak/strong
+ * distinction: it strips the leading `W/` and compares only the
+ * quoted opaque-tag. Returns null for a malformed token (not a valid
+ * entity-tag, e.g. the wildcard `*` is handled by the caller, not here).
+ *
+ *   W/"abc"  → "abc"
+ *   "abc"    → "abc"
+ *   "abc     → null   (unterminated quote)
+ *   abc      → null   (unquoted)
+ */
+function parseEtagToken(token: string): string | null {
+  let t = token.trim();
+  if (t.startsWith('W/')) t = t.slice(2);
+  if (t.length < 2 || t[0] !== '"' || t[t.length - 1] !== '"') return null;
+  return t.slice(1, -1); // the opaque tag inside the quotes
+}
+
+/**
+ * RFC 7232 §3.2 If-None-Match conditional check (weak comparison), as a PURE
+ * function so the matching logic is unit-testable without spinning up
+ * Express.
+ *
+ * `headerValue` is the raw If-None-Match header (a comma-separated list of
+ * entity-tags, or the wildcard `*`). `currentEtag` is the ETag the server
+ * would send on this response (a single entity-tag, possibly weak).
+ *
+ * Returns true when the precondition is met — i.e. the server should respond
+ * 304 Not Modified:
+ *   - `*` matches ANY current representation (RFC 7232 §3.2: "the asterisk
+ *     form matches any value").
+ *   - otherwise, true if ANY listed entity-tag WEAKLY-matches the current
+ *     ETag (weak comparison: strip W/ from both sides, compare the opaque
+ *     tags). RFC 7232 §2.3.2: weak comparison ignores the strong/weak
+ *     distinction, which is exactly what If-None-Match requires.
+ *
+ * This replaces the prior manual `inm === etag` equality, which only handled
+ * the single-tag, exact-string case and silently failed on a header with
+ * multiple tags (e.g. `"a", W/"b"`) or a strong/weak-equivalent pair.
+ */
+export function etagMatchesIfNoneMatch(headerValue: string | undefined | null, currentEtag: string): boolean {
+  if (!headerValue) return false;
+  const raw = headerValue.trim();
+  if (raw === '') return false;
+  if (raw === '*') return true; // wildcard matches any current representation
+  const current = parseEtagToken(currentEtag);
+  if (current === null) return false; // malformed current ETag — never 304
+  // Split on commas. Entity-tags are quoted strings (the opaque tag may NOT
+  // contain a bare comma — RFC 7232 §2.3: the opaque-tag is a quoted-string,
+  // and a comma inside a quoted-string is allowed but never appears in our
+  // h<hex> tags, so a naive comma split is safe for our emitted tags; for
+  // robustness we parse each candidate with parseEtagToken which rejects
+  // malformed tokens rather than mis-splitting).
+  for (const candidate of raw.split(',')) {
+    const tag = parseEtagToken(candidate);
+    if (tag !== null && tag === current) return true;
+  }
+  return false;
+}
+
 /** Map a triologue Message role to a WebUI LogEntry type. */
 export function roleToType(role: string | undefined): string {
   switch (role) {

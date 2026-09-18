@@ -19,7 +19,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { computeHistoryVersion } from '../../serve/serve-history.js';
+import { computeHistoryVersion, etagMatchesIfNoneMatch } from '../../serve/serve-history.js';
 import type { LogEntry } from '../../serve/serve-types.js';
 
 const WEAK_ETAG_RE = /^W\/"h[0-9a-f]+"$/;
@@ -162,5 +162,79 @@ describe('computeHistoryVersion — combined input independence', () => {
     expect(a).not.toBe(b);
     expect(b).not.toBe(c);
     expect(a).not.toBe(c);
+  });
+});
+
+describe('etagMatchesIfNoneMatch — RFC 7232 §3.2 (If-None-Match)', () => {
+  // The /history handler uses this instead of manual `===` equality so the
+  // conditional handles multi-tag headers, the `*` wildcard, and weak vs
+  // strong equivalent tags per RFC 7232. The server always emits weak tags
+  // of the form W/"h<hex>".
+  const CURRENT = 'W/"h1a2b3c"';
+
+  it('no header → false (no precondition → not 304)', () => {
+    expect(etagMatchesIfNoneMatch(undefined, CURRENT)).toBe(false);
+    expect(etagMatchesIfNoneMatch(null, CURRENT)).toBe(false);
+    expect(etagMatchesIfNoneMatch('', CURRENT)).toBe(false);
+    expect(etagMatchesIfNoneMatch('   ', CURRENT)).toBe(false);
+  });
+
+  it('exact single-tag match (same weak tag) → true', () => {
+    expect(etagMatchesIfNoneMatch('W/"h1a2b3c"', CURRENT)).toBe(true);
+  });
+
+  it('strong-vs-weak equivalent tag → true (weak comparison ignores W/)', () => {
+    // RFC 7232 §2.3.2: If-None-Match uses weak comparison, so a strong tag
+    // (no W/) and a weak tag (W/) with the same opaque-tag are equivalent.
+    expect(etagMatchesIfNoneMatch('"h1a2b3c"', CURRENT)).toBe(true);
+  });
+
+  it('a non-matching single tag → false', () => {
+    expect(etagMatchesIfNoneMatch('W/"hdeadbeef"', CURRENT)).toBe(false);
+    expect(etagMatchesIfNoneMatch('"hdeadbeef"', CURRENT)).toBe(false);
+  });
+
+  it('`*` wildcard → true (matches any current representation)', () => {
+    expect(etagMatchesIfNoneMatch('*', CURRENT)).toBe(true);
+    expect(etagMatchesIfNoneMatch(' * ', CURRENT)).toBe(true);
+  });
+
+  it('multi-tag header: the matching tag is in the list → true', () => {
+    // The prior `inm === etag` equality would have FAILED here (the whole
+    // header string !== the single current ETag). RFC 7232 says 304 if ANY
+    // listed tag matches.
+    expect(etagMatchesIfNoneMatch('"foo", W/"h1a2b3c"', CURRENT)).toBe(true);
+    expect(etagMatchesIfNoneMatch('W/"h1a2b3c", "bar"', CURRENT)).toBe(true);
+    expect(etagMatchesIfNoneMatch('"a", "b", W/"h1a2b3c", "d"', CURRENT)).toBe(true);
+  });
+
+  it('multi-tag header: none match → false', () => {
+    expect(etagMatchesIfNoneMatch('"foo", W/"bar", "baz"', CURRENT)).toBe(false);
+  });
+
+  it('whitespace around tags in a multi-tag list is tolerated', () => {
+    expect(etagMatchesIfNoneMatch('"foo" , W/"h1a2b3c" , "bar"', CURRENT)).toBe(true);
+  });
+
+  it('a malformed current ETag → false (never 304 on a bad server tag)', () => {
+    expect(etagMatchesIfNoneMatch('W/"h1a2b3c"', 'not-a-valid-etag')).toBe(false);
+    expect(etagMatchesIfNoneMatch('W/"h1a2b3c"', 'W/unterminated')).toBe(false);
+  });
+
+  it('malformed tokens in the header are skipped, valid ones still matched', () => {
+    // A bare unquoted token is not a valid entity-tag; it is skipped, but a
+    // later valid matching token still yields 304.
+    expect(etagMatchesIfNoneMatch('bogus, W/"h1a2b3c"', CURRENT)).toBe(true);
+    expect(etagMatchesIfNoneMatch('bogus, nope', CURRENT)).toBe(false);
+  });
+
+  it('round-trips with a real computeHistoryVersion ETag', () => {
+    const etag = computeHistoryVersion(null, null, [], 0, false);
+    // Client stores the exact server ETag and sends it back → 304.
+    expect(etagMatchesIfNoneMatch(etag, etag)).toBe(true);
+    // A different history (isRunning flipped) yields a different ETag → no 304.
+    const etag2 = computeHistoryVersion(null, null, [], 0, true);
+    expect(etag).not.toBe(etag2);
+    expect(etagMatchesIfNoneMatch(etag, etag2)).toBe(false);
   });
 });
