@@ -1104,13 +1104,15 @@ export interface SlashCommandContext {
    * Used by /load to inject the restored session's first query.
    */
   nextQuery?: string;
-  /** Sequence tracker — can be cleared by /clear or double Ctrl+L */
-  sequence?: { clear(): void };
+  /** Sequence tracker — compactReset() on /compact (preserves turn events),
+   *  fullClear() on /clear or double Ctrl+L (wipes everything). */
+  sequence?: { compactReset(): void; fullClear(): void };
   /**
    * Hook executor — its per-turn dedup state (stopDisturbance) must be reset
-   * alongside sequence.clear() so that a stop+replace hook suppressed by the
-   * dedup cap re-fires after /clear or /compact (otherwise the cap persists
-   * even though the session.* counters it was deduping against have reset).
+   * alongside sequence.compactReset()/fullClear() so that a stop+replace hook
+   * suppressed by the dedup cap re-fires after /clear or /compact (otherwise
+   * the cap persists even though the session.* counters it was deduping
+   * against have reset).
    */
   hookExecutor?: { resetTurn(): void };
 }

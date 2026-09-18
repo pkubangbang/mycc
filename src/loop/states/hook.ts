@@ -387,8 +387,10 @@ export async function handleHook(
 
       // Reset stat counts now — the confusion that triggered the compact is
       // stale regardless of when the compact itself runs.
+      // compactReset() clears session-level data ONLY (turn.events[] and
+      // totalTurns survive — a turn spans across compaction).
       env.ctx.core.resetConfusionIndex();
-      env.sequence.clear();
+      env.sequence.compactReset();
       env.crossroadOccurred = false;  // clear stale cooldown after compaction
 
       return AgentState.COLLECT;

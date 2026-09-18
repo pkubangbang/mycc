@@ -281,6 +281,7 @@ describe("evaluateExpression() edge cases", () => {
       sessionCountResult: () => 0,
       sessionHadError: () => false,
       isPlanMode: () => false,
+      totalTurns: () => 0,
     };
 
     // -1 >= -1 should be true (both not found = equal)
@@ -308,6 +309,7 @@ describe("evaluateExpression() edge cases", () => {
       sessionCountResult: () => 0,
       sessionHadError: () => false,
       isPlanMode: () => false,
+      totalTurns: () => 0,
     };
 
     // 5 >= -1 -> true
@@ -330,6 +332,7 @@ describe("evaluateExpression() edge cases", () => {
       sessionCountResult: () => 0,
       sessionHadError: () => false,
       isPlanMode: () => false,
+      totalTurns: () => 0,
     };
 
     const expr = "turn.lastIndex('edit_file') >= turn.lastIndex('bash#pnpm lint') || turn.lastIndex('write_file') >= turn.lastIndex('bash#pnpm lint') || turn.lastIndex('bash#pnpm lint') == -1";
@@ -348,10 +351,39 @@ describe("evaluateExpression() edge cases", () => {
       sessionCountResult: () => 0,
       sessionHadError: () => false,
       isPlanMode: () => false,
+      totalTurns: () => 0,
     };
 
     expect(evaluateExpression("turn.count('edit_file') > 0", ctx)).toBe(true);
     expect(evaluateExpression("turn.count('write_file') > 0", ctx)).toBe(false);
+  });
+
+  it("should NOT treat a bare function identifier as truthy (P1 regression)", () => {
+    // A bare `totalTurns` (missing parens) resolves to the function object.
+    // Boolean(fn) would be `true` — a silently always-truthy guard. The
+    // evaluator must throw instead, and evaluateExpression must surface that
+    // as `false` (it catches errors and returns false), NOT `true`.
+    const ctx: EvalContext = {
+      turnCount: () => 0,
+      turnLastIndex: () => -1,
+      turnCountResult: () => 0,
+      turnHadError: () => false,
+      sessionCount: () => 0,
+      sessionLastIndex: () => -1,
+      sessionCountResult: () => 0,
+      sessionHadError: () => false,
+      isPlanMode: () => false,
+      totalTurns: () => 42,
+    };
+
+    // Bare totalTurns must NOT evaluate to true (the function object is truthy
+    // by default, but the evaluator now rejects bare function references).
+    expect(evaluateExpression("totalTurns", ctx)).toBe(false);
+    // Bare isPlanMode likewise.
+    expect(evaluateExpression("isPlanMode", ctx)).toBe(false);
+    // The called forms still work and reflect the real values.
+    expect(evaluateExpression("totalTurns() >= 5", ctx)).toBe(true);
+    expect(evaluateExpression("isPlanMode()", ctx)).toBe(false);
   });
 });
 

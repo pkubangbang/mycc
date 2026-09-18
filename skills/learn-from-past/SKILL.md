@@ -7,7 +7,7 @@ description: >
   daemon to process; **no** declines and you continue. Use this to preserve a
   successful experience at the moment of success, before context moves on and
   it is lost. Fires only on `brief` confidence=10, in normal (non-plan) mode,
-  after 5+ tool calls this session, and only when real work tools
+  after 5+ completed turns this session, and only when real work tools
   (`edit_file`/`write_file`/`bash`) were used at some point this session — so
   plan-mode confidence, premature optimism, and read-only sessions do not
   trigger it. The hook uses a non-blocking message action that injects a
@@ -17,7 +17,7 @@ description: >
 keywords: [learn, past, experience, success, skill, create, optimize, lfp,
   summary, capture, knowledge, distill, brief, confidence, completed,
   reusable, lesson, lfplater, deferred, autonomy, nudge, suggestion, preserve]
-when: "after brief is called with confidence 10 (100%), if not in plan mode, total tool calls exceeds 5, and work tools (edit_file, write_file, or bash) were used at any point in this session, suggest the agent to ask the user whether to summarize the successful experience into a reusable skill"
+when: "after brief is called with confidence 10 (100%), if not in plan mode, total completed turns (totalTurns()) is at least 5, and work tools (edit_file, write_file, or bash) were used at any point in this session, suggest the agent to ask the user whether to summarize the successful experience into a reusable skill"
 ---
 
 # Learn From Past (LFP)
@@ -36,7 +36,7 @@ Fires after `brief` is called when ALL of these are true:
 
 - `call.args.confidence == 10` — the agent reported 100% certainty (completed task)
 - `!isPlanMode()` — not in plan mode (planning ≠ completing)
-- `session.count() > 5` — at least 5 tool calls this session (real work, not premature optimism)
+- `totalTurns() >= 5` — at least 5 completed turns this session (real work, not premature optimism). Uses `totalTurns()` (completed STOP→PROMPT cycles) instead of `session.count()` so the gate survives compaction — `session.count()` resets to 0 on compaction, which would wrongly suppress the hook in long sessions that compacted mid-flight.
 - `session.count('edit_file') > 0 || session.count('write_file') > 0 || session.count('bash') > 0` — real work tools used at any point in this session (session-scoped, not turn-scoped)
 
 These guards prevent false triggers from:
@@ -51,6 +51,17 @@ These guards prevent false triggers from:
 > Checking only the current turn would miss these completions. Session-scoped
 > counting (`session.count(...)`) persists across turn boundaries, so the hook
 > fires whenever real work happened *anywhere* in the session.
+>
+> **Why the threshold uses `totalTurns()` but the work-tool guard uses
+> `session.count(...)`:** they answer different questions. The threshold
+> ("has enough work happened to be worth a prompt?") must survive compaction,
+> so it uses `totalTurns()` (completed STOP→PROMPT cycles, which compaction
+> does NOT reset). The work-tool guard ("did any real tool run at all?")
+> is intentionally session-scoped for the reason above — and its compaction
+> fragility is acceptable: if a compaction wiped the session tally mid-flight,
+> `totalTurns() >= 5` still guarantees we're deep enough into a real session
+> that work almost certainly happened, so the worst case is a missed reminder
+> (false negative), never an unwarranted one (false positive).
 
 ## Action
 
@@ -169,7 +180,7 @@ This hook must not feel intrusive. Follow these principles:
 (e.g., defensive confusion reduction, premature optimism, plan confidence).
 
 **Solution**: The condition includes three guards (`!isPlanMode()`,
-`session.count() > 5`, `session.count('edit_file') > 0 || session.count('write_file') > 0 || session.count('bash') > 0`) that
+`totalTurns() >= 5`, `session.count('edit_file') > 0 || session.count('write_file') > 0 || session.count('bash') > 0`) that
 filter out these false triggers.
 
 ### Pitfall: Over-Suggesting

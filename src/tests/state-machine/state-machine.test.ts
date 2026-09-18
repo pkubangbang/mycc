@@ -112,6 +112,9 @@ describe('AgentStateMachine', () => {
       hasSkillInConversation: vi.fn(() => false),
       totalCount: vi.fn(() => 0),
       markPromptBoundary: vi.fn(),
+      incrementTotalTurns: vi.fn(),
+      compactReset: vi.fn(),
+      fullClear: vi.fn(),
     } as unknown as Sequence;
 
     const hookExecutor = {

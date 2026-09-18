@@ -72,6 +72,7 @@ function createMockDeps() {
     sinceEdit: vi.fn(() => []), evaluate: vi.fn(() => false), isPlanMode: vi.fn(() => false),
     hasSkillInConversation: vi.fn(() => false), totalCount: vi.fn(() => 0),
     markPromptBoundary: vi.fn(),
+    incrementTotalTurns: vi.fn(), compactReset: vi.fn(), fullClear: vi.fn(),
   } as unknown as Sequence;
 
   const hookExecutor = { processToolCalls: vi.fn() } as unknown as HookExecutor;

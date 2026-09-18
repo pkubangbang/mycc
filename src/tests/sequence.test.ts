@@ -2,7 +2,7 @@
  * Tests for sequence.ts
  *
  * Tests cover:
- * - Sequence basic operations (add, getEvents, clear, markPromptBoundary)
+ * - Sequence basic operations (add, getEvents, fullClear, markPromptBoundary)
  * - Turn-scoped API: turnCount, turnLastIndex, turnCountResult, turnHadError
  * - Session-scoped API: sessionCount, sessionLastIndex, sessionCountResult, sessionHadError
  * - isPlanMode()
@@ -39,15 +39,23 @@ describe("Sequence", () => {
     });
   });
 
-  describe("clear()", () => {
+  describe("fullClear()", () => {
     it("should clear all events and session counters", () => {
       seq.add({ tool: "bash", args: { command: "test" }, result: "ok", timestamp: Date.now() });
       seq.add({ tool: "edit_file", args: { path: "test" }, result: "ok", timestamp: Date.now() });
       expect(seq.getEvents()).toHaveLength(2);
 
-      seq.clear();
+      seq.fullClear();
       expect(seq.getEvents()).toHaveLength(0);
       expect(seq.sessionCount()).toBe(0);
+    });
+
+    it("should reset totalTurns (fullClear is a complete session wipe)", () => {
+      seq.incrementTotalTurns();
+      seq.incrementTotalTurns();
+      expect(seq.getTotalTurns()).toBe(2);
+      seq.fullClear();
+      expect(seq.getTotalTurns()).toBe(0);
     });
   });
 
@@ -298,10 +306,10 @@ describe("session.count(tool?)", () => {
     expect(seq.sessionCount("skill_load#plan-quality")).toBe(2);
   });
 
-  it("should reset on clear()", () => {
+  it("should reset on fullClear()", () => {
     seq.add({ tool: "bash", args: { command: "test" }, result: "ok", timestamp: Date.now() });
     expect(seq.sessionCount("bash")).toBe(1);
-    seq.clear();
+    seq.fullClear();
     expect(seq.sessionCount("bash")).toBe(0);
     expect(seq.sessionCount()).toBe(0);
   });
@@ -411,10 +419,10 @@ describe("session.hadError(tool?)", () => {
     expect(seq.sessionHadError("bash")).toBe(false);
   });
 
-  it("should reset on clear()", () => {
+  it("should reset on fullClear()", () => {
     seq.add({ tool: "bash", args: { command: "test" }, result: "error: failed", timestamp: Date.now() });
     expect(seq.sessionHadError()).toBe(true);
-    seq.clear();
+    seq.fullClear();
     expect(seq.sessionHadError()).toBe(false);
   });
 

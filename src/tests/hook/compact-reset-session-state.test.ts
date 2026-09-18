@@ -28,9 +28,15 @@
  * The fix mirrors the established PROMPT-state pattern (which pairs
  * sequence.markPromptBoundary() with hookExecutor.resetTurn()): every call
  * site that clears sequence state on a /clear, /compact, or auto-compact
- * now ALSO calls hookExecutor.resetTurn(). This test pins that contract by
- * simulating the real call-site pairing — clear() followed by resetTurn() —
- * and asserting the hook re-fires.
+ * now calls sequence.compactReset() (session.* only) + hookExecutor.resetTurn().
+ * This test pins that contract by simulating the real call-site pairing —
+ * compactReset() followed by resetTurn() — and asserting the hook re-fires.
+ *
+ * REVISED SEMANTICS (turn-session-semantics-revision.md):
+ * - compactReset() clears session.* ONLY — turn.events[] and totalTurns
+ *   SURVIVE (a turn spans across compaction). This is verified below.
+ * - fullClear() (used by /clear, double-Ctrl+L) clears everything including
+ *   turn.events[] and totalTurns.
  */
 
 import { describe, it, expect, vi } from 'vitest';
@@ -127,13 +133,25 @@ describe('session.* reset on /clear or /compact re-enables session-dedup hooks',
     expect(sequence.sessionCount('skill_load#plan-quality')).toBe(1);
     expect(executor.checkHooks('stop')).not.toContain('plan-quality');
 
-    // ── /compact (or /clear): the call site pairs sequence.clear() with
+    // ── /compact: the call site pairs sequence.compactReset() with
     //    hookExecutor.resetTurn() (mirroring the PROMPT-state pattern that
-    //    pairs markPromptBoundary() with resetTurn()). sequence.clear()
-    //    resets the session.* counters; resetTurn() clears the per-turn
+    //    pairs markPromptBoundary() with resetTurn()). compactReset() resets
+    //    the session.* counters; resetTurn() clears the per-turn
     //    stopDisturbance dedup set that was suppressing the hook. ──
-    sequence.clear();
+    // Verify turn.* SURVIVES compactReset() (revised semantics):
+    // turn.events[] is preserved — a turn spans across compaction.
+    sequence.add({
+      tool: 'edit_file',
+      args: { path: '/test/a.ts' },
+      result: 'OK',
+      timestamp: Date.now(),
+    });
+    expect(sequence.turnCount('edit_file')).toBe(1);
+    sequence.compactReset();
     executor.resetTurn();
+    // turn.* survived compaction (revised semantics — was NOT the case before):
+    expect(sequence.turnCount('edit_file')).toBe(1);
+    // session.* was reset by compactReset():
     expect(sequence.sessionCount('skill_load#plan-quality')).toBe(0);
 
     // ── Next stop trigger: hook should fire AGAIN ──

@@ -73,12 +73,14 @@ export async function handleLlm(
     // Reset stat counts — old context is summarized away.
     ctx.core.resetConfusionIndex();
     env.requestEmbeddingTracker.clear();
-    env.sequence.clear();
-    // Reset hook dedup so a stop+replace hook suppressed by the per-turn cap
-    // can re-fire after auto-compact. Auto-compact fires mid-turn (at the LLM
-    // stage) with no subsequent PROMPT/resetTurn boundary, so without this the
-    // dedup cap would persist for the rest of the turn even though the
+    // compactReset() clears session-level data ONLY (turn.events[] and
+    // totalTurns survive — a turn spans across compaction). resetTurn()
+    // re-arms per-turn hook dedup so a stop+replace hook suppressed by the
+    // cap can re-fire after auto-compact. Auto-compact fires mid-turn (at
+    // the LLM stage) with no subsequent turn boundary, so without resetTurn()
+    // the dedup cap would persist for the rest of the turn even though the
     // session.* counters it was deduping against have been reset.
+    env.sequence.compactReset();
     env.hookExecutor.resetTurn();
     env.crossroadOccurred = false;
   }

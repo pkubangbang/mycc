@@ -154,6 +154,43 @@ describe("validateExpression()", () => {
       expect(result.warnings.some(w => w.includes("==="))).toBe(true);
     });
   });
+
+  describe("function-only names must be called, not referenced bare", () => {
+    // Regression guard for a P1 correctness bug: a bare `totalTurns` or
+    // `isPlanMode` (missing parens) used to validate cleanly because the
+    // names sat in ALLOWED_ROOTS, then evaluated to the function object —
+    // which Boolean() coerces to `true`, producing a silently always-truthy
+    // guard. They must now be rejected; only the call form is legal.
+    it("should reject bare `totalTurns` (missing parens)", () => {
+      const result = validateExpression("totalTurns");
+      expect(result.valid).toBe(false);
+      expect(result.errors.some(e => e.includes("totalTurns") && e.includes("()"))).toBe(true);
+    });
+
+    it("should reject bare `isPlanMode` (missing parens)", () => {
+      const result = validateExpression("isPlanMode");
+      expect(result.valid).toBe(false);
+      expect(result.errors.some(e => e.includes("isPlanMode") && e.includes("()"))).toBe(true);
+    });
+
+    it("should reject bare `totalTurns` inside a larger expression", () => {
+      // A typo like `totalTurns >= 5` (instead of `totalTurns() >= 5`) must
+      // not slip through just because it's wrapped in a comparison.
+      const result = validateExpression("totalTurns >= 5");
+      expect(result.valid).toBe(false);
+      expect(result.errors.some(e => e.includes("totalTurns"))).toBe(true);
+    });
+
+    it("should still accept the called form totalTurns()", () => {
+      expect(validateExpression("totalTurns() >= 5").valid).toBe(true);
+      expect(validateExpression("totalTurns()").valid).toBe(true);
+    });
+
+    it("should still accept the called form isPlanMode()", () => {
+      expect(validateExpression("isPlanMode()").valid).toBe(true);
+      expect(validateExpression("!isPlanMode() && totalTurns() >= 5").valid).toBe(true);
+    });
+  });
 });
 
 describe("testCondition()", () => {
