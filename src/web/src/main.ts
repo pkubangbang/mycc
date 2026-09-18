@@ -198,10 +198,17 @@ function wsSend(data: object): boolean {
  * the server's history is unchanged since that ETag — the already-hydrated
  * (from IndexedDB cache) record stays on screen and we do NOT touch the
  * store (avoids a blank flash + full re-fetch on lock-screen wake). A 200
- * replaces the record authoritatively and updates `lastHistoryEtag`. Network
- * failure leaves the hydrated record in place (the WS reconnect retries).
+ * replaces the record authoritatively and updates `lastHistoryEtag` ONLY
+ * after the body is parsed and the store replaced (so a parse failure cannot
+ * advance the ETag and freeze the UI on a stale store via a later 304).
+ *
+ * Returns true on a successful authoritative update (200 applied) or an
+ * unchanged-history short-circuit (304); false on any failure (non-ok,
+ * network error, JSON parse error). The caller (reconnect) uses the false
+ * signal to NOT connect the WS against a possibly-stale store — see the
+ * session-isolation invariant in reconnect().
  */
-async function fetchHistory(): Promise<void> {
+async function fetchHistory(): Promise<boolean> {
   try {
     const headers: Record<string, string> = {};
     if (lastHistoryEtag) headers['If-None-Match'] = lastHistoryEtag;
@@ -210,11 +217,14 @@ async function fetchHistory(): Promise<void> {
     // Keep it on screen; do not touch the store. Just refresh the steering
     // buffer + running state? No — a 304 means the WHOLE payload (messages
     // + steeringBuffer + isRunning) is unchanged, so there is nothing to do.
-    if (res.status === 304) return;
-    if (!res.ok) return;
-    // Capture the ETag for the next If-None-Match revalidation.
+    if (res.status === 304) return true;
+    if (!res.ok) return false;
+    // Capture the ETag but do NOT commit it yet — only advance lastHistoryEtag
+    // AFTER the body is parsed and the store is replaced, so a parse/processing
+    // failure cannot leave the ETag pointing at a version whose body was never
+    // applied (which would make the next If-None-Match 304 and freeze a stale
+    // store until another history change).
     const etag = res.headers.get('ETag');
-    if (etag) lastHistoryEtag = etag;
     const data = await res.json() as { messages: ChatMessage[]; steeringBuffer?: SteeringNote[]; isRunning?: boolean };
     // Empty-content prompts are "waiting for input" signals, not chat content.
     // Drop them from the visible record; non-empty prompts (e.g. 'Retry? [Y/n]')
@@ -231,6 +241,17 @@ async function fetchHistory(): Promise<void> {
         && m.type !== 'file-flush'
         && !m.synthetic,
     );
+    // Assign a stable id to any history-loaded message that lacks one (older
+    // transcripts predate the id scheme). This MUST happen before the
+    // messages enter the store so their v-for key (messageKey → `id:<id>`)
+    // is stable across collapse-window shifts (loadMore prepends), not
+    // viewport-relative — preserving MessageItem local state (copied, timers).
+    // nextId() is monotonic over the page lifetime, so a re-fetched history
+    // gets fresh ids (the store is replaced, so there is no key collision
+    // with the previous snapshot's ids).
+    for (const m of visible) {
+      if (typeof m.id !== 'number') m.id = nextId();
+    }
     // Split teammate messages from the main chat log by the @-prefix label
     // convention. Teammate messages (@name/tool) go to teammateMessages for
     // the accordion UI; everything else stays in messages. See the
@@ -249,12 +270,18 @@ async function fetchHistory(): Promise<void> {
     if (typeof data.isRunning === 'boolean') {
       store.setPhase(data.isRunning ? 'working' : 'idle');
     }
+    // The authoritative update fully succeeded — NOW commit the ETag so a
+    // later 304 correctly means "the store matches this version".
+    if (etag) lastHistoryEtag = etag;
     // Persist the authoritative snapshot to the cache so the next lock-screen
     // wake hydrates from it. Only on a 200 (we returned early on 304 above,
     // which means the cache is already current). Fire-and-forget.
     persistChatlog();
+    return true;
   } catch {
-    // Network failure — leave existing messages; WS reconnect will retry.
+    // Network/parse failure — leave existing messages; the caller decides
+    // whether to retry (reconnect) vs connect the WS.
+    return false;
   }
 }
 
@@ -289,10 +316,26 @@ async function fetchConfig(): Promise<void> {
     // next /history fetch does NOT send a stale If-None-Match from a
     // previous session (which would 304 against the wrong session's history
     // and freeze the UI on a foreign/empty log).
+    //
+    // SESSION-ISOLATION INVARIANT: once sessionId changes, NO message from
+    // the previous session may remain in the active store. The server does
+    // NOT replay history over the WebSocket (it only sends prompt/auto/
+    // running state on connect), so if the old chatlog were left in place
+    // and the WS connected to the new session, live new-session messages
+    // would layer on top of old-session history → a mixed log. Clearing the
+    // chat arrays HERE (the moment the new sessionId is observed) makes the
+    // transition atomic from the UI's perspective: the store is empty of
+    // foreign history before fetchHistory() runs, and reconnect() connects
+    // the WS only after fetchHistory() succeeds (see reconnect()).
     const newSid = typeof data.sessionId === 'string' ? data.sessionId : null;
     if (newSid !== sessionId) {
       sessionId = newSid;
       lastHistoryEtag = null;
+      // Drop the previous session's chatlog immediately. (Steering buffer +
+      // pendingSteeringReview are PROMPT-gated transient state cleared by
+      // ws.onclose / setPhase; they do not carry cross-session history.)
+      store.messages.splice(0, store.messages.length);
+      store.teammateMessages.splice(0, store.teammateMessages.length);
     }
   } catch {
     // /config unreachable — keep defaults (maxUploadMb=50, persistent=false)
@@ -377,19 +420,42 @@ function connectWebSocket(): void {
 
 /** Reconnect sequence: re-fetch config FIRST, then history, then re-open
  *  the WS. Ordering is load-bearing for session fencing: fetchConfig()
- *  detects a sessionId change (a serve restart started a new session) and
- *  resets `lastHistoryEtag` to null. Only AFTER that reset is it safe to
- *  call fetchHistory() — otherwise a stale If-None-Match from the previous
+ *  detects a sessionId change (a serve restart started a new session),
+ *  clears `lastHistoryEtag`, and CLEARS the store's chat arrays so no
+ *  previous-session message remains. Only AFTER that is it safe to call
+ *  fetchHistory() — otherwise a stale If-None-Match from the previous
  *  session could 304 against the NEW session's history (the /history ETag
  *  is a metadata/state fingerprint that does NOT include the sessionId, so
  *  a fingerprint collision across sessions is possible) and freeze the UI
  *  on a foreign/empty log. With config-first, a session change forces an
  *  unconditional /history fetch (no If-None-Match sent → never a 304
  *  against the wrong session); an unchanged session still benefits from the
- *  304 short-circuit. */
+ *  304 short-circuit.
+ *
+ *  WS-GATING INVARIANT: the WebSocket is connected to the new session ONLY
+ *  if fetchHistory() succeeds. If /history fails (transient network error)
+ *  right after a session change, connecting the WS would let new-session
+ *  live events layer on top of an empty (or stale) store with no
+ *  authoritative history — and the server does NOT replay history over WS.
+ *  On failure we leave the WS CLOSED and schedule another reconnect so the
+ *  next attempt re-runs config → history. This keeps the session transition
+ *  atomic from the UI's perspective: no live new-session events arrive
+ *  until the new session's history is confirmed. */
 async function reconnect(): Promise<void> {
   await fetchConfig();
-  await fetchHistory();
+  const ok = await fetchHistory();
+  if (!ok) {
+    // History unavailable — do NOT connect the WS against a possibly-stale
+    // store. Schedule a retry (mirrors ws.onclose's 1.5s cadence) so the
+    // next attempt re-runs config → history → WS once /history is reachable.
+    if (!reconnectTimer) {
+      reconnectTimer = setTimeout(() => {
+        reconnectTimer = null;
+        void reconnect();
+      }, 1500);
+    }
+    return;
+  }
   connectWebSocket();
 }
 
