@@ -19,6 +19,7 @@ import {
   leaveTail,
   onAppend,
   onShrink,
+  onFilterChange,
   windowSize,
   INITIAL_VISIBLE,
   MAX_VISIBLE,
@@ -135,6 +136,23 @@ describe('leaveTail', () => {
 describe('onShrink', () => {
   it('resets to the initial state', () => {
     expect(onShrink()).toEqual(initialCollapseState());
+  });
+});
+
+describe('onFilterChange', () => {
+  // The verbose-toggle transition (#14): the filtered set's membership
+  // changed, not a genuine append/shrink. The old window position is no
+  // longer meaningful, so reset to the initial window.
+  it('resets an expanded+buffered state to the initial window', () => {
+    // 30/5/false (user scrolled up, 5 buffered) → verbose toggle → 10/0/true
+    expect(onFilterChange()).toEqual(initialCollapseState());
+    expect(onFilterChange()).toEqual(st(INITIAL_VISIBLE, 0, true));
+  });
+
+  it('resets regardless of the incoming state (pure, argument-free)', () => {
+    // onFilterChange takes no state arg — it is a policy decision, not a
+    // delta. Confirm it always yields the initial state.
+    expect(onFilterChange()).toEqual(onShrink());
   });
 });
 

@@ -318,11 +318,25 @@ async function fetchHistory(): Promise<boolean> {
  *
  * Called in the load sequence alongside fetchHistory() — before the WS
  * connects — so the store is populated before the first render.
+ *
+ * CONFIG-GATING INVARIANT: returns `true` only on a successful 200 + parse,
+ * `false` on any failure (non-ok, network error, JSON parse error). BOTH
+ * the bootstrap and reconnect() gate on this boolean: if /config fails, the
+ * client CANNOT trust its cached `sessionId` / `lastHistoryEtag` (a serve
+ * restart may have started a new session, and the failure left the old
+ * identity in place), so it must NOT proceed to fetchHistory() (which could
+ * send a stale If-None-Match and 304 against the wrong session) and must
+ * NOT connect the WS. Instead it schedules a reconnect retry so the next
+ * attempt re-runs config → history → WS. Invariant: no WS connection and
+ * no conditional history validation may proceed unless the current session
+ * identity has been successfully established via /config. This does NOT
+ * affect the instant-cache UX — hydrateFromCache + mount still run during
+ * bootstrap before the gated synchronization stages.
  */
-async function fetchConfig(): Promise<void> {
+async function fetchConfig(): Promise<boolean> {
   try {
     const res = await fetch('/config');
-    if (!res.ok) return;
+    if (!res.ok) return false;
     const data = await res.json() as { maxUploadMb?: number; persistent?: boolean; sessionId?: string | null };
     if (Number.isFinite(data.maxUploadMb) && (data.maxUploadMb as number) > 0) {
       store.maxUploadMb = data.maxUploadMb as number;
@@ -357,8 +371,12 @@ async function fetchConfig(): Promise<void> {
       store.messages.splice(0, store.messages.length);
       store.teammateMessages.splice(0, store.teammateMessages.length);
     }
+    return true;
   } catch {
-    // /config unreachable — keep defaults (maxUploadMb=50, persistent=false)
+    // /config unreachable — keep defaults (maxUploadMb=50, persistent=false).
+    // Return false so the caller does NOT proceed to fetchHistory/WS against
+    // a possibly-stale sessionId/ETag (see the CONFIG-GATING INVARIANT above).
+    return false;
   }
 }
 
@@ -460,9 +478,29 @@ function connectWebSocket(): void {
  *  On failure we leave the WS CLOSED and schedule another reconnect so the
  *  next attempt re-runs config → history. This keeps the session transition
  *  atomic from the UI's perspective: no live new-session events arrive
- *  until the new session's history is confirmed. */
+ *  until the new session's history is confirmed.
+ *
+ *  CONFIG-GATING INVARIANT: fetchConfig() must ALSO succeed before
+ *  fetchHistory() runs. If /config fails, sessionId/lastHistoryEtag stay
+ *  stale (a serve restart may have started a new session unnoticed), so
+ *  sending If-None-Match could 304 against the wrong session's history.
+ *  On config failure we leave the WS CLOSED and schedule a reconnect retry
+ *  (same 1.5s cadence) so the next attempt re-runs config → history → WS. */
 async function reconnect(): Promise<void> {
-  await fetchConfig();
+  const configOk = await fetchConfig();
+  if (!configOk) {
+    // Config unavailable — sessionId/ETag may be stale (a serve restart
+    // could have started a new session). Do NOT fetch history (a stale
+    // If-None-Match could 304 against the wrong session) or connect the WS.
+    // Schedule a retry so the next attempt re-runs config → history → WS.
+    if (!reconnectTimer) {
+      reconnectTimer = setTimeout(() => {
+        reconnectTimer = null;
+        void reconnect();
+      }, 1500);
+    }
+    return;
+  }
   const ok = await fetchHistory();
   if (!ok) {
     // History unavailable — do NOT connect the WS against a possibly-stale
@@ -503,26 +541,43 @@ document.addEventListener('visibilitychange', () => {
 });
 
 // Page load sequence: initialize the Shiki highlighter, fetch config, hydrate
-// the chatlog from the IndexedDB cache, fetch history, THEN mount the Vue app,
-// and finally establish the WS connection. Mounting is deliberately placed
-// INSIDE this async bootstrap — AFTER hydrateFromCache() + fetchHistory() —
-// so the FIRST render already shows the hydrated/prior chatlog instead of a
-// blank screen. (A fire-and-forget IIFE followed by an immediate mount would
-// render first and hydrate later, defeating the lock-screen-instant-wake UX
-// goal.) The highlighter is awaited FIRST so the first render's code blocks
-// are already syntax-highlighted. The WS connects last so live updates never
-// overtake the historical record.
+// the chatlog from the IndexedDB cache, mount the Vue app, fetch history, and
+// finally establish the WS connection. Mounting is deliberately placed
+// INSIDE this async bootstrap — AFTER hydrateFromCache() but BEFORE
+// fetchHistory() — so the FIRST render already shows the hydrated/prior
+// chatlog instead of a blank screen (the instant-cache UX goal). The
+// highlighter is awaited FIRST so the first render's code blocks are already
+// syntax-highlighted. The WS connects last so live updates never overtake
+// the historical record. BOTH fetchConfig() and fetchHistory() act as GATES:
+// if either fails, the WS is NOT connected and a reconnect retry is
+// scheduled, while the cache-mounted UI stays visible (see the CONFIG-GATING
+// and WS-GATING invariants in the bootstrap body and in reconnect()).
 void (async () => {
   store.connectionStatus = 'reconnecting';
   await ensureHighlighterReady();
-  // Fetch config before history: maxUploadMb + persistent feed the first
-  // render (the StatusBar button label and the upload size guard), so they
-  // must be populated before the components mount and start reading the
-  // store. fetchConfig() also captures the wire sessionId (the IndexedDB
-  // cache key) and resets lastHistoryEtag on a session change — which must
-  // happen BEFORE fetchHistory() so a stale If-None-Match is never sent
-  // against a new session (see reconnect() for the same ordering rule).
-  await fetchConfig();
+  // Fetch config first: maxUploadMb + persistent feed the first render (the
+  // StatusBar button label and the upload size guard), and sessionId (the
+  // IndexedDB cache key) must be known BEFORE hydrateFromCache() so the
+  // cache is read from the right key. fetchConfig() also resets
+  // lastHistoryEtag on a session change — which must happen before
+  // fetchHistory() so a stale If-None-Match is never sent against a new
+  // session (see reconnect() for the same ordering rule).
+  //
+  // CONFIG-GATING INVARIANT (mirrors reconnect): fetchConfig() returns a
+  // boolean — true only on a successful 200 + parse. Its SIDE EFFECTS
+  // (sessionId / maxUploadMb / persistent / store clear on session change)
+  // run unconditionally here so hydration + mount use the freshest values
+  // available (and on a first load with no prior session there is nothing
+  // stale to misuse). But the boolean gates the SYNCHRONIZATION stages
+  // (fetchHistory → connectWebSocket): if /config failed, sessionId/
+  // lastHistoryEtag may be stale (a serve restart could have started a new
+  // session unnoticed), so we must NOT fetchHistory (a stale If-None-Match
+  // could 304 against the wrong session) and must NOT connect the WS. We
+  // schedule a reconnect retry instead; the cache-mounted UI stays visible
+  // in the meantime (the instant-cache UX goal is preserved — hydrate +
+  // mount happen regardless of config's outcome, exactly as they do
+  // regardless of history's outcome below).
+  const configOk = await fetchConfig();
   // Hydrate the chatlog from the IndexedDB cache BEFORE mounting so the
   // FIRST render is non-blank on a lock-screen wake — the cached chatlog is
   // visible instantly, without waiting for the /history network round trip.
@@ -542,6 +597,20 @@ void (async () => {
   mountedApp = createApp(App, { state: store });
   mountedApp.use(pinia);
   mountedApp.mount('#app');
+  // CONFIG-GATING: if /config failed, do NOT proceed to the synchronization
+  // stages. Schedule a reconnect retry (same 1.5s cadence as the history
+  // gate below) so the next attempt re-runs config → history → WS. The
+  // cache-mounted UI is already on screen, so the user sees content while
+  // the retry is in flight.
+  if (!configOk) {
+    if (!reconnectTimer) {
+      reconnectTimer = setTimeout(() => {
+        reconnectTimer = null;
+        void reconnect();
+      }, 1500);
+    }
+    return;
+  }
   // Revalidate with the server AFTER mount — 304 keeps the hydrated state,
   // 200 replaces it authoritatively (Pinia reactivity updates the mounted
   // components via splice, no re-mount needed).
@@ -700,5 +769,6 @@ export const chatApi = {
 registerDebugSeam(store, { nextId, chatApi });
 
 // The Vue app is created and mounted INSIDE the async bootstrap above (after
-// hydrateFromCache() + fetchHistory()), so the first render already shows the
-// hydrated chatlog. There is no eager mount here — see the bootstrap IIFE.
+// hydrateFromCache() but before fetchHistory()), so the first render already
+// shows the hydrated chatlog. There is no eager mount here — see the
+// bootstrap IIFE.

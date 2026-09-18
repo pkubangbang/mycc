@@ -12,6 +12,7 @@ import {
   leaveTail as reduceLeaveTail,
   onAppend as reduceOnAppend,
   onShrink as reduceOnShrink,
+  onFilterChange as reduceOnFilterChange,
 } from '../collapse-state';
 import type { CollapseState } from '../collapse-state';
 import MessageItem from './MessageItem.vue';
@@ -274,9 +275,9 @@ function onDiscardAllSteering(): void {
 // Keep the collapse window in sync with the filtered list size. This is the
 // core of the x / t / trackingTail scheme: it reacts to filtered-list GROWTH
 // (new messages arriving) and SHRINKAGE (a 200 replace on reconnect resets
-// the store) / identity change (verbose toggle). The transition LOGIC is in
-// the pure reducer (../collapse-state.ts); this watcher only applies the
-// result + the DOM scroll side-effect.
+// the store). The transition LOGIC is in the pure reducer
+// (../collapse-state.ts); this watcher only applies the result + the DOM
+// scroll side-effect.
 //
 // RE-SCROLL CORRECTNESS (#9): the reducer's onAppend returns a
 // `shouldScrollToTail` signal that is true whenever trackingTail is true and
@@ -285,10 +286,39 @@ function onDiscardAllSteering(): void {
 // but the new tail message must still be scrolled into view). Tying the
 // re-scroll to filtered-list growth (not visibleMessages.length) guarantees
 // trackingTail stays truly "live" once capacity bottoms out.
+//
+// VERBOSE-TOGGLE ISOLATION (#14): toggling 详细日志 changes which messages
+// isMessageVisible() admits, so filteredMessages.length grows/shrinks even
+// though no message arrived and the store was not replaced. Without a
+// guard, this watcher would treat the newly-shown log lines as live
+// arrivals (mutating capacity/tailBuffer) or a verbose-OFF shrink as a
+// 200-replace reset — both wrong. The dedicated verboseLogs watcher
+// (registered BELOW, but flushed BEFORE this one via flush:'sync' so it
+// sets the guard first) applies onFilterChange (a reset); this watcher then
+// sees the flag, skips its append/shrink branch, and clears it. So a
+// verbose toggle is a SEPARATE, testable transition (onFilterChange),
+// never confused with a genuine append/shrink.
+//
+// NOTE on watcher ordering: Vue runs same-flush watchers in registration
+// order. The verboseLogs watcher is registered after this one, so by
+// default it would run LAST and the guard would not be set in time. Giving
+// the verboseLogs watcher flush:'sync' makes it fire IMMEDIATELY when
+// verboseLogs changes (still in the same microtask, before the
+// pre-flush length watcher is batched), guaranteeing filterChangePending is
+// set before the length watcher's callback runs.
+let filterChangePending = false;
 watch(
   () => filteredMessages.value.length,
   (newLen, oldLen) => {
     if (oldLen === undefined) return; // initial — leave INITIAL_VISIBLE
+    // A verbose toggle already reset the window via the verboseLogs watcher
+    // below; the filtered-length change it caused is NOT a genuine
+    // append/shrink. Skip and clear the guard so the next real change is
+    // processed normally.
+    if (filterChangePending) {
+      filterChangePending = false;
+      return;
+    }
     if (newLen > oldLen) {
       const { state, shouldScrollToTail } = reduceOnAppend(collapseState(), newLen - oldLen);
       applyCollapseState(state);
@@ -303,6 +333,30 @@ watch(
     }
     // newLen === oldLen: no size change (e.g. a content edit) — leave the window.
   },
+);
+
+// Dedicated verbose-toggle watcher (#14): when 详细日志 flips, the filtered
+// set's MEMBERSHIP changes (log lines enter/leave interspersed throughout
+// history, not appended at the tail). That is neither a genuine append nor a
+// 200-replace shrink, so it gets its own transition — onFilterChange —
+// which resets the window to the initial state (the old window position is
+// no longer meaningful). Sets filterChangePending so the filtered-length
+// watcher above does NOT also fire its append/shrink branch for the
+// toggle-induced length change (it will see the flag, skip, and clear it).
+// flush:'sync' guarantees this runs BEFORE the pre-flush length watcher's
+// callback in the same change (see the ordering NOTE above), so the guard
+// is set in time. Re-scroll to the tail if the user was tracking it, so the
+// latest exchange stays in view after the reset.
+watch(
+  () => props.state.verboseLogs,
+  () => {
+    filterChangePending = true;
+    applyCollapseState(reduceOnFilterChange());
+    if (trackingTail.value) {
+      nextTick(() => scrollToBottom());
+    }
+  },
+  { flush: 'sync' },
 );
 
 // Re-scroll to bottom when the interrupt/rocket row appears or disappears.

@@ -141,10 +141,34 @@ export function onAppend(
 }
 
 /**
- * onShrink — the filtered list shrank (a 200 replace on reconnect resets the
- * store, or the verbose toggle changed the filtered set). The old window
- * position is invalid, so reset to the initial state.
+ * onShrink — the filtered list shrank because the store was authoritatively
+ * replaced (a 200 on reconnect resets the messages array). The old window
+ * position is invalid, so reset to the initial state. (A verbose-toggle
+ * shrink is NOT handled here — see onFilterChange, which ChatLog's
+ * verboseLogs watcher applies explicitly so a filter change is never
+ * confused with a genuine append/shrink.)
  */
 export function onShrink(): CollapseState {
+  return initialCollapseState();
+}
+
+/**
+ * onFilterChange — the filtered set's MEMBERSHIP changed because the verbose
+ * toggle flipped (详细日志 on/off), not because messages arrived or the store
+ * was replaced. This is distinct from onAppend (genuine arrivals grow the
+ * filtered list at the tail) and onShrink (a 200 replace authoritatively
+ * resets the store): a verbose toggle can grow OR shrink the filtered list,
+ * and the messages that enter/leave are interspersed throughout history, not
+ * appended at the tail. Treating that as an append would wrongly mutate
+ * capacity/tailBuffer; treating it as a shrink is closer but semantically
+ * coincidental. The honest policy is: the old window position is no longer
+ * meaningful (different messages are now visible), so reset to the initial
+ * window and let the user re-expand if desired. Kept as a SEPARATE reducer
+ * from onShrink so the two policies can diverge if a future verbose-toggle
+ * UX wants to preserve capacity (e.g. keep x, just re-derive the window) —
+ * the call site (ChatLog's verboseLogs watcher) picks this transition
+ * explicitly, making the intent unambiguous.
+ */
+export function onFilterChange(): CollapseState {
   return initialCollapseState();
 }
