@@ -28,6 +28,81 @@ import type { LogEntry } from './serve-types.js';
 
 const MAX_LOG_SIZE = 1000;
 
+/**
+ * djb2 string hash (Daniel J. Bernstein). Returns an unsigned hex string
+ * (no leading 0x). Chosen for cheapness and good distribution over short
+ * input strings — the version fingerprint is rebuilt on every /history GET,
+ * so it must stay far cheaper than serializing the body it guards.
+ */
+function djb2(str: string): string {
+  let h = 5381;
+  for (let i = 0; i < str.length; i++) {
+    h = ((h << 5) + h + str.charCodeAt(i)) >>> 0; // h*33 + c, unsigned 32-bit
+  }
+  return h.toString(16);
+}
+
+/**
+ * Compute a content-derived weak ETag for the /history payload WITHOUT
+ * serializing the body.
+ *
+ * Instead of hashing the rendered JSON, this fingerprints the INPUTS that
+ * determine the body:
+ *   - transcript file: statSync mtimeMs + size (covers appended turns)
+ *   - user-log file:   statSync mtimeMs + size (covers appended user submits)
+ *   - messageLog:      length + last entry's timestamp (in-memory tail)
+ *   - steeringBuffer:  its length (the transient steering queue — flips as
+ *                       notes are pushed/drained; NOT a durable file, so a
+ *                       body-content hash that folds these fields in would
+ *                       diverge from a file-only fingerprint. Without it a
+ *                       steering push would be masked by a 304.)
+ *   - isRunning:       the agent running flag (transient — a running/idle
+ *                       flip changes the payload's `isRunning` field but no
+ *                       durable file, so it MUST be folded in or a 304 hides
+ *                       the state change and shows stale UI.)
+ *
+ * Returns a weak ETag of the form `W/"h<hex>"`. The `W/` prefix marks it as
+ * weak (semantically equivalent bodies may share a tag), which is correct
+ * here because two bodies whose only difference is entry insertion order
+ * (same multiset of timestamped entries) are visually equivalent.
+ *
+ * The only impurity is `fs.statSync` (mtimeMs/size). Everything else is a
+ * pure function of the arguments, so the unit tests stub the file stats via
+ * a temp-dir fixture and otherwise exercise the pure core.
+ */
+export function computeHistoryVersion(
+  transcriptPath: string | null,
+  userLogPath: string | null,
+  messageLog: LogEntry[],
+  steeringLength: number,
+  isRunning: boolean,
+): string {
+  const parts: string[] = [];
+  // Durable file fingerprints — mtimeMs + size. A missing file contributes
+  // a stable "null" token (vs. an ever-changing zero) so an absent source
+  // does not needlessly invalidate the ETag on every call.
+  for (const p of [transcriptPath, userLogPath]) {
+    if (!p) { parts.push('null'); continue; }
+    try {
+      const st = fs.statSync(p);
+      parts.push(`${st.mtimeMs}:${st.size}`);
+    } catch {
+      parts.push('null'); // file missing/unreadable → stable token
+    }
+  }
+  // In-memory messageLog tail: length + last timestamp (order-independent
+  // in the middle, but the tail timestamp catches appends). When the log is
+  // empty, emit a stable "0" so an empty log never varies.
+  const lastTs = messageLog.length > 0
+    ? (messageLog[messageLog.length - 1].timestamp ?? 0)
+    : 0;
+  parts.push(`log:${messageLog.length}:${lastTs}`);
+  // Transient fields that live in the body but NOT in the durable files.
+  parts.push(`steer:${steeringLength}`);
+  parts.push(`running:${isRunning ? 1 : 0}`);
+  return `W/"h${djb2(parts.join('|'))}"`;
+}
+
 /** Map a triologue Message role to a WebUI LogEntry type. */
 export function roleToType(role: string | undefined): string {
   switch (role) {

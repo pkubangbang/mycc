@@ -116,8 +116,16 @@ describe('editTool', () => {
   });
 
   it('should block path traversal attacks', async () => {
+    // Use a traversal target that is NOT a sensitive system path. A pattern
+    // like `../../../etc/passwd` RESOLVES to `/etc/passwd`, which IS sensitive,
+    // so edit short-circuits to the protected-path rejection ("Cannot edit
+    // /etc/passwd — system configuration directory") BEFORE the external-
+    // access check — that is correct, secure behavior, but it is the WRONG
+    // target for asserting the external-access branch. A non-sensitive
+    // external target reaches requestExternalPathAccess → 'Path escapes
+    // workspace'. (The sensitive-path branch is covered in path-validation.)
     const result = await editTool.handler(ctx, {
-      path: '../../../etc/passwd',
+      path: '../../../tmp/mycc-traversal-probe.txt',
       old_text: 'root',
       new_text: 'hacked',
     });
