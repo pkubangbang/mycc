@@ -81,8 +81,19 @@ const KNOWN_SCOPED_FUNCTIONS = new Set([
 // Allowed literal values in expressions
 const ALLOWED_LITERALS = ['true', 'false', 'null', 'undefined'];
 
-// Allowed root identifiers (objects that can be accessed)
-const ALLOWED_ROOTS = new Set(['turn', 'session', 'call', 'isPlanMode', 'totalTurns']);
+// Allowed root identifiers (objects that can be accessed as values).
+// NOTE: `isPlanMode` and `totalTurns` are intentionally NOT here — they are
+// function-only names exposed solely as `isPlanMode()` / `totalTurns()` calls.
+// Allowing the bare identifier would make a typo like `totalTurns` (missing
+// parens) validate cleanly and then evaluate to the function object, which
+// `Boolean()` coerces to `true` — an always-truthy guard. The `CallExpression`
+// branch is the only legitimate path for these.
+const ALLOWED_ROOTS = new Set(['turn', 'session', 'call']);
+
+// Names that are legal ONLY as a direct call (e.g. `isPlanMode()`,
+// `totalTurns()`). A bare `Identifier` referencing one of these is a typo
+// (missing parens) and must be rejected, not silently treated as truthy.
+const FUNCTION_ONLY_NAMES = new Set(['isPlanMode', 'totalTurns']);
 
 // Dangerous identifiers that should never be allowed
 const DANGEROUS_IDENTIFIERS = new Set([
@@ -309,6 +320,15 @@ function visitNode(node: jsep.Expression, errors: string[], warnings: string[]):
       // Check for dangerous identifiers
       if (DANGEROUS_IDENTIFIERS.has(name)) {
         newErrors.push(`Forbidden identifier: ${name}`);
+      }
+      // Function-only names (isPlanMode, totalTurns) are legal ONLY as a call
+      // (`isPlanMode()` / `totalTurns()`). A bare reference is almost certainly a
+      // typo (missing parens) and would evaluate to the function object — which
+      // Boolean() coerces to true, producing a silently always-truthy guard.
+      // Reject it explicitly rather than letting it through.
+      if (FUNCTION_ONLY_NAMES.has(name)) {
+        newErrors.push(`"${name}" must be called as ${name}() — a bare identifier is not allowed`);
+        break;
       }
       // Check for unknown identifiers (not literals or allowed roots)
       if (!ALLOWED_LITERALS.includes(name) && !ALLOWED_ROOTS.has(name)) {

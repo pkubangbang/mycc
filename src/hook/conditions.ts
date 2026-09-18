@@ -578,7 +578,7 @@ SESSION-SCOPED (current livelog, since session start or last compact — cleared
 
 GLOBAL:
 - isPlanMode(): Check if agent is in plan mode (prevents hooks during planning).
-- totalTurns(): Number of completed turns (STOP→PROMPT cycles) since session start. Survives compaction (only reset by /clear). Use for "has substantial work happened" guards that must survive compaction. E.g. totalTurns() >= 5 means 5+ turns have completed. Note: at hook-evaluation time (HOOK state), totalTurns() reflects previously completed turns, not the current one.
+- totalTurns(): Number of ended turns (STOP→PROMPT boundary crossings, including interrupted/ESC-wrapped turns) since the in-memory session started. Survives compaction (only reset by /clear). Compaction-immune, NOT persistence-immune: it resets to 0 on restart/resume because Sequence is rebuilt fresh after session restore. Use for "has substantial work happened" guards that must survive a mid-session compaction. E.g. totalTurns() >= 5 means 5+ turn boundaries have been crossed. Note: at hook-evaluation time (HOOK state), totalTurns() reflects previously ended turns, not the current one. MUST always be written with parens as totalTurns(); a bare totalTurns (no parens) is rejected by the validator.
 
 TOOL SPEC FORMAT (three classes):
 - "toolName" — plain tool, exact name match (e.g. "edit_file", "git_commit")

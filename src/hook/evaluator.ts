@@ -47,7 +47,11 @@ export interface CallContext {
  *
  * Global:
  * - isPlanMode: check if agent is in plan mode
- * - totalTurns: number of completed turns (STOP→PROMPT cycles) since session start
+ * - totalTurns: number of ended turns (STOP→PROMPT boundary crossings) since
+ *   the in-memory session started. Compaction-immune (survives auto-compact),
+ *   NOT persistence-immune (resets to 0 on restart/resume — Sequence is rebuilt
+ *   fresh after session restore). Exposed only as totalTurns(); a bare
+ *   `totalTurns` identifier is rejected by the validator AND throws here.
  *
  * Call context (current tool call being evaluated):
  * - call.metadata.X / call.args.X
@@ -100,7 +104,17 @@ function evaluateNode(node: jsep.Expression, ctx: EvalContext): JsepEvaluatedNod
         };
       }
       else if (name in ctx) {
-        value = ctx[name as keyof EvalContext];
+        const resolved = ctx[name as keyof EvalContext];
+        // A bare Identifier that resolves to a function is a misuse: the only
+        // legal function reference is as a CallExpression callee (e.g.
+        // `isPlanMode()` / `totalTurns()`). A bare `isPlanMode` or `totalTurns`
+        // would otherwise coerce to `true` via Boolean(fn), producing a
+        // silently always-truthy condition. (The validator rejects this too,
+        // but defend-in-depth so a stale persisted condition can't slip through.)
+        if (typeof resolved === 'function') {
+          throw new Error(`Identifier "${name}" is a function and must be called as ${name}(), not referenced as a value`);
+        }
+        value = resolved;
       }
       else {
         throw new Error(`Unknown identifier: ${name}`);
