@@ -281,6 +281,7 @@ describe("evaluateExpression() edge cases", () => {
       sessionCountResult: () => 0,
       sessionHadError: () => false,
       isPlanMode: () => false,
+      totalTurns: () => 0,
     };
 
     // -1 >= -1 should be true (both not found = equal)
@@ -308,6 +309,7 @@ describe("evaluateExpression() edge cases", () => {
       sessionCountResult: () => 0,
       sessionHadError: () => false,
       isPlanMode: () => false,
+      totalTurns: () => 0,
     };
 
     // 5 >= -1 -> true
@@ -330,6 +332,7 @@ describe("evaluateExpression() edge cases", () => {
       sessionCountResult: () => 0,
       sessionHadError: () => false,
       isPlanMode: () => false,
+      totalTurns: () => 0,
     };
 
     const expr = "turn.lastIndex('edit_file') >= turn.lastIndex('bash#pnpm lint') || turn.lastIndex('write_file') >= turn.lastIndex('bash#pnpm lint') || turn.lastIndex('bash#pnpm lint') == -1";
@@ -348,6 +351,7 @@ describe("evaluateExpression() edge cases", () => {
       sessionCountResult: () => 0,
       sessionHadError: () => false,
       isPlanMode: () => false,
+      totalTurns: () => 0,
     };
 
     expect(evaluateExpression("turn.count('edit_file') > 0", ctx)).toBe(true);

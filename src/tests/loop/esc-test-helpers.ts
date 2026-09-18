@@ -208,6 +208,9 @@ export function createMockMachineEnv(options: MockMachineEnvOptions): MachineEnv
       hasSkillInConversation: vi.fn(() => false),
       totalCount: vi.fn(() => 0),
       markPromptBoundary: vi.fn(),
+      incrementTotalTurns: vi.fn(),
+      compactReset: vi.fn(),
+      fullClear: vi.fn(),
       ...options.sequence,
     } as unknown as Sequence,
     hookExecutor: {

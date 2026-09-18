@@ -31,6 +31,7 @@ export interface TestableSequence {
   sessionCountResult(tool: string, pattern: string, maxChars?: number): number;
   sessionHadError(tool?: string): boolean;
   isPlanMode(): boolean;
+  totalTurns(): number;
 }
 
 /**
@@ -81,7 +82,7 @@ const KNOWN_SCOPED_FUNCTIONS = new Set([
 const ALLOWED_LITERALS = ['true', 'false', 'null', 'undefined'];
 
 // Allowed root identifiers (objects that can be accessed)
-const ALLOWED_ROOTS = new Set(['turn', 'session', 'call', 'isPlanMode']);
+const ALLOWED_ROOTS = new Set(['turn', 'session', 'call', 'isPlanMode', 'totalTurns']);
 
 // Dangerous identifiers that should never be allowed
 const DANGEROUS_IDENTIFIERS = new Set([
@@ -384,13 +385,13 @@ function visitNode(node: jsep.Expression, errors: string[], warnings: string[]):
         // Direct function call (not turn.XXX() or session.XXX())
         if (callExpr.callee.type === 'Identifier') {
           const fnName = (callExpr.callee as jsep.Identifier).name;
-          if (fnName === 'isPlanMode') {
-            // isPlanMode() is the only allowed direct function call
+          if (fnName === 'isPlanMode' || fnName === 'totalTurns') {
+            // isPlanMode() and totalTurns() are allowed direct function calls
           } else if (!ALLOWED_LITERALS.includes(fnName)) {
-            newErrors.push(`Direct function call "${fnName}()" is not allowed - only turn.XXX(), session.XXX(), or isPlanMode() permitted`);
+            newErrors.push(`Direct function call "${fnName}()" is not allowed - only turn.XXX(), session.XXX(), isPlanMode(), or totalTurns() permitted`);
           }
         } else {
-          newErrors.push('Only turn.XXX(), session.XXX(), or isPlanMode() calls are allowed');
+          newErrors.push('Only turn.XXX(), session.XXX(), isPlanMode(), or totalTurns() calls are allowed');
         }
       }
 
@@ -520,6 +521,7 @@ export function testExpression(
       sessionCountResult: (tool: string, pattern: string, maxChars?: number) => sequence.sessionCountResult(tool, pattern, maxChars),
       sessionHadError: (tool?: string) => sequence.sessionHadError(tool),
       isPlanMode: () => sequence.isPlanMode(),
+      totalTurns: () => sequence.totalTurns(),
       call: callContext || {
         metadata: {
           filePath: '/mock/test.ts',
@@ -556,6 +558,7 @@ export function smokeTestExpression(expression: string): TestResult {
     sessionCountResult: () => 0,
     sessionHadError: () => false,
     isPlanMode: () => false,
+    totalTurns: () => 0,
   };
   return testExpression(expression, emptyMock);
 }
@@ -673,6 +676,8 @@ export class MockSequence implements TestableSequence {
   // --- Global ---
 
   isPlanMode(): boolean { return false; }
+
+  totalTurns(): number { return 0; }
 
   // --- Utility ---
 

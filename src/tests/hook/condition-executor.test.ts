@@ -57,6 +57,7 @@ function evalMock(mock: MockSequence, expr: string): boolean {
     sessionCountResult: (t: string, p: string, m?: number) => mock.sessionCountResult(t, p, m),
     sessionHadError: (t?: string) => mock.sessionHadError(t),
     isPlanMode: () => mock.isPlanMode(),
+    totalTurns: () => mock.totalTurns(),
   };
   return evaluateExpression(expr, ctx);
 }
@@ -711,13 +712,13 @@ describe("Condition combinations", () => {
       expect(evalSeq(seq, "session.count('edit_file') > 0")).toBe(true);
     });
 
-    it("session counters reset on clear()", () => {
+    it("session counters reset on fullClear()", () => {
       const seq = seqFrom([
         ev("edit_file", { path: "a.ts" }),
         ev("edit_file", { path: "b.ts" }),
       ]);
       expect(evalSeq(seq, "session.count('edit_file') > 0")).toBe(true);
-      seq.clear();
+      seq.fullClear();
       expect(evalSeq(seq, "session.count('edit_file') > 0")).toBe(false);
       expect(evalSeq(seq, "session.count() > 0")).toBe(false);
     });

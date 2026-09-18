@@ -38,7 +38,7 @@ const CONDITION_SCHEMA = {
   type: 'object',
   properties: {
     trigger: { type: 'array', items: { type: 'string' }, description: "Array of trigger names: 'stop' (no tool calls), '*' (any tool), or specific tool names like 'bash', 'edit_file', 'git_commit'" },
-    condition: { type: 'string', description: 'Expression using turn.X / session.X / isPlanMode() functions' },
+    condition: { type: 'string', description: 'Expression using turn.X / session.X / isPlanMode() / totalTurns() functions' },
     action: {
       type: 'object',
       properties: {
@@ -562,15 +562,15 @@ ${existingInfo}
 
 ${toolsSection}
 
-Available condition functions (use turn.X / session.X / isPlanMode() syntax):
+Available condition functions (use turn.X / session.X / isPlanMode() / totalTurns() syntax):
 
-TURN-SCOPED (current turn, since last user query):
+TURN-SCOPED (current turn, since last turn boundary — NOT cleared by compaction, cleared at STOP→PROMPT):
 - turn.count(tool?): Count tool occurrences in current turn. No arg = all tools. Tool spec: "toolName", "skill_load#name", "bash#commandPrefix" (clause-split by ;/&&/||, then prefix match).
 - turn.lastIndex(tool): Index of last matching tool in current turn. -1 = not found. Higher = more recent. Use for ordering: turn.lastIndex('edit_file') >= turn.lastIndex('bash#pnpm lint'). For existence check: turn.lastIndex('bash#pnpm lint') != -1.
 - turn.countResult(tool, pattern, maxChars?): Count tool results containing substring in current turn. tool='*' for all tools. maxChars limits search to first N chars (prevents false positives from file content).
 - turn.hadError(tool?): Whether any tool (or specific tool) result contains 'error'/'failed' in current turn. Optional tool spec to filter by.
 
-SESSION-SCOPED (entire livelog, since session start or last compact):
+SESSION-SCOPED (current livelog, since session start or last compact — cleared by compaction):
 - session.count(tool?): Same as turn.count but across entire livelog.
 - session.lastIndex(tool): Same as turn.lastIndex but across entire livelog.
 - session.countResult(tool, pattern, maxChars?): Same as turn.countResult but across entire livelog.
@@ -578,6 +578,7 @@ SESSION-SCOPED (entire livelog, since session start or last compact):
 
 GLOBAL:
 - isPlanMode(): Check if agent is in plan mode (prevents hooks during planning).
+- totalTurns(): Number of completed turns (STOP→PROMPT cycles) since session start. Survives compaction (only reset by /clear). Use for "has substantial work happened" guards that must survive compaction. E.g. totalTurns() >= 5 means 5+ turns have completed. Note: at hook-evaluation time (HOOK state), totalTurns() reflects previously completed turns, not the current one.
 
 TOOL SPEC FORMAT (three classes):
 - "toolName" — plain tool, exact name match (e.g. "edit_file", "git_commit")

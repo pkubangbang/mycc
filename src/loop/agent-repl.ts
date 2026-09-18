@@ -199,7 +199,9 @@ export async function main(): Promise<void> {
   // Set up double Ctrl+L callback for clearing conversation history
   agentIO.setDoubleCtrlLCallback(() => {
     triologue.clear();
-    sequence.clear();
+    // fullClear() resets EVERYTHING including turn.events[] and totalTurns —
+    // double-Ctrl+L starts a completely fresh session.
+    sequence.fullClear();
     clearWrapUp();
     ctx.todo.clear();
     ctx.issue.clearAll();

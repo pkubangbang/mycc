@@ -30,12 +30,14 @@ export const compactCommand: SlashCommand = {
 
     try {
       await triologue.compact(focus);
-      // Reset stat counts: confusion index and sequence events are no longer
-      // relevant after compaction (old context has been summarized away).
+      // Reset stat counts: confusion index and session-level sequence data are
+      // no longer relevant after compaction (old context has been summarized
+      // away). compactReset() clears session.* ONLY — turn.events[] and
+      // totalTurns survive (a turn spans across compaction).
       context.ctx.core.resetConfusionIndex();
-      context.sequence?.clear();
+      context.sequence?.compactReset();
       // Reset hook dedup so a stop+replace hook suppressed by the per-turn cap
-      // can re-fire after /compact — sequence.clear() resets the session.*
+      // can re-fire after /compact — compactReset() resets the session.*
       // counters it was deduping against, but not the dedup set itself.
       context.hookExecutor?.resetTurn();
       if (focus) {
@@ -44,7 +46,7 @@ export const compactCommand: SlashCommand = {
         console.log(chalk.green('Compaction complete.'));
       }
       console.log(chalk.gray('The conversation has been summarized. Domains were included for knowledge persistence.'));
-      console.log(chalk.gray('Stat counters (confusion index, sequence events) have been reset.'));
+      console.log(chalk.gray('Stat counters (confusion index, session events) have been reset. Turn events and totalTurns are preserved.'));
     } catch (err) {
       console.log(chalk.red(`Compaction failed: ${(err as Error).message}`));
     }

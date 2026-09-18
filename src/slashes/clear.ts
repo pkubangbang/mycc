@@ -13,9 +13,12 @@ export const clearCommand: SlashCommand = {
   handler: (context) => {
     const triologue = context.triologue as Triologue;
     triologue.clear();
-    context.sequence?.clear();
+    // fullClear() resets EVERYTHING including turn.events[] and totalTurns —
+    // /clear starts a completely fresh session. This is the one place where
+    // totalTurns is reset (alongside double-Ctrl+L in agent-repl.ts).
+    context.sequence?.fullClear();
     // Reset hook dedup so a stop+replace hook suppressed by the per-turn cap
-    // can re-fire after /clear — sequence.clear() resets the session.* counters
+    // can re-fire after /clear — fullClear() resets the session.* counters
     // it was deduping against, but not the dedup set itself.
     context.hookExecutor?.resetTurn();
     clearWrapUp();

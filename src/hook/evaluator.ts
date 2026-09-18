@@ -47,6 +47,7 @@ export interface CallContext {
  *
  * Global:
  * - isPlanMode: check if agent is in plan mode
+ * - totalTurns: number of completed turns (STOP→PROMPT cycles) since session start
  *
  * Call context (current tool call being evaluated):
  * - call.metadata.X / call.args.X
@@ -61,6 +62,7 @@ export interface EvalContext {
   sessionCountResult: (tool: string, pattern: string, maxChars?: number) => number;
   sessionHadError: (tool?: string) => boolean;
   isPlanMode: () => boolean;
+  totalTurns: () => number;
   call?: CallContext;
 }
 
@@ -357,7 +359,8 @@ export function evaluateExpression(expression: string, ctx: EvalContext): boolea
       .replace(/session\.lastIndex\(/g, 'sessionLastIndex(')
       .replace(/session\.countResult\(/g, 'sessionCountResult(')
       .replace(/session\.hadError\(/g, 'sessionHadError(')
-      .replace(/isPlanMode\(/g, 'isPlanMode('); // no-op, kept for clarity
+      .replace(/isPlanMode\(/g, 'isPlanMode(') // no-op, kept for clarity
+      .replace(/totalTurns\(/g, 'totalTurns('); // no-op, kept for clarity
 
     // Parse to AST
     const ast = jsep(jsExpr);

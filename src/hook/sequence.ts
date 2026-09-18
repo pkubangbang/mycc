@@ -4,10 +4,13 @@
  * Tracks tool executions for hook condition evaluation.
  * Events are added when tools are executed in the agent loop.
  *
- * Two scope levels:
- * 1. turn.*   — events since last user query (cleared at markPromptBoundary)
- * 2. session.* — events across entire livelog (cleared only by clear(), which
- *                is co-called with triologue.compact())
+ * Three scope levels:
+ * 1. turn.*   — events since last turn boundary. Survives compaction.
+ *               Cleared by markPromptBoundary() at STOP→PROMPT.
+ * 2. session.* — events in current livelog. Cleared by compactReset()
+ *               (co-called with triologue.compact()). Does NOT clear turn.*.
+ * 3. totalTurns() — number of completed turns (STOP→PROMPT cycles).
+ *               Survives compaction. Cleared only by fullClear().
  *
  * Tool spec (three-class):
  *   "toolName"             — plain tool, exact name match
@@ -52,6 +55,12 @@ export class Sequence {
   private sessionPatternLog: Array<{ tool: string; key: string }> = [];
   /** Session-level results log for session.countResult() and session.hadError() */
   private sessionResultsLog: Array<{ tool: string; args: Record<string, unknown>; result: string }> = [];
+  /**
+   * Total number of completed turns (STOP→PROMPT cycles) since session start.
+   * Survives compaction (compaction is not a turn boundary). Cleared only by
+   * fullClear() (/clear, double-Ctrl+L).
+   */
+  private totalTurns: number = 0;
   private triologue?: Triologue;
   private getMode: () => 'plan' | 'normal';
 
@@ -80,25 +89,60 @@ export class Sequence {
 
   /**
    * Clear all events at turn boundary.
-   * Called from PROMPT state on each new user query, so hooks only see events from the current turn.
-   * Session-level data is preserved — it tracks the entire livelog.
+   * Called from the STOP state when a turn ends (STOP→PROMPT), so hooks only
+   * see events from the current turn. Session-level data is preserved — it
+   * tracks the entire livelog. Does NOT increment totalTurns — that is a
+   * separate call (incrementTotalTurns()) made by stop.ts at the same boundary.
    */
   markPromptBoundary(): void {
     this.events = [];
   }
 
   /**
-   * Clear the sequence (reset on new session or compact)
-   * Co-called with triologue.compact() / the checkpoint recap
-   * (triologue.getCheckpointManager().recap(index)), so session
-   * counters stay in sync with livelog content.
+   * Increment the total-turn counter. Called by stop.ts at the STOP→PROMPT
+   * boundary (a turn has completed). NOT called on STOP→COLLECT (a teammate
+   * mail / steering continuation is not a new turn).
    */
-  clear(): void {
+  incrementTotalTurns(): void {
+    this.totalTurns++;
+  }
+
+  /**
+   * Total number of completed turns (STOP→PROMPT cycles) since session start.
+   * Survives compaction — only reset by fullClear() (/clear, Ctrl+L).
+   *
+   * Note: stop-trigger hooks evaluate in the HOOK state, BEFORE STOP. So at
+   * hook-evaluation time, totalTurns() reflects previously completed turns,
+   * not the current one. Use `>=` in guards (e.g. totalTurns() >= 5 fires
+   * after 5 completed turns, on the 6th turn's hook evaluation).
+   */
+  getTotalTurns(): number {
+    return this.totalTurns;
+  }
+
+  /**
+   * Clear session-level data ONLY (called on compaction).
+   * Turn-level events[] is preserved — a turn spans across compaction.
+   * totalTurns is preserved — compaction is not a turn boundary.
+   */
+  compactReset(): void {
+    this.totalEventsCount = 0;
+    this.toolCallTally.clear();
+    this.sessionPatternLog = [];
+    this.sessionResultsLog = [];
+  }
+
+  /**
+   * Full clear — reset everything including turn events and totalTurns.
+   * Called by /clear, double-Ctrl+L, and session start.
+   */
+  fullClear(): void {
     this.events = [];
     this.totalEventsCount = 0;
     this.toolCallTally.clear();
     this.sessionPatternLog = [];
     this.sessionResultsLog = [];
+    this.totalTurns = 0;
   }
 
   /**
@@ -283,6 +327,7 @@ export class Sequence {
       sessionLastIndex: (tool: string) => this.sessionLastIndex(tool),
       sessionCountResult: (tool: string, pattern: string, maxChars?: number) => this.sessionCountResult(tool, pattern, maxChars),
       sessionHadError: (tool?: string) => this.sessionHadError(tool),
+      totalTurns: () => this.getTotalTurns(),
       isPlanMode: () => this.isPlanMode(),
       call,
     };

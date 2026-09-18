@@ -228,4 +228,54 @@ describe('handleStop — normal-mode teammate wait via awaitTeammates', () => {
       expect.stringContaining('Timeout waiting for teammates'),
     );
   });
+
+  // ── turn-boundary wiring (STOP→PROMPT fires it, STOP→COLLECT does not) ──
+  //
+  // markTurnBoundary() = markPromptBoundary() + resetTurn() + incrementTotalTurns().
+  // It must fire ONLY on STOP→PROMPT (a turn ended) and NEVER on STOP→COLLECT
+  // (a teammate mail / steering / timeout is a turn CONTINUATION, not a new
+  // turn). These assertions pin the continuation-vs-turn-end distinction at
+  // the wiring level — a future refactor that drops markTurnBoundary() from a
+  // return site would break them, not just the isolated sequence unit tests.
+  describe('turn boundary wiring (markTurnBoundary call sites)', () => {
+    const reasonToState: Array<{ reason: 'all done' | 'esc' | 'mail' | 'steering' | 'holding' | 'timeout'; state: 'PROMPT' | 'COLLECT' }> = [
+      { reason: 'all done', state: 'PROMPT' },
+      { reason: 'esc', state: 'PROMPT' },
+      { reason: 'mail', state: 'COLLECT' },
+      { reason: 'steering', state: 'COLLECT' },
+      { reason: 'holding', state: 'COLLECT' },
+      { reason: 'timeout', state: 'COLLECT' },
+    ];
+
+    for (const { reason, state } of reasonToState) {
+      const fires = state === 'PROMPT';
+      it(`${fires ? 'fires' : 'does NOT fire'} the turn boundary on STOP→${state} (reason: ${reason})`, async () => {
+        const ctx = createMockContext({
+          team: {
+            listTeammates: vi.fn(() => [{ name: 'dev1', status: 'working' }]) as never,
+            printTeam: vi.fn(() => 'Team:\n  dev1 (coder): working') as never,
+            awaitTeammates: vi.fn(async () => reason) as never,
+          },
+        });
+        const env = createMockMachineEnv({ triologue });
+        env.ctx = ctx;
+
+        const result = await handleStop(env, createTurnVars(), createChatData());
+
+        expect(result).toBe(state === 'PROMPT' ? AgentState.PROMPT : AgentState.COLLECT);
+
+        if (fires) {
+          // STOP→PROMPT: the boundary helper ran all three of its steps.
+          expect(env.sequence.markPromptBoundary).toHaveBeenCalledTimes(1);
+          expect(env.sequence.incrementTotalTurns).toHaveBeenCalledTimes(1);
+          expect(env.hookExecutor.resetTurn).toHaveBeenCalledTimes(1);
+        } else {
+          // STOP→COLLECT: a continuation — NONE of the boundary steps ran.
+          expect(env.sequence.markPromptBoundary).not.toHaveBeenCalled();
+          expect(env.sequence.incrementTotalTurns).not.toHaveBeenCalled();
+          expect(env.hookExecutor.resetTurn).not.toHaveBeenCalled();
+        }
+      });
+    }
+  });
 });

@@ -495,7 +495,10 @@ async function runHintRound(env: MachineEnv, turn: TurnVars): Promise<HintSignal
     await triologue.compact(undefined, undefined, tools);
     ctx.core.resetConfusionIndex();
     env.requestEmbeddingTracker.clear();
-    env.sequence.clear();
+    // compactReset() clears session-level data ONLY (turn.events[] and
+    // totalTurns survive — a turn spans across compaction). resetTurn()
+    // re-arms per-turn hook dedup (same rationale as llm.ts auto-compact).
+    env.sequence.compactReset();
     env.hookExecutor.resetTurn();
     env.crossroadOccurred = false;
     // Turn recovered via compaction — clear the transient-retry counter

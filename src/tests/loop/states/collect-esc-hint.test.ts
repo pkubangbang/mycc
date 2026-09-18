@@ -271,7 +271,9 @@ describe('handleCollect — ESC during hint generation', () => {
       // auto-compact branch does. Without these the continued loop runs on
       // corrupted stats (e.g. sequence events inflating the next confusion
       // score, hook dedup cap suppressing the next turn's hooks).
-      expect(env.sequence.clear).toHaveBeenCalledTimes(1);
+      // The hint-compact path calls compactReset() (session.* only — turn.*
+      // survives compaction per the revised semantics), not fullClear().
+      expect(env.sequence.compactReset).toHaveBeenCalledTimes(1);
       expect(env.hookExecutor.resetTurn).toHaveBeenCalledTimes(1);
       expect(env.requestEmbeddingTracker.clear).toHaveBeenCalledTimes(1);
     });

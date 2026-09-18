@@ -34,6 +34,25 @@ export async function handleStop(
 ): Promise<HandlerResult> {
   const { triologue, ctx } = env;
 
+  // ── Turn boundary (STOP→PROMPT) ──
+  // Mark the turn boundary helper: clears turn.* events, resets per-turn hook
+  // dedup, and increments the completed-turn counter. These run ONLY on the
+  // STOP→PROMPT paths below (5 sites: neglected+assistant, neglected+mid-ESC,
+  // the switch default (esc/all done), and the catch block). STOP is reached
+  // in all modes (normal, webui, daemon, neglected), so placing the boundary
+  // here unifies turn.* semantics across modes — fixing the daemon-mode bug
+  // where PROMPT short-circuited to AWAIT before markPromptBoundary() could
+  // fire.
+  //
+  // NOT called on the STOP→COLLECT paths (teammate mail / steering / timeout):
+  // those are turn CONTINUATIONS (the agent keeps working on the same task),
+  // so turn.* events, hook dedup, and totalTurns all persist.
+  const markTurnBoundary = (): void => {
+    env.sequence.markPromptBoundary();
+    env.hookExecutor.resetTurn();
+    env.sequence.incrementTotalTurns();
+  };
+
   try {
     // ── Universal neglection wrap-up (centralized) ──
     // Any state handler that detects neglection returns STOP. This block
@@ -83,6 +102,7 @@ export async function handleStop(
 
         agentIO.flushOutput();
         presentResult(triologue);
+        markTurnBoundary();
         return AgentState.PROMPT;
       }
 
@@ -91,6 +111,7 @@ export async function handleStop(
       const tools = loader.getToolsForScope(env.scope);
       startWrapUp(triologue, tools);
       agentIO.setNeglectedMode(false);
+      markTurnBoundary();
       return AgentState.PROMPT;
     }
 
@@ -128,11 +149,13 @@ export async function handleStop(
       case 'esc':
       case 'all done':
       default:
+        markTurnBoundary();
         return AgentState.PROMPT;
     }
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : String(err);
     ctx.core.brief('error', 'stop', `STOP state error: ${errorMessage}`);
+    markTurnBoundary();
     return AgentState.PROMPT;
   }
 }
