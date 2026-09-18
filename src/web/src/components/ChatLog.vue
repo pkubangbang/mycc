@@ -15,25 +15,67 @@ const scrollContainer = ref<HTMLElement | null>(null);
 const showScrollButton = ref(false);
 let userScrolledUp = false;
 
-// ── Chatlog collapse + infinite scroll up ──
+// ── Chatlog collapse + infinite scroll up (x / t / trackingTail scheme) ──
 //
 // To keep the first render cheap and the tail in view (especially on mobile,
 // where a long history pushes the latest exchange below the fold and slows
-// the initial paint), only the LAST `INITIAL_VISIBLE` messages render at
-// first. Older messages are collapsed; the user scrolls UP to reveal more in
-// batches (`SCROLL_BATCH`), capped at `MAX_VISIBLE` (a hard ceiling that
-// matches the server's MAX_LOG_SIZE so the client never tries to render more
-// than the server can send).
+// the initial paint), only a tail window of the filtered list renders at
+// first. Older messages are collapsed; the user scrolls UP to reveal more.
 //
-// `visibleCount` is a local ref (NOT in the Pinia store) because it is pure
-// view state — it does not survive a refresh (the cache hydrates the log, and
-// the collapse re-applies from INITIAL_VISIBLE), and it has no meaning to any
-// other component. Keeping it local avoids store churn and keeps the feature
-// fully self-contained in ChatLog.
+// The window is governed by THREE pieces of local view state (NOT in the
+// Pinia store — pure view state, does not survive a refresh, meaningless to
+// other components):
+//
+//   x            — capacity. The steady-state size of the rendered window.
+//                  Starts at INITIAL_VISIBLE. Grows when the user scrolls up
+//                  to reveal older history (loadMore adds SCROLL_BATCH), and
+//                  self-trims back toward INITIAL_VISIBLE as new messages
+//                  arrive while the user is pinned to the tail (so a long
+//                  idle-with-tail session does not render an ever-growing
+//                  window). Floor: INITIAL_VISIBLE. Ceiling: MAX_VISIBLE.
+//
+//   t            — tail buffer. New messages that arrive WHILE the user is
+//                  scrolled up (trackingTail = false) are buffered here
+//                  instead of disturbing the viewed history. They are still
+//                  RENDERED (the window is the last x+t), but they sit below
+//                  the viewport, so the user does not see the list jump. When
+//                  the user returns to the tail, t folds into x (x += t) and
+//                  t clears — the window SIZE is unchanged across the fold
+//                  (no visual jump), and the buffered tail is now in view.
+//
+//   trackingTail — whether the user is pinned to the live tail. True after
+//                  mount / scroll-to-bottom / scrolling to the bottom; false
+//                  once the user scrolls up. It decides whether a new message
+//                  is buffered (t += 1) or folded-and-trimmed (x trims by 1).
+//
+// INVARIANT: the rendered window is ALWAYS the last (x + t) filtered
+// messages — all.slice(len - (x + t)). x and t together define the window
+// size; t is never a hidden offset, it is rendered tail overflow.
+//
+// Worked example (INITIAL_VISIBLE=10, SCROLL_BATCH=20):
+//   start            x=10  t=0  tracking=false  → window = last 10
+//   scroll up        x=30  t=0  tracking=false  → window = last 30 (more old)
+//   new msg (away)   x=30  t=1  tracking=false  → window = last 31 (new msg
+//                                                   rendered, below viewport —
+//                                                   viewed history stable)
+//   return to tail   x=31  t=0  tracking=true   → window = last 31 (SIZE
+//                                                   unchanged; buffered tail
+//                                                   now in view)
+//   new msg (track)  x=30  t=0  tracking=true   → window = last 30 (new msg
+//                                                   at bottom, oldest drops
+//                                                   off top — "trades 2 old
+//                                                   for 1 new" until x bottoms
+//                                                   out at INITIAL_VISIBLE)
+//
+// MAX_VISIBLE is a hard ceiling on (x + t) mirroring the server's
+// MAX_LOG_SIZE (1000) so the client never renders more than the server can
+// send.
 const INITIAL_VISIBLE = 10;
 const SCROLL_BATCH = 20;
 const MAX_VISIBLE = 1000;
-const visibleCount = ref(INITIAL_VISIBLE);
+const capacity = ref(INITIAL_VISIBLE); // x
+const tailBuffer = ref(0);             // t
+const trackingTail = ref(true);        // pinned to the live tail?
 
 // The auto-mode stop button's "hyperspace jump" visuals (rocket + meteor
 // starfield) now live in two dedicated components — RocketIcon and
@@ -50,13 +92,12 @@ const filteredMessages = computed(() =>
   props.messages.filter(m => isMessageVisible(m, props.state.verboseLogs)),
 );
 
-// The collapse window: the LAST `visibleCount` of the filtered list. When
-// the list is shorter than visibleCount, all of them show (no collapse
-// affordance). `visibleCount` is clamped to MAX_VISIBLE so a huge log can
-// never render more than the cap in one go.
+// The collapse window: the LAST (capacity + tailBuffer) of the filtered
+// list — see the INVARIANT above. Clamped to MAX_VISIBLE and to the list
+// length (when the list is shorter than the window, all show — no collapse).
 const visibleMessages = computed(() => {
   const all = filteredMessages.value;
-  const count = Math.min(visibleCount.value, MAX_VISIBLE, all.length);
+  const count = Math.min(capacity.value + tailBuffer.value, MAX_VISIBLE, all.length);
   return all.slice(all.length - count);
 });
 
@@ -92,20 +133,23 @@ function isNearTop(): boolean {
 }
 
 /**
- * Reveal one more batch of collapsed messages (infinite scroll up). Clamped
- * to MAX_VISIBLE so the client never renders more than the cap. After the
- * window grows, the scroll position is adjusted so the user stays at roughly
- * the same visible spot (the newly prepended messages appear ABOVE the
-// current viewport, not pushing the user down). No-op if nothing is collapsed.
+ * Reveal one more batch of collapsed messages (infinite scroll up). Grows
+ * `capacity` (x) by SCROLL_BATCH, clamped to MAX_VISIBLE. Scrolling up means
+ * the user is no longer tracking the tail, so trackingTail flips false (new
+ * arrivals will buffer into t until they return). After the window grows,
+ * the scroll position is adjusted so the user stays at roughly the same
+ * visible spot (the newly prepended messages appear ABOVE the current
+ * viewport, not pushing the user down). No-op if nothing is collapsed.
  */
 function loadMore(): void {
   if (!hasCollapsedAbove.value) return;
+  trackingTail.value = false;
   const el = scrollContainer.value;
   // Capture the scroll geometry BEFORE the window grows so we can offset the
   // new scrollTop by the height added (the prepended messages).
   const prevHeight = el ? el.scrollHeight : 0;
   const prevTop = el ? el.scrollTop : 0;
-  visibleCount.value = Math.min(visibleCount.value + SCROLL_BATCH, MAX_VISIBLE);
+  capacity.value = Math.min(capacity.value + SCROLL_BATCH, MAX_VISIBLE);
   // nextTick: wait for the DOM to reflect the larger window, then keep the
   // user at the same content position by adding the newly prepended height.
   nextTick(() => {
@@ -119,18 +163,37 @@ function scrollToBottom(): void {
   const el = scrollContainer.value;
   if (el) {
     el.scrollTop = el.scrollHeight;
-    userScrolledUp = false;
-    showScrollButton.value = false;
   }
+  userScrolledUp = false;
+  showScrollButton.value = false;
+  // Re-tracking the tail: fold the tail buffer into capacity (x += t) and
+  // clear it. The rendered window size (x + t) is UNCHANGED across the fold
+  // (x grows by exactly the t that clears), so there is no visual jump — the
+  // previously-buffered tail is now in view at the bottom. Clamp to MAX_VISIBLE.
+  if (tailBuffer.value > 0) {
+    capacity.value = Math.min(capacity.value + tailBuffer.value, MAX_VISIBLE);
+    tailBuffer.value = 0;
+  }
+  trackingTail.value = true;
 }
 
 function onScroll(): void {
   if (isAtBottom()) {
     showScrollButton.value = false;
     userScrolledUp = false;
+    // Scrolled to the bottom → re-tracking the tail. Same fold as
+    // scrollToBottom: x += t, t = 0 (size-preserving), trackingTail = true.
+    if (tailBuffer.value > 0) {
+      capacity.value = Math.min(capacity.value + tailBuffer.value, MAX_VISIBLE);
+      tailBuffer.value = 0;
+    }
+    trackingTail.value = true;
   } else {
     userScrolledUp = true;
     showScrollButton.value = true;
+    // Scrolled away from the bottom → no longer tracking the tail; new
+    // arrivals will buffer into t instead of disturbing the viewed history.
+    trackingTail.value = false;
   }
   // Infinite scroll up: when the user scrolls near the top and older
   // messages are collapsed, reveal the next batch. This makes "scroll up
@@ -190,45 +253,56 @@ function onDiscardAllSteering(): void {
   chatApi.resolveSteering([]);
 }
 
-// Watch for new messages — auto-scroll only if user is already at bottom.
-// Also grows the collapse window so the newly appended message is visible
-// when the user is following the tail: if the window already shows the whole
-// tail (visibleCount >= filtered length before the append), bump visibleCount
-// so the new last message renders. If the user has scrolled up (collapsed
-// history in view), do NOT grow — the new tail arriving should not yank the
-// window and re-collapse what they revealed.
+// Watch for new messages — auto-scroll only if tracking the tail.
 watch(
   () => visibleMessages.value.length,
   () => {
-    if (!userScrolledUp) {
+    if (trackingTail.value) {
       nextTick(() => scrollToBottom());
     }
   },
 );
 
-// Keep the collapse window in sync with the filtered list size. When the
-// filtered list GROWS by appends AND the user is at the bottom (following the
-// tail), grow visibleCount so the new message shows instead of being hidden
-// behind the collapse. When the list SHRINKS (a 200 replace on reconnect
-// resets the store), or the filtered set changes identity (verbose toggle),
-// reset to INITIAL_VISIBLE so the collapse re-applies from the tail.
+// Keep the collapse window in sync with the filtered list size. This is the
+// core of the x / t / trackingTail scheme: it reacts to filtered-list GROWTH
+// (new messages arriving) and SHRINKAGE (a 200 replace on reconnect resets
+// the store) / identity change (verbose toggle).
 watch(
   () => filteredMessages.value.length,
   (newLen, oldLen) => {
     if (oldLen === undefined) return; // initial — leave INITIAL_VISIBLE
     if (newLen > oldLen) {
-      // Appends: grow the window only if the user is at the bottom (the
-      // previous tail was fully in view). Otherwise leave the window — the
-      // user is reading older history and a tail arrival must not re-collapse it.
-      if (!userScrolledUp) {
-        // Bump by the delta so the newly appended messages render instead of
-        // being hidden behind the collapse. Clamped to MAX_VISIBLE.
-        visibleCount.value = Math.min(visibleCount.value + (newLen - oldLen), MAX_VISIBLE);
+      const delta = newLen - oldLen;
+      if (trackingTail.value) {
+        // Pinned to the tail: each new message folds into view AND trims
+        // capacity by 1, so the window drifts back toward INITIAL_VISIBLE
+        // over time (a long idle-with-tail session does not render an
+        // ever-growing window). Net window-size change per arrival:
+        //   (x - 1) + t  vs  x + t  → shrinks by 1 (the oldest rendered
+        // message drops off the top, the new one enters at the bottom).
+        // This is the "trade 2 old for 1 new" feel until x bottoms out.
+        // Floor at INITIAL_VISIBLE so the window never collapses below the
+        // initial size; once at the floor, arrivals just scroll the tail
+        // (window size constant). Clamp the final (x + t) to MAX_VISIBLE.
+        capacity.value = Math.max(capacity.value - delta, INITIAL_VISIBLE);
+        const over = (capacity.value + tailBuffer.value) - MAX_VISIBLE;
+        if (over > 0) tailBuffer.value = Math.max(tailBuffer.value - over, 0);
+      } else {
+        // Scrolled up (not tracking): buffer the new messages into t. They
+        // are still rendered (window = last x+t) but sit below the viewport,
+        // so the viewed history stays stable — no jump. Clamp (x + t) to
+        // MAX_VISIBLE (drop the oldest from the window if the cap is hit).
+        tailBuffer.value = tailBuffer.value + delta;
+        const over = (capacity.value + tailBuffer.value) - MAX_VISIBLE;
+        if (over > 0) capacity.value = Math.max(capacity.value - over, INITIAL_VISIBLE);
       }
     } else if (newLen < oldLen) {
       // Shrink / replace: reset to the initial window so the collapse
-      // re-applies from the new tail (e.g. after a reconnect 200).
-      visibleCount.value = INITIAL_VISIBLE;
+      // re-applies from the new tail (e.g. after a reconnect 200). The store
+      // was authoritatively replaced, so the old window position is invalid.
+      capacity.value = INITIAL_VISIBLE;
+      tailBuffer.value = 0;
+      trackingTail.value = true;
     }
     // newLen === oldLen: no size change (e.g. a content edit) — leave the window.
   },
@@ -255,7 +329,7 @@ watch(
 watch(
   () => [props.state.isAutoMode, props.state.isRunning, props.state.isWaiting, props.state.pendingSteeringReview.length] as const,
   () => {
-    if (!userScrolledUp) {
+    if (trackingTail.value) {
       nextTick(() => scrollToBottom());
     }
   },
