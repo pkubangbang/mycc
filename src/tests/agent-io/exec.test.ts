@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import os from 'os';
 
 // Mock LineEditor before importing agent-io
 vi.mock('../../utils/line-editor.js', () => {
@@ -15,6 +16,12 @@ vi.mock('../../utils/line-editor.js', () => {
 // Import after mocking
 import { agentIO } from '../../loop/agent-io.js';
 import type { ExecOptions } from '../../loop/agent-exec.js';
+
+// Cross-platform temp directory: '/tmp' does not exist on Windows, so a
+// command spawned with cwd:'/tmp' fails to start and produces no stdout —
+// which breaks assertions that check the command's output. os.tmpdir()
+// resolves to /tmp on Linux/macOS and %LOCALAPPDATA%\Temp on Windows.
+const TMP = os.tmpdir();
 
 describe('agent-io', () => {
   beforeEach(() => {
@@ -33,7 +40,7 @@ describe('agent-io', () => {
   describe('exec validation', () => {
     it('should throw error for invalid timeout (zero)', async () => {
       const options: ExecOptions = {
-        cwd: '/tmp',
+        cwd: TMP,
         command: 'echo test',
         timeout: 0,
       };
@@ -45,7 +52,7 @@ describe('agent-io', () => {
 
     it('should throw error for invalid timeout (negative)', async () => {
       const options: ExecOptions = {
-        cwd: '/tmp',
+        cwd: TMP,
         command: 'echo test',
         timeout: -1,
       };
@@ -57,7 +64,7 @@ describe('agent-io', () => {
 
     it('should throw error for invalid timeout (too large)', async () => {
       const options: ExecOptions = {
-        cwd: '/tmp',
+        cwd: TMP,
         command: 'echo test',
         timeout: 61,
       };
@@ -69,7 +76,7 @@ describe('agent-io', () => {
 
     it('should throw error for non-integer timeout', async () => {
       const options: ExecOptions = {
-        cwd: '/tmp',
+        cwd: TMP,
         command: 'echo test',
         timeout: 5.5,
       };
@@ -81,7 +88,7 @@ describe('agent-io', () => {
 
     it('should accept valid timeout (minimum)', async () => {
       const options: ExecOptions = {
-        cwd: '/tmp',
+        cwd: TMP,
         command: 'echo test',
         timeout: 1,
       };
@@ -97,7 +104,7 @@ describe('agent-io', () => {
 
     it('should accept valid timeout (maximum)', async () => {
       const options: ExecOptions = {
-        cwd: '/tmp',
+        cwd: TMP,
         command: 'echo test',
         timeout: 60,
       };

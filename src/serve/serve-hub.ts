@@ -216,9 +216,20 @@ export class ServeHub implements HubHandler {
     this.expressApp = express();
     this.httpServer = http.createServer(this.expressApp);
 
+    // Public dir for static assets served at `/` during dev (vite publicDir).
+    // Lives under the project's .mycc/ tree (process.cwd()) so per-project
+    // static files are co-located with sessions/mindmap/skills. Created here
+    // so Vite never sees a missing directory at startup; recursive mkdir is a
+    // no-op if it already exists. See the built-in skill
+    // `serve-public-dir` for how the agent should reference these files in
+    // replies (markdown image / download-link syntax).
+    const publicDir = path.join(process.cwd(), '.mycc', 'public');
+    fs.mkdirSync(publicDir, { recursive: true });
+
     // Vite in middleware mode — HMR shares the same http server (single port).
     this.viteServer = await createViteServer({
       root: WEB_ROOT,
+      publicDir, // serve <cwd>/.mycc/public at root path `/` during dev
       plugins: [vue()],
       server: { middlewareMode: true, hmr: { server: this.httpServer } },
       appType: 'custom',
