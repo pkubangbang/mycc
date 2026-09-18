@@ -2,6 +2,7 @@
 import { ref, watch, nextTick, onMounted, computed } from 'vue';
 import type { ChatMessage, ChatState } from '../types';
 import { chatApi, isMessageVisible } from '../main';
+import { messageKey } from '../message-key';
 import MessageItem from './MessageItem.vue';
 import CardItem from './CardItem.vue';
 import SteeringReviewCard from './SteeringReviewCard.vue';
@@ -66,33 +67,12 @@ const hasCollapsedAbove = computed(
   () => filteredMessages.value.length > visibleMessages.value.length,
 );
 
-// v-for key for each visible message: "<raw-timestamp> <label>"
-// (e.g. "1723391724123 assistant"). The raw millisecond timestamp encodes
-// the time and the label is the tool name — together they form a readable,
-// time+tool key as requested.
-//
-// UNIQUENESS: the raw ms timestamp is far more unique than second-granularity
-// HH:MM:SS — two same-label messages would need to share the exact same
-// millisecond to collide, which is extremely rare. No index suffix is needed
-// in the common case.
-//
-// FALLBACK: timestamp and label are both optional. When either is absent
-// (raw verbose logs, history-loaded messages predating the timestamp/label
-// scheme), the key falls back to the index to guarantee uniqueness.
-function messageKey(msg: ChatMessage, index: number): string {
-  const ts = msg.timestamp;
-  const label = msg.label ?? '';
-  if (ts && label) {
-    return `${ts} ${label}`;
-  }
-  if (ts) {
-    return String(ts);
-  }
-  if (label) {
-    return `${label}-${index}`;
-  }
-  return String(index);
-}
+// v-for key for each visible message: messageKey(msg, index). The helper is
+// a PURE function extracted to ../message-key.ts so the strictly-unique-key
+// invariant is unit-testable without importing a .vue SFC. The key shape is
+// "<raw-timestamp> <label> #<index>" — the index is ALWAYS appended as a
+// deterministic tiebreaker so two messages sharing the same ms + label
+// (rare but possible) still get distinct keys. See message-key.ts.
 
 function isAtBottom(): boolean {
   const el = scrollContainer.value;

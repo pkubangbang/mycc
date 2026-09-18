@@ -104,19 +104,39 @@ let sessionId: string | null = null;
 // /history response sets it.
 let lastHistoryEtag: string | null = null;
 
+// Serialize cache writes so they complete in CALL ORDER, not whichever
+// IndexedDB transaction happens to finish first. Without this, two
+// fire-and-forget writes from different lifecycle paths (e.g. ws.onclose
+// then a /history 200, or beforeunload + visibilitychange firing close
+// together) can settle out of order: a NEWER snapshot (B) lands first,
+// then an OLDER snapshot (A) overwrites it → a stale-regression cache.
+// Each write is chained onto the previous one's promise, so the write that
+// was started last always completes last and wins. The chain is failure-
+// tolerant: a rejected/void write never breaks the chain for the next one.
+let lastCacheWrite: Promise<void> = Promise.resolve();
+
 /**
  * Persist the current store chatlog (messages + teammateMessages) to the
  * IndexedDB cache under `sessionId`. No-op when there is no session key
- * (buildCacheKey returns null). Fire-and-forget: the write is failure-
- * tolerant (resolves void on any error) and never blocks the caller, so it
- * is safe to call from the hide/unload/disconnect paths.
+ * (buildCacheKey returns null). Serialized via `lastCacheWrite` so the
+ * latest call always wins the cache (see the comment above). Fire-and-
+ * forget from the caller's perspective: returns void and never throws, so
+ * it is safe to call from the hide/unload/disconnect paths.
  */
 function persistChatlog(): void {
   const key = buildCacheKey(sessionId);
   if (!key) return;
   // Slice to snapshot the current arrays — the I/O is async and the store
   // may keep mutating; we want to persist the state AT this call site.
-  void writeCachedChatlog(key, store.messages.slice(), store.teammateMessages.slice());
+  const messages = store.messages.slice();
+  const teammateMessages = store.teammateMessages.slice();
+  // Chain this write after the previous one. `.catch(() => {})` on the
+  // predecessor guarantees a prior failure can never reject this chain.
+  // The chained write still resolves void on any internal failure
+  // (writeCachedChatlog never rejects), so the chain stays healthy.
+  lastCacheWrite = lastCacheWrite
+    .catch(() => {})
+    .then(() => writeCachedChatlog(key, messages, teammateMessages));
 }
 
 /**
@@ -417,19 +437,29 @@ void (async () => {
   // happen BEFORE fetchHistory() so a stale If-None-Match is never sent
   // against a new session (see reconnect() for the same ordering rule).
   await fetchConfig();
-  // Hydrate the chatlog from the IndexedDB cache BEFORE the first render +
-  // before fetchHistory, so a lock-screen wake shows the prior chatlog
-  // instantly. fetchHistory then revalidates with If-None-Match — a 304
-  // keeps this hydrated state; a 200 replaces it authoritatively.
+  // Hydrate the chatlog from the IndexedDB cache BEFORE mounting so the
+  // FIRST render is non-blank on a lock-screen wake — the cached chatlog is
+  // visible instantly, without waiting for the /history network round trip.
+  // fetchHistory() runs AFTER mount to revalidate authoritatively (a 304
+  // keeps this hydrated state; a 200 replaces it). The cache intentionally
+  // does NOT restore transient state (running/steering/phase), so the first
+  // render may briefly show the default interaction state; the /history
+  // response (or the live WS) corrects it immediately. That brief transient
+  // is preferable to a blank screen while /history is in flight.
   await hydrateFromCache();
-  await fetchHistory();
-  // Mount the Vue app AFTER hydration so the first render is non-blank.
+  // Mount the Vue app AFTER hydration (cached chatlog already in the store)
+  // but BEFORE fetchHistory(), so the user sees the cache instantly and the
+  // server revalidation layers on top without a blank-flash gap.
   // The store was already activated via setActivePinia(pinia) at module
   // load, so useChatStore() above is valid; app.use(pinia) installs the
   // same instance for the component tree.
   mountedApp = createApp(App, { state: store });
   mountedApp.use(pinia);
   mountedApp.mount('#app');
+  // Revalidate with the server AFTER mount — 304 keeps the hydrated state,
+  // 200 replaces it authoritatively (Pinia reactivity updates the mounted
+  // components via splice, no re-mount needed).
+  await fetchHistory();
   connectWebSocket();
 })();
 
