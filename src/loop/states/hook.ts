@@ -420,20 +420,27 @@ export async function handleHook(
       // newline would create a visual paragraph break mid-sentence.
       const finalContent = `${chat.assistantContent || ''} ${chat.crossroadContinuation}`;
       const briefCallId = Math.random().toString(36).slice(2, 10);
-      // Mode-aware brief message. In normal mode, "Continuing." nudges the LLM
-      // to regenerate tool calls after the crossroad — the desired behavior.
-      // In plan mode, "Continuing." is a go-forward signal that contradicts
-      // the plan-mode directive to stop and present the plan once analysis is
-      // done (buildPlanBasePrompt: "End your turn WITHOUT using any tools").
-      // The LLM reads its own brief text and mistakes "Continuing." for an
-      // instruction to keep exploring instead of presenting its plan. In plan
-      // mode we drop the forward nudge and frame the brief as a refinement of
-      // the analysis only — leaving the decision to stop or continue to the
-      // LLM based on whether the plan is complete.
+      // Mode-aware brief message. Neither branch uses a blanket "Continuing."
+      // directive. A synthetic "Continuing." the LLM reads in its own triologue
+      // is a self-approval signal: the agent treats it as consent to drift
+      // forward past points where the user should review, instead of actively
+      // re-orienting on the in-flight task (the same risk fixed in compact.ts,
+      // hint-round.ts, and teammate-worker.ts — see commit 41e2fa8). Both
+      // branches frame the brief as a refinement of the analysis only, leaving
+      // the decision of the next step to the LLM:
+      //   - Normal mode: "re-orient on the in-flight task and decide the next
+      //     step" still nudges tool-call regeneration (deciding the next step
+      //     naturally means emitting tool calls) without sanctioning drift.
+      //   - Plan mode: a go-forward signal would contradict the plan-mode
+      //     directive to stop and present the plan once analysis is done
+      //     (buildPlanBasePrompt: "End your turn WITHOUT using any tools").
+      //     The LLM would mistake "Continuing." for an instruction to keep
+      //     exploring instead of presenting its plan, so we drop the forward
+      //     nudge entirely.
       const inPlanMode = ctx.core.getMode() === 'plan';
       const briefMessage = inPlanMode
         ? 'Refining my analysis.'
-        : 'Refining my approach. Continuing.';
+        : 'Refining my approach. Let me re-orient on the in-flight task and decide the next step.';
       triologue.agent(finalContent, [{
         id: briefCallId,
         function: {

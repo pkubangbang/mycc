@@ -171,7 +171,7 @@ if (pass.crossroadContinuation) {
     id: briefCallId,
     function: {
       name: 'brief',
-      arguments: { message: 'Refining my approach. Continuing.', confidence: 7 },
+      arguments: { message: 'Refining my approach. Let me re-orient on the in-flight task and decide the next step.', confidence: 7 },
     },
   }], pass.assistantReasoningContent);
   triologue.tool('brief', briefResult, briefCallId);  // see wording below
@@ -188,7 +188,7 @@ if (pass.crossroadContinuation) {
 
 Key points:
 - Continuation is joined with a space (natural prose continuation, not a paragraph break).
-- A synthetic `brief()` tool call is injected (NOT a `note('CONTINUE', ...)`) to give the LLM a thinking trace and actively engage it. The message is phrased neutrally (`"Refining my approach. Continuing."`) — it frames the crossroad as a refinement, not a rescue, so the LLM does not feel it was "lost" and needed saving.
+- A synthetic `brief()` tool call is injected (NOT a `note('CONTINUE', ...)`) to give the LLM a thinking trace and actively engage it. The message is phrased neutrally (`"Refining my approach. Let me re-orient on the in-flight task and decide the next step."`) — it frames the crossroad as a refinement, not a rescue, so the LLM does not feel it was "lost" and needed saving. It deliberately avoids a blanket `"Continuing."` directive, which the LLM reads as self-approval to drift forward past review points (the same risk fixed in `compact.ts` / `hint-round.ts` / `teammate-worker.ts`, commit `41e2fa8`).
 - The `brief` tool result uses non-alarming wording: `"A direction refinement was applied to your response. To display the full response to the user, run: bash(...)"` instead of `"Crossroad triggered. To report the decision..."`. The replay mechanism (running `mycc-pretty-print --type=crossroad <path>` via bash with `display=true`) is retained — it lets the LLM show the user the full reconstructed response. The alarm language was removed because "triggered" and "report the decision" implied the LLM did something wrong, which intimidated it away from mid-thought tools.
 - Deferred hook messages are injected so the LLM sees them in the next round.
 - Flow goes to `COLLECT` (not `STOP`) so the LLM regenerates tool calls.
