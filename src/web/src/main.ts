@@ -103,6 +103,17 @@ let sessionId: string | null = null;
 // hydrated-from-cache copy stays on screen. Null until the first successful
 // /history response sets it.
 let lastHistoryEtag: string | null = null;
+// Whether the client has made LOCAL optimistic changes since the last
+// authoritative /history snapshot (sendInput / sendSteer / sendRetry append
+// a user bubble BEFORE wsSend). A 304 means "the server's history is
+// unchanged since the ETag" — but if we appended a message the server never
+// received (e.g. the WS send raced with a disconnect and was lost), a 304
+// would wrongly validate our optimistic copy as authoritative. So when
+// historyDirty is true, fetchHistory() drops the ETag (sends no
+// If-None-Match) to force a 200, then clears the flag once the authoritative
+// snapshot replaces the store. Contract: 304 is valid only when the client
+// has made no local changes since the last authoritative snapshot.
+let historyDirty = false;
 
 // Serialize cache writes so they complete in CALL ORDER, not whichever
 // IndexedDB transaction happens to finish first. Without this, two
@@ -211,12 +222,16 @@ function wsSend(data: object): boolean {
 async function fetchHistory(): Promise<boolean> {
   try {
     const headers: Record<string, string> = {};
-    if (lastHistoryEtag) headers['If-None-Match'] = lastHistoryEtag;
+    // historyDirty: a local optimistic message was appended since the last
+    // authoritative snapshot. A 304 would wrongly validate that optimistic
+    // copy, so drop the ETag to force a full 200 re-fetch. The flag clears
+    // below once the authoritative snapshot replaces the store.
+    if (lastHistoryEtag && !historyDirty) headers['If-None-Match'] = lastHistoryEtag;
     const res = await fetch('/history', { headers });
     // 304 Not Modified — the hydrated-from-cache record is still current.
-    // Keep it on screen; do not touch the store. Just refresh the steering
-    // buffer + running state? No — a 304 means the WHOLE payload (messages
-    // + steeringBuffer + isRunning) is unchanged, so there is nothing to do.
+    // (Reachable only when !historyDirty: a dirty client forces a 200 by
+    // omitting If-None-Match, so a 304 here genuinely means "unchanged AND
+    // you have no unconfirmed local changes".) Keep the store; nothing to do.
     if (res.status === 304) return true;
     if (!res.ok) return false;
     // Capture the ETag but do NOT commit it yet — only advance lastHistoryEtag
@@ -271,8 +286,13 @@ async function fetchHistory(): Promise<boolean> {
       store.setPhase(data.isRunning ? 'working' : 'idle');
     }
     // The authoritative update fully succeeded — NOW commit the ETag so a
-    // later 304 correctly means "the store matches this version".
+    // later 304 correctly means "the store matches this version". Also clear
+    // historyDirty: the store now reflects the server's authoritative
+    // snapshot, so any prior optimistic message has been reconciled (the
+    // server's version of the same user input is in the snapshot; a lost
+    // optimistic message is correctly absent).
     if (etag) lastHistoryEtag = etag;
+    historyDirty = false;
     // Persist the authoritative snapshot to the cache so the next lock-screen
     // wake hydrates from it. Only on a 200 (we returned early on 304 above,
     // which means the cache is already current). Fire-and-forget.
@@ -525,8 +545,24 @@ void (async () => {
   // Revalidate with the server AFTER mount — 304 keeps the hydrated state,
   // 200 replaces it authoritatively (Pinia reactivity updates the mounted
   // components via splice, no re-mount needed).
-  await fetchHistory();
-  connectWebSocket();
+  const historyOk = await fetchHistory();
+  // WS-GATING INVARIANT (mirrors reconnect): the WebSocket connects ONLY
+  // after /history succeeds. The server does NOT replay history over WS
+  // (only prompt/auto/running state + subsequent live events), so opening
+  // the WS against a failed /history would show [cached history] + [live
+  // events] minus whatever historical events happened while /history was
+  // unavailable — a gap in the record. On failure, leave the WS closed and
+  // schedule a reconnect retry; the cache-mounted UI stays visible in the
+  // meantime (the instant-cache UX goal is preserved — mount happens before
+  // fetchHistory regardless of its outcome).
+  if (historyOk) {
+    connectWebSocket();
+  } else if (!reconnectTimer) {
+    reconnectTimer = setTimeout(() => {
+      reconnectTimer = null;
+      void reconnect();
+    }, 1500);
+  }
 })();
 
 // Apply the persisted (or default) theme class on startup so the page
@@ -539,6 +575,10 @@ export const chatApi = {
     if (!text.trim() && (!files || files.length === 0)) return;
     // Echo the user's input as a local message for immediate feedback
     store.messages.push({ type: 'user', content: text || '(uploaded files)', timestamp: Date.now(), id: nextId() });
+    // Local optimistic mutation — a subsequent /history 304 must NOT be
+    // treated as authoritative (the server may never receive this message
+    // if the WS send races with a disconnect). See historyDirty in fetchHistory.
+    historyDirty = true;
     store.inputText = '';
     store.pendingFiles = [];
     // Optimistic: phase → submitted (send→running gap). The backend is now
@@ -563,6 +603,8 @@ export const chatApi = {
   sendSteer(text: string, files?: FileInfo[]): void {
     if (!text.trim() && (!files || files.length === 0)) return;
     store.messages.push({ type: 'user', content: text || '(uploaded files)', timestamp: Date.now(), id: nextId() });
+    // Local optimistic mutation — see historyDirty in fetchHistory.
+    historyDirty = true;
     store.inputText = '';
     store.pendingFiles = [];
     wsSend({ type: 'steer', text: text || undefined, files: files && files.length > 0 ? files : undefined });
@@ -626,6 +668,8 @@ export const chatApi = {
     // Echo the chosen retry answer as a user bubble so the user sees their
     // choice reflected in the chat record (matches sendInput feedback).
     store.messages.push({ type: 'user', content: answer, timestamp: Date.now(), id: nextId() });
+    // Local optimistic mutation — see historyDirty in fetchHistory.
+    historyDirty = true;
     store.showRetry = false;
     store.inputText = '';
     // Optimistic: the retry answer is a fresh input → submitted phase.

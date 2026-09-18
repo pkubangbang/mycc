@@ -3,6 +3,17 @@ import { ref, watch, nextTick, onMounted, computed } from 'vue';
 import type { ChatMessage, ChatState } from '../types';
 import { chatApi, isMessageVisible } from '../main';
 import { messageKey } from '../message-key';
+import {
+  INITIAL_VISIBLE,
+  SCROLL_BATCH,
+  MAX_VISIBLE,
+  loadMore as reduceLoadMore,
+  returnToTail as reduceReturnToTail,
+  leaveTail as reduceLeaveTail,
+  onAppend as reduceOnAppend,
+  onShrink as reduceOnShrink,
+} from '../collapse-state';
+import type { CollapseState } from '../collapse-state';
 import MessageItem from './MessageItem.vue';
 import CardItem from './CardItem.vue';
 import SteeringReviewCard from './SteeringReviewCard.vue';
@@ -70,12 +81,30 @@ let userScrolledUp = false;
 // MAX_VISIBLE is a hard ceiling on (x + t) mirroring the server's
 // MAX_LOG_SIZE (1000) so the client never renders more than the server can
 // send.
-const INITIAL_VISIBLE = 10;
-const SCROLL_BATCH = 20;
-const MAX_VISIBLE = 1000;
+//
+// The transition LOGIC (loadMore / returnToTail / leaveTail / onAppend /
+// onShrink) lives in the PURE module ../collapse-state.ts so it is directly
+// unit-testable in node (see collapse-state.test.ts). ChatLog only holds the
+// reactive refs and applies the reducer results + the DOM/scroll
+// side-effects the pure module can't do.
 const capacity = ref(INITIAL_VISIBLE); // x
 const tailBuffer = ref(0);             // t
 const trackingTail = ref(true);        // pinned to the live tail?
+
+// Read the current collapse state as a plain object (for the pure reducer).
+function collapseState(): CollapseState {
+  return {
+    capacity: capacity.value,
+    tailBuffer: tailBuffer.value,
+    trackingTail: trackingTail.value,
+  };
+}
+// Apply a reducer result back onto the reactive refs.
+function applyCollapseState(s: CollapseState): void {
+  capacity.value = s.capacity;
+  tailBuffer.value = s.tailBuffer;
+  trackingTail.value = s.trackingTail;
+}
 
 // The auto-mode stop button's "hyperspace jump" visuals (rocket + meteor
 // starfield) now live in two dedicated components — RocketIcon and
@@ -133,23 +162,22 @@ function isNearTop(): boolean {
 }
 
 /**
- * Reveal one more batch of collapsed messages (infinite scroll up). Grows
- * `capacity` (x) by SCROLL_BATCH, clamped to MAX_VISIBLE. Scrolling up means
- * the user is no longer tracking the tail, so trackingTail flips false (new
- * arrivals will buffer into t until they return). After the window grows,
- * the scroll position is adjusted so the user stays at roughly the same
- * visible spot (the newly prepended messages appear ABOVE the current
- * viewport, not pushing the user down). No-op if nothing is collapsed.
+ * Reveal one more batch of collapsed messages (infinite scroll up). Delegates
+ * the capacity/tracking transition to the pure reducer; keeps the DOM
+ * side-effect (scroll-anchoring) here. Scrolling up means the user is no
+ * longer tracking the tail (the reducer flips trackingTail false). After the
+ * window grows, the scroll position is adjusted so the user stays at roughly
+ * the same visible spot (the newly prepended messages appear ABOVE the
+ * current viewport, not pushing the user down). No-op if nothing is collapsed.
  */
 function loadMore(): void {
   if (!hasCollapsedAbove.value) return;
-  trackingTail.value = false;
   const el = scrollContainer.value;
   // Capture the scroll geometry BEFORE the window grows so we can offset the
   // new scrollTop by the height added (the prepended messages).
   const prevHeight = el ? el.scrollHeight : 0;
   const prevTop = el ? el.scrollTop : 0;
-  capacity.value = Math.min(capacity.value + SCROLL_BATCH, MAX_VISIBLE);
+  applyCollapseState(reduceLoadMore(collapseState(), filteredMessages.value.length));
   // nextTick: wait for the DOM to reflect the larger window, then keep the
   // user at the same content position by adding the newly prepended height.
   nextTick(() => {
@@ -166,34 +194,24 @@ function scrollToBottom(): void {
   }
   userScrolledUp = false;
   showScrollButton.value = false;
-  // Re-tracking the tail: fold the tail buffer into capacity (x += t) and
-  // clear it. The rendered window size (x + t) is UNCHANGED across the fold
-  // (x grows by exactly the t that clears), so there is no visual jump — the
-  // previously-buffered tail is now in view at the bottom. Clamp to MAX_VISIBLE.
-  if (tailBuffer.value > 0) {
-    capacity.value = Math.min(capacity.value + tailBuffer.value, MAX_VISIBLE);
-    tailBuffer.value = 0;
-  }
-  trackingTail.value = true;
+  // Re-tracking the tail: fold the tail buffer into capacity and clear it
+  // (size-preserving across the fold — no visual jump). The pure reducer
+  // computes the new x; the DOM scroll happens above.
+  applyCollapseState(reduceReturnToTail(collapseState()));
 }
 
 function onScroll(): void {
   if (isAtBottom()) {
     showScrollButton.value = false;
     userScrolledUp = false;
-    // Scrolled to the bottom → re-tracking the tail. Same fold as
-    // scrollToBottom: x += t, t = 0 (size-preserving), trackingTail = true.
-    if (tailBuffer.value > 0) {
-      capacity.value = Math.min(capacity.value + tailBuffer.value, MAX_VISIBLE);
-      tailBuffer.value = 0;
-    }
-    trackingTail.value = true;
+    // Scrolled to the bottom → re-tracking the tail (x += t, t = 0).
+    applyCollapseState(reduceReturnToTail(collapseState()));
   } else {
     userScrolledUp = true;
     showScrollButton.value = true;
     // Scrolled away from the bottom → no longer tracking the tail; new
     // arrivals will buffer into t instead of disturbing the viewed history.
-    trackingTail.value = false;
+    applyCollapseState(reduceLeaveTail(collapseState()));
   }
   // Infinite scroll up: when the user scrolls near the top and older
   // messages are collapsed, reveal the next batch. This makes "scroll up
@@ -253,56 +271,35 @@ function onDiscardAllSteering(): void {
   chatApi.resolveSteering([]);
 }
 
-// Watch for new messages — auto-scroll only if tracking the tail.
-watch(
-  () => visibleMessages.value.length,
-  () => {
-    if (trackingTail.value) {
-      nextTick(() => scrollToBottom());
-    }
-  },
-);
-
 // Keep the collapse window in sync with the filtered list size. This is the
 // core of the x / t / trackingTail scheme: it reacts to filtered-list GROWTH
 // (new messages arriving) and SHRINKAGE (a 200 replace on reconnect resets
-// the store) / identity change (verbose toggle).
+// the store) / identity change (verbose toggle). The transition LOGIC is in
+// the pure reducer (../collapse-state.ts); this watcher only applies the
+// result + the DOM scroll side-effect.
+//
+// RE-SCROLL CORRECTNESS (#9): the reducer's onAppend returns a
+// `shouldScrollToTail` signal that is true whenever trackingTail is true and
+// messages arrived — EVEN when the rendered length stayed constant (the
+// floor-swap case: x=10, one old leaves + one new enters → length unchanged,
+// but the new tail message must still be scrolled into view). Tying the
+// re-scroll to filtered-list growth (not visibleMessages.length) guarantees
+// trackingTail stays truly "live" once capacity bottoms out.
 watch(
   () => filteredMessages.value.length,
   (newLen, oldLen) => {
     if (oldLen === undefined) return; // initial — leave INITIAL_VISIBLE
     if (newLen > oldLen) {
-      const delta = newLen - oldLen;
-      if (trackingTail.value) {
-        // Pinned to the tail: each new message folds into view AND trims
-        // capacity by 1, so the window drifts back toward INITIAL_VISIBLE
-        // over time (a long idle-with-tail session does not render an
-        // ever-growing window). Net window-size change per arrival:
-        //   (x - 1) + t  vs  x + t  → shrinks by 1 (the oldest rendered
-        // message drops off the top, the new one enters at the bottom).
-        // This is the "trade 2 old for 1 new" feel until x bottoms out.
-        // Floor at INITIAL_VISIBLE so the window never collapses below the
-        // initial size; once at the floor, arrivals just scroll the tail
-        // (window size constant). Clamp the final (x + t) to MAX_VISIBLE.
-        capacity.value = Math.max(capacity.value - delta, INITIAL_VISIBLE);
-        const over = (capacity.value + tailBuffer.value) - MAX_VISIBLE;
-        if (over > 0) tailBuffer.value = Math.max(tailBuffer.value - over, 0);
-      } else {
-        // Scrolled up (not tracking): buffer the new messages into t. They
-        // are still rendered (window = last x+t) but sit below the viewport,
-        // so the viewed history stays stable — no jump. Clamp (x + t) to
-        // MAX_VISIBLE (drop the oldest from the window if the cap is hit).
-        tailBuffer.value = tailBuffer.value + delta;
-        const over = (capacity.value + tailBuffer.value) - MAX_VISIBLE;
-        if (over > 0) capacity.value = Math.max(capacity.value - over, INITIAL_VISIBLE);
+      const { state, shouldScrollToTail } = reduceOnAppend(collapseState(), newLen - oldLen);
+      applyCollapseState(state);
+      if (shouldScrollToTail) {
+        nextTick(() => scrollToBottom());
       }
     } else if (newLen < oldLen) {
       // Shrink / replace: reset to the initial window so the collapse
       // re-applies from the new tail (e.g. after a reconnect 200). The store
       // was authoritatively replaced, so the old window position is invalid.
-      capacity.value = INITIAL_VISIBLE;
-      tailBuffer.value = 0;
-      trackingTail.value = true;
+      applyCollapseState(reduceOnShrink());
     }
     // newLen === oldLen: no size change (e.g. a content edit) — leave the window.
   },
