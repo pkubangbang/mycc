@@ -343,7 +343,8 @@ function connectWebSocket(): void {
     if (reconnectTimer) return;
     reconnectTimer = setTimeout(() => {
       reconnectTimer = null;
-      // Re-fetch history first, then re-open the socket — same order as load.
+      // Re-establish: config → history → WS. Same config-first order as
+      // load (see reconnect() for why config must precede history).
       void reconnect();
     }, 1500);
   };
@@ -354,13 +355,21 @@ function connectWebSocket(): void {
   };
 }
 
-/** Reconnect sequence: refresh history, then re-establish the WS. */
+/** Reconnect sequence: re-fetch config FIRST, then history, then re-open
+ *  the WS. Ordering is load-bearing for session fencing: fetchConfig()
+ *  detects a sessionId change (a serve restart started a new session) and
+ *  resets `lastHistoryEtag` to null. Only AFTER that reset is it safe to
+ *  call fetchHistory() — otherwise a stale If-None-Match from the previous
+ *  session could 304 against the NEW session's history (the /history ETag
+ *  is a metadata/state fingerprint that does NOT include the sessionId, so
+ *  a fingerprint collision across sessions is possible) and freeze the UI
+ *  on a foreign/empty log. With config-first, a session change forces an
+ *  unconditional /history fetch (no If-None-Match sent → never a 304
+ *  against the wrong session); an unchanged session still benefits from the
+ *  304 short-circuit. */
 async function reconnect(): Promise<void> {
-  await fetchHistory();
-  // Re-fetch config too — a serve restart could have flipped persistent or
-  // changed the upload cap, so don't trust the prior values across a
-  // disconnect/reconnect boundary.
   await fetchConfig();
+  await fetchHistory();
   connectWebSocket();
 }
 
@@ -387,13 +396,16 @@ document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'hidden') persistChatlog();
 });
 
-// Page load sequence: initialize the Shiki highlighter, fetch history, then
-// establish the WS connection. The highlighter is awaited FIRST so the first
-// render (history bubbles, which may contain code blocks) already has
-// syntax highlighting — markdown-it's sync `highlight` callback calls into a
-// ready singleton. Fetching history and connecting the WS follow; the
-// highlighter init is non-blocking to the WS (it resolves quickly and only
-// gates rendering, which happens at mount below).
+// Page load sequence: initialize the Shiki highlighter, fetch config, hydrate
+// the chatlog from the IndexedDB cache, fetch history, THEN mount the Vue app,
+// and finally establish the WS connection. Mounting is deliberately placed
+// INSIDE this async bootstrap — AFTER hydrateFromCache() + fetchHistory() —
+// so the FIRST render already shows the hydrated/prior chatlog instead of a
+// blank screen. (A fire-and-forget IIFE followed by an immediate mount would
+// render first and hydrate later, defeating the lock-screen-instant-wake UX
+// goal.) The highlighter is awaited FIRST so the first render's code blocks
+// are already syntax-highlighted. The WS connects last so live updates never
+// overtake the historical record.
 void (async () => {
   store.connectionStatus = 'reconnecting';
   await ensureHighlighterReady();
@@ -401,7 +413,9 @@ void (async () => {
   // render (the StatusBar button label and the upload size guard), so they
   // must be populated before the components mount and start reading the
   // store. fetchConfig() also captures the wire sessionId (the IndexedDB
-  // cache key). fetchHistory() and the WS connection follow.
+  // cache key) and resets lastHistoryEtag on a session change — which must
+  // happen BEFORE fetchHistory() so a stale If-None-Match is never sent
+  // against a new session (see reconnect() for the same ordering rule).
   await fetchConfig();
   // Hydrate the chatlog from the IndexedDB cache BEFORE the first render +
   // before fetchHistory, so a lock-screen wake shows the prior chatlog
@@ -409,6 +423,13 @@ void (async () => {
   // keeps this hydrated state; a 200 replaces it authoritatively.
   await hydrateFromCache();
   await fetchHistory();
+  // Mount the Vue app AFTER hydration so the first render is non-blank.
+  // The store was already activated via setActivePinia(pinia) at module
+  // load, so useChatStore() above is valid; app.use(pinia) installs the
+  // same instance for the component tree.
+  mountedApp = createApp(App, { state: store });
+  mountedApp.use(pinia);
+  mountedApp.mount('#app');
   connectWebSocket();
 })();
 
@@ -538,12 +559,6 @@ export const chatApi = {
 // WS handler. Registered only under import.meta.env.DEV; a no-op otherwise.
 registerDebugSeam(store, { nextId, chatApi });
 
-// Create Vue app — install Pinia, then pass the store as the `state` prop.
-// The store satisfies the `ChatState` interface (its reactive refs/computeds
-// are unwrapped by Vue's template renderer, and the prop typing accepts the
-// store's shape). Components read `state.phase` / `state.isWaiting` etc. and
-// call `chatApi` to mutate; only applyServerMessage and chatApi call the
-// store actions directly.
-mountedApp = createApp(App, { state: store });
-mountedApp.use(pinia);
-mountedApp.mount('#app');
+// The Vue app is created and mounted INSIDE the async bootstrap above (after
+// hydrateFromCache() + fetchHistory()), so the first render already shows the
+// hydrated chatlog. There is no eager mount here — see the bootstrap IIFE.
