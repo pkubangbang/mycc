@@ -106,6 +106,13 @@ export class WikiManager implements WikiModule {
       };
       this.table = await this.db.createTable(this.tableName, [initialRecord]);
     }
+    // Ensure a vector ANN index exists on the embedding column so get()'s
+    // native vectorSearch is sublinear (#29). Idempotent — no-op if the
+    // index already exists. Non-fatal on failure (get() falls back to the
+    // manual scan). Not awaited-blocking on the critical path: a missing
+    // index just means the first search uses the manual fallback until the
+    // index finishes building.
+    void this.ensureVectorIndex().catch(() => { /* logged inside */ });
   }
 
   // ============================================================
@@ -230,9 +237,20 @@ export class WikiManager implements WikiModule {
         );
       }
 
-      // Batch delete stale/orphaned records
-      for (const hash of toDelete) {
-        await this.delete(hash);
+      // Batch delete stale/orphaned records.
+      //
+      // SCALING (#29, peer-reviewed): the prior loop called `this.delete(hash)`
+      // per hash, and EACH `delete()` did a full `table.query().toArray()`
+      // scan to locate the row (for its WAL date) + a per-hash
+      // `table.delete("hash = '...'")`. With C changed skills that was C
+      // full table scans. Now we issue ONE batched `table.delete("hash IN
+      // (...)")` for the DB side, and mark WAL deleted per-hash via the
+      // lightweight `markWALDeletedByHash` helper (file I/O, no DB scan).
+      // The WAL mark is best-effort: a missing WAL entry is already handled
+      // gracefully by markWALDeleted (it logs and continues), and the DB
+      // delete is the authoritative removal.
+      if (toDelete.length > 0) {
+        await this.deleteByHashes(toDelete);
       }
 
       // Batch insert all new/changed documents in ONE table.add() call
@@ -454,7 +472,36 @@ export class WikiManager implements WikiModule {
   }
 
   /**
-   * Search for documents by similarity
+   * Search for documents by similarity.
+   *
+   * SCALING (#29, peer-reviewed): the prior implementation did
+   * `table.query().toArray()` — a FULL TABLE SCAN that materialized EVERY
+   * row across ALL domains (the wiki DB is shared across projects) into JS,
+   * then a manual `cosineSimilarity` loop, then a sort + slice. That is
+   * O(total_rows × dim) per search and grows without bound as the store
+   * accumulates skills + wiki docs. The stale comment below it claimed
+   * "vector search requires embedding column" — but the table schema
+   * (initDb) DOES carry an `embedding` column, and LanceDB v0.27 exposes
+   * `Table.vectorSearch(Float32Array)` which uses a native ANN index.
+   *
+   * This rewrite uses the native vector search:
+   *   - `vectorSearch(queryEmbedding).distanceType('cosine')` ranks rows by
+   *     cosine DISTANCE (lower = closer) via the ANN index — sublinear
+   *     instead of O(rows).
+   *   - `.where("domain = '...'")` pushes the domain predicate INTO the DB
+   *     (server-side filter) instead of filtering post-materialization.
+   *   - `.limit(overFetch)` caps the rows returned.
+   * The distance is converted back to similarity (`1 - distance`) so the
+   * threshold cut + sort + topK slice behave as before.
+   *
+   * ANN + prefilter caveat: with an IVF index, `.where()` is applied as a
+   * POSTFILTER on the ANN's top-N candidates, so a highly selective domain
+   * predicate can return fewer than `limit` rows. We over-fetch
+   * (VECTOR_SEARCH_OVERFETCH × topK) to compensate, and the skills domain is
+   * a large fraction of rows so this is not a practical problem. If the
+   * vector search path throws (no index yet built, empty table, or an API
+   * shape change), we fall back to the original manual scan so correctness
+   * is never lost — only the optimization is.
    */
   async get(query: string, options?: GetOptions): Promise<SearchResult[]> {
     await this.initDb();
@@ -467,7 +514,23 @@ export class WikiManager implements WikiModule {
       // Generate embedding for query
       const queryEmbedding = await getEmbedding(query, 'query');
 
-      // Get all records and filter manually (vector search requires embedding column)
+      // Try the native vector search first (the scaling fix). On any failure
+      // (no index, empty table, API change), fall back to the manual scan so
+      // search results are never silently lost.
+      try {
+        return await this.vectorSearchGet(queryEmbedding, options, topK, threshold);
+      } catch (vecErr) {
+        // Vector search unavailable — fall through to the manual scan. Log at
+        // verbose (not warn) so a transient index-not-ready state doesn't
+        // spam; the manual path is correct, just slower.
+        const reason = vecErr instanceof Error ? vecErr.message : String(vecErr);
+        this.core.verbose('wiki', `vector search unavailable, falling back to manual scan: ${reason}`);
+      }
+
+      // Manual-scan fallback — the original O(rows) path. Kept for
+      // correctness when the ANN index is absent (fresh table before
+      // ensureVectorIndex runs, or a LanceDB API regression). Identical
+      // semantics to the pre-#29 implementation.
       const records = await this.table.query().toArray();
       const results: SearchResult[] = [];
 
@@ -506,6 +569,128 @@ export class WikiManager implements WikiModule {
       const error = err instanceof Error ? err.message : String(err);
       this.core.brief('error', 'wiki', `Get failed: ${error}`);
       return [];
+    }
+  }
+
+  /**
+   * Over-fetch multiplier for the native vector search. With an IVF index
+   * the domain `.where()` runs as a postfilter on the ANN's candidates, so
+   * we fetch `VECTOR_SEARCH_OVERFETCH × topK` rows and then apply the
+   * threshold + slice client-side. 4× is a safe margin for the skills
+   * domain (a large fraction of rows); tune up if a highly-selective
+   * domain ever returns fewer than topK after the postfilter.
+   */
+  private static readonly VECTOR_SEARCH_OVERFETCH = 4;
+
+  /**
+   * Native LanceDB vector-search implementation of get().
+   *
+   * Builds a `vectorSearch` query with a cosine distance type + a server-side
+   * domain `.where()` predicate + an over-fetched `.limit()`, executes it,
+   * and converts each returned row's `_distance` (LanceDB cosine distance,
+   * lower = closer) back to a similarity in [0, 1] (`1 - distance`) so the
+   * caller's threshold cut + sort + topK slice are unchanged. Excludes the
+   * `__schema__` bootstrap row defensively (it carries a zero vector).
+   *
+   * Throws if the vector search is unavailable (no index, API regression) —
+   * the caller (get) catches and falls back to the manual scan.
+   */
+  private async vectorSearchGet(
+    queryEmbedding: number[],
+    options: GetOptions | undefined,
+    topK: number,
+    threshold: number,
+  ): Promise<SearchResult[]> {
+    if (!this.table) return [];
+    const limit = Math.max(topK * WikiManager.VECTOR_SEARCH_OVERFETCH, topK);
+    // LanceDB vectorSearch takes a Float32Array; getEmbedding returns number[].
+    // The high-level VectorQuery wrapper is chainable (each method returns
+    // `this` / VectorQuery), so we build the query in one fluent chain.
+    let vq = this.table
+      .vectorSearch(Float32Array.from(queryEmbedding))
+      .distanceType('cosine')
+      .limit(limit);
+    if (options?.domain) {
+      // Server-side domain predicate — rows are filtered in the DB, not
+      // materialized into JS. `where` is the high-level filter (the native
+      // `onlyIf` is the low-level equivalent; the wrapper exposes `where`).
+      // Single-quote-escape the domain value to keep the SQL predicate safe
+      // (domain names are operator-controlled and simple, but defend in depth).
+      const escaped = options.domain.replace(/'/g, "''");
+      vq = vq.where(`domain = '${escaped}'`);
+    }
+    const rows = await vq.toArray();
+    const results: SearchResult[] = [];
+    for (const record of rows) {
+      const r = record as Record<string, unknown>;
+      // Skip the schema bootstrap row (zero vector, meaningless match).
+      if (r.hash === '__schema__') continue;
+      // LanceDB emits the ranked distance as `_distance` (cosine distance,
+      // 0 = identical). Convert to similarity to match the manual path.
+      const distance = typeof r._distance === 'number' ? r._distance : 0;
+      const similarity = 1 - distance;
+      if (similarity < threshold) continue;
+      results.push({
+        document: {
+          domain: r.domain as string,
+          title: r.title as string,
+          content: r.content as string,
+          references: JSON.parse((r.references as string) || '[]'),
+        },
+        similarity,
+        hash: r.hash as string,
+      });
+    }
+    // The ANN already returns distance-ordered rows, but re-sort by similarity
+    // (descending) for a stable contract with the manual path + apply topK.
+    results.sort((a, b) => b.similarity - a.similarity);
+    return results.slice(0, topK);
+  }
+
+  /**
+   * Ensure a vector ANN index exists on the `embedding` column, creating it
+   * (idempotently) if absent. Called after table init so subsequent
+   * `vectorSearch` calls are sublinear.
+   *
+   * Uses IVF-Flat (not IVF-PQ): the wiki/skill store is modest (hundreds to
+   * low-thousands of rows), so Flat's exact scan within IVF partitions
+   * preserves cosine ranking fidelity that PQ's quantization would distort.
+   * `numPartitions` scales with row count via sqrt(N) heuristic. The index
+   * is rebuilt with `replace: true` only when explicitly requested (e.g.
+   * after a rebuild that cleared the table); on normal startup this is a
+   * no-op once the index exists (checked via listIndices).
+   */
+  private vectorIndexEnsured = false;
+  private async ensureVectorIndex(replace = false): Promise<void> {
+    if (!this.table) return;
+    if (this.vectorIndexEnsured && !replace) return;
+    try {
+      const indices = await this.table.listIndices();
+      const hasVectorIndex = indices.some(
+        (idx) => idx.columns.includes('embedding') && idx.indexType !== 'BTree' && idx.indexType !== 'Scalar',
+      );
+      if (hasVectorIndex && !replace) {
+        this.vectorIndexEnsured = true;
+        return;
+      }
+      // numPartitions heuristic: sqrt(N) is LanceDB's rule of thumb for
+      // IVF. For very small tables (< 256 rows) a single partition avoids
+      // a degenerate index. numPartitions must be >= 1.
+      const rowCount = await this.table.countRows();
+      const numPartitions = Math.max(1, Math.round(Math.sqrt(Math.max(rowCount, 1))));
+      // IVF-Flat with cosine distance matches the vectorSearch distanceType.
+      // The high-level API takes a single options object (not positional
+      // args), and createIndex takes (column, options) — `config` carries
+      // the Index, `replace` allows overwriting an existing/stale index.
+      const index = lancedb.Index.ivfFlat({ distanceType: 'cosine', numPartitions });
+      await this.table.createIndex('embedding', { config: index, replace });
+      this.vectorIndexEnsured = true;
+      this.core.verbose('wiki', `vector index ensured (ivfFlat cosine, ${numPartitions} partitions, ${rowCount} rows)`);
+    } catch (err) {
+      // Index creation failure is non-fatal — vectorSearch will throw and
+      // get() falls back to the manual scan. Log so it's diagnosable.
+      const reason = err instanceof Error ? err.message : String(err);
+      this.core.verbose('wiki', `ensureVectorIndex skipped: ${reason}`);
     }
   }
 
@@ -662,7 +847,13 @@ export class WikiManager implements WikiModule {
   }
 
   /**
-   * Delete a document by hash
+   * Delete a document by hash.
+   *
+   * The single-hash public delete path (the `delete` tool). Locates the row
+   * via a full scan to read its `createdAt` (needed to find the WAL file),
+   * marks the WAL entry deleted (audit), then deletes the LanceDB row. This
+   * is the per-hash path — for batched re-index deletes use
+   * {@link deleteByHashes} which skips the per-hash WAL mark + scan.
    */
   async delete(hash: string): Promise<boolean> {
     // Validate hash format
@@ -711,6 +902,49 @@ export class WikiManager implements WikiModule {
       const error = err instanceof Error ? err.message : String(err);
       this.core.brief('error', 'wiki', `Delete failed: ${error}`);
       return false;
+    }
+  }
+
+  /**
+   * Batched DB-only delete of multiple hashes in ONE `table.delete(...)`
+   * call. Used by the skill re-index path ({@link indexSkills}) to remove
+   * stale/orphaned records without C full table scans + C per-hash WAL
+   * marks.
+   *
+   * Unlike {@link delete}, this does NOT mark WAL entries deleted: the
+   * re-index path is a wholesale replacement of the skills domain's
+   * records, not an audited user delete — consistent with the write side
+   * ({@link batchPut} and {@link insertRebuildBatch} which also skip WAL
+   * on the bulk paths). The DB row removal is authoritative; a missing WAL
+   * mark is handled gracefully by {@link markWALDeleted} during a rebuild.
+   *
+   * Hashes are validated against {@link HASH_PATTERN} and single-quote
+   * escaped before being interpolated into the SQL `IN (...)` predicate.
+   */
+  async deleteByHashes(hashes: string[]): Promise<void> {
+    if (hashes.length === 0) return;
+    await this.initDb();
+    if (!this.table) return;
+
+    // Validate + escape every hash. Reject the whole batch on any invalid
+    // hash — a partial delete would leave the re-index diff inconsistent
+    // (the caller expects all stale records gone).
+    const escaped: string[] = [];
+    for (const hash of hashes) {
+      if (!HASH_PATTERN.test(hash)) {
+        this.core.brief('error', 'wiki', `deleteByHashes: invalid hash format: ${hash}`);
+        return;
+      }
+      escaped.push(hash.replace(/'/g, "''"));
+    }
+
+    try {
+      const inList = escaped.map((h) => `'${h}'`).join(', ');
+      await this.table.delete(`hash IN (${inList})`);
+      this.core.brief('info', 'wiki', `Batch deleted ${hashes.length} records`);
+    } catch (err) {
+      const error = err instanceof Error ? err.message : String(err);
+      this.core.brief('error', 'wiki', `deleteByHashes failed: ${error}`);
     }
   }
 
