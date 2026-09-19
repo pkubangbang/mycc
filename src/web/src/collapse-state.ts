@@ -181,6 +181,26 @@ export function onFilterChange(): CollapseState {
  *  only in watcher choreography. */
 export type ChangeKind = 'filter' | 'append' | 'shrink' | 'none';
 
+/** A single observation of the (verboseLogs, filteredLength) pair the
+ *  ChatLog watcher tracks. `applyObservation` takes the PREVIOUS and
+ *  CURRENT observation so the whole state transition — not just the
+ *  classification — is a pure, unit-testable function (the watcher becomes
+ *  a thin caller, which is what made the round-8 delta=0 / lazy-first-
+ *  change bugs detectable in tests rather than only at runtime). */
+export interface Observation {
+  verbose: boolean;
+  filteredLength: number;
+}
+
+/** The result of applying one observation: the new collapse state plus the
+ *  one side-effect signal the pure reducer can compute (whether the caller
+ *  should re-scroll to the tail). The DOM/scroll itself stays in the
+ *  component — this is the pure part. */
+export interface ObservationResult {
+  state: CollapseState;
+  shouldScrollToTail: boolean;
+}
+
 /**
  * classifyChange — decide which collapse transition applies given the
  * PREVIOUS and CURRENT (verboseLogs, filteredLength) observations.
@@ -223,4 +243,69 @@ export function classifyChange(
   if (nextFilteredLength > prevFilteredLength) return 'append';
   if (nextFilteredLength < prevFilteredLength) return 'shrink';
   return 'none';
+}
+
+/**
+ * applyObservation — the PURE state transition the ChatLog watcher runs each
+ * time it observes a new (verboseLogs, filteredLength) pair. It classifies
+ * the change (classifyChange) and dispatches to the right reducer, returning
+ * the new collapse state + the shouldScrollToTail signal.
+ *
+ * This is the WHOLE watcher body as a pure function — extracted so the full
+ * transition (not just the classifier) is unit-testable. The round-8 bugs
+ * (#19 delta=0, #20 lazy-first-change) lived in the watcher's manual
+ * prev-ref bookkeeping and passed the test suite because the tests only
+ * covered classifyChange, not the transition that consumes it. With the
+ * transition itself pure, those bugs are structural: the caller passes the
+ * previous observation Vue supplies via the (newValue, oldValue) callback
+ * signature, so there is no manual advancement to get wrong and no undefined-
+ * prev first-run case (Vue evaluates the source at setup, so the first real
+ * change gets a real prev observation).
+ *
+ *   'append'  → onAppend(state, next.filteredLength - prev.filteredLength).
+ *               shouldScrollToTail = the reducer's signal (true when tracking
+ *               and messages arrived, even at the capacity floor — #9).
+ *   'shrink'  → onShrink() (reset; a 200 replace invalidated the window).
+ *               No re-scroll signal (the caller re-derives position).
+ *   'filter'  → onFilterChange() (reset; the visible set's membership
+ *               changed). shouldScrollToTail = the user's PRE-toggle
+ *               trackingTail (captured BEFORE onFilterChange forces it true
+ *               — #16), so a user reading older history stays put.
+ *   'none'    → unchanged state, no signal (content edit or initial run).
+ *
+ * `prev` may be undefined ONLY when the caller has no prior observation;
+ * classifyChange then returns 'none' and the state is returned unchanged.
+ * In practice the ChatLog watcher always has a real prev (Vue supplies it),
+ * but the undefined guard keeps the function total.
+ */
+export function applyObservation(
+  prev: Observation | undefined,
+  next: Observation,
+  state: CollapseState,
+): ObservationResult {
+  const kind = classifyChange(
+    prev?.verbose,
+    next.verbose,
+    prev?.filteredLength,
+    next.filteredLength,
+  );
+  if (kind === 'append') {
+    // delta is computed from the PREVIOUS observation (passed in), not from a
+    // manually-advanced ref — so a 10→11 append yields delta=1, not 0 (#19).
+    const delta = next.filteredLength - (prev?.filteredLength ?? next.filteredLength);
+    const r = onAppend(state, delta);
+    return { state: r.state, shouldScrollToTail: r.shouldScrollToTail };
+  }
+  if (kind === 'shrink') {
+    return { state: onShrink(), shouldScrollToTail: false };
+  }
+  if (kind === 'filter') {
+    // Capture the user's tail position BEFORE onFilterChange resets
+    // trackingTail=true (#16), so we only signal a re-scroll if they were
+    // actually following the tail.
+    const wasTrackingTail = state.trackingTail;
+    return { state: onFilterChange(), shouldScrollToTail: wasTrackingTail };
+  }
+  // 'none' — content edit or initial run; leave the window.
+  return { state, shouldScrollToTail: false };
 }

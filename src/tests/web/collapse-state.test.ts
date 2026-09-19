@@ -21,6 +21,7 @@ import {
   onShrink,
   onFilterChange,
   classifyChange,
+  applyObservation,
   windowSize,
   INITIAL_VISIBLE,
   MAX_VISIBLE,
@@ -236,5 +237,155 @@ describe('review scenario chain (end-to-end)', () => {
     // +enough appends → 10/0/true (bottoms out)
     s = onAppend(s, 100).state;
     expect(s).toEqual(st(10, 0, true));
+  });
+});
+
+describe('applyObservation — the whole watcher body (round-8 integration)', () => {
+  // applyObservation is the PURE state transition the ChatLog watcher runs on
+  // every observed (verboseLogs, filteredLength) pair. It folds classifyChange
+  // + the dispatch to onAppend/onShrink/onFilterChange + the shouldScrollToTail
+  // signal (including the wasTrackingTail-before-reset capture) into ONE
+  // function, so the FULL transition — not just the classifier — is testable.
+  // These tests are the round-8 regression suite: #19 (delta=0) and #20
+  // (first change dropped) lived in the watcher's manual prev-ref bookkeeping
+  // and passed the suite because only classifyChange was covered.
+
+  // helper: an observation tuple
+  function obs(verbose: boolean, filteredLength: number) {
+    return { verbose, filteredLength };
+  }
+
+  it('#19 — append uses the REAL prev length, so delta is non-zero', () => {
+    // The bug: the watcher advanced prevFilteredLen BEFORE computing delta,
+    // so 10→11 yielded delta=0 and onAppend no-op'd (no capacity trim, no
+    // tailBuffer growth, no re-scroll signal). applyObservation takes the
+    // previous observation as an argument, so delta = next - prev with the
+    // real prev value.
+    const state = st(35, 0, true); // tracking, above the floor
+    const prev = obs(true, 10);
+    const next = obs(true, 11);
+    const { state: after, shouldScrollToTail } = applyObservation(prev, next, state);
+    // delta=1 applied to 35/0/true → trims capacity by 1 → 34/0/true
+    // (NOT the bug's no-op 35/0/true).
+    expect(after).toEqual(st(34, 0, true));
+    expect(shouldScrollToTail).toBe(true);
+  });
+
+  it('#19 — append at the floor still fires the re-scroll signal', () => {
+    // 10/0/true + 1 arrival (delta must be 1, not 0): at the floor the
+    // capacity can't trim, so x stays 10, but the re-scroll signal MUST fire
+    // so the new tail message is scrolled into view (the floor-swap case).
+    const { state: after, shouldScrollToTail } = applyObservation(
+      obs(true, 10),
+      obs(true, 11),
+      st(10, 0, true),
+    );
+    expect(after).toEqual(st(10, 0, true));
+    expect(shouldScrollToTail).toBe(true);
+  });
+
+  it('#19 — append while scrolled up buffers into t (delta non-zero)', () => {
+    // 30/0/false + 5 arrivals: buffers into t → 30/5/false, NO re-scroll.
+    const { state: after, shouldScrollToTail } = applyObservation(
+      obs(true, 30),
+      obs(true, 35),
+      st(30, 0, false),
+    );
+    expect(after).toEqual(st(30, 5, false));
+    expect(shouldScrollToTail).toBe(false);
+  });
+
+  it('#20 — first real append (real prev, not undefined) is processed', () => {
+    // The bug: the lazy watcher + undefined manual refs meant the FIRST real
+    // change classified as 'none' and was dropped. Here the caller passes a
+    // real prev observation (as Vue's (newValue, oldValue) signature does on
+    // the first change), so the append runs.
+    const prev = obs(true, 10); // the setup-time observation Vue captures
+    const next = obs(true, 12); // first real change: 2 arrivals
+    const { state: after, shouldScrollToTail } = applyObservation(
+      prev,
+      next,
+      st(35, 0, true),
+    );
+    // delta=2 → 35 trims by 2 → 33/0/true, with re-scroll.
+    expect(after).toEqual(st(33, 0, true));
+    expect(shouldScrollToTail).toBe(true);
+  });
+
+  it('#20 — undefined prev (true first run) yields none, state unchanged', () => {
+    // The total-guard: if a caller genuinely has no prior observation,
+    // classifyChange returns 'none' and the state is returned unchanged.
+    // (In ChatLog the watcher always has a real prev via Vue, but the guard
+    // keeps applyObservation total.)
+    const state = st(35, 5, false);
+    const { state: after, shouldScrollToTail } = applyObservation(
+      undefined,
+      obs(true, 10),
+      state,
+    );
+    expect(after).toBe(state); // same reference, untouched
+    expect(shouldScrollToTail).toBe(false);
+  });
+
+  it('#16 — verbose toggle while tracking the tail re-scrolls', () => {
+    // wasTrackingTail is captured BEFORE onFilterChange forces trackingTail
+    // true. The user was following the tail → re-scroll so the newest
+    // message stays in view after the membership change.
+    const { state: after, shouldScrollToTail } = applyObservation(
+      obs(false, 10),
+      obs(true, 10), // verbose ON, length unchanged → filter
+      st(30, 5, true), // tracking the tail
+    );
+    expect(after).toEqual(st(INITIAL_VISIBLE, 0, true)); // onFilterChange reset
+    expect(shouldScrollToTail).toBe(true); // was tracking → re-scroll
+  });
+
+  it('#16 — verbose toggle while reading older history does NOT re-scroll', () => {
+    // The user scrolled up (trackingTail=false) and toggled verbose: they
+    // were reading older history, so the toggle must NOT throw them to the
+    // newest message. wasTrackingTail=false is captured before the reset →
+    // no re-scroll signal.
+    const { state: after, shouldScrollToTail } = applyObservation(
+      obs(false, 30),
+      obs(true, 30), // verbose ON, length unchanged → filter
+      st(30, 5, false), // NOT tracking (reading older history)
+    );
+    expect(after).toEqual(st(INITIAL_VISIBLE, 0, true)); // still resets the window
+    expect(shouldScrollToTail).toBe(false); // but no scroll-to-tail
+  });
+
+  it('shrink (200-replace) resets to the initial window, no re-scroll', () => {
+    const { state: after, shouldScrollToTail } = applyObservation(
+      obs(true, 100),
+      obs(true, 20), // length shrank, verbose unchanged → shrink
+      st(30, 5, false),
+    );
+    expect(after).toEqual(initialCollapseState());
+    expect(shouldScrollToTail).toBe(false);
+  });
+
+  it('none (content edit, same length + same verbose) leaves the state untouched', () => {
+    const state = st(30, 5, false);
+    const { state: after, shouldScrollToTail } = applyObservation(
+      obs(true, 30),
+      obs(true, 30), // unchanged → none
+      state,
+    );
+    expect(after).toBe(state);
+    expect(shouldScrollToTail).toBe(false);
+  });
+
+  it('verbose change WINS over a concurrent length change (filter, not append)', () => {
+    // classifyChange prioritizes a verbose change over a length delta, so a
+    // verbose toggle that also grew the list is a 'filter' (membership
+    // changed), not an 'append'. applyObservation must dispatch to the
+    // filter branch (reset + wasTrackingTail signal), NOT onAppend.
+    const { state: after, shouldScrollToTail } = applyObservation(
+      obs(false, 10),
+      obs(true, 50), // verbose ON grew the list, but verbose changed → filter
+      st(35, 0, true),
+    );
+    expect(after).toEqual(st(INITIAL_VISIBLE, 0, true)); // filter reset, NOT append trim
+    expect(shouldScrollToTail).toBe(true);
   });
 });

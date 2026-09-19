@@ -10,12 +10,9 @@ import {
   loadMore as reduceLoadMore,
   returnToTail as reduceReturnToTail,
   leaveTail as reduceLeaveTail,
-  onAppend as reduceOnAppend,
-  onShrink as reduceOnShrink,
-  onFilterChange as reduceOnFilterChange,
-  classifyChange,
+  applyObservation,
 } from '../collapse-state';
-import type { CollapseState } from '../collapse-state';
+import type { CollapseState, Observation } from '../collapse-state';
 import MessageItem from './MessageItem.vue';
 import CardItem from './CardItem.vue';
 import SteeringReviewCard from './SteeringReviewCard.vue';
@@ -281,69 +278,45 @@ function onDiscardAllSteering(): void {
 // (../collapse-state.ts); this watcher only applies the result + the DOM
 // scroll side-effect.
 //
-// SINGLE-WATCHER DESIGN (#15 / #16): the prior design used TWO watchers —
-// one on filteredMessages.length and one on state.verboseLogs — bridged by
-// a `filterChangePending` flag that the length watcher was expected to
-// clear. That had two bugs:
-//   (1) a verbose toggle that left filteredMessages.length IDENTICAL (e.g.
-//       the visible set had no log-only messages) never fired the length
-//       watcher, so the flag stayed set and the NEXT real append was
-//       swallowed (onAppend never ran → no tail-scroll, no tailBuffer
-//       update, no capacity contraction);
-//   (2) the verbose watcher checked trackingTail AFTER calling
-//       onFilterChange (which forces trackingTail=true), so the re-scroll
-//       was effectively unconditional — a user reading older history who
-//       toggled verbose was thrown to the newest message.
-// Folding BOTH signals (verboseLogs + filteredMessages.length) into ONE
-// watcher removes the cross-watcher synchronization entirely: there is no
-// flag whose lifetime depends on another watcher firing. The pure
-// `classifyChange` helper decides which transition applies from the
-// previous vs current (verboseLogs, filteredLength) pair — a verbose change
-// ALWAYS classifies as 'filter' regardless of any length delta, so case (1)
-// is impossible (the append path runs on the next real length growth, with
-// no stale flag to suppress it). For the 'filter' branch we capture
-// wasTrackingTail BEFORE applying onFilterChange (which resets
-// trackingTail=true), so the re-scroll honours the user's pre-toggle
-// position — fixing case (2).
+// SINGLE-WATCHER + PURE-TRANSITION DESIGN (#15 / #16 / #19 / #20 / #21):
+// the watcher is a THIN CALLER over the pure `applyObservation` transition
+// in collapse-state.ts. It uses Vue's (newValue, oldValue) callback
+// signature — Vue evaluates the watched source at setup time and supplies
+// the previous tuple on every change, so:
+//   - the append `delta` is nextLen - prevLen with the REAL prev value
+//     (round-8 #19: the prior manual ref was advanced before delta was
+//     computed, making every append delta=0 → onAppend no-op'd);
+//   - the FIRST real change gets a real prev observation, NOT undefined
+//     (round-8 #20: the prior manual refs started undefined + the lazy
+//     watcher meant the first change classified as 'none' and was dropped).
+// There are NO manual prev refs to advance — Vue owns the previous value —
+// so neither bug can recur. The whole state transition (classify → dispatch
+// to onAppend/onShrink/onFilterChange → shouldScrollToTail signal, including
+// the wasTrackingTail-before-reset capture for #16) lives in the pure
+// `applyObservation` function and is unit-tested directly
+// (collapse-state.test.ts), which is what lets this class of bug be caught
+// in tests instead of only at runtime.
 //
-// RE-SCROLL CORRECTNESS (#9): for the 'append' branch, the reducer's
-// onAppend returns a `shouldScrollToTail` signal that is true whenever
-// trackingTail is true and messages arrived — EVEN when the rendered length
-// stayed constant (the floor-swap case: x=10, one old leaves + one new
-// enters → length unchanged, but the new tail message must still be
-// scrolled into view).
-let prevVerbose: boolean | undefined;
-let prevFilteredLen: number | undefined;
+// RE-SCROLL CORRECTNESS (#9): applyObservation's 'append' branch returns
+// shouldScrollToTail=true whenever trackingTail is true and messages
+// arrived — EVEN when the rendered length stayed constant (the floor-swap
+// case: x=10, one old leaves + one new enters → length unchanged, but the
+// new tail message must still be scrolled into view).
 watch(
   () => [props.state.verboseLogs, filteredMessages.value.length] as const,
-  ([nextVerbose, nextFilteredLen]) => {
-    const kind = classifyChange(prevVerbose, nextVerbose, prevFilteredLen, nextFilteredLen);
-    // Advance the tracked observations AFTER classifying off the previous
-    // pair, so the next invocation compares against this one.
-    prevVerbose = nextVerbose;
-    prevFilteredLen = nextFilteredLen;
-    if (kind === 'none') return; // initial run or a content edit — leave the window
-    if (kind === 'append') {
-      const delta = (nextFilteredLen as number) - (prevFilteredLen as number);
-      const { state, shouldScrollToTail } = reduceOnAppend(collapseState(), delta);
-      applyCollapseState(state);
-      if (shouldScrollToTail) {
-        nextTick(() => scrollToBottom());
-      }
-    } else if (kind === 'shrink') {
-      // A 200 replace authoritatively reset the store — the old window
-      // position is invalid, so reset to the initial window.
-      applyCollapseState(reduceOnShrink());
-    } else {
-      // 'filter' — the verbose toggle changed the visible set's membership.
-      // Capture the user's tail position BEFORE onFilterChange resets
-      // trackingTail=true (#16), so we only re-scroll if they were actually
-      // following the tail (a user reading older history stays put).
-      const wasTrackingTail = trackingTail.value;
-      applyCollapseState(reduceOnFilterChange());
-      if (wasTrackingTail) {
-        nextTick(() => scrollToBottom());
-      }
+  ([nextVerbose, nextFilteredLen], prev) => {
+    // prev is the tuple Vue captured at setup / the last change. On the very
+    // first change it is the setup-time value (NOT undefined), so the first
+    // real append/filter transition is processed (round-8 #20).
+    const prevObs: Observation | undefined =
+      prev === undefined
+        ? undefined
+        : { verbose: prev[0], filteredLength: prev[1] };
+    const nextObs: Observation = { verbose: nextVerbose, filteredLength: nextFilteredLen };
+    const { state, shouldScrollToTail } = applyObservation(prevObs, nextObs, collapseState());
+    applyCollapseState(state);
+    if (shouldScrollToTail) {
+      nextTick(() => scrollToBottom());
     }
   },
 );
