@@ -112,7 +112,10 @@ export class WikiManager implements WikiModule {
     // manual scan). Not awaited-blocking on the critical path: a missing
     // index just means the first search uses the manual fallback until the
     // index finishes building.
-    void this.ensureVectorIndex().catch(() => { /* logged inside */ });
+    void this.ensureVectorIndex().catch((err) => {
+      const reason = err instanceof Error ? err.message : String(err);
+      this.core.verbose('wiki', `ensureVectorIndex on init failed: ${reason}`);
+    });
   }
 
   // ============================================================
@@ -170,14 +173,30 @@ export class WikiManager implements WikiModule {
     }
     try {
       // 4. Batch path — one table scan for all existing 'skills' records.
-      const existing = await this.getByDomain('skills');
-      const existingByTitle = new Map<string, { hash: string; content: string }>();
-      for (const r of existing) {
-        existingByTitle.set(r.document.title, { hash: r.hash, content: r.document.content });
+      //    We scan directly (NOT via getByDomain) because the re-index delete
+      //    needs each stale record's `createdAt` to locate its WAL day-file
+      //    (see deleteByHashes). getByDomain returns SearchResult which
+      //    discards createdAt, so it cannot supply the WAL date. This scan
+      //    also filters to the 'skills' domain server-side-in-JS, same cost
+      //    as getByDomain's single full scan.
+      await this.initDb();
+      const existingByTitle = new Map<string, { hash: string; content: string; createdAt: string }>();
+      if (this.table) {
+        const records = await this.table.query().toArray();
+        for (const record of records) {
+          const r = record as Record<string, unknown>;
+          if (r.hash === '__schema__') continue; // schema bootstrap row
+          if (r.domain !== 'skills') continue;
+          existingByTitle.set(r.title as string, {
+            hash: r.hash as string,
+            content: r.content as string,
+            createdAt: r.createdAt as string,
+          });
+        }
       }
 
       // In-memory diff: partition into unchanged / stale / new
-      const toDelete: string[] = [];
+      const toDelete: Array<{ hash: string; createdAt: string }> = [];
       const toAdd: WikiDocument[] = [];
       for (const { document } of entries) {
         const found = existingByTitle.get(document.title);
@@ -185,7 +204,7 @@ export class WikiManager implements WikiModule {
           continue; // unchanged
         }
         if (found) {
-          toDelete.push(found.hash); // content changed → delete old before re-add
+          toDelete.push({ hash: found.hash, createdAt: found.createdAt }); // content changed → delete old before re-add
         }
         toAdd.push(document);
       }
@@ -224,7 +243,7 @@ export class WikiManager implements WikiModule {
         for (const [title, rec] of existingByTitle) {
           if (currentTitles.has(title)) continue; // still present
           if (!isOwnScope(title)) continue; // belongs to another project — leave it
-          toDelete.push(rec.hash);
+          toDelete.push({ hash: rec.hash, createdAt: rec.createdAt });
         }
       }
 
@@ -244,9 +263,16 @@ export class WikiManager implements WikiModule {
       // scan to locate the row (for its WAL date) + a per-hash
       // `table.delete("hash = '...'")`. With C changed skills that was C
       // full table scans. Now we issue ONE batched `table.delete("hash IN
-      // (...)")` for the DB side, and mark WAL deleted per-hash via the
-      // lightweight `markWALDeletedByHash` helper (file I/O, no DB scan).
-      // The WAL mark is best-effort: a missing WAL entry is already handled
+      // (...)")` for the DB side, and mark the WAL entries deleted in ONE
+      // pass per day-file via deleteByHashes (grouped by createdAt date).
+      //
+      // WAL consistency: deleteByHashes DOES mark the WAL, like the
+      // single-hash delete() — rebuild() replays every WAL file (no domain
+      // filter) skipping only `deleted` entries, so an unmarked WAL entry
+      // would resurrect a stale skill record on the next rebuild, colliding
+      // with the re-indexed new record. Marking the WAL keeps the skills
+      // domain's rebuild behavior identical to every other domain. The
+      // mark is best-effort: a missing WAL file/entry is already handled
       // gracefully by markWALDeleted (it logs and continues), and the DB
       // delete is the authoritative removal.
       if (toDelete.length > 0) {
@@ -494,14 +520,18 @@ export class WikiManager implements WikiModule {
    * The distance is converted back to similarity (`1 - distance`) so the
    * threshold cut + sort + topK slice behave as before.
    *
-   * ANN + prefilter caveat: with an IVF index, `.where()` is applied as a
-   * POSTFILTER on the ANN's top-N candidates, so a highly selective domain
-   * predicate can return fewer than `limit` rows. We over-fetch
-   * (VECTOR_SEARCH_OVERFETCH × topK) to compensate, and the skills domain is
-   * a large fraction of rows so this is not a practical problem. If the
-   * vector search path throws (no index yet built, empty table, or an API
-   * shape change), we fall back to the original manual scan so correctness
-   * is never lost — only the optimization is.
+   * Prefilter semantics (LanceDB v0.27.2): `.where()` defaults to a
+   * PREFILTER — the domain predicate is applied BEFORE the ANN search, so
+   * the search runs over the domain-filtered row set and returns up to
+   * `limit` rows that ALL match the domain. (Postfiltering requires an
+   * explicit `.postfilter()` call, which we do NOT make.) The over-fetch
+   * (VECTOR_SEARCH_OVERFETCH × topK) is therefore not a correctness crutch
+   * against postfilter shrinkage; it is a generous margin for the
+   * client-side threshold cut + any ANN ranking jitter, so a domain with
+   * many sub-threshold rows still yields a full topK. If the vector search
+   * path throws (no index yet built, empty table, or an API shape change),
+   * we fall back to the original manual scan so correctness is never lost
+   * — only the optimization is.
    */
   async get(query: string, options?: GetOptions): Promise<SearchResult[]> {
     await this.initDb();
@@ -573,12 +603,15 @@ export class WikiManager implements WikiModule {
   }
 
   /**
-   * Over-fetch multiplier for the native vector search. With an IVF index
-   * the domain `.where()` runs as a postfilter on the ANN's candidates, so
-   * we fetch `VECTOR_SEARCH_OVERFETCH × topK` rows and then apply the
-   * threshold + slice client-side. 4× is a safe margin for the skills
-   * domain (a large fraction of rows); tune up if a highly-selective
-   * domain ever returns fewer than topK after the postfilter.
+   * Over-fetch multiplier for the native vector search. LanceDB v0.27.2
+   * applies `.where()` as a PREFILTER (not a postfilter), so the domain
+   * predicate shrinks the candidate set BEFORE the ANN search and there is
+   * no postfilter topK-starvation risk. The over-fetch is therefore a
+   * generous margin for the client-side threshold cut (rows above `limit`
+   * may still fall below the similarity threshold) + any ANN ranking
+   * jitter, so a domain with many sub-threshold rows still yields a full
+   * topK. 4× is comfortable headroom; tune down if the threshold cut rarely
+   * trims, up if a domain is dominated by sub-threshold rows.
    */
   private static readonly VECTOR_SEARCH_OVERFETCH = 4;
 
@@ -627,8 +660,14 @@ export class WikiManager implements WikiModule {
       if (r.hash === '__schema__') continue;
       // LanceDB emits the ranked distance as `_distance` (cosine distance,
       // 0 = identical). Convert to similarity to match the manual path.
-      const distance = typeof r._distance === 'number' ? r._distance : 0;
-      const similarity = 1 - distance;
+      // A MISSING _distance signals an API-shape regression — treat it as
+      // unusable and throw so get()'s caller falls back to the manual scan,
+      // rather than silently mapping it to similarity 1.0 (which would
+      // promote a garbage row to the top of the results).
+      if (typeof r._distance !== 'number') {
+        throw new Error(`vector search returned a row with no _distance (hash=${r.hash}) — API shape changed`);
+      }
+      const similarity = 1 - r._distance;
       if (similarity < threshold) continue;
       results.push({
         document: {
@@ -851,9 +890,12 @@ export class WikiManager implements WikiModule {
    *
    * The single-hash public delete path (the `delete` tool). Locates the row
    * via a full scan to read its `createdAt` (needed to find the WAL file),
-   * marks the WAL entry deleted (audit), then deletes the LanceDB row. This
-   * is the per-hash path — for batched re-index deletes use
-   * {@link deleteByHashes} which skips the per-hash WAL mark + scan.
+   * marks the WAL entry deleted (audit), then deletes the LanceDB row. For
+   * the batched re-index path use {@link deleteByHashes}, which marks the
+   * WAL too (grouped by date, one pass per day-file) but batches the DB
+   * delete into a single `hash IN (...)` and reuses the caller's existing
+   * scan for the `createdAt` dates — avoiding this method's per-hash full
+   * scan.
    */
   async delete(hash: string): Promise<boolean> {
     // Validate hash format
@@ -906,45 +948,136 @@ export class WikiManager implements WikiModule {
   }
 
   /**
-   * Batched DB-only delete of multiple hashes in ONE `table.delete(...)`
-   * call. Used by the skill re-index path ({@link indexSkills}) to remove
+   * Batched delete of multiple records: ONE `table.delete("hash IN (...)")`
+   * for the DB side + ONE WAL day-file pass per distinct date for the audit
+   * marks. Used by the skill re-index path ({@link indexSkills}) to remove
    * stale/orphaned records without C full table scans + C per-hash WAL
-   * marks.
+   * writes.
    *
-   * Unlike {@link delete}, this does NOT mark WAL entries deleted: the
-   * re-index path is a wholesale replacement of the skills domain's
-   * records, not an audited user delete — consistent with the write side
-   * ({@link batchPut} and {@link insertRebuildBatch} which also skip WAL
-   * on the bulk paths). The DB row removal is authoritative; a missing WAL
-   * mark is handled gracefully by {@link markWALDeleted} during a rebuild.
+   * WAL consistency (the reason this honors the WAL unlike a naive bulk
+   * delete): {@link rebuild} wipes the whole table and replays every WAL
+   * file with NO domain filter, skipping only entries flagged `deleted`. An
+   * unmarked WAL entry therefore resurrects its row on the next rebuild. For
+   * the skills domain that means a content-changed skill's OLD record would
+   * come back alongside the re-indexed NEW record → duplicate / stale
+   * matches from skill_search. So deleteByHashes marks the WAL exactly like
+   * the single-hash {@link delete} does — the skills domain is treated no
+   * differently from any other domain.
+   *
+   * The WAL mark is grouped by the record's `createdAt` date (one
+   * `YYYY-MM-DD.wal` file per day): all hashes sharing a date are marked in a
+   * single read-parse-mark-write of that day-file, so the cost is O(distinct
+   * dates) file passes, NOT O(C) per-hash. A hash whose WAL file/entry is
+   * already gone is handled gracefully by {@link markWALDeletedBatch} (it logs
+   * and continues) — the DB delete is the authoritative removal either way.
    *
    * Hashes are validated against {@link HASH_PATTERN} and single-quote
    * escaped before being interpolated into the SQL `IN (...)` predicate.
+   * Rejects the whole batch on any invalid hash (a partial delete would
+   * leave the re-index diff inconsistent).
+   *
+   * @param records - `{ hash, createdAt }` pairs. `createdAt` is the stored
+   *   ISO timestamp used to locate the WAL day-file; supplied by the caller
+   *   (indexSkills) from its existing table scan, so this method adds NO
+   *   extra DB scan.
    */
-  async deleteByHashes(hashes: string[]): Promise<void> {
-    if (hashes.length === 0) return;
-    await this.initDb();
-    if (!this.table) return;
+  async deleteByHashes(records: Array<{ hash: string; createdAt: string }>): Promise<void> {
+    if (records.length === 0) return;
 
-    // Validate + escape every hash. Reject the whole batch on any invalid
-    // hash — a partial delete would leave the re-index diff inconsistent
-    // (the caller expects all stale records gone).
-    const escaped: string[] = [];
-    for (const hash of hashes) {
+    // Validate every hash up front. Reject the whole batch on any invalid
+    // hash — a partial delete would leave the re-index diff inconsistent.
+    for (const { hash } of records) {
       if (!HASH_PATTERN.test(hash)) {
         this.core.brief('error', 'wiki', `deleteByHashes: invalid hash format: ${hash}`);
         return;
       }
-      escaped.push(hash.replace(/'/g, "''"));
     }
 
+    await this.initDb();
+    if (!this.table) return;
+
+    // Mark the WAL entries deleted, grouped by date so each day-file is
+    // read+written at most once (one pass per distinct date, not O(C)).
+    // Do this BEFORE the DB delete for consistency (same ordering as the
+    // single-hash delete()). Best-effort: a missing WAL file/entry is logged
+    // and skipped, never fatal — the DB delete below is authoritative.
+    await this.markWALDeletedBatch(records);
+
     try {
-      const inList = escaped.map((h) => `'${h}'`).join(', ');
+      // Single-quote-escape each hash before interpolation into the IN-list.
+      const inList = records
+        .map(({ hash }) => `'${hash.replace(/'/g, "''")}'`)
+        .join(', ');
       await this.table.delete(`hash IN (${inList})`);
-      this.core.brief('info', 'wiki', `Batch deleted ${hashes.length} records`);
+      this.core.brief('info', 'wiki', `Batch deleted ${records.length} records`);
     } catch (err) {
       const error = err instanceof Error ? err.message : String(err);
       this.core.brief('error', 'wiki', `deleteByHashes failed: ${error}`);
+    }
+  }
+
+  /**
+   * Mark multiple WAL entries as deleted, grouping by date so each WAL
+   * day-file (`YYYY-MM-DD.wal`) is read + written at most once. Batched
+   * counterpart to {@link markWALDeleted}. Best-effort: a missing WAL file
+   * or a hash with no matching entry in its day-file is logged and skipped
+   * (the entry may already have aged out, or the record predated the WAL).
+   *
+   * @param records - `{ hash, createdAt }` pairs. `createdAt` selects the
+   *   day-file; hashes sharing a date are marked together in one pass.
+   */
+  private async markWALDeletedBatch(records: Array<{ hash: string; createdAt: string }>): Promise<void> {
+    if (records.length === 0) return;
+    ensureDirs();
+    const walDir = getWikiLogsDir();
+
+    // Group hashes by their WAL date (derived from createdAt).
+    const byDate = new Map<string, Set<string>>();
+    for (const { hash, createdAt } of records) {
+      let date: string;
+      try {
+        date = formatDate(new Date(createdAt));
+      } catch {
+        // Unparseable createdAt — skip the WAL mark for this hash (the DB
+        // delete is authoritative). Log so it's diagnosable.
+        this.core.brief('warn', 'wiki', `markWALDeletedBatch: unparseable createdAt for ${hash}: ${createdAt}`);
+        continue;
+      }
+      let set = byDate.get(date);
+      if (!set) {
+        set = new Set();
+        byDate.set(date, set);
+      }
+      set.add(hash);
+    }
+
+    for (const [date, hashSet] of byDate) {
+      const walPath = path.join(walDir, `${date}.wal`);
+      if (!fs.existsSync(walPath)) {
+        this.core.brief('warn', 'wiki', `WAL file not found for date ${date} (${hashSet.size} hashes)`);
+        continue;
+      }
+      const content = fs.readFileSync(walPath, 'utf-8');
+      const entries = parseWALFile(content);
+
+      // Mark every matching entry deleted. A WAL day-file may legally hold
+      // multiple entries for the same hash (re-puts); mark them all.
+      let marked = 0;
+      for (const entry of entries) {
+        if (entry.deleted) continue;
+        if (hashSet.has(entry.hash)) {
+          entry.deleted = true;
+          marked++;
+        }
+      }
+      if (marked === 0) {
+        // None of the hashes were in this day-file — already aged out or
+        // never WAL-written. Skip the rewrite (no-op) but log for diagnosis.
+        this.core.brief('warn', 'wiki', `markWALDeletedBatch: 0/${hashSet.size} hashes found in WAL ${date}`);
+        continue;
+      }
+      const lines = entries.map((e) => JSON.stringify(e)).join('\n');
+      fs.writeFileSync(walPath, `${lines}\n`, 'utf-8');
     }
   }
 
@@ -1133,6 +1266,15 @@ export class WikiManager implements WikiModule {
 
       const entries = [...merged.values()];
       if (entries.length === 0) {
+        // The table was just wiped (table.delete('true') above). An empty
+        // table leaves the prior ANN index stale (it points at row IDs that
+        // no longer exist). Refresh it so the next get()'s vectorSearch
+        // doesn't search a dead index — best-effort, non-fatal on failure
+        // (get() falls back to the manual scan).
+        void this.ensureVectorIndex(true).catch((err) => {
+          const reason = err instanceof Error ? err.message : String(err);
+          this.core.verbose('wiki', `ensureVectorIndex after empty rebuild failed: ${reason}`);
+        });
         this.core.brief('info', 'wiki', 'Rebuild complete: 0 documents processed');
         return { success: true, documentsProcessed: 0, errors: [] };
       }
@@ -1186,6 +1328,21 @@ export class WikiManager implements WikiModule {
           batchCount,
         });
       }
+
+      // F3: the table was wiped at the start of this rebuild
+      // (table.delete('true')), so the ANN vector index built over the OLD
+      // rows is stale — it points at row IDs that no longer exist. Refresh
+      // it now over the freshly re-inserted rows so the next get() uses a
+      // live index instead of searching a dead one (which would throw and
+      // fall back to the slow manual scan on every query until some other
+      // path rebuilt the index). `replace: true` forces a rebuild even if
+      // an index entry still exists. Best-effort: a failure is logged at
+      // verbose and swallowed — get()'s manual-scan fallback keeps search
+      // correct, only slower, so a rebuild must never fail on index issues.
+      void this.ensureVectorIndex(true).catch((err) => {
+        const reason = err instanceof Error ? err.message : String(err);
+        this.core.verbose('wiki', `ensureVectorIndex after rebuild failed: ${reason}`);
+      });
 
       this.core.brief('info', 'wiki', `Rebuild complete: ${documentsProcessed} documents processed`);
       return { success: true, documentsProcessed, errors };
