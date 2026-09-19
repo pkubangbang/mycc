@@ -170,6 +170,21 @@ async function hydrateFromCache(): Promise<void> {
   // reassignment) so Pinia reactivity propagates to mounted components.
   store.messages.splice(0, store.messages.length, ...record.messages);
   store.teammateMessages.splice(0, store.teammateMessages.length, ...record.teammateMessages);
+  // Normalize IDs on cached messages that lack one (#25), mirroring the
+  // fetchHistory() 200 path. A cached snapshot may contain legacy messages
+  // predating the id scheme; without an id, messageKey falls back to a
+  // window-relative "<ts> <label> #<index>" key, which shifts when loadMore
+  // prepends older messages → the loadMore scroll anchor
+  // (querySelector('[data-msg-key=...]')) can no longer relocate the anchor
+  // and the scroll-restore silently no-ops. Assigning a stable nextId() here
+  // makes the key "id:<id>" and window-independent, so the anchor key is
+  // stable across loadMore — same invariant fetchHistory already enforces.
+  for (const m of store.messages) {
+    if (typeof m.id !== 'number') m.id = nextId();
+  }
+  for (const m of store.teammateMessages) {
+    if (typeof m.id !== 'number') m.id = nextId();
+  }
 }
 
 /**

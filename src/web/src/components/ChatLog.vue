@@ -195,14 +195,22 @@ function loadMore(): void {
   // container's viewport (its rect top minus the container's rect top).
   // This is the position we want to preserve for this message after older
   // messages are prepended above it.
+  //
+  // GEOMETRY (#24): the anchor element is a .chat-msg-row wrapper with
+  // display:contents, which generates NO layout box — getBoundingClientRect
+  // on it returns an empty rect, not the geometry of its child. So we
+  // measure the wrapper's firstElementChild (the real .message-row /
+  // CardItem root), which always has actual geometry. The data-msg-key
+  // attribute survives display:contents (it's a DOM attribute, not a
+  // layout property), so the querySelector lookup still works — only the
+  // rect read must target the child.
   let anchorOffsetFromTop = 0;
-  let anchorEl: Element | null = null;
   if (el && anchorKey !== null) {
-    anchorEl = el.querySelector(`[data-msg-key="${CSS.escape(anchorKey)}"]`);
-    if (anchorEl) {
+    const anchorWrapper = el.querySelector(`[data-msg-key="${CSS.escape(anchorKey)}"]`);
+    const anchorContent = anchorWrapper?.firstElementChild;
+    if (anchorContent instanceof HTMLElement) {
       const elRect = el.getBoundingClientRect();
-      const anchorRect = anchorEl.getBoundingClientRect();
-      anchorOffsetFromTop = anchorRect.top - elRect.top;
+      anchorOffsetFromTop = anchorContent.getBoundingClientRect().top - elRect.top;
     }
   }
   applyCollapseState(reduceLoadMore(collapseState(), filteredMessages.value.length));
@@ -212,14 +220,16 @@ function loadMore(): void {
   // their total height; we compensate by increasing scrollTop by that same
   // amount so the anchor stays at anchorOffsetFromTop. Because we anchor on
   // a specific element (not scrollHeight), a concurrent tail-buffer addition
-  // below the anchor does NOT affect this offset (#23).
+  // below the anchor does NOT affect this offset (#23). The rect read again
+  // targets the wrapper's firstElementChild, not the display:contents
+  // wrapper itself (#24).
   nextTick(() => {
     if (!el || anchorKey === null) return;
-    const anchorAfter = el.querySelector(`[data-msg-key="${CSS.escape(anchorKey)}"]`);
-    if (!anchorAfter) return;
+    const anchorWrapper = el.querySelector(`[data-msg-key="${CSS.escape(anchorKey)}"]`);
+    const anchorContent = anchorWrapper?.firstElementChild;
+    if (!(anchorContent instanceof HTMLElement)) return;
     const elRect = el.getBoundingClientRect();
-    const anchorRectAfter = anchorAfter.getBoundingClientRect();
-    const offsetAfter = anchorRectAfter.top - elRect.top;
+    const offsetAfter = anchorContent.getBoundingClientRect().top - elRect.top;
     // Shift scrollTop so the anchor returns to its captured offset. If the
     // anchor is now further down (offsetAfter > anchorOffsetFromTop, the
     // normal prepend case), increase scrollTop by the difference; if it
