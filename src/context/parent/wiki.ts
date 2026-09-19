@@ -48,6 +48,15 @@ const MIN_CONTENT_LENGTH = 50;
 const MAX_CONTENT_LENGTH = 1000;
 
 /**
+ * Minimum real (non-`__schema__`) rows before `ensureVectorIndex` will build
+ * an IVF index on its own (non-forced) path. Below this the table is too
+ * small for a useful index — `get()` uses the manual scan until the corpus
+ * grows, at which point a forced retrain (indexSkills/rebuild) builds a
+ * properly-sized index. See the `ensureVectorIndex` small-table gate.
+ */
+const MIN_INDEX_ROWS = 16;
+
+/**
  * Rebuild batching. `rebuild()` embeds documents in chunks of
  * EMBED_BATCH_SIZE (one Ollama /api/embed call per chunk) and inserts in
  * chunks of INSERT_BATCH_SIZE (one LanceDB table.add per chunk).
@@ -293,6 +302,27 @@ export class WikiManager implements WikiModule {
       if (toAdd.length > 0) {
         const batchEntries = toAdd.map((document, i) => ({ document, embedding: embeddings[i] }));
         await this.batchPut(batchEntries);
+      }
+
+      // Retrain the ANN vector index after a mutation that changed the row
+      // set (PR #18 round-4 P1 #2). initDb() builds the index fire-and-forget
+      // over whatever rows exist at startup — on a FRESH install that is
+      // just the `__schema__` row (countRows=1 → numPartitions=1), and the
+      // `hasVectorIndex && !replace` early-return in ensureVectorIndex then
+      // never retrains as the real skill corpus is inserted. LanceDB does
+      // NOT auto-incorporate new rows into an existing IVF index, so without
+      // this retrain the sublinear-search promise of the PR never
+      // materializes on a fresh install (new rows sit unindexed). Retraining
+      // here (replace:true) rebuilds the index over the now-populated table
+      // with a numPartitions sized to the real row count. Fire-and-forget is
+      // safe: get()'s manual-scan fallback keeps search correct while the
+      // retrain runs, and a failure is logged + swallowed (non-fatal). Only
+      // retrain when rows actually changed — a no-op re-index skips it.
+      if (toAdd.length > 0 || toDelete.length > 0) {
+        void this.ensureVectorIndex(true).catch((err) => {
+          const reason = err instanceof Error ? err.message : String(err);
+          this.core.verbose('wiki', `ensureVectorIndex retrain after indexSkills failed: ${reason}`);
+        });
       }
 
       // Write the cache so the next startup can skip if nothing changed.
@@ -739,15 +769,35 @@ export class WikiManager implements WikiModule {
       const hasVectorIndex = indices.some(
         (idx) => idx.columns.includes('embedding') && idx.indexType !== 'BTree' && idx.indexType !== 'Scalar',
       );
+      const rowCount = await this.table.countRows();
+      // Don't build an IVF index over a near-empty table (PR #18 round-4
+      // P1 #2). On a FRESH install initDb() creates the table with only the
+      // `__schema__` bootstrap row, then fire-and-forgets this method. With
+      // rowCount=1, numPartitions would be 1, and the resulting 1-partition
+      // index built over a single zero-vector row would then block the
+      // `hasVectorIndex && !replace` early-return from ever retraining as
+      // the real skill corpus is inserted — LanceDB does not auto-add new
+      // rows to an existing IVF index. So skip the build until the table
+      // has at least MIN_INDEX_ROWS real rows. The gate applies even when
+      // replace=true (a rebuild that wiped the table leaves only the
+      // __schema__ row — nothing useful to index; get() uses the manual
+      // scan, and the next indexSkills/rebuild with a real corpus builds
+      // the index). The __schema__ row counts as 0 real rows, so subtract it.
+      const realRows = Math.max(0, rowCount - 1);
       if (hasVectorIndex && !replace) {
         this.vectorIndexEnsured = true;
+        return;
+      }
+      if (realRows < MIN_INDEX_ROWS) {
+        // Too few rows to build a useful index; get() uses the manual scan
+        // until the corpus grows. The next mutation that retrains with a
+        // real corpus (indexSkills/rebuild) builds a properly-sized index.
         return;
       }
       // numPartitions heuristic: sqrt(N) is LanceDB's rule of thumb for
       // IVF. For very small tables (< 256 rows) a single partition avoids
       // a degenerate index. numPartitions must be >= 1.
-      const rowCount = await this.table.countRows();
-      const numPartitions = Math.max(1, Math.round(Math.sqrt(Math.max(rowCount, 1))));
+      const numPartitions = Math.max(1, Math.round(Math.sqrt(Math.max(realRows, 1))));
       // IVF-Flat with cosine distance matches the vectorSearch distanceType.
       // The high-level API takes a single options object (not positional
       // args), and createIndex takes (column, options) — `config` carries
@@ -755,7 +805,7 @@ export class WikiManager implements WikiModule {
       const index = lancedb.Index.ivfFlat({ distanceType: 'cosine', numPartitions });
       await this.table.createIndex('embedding', { config: index, replace });
       this.vectorIndexEnsured = true;
-      this.core.verbose('wiki', `vector index ensured (ivfFlat cosine, ${numPartitions} partitions, ${rowCount} rows)`);
+      this.core.verbose('wiki', `vector index ensured (ivfFlat cosine, ${numPartitions} partitions, ${realRows} rows)`);
     } catch (err) {
       // Index creation failure is non-fatal — vectorSearch will throw and
       // get() falls back to the manual scan. Log so it's diagnosable.
@@ -998,9 +1048,10 @@ export class WikiManager implements WikiModule {
    * The WAL mark is grouped by the record's `createdAt` date (one
    * `YYYY-MM-DD.wal` file per day): all hashes sharing a date are marked in a
    * single read-parse-mark-write of that day-file, so the cost is O(distinct
-   * dates) file passes, NOT O(C) per-hash. A hash whose WAL file/entry is
-   * already gone is handled gracefully by {@link markWALDeletedBatch} (it logs
-   * and continues) — the DB delete is the authoritative removal either way.
+   * dates) file passes, NOT O(C) per-hash. The mark runs AFTER the DB delete
+   * succeeds — see the inline ordering note for the data-loss window this
+   * closes. A hash whose WAL file/entry is already gone is handled gracefully
+   * by {@link markWALDeletedBatch} (it logs and continues).
    *
    * Hashes are validated against {@link HASH_PATTERN} and single-quote
    * escaped before being interpolated into the SQL `IN (...)` predicate.
@@ -1031,26 +1082,43 @@ export class WikiManager implements WikiModule {
     await this.initDb();
     if (!this.table) return;
 
-    // Mark the WAL entries deleted, grouped by date so each day-file is
-    // read+written at most once (one pass per distinct date, not O(C)).
-    // Do this BEFORE the DB delete for consistency (same ordering as the
-    // single-hash delete()). Best-effort: a missing WAL file/entry is logged
-    // and skipped, never fatal — the DB delete below is authoritative.
-    await this.markWALDeletedBatch(records);
-
-    // Single-quote-escape each hash before interpolation into the IN-list.
+    // Order matters for the data-loss window (PR #18 round-4 P1):
+    // mark the WAL AFTER the DB delete succeeds. rebuild() wipes the whole
+    // table (table.delete('true')) then replays the WAL, skipping entries
+    // flagged `deleted`. If we tombstoned the WAL BEFORE the DB delete and
+    // the DB delete then FAILED, the row would survive in the table while
+    // the WAL says it's deleted — a later rebuild would wipe the table and
+    // skip the (tombstoned) WAL entry, so the row would be PERMANENTLY LOST
+    // with no re-insert (A gone, A' never inserted). Doing the WAL mark
+    // AFTER the DB delete closes that window: on a throw, the WAL is still
+    // un-deleted, so the row survives in BOTH the table and the WAL → the
+    // next rebuild re-inserts it, and the next re-index retries the
+    // replace from a consistent-old state. The single-hash delete() keeps
+    // its mark-before-delete ordering only because it is wrapped in its own
+    // try/catch and reports the failure to the caller (it does NOT leave a
+    // tombstone-then-fail state reachable by rebuild); the batched path
+    // throws, so it must not tombstone-then-throw.
+    const inList = records
+      .map(({ hash }) => `'${hash.replace(/'/g, "''")}'`)
+      .join(', ');
     // THROWS on DB failure (does NOT swallow): the caller (indexSkills) must
     // NOT proceed to batchPut + writeSkillIndexCache if the old rows survive
     // — otherwise the new rows are inserted alongside the un-deleted old
     // ones (duplicate titles) and the cache is written as valid, pinning the
-    // inconsistency until a later rebuild. The WAL mark above is harmless if
-    // this throws (a WAL entry marked deleted with its row still present is
-    // a no-op until the next rebuild, which will drop it — no resurrection).
-    const inList = records
-      .map(({ hash }) => `'${hash.replace(/'/g, "''")}'`)
-      .join(', ');
+    // inconsistency until a later rebuild. Because the WAL mark is performed
+    // AFTER this succeeds (below), a throw here leaves the WAL un-deleted too
+    // — the row survives in BOTH the table and the WAL, so the next rebuild
+    // re-inserts it (no permanent data loss) and the next re-index retries.
     await this.table.delete(`hash IN (${inList})`);
     this.core.brief('info', 'wiki', `Batch deleted ${records.length} records`);
+
+    // Mark the WAL entries deleted, grouped by date so each day-file is
+    // read+written at most once (one pass per distinct date, not O(C)).
+    // Done AFTER the DB delete succeeds (see the ordering note above) so a
+    // failed DB delete cannot tombstone a row that still survives in the
+    // table — closing the rebuild→data-loss window. Best-effort: a missing
+    // WAL file/entry is logged and skipped, never fatal.
+    await this.markWALDeletedBatch(records);
   }
 
   /**
@@ -1303,15 +1371,18 @@ export class WikiManager implements WikiModule {
 
       const entries = [...merged.values()];
       if (entries.length === 0) {
-        // The table was just wiped (table.delete('true') above). An empty
-        // table leaves the prior ANN index stale (it points at row IDs that
-        // no longer exist). Refresh it so the next get()'s vectorSearch
-        // doesn't search a dead index — best-effort, non-fatal on failure
-        // (get() falls back to the manual scan).
-        void this.ensureVectorIndex(true).catch((err) => {
-          const reason = err instanceof Error ? err.message : String(err);
-          this.core.verbose('wiki', `ensureVectorIndex after empty rebuild failed: ${reason}`);
-        });
+        // The table was just wiped (table.delete('true') above). Refresh
+        // the ANN index (replace:true) so the next get() uses a live index
+        // instead of a dead one pointing at deleted row IDs. AWAITED (not
+        // fire-and-forget) so "rebuild succeeded" means the index is live
+        // — callers can rely on the next get() not falling back to the slow
+        // manual scan (PR #18 round-4 P1 #3). ensureVectorIndex is non-fatal:
+        // it logs + swallows index failures (get() falls back to the manual
+        // scan), so awaiting it never makes rebuild throw on index issues.
+        // Note: with the table empty (only __schema__ after the wipe) the
+        // small-table gate skips the build — nothing useful to index; the
+        // next indexSkills with a real corpus builds it.
+        await this.ensureVectorIndex(true);
         this.core.brief('info', 'wiki', 'Rebuild complete: 0 documents processed');
         return { success: true, documentsProcessed: 0, errors: [] };
       }
@@ -1372,14 +1443,14 @@ export class WikiManager implements WikiModule {
       // it now over the freshly re-inserted rows so the next get() uses a
       // live index instead of searching a dead one (which would throw and
       // fall back to the slow manual scan on every query until some other
-      // path rebuilt the index). `replace: true` forces a rebuild even if
-      // an index entry still exists. Best-effort: a failure is logged at
-      // verbose and swallowed — get()'s manual-scan fallback keeps search
-      // correct, only slower, so a rebuild must never fail on index issues.
-      void this.ensureVectorIndex(true).catch((err) => {
-        const reason = err instanceof Error ? err.message : String(err);
-        this.core.verbose('wiki', `ensureVectorIndex after rebuild failed: ${reason}`);
-      });
+      // path rebuilt the index). `replace: true` forces a rebuild over the
+      // freshly re-inserted rows. AWAITED (not fire-and-forget) so "rebuild
+      // succeeded" means the index is live — callers can rely on the next
+      // get() using the refreshed index (PR #18 round-4 P1 #3).
+      // ensureVectorIndex is non-fatal: it logs + swallows index failures
+      // (get() falls back to the manual scan), so awaiting it never makes
+      // rebuild throw on index issues.
+      await this.ensureVectorIndex(true);
 
       this.core.brief('info', 'wiki', `Rebuild complete: ${documentsProcessed} documents processed`);
       return { success: true, documentsProcessed, errors };
