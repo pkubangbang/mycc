@@ -276,6 +276,14 @@ async function fetchHistory(): Promise<boolean> {
     // Replace, not append — on reconnect we want a clean, authoritative snapshot.
     store.messages.splice(0, store.messages.length, ...mainMsgs);
     store.teammateMessages.splice(0, store.teammateMessages.length, ...teammateMsgs);
+    // Bump the history revision so the ChatLog collapse watcher resets its
+    // x/t/trackingTail window — a 200 is an AUTHORITATIVE replacement, and
+    // the new history may have the same filtered length as the old (e.g. the
+    // server's 1000-entry cap: old entries leave + new entries enter → count
+    // stays 1000). Without this revision signal the watcher would classify
+    // the same-length replacement as 'none' and keep a now-invalid window
+    // position. See #22.
+    store.historyRevision++;
     // Restore the steering buffer bar from the server's current queue (peek,
     // not consume). Survives a page refresh within the same serve session.
     const queued = data.steeringBuffer ?? [];
@@ -370,6 +378,10 @@ async function fetchConfig(): Promise<boolean> {
       // ws.onclose / setPhase; they do not carry cross-session history.)
       store.messages.splice(0, store.messages.length);
       store.teammateMessages.splice(0, store.teammateMessages.length);
+      // Bump the history revision — clearing the arrays is an authoritative
+      // replacement (to empty), so the collapse watcher must reset its
+      // window just as it does on a /history 200. See #22.
+      store.historyRevision++;
     }
     return true;
   } catch {

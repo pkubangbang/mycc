@@ -168,21 +168,64 @@ function isNearTop(): boolean {
  * window grows, the scroll position is adjusted so the user stays at roughly
  * the same visible spot (the newly prepended messages appear ABOVE the
  * current viewport, not pushing the user down). No-op if nothing is collapsed.
+ *
+ * SCROLL ANCHORING (#23): the anchor is the FIRST VISIBLE MESSAGE ELEMENT,
+ * not total scrollHeight. The prior scrollHeight-delta approach
+ * (scrollTop = prevTop + (scrollHeight - prevHeight)) was racy: a message
+ * arriving while the nextTick is pending (buffered into tailBuffer since
+ * loadMore sets trackingTail=false) grows scrollHeight, so the delta
+ * included the new tail message's height and pushed the user DOWN —
+ * violating the x/t goal that arrivals while reading older history do not
+ * disturb the viewed position. Anchoring on a DOM message element (located
+ * by its data-msg-key) makes the operation insensitive to concurrent
+ * additions at the bottom AND to variable message heights: we record the
+ * first visible message's viewport offset before the window grows, then
+ * after the DOM update restore that same message to the same offset.
  */
 function loadMore(): void {
   if (!hasCollapsedAbove.value) return;
   const el = scrollContainer.value;
-  // Capture the scroll geometry BEFORE the window grows so we can offset the
-  // new scrollTop by the height added (the prepended messages).
-  const prevHeight = el ? el.scrollHeight : 0;
-  const prevTop = el ? el.scrollTop : 0;
+  // The first visible message BEFORE the window grows — this is the anchor
+  // we will restore to its current viewport offset after prepending older
+  // messages above it. visibleMessages[0] is the oldest rendered message;
+  // its data-msg-key lets us relocate it in the DOM after the re-render.
+  const anchorMsg = visibleMessages.value[0];
+  const anchorKey = anchorMsg ? messageKey(anchorMsg, 0) : null;
+  // Capture the anchor element's offset from the top of the scroll
+  // container's viewport (its rect top minus the container's rect top).
+  // This is the position we want to preserve for this message after older
+  // messages are prepended above it.
+  let anchorOffsetFromTop = 0;
+  let anchorEl: Element | null = null;
+  if (el && anchorKey !== null) {
+    anchorEl = el.querySelector(`[data-msg-key="${CSS.escape(anchorKey)}"]`);
+    if (anchorEl) {
+      const elRect = el.getBoundingClientRect();
+      const anchorRect = anchorEl.getBoundingClientRect();
+      anchorOffsetFromTop = anchorRect.top - elRect.top;
+    }
+  }
   applyCollapseState(reduceLoadMore(collapseState(), filteredMessages.value.length));
-  // nextTick: wait for the DOM to reflect the larger window, then keep the
-  // user at the same content position by adding the newly prepended height.
+  // nextTick: wait for the DOM to reflect the larger window (older messages
+  // prepended above the anchor), then restore the anchor message to its
+  // prior viewport offset. The prepended messages push the anchor down by
+  // their total height; we compensate by increasing scrollTop by that same
+  // amount so the anchor stays at anchorOffsetFromTop. Because we anchor on
+  // a specific element (not scrollHeight), a concurrent tail-buffer addition
+  // below the anchor does NOT affect this offset (#23).
   nextTick(() => {
-    if (!el) return;
-    const added = el.scrollHeight - prevHeight;
-    el.scrollTop = prevTop + added;
+    if (!el || anchorKey === null) return;
+    const anchorAfter = el.querySelector(`[data-msg-key="${CSS.escape(anchorKey)}"]`);
+    if (!anchorAfter) return;
+    const elRect = el.getBoundingClientRect();
+    const anchorRectAfter = anchorAfter.getBoundingClientRect();
+    const offsetAfter = anchorRectAfter.top - elRect.top;
+    // Shift scrollTop so the anchor returns to its captured offset. If the
+    // anchor is now further down (offsetAfter > anchorOffsetFromTop, the
+    // normal prepend case), increase scrollTop by the difference; if it
+    // ended up higher (shouldn't happen on a pure prepend, but guards
+    // against measurement jitter), decrease. This is exact, not heuristic.
+    el.scrollTop += offsetAfter - anchorOffsetFromTop;
   });
 }
 
@@ -302,9 +345,22 @@ function onDiscardAllSteering(): void {
 // arrived — EVEN when the rendered length stayed constant (the floor-swap
 // case: x=10, one old leaves + one new enters → length unchanged, but the
 // new tail message must still be scrolled into view).
+//
+// HISTORY-REVISION SIGNAL (#22): the watched tuple ALSO includes
+// props.state.historyRevision, a monotonic counter bumped on every
+// authoritative /history replacement (a 200 that splices the chat arrays)
+// and on a session-change clear. A replacement can leave the filtered
+// length UNCHANGED (e.g. the server's 1000-entry cap: old entries leave +
+// new entries enter → count stays 1000), so the length/verbose classifier
+// would call it 'none' and keep a now-invalid window position. The revision
+// change makes the replacement boundary explicit: when prevRevision !==
+// nextRevision, applyObservation short-circuits to onHistoryReplace()
+// (reset + re-scroll to the new tail) regardless of the classifyChange
+// result. This separates "the list was replaced" from "the list grew /
+// shrank / was filtered" — cardinality alone cannot carry both meanings.
 watch(
-  () => [props.state.verboseLogs, filteredMessages.value.length] as const,
-  ([nextVerbose, nextFilteredLen], prev) => {
+  () => [props.state.verboseLogs, filteredMessages.value.length, props.state.historyRevision] as const,
+  ([nextVerbose, nextFilteredLen, nextRevision], prev) => {
     // prev is the tuple Vue captured at setup / the last change. On the very
     // first change it is the setup-time value (NOT undefined), so the first
     // real append/filter transition is processed (round-8 #20).
@@ -313,7 +369,16 @@ watch(
         ? undefined
         : { verbose: prev[0], filteredLength: prev[1] };
     const nextObs: Observation = { verbose: nextVerbose, filteredLength: nextFilteredLen };
-    const { state, shouldScrollToTail } = applyObservation(prevObs, nextObs, collapseState());
+    // #22: a history-revision change means the store was authoritatively
+    // replaced (a /history 200 or session-clear splice). This is independent
+    // of length/verbose — pass it to applyObservation as the replacement
+    // signal. prev may be undefined on the true first run; in that case the
+    // revision is treated as unchanged (the initial load's 0→1 bump is
+    // observed as a real prev→next pair once the watcher has fired once,
+    // which is correct: the first 200 IS an authoritative replacement).
+    const prevRevision = prev?.[2];
+    const historyReplaced = prevRevision !== undefined && prevRevision !== nextRevision;
+    const { state, shouldScrollToTail } = applyObservation(prevObs, nextObs, collapseState(), historyReplaced);
     applyCollapseState(state);
     if (shouldScrollToTail) {
       nextTick(() => scrollToBottom());
@@ -368,13 +433,15 @@ onMounted(() => {
         加载更多…
       </button>
     </div>
-    <template
+    <div
       v-for="(msg, index) in visibleMessages"
       :key="messageKey(msg, index)"
+      :data-msg-key="messageKey(msg, index)"
+      class="chat-msg-row"
     >
       <CardItem v-if="msg.type === 'card' && msg.card" :card="msg.card" />
       <MessageItem v-else :message="msg" :on-quote="onQuote" />
-    </template>
+    </div>
     <!-- Temporary "继续…" card: surfaces flushed steering notes for the user
          to send as a query or discard when the agent reaches PROMPT. Rendered
          at the tail of the chat flow (same visual spot as other cards) but
@@ -466,6 +533,18 @@ onMounted(() => {
   overflow-y: auto;
   padding: 12px 0;
   position: relative;
+}
+/* Wrapper around each visible message row (v-for). `display:contents` makes
+   the wrapper generate NO box, so MessageItem's `.message-row` (display:flex)
+   and CardItem's root render exactly as they did under the bare <template>
+   v-for — no extra block, no margin collapse change, no layout shift. The
+   wrapper exists ONLY to carry `data-msg-key` so loadMore() can locate a
+   specific message element by key for scroll anchoring (#23). The attribute
+   survives display:contents (it's a DOM attribute, not a layout property),
+   and the wrapper's firstElementChild (the real .message-row) provides the
+   geometry getBoundingClientRect needs. */
+.chat-msg-row {
+  display: contents;
 }
 /* Collapse affordance at the top of the chat log. Rendered only when older
    messages are hidden behind the collapse window (hasCollapsedAbove). The

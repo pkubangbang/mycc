@@ -153,6 +153,25 @@ export function onShrink(): CollapseState {
 }
 
 /**
+ * onHistoryReplace — the store was AUTHORITATIVELY replaced by a /history
+ * 200 (or a session-change clear), signalled by a historyRevision bump
+ * (#22). This is distinct from onShrink: a replacement can leave the
+ * filtered length UNCHANGED (e.g. the server's 1000-entry cap: old entries
+ * leave + new entries enter → count stays 1000), so the length-based
+ * classifier would call it 'none' and keep a now-invalid window position.
+ * The historyRevision signal makes the replacement boundary explicit,
+ * independent of cardinality. The policy is the same as onShrink (reset to
+ * the initial window — the old position is meaningless against a different
+ * list), but kept as a SEPARATE reducer for the same reason onFilterChange
+ * is separate from onShrink: the call site (applyObservation's
+ * historyReplaced branch) names the intent unambiguously, and the two
+ * policies may diverge (e.g. a future replacement might preserve capacity).
+ */
+export function onHistoryReplace(): CollapseState {
+  return initialCollapseState();
+}
+
+/**
  * onFilterChange — the filtered set's MEMBERSHIP changed because the verbose
  * toggle flipped (详细日志 on/off), not because messages arrived or the store
  * was replaced. This is distinct from onAppend (genuine arrivals grow the
@@ -273,6 +292,17 @@ export function classifyChange(
  *               — #16), so a user reading older history stays put.
  *   'none'    → unchanged state, no signal (content edit or initial run).
  *
+ * `historyReplaced` (the #22 signal): when true, the store was
+ * authoritatively replaced (a /history 200 or session-change clear bumped
+ * historyRevision). This short-circuits to onHistoryReplace() REGARDLESS of
+ * the classifyChange result — a same-length replacement classifies as
+ * 'none' by cardinality, but it is semantically a reset (the old window
+ * position is invalid against a different list). historyReplaced takes
+ * priority over append/shrink/filter, just as a verbose change takes
+ * priority over a length delta: the replacement is the authoritative event.
+ * The shouldScrollToTail signal is true (the caller re-scrolls to the tail
+ * of the new history, matching onShrink + the onMounted scrollToBottom).
+ *
  * `prev` may be undefined ONLY when the caller has no prior observation;
  * classifyChange then returns 'none' and the state is returned unchanged.
  * In practice the ChatLog watcher always has a real prev (Vue supplies it),
@@ -282,7 +312,15 @@ export function applyObservation(
   prev: Observation | undefined,
   next: Observation,
   state: CollapseState,
+  historyReplaced: boolean = false,
 ): ObservationResult {
+  // #22: an authoritative /history replacement (historyRevision bumped) is
+  // the highest-priority transition — it resets the window regardless of
+  // what the length/verbose classifier says, because a same-length
+  // replacement classifies as 'none' but is semantically a reset.
+  if (historyReplaced) {
+    return { state: onHistoryReplace(), shouldScrollToTail: true };
+  }
   const kind = classifyChange(
     prev?.verbose,
     next.verbose,
