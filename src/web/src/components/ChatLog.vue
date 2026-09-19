@@ -190,6 +190,21 @@ function loadMore(): void {
   // messages above it. visibleMessages[0] is the oldest rendered message;
   // its data-msg-key lets us relocate it in the DOM after the re-render.
   const anchorMsg = visibleMessages.value[0];
+  // The anchor is visibleMessages[0], so its v-for index is 0 at capture
+  // time — messageKey(anchorMsg, 0) matches the DOM data-msg-key="#0" the
+  // v-for emits for the first visible row. After the prepend this same
+  // message moves to a higher v-for index k, so its DOM key changes — BUT
+  // only for the id-LESS fallback key ("<ts> <label> #<index>"), which
+  // embeds the window-relative index. For id-bearing messages the key is
+  // "id:<id>" (index-independent), so the captured key still locates the
+  // same element after the re-render. Both store entry paths
+  // (fetchHistory + hydrateFromCache in main.ts) assign a nextId() to every
+  // message, so id-less messages are unreachable in the rendered list and
+  // the fallback path is dead at runtime — this anchor therefore relies on
+  // that id guarantee (pinned by message-key.test.ts's
+  // "anchor key stable across a loadMore window shift" regression). The
+  // index argument is kept as 0 (the anchor's real capture-time index)
+  // rather than a magic value so the call mirrors the v-for binding.
   const anchorKey = anchorMsg ? messageKey(anchorMsg, 0) : null;
   // Capture the anchor element's offset from the top of the scroll
   // container's viewport (its rect top minus the container's rect top).

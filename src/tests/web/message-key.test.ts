@@ -97,3 +97,88 @@ describe('messageKey — mixed list (id + fallback)', () => {
     expect(new Set(keys).size).toBe(keys.length);
   });
 });
+
+// ── loadMore anchor contract (peer-review regression #28 / #26) ──
+//
+// ChatLog.vue's loadMore() scroll-anchoring captures the FIRST visible
+// message as the anchor, then after prepending older messages relocates it
+// in the DOM by its data-msg-key to restore its viewport offset. The anchor
+// is visibleMessages[0], so at CAPTURE time its v-for index is 0 and the
+// captured key is messageKey(anchorMsg, 0). After the prepend the SAME
+// message sits at a higher v-for index k (older rows were prepended above
+// it), so the DOM emits messageKey(anchorMsg, k). The captured key locates
+// the element after the re-render ONLY IF the key is index-independent.
+//
+// These tests pin that contract directly: an id-bearing anchor's key is
+// identical at index 0 (capture) and index k (post-prepend DOM), so the
+// querySelector lookup succeeds; an id-LESS anchor's fallback key embeds
+// the window-relative index and so DIFFERS across the shift — which is why
+// loadMore's anchor RELIES on the id guarantee (both store entry paths,
+// fetchHistory + hydrateFromCache, assign a nextId() to every message,
+// making id-less messages unreachable in the rendered list). The id-less
+// case is asserted here to document the trap, not to require a fix — the
+// guarantee that makes it dead is what the anchor depends on.
+describe('messageKey — loadMore anchor key stable across a window shift (#26/#28)', () => {
+  it('id-bearing anchor: key at capture (index 0) === key after prepend (index k)', () => {
+    // The anchor is the first visible message. loadMore prepends, say, 20
+    // older rows, so the anchor's v-for index moves 0 → 20. Its key MUST be
+    // the same so the querySelector('[data-msg-key="..."]') in loadMore's
+    // nextTick still finds it.
+    const anchor = mk({ id: 55, timestamp: 1000, label: 'assistant' });
+    const captured = messageKey(anchor, 0); // capture-time key
+    const domAfter = messageKey(anchor, 20); // post-prepend DOM key
+    expect(captured).toBe(domAfter);
+    expect(captured).toBe('id:55');
+  });
+
+  it('id-bearing anchor stays stable for an arbitrary shift amount', () => {
+    // Pin the property for a range of prepend sizes so a future change to
+    // the id-key format (e.g. accidentally folding in the index) is caught.
+    const anchor = mk({ id: 9, timestamp: 5, label: 'user' });
+    const captured = messageKey(anchor, 0);
+    for (const shift of [1, 5, 20, 100, 999]) {
+      expect(messageKey(anchor, shift)).toBe(captured);
+    }
+  });
+
+  it('id-LESS anchor: fallback key CHANGES across the shift (the trap, documented)', () => {
+    // The id-less fallback key embeds the window-relative index, so the
+    // capture-time key "#0" does NOT equal the post-prepend DOM key "#k".
+    // This is why loadMore's anchor cannot rely on the fallback path — and
+    // why the store's id guarantee (every rendered message is id-bearing)
+    // is loadMore's correctness precondition, not just an optimization.
+    // This test documents the instability; it is NOT a bug to fix.
+    const anchor = mk({ timestamp: 1000, label: 'assistant' }); // no id
+    const captured = messageKey(anchor, 0);
+    const domAfter = messageKey(anchor, 20);
+    expect(captured).not.toBe(domAfter);
+    expect(captured).toBe('1000 assistant #0');
+    expect(domAfter).toBe('1000 assistant #20');
+  });
+
+  it('the anchor contract holds for the realistic mixed window (id anchor + id-less tail)', () => {
+    // A realistic visible window: older id-bearing history at the top (the
+    // anchor) plus a couple of id-less entries that predate the id scheme
+    // below it. loadMore anchors on visibleMessages[0] (the id-bearing
+    // oldest), so its key survives the prepend regardless of the id-less
+    // entries below — the contract the runtime actually exercises.
+    const window = [
+      mk({ id: 1, timestamp: 10, label: 'assistant' }), // anchor (index 0)
+      mk({ id: 2, timestamp: 20, label: 'user' }),
+      mk({ timestamp: 30, label: 'brief' }), // id-less, below the anchor
+      mk({ timestamp: 40, label: 'result' }), // id-less, below the anchor
+    ];
+    const anchor = window[0];
+    const captured = messageKey(anchor, 0);
+    // After a 20-row prepend the anchor moves to index 20; the id-less
+    // entries move to 21/22 but the anchor's key is unchanged.
+    expect(messageKey(anchor, 20)).toBe(captured);
+    // And the anchor's key stays distinct from every other row's key both
+    // before and after the shift (no accidental collision in the lookup).
+    const beforeKeys = window.map((m, i) => messageKey(m, i));
+    const afterKeys = window.map((m, i) => messageKey(m, i + 20));
+    expect(beforeKeys.includes(captured)).toBe(true);
+    expect(afterKeys.includes(captured)).toBe(true);
+    expect(new Set(afterKeys).size).toBe(afterKeys.length);
+  });
+});
