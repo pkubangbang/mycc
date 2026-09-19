@@ -183,6 +183,14 @@ export interface ChatState {
    *  reconnect via the /history replay (approximate persistence — lost on
    *  serve stop/restart, same as the main messageLog). */
   teammateMessages: ChatMessage[];
+  /** Monotonic counter bumped on every AUTHORITATIVE /history replacement
+   *  (a 200 that splices the chat arrays) and on a session-change clear
+   *  (fetchConfig detecting a new sessionId clears the arrays). The ChatLog
+   *  collapse watcher observes this so it resets the x/t/trackingTail
+   *  window on a replacement EVEN WHEN the filtered length is unchanged
+   *  (e.g. the server's 1000-entry cap: old entries leave + new entries
+   *  enter → count stays 1000). See #22. */
+  historyRevision: number;
   /** The LAST server message seen by applyServerMessage, recorded at the very
    *  top of the function (before any type-specific branching) so EVERY wire
    *  message type — explicitly handled or falling through the default branch

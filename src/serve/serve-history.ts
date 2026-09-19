@@ -28,6 +28,143 @@ import type { LogEntry } from './serve-types.js';
 
 const MAX_LOG_SIZE = 1000;
 
+/**
+ * djb2 string hash (Daniel J. Bernstein). Returns an unsigned hex string
+ * (no leading 0x). Chosen for cheapness and good distribution over short
+ * input strings — the version fingerprint is rebuilt on every /history GET,
+ * so it must stay far cheaper than serializing the body it guards.
+ */
+function djb2(str: string): string {
+  let h = 5381;
+  for (let i = 0; i < str.length; i++) {
+    h = ((h << 5) + h + str.charCodeAt(i)) >>> 0; // h*33 + c, unsigned 32-bit
+  }
+  return h.toString(16);
+}
+
+/**
+ * Compute a content-derived weak ETag for the /history payload WITHOUT
+ * serializing the body.
+ *
+ * Instead of hashing the rendered JSON, this fingerprints the INPUTS that
+ * determine the body:
+ *   - transcript file: statSync mtimeMs + size (covers appended turns)
+ *   - user-log file:   statSync mtimeMs + size (covers appended user submits)
+ *   - messageLog:      length + last entry's timestamp (in-memory tail)
+ *   - steeringBuffer:  its length (the transient steering queue — flips as
+ *                       notes are pushed/drained; NOT a durable file, so a
+ *                       body-content hash that folds these fields in would
+ *                       diverge from a file-only fingerprint. Without it a
+ *                       steering push would be masked by a 304.)
+ *   - isRunning:       the agent running flag (transient — a running/idle
+ *                       flip changes the payload's `isRunning` field but no
+ *                       durable file, so it MUST be folded in or a 304 hides
+ *                       the state change and shows stale UI.)
+ *
+ * Returns a weak ETag of the form `W/"h<hex>"`. The `W/` prefix marks it as
+ * weak (semantically equivalent bodies may share a tag), which is correct
+ * here because two bodies whose only difference is entry insertion order
+ * (same multiset of timestamped entries) are visually equivalent.
+ *
+ * The only impurity is `fs.statSync` (mtimeMs/size). Everything else is a
+ * pure function of the arguments, so the unit tests stub the file stats via
+ * a temp-dir fixture and otherwise exercise the pure core.
+ */
+export function computeHistoryVersion(
+  transcriptPath: string | null,
+  userLogPath: string | null,
+  messageLog: LogEntry[],
+  steeringLength: number,
+  isRunning: boolean,
+): string {
+  const parts: string[] = [];
+  // Durable file fingerprints — mtimeMs + size. A missing file contributes
+  // a stable "null" token (vs. an ever-changing zero) so an absent source
+  // does not needlessly invalidate the ETag on every call.
+  for (const p of [transcriptPath, userLogPath]) {
+    if (!p) { parts.push('null'); continue; }
+    try {
+      const st = fs.statSync(p);
+      parts.push(`${st.mtimeMs}:${st.size}`);
+    } catch {
+      parts.push('null'); // file missing/unreadable → stable token
+    }
+  }
+  // In-memory messageLog tail: length + last timestamp (order-independent
+  // in the middle, but the tail timestamp catches appends). When the log is
+  // empty, emit a stable "0" so an empty log never varies.
+  const lastTs = messageLog.length > 0
+    ? (messageLog[messageLog.length - 1].timestamp ?? 0)
+    : 0;
+  parts.push(`log:${messageLog.length}:${lastTs}`);
+  // Transient fields that live in the body but NOT in the durable files.
+  parts.push(`steer:${steeringLength}`);
+  parts.push(`running:${isRunning ? 1 : 0}`);
+  return `W/"h${djb2(parts.join('|'))}"`;
+}
+
+/**
+ * Parse a single entity-tag token (as it appears in an If-None-Match list or
+ * as a response ETag) into its opaque-tag string for WEAK comparison,
+ * per RFC 7232 §2.3. Weak comparison (§2.3.2) ignores the weak/strong
+ * distinction: it strips the leading `W/` and compares only the
+ * quoted opaque-tag. Returns null for a malformed token (not a valid
+ * entity-tag, e.g. the wildcard `*` is handled by the caller, not here).
+ *
+ *   W/"abc"  → "abc"
+ *   "abc"    → "abc"
+ *   "abc     → null   (unterminated quote)
+ *   abc      → null   (unquoted)
+ */
+function parseEtagToken(token: string): string | null {
+  let t = token.trim();
+  if (t.startsWith('W/')) t = t.slice(2);
+  if (t.length < 2 || t[0] !== '"' || t[t.length - 1] !== '"') return null;
+  return t.slice(1, -1); // the opaque tag inside the quotes
+}
+
+/**
+ * RFC 7232 §3.2 If-None-Match conditional check (weak comparison), as a PURE
+ * function so the matching logic is unit-testable without spinning up
+ * Express.
+ *
+ * `headerValue` is the raw If-None-Match header (a comma-separated list of
+ * entity-tags, or the wildcard `*`). `currentEtag` is the ETag the server
+ * would send on this response (a single entity-tag, possibly weak).
+ *
+ * Returns true when the precondition is met — i.e. the server should respond
+ * 304 Not Modified:
+ *   - `*` matches ANY current representation (RFC 7232 §3.2: "the asterisk
+ *     form matches any value").
+ *   - otherwise, true if ANY listed entity-tag WEAKLY-matches the current
+ *     ETag (weak comparison: strip W/ from both sides, compare the opaque
+ *     tags). RFC 7232 §2.3.2: weak comparison ignores the strong/weak
+ *     distinction, which is exactly what If-None-Match requires.
+ *
+ * This replaces the prior manual `inm === etag` equality, which only handled
+ * the single-tag, exact-string case and silently failed on a header with
+ * multiple tags (e.g. `"a", W/"b"`) or a strong/weak-equivalent pair.
+ */
+export function etagMatchesIfNoneMatch(headerValue: string | undefined | null, currentEtag: string): boolean {
+  if (!headerValue) return false;
+  const raw = headerValue.trim();
+  if (raw === '') return false;
+  if (raw === '*') return true; // wildcard matches any current representation
+  const current = parseEtagToken(currentEtag);
+  if (current === null) return false; // malformed current ETag — never 304
+  // Split on commas. Entity-tags are quoted strings (the opaque tag may NOT
+  // contain a bare comma — RFC 7232 §2.3: the opaque-tag is a quoted-string,
+  // and a comma inside a quoted-string is allowed but never appears in our
+  // h<hex> tags, so a naive comma split is safe for our emitted tags; for
+  // robustness we parse each candidate with parseEtagToken which rejects
+  // malformed tokens rather than mis-splitting).
+  for (const candidate of raw.split(',')) {
+    const tag = parseEtagToken(candidate);
+    if (tag !== null && tag === current) return true;
+  }
+  return false;
+}
+
 /** Map a triologue Message role to a WebUI LogEntry type. */
 export function roleToType(role: string | undefined): string {
   switch (role) {

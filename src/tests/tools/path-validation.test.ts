@@ -30,9 +30,19 @@ import {
 } from './test-utils.js';
 import type { AgentContext } from '../../types.js';
 
-// Traversal patterns: resolve outside the workspace but are not sensitive
+// Traversal patterns: resolve outside the workspace but are NOT sensitive
 // system paths, so they reach the requestExternalPathAccess() denial.
-const traversalPatterns = ['../../../etc/passwd'];
+//
+// IMPORTANT: the target must NOT itself match checkSensitivePath() — a
+// traversal like `../../../etc/passwd` RESOLVES to `/etc/passwd`, which IS a
+// sensitive system path, so write/edit short-circuit to the protected-path
+// rejection ("Cannot write to /etc/passwd — system configuration directory")
+// BEFORE the external-access check. That is correct, secure behavior — but
+// it means /etc/passwd is the WRONG target for asserting the external-access
+// branch. Use a non-sensitive external target (`../../../tmp/...`) so the
+// traversal genuinely reaches requestExternalPathAccess → 'Path escapes
+// workspace'. The sensitive-path branch is covered separately below.
+const traversalPatterns = ['../../../tmp/mycc-traversal-probe.txt'];
 
 // Absolute system paths: resolve outside the workspace AND match
 // checkSensitivePath(), so write/edit short-circuit to the protected-path

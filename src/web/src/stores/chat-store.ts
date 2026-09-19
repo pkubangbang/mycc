@@ -56,6 +56,18 @@ export const useChatStore = defineStore('chat', () => {
   const pendingSteeringReview = ref<SteeringNote[]>([]);
   const messages = ref<ChatMessage[]>([]);
   const teammateMessages = ref<ChatMessage[]>([]);
+  // Monotonic counter incremented on every AUTHORITATIVE /history
+  // replacement (a 200 that splices the chat arrays) and on a session-change
+  // clear (fetchConfig detecting a new sessionId clears the arrays — also an
+  // authoritative replacement, to empty). The ChatLog collapse watcher
+  // observes this so it can reset the x/t/trackingTail window on a
+  // replacement EVEN WHEN the filtered length is unchanged (e.g. the
+  // server's 1000-entry cap: old entries leave + new entries enter → count
+  // stays 1000, but the list was authoritatively replaced and the old
+  // window position is invalid). This separates the "replacement boundary"
+  // signal from collection cardinality — the watcher no longer has to infer
+  // a replacement from a length delta it may not observe. See #22.
+  const historyRevision = ref(0);
   const inputText = ref('');
   const pendingFiles = ref<FileInfo[]>([]);
   const connectionStatus = ref<ConnectionStatus>('disconnected');
@@ -123,6 +135,7 @@ export const useChatStore = defineStore('chat', () => {
     pendingSteeringReview,
     messages,
     teammateMessages,
+    historyRevision,
     inputText,
     pendingFiles,
     connectionStatus,

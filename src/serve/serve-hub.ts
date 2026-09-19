@@ -32,7 +32,7 @@ import type { LogEntry, FileUploadEntry, CardMessage } from './serve-types.js';
 export type { CardMessage } from './serve-types.js';
 import { stripAnsi, detectLanIpv4, detectAllLanIpv4 } from './serve-utils.js';
 import { ClientRegistry } from './serve-clients.js';
-import { readHistory } from './serve-history.js';
+import { readHistory, computeHistoryVersion, etagMatchesIfNoneMatch } from './serve-history.js';
 import { DisconnectTimer } from './serve-disconnect-timer.js';
 import { handleWsMessage, type HubHandler } from './serve-ws-handler.js';
 import { getPeerWireAcceptor } from './peer-wire.js';
@@ -290,7 +290,36 @@ export class ServeHub implements HubHandler {
     // GET /history → chat history as JSON (fetched at load BEFORE the WS, so
     // live updates layer on top with no race). Merges transcript + user-log +
     // messageLog by timestamp (see serve-history.ts).
-    this.expressApp.get('/history', (_req, res) => {
+    //
+    // Caching: a content-derived weak ETag (computeHistoryVersion) is sent on
+    // every response, alongside `Cache-Control: no-cache`. `no-cache` does NOT
+    // mean "never cache" — it means the client MUST revalidate with the server
+    // (via If-None-Match) before using a stored copy. When the revalidation
+    // ETag matches, the server returns a 0-byte 304 and the client keeps its
+    // hydrated copy — the lock-screen wake path. The ETag folds in transient
+    // fields (steering-length, isRunning) so a state flip is never masked by a
+    // 304.
+    this.expressApp.get('/history', (req, res) => {
+      const etag = computeHistoryVersion(
+        this.transcriptPath, this.userLogPath, this.messageLog,
+        this.steeringQueue.length, this.agentRunning,
+      );
+      res.set('ETag', etag);
+      res.set('Cache-Control', 'no-cache');
+      // If-None-Match match → 304 Not Modified, empty body. The client's
+      // hydrated copy stays on screen (lock-screen instant wake). The match
+      // uses RFC 7232 §3.2 conditional semantics (weak comparison) via
+      // etagMatchesIfNoneMatch: it handles a comma-separated list of
+      // entity-tags and the `*` wildcard, and compares the opaque tags
+      // ignoring the weak/strong distinction (correct for If-None-Match).
+      // The prior `inm === etag` equality only handled the single-tag
+      // exact-string case and silently failed on multi-tag or
+      // strong/weak-equivalent headers.
+      const inm = req.headers['if-none-match'];
+      if (etagMatchesIfNoneMatch(typeof inm === 'string' ? inm : undefined, etag)) {
+        res.status(304).end();
+        return;
+      }
       const history = readHistory(this.transcriptPath, this.userLogPath, this.messageLog);
       const payload = JSON.stringify({
         messages: history,
@@ -302,9 +331,20 @@ export class ServeHub implements HubHandler {
 
     // GET /config → client-facing runtime config (per-file upload cap +
     // persistent flag so the Web UI renders 重启 vs 退出 correctly).
+    //
+    // `sessionId` is the wire session id (null when no wire session, e.g.
+    // serve started before the agent context). The client uses it as the
+    // per-session key for its IndexedDB chatlog cache: a new sessionId must
+    // never show a foreign session's cached log, so the cache is keyed by
+    // this value and pruned of other sessions on every write.
     this.expressApp.get('/config', (_req, res) => {
+      const wireHooks = getWireHooks();
       res.status(200).set({ 'Content-Type': 'application/json' }).end(
-        JSON.stringify({ maxUploadMb: getMaxUploadMb(), persistent: shouldDaemon() }),
+        JSON.stringify({
+          maxUploadMb: getMaxUploadMb(),
+          persistent: shouldDaemon(),
+          sessionId: wireHooks?.getSessionId() ?? null,
+        }),
       );
     });
 

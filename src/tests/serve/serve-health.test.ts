@@ -34,9 +34,36 @@ function sh(cmd: string, timeoutMs = 10000): string {
   return execSync(cmd, { encoding: 'utf-8', timeout: timeoutMs });
 }
 
-/** True when a usable tmux is on PATH. */
+/**
+ * Cross-platform blocking sleep. The original used
+ * `powershell -Command "Start-Sleep -Seconds N"`, which only exists on
+ * Windows and silently breaks the suite on Linux/macOS (`powershell: not
+ * found`). Spawn node with a busy-wait loop instead — node is a hard
+ * prerequisite for this repo, so it is always on PATH on every platform.
+ */
+function sleepSync(seconds: number): void {
+  sh(`node -e "var d=Date.now()+${Math.floor(seconds * 1000)};while(Date.now()<d){}"`, 10000);
+}
+
+/** The null-redirection token for the current platform. `2>nul` is
+ *  Windows-only and on Linux it creates a stray file named `nul` in the CWD
+ *  (and does NOT actually suppress stderr). Use `2>/dev/null` on Unix. */
+const DEVNULL = process.platform === 'win32' ? '2>nul' : '2>/dev/null';
+
+/** True when a usable tmux SERVER is reachable. `tmux -V` only proves the
+ *  binary is on PATH — it does NOT start or contact a server. A machine can
+ *  have tmux installed but no server running (e.g. a fresh CI box, or a
+ *  headless container without a tmux session ever started), in which case
+ *  `tmux kill-session` throws "no server running". `tmux new-session -d`
+ *  DOES start a server if none exists, so probe by creating + killing a
+ *  throwaway session: if that round-trips, the live-tmux suite can run. */
 function hasTmux(): boolean {
-  try { sh('tmux -V', 3000); return true; } catch { return false; }
+  try { sh('tmux -V', 3000); } catch { return false; }      // binary present?
+  try {
+    sh('tmux new-session -d -s __probe__ 2>/dev/null', 3000);
+    sh('tmux kill-session -t __probe__ 2>/dev/null', 3000);
+    return true;
+  } catch { return false; }
 }
 
 /** True when the global `mycc` command resolves (npm link present).
@@ -65,17 +92,17 @@ async function fetchJson(url: string): Promise<Record<string, unknown>> {
 /** Start the serve instance in a detached tmux session and wait until the
  *  "Web UI started" banner appears (or timeout). */
 function startServe(): void {
-  sh(`tmux kill-session -t ${SESSION} 2>nul`, 3000); // best-effort cleanup
+  try { sh(`tmux kill-session -t ${SESSION} ${DEVNULL}`, 3000); } catch { /* no server / no session — best-effort cleanup */ }
   sh(`tmux new-session -s ${SESSION} -d -x 120 -y 40`);
   // Send the command WITHOUT Enter, pause, then Enter — the mycc Enter
   // throttle rejects a text+Enter typed back-to-back.
   sh(`tmux send-keys -t ${SESSION} "mycc --serve ${PORT} --skip-healthcheck"`);
-  sh('powershell -Command "Start-Sleep -Seconds 2"');
+  sleepSync(2);
   sh(`tmux send-keys -t ${SESSION} Enter`);
   // Poll the pane for the startup banner.
   const deadline = Date.now() + 45_000;
   while (Date.now() < deadline) {
-    sh('powershell -Command "Start-Sleep -Seconds 2"');
+    sleepSync(2);
     const pane = sh(`tmux capture-pane -t ${SESSION} -p -S -100`);
     if (pane.includes('Web UI started')) return;
     if (/Error:|EADDRINUSE|Cannot find/i.test(pane) && !pane.includes('Web UI started')) {
@@ -87,7 +114,7 @@ function startServe(): void {
 
 function stopServe(): void {
   try { sh(`tmux send-keys -t ${SESSION} Escape`, 3000); } catch { /* ignore */ }
-  sh('powershell -Command "Start-Sleep -Seconds 1"');
+  sleepSync(1);
   try { sh(`tmux kill-session -t ${SESSION}`, 3000); } catch { /* already gone */ }
 }
 
