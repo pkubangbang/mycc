@@ -276,6 +276,16 @@ export class WikiManager implements WikiModule {
       // gracefully by markWALDeleted (it logs and continues), and the DB
       // delete is the authoritative removal.
       if (toDelete.length > 0) {
+        // deleteByHashes THROWS on DB-delete failure (it does not swallow).
+        // Letting the throw propagate is deliberate: if the old rows survive
+        // the batched DB delete, proceeding to batchPut would insert the new
+        // rows ALONGSIDE the un-deleted old ones (duplicate titles → stale +
+        // new skill matches from skill_search), and writeSkillIndexCache
+        // would pin the inconsistency until a later rebuild. Aborting here
+        // leaves the WAL already marked (harmless — a marked entry whose row
+        // still exists is a no-op until rebuild drops it) and skips the
+        // cache write, so the NEXT full re-index retries from a clean slate.
+        // The outer try/finally releases the reindex lock on the way out.
         await this.deleteByHashes(toDelete);
       }
 
@@ -520,18 +530,34 @@ export class WikiManager implements WikiModule {
    * The distance is converted back to similarity (`1 - distance`) so the
    * threshold cut + sort + topK slice behave as before.
    *
+   * RETRIEVAL CONTRACT CHANGE (approximate, not exact): once the IVF index
+   * exists, `vectorSearch` is APPROXIMATE nearest-neighbor — it routes the
+   * query to a subset of IVF partitions and searches only those, so a
+   * semantically relevant row that falls outside the probed partitions can
+   * be missed. The old exhaustive scan returned the EXACT topK; this path
+   * returns an APPROXIMATE topK. For the skill/wiki store (hundreds to
+   * low-thousands of rows, modest `numPartitions` via sqrt(N)) the recall
+   * loss is small in practice, but it is NOT zero — callers must not treat
+   * this as a transparent, result-identical optimization.
+   *
    * Prefilter semantics (LanceDB v0.27.2): `.where()` defaults to a
    * PREFILTER — the domain predicate is applied BEFORE the ANN search, so
    * the search runs over the domain-filtered row set and returns up to
    * `limit` rows that ALL match the domain. (Postfiltering requires an
    * explicit `.postfilter()` call, which we do NOT make.) The over-fetch
    * (VECTOR_SEARCH_OVERFETCH × topK) is therefore not a correctness crutch
-   * against postfilter shrinkage; it is a generous margin for the
-   * client-side threshold cut + any ANN ranking jitter, so a domain with
-   * many sub-threshold rows still yields a full topK. If the vector search
-   * path throws (no index yet built, empty table, or an API shape change),
-   * we fall back to the original manual scan so correctness is never lost
-   * — only the optimization is.
+   * against postfilter shrinkage; it is a heuristic margin for the
+   * client-side threshold cut + ANN ranking jitter, so a domain with many
+   * sub-threshold rows still yields a full topK. It is NOT mathematically
+   * guaranteed sufficient: even with a perfect ANN candidate set, the
+   * threshold cut can in principle drop enough rows that a relevant row
+   * just past `limit` is excluded. 4× is comfortable headroom for the
+   * current corpus; tune up if a domain is dominated by sub-threshold rows.
+   * If the vector search path THROWS (no index yet built, empty table, or
+   * an API shape change), we fall back to the original exhaustive manual
+   * scan. The fallback protects against EXCEPTIONS only — it does NOT
+   * protect against an ANN query that succeeds but returns lower-recall
+   * neighbors. When it fires, results revert to exact topK.
    */
   async get(query: string, options?: GetOptions): Promise<SearchResult[]> {
     await this.initDb();
@@ -607,11 +633,16 @@ export class WikiManager implements WikiModule {
    * applies `.where()` as a PREFILTER (not a postfilter), so the domain
    * predicate shrinks the candidate set BEFORE the ANN search and there is
    * no postfilter topK-starvation risk. The over-fetch is therefore a
-   * generous margin for the client-side threshold cut (rows above `limit`
+   * HEURISTIC margin for the client-side threshold cut (rows above `limit`
    * may still fall below the similarity threshold) + any ANN ranking
    * jitter, so a domain with many sub-threshold rows still yields a full
-   * topK. 4× is comfortable headroom; tune down if the threshold cut rarely
-   * trims, up if a domain is dominated by sub-threshold rows.
+   * topK. It is NOT a mathematical guarantee — even with a perfect ANN
+   * candidate set, the threshold cut can in principle drop enough rows that
+   * a relevant row just past `limit` is excluded. 4× is comfortable headroom
+   * for the current corpus (hundreds to low-thousands of rows); tune down
+   * if the threshold cut rarely trims, up if a domain is dominated by
+   * sub-threshold rows. Combined with the IVF approximate search (see the
+   * get() docblock), the overall contract is APPROXIMATE topK, not exact.
    */
   private static readonly VECTOR_SEARCH_OVERFETCH = 4;
 
@@ -974,7 +1005,11 @@ export class WikiManager implements WikiModule {
    * Hashes are validated against {@link HASH_PATTERN} and single-quote
    * escaped before being interpolated into the SQL `IN (...)` predicate.
    * Rejects the whole batch on any invalid hash (a partial delete would
-   * leave the re-index diff inconsistent).
+   * leave the re-index diff inconsistent). THROWS on DB-delete failure (it
+   * does NOT swallow the error) — the caller (indexSkills) relies on this
+   * to abort before inserting new rows or writing the skill-index cache, so
+   * a failed delete cannot leave the store with old+new duplicate rows
+   * pinned by a stale cache.
    *
    * @param records - `{ hash, createdAt }` pairs. `createdAt` is the stored
    *   ISO timestamp used to locate the WAL day-file; supplied by the caller
@@ -1003,17 +1038,19 @@ export class WikiManager implements WikiModule {
     // and skipped, never fatal — the DB delete below is authoritative.
     await this.markWALDeletedBatch(records);
 
-    try {
-      // Single-quote-escape each hash before interpolation into the IN-list.
-      const inList = records
-        .map(({ hash }) => `'${hash.replace(/'/g, "''")}'`)
-        .join(', ');
-      await this.table.delete(`hash IN (${inList})`);
-      this.core.brief('info', 'wiki', `Batch deleted ${records.length} records`);
-    } catch (err) {
-      const error = err instanceof Error ? err.message : String(err);
-      this.core.brief('error', 'wiki', `deleteByHashes failed: ${error}`);
-    }
+    // Single-quote-escape each hash before interpolation into the IN-list.
+    // THROWS on DB failure (does NOT swallow): the caller (indexSkills) must
+    // NOT proceed to batchPut + writeSkillIndexCache if the old rows survive
+    // — otherwise the new rows are inserted alongside the un-deleted old
+    // ones (duplicate titles) and the cache is written as valid, pinning the
+    // inconsistency until a later rebuild. The WAL mark above is harmless if
+    // this throws (a WAL entry marked deleted with its row still present is
+    // a no-op until the next rebuild, which will drop it — no resurrection).
+    const inList = records
+      .map(({ hash }) => `'${hash.replace(/'/g, "''")}'`)
+      .join(', ');
+    await this.table.delete(`hash IN (${inList})`);
+    this.core.brief('info', 'wiki', `Batch deleted ${records.length} records`);
   }
 
   /**
