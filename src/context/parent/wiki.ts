@@ -90,7 +90,10 @@ export class WikiManager implements WikiModule {
    * {@link reindexLock} (which skips on contention): a contended flush
    * must WAIT so it doesn't widen the cross-instance stale-read window.
    */
-  private flushLock = new FlushLock((msg) => this.core.brief('warn', 'wiki', msg));
+  private flushLock = new FlushLock(
+    (msg) => this.core.brief('warn', 'wiki', msg),
+    getWikiFlushLockFile(),
+  );
   /**
    * WAIT-capable lock for the global sequence allocator. DEDICATED,
    * separate from {@link flushLock}: allocation is a fast
@@ -99,7 +102,10 @@ export class WikiManager implements WikiModule {
    * value (a reused sequence resurrects a tombstoned row). See
    * {@link SequenceLock} for the rationale.
    */
-  private sequenceLock = new SequenceLock((msg) => this.core.brief('warn', 'wiki', msg));
+  private sequenceLock = new SequenceLock(
+    (msg) => this.core.brief('warn', 'wiki', msg),
+    getWikiSequenceLockFile(),
+  );
   /**
    * In-flight flush promise (debounce). {@link scheduleFlush} keeps at most ONE
    * flush running at a time per instance: a write-path caller that schedules a
@@ -438,11 +444,24 @@ export class WikiManager implements WikiModule {
   /**
    * Debounce wrapper over {@link flushAhead}: keep at most ONE in-flight flush
    * per instance. A write-path caller (put/batchPut/delete) that schedules a
-   * flush while one is already running reuses the running promise — it
-   * already scans every day-file and will pick up the just-appended WAL line
-   * on its next iteration, so a second concurrent flush would only contend on
-   * the flush lock and do redundant work. When no flush is in flight, start
-   * one and clear {@link inflightFlush} on completion (success or failure).
+   * flush while one is already running reuses the running promise.
+   *
+   * Generation-aware re-flush (V2 fix, per the invariant proof §5). The old
+   * comment claimed the running flush "picks up the just-appended WAL line on
+   * its next day-file iteration" — but that is only true if the append lands
+   * BEFORE the flush reads that day's file. The common case breaks it: a
+   * `put()` appends to today's WAL during the running flush's embed async gap
+   * (AFTER today's file was already read), and `scheduleFlush` reuses the
+   * still-running `inflightFlush` ⇒ no second scan ⇒ the just-appended line is
+   * NOT materialized this pass. The WAL stays correct ([I1]) and a later
+   * `get()` calls a fresh `flushAhead()` that repairs it ([I7]), so this is a
+   * LIVENESS gap, not a safety violation — but the opportunistic "write →
+   * scheduleFlush → cache catches up" property was false under the race.
+   *
+   * Fix: after a flush settles, re-check whether any day-file has advanced
+   * past the watermark since the flush started; if so, schedule ONE more
+   * coalesced pass. "One in-flight flush" and "one flush per burst" are not
+   * the same thing.
    *
    * Returns a promise the caller may await (the read path awaits; the write
    * path fire-and-forgets via `.catch`). Never throws — a flush failure is
@@ -455,11 +474,43 @@ export class WikiManager implements WikiModule {
       return { flushedDays: 0, applied: 0 };
     });
     this.inflightFlush = p;
-    // Clear the slot once settled so the next scheduleFlush can start a new one.
+    // On settle: clear the slot, then schedule one more pass if W advanced
+    // past M during the flush (closes the same-day-miss liveness gap V2).
     void p.finally(() => {
       if (this.inflightFlush === p) this.inflightFlush = null;
+      // If the WAL has entries the watermark doesn't yet cover, the flush
+      // missed a same-day append (or a new write landed during it). Schedule
+      // one more coalesced flush; scheduleFlush reuses inflightFlush if a
+      // follow-up has already started, bounding the chain to one in flight.
+      if (this.walAheadOfWatermark()) {
+        void this.scheduleFlush();
+      }
     });
     return p;
+  }
+
+  /**
+   * True if any WAL day-file has an entry whose sequence exceeds the current
+   * watermark for that day (i.e. there is unflushed work). Used by
+   * {@link scheduleFlush}'s settle hook to decide whether to schedule a
+   * follow-up flush (V2). Cheap: one watermark read + one directory scan; the
+   * per-file parse is bounded by the (small) unflushed tail. Returns false
+   * when the WAL dir is absent or empty (nothing to flush).
+   */
+  private walAheadOfWatermark(): boolean {
+    const walDir = getWikiLogsDir();
+    if (!fs.existsSync(walDir)) return false;
+    const watermark = this.readWatermark();
+    for (const file of fs.readdirSync(walDir).filter((f) => f.endsWith('.wal'))) {
+      const day = file.replace(/\.wal$/, '');
+      const dayMax = watermark[day] ?? 0;
+      const content = fs.readFileSync(path.join(walDir, file), 'utf-8');
+      for (const entry of parseWALFile(content)) {
+        if (!entry.approved || (entry.namespace && entry.namespace !== NAMESPACE)) continue;
+        if (entrySequence(entry) > dayMax) return true;
+      }
+    }
+    return false;
   }
 
   // ============================================================
@@ -1319,20 +1370,86 @@ export class WikiManager implements WikiModule {
   }
 
   /**
+   * Atomic materialization phase of {@link rebuild}, run under the
+   * {@link FlushLock}. Clears the table, inserts the already-embedded records
+   * (Phase 1 embeds lock-free; this Phase 2 is the destructive part), and
+   * resets the watermark `M := {}`.
+   *
+   * Why the lock + reset are needed (V1 + V1b, per the invariant proof):
+   * without the lock, a concurrent {@link flushAhead} could interleave between
+   * the clear and the insert — advancing `M` to a newer WAL state, after which
+   * rebuild's older snapshot would leave `M` *ahead* of `D` in the wrong
+   * direction (violating [I2]/[I8], and making a later `get()` trust a stale
+   * cache — [I4]). Holding the same {@link FlushLock} as `flushAhead` makes
+   * the two table mutators mutually exclusive. Resetting `M` makes rebuild a
+   * true "cache reset to truth": the next flush re-materializes idempotently
+   * (Lemma C), so a stale ahead-of-reality `M` from a prior crash cannot
+   * survive a rebuild.
+   *
+   * @param records  fully-embedded records to insert (Phase 1 output).
+   * @param errors    per-entry embed failures accumulated in Phase 1.
+   * @returns the rebuild result. Returns `success:false` only if the lock
+   *   cannot be acquired (rebuild is abandoned; the caller may retry).
+   */
+  private async rebuildMaterialize(
+    records: Array<{ hash: string; document: WikiDocument; embedding: number[]; createdAt: string }>,
+    errors: string[],
+  ): Promise<RebuildResult> {
+    const lockFile = getWikiFlushLockFile();
+    ensureDirs();
+    const acquired = await this.flushLock.acquire(lockFile);
+    if (!acquired) {
+      this.core.verbose('wiki', 'Rebuild abandoned: flush lock busy (another instance flushing)');
+      return {
+        success: false,
+        documentsProcessed: 0,
+        errors: [...errors, 'Rebuild abandoned: flush lock busy'],
+      };
+    }
+    try {
+      await this.initDb();
+      if (!this.table) {
+        return { success: false, documentsProcessed: 0, errors: ['Database not initialized'] };
+      }
+      // Atomic clear + insert under the lock: no flushAhead can interleave
+      // between these (closing the V1 race).
+      await this.table.delete('true');
+      let documentsProcessed = 0;
+      // Insert in INSERT_BATCH_SIZE chunks to bound the in-flight vector
+      // payload size, exactly as the pre-fix rebuild did.
+      for (let j = 0; j < records.length; j += INSERT_BATCH_SIZE) {
+        const slice = records.slice(j, j + INSERT_BATCH_SIZE);
+        documentsProcessed += await this.insertRebuildBatch(slice);
+      }
+      // V1b: reset the watermark so M can never be ahead of the rebuilt D.
+      // The next flushAhead re-materializes idempotently (Lemma C).
+      this.writeWatermark({});
+      this.core.brief('info', 'wiki', `Rebuild complete: ${documentsProcessed} documents processed`);
+      return { success: true, documentsProcessed, errors };
+    } finally {
+      this.flushLock.release(lockFile);
+    }
+  }
+
+  /**
    * Rebuild vector store from all WAL files.
    *
-   * Performance: the WAL is replayed in bulk, not entry-by-entry.
-   *  1. Fold all WAL files into one `hash → entry` map (latest wins, so an
-   *     entry re-written on a later date/line supersedes its earlier form),
-   *     then filter out deleted / unapproved / foreign-namespace entries.
-   *  2. Embed every surviving document in batched calls via `getEmbeddings`
-   *     (one Ollama /api/embed round-trip per batch instead of one per doc).
-   *  3. Insert via `insertRebuildBatch` (a single table.add per batch) with
-   *     no WAL write — rebuild must not feed its own input.
-   *
-   * This changes O(N) network round-trips + O(N) DB writes into O(N/batch)
-   * of each. Semantics are unchanged: the namespace filter, deleted/approved
-   * filters, and last-write-wins ordering all still hold.
+   * Two phases (per the invariant proof, §6 fix V1+V1b):
+   *  1. Phase 1 (lock-free): fold all WAL files into one `hash → entry` map
+   *     (latest wins, so an entry re-written on a later date/line supersedes
+   *     its earlier form), then filter out deleted / unapproved /
+   *     foreign-namespace entries, and embed every surviving document in
+   *     batched `getEmbeddings` calls. Embedding is many network round-trips
+   *     and reads only W — it touches neither D nor M, so it runs WITHOUT the
+   *     FlushLock (holding the lock across a long rebuild would starve the
+   *     read path's get()→flushAhead()).
+   *  2. Phase 2 (under FlushLock, via {@link rebuildMaterialize}): atomically
+   *     `table.delete('true')`, `insertRebuildBatch` the embedded records,
+   *     and reset the watermark `M := {}`. The lock makes rebuild mutually
+   *     exclusive with flushAhead (closing the V1 race where a flush could
+   *     advance M mid-rebuild, then the older snapshot would leave M ahead of
+   *     D in the wrong direction). The M reset makes rebuild a true cache
+   *     reset to truth.
    *
    * Batching knobs live in EMBED_BATCH_SIZE / INSERT_BATCH_SIZE. Embedding
    * is batched more conservatively than insertion because 768-dim vectors
@@ -1347,13 +1464,17 @@ export class WikiManager implements WikiModule {
         return { success: false, documentsProcessed: 0, errors: ['Database not initialized'] };
       }
 
-      // Clear existing data
-      await this.table.delete('true');
-
-      // Get all WAL files
+      // ── Phase 1 (lock-free): read W and embed the snapshot. ──────────────
+      // Embedding is many network Ollama round-trips and reads only W (it
+      // touches neither D nor M), so it must NOT hold the FlushLock — holding
+      // it across a long rebuild would starve the read path's get()→
+      // flushAhead() (which would time out at 3s and serve possibly-stale
+      // reads for the whole rebuild). The race-critical window is only the
+      // destructive clear+insert (Phase 2), which we serialize below.
       const walDir = getWikiLogsDir();
       if (!fs.existsSync(walDir)) {
-        return { success: true, documentsProcessed: 0, errors: [] };
+        // Nothing in W — still reset D + M under the lock for consistency.
+        return await this.rebuildMaterialize([], []);
       }
 
       // 1. Fold all WAL entries to latest-wins-by-sequence (the global
@@ -1371,16 +1492,19 @@ export class WikiManager implements WikiModule {
 
       if (entries.length === 0) {
         this.core.brief('info', 'wiki', 'Rebuild complete: 0 documents processed');
-        return { success: true, documentsProcessed: 0, errors: [] };
+        // No live entries — still clear D and reset M under the lock so the
+        // cache converges to the (empty) truth.
+        return await this.rebuildMaterialize([], []);
       }
 
       const errors: string[] = [];
+      const records: Array<{ hash: string; document: WikiDocument; embedding: number[]; createdAt: string }> = [];
       let documentsProcessed = 0;
 
       const batchCount = Math.ceil(entries.length / EMBED_BATCH_SIZE);
       let batchIndex = 0;
 
-      // 2 + 3. Embed and insert in batches.
+      // 2 + 3. Embed and accumulate the materialized records (lock-free).
       for (let i = 0; i < entries.length; i += EMBED_BATCH_SIZE) {
         batchIndex++;
         const batch = entries.slice(i, i + EMBED_BATCH_SIZE);
@@ -1389,23 +1513,23 @@ export class WikiManager implements WikiModule {
             batch.map((e) => e.document.content),
             'document',
           );
-
-          // Insert in chunks to bound the in-flight vector payload size.
-          // Raw insert (no WAL write) — rebuild must not feed its own input.
           for (let j = 0; j < batch.length; j += INSERT_BATCH_SIZE) {
             const slice = batch.slice(j, j + INSERT_BATCH_SIZE);
-            const putEntries = slice.map((entry, k) => ({
-              hash: entry.hash,
-              document: entry.document,
-              embedding: embeddings[j + k],
-              createdAt: entry.timestamp,
-            }));
-            documentsProcessed += await this.insertRebuildBatch(putEntries);
+            for (let k = 0; k < slice.length; k++) {
+              const entry = slice[k];
+              records.push({
+                hash: entry.hash,
+                document: entry.document,
+                embedding: embeddings[j + k],
+                createdAt: entry.timestamp,
+              });
+            }
           }
+          documentsProcessed += batch.length;
         } catch (err) {
           // A failed embed batch fails all of its entries — record one error
-          // per hash so the result stays informative, then continue with the
-          // next batch rather than aborting the whole rebuild.
+          // per hash so the result is informative; those entries are simply
+          // omitted from the materialized snapshot (not inserted).
           const error = err instanceof Error ? err.message : String(err);
           for (const entry of batch) {
             errors.push(`${entry.hash} - ${error}`);
@@ -1424,8 +1548,16 @@ export class WikiManager implements WikiModule {
         });
       }
 
-      this.core.brief('info', 'wiki', `Rebuild complete: ${documentsProcessed} documents processed`);
-      return { success: true, documentsProcessed, errors };
+      // ── Phase 2 (under FlushLock): atomic clear + insert + reset M. ───────
+      // This is the destructive part. Holding the FlushLock here means a
+      // concurrent flushAhead() cannot interleave between the clear and the
+      // insert — which was the V1 race (flush could advance M mid-rebuild,
+      // then rebuild's older snapshot would leave M *ahead* of D in the
+      // wrong direction). Resetting M := {} under the same lock (V1b) makes
+      // rebuild a true "cache reset to truth": the next flush re-materializes
+      // idempotently (Lemma C). Writes only append W, so a short lock hold
+      // here does not block the write path.
+      return await this.rebuildMaterialize(records, errors);
     } catch (err) {
       const error = err instanceof Error ? err.message : String(err);
       this.core.brief('error', 'wiki', `Rebuild failed: ${error}`);

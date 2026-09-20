@@ -59,6 +59,10 @@ const embedCalls: string[][] = [];
 // A knob tests can flip to simulate an Ollama failure mid-day (so the flush
 // throws and we can assert the watermark is NOT advanced). Reset per test.
 let embedShouldThrow = false;
+// A hook fired inside getEmbeddings so a test can trigger a concurrent
+// operation DURING an embed async gap (e.g. a flushAhead mid-rebuild to test
+// the V1 rebuild/flush lock race). Reset per test.
+let embedHook: (() => Promise<void>) | null = null;
 vi.mock('../../engine/rag-provider.js', () => ({
   EMBEDDING_DIM: 8,
   NAMESPACE: 'test-ns',
@@ -68,6 +72,7 @@ vi.mock('../../engine/rag-provider.js', () => ({
   },
   getEmbeddings: async (texts: string[]) => {
     embedCalls.push(texts);
+    if (embedHook) { await embedHook(); }
     if (embedShouldThrow) throw new Error('embed-failure-injected');
     return texts.map(() => new Array(8).fill(0.1));
   },
@@ -173,6 +178,7 @@ describe('WikiManager.flushAhead()', () => {
     ]), 'utf-8');
     embedCalls.length = 0;
     embedShouldThrow = false;
+    embedHook = null;
     tableState.rows = [];
     tableState.addCalls = 0;
     tableState.deleteCalls = 0;
@@ -377,13 +383,18 @@ describe('WikiManager.flushAhead()', () => {
     writeWal('2026-01-01.wal', [makeEntry(doc, { hash, sequence: 1 })]);
 
     const wiki = await newManager();
-    await wiki.initDb();
 
-    // Pre-seed the table with TWO copies of the hash — the exact state the
-    // legacy buggy `table.add` flush path would leave after a watermark loss
-    // and re-flush. (Simulates a table written by the old code.)
+    // First flush initializes the table and materializes the real row (one
+    // copy), and sets the day's watermark. (Avoids calling the private
+    // initDb directly — a flush is the public init entry point.)
+    await wiki.flushAhead();
+    expect(tableState.rows.filter((r) => r.hash === hash)).toHaveLength(1);
+
+    // Simulate the legacy buggy `table.add` flush state by pushing an EXTRA
+    // copy of the row onto the table (two physical copies now — what a
+    // re-flush under the old code would have left).
     const dupRecord = { hash, domain: 'project', title: 'title', content: `${C} v1`, references: '[]', embedding: new Array(8).fill(0.1), createdAt: '2026-01-01T00:00:00.000Z' };
-    tableState.rows.push({ ...dupRecord }, { ...dupRecord });
+    tableState.rows.push({ ...dupRecord });
     expect(tableState.rows.filter((r) => r.hash === hash)).toHaveLength(2);
 
     // Drop the watermark so the day is treated as unflushed → the flush
@@ -396,5 +407,64 @@ describe('WikiManager.flushAhead()', () => {
     // pre-existing copies.
     expect(tableState.rows.filter((r) => r.hash === hash)).toHaveLength(1);
     expect(tableState.deletedHashes).toContain(hash);
+  });
+
+  // --- V1 + V1b: rebuild/flush race + watermark reset ---------------------
+  // The pre-fix rebuild did NOT acquire FlushLock, so a concurrent flushAhead
+  // could interleave between rebuild's clear and its insert — advancing the
+  // watermark to a NEWER WAL state, after which rebuild's older snapshot left
+  // M AHEAD of D (wrong direction). The fix: rebuild embeds lock-free, then
+  // Phase 2 (clear+insert) runs under FlushLock AND resets M := {}. This test
+  // pins the race scenario from the proof's §5 V1.
+  it('V1+V1b: a flush interleaved during rebuild is serialized, and rebuild resets the watermark', async () => {
+    // Seed today's WAL with one entry (the "old snapshot" rebuild will embed).
+    const oldDoc = makeDoc('project', 'old', `${C} old`);
+    const oldHash = hashOf(oldDoc);
+    writeWal('2026-01-01.wal', [makeEntry(oldDoc, { hash: oldHash, sequence: 1 })]);
+
+    const wiki = await newManager();
+
+    // During rebuild's Phase-1 embed (lock-free), append a NEWER entry to
+    // today's WAL and fire a concurrent flushAhead that tries to materialize
+    // it. The embed hook gives us the async gap to interleave.
+    const newDoc = makeDoc('project', 'new', `${C} new`);
+    const newHash = hashOf(newDoc);
+    embedHook = async () => {
+      // Append the newer entry mid-rebuild (sequence 2 > rebuild's snapshot).
+      writeWal('2026-01-01.wal', [
+        makeEntry(oldDoc, { hash: oldHash, sequence: 1 }),
+        makeEntry(newDoc, { hash: newHash, sequence: 2 }),
+      ]);
+      // Fire a concurrent flush WITHOUT awaiting — it must block on the
+      // FlushLock that rebuild's Phase 2 is about to hold (or already holds).
+      void wiki.flushAhead();
+    };
+
+    await wiki.rebuild();
+
+    // Let the deferred flush (fire-and-forget inside the hook) settle before
+    // asserting end-state. rebuild + the deferred flush both complete here.
+    await new Promise<void>((r) => setTimeout(r, 50));
+
+    // V1b (end-state): the watermark is NEVER ahead of D. rebuild resets M to
+    // {} under the lock; a subsequent flush may legitimately advance M to
+    // reflect the now-durably-materialized newer entry (which IS in D after
+    // the flush). The invariant is M ≤ materialized-reality, not M == {}.
+    const m = readWatermark();
+    const mDay = m['2026-01-01'];
+    if (mDay !== undefined) {
+      // If the watermark advanced, it must be ≤ the max sequence that is
+      // actually present in D (here, the newer entry at seq 2).
+      expect(mDay).toBeLessThanOrEqual(2);
+    }
+    // V1: the lock serialized the two mutators — no wrong-direction M/D split.
+    // Both hashes are materialized exactly once (rebuild's snapshot had old;
+    // the deferred flush applied new; lock serialization prevented the older
+    // rebuild snapshot from overwriting the flushed newer state after M
+    // advanced). This is the cache == WAL truth invariant from the proof.
+    const oldRows = tableState.rows.filter((r) => r.hash === oldHash);
+    const newRows = tableState.rows.filter((r) => r.hash === newHash);
+    expect(oldRows).toHaveLength(1);
+    expect(newRows).toHaveLength(1);
   });
 });

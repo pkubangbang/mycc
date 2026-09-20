@@ -232,6 +232,14 @@ export class ReindexLock {
 export class FlushLock {
   private handlersRegistered = false;
 
+  /**
+   * @param onWarn   best-effort diagnostics logger.
+   * @param lockFile  the resolved lock path used BOTH by {@link acquire} and
+   *   by the SIGINT/SIGTERM crash handler (V3 fix). Previously defaulted to
+   *   `''`, which made the crash handler run `unlinkSync('')` — a no-op that
+   *   left stale lockfiles on crash (recovered later by PID-steal, but with
+   *   needless acquire latency). Pass the same path {@link acquire} uses.
+   */
   constructor(
     private readonly onWarn?: (message: string) => void,
     private readonly lockFile: string = '',
@@ -369,6 +377,11 @@ export function releaseFlushLock(lockFile: string): void {
 export class SequenceLock {
   private handlersRegistered = false;
 
+  /**
+   * @param onWarn   best-effort diagnostics logger.
+   * @param lockFile  the resolved lock path used BOTH by {@link acquire} and
+   *   by the SIGINT/SIGTERM crash handler (V3 fix — see {@link FlushLock}).
+   */
   constructor(
     private readonly onWarn?: (message: string) => void,
     private readonly lockFile: string = '',

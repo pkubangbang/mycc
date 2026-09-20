@@ -316,12 +316,12 @@ describe('WikiManager.indexSkills() — write-path fixes #1/#4/#5', () => {
     const tHashes = tombstones.map((t) => t.hash).sort();
     expect(tHashes).toEqual([...staleHashes].sort());
     // Distinct monotonic sequences: the three sequences are all different.
-    const seqs = tombstones.map((t) => t.sequence).sort((a, b) => a - b);
+    const seqs = tombstones.map((t) => t.sequence).filter((s): s is number => typeof s === 'number').sort((a, b) => a - b);
     expect(new Set(seqs).size).toBe(3);
     // And they form a contiguous block (first+0, first+1, first+2).
-    expect(seqs[2] - seqs[0]).toBe(2);
+    expect(seqs[2]! - seqs[0]!).toBe(2);
     // Each tombstone is above the seeded live sequences (so a later re-insert
     // would still win — matching single-delete semantics).
-    expect(seqs[0]).toBeGreaterThan(3);
+    expect(seqs[0]!).toBeGreaterThan(3);
   });
 });
