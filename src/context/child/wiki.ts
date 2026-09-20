@@ -30,7 +30,7 @@ export class ChildWiki implements WikiModule {
     return result;
   }
 
-  async batchPut(entries: Array<{ document: WikiDocument; embedding: number[] }>): Promise<PutResult[]> {
+  async batchPut(entries: Array<{ document: WikiDocument; embedding?: number[] }>): Promise<PutResult[]> {
     const result = await ipc.sendRequest<PutResult[]>('wiki_batch_put', { entries });
     return result;
   }

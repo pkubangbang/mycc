@@ -1051,13 +1051,19 @@ export interface WikiModule {
    */
   getByDomain(domain: string): Promise<SearchResult[]>;
   /**
-   * Batch-insert pre-embedded documents in a single table.add() call.
-   * Each entry pairs a document with its precomputed embedding vector,
-   * skipping the per-record findRecordByHash scan and embedding generation that
-   * {@link put} performs. Callers must compute hashes via the same scheme
-   * as prepare()/put() (sha256 of `${domain}:${title}:${content}`, first 16 hex).
+   * Batch-append documents to the WAL (WAL-ONLY write path under WAL-as-truth).
+   *
+   * Each entry carries a document and an OPTIONAL, ignored `embedding`. The
+   * WAL stores only the document; embeddings are derived by the flush/rebuild
+   * at apply time, so the `embedding` field is NOT persisted — it remains on
+   * the input type for backward compatibility with callers (and test
+   * fixtures) that pre-compute embeddings. Callers that follow the
+   * WAL-as-truth model pass only `{ document }` and let the flush embed.
+   * Hashes are computed via the same scheme as prepare()/put()
+   * (sha256 of `${domain}:${title}:${content}`, first 16 hex). The cache
+   * (LanceDB) is mutated only by a subsequent flush, never by this call.
    */
-  batchPut(entries: Array<{ document: WikiDocument; embedding: number[] }>): Promise<PutResult[]>;
+  batchPut(entries: Array<{ document: WikiDocument; embedding?: number[] }>): Promise<PutResult[]>;
   delete(hash: string): Promise<boolean>;
   getWAL(date?: string): Promise<WALEntry[]>;
   parseWAL(asciiContent: string): WALEntry[];

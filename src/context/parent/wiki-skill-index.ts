@@ -342,3 +342,134 @@ export class FlushLock {
 export function releaseFlushLock(lockFile: string): void {
   try { fs.unlinkSync(lockFile); } catch { /* best-effort */ }
 }
+
+// ============================================================
+// Sequence lock (WAIT-capable) — for the global sequence allocator
+// ============================================================
+
+/**
+ * A WAIT-capable cross-instance lock for the global sequence allocator
+ * ({@link WikiManager.allocateSequence}).
+ *
+ * DEDICATED, separate from {@link FlushLock}: the flush lock serializes the
+ * WAL→LanceDB flush, which does network embedding work and can hold the
+ * lock for a long time. Sequence allocation is a fast read-increment-write
+ * that must NOT be blocked behind a flush — sharing one lock would force
+ * the allocator to wait on the flush's embedding round-trips, and a bounded
+ * wait that timed out there would tempt an unlocked `floor + 1` fallback
+ * that can REUSE a sequence number (a P1: two timed-out writers both read
+ * floor=100, both emit 101 → a reused sequence resurrects a tombstoned
+ * row via last-write-wins-by-sequence). A dedicated lock keeps the
+ * allocator's critical section cheap and bounded so it never needs an
+ * unsafe escape hatch.
+ *
+ * The freshness/staleness recovery (stale holder → steal) and crash-time
+ * release handlers mirror {@link FlushLock}.
+ */
+export class SequenceLock {
+  private handlersRegistered = false;
+
+  constructor(
+    private readonly onWarn?: (message: string) => void,
+    private readonly lockFile: string = '',
+  ) {}
+
+  private registerCrashHandlers(): void {
+    if (this.handlersRegistered) return;
+    this.handlersRegistered = true;
+    const release = () => {
+      try { fs.unlinkSync(this.lockFile); } catch { /* best-effort */ }
+    };
+    process.once('SIGINT', () => { release(); process.exit(0); });
+    process.once('SIGTERM', () => { release(); process.exit(0); });
+  }
+
+  private steal(lockPath: string, myInfo: object): void {
+    try {
+      fs.writeFileSync(lockPath, JSON.stringify(myInfo), 'utf-8');
+      this.registerCrashHandlers();
+    } catch {
+      this.onWarn?.('Sequence lock steal write failed — will retry');
+    }
+  }
+
+  tryAcquire(lockPath: string): boolean {
+    const myInfo = {
+      sessionId: getSessionContext(),
+      pid: process.pid,
+      startedAt: Date.now(),
+      namespace: NAMESPACE,
+    };
+
+    try {
+      const fd = fs.openSync(lockPath, 'wx');
+      fs.writeSync(fd, JSON.stringify(myInfo));
+      fs.closeSync(fd);
+      this.registerCrashHandlers();
+      return true;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'EEXIST') {
+        this.onWarn?.(`Sequence lock acquire error: ${(err as Error).message}`);
+        return false;
+      }
+    }
+
+    let holder: { sessionId?: string; pid?: number; startedAt?: number; namespace?: string };
+    try {
+      holder = JSON.parse(fs.readFileSync(lockPath, 'utf-8'));
+    } catch {
+      this.steal(lockPath, myInfo);
+      return true;
+    }
+    if (holder.namespace !== NAMESPACE) {
+      this.steal(lockPath, myInfo);
+      return true;
+    }
+    if (isReindexLockStale(holder)) {
+      this.steal(lockPath, myInfo);
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * Acquire with a bounded wait. Polls {@link tryAcquire} every
+   * `pollIntervalMs` (default 50ms — tighter than the flush lock since the
+   * critical section is fast) until success or `timeoutMs` (default 5000ms)
+   * elapses. Returns true on acquire, false on timeout.
+   *
+   * The caller ({@link WikiManager.allocateSequence}) treats a `false` as a
+   * HARD FAILURE (throws) rather than falling back to an unlocked value —
+   * a reused sequence is a correctness bug, so it is better to fail the
+   * write than to emit a duplicate id. The tight poll + long budget make a
+   * genuine timeout rare (it would mean another instance held the
+   * allocator for 5s straight, which the fast critical section should
+   * never do).
+   */
+  async acquire(
+    lockPath: string,
+    timeoutMs = 5000,
+    pollIntervalMs = 50,
+  ): Promise<boolean> {
+    const deadline = Date.now() + timeoutMs;
+    if (this.tryAcquire(lockPath)) return true;
+    while (Date.now() < deadline) {
+      await new Promise<void>((resolve) => setTimeout(resolve, pollIntervalMs));
+      if (this.tryAcquire(lockPath)) return true;
+    }
+    return false;
+  }
+
+  /** Release the sequence lock. Best-effort (safe when not held). */
+  release(lockPath: string): void {
+    try { fs.unlinkSync(lockPath); } catch { /* best-effort */ }
+  }
+}
+
+/**
+ * Best-effort release of a sequence lock by path. Mirrors
+ * {@link releaseFlushLock} for symmetry.
+ */
+export function releaseSequenceLock(lockFile: string): void {
+  try { fs.unlinkSync(lockFile); } catch { /* best-effort */ }
+}

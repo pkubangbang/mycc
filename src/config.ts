@@ -779,13 +779,28 @@ export function getWikiFlushLockFile(): string {
  * assigns each WAL entry a global monotonic, crash-safe, NON-REUSABLE
  * `sequence` (the tiebreaker that makes out-of-order flushes sound). The
  * counter is a single integer on disk, read-increment-written under the
- * flush lock so it can never be observed out of order or reset+reused.
+ * SEQUENCE lock so it can never be observed out of order or reset+reused.
  * Gaps are harmless (a skipped number is just a never-allocated id); reuse
  * is the killer (a reused number would order a new entry below the
  * tombstone that deleted its predecessor and resurrect the row).
  */
 export function getWikiSequenceFile(): string {
   return path.join(getWikiDir(), 'sequence.json');
+}
+
+/**
+ * Path to the SEQUENCE-allocator lockfile. A DEDICATED lock, SEPARATE from
+ * {@link getWikiFlushLockFile}: the flush lock serializes the WAL→LanceDB
+ * flush (which does network embedding work and can hold the lock for a long
+ * time), while sequence allocation is a fast read-increment-write that must
+ * NOT be blocked behind a flush. Sharing one lock would force the allocator
+ * to wait on the flush's embedding round-trips — and a bounded-wait timeout
+ * there would tempt an unlocked fallback that can reuse a sequence (the
+ * P1 the reviewer flagged). A dedicated lock keeps the allocator's critical
+ * section cheap and bounded, so it never needs an unsafe escape hatch.
+ */
+export function getWikiSequenceLockFile(): string {
+  return path.join(getWikiDir(), 'sequence.lock');
 }
 
 /**

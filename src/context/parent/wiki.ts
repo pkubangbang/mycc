@@ -41,6 +41,7 @@ import {
 import {
   ReindexLock,
   FlushLock,
+  SequenceLock,
   isSkillIndexCacheValid,
   writeSkillIndexCache,
 } from './wiki-skill-index.js';
@@ -49,6 +50,7 @@ import {
   getWikiDbDir,
   getWikiFlushLockFile,
   getWikiSequenceFile,
+  getWikiSequenceLockFile,
   getWikiWatermarkFile,
   ensureDirs,
 } from '../../config.js';
@@ -89,6 +91,15 @@ export class WikiManager implements WikiModule {
    * must WAIT so it doesn't widen the cross-instance stale-read window.
    */
   private flushLock = new FlushLock((msg) => this.core.brief('warn', 'wiki', msg));
+  /**
+   * WAIT-capable lock for the global sequence allocator. DEDICATED,
+   * separate from {@link flushLock}: allocation is a fast
+   * read-increment-write that must not be blocked behind a flush's network
+   * embedding work, and a timeout there must NOT fall back to an unlocked
+   * value (a reused sequence resurrects a tombstoned row). See
+   * {@link SequenceLock} for the rationale.
+   */
+  private sequenceLock = new SequenceLock((msg) => this.core.brief('warn', 'wiki', msg));
   /**
    * In-flight flush promise (debounce). {@link scheduleFlush} keeps at most ONE
    * flush running at a time per instance: a write-path caller that schedules a
@@ -140,7 +151,7 @@ export class WikiManager implements WikiModule {
 
   /**
    * Allocate the next `count` global monotonic sequence numbers under the
-   * flush lock, returning them as a contiguous block (first..first+count-1).
+   * SEQUENCE lock, returning them as a contiguous block (first..first+count-1).
    *
    * The sequence is the tiebreaker that makes WAL replay sound under
    * out-of-order flushing: a tombstone with a higher sequence than an
@@ -155,12 +166,21 @@ export class WikiManager implements WikiModule {
    * Two instances (or two concurrent async write paths) allocating WITHOUT
    * a lock would both read the same `current`, both write `current+1`, and
    * both emit the SAME sequence → a reused number → tombstone resurrection
-   * via the sequence. The WAL-floor guard below protects only against a
-   * CRASH-recovered low counter, not against concurrent reuse. So this
-   * method acquires the {@link FlushLock} for the whole read-increment-write
-   * so concurrent allocators serialize. (`count` lets a batch allocate a
-   * block under ONE lock hold instead of re-locking per entry — avoids
-   * O(B) lock round-trips and O(B×W) WAL rescans.)
+   * via the sequence. So this method acquires the DEDICATED {@link SequenceLock}
+   * for the whole read-increment-write so concurrent allocators serialize.
+   * (`count` lets a batch allocate a block under ONE lock hold instead of
+   * re-locking per entry — avoids O(B) lock round-trips and O(B×W) WAL
+   * rescans.)
+   *
+   * The sequence lock is SEPARATE from the flush lock: the flush lock is
+   * held during network embedding work (slow), so reusing it here would
+   * force the allocator to wait on embedding round-trips — and a bounded
+   * wait that timed out there would tempt an unlocked `floor + 1` fallback
+   * that can REUSE a sequence. The dedicated lock keeps the critical
+   * section fast and bounded. On timeout the allocator THROWS (fails the
+   * write) rather than emitting an unsafe, possibly-reused sequence — a
+   * failed write is recoverable; a duplicate sequence is a silent
+   * correctness bug.
    *
    * Crash safety: the counter is a single JSON integer on disk
    * (`getWikiSequenceFile()`). A crash between read and write leaves the
@@ -171,18 +191,19 @@ export class WikiManager implements WikiModule {
    * an optimization; the WAL itself is the durable authority.)
    *
    * @returns the first sequence of the block; the caller owns [first, first+count).
+   * @throws if the sequence lock cannot be acquired within the bounded wait
+   *   (the write path surfaces this as a failed write — never an unsafe id).
    */
   private async allocateSequence(count = 1): Promise<number> {
-    const lockFile = getWikiFlushLockFile();
+    const lockFile = getWikiSequenceLockFile();
     ensureDirs();
-    const acquired = await this.flushLock.acquire(lockFile);
+    const acquired = await this.sequenceLock.acquire(lockFile);
     if (!acquired) {
-      // Could not serialize with a concurrent flush; allocate defensively at
-      // the WAL floor + 1 so we never collide with a number below one in the
-      // WAL. (We cannot safely read+write the shared counter without the
-      // lock, so we skip the counter and derive purely from the WAL — gaps
-      // are harmless, and the floor guarantees monotonicity w.r.t. the WAL.)
-      return this.walSequenceFloor() + 1;
+      // HARD FAILURE: do NOT fall back to an unlocked `floor + 1` — two
+      // timed-out writers would both read the same floor and both emit the
+      // same sequence, resurrecting a tombstoned row. A failed write is
+      // recoverable; a reused sequence is a silent correctness bug.
+      throw new Error('Sequence lock acquisition timed out — cannot safely allocate a monotonic sequence without serializing with concurrent allocators. Write fails rather than risk a reused sequence.');
     }
     try {
       const floor = this.walSequenceFloor();
@@ -202,7 +223,7 @@ export class WikiManager implements WikiModule {
       fs.writeFileSync(seqFile, JSON.stringify({ value: first + count - 1 }), 'utf-8');
       return first;
     } finally {
-      this.flushLock.release(lockFile);
+      this.sequenceLock.release(lockFile);
     }
   }
 
@@ -244,9 +265,10 @@ export class WikiManager implements WikiModule {
   }
 
   /**
-   * Persist the watermark AFTER a day-file's apply completes. The flush path
-   * calls this once per flushed day with that day's max applied sequence, so
-   * the watermark never advances beyond what is durably in LanceDB
+   * Persist the watermark AFTER the flush loop completes. The flush path
+   * accumulates each flushed day's max applied sequence into one record and
+   * writes it ONCE after the whole per-day loop, so the watermark never
+   * advances beyond what is durably in LanceDB
    * (fail-LOW: watermark < reality → idempotent re-flush; never watermark >
    * reality → reader skips a hash it believes flushed).
    */
@@ -269,10 +291,12 @@ export class WikiManager implements WikiModule {
    *     out-of-order flushes sound — see {@link entrySequence}).
    *  2. For each hash: if the winner is a tombstone (or its GLOBAL-latest
    *     across all day-files is a tombstone — see P1-2 below), `table.delete`
-   *     the row; otherwise `table.add` the live insert. Both are idempotent
-   *     across re-flushes (re-adding a present hash is a benign duplicate;
-   *     re-deleting an absent row is a no-op). Embeddings are batched per day
-   *     (one {@link getEmbeddings} call per day-file's inserts).
+   *     the row; otherwise materialize one fresh copy (delete-all-copies then
+   *     insert one — see {@link materializeFlushBatch}). Re-applying a day is
+   *     idempotent: the pre-insert delete removes all copies (converging
+   *     duplicates left by the legacy `table.add` flush), then exactly one is
+   *     added; re-deleting an absent row is a no-op. Embeddings are batched
+   *     per day (one {@link getEmbeddings} call per day-file's inserts).
    *  3. Update the watermark to that day's max sequence AFTER the apply
    *     completes (fail-LOW).
    *
@@ -291,8 +315,10 @@ export class WikiManager implements WikiModule {
    *
    * Idempotency: re-running a day-file converges to the same table state
    * (latest-wins per hash), so a restart mid-flush needs no compensation log —
-   * the next flush re-applies the same day-file. Half-flush safety: union
-   * semantics (duplicates in both WAL and LanceDB are benign).
+   * the next flush re-applies the same day-file. Half-flush safety: the
+   * materializer deletes all copies of a hash before inserting one, so a
+   * partial flush followed by re-flush converges to exactly one row per hash
+   * (no duplicate accumulation).
    */
   async flushAhead(): Promise<{ flushedDays: number; applied: number }> {
     const lockFile = getWikiFlushLockFile();
@@ -385,7 +411,7 @@ export class WikiManager implements WikiModule {
             'document',
           );
           toAdd.forEach((a, i) => { a.embedding = embeddings[i]; });
-          await this.insertRebuildBatch(toAdd);
+          await this.materializeFlushBatch(toAdd);
           applied += toAdd.length;
         }
         for (const hash of toDelete) {
@@ -549,27 +575,42 @@ export class WikiManager implements WikiModule {
         }
       }
 
-      // Batch embed all new/changed documents in ONE Ollama call
-      let embeddings: number[][] = [];
-      if (toAdd.length > 0) {
-        embeddings = await getEmbeddings(
-          toAdd.map((d) => d.content),
-          'document',
-        );
-      }
-
-      // Batch delete stale/orphaned records
-      for (const hash of toDelete) {
-        await this.delete(hash);
+      // Batch delete stale/orphaned records in ONE WAL append (a single
+      // tombstone block with a distinct monotonic sequence per hash) rather
+      // than a per-hash `delete()` loop. Each `delete()` call re-folds the
+      // WHOLE WAL (`walHasLiveHash`) to check liveness, so a loop over N
+      // hashes is O(N×W) in sync fs scans. `appendTombstones` folds the WAL
+      // once, allocates ONE sequence block, and appends all tombstones in a
+      // single `appendFileSync` (O(W + N) instead of O(N×W)). The hashes here
+      // are ALREADY known live (they came from the cache diff / orphan
+      // sweep), so the per-hash existence check is correctly skipped — which
+      // is why `appendTombstones` is private and documents that the caller
+      // asserts liveness (see issue #4).
+      if (toDelete.length > 0) {
+        await this.appendTombstones(toDelete);
       }
 
       // Batch insert all new/changed documents via ONE batchPut (which
       // appends to the WAL — the write path is WAL-only under WAL-as-truth,
       // so this never calls table.add directly; the cache is mutated only
-      // by a subsequent flush).
+      // by a subsequent flush). Embeddings are NOT pre-computed here: the
+      // WAL stores only the document and the flush re-embeds at apply time,
+      // so pre-embedding here would be thrown away (see issue #5 — this used
+      // to embed every changed skill twice, once here and once on flush).
       if (toAdd.length > 0) {
-        const batchEntries = toAdd.map((document, i) => ({ document, embedding: embeddings[i] }));
-        await this.batchPut(batchEntries);
+        const batchEntries = toAdd.map((document) => ({ document }));
+        const results = await this.batchPut(batchEntries);
+        // Inspect the results BEFORE writing the cache: batchPut does NOT
+        // throw on a WAL-append failure (it returns `success:false`), so the
+        // ONLY way to keep the cache from advancing past an incomplete WAL is
+        // to fail the re-index here. Invariant: WAL complete → cache may
+        // advance; never the reverse. The `finally` below releases the reindex
+        // lock so a retry can re-run. (See issue #1.)
+        if (results.some((r) => !r.success)) {
+          throw new Error(
+            `Skill re-index aborted: batchPut reported ${results.filter((r) => !r.success).length} failed WAL append(s); skill cache not advanced (WAL is the source of truth).`,
+          );
+        }
       }
 
       // Write the cache so the next startup can skip if nothing changed.
@@ -869,24 +910,31 @@ export class WikiManager implements WikiModule {
   }
 
   /**
-   * Batch-append pre-embedded documents to the WAL (WAL-ONLY write path).
+   * Batch-append documents to the WAL (WAL-ONLY write path).
    *
    * Under WAL-as-truth, batchPut appends ONE sequenced WAL line per accepted
    * entry and does NOT touch LanceDB — the cache is mutated only by a flush.
    * `alreadyExisted` is sourced from the WAL (via {@link walHasLiveHash}),
    * not from a LanceDB table scan (which may lag the WAL).
    *
-   * The `embedding` field of each entry is accepted for API compatibility
-   * with {@link indexSkills} (which pre-computes embeddings) but is NOT
+   * The `embedding` field of each entry is OPTIONAL and, if provided, is NOT
    * persisted in the WAL — embeddings are derived by the flush/rebuild at
-   * apply time, so the WAL stores only the document. This keeps the WAL
-   * compact and embedding-model-agnostic (a model swap re-embeds on flush).
+   * apply time, so the WAL stores only the document. The field remains on the
+   * input type for backward compatibility with callers (and test fixtures)
+   * that pre-compute embeddings, but the WAL-as-truth write path ignores it.
+   * Callers that follow the WAL-as-truth model (e.g. {@link indexSkills}) pass
+   * only `{ document }` and let the flush embed.
    *
    * Returns one PutResult per input entry (same order). Entries whose hash
    * already has a live WAL entry are reported `alreadyExisted:true` (and are
-   * NOT re-appended — idempotent), mirroring put()'s reporting.
+   * NOT re-appended — idempotent), mirroring put()'s reporting. A `success`
+   * result reflects that the WAL line was actually appended: the success flag
+   * is set AFTER the `appendFileSync` for that entry's line, so a per-entry
+   * `true` is a real durable append (see issue #1 — previously the optimistic
+   * `success:true` was assigned before the append, which masked a torn
+   * write).
    */
-  async batchPut(entries: Array<{ document: WikiDocument; embedding: number[] }>): Promise<PutResult[]> {
+  async batchPut(entries: Array<{ document: WikiDocument; embedding?: number[] }>): Promise<PutResult[]> {
     if (entries.length === 0) return [];
 
     try {
@@ -902,9 +950,15 @@ export class WikiManager implements WikiModule {
       const walDir = getWikiLogsDir();
 
       // Build the WAL entries to append, sourcing alreadyExisted from the WAL
-      // (the source of truth), not the LanceDB cache.
+      // (the source of truth), not the LanceDB cache. Per-entry success is
+      // recorded as a POSITION (index into `toAppend`) and resolved to
+      // `success:true` only AFTER the WAL append has actually succeeded, so a
+      // `true` result is a real durable append and a torn write surfaces as
+      // `success:false` (issue #1: the optimistic pre-append `success:true`
+      // previously masked a failed/torn append).
       const toAppend: WALEntry[] = [];
       const results: PutResult[] = new Array(entries.length);
+      const appendIndexByPos: number[] = []; // results index for each toAppend entry
 
       for (let i = 0; i < entries.length; i++) {
         const { document } = entries[i];
@@ -932,11 +986,11 @@ export class WikiManager implements WikiModule {
           approved: true,
           namespace: NAMESPACE,
         });
-        results[i] = { success: true, hash };
+        appendIndexByPos.push(i); // remember which results slot this maps to
       }
 
       // Single batched, sequenced WAL append. Allocate a contiguous block of
-      // `count` sequences under ONE flush-lock hold (avoids O(B) lock
+      // `count` sequences under ONE sequence-lock hold (avoids O(B) lock
       // round-trips and O(B×W) WAL rescans), then append. Out-of-order
       // flushes stay sound because each entry gets a distinct monotonic id.
       if (toAppend.length > 0) {
@@ -948,7 +1002,14 @@ export class WikiManager implements WikiModule {
           entry.sequence = first + i;
           lines.push(JSON.stringify(entry));
         });
+        // The append is the durability point — set success:true ONLY here,
+        // after fs.appendFileSync returns, so a result's `success` reflects
+        // a real WAL line on disk. (If appendFileSync throws, the catch below
+        // marks every pending slot false.)
         fs.appendFileSync(walPath, `${lines.join('\n')}\n`, 'utf-8');
+        for (let p = 0; p < toAppend.length; p++) {
+          results[appendIndexByPos[p]] = { success: true, hash: toAppend[p].hash };
+        }
         this.core.brief('info', 'wiki', `Batch stored ${toAppend.length} documents (WAL)`);
 
         // Best-effort opportunistic flush (non-blocking; not a batchPut
@@ -1024,6 +1085,80 @@ export class WikiManager implements WikiModule {
   }
 
   /**
+   * Batch-append tombstones for `hashes` in ONE WAL append (WAL-ONLY write
+   * path — the cache is mutated only by the next flush).
+   *
+   * This is the batch analogue of {@link delete}: instead of a per-hash loop
+   * where each `delete()` call re-folds the WHOLE WAL via
+   * {@link walHasLiveHash} to check liveness (O(N×W) in sync fs scans), it
+   * allocates ONE contiguous sequence block and appends all tombstones in a
+   * single `appendFileSync` (O(W) for the floor + O(N) for the append).
+   *
+   * CONTRACT — the caller ASSERTS LIVENESS: this method does NOT re-check
+   * whether each hash has a live WAL entry (that check is what makes
+   * `delete()` O(W) per call, and the whole point of batching is to skip
+   * it). The caller ({@link indexSkills}) already knows the hashes are live
+   * — they came from the cache diff (content changed) or the orphan sweep
+   * (a title no longer present). This is why the method is PRIVATE: making
+   * it public would let a caller tombstone hashes that were never live,
+   * producing spurious WAL lines. The single-hash public {@link delete}
+   * keeps its own existence check and remains the safe entry point for a
+   * caller that is not sure.
+   *
+   * Distinct sequences: each tombstone gets `first + i` (a distinct
+   * monotonic id per tombstone), matching single-`delete` semantics — a
+   * later re-insert (which allocates a sequence above this block) still
+   * wins by sequence, and two tombstones for the same hash (if a hash is
+   * passed twice, or re-deleted after re-insert) keep distinct ids so the
+   * flush's last-write-wins tiebreak stays sound.
+   *
+   * @throws if the sequence lock cannot be acquired (propagates to the
+   *   caller, which surfaces it as a failed re-index — the cache is NOT
+   *   advanced, see issue #1).
+   */
+  private async appendTombstones(hashes: string[]): Promise<void> {
+    if (hashes.length === 0) return;
+
+    // Validate hash formats (mirror delete()'s guard).
+    const valid = hashes.filter((h) => {
+      if (!HASH_PATTERN.test(h)) {
+        this.core.brief('error', 'wiki', `Invalid hash format: ${h}. Expected 16 hex characters. Skipping tombstone.`);
+        return false;
+      }
+      return true;
+    });
+    if (valid.length === 0) return;
+
+    ensureDirs();
+    const walDir = getWikiLogsDir();
+
+    // Allocate ONE contiguous sequence block for all tombstones (ONE
+    // sequence-lock hold — avoids O(N) lock round-trips), then append every
+    // tombstone in a single fs.appendFileSync. Each gets a DISTINCT
+    // `first + i` so the per-entry sequence contract (distinct monotonic id)
+    // is preserved.
+    const first = await this.allocateSequence(valid.length);
+    const today = formatDate(new Date());
+    const walPath = path.join(walDir, `${today}.wal`);
+    const lines: string[] = valid.map((hash, i) => JSON.stringify({
+      timestamp: new Date().toISOString(),
+      hash,
+      // Tombstone carries the empty document it supersedes (mirrors delete()).
+      document: { domain: '', title: '', content: '', references: [] },
+      approved: true,
+      deleted: true,
+      namespace: NAMESPACE,
+      sequence: first + i,
+    }));
+    fs.appendFileSync(walPath, `${lines.join('\n')}\n`, 'utf-8');
+
+    // Best-effort opportunistic flush so the cache drops the rows promptly.
+    this.scheduleFlush();
+
+    this.core.brief('info', 'wiki', `Batch tombstoned ${valid.length} document(s) (WAL)`);
+  }
+
+  /**
    * Get WAL entries for a specific date (default: today)
    */
   async getWAL(date?: string): Promise<WALEntry[]> {
@@ -1059,12 +1194,14 @@ export class WikiManager implements WikiModule {
    *
    * Every WAL entry — insert or tombstone — gets a `sequence` here so the
    * flush/rebuild last-write-wins-by-sequence ordering is sound for ALL
-   * writes, including deletes. The sequence is allocated under the flush
-   * lock by {@link allocateSequence} so concurrent instances never observe
-   * out-of-order ids (the lock serializes the read-increment-write of the
-   * shared counter). An entry already carrying a `sequence` (e.g. a batchPut
-   * that pre-allocated a block) keeps its value — this is a no-op for entries
-   * that already have one.
+   * writes, including deletes. The sequence is allocated under the
+   * dedicated SEQUENCE lock by {@link allocateSequence} so concurrent
+   * instances never observe out-of-order ids (the lock serializes the
+   * read-increment-write of the shared counter, and is separate from the
+   * flush lock so it's never blocked behind embedding work). An entry
+   * already carrying a `sequence` (e.g. a batchPut that pre-allocated a
+   * block) keeps its value — this is a no-op for entries that already have
+   * one.
    */
   async appendWAL(entry: WALEntry): Promise<void> {
     if (typeof entry.sequence !== 'number') {
@@ -1115,6 +1252,69 @@ export class WikiManager implements WikiModule {
     }));
 
     await this.table.add(records);
+    return records.length;
+  }
+
+  /**
+   * Idempotently materialize ONE flush batch into the LanceDB cache.
+   *
+   * Unlike {@link insertRebuildBatch} (a pure `table.add` used by `rebuild`,
+   * which is safe there because `rebuild` clears the table first), this is the
+   * flush-path materializer and MUST converge a table that already holds
+   * copies of these hashes — including DUPLICATES left by the legacy
+   * re-flush-on-every-flush behavior (the old flush called `table.add`
+   * unconditionally, so a re-flush of an already-flushed day appended a second
+   * row per hash, and a watermark loss followed by re-flush appended a third,
+   * and so on). A plain `table.add` here would keep accumulating duplicates;
+   * `mergeInsert` alone does NOT converge a table that already holds multiple
+   * rows for the join key (its behavior with multiple matches is undefined),
+   * so it cannot heal the legacy state either.
+   *
+   * The fix is delete-then-add PER RECORD: for each hash, first remove ALL
+   * existing physical copies (`table.delete('hash = X')` — idempotent, deletes
+   * 0 rows when absent), then insert exactly one fresh copy. This converges
+   * unconditionally regardless of how many copies existed, and is idempotent
+   * across re-flushes (delete removes the prior copy, add inserts one new
+   * one — net one row per hash). The `__schema__` sentinel row (hash
+   * `'__schema__'`) is never in a flush batch (flush hashes are 16-hex,
+   * HASH_PATTERN-guarded upstream), so it is never deleted here.
+   *
+   * Runs UNDER the {@link FlushLock} held by {@link flushAhead} (no extra
+   * lock): materialization does not allocate sequences (the write path does),
+   * and `scheduleFlush` keeps at most one in-flight flush per instance, so the
+   * per-record delete+add is single-threaded locally; the FlushLock serializes
+   * cross-instance. A real LanceDB delete error (not "row absent", which
+   * deletes 0 rows silently) propagates — the day's watermark is NOT advanced
+   * (fail-LOW), so the next flush re-applies the same day-file and converges.
+   *
+   * @returns the number of records materialized (one per entry).
+   */
+  private async materializeFlushBatch(
+    entries: Array<{ hash: string; document: WikiDocument; embedding: number[]; createdAt: string }>,
+  ): Promise<number> {
+    if (entries.length === 0) return 0;
+    await this.initDb();
+    if (!this.table) throw new Error('Database not initialized');
+
+    const records = entries.map(({ hash, document, embedding, createdAt }) => ({
+      hash,
+      domain: document.domain,
+      title: document.title,
+      content: document.content,
+      references: JSON.stringify(document.references || []),
+      embedding,
+      createdAt,
+    }));
+
+    // Convergence: delete ALL existing copies of each hash first, then add
+    // exactly one fresh copy. The delete is idempotent (absent → 0 rows
+    // deleted, no error); a real LanceDB error propagates (fail-LOW). Per
+    // record (not batched) so each hash is healed independently — a partial
+    // failure leaves the un-materialized hashes' watermark unadvanced.
+    for (const record of records) {
+      await this.table.delete(`hash = '${record.hash}'`);
+      await this.table.add([record]);
+    }
     return records.length;
   }
 

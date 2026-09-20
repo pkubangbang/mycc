@@ -42,6 +42,7 @@ vi.mock('../../config.js', () => ({
   getWikiReindexLockFile: () => path.join(tempDir, 'reindex.lock'),
   getWikiFlushLockFile: () => path.join(tempDir, 'flush.lock'),
   getWikiSequenceFile: () => path.join(tempDir, 'sequence.json'),
+  getWikiSequenceLockFile: () => path.join(tempDir, 'sequence.lock'),
   getWikiWatermarkFile: () => watermarkFile(),
   getHeartbeatFile: (sid: string) => path.join(tempDir, `hb-${sid}.json`),
   getMyccDir: () => tempDir,
@@ -308,7 +309,9 @@ describe('WikiManager.flushAhead()', () => {
     // Exactly one batched call carrying all 3 texts.
     expect(embedCalls).toHaveLength(1);
     expect(embedCalls[0]).toHaveLength(3);
-    expect(tableState.addCalls).toBe(1);
+    // The materializer does one table.add PER RECORD (delete-then-add for
+    // convergence), so 3 inserts → 3 add calls (not one batched add).
+    expect(tableState.addCalls).toBe(3);
     expect(tableState.rows.filter((r) => r.hash && r.hash !== '__schema__')).toHaveLength(3);
   });
 
@@ -330,5 +333,68 @@ describe('WikiManager.flushAhead()', () => {
     expect(tableState.addCalls).toBe(addCallsAfterFirst);
     expect(tableState.rows.length).toBe(rowsAfterFirst);
     expect(readWatermark()['2026-01-01']).toBe(1);
+  });
+
+  // --- #3 flush convergence (delete-before-add materializer) -------------
+  // The legacy flush called `table.add` unconditionally, so a re-flush of an
+  // already-flushed day appended a SECOND physical row per hash. The fix
+  // (materializeFlushBatch) deletes ALL copies of a hash before inserting one,
+  // converging the table to exactly one row per hash regardless of how many
+  // copies existed. These tests pin that invariant.
+
+  it('#3 convergence: re-flush after watermark loss yields exactly ONE physical row per hash', async () => {
+    const doc = makeDoc('project', 'title', `${C} v1`);
+    const hash = hashOf(doc);
+    writeWal('2026-01-01.wal', [makeEntry(doc, { hash, sequence: 1 })]);
+
+    const wiki = await newManager();
+
+    // 1. First flush → the row is present (one copy).
+    await wiki.flushAhead();
+    expect(tableState.rows.filter((r) => r.hash === hash)).toHaveLength(1);
+    const addCallsAfterFirst = tableState.addCalls;
+
+    // 2. Simulate watermark loss (crash before watermark persisted, or a
+    //    corrupt/missing watermark file) → the day is treated as unflushed.
+    fs.rmSync(watermarkFile(), { force: true });
+
+    // 3. Re-flush → re-applies the same day. The materializer MUST delete the
+    //    prior copy before adding the new one, leaving exactly one row (NOT
+    //    two, as the legacy table.add path would).
+    await wiki.flushAhead();
+
+    // Exactly one physical row per hash (convergence, not accumulation).
+    expect(tableState.rows.filter((r) => r.hash === hash)).toHaveLength(1);
+    // A pre-insert delete ran for the hash (delete-all-copies-then-add).
+    expect(tableState.deletedHashes).toContain(hash);
+    // A new add ran on the re-flush (the fresh copy was inserted).
+    expect(tableState.addCalls).toBeGreaterThan(addCallsAfterFirst);
+  });
+
+  it('#3 convergence: a table pre-seeded with duplicate copies is healed to exactly one row', async () => {
+    const doc = makeDoc('project', 'title', `${C} v1`);
+    const hash = hashOf(doc);
+    writeWal('2026-01-01.wal', [makeEntry(doc, { hash, sequence: 1 })]);
+
+    const wiki = await newManager();
+    await wiki.initDb();
+
+    // Pre-seed the table with TWO copies of the hash — the exact state the
+    // legacy buggy `table.add` flush path would leave after a watermark loss
+    // and re-flush. (Simulates a table written by the old code.)
+    const dupRecord = { hash, domain: 'project', title: 'title', content: `${C} v1`, references: '[]', embedding: new Array(8).fill(0.1), createdAt: '2026-01-01T00:00:00.000Z' };
+    tableState.rows.push({ ...dupRecord }, { ...dupRecord });
+    expect(tableState.rows.filter((r) => r.hash === hash)).toHaveLength(2);
+
+    // Drop the watermark so the day is treated as unflushed → the flush
+    // re-applies it and the materializer must converge the duplicates.
+    fs.rmSync(watermarkFile(), { force: true });
+
+    await wiki.flushAhead();
+
+    // Convergence: exactly one physical row per hash, regardless of the two
+    // pre-existing copies.
+    expect(tableState.rows.filter((r) => r.hash === hash)).toHaveLength(1);
+    expect(tableState.deletedHashes).toContain(hash);
   });
 });

@@ -41,6 +41,7 @@ vi.mock('../../config.js', () => ({
   // allocator, flush lock, and flushed-through watermark.
   getWikiFlushLockFile: () => path.join(tempDir, 'flush.lock'),
   getWikiSequenceFile: () => path.join(tempDir, 'sequence.json'),
+  getWikiSequenceLockFile: () => path.join(tempDir, 'sequence.lock'),
   getWikiWatermarkFile: () => path.join(tempDir, 'watermark.json'),
   getHeartbeatFile: (sid: string) => path.join(tempDir, `hb-${sid}.json`),
   getMyccDir: () => tempDir,
