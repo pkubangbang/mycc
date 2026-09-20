@@ -64,10 +64,38 @@ vi.mock('../../engine/rag-provider.js', () => ({
 }));
 
 // --- LanceDB mock ---------------------------------------------------------
-// A single shared in-memory table state so add()/delete() reflect the real
-// sequence (delete('true') clears, then adds accumulate).
+// A single shared in-memory table state so add()/delete()/update() reflect the
+// real sequence. The fake supports the SQL-shape the manager emits:
+//   query().where(PRED).toArray()      — scalar filter (conjunction of `col = v`
+//                                        and `col IN (...)` clauses)
+//   update({ where, values })          — flip matching rows' columns
+//   delete(PRED)                       — remove matching rows
+// It parses just enough SQL to be faithful for these predicates, so the
+// state-machine (PENDING → LIVE → SUBMERGED) is exercised end to end.
 interface FakeTableState { rows: Array<Record<string, unknown>>; addCalls: number; deleteCalls: number; }
 const tableState: FakeTableState = { rows: [], addCalls: 0, deleteCalls: 0 };
+
+function sqlVal(v: unknown): string {
+  return typeof v === 'string' ? v : String(v);
+}
+
+/** Evaluate a `col = v` / `col != v` / `col IN (a, b, ...)` predicate. */
+function rowMatches(row: Record<string, unknown>, predicate: string): boolean {
+  // Split on AND (predicates here never contain AND inside a value).
+  const clauses = predicate.split(/\s+AND\s+/i);
+  return clauses.every((clause) => {
+    let m = /\b(\w+)\s*!=\s*'?([^']*)'?/.exec(clause);
+    if (m) return sqlVal(row[m[1]]) !== m[2];
+    m = /\b(\w+)\s+IN\s*\(([^)]*)\)/i.exec(clause);
+    if (m) {
+      const vals = m[2].split(',').map((s) => s.trim().replace(/^'|'$/g, ''));
+      return vals.includes(sqlVal(row[m[1]]));
+    }
+    m = /\b(\w+)\s*=\s*'?([^']*)'?/.exec(clause);
+    if (m) return sqlVal(row[m[1]]) === m[2];
+    return true; // unrecognised clause — don't filter out (conservative)
+  });
+}
 
 vi.mock('@lancedb/lancedb', () => {
   const fakeTable = {
@@ -75,11 +103,32 @@ vi.mock('@lancedb/lancedb', () => {
       tableState.addCalls++;
       tableState.rows.push(...records);
     },
-    delete: async (_filter: string) => {
+    delete: async (filter: string) => {
       tableState.deleteCalls++;
-      tableState.rows = []; // 'true' clears everything
+      if (filter.trim() === 'true') {
+        tableState.rows = []; // 'true' clears everything
+      } else {
+        tableState.rows = tableState.rows.filter((r) => !rowMatches(r, filter));
+      }
+      return { numDeletedRows: 0, version: 1 };
     },
-    query: () => ({ toArray: async () => tableState.rows }),
+    update: async (opts: { where?: string; values: Record<string, unknown> }) => {
+      let updated = 0;
+      for (const row of tableState.rows) {
+        if (!opts.where || rowMatches(row, opts.where)) {
+          Object.assign(row, opts.values);
+          updated++;
+        }
+      }
+      return { rowsUpdated: updated, version: 1 };
+    },
+    query: () => ({
+      where: (predicate: string) => ({
+        toArray: async () => tableState.rows.filter((r) => rowMatches(r, predicate)),
+      }),
+      toArray: async () => tableState.rows,
+    }),
+    schema: async () => ({ fields: [{ name: 'state' }] }),
   };
   return {
     connect: async () => ({
@@ -89,6 +138,7 @@ vi.mock('@lancedb/lancedb', () => {
         tableState.rows = [...rows];
         return fakeTable;
       },
+      dropTable: async () => { tableState.rows = []; },
     }),
   };
 });
@@ -260,7 +310,7 @@ describe('WikiManager.rebuild()', () => {
       .toBe('2025-12-31T23:59:59.000Z');
   });
 
-  it('clears the table once, then inserts (single delete + batched adds)', async () => {
+  it('recreates the table then inserts (dropTable, not delete)', async () => {
     writeWal('2026-01-01.wal', [
       makeEntry(makeDoc('project', 'a', `${C} a`), { hash: '1111111111111111' }),
       makeEntry(makeDoc('project', 'b', `${C} b`), { hash: '2222222222222222' }),
@@ -269,7 +319,9 @@ describe('WikiManager.rebuild()', () => {
     const wiki = await newManager();
     await wiki.rebuild();
 
-    expect(tableState.deleteCalls).toBe(1);
+    // Rebuild recreates the table (drop + create with the state schema)
+    // rather than row-deleting, so no row-level delete() is issued.
+    expect(tableState.deleteCalls).toBe(0);
     // Two docs fit in a single insert batch → one add() call.
     expect(tableState.addCalls).toBe(1);
   });

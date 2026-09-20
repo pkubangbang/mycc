@@ -3,8 +3,8 @@
  *
  * Extracted from src/context/parent/wiki.ts. The wiki keeps a JSON-lines WAL
  * per day under the wiki logs dir (`<logs>/YYYY-MM-DD.wal`): every stored
- * document appends a line, a delete rewrites the entry with `deleted:true`,
- * and rebuild replays all files. That read/append/rewrite/merge filesystem
+ * document appends a line, a delete appends a `deleted:true` TOMBSTONE (last
+ * write wins), and rebuild replays all files. That read/append/merge filesystem
  * concern is what lives here — it is independent of LanceDB, so it is
  * separated from WikiManager.
  *
@@ -64,55 +64,23 @@ export function appendWALEntries(entries: WALEntry[]): void {
 }
 
 /**
- * Mark the WAL entry for `hash` as deleted (in the file for `date`).
- *
- * Reads the file, flips the matching entry's `deleted` flag, and writes the
- * file back as JSON lines. Best-effort: a missing file or a hash absent from
- * that date's WAL is reported through `warn` (when supplied) and returns —
- * neither is fatal, since the caller's LanceDB delete still proceeds.
- */
-export function markWALEntryDeleted(
-  hash: string,
-  date: string,
-  warn?: (message: string) => void,
-): void {
-  ensureDirs();
-  const walPath = walPathFor(date);
-
-  if (!fs.existsSync(walPath)) {
-    // WAL file no longer exists - this is OK, just report it.
-    warn?.(`WAL file not found for date ${date}`);
-    return;
-  }
-
-  const entries = parseWALFile(fs.readFileSync(walPath, 'utf-8'));
-
-  let found = false;
-  for (const entry of entries) {
-    if (entry.hash === hash) {
-      entry.deleted = true;
-      found = true;
-      break;
-    }
-  }
-
-  if (!found) {
-    warn?.(`Entry ${hash} not found in WAL ${date}`);
-    return;
-  }
-
-  const lines = entries.map((e) => JSON.stringify(e)).join('\n');
-  fs.writeFileSync(walPath, `${lines}\n`, 'utf-8');
-}
-
-/**
  * Replay every WAL file into a single latest-wins entry list, applying the
  * rebuild filters.
  *
  * Files are read in ascending name order and later entries within a file
  * supersede earlier ones (and later files supersede earlier files), so the
- * final map matches a sequential last-write-wins replay. Entries that are
- * deleted, unapproved, or belong to a DIFFERENT RAG namespace are dropped.
+ * final map matches a sequential last-write-wins replay.
+ *
+ * IMPORTANT: the fold runs over ALL entries FIRST, then the filters are
+ * applied to the surviving (latest) entry of each hash. Filtering during the
+ * fold would be wrong: a delete appends a `deleted:true` TOMBSTONE rather than
+ * rewriting the live line, so an early `if (deleted) continue` would let the
+ * earlier live entry win and never let the tombstone supersede it (the deleted
+ * document would be resurrected on rebuild). Folding first makes the tombstone
+ * the latest entry for its hash, and the `deleted` filter then drops it.
+ *
+ * A hash whose LATEST entry is deleted / unapproved / foreign-namespace is
+ * excluded; a hash whose latest entry is live and in-namespace is kept.
  *
  * `namespace` is passed in (rather than imported from the rag provider) so
  * this module stays free of that dependency; the caller supplies its current
@@ -131,16 +99,23 @@ export function mergeWALEntries(namespace: string): WALEntry[] {
     .filter((f) => f.endsWith('.wal'))
     .sort();
 
+  // 1. Fold — latest wins, over ALL entries (tombstones included).
   const merged = new Map<string, WALEntry>();
   for (const walFile of walFiles) {
     const content = fs.readFileSync(path.join(walDir, walFile), 'utf-8');
     for (const entry of parseWALFile(content)) {
-      if (entry.deleted) continue;
-      if (!entry.approved) continue;
-      if (entry.namespace && entry.namespace !== namespace) continue;
-      merged.set(entry.hash, entry); // latest wins
+      merged.set(entry.hash, entry);
     }
   }
 
-  return [...merged.values()];
+  // 2. Filter the surviving latest entry per hash.
+  const result: WALEntry[] = [];
+  for (const entry of merged.values()) {
+    if (entry.deleted) continue;
+    if (!entry.approved) continue;
+    if (entry.namespace && entry.namespace !== namespace) continue;
+    result.push(entry);
+  }
+
+  return result;
 }

@@ -136,8 +136,6 @@ function makeMockWiki(opts: {
     getByDomain: vi.fn(async () => []),
     delete: vi.fn(async () => true),
     getWAL: vi.fn(async () => []),
-    parseWAL: vi.fn(() => []),
-    formatWAL: vi.fn(() => ''),
     appendWAL: vi.fn(async () => {}),
     rebuild: vi.fn(async () => ({ success: true, documentsProcessed: 0, errors: [] })),
     listDomains: vi.fn(async () => Array.from(domains.values())),

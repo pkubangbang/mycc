@@ -92,8 +92,6 @@ describe('Hint Round JSON Output', () => {
       get: vi.fn(),
       delete: vi.fn(),
       getWAL: vi.fn(),
-      parseWAL: vi.fn(),
-      formatWAL: vi.fn(),
       appendWAL: vi.fn(),
       rebuild: vi.fn(),
       getDomain: vi.fn(),

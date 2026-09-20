@@ -1041,8 +1041,6 @@ export interface WikiModule {
   batchPut(entries: Array<{ document: WikiDocument; embedding: number[] }>): Promise<PutResult[]>;
   delete(hash: string): Promise<boolean>;
   getWAL(date?: string): Promise<WALEntry[]>;
-  parseWAL(asciiContent: string): WALEntry[];
-  formatWAL(entries: WALEntry[]): string;
   appendWAL(entry: WALEntry): Promise<void>;
   /**
    * Rebuild the vector store from all WAL files.
