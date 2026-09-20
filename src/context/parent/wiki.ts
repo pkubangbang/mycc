@@ -82,6 +82,28 @@ export class WikiManager implements WikiModule {
   private tableName = `wiki_${NAMESPACE}`;
   /** Serializes skill re-indexing across instances (see wiki-skill-index). */
   private reindexLock = new ReindexLock((msg) => this.core.brief('warn', 'wiki', msg));
+  /**
+   * Serialized index-refresh state (PR #18 round-6 R6-2). `createIndex` is
+   * async and returns BEFORE training finishes (indices.d.ts:671-676 —
+   * "If [waitTimeoutSeconds] not specified, the method will return
+   * immediately after starting the index creation"). indexSkills previously
+   * fired `void ensureVectorIndex(true)` fire-and-forget and released the
+   * reindex lock immediately, so two overlapping indexSkills(A)→(B) calls
+   * could race concurrent `createIndex(replace:true)` jobs, leaving a
+   * stale index trained over state A answering queries after state B's
+   * mutation (get()'s fallback catches only EXCEPTIONS, not a
+   * silently-stale-but-answering index).
+   *
+   * To close that window, the index refresh is now SERIALIZED in-instance:
+   * `indexBuildPromise` chains each refresh off the previous one (no two
+   * `createIndex` jobs overlap), and `indexBuildGeneration` is bumped per
+   * refresh so a superseded refresh (an older generation whose table state
+   * was overwritten by a newer one) can detect it is no longer the newest
+   * and skip its own install — only the newest generation's index becomes
+   * authoritative.
+   */
+  private indexBuildPromise: Promise<void> = Promise.resolve();
+  private indexBuildGeneration = 0;
   constructor(core: CoreModule) {
     this.core = core;
   }
@@ -304,25 +326,44 @@ export class WikiManager implements WikiModule {
         await this.batchPut(batchEntries);
       }
 
-      // Retrain the ANN vector index after a mutation that changed the row
-      // set (PR #18 round-4 P1 #2). initDb() builds the index fire-and-forget
-      // over whatever rows exist at startup — on a FRESH install that is
-      // just the `__schema__` row (countRows=1 → numPartitions=1), and the
-      // `hasVectorIndex && !replace` early-return in ensureVectorIndex then
-      // never retrains as the real skill corpus is inserted. LanceDB does
-      // NOT auto-incorporate new rows into an existing IVF index, so without
-      // this retrain the sublinear-search promise of the PR never
-      // materializes on a fresh install (new rows sit unindexed). Retraining
-      // here (replace:true) rebuilds the index over the now-populated table
-      // with a numPartitions sized to the real row count. Fire-and-forget is
-      // safe: get()'s manual-scan fallback keeps search correct while the
-      // retrain runs, and a failure is logged + swallowed (non-fatal). Only
-      // retrain when rows actually changed — a no-op re-index skips it.
-      if (toAdd.length > 0 || toDelete.length > 0) {
-        void this.ensureVectorIndex(true).catch((err) => {
-          const reason = err instanceof Error ? err.message : String(err);
-          this.core.verbose('wiki', `ensureVectorIndex retrain after indexSkills failed: ${reason}`);
-        });
+      // Retrain the ANN vector index after a FULL re-index that changed the
+      // row set (PR #18 round-4 P1 #2, round-6 R6-1/R6-2). Two changes in
+      // round-6:
+      //
+      // R6-1 — gated on `!skipOrphanSweep`: a PARTIAL re-index (skill_load)
+      //   that changes ONE skill used to fire a full O(N) IVF retrain on the
+      //   write path. That retrain is unnecessary for correctness: ordinary
+      //   `vectorSearch` (the path vectorSearchGet takes) searches indexed
+      //   AND un-indexed rows — the inverse is proven by the `fastSearch()`
+      //   docblock (query.d.ts:204-210: "Skip searching un-indexed data…
+      //   will miss any data that is not yet indexed"). So the new/changed
+      //   row from a partial re-index stays searchable while unindexed; the
+      //   next FULL re-index (startup / /skills build / skill_reindex IPC)
+      //   retrains and incorporates it. A full re-index still retrains so
+      //   the sublinear-search promise materializes once the real corpus is
+      //   loaded (initDb()'s fire-and-forget builds over just `__schema__`
+      //   on a fresh install, and LanceDB does NOT auto-incorporate new
+      //   rows into an existing IVF index).
+      //
+      // R6-2 — serialized + awaited before lock release: the retrain is
+      //   now chained off `indexBuildPromise` (no two createIndex jobs
+      //   overlap) and tagged with a generation counter; indexSkills AWAITs
+      //   the refresh before releasing the reindex lock, so a second
+      //   indexSkills cannot start until the first's index is installed. A
+      //   superseded refresh (an older generation whose table state was
+      //   overwritten by a newer one) detects it is stale and skips its own
+      //   install — only the newest generation's index becomes
+      //   authoritative. This closes the stale-but-answering-index window:
+      //   the lock now guards the full `delete → insert → install` lifetime,
+      //   not just its start. `await refreshIndex()` is intentional even
+      //   though it lengthens the lock hold — a slow index build is
+      //   preferable to a racing one (the lock is process-local; another
+      //   instance simply skips via reindexLock.acquire() and retries next
+      //   time). A failure is logged + swallowed (non-fatal): get()'s
+      //   manual-scan fallback keeps search correct, and the next full
+      //   re-index retries the retrain.
+      if (!skipOrphanSweep && (toAdd.length > 0 || toDelete.length > 0)) {
+        await this.refreshIndexSerialized();
       }
 
       // Write the cache so the next startup can skip if nothing changed.
@@ -505,6 +546,15 @@ export class WikiManager implements WikiModule {
       // Generate embedding
       const embedding = await getEmbedding(document.content, 'document');
 
+      // ONE timestamp for the record + WAL entry + WAL day-file (PR #18
+      // round-6 R6-3) — see batchPut() for the midnight-boundary rationale.
+      // Without this, createdAt (new Date()) and appendWAL's WAL day-file
+      // (another new Date()) could straddle midnight, leaving the WAL entry
+      // unmarked and letting rebuild() resurrect the deleted row.
+      const now = new Date();
+      const nowIso = now.toISOString();
+      const walDate = formatDate(now);
+
       // Create record
       const record: Record<string, unknown> = {
         hash,
@@ -513,20 +563,22 @@ export class WikiManager implements WikiModule {
         content: document.content,
         references: JSON.stringify(document.references || []),
         embedding,
-        createdAt: new Date().toISOString(),
+        createdAt: nowIso,
       };
 
       // Add to LanceDB
       await this.table.add([record]);
 
-      // Append to WAL
+      // Append to WAL — pass the SAME walDate used for createdAt so the WAL
+      // day-file provably matches the createdAt-derived day deleteByHashes
+      // will look up.
       await this.appendWAL({
-        timestamp: new Date().toISOString(),
+        timestamp: nowIso,
         hash,
         document,
         approved: true,
         namespace: NAMESPACE,
-      });
+      }, walDate);
 
       this.core.brief('info', 'wiki', `Stored document: ${document.title}`);
       return { success: true, hash };
@@ -748,6 +800,47 @@ export class WikiManager implements WikiModule {
   }
 
   /**
+   * Serialize an index refresh so overlapping indexSkills calls cannot race
+   * concurrent `createIndex(replace:true)` jobs (PR #18 round-6 R6-2).
+   *
+   * Each refresh is chained off the previous `indexBuildPromise` (so no two
+   * `createIndex` calls overlap) and tagged with a generation counter. A
+   * refresh that is about to install its index first checks whether a NEWER
+   * refresh has superseded it (a later indexSkills bumped the generation
+   * while this one was waiting in the chain); if so it skips the install —
+   * only the newest generation's index becomes authoritative, so a stale
+   * index trained over an older table state can never be the last one
+   * installed. The caller (indexSkills) awaits the returned promise before
+   * releasing the reindex lock, so a second indexSkills cannot start until
+   * the first's refresh is installed (the lock now guards the full
+   * `delete → insert → install` lifetime, not just its start).
+   *
+   * Failures are swallowed: a refresh that throws rejects the chain but does
+   * NOT poison subsequent refreshes (each `.then` step is self-contained and
+   * the generation check makes a failed older refresh a no-op for newer
+   * ones). get()'s manual-scan fallback keeps search correct regardless.
+   */
+  private refreshIndexSerialized(): Promise<void> {
+    const myGeneration = ++this.indexBuildGeneration;
+    // Chain off the previous refresh; do NOT let a rejected earlier promise
+    // block this one (the `.catch(() => {})` on the chain head swallows the
+    // prior failure so this generation still runs).
+    this.indexBuildPromise = this.indexBuildPromise
+      .catch(() => {})
+      .then(async () => {
+        // A newer refresh has superseded this one — let it install instead.
+        // (Skips a stale-index install without erroring the chain.)
+        if (myGeneration !== this.indexBuildGeneration) return;
+        await this.ensureVectorIndex(true);
+      })
+      .catch((err: unknown) => {
+        const reason = err instanceof Error ? err.message : String(err);
+        this.core.verbose('wiki', `ensureVectorIndex retrain after indexSkills failed: ${reason}`);
+      });
+    return this.indexBuildPromise;
+  }
+
+  /**
    * Ensure a vector ANN index exists on the `embedding` column, creating it
    * (idempotently) if absent. Called after table init so subsequent
    * `vectorSearch` calls are sublinear.
@@ -885,6 +978,21 @@ export class WikiManager implements WikiModule {
       }
       const domainSet = new Set(domains.map((d) => d.domain_name));
 
+      // ONE timestamp for the whole batch, reused for every record's
+      // createdAt + walEntry.timestamp AND the WAL day-file name (PR #18
+      // round-6 R6-3). The prior code read `new Date()` three times per
+      // record (createdAt, walEntry.timestamp) and once more for the WAL
+      // filename (formatDate(new Date()) below); at a midnight boundary the
+      // createdAt date (e.g. 23:59:59.999 → 09-20) could disagree with the
+      // WAL write date (00:00:00.001 → 09-21.wal). deleteByHashes later
+      // derives the WAL day-file from the record's createdAt and would look
+      // in the WRONG .wal file, leaving the entry unmarked → rebuild
+      // resurrects the stale record (the same bug class round-2's test
+      // guards). A single `now` makes the three clocks provably agree.
+      const now = new Date();
+      const nowIso = now.toISOString();
+      const walDate = formatDate(now);
+
       // Build records, collecting hashes for a single existence scan
       const hashes = new Set<string>();
       const validEntries: Array<{ document: WikiDocument; embedding: number[]; hash: string; record: Record<string, unknown>; walEntry: WALEntry }> = [];
@@ -912,10 +1020,10 @@ export class WikiManager implements WikiModule {
             content: document.content,
             references: JSON.stringify(document.references || []),
             embedding,
-            createdAt: new Date().toISOString(),
+            createdAt: nowIso,
           },
           walEntry: {
-            timestamp: new Date().toISOString(),
+            timestamp: nowIso,
             hash,
             document,
             approved: true,
@@ -940,12 +1048,13 @@ export class WikiManager implements WikiModule {
       if (toInsert.length > 0) {
         await this.table.add(toInsert.map((e) => e.record));
 
-        // Single batched WAL append
+        // Single batched WAL append — walDate is the SAME clock used for
+        // every record's createdAt above, so the WAL day-file provably
+        // matches the createdAt-derived day deleteByHashes will look up.
         const walLines = toInsert.map((e) => JSON.stringify(e.walEntry)).join('\n');
         ensureDirs();
         const walDir = getWikiLogsDir();
-        const today = formatDate(new Date());
-        const walPath = path.join(walDir, `${today}.wal`);
+        const walPath = path.join(walDir, `${walDate}.wal`);
         fs.appendFileSync(walPath, `${walLines}\n`, 'utf-8');
 
         this.core.brief('info', 'wiki', `Batch stored ${toInsert.length} documents`);
@@ -1282,12 +1391,24 @@ export class WikiManager implements WikiModule {
   }
 
   /**
-   * Append entry to today's WAL
+   * Append entry to today's WAL.
+   *
+   * `walDate` (optional, PR #18 round-6 R6-3) lets a caller that has ALREADY
+   * captured a single `new Date()` for its record's `createdAt` (e.g. put)
+   * pass the matching WAL day-file date, so the WAL is written to the SAME
+   * day-file deleteByHashes will later look up via `formatDate(new
+   * Date(createdAt))`. Without it, appendWAL re-reads `new Date()` — a
+   * second clock that can disagree with `createdAt` at a midnight boundary
+   * (createdAt 23:59:59.999 → 09-20; WAL write 00:00:00.001 → 09-21.wal),
+   * leaving the entry unmarked and letting rebuild() resurrect it. Callers
+   * that pass `walDate` must derive it from the SAME `now` used for
+   * `createdAt`. Callers without a captured timestamp (e.g. tests) omit it
+   * and get the legacy `formatDate(new Date())` behavior.
    */
-  async appendWAL(entry: WALEntry): Promise<void> {
+  async appendWAL(entry: WALEntry, walDate?: string): Promise<void> {
     ensureDirs();
     const walDir = getWikiLogsDir();
-    const today = formatDate(new Date());
+    const today = walDate ?? formatDate(new Date());
     const walPath = path.join(walDir, `${today}.wal`);
 
     // Append as JSON line
