@@ -136,8 +136,6 @@ function makeMockWiki(opts: {
     getByDomain: vi.fn(async () => []),
     delete: vi.fn(async () => true),
     getWAL: vi.fn(async () => []),
-    parseWAL: vi.fn(() => []),
-    formatWAL: vi.fn(() => ''),
     appendWAL: vi.fn(async () => {}),
     rebuild: vi.fn(async () => ({ success: true, documentsProcessed: 0, errors: [] })),
     listDomains: vi.fn(async () => Array.from(domains.values())),
@@ -256,6 +254,28 @@ describe('wiki export writes a v1.1 manifest', () => {
     expect(exported.manifest).toBeDefined();
     expect(exported.manifest.entry_count).toBe(1);
     // The manifest hash must match a fresh recomputation over the exported arrays.
+    expect(exported.manifest.content_sha256).toBe(computeManifestHash(exported.domains, exported.entries));
+  });
+
+  it('export strips the transient `id` so the manifest fingerprints content only (stable across a re-import)', async () => {
+    const domain = makeDomain('project');
+    const doc = makeDoc('project', 'A title', LONG_CONTENT);
+    // Seed a WAL entry that carries the transient per-row transaction id.
+    const entry = makeEntry(doc, { namespace: 'nomic-embed-text', id: 'aaaaaaaa-0000-0000-0000-000000000000' });
+    fs.writeFileSync(path.join(tempDir, 'logs', '2026-07-26.wal'), JSON.stringify(entry) + '\n', 'utf-8');
+    fs.writeFileSync(domainsFile(), JSON.stringify([domain], null, 2), 'utf-8');
+
+    const wiki = makeMockWiki({ existingDomains: [domain] });
+    const exportPath = path.join(tempDir, 'out.json');
+    await runCommand(['export', exportPath], wiki);
+
+    const exported = JSON.parse(fs.readFileSync(exportPath, 'utf-8'));
+    // The transient id must NOT leak into the export file.
+    expect(exported.entries[0].id).toBeUndefined();
+    // The content-bearing fields survive.
+    expect(exported.entries[0].hash).toBe(computeWikiHash(doc));
+    expect(exported.entries[0].document.content).toBe(LONG_CONTENT);
+    // The manifest stays verifiable against the (id-free) exported entries.
     expect(exported.manifest.content_sha256).toBe(computeManifestHash(exported.domains, exported.entries));
   });
 });

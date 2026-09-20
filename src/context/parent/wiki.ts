@@ -6,6 +6,7 @@
  */
 
 import * as lancedb from '@lancedb/lancedb';
+import * as crypto from 'crypto';
 import type {
   WikiModule,
   WikiDocument,
@@ -25,11 +26,7 @@ import { getWikiDbDir, ensureDirs } from '../../config.js';
 import {
   HASH_PATTERN,
   generateHash,
-  cosineSimilarity,
   sameDocument,
-  parseWAL,
-  formatWAL,
-  formatDate,
   loadDomains,
   saveDomains,
 } from './wiki-utils.js';
@@ -38,13 +35,96 @@ import {
   readWAL,
   appendWALEntry,
   appendWALEntries,
-  markWALEntryDeleted,
   mergeWALEntries,
 } from './wiki-wal.js';
 
 const DUPLICATE_THRESHOLD = 0.95;
 const MIN_CONTENT_LENGTH = 50;
 const MAX_CONTENT_LENGTH = 1000;
+
+/**
+ * Column name of the one-way lifecycle state carried by every row.
+ *
+ * Values (never compared in JS — always filtered in SQL, because LanceDB may
+ * hand `state` back as a BigInt after schema inference):
+ *  - {@link WIKI_STATE_PENDING} 0: written to the DB but NOT yet solidified by
+ *    the WAL (in-flight phase 1 of the 2-phase commit). Not readable.
+ *  - {@link WIKI_STATE_LIVE}    1: in the DB AND in the WAL. The ONLY readable
+ *    state — every read predicates on `state = 1`.
+ *  - {@link WIKI_STATE_SUBMERGED} 2: logically deleted (tombstoned in the WAL);
+ *    hidden from reads and swept by {@link WikiManager.gc}.
+ */
+const STATE_COLUMN = 'state';
+const WIKI_STATE_PENDING = 0;
+const WIKI_STATE_LIVE = 1;
+const WIKI_STATE_SUBMERGED = 2;
+
+/**
+ * `state = 0 → state = 1` MUST be keyed on something unique to the exact row
+ * this write inserted — NOT on `hash`. The hash is a content key shared by
+ * every row with the same `domain:title:content`, so a hash-keyed flip would
+ * let one operation solidify a *different* pending row that happens to share
+ * the hash (e.g. two concurrent puts of the same document, or two entries in
+ * one batch) — committing a row that never had its own WAL entry.
+ *
+ * The per-row transaction identity lives in the `rowId` column: a fresh UUID
+ * minted per inserted row, carried in the DB row AND mirrored into the WAL
+ * entry (`id`). It is the predicate for the PENDING → LIVE flip and nothing
+ * else. (The column name is written as the literal 'rowId' wherever used — no
+ * constant — so the SQL reads plainly.)
+ */
+
+/** Mint a fresh, process-unique row identity. */
+function newRowId(): string {
+  return crypto.randomUUID();
+}
+
+/**
+ * The sentinel row that seeds a fresh table's schema. LanceDB infers the
+ * column set (including the `state` column) from the first record, so every
+ * freshly created table carries `state` from birth. The row itself is never a
+ * document: reads exclude it via `hash != '__schema__'`.
+ */
+function schemaSentinelRow(): Record<string, unknown> {
+  return {
+    hash: '__schema__',
+    domain: '',
+    title: '',
+    content: '',
+    references: '[]',
+    embedding: new Array(EMBEDDING_DIM).fill(0),
+    createdAt: new Date().toISOString(),
+    [STATE_COLUMN]: WIKI_STATE_PENDING,
+    ['rowId']: '__schema__',
+  };
+}
+
+/**
+ * Thrown when an existing wiki table predates the `state` column. There is no
+ * migration path: the recovery is `/wiki rebuild`, which drops and recreates
+ * the table from the WAL. The error message tells the user exactly that.
+ *
+ * This is deliberately thrown (not swallowed) so it propagates out of every
+ * public method's catch and the user sees a loud, actionable error instead of
+ * a silent "no documents found".
+ */
+export class WikiSchemaError extends Error {
+  constructor() {
+    super('Wiki database schema is outdated (missing the "state" column). Run /wiki rebuild to recreate the database.');
+    this.name = 'WikiSchemaError';
+  }
+}
+
+/** Escape a value for use inside a single-quoted SQL string literal. */
+function escapeSqlLiteral(value: string): string {
+  return value.replace(/'/g, "''");
+}
+
+/**
+ * The predicate every read applies: only LIVE rows, excluding the schema
+ * sentinel. Centralised so no read path forgets the `state = 1` gate.
+ */
+const SEARCHABLE_PREDICATE = `${STATE_COLUMN} = ${WIKI_STATE_LIVE} AND hash != '__schema__'`;
 
 /**
  * Rebuild batching. `rebuild()` embeds documents in chunks of
@@ -80,7 +160,14 @@ export class WikiManager implements WikiModule {
   }
 
   /**
-   * Initialize the database connection
+   * Initialize the database connection.
+   *
+   * Opens the existing table (validating the `state` column, then sweeping
+   * submerged rows) or creates a fresh one seeded with the `state` schema.
+   *
+   * A table whose schema predates the `state` column is NOT migrated: we fail
+   * fast with {@link WikiSchemaError} so the user runs `/wiki rebuild` (which
+   * goes through {@link recreateTable}) to regenerate the DB from the WAL.
    */
   private async initDb(): Promise<void> {
     if (this.db && this.table) return;
@@ -90,24 +177,71 @@ export class WikiManager implements WikiModule {
 
     this.db = await lancedb.connect(dbPath);
 
-    // Check if table exists
     const tables = await this.db.tableNames();
     if (tables.includes(this.tableName)) {
       this.table = await this.db.openTable(this.tableName);
+      await this.assertStateSchema(this.table);
+      await this.gc();
     } else {
-      // Create table with initial empty schema
-      // LanceDB needs at least one record to create a table
-      const initialRecord: Record<string, unknown> = {
-        hash: '__schema__',
-        domain: '',
-        title: '',
-        content: '',
-        references: '[]',
-        embedding: new Array(EMBEDDING_DIM).fill(0),
-        createdAt: new Date().toISOString(),
-      };
-      this.table = await this.db.createTable(this.tableName, [initialRecord]);
+      this.table = await this.db.createTable(this.tableName, [schemaSentinelRow()]);
     }
+  }
+
+  /**
+   * Fail fast if the opened table lacks the `state` column. Loud by design —
+   * the thrown error carries the `/wiki rebuild` instruction and is rethrown
+   * (not swallowed) by every caller's catch.
+   */
+  private async assertStateSchema(table: lancedb.Table): Promise<void> {
+    const schema = await table.schema();
+    const hasState = schema.fields.some((f) => f.name === STATE_COLUMN);
+    if (!hasState) {
+      this.core.brief('error', 'wiki', 'Wiki DB schema is outdated — run /wiki rebuild to recreate it.');
+      throw new WikiSchemaError();
+    }
+  }
+
+  /**
+   * Sweep submerged rows (`state = 2`). Submerged rows are logically deleted
+   * documents awaiting physical collection; they accumulate between rebuilds,
+   * so we collect them once whenever an existing table is opened. Best-effort:
+   * a GC failure must never block the DB from being used.
+   */
+  private async gc(): Promise<void> {
+    if (!this.table) return;
+    try {
+      await this.table.delete(`${STATE_COLUMN} = ${WIKI_STATE_SUBMERGED}`);
+    } catch {
+      // GC is opportunistic — a failure here is not fatal.
+    }
+  }
+
+  /**
+   * Rethrow a {@link WikiSchemaError} so the stale-schema fail-fast is never
+   * swallowed by a method's catch (which would otherwise degrade it to a
+   * silent empty result). Any other error keeps its existing handling — the
+   * caller decides; this helper only guarantees the schema error escapes.
+   */
+  private rethrowSchema(err: unknown): Error {
+    if (err instanceof WikiSchemaError) throw err;
+    return err instanceof Error ? err : new Error(String(err));
+  }
+
+  /**
+   * Drop and recreate the table with the current schema. Used ONLY by
+   * {@link rebuild}: it deliberately bypasses {@link initDb} so a stale-schema
+   * table can be regenerated from the WAL instead of failing fast.
+   */
+  private async recreateTable(): Promise<void> {
+    ensureDirs();
+    const dbPath = getWikiDbDir();
+    this.db = await lancedb.connect(dbPath);
+
+    const tables = await this.db.tableNames();
+    if (tables.includes(this.tableName)) {
+      await this.db.dropTable(this.tableName);
+    }
+    this.table = await this.db.createTable(this.tableName, [schemaSentinelRow()]);
   }
 
   // ============================================================
@@ -131,34 +265,32 @@ export class WikiManager implements WikiModule {
   }
 
   /**
-   * Check if similar document exists
+   * Check if a similar document exists, using LanceDB's native cosine search.
+   * A single nearest-neighbour probe: a hit above the threshold is a duplicate.
    */
   private async checkDuplicate(embedding: number[], threshold = DUPLICATE_THRESHOLD): Promise<boolean> {
     await this.initDb();
     if (!this.table) return false;
 
-    try {
-      const records = await this.table.query().toArray();
-      for (const record of records) {
-        const r = record as Record<string, unknown>;
-        // Skip schema record
-        if (r.hash === '__schema__') continue;
+    const rows = await this.table
+      .vectorSearch(embedding)
+      .distanceType('cosine')
+      .where(SEARCHABLE_PREDICATE)
+      .limit(1)
+      .toArray();
 
-        const embeddingArr = Array.isArray(r.embedding) ? r.embedding : Array.from(r.embedding as Iterable<number>);
-        const similarity = cosineSimilarity(embedding, embeddingArr);
-        if (similarity > threshold) {
-          this.core.brief('warn', 'wiki', `Duplicate check hit: similarity=${similarity.toFixed(4)} > ${threshold}, colliding doc: domain=${r.domain}, title=${r.title}, hash=${r.hash}`);
-          return true;
-        }
-      }
-    } catch {
-      // Table might be empty
+    if (rows.length === 0) return false;
+    const similarity = 1 - Number((rows[0] as Record<string, unknown>)._distance);
+    if (similarity > threshold) {
+      const r = rows[0] as Record<string, unknown>;
+      this.core.brief('warn', 'wiki', `Duplicate check hit: similarity=${similarity.toFixed(4)} > ${threshold}, colliding doc: domain=${r.domain}, title=${r.title}, hash=${r.hash}`);
+      return true;
     }
     return false;
   }
 
   /**
-   * Fetch the stored record for a given hash, or null if absent.
+   * Fetch the stored LIVE record for a given hash, or null if absent.
    * Used by put() to decide whether an incoming document is an exact copy
    * (full document match: domain + title + content + references) of one
    * already in the store — only an exact copy is a true no-op eligible for
@@ -169,18 +301,28 @@ export class WikiManager implements WikiModule {
     await this.initDb();
     if (!this.table) return null;
 
-    try {
-      const records = await this.table.query().toArray();
-      for (const record of records) {
-        const r = record as Record<string, unknown>;
-        if (r.hash === hash) {
-          return r;
-        }
-      }
-    } catch {
-      // Table might be empty
-    }
-    return null;
+    const rows = await this.table
+      .query()
+      .where(`${STATE_COLUMN} = ${WIKI_STATE_LIVE} AND hash = '${escapeSqlLiteral(hash)}'`)
+      .toArray();
+    return rows.length > 0 ? (rows[0] as Record<string, unknown>) : null;
+  }
+
+  /**
+   * Map a raw LanceDB row to a {@link SearchResult}. `similarity` is passed in
+   * (native search derives it from `_distance`; non-search listings pass 1).
+   */
+  private rowToSearchResult(r: Record<string, unknown>, similarity: number): SearchResult {
+    return {
+      document: {
+        domain: r.domain as string,
+        title: r.title as string,
+        content: r.content as string,
+        references: JSON.parse((r.references as string) || '[]'),
+      },
+      similarity,
+      hash: r.hash as string,
+    };
   }
 
   /**
@@ -284,7 +426,14 @@ export class WikiManager implements WikiModule {
       // Generate embedding
       const embedding = await getEmbedding(document.content, 'document');
 
-      // Create record
+      const timestamp = new Date().toISOString();
+
+      // --- 2-phase commit ---------------------------------------------------
+      // Phase 1: write the row PENDING (state = 0) — durable in the DB but
+      // NOT readable, so a concurrent reader can never see a doc that has not
+      // been recorded in the WAL. The row carries its own `rowId` so phase 3
+      // flips THIS row and no other.
+      const rowId = newRowId();
       const record: Record<string, unknown> = {
         hash,
         domain: document.domain,
@@ -292,24 +441,38 @@ export class WikiManager implements WikiModule {
         content: document.content,
         references: JSON.stringify(document.references || []),
         embedding,
-        createdAt: new Date().toISOString(),
+        createdAt: timestamp,
+        [STATE_COLUMN]: WIKI_STATE_PENDING,
+        ['rowId']: rowId,
       };
-
-      // Add to LanceDB
       await this.table.add([record]);
 
-      // Append to WAL
+      // Phase 2: append the WAL entry — the durable source of truth a rebuild
+      // replays. If this throws, the PENDING row is left behind (invisible to
+      // reads) and will be reconciled by the next rebuild.
       await this.appendWAL({
-        timestamp: new Date().toISOString(),
+        timestamp,
         hash,
         document,
         approved: true,
         namespace: NAMESPACE,
+        id: rowId,
+      });
+
+      // Phase 3: solidify — flip PENDING → LIVE. Keyed on `rowId` (unique to
+      // the row just inserted), NOT on `hash`: a hash is shared by every row
+      // with the same content, so a hash-keyed flip could commit a *different*
+      // concurrent/batched pending row that never had this WAL entry. Only now
+      // is the row readable.
+      await this.table.update({
+        where: `rowId = '${escapeSqlLiteral(rowId)}' AND ${STATE_COLUMN} = ${WIKI_STATE_PENDING}`,
+        values: { [STATE_COLUMN]: WIKI_STATE_LIVE },
       });
 
       this.core.brief('info', 'wiki', `Stored document: ${document.title}`);
       return { success: true, hash };
     } catch (err) {
+      if (err instanceof WikiSchemaError) throw err;
       const error = err instanceof Error ? err.message : String(err);
       this.core.brief('error', 'wiki', `Put failed: ${error}`);
       return { success: false, hash, error };
@@ -317,7 +480,8 @@ export class WikiManager implements WikiModule {
   }
 
   /**
-   * Search for documents by similarity
+   * Search for documents by similarity, using LanceDB's native cosine vector
+   * search (nearest neighbours by `_distance`), restricted to LIVE rows.
    */
   async get(query: string, options?: GetOptions): Promise<SearchResult[]> {
     await this.initDb();
@@ -330,87 +494,53 @@ export class WikiManager implements WikiModule {
       // Generate embedding for query
       const queryEmbedding = await getEmbedding(query, 'query');
 
-      // Get all records and filter manually (vector search requires embedding column)
-      const records = await this.table.query().toArray();
+      // Native cosine search. `_distance` = cosine distance = 1 - similarity.
+      // Filter by state and (optionally) domain BEFORE the search.
+      const predicate = options?.domain
+        ? `${SEARCHABLE_PREDICATE} AND domain = '${escapeSqlLiteral(options.domain)}'`
+        : SEARCHABLE_PREDICATE;
+
+      const rows = await this.table
+        .vectorSearch(queryEmbedding)
+        .distanceType('cosine')
+        .where(predicate)
+        .limit(topK)
+        .toArray();
+
       const results: SearchResult[] = [];
-
-      for (const record of records) {
-        const r = record as Record<string, unknown>;
-
-        // Skip schema record
-        if (r.hash === '__schema__') continue;
-
-        // Apply domain filter if specified
-        if (options?.domain && r.domain !== options.domain) {
-          continue;
-        }
-
-        const embedding = Array.isArray(r.embedding) ? r.embedding as number[] : Array.from(r.embedding as Iterable<number>);
-        const similarity = cosineSimilarity(queryEmbedding, embedding);
-
+      for (const row of rows) {
+        const r = row as Record<string, unknown>;
+        const similarity = 1 - Number(r._distance);
         if (similarity >= threshold) {
-          results.push({
-            document: {
-              domain: r.domain as string,
-              title: r.title as string,
-              content: r.content as string,
-              references: JSON.parse(r.references as string || '[]'),
-            },
-            similarity,
-            hash: r.hash as string,
-          });
+          results.push(this.rowToSearchResult(r, similarity));
         }
       }
 
-      // Sort by similarity and take top-k
-      results.sort((a, b) => b.similarity - a.similarity);
-      return results.slice(0, topK);
+      // Native search already returns nearest-first; keep that order.
+      return results;
     } catch (err) {
-      const error = err instanceof Error ? err.message : String(err);
-      this.core.brief('error', 'wiki', `Get failed: ${error}`);
-      return [];
+      throw this.rethrowSchema(err);
     }
   }
 
   /**
-   * Retrieve all documents in a domain in a single table scan (no embedding).
-   * Used for batch re-indexing where a full domain listing is needed without
-   * the per-query embedding cost of get().
+   * Retrieve all LIVE documents in a domain via a scalar filter (no
+   * embedding). Used for batch re-indexing where a full domain listing is
+   * needed without the per-query embedding cost of get().
    */
   async getByDomain(domain: string): Promise<SearchResult[]> {
     await this.initDb();
     if (!this.table) return [];
 
     try {
-      const records = await this.table.query().toArray();
-      const results: SearchResult[] = [];
+      const rows = await this.table
+        .query()
+        .where(`${STATE_COLUMN} = ${WIKI_STATE_LIVE} AND domain = '${escapeSqlLiteral(domain)}'`)
+        .toArray();
 
-      for (const record of records) {
-        const r = record as Record<string, unknown>;
-
-        // Skip schema record
-        if (r.hash === '__schema__') continue;
-
-        // Domain filter
-        if (r.domain !== domain) continue;
-
-        results.push({
-          document: {
-            domain: r.domain as string,
-            title: r.title as string,
-            content: r.content as string,
-            references: JSON.parse(r.references as string || '[]'),
-          },
-          similarity: 1, // Not a similarity search; placeholder
-          hash: r.hash as string,
-        });
-      }
-
-      return results;
+      return rows.map((row) => this.rowToSearchResult(row as Record<string, unknown>, 1));
     } catch (err) {
-      const error = err instanceof Error ? err.message : String(err);
-      this.core.brief('error', 'wiki', `getByDomain failed: ${error}`);
-      return [];
+      throw this.rethrowSchema(err);
     }
   }
 
@@ -445,7 +575,7 @@ export class WikiManager implements WikiModule {
 
       // Build records, collecting hashes for a single existence scan
       const hashes = new Set<string>();
-      const validEntries: Array<{ document: WikiDocument; embedding: number[]; hash: string; record: Record<string, unknown>; walEntry: WALEntry }> = [];
+      const validEntries: Array<{ document: WikiDocument; embedding: number[]; hash: string; rowId: string; record: Record<string, unknown>; walEntry: WALEntry }> = [];
 
       for (const { document, embedding } of entries) {
         const hash = generateHash(document);
@@ -463,6 +593,7 @@ export class WikiManager implements WikiModule {
           document,
           embedding,
           hash,
+          rowId: newRowId(),
           record: {
             hash,
             domain: document.domain,
@@ -471,6 +602,8 @@ export class WikiManager implements WikiModule {
             references: JSON.stringify(document.references || []),
             embedding,
             createdAt: new Date().toISOString(),
+            [STATE_COLUMN]: WIKI_STATE_PENDING,
+            ['rowId']: '', // filled in below (needs the rowId)
           },
           walEntry: {
             timestamp: new Date().toISOString(),
@@ -478,17 +611,23 @@ export class WikiManager implements WikiModule {
             document,
             approved: true,
             namespace: NAMESPACE,
+            id: '',
           },
         });
       }
 
-      // Single table scan to find which hashes already exist (skip them)
-      const records = await this.table.query().toArray();
+      // Single filtered scan to find which hashes are already LIVE (skip them).
+      // Only LIVE rows count as "present" — a PENDING leftover must be treated
+      // as absent so it gets (re-)written and solidified.
+      const hashList = [...hashes].map((h) => `'${escapeSqlLiteral(h)}'`).join(', ');
       const existingHashes = new Set<string>();
-      for (const record of records) {
-        const r = record as Record<string, unknown>;
-        if (hashes.has(r.hash as string)) {
-          existingHashes.add(r.hash as string);
+      if (hashes.size > 0) {
+        const records = await this.table
+          .query()
+          .where(`${STATE_COLUMN} = ${WIKI_STATE_LIVE} AND hash IN (${hashList})`)
+          .toArray();
+        for (const record of records) {
+          existingHashes.add((record as Record<string, unknown>).hash as string);
         }
       }
 
@@ -496,10 +635,27 @@ export class WikiManager implements WikiModule {
 
       // Single batch insert
       if (toInsert.length > 0) {
+        // Phase 1: write PENDING rows. Each row carries its own `rowId`, now
+        // that it is minted (the record + WAL placeholders set above are
+        // filled here, so the DB row and its WAL entry share the same uuid).
+        for (const e of toInsert) {
+          e.record['rowId'] = e.rowId;
+          e.walEntry.id = e.rowId;
+        }
         await this.table.add(toInsert.map((e) => e.record));
 
-        // Single batched WAL append
+        // Phase 2: single batched WAL append.
         appendWALEntries(toInsert.map((e) => e.walEntry));
+
+        // Phase 3: solidify all inserted rows in one update, keyed on the
+        // per-row ids — NOT on `hash`, so two entries that share a hash still
+        // each solidify exactly the row this batch inserted (never a leftover
+        // pending row from another operation).
+        const insertedIds = toInsert.map((e) => `'${escapeSqlLiteral(e.rowId)}'`).join(', ');
+        await this.table.update({
+          where: `rowId IN (${insertedIds}) AND ${STATE_COLUMN} = ${WIKI_STATE_PENDING}`,
+          values: { [STATE_COLUMN]: WIKI_STATE_LIVE },
+        });
 
         this.core.brief('info', 'wiki', `Batch stored ${toInsert.length} documents`);
       }
@@ -513,6 +669,7 @@ export class WikiManager implements WikiModule {
           : { success: true, hash: e.hash },
       );
     } catch (err) {
+      if (err instanceof WikiSchemaError) throw err;
       const error = err instanceof Error ? err.message : String(err);
       this.core.brief('error', 'wiki', `batchPut failed: ${error}`);
       return entries.map((e) => ({ success: false, hash: generateHash(e.document), error }));
@@ -536,47 +693,52 @@ export class WikiManager implements WikiModule {
     }
 
     try {
-      // Find the document and its createdAt date
-      const records = await this.table.query().toArray();
-      let foundRecord: Record<string, unknown> | null = null;
-
-      for (const record of records) {
-        const r = record as Record<string, unknown>;
-        if (r.hash === hash) {
-          foundRecord = r;
-          break;
-        }
-      }
-
-      if (!foundRecord) {
+      // Look up the LIVE row for this hash.
+      const existing = await this.findRecordByHash(hash);
+      if (!existing) {
         this.core.brief('warn', 'wiki', `Document not found: ${hash}`);
         return false;
       }
 
-      // Get the date from createdAt to find the WAL file
-      const createdAt = foundRecord.createdAt as string;
-      const walDate = formatDate(new Date(createdAt));
+      // Reconstruct the document from the stored row so the WAL tombstone
+      // carries the full entry (a rebuild folds tombstones by hash, and the
+      // exported WAL stays self-describing).
+      const document: WikiDocument = {
+        domain: existing.domain as string,
+        title: existing.title as string,
+        content: existing.content as string,
+        references: JSON.parse((existing.references as string) || '[]'),
+      };
+      const timestamp = new Date().toISOString();
 
-      // Mark as deleted in WAL first (before LanceDB deletion for consistency)
-      await this.markWALDeleted(hash, walDate);
+      // --- Remove = tombstone (WAL) + submerge (DB) -------------------------
+      // Phase 1: append a deleted:true tombstone. Because the fold is
+      // last-write-wins, this supersedes the live entry on any rebuild.
+      appendWALEntry({
+        timestamp,
+        hash,
+        document,
+        approved: true,
+        deleted: true,
+        namespace: NAMESPACE,
+      });
 
-      // Delete from LanceDB
-      await this.table.delete(`hash = '${hash}'`);
+      // Phase 2: submerge — flip the row to state 2. It becomes invisible to
+      // reads and is swept by the next GC/rebuild (never physically deleted
+      // here, keeping the DB write-once-read-many).
+      await this.table.update({
+        where: `hash = '${escapeSqlLiteral(hash)}'`,
+        values: { [STATE_COLUMN]: WIKI_STATE_SUBMERGED },
+      });
 
       this.core.brief('info', 'wiki', `Deleted document: ${hash}`);
       return true;
     } catch (err) {
+      if (err instanceof WikiSchemaError) throw err;
       const error = err instanceof Error ? err.message : String(err);
       this.core.brief('error', 'wiki', `Delete failed: ${error}`);
       return false;
     }
-  }
-
-  /**
-   * Mark a WAL entry as deleted (delegates to wiki-wal).
-   */
-  private async markWALDeleted(hash: string, date: string): Promise<void> {
-    markWALEntryDeleted(hash, date, (msg) => this.core.brief('warn', 'wiki', msg));
   }
 
   /**
@@ -585,22 +747,6 @@ export class WikiManager implements WikiModule {
    */
   async getWAL(date?: string): Promise<WALEntry[]> {
     return readWAL(date);
-  }
-
-  /**
-   * Parse ASCII WAL format to JSON entries (WikiModule contract — delegates
-   * to the pure helper in wiki-utils).
-   */
-  parseWAL(asciiContent: string): WALEntry[] {
-    return parseWAL(asciiContent);
-  }
-
-  /**
-   * Format WAL entries to ASCII format (WikiModule contract — delegates to
-   * the pure helper in wiki-utils).
-   */
-  formatWAL(entries: WALEntry[]): string {
-    return formatWAL(entries);
   }
 
   /**
@@ -641,6 +787,8 @@ export class WikiManager implements WikiModule {
       references: JSON.stringify(document.references || []),
       embedding,
       createdAt,
+      [STATE_COLUMN]: WIKI_STATE_LIVE,
+      ['rowId']: newRowId(),
     }));
 
     await this.table.add(records);
@@ -671,13 +819,14 @@ export class WikiManager implements WikiModule {
     this.core.brief('info', 'wiki', 'Starting rebuild...');
 
     try {
-      await this.initDb();
+      // Rebuild recreates the table from scratch (dropping a stale-schema table
+      // in the process) — it deliberately does NOT go through initDb(), whose
+      // fail-fast would reject exactly the outdated schema a rebuild exists to
+      // fix. Every replayed row is written LIVE (state = 1) directly.
+      await this.recreateTable();
       if (!this.table) {
         return { success: false, documentsProcessed: 0, errors: ['Database not initialized'] };
       }
-
-      // Clear existing data
-      await this.table.delete('true');
 
       // 1. Merge all WAL entries into one latest-wins map, applying filters
       //    (deleted / unapproved / foreign-namespace). Delegates to wiki-wal.

@@ -21,6 +21,7 @@ import * as crypto from 'crypto';
 import chalk from 'chalk';
 import { getWikiLogsDir, getWikiDomainsFile, ensureDirs, isPlainOutput } from '../config.js';
 import { openEditor } from '../utils/open-editor.js';
+import { formatWAL, parseWAL } from '../context/parent/wiki-utils.js';
 
 function formatDate(date: Date): string {
   return date.toISOString().split('T')[0];
@@ -68,7 +69,7 @@ async function handleShow(wiki: WikiModule, date: string): Promise<void> {
   }
 
   console.log(chalk.cyan(`\n=== WAL for ${date} ===\n`));
-  console.log(wiki.formatWAL(entries));
+  console.log(formatWAL(entries));
 }
 
 async function handleEdit(wiki: WikiModule, date: string): Promise<void> {
@@ -83,7 +84,7 @@ async function handleEdit(wiki: WikiModule, date: string): Promise<void> {
 
   // Get current entries
   const entries = await wiki.getWAL(date);
-  const asciiContent = wiki.formatWAL(entries);
+  const asciiContent = formatWAL(entries);
 
   // Write to temp file
   const tempFile = path.join(os.tmpdir(), `wiki-${date}-${Date.now()}.txt`);
@@ -99,7 +100,7 @@ async function handleEdit(wiki: WikiModule, date: string): Promise<void> {
     const editedContent = fs.readFileSync(tempFile, 'utf-8');
 
     // Parse and validate
-    const newEntries = wiki.parseWAL(editedContent);
+    const newEntries = parseWAL(editedContent);
 
     // Write back to WAL file as JSON lines
     const jsonLines = newEntries.map((e: WALEntry) => JSON.stringify(e)).join('\n');
@@ -389,6 +390,31 @@ export function verifyEntryHash(entry: WALEntry): boolean {
   return computeWikiHash(entry.document) === entry.hash;
 }
 
+/**
+ * Project a WAL entry onto its exportable form: the content-bearing fields
+ * only, dropping the transient per-row transaction `id`.
+ *
+ * `id` is a DB-row ↔ WAL correlation token for the 2FC PENDING → LIVE flip,
+ * not durable document content. import re-mints a fresh id via put() and
+ * ignores the incoming one, so exporting it would only add dead bytes and
+ * destabilise the manifest — computeManifestHash covers {domains, entries},
+ * and a transient uuid would make an export→import→export round-trip hash
+ * differently for identical content. Whitelisting the fields (rather than
+ * spreading and deleting) also guarantees any future transient field is
+ * excluded by default.
+ */
+function toExportEntry(entry: WALEntry): WALEntry {
+  return {
+    timestamp: entry.timestamp,
+    hash: entry.hash,
+    document: entry.document,
+    approved: entry.approved,
+    ...(entry.persistent ? { persistent: true } : {}),
+    ...(entry.deleted ? { deleted: true } : {}),
+    ...(entry.namespace ? { namespace: entry.namespace } : {}),
+  };
+}
+
 function parseExportArgs(rawArgs: string[]): {
   domain: string | null;
   file: string;
@@ -441,9 +467,15 @@ async function handleExport(wiki: WikiModule, rawArgs: string[]): Promise<void> 
   const { domain, file: exportFileArg } = parsed;
   const exportFile = exportFileArg || buildDefaultExportFilename(domain);
 
-  // Read all WAL files
+  // Read all WAL files, FOLDING by hash (later entries win) so the export
+  // reflects the current state rather than the append history. This matters
+  // because a delete now appends a `deleted: true` TOMBSTONE rather than
+  // rewriting the original line: without the fold, a later tombstone would
+  // not supersede the earlier live entry and the deleted doc would be
+  // re-exported (and revived on import). After folding, deleted entries are
+  // dropped and the optional domain filter is applied.
   const walDir = getWikiLogsDir();
-  const allEntries: WALEntry[] = [];
+  const folded = new Map<string, WALEntry>();
 
   if (fs.existsSync(walDir)) {
     const walFiles = fs.readdirSync(walDir)
@@ -458,16 +490,20 @@ async function handleExport(wiki: WikiModule, rawArgs: string[]): Promise<void> 
         if (!line.trim()) continue;
         try {
           const entry = JSON.parse(line) as WALEntry;
-          // Skip deleted entries — they should not be exported (would revive on import)
-          if (entry.deleted) continue;
-          if (!domain || entry.document.domain === domain) {
-            allEntries.push(entry);
-          }
+          folded.set(entry.hash, entry); // latest wins
         } catch {
           // skip malformed lines
         }
       }
     }
+  }
+
+  const allEntries: WALEntry[] = [];
+  for (const entry of folded.values()) {
+    // Skip deleted entries (tombstoned) — they should not be exported (would revive on import)
+    if (entry.deleted) continue;
+    if (domain && entry.document.domain !== domain) continue;
+    allEntries.push(toExportEntry(entry));
   }
 
   // Gather domains relevant to the export
