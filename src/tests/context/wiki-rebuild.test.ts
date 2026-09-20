@@ -37,6 +37,11 @@ vi.mock('../../config.js', () => ({
   getWikiDbDir: () => path.join(tempDir, 'db'),
   getWikiDomainsFile: () => domainsFile(),
   getWikiReindexLockFile: () => path.join(tempDir, 'reindex.lock'),
+  // WAL-as-truth paths — co-located with the wiki dir for the sequence
+  // allocator, flush lock, and flushed-through watermark.
+  getWikiFlushLockFile: () => path.join(tempDir, 'flush.lock'),
+  getWikiSequenceFile: () => path.join(tempDir, 'sequence.json'),
+  getWikiWatermarkFile: () => path.join(tempDir, 'watermark.json'),
   getHeartbeatFile: (sid: string) => path.join(tempDir, `hb-${sid}.json`),
   getMyccDir: () => tempDir,
   getSessionContext: () => 'test-session',
@@ -326,13 +331,14 @@ describe('WikiManager.rebuild()', () => {
 });
 
 /**
- * batchPut reports per-entry whether the document was freshly inserted or
- * was already present. This pins the PUBLIC contract (PutResult.alreadyExisted)
- * — batchPut previously returned identical objects for both branches, unlike
- * put(). Both branches are exercised in ONE batch call so the single
- * existence-scan skip semantics are covered too.
+ * batchPut reports per-entry whether the document was freshly WAL-appended
+ * or was already present in the WAL (the source of truth). This pins the
+ * PUBLIC contract (PutResult.alreadyExisted) under WAL-as-truth: the write
+ * path appends to the WAL ONLY and never touches LanceDB, so alreadyExisted
+ * is sourced from the WAL (via walHasLiveHash), not a LanceDB table scan.
+ * Both branches are exercised in ONE batch call.
  */
-describe('WikiManager.batchPut() — alreadyExisted reporting', () => {
+describe('WikiManager.batchPut() — alreadyExisted reporting (WAL-sourced)', () => {
   beforeEach(() => {
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mycc-wiki-batchput-'));
     fs.mkdirSync(logsDir(), { recursive: true });
@@ -354,7 +360,7 @@ describe('WikiManager.batchPut() — alreadyExisted reporting', () => {
     return new WikiManager(makeCore());
   }
 
-  it('flags a pre-existing hash alreadyExisted:true and a fresh one as a plain insert — in one batch', async () => {
+  it('flags a pre-existing (WAL-live) hash alreadyExisted:true and a fresh one as a plain append — in one batch', async () => {
     const existingDoc = makeDoc('project', 'existing', `${C} existing`);
     const freshDoc = makeDoc('project', 'fresh', `${C} fresh`);
     const existingHash = hashOf(existingDoc);
@@ -362,16 +368,20 @@ describe('WikiManager.batchPut() — alreadyExisted reporting', () => {
 
     const wiki = await newManager();
 
-    // Seed: insert existingDoc first so its hash is already in the table.
-    // initDb() short-circuits on the second call, so tableState.rows persists
-    // and the second batchPut's existence scan sees the seeded hash.
-    const seed = await wiki.batchPut([{ document: existingDoc, embedding: new Array(8).fill(0.1) }]);
-    expect(seed).toEqual([{ success: true, hash: existingHash }]);
-    expect(tableState.rows.map((r) => r.hash)).toContain(existingHash);
+    // Seed the source of truth: write a LIVE WAL entry for existingDoc so
+    // batchPut's WAL-sourced alreadyExisted check sees it. Under WAL-as-truth
+    // the write path never touches LanceDB, so we seed the WAL (not the
+    // table). Use a sequence so the entry is well-formed (legacy 0 works too,
+    // but be explicit). walHasLiveHash folds the whole WAL.
+    writeWal('2026-01-01.wal', [
+      makeEntry(existingDoc, { hash: existingHash, sequence: 1 }),
+    ]);
+    // The fold reads ALL *.wal files; today's file may also exist from a
+    // prior step — writeWal overwrites the dated file cleanly here.
 
     const addCallsBefore = tableState.addCalls;
 
-    // One batch: existingDoc (already present) + freshDoc (new).
+    // One batch: existingDoc (already live in WAL) + freshDoc (new).
     const results = await wiki.batchPut([
       { document: existingDoc, embedding: new Array(8).fill(0.1) },
       { document: freshDoc, embedding: new Array(8).fill(0.1) },
@@ -383,25 +393,32 @@ describe('WikiManager.batchPut() — alreadyExisted reporting', () => {
     expect(results[1]).toEqual({ success: true, hash: freshHash });
     expect(results[1].alreadyExisted).toBeUndefined();
 
-    // Only the fresh doc was inserted → one add() call for the batch.
-    expect(tableState.addCalls).toBe(addCallsBefore + 1);
-    // The pre-existing row was NOT duplicated.
-    expect(tableState.rows.filter((r) => r.hash === existingHash)).toHaveLength(1);
+    // WAL-only write path: batchPut must NOT touch LanceDB at all. No add().
+    expect(tableState.addCalls).toBe(addCallsBefore);
+    // The fresh entry was appended to today's WAL (a new dated file for today
+    // appears; the seeded 2026-01-01.wal remains). The existing entry was NOT
+    // re-appended (idempotent).
+    const files = fs.readdirSync(logsDir()).filter((f) => f.endsWith('.wal'));
+    expect(files).toContain('2026-01-01.wal');
   });
 
-  it('reports all-present batch as alreadyExisted:true with no table.add()', async () => {
+  it('reports all-present batch as alreadyExisted:true with no WAL append and no table.add()', async () => {
     const doc = makeDoc('project', 'only', `${C} only`);
     const hash = hashOf(doc);
 
     const wiki = await newManager();
-    await wiki.batchPut([{ document: doc, embedding: new Array(8).fill(0.1) }]);
+
+    // Seed a LIVE WAL entry so the hash is "already in the store".
+    writeWal('2026-01-01.wal', [makeEntry(doc, { hash, sequence: 1 })]);
+    const filesBefore = fs.readdirSync(logsDir()).filter((f) => f.endsWith('.wal'));
 
     const addCallsBefore = tableState.addCalls;
     const results = await wiki.batchPut([{ document: doc, embedding: new Array(8).fill(0.1) }]);
 
     expect(results).toEqual([{ success: true, hash, alreadyExisted: true }]);
-    // Nothing to insert → no table.add() call at all.
+    // Nothing to append and no LanceDB mutation on the write path.
     expect(tableState.addCalls).toBe(addCallsBefore);
-    expect(tableState.rows.filter((r) => r.hash === hash)).toHaveLength(1);
+    // No new WAL file was created (nothing was appended).
+    expect(fs.readdirSync(logsDir()).filter((f) => f.endsWith('.wal'))).toEqual(filesBefore);
   });
 });

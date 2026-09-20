@@ -969,7 +969,29 @@ export interface SearchResult {
 }
 
 /**
- * WAL entry for audit/replay
+ * WAL entry for audit/replay.
+ *
+ * The WAL is the single source of truth for the wiki store (LanceDB is a
+ * derived, repairable cache). Every put/delete appends ONE entry here;
+ * LanceDB is mutated only by a flush that replays WAL entries, never by the
+ * write path. A delete is represented as a tombstone entry (`deleted:true`)
+ * rather than an in-place rewrite, so a delete is a single append — there
+ * is no "DB deleted but WAL tombstone failed" window, and no DB/WAL
+ * disagreement window because the write path never touches LanceDB.
+ *
+ * `sequence` is a GLOBAL monotonic, crash-safe, non-reusable per-entry
+ * version number. It is the tiebreaker that makes WAL replay sound under
+ * out-of-order flushing: a tombstone with a higher sequence than an insert
+ * for the same hash always wins, even if a later day-file flushes before an
+ * earlier one (restart, parallel per-day flushing). Reuse would order a new
+ * entry BELOW the tombstone that deleted its predecessor and resurrect the
+ * row, so the allocator must never reset/reuse — gaps are harmless, reuse
+ * is the killer. Allocated under the flush lock so it can never be observed
+ * out of order.
+ *
+ * Legacy WAL entries (pre-sequence) deserialize with `sequence` undefined;
+ * replay treats them as sequence 0 (oldest), so a rebuild across mixed
+ * history stays monotone.
  */
 export interface WALEntry {
   timestamp: string;
@@ -977,9 +999,16 @@ export interface WALEntry {
   document: WikiDocument;
   approved: boolean;
   persistent?: boolean;
-  deleted?: boolean; // Marks entry as deleted from vector store
+  deleted?: boolean; // Marks entry as a delete tombstone (cache row removed on flush)
   /** RAG provider namespace (the configured model name, e.g. 'nomic-embed-text', 'embeddinggemma') for rebuild filtering */
   namespace?: string;
+  /**
+   * Global monotonic per-entry version. Higher wins on replay. Allocated
+   * under the flush lock from a crash-safe, non-reusable counter so a tombstone
+   * can never be ordered below a re-inserted predecessor. Undefined on
+   * legacy entries (treated as 0).
+   */
+  sequence?: number;
 }
 
 /**

@@ -204,3 +204,141 @@ export class ReindexLock {
     return false;
   }
 }
+
+// ============================================================
+// Flush lock (WAIT-capable) — for the WAL→LanceDB flush path
+// ============================================================
+
+/**
+ * A WAIT-capable cross-instance lock for the WAL→LanceDB flush path.
+ *
+ * Distinct from {@link ReindexLock}: the reindex lock SKIPs when a fresh
+ * holder is present (its caller, {@link WikiManager.indexSkills}, is happy
+ * to let another instance do the work). The flush path cannot skip — a
+ * skipped flush widens the stale-read window (the cross-instance hole from
+ * the peer debate's C1). So {@link FlushLock.acquire} busy-waits with a
+ * bounded budget until the lock is free (or the holder goes stale and is
+ * stolen), instead of returning false on contention.
+ *
+ * Same lockfile (`getWikiReindexLockFile`) is NOT reused: a separate
+ * `flush.lock` file avoids any cross-talk with skill re-indexing. The
+ * freshness/staleness recovery (stale holder → steal) mirrors
+ * {@link ReindexLock}.
+ *
+ * Crash safety: registers SIGINT/SIGTERM release handlers once per process.
+ * SIGKILL leaves a stale lock, recovered by the next acquire's freshness
+ * check (heartbeat + PID liveness via {@link isReindexLockStale}).
+ */
+export class FlushLock {
+  private handlersRegistered = false;
+
+  constructor(
+    private readonly onWarn?: (message: string) => void,
+    private readonly lockFile: string = '',
+  ) {}
+
+  private registerCrashHandlers(): void {
+    if (this.handlersRegistered) return;
+    this.handlersRegistered = true;
+    const release = () => {
+      try { fs.unlinkSync(this.lockFile); } catch { /* best-effort */ }
+    };
+    process.once('SIGINT', () => { release(); process.exit(0); });
+    process.once('SIGTERM', () => { release(); process.exit(0); });
+  }
+
+  private steal(lockPath: string, myInfo: object): void {
+    try {
+      fs.writeFileSync(lockPath, JSON.stringify(myInfo), 'utf-8');
+      this.registerCrashHandlers();
+    } catch {
+      this.onWarn?.('Flush lock steal write failed — will retry');
+    }
+  }
+
+  /**
+   * Try ONE acquire (no wait). Returns true if acquired, false if a fresh
+   * holder is present, and throws on a hard error. Used internally by
+   * {@link acquire} and exposed for callers that want a single attempt.
+   *
+   * Steals stale/corrupt/foreign-namespace holders exactly like
+   * {@link ReindexLock.acquire}.
+   */
+  tryAcquire(lockPath: string): boolean {
+    const myInfo = {
+      sessionId: getSessionContext(),
+      pid: process.pid,
+      startedAt: Date.now(),
+      namespace: NAMESPACE,
+    };
+
+    try {
+      const fd = fs.openSync(lockPath, 'wx');
+      fs.writeSync(fd, JSON.stringify(myInfo));
+      fs.closeSync(fd);
+      this.registerCrashHandlers();
+      return true;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'EEXIST') {
+        this.onWarn?.(`Flush lock acquire error: ${(err as Error).message}`);
+        return false;
+      }
+    }
+
+    let holder: { sessionId?: string; pid?: number; startedAt?: number; namespace?: string };
+    try {
+      holder = JSON.parse(fs.readFileSync(lockPath, 'utf-8'));
+    } catch {
+      this.steal(lockPath, myInfo);
+      return true;
+    }
+    if (holder.namespace !== NAMESPACE) {
+      this.steal(lockPath, myInfo);
+      return true;
+    }
+    if (isReindexLockStale(holder)) {
+      this.steal(lockPath, myInfo);
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * Acquire with a bounded wait. Polls {@link tryAcquire} every
+   * `pollIntervalMs` (default 100ms) until success or `timeoutMs` (default
+   * 3000ms) elapses. Returns true on acquire, false on timeout (caller
+   * falls back to answering possibly-stale from the cache — see the
+   * freshness contract in WikiManager.get).
+   *
+   * Busy-wait (not a condition variable) because the lock is cross-process
+   * (file-based), and a setInterval/sleep loop is the portable primitive.
+   * The budget bounds the worst-case latency a get() can add.
+   */
+  async acquire(
+    lockPath: string,
+    timeoutMs = 3000,
+    pollIntervalMs = 100,
+  ): Promise<boolean> {
+    const deadline = Date.now() + timeoutMs;
+    // First attempt is immediate; subsequent attempts poll.
+    if (this.tryAcquire(lockPath)) return true;
+    while (Date.now() < deadline) {
+      await new Promise<void>((resolve) => setTimeout(resolve, pollIntervalMs));
+      if (this.tryAcquire(lockPath)) return true;
+    }
+    return false;
+  }
+
+  /** Release the flush lock. Best-effort (safe when not held). */
+  release(lockPath: string): void {
+    try { fs.unlinkSync(lockPath); } catch { /* best-effort */ }
+  }
+}
+
+/**
+ * Best-effort release of a flush lock by path. Mirrors the standalone
+ * {@link releaseReindexLock} helper for symmetry.
+ */
+export function releaseFlushLock(lockFile: string): void {
+  try { fs.unlinkSync(lockFile); } catch { /* best-effort */ }
+}

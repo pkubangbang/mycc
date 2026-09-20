@@ -9,6 +9,7 @@
  */
 
 import * as fs from 'fs';
+import * as path from 'path';
 import * as crypto from 'crypto';
 import type { WikiDocument, WikiDomain, WALEntry } from '../../types.js';
 import {
@@ -140,6 +141,7 @@ export function parseASCIIBlock(block: string): WALEntry | null {
   let timestamp = '';
   let domain = '';
   let title = '';
+  let sequence: number | undefined;
   const contentLines: string[] = [];
   const references: string[] = [];
   let section = '';
@@ -153,6 +155,9 @@ export function parseASCIIBlock(block: string): WALEntry | null {
       approved = true;
     } else if (line.startsWith('[created_at]')) {
       timestamp = line.slice(12);
+    } else if (line.startsWith('[sequence]')) {
+      const n = parseInt(line.slice(10), 10);
+      if (Number.isFinite(n)) sequence = n;
     } else if (line.startsWith('[domain]')) {
       domain = line.slice(8);
     } else if (line.startsWith('[title]')) {
@@ -179,6 +184,7 @@ export function parseASCIIBlock(block: string): WALEntry | null {
     },
     approved,
     persistent,
+    ...(sequence !== undefined ? { sequence } : {}),
   };
 }
 
@@ -195,6 +201,7 @@ export function formatWAL(entries: WALEntry[]): string {
     if (entry.persistent) lines.push('!persistent');
     if (entry.approved) lines.push('!approved');
     lines.push(`[created_at]${entry.timestamp}`);
+    if (typeof entry.sequence === 'number') lines.push(`[sequence]${entry.sequence}`);
     lines.push(`[domain]${entry.document.domain}`);
     lines.push(`[title]${entry.document.title}`);
     lines.push('[content]');
@@ -308,4 +315,83 @@ export function releaseReindexLock(): void {
   } catch {
     // Already gone or never acquired — best-effort.
   }
+}
+
+// ============================================================
+// WAL-as-truth: source-of-truth scanners (WAL → derived state)
+// ============================================================
+
+/**
+ * Resolve a WALEntry's global sequence for ordering. Legacy entries
+ * (pre-sequence) deserialize with `sequence` undefined and are treated as 0
+ * (oldest), so a rebuild/flush across mixed history stays monotone.
+ */
+export function entrySequence(entry: WALEntry): number {
+  return typeof entry.sequence === 'number' ? entry.sequence : 0;
+}
+
+/**
+ * Fold ALL WAL day-files into a `hash → latest entry` map, applying the
+ * same filters as rebuild(): skip deleted/unapproved/foreign-namespace
+ * entries; for live entries, last-write-wins by global SEQUENCE (the
+ * tiebreaker that makes out-of-order flushing sound). Within an equal
+ * sequence (legacy entries, or a same-day rewrite), file order then line
+ * order decides — matching the original sequential last-write-wins replay.
+ *
+ * A tombstone (`deleted:true`) is NOT skipped here — it is recorded as the
+ * winning entry for its hash so a later fold (rebuild or flush) knows the
+ * row must be deleted from LanceDB. The caller decides whether to materialize
+ * a tombstone (delete the row) or skip it (omit from inserts).
+ *
+ * Used by:
+ *  - {@link WikiManager.rebuild} to reconstruct LanceDB from the WAL.
+ *  - {@link WikiManager.flushDay} to apply one day-file additively.
+ *  - the WAL-sourced alreadyExisted check (a hash whose latest entry is a
+ *    live, non-tombstoned insert is "already in the store").
+ *
+ * `walDir` is read once; missing dir → empty map. Malformed lines are
+ * skipped by {@link parseWALFile}.
+ *
+ * `namespace` is the current RAG provider's namespace (the caller passes it
+ * so this pure helper has no dependency on the rag-provider module, avoiding
+ * an import cycle). Entries whose `namespace` field differs are skipped.
+ */
+export function foldWAL(walDir: string, namespace: string): Map<string, WALEntry> {
+  const merged = new Map<string, WALEntry>();
+  if (!fs.existsSync(walDir)) return merged;
+
+  const files = fs.readdirSync(walDir).filter((f) => f.endsWith('.wal')).sort();
+  for (const file of files) {
+    const content = fs.readFileSync(path.join(walDir, file), 'utf-8');
+    for (const entry of parseWALFile(content)) {
+      // Filter foreign-namespace entries: a row belongs to a different
+      // embedding model's table and must not be folded into this one.
+      // Legacy entries (no namespace) are kept (re-embedded with the
+      // current model on first flush/rebuild).
+      if (entry.namespace && entry.namespace !== namespace) continue;
+      // Unapproved entries are not materialized.
+      if (!entry.approved) continue;
+
+      const prev = merged.get(entry.hash);
+      if (!prev || entrySequence(entry) >= entrySequence(prev)) {
+        merged.set(entry.hash, entry);
+      }
+    }
+  }
+  return merged;
+}
+
+/**
+ * Whether a hash has a LIVE (non-tombstoned) latest WAL entry — i.e. the
+ * source of truth currently holds this document. Used by the WAL-only write
+ * path to answer `alreadyExisted` from the WAL instead of the LanceDB cache
+ * (which may lag the WAL).
+ *
+ * True iff the hash's latest WAL entry exists, is approved, belongs to the
+ * current namespace, and is NOT a tombstone. A tombstone as the latest entry
+ * means the document was deleted (it does NOT exist), so this returns false.
+ */
+export function walHasLiveHash(walDir: string, hash: string, namespace: string): boolean {
+  const latest = foldWAL(walDir, namespace).get(hash);
+  return !!latest && !latest.deleted;
 }

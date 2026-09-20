@@ -763,6 +763,45 @@ export function getWikiDomainsFile(): string {
   return path.join(getWikiDir(), 'domains.json');
 }
 
+/**
+ * Path to the WAL→LanceDB flush lockfile. A SEPARATE lock from
+ * {@link getWikiReindexLockFile} (which guards skill re-indexing with
+ * skip-on-busy semantics): the flush path must WAIT, not skip, so a
+ * contended flush doesn't widen the stale-read window (the cross-instance
+ * hole). Co-located with the wiki DB it protects.
+ */
+export function getWikiFlushLockFile(): string {
+  return path.join(getWikiDir(), 'flush.lock');
+}
+
+/**
+ * Path to the persisted global sequence counter. The WAL-as-truth design
+ * assigns each WAL entry a global monotonic, crash-safe, NON-REUSABLE
+ * `sequence` (the tiebreaker that makes out-of-order flushes sound). The
+ * counter is a single integer on disk, read-increment-written under the
+ * flush lock so it can never be observed out of order or reset+reused.
+ * Gaps are harmless (a skipped number is just a never-allocated id); reuse
+ * is the killer (a reused number would order a new entry below the
+ * tombstone that deleted its predecessor and resurrect the row).
+ */
+export function getWikiSequenceFile(): string {
+  return path.join(getWikiDir(), 'sequence.json');
+}
+
+/**
+ * Path to the flushed-through watermark — a record of which WAL day-files
+ * have been fully applied to LanceDB. The read path gates freshness on this
+ * (get() answers possibly-stale when unflushed WAL entries exist past the
+ * watermark). Written AFTER a day-file's apply completes and fail-LOW on a
+ * torn read (watermark < reality → idempotent re-flush; never watermark >
+ * reality, which would make a reader skip a hash believed flushed).
+ *
+ * Format: `{ "days": { "<YYYY-MM-DD>": <max sequence flushed> } }`.
+ */
+export function getWikiWatermarkFile(): string {
+  return path.join(getWikiDir(), 'watermark.json');
+}
+
 // ============================================================================
 // Discovery Protocol (myccdp)
 // ============================================================================
