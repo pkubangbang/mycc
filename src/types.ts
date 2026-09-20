@@ -990,6 +990,14 @@ export interface WALEntry {
   deleted?: boolean; // Marks entry as deleted from vector store
   /** RAG provider namespace (the configured model name, e.g. 'nomic-embed-text', 'embeddinggemma') for rebuild filtering */
   namespace?: string;
+  /**
+   * Per-write transaction identity — a UUID minted per stored row and shared
+   * between the DB row (`rowId` column) and this WAL entry. It keys the
+   * PENDING → LIVE flip so an operation solidifies exactly the row it wrote,
+   * never a peer that merely shares the content `hash`. Optional: legacy
+   * entries (and rebuild-written rows) carry no id.
+   */
+  id?: string;
 }
 
 /**

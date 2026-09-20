@@ -6,6 +6,7 @@
  */
 
 import * as lancedb from '@lancedb/lancedb';
+import * as crypto from 'crypto';
 import type {
   WikiModule,
   WikiDocument,
@@ -59,6 +60,26 @@ const WIKI_STATE_LIVE = 1;
 const WIKI_STATE_SUBMERGED = 2;
 
 /**
+ * `state = 0 → state = 1` MUST be keyed on something unique to the exact row
+ * this write inserted — NOT on `hash`. The hash is a content key shared by
+ * every row with the same `domain:title:content`, so a hash-keyed flip would
+ * let one operation solidify a *different* pending row that happens to share
+ * the hash (e.g. two concurrent puts of the same document, or two entries in
+ * one batch) — committing a row that never had its own WAL entry.
+ *
+ * The per-row transaction identity lives in the `rowId` column: a fresh UUID
+ * minted per inserted row, carried in the DB row AND mirrored into the WAL
+ * entry (`id`). It is the predicate for the PENDING → LIVE flip and nothing
+ * else. (The column name is written as the literal 'rowId' wherever used — no
+ * constant — so the SQL reads plainly.)
+ */
+
+/** Mint a fresh, process-unique row identity. */
+function newRowId(): string {
+  return crypto.randomUUID();
+}
+
+/**
  * The sentinel row that seeds a fresh table's schema. LanceDB infers the
  * column set (including the `state` column) from the first record, so every
  * freshly created table carries `state` from birth. The row itself is never a
@@ -74,6 +95,7 @@ function schemaSentinelRow(): Record<string, unknown> {
     embedding: new Array(EMBEDDING_DIM).fill(0),
     createdAt: new Date().toISOString(),
     [STATE_COLUMN]: WIKI_STATE_PENDING,
+    ['rowId']: '__schema__',
   };
 }
 
@@ -409,7 +431,9 @@ export class WikiManager implements WikiModule {
       // --- 2-phase commit ---------------------------------------------------
       // Phase 1: write the row PENDING (state = 0) — durable in the DB but
       // NOT readable, so a concurrent reader can never see a doc that has not
-      // been recorded in the WAL.
+      // been recorded in the WAL. The row carries its own `rowId` so phase 3
+      // flips THIS row and no other.
+      const rowId = newRowId();
       const record: Record<string, unknown> = {
         hash,
         domain: document.domain,
@@ -419,6 +443,7 @@ export class WikiManager implements WikiModule {
         embedding,
         createdAt: timestamp,
         [STATE_COLUMN]: WIKI_STATE_PENDING,
+        ['rowId']: rowId,
       };
       await this.table.add([record]);
 
@@ -431,11 +456,16 @@ export class WikiManager implements WikiModule {
         document,
         approved: true,
         namespace: NAMESPACE,
+        id: rowId,
       });
 
-      // Phase 3: solidify — flip PENDING → LIVE. Only now is the row readable.
+      // Phase 3: solidify — flip PENDING → LIVE. Keyed on `rowId` (unique to
+      // the row just inserted), NOT on `hash`: a hash is shared by every row
+      // with the same content, so a hash-keyed flip could commit a *different*
+      // concurrent/batched pending row that never had this WAL entry. Only now
+      // is the row readable.
       await this.table.update({
-        where: `${STATE_COLUMN} = ${WIKI_STATE_PENDING} AND hash = '${escapeSqlLiteral(hash)}'`,
+        where: `rowId = '${escapeSqlLiteral(rowId)}' AND ${STATE_COLUMN} = ${WIKI_STATE_PENDING}`,
         values: { [STATE_COLUMN]: WIKI_STATE_LIVE },
       });
 
@@ -545,7 +575,7 @@ export class WikiManager implements WikiModule {
 
       // Build records, collecting hashes for a single existence scan
       const hashes = new Set<string>();
-      const validEntries: Array<{ document: WikiDocument; embedding: number[]; hash: string; record: Record<string, unknown>; walEntry: WALEntry }> = [];
+      const validEntries: Array<{ document: WikiDocument; embedding: number[]; hash: string; rowId: string; record: Record<string, unknown>; walEntry: WALEntry }> = [];
 
       for (const { document, embedding } of entries) {
         const hash = generateHash(document);
@@ -563,6 +593,7 @@ export class WikiManager implements WikiModule {
           document,
           embedding,
           hash,
+          rowId: newRowId(),
           record: {
             hash,
             domain: document.domain,
@@ -572,6 +603,7 @@ export class WikiManager implements WikiModule {
             embedding,
             createdAt: new Date().toISOString(),
             [STATE_COLUMN]: WIKI_STATE_PENDING,
+            ['rowId']: '', // filled in below (needs the rowId)
           },
           walEntry: {
             timestamp: new Date().toISOString(),
@@ -579,6 +611,7 @@ export class WikiManager implements WikiModule {
             document,
             approved: true,
             namespace: NAMESPACE,
+            id: '',
           },
         });
       }
@@ -602,16 +635,25 @@ export class WikiManager implements WikiModule {
 
       // Single batch insert
       if (toInsert.length > 0) {
-        // Phase 1: write PENDING rows.
+        // Phase 1: write PENDING rows. Each row carries its own `rowId`, now
+        // that it is minted (the record + WAL placeholders set above are
+        // filled here, so the DB row and its WAL entry share the same uuid).
+        for (const e of toInsert) {
+          e.record['rowId'] = e.rowId;
+          e.walEntry.id = e.rowId;
+        }
         await this.table.add(toInsert.map((e) => e.record));
 
         // Phase 2: single batched WAL append.
         appendWALEntries(toInsert.map((e) => e.walEntry));
 
-        // Phase 3: solidify all inserted rows in one update.
-        const insertedList = toInsert.map((e) => `'${escapeSqlLiteral(e.hash)}'`).join(', ');
+        // Phase 3: solidify all inserted rows in one update, keyed on the
+        // per-row ids — NOT on `hash`, so two entries that share a hash still
+        // each solidify exactly the row this batch inserted (never a leftover
+        // pending row from another operation).
+        const insertedIds = toInsert.map((e) => `'${escapeSqlLiteral(e.rowId)}'`).join(', ');
         await this.table.update({
-          where: `${STATE_COLUMN} = ${WIKI_STATE_PENDING} AND hash IN (${insertedList})`,
+          where: `rowId IN (${insertedIds}) AND ${STATE_COLUMN} = ${WIKI_STATE_PENDING}`,
           values: { [STATE_COLUMN]: WIKI_STATE_LIVE },
         });
 
@@ -746,6 +788,7 @@ export class WikiManager implements WikiModule {
       embedding,
       createdAt,
       [STATE_COLUMN]: WIKI_STATE_LIVE,
+      ['rowId']: newRowId(),
     }));
 
     await this.table.add(records);

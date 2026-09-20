@@ -390,6 +390,31 @@ export function verifyEntryHash(entry: WALEntry): boolean {
   return computeWikiHash(entry.document) === entry.hash;
 }
 
+/**
+ * Project a WAL entry onto its exportable form: the content-bearing fields
+ * only, dropping the transient per-row transaction `id`.
+ *
+ * `id` is a DB-row ↔ WAL correlation token for the 2FC PENDING → LIVE flip,
+ * not durable document content. import re-mints a fresh id via put() and
+ * ignores the incoming one, so exporting it would only add dead bytes and
+ * destabilise the manifest — computeManifestHash covers {domains, entries},
+ * and a transient uuid would make an export→import→export round-trip hash
+ * differently for identical content. Whitelisting the fields (rather than
+ * spreading and deleting) also guarantees any future transient field is
+ * excluded by default.
+ */
+function toExportEntry(entry: WALEntry): WALEntry {
+  return {
+    timestamp: entry.timestamp,
+    hash: entry.hash,
+    document: entry.document,
+    approved: entry.approved,
+    ...(entry.persistent ? { persistent: true } : {}),
+    ...(entry.deleted ? { deleted: true } : {}),
+    ...(entry.namespace ? { namespace: entry.namespace } : {}),
+  };
+}
+
 function parseExportArgs(rawArgs: string[]): {
   domain: string | null;
   file: string;
@@ -477,9 +502,8 @@ async function handleExport(wiki: WikiModule, rawArgs: string[]): Promise<void> 
   for (const entry of folded.values()) {
     // Skip deleted entries (tombstoned) — they should not be exported (would revive on import)
     if (entry.deleted) continue;
-    if (!domain || entry.document.domain === domain) {
-      allEntries.push(entry);
-    }
+    if (domain && entry.document.domain !== domain) continue;
+    allEntries.push(toExportEntry(entry));
   }
 
   // Gather domains relevant to the export

@@ -135,6 +135,7 @@ export function parseASCIIBlock(block: string): WALEntry | null {
   if (lines.length < 2) return null;
 
   let hash = '';
+  let id = '';
   let persistent = false;
   let approved = false;
   let timestamp = '';
@@ -147,6 +148,8 @@ export function parseASCIIBlock(block: string): WALEntry | null {
   for (const line of lines) {
     if (line.startsWith('# ')) {
       hash = line.slice(2);
+    } else if (line.startsWith('[id]')) {
+      id = line.slice(4);
     } else if (line === '!persistent') {
       persistent = true;
     } else if (line === '!approved') {
@@ -179,6 +182,7 @@ export function parseASCIIBlock(block: string): WALEntry | null {
     },
     approved,
     persistent,
+    ...(id ? { id } : {}),
   };
 }
 
@@ -191,6 +195,7 @@ export function formatWAL(entries: WALEntry[]): string {
   for (const entry of entries) {
     const lines: string[] = [];
     lines.push(`# ${entry.hash}`);
+    if (entry.id) lines.push(`[id]${entry.id}`);
     if (entry.deleted) lines.push('!deleted');
     if (entry.persistent) lines.push('!persistent');
     if (entry.approved) lines.push('!approved');

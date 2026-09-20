@@ -240,6 +240,81 @@ describe('wiki state machine + 2FC', () => {
     expect(putRes.alreadyExisted).toBeUndefined();
   });
 
+  it('the PENDING → LIVE flip is keyed on rowId, so it never commits an unrelated row that shares the hash', async () => {
+    // Regression for the hash-keyed-flip bug: two rows can carry the same
+    // content hash (concurrent puts of the same document, or a leftover
+    // pending row from a crashed write). The flip must solidify only the row
+    // THIS operation inserted — never a peer with the same hash, which would
+    // commit a row that never had its own WAL entry.
+    const wiki = await newManager();
+    const doc = makeDoc('project', 't', `${C} shared hash`);
+    const hash = hashOf(doc);
+
+    // Establish the table first (so initDb opens the existing table rather
+    // than recreating it and discarding our decoy), using a different doc.
+    await wiki.put(hashOf(makeDoc('project', 'seed', `${C} seed`)), makeDoc('project', 'seed', `${C} seed`));
+
+    // Seed an unrelated PENDING row with the SAME hash but a different rowId,
+    // as a crashed earlier write would leave behind.
+    tableState.rows.push({
+      hash, domain: doc.domain, title: doc.title, content: doc.content,
+      references: '[]', embedding: embedFor(doc.content), createdAt: 'x',
+      state: 0, rowId: 'aaaaaaaa-0000-0000-0000-000000000000',
+    });
+
+    const res = await wiki.put(hash, doc);
+    expect(res.success).toBe(true);
+
+    // The unrelated pending row must still be PENDING (never solidified).
+    const unrelated = tableState.rows.find((r) => r.rowId === 'aaaaaaaa-0000-0000-0000-000000000000');
+    expect(Number(unrelated!.state)).toBe(0);
+
+    // Exactly the freshly inserted row went LIVE.
+    const live = tableState.rows.filter((r) => r.hash === hash && Number(r.state) === 1);
+    expect(live.length).toBe(1);
+    expect(live[0].rowId).not.toBe('aaaaaaaa-0000-0000-0000-000000000000');
+  });
+
+  it('put() records the SAME uuid in the DB row (rowId) and the WAL entry (id)', async () => {
+    const wiki = await newManager();
+    const doc = makeDoc('project', 'shared-id', `${C} shared id`);
+    const hash = hashOf(doc);
+
+    const res = await wiki.put(hash, doc);
+    expect(res.success).toBe(true);
+
+    const row = tableState.rows.find((r) => r.hash === hash);
+    const wal = allWalEntries().find((e) => e.hash === hash && !e.deleted);
+    expect(row).toBeDefined();
+    expect(wal).toBeDefined();
+    expect(typeof row!.rowId).toBe('string');
+    expect(row!.rowId).toBe(wal!.id); // the shared transaction identity
+  });
+
+  it('batchPut() records the SAME uuid in each DB row and its WAL entry', async () => {
+    const wiki = await newManager();
+    const a = makeDoc('project', 'ba', `${C} batch a`);
+    const b = makeDoc('project', 'bb', `${C} batch b`);
+
+    const results = await wiki.batchPut([
+      { document: a, embedding: embedFor(a.content) },
+      { document: b, embedding: embedFor(b.content) },
+    ]);
+    expect(results.every((r) => r.success)).toBe(true);
+
+    const wal = allWalEntries();
+    for (const doc of [a, b]) {
+      const row = tableState.rows.find((r) => r.hash === hashOf(doc));
+      const entry = wal.find((e) => e.hash === hashOf(doc) && !e.deleted);
+      expect(row).toBeDefined();
+      expect(entry).toBeDefined();
+      expect(row!.rowId).toBe(entry!.id);
+    }
+    // Distinct documents get distinct ids.
+    const ids = [a, b].map((d) => tableState.rows.find((r) => r.hash === hashOf(d))!.rowId);
+    expect(ids[0]).not.toBe(ids[1]);
+  });
+
   it('delete() appends a tombstone and submerges the row (state=2), hidden from reads', async () => {
     const wiki = await newManager();
     const doc = makeDoc('project', 't', `${C} bye`);
