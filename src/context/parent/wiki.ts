@@ -6,8 +6,6 @@
  */
 
 import * as lancedb from '@lancedb/lancedb';
-import * as fs from 'fs';
-import * as path from 'path';
 import type {
   WikiModule,
   WikiDocument,
@@ -23,25 +21,26 @@ import type {
   SkillIndexEntry,
 } from '../../types.js';
 import { getEmbedding, getEmbeddings, EMBEDDING_DIM, NAMESPACE } from '../../engine/rag-provider.js';
-import { getWikiLogsDir, getWikiDbDir, ensureDirs } from '../../config.js';
+import { getWikiDbDir, ensureDirs } from '../../config.js';
 import {
   HASH_PATTERN,
   generateHash,
   cosineSimilarity,
   sameDocument,
-  parseWALFile,
   parseWAL,
   formatWAL,
   formatDate,
   loadDomains,
   saveDomains,
-  releaseReindexLock,
 } from './wiki-utils.js';
+import { SkillIndexer } from './wiki-skill-index.js';
 import {
-  ReindexLock,
-  isSkillIndexCacheValid,
-  writeSkillIndexCache,
-} from './wiki-skill-index.js';
+  readWAL,
+  appendWALEntry,
+  appendWALEntries,
+  markWALEntryDeleted,
+  mergeWALEntries,
+} from './wiki-wal.js';
 
 const DUPLICATE_THRESHOLD = 0.95;
 const MIN_CONTENT_LENGTH = 50;
@@ -71,8 +70,11 @@ export class WikiManager implements WikiModule {
   private table: lancedb.Table | null = null;
   private core: CoreModule;
   private tableName = `wiki_${NAMESPACE}`;
-  /** Serializes skill re-indexing across instances (see wiki-skill-index). */
-  private reindexLock = new ReindexLock((msg) => this.core.brief('warn', 'wiki', msg));
+  /** Owns skill re-indexing (cache, batch diff, orphan sweep, cross-instance lock). */
+  private skillIndexer = new SkillIndexer(
+    this,
+    (message) => this.core.brief('info', 'wiki', message),
+  );
   constructor(core: CoreModule) {
     this.core = core;
   }
@@ -109,162 +111,23 @@ export class WikiManager implements WikiModule {
   }
 
   // ============================================================
-  // Skill Re-index (wiki-DB-level) — moved here from loader.ts
+  // Skill Re-index (wiki-DB-level) — orchestration lives in
+  // wiki-skill-index.ts (see SkillIndexer); this is the thin delegate that
+  // satisfies the WikiModule contract.
   // ============================================================
 
   /**
    * Re-index a set of skills into the wiki "skills" domain.
    *
    * The caller (loader) builds the {@link SkillIndexEntry} array — it owns
-   * skill discovery and scoping (the scope-prefixed title + Scope/Name/
-   * Description/Keywords content + content hash). This method owns the
-   * wiki-DB re-index:
-   *  1. Register the "skills" domain.
-   *  2. Cache check — if every entry's content hash matches the on-disk
-   *     snapshot (and the RAG namespace is unchanged), skip entirely.
-   *  3. Acquire the wiki-DB-level reindex lock (see {@link acquireReindexLock}).
-   *     If another live instance is re-indexing, skip — the caller's watcher
-   *     will fire again or its next skill_load catches it up.
-   *  4. Batch path (under the lock): one table scan (getByDomain, 0
-   *     embeddings), an in-memory diff, ONE batched embedding call for
-   *     changed/new skills, batch delete of stale records, ONE batchPut
-   *     insert, then write the cache.
-   *
-   * The lock is acquired and released INSIDE this method (try/finally), so
-   * no caller needs to know about the lock — all re-index entry points are
-   * serialized by calling this single method.
-   *
-   * Optimized to avoid the per-skill Ollama round-trips that previously made
-   * this step block startup.
+   * skill discovery and scoping. The batch re-index (cache check, table diff,
+   * orphan sweep, batched embed/insert/delete, cache write) and its
+   * cross-instance lock live in {@link SkillIndexer}; this method only wires
+   * the wiki store and the brief sink into it, keeping the WikiManager class
+   * focused on LanceDB lifecycle and the document-storage contract.
    */
   async indexSkills(entries: SkillIndexEntry[], options?: { skipOrphanSweep?: boolean }): Promise<void> {
-    const skipOrphanSweep = options?.skipOrphanSweep === true;
-
-    // 1. Register 'skills' domain
-    await this.registerDomain('skills', 'Skills indexed for semantic matching');
-
-    // 2. Cache check — skip the whole pass if nothing changed.
-    //    Only valid for a FULL re-index: the cache snapshots the complete
-    //    skill set (title→hash), so a length mismatch with a PARTIAL entry
-    //    list (skipOrphanSweep) is expected and must NOT short-circuit.
-    if (!skipOrphanSweep && isSkillIndexCacheValid(entries)) {
-      this.core.brief('info', 'wiki', `Indexed ${entries.length} skills (cached)`);
-      return;
-    }
-
-    // 3. Acquire the reindex lock. If another live instance is re-indexing,
-    //    skip — the cache check will still skip next time if that instance
-    //    finished, and a missed fs.watch event is caught by the next
-    //    skill_load (per-skill re-index, a lighter path that doesn't need
-    //    this lock).
-    if (!this.reindexLock.acquire()) {
-      this.core.brief('info', 'wiki', 'Reindex skipped: another instance is reindexing');
-      return;
-    }
-    try {
-      // 4. Batch path — one table scan for all existing 'skills' records.
-      const existing = await this.getByDomain('skills');
-      const existingByTitle = new Map<string, { hash: string; content: string }>();
-      for (const r of existing) {
-        existingByTitle.set(r.document.title, { hash: r.hash, content: r.document.content });
-      }
-
-      // In-memory diff: partition into unchanged / stale / new
-      const toDelete: string[] = [];
-      const toAdd: WikiDocument[] = [];
-      for (const { document } of entries) {
-        const found = existingByTitle.get(document.title);
-        if (found && found.content === document.content) {
-          continue; // unchanged
-        }
-        if (found) {
-          toDelete.push(found.hash); // content changed → delete old before re-add
-        }
-        toAdd.push(document);
-      }
-      // Detect orphaned existing records (titles no longer present) and delete them.
-      //
-      // IMPORTANT: the wiki DB is shared across ALL projects (it lives in
-      // ~/.mycc-store/wiki, not under the project). Skill record titles are
-      // prefixed with their scope — `[user]:`, `[built-in]:`, or
-      // `<project-basename>:`. A record written by project A therefore has a
-      // title prefix project B cannot match, so it must NOT be treated as an
-      // orphan by project B — otherwise two projects would mutually wipe each
-      // other's project-scoped skill records on every startup.
-      //
-      // Only records whose title prefix is in THIS project's own scope set
-      // ([user], [built-in], and the current project basename) are eligible
-      // for orphan deletion. Records from other projects are left untouched.
-      //
-      // SKIPPED on a PARTIAL re-index (skipOrphanSweep): `entries` may be a
-      // subset of all loaded skills (e.g. skill_load re-indexes just the one
-      // skill it loaded). Sweeping orphans against a subset would delete
-      // every unmentioned own-scope sibling. Only a FULL re-index (startup,
-      // /skills build, the skill_reindex IPC handler) runs the sweep, since
-      // only then is `entries` the complete current set and an absent title a
-      // genuine orphan (the skill was actually deleted). The changed/new
-      // upsert above always runs regardless.
-      if (!skipOrphanSweep) {
-        const projectName = path.basename(process.cwd());
-        const ownScopePrefixes = new Set(['[user]:', '[built-in]:', `${projectName}:`]);
-        const isOwnScope = (title: string): boolean => {
-          for (const prefix of ownScopePrefixes) {
-            if (title.startsWith(prefix)) return true;
-          }
-          return false;
-        };
-        const currentTitles = new Set(entries.map((e) => e.document.title));
-        for (const [title, rec] of existingByTitle) {
-          if (currentTitles.has(title)) continue; // still present
-          if (!isOwnScope(title)) continue; // belongs to another project — leave it
-          toDelete.push(rec.hash);
-        }
-      }
-
-      // Batch embed all new/changed documents in ONE Ollama call
-      let embeddings: number[][] = [];
-      if (toAdd.length > 0) {
-        embeddings = await getEmbeddings(
-          toAdd.map((d) => d.content),
-          'document',
-        );
-      }
-
-      // Batch delete stale/orphaned records
-      for (const hash of toDelete) {
-        await this.delete(hash);
-      }
-
-      // Batch insert all new/changed documents in ONE table.add() call
-      if (toAdd.length > 0) {
-        const batchEntries = toAdd.map((document, i) => ({ document, embedding: embeddings[i] }));
-        await this.batchPut(batchEntries);
-      }
-
-      // Write the cache so the next startup can skip if nothing changed.
-      // Only a FULL re-index may rewrite the cache — the cache snapshots the
-      // COMPLETE skill set, so a partial (skipOrphanSweep) call writing its
-      // subset would corrupt the cache (next full startup would miss it,
-      // forcing a needless re-embed, and worse, the length-only check could
-      // false-pass on a coincidentally-sized subset).
-      if (!skipOrphanSweep) {
-        writeSkillIndexCache(entries);
-      }
-
-      // Partial re-index (skill_load): the diff already ran against the
-      // existing record. If nothing changed (no add, no delete), there was
-      // no embedding call and no DB mutation — the generic "Indexed N
-      // skills" log would be misleading (it implies work was done). Stay
-      // silent in that case; only log when the skill was actually added or
-      // updated.
-      if (skipOrphanSweep && toAdd.length === 0 && toDelete.length === 0) {
-        return;
-      }
-
-      this.core.brief('info', 'wiki', `Indexed ${entries.length} skills`);
-    } finally {
-      releaseReindexLock();
-    }
+    await this.skillIndexer.index(entries, options);
   }
 
   /**
@@ -636,12 +499,7 @@ export class WikiManager implements WikiModule {
         await this.table.add(toInsert.map((e) => e.record));
 
         // Single batched WAL append
-        const walLines = toInsert.map((e) => JSON.stringify(e.walEntry)).join('\n');
-        ensureDirs();
-        const walDir = getWikiLogsDir();
-        const today = formatDate(new Date());
-        const walPath = path.join(walDir, `${today}.wal`);
-        fs.appendFileSync(walPath, `${walLines}\n`, 'utf-8');
+        appendWALEntries(toInsert.map((e) => e.walEntry));
 
         this.core.brief('info', 'wiki', `Batch stored ${toInsert.length} documents`);
       }
@@ -715,55 +573,18 @@ export class WikiManager implements WikiModule {
   }
 
   /**
-   * Mark a WAL entry as deleted
+   * Mark a WAL entry as deleted (delegates to wiki-wal).
    */
   private async markWALDeleted(hash: string, date: string): Promise<void> {
-    ensureDirs();
-    const walPath = path.join(getWikiLogsDir(), `${date}.wal`);
-
-    if (!fs.existsSync(walPath)) {
-      // WAL file no longer exists - this is OK, just log it
-      this.core.brief('warn', 'wiki', `WAL file not found for date ${date}`);
-      return;
-    }
-
-    // Read and parse WAL entries
-    const content = fs.readFileSync(walPath, 'utf-8');
-    const entries = parseWALFile(content);
-
-    // Find and mark the entry as deleted
-    let found = false;
-    for (const entry of entries) {
-      if (entry.hash === hash) {
-        entry.deleted = true;
-        found = true;
-        break;
-      }
-    }
-
-    if (!found) {
-      this.core.brief('warn', 'wiki', `Entry ${hash} not found in WAL ${date}`);
-      return;
-    }
-
-    // Write back as JSON lines
-    const lines = entries.map(e => JSON.stringify(e)).join('\n');
-    fs.writeFileSync(walPath, `${lines  }\n`, 'utf-8');
+    markWALEntryDeleted(hash, date, (msg) => this.core.brief('warn', 'wiki', msg));
   }
 
   /**
-   * Get WAL entries for a specific date (default: today)
+   * Get WAL entries for a specific date (default: today).
+   * Delegates to wiki-wal.
    */
   async getWAL(date?: string): Promise<WALEntry[]> {
-    const targetDate = date || formatDate(new Date());
-    const walPath = path.join(getWikiLogsDir(), `${targetDate}.wal`);
-
-    if (!fs.existsSync(walPath)) {
-      return [];
-    }
-
-    const content = fs.readFileSync(walPath, 'utf-8');
-    return parseWALFile(content);
+    return readWAL(date);
   }
 
   /**
@@ -783,18 +604,10 @@ export class WikiManager implements WikiModule {
   }
 
   /**
-   * Append entry to today's WAL
+   * Append entry to today's WAL (delegates to wiki-wal).
    */
   async appendWAL(entry: WALEntry): Promise<void> {
-    ensureDirs();
-    const walDir = getWikiLogsDir();
-    const today = formatDate(new Date());
-    const walPath = path.join(walDir, `${today}.wal`);
-
-    // Append as JSON line
-    const line = `${JSON.stringify(entry)  }\n`;
-    fs.appendFileSync(walPath, line, 'utf-8');
-
+    appendWALEntry(entry);
     this.core.brief('info', 'wiki', `Appended to WAL: ${entry.hash}`);
   }
 
@@ -866,38 +679,9 @@ export class WikiManager implements WikiModule {
       // Clear existing data
       await this.table.delete('true');
 
-      // Get all WAL files
-      const walDir = getWikiLogsDir();
-      if (!fs.existsSync(walDir)) {
-        return { success: true, documentsProcessed: 0, errors: [] };
-      }
-
-      const walFiles = fs.readdirSync(walDir)
-        .filter(f => f.endsWith('.wal'))
-        .sort();
-
-      // 1. Merge all WAL entries into one latest-wins map, applying filters.
-      //    Later files (sorted ascending) and later lines within a file win,
-      //    matching the previous sequential last-write-wins replay.
-      const merged = new Map<string, WALEntry>();
-      for (const walFile of walFiles) {
-        const walPath = path.join(walDir, walFile);
-        const content = fs.readFileSync(walPath, 'utf-8');
-        for (const entry of parseWALFile(content)) {
-          // Skip deleted and unapproved entries
-          if (entry.deleted) continue;
-          if (!entry.approved) continue;
-
-          // Only rebuild entries belonging to the current namespace.
-          // Entries without a namespace field are legacy (pre-rag-provider)
-          // and are re-embedded with the current model on first rebuild.
-          if (entry.namespace && entry.namespace !== NAMESPACE) continue;
-
-          merged.set(entry.hash, entry); // latest wins
-        }
-      }
-
-      const entries = [...merged.values()];
+      // 1. Merge all WAL entries into one latest-wins map, applying filters
+      //    (deleted / unapproved / foreign-namespace). Delegates to wiki-wal.
+      const entries = mergeWALEntries(NAMESPACE);
       if (entries.length === 0) {
         this.core.brief('info', 'wiki', 'Rebuild complete: 0 documents processed');
         return { success: true, documentsProcessed: 0, errors: [] };
