@@ -9,6 +9,7 @@
  */
 
 import * as fs from 'fs';
+import * as path from 'path';
 import * as crypto from 'crypto';
 import type { WikiDocument, WikiDomain, WALEntry } from '../../types.js';
 import {
@@ -106,6 +107,60 @@ export function parseWALFile(content: string): WALEntry[] {
   }
 
   return entries;
+}
+
+/**
+ * Scan every WAL file in `walDir` and return the LIVE hashes — those whose
+ * latest (last-write-wins) entry is not a tombstone, was approved, and belongs
+ * to the given namespace. The value is the entry's own `timestamp`, i.e. the
+ * day the winning entry was written, so callers that need the WAL day-file can
+ * derive it without a second clock read (the commit path stamps the row's
+ * `createdAt` with the SAME timestamp the entry was written under).
+ *
+ * This is the WAL-sourced existence check used by the wiki write path
+ * (`put`/`batchPut` report `alreadyExisted` from here) and by the reverse-2FC
+ * protocol: a LanceDB row whose `createdAt` is null (premature) is only
+ * "committed" if its hash is live here.
+ *
+ * Ordering mirrors `WikiManager.rebuild()`: files sorted ascending, lines in
+ * file order, later wins. Legacy entries with no `namespace` are accepted
+ * (they predate the rag-provider abstraction and are still truth).
+ */
+export function walLiveHashes(walDir: string, namespace: string): Map<string, string> {
+  const live = new Map<string, string>();
+  let walFiles: string[];
+  try {
+    if (!fs.existsSync(walDir)) return live;
+    walFiles = fs.readdirSync(walDir)
+      .filter((f) => f.endsWith('.wal'))
+      .sort();
+  } catch {
+    // The WAL dir is unreadable (raced away, replaced by a file, permission).
+    // Treat as "no live hashes" rather than throwing: callers use this as an
+    // existence/liveness check, and a throw here would abort a whole write.
+    return live;
+  }
+
+  for (const walFile of walFiles) {
+    let content: string;
+    try {
+      content = fs.readFileSync(path.join(walDir, walFile), 'utf-8');
+    } catch {
+      continue; // unreadable file — skip rather than abort the whole scan
+    }
+    for (const entry of parseWALFile(content)) {
+      // Foreign-namespace entries are not this store's truth.
+      if (entry.namespace && entry.namespace !== namespace) continue;
+      // Last write wins: a later tombstone/unapproved record removes liveness.
+      if (entry.deleted || !entry.approved) {
+        live.delete(entry.hash);
+      } else {
+        live.set(entry.hash, entry.timestamp);
+      }
+    }
+  }
+
+  return live;
 }
 
 /**

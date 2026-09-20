@@ -36,6 +36,7 @@ import {
   loadDomains,
   saveDomains,
   releaseReindexLock,
+  walLiveHashes,
 } from './wiki-utils.js';
 import {
   ReindexLock,
@@ -64,6 +65,46 @@ const EMBED_BATCH_SIZE = 16;
 const INSERT_BATCH_SIZE = 128;
 
 /**
+ * Native ANN search (PR #18 lineage).
+ *
+ * `get()` uses LanceDB `vectorSearch()` over an IVF-Flat index instead of an
+ * O(rows) full-table scan. Three knobs:
+ *  - VECTOR_SEARCH_OVERFETCH — over-fetch factor. `.where()` is a PREFILTER in
+ *    LanceDB v0.27.2 (applied BEFORE the ANN search), so this is NOT a
+ *    correctness crutch against postfilter shrinkage; it is a margin for the
+ *    client-side similarity-threshold cut + ANN ranking jitter, so a domain
+ *    with many sub-threshold rows still yields a full topK.
+ *  - MIN_INDEX_ROWS — below this many real rows the table is too small for a
+ *    useful IVF index (training kmeans on a handful of vectors is noise);
+ *    `ensureVectorIndex` skips building and `vectorSearch` falls back to its
+ *    internal flat scan, which is correct just not sublinear.
+ */
+const VECTOR_SEARCH_OVERFETCH = 4;
+const MIN_INDEX_ROWS = 16;
+
+/**
+ * Reverse two-phase-commit sentinel for the `createdAt` column.
+ *
+ * WRITE ORDER: `add(createdAt: null)` → `appendWAL(timestamp: T)` → `update(createdAt: T)`.
+ * A row with `createdAt === PREMATURE` is INVISIBLE to every read (the read
+ * filter is `createdAt IS NOT NULL`). The flip to a real ISO timestamp is the
+ * COMMIT MARKER, and it is written only AFTER the WAL entry is durable, so:
+ *
+ *   INVARIANT: a committed row (createdAt not null) ⟹ its hash has a live WAL entry.
+ *
+ * The forbidden state (visible row, no live WAL entry) would require the flip
+ * to run before the append — unreachable by construction.
+ *
+ * The sentinel is SQL `NULL` (native predicate `IS NULL` / `IS NOT NULL`, no
+ * magic string literal). A crash between append and flip leaves the document
+ * committed-in-truth but invisible-in-cache; `rebuild()` heals it (it clears
+ * the table and re-inserts from the folded WAL with the entry's real
+ * timestamp). Guard every `new Date(row.createdAt)` read: `new Date(null)` is
+ * the epoch (1970), silently the wrong day-file.
+ */
+const PREMATURE: string | null = null;
+
+/**
  * WikiManager - Manages persistent knowledge storage
  */
 export class WikiManager implements WikiModule {
@@ -71,6 +112,8 @@ export class WikiManager implements WikiModule {
   private table: lancedb.Table | null = null;
   private core: CoreModule;
   private tableName = `wiki_${NAMESPACE}`;
+  /** True once an IVF-Flat vector index exists on this table (this process). */
+  private vectorIndexEnsured = false;
   /** Serializes skill re-indexing across instances (see wiki-skill-index). */
   private reindexLock = new ReindexLock((msg) => this.core.brief('warn', 'wiki', msg));
   constructor(core: CoreModule) {
@@ -78,7 +121,7 @@ export class WikiManager implements WikiModule {
   }
 
   /**
-   * Initialize the database connection
+   * Initialize the database connection (and, best-effort, the vector index).
    */
   private async initDb(): Promise<void> {
     if (this.db && this.table) return;
@@ -106,6 +149,104 @@ export class WikiManager implements WikiModule {
       };
       this.table = await this.db.createTable(this.tableName, [initialRecord]);
     }
+
+    // Ensure the ANN index exists so get()'s vectorSearch is sublinear.
+    // Fire-and-forget: a missing/failed index is non-fatal (get() falls back
+    // to the manual scan), so it must not block startup.
+    void this.ensureVectorIndex().catch((err) => {
+      const reason = err instanceof Error ? err.message : String(err);
+      this.core.verbose('wiki', `ensureVectorIndex on init failed: ${reason}`);
+    });
+  }
+
+  // ============================================================
+  // Native ANN vector index (PR #18 lineage)
+  // ============================================================
+
+  /**
+   * Build (or refresh) the IVF-Flat cosine index on the `embedding` column.
+   *
+   * IVF-Flat (not IVF-PQ): the wiki/skill store is modest (hundreds to low
+   * thousands of rows), so PQ compression buys nothing and costs recall.
+   *
+   * `waitTimeoutSeconds` is REQUIRED for correctness of the "ensured" flag:
+   * without it `createIndex` resolves once creation is STARTED, not once the
+   * index is TRAINED (indices.d.ts). Awaiting the timeout means a subsequent
+   * vectorSearch actually uses a trained index.
+   *
+   * Small-table gate: below MIN_INDEX_ROWS real rows, skip training — a
+   * kmeans over a handful of vectors is noise, and vectorSearch still works
+   * (internal flat scan). Non-fatal: any failure is logged + swallowed, and
+   * get() falls back to the manual scan.
+   */
+  private async ensureVectorIndex(replace = false): Promise<void> {
+    await this.initDb();
+    if (!this.table) return;
+    if (this.vectorIndexEnsured && !replace) return;
+
+    try {
+      // Count real rows (exclude the __schema__ sentinel and premature rows;
+      // premature rows are invisible to reads but still occupy the table).
+      const rows = await this.table.query().toArray();
+      const realRows = rows.filter(
+        (r) => (r as Record<string, unknown>).hash !== '__schema__',
+      ).length;
+
+      if (realRows < MIN_INDEX_ROWS) {
+        this.core.verbose(
+          'wiki',
+          `vector index skipped: ${realRows} rows < ${MIN_INDEX_ROWS} (flat search is fine)`,
+        );
+        return;
+      }
+
+      // ~sqrt(n) partitions is the IVF rule of thumb; clamp to a sane floor.
+      const numPartitions = Math.max(2, Math.min(256, Math.floor(Math.sqrt(realRows))));
+      const index = lancedb.Index.ivfFlat({ distanceType: 'cosine', numPartitions });
+      await this.table.createIndex('embedding', {
+        config: index,
+        replace,
+        waitTimeoutSeconds: 30,
+      });
+      this.vectorIndexEnsured = true;
+      this.core.verbose(
+        'wiki',
+        `vector index ensured (ivfFlat cosine, ${numPartitions} partitions, ${realRows} rows)`,
+      );
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      this.core.verbose('wiki', `ensureVectorIndex skipped: ${reason}`);
+    }
+  }
+
+  /**
+   * Build the native vector-search query shared by get() / checkDuplicate():
+   * cosine distance over the ANN index, a server-side `.where()` prefilter
+   * that (a) drops the __schema__ sentinel and (b) drops PREMATURE rows
+   * (reverse-2FC: uncommitted rows must be invisible), plus an optional
+   * domain predicate, and an over-fetched `.limit()`.
+   *
+   * The caller receives LanceDB cosine DISTANCE rows (`_distance`, lower =
+   * closer); convert with `1 - _distance` for a similarity in [0, 1].
+   */
+  private buildVectorQuery(
+    queryEmbedding: number[],
+    topK: number,
+    domain?: string,
+  ): lancedb.VectorQuery {
+    if (!this.table) throw new Error('Database not initialized');
+    let vq = this.table
+      .vectorSearch(Float32Array.from(queryEmbedding))
+      .distanceType('cosine')
+      .limit(Math.max(topK * VECTOR_SEARCH_OVERFETCH, topK));
+    // ESCAPE single quotes in the domain so a value with an apostrophe cannot
+    // break out of the predicate.
+    let predicate = `hash != '__schema__' AND createdAt IS NOT NULL`;
+    if (domain) {
+      predicate += ` AND domain = '${domain.replace(/'/g, "''")}'`;
+    }
+    vq = vq.where(predicate);
+    return vq;
   }
 
   // ============================================================
@@ -262,24 +403,55 @@ export class WikiManager implements WikiModule {
       }
 
       this.core.brief('info', 'wiki', `Indexed ${entries.length} skills`);
+
+      // Refresh the ANN index after a bulk re-index so subsequent vectorSearch
+      // calls see the new/updated skill rows. Non-fatal, best-effort.
+      await this.ensureVectorIndex(true);
     } finally {
       releaseReindexLock();
     }
   }
 
   /**
-   * Check if similar document exists
+   * Check if a similar document exists, using the native ANN index.
+   *
+   * Only COMMITTED rows are considered (the vector query's `.where()` drops
+   * `createdAt IS NULL` premature rows), so a half-written document mid-put
+   * cannot be mistaken for an existing one.
+   *
+   * Falls back to the O(rows) manual scan if vectorSearch is unavailable
+   * (index missing on a tiny table still returns results; a thrown API error
+   * is the fallback trigger), preserving the pre-ANN semantics exactly.
    */
   private async checkDuplicate(embedding: number[], threshold = DUPLICATE_THRESHOLD): Promise<boolean> {
     await this.initDb();
     if (!this.table) return false;
 
     try {
+      const vq = this.buildVectorQuery(embedding, 1);
+      const rows = await vq.toArray();
+      for (const row of rows) {
+        const r = row as Record<string, unknown>;
+        const distance = Number(r._distance);
+        if (!Number.isFinite(distance)) continue;
+        const similarity = 1 - distance; // cosine distance → similarity
+        if (similarity > threshold) {
+          this.core.brief('warn', 'wiki', `Duplicate check hit: similarity=${similarity.toFixed(4)} > ${threshold}, colliding doc: domain=${r.domain}, title=${r.title}, hash=${r.hash}`);
+          return true;
+        }
+      }
+      return false;
+    } catch (vecErr) {
+      this.core.verbose('wiki', `checkDuplicate vectorSearch failed, falling back to scan: ${vecErr instanceof Error ? vecErr.message : String(vecErr)}`);
+    }
+
+    // Fallback: manual scan (committed rows only).
+    try {
       const records = await this.table.query().toArray();
       for (const record of records) {
         const r = record as Record<string, unknown>;
-        // Skip schema record
         if (r.hash === '__schema__') continue;
+        if (r.createdAt === null || r.createdAt === undefined) continue; // premature
 
         const embeddingArr = Array.isArray(r.embedding) ? r.embedding : Array.from(r.embedding as Iterable<number>);
         const similarity = cosineSimilarity(embedding, embeddingArr);
@@ -295,12 +467,12 @@ export class WikiManager implements WikiModule {
   }
 
   /**
-   * Fetch the stored record for a given hash, or null if absent.
-   * Used by put() to decide whether an incoming document is an exact copy
-   * (full document match: domain + title + content + references) of one
-   * already in the store — only an exact copy is a true no-op eligible for
-   * the alreadyExisted short-circuit. The hash is a fast lookup; the
-   * full-document comparison (sameDocument) is what actually decides.
+   * Fetch the COMMITTED stored record for a given hash, or null if absent.
+   *
+   * Premature rows (`createdAt === null`) are ignored — they are half-written
+   * and are not yet part of the store's truth. Used by put() ONLY to recover
+   * the `references` for a WAL-live hash (the full-document sameDocument()
+   * comparison); WAL liveness itself is the existence gate, see put().
    */
   private async findRecordByHash(hash: string): Promise<Record<string, unknown> | null> {
     await this.initDb();
@@ -310,7 +482,7 @@ export class WikiManager implements WikiModule {
       const records = await this.table.query().toArray();
       for (const record of records) {
         const r = record as Record<string, unknown>;
-        if (r.hash === hash) {
+        if (r.hash === hash && r.createdAt !== null && r.createdAt !== undefined) {
           return r;
         }
       }
@@ -392,24 +564,24 @@ export class WikiManager implements WikiModule {
       return { success: false, hash, error: `Unknown domain "${document.domain}". Register it first with /wiki domains add ${document.domain} <description>.` };
     }
 
-    // Short circuit: if an exact copy already exists, report it. "Exact" means
-    // the full document matches — domain, title, content, AND references. The
-    // hash (sha256 of domain:title:content, 16 hex) is only a fast lookup key;
-    // it does not cover references and can in principle collide, so the
-    // full-document comparison is what actually decides "already present". A
-    // hash collision between two genuinely different documents falls through
-    // to be stored as a new record (the store represents distinct documents
-    // that collide on hash as separate LanceDB rows).
-    const existing = await this.findRecordByHash(hash);
-    if (existing) {
-      if (sameDocument(existing, document)) {
-        this.core.verbose('wiki', `Document already exists (exact match): ${hash}`);
+    // Reverse-2FC existence gate: the WAL is the truth. If a live WAL entry
+    // exists for this hash, the document is already stored (even if the cache
+    // still lags at premature). Compare the full document for the honest
+    // "already present" report — an exact copy is a true no-op, while a hash
+    // collision between different documents (or differing references) falls
+    // through to be stored as a new row.
+    const liveWal = walLiveHashes(getWikiLogsDir(), NAMESPACE);
+    if (liveWal.has(hash)) {
+      const stored = await this.findRecordByHash(hash);
+      if (stored && sameDocument(stored, document)) {
+        this.core.verbose('wiki', `Document already exists (exact match, WAL-live): ${hash}`);
         return { success: true, hash, alreadyExisted: true };
       }
-      // Hash matches but the document differs (collision on the 16-hex
-      // prefix, or references differ) — NOT an exact copy. Store as a new
-      // record rather than silently dropping a distinct document.
-      this.core.verbose('wiki', `Hash ${hash} exists but document differs — storing as new record`);
+      // WAL-live but not an exact document copy (references differ, or the
+      // cache row is absent/premature). Do NOT re-append a duplicate WAL line
+      // — the truth is already durable. Report as already present.
+      this.core.verbose('wiki', `Hash ${hash} already WAL-live but not an exact row match — reporting alreadyExisted`);
+      return { success: true, hash, alreadyExisted: true };
     }
 
     try {
@@ -421,7 +593,19 @@ export class WikiManager implements WikiModule {
       // Generate embedding
       const embedding = await getEmbedding(document.content, 'document');
 
-      // Create record
+      // ONE clock read: the WAL day-file and the committed createdAt MUST
+      // agree, so that delete()'s day-file derivation (which reads the row's
+      // createdAt) finds the entry in the file it was actually written to.
+      const now = new Date();
+      const committedAt = now.toISOString();
+
+      // ── Phase 0: clear any (necessarily premature) prior row for this hash.
+      // After the WAL check above, a row for this hash can only be premature,
+      // so this deletes garbage and guarantees one row per hash.
+      await this.table.delete(`hash = '${hash}'`);
+
+      // ── Phase 1: insert the row PREMATURE (createdAt null) — invisible to
+      // every read (the read filter is `createdAt IS NOT NULL`).
       const record: Record<string, unknown> = {
         hash,
         domain: document.domain,
@@ -429,19 +613,24 @@ export class WikiManager implements WikiModule {
         content: document.content,
         references: JSON.stringify(document.references || []),
         embedding,
-        createdAt: new Date().toISOString(),
+        createdAt: PREMATURE,
       };
-
-      // Add to LanceDB
       await this.table.add([record]);
 
-      // Append to WAL
+      // ── Phase 2: append the WAL entry — the durable source of truth.
       await this.appendWAL({
-        timestamp: new Date().toISOString(),
+        timestamp: committedAt,
         hash,
         document,
         approved: true,
         namespace: NAMESPACE,
+      });
+
+      // ── Phase 3: COMMIT — flip createdAt to a real timestamp. Only now is
+      // the row visible to reads (INVARIANT: committed ⟹ WAL-live).
+      await this.table.update({
+        where: `hash = '${hash}'`,
+        values: { createdAt: committedAt },
       });
 
       this.core.brief('info', 'wiki', `Stored document: ${document.title}`);
@@ -454,7 +643,16 @@ export class WikiManager implements WikiModule {
   }
 
   /**
-   * Search for documents by similarity
+   * Search for documents by similarity.
+   *
+   * Primary path: LanceDB native `vectorSearch` (ANN) over an IVF-Flat cosine
+   * index, with a server-side `.where()` PREFILTER that drops the __schema__
+   * sentinel, drops PREMATURE rows (reverse-2FC: `createdAt IS NOT NULL`), and
+   * applies the optional domain predicate. Sublinear instead of O(rows).
+   *
+   * Fallback: if vectorSearch throws (index unavailable / API regression), the
+   * original full-table manual scan runs with identical semantics, still
+   * excluding premature rows.
    */
   async get(query: string, options?: GetOptions): Promise<SearchResult[]> {
     await this.initDb();
@@ -463,11 +661,47 @@ export class WikiManager implements WikiModule {
     const topK = options?.topK || 5;
     const threshold = options?.threshold || 0.0;
 
+    // Generate embedding for query
+    let queryEmbedding: number[];
     try {
-      // Generate embedding for query
-      const queryEmbedding = await getEmbedding(query, 'query');
+      queryEmbedding = await getEmbedding(query, 'query');
+    } catch (err) {
+      const error = err instanceof Error ? err.message : String(err);
+      this.core.brief('error', 'wiki', `Get failed: ${error}`);
+      return [];
+    }
 
-      // Get all records and filter manually (vector search requires embedding column)
+    try {
+      // ANN path: over-fetch, then apply the threshold + topK client-side.
+      const rows = await this.buildVectorQuery(queryEmbedding, topK, options?.domain).toArray();
+      const results: SearchResult[] = [];
+      for (const row of rows) {
+        const r = row as Record<string, unknown>;
+        const distance = Number(r._distance);
+        if (!Number.isFinite(distance)) continue;
+        const similarity = 1 - distance; // cosine distance → similarity in [0,1]
+        if (similarity >= threshold) {
+          results.push({
+            document: {
+              domain: r.domain as string,
+              title: r.title as string,
+              content: r.content as string,
+              references: JSON.parse((r.references as string) || '[]'),
+            },
+            similarity,
+            hash: r.hash as string,
+          });
+        }
+      }
+      results.sort((a, b) => b.similarity - a.similarity);
+      return results.slice(0, topK);
+    } catch (vecErr) {
+      this.core.verbose('wiki', `vectorSearch failed, falling back to manual scan: ${vecErr instanceof Error ? vecErr.message : String(vecErr)}`);
+    }
+
+    // Fallback: manual full-table scan (committed rows only). Identical
+    // semantics to the pre-ANN implementation.
+    try {
       const records = await this.table.query().toArray();
       const results: SearchResult[] = [];
 
@@ -476,6 +710,8 @@ export class WikiManager implements WikiModule {
 
         // Skip schema record
         if (r.hash === '__schema__') continue;
+        // Skip premature (reverse-2FC uncommitted) rows
+        if (r.createdAt === null || r.createdAt === undefined) continue;
 
         // Apply domain filter if specified
         if (options?.domain && r.domain !== options.domain) {
@@ -499,7 +735,6 @@ export class WikiManager implements WikiModule {
         }
       }
 
-      // Sort by similarity and take top-k
       results.sort((a, b) => b.similarity - a.similarity);
       return results.slice(0, topK);
     } catch (err) {
@@ -510,9 +745,11 @@ export class WikiManager implements WikiModule {
   }
 
   /**
-   * Retrieve all documents in a domain in a single table scan (no embedding).
-   * Used for batch re-indexing where a full domain listing is needed without
-   * the per-query embedding cost of get().
+   * Retrieve all COMMITTED documents in a domain in a single table scan (no
+   * embedding). Used for batch re-indexing where a full domain listing is
+   * needed without the per-query embedding cost of get().
+   *
+   * Premature (reverse-2FC uncommitted) rows are excluded.
    */
   async getByDomain(domain: string): Promise<SearchResult[]> {
     await this.initDb();
@@ -527,6 +764,8 @@ export class WikiManager implements WikiModule {
 
         // Skip schema record
         if (r.hash === '__schema__') continue;
+        // Skip premature (reverse-2FC uncommitted) rows
+        if (r.createdAt === null || r.createdAt === undefined) continue;
 
         // Domain filter
         if (r.domain !== domain) continue;
@@ -557,11 +796,15 @@ export class WikiManager implements WikiModule {
    * performs. Callers must compute hashes via generateHash() (same scheme as
    * prepare()/put()). WAL entries are appended in a single write.
    *
-   * Returns one PutResult per input entry (same order). Entries whose hash
-   * already exists in the table are not re-inserted and are reported with
+   * Returns one PutResult per input entry (same order). Entries whose hash is
+   * already WAL-live are not re-inserted and are reported with
    * alreadyExisted:true (success: true), mirroring put()'s idempotency
-   * reporting. Note: batchPut skips on hash match only (it does not compare
-   * references, unlike put()'s exact-match check).
+   * reporting. Existence is WAL-sourced (the truth), not a table scan.
+   *
+   * Reverse-2FC: all rows are inserted PREMATURE (createdAt null), the WAL is
+   * appended in ONE write, then ONE `update(... IN ...)` commits them. The
+   * invariant "committed ⟹ WAL-live" holds because the commit UPDATE runs only
+   * after the WAL append.
    */
   async batchPut(entries: Array<{ document: WikiDocument; embedding: number[] }>): Promise<PutResult[]> {
     if (entries.length === 0) return [];
@@ -580,9 +823,16 @@ export class WikiManager implements WikiModule {
       }
       const domainSet = new Set(domains.map((d) => d.domain_name));
 
-      // Build records, collecting hashes for a single existence scan
+      // WAL-sourced existence: only hashes with NO live WAL entry are inserted.
+      const liveWal = walLiveHashes(getWikiLogsDir(), NAMESPACE);
+
       const hashes = new Set<string>();
       const validEntries: Array<{ document: WikiDocument; embedding: number[]; hash: string; record: Record<string, unknown>; walEntry: WALEntry }> = [];
+
+      // ONE clock read shared by every row's commit timestamp and every WAL
+      // entry's timestamp + day-file (so delete()'s day-file derivation agrees).
+      const now = new Date();
+      const committedAt = now.toISOString();
 
       for (const { document, embedding } of entries) {
         const hash = generateHash(document);
@@ -607,10 +857,10 @@ export class WikiManager implements WikiModule {
             content: document.content,
             references: JSON.stringify(document.references || []),
             embedding,
-            createdAt: new Date().toISOString(),
+            createdAt: PREMATURE, // committed in Phase 3
           },
           walEntry: {
-            timestamp: new Date().toISOString(),
+            timestamp: committedAt,
             hash,
             document,
             approved: true,
@@ -619,38 +869,41 @@ export class WikiManager implements WikiModule {
         });
       }
 
-      // Single table scan to find which hashes already exist (skip them)
-      const records = await this.table.query().toArray();
-      const existingHashes = new Set<string>();
-      for (const record of records) {
-        const r = record as Record<string, unknown>;
-        if (hashes.has(r.hash as string)) {
-          existingHashes.add(r.hash as string);
-        }
+      const toInsert = validEntries.filter((e) => !liveWal.has(e.hash));
+
+      // Phase 0: clear any prior (necessarily premature) rows for these hashes
+      // so a hash maps to exactly one row.
+      if (toInsert.length > 0) {
+        const hashList = toInsert.map((e) => `'${e.hash}'`).join(', ');
+        await this.table.delete(`hash IN (${hashList})`);
       }
 
-      const toInsert = validEntries.filter((e) => !existingHashes.has(e.hash));
-
-      // Single batch insert
       if (toInsert.length > 0) {
+        // Phase 1: insert all PREMATURE (invisible to reads).
         await this.table.add(toInsert.map((e) => e.record));
 
-        // Single batched WAL append
+        // Phase 2: single batched WAL append (the durable truth).
         const walLines = toInsert.map((e) => JSON.stringify(e.walEntry)).join('\n');
         ensureDirs();
         const walDir = getWikiLogsDir();
-        const today = formatDate(new Date());
+        const today = formatDate(now);
         const walPath = path.join(walDir, `${today}.wal`);
         fs.appendFileSync(walPath, `${walLines}\n`, 'utf-8');
+
+        // Phase 3: COMMIT — one UPDATE flips every just-inserted row to live.
+        const hashList = toInsert.map((e) => `'${e.hash}'`).join(', ');
+        await this.table.update({
+          where: `hash IN (${hashList})`,
+          values: { createdAt: committedAt },
+        });
 
         this.core.brief('info', 'wiki', `Batch stored ${toInsert.length} documents`);
       }
 
-      // Build results in original order. Mirror put()'s honest reporting:
-      // a hash that was already present is flagged alreadyExisted:true rather
-      // than being indistinguishable from a fresh insert.
+      // Build results in original order. A hash that was already WAL-live is
+      // flagged alreadyExisted:true rather than indistinguishable from insert.
       return validEntries.map((e) =>
-        existingHashes.has(e.hash)
+        liveWal.has(e.hash)
           ? { success: true, hash: e.hash, alreadyExisted: true }
           : { success: true, hash: e.hash },
       );
@@ -678,7 +931,7 @@ export class WikiManager implements WikiModule {
     }
 
     try {
-      // Find the document and its createdAt date
+      // Find the document's committed createdAt date.
       const records = await this.table.query().toArray();
       let foundRecord: Record<string, unknown> | null = null;
 
@@ -690,12 +943,26 @@ export class WikiManager implements WikiModule {
         }
       }
 
+      // Two cases:
+      //  (a) A PREMATURE row (createdAt null) — a half-written document whose
+      //      WAL append did not complete. Nothing was committed, so there is no
+      //      tombstone to write: roll the garbage row back with a bare delete
+      //      and skip WAL marking.
+      //  (b) A COMMITTED row — derive its WAL day-file from createdAt (which
+      //      the commit path stamped with the SAME timestamp the entry was
+      //      written under, so this lookup is exact) and mark the tombstone
+      //      BEFORE the DB delete, so a DB failure leaves both stores intact.
       if (!foundRecord) {
         this.core.brief('warn', 'wiki', `Document not found: ${hash}`);
         return false;
       }
 
-      // Get the date from createdAt to find the WAL file
+      if (foundRecord.createdAt === null || foundRecord.createdAt === undefined) {
+        this.core.verbose('wiki', `Deleting premature (uncommitted) row ${hash} — no WAL tombstone needed`);
+        await this.table.delete(`hash = '${hash}'`);
+        return true;
+      }
+
       const createdAt = foundRecord.createdAt as string;
       const walDate = formatDate(new Date(createdAt));
 
@@ -846,6 +1113,13 @@ export class WikiManager implements WikiModule {
    *  3. Insert via `insertRebuildBatch` (a single table.add per batch) with
    *     no WAL write — rebuild must not feed its own input.
    *
+   * Repair: because it clears the table and re-inserts every live WAL entry
+   * with `createdAt = entry.timestamp` (a COMMITTED value), rebuild also
+   * heals reverse-2FC leftovers by construction:
+   *   - a PREMATURE row with NO live WAL entry → cleared, never re-inserted;
+   *   - a PREMATURE row WITH a live WAL entry → cleared, re-inserted committed.
+   * The ANN index is refreshed at the end.
+   *
    * This changes O(N) network round-trips + O(N) DB writes into O(N/batch)
    * of each. Semantics are unchanged: the namespace filter, deleted/approved
    * filters, and last-write-wins ordering all still hold.
@@ -954,6 +1228,12 @@ export class WikiManager implements WikiModule {
       }
 
       this.core.brief('info', 'wiki', `Rebuild complete: ${documentsProcessed} documents processed`);
+
+      // Refresh the ANN index over the rebuilt corpus. Non-fatal (get() falls
+      // back to the manual scan on a missing index). `replace` because the
+      // table was just cleared + repopulated, so any prior index is stale.
+      await this.ensureVectorIndex(true);
+
       return { success: true, documentsProcessed, errors };
     } catch (err) {
       const error = err instanceof Error ? err.message : String(err);

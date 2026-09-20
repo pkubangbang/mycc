@@ -66,8 +66,8 @@ vi.mock('../../engine/rag-provider.js', () => ({
 // --- LanceDB mock ---------------------------------------------------------
 // A single shared in-memory table state so add()/delete() reflect the real
 // sequence (delete('true') clears, then adds accumulate).
-interface FakeTableState { rows: Array<Record<string, unknown>>; addCalls: number; deleteCalls: number; }
-const tableState: FakeTableState = { rows: [], addCalls: 0, deleteCalls: 0 };
+interface FakeTableState { rows: Array<Record<string, unknown>>; addCalls: number; deleteCalls: number; updateCalls: number; }
+const tableState: FakeTableState = { rows: [], addCalls: 0, deleteCalls: 0, updateCalls: 0 };
 
 vi.mock('@lancedb/lancedb', () => {
   const fakeTable = {
@@ -75,11 +75,51 @@ vi.mock('@lancedb/lancedb', () => {
       tableState.addCalls++;
       tableState.rows.push(...records);
     },
-    delete: async (_filter: string) => {
+    // Minimal `where` evaluator supporting the two predicates the wiki write
+    // path uses: `hash = 'X'` and `hash IN ('a', 'b', ...)`. Returns the row
+    // indices that match, so delete()/update() act like the real engine.
+    delete: async (filter: string) => {
       tableState.deleteCalls++;
-      tableState.rows = []; // 'true' clears everything
+      if (filter === 'true') {
+        tableState.rows = []; // full clear
+        return;
+      }
+      const matches = (hash: unknown): boolean => {
+        const h = String(hash);
+        const eq = filter.match(/^hash = '([^']*)'$/);
+        if (eq) return h === eq[1];
+        const inMatch = filter.match(/^hash IN \(([^)]*)\)$/);
+        if (inMatch) {
+          const set = inMatch[1].split(',').map((s) => s.trim().replace(/^'|'$/g, ''));
+          return set.includes(h);
+        }
+        return false;
+      };
+      tableState.rows = tableState.rows.filter((r) => !matches(r.hash));
     },
-    query: () => ({ toArray: async () => tableState.rows }),
+    // Reverse-2FC commit flip: apply `where` + set the given values in place.
+    update: async (opts: { where: string; values: Record<string, unknown> }) => {
+      tableState.updateCalls++;
+      const eq = opts.where.match(/^hash = '([^']*)'$/);
+      const inMatch = opts.where.match(/^hash IN \(([^)]*)\)$/);
+      const set = inMatch
+        ? inMatch[1].split(',').map((s) => s.trim().replace(/^'|'$/g, ''))
+        : null;
+      let count = 0;
+      for (const row of tableState.rows) {
+        const h = String(row.hash);
+        const hit = eq ? h === eq[1] : set ? set.includes(h) : false;
+        if (hit) {
+          Object.assign(row, opts.values);
+          count++;
+        }
+      }
+      return { rowsUpdated: count, version: tableState.updateCalls };
+    },
+    query: () => ({
+      where: (_filter: string) => ({ toArray: async () => tableState.rows }),
+      toArray: async () => tableState.rows,
+    }),
   };
   return {
     connect: async () => ({
@@ -145,6 +185,7 @@ describe('WikiManager.rebuild()', () => {
     tableState.rows = [];
     tableState.addCalls = 0;
     tableState.deleteCalls = 0;
+    tableState.updateCalls = 0;
   });
 
   afterEach(() => {
@@ -343,6 +384,7 @@ describe('WikiManager.batchPut() — alreadyExisted reporting', () => {
     tableState.rows = [];
     tableState.addCalls = 0;
     tableState.deleteCalls = 0;
+    tableState.updateCalls = 0;
   });
 
   afterEach(() => {
