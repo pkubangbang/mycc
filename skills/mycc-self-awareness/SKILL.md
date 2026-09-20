@@ -135,8 +135,9 @@ mycc's relationship with Ollama is **not uniform**:
   startup; `-v` for verbose; `--serve [port]` for the WebUI.
 - **Locate the install:** the `mycc` shim resolves to `bin/mycc.js`; its
   parent is the package root. Or use `$(npm root -g)/@pkubangbang/mycc`.
-- **Do NOT launch peers via raw `node bin/mycc.js`** — the Lead refuses to
-  start outside the Coordinator.
+- **NEVER spawn the Lead entry directly** — not `node bin/mycc.js`, not
+  `node --import tsx ... src/lead.ts`; the Lead refuses to start outside the
+  Coordinator. Always launch via the `mycc` command.
 
 > **Full launch commands, flag reference, and the locate-the-install
 > scripts:** see `launching-and-locating.md`.

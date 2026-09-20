@@ -149,11 +149,16 @@ in `workflow-patterns.md`.
 
 ## Launching a Headless Peer
 
-Bring up a second instance with a plain `mycc` from its working directory
-(NOT raw `node bin/mycc.js` — the Lead refuses to start outside the
-Coordinator). `--serve`/`--auto` are NOT required for channel creation.
-See `launching-peer.md` for the order-of-operations
-checklist.
+Bring up a second instance with a plain `mycc` from its working directory.
+**NEVER spawn the Lead entry directly** — not `node bin/mycc.js` and not
+`node --import tsx ... src/lead.ts`; both trip the guard in
+`src/loop/agent-repl.ts` (`Error: Lead process must be started via
+Coordinator (mycc command)`) and the instance never appears in `peers()`.
+Always use the `mycc` command: `mycc` (interactive), `mycc --auto
+--skip-healthcheck` (unattended), `mycc --daemon [skill]` (headless),
+`mycc --serve <port>` (WebUI). `--serve`/`--auto` are NOT required for
+channel creation. See `launching-peer.md` for the
+full recipes and the order-of-operations checklist.
 
 ## Sanity Checklist & Pitfalls
 

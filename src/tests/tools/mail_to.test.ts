@@ -43,6 +43,8 @@ describe('mailToTool — cross-instance peer routing', () => {
   it('routes a <session-id>/lead name to ctx.peer.sendPeerMail and returns OK', async () => {
     (ctx.peer.sendPeerMail as ReturnType<typeof vi.fn>).mockReturnValue(true);
     (ctx.peer.isFresh as ReturnType<typeof vi.fn>).mockReturnValue(true);
+    // A backing channel exists between sender and peer → clean OK (no warning).
+    (ctx.peer.hasChannelWith as ReturnType<typeof vi.fn>).mockReturnValue(true);
 
     const result = await mailToTool.handler(ctx, {
       name: `${PEER_SID}/lead`,
@@ -54,6 +56,45 @@ describe('mailToTool — cross-instance peer routing', () => {
     expect(ctx.peer.sendPeerMail).toHaveBeenCalledWith(PEER_SID, 'sync-check', 'are you ready?');
     expect(ctx.team.mailTo).not.toHaveBeenCalled();
     expect(result).toBe(`OK. Peer mail sent to ${PEER_SID}/lead.`);
+  });
+
+  it('warns (but still sends) when a peer send succeeds with NO backing channel', async () => {
+    // Fix #2: peer mail is channel-independent and succeeds, but with no channel
+    // between sender and receiver the peer has no channel-driven reply path —
+    // the OK result must carry an advisory warning.
+    (ctx.peer.sendPeerMail as ReturnType<typeof vi.fn>).mockReturnValue(true);
+    (ctx.peer.isFresh as ReturnType<typeof vi.fn>).mockReturnValue(true);
+    (ctx.peer.hasChannelWith as ReturnType<typeof vi.fn>).mockReturnValue(false);
+
+    const result = await mailToTool.handler(ctx, {
+      name: `${PEER_SID}/lead`,
+      title: 'sync-check',
+      content: 'are you ready?',
+    });
+
+    expect(ctx.peer.sendPeerMail).toHaveBeenCalledWith(PEER_SID, 'sync-check', 'are you ready?');
+    expect(ctx.peer.hasChannelWith).toHaveBeenCalledWith(PEER_SID);
+    // Mail WAS sent — the result still starts with OK, but carries a warning.
+    expect(result).toContain('OK. Peer mail sent');
+    expect(result).toContain('WARNING');
+    expect(result).toContain('no channel');
+    expect(result).toContain(PEER_SID);
+  });
+
+  it('does NOT warn when a channel backs the pair (hasChannelWith=true)', async () => {
+    (ctx.peer.sendPeerMail as ReturnType<typeof vi.fn>).mockReturnValue(true);
+    (ctx.peer.isFresh as ReturnType<typeof vi.fn>).mockReturnValue(true);
+    (ctx.peer.hasChannelWith as ReturnType<typeof vi.fn>).mockReturnValue(true);
+
+    const result = await mailToTool.handler(ctx, {
+      name: `${PEER_SID}/lead`,
+      title: 'sync-check',
+      content: 'are you ready?',
+    });
+
+    expect(ctx.peer.hasChannelWith).toHaveBeenCalledWith(PEER_SID);
+    expect(result).toBe(`OK. Peer mail sent to ${PEER_SID}/lead.`);
+    expect(result).not.toContain('WARNING');
   });
 
   it('fail-fast rejects a stale/offline peer BEFORE sendPeerMail (isFresh=false)', async () => {
@@ -163,6 +204,9 @@ describe('mailToTool — UUID session-id validation (Fix #4)', () => {
 
   it('a valid <uuid>/lead IS routed to sendPeerMail', async () => {
     (ctx.peer.sendPeerMail as ReturnType<typeof vi.fn>).mockReturnValue(true);
+    // Backing channel exists → clean OK (isolate the routing behavior from the
+    // fix #2 channel-completeness warning).
+    (ctx.peer.hasChannelWith as ReturnType<typeof vi.fn>).mockReturnValue(true);
     const result = await mailToTool.handler(ctx, {
       name: `${PEER_SID}/lead`,
       title: 'hello',

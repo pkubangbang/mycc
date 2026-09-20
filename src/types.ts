@@ -648,6 +648,16 @@ export interface PeerModule {
    *  --debug-autofly for engaging auto mode. */
   hasActiveChannel(): boolean;
   /**
+   * True if this instance owns a channel whose peer is the given session-id
+   * (a channel file pair exists with this session and `sessionId` as the two
+   * participants). Used by mail_to: peer mail is channel-independent and can
+   * succeed with no backing channel, but without one the peer has no
+   * channel-driven path to deliver a REPLY back — so a successful send with
+   * `hasChannelWith(id) === false` is a silent dead-end worth warning about.
+   * The child (NoopPeerModule) returns false (children do not use channels).
+   */
+  hasChannelWith(sessionId: string): boolean;
+  /**
    * Register a callback fired when a channel is joined (joinChannel sets
    * joined=true and injects the firstQuery). The callback lets the agent loop
    * react to a channel joining MID-PROMPT — i.e. after the Layer A gate was

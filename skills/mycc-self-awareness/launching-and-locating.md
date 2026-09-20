@@ -25,14 +25,16 @@ plain `mycc` launched in a directory already registers identity + writes
 heartbeats + runs the 5s channel poll, so a mediator's `firstQuery`
 auto-delivers with no special flag (see the `mediator` skill).
 
-> **Do NOT launch peers via raw `node bin/mycc.js`** (or any direct spawn
-> of the engine entry). The Lead refuses to start outside the Coordinator —
-> `main()` in `src/loop/agent-repl.ts` checks `process.send` and exits if
-> the Coordinator IPC is absent — so a raw `node` spawn either errors out
+> **Do NOT spawn the Lead entry directly** — neither `node bin/mycc.js` nor
+> `node --import tsx ... src/lead.ts` (or any other direct spawn of the
+> engine entry). The Lead refuses to start outside the Coordinator —
+> `main()` in `src/loop/agent-repl.ts` checks `process.send` and exits with
+> `Error: Lead process must be started via Coordinator (mycc command)` if
+> the Coordinator IPC is absent — so a direct spawn either errors out
 > or hangs before identity registration, and the instance never appears in
 > `peers()`. Always use the `mycc` command (the Coordinator wrapper in
-> `bin/mycc.js`). This matters for the `mediator` skill's cross-instance
-> wiring.
+> `bin/mycc.js`, which runs `src/index.ts`). This matters for the `mediator`
+> skill's cross-instance wiring.
 
 ## 2. How to find the mycc project directory from a runnable `mycc`
 

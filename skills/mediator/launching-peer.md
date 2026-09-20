@@ -17,13 +17,35 @@ the 5s channel poll **regardless of mode** — `--serve` and `--auto` are NOT
 required for channel creation. The peer's `firstQuery` is delivered to its
 mailbox by the channel poll, not by any special flag.
 
-> **Do NOT launch a peer via raw `node bin/mycc.js`** (or any direct spawn of
-> the engine entry with non-TTY stdio). The Lead refuses to start outside the
+> **Do NOT spawn the Lead entry directly** — neither `node bin/mycc.js` nor
+> `node --import tsx/esm src/lead.ts` (or any other direct spawn of `src/lead.ts`
+> / the engine entry with non-TTY stdio). The Lead refuses to start outside the
 > Coordinator — `main()` in `src/loop/agent-repl.ts` checks `process.send` and
-> exits if the Coordinator IPC is absent — so a raw `node` spawn either errors
-> out or hangs before identity registration, and the instance never appears
-> in `peers()`. Always use the `mycc` command (the Coordinator wrapper) for
-> peers. (`--serve` is for the WebUI, not for headless mediation.)
+> exits if the Coordinator IPC is absent — so a direct spawn **errors out with**
+> `Error: Lead process must be started via Coordinator (mycc command)` (or hangs
+> before identity registration), and the instance never appears in `peers()`.
+>
+> **The exact form that failed in the field** (PR #19 peer-restart episode): the
+> agent tried to relaunch peers with
+> `node --import tsx ... src/lead.ts --auto`, which trips the guard above. The
+> `bin/mycc.js` path is a red herring — `src/lead.ts` is **not** a supported
+> entrypoint at all; the coordinator runs `src/index.ts`, which itself sets up
+> the parent/child IPC envelope `lead.ts` expects. If you find yourself typing
+> `src/lead.ts` (or `--import tsx`), you are on the wrong path — stop and use the
+> `mycc` command below.
+>
+> **Launch peers via the `mycc` command (the Coordinator wrapper) — always.**
+> Copy-paste recipes for the cases you will actually hit:
+>
+> ```bash
+> mycc                                   # interactive peer (human at its terminal)
+> mycc --auto --skip-healthcheck         # unattended peer (no human; agent-driven)
+> mycc --daemon [skill]                  # headless daemon (optionally auto-load a service skill)
+> mycc --serve <port>                    # WebUI peer (browser chat; NOT headless mediation)
+> mycc --auto --skip-healthcheck --ollama-model <model>   # pin the peer's model
+> ```
+>
+> (`--serve` is for the WebUI, not for headless mediation.)
 
 ## Order of operations when wiring a headless peer
 
@@ -61,10 +83,12 @@ human at the peer's terminal), you face two constraints:
    `question()`. Then the channel's `firstQuery` (delivered to its mailbox by
    the 5s poll) becomes its first unit of work, and its agent loop executes
    that work and mails the reply back — all autonomously.
-2. **Cannot use raw `node bin/mycc.js`.** The Lead refuses to start outside
-   the Coordinator (no `process.send` → `main()` exits). So you must launch
-   the `mycc` *command* (the Coordinator wrapper), not the engine entry
-   directly.
+2. **Cannot spawn the Lead entry directly.** Neither `node bin/mycc.js`
+   nor `node --import tsx ... src/lead.ts` works — the Lead refuses to start
+   outside the Coordinator (no `process.send` → `main()` exits with
+   `Error: Lead process must be started via Coordinator (mycc command)`).
+   So you must launch the `mycc` *command* (the Coordinator wrapper), not
+   the engine entry directly.
 
 The solution: use the agent's background-command tool to run the `mycc`
 command in the peer's working directory with `--auto` (and `--skip-healthcheck`

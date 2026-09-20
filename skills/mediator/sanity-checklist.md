@@ -5,10 +5,12 @@
 
 ## Sanity Checklist Before Declaring the Workflow Wired
 
-- [ ] Peer instance launched via the `mycc` command (not raw
-      `node bin/mycc.js`), verified online via `peers()` before writing channel
-      files. (`--serve`/`--auto` are not required — identity + heartbeat +
-      channel poll run regardless of mode. See `launching-peer.md`.)
+- [ ] Peer instance launched via the `mycc` command (the Coordinator —
+      NEVER a direct spawn of the Lead entry: not `node bin/mycc.js`, not
+      `node --import tsx ... src/lead.ts`), verified online via `peers()` before
+      writing channel files. (`--serve`/`--auto` are not required — identity +
+      heartbeat + channel poll run regardless of mode. See
+      `launching-peer.md`.)
 - [ ] Both target instances are **online** (verified with `peers()` or a fresh
       heartbeat in `~/.mycc-store/discovery/heartbeat/<sid>.json`).
 - [ ] **Both** channel files of the pair exist, each with the correct

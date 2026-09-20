@@ -156,6 +156,22 @@ export const mailToTool: ToolDefinition = {
         const ok = ctx.peer.sendPeerMail(peerSid, title, content);
         if (ok) {
           ctx.core.brief('info', 'mail_to', `(peer→${name}) ${title}\n${chalk.gray(content)}`);
+          // Channel-completeness check (fix #2): peer mail is channel-INDEPENDENT
+          // and just succeeded, but a peer with NO channel pointing back to this
+          // sender has no channel-driven path to deliver its REPLY — the reply
+          // arrives via the peer's channel poll / firstQuery machinery, which
+          // only runs for a channel file pair. Without one, the sender could
+          // wait forever for a verdict that can never arrive (observed in the
+          // PR #19 peer-restart episode: channel files stayed keyed to dead
+          // session-ids, so the live peers never polled them). The mail is still
+          // sent — this is a non-blocking advisory appended to the OK result.
+          if (!ctx.peer.hasChannelWith(peerSid)) {
+            ctx.core.brief('info', 'mail_to',
+              `No channel between this instance and ${peerSid} — replies may not be delivered.`);
+            return `OK. Peer mail sent to ${name}. WARNING: no channel exists between this instance and ${peerSid}, ` +
+              `so the peer has no channel-driven path to deliver a REPLY back — consider establishing a channel ` +
+              `with the mail receiver (see the mediator skill), otherwise the peer's response may never arrive.`;
+          }
           return `OK. Peer mail sent to ${name}.`;
         }
         // Defensive: isFresh passed above but sendPeerMail returned false

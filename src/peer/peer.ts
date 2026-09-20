@@ -91,6 +91,15 @@ export class PeerManager implements PeerModule {
   }
 
   /**
+   * True if this instance owns a channel whose peer is the given session-id.
+   * Delegates to ChannelManager. Used by mail_to to warn when a peer send
+   * succeeded but no channel backs the pair (the reply path is channel-driven).
+   */
+  hasChannelWith(sessionId: string): boolean {
+    return this.channel.hasChannelWith(sessionId);
+  }
+
+  /**
    * Start the peer subsystem: register identity + begin heartbeat + start channel poll.
    */
   start(): void {
@@ -164,6 +173,7 @@ export class NoopPeerModule implements PeerModule {
   sendMail(_channelId: string, _sessionId: string, _topic: string, _content: string): boolean { return false; }
   sendPeerMail(_sessionId: string, _title: string, _content: string): boolean { return false; }
   hasActiveChannel(): boolean { return false; }
+  hasChannelWith(_sessionId: string): boolean { return false; }
   start(): void { /* no-op */ }
   stop(): void { /* no-op */ }
   getSelfSessionId(): string { return ''; }

@@ -255,6 +255,27 @@ export class ChannelManager {
   }
 
   /**
+   * True if this instance owns a channel whose PEER is `sessionId` — i.e. a
+   * channel file pair exists with this session on one side and `sessionId` on
+   * the other.
+   *
+   * Used by mail_to as a channel-completeness check: peer mail (sendPeerMail)
+   * is channel-INDEPENDENT — it appends straight to the remote mailbox and
+   * succeeds even when no channel exists. But a peer with no channel pointing
+   * to the sender will never auto-deliver a REPLY back (the reply routing /
+   * firstQuery machinery is channel-driven), so a successful send with no
+   * backing channel is a silent dead-end. This predicate surfaces that gap.
+   *
+   * listChannels() only returns channels OWNED by this instance, and populates
+   * their peerSessionId from the sibling file. So "has a channel with X" is
+   * simply "some owned channel's peerSessionId === X".
+   */
+  hasChannelWith(sessionId: string): boolean {
+    if (!sessionId) return false;
+    return this.listChannels().some((ch) => ch.peerSessionId === sessionId);
+  }
+
+  /**
    * Send mail to a remote session via its mailbox.
    * Gated by freshness check. Returns false if peer is stale or not found.
    *
