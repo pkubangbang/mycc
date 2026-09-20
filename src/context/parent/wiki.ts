@@ -971,12 +971,15 @@ export class WikiManager implements WikiModule {
    *
    * The single-hash public delete path (the `delete` tool). Locates the row
    * via a full scan to read its `createdAt` (needed to find the WAL file),
-   * marks the WAL entry deleted (audit), then deletes the LanceDB row. For
-   * the batched re-index path use {@link deleteByHashes}, which marks the
-   * WAL too (grouped by date, one pass per day-file) but batches the DB
-   * delete into a single `hash IN (...)` and reuses the caller's existing
-   * scan for the `createdAt` dates — avoiding this method's per-hash full
-   * scan.
+   * deletes the LanceDB row, then marks the WAL entry deleted (audit). The
+   * DB-before-WAL ordering matches {@link deleteByHashes} (PR #18): a failed
+   * DB delete leaves the WAL unmarked so the row survives in both the table
+   * and the WAL and rebuild() re-inserts it — no tombstone-then-fail data
+   * loss. For the batched re-index path use {@link deleteByHashes}, which
+   * marks the WAL too (grouped by date, one pass per day-file) but batches
+   * the DB delete into a single `hash IN (...)` and reuses the caller's
+   * existing scan for the `createdAt` dates — avoiding this method's
+   * per-hash full scan.
    */
   async delete(hash: string): Promise<boolean> {
     // Validate hash format
@@ -1013,11 +1016,25 @@ export class WikiManager implements WikiModule {
       const createdAt = foundRecord.createdAt as string;
       const walDate = formatDate(new Date(createdAt));
 
-      // Mark as deleted in WAL first (before LanceDB deletion for consistency)
-      await this.markWALDeleted(hash, walDate);
-
-      // Delete from LanceDB
+      // Delete from LanceDB FIRST, then mark the WAL entry deleted. This
+      // matches deleteByHashes' invariant (PR #18): the WAL mark runs AFTER
+      // the DB delete succeeds. The previous "mark WAL first, then delete"
+      // ordering was a tombstone-then-fail data-loss window — if table.delete
+      // threw here, the catch below swallowed the error and returned false,
+      // leaving the WAL tombstoned while the row SURVIVED. The next rebuild()
+      // (wipes the table, replays the WAL skipping `deleted` entries) would
+      // then permanently drop a record the caller was told was NOT deleted.
+      // With the DB delete first, a throw leaves the WAL unmarked too — the
+      // row survives in BOTH the table and the WAL, so the next rebuild
+      // re-inserts it and the caller can retry the delete. (The catch still
+      // returns false, so a failed DB delete correctly reports failure; only
+      // the WAL-mark ordering changed.)
       await this.table.delete(`hash = '${hash}'`);
+
+      // Mark as deleted in WAL only after the DB delete succeeded (best-effort
+      // audit mark; a missing WAL file/entry is logged by markWALDeleted and
+      // is non-fatal — the DB delete is the authoritative removal).
+      await this.markWALDeleted(hash, walDate);
 
       this.core.brief('info', 'wiki', `Deleted document: ${hash}`);
       return true;
@@ -1071,16 +1088,26 @@ export class WikiManager implements WikiModule {
     if (records.length === 0) return;
 
     // Validate every hash up front. Reject the whole batch on any invalid
-    // hash — a partial delete would leave the re-index diff inconsistent.
+    // hash by THROWING (not silently returning) — a partial delete would
+    // leave the re-index diff inconsistent, and a silent return lets the
+    // caller (indexSkills) proceed to batchPut + writeSkillIndexCache,
+    // pinning the very old+new duplicate-rows state the throw-on-DB-failure
+    // contract below exists to prevent. indexSkills' try/finally releases
+    // the reindex lock on the throw.
     for (const { hash } of records) {
       if (!HASH_PATTERN.test(hash)) {
-        this.core.brief('error', 'wiki', `deleteByHashes: invalid hash format: ${hash}`);
-        return;
+        throw new Error(`deleteByHashes: invalid hash format: ${hash}`);
       }
     }
 
     await this.initDb();
-    if (!this.table) return;
+    if (!this.table) {
+      // THROW (not return) so indexSkills aborts before batchPut/cache write
+      // — mirroring the invalid-hash throw above and the DB-delete throw
+      // below. A silent return here would let the re-index proceed as if
+      // the delete succeeded.
+      throw new Error('deleteByHashes: database not initialized');
+    }
 
     // Order matters for the data-loss window (PR #18 round-4 P1):
     // mark the WAL AFTER the DB delete succeeds. rebuild() wipes the whole
@@ -1093,11 +1120,11 @@ export class WikiManager implements WikiModule {
     // AFTER the DB delete closes that window: on a throw, the WAL is still
     // un-deleted, so the row survives in BOTH the table and the WAL → the
     // next rebuild re-inserts it, and the next re-index retries the
-    // replace from a consistent-old state. The single-hash delete() keeps
-    // its mark-before-delete ordering only because it is wrapped in its own
-    // try/catch and reports the failure to the caller (it does NOT leave a
-    // tombstone-then-fail state reachable by rebuild); the batched path
-    // throws, so it must not tombstone-then-throw.
+    // replace from a consistent-old state. The single-hash delete() uses
+    // the SAME DB-before-WAL ordering (PR #18 round-4): on a failed DB
+    // delete it returns false without tombstoning the WAL, so the row
+    // survives in both the table and the WAL and rebuild() re-inserts it —
+    // same invariant, same reason, for both paths.
     const inList = records
       .map(({ hash }) => `'${hash.replace(/'/g, "''")}'`)
       .join(', ');
@@ -1374,14 +1401,21 @@ export class WikiManager implements WikiModule {
         // The table was just wiped (table.delete('true') above). Refresh
         // the ANN index (replace:true) so the next get() uses a live index
         // instead of a dead one pointing at deleted row IDs. AWAITED (not
-        // fire-and-forget) so "rebuild succeeded" means the index is live
-        // — callers can rely on the next get() not falling back to the slow
-        // manual scan (PR #18 round-4 P1 #3). ensureVectorIndex is non-fatal:
-        // it logs + swallows index failures (get() falls back to the manual
-        // scan), so awaiting it never makes rebuild throw on index issues.
-        // Note: with the table empty (only __schema__ after the wipe) the
-        // small-table gate skips the build — nothing useful to index; the
-        // next indexSkills with a real corpus builds it.
+        // fire-and-forget) so "rebuild succeeded" means the index refresh
+        // was kicked off (PR #18 round-4 P1 #3). CAVEAT: LanceDB
+        // createIndex returns once creation is STARTED, not once the index
+        // is fully trained — the await resolves at "index registered", not
+        // "index trained" (indices.d.ts:670-673). So the next get() may still
+        // take the manual-scan fallback path briefly while training
+        // completes in the background; that path is correct, just slower.
+        // Passing waitTimeoutSeconds would block until trained, but that
+        // would make rebuild wait on a background task — the manual-scan
+        // fallback is the cheaper correctness bridge. ensureVectorIndex is
+        // non-fatal: it logs + swallows index failures (get() falls back to
+        // the manual scan), so awaiting it never makes rebuild throw on
+        // index issues. Note: with the table empty (only __schema__ after
+        // the wipe) the small-table gate skips the build — nothing useful
+        // to index; the next indexSkills with a real corpus builds it.
         await this.ensureVectorIndex(true);
         this.core.brief('info', 'wiki', 'Rebuild complete: 0 documents processed');
         return { success: true, documentsProcessed: 0, errors: [] };
@@ -1445,8 +1479,13 @@ export class WikiManager implements WikiModule {
       // fall back to the slow manual scan on every query until some other
       // path rebuilt the index). `replace: true` forces a rebuild over the
       // freshly re-inserted rows. AWAITED (not fire-and-forget) so "rebuild
-      // succeeded" means the index is live — callers can rely on the next
-      // get() using the refreshed index (PR #18 round-4 P1 #3).
+      // succeeded" means the index refresh was kicked off (PR #18 round-4
+      // P1 #3). CAVEAT: LanceDB createIndex returns once creation is
+      // STARTED, not once trained — the await resolves at "index
+      // registered", not "index trained" (indices.d.ts:670-673). The next
+      // get() may therefore still take the manual-scan fallback briefly
+      // while training completes in the background; that path is correct,
+      // just slower (see the matching caveat in the zero-doc branch above).
       // ensureVectorIndex is non-fatal: it logs + swallows index failures
       // (get() falls back to the manual scan), so awaiting it never makes
       // rebuild throw on index issues.

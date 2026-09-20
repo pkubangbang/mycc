@@ -1,7 +1,8 @@
 /**
  * wiki-deletebyhashes.test.ts — peer-review regression test for PR #29
- * round-2: deleteByHashes must mark the WAL before the DB delete so
- * rebuild() does NOT resurrect a deleted skill record.
+ * round-2: deleteByHashes must mark the WAL (AFTER the DB delete succeeds,
+ * PR #18 round-4 ordering) so rebuild() does NOT resurrect a deleted skill
+ * record.
  *
  * The round-1 defect: deleteByHashes removed the LanceDB row but left the
  * record's WAL entry unmarked. rebuild() wipes the table and replays every

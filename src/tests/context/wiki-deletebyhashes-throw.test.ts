@@ -15,6 +15,7 @@ import * as path from 'path';
 import * as os from 'os';
 import * as crypto from 'node:crypto';
 import type { WikiDocument, CoreModule, SkillIndexEntry } from '../../types.js';
+import { parseWALFile, formatDate } from '../../context/parent/wiki-utils.js';
 
 let tempDir = '';
 const logsDir = () => path.join(tempDir, 'logs');
@@ -124,6 +125,23 @@ describe('deleteByHashes throws on DB failure (PR #29/#18 round-3 P1)', () => {
     await expect(
       wiki.deleteByHashes([{ hash, createdAt: seeded.createdAt as string }]),
     ).rejects.toThrow(/DB delete failed/);
+
+    // WAL-after-delete invariant (PR #18 round-5 / peer-review B-5): the WAL
+    // tombstone must NOT be written when the DB delete failed. deleteByHashes
+    // marks the WAL only AFTER table.delete succeeds, so a thrown DB delete
+    // leaves the WAL entry un-tombstoned — the row survives in BOTH the table
+    // and the WAL, so the next rebuild re-inserts it (no permanent data loss).
+    // This assertion is the mutation guard: reorder deleteByHashes to mark
+    // the WAL BEFORE table.delete and this assertion fails (an entry would
+    // have deleted:true), catching the regression that the row/cache
+    // end-state assertions below cannot detect.
+    const walDate = formatDate(new Date(seeded.createdAt as string));
+    const walPath = path.join(logsDir(), `${walDate}.wal`);
+    expect(fs.existsSync(walPath)).toBe(true);
+    const walEntries = parseWALFile(fs.readFileSync(walPath, 'utf-8'));
+    const matching = walEntries.filter((e) => e.hash === hash);
+    expect(matching.length).toBeGreaterThan(0); // batchPut wrote it
+    expect(matching.every((e) => e.deleted !== true)).toBe(true); // NOT tombstoned
   });
 
   it('indexSkills aborts on delete failure: no new insert, no cache write, row survives', async () => {
