@@ -39,6 +39,7 @@ import { handleTool } from './states/tool.js';
 import { handleStop } from './states/stop.js';
 import { handleWait } from './states/await.js';
 import { clearWrapUp } from './esc-wrap-up.js';
+import { skillSuggester } from './states/collect-skill.js';
 import pkg from '../../package.json';
 import { loadProjectMindmap } from './mindmap-loader.js';
 import { registerSignalHandlers } from './signal-handlers.js';
@@ -205,6 +206,12 @@ export async function main(): Promise<void> {
     clearWrapUp();
     ctx.todo.clear();
     ctx.issue.clearAll();
+    // Reset the skill-discovery singleton's throttle state. double-Ctrl+L is
+    // an in-process "start fresh" (no state transition), so the state-machine
+    // turn-boundary guard never runs and the singleton is NOT reset by it.
+    // Explicit reset keeps parity with /clear (clear.ts) and defends against
+    // any future code that mutates the singleton between turn boundaries.
+    skillSuggester.reset();
   });
 
   // ── Register project-context populators ──
