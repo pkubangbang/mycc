@@ -23,7 +23,7 @@ import { isVerbose, validateEnv, ensureToolTypeImports, shouldRunSetup, loadEnv,
 import { agentIO } from './loop/agent-io.js';
 import { parseKeys, isCtrlC, isEscape } from './utils/key-parser.js';
 import { getProjectRoot, spawnTsx } from './utils/tsx-run.js';
-import { printHelp } from './help.js';
+import { printHelp, printVersion } from './help.js';
 import { installVerboseLog } from './utils/verbose-log.js';
 import { spawnDaemonLead, finishDaemonExit } from './utils/daemon-launch.js';
 
@@ -79,6 +79,15 @@ if (!process.stdout.isTTY || process.argv.slice(2).some(a => a === '--debug-ansi
 // dump is plain too (printHelp consults isPlainOutput()).
 if (process.argv.slice(2).some(a => a === '--help' || a === '-h')) {
   printHelp();
+  process.exit(0);
+}
+
+// --version: print the installed version (read from package.json) and
+// exit 0. Intercepted here, before any side effects, for the same reasons as
+// --help above. Only the long form is supported (no short alias) to avoid
+// collision with -v (--verbose).
+if (process.argv.slice(2).some(a => a === '--version')) {
+  printVersion();
   process.exit(0);
 }
 

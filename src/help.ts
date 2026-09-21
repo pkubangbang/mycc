@@ -27,6 +27,18 @@ function readVersion(): string {
   }
 }
 
+/**
+ * Print just the version string (for `mycc --version` / `mycc -V`).
+ * Pure output — no process.exit (the caller decides to exit).
+ *
+ * Honours the plain-output verdict for parity with --help: a redirected
+ * `mycc --version > v.txt` should not leak ANSI escapes.
+ */
+export function printVersion(): void {
+  const version = readVersion();
+  process.stdout.write(`mycc ${version}\n`);
+}
+
 interface FlagRow {
   flag: string;
   env?: string;
@@ -60,6 +72,7 @@ const STARTUP_FLAGS: FlagRow[] = [
   { flag: '--daemon [skill]', desc: 'Start a detached headless daemon (returns immediately). With a skill name, auto-loads it and starts its cron timer (if service_cron); without, runs a passive auto-mode daemon' },
   { flag: '--allow-plan-off', desc: 'In auto mode, auto-approve plan_off (skip confirmation; lets unattended peers escape plan mode)' },
   { flag: '-v, --verbose', desc: 'Show detailed debug output' },
+  { flag: '--version', desc: 'Print the mycc version and exit' },
   { flag: '-h, --help', desc: 'Show this help message and exit' },
 ];
 
