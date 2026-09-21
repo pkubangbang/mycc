@@ -54,6 +54,104 @@ const SKILL_OVERSIZE_THRESHOLD = 5;
  */
 const SKILL_SEMANTIC_TOPK = 10;
 
+// ── Adaptive α/β skill-match thresholds ─────────────────────────────────
+// See docs/adaptive-skill-match-thresholds.md for the full derivation and
+// the peer-reviewed verification. Summary: the old filter was `Z > 0` with
+// bidirectional substring `includes` — noisy (a 2-char query keyword like
+// "go" matched "logging"/"docker"; a 30-keyword skill self-promoted vs a
+// 3-keyword one). The replacement models keyword overlap as sampling
+// without replacement under a null of irrelevance and derives BOTH gates
+// from the keyword-space geometry (X = per-skill keyword count, W = total
+// keyword universe, Y = query keyword count, Z = exact-token intersection).
+//
+//   E[Z|null] = X·Y/W
+//   Var       = Y·(X/W)·((W−X)/W)·((W−Y)/(W−1))
+//   Z_min     = E[Z|null] + κ·sqrt(Var)          (recall gate: Z ≥ ceil(Z_min))
+//   β         = clamp(κ·Y/W, β_min, β_cap)       (precision gate: Z/X ≥ β)
+//
+// κ is the single significance knob (2σ above random). ρ is the coverage-
+// eligibility rule: a skill owning > ρ of the universe is too broad for
+// keyword overlap to be informative and defers to Branch B (semantic).
+
+/** Significance knob: "κσ above the random-overlap null". 2 = 2-sigma. */
+const SKILL_MATCH_KAPPA = 2;
+/**
+ * Coverage-eligibility threshold: a skill owning > ρ of the keyword universe
+ * is too broad for keyword overlap to be informative → defer to Branch B.
+ * Replaces the "α silently >1" hidden hard-disable with a named rule.
+ */
+const SKILL_COVERAGE_RHO = 0.5;
+/**
+ * β clamp band. Without it β = κ·Y/W is unsatisfiable at small W (β_raw > 1,
+ * keyword path silently dies) and vanishes at huge W (β_raw → 0, the
+ * vocabulary-bloat self-promotion bug returns). Verified by mdcalc:
+ * W=4,Y=7 → β_raw 3.5 → clamped 0.5; W=1000,Y=5 → β_raw 0.01 → clamped 0.05.
+ */
+const SKILL_BETA_MIN = 0.05;
+const SKILL_BETA_CAP = 0.5;
+
+/**
+ * Adaptive α/β keyword-match predicate for one skill.
+ *
+ * Replaces the old `Z > 0` substring `includes` filter with:
+ *  1. Exact-token intersection (case-insensitive, NO substring) → Z.
+ *  2. A `Z > 0` floor (rejects X=0 keywordless skills → Branch B).
+ *  3. Crash guards: W ≤ 1 → no null model (variance term divides by zero) →
+ *     fall back to the Z > 0 floor; Y > W → clamp Y ← min(Y, W) so the
+ *     variance is non-negative.
+ *  4. A named coverage-eligibility rule: X/W > ρ → defer to Branch B
+ *     (replaces the buried α > 1 hard-disable).
+ *  5. Two derived gates (both must pass): recall `Z ≥ ceil(Z_min)` and
+ *     precision `Z/X ≥ β`, where Z_min and β come from the hypergeometric
+ *     null above.
+ *
+ * `keywords` (the probe, length Y) is lowercased by the caller/extractor.
+ * `W` is the universe size (loader.getSkillKeywords().length), computed once
+ * per pass by the caller — NOT per skill — to avoid re-reading the map.
+ *
+ * Extracted as a named, pure helper so it is unit-testable in isolation
+ * (mirrors computeQuerySource / buildCompositeText / shouldExtract).
+ */
+export function matchesAdaptiveGates(
+  skillKeywords: string[],
+  keywords: string[],
+  W: number,
+): boolean {
+  // Exact-token intersection (case-insensitive, NO substring includes).
+  // The bidirectional `includes` of the old filter let "go" match "logging";
+  // exact-token match kills that. keywords are already lowercased by
+  // extractKeywords; skill keywords are normalized here.
+  const kwSet = new Set(skillKeywords.map(k => k.toLowerCase()));
+  const Z = keywords.filter(kw => kwSet.has(kw)).length;
+  if (Z === 0) return false;           // floor: rejects X=0 keywordless skills → Branch B
+
+  const X = skillKeywords.length;
+  if (X === 0) return false;            // keywordless → Branch B (defensive; Z>0 above already covers it)
+  if (W <= 1) return true;              // (1a) W≤1: (W−Y)/(W−1) divides by zero → no null model → Z>0 floor
+  // Named ineligible rule: a skill owning > ρ of the universe is too broad
+  // for keyword overlap to be informative → defer to Branch B. Replaces the
+  // buried α>1 hard-disable with a readable, debuggable rule.
+  if (X / W > SKILL_COVERAGE_RHO) return false;
+
+  // (1b) Y > W would make the variance negative (sqrt(NaN)). The probe can't
+  // sample more distinct keywords than the universe holds, so clamp.
+  const Y = Math.min(keywords.length, W);
+
+  // Derived thresholds from the hypergeometric null (Y clamped ≤ W, W > 1).
+  const EZ = (X * Y) / W;
+  const variance = Y * (X / W) * ((W - X) / W) * ((W - Y) / (W - 1));
+  const sigma = Math.sqrt(Math.max(variance, 0));
+  const Zmin = EZ + SKILL_MATCH_KAPPA * sigma;
+  // Z is integer → gate on ceil(Z_min), not the continuous Z_min (a float
+  // 0.72 must require Z ≥ 1, not let Z = 0 "pass" by rounding).
+  const recallOk = Z >= Math.ceil(Zmin);
+  const betaRaw = (SKILL_MATCH_KAPPA * Y) / W;
+  const beta = Math.min(Math.max(betaRaw, SKILL_BETA_MIN), SKILL_BETA_CAP);
+  const precisionOk = (Z / X) >= beta;
+
+  return recallOk && precisionOk;
+}
+
 /**
  * Partition a list of skills into new/suggested/loaded (via
  * getSkillTriologueStatus) and inject a HINT note surfacing them.
@@ -339,14 +437,15 @@ export class SkillSuggester {
     if (keywords.length === 0) return;
 
     const allSkills = ctx.skill.listSkills();
-    const matched = allSkills.filter(s => {
-      const nameLower = s.name.toLowerCase();
-      const kwLower = s.keywords.map(k => k.toLowerCase());
-      return keywords.some(kw =>
-        nameLower.includes(kw) ||
-        kwLower.some(k => k.includes(kw) || kw.includes(k)),
-      );
-    });
+    // Universe size W — computed ONCE per pass (not per skill). This is the
+    // same value passed to extractKeywords as availableKeywords; re-reading
+    // it here is cheap (cached on the loader) and keeps the adaptive gates
+    // self-contained. See docs/adaptive-skill-match-thresholds.md.
+    const W = loader.getSkillKeywords().length;
+    // Adaptive α/β match: exact-token intersection + derived recall (Z ≥
+    // ceil(Z_min)) and precision (Z/X ≥ β) gates. Replaces the old `Z > 0`
+    // substring filter. See matchesAdaptiveGates for the derivation.
+    const matched = allSkills.filter(s => matchesAdaptiveGates(s.keywords, keywords, W));
 
     if (matched.length === 0) return;
 
