@@ -16,11 +16,45 @@
  * Grouping is a frontend computed property — no backend per-teammate state.
  * See the "@-prefix teammate label convention" section in MYCC.md.
  */
-import { computed } from 'vue';
+import { computed, ref, onMounted, onBeforeUnmount } from 'vue';
 import type { ChatMessage } from '../types';
 
 const props = defineProps<{ teammateMessages: ChatMessage[] }>();
 const emit = defineEmits<{ (e: 'open-teammate', name: string): void }>();
+
+/**
+ * Narrow-screen flag — true when the viewport matches the codebase-wide
+ * `max-width: 600px` breakpoint (same one TeammateDrawer and ChatInput use
+ * for their phone-width layout). On narrow screens the collapsed team panel
+ * further narrows from the multi-row card into a single-line `TEAM (x)` pill
+ * (x = active/non-retired teammate count) so it hogs minimal horizontal
+ * space; the full card restores once the viewport widens. Driven by a
+ * matchMedia listener (set up in onMounted, torn down in onBeforeUnmount)
+ * rather than a raw resize handler so it only re-evaluates on breakpoint
+ * crossings, not every pixel change.
+ */
+const NARROW_QUERY = '(max-width: 600px)';
+const isNarrow = ref(false);
+let mql: MediaQueryList | null = null;
+
+function onMqlChange(e: MediaQueryListEvent): void {
+  isNarrow.value = e.matches;
+}
+
+onMounted(() => {
+  // Guard for non-browser (SSR / jsdom) environments where matchMedia may
+  // be absent — the flag simply stays false (wide-screen layout).
+  if (typeof window !== 'undefined' && typeof window.matchMedia === 'function') {
+    mql = window.matchMedia(NARROW_QUERY);
+    isNarrow.value = mql.matches;
+    mql.addEventListener('change', onMqlChange);
+  }
+});
+
+onBeforeUnmount(() => {
+  mql?.removeEventListener('change', onMqlChange);
+  mql = null;
+});
 
 interface TeammateSummary {
   name: string;
@@ -108,6 +142,16 @@ const allDone = computed(() =>
   teammates.value.length > 0 && teammates.value.every(t => t.done),
 );
 
+/**
+ * Count of ACTIVE (non-retired) teammates — the `x` in the narrow-screen
+ * `TEAM (x)` pill. A teammate is active when its last message is NOT the
+ * exit notice (toolTag 'exit'). Retired teammates are excluded so the pill
+ * reflects live work, matching how the full card greys-out retired rows.
+ */
+const activeCount = computed(() =>
+  teammates.value.filter(t => !t.done).length,
+);
+
 function onClick(name: string): void {
   emit('open-teammate', name);
 }
@@ -118,6 +162,17 @@ function onClick(name: string): void {
 function onCollapsedClick(): void {
   const first = teammates.value[0]?.name;
   if (first) emit('open-teammate', first);
+}
+
+// On narrow screens the multi-row card is replaced by a single-line
+// `TEAM (x)` pill. Clicking it opens the drawer on the first ACTIVE
+// teammate (so its accordion starts expanded); if none are active — which
+// can't happen here because the allDone branch renders above this one, but
+// is guarded for safety — it falls back to the first teammate overall.
+function onNarrowClick(): void {
+  const target = teammates.value.find(t => !t.done)?.name
+    ?? teammates.value[0]?.name;
+  if (target) emit('open-teammate', target);
 }
 </script>
 
@@ -135,7 +190,22 @@ function onCollapsedClick(): void {
   >
     <span class="collapsed-label">Team · 已完成</span>
   </button>
-  <!-- Full card: at least one teammate is NOT retired. -->
+  <!-- Narrow-screen collapsed pill: at least one teammate exists and not all
+       are retired, but the viewport is ≤600px. Replace the multi-row card
+       with a single-line `TEAM (x)` pill (x = active/non-retired count) so
+       the panel hugs the top-right with minimal horizontal footprint. Click
+       opens the drawer on the first active teammate. Restores to the full
+       card once the viewport widens (isNarrow flips false). -->
+  <button
+    v-else-if="teammates.length > 0 && isNarrow"
+    class="teammate-card narrow-pill"
+    type="button"
+    :title="`TEAM (${activeCount}) — 点击展开`"
+    @click="onNarrowClick"
+  >
+    <span class="narrow-pill-label">TEAM ({{ activeCount }})</span>
+  </button>
+  <!-- Full card: at least one teammate is NOT retired, wide screen. -->
   <div class="teammate-card" v-else-if="teammates.length > 0">
     <div class="card-title">Team</div>
     <button
@@ -268,6 +338,35 @@ function onCollapsedClick(): void {
 }
 .teammate-row.retired {
   opacity: 0.6;
+}
+/* Narrow-screen collapsed pill: the viewport is ≤600px (the codebase-wide
+   phone-width breakpoint) and at least one teammate is still active. The
+   multi-row card is too wide for a phone, so the panel narrows to a
+   single-line `TEAM (x)` pill hugging the top-right — just a compact,
+   clickable tab that opens the drawer. Distinct from the allDone
+   `.collapsed` pill (which fires regardless of viewport once every
+   teammate retires). Restores to the full multi-row card when the viewport
+   widens past the breakpoint. */
+.teammate-card.narrow-pill {
+  width: auto;
+  padding: 4px 10px;
+  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+  font-size: 11px;
+  border: none;
+  cursor: pointer;
+  transition: opacity 0.18s;
+  display: inline-flex;
+  align-items: center;
+  white-space: nowrap;
+}
+.teammate-card.narrow-pill:hover {
+  opacity: 0.85;
+}
+.narrow-pill-label {
+  color: var(--text-status-btn);
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  white-space: nowrap;
 }
 /* Collapsed card: every teammate has retired. The card becomes a thin,
    semi-transparent pill hugging the top-right edge — just enough of a
