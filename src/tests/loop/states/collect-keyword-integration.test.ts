@@ -123,7 +123,7 @@ import { handleCollect } from '../../../loop/states/collect.js';
 import { AgentState } from '../../../loop/state-machine.js';
 import { Triologue } from '../../../loop/triologue.js';
 import { extractKeywords } from '../../../loop/keyword-extractor.js';
-import { skillSuggester } from '../../../loop/states/collect-skill.js';
+import { skillSuggester, beginFreshSession } from '../../../loop/states/collect-skill.js';
 import {
   createTurnVars,
   createChatData,
@@ -462,6 +462,39 @@ describe('handleCollect — composite keyword extraction (integration)', () => {
     expect(skillSuggester.getCooldown()).toBe(3);
   });
 
+  it('BRANCH B at exactly the threshold (==5): takes the oversize path (boundary)', async () => {
+    // Boundary probe: the branch is `matched.length < SKILL_OVERSIZE_THRESHOLD`
+    // so 5 matched skills is NOT < 5 → it takes Branch B (wiki intersection).
+    // The existing tests probe 3 and 6; this pins the exact boundary at 5.
+    setExtractionResult({ status: 'success', keywords: ['test'], freeformQuery: 'test automation' });
+    const skills = makeOversizeSkills(5); // skill-0 .. skill-4 — exactly the threshold
+    const wikiResults = [
+      { title: 'project:skill-0', similarity: 0.9 },
+      { title: 'project:skill-2', similarity: 0.8 },
+    ];
+    const env = makeEnvWithSkills(skills, wikiResults);
+    const turn: TurnVars = createTurnVars({
+      lastUserQuery: 'help me test exactly five matches',
+    });
+
+    await handleCollect(env, turn, createChatData());
+
+    // Branch B ran → wiki.get was called (Branch A would NOT call it).
+    expect(env.ctx.wiki.get).toHaveBeenCalledWith(
+      'test automation',
+      expect.objectContaining({ domain: 'skills', topK: 10 }),
+    );
+    // Only the intersection (skill-0, skill-2) is surfaced; the other three
+    // keyword-only matches are filtered out.
+    const hintCall = vi.mocked(triologue.note).mock.calls.find(c => c[0] === 'HINT');
+    const hintContent = hintCall ? String(hintCall[1]) : '';
+    expect(hintContent).toContain('skill-0');
+    expect(hintContent).toContain('skill-2');
+    expect(hintContent).not.toContain('skill-1');
+    expect(hintContent).not.toContain('skill-3');
+    expect(hintContent).not.toContain('skill-4');
+  });
+
   it('BRANCH B (oversize >=5): injects ONLY the keyword∩semantic intersection', async () => {
     // 6 skills match → oversize. Wiki returns 2 of them semantically.
     // Intersection = the 2 overlapping skills → HINT contains only those.
@@ -566,5 +599,62 @@ describe('handleCollect — composite keyword extraction (integration)', () => {
     // FAIL FAST: Y NOT marked + cooldown NOT armed → retry eligible next pass.
     expect(skillSuggester.getLastQuery()).toBe('');
     expect(skillSuggester.getCooldown()).toBe(0);
+  });
+
+  // ---------------------------------------------------------------------------
+  // P1 regression: fresh-session clear (double-Ctrl+L / /clear) must not
+  // re-fire extraction on the cleared turn's stale composite sources.
+  // ---------------------------------------------------------------------------
+
+  it('P1: a fresh-session clear prevents extraction on the next COLLECT (stale lastUserQuery)', async () => {
+    setExtractionResult({ status: 'success', keywords: ['test'], freeformQuery: 'test automation' });
+    const env = makeEnv();
+    const turn: TurnVars = createTurnVars({
+      lastUserQuery: 'help me refactor the parser',
+      lastBriefMessage: 'debugging the parser module',
+      lastHintFocus: 'parser refactor',
+    });
+
+    // Pass 1: a genuine query triggers extraction and arms the throttle, so
+    // the suggester's cursor now equals the turn's lastUserQuery.
+    await handleCollect(env, turn, createChatData());
+    expect(vi.mocked(extractKeywords)).toHaveBeenCalledTimes(1);
+    expect(skillSuggester.getLastQuery()).toBe('help me refactor the parser');
+
+    // The user clears the conversation (double-Ctrl+L / /clear): the
+    // fresh-session primitive resets the suggester AND invalidates the
+    // turn's composite sources.
+    beginFreshSession(turn);
+
+    // Next COLLECT: the triologue is empty and the turn sources are cleared,
+    // so querySource is null → NO extraction. Resetting the suggester alone
+    // would have left lastUserQuery populated → a spurious re-fire here.
+    vi.mocked(extractKeywords).mockClear();
+    const result = await handleCollect(env, turn, createChatData());
+
+    expect(vi.mocked(extractKeywords)).not.toHaveBeenCalled();
+    expect(result).toBe(AgentState.LLM);
+  });
+
+  it('P1 counter-check: WITHOUT the fix, resetting the suggester alone re-fires extraction', async () => {
+    setExtractionResult({ status: 'success', keywords: ['test'], freeformQuery: 'test automation' });
+    const env = makeEnv();
+    const turn: TurnVars = createTurnVars({
+      lastUserQuery: 'help me refactor the parser',
+    });
+
+    await handleCollect(env, turn, createChatData());
+    expect(vi.mocked(extractKeywords)).toHaveBeenCalledTimes(1);
+
+    // The OLD (buggy) clear: reset the suggester cursor, but leave the turn's
+    // lastUserQuery stale. The suggester cursor is now '' while the turn still
+    // reports the old query → queryChanged is true → extraction re-fires on
+    // context the user just cleared.
+    skillSuggester.reset();
+
+    vi.mocked(extractKeywords).mockClear();
+    await handleCollect(env, turn, createChatData());
+
+    expect(vi.mocked(extractKeywords)).toHaveBeenCalledTimes(1);
   });
 });

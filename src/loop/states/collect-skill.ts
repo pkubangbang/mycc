@@ -422,3 +422,38 @@ export class SkillSuggester {
  * boundary. Single source of truth for skill-discovery state.
  */
 export const skillSuggester = new SkillSuggester();
+
+/**
+ * Begin a fresh session after an in-process conversation clear (/clear or
+ * double-Ctrl+L). This is NOT a normal turn boundary: those clears run with
+ * NO state transition (double-Ctrl+L is a raw callback; /clear returns
+ * PROMPT from SLASH), so the state-machine turn-boundary guard — which both
+ * (a) resets the suggester and (b) rebuilds TurnVars fresh — never runs.
+ *
+ * Resetting the suggester ALONE is a half-reset that leaves a regression:
+ * `turn.lastUserQuery` (and the brief/hint sources) still hold the OLD turn's
+ * values, while `SkillSuggester.lastQuery` is now ''. On the next COLLECT the
+ * query source is the stale `lastUserQuery`, which differs from the empty
+ * cursor, so `queryChanged` is true and extraction re-fires on context that
+ * belongs to a conversation the user just cleared (the triologue itself is
+ * empty). See PR #22 review (P1).
+ *
+ * The fix: treat a clear as a real turn boundary by invalidating the stale
+ * turn fields as well as resetting the suggester, so the next COLLECT sees
+ * an empty query source and skips extraction until a genuine new query
+ * arrives (a fresh prompt resets them anyway via `turn.lastUserQuery = query`).
+ *
+ * The other TurnVars fields (nudges, todo cursor) are harmless to carry over —
+ * a clear empties todos/issues, so the todo nudge simply re-arms on its own
+ * cadence. Only the three "composite source" fields drive skill discovery and
+ * must match the cleared conversation.
+ *
+ * @param turn - the live TurnVars instance to invalidate (same object the
+ *        state machine holds, so the mutation is visible to the next COLLECT).
+ */
+export function beginFreshSession(turn: Pick<import('../state-machine.js').TurnVars, 'lastUserQuery' | 'lastBriefMessage' | 'lastHintFocus'>): void {
+  skillSuggester.reset();
+  turn.lastUserQuery = '';
+  turn.lastBriefMessage = '';
+  turn.lastHintFocus = '';
+}
