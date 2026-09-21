@@ -126,9 +126,13 @@ export function buildCommonSections(): string {
  * The knowledge axis folds in the concrete usage hints that used to live in
  * the standalone Knowledge Boundary section (now removed), so this section is
  * the single home for both the mental model AND the actionable "how to use"
- * detail. The dynamic skill-keywords list was moved to a project-context
- * populator (buildSkillKeywordsMessages in prompt-populators.ts) to keep the
- * lengthy keyword collection out of the byte-stable system prompt.
+ * detail. The dynamic skill-keywords list was moved out of the byte-stable
+ * system prompt entirely — it is now passed into the extractKeywords() LLM
+ * call (runKeywordExtraction in collect.ts step 6) as a system-message
+ * input, so the LLM selects relevant keywords from the actual available
+ * list based on the X+Y+Z composite, instead of a separate always-on
+ * project-context populator that broke the prompt-cache prefix on every
+ * skill reload.
  */
 const commonAxes = [
   'Knowledge is layered by priority — check local sources FIRST, web LAST: recall(path="/") explores the mindmap knowledge tree (START HERE for project context); skill_search discovers on-demand specialist skills; wiki_get queries the persistent RAG store; web_search/web_fetch are the last resort, not the first.',

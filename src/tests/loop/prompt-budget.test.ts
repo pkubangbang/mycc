@@ -16,10 +16,11 @@
  * intentionally pinned as constants so a regression test fails loudly rather
  * than drifting.
  *
- * No skill-keywords mocking is needed: the skill-keywords block moved to a
- * project-context populator (buildSkillKeywordsMessages in
- * prompt-populators.ts), so the system-prompt builders no longer touch the
- * loader — the prompts are environment-independent by construction.
+ * No skill-keywords mocking is needed: the skill-keywords block is no longer
+ * injected via a project-context populator — it is passed into the
+ * extractKeywords() LLM call (runKeywordExtraction in collect.ts step 6) as
+ * a system-message input. The system-prompt builders never touch the loader
+ * — the prompts are environment-independent by construction.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -110,7 +111,8 @@ describe('Prompt token budget', () => {
   it('old sections are gone from all 5 variants', () => {
     // The old "## Checkpoint and recap" (Context Management) and
     // "## Knowledge Boundary" sections were merged into the agent-memory
-    // section (or moved to a populator for the skill-keywords block), so no
+    // section (or folded into the extractKeywords() LLM call for the
+    // skill-keywords block), so no
     // prompt variant should carry either heading anymore.
     const soloPlan = buildPlanModePrompt(WORK_DIR, false);
     const teamPlan = buildPlanModePrompt(WORK_DIR, true);

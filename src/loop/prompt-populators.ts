@@ -26,7 +26,6 @@ import * as os from 'os';
 import * as fs from 'fs';
 import * as path from 'path';
 import { getShellInfo, type ShellKind } from '../utils/shell-detect.js';
-import { loader } from '../context/shared/loader.js';
 import type { Message } from '../types.js';
 
 // ============================================================================
@@ -191,49 +190,17 @@ export function buildPlatformCalendarMessages(): Message[] {
 // Skill Keywords
 // ============================================================================
 
-/**
- * Build the skill-keywords list as a projectContext deliverable.
- *
- * The skill-keywords block was historically baked into the system prompt by
- * the standalone Knowledge Boundary section (prompts/common.ts, now removed)
- * and rebuilt on every LLM call. But the keyword list is lengthy (hundreds of
- * keywords once skills accumulate) and volatile (it changes whenever a skill
- * is loaded/unloaded), so inlining it bloated the system prompt and — worse —
- * invalidated the prompt-cache prefix on every skill reload. Moving it into a
- * project-context populator freezes it between compact()/clear() boundaries
- * (where the conversation prefix already changes, so refreshing costs no
- * cache penalty) while keeping it delivered to the LLM in full. The
- * knowledge-priority usage hints that used to accompany these keywords now
- * live in the Agent Memory section (buildLeadAgentMemorySection /
- * buildTeammateAgentMemorySection in prompts/common.ts).
- *
- * Registered by both the lead (agent-repl.ts) and teammate children
- * (teammate-worker.ts), so both contexts deliver the same keyword list.
- *
- * Returns an empty array when no skills are loaded, so no messages are
- * injected for a fresh project with no skills (a zero-cost no-op).
- */
-export function buildSkillKeywordsMessages(): Message[] {
-  const keywords = loader.getSkillKeywords();
-  if (keywords.length === 0) return [];
-
-  const content =
-    `[System - Skill Keywords]\n\n` +
-    `Available skill keywords: \`${keywords.join('`, `')}\`\n\n` +
-    `If your current task is relevant to or exactly matches any of these keywords, ` +
-    `**proactively** use \`skill_search(search="<keyword>")\` to discover relevant ` +
-    `skills before proceeding with a generic approach.`;
-
-  return [
-    { role: 'user', content },
-    {
-      role: 'assistant',
-      content:
-        'Understood. I will proactively use skill_search with these keywords ' +
-        'when my task is relevant to them.',
-    },
-  ];
-}
+// NOTE: The skill-keywords list is NO LONGER delivered via a project-context
+// populator here. It was folded into extractKeywords() (keyword-extractor.ts):
+// the extraction LLM call now receives the available skill keywords as a
+// system-message input (so the LLM selects relevant keywords FROM the actual
+// available list based on the X+Y+Z composite), instead of a separate
+// always-on project-context populator that injected the full keyword list
+// into the byte-stable system prompt. This removes a dynamic-content
+// injection that broke the prompt-cache prefix on every skill reload
+// (see the "do not inject dynamic content into projectContext" pitfall) and
+// consolidates skill discovery into a single LLM-driven path (runKeywordExtraction
+// in collect.ts step 6).
 
 // ============================================================================
 // node_modules Detection

@@ -66,6 +66,14 @@ const EXTRACT_KEYWORDS_TOOL: Tool = {
  * The LLM is forced to use the extract_keywords tool (tool_choice: 'required'),
  * guaranteeing structured JSON output without fragile text parsing.
  *
+ * The prompt is split into a system + user message pair. The system message
+ * carries the stable extraction-workflow instructions AND the available
+ * skill-keyword list (so the LLM selects relevant keywords FROM the actual
+ * available list, replacing the separate buildSkillKeywordsMessages
+ * project-context populator that used to inject the full keyword list into
+ * the system prompt). The user message carries the X+Y+Z composite text
+ * (the variable per-call input composed by runKeywordExtraction in COLLECT).
+ *
  * Returns a discriminated union so the caller can distinguish a completed
  * extraction (`success`, keywords possibly empty) from a trivially-skipped
  * input (`skipped`) and a failed/aborted call (`failed`). Only `success` and
@@ -73,12 +81,16 @@ const EXTRACT_KEYWORDS_TOOL: Tool = {
  * must leave the caller's state untouched so the Y source stays eligible for
  * a retry (e.g. after a transient network error or an ESC abort).
  *
- * @param query - User query in any language
+ * @param query - The X+Y+Z composite text (in any language) to extract from
+ * @param availableKeywords - The list of available skill keywords (from
+ *        loader.getSkillKeywords()), shown to the LLM so it can select from
+ *        the actual available list; may be empty when no skills are loaded
  * @param signal - Optional AbortSignal for ESC interruption
  * @returns A {@link KeywordExtractionResult} describing the outcome.
  */
 export async function extractKeywords(
   query: string,
+  availableKeywords: string[],
   signal?: AbortSignal,
 ): Promise<KeywordExtractionResult> {
   const trimmed = query.trim();
@@ -101,14 +113,20 @@ export async function extractKeywords(
         model: MODEL,
         messages: [
           {
-            role: 'user',
-            content: `Extract 2-5 English keywords from this query for skill matching.
+            role: 'system',
+            content: `You are a keyword extraction assistant for a skill-discovery system.
+Select 2-5 English keywords relevant to the user's conversation context for skill matching.
+Choose from the available skill keywords list below when possible; you may also
+include multi-word concepts (e.g. "best practice") not in the list if highly relevant.
 Focus on actionable concepts, tools, or objects.
-Keywords can be multi-word like "best practice".
 Any of the following keywords must be included if the query implies: "plan, learning, collaboration, recovery".
 Return ONLY via the extract_keywords tool.
 
-Query: ${trimmed}`,
+Available skill keywords: ${availableKeywords.join(', ')}`,
+          },
+          {
+            role: 'user',
+            content: `Conversation context:\n${trimmed}`,
           },
         ],
         tools: [EXTRACT_KEYWORDS_TOOL],

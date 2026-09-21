@@ -664,7 +664,7 @@ async function runKeywordExtraction(env: MachineEnv, turn: TurnVars, firstSteerN
   // documented "ESC does not consume the discovery opportunity" retry
   // behavior that the old `[]`-returning API silently broke).
   const result = await ctx.core.escAware(
-    async (ac) => extractKeywords(compositeText, ac.signal),
+    async (ac) => extractKeywords(compositeText, loader.getSkillKeywords(), ac.signal),
     () => ({ status: 'failed' } as const),
   );
 

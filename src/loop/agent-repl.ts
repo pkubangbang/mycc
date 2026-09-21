@@ -45,7 +45,7 @@ import { registerSignalHandlers } from './signal-handlers.js';
 import { initDaemonMode } from './daemon-init.js';
 import { ServeDetachedExitError } from '../serve/serve-errors.js';
 import { initHookSystem, buildHookInfoMessages } from './hook-bootstrap.js';
-import { buildPlatformCalendarMessages, buildNodeModulesReminderMessages, buildSkillKeywordsMessages } from './prompt-populators.js';
+import { buildPlatformCalendarMessages, buildNodeModulesReminderMessages } from './prompt-populators.js';
 import { wireServeCallbacks } from './serve-wiring.js';
 
 const version = pkg.version;
@@ -282,12 +282,13 @@ export async function main(): Promise<void> {
   //      node_modules/ exists (non-Node.js projects).
   triologue.registerProjectContextPopulator(() => buildNodeModulesReminderMessages());
 
-  // (3c) Skill keywords — the (potentially lengthy) list of available skill
-  //      keywords, delivered as project context so the system prompt stays
-  //      byte-stable and the prompt-cache prefix stays hot. Re-queried at
-  //      every rebuild boundary so newly-loaded/unloaded skills surface after
-  //      the next compact/clear. A zero-message no-op when no skills are loaded.
-  triologue.registerProjectContextPopulator(() => buildSkillKeywordsMessages());
+  // (3c) Skill keywords are NO LONGER injected here as a project-context
+  //      populator. The available skill-keyword list is now passed into the
+  //      extractKeywords() LLM call (runKeywordExtraction in collect.ts step 6)
+  //      as a system-message input, so the LLM selects relevant keywords from
+  //      the actual available list based on the X+Y+Z composite. This removed
+  //      a dynamic-content injection that broke the prompt-cache prefix on
+  //      every skill reload and consolidated skill discovery into one path.
 
   // (4) Hook info (pending + legacy) — registered AFTER initHookSystem so the
   //     closure can capture `conditions` and `loader`. Each rebuild re-queries
