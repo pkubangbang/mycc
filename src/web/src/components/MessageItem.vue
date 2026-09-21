@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed, ref, onMounted, onBeforeUnmount } from 'vue';
 import MarkdownIt from 'markdown-it';
 import type { ChatMessage } from '../types';
 import { highlightCode, highlightBash } from '../highlight';
@@ -82,9 +82,62 @@ const md = new MarkdownIt({
   },
 });
 
+// Custom image rule: render markdown images as clickable thumbnails that
+// open the dedicated ImageViewer popup (mounted in App.vue) instead of
+// flowing at natural size (which overflows the chat bubble for large
+// diagrams). The rendered <img> carries a data-zoomable marker; a delegated
+// click handler (bound in onMounted on the markdown-body element) reads the
+// src and dispatches a window `open-image-viewer` CustomEvent. CSS
+// (.markdown-body img) constrains the image to the bubble width. A title
+// hint ("点击放大") makes the affordance discoverable on hover.
+md.renderer.rules.image = (tokens, idx): string => {
+  const token = tokens[idx];
+  // attrGet returns string | number | null — coerce to string so a numeric
+  // attribute value (typed, rare) doesn't break esc()'s .replace().
+  const src = String(token.attrGet('src') ?? '');
+  const alt = token.content || '';
+  const title = String(token.attrGet('title') ?? '点击放大');
+  // Escape attribute values to prevent quote-breakout from the markdown
+  // source (markdown-it with html:false already escapes alt text, but the
+  // src/title come from raw attributes — escape them defensively).
+  const esc = (s: string): string =>
+    s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  return `<img src="${esc(src)}" alt="${esc(alt)}" title="${esc(title)}" data-zoomable="true" draggable="false" />`;
+};
+
 const rendered = computed(() =>
   renderMarkdown.value ? md.render(props.message.content) : '',
 );
+
+// Ref to the markdown-body element so the delegated click handler can bind
+// to it. Event delegation (one listener on the container, check the target's
+// closest('[data-zoomable]')) is cheaper + simpler than binding per-image,
+// and it survives v-html re-renders without re-binding.
+const markdownBodyEl = ref<HTMLElement | null>(null);
+
+// Delegated click handler: when an image marked data-zoomable is clicked,
+// dispatch a window `open-image-viewer` CustomEvent carrying the src + alt.
+// The ImageViewer component (mounted once in App.vue) listens for this event
+// and opens the full-screen popup. This keeps MessageItem decoupled from
+// the viewer — no prop drilling through App → ChatLog → MessageItem.
+function onMarkdownClick(e: MouseEvent): void {
+  const target = e.target as HTMLElement;
+  if (!(target instanceof HTMLImageElement)) return;
+  if (!target.hasAttribute('data-zoomable')) return;
+  e.preventDefault();
+  e.stopPropagation();
+  window.dispatchEvent(new CustomEvent('open-image-viewer', {
+    detail: { src: target.currentSrc || target.src, alt: target.alt },
+  }));
+}
+
+onMounted(() => {
+  markdownBodyEl.value?.addEventListener('click', onMarkdownClick);
+});
+
+onBeforeUnmount(() => {
+  markdownBodyEl.value?.removeEventListener('click', onMarkdownClick);
+});
 
 // Bash command card: highlight the raw shell command with Shiki (lang
 // 'bash') and prepend the `$` prompt span outside the tokenized code. The
@@ -234,7 +287,7 @@ function quoteContent(): void {
         </template>
         <template v-else-if="renderMarkdown">
           <!-- eslint-disable-next-line vue/no-v-html -- markdown-it escapes raw HTML (html:false) -->
-          <div class="markdown-body" v-html="rendered"></div>
+          <div ref="markdownBodyEl" class="markdown-body" v-html="rendered"></div>
         </template>
         <template v-else>
           {{ message.content }}
@@ -511,6 +564,27 @@ function quoteContent(): void {
   border: none;
   border-top: 1px solid var(--md-hr);
   margin: 10px 0;
+}
+
+/* ── Inline images (markdown ![..](..)) ──
+   Constrained to the bubble width so large diagrams don't overflow the chat
+   bubble. The markdown-it image rule (above) marks them data-zoomable; a
+   delegated click handler opens the ImageViewer popup. The thumbnail keeps
+   aspect ratio (height:auto) and gets a subtle rounded border + hover tint
+   so the click affordance is visible. */
+.markdown-body :deep(img) {
+  max-width: 100%;
+  height: auto;
+  border-radius: 6px;
+  border: 1px solid var(--md-table-border);
+  cursor: zoom-in;
+  display: block;
+  margin: 8px 0;
+  transition: filter 0.15s, border-color 0.15s;
+}
+.markdown-body :deep(img:hover) {
+  filter: brightness(1.06);
+  border-color: color-mix(in srgb, var(--accent) 50%, var(--md-table-border));
 }
 
 /* ── Shiki dual-theme CSS variable mapping ──

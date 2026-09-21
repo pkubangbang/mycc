@@ -9,6 +9,7 @@ import TeammateCard from './components/TeammateCard.vue';
 import TeammateDrawer from './components/TeammateDrawer.vue';
 import TodoCard from './components/TodoCard.vue';
 import DebugPanel from './components/DebugPanel.vue';
+import ImageViewer from './components/ImageViewer.vue';
 
 defineProps<{ state: ChatState }>();
 
@@ -53,6 +54,11 @@ function closeDrawer(): void {
       />
     </div>
     <ChatInput :state="state" />
+    <!-- Dedicated full-screen image viewer popup. Mounted once here so it
+         overlays the whole app regardless of which chat bubble's image was
+         clicked. Opens on a window `open-image-viewer` CustomEvent emitted
+         by MessageItem's markdown image click handler. -->
+    <ImageViewer />
   </div>
 </template>
 
