@@ -123,6 +123,7 @@ import { handleCollect } from '../../../loop/states/collect.js';
 import { AgentState } from '../../../loop/state-machine.js';
 import { Triologue } from '../../../loop/triologue.js';
 import { extractKeywords } from '../../../loop/keyword-extractor.js';
+import { skillSuggester } from '../../../loop/states/collect-skill.js';
 import {
   createTurnVars,
   createChatData,
@@ -145,6 +146,9 @@ describe('handleCollect — composite keyword extraction (integration)', () => {
     extractionResult = { status: 'success', keywords: [], freeformQuery: '' };
     serveRunning = false;
     steeredNotes = [];
+    // Reset the skill-discovery singleton's throttle state so prior tests'
+    // query cursor / cooldown never leak into this one.
+    skillSuggester.reset();
     triologue = new Triologue();
   });
 
@@ -239,14 +243,12 @@ describe('handleCollect — composite keyword extraction (integration)', () => {
     const env = makeEnv();
     const turn: TurnVars = createTurnVars({
       lastUserQuery: 'help me test the parser',
-      lastSkillY: '',
-      skillDiscoveryCooldown: 0,
     });
 
     await handleCollect(env, turn, createChatData());
 
-    expect(turn.lastSkillY).toBe('help me test the parser');
-    expect(turn.skillDiscoveryCooldown).toBe(3);
+    expect(skillSuggester.getLastQuery()).toBe('help me test the parser');
+    expect(skillSuggester.getCooldown()).toBe(3);
     expect(vi.mocked(extractKeywords)).toHaveBeenCalledTimes(1);
   });
 
@@ -255,14 +257,12 @@ describe('handleCollect — composite keyword extraction (integration)', () => {
     const env = makeEnv();
     const turn: TurnVars = createTurnVars({
       lastUserQuery: 'some query with no skill match',
-      lastSkillY: '',
-      skillDiscoveryCooldown: 0,
     });
 
     await handleCollect(env, turn, createChatData());
 
-    expect(turn.lastSkillY).toBe('some query with no skill match');
-    expect(turn.skillDiscoveryCooldown).toBe(3);
+    expect(skillSuggester.getLastQuery()).toBe('some query with no skill match');
+    expect(skillSuggester.getCooldown()).toBe(3);
   });
 
   // ---------------------------------------------------------------------------
@@ -274,14 +274,12 @@ describe('handleCollect — composite keyword extraction (integration)', () => {
     const env = makeEnv();
     const turn: TurnVars = createTurnVars({
       lastUserQuery: 'hello',
-      lastSkillY: '',
-      skillDiscoveryCooldown: 0,
     });
 
     await handleCollect(env, turn, createChatData());
 
-    expect(turn.lastSkillY).toBe('hello');
-    expect(turn.skillDiscoveryCooldown).toBe(3);
+    expect(skillSuggester.getLastQuery()).toBe('hello');
+    expect(skillSuggester.getCooldown()).toBe(3);
   });
 
   // ---------------------------------------------------------------------------
@@ -293,15 +291,13 @@ describe('handleCollect — composite keyword extraction (integration)', () => {
     const env = makeEnv();
     const turn: TurnVars = createTurnVars({
       lastUserQuery: 'help me test the parser',
-      lastSkillY: '',
-      skillDiscoveryCooldown: 0,
     });
 
     await handleCollect(env, turn, createChatData());
 
     // Neither field is touched — the discovery opportunity is preserved.
-    expect(turn.lastSkillY).toBe('');
-    expect(turn.skillDiscoveryCooldown).toBe(0);
+    expect(skillSuggester.getLastQuery()).toBe('');
+    expect(skillSuggester.getCooldown()).toBe(0);
   });
 
   it('FAILED: a second pass with the same Y re-triggers extraction (retry works)', async () => {
@@ -309,17 +305,15 @@ describe('handleCollect — composite keyword extraction (integration)', () => {
     const env = makeEnv();
     const turn: TurnVars = createTurnVars({
       lastUserQuery: 'help me test the parser',
-      lastSkillY: '',
-      skillDiscoveryCooldown: 0,
     });
 
-    // Pass 1: fails, leaves Y eligible.
+    // Pass 1: fails, leaves query eligible.
     await handleCollect(env, turn, createChatData());
     expect(vi.mocked(extractKeywords)).toHaveBeenCalledTimes(1);
-    expect(turn.lastSkillY).toBe('');
-    expect(turn.skillDiscoveryCooldown).toBe(0);
+    expect(skillSuggester.getLastQuery()).toBe('');
+    expect(skillSuggester.getCooldown()).toBe(0);
 
-    // Pass 2: same Y, no cooldown, lastSkillY still '' → extraction fires again.
+    // Pass 2: same query, no cooldown, lastQuery still '' → extraction fires again.
     vi.mocked(extractKeywords).mockClear();
     await handleCollect(env, turn, createChatData());
     expect(vi.mocked(extractKeywords)).toHaveBeenCalledTimes(1);
@@ -335,14 +329,12 @@ describe('handleCollect — composite keyword extraction (integration)', () => {
     }) as never;
     const turn: TurnVars = createTurnVars({
       lastUserQuery: 'help me test the parser',
-      lastSkillY: '',
-      skillDiscoveryCooldown: 0,
     });
 
     await handleCollect(env, turn, createChatData());
 
-    expect(turn.lastSkillY).toBe('');
-    expect(turn.skillDiscoveryCooldown).toBe(0);
+    expect(skillSuggester.getLastQuery()).toBe('');
+    expect(skillSuggester.getCooldown()).toBe(0);
   });
 
   // ---------------------------------------------------------------------------
@@ -354,9 +346,8 @@ describe('handleCollect — composite keyword extraction (integration)', () => {
     const env = makeEnv();
     const turn: TurnVars = createTurnVars({
       lastUserQuery: 'same query',
-      lastSkillY: 'same query', // already seen
-      skillDiscoveryCooldown: 0,
     });
+    skillSuggester.markQuerySeen('same query'); // already seen
 
     await handleCollect(env, turn, createChatData());
 
@@ -368,15 +359,16 @@ describe('handleCollect — composite keyword extraction (integration)', () => {
     const env = makeEnv();
     const turn: TurnVars = createTurnVars({
       lastUserQuery: 'a new query',
-      lastSkillY: 'old query', // Y changed
-      skillDiscoveryCooldown: 2, // but cooldown active
     });
+    skillSuggester.markQuerySeen('old query'); // Y changed
+    skillSuggester.armCooldown();               // cooldown active (3)
+    // The top of step 6 decrements cooldown once, so it reads 2 here.
 
     await handleCollect(env, turn, createChatData());
 
     expect(vi.mocked(extractKeywords)).not.toHaveBeenCalled();
     // Cooldown was decremented once at the top of step 6.
-    expect(turn.skillDiscoveryCooldown).toBe(1);
+    expect(skillSuggester.getCooldown()).toBe(2);
   });
 
   // ---------------------------------------------------------------------------
@@ -390,16 +382,14 @@ describe('handleCollect — composite keyword extraction (integration)', () => {
     const env = makeEnv();
     const turn: TurnVars = createTurnVars({
       lastUserQuery: 'original user query',
-      lastSkillY: '',
-      skillDiscoveryCooldown: 0,
     });
 
     await handleCollect(env, turn, createChatData());
 
-    // BUG 1 fix: lastSkillY is the FALLBACK (lastUserQuery), not the steering
+    // BUG 1 fix: lastQuery is the FALLBACK (lastUserQuery), not the steering
     // note, so the consumed-note → fallback re-trigger does not fire.
-    expect(turn.lastSkillY).toBe('original user query');
-    expect(turn.skillDiscoveryCooldown).toBe(3);
+    expect(skillSuggester.getLastQuery()).toBe('original user query');
+    expect(skillSuggester.getCooldown()).toBe(3);
   });
 
   it('STEERING NOTE consumed: a second pass with no note does NOT re-trigger', async () => {
@@ -409,14 +399,12 @@ describe('handleCollect — composite keyword extraction (integration)', () => {
     const env = makeEnv();
     const turn: TurnVars = createTurnVars({
       lastUserQuery: 'original user query',
-      lastSkillY: '',
-      skillDiscoveryCooldown: 0,
     });
 
     // Pass 1: steering note triggers, applies BUG 1 fix.
     await handleCollect(env, turn, createChatData());
-    expect(turn.lastSkillY).toBe('original user query');
-    expect(turn.skillDiscoveryCooldown).toBe(3);
+    expect(skillSuggester.getLastQuery()).toBe('original user query');
+    expect(skillSuggester.getCooldown()).toBe(3);
 
     // Drain cooldown over passes 2, 3, 4 (no steering notes queued).
     steeredNotes = [];
@@ -424,10 +412,10 @@ describe('handleCollect — composite keyword extraction (integration)', () => {
     for (let i = 0; i < 3; i++) {
       await handleCollect(env, turn, createChatData());
     }
-    expect(turn.skillDiscoveryCooldown).toBe(0);
+    expect(skillSuggester.getCooldown()).toBe(0);
 
     // Pass 5: steering note is consumed (serveRunning but no notes). Y falls
-    // back to lastUserQuery, which equals lastSkillY → NO re-trigger.
+    // back to lastUserQuery, which equals lastQuery → NO re-trigger.
     vi.mocked(extractKeywords).mockClear();
     const result = await handleCollect(env, turn, createChatData());
     expect(vi.mocked(extractKeywords)).not.toHaveBeenCalled();
@@ -443,8 +431,6 @@ describe('handleCollect — composite keyword extraction (integration)', () => {
     const env = makeEnv();
     const turn: TurnVars = createTurnVars({
       lastUserQuery: 'help me test the parser',
-      lastSkillY: '',
-      skillDiscoveryCooldown: 0,
     });
 
     const result = await handleCollect(env, turn, createChatData());
@@ -462,8 +448,6 @@ describe('handleCollect — composite keyword extraction (integration)', () => {
     const env = makeEnvWithSkills(skills);
     const turn: TurnVars = createTurnVars({
       lastUserQuery: 'help me test things',
-      lastSkillY: '',
-      skillDiscoveryCooldown: 0,
     });
 
     await handleCollect(env, turn, createChatData());
@@ -474,8 +458,8 @@ describe('handleCollect — composite keyword extraction (integration)', () => {
     // Branch A does NOT call wiki.get (no semantic refinement needed).
     expect(env.ctx.wiki.get).not.toHaveBeenCalled();
     // Y marked + cooldown armed (full success).
-    expect(turn.lastSkillY).toBe('help me test things');
-    expect(turn.skillDiscoveryCooldown).toBe(3);
+    expect(skillSuggester.getLastQuery()).toBe('help me test things');
+    expect(skillSuggester.getCooldown()).toBe(3);
   });
 
   it('BRANCH B (oversize >=5): injects ONLY the keyword∩semantic intersection', async () => {
@@ -491,8 +475,6 @@ describe('handleCollect — composite keyword extraction (integration)', () => {
     const env = makeEnvWithSkills(skills, wikiResults);
     const turn: TurnVars = createTurnVars({
       lastUserQuery: 'help me test the oversize case',
-      lastSkillY: '',
-      skillDiscoveryCooldown: 0,
     });
 
     await handleCollect(env, turn, createChatData());
@@ -512,8 +494,8 @@ describe('handleCollect — composite keyword extraction (integration)', () => {
     expect(hintContent).not.toContain('skill-5');
     expect(hintContent).not.toContain('unrelated-skill');
     // Y marked + cooldown armed.
-    expect(turn.lastSkillY).toBe('help me test the oversize case');
-    expect(turn.skillDiscoveryCooldown).toBe(3);
+    expect(skillSuggester.getLastQuery()).toBe('help me test the oversize case');
+    expect(skillSuggester.getCooldown()).toBe(3);
   });
 
   it('BRANCH B (oversize, empty intersection): NO hint injected', async () => {
@@ -528,8 +510,6 @@ describe('handleCollect — composite keyword extraction (integration)', () => {
     const env = makeEnvWithSkills(skills, wikiResults);
     const turn: TurnVars = createTurnVars({
       lastUserQuery: 'help me test with no intersection',
-      lastSkillY: '',
-      skillDiscoveryCooldown: 0,
     });
 
     await handleCollect(env, turn, createChatData());
@@ -541,8 +521,8 @@ describe('handleCollect — composite keyword extraction (integration)', () => {
     expect(hintCalls).toHaveLength(0);
     // Y still marked + cooldown armed (the extraction itself succeeded;
     // only the refinement produced no suggestion).
-    expect(turn.lastSkillY).toBe('help me test with no intersection');
-    expect(turn.skillDiscoveryCooldown).toBe(3);
+    expect(skillSuggester.getLastQuery()).toBe('help me test with no intersection');
+    expect(skillSuggester.getCooldown()).toBe(3);
   });
 
   it('BRANCH B (oversize, wiki failure): NO hint injected (graceful)', async () => {
@@ -552,8 +532,6 @@ describe('handleCollect — composite keyword extraction (integration)', () => {
     const env = makeEnvWithSkills(skills, [], true /* wikiThrow */);
     const turn: TurnVars = createTurnVars({
       lastUserQuery: 'help me test with wiki down',
-      lastSkillY: '',
-      skillDiscoveryCooldown: 0,
     });
 
     await handleCollect(env, turn, createChatData());
@@ -564,8 +542,8 @@ describe('handleCollect — composite keyword extraction (integration)', () => {
     const hintCalls = vi.mocked(triologue.note).mock.calls.filter(c => c[0] === 'HINT');
     expect(hintCalls).toHaveLength(0);
     // Y still marked + cooldown armed.
-    expect(turn.lastSkillY).toBe('help me test with wiki down');
-    expect(turn.skillDiscoveryCooldown).toBe(3);
+    expect(skillSuggester.getLastQuery()).toBe('help me test with wiki down');
+    expect(skillSuggester.getCooldown()).toBe(3);
   });
 
   it('BRANCH B (oversize, empty freeformQuery): FAIL FAST — no hint, Y eligible for retry', async () => {
@@ -576,8 +554,6 @@ describe('handleCollect — composite keyword extraction (integration)', () => {
     const env = makeEnvWithSkills(skills);
     const turn: TurnVars = createTurnVars({
       lastUserQuery: 'help me test with bad query',
-      lastSkillY: '',
-      skillDiscoveryCooldown: 0,
     });
 
     await handleCollect(env, turn, createChatData());
@@ -588,7 +564,7 @@ describe('handleCollect — composite keyword extraction (integration)', () => {
     const hintCalls = vi.mocked(triologue.note).mock.calls.filter(c => c[0] === 'HINT');
     expect(hintCalls).toHaveLength(0);
     // FAIL FAST: Y NOT marked + cooldown NOT armed → retry eligible next pass.
-    expect(turn.lastSkillY).toBe('');
-    expect(turn.skillDiscoveryCooldown).toBe(0);
+    expect(skillSuggester.getLastQuery()).toBe('');
+    expect(skillSuggester.getCooldown()).toBe(0);
   });
 });

@@ -255,8 +255,6 @@ describe('AgentStateMachine', () => {
     expect(turnVarsHistory[0].lastUserQuery).toBe('');
     expect(turnVarsHistory[0].lastBriefMessage).toBe('');
     expect(turnVarsHistory[0].lastHintFocus).toBe('');
-    expect(turnVarsHistory[0].lastSkillY).toBe('');
-    expect(turnVarsHistory[0].skillDiscoveryCooldown).toBe(0);
   });
 
   it('should preserve TurnVars when entering PROMPT from SLASH', async () => {
@@ -470,8 +468,6 @@ describe('AgentStateMachine', () => {
         expect(turn.lastUserQuery).toBe('');
         expect(turn.lastBriefMessage).toBe('');
         expect(turn.lastHintFocus).toBe('');
-        expect(turn.lastSkillY).toBe('');
-        expect(turn.skillDiscoveryCooldown).toBe(0);
         // chat starts fresh
         expect(chat.abortController).toBeNull();
         expect(chat.rawToolCalls).toEqual([]);

@@ -15,7 +15,7 @@ import { loader } from '../../context/shared/loader.js';
 import { forkChat } from '../../engine/chat-provider.js';
 import { isTransientError } from '../../engine/chat-helpers.js';
 import type { SequenceEvent } from '../../hook/sequence.js';
-import { runKeywordExtraction } from './collect-skill.js';
+import { skillSuggester } from './collect-skill.js';
 import { listWorktrees } from '../../context/worktree-store.js';
 import { getServeHub } from '../../serve/serve-registry.js';
 import { resolveHeadlessFirstQuery } from '../../session/index.js';
@@ -305,9 +305,9 @@ async function checkReactivation(env: MachineEnv): Promise<void> {
  * SYSTEM / REMINDER) relying on auto-fix for TP-safe injection.
  *
  * @returns the freshest steering note drained this pass (`firstSteerNote`),
- *          or null if none. This is the Y source for runKeywordExtraction
- *          (step 6) — steering notes take priority over lastUserQuery as the
- *          freshest mid-task direction.
+ *          or null if none. This is the query source for
+ *          skillSuggester.runKeywordExtraction (step 6) — steering notes take
+ *          priority over lastUserQuery as the freshest mid-task direction.
  */
 async function collectMailsAndInput(env: MachineEnv): Promise<{ firstSteerNote: string | null }> {
   const { triologue, ctx } = env;
@@ -424,7 +424,7 @@ type HintSignal = 'continue' | 'stop' | 'collect';
  *          compacted context); `'continue'` for a normal pass (or when the
  *          hint block was skipped).
  *
- * Side effects on `turn`: captures `lastHintFocus` (the Z source) on a
+ * Side effects on `turn`: captures `lastHintFocus` (the hint source) on a
  * successful hint round; clears `collectTransientRetries` on compaction.
  */
 async function runHintRound(env: MachineEnv, turn: TurnVars): Promise<HintSignal> {
@@ -459,7 +459,7 @@ async function runHintRound(env: MachineEnv, turn: TurnVars): Promise<HintSignal
   if (result === 'aborted') {
     return 'stop';
   }
-  // Capture focus_on from a successful hint round (Z source for the
+  // Capture focus_on from a successful hint round (hint source for the
   // composite keyword extraction below). The discriminated union
   // carries focusOn only on the success path.
   if (result !== 'compact' && result.status === 'success') {
@@ -637,7 +637,7 @@ export async function handleCollect(
 
     // 1–2. Drain all external inputs (child questions, mail, team status,
     //      steering notes, headless first-query marker, file uploads).
-    //      Returns the freshest steering note (the Y source for step 6).
+    //      Returns the freshest steering note (the query source for step 6).
     const { firstSteerNote } = await collectMailsAndInput(env);
 
     // 3. Hint round + compaction. May short-circuit the pass.
@@ -652,7 +652,7 @@ export async function handleCollect(
     await runBriefAndWorktreeNudges(env, turn);
 
     // 6. Composite keyword extraction for proactive skill discovery.
-    await runKeywordExtraction(env, turn, firstSteerNote);
+    await skillSuggester.runKeywordExtraction(env, turn, firstSteerNote);
 
     // 7. Verbose token/message logging.
     const messageCount = triologue.getMessagesRaw().length;
