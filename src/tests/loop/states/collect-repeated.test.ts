@@ -15,7 +15,7 @@
  * + longest-common-prefix logic).
  */
 import { describe, it, expect } from 'vitest';
-import { detectRepeatedActions } from '../../../loop/states/collect.js';
+import { detectRepeatedActions } from '../../../loop/states/collect-hint.js';
 import type { SequenceEvent } from '../../../hook/sequence.js';
 
 /** Build a SequenceEvent with minimal fields. */
