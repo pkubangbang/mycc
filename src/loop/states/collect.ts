@@ -14,9 +14,8 @@ import { isVerbose } from '../../config.js';
 import { loader } from '../../context/shared/loader.js';
 import { forkChat } from '../../engine/chat-provider.js';
 import { isTransientError } from '../../engine/chat-helpers.js';
-import type { SequenceEvent } from '../../hook/sequence.js';
-import { getSkillTriologueStatus } from '../../utils/skill-dedup.js';
-import { extractKeywords } from '../keyword-extractor.js';
+import { hintSuggester } from './collect-hint.js';
+import { skillSuggester } from './collect-skill.js';
 import { listWorktrees } from '../../context/worktree-store.js';
 import { getServeHub } from '../../serve/serve-registry.js';
 import { resolveHeadlessFirstQuery } from '../../session/index.js';
@@ -24,10 +23,6 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { loopEvents } from '../loop-events.js';
 
-// Confusion threshold for hint generation
-const CONFUSION_THRESHOLD = 10;
-// Minimum message count before hint generation
-const MIN_MESSAGES_FOR_HINT = 6;
 /**
  * Max consecutive transient COLLECT errors retried within one turn before the
  * circuit breaker trips and the turn is abandoned to PROMPT (interactive) /
@@ -42,50 +37,6 @@ const MIN_MESSAGES_FOR_HINT = 6;
 const MAX_COLLECT_TRANSIENT_RETRIES = 3;
 
 /**
- * Generate a human-readable breakdown of confusion factors
- */
-function generateBreakdown(
-  _confusionIndex: number,
-  events: SequenceEvent[]
-): string {
-  const parts: string[] = [];
-
-  // Count assistant turns (inferred from events - each turn has multiple tools)
-  // Estimate turns by counting unique tool call batches
-  const turnCount = Math.ceil(events.length / 3); // rough estimate
-  if (turnCount > 0) {
-    parts.push(`${turnCount} assistant turns`);
-  }
-
-  // Count errors — only match error/failed/fatal at the start of the result
-  // to avoid false positives from normal file content containing these words.
-  // Keep 'includes' for OS error codes (ENOENT, EACCES, EPERM) which are
-  // specific identifiers that won't appear in file content.
-  const errors = events.filter(e => {
-    const result = e.result?.toLowerCase() || '';
-    return result.startsWith('error:') || result.startsWith('error ') ||
-           result.startsWith('fatal:') || result.startsWith('failed:') ||
-           result.startsWith('failed ') ||
-           result.includes('enoent') || result.includes('eacces') ||
-           result.includes('eperm') || result.includes('permission denied');
-  });
-  if (errors.length > 0) {
-    parts.push(`${errors.length} tool errors`);
-  }
-
-  // Dead-loop evidence: same tool called 3+ times recently with the same error
-  // prefix. Feeds the hint-round prompt instruction 8 so the LLM judges
-  // should_compact on facts (a repeated-action line) rather than a vague
-  // "the conversation feels long" feeling, which was over-triggering compact.
-  const repeated = detectRepeatedActions(events);
-  if (repeated) {
-    parts.push(repeated);
-  }
-
-  return parts.length > 0 ? parts.join(', ') : 'No issues detected';
-}
-
-/**
  * Shape of a single reactivation evaluation returned by the LLM via forkChat.
  */
 interface ReactivationEvaluation {
@@ -93,79 +44,6 @@ interface ReactivationEvaluation {
   hash: string;
   reopen: boolean;
   reason?: string;
-}
-
-/**
- * Detect repeated tool actions that signal a dead-loop, to feed the hint
- * round as objective evidence (so the LLM judges should_compact on facts,
- * not on a vague "the conversation feels long" feeling).
- *
- * A "repeated action" = the same tool called 3+ times in the recent window
- * with results that share the same error-ish prefix. We look at the trailing
- * events (the recent window) and group consecutive same-tool calls; if 3+
- * share a common error prefix, we report it. Bash is keyed by its first
- * command clause (so repeated `pnpm test` runs group together even when the
- * tail differs); other tools are keyed by a stable arg (path/name/command).
- *
- * Returns a human-readable line like:
- *   "Repeated actions: edit_file ×4 (results start with "Error: old_text not found")"
- * or null if no repetition is found. The hint-round prompt (instruction 8)
- * tells the LLM to default should_compact=false when there is no such line.
- *
- * Exported for unit testing (see src/tests/loop/states/collect-repeated.test.ts).
- */
-export function detectRepeatedActions(events: SequenceEvent[]): string | null {
-  if (events.length < 3) return null;
-  // Inspect only the trailing window — a dead-loop is a RECENT phenomenon.
-  const window = events.slice(-8);
-  // Group consecutive same-tool calls; report the largest group with 3+ that
-  // also share an error prefix in their results.
-  const groups: Array<{ tool: string; events: SequenceEvent[] }> = [];
-  for (const ev of window) {
-    const last = groups[groups.length - 1];
-    if (last && last.tool === ev.tool) {
-      last.events.push(ev);
-    } else {
-      groups.push({ tool: ev.tool, events: [ev] });
-    }
-  }
-  let best: { tool: string; count: number; prefix: string } | null = null;
-  for (const g of groups) {
-    if (g.events.length < 3) continue;
-    const prefix = commonErrorPrefix(g.events.map(e => e.result || ''));
-    if (prefix) {
-      const candidate = { tool: g.tool, count: g.events.length, prefix };
-      if (!best || candidate.count > best.count) best = candidate;
-    }
-  }
-  if (!best) return null;
-  return `Repeated actions: ${best.tool} ×${best.count} (results start with "${best.prefix}")`;
-}
-
-/**
- * Find the longest common error prefix across results that look like errors.
- * Only considers results that start with an error-ish marker; if fewer than
- * 3 share a prefix, returns null (not a dead-loop signal).
- */
-function commonErrorPrefix(results: string[]): string | null {
-  const errorish = results.filter(r => {
-    const lower = r.toLowerCase();
-    return lower.startsWith('error:') || lower.startsWith('error ') ||
-      lower.startsWith('failed') || lower.includes('not found') ||
-      lower.includes('no such') || lower.includes('does not match');
-  });
-  if (errorish.length < 3) return null;
-  // Longest common prefix of the first 40 chars (enough to identify the
-  // repeated error class without dumping a whole message into the breakdown).
-  const snippets = errorish.map(r => r.slice(0, 40));
-  let prefix = snippets[0];
-  for (const s of snippets) {
-    while (prefix && !s.startsWith(prefix)) {
-      prefix = prefix.slice(0, -1);
-    }
-    if (!prefix) break;
-  }
-  return prefix && prefix.length >= 6 ? prefix : null;
 }
 
 /**
@@ -306,9 +184,9 @@ async function checkReactivation(env: MachineEnv): Promise<void> {
  * SYSTEM / REMINDER) relying on auto-fix for TP-safe injection.
  *
  * @returns the freshest steering note drained this pass (`firstSteerNote`),
- *          or null if none. This is the Y source for runKeywordExtraction
- *          (step 6) — steering notes take priority over lastUserQuery as the
- *          freshest mid-task direction.
+ *          or null if none. This is the query source for
+ *          skillSuggester.runKeywordExtraction (step 6) — steering notes take
+ *          priority over lastUserQuery as the freshest mid-task direction.
  */
 async function collectMailsAndInput(env: MachineEnv): Promise<{ firstSteerNote: string | null }> {
   const { triologue, ctx } = env;
@@ -412,105 +290,6 @@ async function collectMailsAndInput(env: MachineEnv): Promise<{ firstSteerNote: 
   return { firstSteerNote };
 }
 
-/** Signal returned by runHintRound to steer the orchestrator. */
-type HintSignal = 'continue' | 'stop' | 'collect';
-
-/**
- * Step 3: generate a hint round when confusion is high, and handle its
- * three outcomes.
- *
- * @returns `'stop'` if ESC aborted the hint round (caller returns STOP for
- *          centralized wrap-up); `'collect'` if the hint round signalled a
- *          dead-loop compaction (caller returns COLLECT to continue on
- *          compacted context); `'continue'` for a normal pass (or when the
- *          hint block was skipped).
- *
- * Side effects on `turn`: captures `lastHintFocus` (the Z source) on a
- * successful hint round; clears `collectTransientRetries` on compaction.
- */
-async function runHintRound(env: MachineEnv, turn: TurnVars): Promise<HintSignal> {
-  const { triologue, ctx } = env;
-  const confusionIndex = ctx.core.getConfusionIndex();
-  const messageCount = triologue.getMessagesRaw().length;
-
-  if (confusionIndex < CONFUSION_THRESHOLD || messageCount < MIN_MESSAGES_FOR_HINT) {
-    return 'continue';
-  }
-
-  // Use brief for hint round notification (user-facing)
-  ctx.core.brief('info', 'loop', 'Generating hint...');
-  const pendingSkills = env.conditions.getPending();
-  const breakdown = generateBreakdown(confusionIndex, env.sequence.getEvents());
-
-  // Use escAware for ESC-interruptible hint generation
-  const result = await ctx.core.escAware(
-    async (abortController) => {
-      return await triologue.generateHintRound(abortController, confusionIndex, breakdown, pendingSkills);
-    },
-    () => {
-      // ESC pressed during hint generation — return 'aborted' so the
-      // caller returns STOP for centralized wrap-up (stop.ts handles
-      // startWrapUp + auto-off + setNeglectedMode).
-      return 'aborted' as const;
-    }
-  );
-
-  // If aborted (ESC pressed), return STOP for centralized wrap-up.
-  // Neglected mode is NOT cleared here — stop.ts handles that.
-  if (result === 'aborted') {
-    return 'stop';
-  }
-  // Capture focus_on from a successful hint round (Z source for the
-  // composite keyword extraction below). The discriminated union
-  // carries focusOn only on the success path.
-  if (result !== 'compact' && result.status === 'success') {
-    turn.lastHintFocus = result.focusOn;
-  }
-  // If the LLM signalled should_compact (dead-loop or context stress),
-  // trigger compaction now and CONTINUE the loop on fresh, compacted
-  // context. Compaction is a mid-turn intervention (not a turn boundary),
-  // so we return COLLECT (not STOP): COLLECT → LLM will retryChat on the
-  // now-compacted triologue within the same turn. Returning STOP here was
-  // the bug — STOP → PROMPT ends the turn and waits for user input, so the
-  // loop stalled at PROMPT after a hint-compact. This mirrors the
-  // hook-deferred compaction path (hook.ts sets deferredCompact → llm.ts
-  // compacts and continues the while-loop).
-  //
-  // TP parity: compact() replaces the conversation with a 3-message
-  // [summary_user, brief_assistant, brief_tool] resume sequence, so
-  // getLastRole() is 'tool' — the next agent() (the real LLM response) is a
-  // natural tool→assistant transition. Any note/user/tool the following
-  // states inject starts from a legal role sequence. No special TP handling
-  // needed here.
-  //
-  // Stat reset MUST mirror the llm.ts auto-compact branch: the stale
-  // sequence events, embedding tracker, hook dedup cap, and crossroad
-  // cooldown were all computed against the pre-compact history that no
-  // longer exists. Without these resets, the continued loop would run on
-  // corrupted stats (e.g. sequence events inflating the next confusion
-  // score, hook dedup cap suppressing the next turn's hooks).
-  if (result === 'compact') {
-    ctx.core.brief('info', 'loop', 'Hint round signalled compaction (dead-loop / context stress); compacting...');
-    const tools = loader.getToolsForScope(env.scope);
-    await triologue.compact(undefined, undefined, tools);
-    ctx.core.resetConfusionIndex();
-    env.requestEmbeddingTracker.clear();
-    // compactReset() clears session-level data ONLY (turn.events[] and
-    // totalTurns survive — a turn spans across compaction). resetTurn()
-    // re-arms per-turn hook dedup (same rationale as llm.ts auto-compact).
-    env.sequence.compactReset();
-    env.hookExecutor.resetTurn();
-    env.crossroadOccurred = false;
-    // Turn recovered via compaction — clear the transient-retry counter
-    // so the next hiccup starts a fresh circuit-breaker count.
-    turn.collectTransientRetries = 0;
-    return 'collect';
-  }
-  // Reset confusion after hint
-  ctx.core.resetConfusionIndex();
-  return 'continue';
-}
-
 /**
  * Step 4: todo + peer-channel nudging with state tracking.
  *
@@ -611,142 +390,6 @@ async function runBriefAndWorktreeNudges(env: MachineEnv, turn: TurnVars): Promi
 }
 
 /**
- * Step 6: composite keyword extraction for proactive skill discovery.
- *
- * Composes a composite text from three sources:
- *   X = turn.lastBriefMessage  (agent's self-reported focus, set in TOOL)
- *   Y = firstSteerNote ?? turn.lastUserQuery  (the trigger source)
- *   Z = turn.lastHintFocus  (hint round focus_on, captured in step 3)
- * Extraction is TRIGGERED only by a change in Y (new user query or new
- * steering note). X and Z enrich the composite but never trigger.
- * A 3-pass cooldown suppresses re-triggering from consecutive user messages.
- * See docs/plan-composite-keyword-extraction.md.
- *
- * @param firstSteerNote - the freshest steering note drained this pass
- *        (from collectMailsAndInput), or null.
- *
- * Side effects on `turn`: `lastSkillY` (Y dedup cursor) and
- * `skillDiscoveryCooldown` — armed ONLY on a success/skipped outcome; a
- * `failed` outcome (ESC / transient) leaves Y eligible for retry.
- */
-async function runKeywordExtraction(env: MachineEnv, turn: TurnVars, firstSteerNote: string | null): Promise<void> {
-  const { triologue, ctx } = env;
-
-  if (turn.skillDiscoveryCooldown > 0) turn.skillDiscoveryCooldown--;
-
-  const ySource = firstSteerNote ?? (turn.lastUserQuery || null);
-  const yChanged = ySource !== null && ySource !== turn.lastSkillY;
-
-  // Build the composite text (X + Y + Z). Y is the trigger; X and Z enrich.
-  const compositeParts: string[] = [];
-  if (turn.lastBriefMessage) compositeParts.push(turn.lastBriefMessage);
-  if (ySource) compositeParts.push(ySource);
-  if (turn.lastHintFocus) compositeParts.push(turn.lastHintFocus);
-  const compositeText = compositeParts.join('\n');
-
-  if (!yChanged || turn.skillDiscoveryCooldown !== 0 || compositeText.trim().length < 4) {
-    return;
-  }
-
-  // Extract English keywords from the composite via LLM (ESC-safe).
-  // extractKeywords returns a discriminated union so we can distinguish a
-  // completed extraction (success/skipped) from a failed/aborted one:
-  //   - success: the LLM ran; keywords may be empty. Arm the cooldown and
-  //     mark Y as seen.
-  //   - skipped: the composite was trivial (greeting/ack). Mark Y as seen
-  //     so a trivial "hello" doesn't re-trigger every pass — but a
-  //     subsequent meaningful query (different Y content) still triggers.
-  //   - failed: the call threw (transient network error or ESC abort).
-  //     Do NOT arm the cooldown or mark Y as seen: Y stays eligible for a
-  //     retry on a subsequent pass.
-  // The escAware cleanup returns { status: 'failed' } on ESC, so the
-  // abort path is handled by the same `failed` branch (preserving the
-  // documented "ESC does not consume the discovery opportunity" retry
-  // behavior that the old `[]`-returning API silently broke).
-  const result = await ctx.core.escAware(
-    async (ac) => extractKeywords(compositeText, loader.getSkillKeywords(), ac.signal),
-    () => ({ status: 'failed' } as const),
-  );
-
-  if (result.status === 'failed') {
-    // Y stays eligible for retry — do not touch lastSkillY or cooldown.
-    // (The cooldown was already decremented at the top of step 6, which is
-    // fine: a failed attempt does not extend suppression.)
-    return;
-  }
-
-  // success or skipped: mark the Y source as "seen" so it doesn't
-  // re-trigger. When a steering note was the trigger, ALSO mark the
-  // fallback lastUserQuery as seen so it doesn't spuriously re-trigger
-  // after the steering note is consumed on subsequent passes
-  // (Review BUG 1 — spurious double-trigger).
-  turn.lastSkillY = ySource;
-  if (firstSteerNote && turn.lastUserQuery) {
-    turn.lastSkillY = turn.lastUserQuery;
-  }
-  turn.skillDiscoveryCooldown = 3;
-
-  // Only a successful extraction with real keywords can surface skills.
-  // A `skipped` (trivial) outcome has no keywords, and a `success` with
-  // an empty keywords array means the LLM found nothing relevant — both
-  // fall through here without injecting a HINT note.
-  const keywords = result.status === 'success' ? result.keywords : [];
-  if (keywords.length === 0) return;
-
-  const allSkills = ctx.skill.listSkills();
-  const matched = allSkills.filter(s => {
-    const nameLower = s.name.toLowerCase();
-    const kwLower = s.keywords.map(k => k.toLowerCase());
-    return keywords.some(kw =>
-      nameLower.includes(kw) ||
-      kwLower.some(k => k.includes(kw) || kw.includes(k)),
-    );
-  });
-
-  if (matched.length === 0) return;
-
-  const newSkills: string[] = [];
-  const suggestedSkills: string[] = [];
-  const loadedSkills: string[] = [];
-
-  for (const skill of matched) {
-    const status = getSkillTriologueStatus(triologue, skill);
-    switch (status) {
-      case 'new': {
-        const desc = skill.description ? ` (${skill.description})` : '';
-        newSkills.push(`${skill.name}${desc}`);
-        break;
-      }
-      case 'suggested':
-        suggestedSkills.push(skill.name);
-        break;
-      case 'loaded':
-        loadedSkills.push(skill.name);
-        break;
-    }
-  }
-
-  const lines: string[] = [];
-  if (newSkills.length > 0) {
-    lines.push(`New relevant skills: ${newSkills.join(', ')}. Use skill_load(name="<exact_name>") to load them.`);
-  }
-  if (suggestedSkills.length > 0) {
-    lines.push(`Also suggesting: ${suggestedSkills.join(', ')}. Use skill_load(name="<exact_name>") to load it.`);
-  }
-  if (loadedSkills.length > 0) {
-    lines.push(`The below skills are loaded and also relevant: ${loadedSkills.join(', ')}.`);
-  }
-  lines.push('Note: you can also use skill_search to search for skills semantically.');
-  // This is a silent nudge: either load a skill that genuinely helps the
-  // current task (via skill_load), or ignore it and keep working. Do NOT
-  // write a prose reply explaining why you are/aren't loading a skill —
-  // that clutters the conversation and re-triggers the same nudge.
-  lines.push('Discipline: this is a silent nudge. If a skill helps the current task, load it with skill_load; otherwise stay silent and continue. Do NOT narrate your decision.');
-
-  triologue.note('HINT', lines.join('\n'));
-}
-
-/**
  * Step 7: log message count and token consumption in verbose mode.
  */
 function logVerboseStats(env: MachineEnv, messageCount: number): void {
@@ -774,11 +417,11 @@ export async function handleCollect(
 
     // 1–2. Drain all external inputs (child questions, mail, team status,
     //      steering notes, headless first-query marker, file uploads).
-    //      Returns the freshest steering note (the Y source for step 6).
+    //      Returns the freshest steering note (the query source for step 6).
     const { firstSteerNote } = await collectMailsAndInput(env);
 
     // 3. Hint round + compaction. May short-circuit the pass.
-    const hintSignal = await runHintRound(env, turn);
+    const hintSignal = await hintSuggester.runHintRound(env, turn);
     if (hintSignal === 'stop') return AgentState.STOP;
     if (hintSignal === 'collect') return AgentState.COLLECT;
 
@@ -789,7 +432,7 @@ export async function handleCollect(
     await runBriefAndWorktreeNudges(env, turn);
 
     // 6. Composite keyword extraction for proactive skill discovery.
-    await runKeywordExtraction(env, turn, firstSteerNote);
+    await skillSuggester.runKeywordExtraction(env, turn, firstSteerNote);
 
     // 7. Verbose token/message logging.
     const messageCount = triologue.getMessagesRaw().length;

@@ -33,8 +33,6 @@ export function createTurnVars(overrides: Partial<TurnVars> = {}): TurnVars {
     lastUserQuery: '',
     lastBriefMessage: '',
     lastHintFocus: '',
-    lastSkillY: '',
-    skillDiscoveryCooldown: 0,
     collectTransientRetries: 0,
     ...overrides,
   };

@@ -1131,6 +1131,14 @@ export interface SlashCommandContext {
    * against have reset).
    */
   hookExecutor?: { resetTurn(): void };
+  /**
+   * The live TurnVars for the current turn (handed over by the SLASH handler).
+   * /clear needs it to invalidate the stale composite sources (lastUserQuery /
+   * lastBriefMessage / lastHintFocus) so a clear is a real fresh-session
+   * boundary for skill discovery — see beginFreshSession(). Omitted by
+   * commands that don't touch turn state.
+   */
+  turn?: { lastUserQuery: string; lastBriefMessage: string; lastHintFocus: string };
 }
 
 /**

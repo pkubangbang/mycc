@@ -36,7 +36,7 @@ import type { Tool } from '../types.js';
  * discovery opportunity for a trivial query (the catch-all `[]`).
  */
 export type KeywordExtractionResult =
-  | { status: 'success'; keywords: string[] }
+  | { status: 'success'; keywords: string[]; freeformQuery: string }
   | { status: 'skipped' }
   | { status: 'failed' };
 
@@ -45,7 +45,7 @@ const EXTRACT_KEYWORDS_TOOL: Tool = {
   type: 'function',
   function: {
     name: 'extract_keywords',
-    description: 'Extract English keywords from the user query for skill matching',
+    description: 'Extract English keywords and a free-form search query from the user query for skill matching',
     parameters: {
       type: 'object',
       properties: {
@@ -54,8 +54,12 @@ const EXTRACT_KEYWORDS_TOOL: Tool = {
           items: { type: 'string' },
           description: 'Extracted English keywords (2-5 words) describing the user intent',
         },
+        freeform_query: {
+          type: 'string',
+          description: "A concise free-form search query (2-5 words) capturing the user's core intent for semantic skill search",
+        },
       },
-      required: ['keywords'],
+      required: ['keywords', 'freeform_query'],
     },
   },
 };
@@ -120,6 +124,10 @@ Choose from the available skill keywords list below when possible; you may also
 include multi-word concepts (e.g. "best practice") not in the list if highly relevant.
 Focus on actionable concepts, tools, or objects.
 Any of the following keywords must be included if the query implies: "plan, learning, collaboration, recovery".
+Also provide a concise free-form search query (2-5 words) that captures the user's
+core intent, suitable for semantic search against a skill database. The free-form
+query should be a natural phrase (e.g. "code review automation", "pdf text extraction")
+distilled from the conversation context — NOT a comma-separated keyword list.
 Return ONLY via the extract_keywords tool.
 
 Available skill keywords: ${availableKeywords.join(', ')}`,
@@ -142,7 +150,7 @@ Available skill keywords: ${availableKeywords.join(', ')}`,
       // The LLM responded but produced no tool call. The operation completed
       // (no throw), so this is a successful extraction with zero keywords,
       // not a failure — the caller may advance its throttle state.
-      return { status: 'success', keywords: [] };
+      return { status: 'success', keywords: [], freeformQuery: '' };
     }
 
     const args = toolCalls[0].function.arguments;
@@ -154,7 +162,15 @@ Available skill keywords: ${availableKeywords.join(', ')}`,
       .map((kw: unknown) => String(kw).trim().toLowerCase())
       .filter((kw: string) => kw.length > 0);
 
-    return { status: 'success', keywords: cleaned };
+    // The free-form query is a natural phrase for semantic search. It is
+    // NOT lowercased (proper nouns / tool names matter for embedding match)
+    // but is trimmed. An empty/whitespace value is preserved as '' so the
+    // caller can detect "invalid freeformQuery" and fail fast (oversize
+    // branch) rather than silently degrading.
+    const freeformQuery: string =
+      typeof parsed.freeform_query === 'string' ? parsed.freeform_query.trim() : '';
+
+    return { status: 'success', keywords: cleaned, freeformQuery };
   } catch {
     stopSpinner();
     // A throw here covers both transient network errors and ESC aborts

@@ -17,9 +17,10 @@ The hint-round system is a **meta-cognitive diagnostic** mechanism. When the LLM
 | `src/context/shared/base-core.ts` | Confusion index storage (`confusionIndex` field) |
 | `src/loop/states/tool.ts` | Confusion scoring after each tool execution |
 | `src/loop/states/hook.ts` | Confusion scoring per assistant turn (plan mode) |
-| `src/loop/states/collect.ts` | Hint trigger check, calls `generateHintRound()` |
+| `src/loop/states/collect-hint.ts` | Hint trigger check (step 3): gate + breakdown + ESC wiring; calls `triologue.generateHintRound()` |
+| `src/loop/states/collect.ts` | COLLECT pipeline orchestrator; delegates step 3 to `hintSuggester.runHintRound()` |
 | `src/loop/states/prompt.ts` | Confusion reset on new user query |
-| `src/loop/hint-round.ts` | Core hint generation: LLM analysis + injection |
+| `src/loop/triologue/hint-round.ts` | Core hint generation: LLM analysis + injection (`HintRoundManager`) |
 | `src/utils/llm-chat-minifier.ts` | `minifyForHint()`: context extraction for hint |
 | `src/loop/triologue.ts` | `generateHintRound()` wrapper, `HintRoundContext` |
 | `src/context/teammate-worker.ts` | Child process confusion handling (mail to lead) |
@@ -46,7 +47,7 @@ PROMPT ──► COLLECT ──► LLM ──► HOOK ──► TOOL ──► S
            → reset confusion to 0
 ```
 
-### Trigger Conditions (in `collect.ts`)
+### Trigger Conditions (in `collect-hint.ts`)
 
 ```typescript
 confusionIndex >= 10          // CONFUSION_THRESHOLD
@@ -197,7 +198,7 @@ But the `onHint` callback passed to `Triologue` is just the default no-op (`() =
 **Risk**: Dead code / misleading infrastructure. If intent was to log/track hint events, the callback is unused.
 
 ### 5.8 Confusion Breakdown is Heuristic
-**Observation**: `generateBreakdown()` in `collect.ts` estimates turn count as `Math.ceil(events.length / 3)`. This is a rough heuristic — a single turn could have 1 tool call or 15 tool calls.
+**Observation**: `generateBreakdown()` in `collect-hint.ts` estimates turn count as `Math.ceil(events.length / 3)`. This is a rough heuristic — a single turn could have 1 tool call or 15 tool calls.
 
 **Risk**: The breakdown shown to the LLM ("3 assistant turns, 2 tool errors, 1 repeated tool") may be inaccurate, especially with tools that have many parallel calls.
 
@@ -261,7 +262,7 @@ The lead receives this mail in its COLLECT state and injects it as a `[MAIL]` no
 
 > **Date**: 2026-05-22
 > **Status**: Implemented
-> **Scope**: Changes to `src/loop/states/collect.ts`
+> **Scope**: Changes to `src/loop/states/collect.ts` and `src/loop/states/collect-hint.ts`
 
 ### What shipped
 

@@ -31,6 +31,7 @@ import type { InputProvider } from './input-provider.js';
 import type { RequestEmbeddingTracker } from './request-embedding.js';
 import { displayLetterBox } from '../utils/letter-box.js';
 import { loopEvents } from './loop-events.js';
+import { skillSuggester } from './states/collect-skill.js';
 
 // ============================================================================
 // States
@@ -83,14 +84,10 @@ export interface TurnVars {
   nextBriefNudge: number;
   /** User's last real query, stored for recap to preserve across compression */
   lastUserQuery: string;
-  /** Last brief message (X source) — agent's self-reported focus, set in TOOL state */
+  /** Last brief message (brief source) — agent's self-reported focus, set in TOOL state */
   lastBriefMessage: string;
-  /** Last hint round focus_on (Z source) — recovery guidance, captured in COLLECT */
+  /** Last hint round focus_on (hint source) — recovery guidance, captured in COLLECT */
   lastHintFocus: string;
-  /** Y source value used in the last skill-discovery extraction, for change detection */
-  lastSkillY: string;
-  /** Cooldown counter: suppresses skill-discovery extraction for N COLLECT passes after firing */
-  skillDiscoveryCooldown: number;
   /**
    * Consecutive transient COLLECT errors within the current turn (circuit
    * breaker). When a transient error (e.g. a TLS handshake timeout during
@@ -150,6 +147,11 @@ export type StateHandler = (
 export class AgentStateMachine {
   private env: MachineEnv;
   private handlers: Record<AgentState, StateHandler>;
+  /** The live TurnVars instance, or null before run() starts. Read by the
+   *  double-Ctrl+L fresh-session callback (agent-repl) so it can invalidate
+   *  stale turn composite sources — a clear has no state transition, so the
+   *  turn-boundary guard does not run. */
+  private currentTurn: TurnVars | null = null;
 
   constructor(
     triologue: Triologue,
@@ -181,6 +183,20 @@ export class AgentStateMachine {
   }
 
   /**
+   * The live TurnVars instance, or null before run() has started.
+   *
+   * Exposed so an out-of-band "start fresh" event (double-Ctrl+L in
+   * agent-repl.ts) can invalidate the current turn's composite sources. Such
+   * a clear runs with NO state transition, so the turn-boundary guard in
+   * run() never fires for it — the caller needs a handle to the live turn to
+   * reset it explicitly and keep skill discovery from re-firing on stale
+   * context (PR #22 review, P1).
+   */
+  getTurn(): TurnVars | null {
+    return this.currentTurn;
+  }
+
+  /**
    * Run the state machine loop.
    *
    * Conversational turns: PROMPT → ... → STOP → PROMPT (reset TurnVars)
@@ -191,7 +207,9 @@ export class AgentStateMachine {
    * Errors propagate to the caller.
    */
   async run(): Promise<void> {
-    let turn: TurnVars = { isFirstRound: true, nextTodoNudge: 3, lastTodoState: '', nextBriefNudge: 5, lastUserQuery: '', lastBriefMessage: '', lastHintFocus: '', lastSkillY: '', skillDiscoveryCooldown: 0, collectTransientRetries: 0 };
+    let turn: TurnVars = { isFirstRound: true, nextTodoNudge: 3, lastTodoState: '', nextBriefNudge: 5, lastUserQuery: '', lastBriefMessage: '', lastHintFocus: '', collectTransientRetries: 0 };
+    this.currentTurn = turn;
+    skillSuggester.reset();
     let chat: ChatData = { abortController: null, rawToolCalls: [], assistantContent: '', augmentedCalls: [], hookResult: null, deferredCompact: false };
     // Initial state is always PROMPT. PROMPT is the single decision point for
     // whether to run autonomously: it redirects to AWAIT when auto mode is on
@@ -209,7 +227,12 @@ export class AgentStateMachine {
       // AWAIT is also a turn boundary in auto mode: each autonomous cycle starts a
       // fresh turn (fresh nudges, lastUserQuery cleared). AWAIT never follows SLASH.
       if ((state === AgentState.PROMPT || state === AgentState.AWAIT) && prevState !== AgentState.SLASH) {
-        turn = { isFirstRound: true, nextTodoNudge: 3, lastTodoState: '', nextBriefNudge: 5, lastUserQuery: '', lastBriefMessage: '', lastHintFocus: '', lastSkillY: '', skillDiscoveryCooldown: 0, collectTransientRetries: 0 };
+        turn = { isFirstRound: true, nextTodoNudge: 3, lastTodoState: '', nextBriefNudge: 5, lastUserQuery: '', lastBriefMessage: '', lastHintFocus: '', collectTransientRetries: 0 };
+        this.currentTurn = turn;
+        // Reset the skill-discovery singleton's throttle state at the turn
+        // boundary — the same lifecycle point where lastSkillY /
+        // skillDiscoveryCooldown were previously re-initialized on TurnVars.
+        skillSuggester.reset();
       }
       // COLLECT = fresh pipeline pass — always reset. Preserve
       // `deferredCompact`: HOOK sets it (e.g. compact-on-intent-trap) and
