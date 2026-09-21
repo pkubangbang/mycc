@@ -56,7 +56,7 @@ vi.mock('../../../config.js', () => ({ isVerbose: vi.fn(() => false) }));
 // chat-provider.ts → config chain) never loads. Returns the new
 // discriminated-union shape (vestigial — handleTool no longer calls it).
 vi.mock('../../../loop/keyword-extractor.js', () => ({
-  extractKeywords: vi.fn(async () => ({ status: 'success', keywords: [] })),
+  extractKeywords: vi.fn(async () => ({ status: 'success', keywords: [], freeformQuery: '' })),
 }));
 
 // engine/chat-provider.js: stub to prevent the config chain from loading.

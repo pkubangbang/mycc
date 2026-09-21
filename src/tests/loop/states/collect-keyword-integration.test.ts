@@ -71,7 +71,7 @@ vi.mock('../../../context/worktree-store.js', () => ({
 // each union variant without an LLM call. The mock factory captures the
 // configured return value via a module-level let, reassigned per-test through
 // the imported `setExtractionResult` helper below.
-let extractionResult: KeywordExtractionResult = { status: 'success', keywords: [] };
+let extractionResult: KeywordExtractionResult = { status: 'success', keywords: [], freeformQuery: '' };
 vi.mock('../../../loop/keyword-extractor.js', () => ({
   extractKeywords: vi.fn(async (): Promise<KeywordExtractionResult> => extractionResult),
 }));
@@ -142,7 +142,7 @@ describe('handleCollect — composite keyword extraction (integration)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     // Reset module-level mock state to safe defaults.
-    extractionResult = { status: 'success', keywords: [] };
+    extractionResult = { status: 'success', keywords: [], freeformQuery: '' };
     serveRunning = false;
     steeredNotes = [];
     triologue = new Triologue();
@@ -173,12 +173,69 @@ describe('handleCollect — composite keyword extraction (integration)', () => {
     return env;
   }
 
+  /**
+   * Build an env wired for the BRANCHING skill-suggestion tests: low
+   * confusion (hint block skipped), no todos, passthrough escAware, BUT with
+   * a populated skill list (so keyword matching produces matches) and a
+   * configurable wiki.get mock (so Branch B's semantic intersection can be
+   * exercised). `wikiResults` is an array of { title, similarity } shaping
+   * the ctx.wiki.get return; `wikiThrow` makes wiki.get reject (to test the
+   * graceful-failure path).
+   *
+   * Every skill is given the keyword 'test' so a single extracted keyword
+   * 'test' matches all of them — driving the oversize branch when >= 6
+   * skills are provided.
+   */
+  function makeEnvWithSkills(
+    skills: Array<{ name: string; description?: string; keywords?: string[] }>,
+    wikiResults: Array<{ title: string; similarity?: number }> = [],
+    wikiThrow = false,
+  ) {
+    const fullSkills = skills.map(s => ({
+      name: s.name,
+      description: s.description ?? '',
+      keywords: s.keywords ?? ['test'],
+      content: '',
+    }));
+    const ctx = createMockContext({
+      core: {
+        getConfusionIndex: vi.fn(() => 0),
+        brief: vi.fn(),
+        verbose: vi.fn(),
+      } as never,
+      skill: { listSkills: vi.fn(() => fullSkills) } as never,
+      wiki: {
+        get: wikiThrow
+          ? vi.fn(async () => { throw new Error('embedding model unavailable'); })
+          : vi.fn(async () => wikiResults.map(r => ({
+              document: { title: r.title, content: '', references: [] },
+              similarity: r.similarity ?? 0.8,
+              hash: 'h',
+            }))),
+      } as never,
+    });
+    const env = createMockMachineEnv({ triologue });
+    env.ctx = ctx;
+    env.ctx.core.escAware = vi.fn(async (operation: (ac: AbortController) => Promise<unknown>) => {
+      return await operation(new AbortController());
+    }) as never;
+    return env;
+  }
+
+  /** Build N skills all matching the keyword 'test' (name = skill-<i>). */
+  function makeOversizeSkills(n: number): Array<{ name: string; description?: string }> {
+    return Array.from({ length: n }, (_, i) => ({
+      name: `skill-${i}`,
+      description: `Skill number ${i}`,
+    }));
+  }
+
   // ---------------------------------------------------------------------------
   // success path
   // ---------------------------------------------------------------------------
 
   it('SUCCESS: arms lastSkillY + cooldown=3 and consumes extractKeywords once', async () => {
-    setExtractionResult({ status: 'success', keywords: ['parser', 'test'] });
+    setExtractionResult({ status: 'success', keywords: ['parser', 'test'], freeformQuery: '' });
     const env = makeEnv();
     const turn: TurnVars = createTurnVars({
       lastUserQuery: 'help me test the parser',
@@ -194,7 +251,7 @@ describe('handleCollect — composite keyword extraction (integration)', () => {
   });
 
   it('SUCCESS with empty keywords still arms the cooldown (op completed)', async () => {
-    setExtractionResult({ status: 'success', keywords: [] });
+    setExtractionResult({ status: 'success', keywords: [], freeformQuery: '' });
     const env = makeEnv();
     const turn: TurnVars = createTurnVars({
       lastUserQuery: 'some query with no skill match',
@@ -293,7 +350,7 @@ describe('handleCollect — composite keyword extraction (integration)', () => {
   // ---------------------------------------------------------------------------
 
   it('does NOT call extractKeywords when Y is unchanged (lastSkillY === Y)', async () => {
-    setExtractionResult({ status: 'success', keywords: [] });
+    setExtractionResult({ status: 'success', keywords: [], freeformQuery: '' });
     const env = makeEnv();
     const turn: TurnVars = createTurnVars({
       lastUserQuery: 'same query',
@@ -307,7 +364,7 @@ describe('handleCollect — composite keyword extraction (integration)', () => {
   });
 
   it('does NOT call extractKeywords when cooldown > 0', async () => {
-    setExtractionResult({ status: 'success', keywords: [] });
+    setExtractionResult({ status: 'success', keywords: [], freeformQuery: '' });
     const env = makeEnv();
     const turn: TurnVars = createTurnVars({
       lastUserQuery: 'a new query',
@@ -327,7 +384,7 @@ describe('handleCollect — composite keyword extraction (integration)', () => {
   // ---------------------------------------------------------------------------
 
   it('STEERING NOTE: triggers on the note, marks the fallback lastUserQuery as seen', async () => {
-    setExtractionResult({ status: 'success', keywords: ['tests'] });
+    setExtractionResult({ status: 'success', keywords: ['tests'], freeformQuery: '' });
     serveRunning = true;
     steeredNotes = ['focus on tests'];
     const env = makeEnv();
@@ -346,7 +403,7 @@ describe('handleCollect — composite keyword extraction (integration)', () => {
   });
 
   it('STEERING NOTE consumed: a second pass with no note does NOT re-trigger', async () => {
-    setExtractionResult({ status: 'success', keywords: ['tests'] });
+    setExtractionResult({ status: 'success', keywords: ['tests'], freeformQuery: '' });
     serveRunning = true;
     steeredNotes = ['focus on tests'];
     const env = makeEnv();
@@ -382,7 +439,7 @@ describe('handleCollect — composite keyword extraction (integration)', () => {
   // ---------------------------------------------------------------------------
 
   it('returns LLM after a successful extraction pass', async () => {
-    setExtractionResult({ status: 'success', keywords: ['x'] });
+    setExtractionResult({ status: 'success', keywords: ['x'], freeformQuery: '' });
     const env = makeEnv();
     const turn: TurnVars = createTurnVars({
       lastUserQuery: 'help me test the parser',
@@ -392,5 +449,146 @@ describe('handleCollect — composite keyword extraction (integration)', () => {
 
     const result = await handleCollect(env, turn, createChatData());
     expect(result).toBe(AgentState.LLM);
+  });
+
+  // ---------------------------------------------------------------------------
+  // Branching skill suggestion (Branch A small / Branch B oversize)
+  // ---------------------------------------------------------------------------
+
+  it('BRANCH A (small match <5): injects the full keyword-matched list, no wiki call', async () => {
+    // 3 skills match keyword 'test' → below the oversize threshold (5).
+    setExtractionResult({ status: 'success', keywords: ['test'], freeformQuery: 'test automation' });
+    const skills = makeOversizeSkills(3);
+    const env = makeEnvWithSkills(skills);
+    const turn: TurnVars = createTurnVars({
+      lastUserQuery: 'help me test things',
+      lastSkillY: '',
+      skillDiscoveryCooldown: 0,
+    });
+
+    await handleCollect(env, turn, createChatData());
+
+    // HINT injected with all 3 matched skills (new → name + description).
+    expect(triologue.note).toHaveBeenCalledWith('HINT', expect.stringContaining('skill-0'));
+    expect(triologue.note).toHaveBeenCalledWith('HINT', expect.stringContaining('skill-2'));
+    // Branch A does NOT call wiki.get (no semantic refinement needed).
+    expect(env.ctx.wiki.get).not.toHaveBeenCalled();
+    // Y marked + cooldown armed (full success).
+    expect(turn.lastSkillY).toBe('help me test things');
+    expect(turn.skillDiscoveryCooldown).toBe(3);
+  });
+
+  it('BRANCH B (oversize >=5): injects ONLY the keyword∩semantic intersection', async () => {
+    // 6 skills match → oversize. Wiki returns 2 of them semantically.
+    // Intersection = the 2 overlapping skills → HINT contains only those.
+    setExtractionResult({ status: 'success', keywords: ['test'], freeformQuery: 'test automation' });
+    const skills = makeOversizeSkills(6); // skill-0 .. skill-5
+    const wikiResults = [
+      { title: 'project:skill-1', similarity: 0.9 },
+      { title: 'project:skill-4', similarity: 0.8 },
+      { title: 'project:unrelated-skill', similarity: 0.7 },
+    ];
+    const env = makeEnvWithSkills(skills, wikiResults);
+    const turn: TurnVars = createTurnVars({
+      lastUserQuery: 'help me test the oversize case',
+      lastSkillY: '',
+      skillDiscoveryCooldown: 0,
+    });
+
+    await handleCollect(env, turn, createChatData());
+
+    // wiki.get was called with the freeform query.
+    expect(env.ctx.wiki.get).toHaveBeenCalledWith(
+      'test automation',
+      expect.objectContaining({ domain: 'skills', topK: 10 }),
+    );
+    // HINT contains the 2 intersection skills...
+    expect(triologue.note).toHaveBeenCalledWith('HINT', expect.stringContaining('skill-1'));
+    expect(triologue.note).toHaveBeenCalledWith('HINT', expect.stringContaining('skill-4'));
+    // ...but NOT the 4 keyword-only-matched skills.
+    const hintCall = vi.mocked(triologue.note).mock.calls.find(c => c[0] === 'HINT');
+    const hintContent = hintCall ? String(hintCall[1]) : '';
+    expect(hintContent).not.toContain('skill-0');
+    expect(hintContent).not.toContain('skill-5');
+    expect(hintContent).not.toContain('unrelated-skill');
+    // Y marked + cooldown armed.
+    expect(turn.lastSkillY).toBe('help me test the oversize case');
+    expect(turn.skillDiscoveryCooldown).toBe(3);
+  });
+
+  it('BRANCH B (oversize, empty intersection): NO hint injected', async () => {
+    // 6 skills match → oversize. Wiki returns only unrelated skills →
+    // intersection empty → no HINT.
+    setExtractionResult({ status: 'success', keywords: ['test'], freeformQuery: 'test automation' });
+    const skills = makeOversizeSkills(6);
+    const wikiResults = [
+      { title: 'project:totally-unrelated', similarity: 0.9 },
+      { title: 'project:also-unrelated', similarity: 0.8 },
+    ];
+    const env = makeEnvWithSkills(skills, wikiResults);
+    const turn: TurnVars = createTurnVars({
+      lastUserQuery: 'help me test with no intersection',
+      lastSkillY: '',
+      skillDiscoveryCooldown: 0,
+    });
+
+    await handleCollect(env, turn, createChatData());
+
+    // wiki was called...
+    expect(env.ctx.wiki.get).toHaveBeenCalled();
+    // ...but NO HINT note was injected (empty intersection → silent).
+    const hintCalls = vi.mocked(triologue.note).mock.calls.filter(c => c[0] === 'HINT');
+    expect(hintCalls).toHaveLength(0);
+    // Y still marked + cooldown armed (the extraction itself succeeded;
+    // only the refinement produced no suggestion).
+    expect(turn.lastSkillY).toBe('help me test with no intersection');
+    expect(turn.skillDiscoveryCooldown).toBe(3);
+  });
+
+  it('BRANCH B (oversize, wiki failure): NO hint injected (graceful)', async () => {
+    // 6 skills match → oversize. wiki.get throws → no hint.
+    setExtractionResult({ status: 'success', keywords: ['test'], freeformQuery: 'test automation' });
+    const skills = makeOversizeSkills(6);
+    const env = makeEnvWithSkills(skills, [], true /* wikiThrow */);
+    const turn: TurnVars = createTurnVars({
+      lastUserQuery: 'help me test with wiki down',
+      lastSkillY: '',
+      skillDiscoveryCooldown: 0,
+    });
+
+    await handleCollect(env, turn, createChatData());
+
+    // wiki.get was attempted...
+    expect(env.ctx.wiki.get).toHaveBeenCalled();
+    // ...but NO HINT note (semantic search unavailable → silent).
+    const hintCalls = vi.mocked(triologue.note).mock.calls.filter(c => c[0] === 'HINT');
+    expect(hintCalls).toHaveLength(0);
+    // Y still marked + cooldown armed.
+    expect(turn.lastSkillY).toBe('help me test with wiki down');
+    expect(turn.skillDiscoveryCooldown).toBe(3);
+  });
+
+  it('BRANCH B (oversize, empty freeformQuery): FAIL FAST — no hint, Y eligible for retry', async () => {
+    // 6 skills match → oversize. But freeformQuery is empty → fail fast.
+    // Y must NOT be marked and cooldown must NOT be armed (retry eligible).
+    setExtractionResult({ status: 'success', keywords: ['test'], freeformQuery: '' });
+    const skills = makeOversizeSkills(6);
+    const env = makeEnvWithSkills(skills);
+    const turn: TurnVars = createTurnVars({
+      lastUserQuery: 'help me test with bad query',
+      lastSkillY: '',
+      skillDiscoveryCooldown: 0,
+    });
+
+    await handleCollect(env, turn, createChatData());
+
+    // wiki.get was NOT called (fail fast before the semantic step).
+    expect(env.ctx.wiki.get).not.toHaveBeenCalled();
+    // NO HINT injected.
+    const hintCalls = vi.mocked(triologue.note).mock.calls.filter(c => c[0] === 'HINT');
+    expect(hintCalls).toHaveLength(0);
+    // FAIL FAST: Y NOT marked + cooldown NOT armed → retry eligible next pass.
+    expect(turn.lastSkillY).toBe('');
+    expect(turn.skillDiscoveryCooldown).toBe(0);
   });
 });

@@ -132,7 +132,7 @@ vi.mock('../../../loop/esc-wrap-up.js', () => ({
 // discriminated-union shape — vestigial, since handlePrompt no longer calls
 // it after extraction moved to COLLECT; kept so the mock stays type-honest).
 vi.mock('../../../loop/keyword-extractor.js', () => ({
-  extractKeywords: vi.fn(async () => ({ status: 'success', keywords: [] })),
+  extractKeywords: vi.fn(async () => ({ status: 'success', keywords: [], freeformQuery: '' })),
 }));
 
 // engine/chat-provider.js: stub forkChat (not reached by the guard).

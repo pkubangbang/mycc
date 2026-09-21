@@ -241,7 +241,7 @@ describe('Composite keyword extraction — BUG 1 (spurious double-trigger)', () 
 
     // Apply post-extraction (includes BUG 1 fix) — success outcome arms the
     // throttle and marks Y as seen.
-    applyPostExtraction(turn, firstSteerNote, y1!, { status: 'success', keywords: [] });
+    applyPostExtraction(turn, firstSteerNote, y1!, { status: 'success', keywords: [], freeformQuery: '' });
     expect(turn.skillDiscoveryCooldown).toBe(3);
     // lastSkillY is set to the FALLBACK (lastUserQuery), not the steering note.
     expect(turn.lastSkillY).toBe('original user query');
@@ -259,7 +259,7 @@ describe('Composite keyword extraction — BUG 1 (spurious double-trigger)', () 
 
     // Pass 1: steering note triggers, apply fix (success outcome).
     const y1 = computeYSource(firstSteerNote, turn.lastUserQuery)!;
-    applyPostExtraction(turn, firstSteerNote, y1, { status: 'success', keywords: [] });
+    applyPostExtraction(turn, firstSteerNote, y1, { status: 'success', keywords: [], freeformQuery: '' });
     // Cooldown decrements over passes 2, 3, 4.
     for (let i = 0; i < 3; i++) {
       if (turn.skillDiscoveryCooldown > 0) turn.skillDiscoveryCooldown--;
@@ -319,7 +319,7 @@ describe('Composite keyword extraction — outcome-gated throttle (P1 fix)', () 
       skillDiscoveryCooldown: 0,
     });
     const y = computeYSource(null, turn.lastUserQuery)!;
-    applyPostExtraction(turn, null, y, { status: 'success', keywords: ['parser', 'test'] });
+    applyPostExtraction(turn, null, y, { status: 'success', keywords: ['parser', 'test'], freeformQuery: '' });
     expect(turn.lastSkillY).toBe('help me test the parser');
     expect(turn.skillDiscoveryCooldown).toBe(3);
   });
@@ -402,7 +402,7 @@ describe('Composite keyword extraction — outcome-gated throttle (P1 fix)', () 
       skillDiscoveryCooldown: 0,
     });
     const y = computeYSource(null, turn.lastUserQuery)!;
-    applyPostExtraction(turn, null, y, { status: 'success', keywords: [] });
+    applyPostExtraction(turn, null, y, { status: 'success', keywords: [], freeformQuery: '' });
     expect(turn.lastSkillY).toBe('some non-trivial query with no skill match');
     expect(turn.skillDiscoveryCooldown).toBe(3);
   });

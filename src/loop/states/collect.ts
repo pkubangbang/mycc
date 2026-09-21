@@ -10,12 +10,14 @@ import { AgentState } from '../state-machine.js';
 import type { MachineEnv, TurnVars, ChatData, HandlerResult } from '../state-machine.js';
 import { agentIO } from '../agent-io.js';
 import { autoState } from '../auto-state.js';
-import { isVerbose } from '../../config.js';
+import { isVerbose, getSkillMatchThreshold } from '../../config.js';
 import { loader } from '../../context/shared/loader.js';
 import { forkChat } from '../../engine/chat-provider.js';
 import { isTransientError } from '../../engine/chat-helpers.js';
 import type { SequenceEvent } from '../../hook/sequence.js';
 import { getSkillTriologueStatus } from '../../utils/skill-dedup.js';
+import type { Skill } from '../../types.js';
+import type { Triologue } from '../triologue.js';
 import { extractKeywords } from '../keyword-extractor.js';
 import { listWorktrees } from '../../context/worktree-store.js';
 import { getServeHub } from '../../serve/serve-registry.js';
@@ -28,6 +30,21 @@ import { loopEvents } from '../loop-events.js';
 const CONFUSION_THRESHOLD = 10;
 // Minimum message count before hint generation
 const MIN_MESSAGES_FOR_HINT = 6;
+/**
+ * When the keyword-matched skill count reaches this threshold, the
+ * suggestion is "oversize" — listing all matches (with descriptions) wastes
+ * tokens. Instead, a semantic-search intersection refines the list to the
+ * skills BOTH keyword-matched AND embedding-relevant. Below the threshold,
+ * the full keyword-matched list is surfaced as before (small enough to be
+ * useful inline). See runKeywordExtraction step 6, Branch B.
+ */
+const SKILL_OVERSIZE_THRESHOLD = 5;
+/**
+ * topK for the semantic wiki.get call in the oversize branch. Broader than
+ * skill_search's topK=3 so the intersection with keyword matches has room
+ * to be non-empty; the keyword match already acts as a precision filter.
+ */
+const SKILL_SEMANTIC_TOPK = 10;
 /**
  * Max consecutive transient COLLECT errors retried within one turn before the
  * circuit breaker trips and the turn is abandoned to PROMPT (interactive) /
@@ -611,6 +628,72 @@ async function runBriefAndWorktreeNudges(env: MachineEnv, turn: TurnVars): Promi
 }
 
 /**
+ * Partition a list of skills into new/suggested/loaded (via
+ * getSkillTriologueStatus) and inject a HINT note surfacing them.
+ *
+ * Shared by both branches of runKeywordExtraction step 6:
+ *  - Branch A (small match): the full keyword-matched list.
+ *  - Branch B (oversize): the keyword∩semantic intersection.
+ *
+ * New skills are listed with their description; suggested/loaded skills are
+ * listed by name only. The note always ends with the skill_search pointer
+ * and the silent-nudge discipline reminder.
+ */
+function injectSkillHint(triologue: Triologue, skills: Skill[]): void {
+  if (skills.length === 0) return;
+
+  const newSkills: string[] = [];
+  const suggestedSkills: string[] = [];
+  const loadedSkills: string[] = [];
+
+  for (const skill of skills) {
+    const status = getSkillTriologueStatus(triologue, skill);
+    switch (status) {
+      case 'new': {
+        const desc = skill.description ? ` (${skill.description})` : '';
+        newSkills.push(`${skill.name}${desc}`);
+        break;
+      }
+      case 'suggested':
+        suggestedSkills.push(skill.name);
+        break;
+      case 'loaded':
+        loadedSkills.push(skill.name);
+        break;
+    }
+  }
+
+  const lines: string[] = [];
+  if (newSkills.length > 0) {
+    lines.push(`New relevant skills: ${newSkills.join(', ')}. Use skill_load(name="<exact_name>") to load them.`);
+  }
+  if (suggestedSkills.length > 0) {
+    lines.push(`Also suggesting: ${suggestedSkills.join(', ')}. Use skill_load(name="<exact_name>") to load it.`);
+  }
+  if (loadedSkills.length > 0) {
+    lines.push(`The below skills are loaded and also relevant: ${loadedSkills.join(', ')}.`);
+  }
+  lines.push('Note: you can also use skill_search to search for skills semantically.');
+  // This is a silent nudge: either load a skill that genuinely helps the
+  // current task (via skill_load), or ignore it and keep working. Do NOT
+  // write a prose reply explaining why you are/aren't loading a skill —
+  // that clutters the conversation and re-triggers the same nudge.
+  lines.push('Discipline: this is a silent nudge. If a skill helps the current task, load it with skill_load; otherwise stay silent and continue. Do NOT narrate your decision.');
+
+  triologue.note('HINT', lines.join('\n'));
+}
+
+/**
+ * Strip the "<scope>:" prefix from a wiki skill title to get the bare skill
+ * name. Wiki titles use the format "<scope>:<skill-name>" (e.g.
+ * "project:code-review"); a title without a colon is returned as-is.
+ * Mirrors the logic in skill_search.ts.
+ */
+function baseSkillNameFromWikiTitle(title: string): string {
+  return title.includes(':') ? title.split(':').slice(1).join(':') : title;
+}
+
+/**
  * Step 6: composite keyword extraction for proactive skill discovery.
  *
  * Composes a composite text from three sources:
@@ -691,6 +774,7 @@ async function runKeywordExtraction(env: MachineEnv, turn: TurnVars, firstSteerN
   // an empty keywords array means the LLM found nothing relevant — both
   // fall through here without injecting a HINT note.
   const keywords = result.status === 'success' ? result.keywords : [];
+  const freeformQuery = result.status === 'success' ? result.freeformQuery : '';
   if (keywords.length === 0) return;
 
   const allSkills = ctx.skill.listSkills();
@@ -705,45 +789,70 @@ async function runKeywordExtraction(env: MachineEnv, turn: TurnVars, firstSteerN
 
   if (matched.length === 0) return;
 
-  const newSkills: string[] = [];
-  const suggestedSkills: string[] = [];
-  const loadedSkills: string[] = [];
-
-  for (const skill of matched) {
-    const status = getSkillTriologueStatus(triologue, skill);
-    switch (status) {
-      case 'new': {
-        const desc = skill.description ? ` (${skill.description})` : '';
-        newSkills.push(`${skill.name}${desc}`);
-        break;
-      }
-      case 'suggested':
-        suggestedSkills.push(skill.name);
-        break;
-      case 'loaded':
-        loadedSkills.push(skill.name);
-        break;
-    }
+  // ── Branching skill suggestion ──────────────────────────────────────
+  // Branch A (small match): the keyword-matched list is small enough to
+  //   surface inline with descriptions — inject it directly (the original
+  //   behavior). No semantic-search refinement needed.
+  // Branch B (oversize): too many keyword matches to dump inline (token
+  //   bloat). Refine via a semantic-search intersection: call ctx.wiki.get
+  //   with the free-form query, then keep ONLY the skills that BOTH
+  //   keyword-matched AND appear in the semantic results. If the
+  //   freeformQuery is invalid (empty), FAIL FAST — leave Y eligible for a
+  //   retry (do NOT mark lastSkillY / arm cooldown) so the next pass
+  //   re-attempts extraction. If the intersection is empty, no hint is
+  //   injected (the signal is too weak to suggest anything).
+  if (matched.length < SKILL_OVERSIZE_THRESHOLD) {
+    // Branch A: small match — inject the full keyword-matched list.
+    injectSkillHint(triologue, matched);
+    return;
   }
 
-  const lines: string[] = [];
-  if (newSkills.length > 0) {
-    lines.push(`New relevant skills: ${newSkills.join(', ')}. Use skill_load(name="<exact_name>") to load them.`);
+  // Branch B: oversize — refine via semantic intersection.
+  // The freeformQuery MUST be valid to start the matching; otherwise fail
+  // fast and leave Y eligible for retry on the next pass. Undo the
+  // Y-marking + cooldown-arming performed above so the next pass
+  // re-attempts extraction (the LLM gets another chance to produce a
+  // valid freeformQuery). This mirrors the `failed` path: both leave
+  // lastSkillY untouched-at-eligible and cooldown at 0.
+  if (!freeformQuery || !freeformQuery.trim()) {
+    turn.lastSkillY = '';
+    turn.skillDiscoveryCooldown = 0;
+    return;
   }
-  if (suggestedSkills.length > 0) {
-    lines.push(`Also suggesting: ${suggestedSkills.join(', ')}. Use skill_load(name="<exact_name>") to load it.`);
-  }
-  if (loadedSkills.length > 0) {
-    lines.push(`The below skills are loaded and also relevant: ${loadedSkills.join(', ')}.`);
-  }
-  lines.push('Note: you can also use skill_search to search for skills semantically.');
-  // This is a silent nudge: either load a skill that genuinely helps the
-  // current task (via skill_load), or ignore it and keep working. Do NOT
-  // write a prose reply explaining why you are/aren't loading a skill —
-  // that clutters the conversation and re-triggers the same nudge.
-  lines.push('Discipline: this is a silent nudge. If a skill helps the current task, load it with skill_load; otherwise stay silent and continue. Do NOT narrate your decision.');
 
-  triologue.note('HINT', lines.join('\n'));
+  // Semantic search via wiki (embedding-based). Graceful failure: if the
+  // wiki call throws (no embedding model, transient error), no hint is
+  // injected — the keyword match alone is too noisy at this scale to be
+  // useful, so we stay silent rather than bloat the conversation.
+  let semResults: Awaited<ReturnType<typeof ctx.wiki.get>> = [];
+  try {
+    semResults = await ctx.wiki.get(freeformQuery, {
+      domain: 'skills',
+      topK: SKILL_SEMANTIC_TOPK,
+      threshold: getSkillMatchThreshold(),
+    });
+  } catch {
+    // Semantic search unavailable — no hint (signal too weak to refine).
+    return;
+  }
+
+  // Build a case-insensitive set of semantic skill names (strip the
+  // "<scope>:" prefix from wiki titles to get bare skill names).
+  const semanticNames = new Set<string>();
+  for (const r of semResults) {
+    const baseName = baseSkillNameFromWikiTitle(r.document.title).toLowerCase();
+    if (baseName) semanticNames.add(baseName);
+  }
+
+  // Intersection: skills that BOTH keyword-matched AND are semantically
+  // relevant. Order preserved from `matched` (deterministic).
+  const intersection = matched.filter(s => semanticNames.has(s.name.toLowerCase()));
+
+  // Empty intersection → no hint. Neither keyword matching nor semantic
+  // search agree on any skill; the signal is too weak to suggest anything.
+  if (intersection.length === 0) return;
+
+  injectSkillHint(triologue, intersection);
 }
 
 /**
