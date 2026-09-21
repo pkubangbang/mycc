@@ -105,6 +105,23 @@ md.renderer.rules.image = (tokens, idx): string => {
   return `<img src="${esc(src)}" alt="${esc(alt)}" title="${esc(title)}" data-zoomable="true" draggable="false" />`;
 };
 
+// Custom table wrapper: markdown-it emits a bare <table>. On a narrow chat
+// bubble the table is force-compressed to the bubble width with no scroll,
+// which shatters cell content mid-character ("Cha/nge", "col/lec/t.ts").
+// Wrap each table in a horizontally-scrollable .md-table-wrap container so
+// the table keeps a usable min width and overflows with a scrollbar instead
+// of crushing columns. The default table_open/table_close rules are
+// undefined (markdown-it falls back to renderToken), so we capture that
+// fallback and prepend/append our wrapper div around it.
+const defaultTableOpen = md.renderer.rules.table_open
+  || ((tokens, idx, opts, _env, self) => self.renderToken(tokens, idx, opts));
+const defaultTableClose = md.renderer.rules.table_close
+  || ((tokens, idx, opts, _env, self) => self.renderToken(tokens, idx, opts));
+md.renderer.rules.table_open = (tokens, idx, opts, env, self): string =>
+  `<div class="md-table-wrap">\n${defaultTableOpen(tokens, idx, opts, env, self)}`;
+md.renderer.rules.table_close = (tokens, idx, opts, env, self): string =>
+  `${defaultTableClose(tokens, idx, opts, env, self)}\n</div>`;
+
 const rendered = computed(() =>
   renderMarkdown.value ? md.render(props.message.content) : '',
 );
@@ -550,15 +567,56 @@ function quoteContent(): void {
 .markdown-body :deep(a:hover) {
   text-decoration: underline;
 }
+/* ── Markdown tables ──
+   On a narrow chat bubble a bare <table> is force-compressed to the bubble
+   width with no scroll, which shatters cell content mid-character. The
+   table_open/table_close renderer rules wrap each table in a
+   .md-table-wrap div that scrolls horizontally, so the table keeps a usable
+   min width (columns don't crush below ~4em) and overflows with a scrollbar
+   instead. Inside cells, word-break:break-word lets long tokens wrap at
+   boundaries while very-long unbreakable strings still wrap. The header row
+   gets a subtle tint + bottom border to read as a header; zebra-striping
+   the body rows aids scanning across wide tables. */
+.markdown-body :deep(.md-table-wrap) {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  margin: 8px 0;
+  max-width: 100%;
+}
 .markdown-body :deep(table) {
   border-collapse: collapse;
-  margin: 8px 0;
   font-size: 13px;
+  /* Keep columns usable on narrow screens: never crush below this, let the
+     wrapper scroll instead. margin:0 because the wrapper owns the spacing. */
+  min-width: max-content;
+  width: 100%;
+  margin: 0;
 }
 .markdown-body :deep(th),
 .markdown-body :deep(td) {
   border: 1px solid var(--md-table-border);
   padding: 6px 10px;
+  /* Wrap long content within a cell at word boundaries; only break a token
+     itself if it's unbreakably long, so identifiers stay readable. */
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  vertical-align: top;
+  /* Don't let a single cell steal all the width; let columns share space. */
+  max-width: 60ch;
+}
+.markdown-body :deep(th) {
+  font-weight: 600;
+  background: var(--md-code-bg);
+  text-align: left;
+  white-space: nowrap;
+}
+.markdown-body :deep(td) {
+  /* Body cells wrap (unlike headers); give each a sane minimum so a short
+     label column doesn't collapse to a couple of characters. */
+  min-width: 4em;
+}
+.markdown-body :deep(tr:nth-child(even) td) {
+  background: color-mix(in srgb, var(--md-code-bg) 35%, transparent);
 }
 .markdown-body :deep(hr) {
   border: none;
