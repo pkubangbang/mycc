@@ -56,6 +56,11 @@ vi.mock('../../../context/shared/loader.js', () => ({
     // suggestSkill now passes loader.getSkillKeywords() into
     // extractKeywords; stub it so the COLLECT step 6 path resolves.
     getSkillKeywords: vi.fn(() => []),
+    // scoreSkills (shared scorer) maps each local skill to its qualified
+    // wiki title (${scope}:${name}) via buildAllSkillEntries(). The tests use
+    // the scope 'project', so stub entries with 'project:<name>' titles.
+    // Tests that need a different scope override this via the helper below.
+    buildAllSkillEntries: vi.fn(() => []),
   },
 }));
 
@@ -127,6 +132,7 @@ import {
 import { createMockContext } from '../../test-utils/mock-context.js';
 import type { TurnVars } from '../../../loop/state-machine.js';
 import { extractKeywords } from '../../../loop/keyword-extractor.js';
+import { loader } from '../../../context/shared/loader.js';
 
 /** The module-level mock of the shared extractor (call-count assertions). */
 const mockedExtractKeywords = vi.mocked(extractKeywords);
@@ -199,6 +205,7 @@ describe('handleCollect — composite keyword extraction (integration)', () => {
     skills: Array<{ name: string; description?: string; keywords?: string[] }>,
     wikiResults: Array<{ title: string; similarity?: number }> = [],
     wikiThrow = false,
+    scope = 'project',
   ) {
     const fullSkills = skills.map(s => ({
       name: s.name,
@@ -206,6 +213,19 @@ describe('handleCollect — composite keyword extraction (integration)', () => {
       keywords: s.keywords ?? ['test'],
       content: '',
     }));
+    // scoreSkills maps local skills to their qualified wiki titles; mirror
+    // the chosen scope so wiki rows (built by the caller) can match.
+    vi.mocked(loader.buildAllSkillEntries).mockReturnValue(
+      fullSkills.map(s => ({
+        document: {
+          domain: 'skills',
+          title: `${scope}:${s.name}`,
+          content: '',
+          references: [],
+        },
+        contentHash: 'h',
+      })),
+    );
     const ctx = createMockContext({
       core: {
         getConfusionIndex: vi.fn(() => 0),
@@ -382,7 +402,7 @@ describe('handleCollect — composite keyword extraction (integration)', () => {
       { title: 'project:skill-3', similarity: 0.9 },
       { title: 'project:skill-0', similarity: 0.7 },
     ];
-    const env = makeEnvWithSkills(skills, wikiResults);
+    const env = makeEnvWithSkills(skills, wikiResults, false, 'project');
     const turn: TurnVars = createTurnVars({ lastUserQuery: 'help me test things' });
 
     await handleCollect(env, turn, createChatData());
@@ -467,6 +487,39 @@ describe('handleCollect — composite keyword extraction (integration)', () => {
     await handleCollect(env, turn, createChatData());
 
     expect(triologue.note).toHaveBeenCalledWith('HINT', expect.stringContaining('mycc-online-hotfix'));
+  });
+
+  it('P1 SCOPE: another scope\'s wiki row does NOT boost the local same-named skill', async () => {
+    // End-to-end through handleCollect: the local process holds skill-0 under
+    // scope 'project'; the wiki returns a row for the SAME bare name under a
+    // DIFFERENT scope with a high similarity. Before the P1 fix (bare-name
+    // keying) that row would boost the local skill; after the fix the
+    // qualified titles differ → no boost → 10 pts stays AT the floor → dropped
+    // → no HINT at all. A positive control with the matching scope is covered
+    // in collect-skill-scoring.test.ts.
+    setExtractionResult({ status: 'success', keywords: ['test'], freeformQuery: 'test automation' });
+    const skills = [{ name: 'code-review', description: 'Review', keywords: ['test'] }];
+    // Local scope is 'project', but the wiki row is '[user]' — same bare name.
+    const env = makeEnvWithSkills(skills, [{ title: '[user]:code-review', similarity: 0.92 }], false, 'project');
+    const turn: TurnVars = createTurnVars({ lastUserQuery: 'help me test things' });
+
+    await handleCollect(env, turn, createChatData());
+
+    // No boost applied → 10 pts is NOT > 10 → nothing surfaces → no HINT.
+    expect(triologue.note).not.toHaveBeenCalledWith('HINT', expect.anything());
+  });
+
+  it('P1 SCOPE positive control: the MATCHING scope\'s row DOES boost (HINT injected)', async () => {
+    // Same as above but the wiki row's scope matches the local skill's, so the
+    // 0.9 similarity boosts 10 pts → 10 × 1.5 = 15 > 10 → the skill surfaces.
+    setExtractionResult({ status: 'success', keywords: ['test'], freeformQuery: 'test automation' });
+    const skills = [{ name: 'code-review', description: 'Review', keywords: ['test'] }];
+    const env = makeEnvWithSkills(skills, [{ title: 'project:code-review', similarity: 1.0 }], false, 'project');
+    const turn: TurnVars = createTurnVars({ lastUserQuery: 'help me test things' });
+
+    await handleCollect(env, turn, createChatData());
+
+    expect(triologue.note).toHaveBeenCalledWith('HINT', expect.stringContaining('code-review'));
   });
 
   // ---------------------------------------------------------------------------

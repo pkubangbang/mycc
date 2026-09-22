@@ -10,20 +10,22 @@
  * identically), then scores every loaded skill and injects the top 3 as a
  * HINT note.
  *
- * SCORING (the pinned contract, shared with skill_search):
+ * SCORING — delegated to the SHARED scorer `scoreSkills`
+ * (src/loop/skill-matcher.ts), the same function the `skill_search` tool
+ * calls, so on-demand search and the proactive nudge cannot drift:
  *   1. Positional points — for each significance-ordered query keyword
  *      kw[i] (i < 5), every skill owning kw[i] (exact case-insensitive
  *      token membership) earns WEIGHTS[i] points: [10, 7, 5, 3, 2] for the
  *      1st..5th keyword (Motor-racing style). Keywords beyond the 5th are
  *      ignored. `points > 0` is a HARD precondition, so a pure-semantic
  *      skill can never surface (0 × anything = 0).
- *   2. Semantic boost — `boost = 1 + (sim - getSkillMatchThreshold())`, i.e.
- *      neutral (1.0) at the similarity threshold, rising linearly
- *      (0.7 → 1.2, 0.9 → 1.4). A keyword-matched skill that misses the
- *      semantic window (or a failed wiki call) keeps boost 1.0 — it is
- *      NEVER excluded on semantic grounds (soft boost, not intersection).
- *   3. score = points × boost; keep score > 10 STRICT; sort desc; take the
- *      top 3.
+ *   2. Scope-aware semantic boost — the wiki similarity is matched by the
+ *      FULL `${scope}:${name}` qualified title, so a same-named skill from
+ *      another scope cannot inherit this scope's similarity (P1 fix).
+ *      `boost = 1 + (sim - threshold)` when `sim > threshold`, else 1.0
+ *      (a keyword-matched skill that misses the semantic window is NEVER
+ *      excluded — soft boost, not intersection).
+ *   3. score = points × boost; keep score > 10 STRICT; sort desc; top 3.
  * Because points ≥ 12 passes unconditionally (12 × 1.0 > 10) and points ≤ 5
  * can never pass, the gate makes keyword-strong matches stand alone while
  * letting a 7–10 point match ride a genuine semantic hit.
@@ -48,37 +50,24 @@
  */
 
 import type { MachineEnv, TurnVars } from '../state-machine.js';
-import { getSkillMatchThreshold } from '../../config.js';
 import { loader } from '../../context/shared/loader.js';
 import type { Skill, Message } from '../../types.js';
 import type { Triologue } from '../triologue.js';
 import { extractKeywords, type KeywordExtractionResult } from '../keyword-extractor.js';
+import {
+  scoreSkills,
+  SKILL_SEMANTIC_TOPK,
+  getSkillMatchThreshold,
+  type RankedSkill,
+} from '../skill-matcher.js';
 
-/**
- * Positional weights for the 1st..5th significance-ordered query keyword.
- * The 1st (most discriminative) keyword is worth 10; the 5th is worth 2.
- * Keywords beyond the 5th are ignored by the scorer. Mirrors the constant in
- * skill_search.ts — both consumers must weight positions identically.
- */
-const KEYWORD_WEIGHTS = [10, 7, 5, 3, 2] as const;
-
-/** Minimum total score to surface a skill (STRICT greater-than). */
-const SKILL_SCORE_FLOOR = 10;
-
-/** Number of top-scoring skills surfaced in the HINT note. */
-const SKILL_TOP_N = 3;
-
-/**
- * FLAT topK for the semantic wiki.get call. NOT derived from
- * listSkills().length: the 'skills' wiki domain is SHARED ACROSS PROJECTS
- * and accumulates rows from every project on the machine (the loader's
- * orphan sweep is own-scope only, so other projects' rows survive), so the
- * loaded-skill count is NOT an upper bound on the domain row count. Measured
- * on a 66-row domain, topK=50 yields 0 hidden results. Residual risk: if the
- * domain grows enough that 50 starts truncating, `results.length === topK`
- * (a saturated window) is the signal, logged below as a warning.
- */
-const SKILL_SEMANTIC_TOPK = 50;
+// Scoring constants (KEYWORD_WEIGHTS, SKILL_SCORE_FLOOR, SKILL_TOP_N,
+// SKILL_SEMANTIC_TOPK) and the scope-aware semantic-boost logic now live in
+// the SHARED scorer `src/loop/skill-matcher.ts` (scoreSkills), consumed by
+// BOTH this proactive suggester and the skill_search tool. The two consumers
+// call the same function, so their scoring can no longer drift — and the P1
+// cross-project scope-collision fix (similarity keyed by the FULL
+// `${scope}:${name}` qualified title) applies to both at once.
 
 // ── Skill triologue status (folded from utils/skill-dedup.ts) ───────────
 // Classifies a skill as new / suggested / loaded by scanning the triologue
@@ -240,73 +229,6 @@ export class SkillSuggester {
     return queryChanged && cooldown === 0 && compositeText.trim().length >= 4;
   }
 
-  // ── Scoring (positional points + semantic boost) ──────────────────────
-
-  /**
-   * Positional keyword points for one skill.
-   *
-   * For each significance-ordered query keyword `kw[i]` (i < 5), the skill
-   * earns KEYWORD_WEIGHTS[i] points when it owns `kw[i]` as an exact
-   * (case-insensitive) token. Weights are [10, 7, 5, 3, 2] for the
-   * 1st..5th keyword; keywords beyond the 5th are IGNORED (so a long
-   * extraction cannot inflate a score). Matching is exact-token membership,
-   * NOT substring — `includes` would let "go" match "logging".
-   *
-   * Returns 0 when the skill owns none of the query keywords. That 0 is the
-   * HARD precondition of the whole pipeline: `points > 0` gates entry, so a
-   * skill surfaced on semantic similarity alone is impossible (0 × anything
-   * = 0).
-   *
-   * Pure (no instance state) but lives on the class so SkillSuggester owns
-   * the discovery pipeline as one cohesive unit. Mirrors skill_search.ts's
-   * scoreboard so both consumers rank identically.
-   *
-   * @param skillKeywords - the skill's `keywords` frontmatter (any case).
-   * @param keywords - the extraction's significance-ordered keywords
-   *        (already lowercased by extractKeywords).
-   */
-  private keywordPoints(skillKeywords: string[], keywords: string[]): number {
-    const kwSet = new Set(skillKeywords.map(k => k.toLowerCase()));
-    let points = 0;
-    for (let i = 0; i < keywords.length && i < KEYWORD_WEIGHTS.length; i++) {
-      if (kwSet.has(keywords[i])) points += KEYWORD_WEIGHTS[i];
-    }
-    return points;
-  }
-
-  /**
-   * Semantic boost factor for a skill's similarity.
-   *
-   *   boost = 1 + (similarity - getSkillMatchThreshold())
-   *
-   * The boost is NEUTRAL (1.0) at the configured similarity threshold and
-   * rises linearly to 1.5 at perfect similarity (threshold 0.5 → 0.7 = 1.2,
-   * 0.9 = 1.4). `ctx.wiki.get` already filters `similarity >= threshold`, so
-   * a returned skill always has boost >= 1.0.
-   *
-   * This is a SOFT boost, not an intersection: a keyword-matched skill that
-   * is absent from the semantic window is NOT excluded — the caller simply
-   * skips the boost and uses 1.0, so the skill keeps its raw keyword points
-   * (e.g. 12 × 1.0 = 12, which still clears the floor of 10).
-   */
-  private semanticBoost(similarity: number): number {
-    return 1 + (similarity - getSkillMatchThreshold());
-  }
-
-  /**
-   * Strip the "<scope>:" prefix from a wiki skill title to get the bare
-   * skill name. Wiki titles use the format "<scope>:<skill-name>" (e.g.
-   * "project:code-review"); a title without a colon is returned as-is.
-   * Mirrors the logic in skill_search.ts.
-   *
-   * Used by {@link rankSkills} to map wiki.get result titles onto the bare
-   * skill names that `listSkills()` carries, so the semantic boost can be
-   * looked up per skill.
-   */
-  private baseSkillNameFromWikiTitle(title: string): string {
-    return title.includes(':') ? title.split(':').slice(1).join(':') : title;
-  }
-
   // ── HINT injection ────────────────────────────────────────────────────
 
   /**
@@ -438,26 +360,30 @@ export class SkillSuggester {
     triologue.note('HINT', lines.join('\n'));
   }
 
-  // ── Ranking (points × boost → top N) ──────────────────────────────────
+  // ── Ranking (delegates to the shared scorer) ──────────────────────────
 
   /**
-   * Score every loaded skill and return the top {@link SKILL_TOP_N}.
+   * Fetch the semantic window and rank every loaded skill via the SHARED
+   * scorer {@link scoreSkills} (`src/loop/skill-matcher.ts` — the same
+   * function the `skill_search` tool calls, so the proactive nudge and
+   * on-demand search rank identically and cannot drift).
    *
    * Pipeline:
-   *  1. Semantic window — ONE `ctx.wiki.get` on the free-form query, mapped
-   *     to `bare skill name (lowercased) → highest similarity`. Graceful
-   *     failure: a throw (no embedding model / transient) degrades to
-   *     keyword-only ranking (every boost = 1.0) rather than staying silent.
-   *  2. points = {@link keywordPoints} per skill; skills with `points === 0`
-   *     are dropped (the hard precondition — no pure-semantic entry).
-   *  3. score = points × boost, where boost is {@link semanticBoost} when the
-   *     skill is in the semantic window and 1.0 otherwise.
-   *  4. Keep only `score > SKILL_SCORE_FLOOR` (STRICT), sort desc, take
-   *     SKILL_TOP_N. The sort is stable, so ties keep `listSkills()` order.
+   *  1. Semantic window — ONE `ctx.wiki.get` on the free-form query, whose
+   *     RAW results (titles are `${scope}:${name}`) are handed to scoreSkills.
+   *     Graceful failure: a throw (no embedding model / transient) degrades to
+   *     keyword-only ranking (empty results → every boost = 1.0) rather than
+   *     staying silent.
+   *  2. {@link scoreSkills} scores (positional points × scope-aware semantic
+   *     boost), keeps `score > SKILL_SCORE_FLOOR` (STRICT), sorts desc, and
+   *     takes the top SKILL_TOP_N. The scope-aware identity mapping (matching
+   *     the local qualified title against the wiki row's full title) is what
+   *     fixes the P1 cross-project collision — a same-named skill from
+   *     another scope contributes no boost.
    *
    * `topK` is the flat SKILL_SEMANTIC_TOPK; when the wiki returns exactly
-   * that many rows the window may be truncating (see the constant's doc), so
-   * a verbose note is emitted as an operator signal.
+   * that many rows the window may be truncating, so a verbose note is emitted
+   * as an operator signal.
    *
    * @param ctx - the AgentContext (reads `ctx.wiki.get` + `ctx.skill.listSkills()`).
    * @param keywords - the significance-ordered keywords from the extraction
@@ -472,10 +398,11 @@ export class SkillSuggester {
   ): Promise<Skill[]> {
     const threshold = getSkillMatchThreshold();
 
-    // 1. Semantic window → bare-name → best similarity.
-    const similarityByName = new Map<string, number>();
+    // 1. Semantic window (raw results; scoreSkills owns the scope-aware
+    //    title→similarity mapping).
+    let semResults: Awaited<ReturnType<typeof ctx.wiki.get>> = [];
     try {
-      const semResults = await ctx.wiki.get(freeformQuery, {
+      semResults = await ctx.wiki.get(freeformQuery, {
         domain: 'skills',
         topK: SKILL_SEMANTIC_TOPK,
         threshold,
@@ -488,31 +415,19 @@ export class SkillSuggester {
           `semantic window saturated (topK=${SKILL_SEMANTIC_TOPK}); results may be truncated`,
         );
       }
-      for (const r of semResults) {
-        const baseName = this.baseSkillNameFromWikiTitle(r.document.title).toLowerCase();
-        if (!baseName) continue;
-        const prev = similarityByName.get(baseName);
-        if (prev === undefined || r.similarity > prev) {
-          similarityByName.set(baseName, r.similarity);
-        }
-      }
     } catch {
-      // Semantic search unavailable → keyword-only ranking (boost 1.0).
+      // Semantic search unavailable → scoreSkills receives [] → boost 1.0
+      // everywhere (keyword-only ranking).
     }
 
-    // 2 + 3 + 4. Score, gate, order, truncate.
-    return ctx.skill
-      .listSkills()
-      .map(skill => {
-        const points = this.keywordPoints(skill.keywords, keywords);
-        const similarity = similarityByName.get(skill.name.toLowerCase());
-        const boost = similarity === undefined ? 1 : this.semanticBoost(similarity);
-        return { skill, score: points * boost };
-      })
-      .filter(x => x.score > SKILL_SCORE_FLOOR)
-      .sort((a, b) => b.score - a.score)
-      .slice(0, SKILL_TOP_N)
-      .map(x => x.skill);
+    // 2. Shared scorer → top-N RankedSkill[] → bare Skill[] for the HINT.
+    const ranked: RankedSkill[] = scoreSkills({
+      skills: ctx.skill.listSkills(),
+      keywords,
+      semanticResults: semResults,
+      threshold,
+    });
+    return ranked.map(r => r.skill);
   }
 
   // ── Main entry ────────────────────────────────────────────────────────

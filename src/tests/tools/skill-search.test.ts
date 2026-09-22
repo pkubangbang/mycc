@@ -27,14 +27,19 @@ vi.mock('../../loop/keyword-extractor.js', () => ({
   extractKeywords: vi.fn().mockResolvedValue({ status: 'success', keywords: [], freeformQuery: '' }),
 }));
 
-// Mock the loader singleton (keyword universe; not the skill set — that comes
-// from ctx.skill.listSkills()).
+// Mock the loader singleton. `buildAllSkillEntries` returns the qualified
+// "${scope}:${name}" titles the real loader produces (loader.buildSkillDocument
+// → `title: \`${scope}:${name}\``), so the scope-aware identity mapping in
+// scoreSkills is exercised on its REAL path (not the bare-name fallback).
+// `currentScopeEntries` is a module-level mutable the tests set per-case.
+let currentScopeEntries: Array<{ document: { title: string; content: string }; contentHash: string }> = [];
+
 vi.mock('../../context/shared/loader.js', () => ({
   loader: {
     getSkillKeywords: vi.fn(() => []),
     getSkillLayer: vi.fn(() => 'project'),
     buildSkillIndexEntry: vi.fn(() => null),
-    buildAllSkillEntries: vi.fn(() => []),
+    buildAllSkillEntries: vi.fn(() => currentScopeEntries),
   },
 }));
 
@@ -99,6 +104,34 @@ function createSampleSkill(overrides: Partial<Skill> = {}): Skill {
   };
 }
 
+/**
+ * Build the qualified-title index entries the mocked loader's
+ * `buildAllSkillEntries` returns, for the given skills under one scope.
+ * Mirrors the real loader's `buildSkillDocument` title format
+ * `${scope}:${name}`. Sets the module-level `currentScopeEntries` consumed
+ * by the loader mock, so scoreSkills' scope-aware identity mapping runs on
+ * its REAL path (matching qualified wiki titles to local qualified titles).
+ */
+function setLocalScope(skills: Skill[], scope: string): void {
+  currentScopeEntries = skills.map(s => ({
+    document: { title: `${scope}:${s.name}`, content: `Scope: ${scope}\nName: ${s.name}` },
+    contentHash: 'hash',
+  }));
+}
+
+/**
+ * Build a wiki.get result entry under a given scope (the title the wiki
+ * stored for a skill indexed by a process with that scope). Use this to
+ * simulate a cross-project row in the shared `skills` domain.
+ */
+function wikiRow(name: string, scope: string, similarity: number) {
+  return {
+    document: { title: `${scope}:${name}`, content: `Scope: ${scope}\nName: ${name}` },
+    similarity,
+    hash: 'h',
+  };
+}
+
 describe('skillSearchTool - Basics', () => {
   let ctx: AgentContext;
 
@@ -106,6 +139,9 @@ describe('skillSearchTool - Basics', () => {
     vi.clearAllMocks();
     // Reset the extractor mock to the safe default before each test.
     mockedExtractKeywords.mockResolvedValue({ status: 'success', keywords: [], freeformQuery: '' });
+    // Reset the loader's qualified-title entries (each test that needs the
+    // scope-aware path calls setLocalScope explicitly).
+    currentScopeEntries = [];
     ctx = createMockContextWithSkills('/tmp/test', []);
   });
 
@@ -200,12 +236,15 @@ describe('skillSearchTool - Basics', () => {
 
   it('multiplies points by boost when similarity exceeds threshold', async () => {
     // 1 keyword weight 10 + semantic sim 0.7 → boost = 1 + (0.7 - 0.5) = 1.2
-    // → score = 10 * 1.2 = 12 > 10 → surfaced.
+    // → score = 10 * 1.2 = 12 > 10 → surfaced. Uses the scope-aware path:
+    // the local skill is indexed under "[user]:code-review" and the wiki row
+    // carries that SAME qualified title, so the match resolves correctly.
     const skills = [
       createSampleSkill({ name: 'code-review', description: 'Review code', keywords: ['code'] }),
     ];
+    setLocalScope(skills, '[user]');
     ctx = createMockContextWithSkills('/tmp/test', skills, [
-      { document: { title: 'code-review', content: 'Review code' }, similarity: 0.7, hash: 'h' },
+      wikiRow('code-review', '[user]', 0.7),
     ]);
     mockedExtractKeywords.mockResolvedValue({ status: 'success', keywords: ['code'], freeformQuery: 'code review' });
 
@@ -218,15 +257,20 @@ describe('skillSearchTool - Basics', () => {
   });
 
   it('keeps boost = 1.0 (NOT exclusion) when a keyword-matched skill misses the semantic window', async () => {
-    // Skill owns the 1st keyword (weight 10) but wiki returns NO result for it
-    // → boost = 1.0 → score = 10. Strict > 10 fails → gated. Use 2 keywords
-    // (10 + 7 = 17) to clear the floor and assert boost stays 1.0 (no boost tag).
+    // Skill owns the 1st keyword (weight 10) but wiki returns NO result for
+    // its qualified title → boost = 1.0 → score = 10. Strict > 10 fails →
+    // gated. Use 2 keywords (10 + 7 = 17) to clear the floor and assert boost
+    // stays 1.0 (no boost tag). Uses the scope-aware path: local skill is
+    // "[user]:code-review"; wiki returns an OTHER-scope same-named row, which
+    // must NOT match (that is the scope-collision guard — covered explicitly
+    // in the regression block below; here the wiki simply returns a different
+    // bare skill under the local scope).
     const skills = [
       createSampleSkill({ name: 'code-review', description: 'Review code', keywords: ['code', 'review'] }),
     ];
-    // Wiki returns a DIFFERENT skill — code-review is absent from the window.
+    setLocalScope(skills, '[user]');
     ctx = createMockContextWithSkills('/tmp/test', skills, [
-      { document: { title: 'other-skill', content: 'something else' }, similarity: 0.9, hash: 'h' },
+      wikiRow('other-skill', '[user]', 0.9),
     ]);
     mockedExtractKeywords.mockResolvedValue({ status: 'success', keywords: ['code', 'review'], freeformQuery: 'code review' });
 
@@ -245,8 +289,9 @@ describe('skillSearchTool - Basics', () => {
     const skills = [
       createSampleSkill({ name: 'code-review', description: 'Review code', keywords: ['code', 'review'] }),
     ];
+    setLocalScope(skills, '[user]');
     ctx = createMockContextWithSkills('/tmp/test', skills, [
-      { document: { title: 'code-review', content: 'Review code' }, similarity: 0.5, hash: 'h' },
+      wikiRow('code-review', '[user]', 0.5),
     ]);
     mockedExtractKeywords.mockResolvedValue({ status: 'success', keywords: ['code', 'review'], freeformQuery: 'code review' });
 
@@ -267,8 +312,9 @@ describe('skillSearchTool - Basics', () => {
     const skills = [
       createSampleSkill({ name: 'semantic-only', description: 'No keyword overlap', keywords: ['unrelated'] }),
     ];
+    setLocalScope(skills, '[user]');
     ctx = createMockContextWithSkills('/tmp/test', skills, [
-      { document: { title: 'semantic-only', content: 'Highly relevant embedding' }, similarity: 0.99, hash: 'h' },
+      wikiRow('semantic-only', '[user]', 0.99),
     ]);
     mockedExtractKeywords.mockResolvedValue({ status: 'success', keywords: ['code', 'review'], freeformQuery: 'code review' });
 
@@ -290,10 +336,11 @@ describe('skillSearchTool - Basics', () => {
       createSampleSkill({ name: 'c-low', keywords: ['code', 'review'] }),       // 17, sim 0.6 → *1.1 = 18.7
       createSampleSkill({ name: 'd-out', keywords: ['code', 'review'] }),       // 17, no sim → 17
     ];
+    setLocalScope(skills, '[user]');
     ctx = createMockContextWithSkills('/tmp/test', skills, [
-      { document: { title: 'a-top', content: 'x' }, similarity: 0.9, hash: 'h' },
-      { document: { title: 'b-mid', content: 'x' }, similarity: 0.7, hash: 'h' },
-      { document: { title: 'c-low', content: 'x' }, similarity: 0.6, hash: 'h' },
+      wikiRow('a-top', '[user]', 0.9),
+      wikiRow('b-mid', '[user]', 0.7),
+      wikiRow('c-low', '[user]', 0.6),
     ]);
     mockedExtractKeywords.mockResolvedValue({ status: 'success', keywords: ['code', 'review'], freeformQuery: 'code review' });
 
@@ -421,6 +468,7 @@ describe('skillSearchTool - Basics', () => {
     const skills = [
       createSampleSkill({ name: 'code-review', description: 'Review code', keywords: ['code', 'review'] }),
     ];
+    setLocalScope(skills, '[user]');
     ctx = createMockContextWithSkills('/tmp/test', skills);
     mockedExtractKeywords.mockResolvedValue({ status: 'success', keywords: ['code', 'review'], freeformQuery: 'code review' });
 
@@ -430,5 +478,78 @@ describe('skillSearchTool - Basics', () => {
       expect.any(String),
       expect.objectContaining({ domain: 'skills', topK: 50, threshold: 0.5 }),
     );
+  });
+
+  // =========================================================================
+  // P1 scope-collision regression (review #1)
+  // The `skills` wiki domain is shared cross-project; wiki titles are
+  // "${scope}:${name}". A same-named skill under ANOTHER scope must NOT have
+  // its similarity applied to the locally-loaded skill. `[user]` and
+  // `[built-in]` are constant scope strings on every machine, so a
+  // user/built-in same-named skill collides with EVERY project's copy.
+  // =========================================================================
+
+  it('P1: does NOT apply another PROJECT scope\'s similarity to a local same-named skill', async () => {
+    // Local process loaded "code-review" under scope "mycc". The wiki (shared
+    // domain) also has "[user]:code-review" with a high similarity from a
+    // DIFFERENT process. The local skill must keep boost 1.0 (not inherit
+    // the [user] row's 0.9). Use 2 keywords (17 pts) to clear the floor.
+    const skills = [
+      createSampleSkill({ name: 'code-review', description: 'Review code', keywords: ['code', 'review'] }),
+    ];
+    setLocalScope(skills, 'mycc'); // local scope = project name "mycc"
+    ctx = createMockContextWithSkills('/tmp/test', skills, [
+      wikiRow('code-review', '[user]', 0.9), // a DIFFERENT scope's row
+    ]);
+    mockedExtractKeywords.mockResolvedValue({ status: 'success', keywords: ['code', 'review'], freeformQuery: 'code review' });
+
+    const result = await skillSearchTool.handler(ctx, { search: 'code review' });
+
+    expect(result).toContain('code-review');
+    // score must be 17 (points only, boost 1.0) — NOT 17 * 1.4 = 23.8.
+    expect(result).toContain('score 17');
+    expect(result).not.toContain('x1.');
+    expect(result).not.toContain('% semantic');
+  });
+
+  it('P1: does NOT apply a [user] scope\'s similarity to a local [built-in] same-named skill', async () => {
+    // [user] and [built-in] are CONSTANT scopes on every machine — the most
+    // insidious collision. Local skill under [built-in]; wiki row under
+    // [user] with sim 0.8. The [built-in] skill must NOT inherit it.
+    const skills = [
+      createSampleSkill({ name: 'code-review', description: 'Review code', keywords: ['code', 'review'] }),
+    ];
+    setLocalScope(skills, '[built-in]');
+    ctx = createMockContextWithSkills('/tmp/test', skills, [
+      wikiRow('code-review', '[user]', 0.8),
+    ]);
+    mockedExtractKeywords.mockResolvedValue({ status: 'success', keywords: ['code', 'review'], freeformQuery: 'code review' });
+
+    const result = await skillSearchTool.handler(ctx, { search: 'code review' });
+
+    expect(result).toContain('code-review');
+    expect(result).toContain('score 17'); // boost 1.0, not 1.3
+    expect(result).not.toContain('x1.');
+  });
+
+  it('P1: DOES apply the matching scope\'s similarity (positive control)', async () => {
+    // Same setup as the project-scope collision test, but the wiki row IS
+    // under the local scope "mycc" → the boost MUST apply. This confirms the
+    // fix does not over-restrict (a genuine same-scope match still boosts).
+    const skills = [
+      createSampleSkill({ name: 'code-review', description: 'Review code', keywords: ['code', 'review'] }),
+    ];
+    setLocalScope(skills, 'mycc');
+    ctx = createMockContextWithSkills('/tmp/test', skills, [
+      wikiRow('code-review', 'mycc', 0.9),
+    ]);
+    mockedExtractKeywords.mockResolvedValue({ status: 'success', keywords: ['code', 'review'], freeformQuery: 'code review' });
+
+    const result = await skillSearchTool.handler(ctx, { search: 'code review' });
+
+    expect(result).toContain('code-review');
+    // 17 * (1 + (0.9 - 0.5)) = 17 * 1.4 = 23.8
+    expect(result).toContain('x1.40 boost');
+    expect(result).toContain('90% semantic');
   });
 });
