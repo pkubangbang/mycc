@@ -25,7 +25,7 @@
  */
 import { describe, it, expect, beforeEach } from 'vitest';
 import { skillSuggester } from '../../../loop/states/collect-skill.js';
-import type { KeywordExtractionResult } from '../../../loop/states/collect-skill.js';
+import type { KeywordExtractionResult } from '../../../loop/keyword-extractor.js';
 
 describe('Composite keyword extraction — query source', () => {
   beforeEach(() => skillSuggester.reset());

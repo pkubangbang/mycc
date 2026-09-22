@@ -26,7 +26,7 @@
  * resolveHeadlessFirstQuery is a no-op.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { KeywordExtractionResult } from '../../../loop/states/collect-skill.js';
+import type { KeywordExtractionResult } from '../../../loop/keyword-extractor.js';
 
 // --- Mocks (paths relative to this test file: src/tests/loop/states/) --------
 
@@ -63,17 +63,14 @@ vi.mock('../../../context/worktree-store.js', () => ({
   listWorktrees: vi.fn(async () => []),
 }));
 
-// extractKeywords is now a PRIVATE method on the SkillSuggester singleton
-// (folded in from the former keyword-extractor.ts). The mock controls the
-// extraction outcome so we can test each union variant without an LLM call.
-// Since the method is private, the mock is installed via vi.spyOn on the
-// shared singleton; a module-level `extractionResult` is reassigned per-test
-// through the `setExtractionResult` helper, and the spy reads it at call
-// time. `extractKeywordsSpy` exposes call-count assertions (replacing the
-// old vi.mocked(extractKeywords) usage).
-type ExtractKeywordsMock = ReturnType<typeof vi.fn<() => Promise<KeywordExtractionResult>>>;
-let extractionResult: KeywordExtractionResult = { status: 'success', keywords: [], freeformQuery: '' };
-let extractKeywordsSpy: ExtractKeywordsMock;
+// extractKeywords is the SHARED extractor (src/loop/keyword-extractor.ts),
+// imported by collect-skill.ts as a module binding. Mock the module so the
+// extraction outcome is controlled without an LLM call, and so we can assert
+// call counts (replacing the old private-method spy on the singleton, which
+// no longer exists — the method was folded out into the shared module).
+vi.mock('../../../loop/keyword-extractor.js', () => ({
+  extractKeywords: vi.fn().mockResolvedValue({ status: 'success', keywords: [], freeformQuery: '' }),
+}));
 
 // serve-registry: module-level state drives isRunning/drainSteering so the
 // steering-note path can be exercised. Defaults to NOT running (steering path
@@ -129,26 +126,18 @@ import {
 } from '../esc-test-helpers.js';
 import { createMockContext } from '../../test-utils/mock-context.js';
 import type { TurnVars } from '../../../loop/state-machine.js';
+import { extractKeywords } from '../../../loop/keyword-extractor.js';
+
+/** The module-level mock of the shared extractor (call-count assertions). */
+const mockedExtractKeywords = vi.mocked(extractKeywords);
 
 /**
- * Configure the mocked extractKeywords to return the given result. Installs a
- * fresh vi.fn on the singleton's (private) method each call so prior tests'
- * mocks never leak. The fn resolves to the CURRENT `extractionResult` at call
- * time (re-read from the closure), so a per-test `setExtractionResult` after
- * the fn is installed still takes effect.
- *
- * Uses `vi.fn` + direct assignment rather than `vi.spyOn` because the method
- * is private: `vi.spyOn(obj, 'privateMethod' as never)` collapses the spy
- * type to `never` under the strict test tsconfig, so `.mockImplementation`
- * fails to typecheck. A plain `vi.fn` assigned via bracket access keeps a
- * concrete `Mock` type and is restored in afterEach via `vi.restoreAllMocks`
- * (skipped here — the singleton is long-lived and reassignment per-test is
- * the intended lifecycle; `mockClear` resets call state between tests).
+ * Configure the mocked extractKeywords to return the given result. Uses
+ * mockResolvedValue on the module mock so every call in the test resolves to
+ * this outcome; mockClear in beforeEach resets call state between tests.
  */
 function setExtractionResult(result: KeywordExtractionResult): void {
-  extractionResult = result;
-  extractKeywordsSpy = vi.fn(async () => extractionResult);
-  (skillSuggester as unknown as Record<string, unknown>).extractKeywords = extractKeywordsSpy;
+  mockedExtractKeywords.mockResolvedValue(result);
 }
 
 describe('handleCollect — composite keyword extraction (integration)', () => {
@@ -156,12 +145,10 @@ describe('handleCollect — composite keyword extraction (integration)', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    // Reset module-level mock state to safe defaults and install a fresh
-    // spy on the (now-private) extractKeywords method. Each setExtractionResult
-    // call re-installs the spy with the new return value.
-    extractionResult = { status: 'success', keywords: [], freeformQuery: '' };
-    extractKeywordsSpy = vi.fn(async () => extractionResult);
-    (skillSuggester as unknown as Record<string, unknown>).extractKeywords = extractKeywordsSpy;
+    // Reset the extractor mock to a safe default (success, no keywords) and
+    // clear its call state; each setExtractionResult overrides the outcome.
+    mockedExtractKeywords.mockReset();
+    mockedExtractKeywords.mockResolvedValue({ status: 'success', keywords: [], freeformQuery: '' });
     serveRunning = false;
     steeredNotes = [];
     // Reset the skill-discovery singleton's throttle state so prior tests'
@@ -257,7 +244,7 @@ describe('handleCollect — composite keyword extraction (integration)', () => {
   // ---------------------------------------------------------------------------
 
   it('SUCCESS: arms lastSkillY + cooldown=3 and consumes extractKeywords once', async () => {
-    setExtractionResult({ status: 'success', keywords: ['parser', 'test'], freeformQuery: '' });
+    setExtractionResult({ status: 'success', keywords: ['parser', 'test'], freeformQuery: 'parser testing' });
     const env = makeEnv();
     const turn: TurnVars = createTurnVars({
       lastUserQuery: 'help me test the parser',
@@ -267,7 +254,7 @@ describe('handleCollect — composite keyword extraction (integration)', () => {
 
     expect(skillSuggester.getLastQuery()).toBe('help me test the parser');
     expect(skillSuggester.getCooldown()).toBe(3);
-    expect(extractKeywordsSpy).toHaveBeenCalledTimes(1);
+    expect(mockedExtractKeywords).toHaveBeenCalledTimes(1);
   });
 
 
@@ -339,7 +326,7 @@ describe('handleCollect — composite keyword extraction (integration)', () => {
 
     await handleCollect(env, turn, createChatData());
 
-    expect(extractKeywordsSpy).not.toHaveBeenCalled();
+    expect(mockedExtractKeywords).not.toHaveBeenCalled();
   });
 
 
@@ -348,7 +335,7 @@ describe('handleCollect — composite keyword extraction (integration)', () => {
   // ---------------------------------------------------------------------------
 
   it('STEERING NOTE: triggers on the note, marks the fallback lastUserQuery as seen', async () => {
-    setExtractionResult({ status: 'success', keywords: ['tests'], freeformQuery: '' });
+    setExtractionResult({ status: 'success', keywords: ['tests'], freeformQuery: 'running tests' });
     serveRunning = true;
     steeredNotes = ['focus on tests'];
     const env = makeEnv();
@@ -381,65 +368,125 @@ describe('handleCollect — composite keyword extraction (integration)', () => {
   });
 
   // ---------------------------------------------------------------------------
-  // Branching skill suggestion (Branch A small / Branch B oversize)
+  // Ranking / top-3 injection (positional points × semantic boost)
   // ---------------------------------------------------------------------------
 
-  it('BRANCH A (small match <5): injects the full keyword-matched list, no wiki call', async () => {
-    // 3 skills match keyword 'test' → below the oversize threshold (5).
+  it('RANKING: injects the top-3 scored skills, ordered by score', async () => {
+    // 4 skills, all owning the single query keyword 'test' (1st position =
+    // 10 pts). Wiki awards skill-3 a 0.9 similarity (boost 1.4 → 14.0),
+    // skill-0 a 0.7 (boost 1.2 → 12.0); skill-1/2 get no similarity
+    // (boost 1.0 → 10.0, which does NOT clear the strict >10 gate).
     setExtractionResult({ status: 'success', keywords: ['test'], freeformQuery: 'test automation' });
-    const skills = makeOversizeSkills(3);
-    const env = makeEnvWithSkills(skills);
-    const turn: TurnVars = createTurnVars({
-      lastUserQuery: 'help me test things',
-    });
+    const skills = makeOversizeSkills(4);
+    const wikiResults = [
+      { title: 'project:skill-3', similarity: 0.9 },
+      { title: 'project:skill-0', similarity: 0.7 },
+    ];
+    const env = makeEnvWithSkills(skills, wikiResults);
+    const turn: TurnVars = createTurnVars({ lastUserQuery: 'help me test things' });
 
     await handleCollect(env, turn, createChatData());
 
-    // HINT injected with all 3 matched skills (new → name + description).
-    expect(triologue.note).toHaveBeenCalledWith('HINT', expect.stringContaining('skill-0'));
-    expect(triologue.note).toHaveBeenCalledWith('HINT', expect.stringContaining('skill-2'));
-    // Branch A does NOT call wiki.get (no semantic refinement needed).
-    expect(env.ctx.wiki.get).not.toHaveBeenCalled();
+    // wiki.get called with the freeform query + the FLAT topK=50 window.
+    expect(env.ctx.wiki.get).toHaveBeenCalledWith(
+      'test automation',
+      expect.objectContaining({ domain: 'skills', topK: 50 }),
+    );
+    // The two boosted skills clear the floor; the two unboosted (10.0) do not.
+    const hintCall = vi.mocked(triologue.note).mock.calls.find(c => c[0] === 'HINT');
+    expect(hintCall).toBeDefined();
+    const hintContent = hintCall ? String(hintCall[1]) : '';
+    expect(hintContent).toContain('skill-3');
+    expect(hintContent).toContain('skill-0');
+    expect(hintContent).not.toContain('skill-1');
+    expect(hintContent).not.toContain('skill-2');
     // Y marked + cooldown armed (full success).
     expect(skillSuggester.getLastQuery()).toBe('help me test things');
     expect(skillSuggester.getCooldown()).toBe(3);
   });
 
-
-  it('BRANCH B (oversize >=5): injects ONLY the keyword∩semantic intersection', async () => {
-    // 6 skills match → oversize. Wiki returns 2 of them semantically.
-    // Intersection = the 2 overlapping skills → HINT contains only those.
-    setExtractionResult({ status: 'success', keywords: ['test'], freeformQuery: 'test automation' });
-    const skills = makeOversizeSkills(6); // skill-0 .. skill-5
-    const wikiResults = [
-      { title: 'project:skill-1', similarity: 0.9 },
-      { title: 'project:skill-4', similarity: 0.8 },
-      { title: 'project:unrelated-skill', similarity: 0.7 },
-    ];
-    const env = makeEnvWithSkills(skills, wikiResults);
-    const turn: TurnVars = createTurnVars({
-      lastUserQuery: 'help me test the oversize case',
+  it('RANKING: a keyword-strong match passes with NO wiki hit (boost 1.0, strict gate)', async () => {
+    // 1st + 2nd keywords = 17 pts. No semantic row → boost 1.0 → 17 > 10,
+    // so the keyword signal alone surfaces the skill (soft boost never
+    // EXCLUDES a keyword-matched skill).
+    setExtractionResult({
+      status: 'success',
+      keywords: ['restart', 'mycc'],
+      freeformQuery: 'restart the mycc instance',
     });
+    const skills = [{ name: 'mycc-online-hotfix', description: 'Hotfix', keywords: ['restart', 'mycc'] }];
+    const env = makeEnvWithSkills(skills); // wiki returns no rows
+    const turn: TurnVars = createTurnVars({ lastUserQuery: 'restart my mycc instance' });
 
     await handleCollect(env, turn, createChatData());
 
-    // wiki.get was called with the freeform query.
-    expect(env.ctx.wiki.get).toHaveBeenCalledWith(
-      'test automation',
-      expect.objectContaining({ domain: 'skills', topK: 10 }),
-    );
-    // HINT contains the 2 intersection skills...
-    expect(triologue.note).toHaveBeenCalledWith('HINT', expect.stringContaining('skill-1'));
-    expect(triologue.note).toHaveBeenCalledWith('HINT', expect.stringContaining('skill-4'));
-    // ...but NOT the 4 keyword-only-matched skills.
-    const hintCall = vi.mocked(triologue.note).mock.calls.find(c => c[0] === 'HINT');
-    const hintContent = hintCall ? String(hintCall[1]) : '';
-    expect(hintContent).not.toContain('skill-0');
-    expect(hintContent).not.toContain('skill-5');
-    expect(hintContent).not.toContain('unrelated-skill');
-    // Y marked + cooldown armed.
-    expect(skillSuggester.getLastQuery()).toBe('help me test the oversize case');
-    expect(skillSuggester.getCooldown()).toBe(3);
+    expect(triologue.note).toHaveBeenCalledWith('HINT', expect.stringContaining('mycc-online-hotfix'));
+  });
+
+  it('RANKING: a weak 7-pt match needs a strong semantic hit to pass', async () => {
+    // 2nd-position keyword only = 7 pts. A 0.9 similarity (boost 1.4) gives
+    // 9.8, which does NOT clear the strict >10 gate → no HINT.
+    setExtractionResult({
+      status: 'success',
+      keywords: ['foo', 'bar'],
+      freeformQuery: 'bar handling',
+    });
+    const skills = [{ name: 'weak-match', description: 'W', keywords: ['bar'] }];
+    const env = makeEnvWithSkills(skills, [{ title: 'project:weak-match', similarity: 0.9 }]);
+    const turn: TurnVars = createTurnVars({ lastUserQuery: 'tell me about bar' });
+
+    await handleCollect(env, turn, createChatData());
+
+    expect(triologue.note).not.toHaveBeenCalledWith('HINT', expect.anything());
+  });
+
+  it('RANKING: a pure-semantic skill (0 keyword points) can NEVER surface', async () => {
+    // The skill matches NO query keyword → points 0 → 0 × boost = 0, so it
+    // never clears the floor even with a perfect 1.0 similarity.
+    setExtractionResult({ status: 'success', keywords: ['alpha'], freeformQuery: 'alpha work' });
+    const skills = [{ name: 'semantic-only', description: 'S', keywords: ['unrelated'] }];
+    const env = makeEnvWithSkills(skills, [{ title: 'project:semantic-only', similarity: 1.0 }]);
+    const turn: TurnVars = createTurnVars({ lastUserQuery: 'do alpha work' });
+
+    await handleCollect(env, turn, createChatData());
+
+    expect(triologue.note).not.toHaveBeenCalledWith('HINT', expect.anything());
+  });
+
+  it('RANKING: wiki failure degrades to keyword-only ranking (no throw)', async () => {
+    // wiki.get throws → every boost = 1.0; a 17-pt keyword match still passes.
+    setExtractionResult({
+      status: 'success',
+      keywords: ['restart', 'mycc'],
+      freeformQuery: 'restart the mycc instance',
+    });
+    const skills = [{ name: 'mycc-online-hotfix', description: 'Hotfix', keywords: ['restart', 'mycc'] }];
+    const env = makeEnvWithSkills(skills, [], /* wikiThrow */ true);
+    const turn: TurnVars = createTurnVars({ lastUserQuery: 'restart my mycc instance' });
+
+    await handleCollect(env, turn, createChatData());
+
+    expect(triologue.note).toHaveBeenCalledWith('HINT', expect.stringContaining('mycc-online-hotfix'));
+  });
+
+  // ---------------------------------------------------------------------------
+  // Fail-fast: empty freeformQuery clears the throttle (retry-eligible)
+  // ---------------------------------------------------------------------------
+
+  it('fail-fast: an empty freeformQuery clears the throttle and injects no HINT', async () => {
+    // A success outcome that carries keywords but NO freeformQuery cannot run
+    // the semantic phase → clearThrottle() undoes the mark-seen + cooldown so
+    // the next pass re-attempts extraction (the query stays eligible).
+    setExtractionResult({ status: 'success', keywords: ['test'], freeformQuery: '' });
+    const skills = makeOversizeSkills(3);
+    const env = makeEnvWithSkills(skills);
+    const turn: TurnVars = createTurnVars({ lastUserQuery: 'help me test things' });
+
+    await handleCollect(env, turn, createChatData());
+
+    expect(triologue.note).not.toHaveBeenCalledWith('HINT', expect.anything());
+    expect(skillSuggester.getLastQuery()).toBe('');
+    expect(skillSuggester.getCooldown()).toBe(0);
   });
 
 
@@ -462,7 +509,7 @@ describe('handleCollect — composite keyword extraction (integration)', () => {
     // Pass 1: a genuine query triggers extraction and arms the throttle, so
     // the suggester's cursor now equals the turn's lastUserQuery.
     await handleCollect(env, turn, createChatData());
-    expect(extractKeywordsSpy).toHaveBeenCalledTimes(1);
+    expect(mockedExtractKeywords).toHaveBeenCalledTimes(1);
     expect(skillSuggester.getLastQuery()).toBe('help me refactor the parser');
 
     // The user clears the conversation (double-Ctrl+L / /clear): the
@@ -473,10 +520,10 @@ describe('handleCollect — composite keyword extraction (integration)', () => {
     // Next COLLECT: the triologue is empty and the turn sources are cleared,
     // so querySource is null → NO extraction. Resetting the suggester alone
     // would have left lastUserQuery populated → a spurious re-fire here.
-    extractKeywordsSpy.mockClear();
+    mockedExtractKeywords.mockClear();
     const result = await handleCollect(env, turn, createChatData());
 
-    expect(extractKeywordsSpy).not.toHaveBeenCalled();
+    expect(mockedExtractKeywords).not.toHaveBeenCalled();
     expect(result).toBe(AgentState.LLM);
   });
 
