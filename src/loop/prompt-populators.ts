@@ -201,7 +201,7 @@ export function buildPlatformCalendarMessages(): Message[] {
 // injection that broke the prompt-cache prefix on every skill reload
 // (see the "do not inject dynamic content into projectContext" pitfall) and
 // consolidates skill discovery into a single LLM-driven path
-// (skillSuggester.runKeywordExtraction in collect.ts step 6).
+// (skillSuggester.suggestSkill in collect.ts step 6).
 
 // ============================================================================
 // node_modules Detection

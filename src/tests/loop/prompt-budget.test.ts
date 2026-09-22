@@ -18,7 +18,7 @@
  *
  * No skill-keywords mocking is needed: the skill-keywords block is no longer
  * injected via a project-context populator — it is passed into the
- * extractKeywords() LLM call (runKeywordExtraction in collect.ts step 6) as
+ * extractKeywords() LLM call (suggestSkill in collect.ts step 6) as
  * a system-message input. The system-prompt builders never touch the loader
  * — the prompts are environment-independent by construction.
  */

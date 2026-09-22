@@ -44,7 +44,7 @@ import { startSpinner } from '../../engine/chat-helpers.js';
  * tokens. Instead, a semantic-search intersection refines the list to the
  * skills BOTH keyword-matched AND embedding-relevant. Below the threshold,
  * the full keyword-matched list is surfaced as before (small enough to be
- * useful inline). See runKeywordExtraction step 6, Branch B.
+ * useful inline). See suggestSkill step 6, Branch B.
  */
 const SKILL_OVERSIZE_THRESHOLD = 5;
 /**
@@ -104,7 +104,7 @@ const SKILL_QUERY_KW_MAX = 5;
  *    The caller MUST NOT advance throttle/dedup state: Y stays eligible for
  *    a retry on a subsequent pass.
  *
- * This distinction matters because runKeywordExtraction mutates a cooldown
+ * This distinction matters because suggestSkill mutates a cooldown
  * and a dedup cursor (`lastQuery`) based on the extraction result. Treating
  * a `failed` or `skipped` outcome the same as `success` would either suppress
  * a retry after a transient failure (failed) or consume the discovery
@@ -312,7 +312,7 @@ export class SkillSuggester {
    * parsing. The system message carries the stable extraction-workflow
    * instructions AND the available skill-keyword list (so the LLM selects
    * relevant keywords FROM the actual available list). The user message
-   * carries the X+Y+Z composite text composed by runKeywordExtraction.
+   * carries the X+Y+Z composite text composed by suggestSkill.
    *
    * Returns a {@link KeywordExtractionResult} so the caller can distinguish a
    * completed extraction (`success`, keywords possibly empty) from a
@@ -417,7 +417,67 @@ Available skill keywords: ${availableKeywords.join(', ')}`,
     }
   }
 
-  // ── Match gate + HINT injection ───────────────────────────────────────
+  // ── Match gate ────────────────────────────────────────────────────────
+
+  /**
+   * Baseline skill-match predicate for one skill.
+   *
+   * `skillKeywords` (length X) and `keywords` (the probe, length Y) are both
+   * lowercased by the caller/extractor; matching is exact-token, not
+   * substring. `W` is the universe size (loader.getSkillKeywords().length),
+   * computed once per pass by the caller — NOT per skill.
+   *
+   * Edge cases:
+   *  - X = 0 (keywordless skill) → Z = 0 → never matches (defers to Branch B).
+   *  - W = 0 (no universe / no skills carry keywords) → falls back to the
+   *    `Z > 0` floor so a single exact-token hit still surfaces the skill.
+   *  - Y clamped to [2, 5]: a 1-keyword query (Y - 1 = 0) would demand
+   *    nothing, so the floor Y = 2 keeps the bar meaningful; huge Y is
+   *    capped so the Y - 1 term doesn't dominate small-W universes.
+   *
+   * Pure (no instance state) but lives on the class so SkillSuggester owns
+   * the whole discovery pipeline as one cohesive unit. Accessed in tests via
+   * bracket call on the singleton (`(skillSuggester as any).matchesBaselineGate`).
+   *
+   * First filter in suggestSkill step 6: filters loaded skills down
+   * to the keyword-matched set that feeds both Branch A (direct inject) and
+   * Branch B (semantic intersection). Called by matchSkillsByKeywords.
+   */
+  private matchesBaselineGate(
+    skillKeywords: string[],
+    keywords: string[],
+    W: number,
+  ): boolean {
+    const kwSet = new Set(skillKeywords.map(k => k.toLowerCase()));
+    const Z = keywords.filter(kw => kwSet.has(kw)).length;
+    if (Z === 0) return false; // floor: rejects keywordless / zero-overlap skills
+
+    const X = skillKeywords.length;
+    if (X === 0) return false; // defensive (Z > 0 above already covers it)
+    if (W <= 0) return true;   // no universe → no null model → Z > 0 floor
+
+    const Y = Math.min(Math.max(keywords.length, SKILL_QUERY_KW_MIN), SKILL_QUERY_KW_MAX);
+    const expected = (X / W) * Y;     // E[Z | null]
+    const baseline = Math.min(Y - 1, expected);
+    return Z >= baseline;
+  }
+
+  /**
+   * Strip the "<scope>:" prefix from a wiki skill title to get the bare
+   * skill name. Wiki titles use the format "<scope>:<skill-name>" (e.g.
+   * "project:code-review"); a title without a colon is returned as-is.
+   * Mirrors the logic in skill_search.ts.
+   *
+   * Used by refineBySemanticIntersection (suggestSkill's Branch B, oversize)
+   * to map wiki.get result titles onto the bare skill names that the
+   * keyword-matched set carries, so the keyword∩semantic intersection can
+   * be computed.
+   */
+  private baseSkillNameFromWikiTitle(title: string): string {
+    return title.includes(':') ? title.split(':').slice(1).join(':') : title;
+  }
+
+  // ── HINT injection ────────────────────────────────────────────────────
 
   /**
    * Determine whether a skill is new, previously suggested, or already
@@ -436,6 +496,8 @@ Available skill keywords: ${availableKeywords.join(', ')}`,
    *
    * Folded from the former standalone `src/utils/skill-dedup.ts`; now a
    * private method so SkillSuggester owns the full discovery pipeline.
+   * Called by injectSkillHint to partition each matched skill before
+   * surfacing it.
    */
   private getSkillTriologueStatus(triologue: Triologue, skill: Skill): SkillTriologueStatus {
     const messages = triologue.getMessagesRaw();
@@ -492,49 +554,10 @@ Available skill keywords: ${availableKeywords.join(', ')}`,
   }
 
   /**
-   * Baseline skill-match predicate for one skill.
-   *
-   * `skillKeywords` (length X) and `keywords` (the probe, length Y) are both
-   * lowercased by the caller/extractor; matching is exact-token, not
-   * substring. `W` is the universe size (loader.getSkillKeywords().length),
-   * computed once per pass by the caller — NOT per skill.
-   *
-   * Edge cases:
-   *  - X = 0 (keywordless skill) → Z = 0 → never matches (defers to Branch B).
-   *  - W = 0 (no universe / no skills carry keywords) → falls back to the
-   *    `Z > 0` floor so a single exact-token hit still surfaces the skill.
-   *  - Y clamped to [2, 5]: a 1-keyword query (Y - 1 = 0) would demand
-   *    nothing, so the floor Y = 2 keeps the bar meaningful; huge Y is
-   *    capped so the Y - 1 term doesn't dominate small-W universes.
-   *
-   * Pure (no instance state) but lives on the class so SkillSuggester owns
-   * the whole discovery pipeline as one cohesive unit. Accessed in tests via
-   * bracket call on the singleton (`(skillSuggester as any).matchesBaselineGate`).
-   */
-  private matchesBaselineGate(
-    skillKeywords: string[],
-    keywords: string[],
-    W: number,
-  ): boolean {
-    const kwSet = new Set(skillKeywords.map(k => k.toLowerCase()));
-    const Z = keywords.filter(kw => kwSet.has(kw)).length;
-    if (Z === 0) return false; // floor: rejects keywordless / zero-overlap skills
-
-    const X = skillKeywords.length;
-    if (X === 0) return false; // defensive (Z > 0 above already covers it)
-    if (W <= 0) return true;   // no universe → no null model → Z > 0 floor
-
-    const Y = Math.min(Math.max(keywords.length, SKILL_QUERY_KW_MIN), SKILL_QUERY_KW_MAX);
-    const expected = (X / W) * Y;     // E[Z | null]
-    const baseline = Math.min(Y - 1, expected);
-    return Z >= baseline;
-  }
-
-  /**
    * Partition a list of skills into new/suggested/loaded (via
    * getSkillTriologueStatus) and inject a HINT note surfacing them.
    *
-   * Shared by both branches of runKeywordExtraction step 6:
+   * Shared by both branches of suggestSkill step 6:
    *  - Branch A (small match): the full keyword-matched list.
    *  - Branch B (oversize): the keyword∩semantic intersection.
    *
@@ -586,14 +609,98 @@ Available skill keywords: ${availableKeywords.join(', ')}`,
     triologue.note('HINT', lines.join('\n'));
   }
 
+  // ── Phase 1: keyword matching ─────────────────────────────────────────
+
   /**
-   * Strip the "<scope>:" prefix from a wiki skill title to get the bare
-   * skill name. Wiki titles use the format "<scope>:<skill-name>" (e.g.
-   * "project:code-review"); a title without a colon is returned as-is.
-   * Mirrors the logic in skill_search.ts.
+   * Phase 1 of skill suggestion: match extracted keywords against every
+   * loaded skill via the baseline gate.
+   *
+   * Lists all loaded skills, computes the keyword-universe size `W` ONCE
+   * (not per skill — the gate's null model is shared across all skills in a
+   * pass), and filters to the skills whose `keywords` frontmatter pass
+   * {@link matchesBaselineGate} (exact-token intersection ≥ baseline). The
+   * returned set is the input to the branching decision in suggestSkill:
+   *  - empty → no hint.
+   *  - < SKILL_OVERSIZE_THRESHOLD → Branch A (inject directly).
+   *  - ≥ SKILL_OVERSIZE_THRESHOLD → Branch B (semantic refinement).
+   *
+   * @param ctx - the AgentContext (reads `ctx.skill.listSkills()`).
+   * @param keywords - the extracted query keywords (lowercased by the
+   *        extractor); may be empty (caller guards before calling).
+   * @returns the keyword-matched skills, in `listSkills()` order.
    */
-  private baseSkillNameFromWikiTitle(title: string): string {
-    return title.includes(':') ? title.split(':').slice(1).join(':') : title;
+  private matchSkillsByKeywords(ctx: MachineEnv['ctx'], keywords: string[]): Skill[] {
+    const allSkills = ctx.skill.listSkills();
+    // W (universe size) is computed ONCE per pass, not per skill.
+    const W = loader.getSkillKeywords().length;
+    return allSkills.filter(s => this.matchesBaselineGate(s.keywords, keywords, W));
+  }
+
+  // ── Phase 2: semantic intersection ────────────────────────────────────
+
+  /**
+   * Phase 2 of skill suggestion (Branch B, oversize): refine the
+   * keyword-matched set via a wiki semantic-search intersection.
+   *
+   * Calls `ctx.wiki.get` with the free-form query, strips the "<scope>:"
+   * prefix from each wiki title ({@link baseSkillNameFromWikiTitle}), and
+   * keeps ONLY the skills that BOTH keyword-matched AND appear in the
+   * semantic results (order preserved from `matched`).
+   *
+   * Graceful failure: if the wiki call throws (no embedding model,
+   * transient error), returns `null` — the keyword match alone is too noisy
+   * at this scale to be useful, so the caller stays silent. An empty
+   * intersection (keyword and semantic search disagree) likewise returns
+   * `null` — the signal is too weak to suggest anything.
+   *
+   * NOTE: the freeformQuery MUST be valid (non-empty after trim) before
+   * calling this method. The orchestrator (suggestSkill) validates it and
+   * fail-fasts with `clearThrottle()` when it is empty, so this method
+   * assumes a usable query and never receives an empty one.
+   *
+   * @param ctx - the AgentContext (reads `ctx.wiki.get`).
+   * @param matched - the keyword-matched skills from phase 1.
+   * @param freeformQuery - the validated (non-empty) free-form semantic
+   *        query from the extraction.
+   * @returns the keyword∩semantic intersection, or `null` if the wiki call
+   *         failed or the intersection is empty (→ no hint).
+   */
+  private async refineBySemanticIntersection(
+    ctx: MachineEnv['ctx'],
+    matched: Skill[],
+    freeformQuery: string,
+  ): Promise<Skill[] | null> {
+    // Semantic search via wiki (embedding-based). Graceful failure: if the
+    // wiki call throws (no embedding model, transient error), return null —
+    // the keyword match alone is too noisy at this scale to be useful.
+    let semResults: Awaited<ReturnType<typeof ctx.wiki.get>>;
+    try {
+      semResults = await ctx.wiki.get(freeformQuery, {
+        domain: 'skills',
+        topK: SKILL_SEMANTIC_TOPK,
+        threshold: getSkillMatchThreshold(),
+      });
+    } catch {
+      // Semantic search unavailable → no hint (signal too weak to refine).
+      return null;
+    }
+
+    // Build a case-insensitive set of semantic skill names (strip the
+    // "<scope>:" prefix from wiki titles to get bare skill names).
+    const semanticNames = new Set<string>();
+    for (const r of semResults) {
+      const baseName = this.baseSkillNameFromWikiTitle(r.document.title).toLowerCase();
+      if (baseName) semanticNames.add(baseName);
+    }
+
+    // Intersection: skills that BOTH keyword-matched AND are semantically
+    // relevant. Order preserved from `matched` (deterministic).
+    const intersection = matched.filter(s => semanticNames.has(s.name.toLowerCase()));
+
+    // Empty intersection → null (caller injects no hint). Neither keyword
+    // matching nor semantic search agree on any skill; the signal is too
+    // weak to suggest anything.
+    return intersection.length > 0 ? intersection : null;
   }
 
   // ── Main entry ────────────────────────────────────────────────────────
@@ -609,6 +716,13 @@ Available skill keywords: ${availableKeywords.join(', ')}`,
    * the composite but never trigger. A 3-pass cooldown suppresses
    * re-triggering from consecutive user messages.
    *
+   * Two-phase matching (after a successful extraction yields keywords):
+   *  - Phase 1 ({@link matchSkillsByKeywords}): keyword-match loaded skills
+   *    via the baseline gate.
+   *  - Phase 2 ({@link refineBySemanticIntersection}, Branch B only): when
+   *    phase 1 returns ≥ SKILL_OVERSIZE_THRESHOLD matches, refine via a wiki
+   *    semantic-search intersection to avoid token bloat.
+   *
    * @param firstSteerNote - the freshest steering note drained this pass
    *        (from collectMailsAndInput), or null.
    *
@@ -616,7 +730,7 @@ Available skill keywords: ${availableKeywords.join(', ')}`,
    * `cooldown` — armed ONLY on a success/skipped outcome; a `failed`
    * outcome (ESC / transient) leaves query eligible for retry.
    */
-  async runKeywordExtraction(env: MachineEnv, turn: TurnVars, firstSteerNote: string | null): Promise<void> {
+  async suggestSkill(env: MachineEnv, turn: TurnVars, firstSteerNote: string | null): Promise<void> {
     const { triologue, ctx } = env;
 
     this.decrementCooldown();
@@ -682,27 +796,19 @@ Available skill keywords: ${availableKeywords.join(', ')}`,
     const freeformQuery = result.status === 'success' ? result.freeformQuery : '';
     if (keywords.length === 0) return;
 
-    const allSkills = ctx.skill.listSkills();
-    // Baseline skill-match gate (private method): exact-token intersection +
-    //   baseline = min(Y - 1, (X / W) * Y)
-    // W (universe size) is computed ONCE per pass, not per skill.
-    const W = loader.getSkillKeywords().length;
-    const matched = allSkills.filter(s => this.matchesBaselineGate(s.keywords, keywords, W));
-
+    // ── Phase 1: keyword matching ──────────────────────────────────────
+    const matched = this.matchSkillsByKeywords(ctx, keywords);
     if (matched.length === 0) return;
 
     // ── Branching skill suggestion ──────────────────────────────────────
-    // Branch A (small match): the keyword-matched list is small enough to
-    //   surface inline with descriptions — inject it directly (the original
-    //   behavior). No semantic-search refinement needed.
-    // Branch B (oversize): too many keyword matches to dump inline (token
-    //   bloat). Refine via a semantic-search intersection: call ctx.wiki.get
-    //   with the free-form query, then keep ONLY the skills that BOTH
-    //   keyword-matched AND appear in the semantic results. If the
-    //   freeformQuery is invalid (empty), FAIL FAST — leave query eligible
-    //   for a retry (do NOT mark lastQuery / arm cooldown) so the next pass
-    //   re-attempts extraction. If the intersection is empty, no hint is
-    //   injected (the signal is too weak to suggest anything).
+    // Branch A (small match < threshold): the keyword-matched list is small
+    //   enough to surface inline with descriptions — inject it directly. No
+    //   semantic-search refinement needed.
+    // Branch B (oversize ≥ threshold): too many keyword matches to dump
+    //   inline (token bloat). Refine via phase 2's semantic intersection.
+    //   If the freeformQuery is invalid (empty), FAIL FAST — leave query
+    //   eligible for a retry (clearThrottle undoes the marking + arming above)
+    //   so the next pass re-attempts extraction.
     if (matched.length < SKILL_OVERSIZE_THRESHOLD) {
       // Branch A: small match — inject the full keyword-matched list.
       this.injectSkillHint(triologue, matched);
@@ -710,8 +816,8 @@ Available skill keywords: ${availableKeywords.join(', ')}`,
     }
 
     // Branch B: oversize — refine via semantic intersection.
-    // The freeformQuery MUST be valid to start the matching; otherwise fail
-    // fast and leave query eligible for retry on the next pass. Undo the
+    // The freeformQuery MUST be valid to start phase 2; otherwise fail fast
+    // and leave query eligible for retry on the next pass. Undo the
     // query-marking + cooldown-arming performed above so the next pass
     // re-attempts extraction (the LLM gets another chance to produce a
     // valid freeformQuery). This mirrors the `failed` path: both leave
@@ -721,37 +827,12 @@ Available skill keywords: ${availableKeywords.join(', ')}`,
       return;
     }
 
-    // Semantic search via wiki (embedding-based). Graceful failure: if the
-    // wiki call throws (no embedding model, transient error), no hint is
-    // injected — the keyword match alone is too noisy at this scale to be
-    // useful, so we stay silent rather than bloat the conversation.
-    let semResults: Awaited<ReturnType<typeof ctx.wiki.get>>;
-    try {
-      semResults = await ctx.wiki.get(freeformQuery, {
-        domain: 'skills',
-        topK: SKILL_SEMANTIC_TOPK,
-        threshold: getSkillMatchThreshold(),
-      });
-    } catch {
-      // Semantic search unavailable — no hint (signal too weak to refine).
-      return;
-    }
-
-    // Build a case-insensitive set of semantic skill names (strip the
-    // "<scope>:" prefix from wiki titles to get bare skill names).
-    const semanticNames = new Set<string>();
-    for (const r of semResults) {
-      const baseName = this.baseSkillNameFromWikiTitle(r.document.title).toLowerCase();
-      if (baseName) semanticNames.add(baseName);
-    }
-
-    // Intersection: skills that BOTH keyword-matched AND are semantically
-    // relevant. Order preserved from `matched` (deterministic).
-    const intersection = matched.filter(s => semanticNames.has(s.name.toLowerCase()));
-
-    // Empty intersection → no hint. Neither keyword matching nor semantic
-    // search agree on any skill; the signal is too weak to suggest anything.
-    if (intersection.length === 0) return;
+    // ── Phase 2: semantic intersection ─────────────────────────────────
+    // Returns the keyword∩semantic intersection, or null on wiki failure /
+    // empty intersection (→ no hint: the signal is too weak to suggest
+    // anything). The freeformQuery is already validated above.
+    const intersection = await this.refineBySemanticIntersection(ctx, matched, freeformQuery);
+    if (intersection === null) return;
 
     this.injectSkillHint(triologue, intersection);
   }

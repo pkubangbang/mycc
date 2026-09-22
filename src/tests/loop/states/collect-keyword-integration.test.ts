@@ -53,7 +53,7 @@ vi.mock('../../../config.js', async (importOriginal) => {
 vi.mock('../../../context/shared/loader.js', () => ({
   loader: {
     getToolsForScope: vi.fn(() => [{ function: { name: 'bash' } }]),
-    // runKeywordExtraction now passes loader.getSkillKeywords() into
+    // suggestSkill now passes loader.getSkillKeywords() into
     // extractKeywords; stub it so the COLLECT step 6 path resolves.
     getSkillKeywords: vi.fn(() => []),
   },

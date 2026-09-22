@@ -307,7 +307,7 @@ describe('Composite keyword extraction — outcome-gated throttle (P1 fix)', () 
 /**
  * Apply the post-extraction state update, gated by the extraction outcome.
  *
- * Mirrors the runKeywordExtraction success/skipped/failed branching:
+ * Mirrors the suggestSkill success/skipped/failed branching:
  *  - 'failed' (ESC / transient error): do NOT touch the query cursor or
  *    cooldown — query stays eligible for a retry on a subsequent pass.
  *  - 'success' or 'skipped': mark the query source as seen (with the BUG 1

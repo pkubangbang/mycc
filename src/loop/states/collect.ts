@@ -185,7 +185,7 @@ async function checkReactivation(env: MachineEnv): Promise<void> {
  *
  * @returns the freshest steering note drained this pass (`firstSteerNote`),
  *          or null if none. This is the query source for
- *          skillSuggester.runKeywordExtraction (step 6) — steering notes take
+ *          skillSuggester.suggestSkill (step 6) — steering notes take
  *          priority over lastUserQuery as the freshest mid-task direction.
  */
 async function collectMailsAndInput(env: MachineEnv): Promise<{ firstSteerNote: string | null }> {
@@ -432,7 +432,7 @@ export async function handleCollect(
     await runBriefAndWorktreeNudges(env, turn);
 
     // 6. Composite keyword extraction for proactive skill discovery.
-    await skillSuggester.runKeywordExtraction(env, turn, firstSteerNote);
+    await skillSuggester.suggestSkill(env, turn, firstSteerNote);
 
     // 7. Verbose token/message logging.
     const messageCount = triologue.getMessagesRaw().length;

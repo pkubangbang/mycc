@@ -128,7 +128,7 @@ export function buildCommonSections(): string {
  * the single home for both the mental model AND the actionable "how to use"
  * detail. The dynamic skill-keywords list was moved out of the byte-stable
  * system prompt entirely — it is now passed into the extractKeywords() LLM
- * call (runKeywordExtraction in collect.ts step 6) as a system-message
+ * call (suggestSkill in collect.ts step 6) as a system-message
  * input, so the LLM selects relevant keywords from the actual available
  * list based on the X+Y+Z composite, instead of a separate always-on
  * project-context populator that broke the prompt-cache prefix on every

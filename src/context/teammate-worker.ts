@@ -193,7 +193,7 @@ function createPersistentTriologue(name: string, assignedPath?: string): Triolog
   triologue.registerProjectContextPopulator(() => buildNodeModulesReminderMessages());
   // Skill keywords are NO LONGER injected here as a project-context
   // populator. The available skill-keyword list is now passed into the
-  // extractKeywords() LLM call (runKeywordExtraction in collect.ts step 6) as
+  // extractKeywords() LLM call (suggestSkill in collect.ts step 6) as
   // a system-message input, so the LLM selects relevant keywords from the
   // actual available list based on the X+Y+Z composite. Teammates don't run
   // the COLLECT state, so they don't do skill discovery via extractKeywords;
