@@ -370,6 +370,173 @@ edit_file(path="src/api/mock.js", old_text=..., new_text=...)
 3. 用 `edit_file` 的 `old_text` 精确匹配**英文代码段**（不依赖编码/行号）来修改。
 4. 对完整目标区间用 `-Encoding UTF8` **一次性重读**，不要分段试探重复读已失败区间。
 
+### ⚠️ 转义与特殊字符 (Escaping & Special Characters) — 解决引号/插值/特殊符号摩擦
+
+**这是写 PowerShell 命令时第二高频的坑（仅次于编码）。** 摩擦的根源：PowerShell 的转义符是反引号 `` ` `` (grave accent, ASCII 96)，**不是** Bash 的反斜杠 `\`；且转义序列**只在双引号字符串内才被解释**。把 Bash/CMD 的直觉套过来会反复踩雷。
+
+> **来源：** [about_Special_Characters — Microsoft Learn](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_special_characters)
+
+#### 转义符：反引号 `` ` `` （不是反斜杠 `\`）
+
+PowerShell 用反引号 `` ` `` 作为转义字符，**大小写敏感**。Bash 用 `\`，CMD 用 `^` —— 三者完全不同，切勿混用。
+
+| 转义序列 | 含义 | 备注 |
+|----------|------|------|
+| `` `0 `` | Null | 文件中的 null 终止符；不等同于 `$null` 变量 |
+| `` `a `` | Alert (响铃) | 触发系统蜂鸣 |
+| `` `b `` | Backspace | 光标回退一格，**不删除**字符 |
+| `` `f `` | Form feed | 仅影响打印，不影响屏幕 |
+| `` `n `` | 换行 (New line) | 插入换行；最常用 |
+| `` `r `` | 回车 (Carriage return) | 回到行首并**覆盖**后续内容 |
+| `` `t `` | 水平制表符 | 跳到下一个 tab stop |
+| `` `v `` | 垂直制表符 | 渲染依终端而定（Windows Terminal 当作 CRLF） |
+| `` `e `` | Escape (ESC) | **PS6+ 新增**，5.1 无；ANSI/虚拟终端序列（颜色、加粗等） |
+| `` `u{x} `` | Unicode 转义 | **PS6+ 新增**，5.1 无；按十六进制码点输出字符（1–6 位，上限 10FFFF，含 emoji） |
+
+#### 🆕 版本差异 (PowerShell 7 vs 5.1) — 转义序列的差异高亮
+
+**对比来源：** Microsoft Learn `about_Special_Characters` 的 [5.1 版](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_special_characters?view=powershell-5.1) 与 [7.5 版](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_special_characters?view=powershell-7.5)。
+
+> PowerShell 6 起新增了 **两个** 转义序列，Windows 自带的 **5.1 完全没有**。其余转义序列（`` `0 `a `b `f `n `r `t `v ``）、转义符 `` ` ``、"只在双引号内生效"规则、行延续、`--`、`--%`、`~` —— **两版本完全一致**。
+
+| 转义序列 | 含义 | 5.1 | 7+ (自 PS6) | 用途 |
+|----------|------|:---:|:---:|------|
+| `` `e `` | Escape (ESC, ASCII 27) | ❌ 无 | ✅ 有 | ANSI/虚拟终端转义序列：改颜色、加粗、下划线、光标定位 |
+| `` `u{x} `` | Unicode 转义 | ❌ 无 | ✅ 有 | 按十六进制码点输出任意 Unicode 字符（1–6 位 hex，上限 `10FFFF`，支持 emoji 与 BMP 之外字符）|
+
+**`` `e `` 示例（仅 PS7+）— ANSI 颜色：**
+
+```powershell
+# PS7+：输出绿色文字（5.1 会把 `e 当字面文本，不生效）
+$fgColor = 32  # green
+"`e[${fgColor}mGreen text`e[0m"   # -> 绿色的 "Green text"
+# 检测主机是否支持虚拟终端序列：
+$Host.UI.SupportsVirtualTerminal
+```
+
+**`` `u{x} `` 示例（仅 PS7+）— Unicode 字符：**
+
+```powershell
+# PS7+：按码点输出字符（5.1 会把 `u{...} 当字面文本）
+"`u{2195}"      # -> ↕ (上下双箭头)
+"`u{1F44D}"     # -> 👍 (thumbs up emoji，BMP 之外)
+"`u{0041}"      # -> A
+```
+
+**跨版本兼容写法（同时在 5.1 和 7 上跑）：**
+
+```powershell
+# ESC 字符：5.1 没有 `e，用 [char]27 构造
+$esc = [char]27                 # 5.1 与 7 通用
+"$esc[32mGreen text$esc[0m"     # 7 上也可用此写法（`e 只是语法糖）
+
+# Unicode 字符：5.1 没有 `u{x}，用 [char]::ConvertFromUtf32 构造
+$arrow = [char]::ConvertFromUtf32(0x2195)   # 5.1 与 7 通用 -> ↕
+$thumb = [char]::ConvertFromUtf32(0x1F44D)  # -> 👍
+```
+
+> **速记：** 写跨版本脚本时，用 `[char]27` 代替 `` `e ``、用 `[char]::ConvertFromUtf32(0xXXXX)` 代替 `` `u{XXXX} `` —— 两者在 5.1 和 7 上行为一致，避免版本分叉。mycc 在 Windows 上默认用 PowerShell 7 (pwsh) 执行命令，故 `` `e `` / `` `u{x} `` 通常可直接用；仅当目标明确是 5.1 时才需要回退到 `[char]` 写法。
+
+#### ⚠️ 关键规则：转义序列只在双引号内生效
+
+`` ` `` 转义**只在双引号 `"..."` 字符串中被解释**。在单引号 `'...'` 中，反引号是**字面字符**，不做任何转义。
+
+```powershell
+"Line1`nLine2"     # 双引号 -> `n 被解释 -> 两行
+'Line1`nLine2'     # 单引号 -> `n 是字面文本 -> "Line1`nLine2"（原样）
+```
+
+**推论 — 想让 `` ` `` 转义生效，必须用双引号；想让 `` ` `` 保持字面，用单引号。** 这是单/双引号选择的核心依据之一（见下表）。
+
+#### 单引号 vs 双引号（选哪一个？）
+
+| 引号 | 变量插值 `$var` | 子表达式 `$(...)` | 转义序列 `` `n `` 等 | 反引号本身 `` ` `` | 适用场景 |
+|------|:---:|:---:|:---:|:---:|------|
+| `'...'` 单引号 | ❌ 不插值 | ❌ 不求值 | ❌ 字面 | 字面 | **字面字符串**（含 `$`、`` ` ``、路径、正则、JSON 片段）|
+| `"..."` 双引号 | ✅ 插值 | ✅ 求值 | ✅ 解释 | 转义符 | 需要插值/换行/制表时 |
+
+**高频摩擦与解法：**
+
+```powershell
+# 摩擦 1：想在双引号里输出字面 $（变量名被插值了）
+"Price is $5"            # ❌ $5 被当作变量插值 -> "Price is "（$5 为空）
+'Price is $5'            # ✅ 单引号，字面 -> "Price is $5"
+"Price is `$5"           # ✅ 双引号 + 反引号转义 $ -> "Price is $5"
+
+# 摩擦 2：想在字符串里输出字面反引号 ` 本身
+'Use the ` char'         # ✅ 单引号里 ` 是字面 -> "Use the ` char"
+"Use the `` char"        # ✅ 双引号里用 `` 转义出一个字面 ` -> "Use the ` char"
+
+# 摩擦 3：双引号里嵌套双引号
+"He said "hi""           # ❌ 引号提前闭合，解析错误
+"He said `"hi`""         # ✅ 用 `" 转义内层双引号 -> He said "hi"
+'He said "hi"'           # ✅ 更简单：外层用单引号 -> He said "hi"
+
+# 摩擦 4：单引号里想输出字面单引号
+'It's'                   # ❌ 单引号内无法用 ` 转义（` 在单引号里是字面）
+'It''s'                  # ✅ 单引号用双写 '' 表示一个字面 ' -> It's
+```
+
+> **速记口诀：** 单引号 = 字面王道（唯一例外是 `'` 自身要 `''` 双写）；双引号 = 插值 + `` ` `` 转义。含 `$` 或 `` ` `` 又不需要插值 → 优先单引号。
+
+#### 行延续 (Line continuation)
+
+反引号放在一行**末尾**表示命令延续到下一行（等价于 Bash 的 `\` 换行）：
+
+```powershell
+Get-Process | Where-Object { $_.CPU -gt 10 } |
+    Sort-Object CPU -Descending |
+    Select-Object -First 5      # 管道 `|` 天然换行，无需反引号
+
+# 显式行延续（无天然换行符时）
+curl.exe -X POST https://api.example.com/items `
+    -H "Content-Type: application/json" `
+    -d '{"name":"widget"}'
+```
+
+> **注意：** 反引号行延续后**不能有任何尾随空格**，否则延续失效。能用 `|`、`{` `}`、`(` `)` 等天然换行点时优先用它们，比反引号更稳健。
+
+#### 停止解析标记 `--%`（Stop-parsing token）
+
+`--%` 让其后的所有内容按**字面**传递给外部程序，PowerShell **不再**解释为命令/表达式/变量。用于把含 `$`、`()`、`{}` 等的参数原样传给 exe（如 `icacls`、`cmd.exe`）。
+
+```powershell
+# `--%` 之后的 $HOME 不被插值，原样传给 cmd
+cmd.exe /c echo $HOME --% $HOME
+# -> 第一处 $HOME 被 PowerShell 插值为路径，第二处 $HOME 字面输出
+
+icacls X:\VMS --% /grant Dom\HVAdmin:(CI)(OI)F
+# `--%` 之后整串原样传给 icacls，括号等不被 PowerShell 解析
+```
+
+> **限制：** `--%` 之后**不能**再用 PowerShell 变量插值；`--%` 之前的变量仍正常插值。环境变量 `%VAR%` 风格在 `--%` 之后会被展开。
+
+#### 结束参数标记 `--`（End-of-parameters）
+
+`--` 表示其后的值作为**纯参数**传递（如同被双引号包裹），不被当作参数名解析。用于输出以 `-` 开头的字面字符串：
+
+```powershell
+Write-Output -- -InputObject     # -> -InputObject（不会被当成参数）
+```
+
+#### 波浪号 `~`（Tilde 展开）
+
+`~` 在路径**开头**时展开为用户主目录，在路径其他位置是**字面字符**：
+
+```powershell
+Copy-Item ~/notes.txt D:\backup\        # ~ -> C:\Users\student
+Copy-Item D:\data~1\file.txt .          # 这里的 ~ 是字面，不展开
+```
+
+#### mycc 上下文：bash 工具如何执行你的命令
+
+mycc 的 bash 工具在 Windows 上通过 `powershell -EncodedCommand <Base64(UTF-16LE)>` 执行你输入的命令（见 mindmap「PowerShell -EncodedCommand」），**整条命令被 Base64 编码后整体送入**，因此：
+
+- **你不需要**为绕过分号 `;` / 引号嵌套而额外转义 —— 编码传递避免了 shell 层的二次解析摩擦。
+- 但命令**内部**传给外部 exe 的参数仍按上面的 PowerShell 引用/转义规则处理（单双引号、`` ` `` 转义、`--%` 都照常生效）。
+- **优先用内置工具**读写源码：`read_file` / `edit_file` / `write_file` 不经过 shell 解析，`old_text`/`new_text`/`content` 按字面匹配，彻底回避引号与转义摩擦。只有必须走 shell 管道（`Get-Content -Encoding UTF8` 切片、`curl.exe`、调用 exe 传含 `$` 的参数）时，才需要手写转义。
+- **PowerShell 5.1 限定：** 该版本不支持 `&&`/`||` 管道链运算符、`??`/`??=` 空合并、`-Encoding utf8NoBOM`；用 `;`/`if ($?)`、`if ($null -eq $x) {...}`、.NET `WriteAllText` 替代（参见「命令连接符」与「文件编码」两节）。
+
 ### 文本处理
 
 ```powershell
