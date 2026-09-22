@@ -60,10 +60,6 @@ vi.mock('../../../context/shared/loader.js', () => ({
   loader: { getToolsForScope: vi.fn(() => [{ function: { name: 'bash' } }]) },
 }));
 
-vi.mock('../../../utils/skill-dedup.js', () => ({
-  getSkillTriologueStatus: vi.fn(() => 'new'),
-}));
-
 vi.mock('../../../context/worktree-store.js', () => ({
   listWorktrees: vi.fn(async () => []),
 }));

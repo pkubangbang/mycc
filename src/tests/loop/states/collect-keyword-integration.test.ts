@@ -20,13 +20,13 @@
  *
  * The mock harness mirrors collect-esc-hint.test.ts / collect-transient-retry
  * .test.ts: mock agent-io, esc-wrap-up, config (isVerbose→false), loader,
- * skill-dedup, worktree-store, triologue, AND keyword-extractor (so the real
+ * worktree-store, triologue (so the real
  * LLM call never fires — the mock controls the outcome). serve-registry is
  * mocked to drive the steering-note path; session/index is stubbed so
  * resolveHeadlessFirstQuery is a no-op.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { KeywordExtractionResult } from '../../../loop/keyword-extractor.js';
+import type { KeywordExtractionResult } from '../../../loop/states/collect-skill.js';
 
 // --- Mocks (paths relative to this test file: src/tests/loop/states/) --------
 
@@ -59,22 +59,21 @@ vi.mock('../../../context/shared/loader.js', () => ({
   },
 }));
 
-vi.mock('../../../utils/skill-dedup.js', () => ({
-  getSkillTriologueStatus: vi.fn(() => 'new'),
-}));
-
 vi.mock('../../../context/worktree-store.js', () => ({
   listWorktrees: vi.fn(async () => []),
 }));
 
-// keyword-extractor: the mock controls the extraction outcome so we can test
-// each union variant without an LLM call. The mock factory captures the
-// configured return value via a module-level let, reassigned per-test through
-// the imported `setExtractionResult` helper below.
+// extractKeywords is now a PRIVATE method on the SkillSuggester singleton
+// (folded in from the former keyword-extractor.ts). The mock controls the
+// extraction outcome so we can test each union variant without an LLM call.
+// Since the method is private, the mock is installed via vi.spyOn on the
+// shared singleton; a module-level `extractionResult` is reassigned per-test
+// through the `setExtractionResult` helper, and the spy reads it at call
+// time. `extractKeywordsSpy` exposes call-count assertions (replacing the
+// old vi.mocked(extractKeywords) usage).
+type ExtractKeywordsMock = ReturnType<typeof vi.fn<() => Promise<KeywordExtractionResult>>>;
 let extractionResult: KeywordExtractionResult = { status: 'success', keywords: [], freeformQuery: '' };
-vi.mock('../../../loop/keyword-extractor.js', () => ({
-  extractKeywords: vi.fn(async (): Promise<KeywordExtractionResult> => extractionResult),
-}));
+let extractKeywordsSpy: ExtractKeywordsMock;
 
 // serve-registry: module-level state drives isRunning/drainSteering so the
 // steering-note path can be exercised. Defaults to NOT running (steering path
@@ -122,7 +121,6 @@ vi.mock('../../../loop/triologue.js', () => {
 import { handleCollect } from '../../../loop/states/collect.js';
 import { AgentState } from '../../../loop/state-machine.js';
 import { Triologue } from '../../../loop/triologue.js';
-import { extractKeywords } from '../../../loop/keyword-extractor.js';
 import { skillSuggester, beginFreshSession } from '../../../loop/states/collect-skill.js';
 import {
   createTurnVars,
@@ -132,9 +130,25 @@ import {
 import { createMockContext } from '../../test-utils/mock-context.js';
 import type { TurnVars } from '../../../loop/state-machine.js';
 
-/** Configure the mocked extractKeywords to return the given result. */
+/**
+ * Configure the mocked extractKeywords to return the given result. Installs a
+ * fresh vi.fn on the singleton's (private) method each call so prior tests'
+ * mocks never leak. The fn resolves to the CURRENT `extractionResult` at call
+ * time (re-read from the closure), so a per-test `setExtractionResult` after
+ * the fn is installed still takes effect.
+ *
+ * Uses `vi.fn` + direct assignment rather than `vi.spyOn` because the method
+ * is private: `vi.spyOn(obj, 'privateMethod' as never)` collapses the spy
+ * type to `never` under the strict test tsconfig, so `.mockImplementation`
+ * fails to typecheck. A plain `vi.fn` assigned via bracket access keeps a
+ * concrete `Mock` type and is restored in afterEach via `vi.restoreAllMocks`
+ * (skipped here — the singleton is long-lived and reassignment per-test is
+ * the intended lifecycle; `mockClear` resets call state between tests).
+ */
 function setExtractionResult(result: KeywordExtractionResult): void {
   extractionResult = result;
+  extractKeywordsSpy = vi.fn(async () => extractionResult);
+  (skillSuggester as unknown as Record<string, unknown>).extractKeywords = extractKeywordsSpy;
 }
 
 describe('handleCollect — composite keyword extraction (integration)', () => {
@@ -142,8 +156,12 @@ describe('handleCollect — composite keyword extraction (integration)', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    // Reset module-level mock state to safe defaults.
+    // Reset module-level mock state to safe defaults and install a fresh
+    // spy on the (now-private) extractKeywords method. Each setExtractionResult
+    // call re-installs the spy with the new return value.
     extractionResult = { status: 'success', keywords: [], freeformQuery: '' };
+    extractKeywordsSpy = vi.fn(async () => extractionResult);
+    (skillSuggester as unknown as Record<string, unknown>).extractKeywords = extractKeywordsSpy;
     serveRunning = false;
     steeredNotes = [];
     // Reset the skill-discovery singleton's throttle state so prior tests'
@@ -249,7 +267,7 @@ describe('handleCollect — composite keyword extraction (integration)', () => {
 
     expect(skillSuggester.getLastQuery()).toBe('help me test the parser');
     expect(skillSuggester.getCooldown()).toBe(3);
-    expect(vi.mocked(extractKeywords)).toHaveBeenCalledTimes(1);
+    expect(extractKeywordsSpy).toHaveBeenCalledTimes(1);
   });
 
   it('SUCCESS with empty keywords still arms the cooldown (op completed)', async () => {
@@ -309,14 +327,14 @@ describe('handleCollect — composite keyword extraction (integration)', () => {
 
     // Pass 1: fails, leaves query eligible.
     await handleCollect(env, turn, createChatData());
-    expect(vi.mocked(extractKeywords)).toHaveBeenCalledTimes(1);
+    expect(extractKeywordsSpy).toHaveBeenCalledTimes(1);
     expect(skillSuggester.getLastQuery()).toBe('');
     expect(skillSuggester.getCooldown()).toBe(0);
 
     // Pass 2: same query, no cooldown, lastQuery still '' → extraction fires again.
-    vi.mocked(extractKeywords).mockClear();
+    extractKeywordsSpy.mockClear();
     await handleCollect(env, turn, createChatData());
-    expect(vi.mocked(extractKeywords)).toHaveBeenCalledTimes(1);
+    expect(extractKeywordsSpy).toHaveBeenCalledTimes(1);
   });
 
   it('FAILED via ESC cleanup: escAware cleanup returns {status:"failed"} → retry eligible', async () => {
@@ -351,7 +369,7 @@ describe('handleCollect — composite keyword extraction (integration)', () => {
 
     await handleCollect(env, turn, createChatData());
 
-    expect(vi.mocked(extractKeywords)).not.toHaveBeenCalled();
+    expect(extractKeywordsSpy).not.toHaveBeenCalled();
   });
 
   it('does NOT call extractKeywords when cooldown > 0', async () => {
@@ -366,7 +384,7 @@ describe('handleCollect — composite keyword extraction (integration)', () => {
 
     await handleCollect(env, turn, createChatData());
 
-    expect(vi.mocked(extractKeywords)).not.toHaveBeenCalled();
+    expect(extractKeywordsSpy).not.toHaveBeenCalled();
     // Cooldown was decremented once at the top of step 6.
     expect(skillSuggester.getCooldown()).toBe(2);
   });
@@ -408,7 +426,7 @@ describe('handleCollect — composite keyword extraction (integration)', () => {
 
     // Drain cooldown over passes 2, 3, 4 (no steering notes queued).
     steeredNotes = [];
-    vi.mocked(extractKeywords).mockClear();
+    extractKeywordsSpy.mockClear();
     for (let i = 0; i < 3; i++) {
       await handleCollect(env, turn, createChatData());
     }
@@ -416,9 +434,9 @@ describe('handleCollect — composite keyword extraction (integration)', () => {
 
     // Pass 5: steering note is consumed (serveRunning but no notes). Y falls
     // back to lastUserQuery, which equals lastQuery → NO re-trigger.
-    vi.mocked(extractKeywords).mockClear();
+    extractKeywordsSpy.mockClear();
     const result = await handleCollect(env, turn, createChatData());
-    expect(vi.mocked(extractKeywords)).not.toHaveBeenCalled();
+    expect(extractKeywordsSpy).not.toHaveBeenCalled();
     expect(result).toBe(AgentState.LLM);
   });
 
@@ -618,7 +636,7 @@ describe('handleCollect — composite keyword extraction (integration)', () => {
     // Pass 1: a genuine query triggers extraction and arms the throttle, so
     // the suggester's cursor now equals the turn's lastUserQuery.
     await handleCollect(env, turn, createChatData());
-    expect(vi.mocked(extractKeywords)).toHaveBeenCalledTimes(1);
+    expect(extractKeywordsSpy).toHaveBeenCalledTimes(1);
     expect(skillSuggester.getLastQuery()).toBe('help me refactor the parser');
 
     // The user clears the conversation (double-Ctrl+L / /clear): the
@@ -629,10 +647,10 @@ describe('handleCollect — composite keyword extraction (integration)', () => {
     // Next COLLECT: the triologue is empty and the turn sources are cleared,
     // so querySource is null → NO extraction. Resetting the suggester alone
     // would have left lastUserQuery populated → a spurious re-fire here.
-    vi.mocked(extractKeywords).mockClear();
+    extractKeywordsSpy.mockClear();
     const result = await handleCollect(env, turn, createChatData());
 
-    expect(vi.mocked(extractKeywords)).not.toHaveBeenCalled();
+    expect(extractKeywordsSpy).not.toHaveBeenCalled();
     expect(result).toBe(AgentState.LLM);
   });
 
@@ -644,7 +662,7 @@ describe('handleCollect — composite keyword extraction (integration)', () => {
     });
 
     await handleCollect(env, turn, createChatData());
-    expect(vi.mocked(extractKeywords)).toHaveBeenCalledTimes(1);
+    expect(extractKeywordsSpy).toHaveBeenCalledTimes(1);
 
     // The OLD (buggy) clear: reset the suggester cursor, but leave the turn's
     // lastUserQuery stale. The suggester cursor is now '' while the turn still
@@ -652,9 +670,9 @@ describe('handleCollect — composite keyword extraction (integration)', () => {
     // context the user just cleared.
     skillSuggester.reset();
 
-    vi.mocked(extractKeywords).mockClear();
+    extractKeywordsSpy.mockClear();
     await handleCollect(env, turn, createChatData());
 
-    expect(vi.mocked(extractKeywords)).toHaveBeenCalledTimes(1);
+    expect(extractKeywordsSpy).toHaveBeenCalledTimes(1);
   });
 });

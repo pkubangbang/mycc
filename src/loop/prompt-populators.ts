@@ -191,7 +191,8 @@ export function buildPlatformCalendarMessages(): Message[] {
 // ============================================================================
 
 // NOTE: The skill-keywords list is NO LONGER delivered via a project-context
-// populator here. It was folded into extractKeywords() (keyword-extractor.ts):
+// populator here. It was folded into extractKeywords() (now a private method
+// on the SkillSuggester class in src/loop/states/collect-skill.ts):
 // the extraction LLM call now receives the available skill keywords as a
 // system-message input (so the LLM selects relevant keywords FROM the actual
 // available list based on the X+Y+Z composite), instead of a separate
@@ -199,8 +200,8 @@ export function buildPlatformCalendarMessages(): Message[] {
 // into the byte-stable system prompt. This removes a dynamic-content
 // injection that broke the prompt-cache prefix on every skill reload
 // (see the "do not inject dynamic content into projectContext" pitfall) and
-// consolidates skill discovery into a single LLM-driven path (runKeywordExtraction
-// in collect.ts step 6).
+// consolidates skill discovery into a single LLM-driven path
+// (skillSuggester.runKeywordExtraction in collect.ts step 6).
 
 // ============================================================================
 // node_modules Detection

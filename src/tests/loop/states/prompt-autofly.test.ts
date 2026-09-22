@@ -128,12 +128,8 @@ vi.mock('../../../loop/esc-wrap-up.js', () => ({
   clearWrapUp: vi.fn(),
 }));
 
-// keyword-extractor.js: stub extractKeywords (async, returns the new
-// discriminated-union shape — vestigial, since handlePrompt no longer calls
-// it after extraction moved to COLLECT; kept so the mock stays type-honest).
-vi.mock('../../../loop/keyword-extractor.js', () => ({
-  extractKeywords: vi.fn(async () => ({ status: 'success', keywords: [], freeformQuery: '' })),
-}));
+// (extractKeywords was folded into SkillSuggester as a private method, so
+// there is no standalone keyword-extractor module to stub here anymore.)
 
 // engine/chat-provider.js: stub forkChat (not reached by the guard).
 vi.mock('../../../engine/chat-provider.js', () => ({
