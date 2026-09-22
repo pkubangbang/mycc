@@ -1,32 +1,78 @@
 /**
- * skill_search.ts - Search skills by keywords with semantic and name matching
+ * skill_search.ts - Search skills by keywords with positional scoring and
+ *                   scope-aware semantic boost.
  *
- * Scope: ['main', 'child'] - Available to lead and teammate agents
+ * Scope: ['main', 'child'] - Available to lead and teammate agents.
  *
- * This tool searches for skills using a combination of:
- * 1. Semantic search via wiki (embedding-based)
- * 2. Name/keyword fuzzy matching against loaded skills
+ * CONSOLIDATION: this tool is the single skill-discovery entry point. It
+ * shares the SAME keyword-extraction primitive (`extractKeywords` from
+ * src/loop/keyword-extractor.ts) AND the SAME scorer (`scoreSkills` from
+ * src/loop/skill-matcher.ts) as the proactive SkillSuggester
+ * (src/loop/states/collect-skill.ts), so on-demand search and proactive
+ * discovery agree on prompt, tool, result contract, AND scoring — no private
+ * drift in either layer.
  *
- * Returns a list of matching skills with their names and descriptions.
- * Use skill_load(name="<exact_name>") to load a specific skill's full content.
+ * API: skill_search(search, semantic?)
+ *   arg1 `search`   — the query to extract keywords from (via retryChat +
+ *                     the extract_keywords tool, tool_choice:'required').
+ *                     The LLM emits significance-ORDERED keywords (most
+ *                     discriminative first). These are matched positionally
+ *                     against every loaded skill's keywords.
+ *   arg2 `semantic` — optional semantic refinement string fed to
+ *                     ctx.wiki.get (embedding similarity). When omitted, the
+ *                     extractor's distilled `freeformQuery` is used (it is a
+ *                     cleaner semantic phrase than the raw `search` arg); if
+ *                     that is empty too, `search` is used. The resulting
+ *                     similarity becomes a multiplicative BOOST on the
+ *                     keyword points.
+ *
+ * SCORING (delegated to src/loop/skill-matcher.ts → scoreSkills):
+ *   1. Positional points [10, 7, 5, 3, 2] for the 1st..5th significance-
+ *      ordered query keyword (exact case-insensitive token membership; first
+ *      5 only). points > 0 is the hard precondition (pure-semantic entry is
+ *      impossible by construction — 0 × anything = 0).
+ *   2. Scope-aware boost: similarity is matched by FULL qualified wiki title
+ *      ("${scope}:${name}"), NOT the stripped bare name — so a cross-project
+ *      same-named skill cannot inherit another scope's similarity (the P1
+ *      scope-collision bug fixed in skill-matcher.ts). When sim > THRESHOLD,
+ *      boost = 1 + (sim - THRESHOLD); otherwise boost = 1.0 (a keyword-
+ *      matched skill missing the semantic window is NEVER excluded — e.g.
+ *      12 × 1.0 = 12, still suggested).
+ *   3. score = points × boost; keep score > 10 STRICT; sort desc; top 3.
+ *
+ * topK for ctx.wiki.get is a FLAT 50 (see skill-matcher.ts SKILL_SEMANTIC_TOPK
+ * for why this is flat and not derived from listSkills().length). A saturated
+ * window (results.length === topK) is logged via ctx.core.brief so the
+ * operator can raise the cap or revive the (held) getExact design.
  */
 
 import type { ToolDefinition, AgentContext } from '../types.js';
-import { getSkillMatchThreshold } from '../config.js';
+import { extractKeywords } from '../loop/keyword-extractor.js';
+import {
+  scoreSkills,
+  SKILL_SEMANTIC_TOPK,
+  getSkillMatchThreshold,
+} from '../loop/skill-matcher.js';
+import { loader } from '../context/shared/loader.js';
 
 export const skillSearchTool: ToolDefinition = {
   name: 'skill_search',
-  description: `Search skills by keywords. Returns a list of matching skill names and descriptions.
+  description: `Search skills by keywords. Returns a ranked list of matching skill names and descriptions.
 
 Use this when you don't know the exact skill name, or want to find relevant skills for a task.
-Results include skills matched by semantic similarity and name/keyword matching.
+The first argument is a natural-language query: keywords are extracted from it (via an LLM call) and matched positionally against every loaded skill's keywords. The optional second argument is a semantic refinement string; its embedding similarity boosts the keyword-match score.
+Results are ranked by a combined score (keyword points × semantic boost); only the top matches are returned.
 Once you find the right skill, use skill_load(name="<exact_name>") to load its full content.`,
   input_schema: {
     type: 'object',
     properties: {
       search: {
         type: 'string',
-        description: 'REQUIRED: Short keywords/phrases (2-5 words) describing the skill you are looking for. Use concise terms, NOT full sentences or long descriptions.',
+        description: 'REQUIRED: A natural-language query (a few words or a short phrase) describing the skill you are looking for, in any language. Keywords are extracted from this via an LLM and matched against skill keywords. Use concise terms, NOT long essays.',
+      },
+      semantic: {
+        type: 'string',
+        description: 'OPTIONAL: A semantic refinement string whose embedding similarity boosts the keyword-match score. When omitted, the extractor\'s distilled free-form query is used for the semantic lookup (falling back to `search` if that is empty). Useful when the natural-language query and the precise semantic phrase differ.',
       },
     },
     required: ['search'],
@@ -34,69 +80,70 @@ Once you find the right skill, use skill_load(name="<exact_name>") to load its f
   scope: ['main', 'child'],
   handler: async (ctx: AgentContext, args: Record<string, unknown>): Promise<string> => {
     const search = args.search as string;
+    const semantic = (args.semantic as string | undefined) ?? undefined;
 
-    // Validate search parameter
+    // Validate the search parameter.
     if (!search || typeof search !== 'string' || search.trim() === '') {
-      ctx.core.brief('error', 'skill_search', 'Missing or empty search parameter', 'skill_search(search="<keywords>")');
-      return 'ERROR: The "search" parameter is required and must be a non-empty string.\n\nUsage: skill_search(search="<keywords about what you need>")';
+      ctx.core.brief('error', 'skill_search', 'Missing or empty search parameter', 'skill_search(search="<query>")');
+      return 'ERROR: The "search" parameter is required and must be a non-empty string.\n\nUsage: skill_search(search="<query about what you need>")';
     }
+
+    // Extract significance-ordered keywords from the query via the shared
+    // LLM extractor (retryChat + extract_keywords tool, tool_choice required).
+    // A `failed`/`skipped` outcome yields no keywords → no scoreboard entries
+    // → the tool reports no matches (pure-semantic entry is impossible by
+    // construction: points>0 is the hard precondition).
+    const extraction = await extractKeywords(search, loader.getSkillKeywords());
+    const keywords = extraction.status === 'success' ? extraction.keywords : [];
+
+    // The semantic query for ctx.wiki.get. Precedence: an explicit `semantic`
+    // arg; else the extractor's distilled freeformQuery (a cleaner semantic
+    // phrase than the raw search arg); else the raw `search` arg as the last
+    // resort. (The tool description documents this precedence — it is NOT a
+    // simple `semantic || search` default.)
+    const semanticQuery =
+      (semantic && semantic.trim()) ||
+      (extraction.status === 'success' && extraction.freeformQuery) ||
+      search;
 
     const threshold = getSkillMatchThreshold();
-    const searchQuery = `a skill to satisfy: ${search}`;
+
+    // Semantic search via wiki (embedding-based). Graceful failure: if the
+    // wiki call throws (no embedding model, transient error), pass an empty
+    // result set to scoreSkills → boost defaults to 1.0 for every skill and
+    // the keyword points alone still rank results.
     let semResults: Awaited<ReturnType<typeof ctx.wiki.get>> = [];
-
-    // Semantic search via wiki (embedding-based)
     try {
-      semResults = await ctx.wiki.get(searchQuery, { domain: 'skills', topK: 3, threshold });
-    } catch {
-      // Semantic search may not be available (no embedding model)
-    }
-
-    // Name/keyword search: match search terms against skill names and keywords
-    const nameResults: { name: string; description: string; keywords: string[] }[] = [];
-    if (search.length > 2) {
-      const lowerSearch = search.toLowerCase();
-      const searchTerms = lowerSearch.split(/\s+/).filter(t => t.length > 1);
-      const allSkills = ctx.skill.listSkills();
-      for (const s of allSkills) {
-        const nameMatch = searchTerms.some(term => s.name.toLowerCase().includes(term));
-        const kwMatch = s.keywords.some(kw =>
-          searchTerms.some(term => kw.toLowerCase().includes(term))
+      semResults = await ctx.wiki.get(semanticQuery, {
+        domain: 'skills',
+        topK: SKILL_SEMANTIC_TOPK,
+        threshold,
+      });
+      // Saturated-window signal: if the returned count equals topK, the
+      // domain may have more qualifying rows than the cap allows through —
+      // a future signal to raise the cap or revive the (held) getExact design.
+      if (semResults.length === SKILL_SEMANTIC_TOPK) {
+        ctx.core.brief(
+          'warn',
+          'skill_search',
+          `semantic window saturated (topK=${SKILL_SEMANTIC_TOPK}); results may be truncated`,
+          semanticQuery,
         );
-        if (nameMatch || kwMatch) {
-          nameResults.push({ name: s.name, description: s.description, keywords: s.keywords });
-        }
       }
+    } catch {
+      // Semantic search unavailable → scoreSkills receives [] → boost 1.0.
     }
 
-    // Deduplicate and build suggestions
-    // Wiki titles now use format "<scope>:<skill-name>", while nameResults use bare skill name.
-    // Extract the base skill name to deduplicate correctly.
-    const matchedNames = new Set<string>();
-    const suggestions: string[] = [];
+    // Shared scorer: positional keyword points × scope-aware semantic boost.
+    // Returns the top SKILL_TOP_N ranked candidates (score > floor STRICT).
+    const kept = scoreSkills({
+      skills: ctx.skill.listSkills(),
+      keywords,
+      semanticResults: semResults,
+      threshold,
+    });
 
-    for (const r of semResults) {
-      // Strip "<scope>:" prefix to get bare skill name for user-facing display
-      const title = r.document.title;
-      const baseName = title.includes(':') ? title.split(':').slice(1).join(':') : title;
-      if (!matchedNames.has(baseName)) {
-        matchedNames.add(baseName);
-        const pct = (r.similarity * 100).toFixed(0);
-        suggestions.push(`## ${baseName} (${pct}% semantic match)\n\n${r.document.content}`);
-      }
-    }
-
-    for (const nr of nameResults) {
-      if (!matchedNames.has(nr.name)) {
-        matchedNames.add(nr.name);
-        const desc = nr.description ? `*${nr.description}*` : '';
-        const kw = nr.keywords.length > 0 ? `Keywords: ${nr.keywords.join(', ')}` : '';
-        const parts = [desc, kw].filter(Boolean);
-        suggestions.push(`## ${nr.name} (name/keyword match)\n\n${parts.join('\n')}`);
-      }
-    }
-
-    if (suggestions.length === 0) {
+    if (kept.length === 0) {
       ctx.core.brief('warn', 'skill_search', `No matches: ${search}`);
       return `No skills found matching '${search}'.
 
@@ -106,12 +153,25 @@ Suggestions:
 - Some skills may not be indexed yet; try /skills build to rebuild the skill index.`;
     }
 
-    const allNames = [...matchedNames];
-    const matchSummary = allNames.join(', ');
-    ctx.core.brief('info', 'skill_search', `→ ${matchSummary}`, search);
+    // Render. Show the score (keyword points × boost) and, when a similarity
+    // was found, the percentage. Description + keywords aid the user's pick.
+    const suggestions: string[] = [];
+    for (const r of kept) {
+      const pct = r.similarity !== undefined ? ` · ${Math.round(r.similarity * 100)}% semantic` : '';
+      const boostTag = r.boost > 1.0 ? ` · x${r.boost.toFixed(2)} boost` : '';
+      const desc = r.skill.description ? `*${r.skill.description}*` : '';
+      const kw = r.skill.keywords.length > 0 ? `Keywords: ${r.skill.keywords.join(', ')}` : '';
+      const parts = [desc, kw].filter(Boolean);
+      suggestions.push(
+        `## ${r.skill.name} (score ${r.score} · pts ${r.points}${boostTag}${pct})\n\n${parts.join('\n')}`,
+      );
+    }
+
+    const names = kept.map(r => r.skill.name).join(', ');
+    ctx.core.brief('info', 'skill_search', `→ ${names}`, search);
 
     const body = suggestions.join('\n\n---\n\n');
 
-    return `Found ${suggestions.length} skill(s) matching '${search}':\n\n---\n\n${body}\n\n---\n\nTo load a specific skill, use: skill_load(name="<exact_skill_name>")`;
+    return `Found ${kept.length} skill(s) matching '${search}':\n\n---\n\n${body}\n\n---\n\nTo load a specific skill, use: skill_load(name="<exact_skill_name>")`;
   },
 };
