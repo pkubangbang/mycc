@@ -47,8 +47,9 @@ import { startSpinner } from '../engine/chat-helpers.js';
  *  - `success` — the LLM call ran to completion. `keywords` may be empty
  *    (the model found nothing relevant), but the operation itself succeeded,
  *    so the caller MAY advance its throttle/dedup state. `keywords` is
- *    SIGNIFICANCE-ORDERED (most important first) and lowercased; beyond the
- *    first 5, downstream positional scoring ignores them.
+ *    SIGNIFICANCE-ORDERED (most important first), lowercased, and deduplicated
+ *    (first occurrence kept); beyond the first 5, downstream positional
+ *    scoring ignores them.
  *  - `skipped` — the input was trivial (too short, or a greeting/ack). No LLM
  *    call was made. The caller SHOULD mark the Y source as seen (so a trivial
  *    "hello" doesn't re-trigger every pass) but this is NOT a failure.
@@ -199,10 +200,19 @@ Available skill keywords: ${availableKeywords.join(', ')}`,
     // Filter out empty strings and trim whitespace. Lowercasing matches the
     // exact-token membership test downstream (case-insensitive). The order
     // emitted by the LLM is PRESERVED — it is the significance order the
-    // positional scorer consumes.
+    // positional scorer consumes. Duplicates are dropped keeping first
+    // occurrence, so a repeated query keyword can never earn two positional
+    // weights (e.g. ["code","code"] → 10, not 10+7); first-occurrence order
+    // preserves the LLM's significance ranking.
+    const seen = new Set<string>();
     const cleaned = keywords
       .map((kw: unknown) => String(kw).trim().toLowerCase())
-      .filter((kw: string) => kw.length > 0);
+      .filter((kw: string) => kw.length > 0)
+      .filter((kw: string) => {
+        if (seen.has(kw)) return false;
+        seen.add(kw);
+        return true;
+      });
 
     // The free-form query is a natural phrase for semantic search. It is
     // NOT lowercased (proper nouns / tool names matter for embedding match)

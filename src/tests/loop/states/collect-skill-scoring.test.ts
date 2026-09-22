@@ -97,10 +97,29 @@ function one(
  * `score = points × 1.5 > 10` holds for any points ≥ 7, and `points` itself
  * is gate-independent, so we read it directly. For points below that (which
  * can never clear the floor anyway) the caller asserts the drop via `one()`.
+ *
+ * IMPORTANT — the OOV fix (positional weights apply to MATCHING evidence,
+ * not the raw keyword list): to pin a keyword at a SPECIFIC evidence position
+ * `p`, every keyword BEFORE it in the query must also be matchable, otherwise
+ * the target collapses to an earlier position. The helper therefore accepts
+ * an optional `padSkillKeywords` list — when given, a padding skill owning
+ * those keywords is added so the query's full ordering is preserved as real
+ * evidence positions. Omit it only when the target is the sole/first match.
  */
-function points(skillKeywords: string[], keywords: string[], name = 's'): number {
-  const res = one(mkSkill(name, skillKeywords), keywords, [wikiRow(`proj:${name}`, 1.0)]);
-  return res ? res.points : 0;
+function points(
+  skillKeywords: string[],
+  keywords: string[],
+  name = 's',
+  padSkillKeywords: string[] = [],
+): number {
+  const target = mkSkill(name, skillKeywords);
+  const skills = padSkillKeywords.length ? [target, mkSkill(`${name}-pad`, padSkillKeywords)] : [target];
+  const scopes: Record<string, string> = { [name]: 'proj' };
+  if (padSkillKeywords.length) scopes[`${name}-pad`] = 'proj';
+  setLocalScopes(scopes);
+  const ranked = scoreSkills({ skills, keywords, semanticResults: [wikiRow(`proj:${name}`, 1.0)], threshold: THRESHOLD });
+  const r = ranked.find(x => x.skill.name === name);
+  return r ? r.points : 0;
 }
 
 /**
@@ -125,15 +144,20 @@ describe('scoreSkills — positional weights [10, 7, 5, 3, 2]', () => {
   });
 
   it('ignores keywords beyond the 5th position', () => {
-    // Only the first five positions have weights; kw[5] and kw[6] contribute 0
-    // (score 0 → dropped → surfaced as 0).
-    expect(points(['f', 'g'], ['a', 'b', 'c', 'd', 'e', 'f', 'g'])).toBe(0);
+    // To land a keyword at evidence position ≥5 (so it scores 0), the five
+    // keywords before it must be MATCHABLE — otherwise the OOV fix collapses
+    // it to an earlier position. A padding skill owns the first five so the
+    // target `f`/`g` genuinely sit at evidence positions 5/6 → 0 points.
+    expect(points(['f', 'g'], ['a', 'b', 'c', 'd', 'e', 'f', 'g'], 'tgt', ['a', 'b', 'c', 'd', 'e'])).toBe(0);
     // Sanity: the same skill owning kw[0] scores only the 1st-position weight.
-    expect(points(['a', 'f', 'g'], ['a', 'b', 'c', 'd', 'e', 'f', 'g'])).toBe(10);
+    expect(points(['a', 'f', 'g'], ['a', 'b', 'c', 'd', 'e', 'f', 'g'], 'tgt2', ['b', 'c', 'd', 'e'])).toBe(10);
   });
 
   it('accumulates disjoint positional hits (1st + 4th = 13)', () => {
-    expect(points(['a', 'd'], ['a', 'b', 'c', 'd', 'e'])).toBe(13);
+    // Query [a,b,c,d,e]; the target owns a (pos 0 → 10) and d (pos 3 → 3).
+    // b/c/e must be matchable (via a padding skill) so d stays at position 3
+    // rather than collapsing to position 1. 10 + 3 = 13.
+    expect(points(['a', 'd'], ['a', 'b', 'c', 'd', 'e'], 'tgt', ['b', 'c', 'e'])).toBe(13);
   });
 
   it('scores 0 when the skill owns none of the query keywords (dropped)', () => {
@@ -189,10 +213,18 @@ describe('scoreSkills — semantic boost is linear around the threshold', () => 
 
 describe('scoreSkills — score = points × boost, strict > 10 gate', () => {
   it('points ≥ 12 passes unconditionally (12 × 1.0 > 10)', () => {
-    // 1st + 4th = 10 + 3 = 13; with no semantic hit the boost is 1.0.
-    const r = one(mkSkill('s', ['a', 'd']), ['a', 'b', 'c', 'd', 'e']);
-    expect(r!.points).toBe(13);
-    expect(r!.score).toBeGreaterThan(10);
+    // 1st + 4th = 10 + 3 = 13; with no semantic hit the boost is 1.0. b/c/e
+    // are matchable via a padding skill so d stays at evidence position 3.
+    setLocalScopes({ tgt: 'proj', pad: 'proj' });
+    const ranked = scoreSkills({
+      skills: [mkSkill('tgt', ['a', 'd']), mkSkill('pad', ['b', 'c', 'e'])],
+      keywords: ['a', 'b', 'c', 'd', 'e'],
+      semanticResults: [],
+      threshold: THRESHOLD,
+    });
+    const r = ranked.find(x => x.skill.name === 'tgt')!;
+    expect(r.points).toBe(13);
+    expect(r.score).toBeGreaterThan(10);
   });
 
   it('points = 10 needs a semantic hit (10 × 1.0 is NOT > 10)', () => {
@@ -204,16 +236,34 @@ describe('scoreSkills — score = points × boost, strict > 10 gate', () => {
   });
 
   it('points ≤ 5 can never clear the floor (5 × 1.5 = 7.5)', () => {
-    // 5th-position keyword only: 2 points; even at perfect similarity the
-    // score is far below 10 → dropped.
-    expect(one(mkSkill('s', ['e']), ['a', 'b', 'c', 'd', 'e'], [wikiRow('proj:s', 1.0)])).toBeNull();
+    // 5th-position keyword = 2 points. To land `e` at evidence position 4,
+    // a/b/c/d must be matchable (padding skill) so `e` doesn't collapse to
+    // position 0 (weight 10). Even at perfect similarity the score is
+    // 2 × 1.5 = 3.0, far below 10 → dropped.
+    setLocalScopes({ tgt: 'proj', pad: 'proj' });
+    expect(
+      scoreSkills({
+        skills: [mkSkill('tgt', ['e']), mkSkill('pad', ['a', 'b', 'c', 'd'])],
+        keywords: ['a', 'b', 'c', 'd', 'e'],
+        semanticResults: [wikiRow('proj:tgt', 1.0)],
+        threshold: THRESHOLD,
+      }).find(x => x.skill.name === 'tgt'),
+    ).toBeUndefined();
   });
 
   it('a 7-point match rides a genuine semantic hit but still fails (7 × 1.4 = 9.8)', () => {
-    // 2nd-position keyword = 7 points. Even a strong 0.9 similarity
-    // (boost 1.4) gives 9.8, which does NOT clear the strict > 10 gate.
-    const r = one(mkSkill('s', ['b']), ['a', 'b', 'c', 'd', 'e'], [wikiRow('proj:s', 0.9)]);
-    expect(r).toBeNull();
+    // 2nd-position keyword = 7 points. `a` must be matchable (padding skill)
+    // so `b` stays at evidence position 1 (weight 7), not position 0 (10).
+    // Even a strong 0.9 similarity (boost 1.4) gives 9.8, NOT > 10 → dropped.
+    setLocalScopes({ tgt: 'proj', pad: 'proj' });
+    expect(
+      scoreSkills({
+        skills: [mkSkill('tgt', ['b']), mkSkill('pad', ['a', 'c', 'd', 'e'])],
+        keywords: ['a', 'b', 'c', 'd', 'e'],
+        semanticResults: [wikiRow('proj:tgt', 0.9)],
+        threshold: THRESHOLD,
+      }).find(x => x.skill.name === 'tgt'),
+    ).toBeUndefined();
   });
 
   it('a 10-point match with a 0.7 hit passes (10 × 1.2 = 12 > 10)', () => {
@@ -279,6 +329,102 @@ describe('scoreSkills — P1 scope collision (similarity matched by qualified ti
     expect(ranked[0].boost).toBeCloseTo(1.4, 10);
     expect(ranked[0].score).toBeCloseTo(23.8, 10);
     expect(ranked[0].similarity).toBeCloseTo(0.9, 10);
+  });
+});
+
+describe('scoreSkills — P1 OOV: unmatchable concepts do not distort positions', () => {
+  // The extractor may emit arbitrary concepts not in any skill's keyword set
+  // (e.g. "pg_dump"). Under the OLD scorer, such a concept at position 1
+  // would demote a real keyword from weight 10 to weight 7 — and with a
+  // 0.9/0.5 boost that flips a match past the strict >10 gate (10×1.4=14
+  // passes vs 7×1.4=9.8 fails). The fix: the scorer drops unmatchable
+  // concepts BEFORE assigning positions, so positional weights apply to
+  // ranked MATCHING evidence, not the raw LLM list. The extractor stays free
+  // to emit arbitrary concepts (useful for the freeform/semantic path).
+
+  it('property: inserting an OOV concept ahead of real keywords changes nothing', () => {
+    // Query A = [backup, postgres]; Query B = [pg_dump, backup, postgres]
+    // where pg_dump is NOT owned by any skill. The relative points of the
+    // backup/postgres skills must be identical between A and B — the OOV
+    // concept is dropped before positions are assigned.
+    //
+    // Both skills own only one query keyword (10 / 7 pts), which sits AT or
+    // BELOW the strict >10 floor, so a matching-scope semantic hit (sim 1.0
+    // → boost 1.5) is attached to make them readable through the gate. The
+    // boost is identical for A and B, so it cannot mask a positional change.
+    const backup = mkSkill('backup', ['backup']);
+    const postgres = mkSkill('postgres', ['postgres']);
+    setLocalScopes({ backup: 'proj', postgres: 'proj' });
+    const sem = [wikiRow('proj:backup', 1.0), wikiRow('proj:postgres', 1.0)];
+    const scoreBoth = (kws: string[]) =>
+      scoreSkills({ skills: [backup, postgres], keywords: kws, semanticResults: sem, threshold: THRESHOLD });
+
+    const a = scoreBoth(['backup', 'postgres']);
+    const b = scoreBoth(['pg_dump', 'backup', 'postgres']);
+
+    // backup = evidence[0] → 10 in both; postgres = evidence[1] → 7 in both.
+    const aBackup = a.find(x => x.skill.name === 'backup')!;
+    const aPg = a.find(x => x.skill.name === 'postgres')!;
+    const bBackup = b.find(x => x.skill.name === 'backup')!;
+    const bPg = b.find(x => x.skill.name === 'postgres')!;
+    expect(aBackup.points).toBe(bBackup.points); // 10 === 10
+    expect(aPg.points).toBe(bPg.points); // 7 === 7
+    expect(aBackup.points).toBe(10);
+    expect(aPg.points).toBe(7);
+    // pg_dump contributed zero entries (no skill owns it) — same count.
+    expect(a).toHaveLength(b.length);
+  });
+
+  it('an OOV concept at position 1 does NOT demote a 10-pt match to 7', () => {
+    // The exact gate-flip scenario from the review: a skill owning `backup`
+    // with a 0.9 similarity (boost 1.4). With the OOV concept dropped,
+    // backup stays at evidence position 0 → 10 × 1.4 = 14 > 10 (PASSES).
+    // Under the old scorer it would have been 7 × 1.4 = 9.8 (DROPPED).
+    setLocalScopes({ backup: 'proj' });
+    const ranked = scoreSkills({
+      skills: [mkSkill('backup', ['backup'])],
+      keywords: ['pg_dump', 'backup', 'postgres'],
+      semanticResults: [wikiRow('proj:backup', 0.9)],
+      threshold: THRESHOLD,
+    });
+    expect(ranked).toHaveLength(1);
+    expect(ranked[0].points).toBe(10);
+    expect(ranked[0].boost).toBeCloseTo(1.4, 10);
+    expect(ranked[0].score).toBeCloseTo(14, 10);
+  });
+
+  it('an OOV-only query scores 0 (no matchable evidence)', () => {
+    // If every extracted keyword is unmatchable, there is no evidence → no
+    // candidates (pure-semantic entry remains impossible by construction).
+    setLocalScopes({ s: 'proj' });
+    const ranked = scoreSkills({
+      skills: [mkSkill('s', ['backup'])],
+      keywords: ['pg_dump', 'wal_archive'],
+      semanticResults: [wikiRow('proj:s', 1.0)],
+      threshold: THRESHOLD,
+    });
+    expect(ranked).toHaveLength(0);
+  });
+});
+
+describe('scoreSkills — P2 duplicates: a skill owns a keyword ONCE', () => {
+  it('duplicate skill-keyword entries do not manufacture points', () => {
+    // skill keywords ["code","code"] + query ["code"] must be 10, not 10+10=20.
+    // The scorer dedups a skill's own keyword set when building the index.
+    expect(points(['code', 'code'], ['code'], 'dup-skill')).toBe(10);
+  });
+
+  it('duplicate query keywords do not manufacture points', () => {
+    // query ["code","code"] against skill ["code"] must be 10, not 10+7=17.
+    // extractKeywords dedups the query preserving first occurrence; the
+    // scorer also dedups defensively so the positional weight applies once.
+    expect(points(['code'], ['code', 'code'], 'dup-query')).toBe(10);
+  });
+
+  it('dedup keeps first occurrence (significance order preserved)', () => {
+    // query [a, a, b]: a is deduped to evidence[0] (weight 10), b is
+    // evidence[1] (weight 7) → 17, NOT a=10+a=7+b=5=22.
+    expect(points(['a', 'b'], ['a', 'a', 'b'], 'dedup-order')).toBe(17);
   });
 });
 

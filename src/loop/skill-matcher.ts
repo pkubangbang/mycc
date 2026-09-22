@@ -150,16 +150,27 @@ function buildSimilarityByTitle(
  *
  * PRECONDITION — the caller MUST pass `keywords` already lowercased and
  * significance-ordered. `extractKeywords` (src/loop/keyword-extractor.ts)
- * guarantees both: it lowercases each keyword and the LLM prompt enforces
- * descending importance (1st keyword = most discriminative). Neither consumer
- * re-lowercases the query side; this function relies on that invariant.
+ * guarantees both: it lowercases each keyword, deduplicates preserving
+ * first-occurrence order, and the LLM prompt enforces descending importance
+ * (1st keyword = most discriminative). Neither consumer re-lowercases the
+ * query side; this function relies on that invariant.
  *
  * Scoring (the single shared contract):
- *   1. Positional points: for each query keyword `kw[i]` (i < 5), every skill
- *      that owns `kw[i]` as an exact case-insensitive token (lowercased
- *      skill-side keywords) earns `KEYWORD_WEIGHTS[i]` points. Keywords
- *      beyond the 5th are ignored. Only skills with points > 0 can appear
+ *   1. Positional points: FIRST the query keywords are reduced to MATCHING
+ *      EVIDENCE — those present in the skill keyword index — preserving the
+ *      LLM's significance order. Unmatchable concepts the extractor emitted
+ *      (e.g. "pg_dump" when no skill owns it) are dropped BEFORE positions
+ *      are assigned, so a vocabulary mismatch can never demote a real
+ *      keyword from position 1 (weight 10) to position 2 (weight 7). The
+ *      positional weights [10,7,5,3,2] then apply to the FIRST 5 matching
+ *      evidence items: each skill owning `evidence[i]` as an exact
+ *      case-insensitive token earns `KEYWORD_WEIGHTS[i]` points. Evidence
+ *      beyond the 5th is ignored. Only skills with points > 0 can appear
  *      (pure-semantic entry is impossible by construction).
+ *      Duplicate handling: a skill's keywords are deduplicated (a skill
+ *      owns a keyword ONCE, not N times), and duplicate query keywords are
+ *      deduplicated preserving first occurrence — so `["code","code"]` never
+ *      earns `10+7`, only `10`.
  *   2. Semantic boost: for each scored skill, look up its wiki similarity by
  *      FULL qualified title (scope-aware — see {@link buildQualifiedTitleIndex}).
  *      When `sim > threshold`, `boost = 1 + (sim - threshold)`; otherwise
@@ -189,21 +200,44 @@ export function scoreSkills(args: {
   const qualifiedTitleByName = buildQualifiedTitleIndex(skills);
   const similarityByTitle = buildSimilarityByTitle(semanticResults);
 
-  // Phase 1: positional-points scoreboard. Build a keyword→skills index once,
-  // then a single linear pass over the (first 5) query keywords.
+  // Phase 1: positional-points scoreboard. Build a keyword→skills index once.
+  // A skill's keywords are DEDUPLICATED (a skill owns a keyword once, not N
+  // times), so duplicate frontmatter entries can never manufacture extra
+  // points (e.g. skill ["code","code"] + query ["code"] = 10, not 20).
   const index = new Map<string, Skill[]>();
   for (const skill of skills) {
+    const seen = new Set<string>();
     for (const kw of skill.keywords) {
       const key = kw.toLowerCase();
+      if (seen.has(key)) continue; // dedup within this skill's keyword set
+      seen.add(key);
       const bucket = index.get(key);
       if (bucket) bucket.push(skill);
       else index.set(key, [skill]);
     }
   }
+
+  // Reduce the LLM's keyword list to MATCHING EVIDENCE: keep only keywords
+  // that at least one skill owns, PRESERVING the LLM's significance order.
+  // This is the P1 OOV fix — an unmatchable concept (e.g. "pg_dump" when no
+  // skill owns it) is dropped BEFORE positional weights are assigned, so it
+  // cannot demote a real keyword from position 1 (weight 10) to position 2
+  // (weight 7). Positional weights apply to ranked MATCHING evidence, not to
+  // the raw LLM keyword list. Duplicate query keywords are also dropped here
+  // (defensive — extractKeywords already dedups preserving first occurrence).
+  const seenQuery = new Set<string>();
+  const evidence: string[] = [];
+  for (const kw of keywords) {
+    if (seenQuery.has(kw)) continue; // dedup, keep first occurrence
+    seenQuery.add(kw);
+    if (index.has(kw)) evidence.push(kw);
+  }
+
+  // Assign positional weights to the (first 5) matching evidence items.
   const scoreboard = new Map<string, { skill: Skill; points: number }>();
-  for (let i = 0; i < keywords.length; i++) {
+  for (let i = 0; i < evidence.length; i++) {
     if (i >= KEYWORD_WEIGHTS.length) break; // only first 5 score
-    const found = index.get(keywords[i]);
+    const found = index.get(evidence[i]);
     if (!found) continue;
     const weight = KEYWORD_WEIGHTS[i];
     for (const skill of found) {

@@ -446,12 +446,21 @@ describe('handleCollect — composite keyword extraction (integration)', () => {
   it('RANKING: a weak 7-pt match needs a strong semantic hit to pass', async () => {
     // 2nd-position keyword only = 7 pts. A 0.9 similarity (boost 1.4) gives
     // 9.8, which does NOT clear the strict >10 gate → no HINT.
+    //
+    // NOTE: `foo` must be matchable (owned by a padding skill) so `bar` stays
+    // at evidence position 1 (weight 7). Under the OOV fix, an unmatchable
+    // `foo` would be dropped and `bar` would collapse to position 0 (weight
+    // 10 → 10×1.4=14 > 10, wrongly passing). The padding skill owns `foo`
+    // only and is absent from the wiki window, so it never surfaces itself.
     setExtractionResult({
       status: 'success',
       keywords: ['foo', 'bar'],
       freeformQuery: 'bar handling',
     });
-    const skills = [{ name: 'weak-match', description: 'W', keywords: ['bar'] }];
+    const skills = [
+      { name: 'foo-pad', description: 'F', keywords: ['foo'] },
+      { name: 'weak-match', description: 'W', keywords: ['bar'] },
+    ];
     const env = makeEnvWithSkills(skills, [{ title: 'project:weak-match', similarity: 0.9 }]);
     const turn: TurnVars = createTurnVars({ lastUserQuery: 'tell me about bar' });
 
