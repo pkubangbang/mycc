@@ -54,6 +54,80 @@ const SKILL_OVERSIZE_THRESHOLD = 5;
  */
 const SKILL_SEMANTIC_TOPK = 10;
 
+// ── Baseline skill-match gate ───────────────────────────────────────────
+// Replaces both the old noisy `Z > 0` bidirectional-substring `includes`
+// filter AND the reverted κσ hypergeometric adaptive gates. The match
+// predicate is a single, readable bar:
+//
+//   baseline = min(Y - 1, (X / W) * Y)
+//   match    = Z >= baseline        (Z = exact-token intersection count)
+//
+// where:
+//   X = per-skill keyword count
+//   W = total keyword-universe size (loader.getSkillKeywords().length)
+//   Y = query keyword count, clamped to [SKILL_QUERY_KW_MIN, SKILL_QUERY_KW_MAX]
+//   Z = |query keywords ∩ skill keywords| (exact, case-insensitive, NO substring)
+//
+// Why this shape (vs the reverted κσ derivation):
+//   - (X / W) * Y is E[Z | null] — the overlap expected by chance. Using it
+//     directly as the bar gives proportionality (a fat skill in a small
+//     universe is held to a higher bar) WITHOUT a significance test that
+//     over-suppresses true positives at small W.
+//   - Y - 1 caps the bar at "all-but-one query keyword must hit", so the
+//     demand scales with query length and can never exceed Y (always
+//     satisfiable). This replaces the reverted ρ coverage-eligibility rule:
+//     a vocabulary-bloated skill with huge X pushes E[Z] up, but `min` picks
+//     Y - 1, blocking the self-promotion without a separate rule.
+//   - min() takes the STRICTER of the two: small-skill/large-universe →
+//     E[Z] is tiny → permissive but still rejects zero-overlap; large-skill/
+//     small-universe → Y - 1 caps the demand.
+//
+// Exact-token intersection (not substring `includes`) is retained from the
+// reverted commit — it kills the "go" ↔ "logging" false match. The κσ recall
+// gate, the β precision gate, and the ρ coverage rule are all dropped.
+
+/** Query-keyword-count clamp band. Y is observed query keyword count. */
+const SKILL_QUERY_KW_MIN = 2;
+const SKILL_QUERY_KW_MAX = 5;
+
+/**
+ * Baseline skill-match predicate for one skill.
+ *
+ * `skillKeywords` (length X) and `keywords` (the probe, length Y) are both
+ * lowercased by the caller/extractor; matching is exact-token, not
+ * substring. `W` is the universe size (loader.getSkillKeywords().length),
+ * computed once per pass by the caller — NOT per skill.
+ *
+ * Edge cases:
+ *  - X = 0 (keywordless skill) → Z = 0 → never matches (defers to Branch B).
+ *  - W = 0 (no universe / no skills carry keywords) → falls back to the
+ *    `Z > 0` floor so a single exact-token hit still surfaces the skill.
+ *  - Y clamped to [2, 5]: a 1-keyword query (Y - 1 = 0) would demand nothing,
+ *    so the floor Y = 2 keeps the bar meaningful; huge Y is capped so the
+ *    Y - 1 term doesn't dominate small-W universes.
+ *
+ * Extracted as a named, pure helper so it is unit-testable in isolation
+ * (mirrors computeQuerySource / buildCompositeText / shouldExtract).
+ */
+export function matchesBaselineGate(
+  skillKeywords: string[],
+  keywords: string[],
+  W: number,
+): boolean {
+  const kwSet = new Set(skillKeywords.map(k => k.toLowerCase()));
+  const Z = keywords.filter(kw => kwSet.has(kw)).length;
+  if (Z === 0) return false; // floor: rejects keywordless / zero-overlap skills
+
+  const X = skillKeywords.length;
+  if (X === 0) return false; // defensive (Z > 0 above already covers it)
+  if (W <= 0) return true;   // no universe → no null model → Z > 0 floor
+
+  const Y = Math.min(Math.max(keywords.length, SKILL_QUERY_KW_MIN), SKILL_QUERY_KW_MAX);
+  const expected = (X / W) * Y;     // E[Z | null]
+  const baseline = Math.min(Y - 1, expected);
+  return Z >= baseline;
+}
+
 /**
  * Partition a list of skills into new/suggested/loaded (via
  * getSkillTriologueStatus) and inject a HINT note surfacing them.
@@ -339,14 +413,13 @@ export class SkillSuggester {
     if (keywords.length === 0) return;
 
     const allSkills = ctx.skill.listSkills();
-    const matched = allSkills.filter(s => {
-      const nameLower = s.name.toLowerCase();
-      const kwLower = s.keywords.map(k => k.toLowerCase());
-      return keywords.some(kw =>
-        nameLower.includes(kw) ||
-        kwLower.some(k => k.includes(kw) || kw.includes(k)),
-      );
-    });
+    // Baseline skill-match gate: exact-token intersection + the
+    //   baseline = min(Y - 1, (X / W) * Y)
+    // bar (see matchesBaselineGate). Replaces the old `Z > 0` bidirectional
+    // substring `includes` filter. W (universe size) is computed ONCE per
+    // pass, not per skill.
+    const W = loader.getSkillKeywords().length;
+    const matched = allSkills.filter(s => matchesBaselineGate(s.keywords, keywords, W));
 
     if (matched.length === 0) return;
 
