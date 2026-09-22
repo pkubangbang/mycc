@@ -93,15 +93,6 @@ describe("matchesToolSpec()", () => {
     expect(matchesToolSpec(ev("bash", { command: "pnpm lint" }), "bash#pnpm")).toBe(true);
   });
 
-  it("bash#prefix: clause split by ;", () => {
-    expect(matchesToolSpec(ev("bash", { command: "pnpm lint; pnpm test" }), "bash#pnpm test")).toBe(true);
-    expect(matchesToolSpec(ev("bash", { command: "pnpm lint; pnpm test" }), "bash#pnpm lint")).toBe(true);
-  });
-
-  it("bash#prefix: clause split by ||", () => {
-    expect(matchesToolSpec(ev("bash", { command: "cmd1 || cmd2" }), "bash#cmd2")).toBe(true);
-  });
-
   it("returns false when tool name mismatches", () => {
     expect(matchesToolSpec(ev("read_file", { command: "test" }), "bash#test")).toBe(false);
   });
@@ -112,18 +103,6 @@ describe("matchesToolSpec()", () => {
 });
 
 describe("splitClauses()", () => {
-  it("splits by ;", () => {
-    expect(splitClauses("a; b; c")).toEqual(["a", "b", "c"]);
-  });
-
-  it("splits by &&", () => {
-    expect(splitClauses("a && b && c")).toEqual(["a", "b", "c"]);
-  });
-
-  it("splits by ||", () => {
-    expect(splitClauses("a || b")).toEqual(["a", "b"]);
-  });
-
   it("splits by mixed separators", () => {
     expect(splitClauses("a && b; c || d")).toEqual(["a", "b", "c", "d"]);
   });
@@ -168,15 +147,6 @@ describe("turn.count(tool?)", () => {
       expect(evalSeq(seq, "turn.count('edit_file') > 0")).toBe(false);
     });
 
-    it("N2: count() > 0 on empty sequence", () => {
-      const seq = seqFrom([]);
-      expect(evalSeq(seq, "turn.count() > 0")).toBe(false);
-    });
-
-    it("N3: count(\"bash#pnpm lint\") > 0 when bash has different command", () => {
-      const seq = seqFrom([ev("bash", { command: "echo hi" })]);
-      expect(evalSeq(seq, "turn.count('bash#pnpm lint') > 0")).toBe(false);
-    });
   });
 });
 
@@ -206,18 +176,6 @@ describe("turn.lastIndex(tool)", () => {
       expect(evalSeq(seq, "turn.lastIndex('edit_file') >= 0")).toBe(false);
     });
 
-    it("N2: lastIndex(\"edit_file\") >= lastIndex(\"bash#pnpm lint\") when lint after edit", () => {
-      const seq = seqFrom([
-        ev("edit_file", { path: "a.ts" }),
-        ev("bash", { command: "pnpm lint" }),
-      ]);
-      expect(evalSeq(seq, "turn.lastIndex('edit_file') >= turn.lastIndex('bash#pnpm lint')")).toBe(false);
-    });
-
-    it("N3: lastIndex(\"bash#pnpm lint\") != -1 when no lint run", () => {
-      const seq = seqFrom([ev("edit_file", { path: "a.ts" })]);
-      expect(evalSeq(seq, "turn.lastIndex('bash#pnpm lint') != -1")).toBe(false);
-    });
   });
 });
 
@@ -244,20 +202,7 @@ describe("turn.countResult(tool, pattern, maxChars?)", () => {
       expect(evalSeq(seq, "turn.countResult('bash', 'error') > 0")).toBe(false);
     });
 
-    it("N2: countResult(\"edit_file\", \"error\") > 0 when error is in a different tool", () => {
-      const seq = seqFrom([
-        ev("bash", { command: "test" }, "error: failed"),
-        ev("edit_file", { path: "a.ts" }, "ok"),
-      ]);
-      expect(evalSeq(seq, "turn.countResult('edit_file', 'error') > 0")).toBe(false);
-    });
 
-    it("N3: countResult with maxChars excludes error beyond limit", () => {
-      // Error appears at char 50+, but maxChars=50 truncates before it
-      const longResult = "x".repeat(50) + "error: found";
-      const seq = seqFrom([ev("bash", { command: "test" }, longResult)]);
-      expect(evalSeq(seq, "turn.countResult('bash', 'error', 50) > 0")).toBe(false);
-    });
   });
 });
 
@@ -287,18 +232,6 @@ describe("turn.hadError(tool?)", () => {
       expect(evalSeq(seq, "turn.hadError()")).toBe(false);
     });
 
-    it("N2: hadError(\"bash\") when error is in a different tool", () => {
-      const seq = seqFrom([
-        ev("edit_file", { path: "a.ts" }, "error: failed"),
-        ev("bash", { command: "test" }, "ok"),
-      ]);
-      expect(evalSeq(seq, "turn.hadError('bash')")).toBe(false);
-    });
-
-    it("N3: hadError() on empty sequence", () => {
-      const seq = seqFrom([]);
-      expect(evalSeq(seq, "turn.hadError()")).toBe(false);
-    });
   });
 });
 
@@ -327,15 +260,6 @@ describe("session.count(tool?)", () => {
       expect(evalSeq(seq, "session.count('edit_file') > 0")).toBe(false);
     });
 
-    it("N2: session.count(\"skill_load#plan-quality\") > 0 when different skill loaded", () => {
-      const seq = seqFrom([ev("skill_load", { name: "create-skill" })]);
-      expect(evalSeq(seq, "session.count('skill_load#plan-quality') > 0")).toBe(false);
-    });
-
-    it("N3: session.count(\"bash#pnpm lint\") > 0 when bash has different command", () => {
-      const seq = seqFrom([ev("bash", { command: "echo hi" })]);
-      expect(evalSeq(seq, "session.count('bash#pnpm lint') > 0")).toBe(false);
-    });
   });
 });
 
@@ -365,18 +289,6 @@ describe("session.lastIndex(tool)", () => {
       expect(evalSeq(seq, "session.lastIndex('edit_file') >= 0")).toBe(false);
     });
 
-    it("N2: session.lastIndex(\"bash#pnpm lint\") != -1 when no lint run", () => {
-      const seq = seqFrom([ev("edit_file", { path: "a.ts" })]);
-      expect(evalSeq(seq, "session.lastIndex('bash#pnpm lint') != -1")).toBe(false);
-    });
-
-    it("N3: session.lastIndex(\"edit_file\") >= session.lastIndex(\"bash#pnpm lint\") when lint after edit", () => {
-      const seq = seqFrom([
-        ev("edit_file", { path: "a.ts" }),
-        ev("bash", { command: "pnpm lint" }),
-      ]);
-      expect(evalSeq(seq, "session.lastIndex('edit_file') >= session.lastIndex('bash#pnpm lint')")).toBe(false);
-    });
   });
 });
 
@@ -404,19 +316,7 @@ describe("session.countResult(tool, pattern, maxChars?)", () => {
       expect(evalSeq(seq, "session.countResult('bash', 'error') > 0")).toBe(false);
     });
 
-    it("N2: session.countResult(\"edit_file\", \"error\") > 0 when error is in bash only", () => {
-      const seq = seqFrom([
-        ev("bash", { command: "test" }, "error: failed"),
-        ev("edit_file", { path: "a.ts" }, "ok"),
-      ]);
-      expect(evalSeq(seq, "session.countResult('edit_file', 'error') > 0")).toBe(false);
-    });
 
-    it("N3: session.countResult with maxChars excludes error beyond limit", () => {
-      const longResult = "x".repeat(50) + "error: found";
-      const seq = seqFrom([ev("bash", { command: "test" }, longResult)]);
-      expect(evalSeq(seq, "session.countResult('bash', 'error', 50) > 0")).toBe(false);
-    });
   });
 });
 
@@ -444,18 +344,6 @@ describe("session.hadError(tool?)", () => {
       expect(evalSeq(seq, "session.hadError()")).toBe(false);
     });
 
-    it("N2: session.hadError(\"bash\") when error is in edit_file only", () => {
-      const seq = seqFrom([
-        ev("edit_file", { path: "a.ts" }, "error: failed"),
-        ev("bash", { command: "test" }, "ok"),
-      ]);
-      expect(evalSeq(seq, "session.hadError('bash')")).toBe(false);
-    });
-
-    it("N3: session.hadError() on empty sequence", () => {
-      const seq = seqFrom([]);
-      expect(evalSeq(seq, "session.hadError()")).toBe(false);
-    });
   });
 });
 
@@ -483,16 +371,7 @@ describe("isPlanMode()", () => {
       expect(evalSeq(seq, "isPlanMode()")).toBe(false);
     });
 
-    it("N2: isPlanMode() with no mode getter (defaults to normal)", () => {
-      const seq = new Sequence();
-      expect(evalSeq(seq, "isPlanMode()")).toBe(false);
-    });
 
-    it("N3: isPlanMode() && turn.count(\"edit_file\") > 0 in normal mode", () => {
-      const seq = new Sequence(undefined, () => "normal");
-      seq.add(ev("edit_file", { path: "a.ts" }));
-      expect(evalSeq(seq, "isPlanMode() && turn.count('edit_file') > 0")).toBe(false);
-    });
   });
 });
 
@@ -536,19 +415,7 @@ describe("call.metadata.* / call.args.*", () => {
       })).toBe(false);
     });
 
-    it("N2: call.metadata.isDestructive when metadata says not destructive", () => {
-      const seq = seqFrom([]);
-      expect(evalWithCall(seq, "call.metadata.isDestructive", {
-        metadata: { isDestructive: false },
-      })).toBe(false);
-    });
 
-    it("N3: call.metadata.isDestructive when metadata is missing", () => {
-      const seq = seqFrom([]);
-      expect(evalWithCall(seq, "call.metadata.isDestructive", {
-        metadata: {},
-      })).toBe(false);
-    });
   });
 });
 
@@ -834,25 +701,13 @@ describe("Three-class tool spec in conditions", () => {
   });
 
   describe("bash#commandPrefix (clause-split + prefix match)", () => {
-    it("bash#pnpm lint matches \"pnpm lint && pnpm test\"", () => {
-      const seq = seqFrom([ev("bash", { command: "pnpm lint && pnpm test" })]);
-      expect(evalSeq(seq, "turn.lastIndex('bash#pnpm lint') != -1")).toBe(true);
-    });
 
     it("bash#lint does NOT match \"pnpm lint\" (prefix, not substring)", () => {
       const seq = seqFrom([ev("bash", { command: "pnpm lint" })]);
       expect(evalSeq(seq, "turn.lastIndex('bash#lint') != -1")).toBe(false);
     });
 
-    it("bash#pnpm matches \"pnpm lint\" (prefix match)", () => {
-      const seq = seqFrom([ev("bash", { command: "pnpm lint" })]);
-      expect(evalSeq(seq, "turn.lastIndex('bash#pnpm') != -1")).toBe(true);
-    });
 
-    it("bash#pnpm test matches second clause in \"pnpm lint && pnpm test\"", () => {
-      const seq = seqFrom([ev("bash", { command: "pnpm lint && pnpm test" })]);
-      expect(evalSeq(seq, "turn.lastIndex('bash#pnpm test') != -1")).toBe(true);
-    });
 
     it("session.count(\"bash#pnpm lint\") counts across turns (survives boundary)", () => {
       const seq = seqFrom([

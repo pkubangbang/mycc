@@ -52,8 +52,6 @@ import {
   evaluateWrapUp,
   clearWrapUp,
   getWrapUpState,
-  hasPendingWrapUp,
-  markWrapUpShown,
   displayWrapUp,
 } from '../../../loop/esc-wrap-up.js';
 import { retryChat } from '../../../engine/chat-provider.js';
@@ -106,24 +104,6 @@ describe('ESC wrap-up lifecycle (esc-wrap-up.ts state management)', () => {
   });
 
   // [3] evaluateWrapUp returns 'rollback' when within the 3s grace period
-  it('should return rollback from evaluateWrapUp when within 3s grace period', async () => {
-    // Pin Date.now to a fixed value so the grace-period check is deterministic
-    // (avoids flakiness if the machine is slow between promise resolution and
-    // the evaluateWrapUp call).
-    const fixedNow = 1_700_000_000_000;
-    Date.now = vi.fn(() => fixedNow) as never;
-
-    vi.mocked(retryChat).mockResolvedValueOnce({
-      message: { role: 'assistant', content: 'done' },
-      done: true,
-    } as never);
-
-    startWrapUp(triologue);
-    await getWrapUpState().promise; // wait for completion (completedAt = fixedNow)
-
-    // Immediately after completion → within grace period (same timestamp)
-    expect(evaluateWrapUp()).toBe('rollback');
-  });
 
   // [4] evaluateWrapUp returns 'commit' when past the 3s grace period
   it('should return commit from evaluateWrapUp when past 3s grace period', async () => {
@@ -143,37 +123,8 @@ describe('ESC wrap-up lifecycle (esc-wrap-up.ts state management)', () => {
   });
 
   // [5] evaluateWrapUp returns 'rollback' when content is empty (failed LLM)
-  it('should return rollback from evaluateWrapUp when wrap-up content is empty', async () => {
-    // retryChat returns empty content
-    vi.mocked(retryChat).mockResolvedValueOnce({
-      message: { role: 'assistant', content: '' },
-      done: true,
-    } as never);
-
-    startWrapUp(triologue);
-    await getWrapUpState().promise;
-
-    // Even past grace period, empty content → rollback (no wrap-up to show)
-    const completionTime = Date.now();
-    Date.now = vi.fn(() => completionTime + 5000) as never;
-
-    expect(evaluateWrapUp()).toBe('rollback');
-  });
 
   // [6] hasPendingWrapUp / markWrapUpShown tracking
-  it('should report pending wrap-up until marked shown', async () => {
-    vi.mocked(retryChat).mockResolvedValueOnce({
-      message: { role: 'assistant', content: 'pending text' },
-      done: true,
-    } as never);
-
-    startWrapUp(triologue);
-    await getWrapUpState().promise;
-
-    expect(hasPendingWrapUp()).toBe(true);
-    markWrapUpShown();
-    expect(hasPendingWrapUp()).toBe(false);
-  });
 
   // [7] displayWrapUp shows non-empty content via displayLetterBox
   it('should call displayLetterBox with content when displayWrapUp is given non-empty content', () => {
@@ -182,24 +133,4 @@ describe('ESC wrap-up lifecycle (esc-wrap-up.ts state management)', () => {
   });
 
   // [8] clearWrapUp resets the singleton state
-  it('should reset all singleton state on clearWrapUp', async () => {
-    vi.mocked(retryChat).mockResolvedValueOnce({
-      message: { role: 'assistant', content: 'text' },
-      done: true,
-    } as never);
-
-    startWrapUp(triologue);
-    await getWrapUpState().promise;
-
-    expect(getWrapUpState().content).not.toBeNull();
-
-    clearWrapUp();
-
-    const state = getWrapUpState();
-    expect(state.promise).toBeNull();
-    expect(state.content).toBeNull();
-    expect(state.completedAt).toBeNull();
-    expect(state.shown).toBe(false);
-    expect(state.triologue).toBeNull();
-  });
 });

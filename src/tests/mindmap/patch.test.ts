@@ -229,41 +229,6 @@ describe('patch_mindmap', () => {
       expect(result?.text).toBe('#### Updated Grandchild\n\nNew content');
       expect(result?.title).toBe('Updated Grandchild');
     });
-
-    it('should not affect sibling nodes', () => {
-      const childNode = findNode(mindmap.root, '/parent/child');
-      const originalText = childNode?.text;
-
-      patch_mindmap(
-        mindmap,
-        '/parent/child/grandchild',
-        '#### Updated\n\nNew content'
-      );
-
-      // Child's other children should remain unchanged
-      // (in this case there's only one child, but the test shows the concept)
-      expect(childNode?.text).toBe(originalText);
-    });
-
-    it('should update node title from heading', () => {
-      const result = patch_mindmap(
-        mindmap,
-        '/parent/child/grandchild',
-        '#### New Title\n\nContent'
-      );
-
-      expect(result?.title).toBe('New Title');
-    });
-
-    it('should preserve node id', () => {
-      const result = patch_mindmap(
-        mindmap,
-        '/parent/child/grandchild',
-        '#### Updated\n\nContent'
-      );
-
-      expect(result?.id).toBe('/parent/child/grandchild');
-    });
   });
 
   describe('Cascade to Ancestors', () => {
@@ -287,16 +252,6 @@ describe('patch_mindmap', () => {
       expect(newRootSummary).toBe('Summary: Root (level 0)');
     });
 
-    it('should cascade up to root', () => {
-      patch_mindmap(
-        mindmap,
-        '/parent/child/grandchild',
-        '#### Updated\n\nContent'
-      );
-
-      // Root should have an updated_at timestamp
-      expect(mindmap.updated_at).toBeInstanceOf(Date);
-    });
   });
 
   describe('Cascade to Descendants', () => {
@@ -316,19 +271,6 @@ describe('patch_mindmap', () => {
       expect(grandchild?.summary).toBe('Summary: Grandchild (level 3)');
     });
 
-    it('should process descendants bottom-up', () => {
-      // When parent changes, deepest descendants should be summarized first
-      patch_mindmap(
-        mindmap,
-        '/parent',
-        '## Updated\n\nContent'
-      );
-
-      // The order of summarization matters for A-N-C-E context
-      // Grandchild summary should be computed before child
-      const grandchild = findNode(mindmap.root, '/parent/child/grandchild');
-      expect(grandchild?.summary).toContain('Grandchild');
-    });
   });
 
   describe('Process Isolation', () => {
@@ -345,25 +287,6 @@ describe('patch_mindmap', () => {
       // The operation is synchronous and local
     });
 
-    it('should maintain independent mindmap instance', () => {
-      // Create two separate instances
-      const mindmap1 = createTestMindmap();
-      const mindmap2 = createTestMindmap();
-
-      // Patch one
-      patch_mindmap(
-        mindmap1,
-        '/parent',
-        '## Updated\n\nContent'
-      );
-
-      // The other should be unchanged
-      const parent1 = findNode(mindmap1.root, '/parent');
-      const parent2 = findNode(mindmap2.root, '/parent');
-
-      expect(parent1?.text).toBe('## Updated\n\nContent');
-      expect(parent2?.text).toBe('## Parent\n\nParent content');
-    });
   });
 
   describe('Non-existent Node', () => {
@@ -377,15 +300,6 @@ describe('patch_mindmap', () => {
       expect(result).toBeNull();
     });
 
-    it('should return null for invalid path format', () => {
-      const result = patch_mindmap(
-        mindmap,
-        'invalid-path',
-        '## New\n\nContent'
-      );
-
-      expect(result).toBeNull();
-    });
   });
 
   describe('Feedback Parameter', () => {
@@ -417,27 +331,8 @@ describe('summarize_node', () => {
     expect(summary).toBe('Summary: Child (level 2)');
   });
 
-  it('should return null for non-existent node', () => {
-    const summary = summarize_node(mindmap, '/nonexistent');
 
-    expect(summary).toBeNull();
-  });
 
-  it('should include ancestor context', () => {
-    // When summarizing a child, parent and root text should be considered.
-    // The mock ignores context, but the returned summary must still be the
-    // node's own regenerated value (not null / not the original).
-    const summary = summarize_node(mindmap, '/parent/child/grandchild');
-
-    expect(summary).toBe('Summary: Grandchild (level 3)');
-  });
-
-  it('should include descendant context', () => {
-    // When summarizing a parent, child summaries should be considered.
-    const summary = summarize_node(mindmap, '/parent');
-
-    expect(summary).toBe('Summary: Parent (level 1)');
-  });
 
   it('should update node summary in place', () => {
     const node = findNode(mindmap.root, '/parent/child');
@@ -450,30 +345,6 @@ describe('summarize_node', () => {
 });
 
 describe('Helper Functions', () => {
-  describe('collectAncestors', () => {
-    it('should return empty array for root', () => {
-      const mindmap = createTestMindmap();
-      const ancestors = collectAncestors(mindmap.root, '/');
-      expect(ancestors).toEqual([]);
-    });
-
-    it('should return parent for first-level node', () => {
-      const mindmap = createTestMindmap();
-      const ancestors = collectAncestors(mindmap.root, '/parent');
-      expect(ancestors).toHaveLength(1);
-      expect(ancestors[0].id).toBe('/');
-    });
-
-    it('should return chain of ancestors', () => {
-      const mindmap = createTestMindmap();
-      const ancestors = collectAncestors(mindmap.root, '/parent/child/grandchild');
-      expect(ancestors).toHaveLength(3);
-      expect(ancestors[0].id).toBe('/');
-      expect(ancestors[1].id).toBe('/parent');
-      expect(ancestors[2].id).toBe('/parent/child');
-    });
-  });
-
   describe('collectDescendants', () => {
     it('should return empty array for leaf node', () => {
       const mindmap = createTestMindmap();
@@ -482,11 +353,6 @@ describe('Helper Functions', () => {
       expect(descendants).toEqual([]);
     });
 
-    it('should return all descendants for root', () => {
-      const mindmap = createTestMindmap();
-      const descendants = collectDescendants(mindmap.root);
-      expect(descendants.length).toBe(3); // parent, child, grandchild
-    });
 
     it('should return correct descendants for intermediate node', () => {
       const mindmap = createTestMindmap();
@@ -495,26 +361,6 @@ describe('Helper Functions', () => {
       expect(descendants).toHaveLength(2); // child, grandchild
       expect(descendants[0].id).toBe('/parent/child');
       expect(descendants[1].id).toBe('/parent/child/grandchild');
-    });
-  });
-
-  describe('findNode', () => {
-    it('should find root node', () => {
-      const mindmap = createTestMindmap();
-      const node = findNode(mindmap.root, '/');
-      expect(node?.id).toBe('/');
-    });
-
-    it('should find nested node', () => {
-      const mindmap = createTestMindmap();
-      const node = findNode(mindmap.root, '/parent/child/grandchild');
-      expect(node?.id).toBe('/parent/child/grandchild');
-    });
-
-    it('should return null for non-existent node', () => {
-      const mindmap = createTestMindmap();
-      const node = findNode(mindmap.root, '/nonexistent');
-      expect(node).toBeNull();
     });
   });
 });

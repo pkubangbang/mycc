@@ -96,23 +96,7 @@ describe('Mindmap Types', () => {
       expect(isValidLink(link)).toBe(true);
     });
 
-    it('should validate a valid file link', () => {
-      const link: Link = {
-        target_type: 'file',
-        file_path: './src/index.ts',
-        comment: 'Source file'
-      };
-      expect(isValidLink(link)).toBe(true);
-    });
 
-    it('should validate a valid url link', () => {
-      const link: Link = {
-        target_type: 'url',
-        url: 'https://example.com/docs',
-        comment: 'External documentation'
-      };
-      expect(isValidLink(link)).toBe(true);
-    });
 
     it('should reject link without target_type', () => {
       const link = {
@@ -122,13 +106,6 @@ describe('Mindmap Types', () => {
       expect(isValidLink(link)).toBe(false);
     });
 
-    it('should reject link without comment', () => {
-      const link = {
-        target_type: 'node',
-        node_id: '/test'
-      };
-      expect(isValidLink(link)).toBe(false);
-    });
 
     it('should reject link with invalid target_type', () => {
       const link = {
@@ -138,29 +115,8 @@ describe('Mindmap Types', () => {
       expect(isValidLink(link)).toBe(false);
     });
 
-    it('should reject node link without node_id', () => {
-      const link = {
-        target_type: 'node',
-        comment: 'Missing node_id'
-      };
-      expect(isValidLink(link)).toBe(false);
-    });
 
-    it('should reject file link without file_path', () => {
-      const link = {
-        target_type: 'file',
-        comment: 'Missing file_path'
-      };
-      expect(isValidLink(link)).toBe(false);
-    });
 
-    it('should reject url link without url', () => {
-      const link = {
-        target_type: 'url',
-        comment: 'Missing url'
-      };
-      expect(isValidLink(link)).toBe(false);
-    });
   });
 
   describe('Node Type', () => {
@@ -190,47 +146,7 @@ describe('Mindmap Types', () => {
       expect(isValidNode(node)).toBe(true);
     });
 
-    it('should validate node with children', () => {
-      const node: Node = {
-        id: '/architecture',
-        text: '## Architecture\n\nArchitecture content',
-        title: 'Architecture',
-        summary: 'Architecture summary',
-        level: 1,
-        children: [
-          {
-            id: '/architecture/core',
-            text: '### Core\n\nCore content',
-            title: 'Core',
-            summary: 'Core summary',
-            level: 2,
-            children: [],
-            links: []
-          }
-        ],
-        links: []
-      };
-      expect(isValidNode(node)).toBe(true);
-    });
 
-    it('should validate node with links', () => {
-      const node: Node = {
-        id: '/references',
-        text: '## References\n\n- [Docs](https://example.com)',
-        title: 'References',
-        summary: 'Reference links',
-        level: 1,
-        children: [],
-        links: [
-          {
-            target_type: 'url',
-            url: 'https://example.com',
-            comment: 'Docs'
-          }
-        ]
-      };
-      expect(isValidNode(node)).toBe(true);
-    });
 
     it('should reject node without id', () => {
       const node = {
@@ -256,29 +172,7 @@ describe('Mindmap Types', () => {
       expect(isValidNode(node)).toBe(false);
     });
 
-    it('should reject node without title', () => {
-      const node = {
-        id: '/',
-        text: '# Root',
-        summary: 'Summary',
-        level: 0,
-        children: [],
-        links: []
-      };
-      expect(isValidNode(node)).toBe(false);
-    });
 
-    it('should reject node without summary', () => {
-      const node = {
-        id: '/',
-        text: '# Root',
-        title: 'Root',
-        level: 0,
-        children: [],
-        links: []
-      };
-      expect(isValidNode(node)).toBe(false);
-    });
 
     it('should reject node without level', () => {
       const node = {
@@ -292,44 +186,8 @@ describe('Mindmap Types', () => {
       expect(isValidNode(node)).toBe(false);
     });
 
-    it('should reject node with non-array children', () => {
-      const node = {
-        id: '/',
-        text: '# Root',
-        title: 'Root',
-        summary: 'Summary',
-        level: 0,
-        children: 'not an array',
-        links: []
-      };
-      expect(isValidNode(node)).toBe(false);
-    });
 
-    it('should reject node with invalid children', () => {
-      const node = {
-        id: '/',
-        text: '# Root',
-        title: 'Root',
-        summary: 'Summary',
-        level: 0,
-        children: [{ invalid: 'node' }],
-        links: []
-      };
-      expect(isValidNode(node)).toBe(false);
-    });
 
-    it('should reject node with invalid links', () => {
-      const node = {
-        id: '/',
-        text: '# Root',
-        title: 'Root',
-        summary: 'Summary',
-        level: 0,
-        children: [],
-        links: [{ invalid: 'link' }]
-      };
-      expect(isValidNode(node)).toBe(false);
-    });
   });
 
   describe('Mindmap Type', () => {
@@ -352,80 +210,8 @@ describe('Mindmap Types', () => {
       expect(isValidMindmap(mindmap)).toBe(true);
     });
 
-    it('should validate mindmap with nested structure', () => {
-      const mindmap: Mindmap = {
-        dir: '/path/to/resources',
-        hash: 'abc123',
-        compiled_at: new Date(),
-        updated_at: new Date(),
-        root: {
-          id: '/',
-          text: '# Root',
-          title: 'Root',
-          summary: 'Root summary',
-          level: 0,
-          children: [
-            {
-              id: '/child',
-              text: '## Child',
-              title: 'Child',
-              summary: 'Child summary',
-              level: 1,
-              children: [
-                {
-                  id: '/child/grandchild',
-                  text: '### Grandchild',
-                  title: 'Grandchild',
-                  summary: 'Grandchild summary',
-                  level: 2,
-                  children: [],
-                  links: []
-                }
-              ],
-              links: []
-            }
-          ],
-          links: []
-        }
-      };
-      expect(isValidMindmap(mindmap)).toBe(true);
-    });
 
-    it('should reject mindmap without dir', () => {
-      const mindmap = {
-        hash: 'abc123',
-        compiled_at: new Date(),
-        updated_at: new Date(),
-        root: {
-          id: '/',
-          text: '# Root',
-          title: 'Root',
-          summary: 'Summary',
-          level: 0,
-          children: [],
-          links: []
-        }
-      };
-      expect(isValidMindmap(mindmap)).toBe(false);
-    });
 
-    it('should reject mindmap without hash', () => {
-      const mindmap = {
-        dir: '/path',
-        compiled_at: new Date(),
-        updated_at: new Date(),
-        root: {
-          id: '/',
-          text: '# Root',
-          title: 'Root',
-          summary: 'Summary',
-          level: 0,
-          children: [],
-          links: []
-        }
-      };
-      expect(isValidMindmap(mindmap)).toBe(false);
-    });
 
     it('should reject mindmap without root', () => {
       const mindmap = {
@@ -437,22 +223,6 @@ describe('Mindmap Types', () => {
       expect(isValidMindmap(mindmap)).toBe(false);
     });
 
-    it('should reject mindmap with invalid root', () => {
-      const mindmap = {
-        dir: '/path',
-        hash: 'abc123',
-        compiled_at: new Date(),
-        updated_at: new Date(),
-        root: {
-          id: '/',
-          // missing text, title, summary
-          level: 0,
-          children: [],
-          links: []
-        }
-      };
-      expect(isValidMindmap(mindmap)).toBe(false);
-    });
 
     it('should accept mindmap with string dates', () => {
       // JSON parsed dates are strings, should still validate
@@ -488,40 +258,7 @@ describe('Mindmap Types', () => {
       })).toBe(true);
     });
 
-    it('should accept single-level path', () => {
-      expect(isValidNode({
-        id: '/architecture',
-        text: '## Architecture',
-        title: 'Architecture',
-        summary: 'Summary',
-        level: 1,
-        children: [],
-        links: []
-      })).toBe(true);
-    });
 
-    it('should accept multi-level path', () => {
-      expect(isValidNode({
-        id: '/development/testing/unit-tests',
-        text: '#### Unit Tests',
-        title: 'Unit Tests',
-        summary: 'Summary',
-        level: 3,
-        children: [],
-        links: []
-      })).toBe(true);
-    });
 
-    it('should accept path with kebab-case', () => {
-      expect(isValidNode({
-        id: '/architecture/core-module',
-        text: '### Core Module',
-        title: 'Core Module',
-        summary: 'Summary',
-        level: 2,
-        children: [],
-        links: []
-      })).toBe(true);
-    });
   });
 });

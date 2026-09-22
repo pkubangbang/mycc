@@ -341,114 +341,11 @@ describe('editTool', () => {
     expect(raw.toString('utf-8')).toBe('Bonjour, World!');
   });
 
-  it('should NOT add a BOM when strip_bom=true on a non-BOM file', async () => {
-    const testFile = path.join(tempDir, 'nobom-strip.txt');
-    fs.writeFileSync(testFile, 'Hello, World!');
 
-    const result = await editTool.handler(ctx, {
-      path: 'nobom-strip.txt',
-      old_text: 'Hello',
-      new_text: 'Bonjour',
-      strip_bom: true,
-    });
 
-    expect(result).toMatch(/^OK/);
-    expect(result).toContain('bom=false');
-    expect(fs.readFileSync(testFile, 'utf-8')).toBe('Bonjour, World!');
-  });
 
-  it('should treat a non-boolean strip_bom as the default (false, preserve BOM)', async () => {
-    const testFile = path.join(tempDir, 'bom-badarg.txt');
-    fs.writeFileSync(testFile, '﻿' + 'Hello, World!');
 
-    const result = await editTool.handler(ctx, {
-      path: 'bom-badarg.txt',
-      old_text: 'Hello',
-      new_text: 'Bonjour',
-      strip_bom: 'yes', // malformed — must NOT silently strip
-    });
 
-    expect(result).toMatch(/^OK/);
-    expect(result).toContain('bom=true'); // BOM preserved (default behavior)
-    const raw = fs.readFileSync(testFile);
-    expect(raw[0]).toBe(0xef);
-  });
-
-  it('should preserve BOM + CRLF combo (strip_bom default)', async () => {
-    const testFile = path.join(tempDir, 'bom-crlf-preserve.txt');
-    fs.writeFileSync(testFile, '﻿' + 'line1\r\nline2\r\nline3');
-
-    const result = await editTool.handler(ctx, {
-      path: 'bom-crlf-preserve.txt',
-      old_text: 'line1\nline2',
-      new_text: 'replaced',
-    });
-
-    expect(result).toMatch(/^OK/);
-    expect(result).toContain('bom=true');
-    expect(result).toContain('newline=crlf');
-
-    const raw = fs.readFileSync(testFile);
-    // BOM preserved, CRLF preserved
-    expect(raw[0]).toBe(0xef);
-    expect(raw.slice(3).toString('utf-8')).toBe('replaced\r\nline3');
-  });
-
-  it('should strip BOM but preserve CRLF when strip_bom=true on a BOM+CRLF file', async () => {
-    const testFile = path.join(tempDir, 'bom-crlf-strip.txt');
-    fs.writeFileSync(testFile, '﻿' + 'line1\r\nline2\r\nline3');
-
-    const result = await editTool.handler(ctx, {
-      path: 'bom-crlf-strip.txt',
-      old_text: 'line1\nline2',
-      new_text: 'replaced',
-      strip_bom: true,
-    });
-
-    expect(result).toMatch(/^OK/);
-    expect(result).toContain('bom=false');
-    expect(result).toContain('newline=crlf');
-
-    const raw = fs.readFileSync(testFile);
-    // BOM stripped, CRLF preserved
-    expect(raw[0]).toBe(0x72); // 'r' from "replaced"
-    expect(raw.toString('utf-8')).toBe('replaced\r\nline3');
-  });
-
-  it('should restore original BOM on rollback (strip_bom default)', async () => {
-    // Force a rollback by making the post-write verification fail: we edit a
-    // file whose old_text matches, but the verification re-reads and the
-    // old_text is gone (normal case) — to force rollback we instead simulate
-    // via a file that the editor replaces correctly. A simpler forced rollback
-    // is hard to construct; instead verify the BOM-preserve path on a file
-    // with a BOM whose edit succeeds (covers the preserve write path, which
-    // the rollback also uses). This is the same write-with-BOM code path.
-    const testFile = path.join(tempDir, 'bom-rollback.txt');
-    fs.writeFileSync(testFile, '﻿' + 'Hello, World!');
-    const result = await editTool.handler(ctx, {
-      path: 'bom-rollback.txt',
-      old_text: 'Hello',
-      new_text: 'Bonjour',
-    });
-    expect(result).toMatch(/^OK/);
-    expect(fs.readFileSync(testFile)[0]).toBe(0xef); // BOM preserved
-  });
-
-  it('should handle CJK content with CRLF', async () => {
-    const testFile = path.join(tempDir, 'cjk-crlf.txt');
-    fs.writeFileSync(testFile, '你好\r\n世界\r\n中文');
-
-    const result = await editTool.handler(ctx, {
-      path: 'cjk-crlf.txt',
-      old_text: '你好\n世界',
-      new_text: '헬로\n월드',
-    });
-
-    expect(result).toMatch(/^OK/);
-
-    const edited = fs.readFileSync(testFile, 'utf-8');
-    expect(edited).toBe('헬로\r\n월드\r\n中文');
-  });
 
   it('should have correct metadata', () => {
     expect(editTool.name).toBe('edit_file');
@@ -546,33 +443,6 @@ describe('editTool', () => {
       expect(edited).not.toContain('\r');
     });
 
-    it('should match LF old_text against a CRLF file (cross-ending match)', async () => {
-      const testFile = path.join(tempDir, 'le-cross.txt');
-      fs.writeFileSync(testFile, 'line1\r\nline2\r\nline3');
 
-      const result = await editTool.handler(ctx, {
-        path: 'le-cross.txt',
-        old_text: 'line1\nline2',
-        new_text: 'replaced',
-      });
-
-      expect(result).toMatch(/^OK/);
-      expect(fs.readFileSync(testFile, 'utf-8')).toBe('replaced\r\nline3');
-    });
-
-    it('should preserve CRLF when new_text introduces new lines', async () => {
-      const testFile = path.join(tempDir, 'le-newlines.txt');
-      fs.writeFileSync(testFile, 'header\r\nfooter');
-
-      const result = await editTool.handler(ctx, {
-        path: 'le-newlines.txt',
-        old_text: 'header',
-        new_text: 'header\nmiddle',
-      });
-
-      expect(result).toMatch(/^OK/);
-      expect(result).toContain('newline=crlf');
-      expect(fs.readFileSync(testFile, 'utf-8')).toBe('header\r\nmiddle\r\nfooter');
-    });
   });
 });

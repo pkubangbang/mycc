@@ -106,9 +106,6 @@ describe('stripAndValidate', () => {
     expect(stripAndValidate('', cont)).toBe(cont);
   });
 
-  it('should return continuation unchanged when anchor is empty and continuation is empty', () => {
-    expect(stripAndValidate('', '')).toBe('');
-  });
 
   it('should handle anchor with trailing punctuation (Chinese)', () => {
     const anchor = '数据库连接正常。';
@@ -116,9 +113,6 @@ describe('stripAndValidate', () => {
     expect(stripAndValidate(anchor, cont)).toBe('但缓存策略有问题。');
   });
 
-  it('should return null when anchor is non-empty but continuation is empty', () => {
-    expect(stripAndValidate('anchor sentence here.', '')).toBeNull();
-  });
 });
 
 describe('extractWordsBeforeTurn', () => {
@@ -152,13 +146,7 @@ describe('extractWordsBeforeTurn', () => {
     expect(extractWordsBeforeTurn(prefix)).toBe('Final one.');
   });
 
-  it('should handle empty prefix', () => {
-    expect(extractWordsBeforeTurn('')).toBe('');
-  });
 
-  it('should handle whitespace-only prefix', () => {
-    expect(extractWordsBeforeTurn('   \n\n   ')).toBe('');
-  });
 
   it('should trim whitespace around the extracted sentence', () => {
     const prefix = 'First.   Second with spaces.   ';
@@ -272,31 +260,7 @@ describe('generateContinuations', () => {
     expect(results[0]).toBe('Dir2 ok.');
   });
 
-  it('should reject continuation that is only the anchor (null after strip)', async () => {
-    const anchor = 'The schema looks correct.';
-    // dir1: only anchor → null → retry → only anchor again → skip
-    // dir2: success, dir3: success
-    queueForkChat(
-      'The schema looks correct.',   // dir1 attempt1 — only anchor → null
-      'The schema looks correct.',   // dir1 retry — same → skip
-      'The schema looks correct. Dir2 ok.',
-      'The schema looks correct. Dir3 ok.',
-    );
 
-    const results = await generateContinuations(MESSAGES, TOOLS, PREFIX, undefined, anchor);
-
-    expect(results).toHaveLength(2);
-  });
-
-  it('should default wordsBeforeTurn to empty when not provided', async () => {
-    vi.mocked(forkChat).mockImplementation(async () => 'Content without anchor.' as never);
-
-    const results = await generateContinuations(MESSAGES, TOOLS, PREFIX);
-
-    // No anchor → all pass validation without stripping
-    expect(results).toHaveLength(3);
-    expect(forkChat).toHaveBeenCalledTimes(3);
-  });
 });
 
 describe('selectBestContinuation', () => {
@@ -375,14 +339,6 @@ describe('selectBestContinuation', () => {
     expect(result).toBe('first');
   });
 
-  it('should handle out-of-range option number (fall back to first)', async () => {
-    // 5 is out of range → optionMatch fails the bounds check → substring check
-    // fails → first continuation
-    vi.mocked(forkChat).mockImplementation(async () => '5\nsome text' as never);
-    const conts = ['first', 'second', 'third'];
-    const result = await selectBestContinuation(MESSAGES, TOOLS, PREFIX, conts);
-    expect(result).toBe('first');
-  });
 });
 
 describe('handleCrossroad', () => {

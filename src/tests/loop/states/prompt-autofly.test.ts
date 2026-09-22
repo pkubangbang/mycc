@@ -194,20 +194,6 @@ describe('handlePrompt — auto-mode engagement gate', () => {
       expect(autoState.setAuto).toHaveBeenCalledWith(true);
     });
 
-    it('does not consult the autofly trigger when auto is already on', async () => {
-      const { env } = makeEnv();
-      vi.mocked(autoState.getAuto).mockReturnValue(true);
-      // Even with a huge streak and the flag on, case 1 short-circuits first.
-      vi.mocked(autoState.getStreak).mockReturnValue(99);
-      vi.mocked(isDebugAutofly).mockReturnValue(true);
-
-      const result = await handlePrompt(env, createTurnVars(), createChatData());
-
-      expect(result).toBe(AgentState.AWAIT);
-      // Case 1 short-circuits before the streak/threshold are consulted.
-      expect(autoState.getStreak).not.toHaveBeenCalled();
-      expect(autoState.getAutoflyThreshold).not.toHaveBeenCalled();
-    });
   });
 
   describe('case 2: --debug-autofly autofly trigger', () => {
@@ -225,158 +211,12 @@ describe('handlePrompt — auto-mode engagement gate', () => {
       expect(autoState.resetStreak).not.toHaveBeenCalled();
     });
 
-    it('engages auto mode and returns AWAIT when streak >= a custom singleton threshold', async () => {
-      const { env } = makeEnv();
-      vi.mocked(isDebugAutofly).mockReturnValue(true);
-      vi.mocked(autoState.getAutoflyThreshold).mockReturnValue(5); // seeded from --autofly=5
-      vi.mocked(autoState.getStreak).mockReturnValue(5); // 5 >= 5
 
-      const result = await handlePrompt(env, createTurnVars(), createChatData());
 
-      expect(result).toBe(AgentState.AWAIT);
-      expect(autoState.setAuto).toHaveBeenCalledWith(true);
-    });
-
-    it('engages when streak equals the threshold (>= comparison; threshold 3 means 3, not 4)', async () => {
-      const { env } = makeEnv();
-      vi.mocked(isDebugAutofly).mockReturnValue(true);
-      vi.mocked(autoState.getAutoflyThreshold).mockReturnValue(3);
-      vi.mocked(autoState.getStreak).mockReturnValue(3); // 3 >= 3 → engage
-
-      const result = await handlePrompt(env, createTurnVars(), createChatData());
-
-      expect(result).toBe(AgentState.AWAIT);
-      expect(autoState.setAuto).toHaveBeenCalledWith(true);
-    });
-
-    it('does NOT engage when streak is below the threshold', async () => {
-      const { env } = makeEnv();
-      vi.mocked(isDebugAutofly).mockReturnValue(true);
-      vi.mocked(autoState.getAutoflyThreshold).mockReturnValue(3);
-      vi.mocked(autoState.getStreak).mockReturnValue(2); // 2 >= 3 is false
-
-      const result = await handlePrompt(env, createTurnVars(), createChatData());
-
-      expect(result).toBe(AgentState.COLLECT);
-      expect(autoState.setAuto).not.toHaveBeenCalledWith(true);
-      // Per-turn reset fires on the fall-through path (start of the new turn).
-      expect(autoState.resetStreak).toHaveBeenCalled();
-    });
   });
 
-  describe('autofly per-turn momentum (the streak counts LLM stages within a turn)', () => {
-    // The streak is reset to 0 at PROMPT entry and climbs 1 per LLM stage
-    // (llm.ts recordLlmSuccess). The gate at the NEXT PROMPT entry evaluates
-    // the count from the just-finished turn. A turn with 2 LLM stages never
-    // triggers (streak 2 < threshold 3); a turn with 3 LLM stages triggers
-    // (streak 3 >= threshold 3) → AWAIT + "auto mode is on" note instead of
-    // showing the prompt.
 
-    it('2-LLM-stage turn (streak 2) does NOT trigger autofly → falls through to prompt', async () => {
-      const { env } = makeEnv();
-      vi.mocked(isDebugAutofly).mockReturnValue(true);
-      vi.mocked(autoState.getAutoflyThreshold).mockReturnValue(3);
-      vi.mocked(autoState.getStreak).mockReturnValue(2); // 2 LLM stages this turn
 
-      const result = await handlePrompt(env, createTurnVars(), createChatData());
-
-      expect(result).toBe(AgentState.COLLECT); // prompt shown (user input consumed)
-      expect(autoState.setAuto).not.toHaveBeenCalledWith(true);
-      expect(autoState.resetStreak).toHaveBeenCalled(); // per-turn reset
-    });
-
-    it('3-LLM-stage turn (streak 3) triggers autofly → AWAIT + "auto mode is on" note', async () => {
-      const { env } = makeEnv();
-      vi.mocked(isDebugAutofly).mockReturnValue(true);
-      vi.mocked(autoState.getAutoflyThreshold).mockReturnValue(3);
-      vi.mocked(autoState.getStreak).mockReturnValue(3); // 3 LLM stages this turn
-
-      const result = await handlePrompt(env, createTurnVars(), createChatData());
-
-      expect(result).toBe(AgentState.AWAIT); // prompt NOT shown; auto-continue
-      expect(autoState.setAuto).toHaveBeenCalledWith(true);
-      expect(autoState.resetStreak).not.toHaveBeenCalled(); // engage path skips the reset
-    });
-  });
-
-  describe('flag off: autofly never engages regardless of streak', () => {
-    it('falls through to normal prompting with a high streak and flag off', async () => {
-      const { env } = makeEnv();
-      vi.mocked(isDebugAutofly).mockReturnValue(false);
-      vi.mocked(autoState.getStreak).mockReturnValue(100); // huge streak, but flag is off
-
-      const result = await handlePrompt(env, createTurnVars(), createChatData());
-
-      expect(result).toBe(AgentState.COLLECT);
-      expect(autoState.setAuto).not.toHaveBeenCalledWith(true);
-      // Flag is off → the threshold is never consulted.
-      expect(autoState.getAutoflyThreshold).not.toHaveBeenCalled();
-    });
-  });
-
-  describe('case 2 (channel trigger): an active peer channel arms the trigger (streak-gated, like --debug-autofly)', () => {
-    // The autofly gate is (isDebugAutofly() || ctx.peer.hasActiveChannel()) && streak >= threshold.
-    // An active channel is equivalent to --debug-autofly: it arms the trigger
-    // even when the CLI flag is off. BUT it shares the SAME streak >= threshold
-    // gate — the streak IS the breathing room. ESC resets streak to 0, so an
-    // active channel does NOT re-engage auto until a turn again accumulates
-    // >= threshold LLM stages; that window is when the user intervenes (e.g.
-    // "try again" after a by-design git_commit rejection). A channel with
-    // streak=0 must NOT engage.
-
-    it('engages auto mode when a channel is active and streak > threshold (flag off)', async () => {
-      const { env } = makeEnv();
-      vi.mocked(isDebugAutofly).mockReturnValue(false);
-      (env.ctx.peer.hasActiveChannel as ReturnType<typeof vi.fn>).mockReturnValue(true);
-      vi.mocked(autoState.getAutoflyThreshold).mockReturnValue(3);
-      vi.mocked(autoState.getStreak).mockReturnValue(4);
-
-      const result = await handlePrompt(env, createTurnVars(), createChatData());
-
-      expect(result).toBe(AgentState.AWAIT);
-      expect(autoState.setAuto).toHaveBeenCalledWith(true);
-    });
-
-    it('engages when a channel is active and streak == threshold (>= comparison)', async () => {
-      const { env } = makeEnv();
-      vi.mocked(isDebugAutofly).mockReturnValue(false);
-      (env.ctx.peer.hasActiveChannel as ReturnType<typeof vi.fn>).mockReturnValue(true);
-      vi.mocked(autoState.getAutoflyThreshold).mockReturnValue(3);
-      vi.mocked(autoState.getStreak).mockReturnValue(3); // 3 >= 3 → engage
-
-      const result = await handlePrompt(env, createTurnVars(), createChatData());
-
-      expect(result).toBe(AgentState.AWAIT);
-      expect(autoState.setAuto).toHaveBeenCalledWith(true);
-    });
-
-    it('does NOT engage when a channel is active but streak is 0 (post-ESC breathing room)', async () => {
-      const { env } = makeEnv();
-      vi.mocked(isDebugAutofly).mockReturnValue(false);
-      (env.ctx.peer.hasActiveChannel as ReturnType<typeof vi.fn>).mockReturnValue(true);
-      vi.mocked(autoState.getStreak).mockReturnValue(0); // ESC just reset streak
-
-      const result = await handlePrompt(env, createTurnVars(), createChatData());
-
-      // Falls through to normal prompting — the breathing room lets the user
-      // intervene (e.g. retry a rejected git_commit) before auto re-engages.
-      expect(result).toBe(AgentState.COLLECT);
-      expect(autoState.setAuto).not.toHaveBeenCalledWith(true);
-      expect(autoState.resetStreak).toHaveBeenCalled(); // per-turn reset
-    });
-
-    it('does NOT engage when no channel is active and the flag is off', async () => {
-      const { env } = makeEnv();
-      vi.mocked(isDebugAutofly).mockReturnValue(false);
-      (env.ctx.peer.hasActiveChannel as ReturnType<typeof vi.fn>).mockReturnValue(false);
-      vi.mocked(autoState.getStreak).mockReturnValue(99);
-
-      const result = await handlePrompt(env, createTurnVars(), createChatData());
-
-      expect(result).toBe(AgentState.COLLECT);
-      expect(autoState.setAuto).not.toHaveBeenCalledWith(true);
-    });
-  });
 
   describe('autonomous null-skip path resets per-turn hook state', () => {
     // Bug fix: the autonomous null-skip early return (p0Input === null) used

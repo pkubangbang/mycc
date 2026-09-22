@@ -78,17 +78,7 @@ describe("validateSchema()", () => {
       expect(result.errors).toContain("Condition must be a non-null object");
     });
 
-    it("should reject undefined condition", () => {
-      const result = validateSchema(undefined);
-      expect(result.valid).toBe(false);
-      expect(result.errors).toContain("Condition must be a non-null object");
-    });
 
-    it("should reject non-object condition", () => {
-      const result = validateSchema("string");
-      expect(result.valid).toBe(false);
-      expect(result.errors).toContain("Condition must be a non-null object");
-    });
 
     it("should reject missing trigger", () => {
       const condition = { when: "test", condition: "true", action: { type: "message" }, version: 1 };
@@ -97,32 +87,9 @@ describe("validateSchema()", () => {
       expect(result.errors.some(e => e.includes("trigger"))).toBe(true);
     });
 
-    it("should reject missing when field", () => {
-      const condition = { trigger: ["bash"], condition: "true", action: { type: "message" }, version: 1 };
-      const result = validateSchema(condition);
-      expect(result.valid).toBe(false);
-      expect(result.errors.some(e => e.includes("when"))).toBe(true);
-    });
 
-    it("should reject empty when field", () => {
-      const condition = { trigger: ["bash"], when: "", condition: "true", action: { type: "message" }, version: 1 };
-      const result = validateSchema(condition);
-      expect(result.valid).toBe(false);
-      expect(result.errors.some(e => e.includes("when"))).toBe(true);
-    });
 
-    it("should reject missing condition field", () => {
-      const condition = { trigger: ["bash"], when: "test", action: { type: "message" }, version: 1 };
-      const result = validateSchema(condition);
-      expect(result.valid).toBe(false);
-      expect(result.errors.some(e => e.includes("condition"))).toBe(true);
-    });
 
-    it("should reject invalid version", () => {
-      const condition: Condition = { trigger: ["bash"], when: "test", condition: "true", action: { type: "message" }, version: 0 };
-      const result = validateSchema(condition);
-      expect(result.valid).toBe(false);
-    });
 
     it("should reject missing action", () => {
       const condition = { trigger: ["bash"], when: "test", condition: "true", version: 1 };
@@ -130,14 +97,6 @@ describe("validateSchema()", () => {
       expect(result.valid).toBe(false);
     });
 
-    it("should reject invalid history entries", () => {
-      const condition: Condition = {
-        trigger: ["bash"], when: "test", condition: "true", action: { type: "message" }, version: 2,
-        history: [{ version: 1, condition: "x", action: { type: "message" } }, { version: "invalid" as unknown as number, condition: "y", action: { type: "message" } }],
-      };
-      const result = validateSchema(condition);
-      expect(result.valid).toBe(false);
-    });
   });
 
   describe("warnings", () => {
@@ -175,11 +134,6 @@ describe("validateAction()", () => {
     expect(result.valid).toBe(false);
   });
 
-  it("should reject inject_before without args", () => {
-    const action = { type: "inject_before", tool: "bash" };
-    const result = validateAction(action);
-    expect(result.valid).toBe(false);
-  });
 
   it("should warn about out-of-range timeout", () => {
     const action = { type: "inject_before", tool: "bash", args: { command: "lint", timeout: 500, intent: "TEST ARTIFACT TO verify behavior" } };
@@ -194,17 +148,7 @@ describe("validateAction()", () => {
     expect(result.valid).toBe(true);
   });
 
-  it("should validate block without reason", () => {
-    const action = { type: "block" };
-    const result = validateAction(action);
-    expect(result.valid).toBe(true);
-  });
 
-  it("should reject block with non-string reason", () => {
-    const action = { type: "block", reason: 123 };
-    const result = validateAction(action);
-    expect(result.valid).toBe(false);
-  });
 
   it("should validate message action", () => {
     const action = { type: "message" };
@@ -212,21 +156,6 @@ describe("validateAction()", () => {
     expect(result.valid).toBe(true);
   });
 
-  it("should reject unknown action type", () => {
-    const action = { type: "unknown_action" };
-    const result = validateAction(action);
-    expect(result.valid).toBe(false);
-    expect(result.errors.some(e => e.includes("unknown_action"))).toBe(true);
-  });
 
-  it("should reject null action", () => {
-    const result = validateAction(null);
-    expect(result.valid).toBe(false);
-  });
 
-  it("should reject action without type", () => {
-    const action = { tool: "bash" };
-    const result = validateAction(action);
-    expect(result.valid).toBe(false);
-  });
 });

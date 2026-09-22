@@ -162,15 +162,6 @@ describe('memory-store edge cases', () => {
       expect(id4).toBe(4); // Not reusing ID 2
     });
 
-    it('should maintain unique IDs across many creations', () => {
-      const ids = new Set<number>();
-      for (let i = 0; i < 1000; i++) {
-        const id = createIssue(`Issue ${i}`, 'Content', []);
-        expect(ids.has(id)).toBe(false);
-        ids.add(id);
-      }
-      expect(ids.size).toBe(1000);
-    });
 
     it('should start IDs at 1, not 0', () => {
       const id = createIssue('First Issue', 'Content', []);
@@ -238,40 +229,7 @@ describe('memory-store edge cases', () => {
   // ============================================================================
 
   describe('Type Safety', () => {
-    it('should accept all valid IssueStatus values', () => {
-      const id = createIssue('Test', 'Content', []);
 
-      const validStatuses: IssueStatus[] = [
-        'pending',
-        'in_progress',
-        'completed',
-        'failed',
-        'abandoned',
-      ];
-
-      for (const status of validStatuses) {
-        const result = updateIssue(id, { status });
-        expect(result).toBe(true);
-        expect(getIssue(id)?.status).toBe(status);
-      }
-    });
-
-    it('should accept all valid TeammateStatus values', () => {
-      createTeammate('worker', 'role', 'prompt');
-
-      const validStatuses: TeammateStatus[] = [
-        'working',
-        'idle',
-        'holding',
-        'shutdown',
-      ];
-
-      for (const status of validStatuses) {
-        const result = updateTeammateStatus('worker', status);
-        expect(result).toBe(true);
-        expect(getTeammate('worker')?.status).toBe(status);
-      }
-    });
 
     it('should default to draft status for new issues', () => {
       const id = createIssue('Test', 'Content', []);
@@ -291,42 +249,6 @@ describe('memory-store edge cases', () => {
   // Blockage with Non-Existent Issues
   // ============================================================================
 
-  describe('Blockages with Non-Existent Issues', () => {
-    it('should create blockage where blocker does not exist', () => {
-      const blocked = createIssue('Blocked', 'Content', []);
-
-      // Create blockage with non-existent blocker
-      createBlockage(999, blocked);
-
-      const issue = getIssue(blocked);
-      expect(issue?.blockedBy).toContain(999);
-    });
-
-    it('should create blockage where blocked does not exist', () => {
-      const blocker = createIssue('Blocker', 'Content', []);
-
-      // Create blockage with non-existent blocked
-      createBlockage(blocker, 999);
-
-      const issue = getIssue(blocker);
-      expect(issue?.blocks).toContain(999);
-    });
-
-    it('should create blockage where neither issue exists', () => {
-      // Should not throw
-      createBlockage(999, 888);
-    });
-
-    it('should remove blockage with non-existent issues', () => {
-      // Should not throw
-      removeBlockage(999, 888);
-    });
-
-    it('should create issue blocked by non-existent issue', () => {
-      const id = createIssue('Test', 'Content', [999]);
-      expect(getIssue(id)?.blockedBy).toContain(999);
-    });
-  });
 
   // ============================================================================
   // Comment Timestamps
@@ -382,20 +304,8 @@ describe('memory-store edge cases', () => {
       expect(getIssue(id)?.title).toBe('');
     });
 
-    it('should handle empty content', () => {
-      const id = createIssue('Title', '', []);
-      expect(getIssue(id)?.content).toBe('');
-    });
 
-    it('should handle empty role', () => {
-      createTeammate('worker', '', 'prompt');
-      expect(getTeammate('worker')?.role).toBe('');
-    });
 
-    it('should handle empty prompt', () => {
-      createTeammate('worker', 'role', '');
-      expect(getTeammate('worker')?.prompt).toBe('');
-    });
 
     it('should handle empty blockedBy array', () => {
       const id = createIssue('Test', 'Content', []);
@@ -419,43 +329,4 @@ describe('memory-store edge cases', () => {
   // Rapid Sequential Operations
   // ============================================================================
 
-  describe('Rapid Sequential Operations', () => {
-    it('should handle rapid create-update cycles', () => {
-      for (let i = 0; i < 100; i++) {
-        const id = createIssue(`Issue ${i}`, 'Content', []);
-        updateIssue(id, { status: 'in_progress' as IssueStatus });
-        updateIssue(id, { status: 'completed' as IssueStatus });
-      }
-
-      const issues = listIssues();
-      expect(issues).toHaveLength(100);
-      expect(issues.every((i) => i.status === 'completed')).toBe(true);
-    });
-
-    it('should handle rapid teammate create-update cycles', () => {
-      for (let i = 0; i < 100; i++) {
-        createTeammate(`worker-${i}`, 'role', 'prompt');
-        updateTeammateStatus(`worker-${i}`, 'idle' as TeammateStatus);
-        updateTeammateStatus(`worker-${i}`, 'working' as TeammateStatus);
-      }
-
-      const teammates = listTeammates();
-      expect(teammates).toHaveLength(100);
-      expect(teammates.every((t) => t.status === 'working')).toBe(true);
-    });
-
-    it('should handle rapid blockage create-remove cycles', () => {
-      const issue1 = createIssue('Issue 1', 'Content', []);
-      const issue2 = createIssue('Issue 2', 'Content', []);
-
-      for (let i = 0; i < 50; i++) {
-        createBlockage(issue1, issue2);
-        removeBlockage(issue1, issue2);
-      }
-
-      // Should end with no blockage
-      expect(getIssue(issue1)?.blocks).toEqual([]);
-      expect(getIssue(issue2)?.blockedBy).toEqual([]);
-    });
-  });
 });

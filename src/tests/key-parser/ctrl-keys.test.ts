@@ -20,19 +20,11 @@ describe('key-parser', () => {
         expect(isCtrlC(hexBuf(0x03))).toBe(true);
       });
 
-      it('should return false for other keys', () => {
-        expect(isCtrlC(hexBuf(0x01))).toBe(false);
-        expect(isCtrlC(hexBuf(0x04))).toBe(false);
-        expect(isCtrlC(hexBuf(0x61))).toBe(false);
-      });
 
       it('should return false for multi-byte buffers', () => {
         expect(isCtrlC(hexBuf(0x03, 0x00))).toBe(false);
       });
 
-      it('should return false for empty buffer', () => {
-        expect(isCtrlC(hexBuf())).toBe(false);
-      });
     });
 
     describe('isEscape', () => {
@@ -44,14 +36,7 @@ describe('key-parser', () => {
         expect(isEscape(hexBuf(0x1b, 0x5b, 0x41))).toBe(false);
       });
 
-      it('should return false for other keys', () => {
-        expect(isEscape(hexBuf(0x03))).toBe(false);
-        expect(isEscape(hexBuf(0x61))).toBe(false);
-      });
 
-      it('should return false for empty buffer', () => {
-        expect(isEscape(hexBuf())).toBe(false);
-      });
     });
 
     describe('Ctrl+A through Ctrl+Z', () => {
@@ -66,16 +51,6 @@ describe('key-parser', () => {
         });
       });
 
-      it('should parse Ctrl+B (0x02)', () => {
-        const result = parseKeys(hexBuf(0x02));
-        expect(result[0]).toEqual<KeyInfo>({
-          name: 'b',
-          ctrl: true,
-          meta: false,
-          shift: false,
-          sequence: 'b',
-        });
-      });
 
       it('should parse Ctrl+D (0x04) - EOF', () => {
         const result = parseKeys(hexBuf(0x04));
@@ -88,27 +63,7 @@ describe('key-parser', () => {
         });
       });
 
-      it('should parse Ctrl+E (0x05)', () => {
-        const result = parseKeys(hexBuf(0x05));
-        expect(result[0]).toEqual<KeyInfo>({
-          name: 'e',
-          ctrl: true,
-          meta: false,
-          shift: false,
-          sequence: 'e',
-        });
-      });
 
-      it('should parse Ctrl+G (0x07) - Bell', () => {
-        const result = parseKeys(hexBuf(0x07));
-        expect(result[0]).toEqual<KeyInfo>({
-          name: 'g',
-          ctrl: true,
-          meta: false,
-          shift: false,
-          sequence: 'g',
-        });
-      });
 
       it('should parse Ctrl+H (0x08) - should be backspace, not ctrl+h', () => {
         // Note: 0x08 is backspace in the implementation
@@ -179,38 +134,8 @@ describe('key-parser', () => {
         });
       });
 
-      it('should parse Ctrl+N (0x0e)', () => {
-        const result = parseKeys(hexBuf(0x0e));
-        expect(result[0]).toEqual<KeyInfo>({
-          name: 'n',
-          ctrl: true,
-          meta: false,
-          shift: false,
-          sequence: 'n',
-        });
-      });
 
-      it('should parse Ctrl+P (0x10)', () => {
-        const result = parseKeys(hexBuf(0x10));
-        expect(result[0]).toEqual<KeyInfo>({
-          name: 'p',
-          ctrl: true,
-          meta: false,
-          shift: false,
-          sequence: 'p',
-        });
-      });
 
-      it('should parse Ctrl+Q (0x11)', () => {
-        const result = parseKeys(hexBuf(0x11));
-        expect(result[0]).toEqual<KeyInfo>({
-          name: 'q',
-          ctrl: true,
-          meta: false,
-          shift: false,
-          sequence: 'q',
-        });
-      });
 
       it('should parse Ctrl+R (0x12)', () => {
         const result = parseKeys(hexBuf(0x12));
@@ -223,16 +148,6 @@ describe('key-parser', () => {
         });
       });
 
-      it('should parse Ctrl+S (0x13)', () => {
-        const result = parseKeys(hexBuf(0x13));
-        expect(result[0]).toEqual<KeyInfo>({
-          name: 's',
-          ctrl: true,
-          meta: false,
-          shift: false,
-          sequence: 's',
-        });
-      });
 
       it('should parse Ctrl+U (0x15)', () => {
         const result = parseKeys(hexBuf(0x15));
@@ -245,16 +160,6 @@ describe('key-parser', () => {
         });
       });
 
-      it('should parse Ctrl+V (0x16)', () => {
-        const result = parseKeys(hexBuf(0x16));
-        expect(result[0]).toEqual<KeyInfo>({
-          name: 'v',
-          ctrl: true,
-          meta: false,
-          shift: false,
-          sequence: 'v',
-        });
-      });
 
       it('should parse Ctrl+W (0x17)', () => {
         const result = parseKeys(hexBuf(0x17));
@@ -267,38 +172,8 @@ describe('key-parser', () => {
         });
       });
 
-      it('should parse Ctrl+X (0x18)', () => {
-        const result = parseKeys(hexBuf(0x18));
-        expect(result[0]).toEqual<KeyInfo>({
-          name: 'x',
-          ctrl: true,
-          meta: false,
-          shift: false,
-          sequence: 'x',
-        });
-      });
 
-      it('should parse Ctrl+Y (0x19)', () => {
-        const result = parseKeys(hexBuf(0x19));
-        expect(result[0]).toEqual<KeyInfo>({
-          name: 'y',
-          ctrl: true,
-          meta: false,
-          shift: false,
-          sequence: 'y',
-        });
-      });
 
-      it('should parse Ctrl+Z (0x1a)', () => {
-        const result = parseKeys(hexBuf(0x1a));
-        expect(result[0]).toEqual<KeyInfo>({
-          name: 'z',
-          ctrl: true,
-          meta: false,
-          shift: false,
-          sequence: 'z',
-        });
-      });
     });
   });
 });

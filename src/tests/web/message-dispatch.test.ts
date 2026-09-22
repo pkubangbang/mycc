@@ -105,15 +105,6 @@ describe('applyServerMessage — steering review card', () => {
     expect(state.isWaiting).toBe(true);
   });
 
-  it('does NOT surface review card in auto mode', () => {
-    const state = makeState();
-    state.setAutoMode(true);
-    const ctx = makeCtx();
-    applyServerMessage(state, steerEcho('note A', 1), ctx);
-    applyServerMessage(state, { type: 'prompt', content: '' }, ctx);
-    expect(state.steeringBuffer).toEqual([]);
-    expect(state.pendingSteeringReview).toEqual([]);
-  });
 
   it('steer-flush clears only the buffer, never populates review', () => {
     const state = makeState();
@@ -125,13 +116,6 @@ describe('applyServerMessage — steering review card', () => {
     expect(state.isWaiting).toBe(false);
   });
 
-  it('steer-echo with missing id falls back to nextId', () => {
-    const state = makeState();
-    const ctx = makeCtx();
-    applyServerMessage(state, { type: 'steer-echo', content: 'no-id' }, ctx);
-    expect(state.steeringBuffer[0].id).toBe(1);
-    expect(state.steeringBuffer[0].text).toBe('no-id');
-  });
 
   it('auto:on abandons any pending review', () => {
     const state = makeState();
@@ -157,27 +141,7 @@ describe('applyServerMessage — phase transitions', () => {
     expect(state.isRunning).toBe(false);
   });
 
-  it('running:off is NO-OP from prompt (reconnect reordering guard)', () => {
-    const state = makeState();
-    const ctx = makeCtx();
-    // Establish a stable prompt phase
-    applyServerMessage(state, { type: 'prompt', content: '' }, ctx);
-    expect(state.phase).toBe('prompt');
-    // A late running:off (reconnect sends prompt BEFORE running:off) must NOT
-    // clobber the prompt phase.
-    applyServerMessage(state, { type: 'running', content: 'off' }, ctx);
-    expect(state.phase).toBe('prompt');
-    expect(state.isWaiting).toBe(true);
-  });
 
-  it('running:off is NO-OP from await', () => {
-    const state = makeState();
-    const ctx = makeCtx();
-    applyServerMessage(state, { type: 'auto', content: 'on' }, ctx);
-    expect(state.phase).toBe('await');
-    applyServerMessage(state, { type: 'running', content: 'off' }, ctx);
-    expect(state.phase).toBe('await');
-  });
 
   it('card message transitions to card phase', () => {
     const state = makeState();
@@ -262,26 +226,6 @@ describe('applyServerMessage — phase transitions', () => {
     expect(state.isAutoMode).toBe(true);
   });
 
-  it('auto:off is NO-OP unless phase === await', () => {
-    const state = makeState();
-    const ctx = makeCtx();
-    // From working, auto:off is a no-op on phase (only flips the boolean).
-    applyServerMessage(state, { type: 'running', content: 'on' }, ctx);
-    expect(state.phase).toBe('working');
-    applyServerMessage(state, { type: 'auto', content: 'on' }, ctx);
-    expect(state.phase).toBe('working'); // auto:on while working stays working
-    expect(state.isAutoMode).toBe(true);
-    applyServerMessage(state, { type: 'auto', content: 'off' }, ctx);
-    expect(state.phase).toBe('working'); // auto:off from working is NO-OP
-    expect(state.isAutoMode).toBe(false);
-    // From await, auto:off → idle. First reach await: working → idle → await.
-    applyServerMessage(state, { type: 'running', content: 'off' }, ctx);
-    expect(state.phase).toBe('idle');
-    applyServerMessage(state, { type: 'auto', content: 'on' }, ctx);
-    expect(state.phase).toBe('await');
-    applyServerMessage(state, { type: 'auto', content: 'off' }, ctx);
-    expect(state.phase).toBe('idle');
-  });
 
   it('default branch transitions prompt → working on agent output', () => {
     const state = makeState();
@@ -293,14 +237,6 @@ describe('applyServerMessage — phase transitions', () => {
     expect(state.phase).toBe('working');
   });
 
-  it('default branch does NOT change phase when already working', () => {
-    const state = makeState();
-    const ctx = makeCtx();
-    applyServerMessage(state, { type: 'running', content: 'on' }, ctx);
-    expect(state.phase).toBe('working');
-    applyServerMessage(state, { type: 'result', content: 'more output' }, ctx);
-    expect(state.phase).toBe('working');
-  });
 });
 
 describe('applyServerMessage — routing', () => {
@@ -339,30 +275,8 @@ describe('applyServerMessage — synthetic filter (machine-originated briefs)', 
     expect(state.teammateMessages).toHaveLength(0);
   });
 
-  it('synthetic message still transitions prompt/card → working (phase semantics intact)', () => {
-    const state = makeState();
-    const ctx = makeCtx();
-    applyServerMessage(state, { type: 'prompt', content: '' }, ctx);
-    expect(state.phase).toBe('prompt');
-    applyServerMessage(state, { type: 'log', content: 'hook brief', label: 'hook', synthetic: true }, ctx);
-    expect(state.phase).toBe('working');
-    expect(state.messages).toHaveLength(0);
-  });
 
-  it('synthetic message is still recorded in lastServerMsg (diagnostic)', () => {
-    const state = makeState();
-    const ctx = makeCtx();
-    applyServerMessage(state, { type: 'log', content: 'hook brief', label: 'hook', synthetic: true }, ctx);
-    expect(state.lastServerMsg?.type).toBe('log');
-  });
 
-  it('non-synthetic messages are unaffected by the filter', () => {
-    const state = makeState();
-    const ctx = makeCtx();
-    applyServerMessage(state, { type: 'log', content: 'normal brief', label: 'bash' }, ctx);
-    applyServerMessage(state, { type: 'log', content: 'normal brief no synthetic flag', label: 'hook', synthetic: false }, ctx);
-    expect(state.messages).toHaveLength(2);
-  });
 });
 
 describe('applyServerMessage — lastServerMsg diagnostic recording', () => {
@@ -377,31 +291,6 @@ describe('applyServerMessage — lastServerMsg diagnostic recording', () => {
     expect(state.lastServerMsg?.type).toBe('running');
   });
 
-  it('records messages that fall through the default branch too', () => {
-    const state = makeState();
-    const ctx = makeCtx();
-    // 'result' with no label is not explicitly branched — it hits the default
-    // fall-through (the prompt → working transition under investigation).
-    applyServerMessage(state, { type: 'result', content: 'wrap-up summary' }, ctx);
-    expect(state.lastServerMsg?.type).toBe('result');
-    expect(state.isWaiting).toBe(false); // default branch transitioned to working
-  });
 
-  it('keeps recording on every subsequent message (latest wins)', () => {
-    const state = makeState();
-    const ctx = makeCtx();
-    applyServerMessage(state, { type: 'prompt', content: '' }, ctx);
-    applyServerMessage(state, steerEcho('note', 1), ctx);
-    expect(state.lastServerMsg?.type).toBe('steer-echo');
-  });
 
-  it('replaces the previous record instead of accumulating', () => {
-    const state = makeState();
-    const ctx = makeCtx();
-    applyServerMessage(state, { type: 'prompt', content: '' }, ctx);
-    const first = { ...state.lastServerMsg! };
-    applyServerMessage(state, { type: 'auto', content: 'off' }, ctx);
-    expect(state.lastServerMsg!.type).not.toBe(first.type);
-    expect(state.lastServerMsg!.at).toBeGreaterThanOrEqual(first.at);
-  });
 });

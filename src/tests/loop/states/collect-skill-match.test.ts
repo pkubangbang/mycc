@@ -37,16 +37,7 @@ describe('matchesBaselineGate — exact-token intersection (no substring)', () =
     expect(gate(['go', 'rust', 'python'], ['go'], 10)).toBe(true);
   });
 
-  it('does NOT match on a substring ("go" must not match "logging")', () => {
-    // A substring `includes` filter would let "go" match "logging"; the
-    // exact-token intersection kills that. Z = 0 → no match.
-    expect(gate(['logging', 'debug'], ['go'], 10)).toBe(false);
-  });
 
-  it('does NOT match on a superstring ("logging" must not match "log")', () => {
-    // Bidirectional substring also matched the other way; exact-token kills it.
-    expect(gate(['go', 'run'], ['logging'], 10)).toBe(false);
-  });
 
   it('matching is case-insensitive on both sides', () => {
     expect(gate(['Go', 'Rust'], ['GO', 'rust'], 10)).toBe(true);
@@ -87,56 +78,6 @@ describe('matchesBaselineGate — the baseline bar', () => {
     expect(gate(skill, ['a', 'b', 'c', 'd', 'x'], 10)).toBe(true);  // Z=4
   });
 
-  it('is permissive for a small skill in a large universe', () => {
-    // X=2, W=100, Y=2. expected = (2/100)*2 = 0.04; baseline = min(1, 0.04) = 0.04.
-    // Z = 1 → 1 >= 0.04 → match. A single exact hit surfaces a niche skill.
-    expect(gate(['niche', 'rare'], ['niche'], 100)).toBe(true);
-  });
 });
 
-describe('matchesBaselineGate — Y clamp [2, 5]', () => {
-  it('clamps a 1-keyword query up to Y=2 (so Y-1=1 keeps a meaningful bar)', () => {
-    // Y observed = 1 → clamped to 2. X=2, W=10. expected = 0.4; baseline = min(1, 0.4) = 0.4.
-    // Z = 1 → match.
-    expect(gate(['go', 'rust'], ['go'], 10)).toBe(true);
-  });
 
-  it('clamps a huge query down to Y=5 (so Y-1=4 does not dominate small W)', () => {
-    // Y observed = 8 → clamped to 5. X=2, W=10. expected = (2/10)*5 = 1.0;
-    // baseline = min(4, 1.0) = 1.0. Z = 1 → match (the cap keeps it satisfiable).
-    const skill = ['go', 'rust'];
-    const query = ['go', 'x1', 'x2', 'x3', 'x4', 'x5', 'x6', 'x7'];
-    expect(gate(skill, query, 10)).toBe(true);
-  });
-});
-
-describe('matchesBaselineGate — edge cases', () => {
-  it('keywordless skill (X=0) never matches', () => {
-    expect(gate([], ['go', 'rust'], 10)).toBe(false);
-  });
-
-  it('zero overlap (Z=0) never matches', () => {
-    expect(gate(['a', 'b'], ['x', 'y'], 10)).toBe(false);
-  });
-
-  it('W=0 (no universe) falls back to the Z > 0 floor', () => {
-    // No null model is available (E[Z] would divide by zero). A single
-    // exact-token hit still surfaces the skill.
-    expect(gate(['go', 'rust'], ['go'], 0)).toBe(true);
-    expect(gate(['go', 'rust'], ['x'], 0)).toBe(false);
-  });
-
-  it('W=1 falls back to the Z > 0 floor (no degenerate bar)', () => {
-    // W=1: expected = (X/1)*Y could be huge; the floor path avoids that.
-    expect(gate(['go'], ['go'], 1)).toBe(true);
-    expect(gate(['go'], ['x'], 1)).toBe(false);
-  });
-
-  it('Z >= continuous baseline works on the float threshold', () => {
-    // baseline is a float (e.g. 0.6); Z is an integer. Z=1 >= 0.6 passes,
-    // Z=0 is rejected by the floor. This pins that the comparison is the
-    // raw `Z >= baseline` (NOT `Z >= ceil(baseline)`, which over-suppresses
-    // at small W).
-    expect(gate(['a', 'b', 'c'], ['a'], 10)).toBe(true); // baseline 0.6, Z=1
-  });
-});

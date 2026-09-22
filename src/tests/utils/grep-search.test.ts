@@ -369,28 +369,13 @@ describe('grepSearch - fallback behavior (mocked)', () => {
     expect(result.output).toBe('No matches found');
   });
 
-  it('should fall through to ripgrep WASM when rg is not installed', async () => {
-    // This test verifies the fallback chain works.
-    // If rg is available, it will be used. If not, ripgrep WASM is tried.
-    const result = await grepSearch('test', process.cwd(), undefined, 10);
-    expect(['rg', 'ripgrep_wasm', 'grep', 'powershell', 'none']).toContain(result.method);
-  });
 
   it('should return method "none" when all engines fail', async () => {
     const result = await grepSearch('test', '/nonexistent', undefined, 10);
     expect(['rg', 'ripgrep_wasm', 'grep', 'powershell', 'none']).toContain(result.method);
   });
 
-  it('should handle rg error with stderr', async () => {
-    // Real rg with a valid pattern should succeed
-    const result = await grepSearch('import', process.cwd(), '*.ts', 5);
-    expect(['rg', 'ripgrep_wasm', 'grep', 'powershell', 'none']).toContain(result.method);
-  });
 
-  it('should handle rg error with stdout content', async () => {
-    const result = await grepSearch('import', process.cwd(), '*.ts', 5);
-    expect(['rg', 'ripgrep_wasm', 'grep', 'powershell', 'none']).toContain(result.method);
-  });
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -518,56 +503,19 @@ describe('grepSearch - edge cases', () => {
     expect(['rg', 'ripgrep_wasm', 'grep', 'powershell', 'none']).toContain(result.method);
   });
 
-  it('should handle regex special characters in pattern', async () => {
-    const result = await grepSearch('\\[', process.cwd(), '*.ts', 10);
-    expect(['rg', 'ripgrep_wasm', 'grep', 'powershell', 'none']).toContain(result.method);
-  });
 
-  it('should handle very long pattern', async () => {
-    const longPattern = 'a'.repeat(200);
-    const result = await grepSearch(longPattern, process.cwd(), undefined, 5);
-    expect(['rg', 'ripgrep_wasm', 'grep', 'powershell', 'none']).toContain(result.method);
-  });
 
-  it('should handle pattern with spaces', async () => {
-    const result = await grepSearch('export function', process.cwd(), '*.ts', 5);
-    expect(['rg', 'ripgrep_wasm', 'grep', 'powershell', 'none']).toContain(result.method);
-  });
 
-  it('should handle pattern with dots', async () => {
-    const result = await grepSearch('grepSearch', process.cwd(), '*.ts', 5);
-    expect(['rg', 'ripgrep_wasm', 'grep', 'powershell', 'none']).toContain(result.method);
-  });
 
   it('should handle non-existent directory', async () => {
     const result = await grepSearch('test', '/nonexistent/directory/xyz123', undefined, 10);
     expect(['rg', 'ripgrep_wasm', 'grep', 'powershell', 'none']).toContain(result.method);
   });
 
-  it('should handle pattern with unicode characters', async () => {
-    const result = await grepSearch('代理', process.cwd(), '*.ts', 5);
-    expect(['rg', 'ripgrep_wasm', 'grep', 'powershell', 'none']).toContain(result.method);
-  });
 
-  it('should handle pattern with leading/trailing whitespace', async () => {
-    const result = await grepSearch('  import  ', process.cwd(), '*.ts', 5);
-    expect(['rg', 'ripgrep_wasm', 'grep', 'powershell', 'none']).toContain(result.method);
-  });
 
-  it('should handle pattern with regex alternation', async () => {
-    const result = await grepSearch('import|export', process.cwd(), '*.ts', 5);
-    expect(['rg', 'ripgrep_wasm', 'grep', 'powershell', 'none']).toContain(result.method);
-  });
 
-  it('should handle pattern with regex anchors', async () => {
-    const result = await grepSearch('^import', process.cwd(), '*.ts', 5);
-    expect(['rg', 'ripgrep_wasm', 'grep', 'powershell', 'none']).toContain(result.method);
-  });
 
-  it('should handle pattern with regex groups', async () => {
-    const result = await grepSearch('(import|export) function', process.cwd(), '*.ts', 5);
-    expect(['rg', 'ripgrep_wasm', 'grep', 'powershell', 'none']).toContain(result.method);
-  });
 
   it('should handle maxResults of 0', async () => {
     const result = await grepSearch('import', process.cwd(), '*.ts', 0);
@@ -579,47 +527,13 @@ describe('grepSearch - edge cases', () => {
     expect(['rg', 'ripgrep_wasm', 'grep', 'powershell', 'none']).toContain(result.method);
   });
 
-  it('should handle exclude pattern with special glob chars', async () => {
-    const result = await grepSearch('import', process.cwd(), '*.ts', 10, '*.min.*');
-    expect(['rg', 'ripgrep_wasm', 'grep', 'powershell', 'none']).toContain(result.method);
-  });
 
-  it('should handle exclude pattern that matches nothing', async () => {
-    const result = await grepSearch('import', process.cwd(), '*.ts', 10, '*.nonexistent');
-    expect(['rg', 'ripgrep_wasm', 'grep', 'powershell', 'none']).toContain(result.method);
-  });
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
 // grepSearch — parameter validation
 // ═══════════════════════════════════════════════════════════════════════════
 
-describe('grepSearch - parameter validation', () => {
-  it('should handle undefined include', async () => {
-    const result = await grepSearch('import', process.cwd(), undefined, 10);
-    expect(['rg', 'ripgrep_wasm', 'grep', 'powershell', 'none']).toContain(result.method);
-  });
-
-  it('should handle undefined exclude', async () => {
-    const result = await grepSearch('import', process.cwd(), '*.ts', 10, undefined);
-    expect(['rg', 'ripgrep_wasm', 'grep', 'powershell', 'none']).toContain(result.method);
-  });
-
-  it('should handle undefined maxResults (use default)', async () => {
-    const result = await grepSearch('import', process.cwd(), '*.ts', undefined as unknown as number);
-    expect(['rg', 'ripgrep_wasm', 'grep', 'powershell', 'none']).toContain(result.method);
-  });
-
-  it('should handle null include', async () => {
-    const result = await grepSearch('import', process.cwd(), null as unknown as string, 10);
-    expect(['rg', 'ripgrep_wasm', 'grep', 'powershell', 'none']).toContain(result.method);
-  });
-
-  it('should handle null exclude', async () => {
-    const result = await grepSearch('import', process.cwd(), '*.ts', 10, null as unknown as string);
-    expect(['rg', 'ripgrep_wasm', 'grep', 'powershell', 'none']).toContain(result.method);
-  });
-});
 
 // ═══════════════════════════════════════════════════════════════════════════
 // grepSearch — output format

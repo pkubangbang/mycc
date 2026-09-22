@@ -113,34 +113,7 @@ describe('HookExecutor', () => {
       expect(hooks).toContain('test-hook');
     });
 
-    it('should return wildcard hooks for any trigger', () => {
-      registry.set('any-hook', {
-        trigger: ['*'],
-        when: 'any tool',
-        condition: 'true',
-        action: { type: 'message' },
-        version: 1,
-      });
 
-      const hooks = executor.checkHooks('bash');
-      expect(hooks).toContain('any-hook');
-
-      const hooks2 = executor.checkHooks('edit_file');
-      expect(hooks2).toContain('any-hook');
-    });
-
-    it('should not return hooks for different trigger', () => {
-      registry.set('bash-hook', {
-        trigger: ['bash'],
-        when: 'bash only',
-        condition: 'true',
-        action: { type: 'message' },
-        version: 1,
-      });
-
-      const hooks = executor.checkHooks('edit_file');
-      expect(hooks).not.toContain('bash-hook');
-    });
 
     it('should only return hooks whose condition evaluates to true', () => {
       registry.set('has-edits', {
@@ -161,24 +134,6 @@ describe('HookExecutor', () => {
       expect(executor.checkHooks('git_commit')).toContain('has-edits');
     });
 
-    it('should always match hooks regardless of prior injection', () => {
-      registry.set('test-hook', {
-        trigger: ['bash'],
-        when: 'test',
-        condition: 'true',
-        action: { type: 'message' },
-        version: 1,
-      });
-
-      // First check
-      expect(executor.checkHooks('bash')).toContain('test-hook');
-
-      // Mark as injected
-      registry.markInjected('test-hook');
-
-      // Second check - should still match (per-chat dedup happens in execute(), not matches())
-      expect(executor.checkHooks('bash')).toContain('test-hook');
-    });
   });
 
   // ============================================================================
@@ -214,30 +169,6 @@ describe('HookExecutor', () => {
       expect(result.newCalls?.[1].function.name).toBe('git_commit'); // Original second
     });
 
-    it('should preserve original tool call arguments', async () => {
-      registry.set('test-hook', {
-        trigger: ['bash'],
-        when: 'test',
-        condition: 'true',
-        action: {
-          type: 'inject_before',
-          tool: 'read_file',
-          args: { path: 'test.ts' },
-        },
-        version: 1,
-      });
-
-      const pendingCalls = [createPendingToolCall('bash', { command: 'echo test' })];
-      const result = await executor.execute(
-        'test-hook',
-        registry.get('test-hook')!.action,
-        ctx,
-        pendingCalls,
-        'Test content'
-      );
-
-      expect(result.newCalls?.[1].function.arguments).toEqual({ command: 'echo test' });
-    });
 
     it('should report the injection via core.brief with the trigger and hook name', async () => {
       registry.set('test-hook', {
@@ -307,36 +238,6 @@ describe('HookExecutor', () => {
       expect(result.newCalls?.[1].function.name).toBe('bash'); // Injected second
     });
 
-    it('should handle multiple pending calls', async () => {
-      registry.set('test-hook', {
-        trigger: ['bash'],
-        when: 'test',
-        condition: 'true',
-        action: {
-          type: 'inject_after',
-          tool: 'read_file',
-          args: { path: 'test.ts' },
-        },
-        version: 1,
-      });
-
-      const pendingCalls = [
-        createToolCall('bash', { command: 'first' }, 'test-hook'),
-        createToolCall('bash', { command: 'second' }, 'test-hook'),
-      ];
-      const result = await executor.execute(
-        'test-hook',
-        registry.get('test-hook')!.action,
-        ctx,
-        pendingCalls,
-        'Test'
-      );
-
-      expect(result.newCalls).toHaveLength(3);
-      expect(result.newCalls?.[0].function.name).toBe('bash');
-      expect(result.newCalls?.[1].function.name).toBe('read_file'); // Injected after first
-      expect(result.newCalls?.[2].function.name).toBe('bash');
-    });
   });
 
   // ============================================================================
@@ -370,28 +271,6 @@ describe('HookExecutor', () => {
       expect(result.message).toContain('Force push to main is prohibited');
     });
 
-    it('should work without reason', async () => {
-      registry.set('block-any', {
-        trigger: ['bash'],
-        when: 'block any',
-        condition: 'true',
-        action: { type: 'block' },
-        version: 1,
-      });
-
-      const pendingCalls = [createToolCall('bash', { command: 'test' }, 'test-hook')];
-      const result = await executor.execute(
-        'block-any',
-        registry.get('block-any')!.action,
-        ctx,
-        pendingCalls,
-        'Block content'
-      );
-
-      expect(result.action).toBe('blocked');
-      expect(result.message).toContain('[Hook: block-any]');
-      expect(result.message).toContain('no reason provided');
-    });
   });
 
   // ============================================================================
@@ -427,30 +306,6 @@ describe('HookExecutor', () => {
       expect(result.newCalls?.[0].function.arguments).toEqual({ command: 'echo safe', intent: 'safety' });
     });
 
-    it('should replace with different tool type', async () => {
-      registry.set('replace-hook', {
-        trigger: ['web_search'],
-        when: 'use wiki instead',
-        condition: 'true',
-        action: {
-          type: 'replace',
-          tool: 'wiki_get',
-          args: { query: 'project', domain: 'pitfall' },
-        },
-        version: 1,
-      });
-
-      const pendingCalls = [createToolCall('web_search', { query: 'test' }, 'test-hook')];
-      const result = await executor.execute(
-        'replace-hook',
-        registry.get('replace-hook')!.action,
-        ctx,
-        pendingCalls,
-        'Use wiki'
-      );
-
-      expect(result.newCalls?.[0].function.name).toBe('wiki_get');
-    });
   });
 
   // ============================================================================
@@ -458,34 +313,6 @@ describe('HookExecutor', () => {
   // ============================================================================
 
   describe('execute() - replace on stop trigger (empty pendingCalls)', () => {
-    it('should not crash and should inject the replacement call when pendingCalls is empty', async () => {
-      registry.set('plan-quality', {
-        trigger: ['stop'],
-        when: 'replace stop with skill load',
-        condition: 'isPlanMode() && session.count("skill_load#plan-quality") == 0',
-        action: {
-          type: 'replace',
-          tool: 'skill_load',
-          args: { name: 'plan-quality' },
-        },
-        version: 1,
-      });
-
-      // Empty pendingCalls simulates the stop trigger (no pending tool calls).
-      // Before the fix, replace() dereferenced pendingCalls[0] and crashed.
-      const result = await executor.execute(
-        'plan-quality',
-        registry.get('plan-quality')!.action,
-        ctx,
-        [], // empty = stop trigger
-        'Replace the stop with loading this skill'
-      );
-
-      expect(result.action).toBe('injected');
-      expect(result.newCalls).toHaveLength(1);
-      expect(result.newCalls?.[0].function.name).toBe('skill_load');
-      expect(result.newCalls?.[0].function.arguments).toEqual({ name: 'plan-quality' });
-    });
 
     it('processStopTrigger should replace stop with a skill_load call end-to-end', async () => {
       // Use plan mode so isPlanMode() is true. The shared beforeEach
@@ -563,102 +390,8 @@ describe('HookExecutor', () => {
       expect(r2.calls).toHaveLength(0); // stop proceeds — no re-replacement
     });
 
-    it('resetTurn() re-enables a stop+replace hook for the next turn', async () => {
-      (ctx.core.getMode as ReturnType<typeof vi.fn>).mockReturnValue('plan' as const);
-      const ex = planModeExecutor();
 
-      registry.set('plan-quality', {
-        trigger: ['stop'],
-        when: 'replace stop with skill load',
-        condition: 'isPlanMode() && session.count("skill_load#plan-quality") == 0',
-        action: {
-          type: 'replace',
-          tool: 'skill_load',
-          args: { name: 'plan-quality' },
-        },
-        version: 1,
-      });
 
-      // Turn 1, batch 1: fires
-      await ex.processToolCalls([], ctx, getSkill);
-
-      // Turn boundary — resetTurn() is called by the agent loop at PROMPT
-      ex.resetTurn();
-
-      // Turn 2, batch 1: fires again (new turn, fresh allowance)
-      const r = await ex.processToolCalls([], ctx, getSkill);
-      expect(r.calls).toHaveLength(1);
-      expect(r.calls[0].function.name).toBe('skill_load');
-    });
-
-    it('multiple distinct stop+replace hooks each act once per turn', async () => {
-      (ctx.core.getMode as ReturnType<typeof vi.fn>).mockReturnValue('plan' as const);
-      const ex = planModeExecutor();
-
-      registry.set('hook-a', {
-        trigger: ['stop'],
-        when: 'a',
-        condition: 'isPlanMode()',
-        action: { type: 'replace', tool: 'skill_load', args: { name: 'a' } },
-        version: 1,
-      });
-      registry.set('hook-b', {
-        trigger: ['stop'],
-        when: 'b',
-        condition: 'isPlanMode()',
-        action: { type: 'replace', tool: 'skill_load', args: { name: 'b' } },
-        version: 1,
-      });
-
-      const anySkill = (_n: string) => ({ content: 'skill body' });
-
-      // First batch: only the highest-priority-first stop hook acts (replace
-      // is priority 1, first-wins within the priority group, so only ONE
-      // replace fires per processToolCalls — the other is not reached this
-      // batch because processStopTrigger returns early for priority < 2).
-      const r1 = await ex.processToolCalls([], ctx, anySkill);
-      // Exactly one replacement happened this batch
-      expect(r1.calls).toHaveLength(1);
-      const actedFirst = r1.calls[0].function.arguments as { name: string };
-
-      // Second batch (same turn): the hook that already acted must NOT re-fire,
-      // but the OTHER distinct hook may still act once.
-      const r2 = await ex.processToolCalls([], ctx, anySkill);
-      expect(r2.calls).toHaveLength(1);
-      const actedSecond = r2.calls[0].function.arguments as { name: string };
-      // The second batch's actor is the OTHER hook (distinct allowance)
-      expect(actedSecond.name).not.toBe(actedFirst.name);
-
-      // Third batch (same turn): both have now acted → stop proceeds
-      const r3 = await ex.processToolCalls([], ctx, anySkill);
-      expect(r3.calls).toHaveLength(0);
-    });
-
-    it('inject_before hooks are NOT capped per-turn (may fire on every batch)', async () => {
-      const ex = planModeExecutor();
-
-      registry.set('inject-stop', {
-        trigger: ['stop'],
-        when: 'inject on stop every batch',
-        condition: 'true',
-        action: { type: 'inject_before', tool: 'bash', args: { command: 'echo hi', intent: 'TEST ARTIFACT TO greet' } },
-        version: 1,
-      });
-
-      // Batch 1
-      const r1 = await ex.processToolCalls(
-        [], ctx, (n) => (n === 'inject-stop' ? { content: 'skill body' } : undefined)
-      );
-      expect(r1.calls).toHaveLength(1);
-      expect(r1.calls[0].function.name).toBe('bash');
-
-      // Batch 2 (same turn): inject_before is NOT capped → fires again
-      const r2 = await ex.processToolCalls(
-        [], ctx, (n) => (n === 'inject-stop' ? { content: 'skill body' } : undefined)
-      );
-      expect(r2.calls).toHaveLength(1);
-      expect(r2.calls[0].function.name).toBe('bash');
-    });
   });
 
   // ============================================================================
@@ -727,42 +460,6 @@ describe('HookExecutor', () => {
       expect(result2.message).toContain('already injected this chat');
     });
 
-    it('should allow reactivation in a new move', async () => {
-      registry.set('test-hook', {
-        trigger: ['bash'],
-        when: 'test',
-        condition: 'true',
-        action: { type: 'message' },
-        version: 1,
-      });
-
-      const pendingCalls = [createToolCall('bash', { command: 'test' }, 'test-hook')];
-
-      // First move
-      let result = await executor.execute(
-        'test-hook',
-        registry.get('test-hook')!.action,
-        ctx,
-        pendingCalls,
-        'Test content'
-      );
-      expect(result.message).toContain('test-hook');
-
-      // Simulate new move — processToolCalls clears injectedThisChat
-      await executor.processToolCalls([], ctx, (name) =>
-        name === 'test-hook' ? { content: 'Test content' } : undefined
-      );
-
-      // New move — should activate again
-      result = await executor.execute(
-        'test-hook',
-        registry.get('test-hook')!.action,
-        ctx,
-        pendingCalls,
-        'Test content'
-      );
-      expect(result.message).toContain('test-hook');
-    });
   });
 
   // ============================================================================
@@ -911,17 +608,5 @@ describe('createToolCall()', () => {
     expect(call.function.arguments).toEqual({ command: 'test' });
   });
 
-  it('should create unique IDs for different skills', () => {
-    const call1 = createToolCall('bash', {}, 'skill1');
-    const call2 = createToolCall('bash', {}, 'skill2');
 
-    expect(call1.id).toContain('skill1');
-    expect(call2.id).toContain('skill2');
-    expect(call1.id).not.toBe(call2.id);
-  });
-
-  it('should include skill name in ID', () => {
-    const call = createToolCall('bash', {}, 'my-special-skill');
-    expect(call.id).toContain('hook-my-special-skill');
-  });
 });

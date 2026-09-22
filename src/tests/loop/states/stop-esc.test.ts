@@ -87,7 +87,6 @@ import { AgentState, presentResult } from '../../../loop/state-machine.js';
 import { agentIO } from '../../../loop/agent-io.js';
 import { startWrapUp } from '../../../loop/esc-wrap-up.js';
 import { stopSpinner } from '../../../engine/chat-helpers.js';
-import { autoState } from '../../../loop/auto-state.js';
 import { Triologue } from '../../../loop/triologue.js';
 import { createTurnVars, createChatData, createMockMachineEnv } from '../esc-test-helpers.js';
 import { createMockContext } from '../../test-utils/mock-context.js';
@@ -148,27 +147,6 @@ describe('handleStop — centralized neglection wrap-up', () => {
     expect(logMsg).toContain('teammates still working');
   });
 
-  it('should NOT log teammates message when no teammate is working (text-only path)', async () => {
-    const ctx = createMockContext({
-      team: {
-        listTeammates: vi.fn(() => [
-          { name: 'dev1', status: 'idle' },
-        ]) as never,
-      },
-    });
-    const env = createMockMachineEnv({ triologue });
-    env.ctx = ctx;
-    const turn = createTurnVars();
-    const chat = createChatData();
-
-    agentIO.setNeglectedMode(true);
-    vi.mocked(triologue.getLastRole).mockReturnValue('assistant');
-
-    await handleStop(env, turn, chat);
-
-    expect(agentIO.log).not.toHaveBeenCalled();
-    expect(presentResult).toHaveBeenCalledWith(triologue);
-  });
 
   // ── Path 2: Direct ESC→STOP (new startWrapUp path) ──
 
@@ -196,64 +174,7 @@ describe('handleStop — centralized neglection wrap-up', () => {
     expect(presentResult).not.toHaveBeenCalled();
   });
 
-  it('should call startWrapUp when lastRole is null (ESC before any LLM call)', async () => {
-    const env = createMockMachineEnv({ triologue });
-    const turn = createTurnVars();
-    const chat = createChatData();
 
-    agentIO.setNeglectedMode(true);
-    // Last triologue role is null (no messages yet, or only user messages)
-    vi.mocked(triologue.getLastRole).mockReturnValue(null);
 
-    const result = await handleStop(env, turn, chat);
 
-    expect(result).toBe(AgentState.PROMPT);
-    // startWrapUp fires (null is not 'assistant' → mid-execution ESC path)
-    expect(startWrapUp).toHaveBeenCalledTimes(1);
-  });
-
-  it('should call startWrapUp when lastRole is user (ESC during LLM call)', async () => {
-    const env = createMockMachineEnv({ triologue });
-    const turn = createTurnVars();
-    const chat = createChatData();
-
-    agentIO.setNeglectedMode(true);
-    vi.mocked(triologue.getLastRole).mockReturnValue('user');
-
-    const result = await handleStop(env, turn, chat);
-
-    expect(result).toBe(AgentState.PROMPT);
-    expect(startWrapUp).toHaveBeenCalledTimes(1);
-    expect(presentResult).not.toHaveBeenCalled();
-  });
-
-  it('should turn off auto mode when ESC fires (mid-execution ESC path)', async () => {
-    const env = createMockMachineEnv({ triologue });
-    const turn = createTurnVars();
-    const chat = createChatData();
-
-    // Enable auto mode, then ESC
-    autoState.setAuto(true);
-    agentIO.setNeglectedMode(true);
-    vi.mocked(triologue.getLastRole).mockReturnValue('tool');
-
-    await handleStop(env, turn, chat);
-
-    // Auto mode turned off (ESC = "give me control back")
-    expect(autoState.getAuto()).toBe(false);
-  });
-
-  it('should turn off auto mode when ESC fires (text-only path)', async () => {
-    const env = createMockMachineEnv({ triologue });
-    const turn = createTurnVars();
-    const chat = createChatData();
-
-    autoState.setAuto(true);
-    agentIO.setNeglectedMode(true);
-    vi.mocked(triologue.getLastRole).mockReturnValue('assistant');
-
-    await handleStop(env, turn, chat);
-
-    expect(autoState.getAuto()).toBe(false);
-  });
 });

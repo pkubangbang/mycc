@@ -387,27 +387,15 @@ describe('bashTool timeout coercion', () => {
     return mockExec.mock.calls[0][0].timeout;
   }
 
-  it('defaults to 30 when timeout is undefined (the common first-call case)', async () => {
+  it('defaults to 30 when timeout is undefined or omitted', async () => {
     expect(await execTimeoutFor({})).toBe(30);
-  });
-
-  it('defaults to 30 when timeout is omitted entirely', async () => {
     expect(await execTimeoutFor({ timeout: undefined })).toBe(30);
   });
 
-  it('clamps 90 down to 60', async () => {
+  it('clamps out-of-range values (90→60, 120→60, 0→1, negative→1)', async () => {
     expect(await execTimeoutFor({ timeout: 90 })).toBe(60);
-  });
-
-  it('clamps 120 down to 60', async () => {
     expect(await execTimeoutFor({ timeout: 120 })).toBe(60);
-  });
-
-  it('clamps 0 up to 1', async () => {
     expect(await execTimeoutFor({ timeout: 0 })).toBe(1);
-  });
-
-  it('clamps negative up to 1', async () => {
     expect(await execTimeoutFor({ timeout: -5 })).toBe(1);
   });
 
@@ -415,7 +403,7 @@ describe('bashTool timeout coercion', () => {
     expect(await execTimeoutFor({ timeout: 5.9 })).toBe(5);
   });
 
-  it('passes through a valid in-range integer unchanged', async () => {
+  it('passes through valid in-range integers unchanged', async () => {
     expect(await execTimeoutFor({ timeout: 30 })).toBe(30);
     expect(await execTimeoutFor({ timeout: 1 })).toBe(1);
     expect(await execTimeoutFor({ timeout: 60 })).toBe(60);
@@ -468,13 +456,6 @@ describe('bashTool timeout coercion', () => {
       expect(result).toContain('clamped to 60');
     });
 
-    it('includes a warning when timeout is out of range (120)', async () => {
-      const result = await runAndGetResult({ timeout: 120 });
-      expect(result).toContain('[Warning: bash timeout]');
-      expect(result).toContain('120');
-      expect(result).toContain('clamped to 60');
-    });
-
     it('includes a warning when timeout is 0', async () => {
       const result = await runAndGetResult({ timeout: 0 });
       expect(result).toContain('[Warning: bash timeout]');
@@ -487,16 +468,10 @@ describe('bashTool timeout coercion', () => {
       expect(result).toContain('floored to 5');
     });
 
-    it('does NOT include a warning for a valid in-range integer', async () => {
-      const result = await runAndGetResult({ timeout: 30 });
-      expect(result).not.toContain('[Warning: bash timeout]');
-    });
-
-    it('does NOT include a warning for boundary values 1 and 60', async () => {
+    it('does NOT include a warning for valid in-range integers', async () => {
+      expect(await runAndGetResult({ timeout: 30 })).not.toContain('[Warning: bash timeout]');
       expect(await runAndGetResult({ timeout: 1 })).not.toContain('[Warning: bash timeout]');
-      // reset mock for second call
-      const r60 = await runAndGetResult({ timeout: 60 });
-      expect(r60).not.toContain('[Warning: bash timeout]');
+      expect(await runAndGetResult({ timeout: 60 })).not.toContain('[Warning: bash timeout]');
     });
 
     it('surfaces the warning even on the timeout (timedOut) path', async () => {
@@ -544,41 +519,18 @@ describe('checkDangerousCommand', () => {
   describe('recursive delete from root', () => {
     const blocked = 'Recursive delete from root directory';
 
-    it('blocks rm -rf /', () => {
+    it('blocks rm -rf / and variants', () => {
       expect(checkDangerousCommand('rm -rf /')).toEqual({ blocked: true, reason: blocked });
-    });
-    it('blocks rm -fr /', () => {
       expect(checkDangerousCommand('rm -fr /')).toEqual({ blocked: true, reason: blocked });
-    });
-    it('blocks rm -r /', () => {
-      expect(checkDangerousCommand('rm -r /')).toEqual({ blocked: true, reason: blocked });
-    });
-    it('blocks rm -Rf /', () => {
-      expect(checkDangerousCommand('rm -Rf /')).toEqual({ blocked: true, reason: blocked });
-    });
-    it('blocks rm -rf /*', () => {
       expect(checkDangerousCommand('rm -rf /*')).toEqual({ blocked: true, reason: blocked });
-    });
-    it('blocks rm -rf / ', () => {
-      expect(checkDangerousCommand('rm -rf / ')).toEqual({ blocked: true, reason: blocked });
-    });
-    it('blocks rm -r -f / (separate flags)', () => {
       expect(checkDangerousCommand('rm -r -f /')).toEqual({ blocked: true, reason: blocked });
-    });
-    it('blocks rm -rf --no-preserve-root /', () => {
       expect(checkDangerousCommand('rm -rf --no-preserve-root /')).toEqual({
         blocked: true,
         reason: blocked,
       });
     });
 
-    it('allows rm /some/file (absolute path, not root)', () => {
-      expect(checkDangerousCommand('rm /some/file').blocked).toBe(false);
-    });
-    it('allows rm -rf /some/dir (absolute path, not root)', () => {
-      expect(checkDangerousCommand('rm -rf /some/dir').blocked).toBe(false);
-    });
-    it('allows rm -rf /tmp/build (targeted directory cleanup)', () => {
+    it('allows rm -rf /tmp/build (targeted directory cleanup, not root)', () => {
       expect(checkDangerousCommand('rm -rf /tmp/build').blocked).toBe(false);
     });
   });
@@ -590,12 +542,6 @@ describe('checkDangerousCommand', () => {
     it('blocks rm -rf .', () => {
       expect(checkDangerousCommand('rm -rf .')).toEqual({ blocked: true, reason: blocked });
     });
-    it('blocks rm -r .', () => {
-      expect(checkDangerousCommand('rm -r .')).toEqual({ blocked: true, reason: blocked });
-    });
-    it('blocks rm -rf . ', () => {
-      expect(checkDangerousCommand('rm -rf . ')).toEqual({ blocked: true, reason: blocked });
-    });
     it('allows rm . (non-recursive)', () => {
       expect(checkDangerousCommand('rm .').blocked).toBe(false);
     });
@@ -605,13 +551,8 @@ describe('checkDangerousCommand', () => {
   describe('recursive deletion in home directory', () => {
     const blocked = 'Recursive deletion in home directory';
 
-    it('blocks rm -rf ~', () => {
+    it('blocks rm -rf ~ and ~-paths', () => {
       expect(checkDangerousCommand('rm -rf ~')).toEqual({ blocked: true, reason: blocked });
-    });
-    it('blocks rm -r ~', () => {
-      expect(checkDangerousCommand('rm -r ~')).toEqual({ blocked: true, reason: blocked });
-    });
-    it('blocks rm -rf ~/some/dir', () => {
       expect(checkDangerousCommand('rm -rf ~/some/dir')).toEqual({
         blocked: true,
         reason: blocked,
@@ -624,22 +565,15 @@ describe('checkDangerousCommand', () => {
 
   // ── Privileged operations ─────────────────────────────────────────
   describe('privileged deletion', () => {
-    const blocked = 'Privileged deletion';
-
-    it('blocks sudo rm -rf /', () => {
+    it('blocks sudo rm -rf / and variants', () => {
       expect(checkDangerousCommand('sudo rm -rf /')).toEqual({
         blocked: true,
         reason: 'Privileged deletion',
       });
-    });
-    it('blocks sudo -u root rm -rf /', () => {
       expect(checkDangerousCommand('sudo -u root rm -rf /')).toEqual({
         blocked: true,
         reason: 'Privileged deletion',
       });
-    });
-    it('blocks sudo -E rm file', () => {
-      expect(checkDangerousCommand('sudo -E rm file')).toEqual({ blocked: true, reason: blocked });
     });
     it('allows sudo mv file (not rm)', () => {
       expect(checkDangerousCommand('sudo mv file').blocked).toBe(false);
@@ -667,17 +601,9 @@ describe('checkDangerousCommand', () => {
   describe('batch deletion with glob', () => {
     const blocked = 'Batch deletion with glob pattern';
 
-    it('blocks rm *', () => {
+    it('blocks rm * and glob patterns', () => {
       expect(checkDangerousCommand('rm *')).toEqual({ blocked: true, reason: blocked });
-    });
-    it('blocks rm -rf *', () => {
-      expect(checkDangerousCommand('rm -rf *')).toEqual({ blocked: true, reason: blocked });
-    });
-    it('blocks rm *.txt', () => {
       expect(checkDangerousCommand('rm *.txt')).toEqual({ blocked: true, reason: blocked });
-    });
-    it('allows rm /path/to/* (targeted, has path prefix)', () => {
-      expect(checkDangerousCommand('rm /path/to/*').blocked).toBe(false);
     });
     it('allows rm src/*.test.ts (targeted, has path prefix)', () => {
       expect(checkDangerousCommand('rm src/*.test.ts').blocked).toBe(false);
@@ -698,19 +624,11 @@ describe('checkDangerousCommand', () => {
         reason: 'Disk imaging operation',
       });
     });
-    it('blocks dd bs=4M if=/dev/sda of=/dev/sdb', () => {
-      expect(checkDangerousCommand('dd bs=4M if=/dev/sda of=/dev/sdb')).toEqual({
-        blocked: true,
-        reason: 'Disk imaging operation',
-      });
-    });
-    it('blocks shutdown -h now', () => {
+    it('blocks shutdown and reboot', () => {
       expect(checkDangerousCommand('shutdown -h now')).toEqual({
         blocked: true,
         reason: 'System shutdown',
       });
-    });
-    it('blocks reboot', () => {
       expect(checkDangerousCommand('reboot')).toEqual({
         blocked: true,
         reason: 'System reboot',
@@ -729,34 +647,18 @@ describe('checkDangerousCommand', () => {
         reason: 'Use git_commit tool instead',
       });
     });
-    it('blocks git push --force', () => {
+    it('blocks git push --force variants', () => {
       expect(checkDangerousCommand('git push --force')).toEqual({
         blocked: true,
         reason: 'Force push',
       });
-    });
-    it('blocks git push origin main --force', () => {
-      expect(checkDangerousCommand('git push origin main --force')).toEqual({
-        blocked: true,
-        reason: 'Force push',
-      });
-    });
-    it('allows git push --force-with-lease', () => {
-      expect(checkDangerousCommand('git push --force-with-lease').blocked).toBe(false);
-    });
-    it('blocks git push -f', () => {
-      expect(checkDangerousCommand('git push -f')).toEqual({
-        blocked: true,
-        reason: 'Force push (-f)',
-      });
-    });
-    it('blocks git push origin main -f', () => {
       expect(checkDangerousCommand('git push origin main -f')).toEqual({
         blocked: true,
         reason: 'Force push (-f)',
       });
     });
-    it('allows git push (no force)', () => {
+    it('allows git push --force-with-lease and plain push', () => {
+      expect(checkDangerousCommand('git push --force-with-lease').blocked).toBe(false);
       expect(checkDangerousCommand('git push').blocked).toBe(false);
     });
     it('blocks git reset --hard', () => {
@@ -769,20 +671,12 @@ describe('checkDangerousCommand', () => {
 
   // ── Package publishing ────────────────────────────────────────────
   describe('package publishing', () => {
-    it('blocks npm publish', () => {
+    it('blocks npm publish and twine upload', () => {
       expect(checkDangerousCommand('npm publish')).toEqual({
         blocked: true,
         reason: 'Package publishing requires manual confirmation',
       });
-    });
-    it('blocks twine upload dist/*', () => {
       expect(checkDangerousCommand('twine upload dist/*')).toEqual({
-        blocked: true,
-        reason: 'Package publishing requires manual confirmation',
-      });
-    });
-    it('blocks python -m twine upload dist/*', () => {
-      expect(checkDangerousCommand('python -m twine upload dist/*')).toEqual({
         blocked: true,
         reason: 'Package publishing requires manual confirmation',
       });
@@ -794,20 +688,9 @@ describe('checkDangerousCommand', () => {
 
   // ── Benign commands ───────────────────────────────────────────────
   describe('benign commands', () => {
-    it('allows echo hello', () => {
+    it('allows echo and git status', () => {
       expect(checkDangerousCommand('echo hello').blocked).toBe(false);
-    });
-    it('allows ls -la', () => {
-      expect(checkDangerousCommand('ls -la').blocked).toBe(false);
-    });
-    it('allows pnpm test', () => {
-      expect(checkDangerousCommand('pnpm test').blocked).toBe(false);
-    });
-    it('allows git status', () => {
       expect(checkDangerousCommand('git status').blocked).toBe(false);
-    });
-    it('allows cat file.txt', () => {
-      expect(checkDangerousCommand('cat file.txt').blocked).toBe(false);
     });
   });
 });

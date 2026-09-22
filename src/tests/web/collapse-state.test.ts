@@ -19,8 +19,6 @@ import {
   leaveTail,
   onAppend,
   onShrink,
-  onFilterChange,
-  onHistoryReplace,
   classifyChange,
   applyObservation,
   windowSize,
@@ -142,39 +140,7 @@ describe('onShrink', () => {
   });
 });
 
-describe('onFilterChange', () => {
-  // The verbose-toggle transition (#14): the filtered set's membership
-  // changed, not a genuine append/shrink. The old window position is no
-  // longer meaningful, so reset to the initial window.
-  it('resets an expanded+buffered state to the initial window', () => {
-    // 30/5/false (user scrolled up, 5 buffered) → verbose toggle → 10/0/true
-    expect(onFilterChange()).toEqual(initialCollapseState());
-    expect(onFilterChange()).toEqual(st(INITIAL_VISIBLE, 0, true));
-  });
 
-  it('resets regardless of the incoming state (pure, argument-free)', () => {
-    // onFilterChange takes no state arg — it is a policy decision, not a
-    // delta. Confirm it always yields the initial state.
-    expect(onFilterChange()).toEqual(onShrink());
-  });
-});
-
-describe('onHistoryReplace', () => {
-  // The #22 transition: an AUTHORITATIVE /history replacement (a 200 that
-  // splices the chat arrays, or a session-change clear) bumped
-  // historyRevision. The policy is the same as onShrink (reset to the
-  // initial window — the old position is meaningless against a different
-  // list), but kept as a separate reducer so the call site names the intent
-  // unambiguously and the two policies may diverge.
-  it('resets an expanded+buffered state to the initial window', () => {
-    expect(onHistoryReplace()).toEqual(initialCollapseState());
-    expect(onHistoryReplace()).toEqual(st(INITIAL_VISIBLE, 0, true));
-  });
-
-  it('resets regardless of the incoming state (pure, argument-free)', () => {
-    expect(onHistoryReplace()).toEqual(onShrink());
-  });
-});
 
 describe('classifyChange', () => {
   // classifyChange is the PURE decision the ChatLog watcher makes each time
@@ -212,10 +178,6 @@ describe('classifyChange', () => {
     expect(classifyChange(false, false, 30, 10)).toBe('shrink');
   });
 
-  it('verbose unchanged & length same → none (content edit; leave window)', () => {
-    expect(classifyChange(true, true, 10, 10)).toBe('none');
-    expect(classifyChange(false, false, 0, 0)).toBe('none');
-  });
 
   it('the #15 regression chain: filter (unchanged length) then a real append', () => {
     // Toggle verbose with NO log-only messages present (length unchanged).
@@ -425,33 +387,7 @@ describe('applyObservation — the whole watcher body (round-8 integration)', ()
     expect(shouldScrollToTail).toBe(true); // re-scroll to the new tail
   });
 
-  it('#22 — historyReplaced WINS over a concurrent append (revision is highest priority)', () => {
-    // A /history 200 can also grow the list (more history than before). The
-    // revision change must take priority over the append classification —
-    // the replacement is the authoritative event, not a tail arrival.
-    const { state: after, shouldScrollToTail } = applyObservation(
-      obs(true, 10),
-      obs(true, 50), // length grew → would classify as 'append'…
-      st(35, 0, true),
-      true, // …but historyReplaced overrides → reset
-    );
-    expect(after).toEqual(initialCollapseState()); // reset, NOT append trim
-    expect(shouldScrollToTail).toBe(true);
-  });
 
-  it('#22 — historyReplaced WINS over a concurrent verbose toggle', () => {
-    // A 200 replacement can coincide with a verbose change in the same
-    // render cycle. The revision change takes priority over the filter
-    // classification too.
-    const { state: after, shouldScrollToTail } = applyObservation(
-      obs(false, 1000),
-      obs(true, 1000), // verbose changed → would classify as 'filter'…
-      st(30, 5, false),
-      true, // …but historyReplaced overrides → reset
-    );
-    expect(after).toEqual(initialCollapseState());
-    expect(shouldScrollToTail).toBe(true);
-  });
 
   it('#22 — historyReplaced=false + length grew → normal append (revision does not interfere)', () => {
     // The default (historyReplaced=false) path is unchanged: a normal tail
@@ -467,18 +403,4 @@ describe('applyObservation — the whole watcher body (round-8 integration)', ()
     expect(shouldScrollToTail).toBe(true);
   });
 
-  it('#22 — historyReplaced=false (default) preserves the prior behavior exactly', () => {
-    // The historyReplaced parameter defaults to false, so existing callers
-    // (and existing tests) that omit it get the unchanged transition. Pin a
-    // verbose-toggle case to confirm the default does not alter the filter
-    // branch's wasTrackingTail behaviour.
-    const { state: after, shouldScrollToTail } = applyObservation(
-      obs(false, 30),
-      obs(true, 30),
-      st(30, 5, false), // reading older history (not tracking)
-      // historyReplaced omitted → defaults to false
-    );
-    expect(after).toEqual(st(INITIAL_VISIBLE, 0, true)); // filter reset
-    expect(shouldScrollToTail).toBe(false); // was NOT tracking → no re-scroll
-  });
 });

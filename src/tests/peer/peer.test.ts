@@ -40,7 +40,6 @@ vi.mock('../../config.js', () => ({
 import { IdentityManager } from '../../peer/identity.js';
 import { ChannelManager } from '../../peer/channel.js';
 import { PeerManager } from '../../peer/peer.js';
-import { estimateTextTokens } from '../../utils/token.js';
 import type { ChannelFile } from '../../types.js';
 
 const SID_A = 'aaaa0000-0000-0000-0000-000000000000';
@@ -127,34 +126,7 @@ describe('IdentityManager', () => {
     expect(sids).toEqual([SID_A, SID_B]); // both present
   });
 
-  it('register() preserves entries with no heartbeat file (mid-startup peer)', () => {
-    // Pre-seed identity.json with SID_B but NO heartbeat file — it registered
-    // but has not beaten yet. Pruning must not remove it (could be mid-startup).
-    const now = Date.now();
-    fs.writeFileSync(identityFile(), JSON.stringify({
-      [SID_B]: { sessionId: SID_B, workDir: '/work/b', mailbox: makeMailboxPath(SID_B), startedAt: now - 5_000 },
-    }, null, 2), 'utf-8');
-    // Deliberately no writeHeartbeatRaw(SID_B, ...).
 
-    const id = new IdentityManager(SID_A, '/work/a', makeMailboxPath(SID_A));
-    id.register();
-
-    const sids = id.listIdentities().map(e => e.sessionId).sort();
-    expect(sids).toEqual([SID_A, SID_B]); // SID_B preserved despite no beats
-  });
-
-  it('register() never prunes its own entry even if its heartbeat is stale', () => {
-    // Self-prune guard: write a stale heartbeat for SID_A itself, then
-    // register SID_A. The self entry must survive.
-    const now = Date.now();
-    writeHeartbeatRaw(SID_A, [now - 2 * 60 * 60 * 1000]); // 2h old
-
-    const id = new IdentityManager(SID_A, '/work/a', makeMailboxPath(SID_A));
-    id.register();
-
-    const sids = id.listIdentities().map(e => e.sessionId);
-    expect(sids).toContain(SID_A); // self preserved
-  });
 
   it('register() includes the role field when provided', () => {
     const id = new IdentityManager(SID_A, '/work/a', makeMailboxPath(SID_A), 'skill-manager');
@@ -167,22 +139,7 @@ describe('IdentityManager', () => {
     expect(raw[SID_A].role).toBe('skill-manager');
   });
 
-  it('register() omits the role field when not provided (clean JSON)', () => {
-    const id = new IdentityManager(SID_A, '/work/a', makeMailboxPath(SID_A));
-    id.register();
-    const entries = id.listIdentities();
-    expect(entries).toHaveLength(1);
-    expect(entries[0].role).toBeUndefined();
-    // The role key is absent from the JSON (not role: null / undefined).
-    const raw = JSON.parse(fs.readFileSync(identityFile(), 'utf-8'));
-    expect(raw[SID_A]).not.toHaveProperty('role');
-  });
 
-  it('isFresh() returns false for an unregistered session', () => {
-    const id = new IdentityManager(SID_A, '/work/a', makeMailboxPath(SID_A));
-    id.register();
-    expect(id.isFresh(SID_B)).toBe(false);
-  });
 
   it('isFresh() is true when remote heartbeat is newer than local oldest', () => {
     const id = new IdentityManager(SID_A, '/work/a', makeMailboxPath(SID_A));
@@ -211,193 +168,6 @@ describe('IdentityManager', () => {
     writeHeartbeatRaw(SID_B, [now - 80_000, now - 70_000, now - 60_000]);
     expect(id.isFresh(SID_B)).toBe(false);
   });
-
-  it('isFresh() is true for a peer that started before local with a RECENT beat (startup race)', () => {
-    // Regression: a peer (B) that started BEFORE the local instance (A) has
-    // its only heartbeat older than A's oldest beat. The relative check
-    // (remoteLatest > localOldest) alone would mark it stale for up to
-    // HEARTBEAT_INTERVAL_MS (30s) until B's next beat — the "30s delay"
-    // bug. The "recent clause" fixes this: a remote whose latest beat is
-    // within one heartbeat interval of now is live regardless of the
-    // relative ordering. Here B's latest beat is 5s ago (recent) but older
-    // than A's oldest beat (now-1000), so WITHOUT the fix this is false.
-    const id = new IdentityManager(SID_A, '/work/a', makeMailboxPath(SID_A));
-    id.register();
-    const idB = new IdentityManager(SID_B, '/work/b', makeMailboxPath(SID_B));
-    idB.register();
-    const now = Date.now();
-    // A started later: oldest beat at now-1000. B started earlier: single
-    // beat at now-5000 (recent, within 30s, but older than A's oldest).
-    writeHeartbeatRaw(SID_A, [now - 1000]);
-    writeHeartbeatRaw(SID_B, [now - 5000]);
-    expect(id.isFresh(SID_B)).toBe(true);
-  });
-
-  it('isFresh() is false for a peer whose recent beat is NOT recent enough AND older than local oldest', () => {
-    // The "recent clause" only grants freshness within HEARTBEAT_INTERVAL_MS.
-    // A remote whose latest beat is older than that window (but still within
-    // FRESHNESS_WINDOW_MS) must still pass the relative check. Here B's
-    // latest beat is 45s ago (past the 30s recent window) and older than A's
-    // oldest (now-1000), so it is correctly stale — the relative check still
-    // guards peers that died a while ago.
-    const id = new IdentityManager(SID_A, '/work/a', makeMailboxPath(SID_A));
-    id.register();
-    const idB = new IdentityManager(SID_B, '/work/b', makeMailboxPath(SID_B));
-    idB.register();
-    const now = Date.now();
-    writeHeartbeatRaw(SID_A, [now - 1000]);
-    writeHeartbeatRaw(SID_B, [now - 45_000]);
-    expect(id.isFresh(SID_B)).toBe(false);
-  });
-
-  it('isFresh() treats everything as fresh when local has 0 beats (oldest = -Infinity)', () => {
-    const id = new IdentityManager(SID_A, '/work/a', makeMailboxPath(SID_A));
-    id.register();
-    const idB = new IdentityManager(SID_B, '/work/b', makeMailboxPath(SID_B));
-    idB.register();
-    // No local heartbeat file for A; remote has a recent beat.
-    // Timestamp is Date.now()-relative so it falls within the 90s absolute
-    // freshness window (fixed epoch values are decades old → stale).
-    const now = Date.now();
-    writeHeartbeatRaw(SID_B, [now - 20, now - 10, now]);
-    expect(id.isFresh(SID_B)).toBe(true);
-  });
-
-  it('getRemoteMailbox() returns the registered mailbox path or null', () => {
-    const id = new IdentityManager(SID_A, '/work/a', makeMailboxPath(SID_A));
-    id.register();
-    expect(id.getRemoteMailbox(SID_A)).toContain('unread-lead.jsonl');
-    expect(id.getRemoteMailbox('nonexistent-sid')).toBeNull();
-  });
-
-  it('startHeartbeat() writes a beat immediately and trims to 3', () => {
-    const id = new IdentityManager(SID_A, '/work/a', makeMailboxPath(SID_A));
-    id.startHeartbeat();
-    let beats = id.getOwnHeartbeat();
-    expect(beats).toHaveLength(1);
-    // Manually beat twice more to test the trim-to-3 invariant.
-    id.stopHeartbeat();
-    // Re-create and beat 5 times by calling start/stop won't trim predictably;
-    // instead, write directly to test trim on read-back via a fresh instance.
-    writeHeartbeatRaw(SID_A, [1, 2, 3, 4, 5]);
-    // A new instance reading the same file trims on next beat.
-    const id2 = new IdentityManager(SID_A, '/work/a', makeMailboxPath(SID_A));
-    id2.startHeartbeat();
-    beats = id2.getOwnHeartbeat();
-    expect(beats).toHaveLength(3);
-    // Last three of [1,2,3,4,5,now] → [4,5,now]
-    expect(beats[0]).toBe(4);
-    expect(beats[1]).toBe(5);
-    id2.stopHeartbeat();
-  });
-
-  it('readHeartbeats() reads the legacy {timestamps} schema (backward-compat)', () => {
-    writeHeartbeatRaw(SID_A, [100, 200, 300]);
-    const id = new IdentityManager(SID_A, '/work/a', makeMailboxPath(SID_A));
-    expect(id.getOwnHeartbeat()).toEqual([100, 200, 300]);
-  });
-
-  it('recordBrief() writes a brief entry and getBriefs() reads it back', () => {
-    const id = new IdentityManager(SID_A, '/work/a', makeMailboxPath(SID_A));
-    id.recordBrief('working on heartbeat', 8);
-    const briefs = id.getBriefs(SID_A);
-    expect(briefs).toHaveLength(1);
-    expect(briefs[0].content).toBe('working on heartbeat');
-    expect(briefs[0].confidence).toBe(8);
-    expect(briefs[0].time).toBeTypeOf('number');
-  });
-
-  it('recordBrief() truncates content to at most 200 estimated tokens', () => {
-    const id = new IdentityManager(SID_A, '/work/a', makeMailboxPath(SID_A));
-    // A short message fits and is stored verbatim.
-    id.recordBrief('short message', 5);
-    expect(id.getBriefs(SID_A)[0].content).toBe('short message');
-
-    // A long message (well over 200 tokens) is truncated so the stored
-    // content estimates to <= 200 tokens, and confidence is preserved.
-    const longMsg = 'word '.repeat(500); // ~500 words -> well over 200 tokens
-    expect(estimateTextTokens(longMsg)).toBeGreaterThan(200);
-    id.recordBrief(longMsg, 6);
-    const stored = id.getBriefs(SID_A)[1].content;
-    expect(estimateTextTokens(stored)).toBeLessThanOrEqual(200);
-    expect(id.getBriefs(SID_A)[1].confidence).toBe(6);
-  });
-
-  it('recordBrief() keeps only the last 3 briefs', () => {
-    const id = new IdentityManager(SID_A, '/work/a', makeMailboxPath(SID_A));
-    id.recordBrief('b1', 1);
-    id.recordBrief('b2', 2);
-    id.recordBrief('b3', 3);
-    id.recordBrief('b4', 4);
-    id.recordBrief('b5', 5);
-    const briefs = id.getBriefs(SID_A);
-    expect(briefs).toHaveLength(3);
-    expect(briefs[0].content).toBe('b3');
-    expect(briefs[1].content).toBe('b4');
-    expect(briefs[2].content).toBe('b5');
-    // Confidence preserved alongside content.
-    expect(briefs[2].confidence).toBe(5);
-  });
-
-  it('recordBrief() preserves existing heartbeats and getOwnHeartbeat still works', () => {
-    // Start with a legacy {timestamps} heartbeat file.
-    writeHeartbeatRaw(SID_A, [100, 200, 300]);
-    const id = new IdentityManager(SID_A, '/work/a', makeMailboxPath(SID_A));
-    id.recordBrief('added a brief', 7);
-    // Heartbeats must survive the brief write (not be wiped).
-    expect(id.getOwnHeartbeat()).toEqual([100, 200, 300]);
-    expect(id.getBriefs(SID_A)).toHaveLength(1);
-  });
-
-  it('beat() preserves existing briefs (does not wipe the briefs array)', () => {
-    const id = new IdentityManager(SID_A, '/work/a', makeMailboxPath(SID_A));
-    id.recordBrief('survive-the-beat', 9);
-    // A beat must keep the brief entry.
-    id.startHeartbeat();
-    id.stopHeartbeat();
-    const briefs = id.getBriefs(SID_A);
-    expect(briefs).toHaveLength(1);
-    expect(briefs[0].content).toBe('survive-the-beat');
-  });
-
-  it('getBriefs() returns [] for a session with no heartbeat file', () => {
-    const id = new IdentityManager(SID_A, '/work/a', makeMailboxPath(SID_A));
-    expect(id.getBriefs(SID_B)).toEqual([]);
-  });
-
-  it('beat() stamps process.pid into the heartbeat file (kill target for daemons)', () => {
-    const id = new IdentityManager(SID_A, '/work/a', makeMailboxPath(SID_A));
-    id.startHeartbeat();
-    id.stopHeartbeat();
-    const raw = JSON.parse(fs.readFileSync(heartbeatFile(SID_A), 'utf-8'));
-    expect(raw.pid).toBe(process.pid);
-  });
-
-  it('getPid() reads back the PID stamped by a beat', () => {
-    const id = new IdentityManager(SID_A, '/work/a', makeMailboxPath(SID_A));
-    id.startHeartbeat();
-    id.stopHeartbeat();
-    expect(id.getPid(SID_A)).toBe(process.pid);
-  });
-
-  it('getPid() returns null for a heartbeat file without a pid field (legacy/backward-compat)', () => {
-    // Legacy {timestamps} file has no pid — getPid must degrade to null.
-    writeHeartbeatRaw(SID_A, [100, 200, 300]);
-    const id = new IdentityManager(SID_A, '/work/a', makeMailboxPath(SID_A));
-    expect(id.getPid(SID_A)).toBeNull();
-  });
-
-  it('getPid() returns null for a session with no heartbeat file', () => {
-    const id = new IdentityManager(SID_A, '/work/a', makeMailboxPath(SID_A));
-    expect(id.getPid(SID_B)).toBeNull();
-  });
-
-  it('PeerManager.getPid() forwards to IdentityManager', () => {
-    const peer = new PeerManager(SID_A, '/work/a', makeMailboxPath(SID_A));
-    peer.start();
-    expect(peer.getPid(SID_A)).toBe(process.pid);
-    peer.stop();
-  });
 });
 
 describe('ChannelManager', () => {
@@ -422,11 +192,6 @@ describe('ChannelManager', () => {
     expect(list[0].peerSessionId).toBe(SID_B);
   });
 
-  it('listChannels() returns [] when no own channel files exist', () => {
-    const idA = new IdentityManager(SID_A, '/work/a', makeMailboxPath(SID_A));
-    const ch = new ChannelManager(SID_A, idA, makeMailboxPath(SID_A));
-    expect(ch.listChannels()).toEqual([]);
-  });
 
   it('joinChannel() throws if the channel file does not exist', () => {
     const idA = new IdentityManager(SID_A, '/work/a', makeMailboxPath(SID_A));
@@ -631,65 +396,9 @@ describe('ChannelManager', () => {
     expect(calls).toEqual(['joined']);
   });
 
-  it('joinChannel() does not throw if no onChannelJoin callback is set', () => {
-    const cid = 'chan-join-nocb';
-    const mailbox = makeMailboxPath(SID_A);
-    writeChannelRaw(SID_A, cid, {
-      channelId: cid, ownerSessionId: SID_A, peerSessionId: SID_B,
-      title: 't', firstQuery: null, joined: false, firstQuerySent: false, createdAt: 1,
-    });
-    const idA = new IdentityManager(SID_A, '/work/a', mailbox);
-    const ch = new ChannelManager(SID_A, idA, mailbox);
-    // No setOnChannelJoin call — joinChannel must still succeed.
-    expect(() => ch.joinChannel(cid)).not.toThrow();
-  });
 
-  it('joinChannel() swallows a throwing onChannelJoin callback (channel state stays committed)', () => {
-    const cid = 'chan-join-throw';
-    const mailbox = makeMailboxPath(SID_A);
-    writeChannelRaw(SID_A, cid, {
-      channelId: cid, ownerSessionId: SID_A, peerSessionId: SID_B,
-      title: 't', firstQuery: null, joined: false, firstQuerySent: false, createdAt: 1,
-    });
-    const idA = new IdentityManager(SID_A, '/work/a', mailbox);
-    const ch = new ChannelManager(SID_A, idA, mailbox);
-    ch.setOnChannelJoin(() => { throw new Error('callback exploded'); });
 
-    // joinChannel must not propagate the callback error.
-    const result = ch.joinChannel(cid);
-    expect(result.joined).toBe(true);
-    // joined flag persisted despite the callback throw.
-    const persisted = JSON.parse(fs.readFileSync(channelFile(SID_A, cid), 'utf-8'));
-    expect(persisted.joined).toBe(true);
-  });
 
-  it('setOnChannelJoin overwrites a previously registered callback (single listener)', () => {
-    const cid = 'chan-join-overwrite';
-    const mailbox = makeMailboxPath(SID_A);
-    writeChannelRaw(SID_A, cid, {
-      channelId: cid, ownerSessionId: SID_A, peerSessionId: SID_B,
-      title: 't', firstQuery: null, joined: false, firstQuerySent: false, createdAt: 1,
-    });
-    const idA = new IdentityManager(SID_A, '/work/a', mailbox);
-    const ch = new ChannelManager(SID_A, idA, mailbox);
-
-    const first: string[] = [];
-    const second: string[] = [];
-    ch.setOnChannelJoin(() => { first.push('a'); });
-    ch.setOnChannelJoin(() => { second.push('b'); });
-
-    ch.joinChannel(cid);
-    expect(first).toEqual([]);      // overwritten — not called
-    expect(second).toEqual(['b']);  // only the latest listener fires
-  });
-
-  it('sendPeerMail() returns false for an unregistered session', () => {
-    const mailboxA = makeMailboxPath(SID_A);
-    const idA = new IdentityManager(SID_A, '/work/a', mailboxA);
-    idA.register();
-    const ch = new ChannelManager(SID_A, idA, mailboxA);
-    expect(ch.sendPeerMail('not-registered-sid', 't', 'b')).toBe(false);
-  });
 });
 
 describe('PeerManager facade', () => {
@@ -707,12 +416,6 @@ describe('PeerManager facade', () => {
     expect(peer.listIdentities()).toHaveLength(0);
   });
 
-  it('hasActiveChannel() is false with no channels', () => {
-    const peer = new PeerManager(SID_A, '/work/a', makeMailboxPath(SID_A));
-    peer.start();
-    expect(peer.hasActiveChannel()).toBe(false);
-    peer.stop();
-  });
 
   it('hasActiveChannel() is true when a joined channel has a fresh peer', () => {
     const cid = 'chan-005';

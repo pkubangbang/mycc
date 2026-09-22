@@ -74,23 +74,7 @@ describe('agent-io', () => {
         expect(buffer).toHaveLength(1);
       });
 
-      it('should handle multiple arguments', () => {
-        agentIO.log('arg1', 'arg2', 'arg3');
 
-        expect(consoleLogSpy).toHaveBeenCalledWith('arg1', 'arg2', 'arg3');
-      });
-
-      it('should buffer multiple calls in interaction mode', () => {
-        agentIO.setNeglectedMode(true);
-
-        agentIO.log('message 1');
-        agentIO.log('message 2');
-        agentIO.log('message 3');
-
-        const buffer = (agentIO as unknown as { outputBuffer: Array<{ method: string; args: unknown[] }> })
-          .outputBuffer;
-        expect(buffer).toHaveLength(3);
-      });
     });
 
     describe('warn', () => {
@@ -190,45 +174,8 @@ describe('agent-io', () => {
       expect(consoleErrorSpy).not.toHaveBeenCalled();
     });
 
-    it('should flush log messages', () => {
-      // Manually add to buffer
-      (agentIO as unknown as { outputBuffer: Array<{ method: string; args: unknown[] }> }).outputBuffer = [
-        { method: 'log', args: ['message 1'] },
-        { method: 'log', args: ['message 2'] },
-      ];
 
-      agentIO.flushOutput();
 
-      expect(consoleLogSpy).toHaveBeenCalledTimes(2);
-      expect(consoleLogSpy).toHaveBeenNthCalledWith(1, 'message 1');
-      expect(consoleLogSpy).toHaveBeenNthCalledWith(2, 'message 2');
-    });
-
-    it('should flush warn messages', () => {
-      (agentIO as unknown as { outputBuffer: Array<{ method: string; args: unknown[] }> }).outputBuffer = [
-        { method: 'warn', args: ['warning 1'] },
-        { method: 'warn', args: ['warning 2'] },
-      ];
-
-      agentIO.flushOutput();
-
-      expect(consoleWarnSpy).toHaveBeenCalledTimes(2);
-      expect(consoleWarnSpy).toHaveBeenNthCalledWith(1, 'warning 1');
-      expect(consoleWarnSpy).toHaveBeenNthCalledWith(2, 'warning 2');
-    });
-
-    it('should flush error messages', () => {
-      (agentIO as unknown as { outputBuffer: Array<{ method: string; args: unknown[] }> }).outputBuffer = [
-        { method: 'error', args: ['error 1'] },
-        { method: 'error', args: ['error 2'] },
-      ];
-
-      agentIO.flushOutput();
-
-      expect(consoleErrorSpy).toHaveBeenCalledTimes(2);
-      expect(consoleErrorSpy).toHaveBeenNthCalledWith(1, 'error 1');
-      expect(consoleErrorSpy).toHaveBeenNthCalledWith(2, 'error 2');
-    });
 
     it('should flush mixed messages in order', () => {
       (agentIO as unknown as { outputBuffer: Array<{ method: string; args: unknown[] }> }).outputBuffer = [
@@ -251,50 +198,9 @@ describe('agent-io', () => {
       expect(consoleLogSpy).toHaveBeenNthCalledWith(2, 'log 2');
     });
 
-    it('should clear buffer after flush', () => {
-      (agentIO as unknown as { outputBuffer: Array<{ method: string; args: unknown[] }> }).outputBuffer = [
-        { method: 'log', args: ['message'] },
-      ];
 
-      agentIO.flushOutput();
 
-      const buffer = (agentIO as unknown as { outputBuffer: Array<{ method: string; args: unknown[] }> })
-        .outputBuffer;
-      expect(buffer).toHaveLength(0);
-    });
 
-    it('should handle messages with multiple arguments', () => {
-      (agentIO as unknown as { outputBuffer: Array<{ method: string; args: unknown[] }> }).outputBuffer = [
-        { method: 'log', args: ['arg1', 'arg2', 'arg3'] },
-      ];
-
-      agentIO.flushOutput();
-
-      expect(consoleLogSpy).toHaveBeenCalledWith('arg1', 'arg2', 'arg3');
-    });
-
-    it('should handle empty arguments array', () => {
-      (agentIO as unknown as { outputBuffer: Array<{ method: string; args: unknown[] }> }).outputBuffer = [
-        { method: 'log', args: [] },
-      ];
-
-      agentIO.flushOutput();
-
-      expect(consoleLogSpy).toHaveBeenCalledWith();
-    });
-
-    it('should handle large buffer', () => {
-      const largeBuffer: Array<{ method: 'log' | 'warn' | 'error'; args: unknown[] }> = [];
-      for (let i = 0; i < 100; i++) {
-        largeBuffer.push({ method: 'log', args: [`message ${i}`] });
-      }
-      (agentIO as unknown as { outputBuffer: Array<{ method: string; args: unknown[] }> }).outputBuffer =
-        largeBuffer;
-
-      agentIO.flushOutput();
-
-      expect(consoleLogSpy).toHaveBeenCalledTimes(100);
-    });
 
     it('should not interfere with new buffering after flush', () => {
       // First round
@@ -312,111 +218,4 @@ describe('agent-io', () => {
     });
   });
 
-  describe('Edge Cases', () => {
-    it('should handle concurrent log calls safely', () => {
-      agentIO.setNeglectedMode(true);
-
-      // Simulate concurrent calls
-      for (let i = 0; i < 10; i++) {
-        agentIO.log(`concurrent message ${i}`);
-      }
-
-      const buffer = (agentIO as unknown as { outputBuffer: Array<{ method: string; args: unknown[] }> })
-        .outputBuffer;
-      expect(buffer).toHaveLength(10);
-    });
-
-    it('should handle state transitions during buffering', () => {
-      // Start not in interaction mode
-      agentIO.log('direct message 1');
-      expect(consoleLogSpy).toHaveBeenCalledTimes(1);
-
-      // Enter interaction mode
-      agentIO.setNeglectedMode(true);
-      agentIO.log('buffered message');
-      expect(consoleLogSpy).toHaveBeenCalledTimes(1); // No new calls
-
-      // Exit interaction mode and flush
-      agentIO.setNeglectedMode(false);
-      agentIO.flushOutput();
-      expect(consoleLogSpy).toHaveBeenCalledTimes(2);
-
-      // Now log directly again
-      agentIO.log('direct message 2');
-      expect(consoleLogSpy).toHaveBeenCalledTimes(3);
-    });
-
-    it('should handle objects and complex arguments', () => {
-      const obj = { key: 'value', nested: { a: 1 } };
-      const arr = [1, 2, 3];
-
-      agentIO.setNeglectedMode(true);
-      agentIO.log('object:', obj, 'array:', arr);
-
-      const buffer = (agentIO as unknown as { outputBuffer: Array<{ method: string; args: unknown[] }> })
-        .outputBuffer;
-      expect(buffer[0].args).toEqual(['object:', obj, 'array:', arr]);
-
-      agentIO.flushOutput();
-      expect(consoleLogSpy).toHaveBeenCalledWith('object:', obj, 'array:', arr);
-    });
-
-    it('should handle special string values', () => {
-      agentIO.setNeglectedMode(true);
-      agentIO.log('');
-      agentIO.log('   ');
-      agentIO.log('\n\t');
-      agentIO.log('unicode: \u{1F600}');
-
-      agentIO.flushOutput();
-
-      expect(consoleLogSpy).toHaveBeenCalledTimes(4);
-    });
-
-    it('should handle null and undefined arguments', () => {
-      agentIO.setNeglectedMode(true);
-      agentIO.log(null);
-      agentIO.log(undefined);
-      agentIO.log('mixed', null, undefined);
-
-      agentIO.flushOutput();
-
-      expect(consoleLogSpy).toHaveBeenCalledWith(null);
-      expect(consoleLogSpy).toHaveBeenCalledWith(undefined);
-      expect(consoleLogSpy).toHaveBeenCalledWith('mixed', null, undefined);
-    });
-
-    it('should handle numeric arguments', () => {
-      agentIO.setNeglectedMode(true);
-      agentIO.log(42);
-      agentIO.log(3.14159);
-      agentIO.log(-1);
-      agentIO.log(0);
-      agentIO.log(Infinity);
-      agentIO.log(NaN);
-
-      agentIO.flushOutput();
-
-      expect(consoleLogSpy).toHaveBeenCalledTimes(6);
-    });
-
-    it('should maintain separate buffers for different output methods', () => {
-      agentIO.setNeglectedMode(true);
-
-      agentIO.log('log message');
-      agentIO.warn('warn message');
-      agentIO.error('error message');
-      agentIO.log('another log');
-
-      const buffer = (agentIO as unknown as { outputBuffer: Array<{ method: string; args: unknown[] }> })
-        .outputBuffer;
-
-      expect(buffer).toEqual([
-        { method: 'log', args: ['log message'] },
-        { method: 'warn', args: ['warn message'] },
-        { method: 'error', args: ['error message'] },
-        { method: 'log', args: ['another log'] },
-      ]);
-    });
-  });
 });

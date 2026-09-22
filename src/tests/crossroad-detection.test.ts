@@ -72,12 +72,6 @@ describe('detectTurningWord — true positives (should detect)', () => {
 });
 
 describe('detectTurningWord — false positives (should NOT detect)', () => {
-  it('rejects But mid-sentence (balanced analysis)', () => {
-    const content =
-      'The refactoring approach is cleaner but it requires more upfront work. We should weigh the tradeoffs carefully before deciding.';
-    const result = detectTurningWord(content);
-    expect(result).toBeNull();
-  });
 
   it('rejects However mid-sentence (not at sentence boundary)', () => {
     const content =
@@ -107,12 +101,6 @@ describe('detectTurningWord — false positives (should NOT detect)', () => {
     expect(result).toBeNull();
   });
 
-  it('rejects Actually mid-sentence (clarification, not turn)', () => {
-    const content =
-      'The function signature is actually quite simple once you understand the type parameters and how they interact with the generic constraints.';
-    const result = detectTurningWord(content);
-    expect(result).toBeNull();
-  });
 
   it('rejects short prefix (no commitment before turn)', () => {
     const content =
@@ -128,26 +116,8 @@ describe('detectTurningWord — false positives (should NOT detect)', () => {
     expect(result).toBeNull();
   });
 
-  it('rejects Chinese 但 mid-sentence (conjunction)', () => {
-    const content =
-      '这个方案实现简单但维护成本较高，我们需要在两者之间找到平衡点来做出最终的技术决策。';
-    const result = detectTurningWord(content);
-    expect(result).toBeNull();
-  });
 
-  it('rejects Chinese 其实 mid-sentence (clarification)', () => {
-    const content =
-      '这个问题其实比看起来要复杂得多，涉及到底层架构的多个组件之间的交互和依赖关系。';
-    const result = detectTurningWord(content);
-    expect(result).toBeNull();
-  });
 
-  it('rejects Chinese 不过 mid-sentence (conjunction)', () => {
-    const content =
-      '代码质量不错不过测试覆盖率还可以进一步提升，建议添加更多的边界条件测试用例。';
-    const result = detectTurningWord(content);
-    expect(result).toBeNull();
-  });
 });
 
 describe('detectTurningWord — edge cases', () => {

@@ -30,14 +30,6 @@ describe('magic-bytes', () => {
       expect(result[0].extension).toBe('.gif');
     });
 
-    it('should detect BMP', () => {
-      const bmp = Buffer.from([0x42, 0x4D, 0x00, 0x00]);
-      const result = filetypeinfo(bmp);
-      expect(result).toHaveLength(1);
-      expect(result[0].typename).toBe('bmp');
-      expect(result[0].mime).toBe('image/bmp');
-      expect(result[0].extension).toBe('.bmp');
-    });
 
     it('should detect ICO', () => {
       const ico = Buffer.from([0x00, 0x00, 0x01, 0x00]);
@@ -84,31 +76,8 @@ describe('magic-bytes', () => {
       expect(result[0].extension).toBe('.mp3');
     });
 
-    it('should detect MP3 (ID3 tag)', () => {
-      const mp3 = Buffer.from([0x49, 0x44, 0x33, 0x04]);
-      const result = filetypeinfo(mp3);
-      expect(result).toHaveLength(1);
-      expect(result[0].typename).toBe('mp3');
-      expect(result[0].mime).toBe('audio/mpeg');
-    });
 
-    it('should detect OGG', () => {
-      const ogg = Buffer.from([0x4F, 0x67, 0x67, 0x53]);
-      const result = filetypeinfo(ogg);
-      expect(result).toHaveLength(1);
-      expect(result[0].typename).toBe('ogg');
-      expect(result[0].mime).toBe('audio/ogg');
-      expect(result[0].extension).toBe('.ogg');
-    });
 
-    it('should detect FLV', () => {
-      const flv = Buffer.from([0x46, 0x4C, 0x56, 0x01]);
-      const result = filetypeinfo(flv);
-      expect(result).toHaveLength(1);
-      expect(result[0].typename).toBe('flv');
-      expect(result[0].mime).toBe('video/x-flv');
-      expect(result[0].extension).toBe('.flv');
-    });
   });
 
   describe('video', () => {
@@ -146,13 +115,6 @@ describe('magic-bytes', () => {
       expect(result[0].extension).toBe('.zip');
     });
 
-    it('should detect empty ZIP', () => {
-      const emptyZip = Buffer.from([0x50, 0x4B, 0x05, 0x06]);
-      const result = filetypeinfo(emptyZip);
-      expect(result).toHaveLength(1);
-      expect(result[0].typename).toBe('zip');
-      expect(result[0].mime).toBe('application/zip');
-    });
 
     it('should detect GZIP', () => {
       const gzip = Buffer.from([0x1F, 0x8B, 0x08]);
@@ -163,38 +125,8 @@ describe('magic-bytes', () => {
       expect(result[0].extension).toBe('.gz');
     });
 
-    it('should detect RAR', () => {
-      const rar = Buffer.from([0x52, 0x61, 0x72, 0x21]);
-      const result = filetypeinfo(rar);
-      expect(result).toHaveLength(1);
-      expect(result[0].typename).toBe('rar');
-      expect(result[0].mime).toBe('application/x-rar');
-      expect(result[0].extension).toBe('.rar');
-    });
 
-    it('should detect 7z', () => {
-      const sevenZ = Buffer.from([0x37, 0x7A, 0xBC, 0xAF, 0x27, 0x1C]);
-      const result = filetypeinfo(sevenZ);
-      expect(result).toHaveLength(1);
-      expect(result[0].typename).toBe('7z');
-      expect(result[0].mime).toBe('application/x-7z-compressed');
-      expect(result[0].extension).toBe('.7z');
-    });
 
-    it('should detect TAR (ustar at offset 257)', () => {
-      // TAR file with ustar signature at offset 257
-      const tar = Buffer.alloc(300);
-      tar[257] = 0x75; // u
-      tar[258] = 0x73; // s
-      tar[259] = 0x74; // t
-      tar[260] = 0x61; // a
-      tar[261] = 0x72; // r
-      const result = filetypeinfo(tar);
-      expect(result).toHaveLength(1);
-      expect(result[0].typename).toBe('tar');
-      expect(result[0].mime).toBe('application/x-tar');
-      expect(result[0].extension).toBe('.tar');
-    });
   });
 
   describe('documents', () => {

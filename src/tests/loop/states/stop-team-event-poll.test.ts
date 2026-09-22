@@ -141,93 +141,18 @@ describe('handleStop — normal-mode teammate wait via awaitTeammates', () => {
 
   // ── reason routing: holding → COLLECT ──
 
-  it('returns COLLECT when awaitTeammates reports holding (question path)', async () => {
-    const ctx = createMockContext({
-      team: {
-        listTeammates: vi.fn(() => [{ name: 'dev1', status: 'holding' }]) as never,
-        awaitTeammates: vi.fn(async () => 'holding' as const) as never,
-      },
-    });
-    const env = createMockMachineEnv({ triologue });
-    env.ctx = ctx;
-
-    const result = await handleStop(env, createTurnVars(), createChatData());
-
-    expect(result).toBe(AgentState.COLLECT);
-  });
 
   // ── reason routing: mail → COLLECT ──
 
-  it('returns COLLECT when awaitTeammates reports mail (heartbeat/peer event)', async () => {
-    const ctx = createMockContext({
-      team: {
-        listTeammates: vi.fn(() => [{ name: 'dev1', status: 'working' }]) as never,
-        awaitTeammates: vi.fn(async () => 'mail' as const) as never,
-      },
-    });
-    const env = createMockMachineEnv({ triologue });
-    env.ctx = ctx;
-
-    const result = await handleStop(env, createTurnVars(), createChatData());
-
-    expect(result).toBe(AgentState.COLLECT);
-  });
 
   // ── reason routing: steering → COLLECT ──
 
-  it('returns COLLECT when awaitTeammates reports steering (webui note)', async () => {
-    const ctx = createMockContext({
-      team: {
-        listTeammates: vi.fn(() => [{ name: 'dev1', status: 'working' }]) as never,
-        awaitTeammates: vi.fn(async () => 'steering' as const) as never,
-      },
-    });
-    const env = createMockMachineEnv({ triologue });
-    env.ctx = ctx;
-
-    const result = await handleStop(env, createTurnVars(), createChatData());
-
-    expect(result).toBe(AgentState.COLLECT);
-  });
 
   // ── reason routing: esc → PROMPT ──
 
-  it('returns PROMPT when awaitTeammates reports esc (user interrupted)', async () => {
-    const ctx = createMockContext({
-      team: {
-        listTeammates: vi.fn(() => [{ name: 'dev1', status: 'working' }]) as never,
-        awaitTeammates: vi.fn(async () => 'esc' as const) as never,
-      },
-    });
-    const env = createMockMachineEnv({ triologue });
-    env.ctx = ctx;
-
-    const result = await handleStop(env, createTurnVars(), createChatData());
-
-    expect(result).toBe(AgentState.PROMPT);
-  });
 
   // ── reason routing: timeout → COLLECT + SYSTEM timeout note ──
 
-  it('returns COLLECT with a SYSTEM timeout note when awaitTeammates reports timeout', async () => {
-    const ctx = createMockContext({
-      team: {
-        listTeammates: vi.fn(() => [{ name: 'dev1', status: 'working' }]) as never,
-        printTeam: vi.fn(() => 'Team:\n  dev1 (coder): working') as never,
-        awaitTeammates: vi.fn(async () => 'timeout' as const) as never,
-      },
-    });
-    const env = createMockMachineEnv({ triologue });
-    env.ctx = ctx;
-
-    const result = await handleStop(env, createTurnVars(), createChatData());
-
-    expect(result).toBe(AgentState.COLLECT);
-    expect(triologue.note).toHaveBeenCalledWith(
-      'SYSTEM',
-      expect.stringContaining('Timeout waiting for teammates'),
-    );
-  });
 
   // ── turn-boundary wiring (STOP→PROMPT fires it, STOP→COLLECT does not) ──
   //

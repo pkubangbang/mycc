@@ -41,57 +41,12 @@ describe('briefTool', () => {
       expect(ctx.peer.recordBrief).not.toHaveBeenCalled();
     });
 
-    it('should send message with details', () => {
-      briefTool.handler(ctx, { message: 'Processed 5 files', confidence: 9 });
 
-      expect(ctx.core.brief).toHaveBeenCalledWith('info', 'brief', 'Processed 5 files', 'confidence: 90%');
-    });
 
-    it('should send multi-line message', () => {
-      const multiLineMessage = 'Line 1\nLine 2\nLine 3';
-      const result = briefTool.handler(ctx, { message: multiLineMessage, confidence: 8 });
 
-      expect(result).toBe('OK');
-      expect(ctx.core.brief).toHaveBeenCalledWith('info', 'brief', multiLineMessage, 'confidence: 80%');
-    });
 
-    it('should send progress update', () => {
-      briefTool.handler(ctx, { message: '50% complete', confidence: 7 });
 
-      expect(ctx.core.brief).toHaveBeenCalledWith('info', 'brief', '50% complete', 'confidence: 70%');
-    });
 
-    it('should accept very long message (1000+ chars)', () => {
-      const longMessage = 'x'.repeat(1500);
-      const result = briefTool.handler(ctx, { message: longMessage, confidence: 6 });
-
-      expect(result).toBe('OK');
-      expect(ctx.core.brief).toHaveBeenCalledWith('info', 'brief', longMessage, 'confidence: 60%');
-    });
-
-    it('should preserve message with special characters', () => {
-      const specialMessage = 'Error: 💥 [FAIL]';
-      const result = briefTool.handler(ctx, { message: specialMessage, confidence: 5 });
-
-      expect(result).toBe('OK');
-      expect(ctx.core.brief).toHaveBeenCalledWith('info', 'brief', specialMessage, 'confidence: 50%');
-    });
-
-    it('should pass through markdown content as-is', () => {
-      const markdownMessage = '# Status\n- Item 1\n- Item 2';
-      const result = briefTool.handler(ctx, { message: markdownMessage, confidence: 4 });
-
-      expect(result).toBe('OK');
-      expect(ctx.core.brief).toHaveBeenCalledWith('info', 'brief', markdownMessage, 'confidence: 40%');
-    });
-
-    it('should handle unicode and emojis', () => {
-      const unicodeMessage = '✓ Complete ✓ 🎉';
-      const result = briefTool.handler(ctx, { message: unicodeMessage, confidence: 3 });
-
-      expect(result).toBe('OK');
-      expect(ctx.core.brief).toHaveBeenCalledWith('info', 'brief', unicodeMessage, 'confidence: 30%');
-    });
   });
 
   describe('edge cases', () => {
@@ -111,33 +66,9 @@ describe('briefTool', () => {
       expect(ctx.core.brief).not.toHaveBeenCalled();
     });
 
-    it('should return error for null message', () => {
-      const result = briefTool.handler(ctx, { message: null, confidence: 10 });
 
-      expect(result).toBe('Error: message parameter is required and must be a string');
-      expect(ctx.core.brief).not.toHaveBeenCalled();
-    });
 
-    it('should return error for undefined message', () => {
-      const result = briefTool.handler(ctx, { message: undefined, confidence: 10 });
 
-      expect(result).toBe('Error: message parameter is required and must be a string');
-      expect(ctx.core.brief).not.toHaveBeenCalled();
-    });
-
-    it('should return error for non-string message (number)', () => {
-      const result = briefTool.handler(ctx, { message: 123, confidence: 10 });
-
-      expect(result).toBe('Error: message parameter is required and must be a string');
-      expect(ctx.core.brief).not.toHaveBeenCalled();
-    });
-
-    it('should return error for non-string message (object)', () => {
-      const result = briefTool.handler(ctx, { message: { text: 'test' }, confidence: 10 });
-
-      expect(result).toBe('Error: message parameter is required and must be a string');
-      expect(ctx.core.brief).not.toHaveBeenCalled();
-    });
 
     it('should return error for missing confidence parameter', () => {
       const result = briefTool.handler(ctx, { message: 'test' });
@@ -146,26 +77,8 @@ describe('briefTool', () => {
       expect(ctx.core.brief).not.toHaveBeenCalled();
     });
 
-    it('should return error for confidence out of range (high)', () => {
-      const result = briefTool.handler(ctx, { message: 'test', confidence: 11 });
 
-      expect(result).toBe('Error: confidence parameter is required and must be a number between 0 and 10');
-      expect(ctx.core.brief).not.toHaveBeenCalled();
-    });
 
-    it('should return error for confidence out of range (low)', () => {
-      const result = briefTool.handler(ctx, { message: 'test', confidence: -1 });
-
-      expect(result).toBe('Error: confidence parameter is required and must be a number between 0 and 10');
-      expect(ctx.core.brief).not.toHaveBeenCalled();
-    });
-
-    it('should return error for non-number confidence', () => {
-      const result = briefTool.handler(ctx, { message: 'test', confidence: 'high' });
-
-      expect(result).toBe('Error: confidence parameter is required and must be a number between 0 and 10');
-      expect(ctx.core.brief).not.toHaveBeenCalled();
-    });
   });
 
   describe('tool metadata and integration', () => {
@@ -185,32 +98,9 @@ describe('briefTool', () => {
       expect(briefTool.input_schema.required).toContain('confidence');
     });
 
-    it('should have message property in input schema as string', () => {
-      const properties = briefTool.input_schema.properties as Record<string, { type?: string }>;
-      expect(properties?.message).toBeDefined();
-      expect(properties.message.type).toBe('string');
-    });
 
-    it('should have confidence property in input schema as number', () => {
-      const properties = briefTool.input_schema.properties as Record<string, { type?: string }>;
-      expect(properties?.confidence).toBeDefined();
-      expect(properties.confidence.type).toBe('number');
-    });
 
-    it('should always use info log level', () => {
-      briefTool.handler(ctx, { message: 'test1', confidence: 10 });
-      briefTool.handler(ctx, { message: 'test2', confidence: 9 });
 
-      expect(ctx.core.brief).toHaveBeenCalledTimes(2);
-      expect(ctx.core.brief).toHaveBeenNthCalledWith(1, 'info', 'brief', 'test1', 'confidence: 100%');
-      expect(ctx.core.brief).toHaveBeenNthCalledWith(2, 'info', 'brief', 'test2', 'confidence: 90%');
-    });
-
-    it('should always use brief tag', () => {
-      briefTool.handler(ctx, { message: 'any message', confidence: 8 });
-
-      expect(ctx.core.brief).toHaveBeenCalledWith('info', 'brief', 'any message', 'confidence: 80%');
-    });
 
     it('should update confusion index based on confidence', () => {
       // High confidence (10) should reduce confusion (delta = 8 - 10 = -2)

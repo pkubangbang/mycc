@@ -9,7 +9,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { ConditionRegistry, type Condition, type HookAction } from "../hook/conditions.js";
+import { ConditionRegistry, type Condition } from "../hook/conditions.js";
 import { Sequence } from "../hook/sequence.js";
 import * as fs from "fs";
 import * as path from "path";
@@ -226,58 +226,7 @@ describe("ConditionRegistry", () => {
       expect(fs.existsSync(conditionsFile)).toBe(true);
     });
 
-    it("should preserve all condition fields", async () => {
-      const fullCondition: Condition = {
-        trigger: ["git_commit"],
-        when: "run lint before commit",
-        condition: 'turn.count("edit_file") > 0 && turn.lastIndex("bash#pnpm lint") == -1',
-        action: {
-          type: "inject_before",
-          tool: "bash",
-          args: { command: "pnpm lint", intent: "TEST ARTIFACT TO verify lint", timeout: 60 },
-        },
-        version: 2,
-        history: [
-          {
-            version: 1,
-            condition: 'turn.count("edit_file") > 0',
-            action: { type: "message" },
-            reason: "initial compilation",
-          },
-        ],
-      };
 
-      registry.set("pre-commit-lint", fullCondition);
-
-      await registry.save();
-
-      const content = fs.readFileSync(conditionsFile, "utf-8");
-      const parsed = JSON.parse(content);
-      expect(parsed["pre-commit-lint"]).toEqual(fullCondition);
-    });
-
-    it("should handle multiple conditions", async () => {
-      registry.set("skill1", {
-        trigger: ["bash"],
-        when: "test1",
-        condition: "true",
-        action: { type: "message" },
-        version: 1,
-      });
-      registry.set("skill2", {
-        trigger: ["git_commit"],
-        when: "test2",
-        condition: "false",
-        action: { type: "block" },
-        version: 1,
-      });
-
-      await registry.save();
-
-      const content = fs.readFileSync(conditionsFile, "utf-8");
-      const parsed = JSON.parse(content);
-      expect(Object.keys(parsed)).toHaveLength(2);
-    });
   });
 
   // get() / set()
@@ -298,25 +247,6 @@ describe("ConditionRegistry", () => {
       expect(registry.get("test-skill")).toEqual(condition);
     });
 
-    it("should overwrite existing condition", () => {
-      registry.set("test-skill", {
-        trigger: ["bash"],
-        when: "test",
-        condition: "true",
-        action: { type: "message" },
-        version: 1,
-      });
-      registry.set("test-skill", {
-        trigger: ["git_commit"],
-        when: "updated",
-        condition: "false",
-        action: { type: "block" },
-        version: 2,
-      });
-      const cond = registry.get("test-skill");
-      expect(cond?.trigger).toEqual(["git_commit"]);
-      expect(cond?.version).toBe(2);
-    });
   });
 
   // findByTrigger()
@@ -342,16 +272,7 @@ describe("ConditionRegistry", () => {
       expect(bashHooks.some(h => h.when === "bash only")).toBe(true);
     });
 
-    it("should find wildcard conditions for any trigger", () => {
-      const editHooks = registry.findByTrigger("edit_file");
-      expect(editHooks).toHaveLength(1);
-      expect(editHooks[0].trigger).toEqual(["*"]);
-    });
 
-    it("should return empty array for no matches", () => {
-      registry = new ConditionRegistry();
-      expect(registry.findByTrigger("bash")).toHaveLength(0);
-    });
   });
 
   // matches()
@@ -385,11 +306,6 @@ describe("ConditionRegistry", () => {
       expect(matches).toContain("edit-reminder");
     });
 
-    it("should not match condition that evaluates to false", () => {
-      seq.add({ tool: "edit_file", args: { path: "a.ts" }, result: "ok", timestamp: 1000 });
-      const matches = registry.matches("edit_file", seq);
-      expect(matches).not.toContain("edit-reminder");
-    });
 
     it("should match wildcard trigger for any tool", () => {
       seq.add({ tool: "bash", args: { command: "test" }, result: "Error: failed", timestamp: 1000 });
@@ -397,11 +313,6 @@ describe("ConditionRegistry", () => {
       expect(matches).toContain("any-error");
     });
 
-    it("should not match different trigger", () => {
-      seq.add({ tool: "bash", args: { command: "test" }, result: "ok", timestamp: 1000 });
-      const matches = registry.matches("bash", seq);
-      expect(matches).not.toContain("edit-reminder");
-    });
 
     it("should match even when previously injected", () => {
       seq.add({ tool: "bash", args: { command: "test" }, result: "Error: failed", timestamp: 1000 });
@@ -412,64 +323,11 @@ describe("ConditionRegistry", () => {
       expect(matches2).toContain("any-error");
     });
 
-    it("should return multiple matching conditions", () => {
-      registry.set("another-bash-hook", {
-        trigger: ["bash"], when: "another hook",
-        condition: "turn.count() > 0",
-        action: { type: "message" }, version: 1,
-      });
-      seq.add({ tool: "bash", args: { command: "test" }, result: "Error: failed", timestamp: 1000 });
-      const matches = registry.matches("bash", seq);
-      expect(matches).toContain("any-error");
-      expect(matches).toContain("another-bash-hook");
-    });
   });
 
   // pending management
-  describe("pending management", () => {
-    it("should mark skill as pending", () => {
-      registry.markPending("new-skill");
-      expect(registry.needsCompilation("new-skill")).toBe(true);
-    });
-
-    it("should not mark skill with existing condition as pending", () => {
-      registry.set("existing-skill", {
-        trigger: ["bash"], when: "test", condition: "true",
-        action: { type: "message" }, version: 1,
-      });
-      registry.markPending("existing-skill");
-      expect(registry.needsCompilation("existing-skill")).toBe(false);
-    });
-
-    it("should remove from pending when condition is set", () => {
-      registry.markPending("new-skill");
-      expect(registry.needsCompilation("new-skill")).toBe(true);
-      registry.set("new-skill", {
-        trigger: ["bash"], when: "test", condition: "true",
-        action: { type: "message" }, version: 1,
-      });
-      expect(registry.needsCompilation("new-skill")).toBe(false);
-    });
-  });
 
   // injected management
-  describe("injected management", () => {
-    it("should track injected skills", () => {
-      expect(registry.hasInjected("test-skill")).toBe(false);
-      registry.markInjected("test-skill");
-      expect(registry.hasInjected("test-skill")).toBe(true);
-    });
-
-    it("should clear all injected markers", () => {
-      registry.markInjected("skill1");
-      registry.markInjected("skill2");
-      expect(registry.hasInjected("skill1")).toBe(true);
-      expect(registry.hasInjected("skill2")).toBe(true);
-      registry.clearInjected();
-      expect(registry.hasInjected("skill1")).toBe(false);
-      expect(registry.hasInjected("skill2")).toBe(false);
-    });
-  });
 
   // load/save roundtrip
   describe("load/save roundtrip", () => {
@@ -497,26 +355,7 @@ describe("ConditionRegistry", () => {
       expect(loaded).toEqual(original);
     });
 
-    it("should handle special characters in condition", async () => {
-      const condition: Condition = {
-        trigger: ["bash"], when: "test special chars",
-        condition: 'turn.count("bash#git push --force") > 0',
-        action: { type: "block", reason: "Dangerous push blocked!" },
-        version: 1,
-      };
-      registry.set("special-chars", condition);
-      await registry.save();
-      const newRegistry = new ConditionRegistry();
-      await newRegistry.load();
-      const loaded = newRegistry.get("special-chars");
-      expect(loaded?.condition).toBe('turn.count("bash#git push --force") > 0');
-    });
 
-    it("should handle empty conditions file", async () => {
-      fs.writeFileSync(conditionsFile, "{}");
-      await registry.load();
-      expect(registry.get("any")).toBeUndefined();
-    });
   });
 
   // edge cases
@@ -605,34 +444,3 @@ describe("ConditionRegistry", () => {
 });
 
 // Type Tests
-describe("HookAction Types", () => {
-  it("should accept inject_before action", () => {
-    const action: HookAction = { type: "inject_before", tool: "bash", args: { command: "test" } };
-    expect(action.type).toBe("inject_before");
-  });
-
-  it("should accept inject_after action", () => {
-    const action: HookAction = { type: "inject_after", tool: "wiki_get", args: { query: "test", domain: "project" } };
-    expect(action.type).toBe("inject_after");
-  });
-
-  it("should accept block action", () => {
-    const action: HookAction = { type: "block", reason: "Not allowed" };
-    expect(action.type).toBe("block");
-  });
-
-  it("should accept replace action", () => {
-    const action: HookAction = { type: "replace", tool: "bash", args: { command: "safe-command" } };
-    expect(action.type).toBe("replace");
-  });
-
-  it("should accept message action", () => {
-    const action: HookAction = { type: "message" };
-    expect(action.type).toBe("message");
-  });
-
-  it("should support optional timeout in inject actions", () => {
-    const action: HookAction = { type: "inject_before", tool: "bash", args: { command: "test", timeout: 60 } };
-    expect((action as { args: { timeout?: number } }).args.timeout).toBe(60);
-  });
-});

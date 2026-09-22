@@ -82,23 +82,23 @@ describe('parseIntent', () => {
 
   // ── All valid verbs ───────────────────────────────────────
 
-  for (const verb of VALID_VERBS) {
-    it(`should accept valid verb: ${verb}`, () => {
+  it('should accept every valid verb', () => {
+    for (const verb of VALID_VERBS) {
       const result = parseIntent(`${verb} SOURCE TO do something`);
       expect(result).not.toBeNull();
       expect(result!.verb).toBe(verb);
-    });
-  }
+    }
+  });
 
   // ── All valid objects ─────────────────────────────────────
 
-  for (const obj of VALID_OBJECTS) {
-    it(`should accept valid object: ${obj}`, () => {
+  it('should accept every valid object', () => {
+    for (const obj of VALID_OBJECTS) {
       const result = parseIntent(`READ ${obj} TO do something`);
       expect(result).not.toBeNull();
       expect(result!.object).toBe(obj);
-    });
-  }
+    }
+  });
 
   // ── Whitespace tolerance ──────────────────────────────────
 
