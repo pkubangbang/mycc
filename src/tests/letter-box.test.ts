@@ -22,6 +22,12 @@ const FW_VLINE = '\uff5c';
 const FW_DSML_OPEN = '<' + FW_VLINE + FW_VLINE + 'DSML' + FW_VLINE + FW_VLINE;
 const FW_DSML_CLOSE = '</' + FW_VLINE + FW_VLINE + 'DSML' + FW_VLINE + FW_VLINE;
 
+// ASCII-pipe form — the actual DeepSeek wire format. The pipes are plain "|"
+// (U+007C), NOT the fullwidth vline the original matcher gated on. This is the
+// form that leaked: the old `includes(FW_VLINE)` fast path skipped it entirely.
+const A_DSML_OPEN = '<||DSML||';
+const A_DSML_CLOSE = '</||DSML||';
+
 /**
  * Helper: build a DSML opening tag, e.g. <||DSML||tool_calls>
  */
@@ -34,6 +40,20 @@ function dsmlOpen(name: string): string {
  */
 function dsmlClose(name: string): string {
   return FW_DSML_CLOSE + name + '>';
+}
+
+/**
+ * Helper: build an ASCII-pipe DSML opening tag, e.g. <||DSML||tool_calls>
+ */
+function asciiOpen(name: string): string {
+  return A_DSML_OPEN + name + '>';
+}
+
+/**
+ * Helper: build an ASCII-pipe DSML closing tag, e.g. </||DSML||tool_calls>
+ */
+function asciiClose(name: string): string {
+  return A_DSML_CLOSE + name + '>';
 }
 
 describe('stripInternalMarkup', () => {
@@ -171,6 +191,63 @@ describe('stripInternalMarkup', () => {
     const input = 'Hello, this is a normal message with no markup.';
     const result = stripInternalMarkup(input);
     expect(result).toBe(input);
+  });
+
+  // ── ASCII-pipe form: <||DSML||tagname> (plain "|" U+007C) ──
+  // The actual DeepSeek wire format. The old matcher gated on the fullwidth
+  // vline and never ran for this form, so raw markup leaked to display.
+  // Regression guard for the ASCII-pipe DSML leak.
+
+  it('should strip ASCII-pipe paired DSML tags with content', () => {
+    const input = [
+      'Some text before.',
+      asciiOpen('tool_calls'),
+      asciiOpen('invoke') + 'Hello' + asciiClose('invoke'),
+      asciiClose('tool_calls'),
+      'Some text after.',
+    ].join('\n');
+
+    const result = stripInternalMarkup(input);
+    expect(result).toBe('Some text before.\n\nSome text after.');
+  });
+
+  it('should strip a full ASCII-pipe tool-call block to empty', () => {
+    const input = [
+      asciiOpen('tool_calls'),
+      asciiOpen('invoke name="brief"'),
+      asciiOpen('parameter name="message" string="true"') +
+        'editor-tester has been dispatched on #21.' +
+        asciiClose('parameter'),
+      asciiClose('invoke'),
+      asciiClose('tool_calls'),
+    ].join('\n');
+    const result = stripInternalMarkup(input);
+    expect(result).toBe('');
+  });
+
+  it('should strip ASCII-pipe opening tags with attributes', () => {
+    const input = 'text <||DSML||invoke name="mail_to"> more';
+    const result = stripInternalMarkup(input);
+    expect(result).toBe('text  more');
+  });
+
+  it('should strip ASCII-pipe orphaned closing tags', () => {
+    const input = 'editor dispatched on #21. Let me await its result.tester</||DSML||parameter>';
+    const result = stripInternalMarkup(input);
+    expect(result).toBe('editor dispatched on #21. Let me await its result.tester');
+  });
+
+  it('should strip ASCII-pipe self-closing tags', () => {
+    const input = 'hello <||DSML||br /> world';
+    const result = stripInternalMarkup(input);
+    expect(result).toBe('hello  world');
+  });
+
+  it('should strip mixed ASCII-open + fullwidth-close DSML tags', () => {
+    const input = 'x <||DSML||tool_calls>hidden' + '</' + FW_VLINE + FW_VLINE +
+      'DSML' + FW_VLINE + FW_VLINE + 'tool_calls> y';
+    const result = stripInternalMarkup(input);
+    expect(result).toBe('x  y');
   });
 
   it('should handle content that has no fullwidth vertical lines efficiently', () => {

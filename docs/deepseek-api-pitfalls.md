@@ -82,24 +82,23 @@ tmux kill-session -t mycc-test
 
 **File:** `src/engine/deepseek.ts` — `normalizeMessage()`.
 
-### 6. DSML tags (fullwidth vertical lines U+FF5C) leak into content stream
+### 6. DSML tags leak into content stream (ASCII-pipe AND fullwidth-vline forms)
 
-**Symptom:** DeepSeek sometimes emits internal markup tags directly into the text content stream. These tags use fullwidth vertical lines (U+FF5C) instead of ASCII pipes, and appear in **two forms**:
+**Symptom:** DeepSeek sometimes emits internal markup tags directly into the text content stream. The pipe glyph around `DSML` may be an **ASCII vertical bar `|`** (U+007C — the real wire form), a **fullwidth vertical line** (U+FF5C), or a **mix** of the two on the two sides. Each side carries **one or two** pipes, giving these forms:
+- ASCII-pipe double: two `|` per side (DeepSeek's actual output)
+- fullwidth double: two U+FF5C per side (what the original matcher assumed)
+- Single-pipe and mixed-asymmetric variants also occur.
 - double-vline: `<｜｜DSML｜｜tagname>...</｜｜DSML｜｜tagname>` (two U+FF5C per side)
 - single-vline: `<｜DSML｜tagname>...</｜DSML｜tagname>` (one U+FF5C per side)
 
-Opening tags may also carry attributes, e.g. `<｜DSML｜invoke name="brief">`.
+Opening tags may also carry attributes, e.g. a DSML-wrapped `invoke name="brief"` opening tag.
 
-**Cause:** DeepSeek's API occasionally injects DeepSeek Markup Language (DSML) tags (e.g. `<｜DSML｜tool_calls>`, `<｜DSML｜safety>`, `<｜DSML｜thinking>`) into the `content` field of assistant messages. If not stripped, these raw tags appear in the user-facing display. Two display paths existed:
-1. The letter-box (STOP state) already stripped DSML — but only matched the double-vline form, so the single-vline form leaked through.
-2. Mid-loop `brief('info', 'assistant', chat.assistantContent)` calls in `hook.ts` displayed raw content with **no** stripping at all.
+**Cause:** DeepSeek's API occasionally injects DeepSeek Markup Language (DSML) tags (e.g. `tool_calls`, `safety`, `thinking`) into the `content` field of assistant messages. If not stripped, these raw tags appear in the user-facing display. The original fix gated `stripInternalMarkup()` on the fullwidth vline (U+FF5C) alone and assumed tags "use fullwidth vertical lines instead of ASCII pipes" — but DeepSeek's real output uses **ASCII pipes**, so the gate never fired for it and the raw markup leaked through on **both** display paths:
+1. The letter-box (STOP state) — `includes(FW_VLINE)` was false for the ASCII form, so no regex ran.
+2. Mid-loop `brief('info', 'assistant', chat.assistantContent)` calls in `hook.ts` (via `briefAssistantContent()`).
 
 **Fix:** Two choke points, display-only (raw content stays in the triologue):
-- `stripInternalMarkup()` now matches **both** vline forms via a `{1,2}` quantifier on U+FF5C and tolerates attributes on opening tags. Four pattern shapes are handled:
-  - Full paired tags: `<｜DSML｜tagname>...</｜DSML｜tagname>`
-  - Self-closing tags: `<｜DSML｜tagname />`
-  - Opening-only tags: `<｜DSML｜tagname ...>`
-  - Closing-only tags: `</｜DSML｜tagname>`
-- All mid-loop brief sites in `hook.ts` (checkpoint, recap, crossroad, normal path) route content through a `briefAssistantContent()` helper that strips DSML first and skips the brief if nothing displayable remains.
+- `stripInternalMarkup()` matches the pipe as a per-side character class — ASCII `|` **or** fullwidth vline, `{1,2}` (single or double), on each side — and tolerates attributes on opening tags. The fast-path gate is now `includes('DSML')` (the invariant shared by every form), not `includes(FW_VLINE)`. Four pattern shapes are handled (paired, self-closing, opening-only, closing-only), for ASCII, fullwidth, and mixed forms alike.
+- All mid-loop brief sites in `hook.ts` (checkpoint, recap, crossroad, normal path) route content through `briefAssistantContent()`, which strips DSML first and skips the brief if nothing displayable remains.
 
-**Files:** `src/utils/letter-box.ts` — `stripInternalMarkup()`; `src/loop/states/hook.ts` — `briefAssistantContent()`. Tests in `src/tests/letter-box.test.ts` (single-vline cases included).
+**Files:** `src/utils/letter-box.ts` — `stripInternalMarkup()`; `src/loop/states/hook.ts` — `briefAssistantContent()`. Tests in `src/tests/letter-box.test.ts` (ASCII-pipe, fullwidth, and mixed cases).

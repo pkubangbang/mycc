@@ -20,16 +20,20 @@ function getTimestamp(): string {
 const FW_VLINE = '\uff5c';
 
 /**
- * Regex source: ONE or TWO fullwidth vlines per side of "DSML".
- * Providers differ: DeepSeek emits the double-vline form
- * (<｜｜DSML｜｜tagname>) while some Ollama-hosted models (e.g. GLM) emit the
- * single-vline form (<｜DSML｜tagname>). The {1,2} quantifier must stay
- * OUTSIDE escapeRegex (which escapes braces), so the vline char is escaped
- * alone and the quantifier is appended as raw regex source.
+ * Regex source: ONE or TWO pipe characters per side of "DSML".
+ *
+ * The pipe may be an ASCII vertical bar (`|`) OR the fullwidth vertical line
+ * (U+FF5C, rendered `｜`). DeepSeek's real wire format uses ASCII pipes
+ * (<||DSML||tagname>), while some Ollama-hosted models (e.g. GLM) emit the
+ * fullwidth form (<｜DSML｜tagname>) and others double it (<｜｜DSML｜｜tagname>).
+ * A per-side class accepts either glyph, and the {1,2} quantifier accepts the
+ * single or double form. The class is raw regex source (the vline is escaped
+ * alone, the `|` alternation and {1,2} applied outside escapeRegex, which
+ * would otherwise escape the braces).
  */
-const VLINE_Q = `${escapeRegex(FW_VLINE)}{1,2}`;
-const FW_DSML_OPEN_RE = `<${VLINE_Q}DSML${VLINE_Q}`;
-const FW_DSML_CLOSE_RE = `</${VLINE_Q}DSML${VLINE_Q}`;
+const PIPE_Q = `[\\|${escapeRegex(FW_VLINE)}]{1,2}`;
+const FW_DSML_OPEN_RE = `<${PIPE_Q}DSML${PIPE_Q}`;
+const FW_DSML_CLOSE_RE = `</${PIPE_Q}DSML${PIPE_Q}`;
 
 /**
  * Escape special regex characters in a string for use in RegExp constructor.
@@ -42,14 +46,20 @@ function escapeRegex(str: string): string {
  * Strip internal markup tags from content before display.
  *
  * DeepSeek sometimes emits DSML (DeepSeek Markup Language) tags directly
- * into the text content stream. These use fullwidth vertical lines (U+FF5C):
+ * into the text content stream:
  *   <||DSML||tagname>...</||DSML||tagname>
- * where "||" is rendered as two fullwidth vertical bars (U+FF5C).
+ * The pipe glyph may be an ASCII vertical bar (`|`, the real wire form) or the
+ * fullwidth vertical line (U+FF5C, `｜`) — the matcher accepts either, single
+ * or doubled, on each side of the tag name.
  */
 export function stripInternalMarkup(content: string): string {
   let result = content;
 
-  if (result.includes(FW_VLINE)) {
+  // Fast-path gate: both forms share the literal "DSML" tag name. Gating on
+  // that (NOT on the fullwidth vline) is what lets the ASCII-pipe form enter
+  // the regexes below — previously the gate missed it entirely and the raw
+  // markup leaked through to both the mid-loop briefs and the letter-box.
+  if (result.includes('DSML')) {
     // Strip full DSML paired tags: <||DSML||tagname>...</||DSML||tagname>
     // (opening tag may carry attributes, e.g. <||DSML||parameter name="m">)
     const fullTagRe = new RegExp(
