@@ -5,10 +5,21 @@
  *
  * ESC handling: In main context, registers onNeglected callback to interrupt
  * waiting when ESC is pressed. In child context, ESC is not available.
+ *
+ * Steering handling: In main context, the poll loop also PEEKS the WebUI
+ * steering queue (getServeHub().getSteeringNotes()) so a mid-task direction
+ * from the user breaks the wait immediately, exactly like AWAIT's
+ * awaitTeammates does. Without this, a steering note queued while the agent
+ * blocks in bg_await is not honored until the tool returns and the state
+ * machine next reaches COLLECT — the note sits buffered the whole time.
+ * Peek only (non-consuming): the drain stays a single consumption point at
+ * COLLECT's 2c block. When a note is seen we return early so the loop
+ * proceeds to COLLECT and drains it.
  */
 
 import type { ToolDefinition, AgentContext } from '../types.js';
 import { agentIO } from '../loop/agent-io.js';
+import { getServeHub } from '../serve/serve-registry.js';
 
 export const bgAwaitTool: ToolDefinition = {
   name: 'bg_await',
@@ -44,6 +55,7 @@ export const bgAwaitTool: ToolDefinition = {
     const pollInterval = 1000; // 1 second
     let elapsed = 0;
     let interrupted = false;
+    let steered = false;
 
     // Register ESC handler to interrupt waiting (only works in main process)
     // In child process, agentIO doesn't receive IPC neglection messages,
@@ -60,8 +72,20 @@ export const bgAwaitTool: ToolDefinition = {
     }
 
     try {
-      while (elapsed < timeout && !interrupted) {
+      while (elapsed < timeout && !interrupted && !steered) {
         try {
+          // WebUI steering note queued by the user (mid-task direction). PEEK
+          // only (non-consuming) — the drain happens downstream in COLLECT's
+          // 2c block, keeping a single consumption point. When a note is
+          // present, break the wait so the loop proceeds to COLLECT and
+          // honors the user's direction instead of blocking on the task.
+          // Guarded by isRunning() so a non-serve session (no WebUI) never
+          // blocks; mirrors awaitTeammates in team.ts.
+          if (getServeHub().isRunning() && getServeHub().getSteeringNotes().length > 0) {
+            steered = true;
+            break;
+          }
+
           if (pid !== undefined) {
             // Waiting for a specific pid: check just that task (no redundant full scan)
             const task = ctx.bg.getTask(pid);
@@ -96,6 +120,17 @@ export const bgAwaitTool: ToolDefinition = {
       if (interrupted) {
         ctx.core.brief('warn', 'bg_await', 'Interrupted by ESC');
         return 'Error: Interrupted by user';
+      }
+
+      // A steering note arrived while waiting — return early WITHOUT consuming
+      // it (COLLECT's 2c block drains it next). Returning here lets the state
+      // machine reach COLLECT so the user's mid-task direction is honored now
+      // rather than after the task finishes.
+      if (steered) {
+        const notes = getServeHub().getSteeringNotes();
+        ctx.core.brief('info', 'bg_await', `Steering note received, returning to process it (${targetDesc} still running)`);
+        return `OK: steering note received while waiting for ${targetDesc} (still running). `
+          + `Pending direction: ${notes.map((n) => `"${n}"`).join(', ')}`;
       }
 
       ctx.core.brief('warn', 'bg_await', `Timeout reached, ${targetDesc} still running`);
