@@ -3,9 +3,11 @@
  */
 
 import { spawn, execSync, ChildProcess } from 'child_process';
-import type { BgModule, BgTask, CoreModule } from '../../types.js';
+import type { BgModule, BgTask, BgWaitResult, CoreModule } from '../../types.js';
 import { getShellInfo } from '../../utils/shell-detect.js';
 import { filterCliXml, PS51_LAYER2_PATCH } from '../../loop/agent-exec.js';
+import { agentIO } from '../../loop/agent-io.js';
+import { getServeHub } from '../../serve/serve-registry.js';
 
 /** Maximum accumulated output per task (100 KB). Older output is trimmed. */
 const MAX_OUTPUT_BYTES = 100 * 1024;
@@ -216,6 +218,94 @@ export class BackgroundTasks implements BgModule {
    */
   getTask(pid: number): BgTask | undefined {
     return this.tasks.get(pid);
+  }
+
+  /**
+   * Block until the target task(s) finish, the wait times out, ESC is pressed,
+   * or a WebUI steering note is queued.
+   *
+   * This is the bg module's unified wait primitive — the analogue of
+   * TeamManager.awaitTeammates. The bg module OWNS the background-task resource,
+   * so it also owns the wait loop AND the ESC/steering watch; the `bg_await`
+   * tool is a thin wrapper and never imports the serve layer. That keeps the
+   * tool decoupled from getServeHub() (see the decoupled-ipc-bounceback lesson:
+   * a listener/watch belongs in the module that owns the resource, never in the
+   * tool/I-O layer).
+   *
+   * ESC: registers agentIO.onNeglected (main process only; the child never
+   * receives IPC neglection, so the callback simply never fires there and the
+   * timeout still governs). Steering: PEEKS the WebUI queue (non-consuming) so
+   * the single consumption point remains COLLECT's 2c drain — mirrors
+   * awaitTeammates.
+   */
+  async waitForTasks(opts?: { pid?: number; timeoutMs?: number }): Promise<BgWaitResult> {
+    const pid = opts?.pid;
+    const timeoutMs = opts?.timeoutMs ?? 60000;
+    const pollInterval = 1000;
+
+    const startTime = Date.now();
+    let interrupted = false;
+    let steered = false;
+
+    // ESC handler — only meaningful in the main process (the child has no IPC
+    // neglection); registered regardless for parity, the timeout still governs.
+    let unsubscribe: (() => void) | undefined;
+    if (agentIO.isMainProcess()) {
+      unsubscribe = agentIO.onNeglected(() => { interrupted = true; });
+    }
+
+    try {
+      while (!interrupted && !steered) {
+        // WebUI steering note queued by the user (mid-task direction). PEEK
+        // only (non-consuming) — the drain stays downstream in COLLECT's 2c
+        // block, keeping a single consumption point. Guarded by isRunning() so
+        // a non-serve session (no WebUI) never blocks.
+        if (getServeHub().isRunning() && getServeHub().getSteeringNotes().length > 0) {
+          steered = true;
+          break;
+        }
+
+        if (pid !== undefined) {
+          // Waiting for a specific pid: check just that task (no full scan).
+          const task = this.getTask(pid);
+          if (!task || task.status !== 'running') {
+            return {
+              reason: 'completed',
+              pid,
+              status: task?.status ?? 'completed',
+              output: task?.output,
+            };
+          }
+        } else {
+          // Waiting for ALL tasks: done once none are still running.
+          if (!(await this.hasRunningBgTasks())) {
+            return { reason: 'completed' };
+          }
+        }
+
+        if (Date.now() - startTime >= timeoutMs) {
+          break;
+        }
+
+        await new Promise((resolve) => setTimeout(resolve, pollInterval));
+      }
+    } finally {
+      // Clean up: remove the ESC handler if still registered.
+      if (unsubscribe) {
+        unsubscribe();
+      }
+    }
+
+    if (interrupted) {
+      return { reason: 'esc' };
+    }
+
+    if (steered) {
+      // Return the peeked notes WITHOUT consuming them (COLLECT drains next).
+      return { reason: 'steering', notes: getServeHub().getSteeringNotes() };
+    }
+
+    return { reason: 'timeout', pid };
   }
 
   // --- helpers ---

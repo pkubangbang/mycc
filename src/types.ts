@@ -820,6 +820,51 @@ export interface BgModule {
   killTask(pid: number): Promise<void>;
   /** Get task by pid (for status checking in bg_await) */
   getTask(pid: number): { pid: number; command: string; status: string; output?: string } | undefined;
+  /**
+   * Block until the target background task(s) finish, the wait times out, ESC
+   * is pressed, or a WebUI steering note is queued.
+   *
+   * This is the bg module's unified wait primitive (the analogue of
+   * {@link TeamModule.awaitTeammates}): the module owns the polling loop AND
+   * the ESC/steering watch, so the `bg_await` tool stays a thin wrapper and
+   * never imports the serve layer. Steering notes are PEEKED (non-consuming) —
+   * the single consumption point remains COLLECT's 2c drain — so a queued
+   * mid-task direction breaks the wait and lets the loop reach COLLECT to
+   * honor it.
+   *
+   * @param opts.pid - Wait for a single task by pid; omit to wait for ALL tasks.
+   * @param opts.timeoutMs - Max-wait safety valve in ms (default 60000).
+   * @returns The wait outcome (see {@link BgWaitResult}).
+   */
+  waitForTasks(opts?: { pid?: number; timeoutMs?: number }): Promise<BgWaitResult>;
+}
+
+/**
+ * Outcome of {@link BgModule.waitForTasks}.
+ *
+ * The reason is typed (rather than a bare string) so the `bg_await` tool can
+ * render the right message deterministically:
+ *   - 'completed' — the target task(s) finished (running → completed/failed/killed)
+ *   - 'steering'  — a WebUI steering note was queued (wait broke early; note
+ *                   is left unconsumed for COLLECT's drain)
+ *   - 'esc'       — the user pressed ESC
+ *   - 'timeout'   — the max-wait safety valve fired
+ */
+export type BgWaitReason = 'completed' | 'steering' | 'esc' | 'timeout';
+
+/**
+ * Result of {@link BgModule.waitForTasks}.
+ *
+ * `reason` is the typed outcome; `pid`/`status`/`output` describe the finished
+ * task when waiting on a single pid (undefined for the all-tasks wait);
+ * `notes` carries the peeked steering notes (only set when reason==='steering').
+ */
+export interface BgWaitResult {
+  reason: BgWaitReason;
+  pid?: number;
+  status?: BgTaskStatus;
+  output?: string;
+  notes?: string[];
 }
 
 // ============================================================================

@@ -126,6 +126,7 @@ export function createMockBg(overrides: Partial<BgModule> = {}): BgModule {
     hasRunningBgTasks: vi.fn(async () => false),
     killTask: vi.fn(async () => {}),
     getTask: vi.fn(() => undefined),
+    waitForTasks: vi.fn(async () => ({ reason: 'completed' as const })),
     ...overrides,
   };
 }
