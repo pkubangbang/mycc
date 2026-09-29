@@ -176,7 +176,7 @@ function createPersistentTriologue(name: string, assignedPath?: string): Triolog
     onMessage: (msg) => {
       // Per-piece contract (the {A, AB} fix): append EXACTLY ONE flat line
       // per appended message — the piece arrives pre-stamped with
-      // kind/turn_id/user_origin from the facade dispatcher; the writer
+      // kind/user_origin from the facade dispatcher; the writer
       // adds the timestamp. A merely-mutating call (user()/note() combine)
       // emits a 'merge' piece instead of a full resent snapshot.
       transcriptWriter.append(asAppendablePiece(msg));

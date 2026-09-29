@@ -166,16 +166,16 @@ describe('readHistory (collateEntries projection)', () => {
 
   it('collates new-format piece records: a merge line folds into its host message', () => {
     // New format (JsonlTranscriptWriter): an assistant 'new' piece, then a
-    // tool result 'new' piece, each carrying kind/turn_id/timestamp + msg
+    // tool result 'new' piece, each carrying kind/timestamp + msg
     // fields at top level (flat record). A HINT-note 'merge' piece folds
     // into its user host — but user-role entries are then SKIPPED by
     // readHistory (user.jsonl owns user bubbles), so the folded content
     // disappears from the serve view exactly like pre-fix behavior.
     fs.writeFileSync(
       transcriptPath,
-      JSON.stringify({ role: 'assistant', content: 'working', kind: 'new', turn_id: 1, timestamp: 100 }) + '\n' +
-      JSON.stringify({ role: 'tool', tool_name: 'bash', tool_call_id: 't1', content: 'out1', kind: 'new', turn_id: 1, timestamp: 200 }) + '\n' +
-      JSON.stringify({ role: 'user', content: '[HINT] steering', kind: 'merge', turn_id: 1, timestamp: 250 }) + '\n',
+      JSON.stringify({ role: 'assistant', content: 'working', kind: 'new', timestamp: 100 }) + '\n' +
+      JSON.stringify({ role: 'tool', tool_name: 'bash', tool_call_id: 't1', content: 'out1', kind: 'new', timestamp: 200 }) + '\n' +
+      JSON.stringify({ role: 'user', content: '[HINT] steering', kind: 'merge', timestamp: 250 }) + '\n',
       'utf-8',
     );
     const history = readHistory(transcriptPath, userLogPath, []);
@@ -206,7 +206,7 @@ describe('readHistory (collateEntries projection)', () => {
   it('merges transcript + user-log entries chronologically by timestamp', () => {
     fs.writeFileSync(
       transcriptPath,
-      JSON.stringify({ role: 'tool', tool_name: 'bash', tool_call_id: 'x', content: 'toolout', kind: 'new', turn_id: 1, timestamp: 300 }) + '\n',
+      JSON.stringify({ role: 'tool', tool_name: 'bash', tool_call_id: 'x', content: 'toolout', kind: 'new', timestamp: 300 }) + '\n',
       'utf-8',
     );
     fs.writeFileSync(

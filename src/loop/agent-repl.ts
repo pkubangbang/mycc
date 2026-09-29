@@ -191,7 +191,7 @@ export async function main(): Promise<void> {
     onMessage: (msg, _getTriologue) => {
       // Per-piece contract (the {A, AB} fix): append EXACTLY ONE flat line
       // per appended message via the shared JsonlTranscriptWriter — the
-      // piece arrives pre-stamped with kind/turn_id/user_origin; the writer
+      // piece arrives pre-stamped with kind/user_origin; the writer
       // adds the timestamp at write time. No seek, no truncate, no read,
       // no snapshot of the grown prefix (a merely-mutating call emits a
       // 'merge' piece instead — one line, not a full resend).

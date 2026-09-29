@@ -88,7 +88,7 @@ function resolveTranscriptDir(): string {
  * crash observability than the previous write-only-at-compaction scheme.
  *
  * Per-piece contract (the {A, AB} fix): the callback receives ONE message
- * piece (pre-stamped with kind/turn_id/user_origin); the shared
+ * piece (pre-stamped with kind/user_origin); the shared
  * JsonlTranscriptWriter appends exactly one flat line for it (adding the
  * timestamp). A merely-mutating call emits a 'merge' piece — one line,
  * not the full re-sent snapshot.

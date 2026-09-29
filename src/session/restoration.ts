@@ -31,7 +31,7 @@ export type SummaryPair = [Message, Message];
  * Delegates to the shared collation core (triologue/transcript.ts — the
  * {A, AB} fix): the file may be either
  *   - the NEW piece log (one flat record per appended message, stamped
- *     kind/turn_id/user_origin/timestamp by JsonlTranscriptWriter), or
+ *     kind/user_origin/timestamp by JsonlTranscriptWriter), or
  *   - a LEGACY whole-snapshot transcript (lines without `kind`, which
  *     readTranscript passes through as 'new' plain Messages — zero
  *     migration, already-baked {A, AB} duplicates in old files preserved

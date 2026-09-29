@@ -45,7 +45,7 @@ export interface TriologueOptions {
    *
    * Per-piece contract (the {A, AB} backlog fix): the callback receives the
    * single appended/merged message piece (a shallow copy stamped with the
-   * collation metadata `kind`/`turn_id`/`user_origin`), NOT the full
+   * collation metadata `kind`/`user_origin`), NOT the full
    * snapshot. Consumers that need the current full state call the second
    * parameter `getTriologue()` lazily — it re-reads the live store at call
    * time, so it survives compact()/clear() store swaps.

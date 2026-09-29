@@ -305,6 +305,22 @@ describe('TriologueLite', () => {
       expect(raw[2].role).toBe('tool');
       expect(raw[2].tool_name).toBe('brief');
       expect(raw[2].tool_call_id).toBe((raw[1].tool_calls![0] as ToolCall).id);
+      // Transcript parity: the compact boundary is journaled as a bare
+      // 'compact' boundary piece (the event name IS the kind — conflated,
+      // no 'control' pseudo-kind, no event field), then the 3 summary
+      // messages are emitted as 'new' pieces (the livelog and the
+      // transcript change together — collation-parity).
+      const kinds = onMessage.mock.calls.map((args: unknown[]) => (args[0] as Message & { kind?: string }).kind);
+      expect(kinds.filter((k) => k === 'compact')).toHaveLength(1);
+      // The boundary piece's kind is a journaled ControlEvent and it
+      // carries NO role (it is not a message).
+      const controlPiece = onMessage.mock.calls.map((args: unknown[]) => args[0] as Message & { kind?: string; event?: string })
+        .find((m) => m.kind === 'compact');
+      expect(controlPiece?.event).toBeUndefined();
+      expect((controlPiece as unknown as { role?: string }).role).toBeUndefined();
+      // The boundary piece is followed by exactly 3 'new' summary pieces.
+      const controlIdx = kinds.indexOf('compact');
+      expect(kinds.slice(controlIdx + 1)).toEqual(['new', 'new', 'new']);
     });
 
     it('compact() leaves lastRole === "tool" so the next agent() is a TP-valid tool→assistant transition (no duplicate_assistant fix)', async () => {
@@ -382,7 +398,6 @@ describe('TriologueLite', () => {
         if (parsed.reasoning_content !== undefined) expect(typeof parsed.reasoning_content).toBe('string');
         // Per-piece envelope keys are present on the piece copy only.
         expect(['new', 'merge']).toContain(parsed.kind);
-        expect(typeof parsed.turn_id).toBe('number');
       }
       // The tool message must carry tool_name + tool_call_id for orphan fixing.
       const toolMsg = pieces.find((m) => m.role === 'tool');
@@ -393,6 +408,13 @@ describe('TriologueLite', () => {
       expect(userPieces.length).toBeGreaterThanOrEqual(1);
       const notePiece = pieces.find((m) => m.role === 'user' && typeof m.content === 'string' && m.content.startsWith('[MAIL]'));
       expect((notePiece as unknown as { user_origin?: true }).user_origin).toBeUndefined();
+      // Every piece in this normal flow is a message piece: role present,
+      // and NO stray control pseudo-kind leaks into message records
+      // (boundary pieces are only journaled at truncation sites — none here).
+      for (const m of pieces) {
+        expect((m as unknown as { event?: string }).event).toBeUndefined();
+        expect(['new', 'merge', 'clear', 'compact', 'recap', 'rollback']).toContain((m as unknown as { kind?: string }).kind);
+      }
       // getTriologue reflects the live store at call time.
       const lastCall = onMessage.mock.calls[onMessage.mock.calls.length - 1] as unknown[];
       const getTriologue = lastCall[1] as () => Message[];

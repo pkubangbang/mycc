@@ -128,29 +128,32 @@ Instead of `mail/` + `sessions/` + `transcripts/` folders, now we only have `ses
   writer (`triologue/transcript.ts` `JsonlTranscriptWriter`) appends exactly
   ONE flat JSONL line per APPENDED message:
 
-      { ...messageFields, kind: 'new'|'merge', turn_id: number,
-        user_origin?: true, timestamp: number }
+      { ...messageFields, kind: 'new'|'merge', user_origin?: true,
+        timestamp: number }
+      { kind: 'control', event: 'clear'|'compact'|'recap'|'rollback',
+        timestamp: number }
 
   - `kind:'new'`  — an appended livelog message (tool result, assistant,
-    TP-bridge, hook note, post-wrap-up assistant).
+    TP-bridge, hook note, post-wrap-up assistant, post-compact summary
+    round-trip).
   - `kind:'merge'` — the user()/note() COMBINE branches: the host message in
     the livelog is mutated in place (content + `\n` + fragment kept in
-    memory for the LLM view), but the transcript records ONLY the fragment
-    with the host's turn_id — the old writer re-emitted the MUTATED FULL
-    message (the `{A}` + `{AB}` backlog-duplication regression), which this
-    design removes.
+    memory for the LLM view), but the transcript records ONLY the fragment —
+    the old writer re-emitted the MUTATED FULL message (the `{A}` + `{AB}`
+    backlog-duplication regression), which this design removes.
+  - `kind:'control'` — a journaled truncation/boundary marker with NO
+    message fields (role is absent). `event:'clear'` resets the read-time
+    collated view (restoration honors the /clear); `compact`/`recap`/
+    `rollback` are boundary markers that do NOT cut the durable collated
+    history (it stays the documented superset of the live LLM context).
   - `user_origin: true` — present only on genuine user-input pieces.
-  - `turn_id` — minted per user() turn; merge pieces (and tool/assistant
-    appends that belong to the turn) inherit it; read-time collation folds
-    merge pieces into the nearest preceding user host and stamps the folded
-    entry with the HOST's timestamp.
+  - Read-time collation folds merge pieces into the NEAREST PRECEDING user
+    host (positional lastUserIndex cursor — no turn identifiers); the folded
+    entry keeps the HOST's timestamp.
   - The read side (`restoration.ts` + `serve-history.ts`) replays the appends
     through `triologue/transcript.ts` (`readTranscript` + `collateMessages` /
     `collateEntries`); legacy lines without `kind` replay as plain 'new'
     records (zero migration, already-baked {A,AB} duplicates preserved).
-  - CAVEAT: removals (compact/clear/rollback/recap truncation) are NOT
-    journaled — the collated transcript is the durable FULL history, a
-    superset of what the live LLM context holds at any moment.
 
 ### 10. Lead Auto-Compact (`src/loop/triologue.ts`)
 - `runAutoCompact()` — writes transcript to `sessions/{sessionId}/transcript-lead-{ts}.jsonl`

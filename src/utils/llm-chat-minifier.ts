@@ -55,6 +55,11 @@ export function minifyMessages(
   for (const msg of messages) {
     // Skip system messages
     if (msg.role === 'system') continue;
+    // Defensive: skip role-less records (e.g. a journaled control record
+    // like {kind:'clear'} that leaked into the message array) — a role-less
+    // object cannot be abbreviated and would crash the ROLE_ABBREVS lookup
+    // path below.
+    if (!msg.role) continue;
 
     // Handle assistant with tool_calls as 'ti' (tool invocation)
     if (msg.role === 'assistant' && msg.tool_calls?.length) {

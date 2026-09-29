@@ -15,7 +15,7 @@
  * keep their own copies of the append logic (user/note/agent/tool) so each can
  * evolve independently. The shared invariants they must BOTH preserve are:
  *   1. JSONL persistence via options.onMessage — the callback now receives
- *      ONE message PIECE (a shallow copy stamped kind/turn_id/user_origin)
+ *      ONE message PIECE (a shallow copy stamped kind/user_origin)
  *      per appended message, and NO event for a mere in-memory mutation
  *      (the {A, AB} fix; the transcript is an append-only piece log — see
  *      triologue/transcript.ts). restoration.ts reads teammate transcripts
@@ -49,53 +49,38 @@ export class TriologueLite {
   };
 
   /**
-   * Turn counter for the per-piece onMessage contract (the {A, AB} fix).
-   * A user() turn mints a fresh turn_id (when the previous message is not a
-   * user message being combined); every 'merge' piece inherits the host's
-   * turn_id so read-time collation can fold pieces into the right message.
-   */
-  private turnCounter: number = 0;
-
-  /**
    * Private per-piece dispatcher for the onMessage contract.
    *
-   * Stamps the collation metadata (kind + turn_id, plus user_origin for
-   * GENUINE user pieces) onto a SHALLOW COPY of the piece and invokes
-   * onMessage with the copy — the livelog message object inside the store is
-   * never touched, so `Message` gains zero new fields and nothing extra can
-   * reach the LLM provider payload.
+   * Stamps the collation metadata (kind + user_origin for GENUINE user
+   * pieces) onto a SHALLOW COPY of the piece and invokes onMessage with the
+   * copy — the livelog message object inside the store is never touched, so
+   * `Message` gains zero new fields and nothing extra can reach the LLM
+   * provider payload.
    *
    * `getTriologue` is bound to `() => this.store.getRaw()` — re-read at CALL
    * time, so it keeps working across compact()/clear() store swaps (same
    * lazy-binding pattern as the feature-domain delegates).
    */
-  private emit(piece: Message, kind: 'new' | 'merge', opts?: { userOrigin?: boolean; turnId?: number }): void {
+  private emit(piece: Message, kind: 'new' | 'merge', opts?: { userOrigin?: boolean }): void {
     const copy: Message = { ...piece };
     if (opts?.userOrigin) {
       (copy as { user_origin?: true }).user_origin = true;
     }
-    (copy as { kind?: 'new' | 'merge'; turn_id?: number }).kind = kind;
-    (copy as { kind?: 'new' | 'merge'; turn_id?: number }).turn_id =
-      opts?.turnId ?? this.turnCounter;
+    (copy as { kind?: 'new' | 'merge' }).kind = kind;
     this.options.onMessage(copy, () => this.store.getRaw());
   }
 
   /**
-   * The turn_id of the CURRENT (most recently minted) turn, used as the
-   * inherit target for 'merge' pieces. Note: unlike mintTurn(), this does
-   * NOT advance the counter — the host message already carries this id.
+   * Journal a live-log boundary for the child transcript (control-event
+   * contract — see triologue/transcript.ts). The lite facade only ever
+   * truncates at compact(), so only the 'compact' boundary is journaled
+   * here (the event name IS the kind — conflated, no 'control' pseudo-kind).
    */
-  private currentTurnId(): number {
-    return this.turnCounter;
-  }
-
-  /**
-   * Mint a fresh turn id (post-increment so the first turn is 1).
-   * Called by user() when starting a NEW user turn.
-   */
-  private mintTurn(): number {
-    this.turnCounter += 1;
-    return this.turnCounter;
+  private emitControl(event: 'compact'): void {
+    this.options.onMessage(
+      { kind: event } as unknown as Message,
+      () => this.store.getRaw(),
+    );
   }
 
   /**
@@ -181,9 +166,8 @@ export class TriologueLite {
         // Provider supports tool → user natively — skip bridge, just append.
         // Fresh turn: the pre-tool user turn is complete, this input starts
         // a new conversation turn (guards the F1 collapse where two queries
-        // collated into one turn). Minting happens inside addMessage via the
-        // turnStamp hook below; here we only mark the piece as user_origin.
-        this.addMessage({ role: 'user', content }, { isUserOrigin: true, mintNewTurn: true });
+        // collated into one turn).
+        this.addMessage({ role: 'user', content }, { isUserOrigin: true });
         return;
       }
       // 'recovered': bridge was injected, fall through to add user message
@@ -194,17 +178,16 @@ export class TriologueLite {
       // the mutated host). The host still concatenates content in memory so
       // the LLM view and lastUserQuery are unchanged; the transcript now
       // records ZERO lines for this mutation's full state — the {A, AB} fix.
-      const turnId = this.currentTurnId();
       const lastMsg = this.store.last()!;
       lastMsg.content += `\n${content}`;
       this.store.recomputeTokenCount();
       this.store.setLastUserQuery(lastMsg.content);
-      this.emit({ role: 'user', content }, 'merge', { userOrigin: false, turnId });
+      this.emit({ role: 'user', content }, 'merge', { userOrigin: false });
       return;
     }
     // Track last real user query for auto-compact context preservation
     this.store.setLastUserQuery(content);
-    this.addMessage({ role: 'user', content }, { isUserOrigin: true, mintNewTurn: true });
+    this.addMessage({ role: 'user', content }, { isUserOrigin: true });
   }
 
   /**
@@ -238,12 +221,11 @@ export class TriologueLite {
       // then emit a 'merge' piece for the note fragment. The host still
       // concatenates in memory so the LLM view is unchanged; the transcript
       // records exactly ONE merge line (the note) for this call — the zero
-      // full-snapshot lines is the {A, AB} fix. (See user() for turn minting.)
-      const turnId = this.currentTurnId();
+      // full-snapshot lines is the {A, AB} fix.
       const lastMsg = this.store.last()!;
       lastMsg.content += `\n${noteContent}`;
       this.store.recomputeTokenCount();
-      this.emit({ role: 'user', content: noteContent }, 'merge', { userOrigin: false, turnId });
+      this.emit({ role: 'user', content: noteContent }, 'merge', { userOrigin: false });
       return;
     }
     this.addMessage({ role: 'user', content: noteContent, ...(hookName ? { hook_name: hookName } : {}) });
@@ -365,6 +347,22 @@ export class TriologueLite {
     this.store.replaceAll(compacted);
     this.store.recomputeTokenCount();
     this.ledger.clear();
+    // Journal the swap boundary + replay parity (same contract as the full
+    // facade's compact): the control event is an observable boundary marker,
+    // and the summary messages are emitted as 'new' pieces so the transcript
+    // records the post-compact summary (the collated view is deliberately a
+    // superset — durable-full-history semantics — so this is journaling
+    // completeness, NOT snapshot parity with the livelog).
+    this.emitControl('compact');
+    // NOTE: the summary messages are ALREADY in the store — replaceAll()
+    // installs `compacted` by reference, so pushing them again here would
+    // append into the very array this for-of is iterating (a push during
+    // iteration feeds the iterator a new element every round → the loop
+    // never terminates and the process OOMs). Emit-only: the transcript
+    // sees the post-compact summary as 'new' pieces, the livelog keeps 3.
+    for (const summaryMsg of compacted) {
+      this.emit(summaryMsg, 'new', { userOrigin: false });
+    }
     // Refresh dynamic project context at the compact boundary — the
     // conversation prefix already changed, so no extra cache penalty.
     // Populators re-read current state.
@@ -434,19 +432,14 @@ export class TriologueLite {
    * Overflow checking is done by the caller (teammate worker LLM stage).
    *
    * Emits ONE 'new' piece per appended message (per-piece contract).
-   * `opts.mintNewTurn` is set by user() so a fresh user input after a tool
-   * (TpAutoFixer 'allowed' fast path) starts a new turn; every other append
-   * (agent/tool/bridge/ESC-flush items) carries the current turn counter.
+   * Replay is purely positional — no turn identity is needed.
    */
   private addMessage(
     message: Message,
-    opts?: { isUserOrigin?: boolean; mintNewTurn?: boolean },
+    opts?: { isUserOrigin?: boolean },
   ): void {
     this.store.push(message);
     this.store.incrementTokenCount(message);
-    if (opts?.mintNewTurn) {
-      this.mintTurn();
-    }
 
     this.emit(message, 'new', {
       userOrigin: opts?.isUserOrigin,
