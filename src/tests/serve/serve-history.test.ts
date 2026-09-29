@@ -147,6 +147,65 @@ describe('readHistory (transcript journal projection)', () => {
     expect(history[1].timestamp).toBe(100);
   });
 
+  it('P1: a LEADING untimestamped prefix stays at 0 (no back-fill from a later record)', () => {
+    // [0, 0, 100, 200] — the leading untimestamped records must NOT be
+    // back-filled to 100 (the ts of a LATER record); they keep 0 so they sort
+    // to the head, preserving the legacy prefix.
+    fs.writeFileSync(
+      transcriptPath,
+      JSON.stringify({ role: 'assistant', content: 'A' }) + '\n' +
+      JSON.stringify({ role: 'assistant', content: 'B' }) + '\n' +
+      JSON.stringify({ role: 'assistant', content: 'C', timestamp: 100 }) + '\n' +
+      JSON.stringify({ role: 'assistant', content: 'D', timestamp: 200 }) + '\n',
+      'utf-8',
+    );
+    const history = readHistory(transcriptPath, []);
+    expect(history.map((e) => e.content)).toEqual(['A', 'B', 'C', 'D']);
+    expect(history.map((e) => e.timestamp)).toEqual([0, 0, 100, 200]);
+  });
+
+  it('P1: [100, 0, 200] inherits the preceding positive ts for the middle entry', () => {
+    fs.writeFileSync(
+      transcriptPath,
+      JSON.stringify({ role: 'assistant', content: 'A', timestamp: 100 }) + '\n' +
+      JSON.stringify({ role: 'assistant', content: 'B' }) + '\n' +
+      JSON.stringify({ role: 'assistant', content: 'C', timestamp: 200 }) + '\n',
+      'utf-8',
+    );
+    const history = readHistory(transcriptPath, []);
+    expect(history.map((e) => e.timestamp)).toEqual([100, 100, 200]);
+  });
+
+  it('P1: [0, 0, 0] keeps file order (all equal, stable sort no-op)', () => {
+    fs.writeFileSync(
+      transcriptPath,
+      JSON.stringify({ role: 'assistant', content: 'A' }) + '\n' +
+      JSON.stringify({ role: 'assistant', content: 'B' }) + '\n' +
+      JSON.stringify({ role: 'assistant', content: 'C' }) + '\n',
+      'utf-8',
+    );
+    const history = readHistory(transcriptPath, []);
+    expect(history.map((e) => e.content)).toEqual(['A', 'B', 'C']);
+    expect(history.map((e) => e.timestamp)).toEqual([0, 0, 0]);
+  });
+
+  it('P1: a legacy prefix stays BEFORE newer messageLog entries when merged', () => {
+    // legacy A(0), B(0) + new transcript C(100) + live message M(50):
+    // must render as M, A, B, C (prefix at head), NOT A, B, C where the
+    // prefix was back-filled to 100 and jumped after M.
+    fs.writeFileSync(
+      transcriptPath,
+      JSON.stringify({ role: 'assistant', content: 'A' }) + '\n' +
+      JSON.stringify({ role: 'assistant', content: 'B' }) + '\n' +
+      JSON.stringify({ role: 'assistant', content: 'C', timestamp: 100 }) + '\n',
+      'utf-8',
+    );
+    const messageLog = [{ type: 'log' as const, content: 'M', timestamp: 50 }];
+    const history = readHistory(transcriptPath, messageLog);
+    expect(history.map((e) => e.content)).toEqual(['A', 'B', 'M', 'C']);
+    expect(history.map((e) => e.timestamp)).toEqual([0, 0, 50, 100]);
+  });
+
   it('merges transcript entries + in-memory messageLog chronologically by timestamp', () => {
     fs.writeFileSync(
       transcriptPath,

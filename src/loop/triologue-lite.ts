@@ -205,6 +205,11 @@ export class TriologueLite {
    * `user_origin: true`) and nothing else. Mirror of Triologue.submitUser —
    * see there for the rationale (a typed steering note has no message of its
    * own; this is what makes it survive a WebUI refresh).
+   *
+   * CONTRACT: only pass `'prompt'` for a query the livelog ALSO records as a
+   * user message (the restoration projection folds a 'user' record onto the
+   * last user host); `'steer'` is skipped by collateMessages and rendered as
+   * its own serve bubble.
    */
   submitUser(text: string, source: 'prompt' | 'steer' = 'prompt'): void {
     if (text.trim() === '') return;

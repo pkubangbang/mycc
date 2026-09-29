@@ -240,24 +240,31 @@ export function readHistory(
       // Timestamp normalisation, in EMISSION ORDER: the sort below is
       // chronological, so an entry with no usable timestamp (a legacy
       // pre-piece line — timestamp 0) must not fall back to 0 and jump to the
-      // HEAD of the log (pitfall 8547e85b). Each such entry inherits the last
-      // known positive timestamp, which preserves its relative position and
-      // keeps it adjacent to the record it belongs to. A file whose records
-      // are ALL untimestamped keeps them in file order (all equal ⇒ a stable
-      // sort is a no-op).
-      let knownTimestamp = entries.find((e) => typeof e.timestamp === 'number' && e.timestamp > 0)?.timestamp as number | undefined;
+      // HEAD of the log (pitfall 8547e85b) *after* a timestamped record. We
+      // therefore walk the entries forward and let each untimestamped entry
+      // inherit the last positive timestamp seen SO FAR. A LEADING run of
+      // untimestamped entries (no positive timestamp precedes them) stays at
+      // 0 — there is no earlier record to inherit from, and back-filling them
+      // from a LATER record would wrongly move a legacy prefix into the middle
+      // of newer history once messageLog entries are merged (P1). A file whose
+      // records are ALL untimestamped keeps them in file order (all equal ⇒ a
+      // stable sort is a no-op).
+      let knownTimestamp: number | undefined;
       for (const e of entries) {
         if (typeof e.timestamp === 'number' && e.timestamp > 0) {
           knownTimestamp = e.timestamp;
         } else if (knownTimestamp !== undefined) {
           e.timestamp = knownTimestamp;
         }
-        // A legacy record with no timestamped record anywhere stays
-        // untimestamped; the filter below then excludes it exactly as before
-        // (there is no reliable chronological position for it).
+        // else: a leading untimestamped entry — leave its timestamp at 0 so
+        // it sorts to the head, preserving file order before the first
+        // timestamped record.
       }
 
       // Merge transcript entries + the in-memory messageLog, by timestamp.
+      // Entries keep a numeric timestamp throughout: journal/legacy records
+      // carry 0 (or the writer's clock), and the normalisation above assigns a
+      // positive value where one is available, so the filter is defensive only.
       const combined = entries
         .concat(messageLog)
         .filter((e) => typeof e.timestamp === 'number');

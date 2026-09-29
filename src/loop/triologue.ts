@@ -285,6 +285,15 @@ export class Triologue {
    * the agent is running (no role-transition risk mid-run). The transcript is
    * the single source of truth for WebUI user bubbles, so this is what makes
    * a steering note survive a page refresh.
+   *
+   * CONTRACT: a `'user'` record (the `'prompt'` source) carries user_origin:true
+   * and is FOLDED onto the last user host by the restoration projection
+   * (collateMessages) for livelog parity. Only pass `'prompt'` for a query
+   * that the livelog ALSO records as a user message (so the fold is accurate);
+   * a `'prompt'` record with no preceding user host trips the projection's
+   * no-host anomaly path. `'steer'` is skipped by collateMessages (its text
+   * already reached the LLM as the synthesised [REMINDER] note) and rendered
+   * as its own bubble by the serve projection.
    */
   submitUser(text: string, source: 'prompt' | 'steer' = 'prompt'): void {
     if (text.trim() === '') return; // nothing to journal

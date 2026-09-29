@@ -163,7 +163,17 @@ export class ServeHub implements HubHandler {
    * before the agent loop wired it).
    */
   journalUserSubmission(text: string, source: 'prompt' | 'steer'): void {
-    try { this.userJournalProvider?.(text, source); } catch { /* best-effort */ }
+    try {
+      this.userJournalProvider?.(text, source);
+    } catch (err) {
+      // Best-effort: a journal failure must NOT break the live submission
+      // (the user still sees their bubble optimistically this session). But
+      // the transcript is the SINGLE SOURCE OF TRUTH for user bubbles now, so
+      // a write failure means "bubble survives live, disappears on reload" —
+      // surface it on the verbose/error path instead of swallowing it
+      // silently, so the divergence is diagnosable.
+      agentIO.verbose('serve', `user-journal write failed (${source}): ${String(err)}`);
+    }
   }
 
   // ===========================================================================
