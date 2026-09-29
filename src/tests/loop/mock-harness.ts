@@ -201,6 +201,7 @@ export class MockHarness {
         needsCompact = vi.fn(() => false);
         compact = vi.fn(async () => {});
         note = vi.fn();
+        submitUser = vi.fn();
         skipPendingTools = vi.fn();
         getTokenCount = vi.fn(() => 0);
         getTokenThreshold = vi.fn(() => 8000);

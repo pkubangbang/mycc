@@ -397,7 +397,7 @@ describe('TriologueLite', () => {
         if (parsed.tool_call_id !== undefined) expect(typeof parsed.tool_call_id).toBe('string');
         if (parsed.reasoning_content !== undefined) expect(typeof parsed.reasoning_content).toBe('string');
         // Per-piece envelope keys are present on the piece copy only.
-        expect(['new', 'merge']).toContain(parsed.kind);
+        expect(['new', 'merge', 'user']).toContain(parsed.kind);
       }
       // The tool message must carry tool_name + tool_call_id for orphan fixing.
       const toolMsg = pieces.find((m) => m.role === 'tool');
@@ -413,7 +413,7 @@ describe('TriologueLite', () => {
       // (boundary pieces are only journaled at truncation sites — none here).
       for (const m of pieces) {
         expect((m as unknown as { event?: string }).event).toBeUndefined();
-        expect(['new', 'merge', 'clear', 'compact', 'recap', 'rollback']).toContain((m as unknown as { kind?: string }).kind);
+        expect(['new', 'merge', 'user', 'steer', 'clear', 'compact', 'recap', 'rollback']).toContain((m as unknown as { kind?: string }).kind);
       }
       // getTriologue reflects the live store at call time.
       const lastCall = onMessage.mock.calls[onMessage.mock.calls.length - 1] as unknown[];

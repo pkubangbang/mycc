@@ -1,18 +1,22 @@
 /**
- * serve-history.test.ts - unit tests for role mapping + user-log reading
+ * serve-history.test.ts - unit tests for role mapping + history collation
  *
- * Covers roleToType / roleToLabel (test-strength dir-14 round-10 weakness 4):
- * these map triologue Message roles to WebUI LogEntry types/labels and are
- * the key rendering contract for the /history endpoint. Includes the unknown
- * / undefined role branches, which had zero coverage. Also exercises
- * readUserLog against a temp-dir fixture (malformed lines skipped, empty
- * content skipped, timestamps carried through).
+ * Covers roleToType / roleToLabel: these map triologue Message roles to
+ * WebUI LogEntry types/labels and are the key rendering contract for the
+ * /history endpoint. Includes the unknown / undefined role branches.
+ *
+ * readHistory is now sourced from the triologue transcript journal alone
+ * (the serve-only user.jsonl side file was deleted): right-side user
+ * bubbles come from kind:'user'|'steer' records stamped user_origin:true,
+ * while marker-less 'new' user records (injected notes) and 'merge'
+ * fragments never render. Untimestamped legacy lines inherit the previous
+ * positive timestamp (emission order) rather than sorting to the head.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { roleToType, roleToLabel, readUserLog, readHistory } from '../../serve/serve-history.js';
+import { roleToType, roleToLabel, readHistory } from '../../serve/serve-history.js';
 
 describe('roleToType', () => {
   it('maps known roles to their LogEntry types', () => {
@@ -52,138 +56,62 @@ describe('roleToLabel', () => {
   });
 });
 
-describe('readUserLog', () => {
-  let tmpDir: string;
-  let logPath: string;
-
-  beforeEach(() => {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'serve-history-'));
-    logPath = path.join(tmpDir, 'user.log');
-  });
-
-  afterEach(() => {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
-  });
-
-  it('returns [] when the path is null', () => {
-    expect(readUserLog(null)).toEqual([]);
-  });
-
-  it('returns [] when the file does not exist', () => {
-    expect(readUserLog(logPath)).toEqual([]);
-  });
-
-  it('reads well-formed user-log lines as user LogEntries', () => {
-    fs.writeFileSync(
-      logPath,
-      JSON.stringify({ type: 'user', content: 'hello', kind: 'prompt', timestamp: 1000 }) + '\n' +
-      JSON.stringify({ type: 'user', content: 'steer me', kind: 'steer', timestamp: 2000 }) + '\n',
-      'utf-8',
-    );
-    const entries = readUserLog(logPath);
-    expect(entries).toHaveLength(2);
-    expect(entries[0]).toEqual({ type: 'user', content: 'hello', timestamp: 1000 });
-    expect(entries[1]).toEqual({ type: 'user', content: 'steer me', timestamp: 2000 });
-  });
-
-  it('skips malformed JSON lines without throwing', () => {
-    fs.writeFileSync(
-      logPath,
-      '{not json\n' +
-      JSON.stringify({ content: 'good', timestamp: 5 }) + '\n',
-      'utf-8',
-    );
-    const entries = readUserLog(logPath);
-    expect(entries).toHaveLength(1);
-    expect(entries[0].content).toBe('good');
-  });
-
-  it('skips entries with empty/null/undefined content', () => {
-    fs.writeFileSync(
-      logPath,
-      JSON.stringify({ content: '', timestamp: 1 }) + '\n' +
-      JSON.stringify({ content: null, timestamp: 2 }) + '\n' +
-      JSON.stringify({ timestamp: 3 }) + '\n' +
-      JSON.stringify({ content: 'keep', timestamp: 4 }) + '\n',
-      'utf-8',
-    );
-    const entries = readUserLog(logPath);
-    expect(entries).toHaveLength(1);
-    expect(entries[0].content).toBe('keep');
-  });
-
-  it('strips ANSI codes from content', () => {
-    fs.writeFileSync(
-      logPath,
-      JSON.stringify({ content: '\x1b[31mred\x1b[0m', timestamp: 1 }) + '\n',
-      'utf-8',
-    );
-    expect(readUserLog(logPath)[0].content).toBe('red');
-  });
-
-  it('omits timestamp when the line has no numeric timestamp', () => {
-    fs.writeFileSync(
-      logPath,
-      JSON.stringify({ content: 'no-ts' }) + '\n',
-      'utf-8',
-    );
-    const entry = readUserLog(logPath)[0];
-    expect(entry.content).toBe('no-ts');
-    expect(entry.timestamp).toBeUndefined();
-  });
-
-  it('coerces a non-string content value to a string (String() coercion)', () => {
-    // The implementation does `String(entry.content)`, so a numeric content
-    // is kept as its string form and an object becomes "[object Object]".
-    // Pin this contract so a future change to skip non-strings is caught.
-    fs.writeFileSync(
-      logPath,
-      JSON.stringify({ content: 12345, timestamp: 1 }) + '\n' +
-      JSON.stringify({ content: { nested: true }, timestamp: 2 }) + '\n',
-      'utf-8',
-    );
-    const entries = readUserLog(logPath);
-    expect(entries).toHaveLength(2);
-    expect(entries[0].content).toBe('12345');
-    expect(entries[1].content).toBe('[object Object]');
-  });
-});
-
-describe('readHistory (collateEntries projection)', () => {
+describe('readHistory (transcript journal projection)', () => {
   let tmpDir: string;
   let transcriptPath: string;
-  let userLogPath: string;
 
   beforeEach(() => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'serve-history-rh-'));
     transcriptPath = path.join(tmpDir, 'transcript.jsonl');
-    userLogPath = path.join(tmpDir, 'user.jsonl');
   });
 
   afterEach(() => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it('collates new-format piece records: a merge line folds into its host message', () => {
-    // New format (JsonlTranscriptWriter): an assistant 'new' piece, then a
-    // tool result 'new' piece, each carrying kind/timestamp + msg
-    // fields at top level (flat record). A HINT-note 'merge' piece folds
-    // into its user host — but user-role entries are then SKIPPED by
-    // readHistory (user.jsonl owns user bubbles), so the folded content
-    // disappears from the serve view exactly like pre-fix behavior.
+  it('renders a genuine user query as a bubble with NO user.jsonl side file', () => {
+    // A kind:'user' journal record (user_origin:true) IS the source of the
+    // right-side bubble — the deleted user.jsonl is gone entirely.
+    fs.writeFileSync(
+      transcriptPath,
+      JSON.stringify({ role: 'user', content: 'fix the bug', kind: 'user', user_origin: true, timestamp: 100 }) + '\n' +
+      JSON.stringify({ role: 'assistant', content: 'on it', kind: 'new', timestamp: 200 }) + '\n',
+      'utf-8',
+    );
+    const history = readHistory(transcriptPath, []);
+    expect(history.map((e) => e.content)).toEqual(['fix the bug', 'on it']);
+    expect(history[0].type).toBe('user');
+    expect(history[1].type).toBe('result');
+  });
+
+  it('renders a steer journal record as a user bubble too', () => {
+    fs.writeFileSync(
+      transcriptPath,
+      JSON.stringify({ role: 'user', content: 'stop and reconsider', kind: 'steer', user_origin: true, timestamp: 50 }) + '\n',
+      'utf-8',
+    );
+    const history = readHistory(transcriptPath, []);
+    expect(history).toHaveLength(1);
+    expect(history[0]).toEqual({ type: 'user', content: 'stop and reconsider', timestamp: 50 });
+  });
+
+  it('never renders an injected note: marker-less new-user and merge records are skipped', () => {
+    // The [HINT] merge fragment and the marker-less 'new' [REMINDER] note
+    // are injected (not user_origin) — neither may surface as a bubble.
     fs.writeFileSync(
       transcriptPath,
       JSON.stringify({ role: 'assistant', content: 'working', kind: 'new', timestamp: 100 }) + '\n' +
       JSON.stringify({ role: 'tool', tool_name: 'bash', tool_call_id: 't1', content: 'out1', kind: 'new', timestamp: 200 }) + '\n' +
-      JSON.stringify({ role: 'user', content: '[HINT] steering', kind: 'merge', timestamp: 250 }) + '\n',
+      JSON.stringify({ role: 'user', content: '[HINT] steering', kind: 'merge', timestamp: 250 }) + '\n' +
+      JSON.stringify({ role: 'user', content: '[REMINDER] nudge', kind: 'new', timestamp: 260 }) + '\n',
       'utf-8',
     );
-    const history = readHistory(transcriptPath, userLogPath, []);
-    // user (host of merge) skipped; assistant + tool survive, each ONE entry.
+    const history = readHistory(transcriptPath, []);
     const contents = history.map((e) => e.content);
     expect(contents).toContain('working');
     expect(contents).toContain('out1');
     expect(contents).not.toContain('[HINT] steering');
+    expect(contents).not.toContain('[REMINDER] nudge');
     expect(contents).toHaveLength(2);
     for (const e of history) expect(e.timestamp).toBeDefined();
   });
@@ -198,24 +126,111 @@ describe('readHistory (collateEntries projection)', () => {
       JSON.stringify({ role: 'assistant', content: 'AB', timestamp: 11 }) + '\n',
       'utf-8',
     );
-    const history = readHistory(transcriptPath, userLogPath, []);
+    const history = readHistory(transcriptPath, []);
     expect(history.map((e) => e.content)).toEqual(['A', 'AB']);
     expect(history.map((e) => e.timestamp)).toEqual([10, 11]);
   });
 
-  it('merges transcript + user-log entries chronologically by timestamp', () => {
+  it('normalises untimestamped legacy lines in emission order (no jump to head)', () => {
+    // Pitfall 8547e85b: a ts===0 line must inherit the PREVIOUS positive
+    // timestamp, keeping emission order — NOT sort to the head of the list.
+    fs.writeFileSync(
+      transcriptPath,
+      JSON.stringify({ role: 'assistant', content: 'first', timestamp: 100 }) + '\n' +
+      JSON.stringify({ role: 'assistant', content: 'second' }) + '\n' +
+      JSON.stringify({ role: 'assistant', content: 'third', timestamp: 300 }) + '\n',
+      'utf-8',
+    );
+    const history = readHistory(transcriptPath, []);
+    expect(history.map((e) => e.content)).toEqual(['first', 'second', 'third']);
+    // second inherits 100 (emission order), never 0.
+    expect(history[1].timestamp).toBe(100);
+  });
+
+  it('P1: a LEADING untimestamped prefix stays at 0 (no back-fill from a later record)', () => {
+    // [0, 0, 100, 200] — the leading untimestamped records must NOT be
+    // back-filled to 100 (the ts of a LATER record); they keep 0 so they sort
+    // to the head, preserving the legacy prefix.
+    fs.writeFileSync(
+      transcriptPath,
+      JSON.stringify({ role: 'assistant', content: 'A' }) + '\n' +
+      JSON.stringify({ role: 'assistant', content: 'B' }) + '\n' +
+      JSON.stringify({ role: 'assistant', content: 'C', timestamp: 100 }) + '\n' +
+      JSON.stringify({ role: 'assistant', content: 'D', timestamp: 200 }) + '\n',
+      'utf-8',
+    );
+    const history = readHistory(transcriptPath, []);
+    expect(history.map((e) => e.content)).toEqual(['A', 'B', 'C', 'D']);
+    expect(history.map((e) => e.timestamp)).toEqual([0, 0, 100, 200]);
+  });
+
+  it('P1: [100, 0, 200] inherits the preceding positive ts for the middle entry', () => {
+    fs.writeFileSync(
+      transcriptPath,
+      JSON.stringify({ role: 'assistant', content: 'A', timestamp: 100 }) + '\n' +
+      JSON.stringify({ role: 'assistant', content: 'B' }) + '\n' +
+      JSON.stringify({ role: 'assistant', content: 'C', timestamp: 200 }) + '\n',
+      'utf-8',
+    );
+    const history = readHistory(transcriptPath, []);
+    expect(history.map((e) => e.timestamp)).toEqual([100, 100, 200]);
+  });
+
+  it('P1: [0, 0, 0] keeps file order (all equal, stable sort no-op)', () => {
+    fs.writeFileSync(
+      transcriptPath,
+      JSON.stringify({ role: 'assistant', content: 'A' }) + '\n' +
+      JSON.stringify({ role: 'assistant', content: 'B' }) + '\n' +
+      JSON.stringify({ role: 'assistant', content: 'C' }) + '\n',
+      'utf-8',
+    );
+    const history = readHistory(transcriptPath, []);
+    expect(history.map((e) => e.content)).toEqual(['A', 'B', 'C']);
+    expect(history.map((e) => e.timestamp)).toEqual([0, 0, 0]);
+  });
+
+  it('P1: a legacy prefix stays BEFORE newer messageLog entries when merged', () => {
+    // legacy A(0), B(0) + new transcript C(100) + live message M(50):
+    // must render as M, A, B, C (prefix at head), NOT A, B, C where the
+    // prefix was back-filled to 100 and jumped after M.
+    fs.writeFileSync(
+      transcriptPath,
+      JSON.stringify({ role: 'assistant', content: 'A' }) + '\n' +
+      JSON.stringify({ role: 'assistant', content: 'B' }) + '\n' +
+      JSON.stringify({ role: 'assistant', content: 'C', timestamp: 100 }) + '\n',
+      'utf-8',
+    );
+    const messageLog = [{ type: 'log' as const, content: 'M', timestamp: 50 }];
+    const history = readHistory(transcriptPath, messageLog);
+    expect(history.map((e) => e.content)).toEqual(['A', 'B', 'M', 'C']);
+    expect(history.map((e) => e.timestamp)).toEqual([0, 0, 50, 100]);
+  });
+
+  it('merges transcript entries + in-memory messageLog chronologically by timestamp', () => {
     fs.writeFileSync(
       transcriptPath,
       JSON.stringify({ role: 'tool', tool_name: 'bash', tool_call_id: 'x', content: 'toolout', kind: 'new', timestamp: 300 }) + '\n',
       'utf-8',
     );
-    fs.writeFileSync(
-      userLogPath,
-      JSON.stringify({ type: 'user', content: 'user bubble', timestamp: 200 }) + '\n',
-      'utf-8',
+    const messageLog = [{ type: 'log' as const, content: 'memlog', timestamp: 200 }];
+    const history = readHistory(transcriptPath, messageLog);
+    expect(history.map((e) => e.content)).toEqual(['memlog', 'toolout']);
+  });
+
+  it('regression fixture (849a9dd2): 9 genuine queries all render as user bubbles', () => {
+    // A transcript polluted by injected notes between the 9 real queries —
+    // every query must still round-trip to a right-side bubble.
+    const lines: string[] = [];
+    for (let i = 1; i <= 9; i++) {
+      lines.push(JSON.stringify({ role: 'user', content: `query ${i}`, kind: 'user', user_origin: true, timestamp: i * 100 }));
+      lines.push(JSON.stringify({ role: 'assistant', content: `reply ${i}`, kind: 'new', timestamp: i * 100 + 10 }));
+      lines.push(JSON.stringify({ role: 'user', content: `[HINT] note ${i}`, kind: 'merge', timestamp: i * 100 + 20 }));
+    }
+    fs.writeFileSync(transcriptPath, lines.join('\n') + '\n', 'utf-8');
+    const history = readHistory(transcriptPath, []);
+    const userBubbles = history.filter((e) => e.type === 'user');
+    expect(userBubbles.map((e) => e.content)).toEqual(
+      Array.from({ length: 9 }, (_, i) => `query ${i + 1}`),
     );
-    const history = readHistory(transcriptPath, userLogPath, []);
-    // user bubble (200) sorts BEFORE the tool result (300).
-    expect(history.map((e) => e.content)).toEqual(['user bubble', 'toolout']);
   });
 });

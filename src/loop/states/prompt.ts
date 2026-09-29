@@ -417,20 +417,15 @@ export async function handlePrompt(
     }
   }
 
-  // Add user message to triologue
+  // Add user message to triologue. This IS the journal write for a prompt
+  // query: user() emits the 'user' journal record (plain query: a marked
+  // 'new' piece) that /history renders as the right-side user bubble, so no
+  // side file is needed and the query survives a page refresh even in
+  // terminal mode.
   triologue.user(query);
   turn.lastUserQuery = query;
   env.ctx.core.resetConfusionIndex();
   env.crossroadOccurred = false;  // clear stale cooldown at turn start
-
-  // Persist the real user query to the user-log JSONL so it survives a page
-  // refresh and re-renders as a right-side user bubble. The triologue's
-  // role:'user' entries are polluted with injected system notes, so the user
-  // log is the single source of truth for genuine user bubbles. Only when
-  // serve is running (terminal mode has no webui to refresh).
-  if (hub.isRunning()) {
-    hub.appendUserLog(query, 'prompt');
-  }
 
   // Reset sequence to current turn (hooks only see events since last user query)
   env.sequence.markPromptBoundary();

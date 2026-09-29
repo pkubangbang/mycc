@@ -2,25 +2,25 @@
  * serve-history.ts - chat-history reconstruction for the /history endpoint
  *
  * Extracted from ServeHub as pure functions that take their data sources
- * (transcript path, user-log path, in-memory messageLog) as parameters,
- * so the merging logic can be reasoned about and tested without importing
- * the heavy serve-hub.ts module graph (Express + Vite + agent-io).
+ * (the transcript path, the in-memory messageLog) as parameters, so the
+ * merging logic can be reasoned about and tested without importing the heavy
+ * serve-hub.ts module graph (Express + Vite + agent-io).
  *
- * History is reconstructed from TWO durable sources, merged by timestamp:
+ * History is reconstructed from TWO sources, merged by timestamp:
  *
  * 1. The triologue JSONL transcript (transcriptPath) — assistant/tool/system
- *    turns. role:'user' entries are SKIPPED because they are polluted with
- *    injected system notes ([REMINDER]/[HINT]/[WRAP_UP] etc.) that must NOT
- *    render as right-side user bubbles.
+ *    turns AND the genuine user bubbles. The transcript is the SINGLE SOURCE
+ *    OF TRUTH for what the user typed: every real submission is journaled
+ *    there as a user-input record (kind 'user'|'steer', or a marker-bearing
+ *    'new' piece), which collateEntries() projects one-to-one onto right-side
+ *    bubbles. Injected system notes ([REMINDER]/[HINT]/[WRAP_UP] etc.) are
+ *    'merge' fragments or unmarked 'new' user pieces and are SKIPPED, so they
+ *    never render as user input. Because the transcript is written on every
+ *    turn (terminal mode included), a query survives a page refresh, a serve
+ *    restart, and a page close — no serve-only side file is involved.
  *
- * 2. The user-log JSONL (userLogPath) — real user submissions only (prompt
- *    queries + steering notes), written via appendUserLog(). These are the
- *    genuine right-side user bubbles.
- *
- * Both sources carry a `timestamp` field, so they merge into the correct
- * chronological order. The in-memory messageLog (intermediate
- * brief/log/warn/error + cards) is appended after — it already carries
- * timestamps, so it sorts into the merged sequence too.
+ * 2. The in-memory messageLog (intermediate brief/log/warn/error + cards) —
+ *    serve-lifetime only, appended after and sorted into the same sequence.
  */
 import * as fs from 'fs';
 import { stripAnsi } from './serve-utils.js';
@@ -49,8 +49,9 @@ function djb2(str: string): string {
  *
  * Instead of hashing the rendered JSON, this fingerprints the INPUTS that
  * determine the body:
- *   - transcript file: statSync mtimeMs + size (covers appended turns)
- *   - user-log file:   statSync mtimeMs + size (covers appended user submits)
+ *   - transcript file: statSync mtimeMs + size (covers appended turns AND
+ *                       appended user-input journal records — the transcript
+ *                       is the single durable source of history)
  *   - messageLog:      length + last entry's timestamp (in-memory tail)
  *   - steeringBuffer:  its length (the transient steering queue — flips as
  *                       notes are pushed/drained; NOT a durable file, so a
@@ -73,19 +74,19 @@ function djb2(str: string): string {
  */
 export function computeHistoryVersion(
   transcriptPath: string | null,
-  userLogPath: string | null,
   messageLog: LogEntry[],
   steeringLength: number,
   isRunning: boolean,
 ): string {
   const parts: string[] = [];
-  // Durable file fingerprints — mtimeMs + size. A missing file contributes
+  // Durable file fingerprint — mtimeMs + size. A missing file contributes
   // a stable "null" token (vs. an ever-changing zero) so an absent source
   // does not needlessly invalidate the ETag on every call.
-  for (const p of [transcriptPath, userLogPath]) {
-    if (!p) { parts.push('null'); continue; }
+  if (!transcriptPath) {
+    parts.push('null');
+  } else {
     try {
-      const st = fs.statSync(p);
+      const st = fs.statSync(transcriptPath);
       parts.push(`${st.mtimeMs}:${st.size}`);
     } catch {
       parts.push('null'); // file missing/unreadable → stable token
@@ -190,44 +191,10 @@ export function roleToLabel(role: string | undefined): string | undefined {
 }
 
 /**
- * Read the user-log JSONL (real user submissions) and map each entry to a
- * 'user'-type LogEntry (right-side bubble). Returns an empty array if the
- * user log path is unset or the file is missing/unreadable.
- *
- * Each user-log line is `{ type: 'user', content, kind, timestamp }`. The
- * `kind` field ('prompt' | 'steer') is informational only — both kinds
- * render identically as right-side user bubbles.
- */
-export function readUserLog(userLogPath: string | null): LogEntry[] {
-  if (!userLogPath) return [];
-  try {
-    const raw = fs.readFileSync(userLogPath, 'utf-8');
-    const entries: LogEntry[] = [];
-    for (const line of raw.split('\n')) {
-      const trimmed = line.trim();
-      if (!trimmed) continue;
-      let entry: { content?: string; timestamp?: number };
-      try {
-        entry = JSON.parse(trimmed);
-      } catch {
-        continue; // skip malformed lines
-      }
-      if (entry.content === undefined || entry.content === null || entry.content === '') continue;
-      const logEntry: LogEntry = { type: 'user', content: stripAnsi(String(entry.content)) };
-      if (typeof entry.timestamp === 'number') logEntry.timestamp = entry.timestamp;
-      entries.push(logEntry);
-    }
-    return entries;
-  } catch {
-    return [];
-  }
-}
-
-/**
  * Reconstruct the full chat history for the /history endpoint.
  *
- * @param transcriptPath - durable triologue JSONL path (assistant/tool/system)
- * @param userLogPath    - durable user-log JSONL path (real user submissions)
+ * @param transcriptPath - durable triologue JSONL path (assistant/tool/system
+ *                         turns AND the genuine user-input journal)
  * @param messageLog     - in-memory log (intermediate brief/log/warn/error + cards)
  * @returns merged, timestamp-sorted, MAX_LOG_SIZE-capped LogEntry[]
  *
@@ -236,20 +203,19 @@ export function readUserLog(userLogPath: string | null): LogEntry[] {
  */
 export function readHistory(
   transcriptPath: string | null,
-  userLogPath: string | null,
   messageLog: LogEntry[],
 ): LogEntry[] {
   if (transcriptPath) {
     try {
       // Read the transcript through the shared collation core (the {A, AB}
-      // fix): the file is now an append-only PIECE log — a 'merge' line must
-      // fold into its host message instead of appending as a new entry.
-      // collateEntries() replays the appends the livelog performed and
-      // returns one entry per collated message with its host timestamp; a
-      // merge entry carries the HOST's timestamp (the turn's start), which
-      // also sidesteps the pitfall-8547e85b ordering trap (untimestamped
-      // legacy pieces keep their file-order emission position inside the
-      // collated list, and legacy lines are only ever 'new').
+      // fix): the file is an append-only PIECE log, replayed by the serve
+      // projection into one entry per collated message. collateEntries() now
+      // yields the RIGHT-SIDE USER BUBBLES too — a genuine submission is
+      // journaled as a 'user'|'steer' record (or a marker-bearing 'new' user
+      // piece), which the projection keeps one-to-one, while injected notes
+      // ('merge' fragments, unmarked user pieces) are dropped. This is why
+      // history no longer depends on the serve-only user.jsonl side file:
+      // the transcript is written on every turn, terminal mode included.
       // Legacy tolerance: pre-piece full-snapshot lines have no `kind`, so
       // readTranscript treats each as a 'new' plain Message — their existing
       // {A, AB} duplicates in old files are preserved on read (zero
@@ -259,35 +225,47 @@ export function readHistory(
       for (const entry of collateEntries(records)) {
         const msg = entry.message;
         if (msg.content === undefined || msg.content === null || msg.content === '') continue;
-        // Skip role:'user' from the triologue — these are injected system
-        // notes ([REMINDER]/[HINT]/[WRAP_UP] etc.), NOT real user input.
-        // Real user bubbles come from the user log (read below).
-        if (msg.role === 'user') continue;
         const role = msg.role as string | undefined;
         const type = roleToType(role);
         const label = roleToLabel(role);
         const logEntry: LogEntry = { type, content: stripAnsi(String(msg.content)) };
         if (label) logEntry.label = label;
         // collateEntries preserves the piece timestamp (written by
-        // JsonlTranscriptWriter); legacy untimestamped lines are dropped
-        // here exactly as before (no bogus 0 timestamps).
-        if (typeof entry.timestamp === 'number' && entry.timestamp > 0) {
-          logEntry.timestamp = entry.timestamp;
-        }
+        // JsonlTranscriptWriter at append time) — every genuine user
+        // submission therefore carries a real timestamp.
+        logEntry.timestamp = entry.timestamp;
         entries.push(logEntry);
       }
 
-      // Read the user log (real user submissions) and merge by timestamp.
-      const userEntries = readUserLog(userLogPath);
+      // Timestamp normalisation, in EMISSION ORDER: the sort below is
+      // chronological, so an entry with no usable timestamp (a legacy
+      // pre-piece line — timestamp 0) must not fall back to 0 and jump to the
+      // HEAD of the log (pitfall 8547e85b) *after* a timestamped record. We
+      // therefore walk the entries forward and let each untimestamped entry
+      // inherit the last positive timestamp seen SO FAR. A LEADING run of
+      // untimestamped entries (no positive timestamp precedes them) stays at
+      // 0 — there is no earlier record to inherit from, and back-filling them
+      // from a LATER record would wrongly move a legacy prefix into the middle
+      // of newer history once messageLog entries are merged (P1). A file whose
+      // records are ALL untimestamped keeps them in file order (all equal ⇒ a
+      // stable sort is a no-op).
+      let knownTimestamp: number | undefined;
+      for (const e of entries) {
+        if (typeof e.timestamp === 'number' && e.timestamp > 0) {
+          knownTimestamp = e.timestamp;
+        } else if (knownTimestamp !== undefined) {
+          e.timestamp = knownTimestamp;
+        }
+        // else: a leading untimestamped entry — leave its timestamp at 0 so
+        // it sorts to the head, preserving file order before the first
+        // timestamped record.
+      }
 
-      // Merge triologue entries + user entries + in-memory messageLog.
-      // Filter out entries WITHOUT a timestamp — legacy pre-timestamp
-      // transcript lines have no reliable chronological position, so
-      // sorting them to 0 (front) or MAX_SAFE_INTEGER (end) would misorder
-      // them relative to timestamped entries. Excluding them keeps the
-      // reconstructed history chronologically accurate.
+      // Merge transcript entries + the in-memory messageLog, by timestamp.
+      // Entries keep a numeric timestamp throughout: journal/legacy records
+      // carry 0 (or the writer's clock), and the normalisation above assigns a
+      // positive value where one is available, so the filter is defensive only.
       const combined = entries
-        .concat(userEntries)
         .concat(messageLog)
         .filter((e) => typeof e.timestamp === 'number');
       combined.sort((a, b) => (a.timestamp as number) - (b.timestamp as number));

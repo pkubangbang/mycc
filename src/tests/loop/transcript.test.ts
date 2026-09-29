@@ -213,18 +213,23 @@ describe('collate projections (positional replay)', () => {
     expect(messages[1].role).toBe('assistant');
   });
 
-  it('collateEntries keeps the HOST timestamp on a folded user entry', () => {
+  it('collateEntries is a clean scan: a merge fragment is SKIPPED (never folded)', () => {
+    // The serve view does NOT fold — the 'merge' [REMINDER] note is an
+    // injected fragment, not a user bubble, so collateEntries drops it and
+    // the user host keeps its own bare content.
     const entries = collateEntries(baseRecords());
     expect(entries).toHaveLength(2);
-    expect(entries[0].timestamp).toBe(100); // HOST (user turn start), NOT the merge piece's 120
-    expect(entries[0].message.content).toBe('task\n[REMINDER] nudge');
+    expect(entries[0].timestamp).toBe(100); // HOST (user turn start)
+    expect(entries[0].message.content).toBe('task');
     expect(entries[1].message.role).toBe('assistant');
     expect(entries[1].timestamp).toBe(110);
   });
 
-  it('merge onto a non-user host pushes as its own message (structural anomaly)', () => {
-    // No user host anywhere in the collated view — the merge cannot fold,
-    // so its content is kept as its own message and the anomaly is reported.
+  it('merge onto a non-user host pushes as its own message (restoration) and is skipped by the serve view', () => {
+    // No user host anywhere in the collated view — the restoration view
+    // cannot fold, so its content is kept as its own message and the anomaly
+    // is reported. The serve view NEVER renders a merge fragment (it is a
+    // note, not a user bubble), so it is skipped there without an anomaly.
     const records: TranscriptRecord[] = [
       { role: 'assistant', content: 'a', kind: 'new', timestamp: 1 },
       { role: 'user', content: 'm', kind: 'merge', timestamp: 2 },
@@ -235,7 +240,7 @@ describe('collate projections (positional replay)', () => {
     expect(messages[0].content).toBe('a');
     expect(anomalies.some((a) => a.includes('without a user host'))).toBe(true);
     const entries = collateEntries(records, (a) => anomalies.push(a));
-    expect(entries.map((e) => e.message.role)).toEqual(['assistant', 'user']);
+    expect(entries.map((e) => e.message.role)).toEqual(['assistant']);
   });
 
   it('replay stays O(n): a merge-heavy transcript folds in one pass', () => {
@@ -321,7 +326,9 @@ describe('control events (journaled truncation boundaries)', () => {
     collateMessages(records, (a) => anomalies.push(a));
     expect(anomalies).toHaveLength(0);
     const entries = collateEntries(records);
-    expect(entries).toHaveLength(4); // same view, serve projection
+    // Serve projection: the marked 'q' new-user piece is a bubble, the
+    // UNMARKED post-compact summary is not (injected context, not input).
+    expect(entries.map((e) => e.message.content)).toEqual(['q', 'a', 'r']);
   });
 
   it('control records never become messages even with stray role fields', () => {

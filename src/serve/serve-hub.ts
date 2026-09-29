@@ -83,9 +83,11 @@ export class ServeHub implements HubHandler {
   private messageLog: LogEntry[] = [];
   private static readonly MAX_LOG_SIZE = 1000;
 
-  // ── Durable history sources ──
+  // ── Durable history source ──
   private transcriptPath: string | null = null;
-  private userLogPath: string | null = null;
+  // Lead-side callback that journals a genuine user submission into the
+  // transcript (registered by agent-repl; see setUserJournalProvider).
+  private userJournalProvider: ((text: string, source: 'prompt' | 'steer') => void) | null = null;
 
   // ── Disconnect-reconnect (encapsulated in DisconnectTimer) ──
   //
@@ -136,19 +138,42 @@ export class ServeHub implements HubHandler {
   /** Set the durable triologue transcript path (read by /history). */
   setTranscriptPath(p: string | null): void { this.transcriptPath = p; }
 
-  /** Set the durable user-log path (real user submissions, read by /history). */
-  setUserLogPath(p: string | null): void { this.userLogPath = p; }
+  /**
+   * Register the user-input journal provider: the lead-side callback that
+   * writes ONE transcript journal record ('user'|'steer') for a genuine user
+   * submission. The transcript is the single source of truth for WebUI user
+   * bubbles (/history reads it), so this replaces the old serve-only
+   * user.jsonl side file.
+   *
+   * The hub never opens the transcript itself — `JsonlTranscriptWriter` is
+   * the single writer (it owns kind stamping and the write-time timestamp),
+   * and the provider is registered by agent-repl once the triologue exists.
+   * Guarded at every call site so a serve started before the loop wired it
+   * is a no-op rather than a crash.
+   */
+  setUserJournalProvider(cb: ((text: string, source: 'prompt' | 'steer') => void) | null): void {
+    this.userJournalProvider = cb;
+  }
 
   /**
-   * Append a real user submission (prompt query or steering note) to the
-   * user-log JSONL. Kept separate from the triologue because the triologue's
-   * role:'user' entries are polluted with injected system notes. Each entry
-   * carries a timestamp for chronological merge in readHistory.
+   * Append a real user submission to the transcript's user-input journal via
+   * the registered provider (see setUserJournalProvider). Kept as the single
+   * call the serve layer uses for its own submissions (a steering note typed
+   * in the browser). No-op when no provider is registered yet (serve started
+   * before the agent loop wired it).
    */
-  appendUserLog(text: string, kind: 'prompt' | 'steer'): void {
-    if (!this.userLogPath) return;
-    const entry = JSON.stringify({ type: 'user', content: text, kind, timestamp: Date.now() });
-    try { fs.appendFileSync(this.userLogPath, `${entry}\n`, 'utf-8'); } catch { /* ignore */ }
+  journalUserSubmission(text: string, source: 'prompt' | 'steer'): void {
+    try {
+      this.userJournalProvider?.(text, source);
+    } catch (err) {
+      // Best-effort: a journal failure must NOT break the live submission
+      // (the user still sees their bubble optimistically this session). But
+      // the transcript is the SINGLE SOURCE OF TRUTH for user bubbles now, so
+      // a write failure means "bubble survives live, disappears on reload" —
+      // surface it on the verbose/error path instead of swallowing it
+      // silently, so the divergence is diagnosable.
+      agentIO.verbose('serve', `user-journal write failed (${source}): ${String(err)}`);
+    }
   }
 
   // ===========================================================================
@@ -288,8 +313,10 @@ export class ServeHub implements HubHandler {
     });
 
     // GET /history → chat history as JSON (fetched at load BEFORE the WS, so
-    // live updates layer on top with no race). Merges transcript + user-log +
-    // messageLog by timestamp (see serve-history.ts).
+    // live updates layer on top with no race). Merges transcript + messageLog
+    // by timestamp (see serve-history.ts). The transcript holds BOTH the
+    // assistant/tool turns AND the genuine user-input journal, so it is the
+    // single durable source of user bubbles.
     //
     // Caching: a content-derived weak ETag (computeHistoryVersion) is sent on
     // every response, alongside `Cache-Control: no-cache`. `no-cache` does NOT
@@ -301,7 +328,7 @@ export class ServeHub implements HubHandler {
     // 304.
     this.expressApp.get('/history', (req, res) => {
       const etag = computeHistoryVersion(
-        this.transcriptPath, this.userLogPath, this.messageLog,
+        this.transcriptPath, this.messageLog,
         this.steeringQueue.length, this.agentRunning,
       );
       res.set('ETag', etag);
@@ -320,7 +347,7 @@ export class ServeHub implements HubHandler {
         res.status(304).end();
         return;
       }
-      const history = readHistory(this.transcriptPath, this.userLogPath, this.messageLog);
+      const history = readHistory(this.transcriptPath, this.messageLog);
       const payload = JSON.stringify({
         messages: history,
         steeringBuffer: this.getSteeringNotes(),
@@ -528,11 +555,17 @@ export class ServeHub implements HubHandler {
   // Steering queue (webui-only — user mid-task direction while LLM runs)
   // ===========================================================================
 
-  /** Buffer a steering note, persist it, and echo it to all clients' buffer bars. */
+  /** Buffer a steering note, journal it, and echo it to all clients' buffer bars. */
   pushSteer(text: string): void {
     const note: SteeringNote = { id: ++this.steeringIdCounter, text };
     this.steeringQueue.push(note);
-    this.appendUserLog(text, 'steer'); // persist so the bubble survives refresh
+    // Journal the note as user input so it survives a page refresh and
+    // re-renders as a right-side bubble (the transcript is the single source
+    // of truth for user bubbles). Journaled at SUBMISSION time: the text is a
+    // genuine user submission the moment it is typed, whether COLLECT later
+    // injects it as a [REMINDER] note or PROMPT folds it into a synthesised
+    // query. A no-op when the loop has not registered the provider yet.
+    this.journalUserSubmission(text, 'steer');
     // steer-echo carries the stable steerId for per-note discard/send; sent
     // directly (not via broadcast()) because broadcast() takes a flat string.
     const echoPayload = JSON.stringify({ type: 'steer-echo', content: text, steerId: note.id });

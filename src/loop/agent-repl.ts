@@ -95,11 +95,13 @@ export async function main(): Promise<void> {
   // can read the on-disk triologue JSONL (survives serve stop/restart and
   // page closes) instead of the ephemeral in-memory messageLog.
   getServeHub().setTranscriptPath(triologuePath);
-  // Wire the user-log path (same session directory) so real user submissions
-  // (prompt queries + steering notes) are persisted and reconstructed as
-  // right-side bubbles on refresh, instead of mapping every role:'user'
-  // from the triologue (which includes injected system notes).
-  getServeHub().setUserLogPath(path.join(path.dirname(triologuePath), 'user.jsonl'));
+  // Wire the user-input journal provider: the transcript is the single source
+  // of truth for WebUI user bubbles, so a genuine user submission (a prompt
+  // query, or a steering note typed while the agent runs) is journaled by the
+  // triologue itself as a 'user'|'steer' record. The hub reaches the writer
+  // ONLY through this callback — JsonlTranscriptWriter stays the single
+  // writer of the transcript file.
+  getServeHub().setUserJournalProvider((text, source) => triologue.submitUser(text, source));
 
   // Pass initial query to prompt handler
   setInitialQuery(initialQuery);
