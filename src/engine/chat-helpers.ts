@@ -85,6 +85,56 @@ export function isTransientError(err: unknown): boolean {
 }
 
 /**
+ * Normalize a bare `TypeError: terminated` into a descriptive error the
+ * existing retry logic already covers.
+ *
+ * This is a **transport-termination normalizer**, not an undici-specific
+ * detector. Node's global `fetch()` (undici) surfaces several transport-level
+ * failures as a bare
+ *   TypeError: terminated
+ *   at Fetch.onAborted (node:internal/deps/undici/undici:...)
+ * including mid-stream socket closes (UND_ERR_SOCKET) and client-side body
+ * timeouts (UND_ERR_BODY_TIMEOUT). The literal message is just the word
+ * "terminated" regardless of which transport condition caused it, and it
+ * shares no substring with any entry in TRANSIENT_ERROR_PATTERNS, so
+ * `isTransientError()` returns false → `retryWithBackoff` / `retryChat`
+ * rethrow on the FIRST attempt (zero retries), and the COLLECT catch skips
+ * its transient-recovery branch → returns PROMPT → in auto/daemon mode
+ * PROMPT routes to AWAIT, BLOCKING forever for an external event that never
+ * arrives.
+ *
+ * Scope of the predicate: the check is `err instanceof TypeError && err.message
+ * === 'terminated'`. It does NOT inspect `err.cause`, so it does not prove the
+ * error came from undici specifically — any code that constructs exactly this
+ * error will be normalized. That is intentional: this helper only runs inside
+ * the fetch/stream catch blocks of `retryWithBackoff` and the two providers'
+ * `retryChat`, where every caught error originates from a fetch/undici code
+ * path (the ollama library's fetch POST, the raw `fetch()` SSE reader, or the
+ * for-await over an undici-backed `collectStream` reader). In that context a
+ * `TypeError: terminated` IS a transport termination worth retrying, and
+ * narrowing the predicate to specific cause codes (UND_ERR_SOCKET /
+ * UND_ERR_BODY_TIMEOUT) would risk missing real termination variants and
+ * re-introduce the stall. The deliberately generic message ("transport
+ * terminated") reflects what the predicate actually proves — it does NOT claim
+ * the remote endpoint closed the connection, since undici can surface
+ * client-side timeouts through the same top-level error.
+ *
+ * Rather than add the generic word "terminated" to the pattern list (which
+ * would risk false-positives on any unrelated TypeError whose message is
+ * exactly "terminated" outside these catch blocks), this helper rewrites the
+ * error into one whose message matches TWO existing patterns — 'fetch failed'
+ * and 'premature close' — so the existing retry-with-backoff path covers it
+ * with no pattern-list change. The original error is preserved as `cause` for
+ * diagnostics.
+ */
+export function normalizeFetchError(err: unknown): unknown {
+  if (err instanceof TypeError && err.message === 'terminated') {
+    return new Error('fetch failed: transport terminated (premature close)', { cause: err });
+  }
+  return err;
+}
+
+/**
  * Error types for different handling strategies
  */
 export type ErrorType = 'transient' | 'auth' | 'model' | 'config' | 'fatal';
@@ -286,7 +336,8 @@ export async function retryWithBackoff<T>(
         ]);
       }
       return await operation();
-    } catch (err) {
+    } catch (e) {
+      const err = normalizeFetchError(e);
       if (!isTransientError(err)) {
         throw err;
       }
