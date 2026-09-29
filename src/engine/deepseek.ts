@@ -24,6 +24,7 @@ import {
   retryWithBackoff,
   StreamAbortedError,
   StreamTimeoutError,
+  normalizeFetchError,
   DEFAULT_RETRY_CONFIG,
   DEFAULT_TOKEN_LIVENESS_TIMEOUT_MS,
   DEFAULT_THINKING_LIVENESS_TIMEOUT_MS,
@@ -529,8 +530,12 @@ export async function retryChat(
 
         const response = reconstructResponse(chunks, body.model);
         return response;
-      } catch (err) {
-        if (err instanceof StreamAbortedError) throw err;
+      } catch (e) {
+        if (e instanceof StreamAbortedError) throw e;
+        // Normalize undici's bare `TypeError: terminated` (mid-stream socket
+        // close) into a descriptive error isTransientError() recognizes, so
+        // the retry loop covers it instead of rethrowing on the first attempt.
+        const err = normalizeFetchError(e);
 
         if (err instanceof StreamTimeoutError) {
           lastError = err;
