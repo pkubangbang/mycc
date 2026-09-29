@@ -548,6 +548,12 @@ export async function main(): Promise<void> {
   // so no child processes are orphaned when the Lead process exits.
   await getServeHub().stop();
   if (daemonCronJob) daemonCronJob.stop();
+  // Kill any still-running bg tasks before exit — they are spawned with
+  // unref() and otherwise orphan, holding their PIDs after the Lead exits.
+  // This mirrors the SIGINT/SIGTERM teardown in signal-handlers.ts; the
+  // normal-exit path (empty Enter / 'exit' / 'q') reaches here instead of
+  // the signal handlers, so without this the common quit would leak bg PIDs.
+  await ctx.bg.killAllRunning();
   ctx.peer.stop(); // Stop heartbeat + channel poll + unregister identity
 
   // Signal Coordinator to exit

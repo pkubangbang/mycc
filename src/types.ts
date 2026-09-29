@@ -818,6 +818,17 @@ export interface BgModule {
   printBgTasks(pid?: number): Promise<string>;
   hasRunningBgTasks(): Promise<boolean>;
   killTask(pid: number): Promise<void>;
+  /**
+   * Kill every still-running background task.
+   *
+   * Called from the shutdown signal handlers (SIGINT/SIGTERM) so that bg
+   * tasks — which are spawned with unref() and otherwise outlive the parent
+   * — are tree-killed before the Lead exits. Without this, any bg task still
+   * 'running' when mycc quits becomes an orphan process holding its PID
+   * indefinitely. Best-effort: a kill failure is logged but does not abort
+   * the remaining kills or the caller's teardown.
+   */
+  killAllRunning(): Promise<void>;
   /** Get task by pid (for status checking in bg_await) */
   getTask(pid: number): { pid: number; command: string; status: string; output?: string } | undefined;
   /**

@@ -50,7 +50,7 @@ export function registerSignalHandlers(ctx: AgentContext, daemonCronJob: Cron | 
   });
 
   // ── SIGINT handler ──
-  process.on('SIGINT', () => {
+  process.on('SIGINT', async () => {
     const controller = agentIO.getLlmAbortController();
     if (controller) {
       controller.abort();
@@ -60,6 +60,13 @@ export function registerSignalHandlers(ctx: AgentContext, daemonCronJob: Cron | 
     console.log(chalk.yellow('\nShutting down...'));
     if (daemonCronJob) daemonCronJob.stop();
     ctx.team.dismissTeam(false); // Graceful shutdown of all teammates
+    // Kill any still-running bg tasks before exit — they are spawned with
+    // unref() and otherwise orphan, holding their PIDs after the Lead exits.
+    // Awaited (not void) so all kills complete before the exit IPC message;
+    // a fire-and-forget would race the Coordinator termination and could
+    // leave 2+ bg tasks un-killed — the exact leak this fix targets.
+    agentIO.verbose('signal', 'SIGINT: killing background tasks');
+    await ctx.bg.killAllRunning(); // best-effort tree-kill of running tasks
     ctx.peer.stop(); // Stop heartbeat + channel poll + unregister identity
     process.send?.({ type: 'exit' });
   });
@@ -83,6 +90,10 @@ export function registerSignalHandlers(ctx: AgentContext, daemonCronJob: Cron | 
     }
     agentIO.verbose('signal', 'SIGTERM: dismissing team');
     ctx.team.dismissTeam(false);
+    // Kill any still-running bg tasks before exit — they are spawned with
+    // unref() and otherwise orphan, holding their PIDs after the Lead exits.
+    agentIO.verbose('signal', 'SIGTERM: killing background tasks');
+    await ctx.bg.killAllRunning(); // best-effort tree-kill of running tasks
     agentIO.verbose('signal', 'SIGTERM: stopping peer (heartbeat + channel poll)');
     ctx.peer.stop(); // Stop heartbeat + channel poll + unregister identity
     agentIO.verbose('signal', 'SIGTERM: stopping ServeHub (Vite + HTTP port)');

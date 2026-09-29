@@ -178,6 +178,36 @@ export class BackgroundTasks implements BgModule {
   }
 
   /**
+   * Kill every still-running background task.
+   *
+   * Called from the shutdown signal handlers (SIGINT/SIGTERM) so that bg
+   * tasks — which are spawned with unref() and otherwise outlive the parent
+   * — are tree-killed before the Lead exits. Without this, any bg task that
+   * is still 'running' when mycc quits becomes an orphan process holding its
+   * PID indefinitely (the historical PID-consumption leak: the teardown
+   * sequence dismissed the team and stopped the peer, but never touched bg).
+   *
+   * Best-effort: a kill failure is logged via brief() (inside killTask) but
+   * does not abort the remaining kills or the caller's teardown. Reuses
+   * killTask() so the cross-platform tree-kill (taskkill /F /T on Windows,
+   * kill -PG on Unix) stays in one place.
+   */
+  async killAllRunning(): Promise<void> {
+    // Snapshot the running pids first — killTask() mutates this.tasks /
+    // this.processes, so iterating the live map while killing would skip
+    // entries or throw on a concurrently-deleted key.
+    const runningPids: number[] = [];
+    for (const [pid, task] of this.tasks) {
+      if (task.status === 'running') {
+        runningPids.push(pid);
+      }
+    }
+    for (const pid of runningPids) {
+      await this.killTask(pid);
+    }
+  }
+
+  /**
    * Check if there are running tasks
    */
   async hasRunningBgTasks(): Promise<boolean> {

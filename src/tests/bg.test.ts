@@ -214,3 +214,35 @@ describe('BackgroundTasks.killTask — Fix 5 (logs failures) + killed status', (
     expect(out).toContain('status: [killed]');
   });
 });
+
+describe('BackgroundTasks.killAllRunning — shutdown cleanup of orphaned bg tasks', () => {
+  it('kills every running task and leaves finished tasks untouched', async () => {
+    const { bg } = makeBg();
+    seedTask(bg, 101, 'running', '', 'srv-a');
+    seedTask(bg, 102, 'running', '', 'srv-b');
+    seedTask(bg, 103, 'completed', '', 'build'); // finished — must stay 'completed'
+    seedTask(bg, 104, 'failed', '', 'lint'); // finished — must stay 'failed'
+
+    await bg.killAllRunning();
+
+    expect(bg.getTask(101)?.status).toBe('killed');
+    expect(bg.getTask(102)?.status).toBe('killed');
+    // Finished tasks are NOT re-killed.
+    expect(bg.getTask(103)?.status).toBe('completed');
+    expect(bg.getTask(104)?.status).toBe('failed');
+  });
+
+  it('is a no-op when no tasks are running', async () => {
+    const { bg } = makeBg();
+    seedTask(bg, 1, 'completed');
+    seedTask(bg, 2, 'killed');
+    await bg.killAllRunning();
+    expect(bg.getTask(1)?.status).toBe('completed');
+    expect(bg.getTask(2)?.status).toBe('killed');
+  });
+
+  it('is a no-op on an empty task map', async () => {
+    const { bg } = makeBg();
+    await expect(bg.killAllRunning()).resolves.toBeUndefined();
+  });
+});
