@@ -33,6 +33,7 @@ import { MessageStore } from './triologue/store.js';
 import { PendingToolLedger } from './triologue/pending-tools.js';
 import { runAutoCompact as doRunAutoCompact } from './triologue/compact.js';
 import type { Role, MisorderWarning, ToolAlignmentWarning, TriologueOptions } from './triologue/types.js';
+import { type PieceKind } from './triologue/transcript.js';
 
 export type { Role, MisorderWarning, ToolAlignmentWarning, TriologueOptions } from './triologue/types.js';
 
@@ -61,12 +62,12 @@ export class TriologueLite {
    * time, so it keeps working across compact()/clear() store swaps (same
    * lazy-binding pattern as the feature-domain delegates).
    */
-  private emit(piece: Message, kind: 'new' | 'merge', opts?: { userOrigin?: boolean }): void {
+  private emit(piece: Message, kind: PieceKind, opts?: { userOrigin?: boolean }): void {
     const copy: Message = { ...piece };
     if (opts?.userOrigin) {
       (copy as { user_origin?: true }).user_origin = true;
     }
-    (copy as { kind?: 'new' | 'merge' }).kind = kind;
+    (copy as { kind?: PieceKind }).kind = kind;
     this.options.onMessage(copy, () => this.store.getRaw());
   }
 
@@ -174,20 +175,42 @@ export class TriologueLite {
     }
     if (lastRole === 'user') {
       // Combine: append the new input to the last user message in memory,
-      // then emit a 'merge' piece for the FRAGMENT the caller passed (never
-      // the mutated host). The host still concatenates content in memory so
-      // the LLM view and lastUserQuery are unchanged; the transcript now
-      // records ZERO lines for this mutation's full state — the {A, AB} fix.
+      // then emit a 'user' JOURNAL piece for the FRAGMENT the caller passed
+      // (never the mutated host). The host still concatenates content in
+      // memory so the LLM view and lastUserQuery are unchanged; the
+      // transcript records ZERO full-snapshot lines for this mutation — the
+      // {A, AB} fix.
+      //
+      // Why 'user' and not 'merge': this fragment is GENUINE user input, and
+      // it must stay distinguishable from an injected note once it is in the
+      // log (a 'merge' piece carries no user_origin marker; notes emit it
+      // too). The 'user' journal kind carries user_origin:true, is folded
+      // back onto the host by the restoration projection (livelog parity),
+      // and renders as its own right-side bubble in the serve projection.
       const lastMsg = this.store.last()!;
       lastMsg.content += `\n${content}`;
       this.store.recomputeTokenCount();
       this.store.setLastUserQuery(lastMsg.content);
-      this.emit({ role: 'user', content }, 'merge', { userOrigin: false });
+      this.emit({ role: 'user', content }, 'user', { userOrigin: true });
       return;
     }
     // Track last real user query for auto-compact context preservation
     this.store.setLastUserQuery(content);
     this.addMessage({ role: 'user', content }, { isUserOrigin: true });
+  }
+
+  /**
+   * Journal a genuine user submission WITHOUT touching the conversation:
+   * emits exactly ONE 'user'|'steer' journal record (stamped
+   * `user_origin: true`) and nothing else. Mirror of Triologue.submitUser —
+   * see there for the rationale (a typed steering note has no message of its
+   * own; this is what makes it survive a WebUI refresh).
+   */
+  submitUser(text: string, source: 'prompt' | 'steer' = 'prompt'): void {
+    if (text.trim() === '') return;
+    // 'prompt' is journaled as the 'user' kind (the journal kind is named for
+    // the RECORD, not for the submission source); only notes stay 'steer'.
+    this.emit({ role: 'user', content: text }, source === 'steer' ? 'steer' : 'user', { userOrigin: true });
   }
 
   /**

@@ -16,6 +16,7 @@ import { agentIO } from './agent-io.js';
 import { TpAutoFixer } from './triologue/tp-fix.js';
 import { loopEvents } from './loop-events.js';
 import type { Role, MisorderWarning, ToolAlignmentWarning, TriologueOptions } from './triologue/types.js';
+import { type PieceKind } from './triologue/transcript.js';
 
 export type { Role, MisorderWarning, ToolAlignmentWarning, TriologueOptions, CheckpointInfo } from './triologue/types.js';
 export { CheckpointManager } from './triologue/checkpoint.js';
@@ -56,12 +57,12 @@ export class Triologue {
    * transcript writers use it; it is the lazy full-state escape hatch for
    * future full-state consumers and tests.
    */
-  private emit(piece: Message, kind: 'new' | 'merge', opts?: { userOrigin?: boolean }): void {
+  private emit(piece: Message, kind: PieceKind, opts?: { userOrigin?: boolean }): void {
     const copy: Message = { ...piece };
     if (opts?.userOrigin) {
       (copy as { user_origin?: true }).user_origin = true;
     }
-    (copy as { kind?: 'new' | 'merge' }).kind = kind;
+    (copy as { kind?: PieceKind }).kind = kind;
     this.options.onMessage(copy, () => this.store.getRaw());
   }
 
@@ -237,10 +238,21 @@ export class Triologue {
     }
     if (lastRole === 'user') {
       // Combine: append the new input to the last user message in memory,
-      // then emit a 'merge' piece for the FRAGMENT the caller passed (never
-      // the mutated host). The host still concatenates content in memory so
-      // the LLM view and lastUserQuery are unchanged; the transcript records
-      // ZERO full-snapshot lines for this mutation — the {A, AB} fix.
+      // then emit a 'user' JOURNAL piece for the FRAGMENT the caller passed
+      // (never the mutated host). The host still concatenates content in
+      // memory so the LLM view and lastUserQuery are unchanged; the
+      // transcript records ZERO full-snapshot lines for this mutation — the
+      // {A, AB} fix.
+      //
+      // Why 'user' and not 'merge': this fragment is GENUINE user input, and
+      // it must stay distinguishable from an injected note once it is in the
+      // log. A 'merge' piece carries no user_origin marker (notes emit it
+      // too), so recording it as 'merge' made a real query indistinguishable
+      // from a [REMINDER]/[HINT] note on read — the bug that forced the
+      // serve-only user.jsonl side file. The 'user' journal kind carries
+      // user_origin:true and is folded back onto the host by the restoration
+      // projection (livelog parity) while the serve projection renders it as
+      // its own right-side bubble.
       const lastMsg = this.store.last()!;
       lastMsg.content += `\n${content}`;
       this.store.recomputeTokenCount();
@@ -248,12 +260,37 @@ export class Triologue {
       // complete user intent, not just the pre-merge fragment. Without
       // this, a compact right after a merge loses the latest instruction.
       this.store.setLastUserQuery(lastMsg.content);
-      this.emit({ role: 'user', content }, 'merge', { userOrigin: false });
+      this.emit({ role: 'user', content }, 'user', { userOrigin: true });
       return;
     }
     // Track last real user query for auto-compact context preservation
     this.store.setLastUserQuery(content);
     this.addMessage({ role: 'user', content }, { isUserOrigin: true });
+  }
+
+  /**
+   * Journal a genuine user submission WITHOUT touching the conversation:
+   * emits exactly ONE 'user'|'steer' journal record (stamped
+   * `user_origin: true`) and nothing else.
+   *
+   * Used for inputs that reach the LLM through another channel and therefore
+   * have no message of their own to append:
+   *   - 'steer' — a webui steering note, whose text the livelog records as a
+   *     [REMINDER] steering note when COLLECT drains it (or which PROMPT
+   *     folds into a synthesised query).
+   *   - 'prompt' — reserved for a query that was recorded elsewhere.
+   *
+   * It deliberately does NOT push to the store, touch the TP ledger, or set
+   * `lastUserQuery`: it is a pure journal write, so it is safe to call while
+   * the agent is running (no role-transition risk mid-run). The transcript is
+   * the single source of truth for WebUI user bubbles, so this is what makes
+   * a steering note survive a page refresh.
+   */
+  submitUser(text: string, source: 'prompt' | 'steer' = 'prompt'): void {
+    if (text.trim() === '') return; // nothing to journal
+    // 'prompt' is journaled as the 'user' kind (the journal kind is named for
+    // the RECORD, not for the submission source); only notes stay 'steer'.
+    this.emit({ role: 'user', content: text }, source === 'steer' ? 'steer' : 'user', { userOrigin: true });
   }
 
   /**

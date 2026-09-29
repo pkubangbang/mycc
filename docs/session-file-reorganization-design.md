@@ -130,30 +130,55 @@ Instead of `mail/` + `sessions/` + `transcripts/` folders, now we only have `ses
 
       { ...messageFields, kind: 'new'|'merge', user_origin?: true,
         timestamp: number }
-      { kind: 'control', event: 'clear'|'compact'|'recap'|'rollback',
+      { ...messageFields, kind: 'user'|'steer', user_origin: true,
         timestamp: number }
+      { kind: 'clear'|'compact'|'recap'|'rollback', timestamp: number }
 
   - `kind:'new'`  — an appended livelog message (tool result, assistant,
     TP-bridge, hook note, post-wrap-up assistant, post-compact summary
     round-trip).
-  - `kind:'merge'` — the user()/note() COMBINE branches: the host message in
-    the livelog is mutated in place (content + `\n` + fragment kept in
-    memory for the LLM view), but the transcript records ONLY the fragment —
-    the old writer re-emitted the MUTATED FULL message (the `{A}` + `{AB}`
+  - `kind:'merge'` — the note() COMBINE branch: the host message in the
+    livelog is mutated in place (content + `\n` + fragment kept in memory
+    for the LLM view), but the transcript records ONLY the fragment — the
+    old writer re-emitted the MUTATED FULL message (the `{A}` + `{AB}`
     backlog-duplication regression), which this design removes.
-  - `kind:'control'` — a journaled truncation/boundary marker with NO
-    message fields (role is absent). `event:'clear'` resets the read-time
-    collated view (restoration honors the /clear); `compact`/`recap`/
-    `rollback` are boundary markers that do NOT cut the durable collated
-    history (it stays the documented superset of the live LLM context).
-  - `user_origin: true` — present only on genuine user-input pieces.
-  - Read-time collation folds merge pieces into the NEAREST PRECEDING user
-    host (positional lastUserIndex cursor — no turn identifiers); the folded
-    entry keeps the HOST's timestamp.
+  - `kind:'user'|'steer'` — the USER JOURNAL: genuine user input. `'user'`
+    is a query fragment (the user() COMBINE branch — folded onto its host at
+    read time for livelog parity); `'steer'` is a typed steering note
+    journaled by `submitUser()` at submission time (serve-hub `pushSteer`).
+    Both stamp `user_origin:true`. These records are the SINGLE source of
+    truth for WebUI right-side user bubbles — the serve-only `user.jsonl`
+    side file was DELETED.
+  - `kind:'clear'|'compact'|'recap'|'rollback'` — a journaled truncation /
+    boundary marker with NO message fields (role is absent; the event name
+    IS the kind — conflated, no `event` field). `clear` resets the read-time
+    RESTORATION view (honors /clear); `compact`/`recap`/`rollback` are
+    boundary markers that do NOT cut either projection (the durable history
+    stays the documented superset of the live LLM context).
+  - `user_origin: true` — present only on genuine user-input pieces
+    (`'new'` on a real submit, `'user'`, `'steer'`). Read-time
+    `readTranscript` SHAPE-VALIDATES user journal records
+    (`role==='user' && user_origin===true`), so a malformed line can never
+    smuggle an injected note into rendered user bubbles.
+  - The TWO read projections deliberately diverge:
+    - `collateMessages` (RESTORATION): folds `'merge'` AND `'user'` into the
+      NEAREST PRECEDING user host (positional lastUserIndex cursor — no turn
+      identifiers); the folded entry keeps the HOST's timestamp. `'steer'`
+      is SKIPPED (already recorded as the `[REMINDER]` note in the livelog,
+      so folding it would duplicate the note).
+    - `collateEntries` (SERVE / `/history`): a CLEAN SCAN — no folding.
+      Each journal record (`'user'`/`'steer'`) becomes its OWN entry;
+      `'merge'` fragments and marker-less `'new'` user records (injected
+      `[REMINDER]`/`[HINT]`/`[WRAP_UP]` notes) are SKIPPED so they never
+      render as user bubbles. Control events are archival — they never cut
+      this projection.
   - The read side (`restoration.ts` + `serve-history.ts`) replays the appends
     through `triologue/transcript.ts` (`readTranscript` + `collateMessages` /
     `collateEntries`); legacy lines without `kind` replay as plain 'new'
     records (zero migration, already-baked {A,AB} duplicates preserved).
+  - `readHistory` normalises untimestamped legacy lines by EMISSION ORDER
+    (each `ts===0` entry inherits the previous positive timestamp) rather
+    than sorting them to the head (closes pitfall `8547e85b`).
 
 ### 10. Lead Auto-Compact (`src/loop/triologue.ts`)
 - `runAutoCompact()` — writes transcript to `sessions/{sessionId}/transcript-lead-{ts}.jsonl`

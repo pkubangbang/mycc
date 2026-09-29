@@ -20,6 +20,25 @@
  *   kind:'merge'  → fold the piece content into the MOST RECENTLY COLLATED
  *                   user-role message (tracked by a single `lastUserIndex`
  *                   cursor — O(n) replay, no backward scans)
+ *   kind:'user' | 'steer'
+ *                 → the USER-INPUT JOURNAL: one record per genuine user
+ *                   submission (a typed query fragment folded into a
+ *                   preceding user host, or a typed webui steering note).
+ *                   Both are stamped `user_origin: true`. They are NOT
+ *                   livelog mutations on their own terms:
+ *                     'user'  — the livelog host really did grow (the
+ *                               combine branch of user()), so the
+ *                               restoration projection FOLDS it onto the
+ *                               host to stay parity-equivalent.
+ *                     'steer' — the text reached the LLM as the [REMINDER]
+ *                               steering note the livelog recorded, so the
+ *                               restoration projection SKIPS it (folding
+ *                               would duplicate the note text).
+ *                   The serve projection keeps both as their OWN entries:
+ *                   that journal is the single source of truth for the
+ *                   right-side user bubbles (see serve-history.ts), which is
+ *                   why a refresh no longer depends on the serve-only
+ *                   user.jsonl side file.
  *   kind:'clear' | 'compact' | 'recap' | 'rollback'
  *                 → a journaled truncation boundary, carrying NO message
  *                   fields (no role). The clear semantics are a property of
@@ -29,9 +48,10 @@
  *                   collated view, so restored context honors the /clear
  *                   (cleared material does NOT resurrect); the serve
  *                   projection `collateEntries()` is archival and KEEPS the
- *                   cleared material (user.jsonl and the in-memory serve
- *                   log are not cut by /clear either — a one-sided reset
- *                   would orphan pre-clear user bubbles in the UI). All
+ *                   cleared material (the durable user-input journal and the
+ *                   in-memory serve log are not cut by /clear either — a
+ *                   one-sided reset would orphan pre-clear user bubbles in
+ *                   the UI). All
  *                   boundary kinds (including clear) are journaled as
  *                   observable markers in the record stream; compact/
  *                   recap/rollback never cut EITHER projection — the
@@ -46,26 +66,55 @@
  * jq recipes and readHistory's field access keep working):
  *   { ...messageFields, kind: 'new'|'merge', user_origin?: true,
  *     timestamp: number }
+ *   { ...messageFields, kind: 'user'|'steer', user_origin: true,
+ *     timestamp: number }
  *   { kind: 'clear'|'compact'|'recap'|'rollback', timestamp: number }
  *
  * Legacy lines (full snapshots without `kind`) are treated as `new`
  * plain Messages on read — zero migration.
  *
- * The only anomaly is STRUCTURAL: a merge piece with no user message in the
- * collated view (its content is kept as its own message instead of being
- * dropped). There is no turn-identity layer pretending to be authoritative —
- * stream position alone determines merge ownership.
+ * The only anomaly is STRUCTURAL: a merge piece (or a folded 'user' journal
+ * record) with no user message in the collated view — its content is kept as
+ * its own message instead of being dropped. There is no turn-identity layer
+ * pretending to be authoritative — stream position alone determines
+ * ownership of a fold.
  */
 
 import * as fs from 'fs';
 
 /**
- * Collation kind of a transcript piece. Message pieces carry 'new'/'merge';
- * the boundary kinds ('clear'|'compact'|'recap'|'rollback') are journaled
+ * Collation kind of a transcript piece. Message pieces carry
+ * 'new'/'merge'/'user'/'steer'; the boundary kinds
+ * ('clear'|'compact'|'recap'|'rollback') are journaled
  * truncation events CONFLATED into the kind field (no 'control' pseudo-kind
  * — kind IS the event for boundary records).
  */
-export type PieceKind = 'new' | 'merge' | ControlEvent;
+export type PieceKind = 'new' | 'merge' | UserJournalKind | ControlEvent;
+
+/**
+ * The user-input journal kinds: message-bearing records that carry ONE
+ * genuine user submission each (never an injected note), stamped
+ * `user_origin: true`.
+ *
+ *   'user'  — a typed user fragment folded into the preceding user host by
+ *             the user() combine branch (the livelog host really did grow
+ *             by `\n<fragment>`, so the restoration projection folds it).
+ *   'steer' — a typed webui steering note (submitted mid-run). The livelog
+ *             recorded the note as the [REMINDER] steering note, so the
+ *             restoration projection SKIPS it (folding would duplicate).
+ *
+ * The serve projection keeps both as their own entries — this journal is the
+ * single source of truth for right-side user bubbles on /history.
+ */
+export type UserJournalKind = 'user' | 'steer';
+
+/** The subset of PieceKind values that are user-input journal records. */
+export const USER_JOURNAL_KINDS: readonly UserJournalKind[] = ['user', 'steer'];
+
+/** Narrow a raw PieceKind: is the record a user-input journal entry? */
+export function isUserJournalKind(kind: unknown): kind is UserJournalKind {
+  return typeof kind === 'string' && USER_JOURNAL_KINDS.includes(kind as UserJournalKind);
+}
 
 /** Journaled live-log truncation/boundary events (carried directly on `kind`). */
 export type ControlEvent = 'clear' | 'compact' | 'recap' | 'rollback';
@@ -80,7 +129,7 @@ export function isControlKind(kind: unknown): kind is ControlEvent {
 
 /** One flat JSONL transcript record (a single emitted piece or control event). */
 export type TranscriptRecord = {
-  /** Collation kind: replayed as push ('new'), fold-into-last-user ('merge'), or journaled boundary ('clear'|'compact'|'recap'|'rollback') */
+  /** Collation kind: replayed as push ('new'), fold-into-last-user ('merge'), a user-input journal entry ('user'|'steer'), or a journaled boundary ('clear'|'compact'|'recap'|'rollback') */
   kind: PieceKind;
   /** True only for pieces carrying genuine user input (never notes/bridges) */
   user_origin?: true;
@@ -145,6 +194,18 @@ export function readTranscript(filePath: string): ReadTranscriptResult {
     const kind = obj.kind;
     if (kind === 'new' || kind === 'merge' || isControlKind(kind)) {
       records.push(obj as TranscriptRecord);
+    } else if (isUserJournalKind(kind)) {
+      // The user-input journal: a genuine submission (folded query fragment
+      // or typed steering note). Shape-validated rather than trusted — a
+      // record claiming user origin MUST be a user message; anything else is
+      // treated as corrupt/forward-format and skipped (never guessed), so a
+      // malformed line can never smuggle an injected note into the user
+      // bubbles rendered by serve-history.
+      if (obj.role !== 'user' || obj.user_origin !== true) {
+        skippedLines++;
+        continue;
+      }
+      records.push(obj as TranscriptRecord);
     } else if (kind === undefined) {
       // Legacy line: a plain Message written by the old full-snapshot writer.
       // Treated as a 'new' piece; envelope keys never existed, nothing to strip.
@@ -206,25 +267,36 @@ export function collateMessages(
       continue; // boundary records never become messages
     }
 
+    // A typed steering note is a DISPLAY journal entry, not a livelog
+    // mutation: its text reached the LLM as the [REMINDER] steering note the
+    // livelog already recorded (and which this projection replays). Folding
+    // it here would duplicate the note text in restored context.
+    if (record.kind === 'steer') continue;
+
     // The spread copies every non-envelope key (role/content/tool_name/
     // tool_call_id/reasoning_content/hook_name/...) in insertion order.
     const { kind: _k, user_origin: _u, timestamp: _ts, ...message } = record;
     void _k; void _u; void _ts;
     if (message.role === undefined) continue; // defensive: never push shapeless records
 
-    if (record.kind === 'merge' && lastUserIndex !== -1) {
-      // Note: a 'merge' piece carries only role+content from the current
-      // producers (the user()/note() combine fragments), so plain content
-      // folding is complete. If future producers emit field-bearing merge
-      // pieces, the fold policy belongs here.
+    if ((record.kind === 'merge' || record.kind === 'user') && lastUserIndex !== -1) {
+      // Note: a 'merge'/'user' piece carries only role+content from the
+      // current producers (the user()/note() combine fragments), so plain
+      // content folding is complete. If future producers emit field-bearing
+      // merge pieces, the fold policy belongs here.
+      //
+      // 'user' folds for livelog parity: the combine branch grew the host by
+      // exactly `\n<fragment>` in memory, so replaying the journal restores
+      // the same message[] the livelog held.
       const host = messages[lastUserIndex];
       host.content = `${host.content}\n${message.content}`;
-    } else if (record.kind === 'merge') {
+    } else if (record.kind === 'merge' || record.kind === 'user') {
       // Defensive (structural anomaly): no user host in the collated view —
       // the piece cannot be folded, so keep its content (push as its own
       // message) rather than drop it.
-      emitAnomaly('merge without a user host — pushed as its own message');
+      emitAnomaly(`${record.kind} without a user host — pushed as its own message`);
       messages.push(message as unknown as { role: string; content: string; [key: string]: unknown });
+      if (message.role === 'user') lastUserIndex = messages.length - 1;
     } else {
       messages.push(message as unknown as { role: string; content: string; [key: string]: unknown });
       if (message.role === 'user') lastUserIndex = messages.length - 1;
@@ -237,20 +309,30 @@ export function collateMessages(
 /**
  * Collate transcript records preserving per-piece timestamps — the
  * serve-history projection (entry-level UI ordering), consumed by
- * serve-history.readHistory via LogEntry mapping. Same replay rules as
- * collateMessages() (fold onto the most recently collated user host,
- * control:clear resets the view), with one difference:
+ * serve-history.readHistory via LogEntry mapping.
  *
- * A folded entry keeps the HOST's timestamp — the wall-clock moment the
- * turn's user message was appended — so serve-history chronological merge
- * (combined.sort by timestamp) places the completed user turn BEFORE the
- * assistant response that answered it, exactly where the livelog placed
- * the turn start. Using the piece timestamp instead (the merge's append
- * time, always later) would flicker the turn after its reply in the UI.
- * Untimestamped legacy pieces (timestamp 0) stay orderable alongside
- * timestamped ones by emission order (see pitfall 8547e85b: readHistory
- * must never sort untimestamped entries to the head — readHistory drops
- * timestamp<=0 entries instead).
+ * This projection is the USER-BUBBLE SOURCE for the WebUI, so it is a CLEAN
+ * SCAN rather than a replay of the livelog:
+ *
+ *   - A user-input journal record ('user' | 'steer') becomes its OWN entry
+ *     at its own timestamp — one right-side bubble per genuine submission,
+ *     whether the query was appended fresh or folded into a preceding user
+ *     host by the combine branch.
+ *   - A marker-bearing 'new' user record (user_origin:true — the plain
+ *     query and the post-tool fast path) also becomes its own entry.
+ *   - A 'merge' piece is SKIPPED: it is a system-note fragment
+ *     ([REMINDER]/[HINT]/[WRAP_UP]...) that must never render as a user
+ *     bubble. Likewise a 'new' user record WITHOUT user_origin (wrap-up
+ *     markers, restoration summaries, standalone/hook notes, TP bridges) is
+ *     skipped — that anti-pollution rule is why readHistory historically
+ *     dropped all role:'user' records, now applied precisely at record level.
+ *   - assistant/tool/system records are pushed as before; boundary kinds are
+ *     observable markers that never cut this archival view.
+ *
+ * Every genuine user submission therefore carries its own timestamp (written
+ * by JsonlTranscriptWriter at append time), so readHistory no longer needs a
+ * timestamp filter to keep untimestamped legacy lines out of the ordering —
+ * it normalises them in emission order instead (pitfall 8547e85b).
  */
 export function collateEntries(
   records: TranscriptRecord[],
@@ -263,10 +345,6 @@ export function collateEntries(
     message: { role: string; content: string; [key: string]: unknown };
     timestamp: number;
   }> = [];
-  // Positional fold cursor (indexes the entries array) + the HOST timestamp
-  // of the most recent user entry: a fold copies the host timestamp instead
-  // of inheriting the merge piece's own (later) one.
-  let lastUserIndex = -1;
 
   const emitAnomaly = (anomaly: string): void => {
     try {
@@ -282,31 +360,34 @@ export function collateEntries(
       // view keeps the durable FULL history. A clear is journaled as an
       // observable boundary marker here but does NOT cut this projection —
       // only the restoration projection (collateMessages) honors the /clear
-      // reset. Cutting this view while user.jsonl / the in-memory serve log
-      // stay intact would orphan pre-clear user bubbles (an inconsistent
-      // half-cut for an archival consumer).
+      // reset. Cutting this view while the durable journal stays intact
+      // would orphan pre-clear user bubbles (an inconsistent half-cut for an
+      // archival consumer).
       continue;
     }
 
-    const { kind: _k, user_origin: _u, timestamp: _ts, ...message } = record;
-    void _k; void _u; void _ts;
-    const timestamp = typeof record.timestamp === 'number' ? record.timestamp : 0;
-    if (message.role === undefined) continue; // defensive
+    // A note fragment folded into a user host — never a user bubble.
+    if (record.kind === 'merge') continue;
 
-    if (record.kind === 'merge' && lastUserIndex !== -1) {
-      entries[lastUserIndex].message.content = `${entries[lastUserIndex].message.content}\n${message.content}`;
-      // The entry's timestamp stays at the HOST's timestamp (the turn
-      // start); the merge piece's own timestamp is deliberately NOT taken.
-    } else if (record.kind === 'merge') {
-      // Defensive (structural anomaly): no user host — keep the content as
-      // its own entry (its piece timestamp is the host timestamp of a new
-      // group).
-      emitAnomaly('merge without a user host — pushed as its own entry');
+    const timestamp = typeof record.timestamp === 'number' ? record.timestamp : 0;
+
+    // The user-input journal: one entry per genuine submission.
+    if (isUserJournalKind(record.kind)) {
+      const { kind: _k, user_origin: _u, timestamp: _ts, ...message } = record;
+      void _k; void _u; void _ts;
+      if (message.role === undefined) {
+        emitAnomaly(`${record.kind} journal record without a role — skipped`);
+        continue;
+      }
       entries.push({ message: message as unknown as { role: string; content: string; [key: string]: unknown }, timestamp });
-    } else {
-      entries.push({ message: message as unknown as { role: string; content: string; [key: string]: unknown }, timestamp });
-      if (message.role === 'user') lastUserIndex = entries.length - 1;
+      continue;
     }
+
+    const { kind: _k, user_origin, timestamp: _ts, ...message } = record;
+    void _k; void _ts;
+    if (message.role === undefined) continue; // defensive
+    if (message.role === 'user' && user_origin !== true) continue; // injected note, not input
+    entries.push({ message: message as unknown as { role: string; content: string; [key: string]: unknown }, timestamp });
   }
 
   return entries;
@@ -372,8 +453,9 @@ export class JsonlTranscriptWriter {
 
   /**
    * Append exactly one flat record line. `message` is the piece (already
-   * stamped with kind/user_origin by the facade's dispatcher — or a
-   * bare boundary piece { kind:'clear'|'compact'|'recap'|'rollback' });
+   * stamped with kind/user_origin by the facade's dispatcher — a
+   * 'new'/'merge' message piece, a 'user'/'steer' user-input journal record,
+   * or a bare boundary piece { kind:'clear'|'compact'|'recap'|'rollback' });
    * the timestamp is added here at write time (single clock, monotonic
    * per line).
    */

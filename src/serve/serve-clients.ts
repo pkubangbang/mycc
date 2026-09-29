@@ -128,9 +128,10 @@ export class ClientRegistry {
    * optimistic bubble via sendInput/sendSteer in main.ts) doesn't get a
    * duplicate.
    *
-   * Never logged to the message log — user bubbles are persisted via
-   * appendUserLog() to the durable user-log JSONL, and logging here would
-   * duplicate them on /history (messageLog + userLog merge).
+   * Never logged to the message log — user bubbles are persisted by the
+   * triologue's user-input journal (a 'user'|'steer' transcript record), and
+   * logging here would duplicate them on /history (messageLog + transcript
+   * merge).
    */
   broadcastExcept(
     sender: WebSocket,

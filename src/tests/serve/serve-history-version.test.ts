@@ -26,71 +26,60 @@ const WEAK_ETAG_RE = /^W\/"h[0-9a-f]+"$/;
 
 describe('computeHistoryVersion — shape', () => {
   it('produces a weak ETag of the form W/"h<hex>"', () => {
-    const etag = computeHistoryVersion(null, null, [], 0, false);
+    const etag = computeHistoryVersion(null, [], 0, false);
     expect(etag).toMatch(WEAK_ETAG_RE);
   });
 
   it('is deterministic — identical inputs yield identical ETags', () => {
-    const a = computeHistoryVersion(null, null, [], 0, false);
-    const b = computeHistoryVersion(null, null, [], 0, false);
+    const a = computeHistoryVersion(null, [], 0, false);
+    const b = computeHistoryVersion(null, [], 0, false);
     expect(a).toBe(b);
   });
 });
 
-describe('computeHistoryVersion — durable file fingerprints', () => {
+describe('computeHistoryVersion — durable file fingerprint', () => {
   let tmpDir: string;
   let transcriptPath: string;
-  let userLogPath: string;
 
   beforeEach(() => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'history-version-'));
     transcriptPath = path.join(tmpDir, 'transcript.jsonl');
-    userLogPath = path.join(tmpDir, 'user.log');
     fs.writeFileSync(transcriptPath, '{}\n', 'utf-8');
-    fs.writeFileSync(userLogPath, '{}\n', 'utf-8');
   });
 
   afterEach(() => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it('flips when the transcript file changes (size/mtime)', () => {
-    const before = computeHistoryVersion(transcriptPath, userLogPath, [], 0, false);
-    // Bump mtime + size by appending content. Use a small sleep so mtimeMs
-    // actually moves (some filesystems have ms resolution but race on tight
-    // loops); the size change alone also flips the fingerprint.
-    fs.appendFileSync(transcriptPath, '{"role":"assistant","content":"more"}\n', 'utf-8');
-    const after = computeHistoryVersion(transcriptPath, userLogPath, [], 0, false);
-    expect(after).not.toBe(before);
-  });
-
-  it('flips when the user-log file changes', () => {
-    const before = computeHistoryVersion(transcriptPath, userLogPath, [], 0, false);
-    fs.appendFileSync(userLogPath, '{"type":"user","content":"hi"}\n', 'utf-8');
-    const after = computeHistoryVersion(transcriptPath, userLogPath, [], 0, false);
+  it('flips when the transcript file changes (size/mtime) — the user journal lives there', () => {
+    const before = computeHistoryVersion(transcriptPath, [], 0, false);
+    // Appending a user-input journal record is a transcript append, so the
+    // same fingerprint that catches a new turn catches a new user bubble.
+    fs.appendFileSync(transcriptPath, '{"role":"user","content":"hi","kind":"steer","user_origin":true}\n', 'utf-8');
+    const after = computeHistoryVersion(transcriptPath, [], 0, false);
     expect(after).not.toBe(before);
   });
 
   it('is stable when no file changed (same stat → same ETag)', () => {
-    const a = computeHistoryVersion(transcriptPath, userLogPath, [], 0, false);
-    const b = computeHistoryVersion(transcriptPath, userLogPath, [], 0, false);
+    const a = computeHistoryVersion(transcriptPath, [], 0, false);
+    const b = computeHistoryVersion(transcriptPath, [], 0, false);
     expect(a).toBe(b);
   });
 
-  it('a missing file yields a stable token (does not vary across calls)', () => {
-    const a = computeHistoryVersion(transcriptPath, null, [], 0, false);
-    const b = computeHistoryVersion(transcriptPath, null, [], 0, false);
+  it('a missing transcript path yields a stable token (does not vary across calls)', () => {
+    const a = computeHistoryVersion(null, [], 0, false);
+    const b = computeHistoryVersion(null, [], 0, false);
     expect(a).toBe(b);
-    // And differs from the both-files-present fingerprint (the null slot is
-    // not a zero stat).
-    const both = computeHistoryVersion(transcriptPath, userLogPath, [], 0, false);
-    expect(a).not.toBe(both);
+    // And differs from the present-file fingerprint (the null slot is not a
+    // zero stat).
+    const present = computeHistoryVersion(transcriptPath, [], 0, false);
+    expect(a).not.toBe(present);
   });
 
   it('a deleted file flips the ETag (present → missing)', () => {
-    const present = computeHistoryVersion(transcriptPath, userLogPath, [], 0, false);
-    fs.unlinkSync(userLogPath);
-    const missing = computeHistoryVersion(transcriptPath, userLogPath, [], 0, false);
+    const present = computeHistoryVersion(transcriptPath, [], 0, false);
+    fs.unlinkSync(transcriptPath);
+    const missing = computeHistoryVersion(transcriptPath, [], 0, false);
     expect(missing).not.toBe(present);
   });
 });
@@ -98,14 +87,11 @@ describe('computeHistoryVersion — durable file fingerprints', () => {
 describe('computeHistoryVersion — transient fields (must flip the ETag)', () => {
   let tmpDir: string;
   let transcriptPath: string;
-  let userLogPath: string;
 
   beforeEach(() => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'history-version-tr-'));
     transcriptPath = path.join(tmpDir, 'transcript.jsonl');
-    userLogPath = path.join(tmpDir, 'user.log');
     fs.writeFileSync(transcriptPath, '{}\n', 'utf-8');
-    fs.writeFileSync(userLogPath, '{}\n', 'utf-8');
   });
 
   afterEach(() => {
@@ -113,52 +99,52 @@ describe('computeHistoryVersion — transient fields (must flip the ETag)', () =
   });
 
   it('flips when the steering queue length changes', () => {
-    const a = computeHistoryVersion(transcriptPath, userLogPath, [], 0, false);
-    const b = computeHistoryVersion(transcriptPath, userLogPath, [], 2, false);
+    const a = computeHistoryVersion(transcriptPath, [], 0, false);
+    const b = computeHistoryVersion(transcriptPath, [], 2, false);
     expect(b).not.toBe(a);
   });
 
   it('flips when isRunning changes', () => {
-    const a = computeHistoryVersion(transcriptPath, userLogPath, [], 0, false);
-    const b = computeHistoryVersion(transcriptPath, userLogPath, [], 0, true);
+    const a = computeHistoryVersion(transcriptPath, [], 0, false);
+    const b = computeHistoryVersion(transcriptPath, [], 0, true);
     expect(b).not.toBe(a);
   });
 
   it('flips when the messageLog length changes (tail grows)', () => {
     const log: LogEntry[] = [{ type: 'log', content: 'a', timestamp: 1 }];
-    const a = computeHistoryVersion(transcriptPath, userLogPath, log, 0, false);
+    const a = computeHistoryVersion(transcriptPath, log, 0, false);
     log.push({ type: 'log', content: 'b', timestamp: 2 });
-    const b = computeHistoryVersion(transcriptPath, userLogPath, log, 0, false);
+    const b = computeHistoryVersion(transcriptPath, log, 0, false);
     expect(b).not.toBe(a);
   });
 
   it('flips when the messageLog last timestamp changes (same length)', () => {
     const logA: LogEntry[] = [{ type: 'log', content: 'a', timestamp: 1 }];
     const logB: LogEntry[] = [{ type: 'log', content: 'a', timestamp: 99 }];
-    const a = computeHistoryVersion(transcriptPath, userLogPath, logA, 0, false);
-    const b = computeHistoryVersion(transcriptPath, userLogPath, logB, 0, false);
+    const a = computeHistoryVersion(transcriptPath, logA, 0, false);
+    const b = computeHistoryVersion(transcriptPath, logB, 0, false);
     expect(b).not.toBe(a);
   });
 
   it('an empty messageLog is stable (no spurious flips from a zero tail)', () => {
-    const a = computeHistoryVersion(transcriptPath, userLogPath, [], 0, false);
-    const b = computeHistoryVersion(transcriptPath, userLogPath, [], 0, false);
+    const a = computeHistoryVersion(transcriptPath, [], 0, false);
+    const b = computeHistoryVersion(transcriptPath, [], 0, false);
     expect(a).toBe(b);
   });
 
   it('a messageLog entry without a timestamp contributes a 0 tail (stable)', () => {
     const log: LogEntry[] = [{ type: 'log', content: 'a' /* no timestamp */ }];
-    const a = computeHistoryVersion(transcriptPath, userLogPath, log, 0, false);
-    const b = computeHistoryVersion(transcriptPath, userLogPath, log, 0, false);
+    const a = computeHistoryVersion(transcriptPath, log, 0, false);
+    const b = computeHistoryVersion(transcriptPath, log, 0, false);
     expect(a).toBe(b);
   });
 });
 
 describe('computeHistoryVersion — combined input independence', () => {
   it('two distinct input sets produce distinct ETags', () => {
-    const a = computeHistoryVersion(null, null, [], 0, false);
-    const b = computeHistoryVersion(null, null, [], 1, true);
-    const c = computeHistoryVersion(null, null, [{ type: 'log', content: 'x', timestamp: 5 }], 1, true);
+    const a = computeHistoryVersion(null, [], 0, false);
+    const b = computeHistoryVersion(null, [], 1, true);
+    const c = computeHistoryVersion(null, [{ type: 'log', content: 'x', timestamp: 5 }], 1, true);
     expect(a).not.toBe(b);
     expect(b).not.toBe(c);
     expect(a).not.toBe(c);
@@ -229,11 +215,11 @@ describe('etagMatchesIfNoneMatch — RFC 7232 §3.2 (If-None-Match)', () => {
   });
 
   it('round-trips with a real computeHistoryVersion ETag', () => {
-    const etag = computeHistoryVersion(null, null, [], 0, false);
+    const etag = computeHistoryVersion(null, [], 0, false);
     // Client stores the exact server ETag and sends it back → 304.
     expect(etagMatchesIfNoneMatch(etag, etag)).toBe(true);
     // A different history (isRunning flipped) yields a different ETag → no 304.
-    const etag2 = computeHistoryVersion(null, null, [], 0, true);
+    const etag2 = computeHistoryVersion(null, [], 0, true);
     expect(etag).not.toBe(etag2);
     expect(etagMatchesIfNoneMatch(etag, etag2)).toBe(false);
   });

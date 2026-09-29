@@ -98,7 +98,6 @@ vi.mock('../../../serve/serve-registry.js', () => ({
     getSteeringNotes: vi.fn(() => []),
     drainSteering: vi.fn(),
     drainFileUploads: vi.fn(() => []),
-    appendUserLog: vi.fn(),
   })),
 }));
 

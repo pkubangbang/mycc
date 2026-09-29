@@ -6,8 +6,9 @@
  * collation). Here we pin the PRODUCER contract that feeds it:
  *   - every producer call that APPENDS a message emits exactly ONE 'new'
  *     piece carrying the message fields (NOT a full snapshot);
- *   - the user()/note() combine branches (a MUTATION of the last user
- *     message) emit exactly ONE 'merge' piece carrying the FRAGMENT, and
+ *   - the user()/note() combine branches: user() emits ONE 'user' journal
+ *     piece (genuine input fragment) and note() emits ONE 'merge' piece —
+ *     both carrying the FRAGMENT only, and
  *     ZERO full-snapshot lines — the old design re-emitted the grown host
  *     ({A} then {AB}), which is what the {A, AB} fix removes;
  *   - the stamped envelope (kind / user_origin) lives on a shallow copy —
@@ -28,7 +29,7 @@ import type { Message, ToolCall } from '../../types.js';
 
 /** Captured piece: the shallow-copied message plus the livelog state at emit. */
 interface Captured {
-  msg: Message & { kind?: 'new' | 'merge' | 'clear' | 'compact' | 'recap' | 'rollback'; user_origin?: true };
+  msg: Message & { kind?: 'new' | 'merge' | 'user' | 'steer' | 'clear' | 'compact' | 'recap' | 'rollback'; user_origin?: true };
   /** getTriologue() snapshot taken at emit time (livelog the piece belongs to) */
   seen: Message[];
 }
@@ -73,7 +74,7 @@ describe('Triologue per-piece onMessage contract ({A, AB} facade guard)', () => 
     expect(captured[0].seen.map((m) => m.role)).toEqual(['user']);
   });
 
-  it('combined user() emits ONE merge piece carrying the FRAGMENT — never the grown host', () => {
+  it('combined user() emits ONE user journal piece carrying the FRAGMENT — never the grown host', () => {
     triologue.user('A');
     triologue.user('B'); // combine path: A grows to "A\nB" in memory
     expect(captured).toHaveLength(2);
@@ -81,9 +82,9 @@ describe('Triologue per-piece onMessage contract ({A, AB} facade guard)', () => 
       role: 'user', content: 'A', kind: 'new', user_origin: true,
     });
     expect(pieceOf(captured[1])).toEqual({
-      role: 'user', content: 'B', kind: 'merge',
+      role: 'user', content: 'B', kind: 'user', user_origin: true,
     });
-    expect(captured[1].msg.user_origin).toBeUndefined(); // a fragment, not genuine input
+    expect(captured[1].msg.user_origin).toBe(true); // a genuine-input fragment
     // THE {A, AB} REGRESSION GUARD: the second emit is the fragment "B",
     // NOT the full mutated host "A\nB".
     expect(captured[1].msg.content).toBe('B');
@@ -113,7 +114,7 @@ describe('Triologue per-piece onMessage contract ({A, AB} facade guard)', () => 
     triologue.user('task');
     triologue.note('MAIL', 'from hook', 'some-hook');
     expect(captured).toHaveLength(2);
-    const hookPiece = captured[1].msg as Captured['msg'] & { hook_name?: string; kind?: 'new' | 'merge' | 'clear' | 'compact' | 'recap' | 'rollback' };
+    const hookPiece = captured[1].msg as Captured['msg'] & { hook_name?: string; kind?: 'new' | 'merge' | 'user' | 'steer' | 'clear' | 'compact' | 'recap' | 'rollback' };
     expect(hookPiece.kind).toBe('new');
     expect(hookPiece.hook_name).toBe('some-hook');
     expect(triologue.getMessagesRaw()).toHaveLength(2); // separate message
@@ -205,7 +206,7 @@ describe('Triologue per-piece onMessage contract ({A, AB} facade guard)', () => 
     // 'new' per append (no boundary pieces leak into ordinary flow).
     triologue.user('q');
     expect(captured.map((c) => pieceOf(c).kind)).toEqual(['new']);
-    expect(captured.every((c) => ['new', 'merge'].includes(c.msg.kind as string))).toBe(true);
+    expect(captured.every((c) => ['new', 'merge', 'user'].includes(c.msg.kind as string))).toBe(true);
   });
 
   it('livelog messages NEVER carry envelope keys (kind/user_origin stay on the copy)', () => {
