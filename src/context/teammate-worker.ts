@@ -481,14 +481,37 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
           // LLM-stage check catches it (at most one extra tool result over
           // threshold, harmless: the model context window > TOKEN_THRESHOLD).
 
-          // Track budget from mail_to call
-          if (toolName === 'mail_to' && !budgetSent) {
+          // Track budget from mail_to call.
+          //
+          // The deadline must be refreshed on EVERY eta>0 mail — not only the
+          // first — otherwise a teammate's own view of its budget freezes at
+          // the initial eta while the LEAD's view keeps extending (mail_to.ts
+          // passes eta to ChildTeam.mailTo, which emits eta_update for every
+          // extension). That divergence is a real bug, not a cosmetic one:
+          // once Date.now() passes the frozen deadlineMs, createTurnWatchdog()
+          // computes remaining=0 → cap = max(min(0*0.5, 180s), 60s) = 60s
+          // PERMANENTLY. Since the provider's retry escalation is 20→40→80→120s
+          // (escalateFirstTokenTimeout), a 60s turn watchdog aborts the whole
+          // retryChat before the 80s/120s attempts can run — so the extended
+          // budget is ignored, every long turn emits a false "stuck" WARNING,
+          // and the "Send mail_to with a new eta to extend" nudge (:327) gives
+          // advice that cannot take effect. Refreshing deadlineMs here restores
+          // the turn cap after an extension and makes the nudge followable.
+          //
+          // `budgetSent` remains a one-way latch (it gates the "request a
+          // budget" nudge and the heartbeat), so the one-time side effects
+          // (startTime / lastHeartbeatTime) are initialized only on the first
+          // budget — heartbeat elapsed time must not reset on each extension.
+          if (toolName === 'mail_to') {
             const eta = args?.eta as number | undefined;
             if (eta && eta > 0) {
+              const firstBudget = !budgetSent;
               budgetSent = true;
               deadlineMs = Date.now() + eta * 1000;
-              startTime = Date.now();
-              lastHeartbeatTime = Date.now();
+              if (firstBudget) {
+                startTime = Date.now();
+                lastHeartbeatTime = Date.now();
+              }
             }
           }
 
