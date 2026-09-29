@@ -121,6 +121,37 @@ Instead of `mail/` + `sessions/` + `transcripts/` folders, now we only have `ses
 - Path from session init — no direct change, but path format changes
 - `onMessage` callback appends to triologue path
 
+  **UPDATE (2026-09-29, onMessage piece fix):** `onMessage` is no longer a
+  full-snapshot appendix. Its contract is now
+  `(msg: Message, getTriologue: () => Message[]) => void`: the triologue
+  facade invokes it ONCE per producer call with a single "piece", and the
+  writer (`triologue/transcript.ts` `JsonlTranscriptWriter`) appends exactly
+  ONE flat JSONL line per APPENDED message:
+
+      { ...messageFields, kind: 'new'|'merge', turn_id: number,
+        user_origin?: true, timestamp: number }
+
+  - `kind:'new'`  — an appended livelog message (tool result, assistant,
+    TP-bridge, hook note, post-wrap-up assistant).
+  - `kind:'merge'` — the user()/note() COMBINE branches: the host message in
+    the livelog is mutated in place (content + `\n` + fragment kept in
+    memory for the LLM view), but the transcript records ONLY the fragment
+    with the host's turn_id — the old writer re-emitted the MUTATED FULL
+    message (the `{A}` + `{AB}` backlog-duplication regression), which this
+    design removes.
+  - `user_origin: true` — present only on genuine user-input pieces.
+  - `turn_id` — minted per user() turn; merge pieces (and tool/assistant
+    appends that belong to the turn) inherit it; read-time collation folds
+    merge pieces into the nearest preceding user host and stamps the folded
+    entry with the HOST's timestamp.
+  - The read side (`restoration.ts` + `serve-history.ts`) replays the appends
+    through `triologue/transcript.ts` (`readTranscript` + `collateMessages` /
+    `collateEntries`); legacy lines without `kind` replay as plain 'new'
+    records (zero migration, already-baked {A,AB} duplicates preserved).
+  - CAVEAT: removals (compact/clear/rollback/recap truncation) are NOT
+    journaled — the collated transcript is the durable FULL history, a
+    superset of what the live LLM context holds at any moment.
+
 ### 10. Lead Auto-Compact (`src/loop/triologue.ts`)
 - `runAutoCompact()` — writes transcript to `sessions/{sessionId}/transcript-lead-{ts}.jsonl`
 - Previously wrote to `transcripts/transcript_{timestamp}.jsonl`

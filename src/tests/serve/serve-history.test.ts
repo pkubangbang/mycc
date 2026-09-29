@@ -12,7 +12,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { roleToType, roleToLabel, readUserLog } from '../../serve/serve-history.js';
+import { roleToType, roleToLabel, readUserLog, readHistory } from '../../serve/serve-history.js';
 
 describe('roleToType', () => {
   it('maps known roles to their LogEntry types', () => {
@@ -146,5 +146,76 @@ describe('readUserLog', () => {
     expect(entries).toHaveLength(2);
     expect(entries[0].content).toBe('12345');
     expect(entries[1].content).toBe('[object Object]');
+  });
+});
+
+describe('readHistory (collateEntries projection)', () => {
+  let tmpDir: string;
+  let transcriptPath: string;
+  let userLogPath: string;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'serve-history-rh-'));
+    transcriptPath = path.join(tmpDir, 'transcript.jsonl');
+    userLogPath = path.join(tmpDir, 'user.jsonl');
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('collates new-format piece records: a merge line folds into its host message', () => {
+    // New format (JsonlTranscriptWriter): an assistant 'new' piece, then a
+    // tool result 'new' piece, each carrying kind/turn_id/timestamp + msg
+    // fields at top level (flat record). A HINT-note 'merge' piece folds
+    // into its user host — but user-role entries are then SKIPPED by
+    // readHistory (user.jsonl owns user bubbles), so the folded content
+    // disappears from the serve view exactly like pre-fix behavior.
+    fs.writeFileSync(
+      transcriptPath,
+      JSON.stringify({ role: 'assistant', content: 'working', kind: 'new', turn_id: 1, timestamp: 100 }) + '\n' +
+      JSON.stringify({ role: 'tool', tool_name: 'bash', tool_call_id: 't1', content: 'out1', kind: 'new', turn_id: 1, timestamp: 200 }) + '\n' +
+      JSON.stringify({ role: 'user', content: '[HINT] steering', kind: 'merge', turn_id: 1, timestamp: 250 }) + '\n',
+      'utf-8',
+    );
+    const history = readHistory(transcriptPath, userLogPath, []);
+    // user (host of merge) skipped; assistant + tool survive, each ONE entry.
+    const contents = history.map((e) => e.content);
+    expect(contents).toContain('working');
+    expect(contents).toContain('out1');
+    expect(contents).not.toContain('[HINT] steering');
+    expect(contents).toHaveLength(2);
+    for (const e of history) expect(e.timestamp).toBeDefined();
+  });
+
+  it('legacy full-snapshot lines keep passing unchanged (each line = one entry)', () => {
+    // Pre-piece format: whole-snapshot lines without `kind`. readTranscript
+    // treats each as a 'new' plain Message — the raw-line parser behavior is
+    // preserved, INCLUDING the {A, AB} duplicates baked into old files.
+    fs.writeFileSync(
+      transcriptPath,
+      JSON.stringify({ role: 'assistant', content: 'A', timestamp: 10 }) + '\n' +
+      JSON.stringify({ role: 'assistant', content: 'AB', timestamp: 11 }) + '\n',
+      'utf-8',
+    );
+    const history = readHistory(transcriptPath, userLogPath, []);
+    expect(history.map((e) => e.content)).toEqual(['A', 'AB']);
+    expect(history.map((e) => e.timestamp)).toEqual([10, 11]);
+  });
+
+  it('merges transcript + user-log entries chronologically by timestamp', () => {
+    fs.writeFileSync(
+      transcriptPath,
+      JSON.stringify({ role: 'tool', tool_name: 'bash', tool_call_id: 'x', content: 'toolout', kind: 'new', turn_id: 1, timestamp: 300 }) + '\n',
+      'utf-8',
+    );
+    fs.writeFileSync(
+      userLogPath,
+      JSON.stringify({ type: 'user', content: 'user bubble', timestamp: 200 }) + '\n',
+      'utf-8',
+    );
+    const history = readHistory(transcriptPath, userLogPath, []);
+    // user bubble (200) sorts BEFORE the tool result (300).
+    expect(history.map((e) => e.content)).toEqual(['user bubble', 'toolout']);
   });
 });

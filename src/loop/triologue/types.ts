@@ -41,8 +41,16 @@ export interface TriologueOptions {
   onToolMisalign?: (warning: ToolAlignmentWarning) => void;
   /** Called when auto-compact is triggered */
   onCompact?: (transcriptPath: string) => void;
-  /** Called after each message is added */
-  onMessage?: (messages: Message[]) => void;
+  /** Called after each message is added
+   *
+   * Per-piece contract (the {A, AB} backlog fix): the callback receives the
+   * single appended/merged message piece (a shallow copy stamped with the
+   * collation metadata `kind`/`turn_id`/`user_origin`), NOT the full
+   * snapshot. Consumers that need the current full state call the second
+   * parameter `getTriologue()` lazily — it re-reads the live store at call
+   * time, so it survives compact()/clear() store swaps.
+   */
+  onMessage?: (msg: Message, getTriologue: () => Message[]) => void;
 
   /** Callback to retrieve wiki domains for knowledge persistence during compact */
   getWikiDomains?: () => Promise<Array<{ domain_name: string; description?: string }>>;
@@ -57,7 +65,7 @@ export interface ResolvedTriologueOptions {
   onMisorder: (warning: MisorderWarning) => void;
   onToolMisalign: (warning: ToolAlignmentWarning) => void;
   onCompact: (transcriptPath: string) => void;
-  onMessage: (messages: Message[]) => void;
+  onMessage: (msg: Message, getTriologue: () => Message[]) => void;
   getWikiDomains?: () => Promise<Array<{ domain_name: string; description?: string }>>;
   getDuplicationReport?: () => string;
 }

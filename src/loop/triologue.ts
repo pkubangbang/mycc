@@ -38,8 +38,62 @@ export class Triologue {
     onMisorder: (warning: MisorderWarning) => void;
     onToolMisalign: (warning: ToolAlignmentWarning) => void;
     onCompact: (transcriptPath: string) => void;
-    onMessage: (messages: Message[]) => void;
+    onMessage: (msg: Message, getTriologue: () => Message[]) => void;
   };
+
+  /**
+   * Turn counter for the per-piece onMessage contract (the {A, AB} fix).
+   * A user() turn mints a fresh turn_id; every 'merge' piece (user()/note()
+   * combine branches) inherits the host turn's id so read-time collation
+   * folds pieces into the right message. clear() resets to 0;
+   * finishWrapUp() mints its own turn.
+   */
+  private turnCounter: number = 0;
+
+  /**
+   * Private per-piece dispatcher for the onMessage contract.
+   *
+   * Stamps the collation metadata (kind + turn_id, plus user_origin for
+   * GENUINE user pieces) onto a SHALLOW COPY of the piece and invokes
+   * onMessage with the copy — the livelog message object inside the store is
+   * never touched, so `Message` gains zero new fields and nothing extra can
+   * reach the LLM provider payload.
+   *
+   * `getTriologue` is bound to `() => this.store.getRaw()` — re-read at CALL
+   * time, so it keeps working across compact()/clear() store swaps (same
+   * lazy-binding pattern as the feature-domain delegates). None of the three
+   * transcript writers use it; it is the lazy full-state escape hatch for
+   * future full-state consumers and tests.
+   */
+  private emit(piece: Message, kind: 'new' | 'merge', opts?: { userOrigin?: boolean; turnId?: number }): void {
+    const copy: Message = { ...piece };
+    if (opts?.userOrigin) {
+      (copy as { user_origin?: true }).user_origin = true;
+    }
+    (copy as { kind?: 'new' | 'merge'; turn_id?: number }).kind = kind;
+    (copy as { kind?: 'new' | 'merge'; turn_id?: number }).turn_id =
+      opts?.turnId ?? this.turnCounter;
+    this.options.onMessage(copy, () => this.store.getRaw());
+  }
+
+  /**
+   * Mint a fresh turn id (post-increment so the first turn is 1).
+   * Called when a NEW turn starts: user() on a non-combine path, and
+   * finishWrapUp() (a wrap-up is its own turn).
+   */
+  private mintTurn(): number {
+    this.turnCounter += 1;
+    return this.turnCounter;
+  }
+
+  /**
+   * The turn_id of the CURRENT (most recently minted) turn, used as the
+   * inherit target for 'merge' pieces. Does NOT advance the counter — the
+   * host message already carries this id.
+   */
+  private currentTurnId(): number {
+    return this.turnCounter;
+  }
 
   /**
    * Wrap-up management (see triologue/wrap-up.ts): marks the message index
@@ -164,6 +218,9 @@ export class Triologue {
     this.store.resetTokenCount();
     this.ledger.clear();
     this.wrapUp.reset();
+    // Reset the per-piece turn counter: the transcript piece log is an
+    // append-only history, but turn identity starts fresh after /clear.
+    this.turnCounter = 0;
     // Fresh start: rebuild dynamic project context from populators so the
     // cleared conversation still carries current README/mindmap/hook state.
     this.rebuildProjectContext();
@@ -179,17 +236,22 @@ export class Triologue {
     if (lastRole === 'tool') {
       const fixResult = this.tpFix.handle('user_after_tool', lastRole, 'cannot add user message after tool role');
       if (fixResult === 'allowed') {
-        // Provider supports tool → user natively — skip bridge, just append
-        this.addMessage({ role: 'user', content });
+        // Provider supports tool → user natively — skip bridge, just append.
+        // Fresh turn: the pre-tool turn is complete; this input starts a new
+        // conversation turn (guards the F1 collapse where two queries
+        // collated into one turn).
+        this.addMessage({ role: 'user', content }, { isUserOrigin: true, mintNewTurn: true });
         return;
       }
       // 'recovered': bridge was injected, fall through to add user message
     }
     if (lastRole === 'user') {
-      // Combine: append to last user message, then fire onMessage so
-      // the JSONL transcript records this combined state. Note: writing
-      // combines into the same message creates duplicate content in the
-      // transcript, but ensures every note()/user() call is recorded.
+      // Combine: append the new input to the last user message in memory,
+      // then emit a 'merge' piece for the FRAGMENT the caller passed (never
+      // the mutated host). The host still concatenates content in memory so
+      // the LLM view and lastUserQuery are unchanged; the transcript records
+      // ZERO full-snapshot lines for this mutation — the {A, AB} fix.
+      const turnId = this.currentTurnId();
       const lastMsg = this.store.last()!;
       lastMsg.content += `\n${content}`;
       this.store.recomputeTokenCount();
@@ -197,12 +259,12 @@ export class Triologue {
       // complete user intent, not just the pre-merge fragment. Without
       // this, a compact right after a merge loses the latest instruction.
       this.store.setLastUserQuery(lastMsg.content);
-      this.options.onMessage(this.store.getRaw());
+      this.emit({ role: 'user', content }, 'merge', { userOrigin: false, turnId });
       return;
     }
     // Track last real user query for auto-compact context preservation
     this.store.setLastUserQuery(content);
-    this.addMessage({ role: 'user', content });
+    this.addMessage({ role: 'user', content }, { isUserOrigin: true, mintNewTurn: true });
   }
 
   /**
@@ -233,12 +295,15 @@ export class Triologue {
     // Hook-originated notes are always separate messages (never combined) so
     // each hook retains its own attribution in the minifier output.
     if (lastRole === 'user' && !hookName) {
-      // Combine: append to last user message, then fire onMessage so
-      // the JSONL transcript records this combined state.
+      // Combine: append the note content to the last user message in memory,
+      // then emit a 'merge' piece for the note fragment. The host still
+      // concatenates in memory so the LLM view is unchanged; the transcript
+      // records exactly ONE merge line (the note) for this call.
+      const turnId = this.currentTurnId();
       const lastMsg = this.store.last()!;
       lastMsg.content += `\n${noteContent}`;
       this.store.recomputeTokenCount();
-      this.options.onMessage(this.store.getRaw());
+      this.emit({ role: 'user', content: noteContent }, 'merge', { userOrigin: false, turnId });
       return;
     }
     this.addMessage({ role: 'user', content: noteContent, ...(hookName ? { hook_name: hookName } : {}) });
@@ -502,9 +567,10 @@ export class Triologue {
     const message: Message = { role: 'assistant', content };
     this.store.push(message);
     this.store.incrementTokenCount(message);
-    if (this.options.onMessage) {
-      this.options.onMessage(this.store.getRaw());
-    }
+    // A wrap-up turn is its own turn: mint BEFORE emitting so the piece
+    // carries the wrap-up's fresh turn_id.
+    this.mintTurn();
+    this.emit(message, 'new', { userOrigin: false });
     // mark stays — allows rollback to remove both user_wrap and agent_wrap
   }
 
@@ -698,14 +764,23 @@ export class Triologue {
    * Note: Auto-compact is NOT called here to avoid race conditions.
    * Overflow checking is done in the LLM stage (llm.ts) before each call.
    */
-  private addMessage(message: Message): void {
+  private addMessage(
+    message: Message,
+    opts?: { isUserOrigin?: boolean; mintNewTurn?: boolean },
+  ): void {
     this.store.push(message);
     this.store.incrementTokenCount(message);
-
-    // Call onMessage callback if set
-    if (this.options.onMessage) {
-      this.options.onMessage(this.store.getRaw());
+    if (opts?.mintNewTurn) {
+      this.mintTurn();
     }
+
+    // ONE 'new' piece per appended message (per-piece contract). Covers
+    // agent(), tool() results (including skipPendingTools' flushed items),
+    // TP-bridge injections via injectBypass, and standalone notes — each is
+    // a real livelog message, so each gets its own line (parity).
+    this.emit(message, 'new', {
+      userOrigin: opts?.isUserOrigin,
+    });
   }
 
   // === Default Callbacks ===

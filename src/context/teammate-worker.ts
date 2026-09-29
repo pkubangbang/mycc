@@ -13,12 +13,13 @@ import * as path from 'path';
 import { ChildContext, silentLoader } from './child-context.js';
 import { retryChat, MODEL } from '../engine/chat-provider.js';
 import { StreamAbortedError } from '../engine/chat-provider.js';
-import type { AgentContext, Message } from '../types.js';
+import type { AgentContext } from '../types.js';
 import type { ToolCall } from '../types.js';
 import { buildNormalModePrompt } from '../loop/prompts/lead.js';
 import { buildPlatformCalendarMessages, buildNodeModulesReminderMessages } from '../loop/prompt-populators.js';
 import { getTokenThreshold, getSessionContext, getSessionDir, setSessionContext, isVerbose } from '../config.js';
 import { TriologueLite } from '../loop/triologue-lite.js';
+import { JsonlTranscriptWriter, asAppendablePiece } from '../loop/triologue/transcript.js';
 import { ipc, sendStatus } from './child/ipc-helpers.js';
 
 const POLL_INTERVAL = 5000; // 5 seconds
@@ -158,24 +159,27 @@ function createPersistentTriologue(name: string, assignedPath?: string): Triolog
   // Clear existing file on start
   fs.writeFileSync(triologuePath, '', 'utf-8');
 
+  // The JSONL transcript writer (shared with the lead facade triologue.ts):
+  // ONE fs.appendFileSync per appended message, never throws — errors
+  // surface via the onError callback. The child has no agentIO/loopEvents,
+  // so route through ctx.core.verbose (the IPC verbose notification the
+  // parent prints under -v). Without this, a disk-full / permission /
+  // invalid-path failure drops EVERY subsequent message from the durable
+  // transcript with zero diagnostic.
+  const transcriptWriter = new JsonlTranscriptWriter(triologuePath, (writeErr) => {
+    ctx.core.verbose('triologue',
+      `Transcript write failed: ${writeErr instanceof Error ? writeErr.message : String(writeErr)}`);
+  });
+
   const triologue = new TriologueLite({
     tokenThreshold: getTokenThreshold(),
-    onMessage: (messages: Message[]) => {
-      // Append last message to file
-      const lastMsg = messages[messages.length - 1];
-      try {
-        fs.appendFileSync(triologuePath, `${JSON.stringify(lastMsg)}\n`, 'utf-8');
-      } catch (writeErr) {
-        // Don't crash the worker on transcript write failure, but make it
-        // observable — mirroring the lead-side onMessage in agent-repl.ts,
-        // which logs via agentIO.verbose + emits a triologue_event. The child
-        // has no agentIO/loopEvents, so route through ctx.core.verbose (the
-        // IPC verbose notification the parent prints under -v). Without this,
-        // a disk-full / permission / invalid-path failure drops EVERY
-        // subsequent message from the durable transcript with zero diagnostic.
-        ctx.core.verbose('triologue',
-          `Transcript write failed: ${writeErr instanceof Error ? writeErr.message : String(writeErr)}`);
-      }
+    onMessage: (msg) => {
+      // Per-piece contract (the {A, AB} fix): append EXACTLY ONE flat line
+      // per appended message — the piece arrives pre-stamped with
+      // kind/turn_id/user_origin from the facade dispatcher; the writer
+      // adds the timestamp. A merely-mutating call (user()/note() combine)
+      // emits a 'merge' piece instead of a full resent snapshot.
+      transcriptWriter.append(asAppendablePiece(msg));
     },
   });
 
