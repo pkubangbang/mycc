@@ -25,6 +25,7 @@
 import * as fs from 'fs';
 import { stripAnsi } from './serve-utils.js';
 import type { LogEntry } from './serve-types.js';
+import { readTranscript, collateEntries } from '../loop/triologue/transcript.js';
 
 const MAX_LOG_SIZE = 1000;
 
@@ -240,32 +241,40 @@ export function readHistory(
 ): LogEntry[] {
   if (transcriptPath) {
     try {
-      const raw = fs.readFileSync(transcriptPath, 'utf-8');
+      // Read the transcript through the shared collation core (the {A, AB}
+      // fix): the file is now an append-only PIECE log — a 'merge' line must
+      // fold into its host message instead of appending as a new entry.
+      // collateEntries() replays the appends the livelog performed and
+      // returns one entry per collated message with its host timestamp; a
+      // merge entry carries the HOST's timestamp (the turn's start), which
+      // also sidesteps the pitfall-8547e85b ordering trap (untimestamped
+      // legacy pieces keep their file-order emission position inside the
+      // collated list, and legacy lines are only ever 'new').
+      // Legacy tolerance: pre-piece full-snapshot lines have no `kind`, so
+      // readTranscript treats each as a 'new' plain Message — their existing
+      // {A, AB} duplicates in old files are preserved on read (zero
+      // migration), identical to the previous raw-line parser's output.
+      const { records } = readTranscript(transcriptPath);
       const entries: LogEntry[] = [];
-      for (const line of raw.split('\n')) {
-        const trimmed = line.trim();
-        if (!trimmed) continue;
-        let msg: { role?: string; content?: string; timestamp?: number };
-        try {
-          msg = JSON.parse(trimmed);
-        } catch {
-          continue; // skip malformed lines
-        }
+      for (const entry of collateEntries(records)) {
+        const msg = entry.message;
         if (msg.content === undefined || msg.content === null || msg.content === '') continue;
         // Skip role:'user' from the triologue — these are injected system
         // notes ([REMINDER]/[HINT]/[WRAP_UP] etc.), NOT real user input.
         // Real user bubbles come from the user log (read below).
         if (msg.role === 'user') continue;
-        const type = roleToType(msg.role);
-        const label = roleToLabel(msg.role);
-        const entry: LogEntry = { type, content: stripAnsi(String(msg.content)) };
-        if (label) entry.label = label;
-        // The triologue Message carries a timestamp (written by the onMessage
-        // callback in agent-repl.ts). Use it for chronological merge with the
-        // user log. Older transcripts (pre-timestamp) have no field; omit it
-        // rather than emitting a bogus 0.
-        if (typeof msg.timestamp === 'number') entry.timestamp = msg.timestamp;
-        entries.push(entry);
+        const role = msg.role as string | undefined;
+        const type = roleToType(role);
+        const label = roleToLabel(role);
+        const logEntry: LogEntry = { type, content: stripAnsi(String(msg.content)) };
+        if (label) logEntry.label = label;
+        // collateEntries preserves the piece timestamp (written by
+        // JsonlTranscriptWriter); legacy untimestamped lines are dropped
+        // here exactly as before (no bogus 0 timestamps).
+        if (typeof entry.timestamp === 'number' && entry.timestamp > 0) {
+          logEntry.timestamp = entry.timestamp;
+        }
+        entries.push(logEntry);
       }
 
       // Read the user log (real user submissions) and merge by timestamp.

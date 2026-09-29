@@ -38,8 +38,48 @@ export class Triologue {
     onMisorder: (warning: MisorderWarning) => void;
     onToolMisalign: (warning: ToolAlignmentWarning) => void;
     onCompact: (transcriptPath: string) => void;
-    onMessage: (messages: Message[]) => void;
+    onMessage: (msg: Message, getTriologue: () => Message[]) => void;
   };
+
+  /**
+   * Private per-piece dispatcher for the onMessage contract.
+   *
+   * Stamps the collation metadata (kind + user_origin for GENUINE user
+   * pieces) onto a SHALLOW COPY of the piece and invokes onMessage with the
+   * copy — the livelog message object inside the store is never touched, so
+   * `Message` gains zero new fields and nothing extra can reach the LLM
+   * provider payload.
+   *
+   * `getTriologue` is bound to `() => this.store.getRaw()` — re-read at CALL
+   * time, so it keeps working across compact()/clear() store swaps (same
+   * lazy-binding pattern as the feature-domain delegates). None of the three
+   * transcript writers use it; it is the lazy full-state escape hatch for
+   * future full-state consumers and tests.
+   */
+  private emit(piece: Message, kind: 'new' | 'merge', opts?: { userOrigin?: boolean }): void {
+    const copy: Message = { ...piece };
+    if (opts?.userOrigin) {
+      (copy as { user_origin?: true }).user_origin = true;
+    }
+    (copy as { kind?: 'new' | 'merge' }).kind = kind;
+    this.options.onMessage(copy, () => this.store.getRaw());
+  }
+
+  /**
+   * Journal a live-log truncation/boundary (the control-event contract):
+   * invokes onMessage with a bare boundary piece (no message fields) that
+   * the writer records as `{ kind, timestamp }` — the event name IS the
+   * kind (conflated; no 'control' pseudo-kind, no event field). Journaled
+   * events: 'clear' (replay resets the collated view — /clear meaning is
+   * preserved across restoration), 'compact', 'recap', 'rollback' (boundary
+   * markers; the durable collated history stays intact).
+   */
+  private emitControl(event: 'clear' | 'compact' | 'recap' | 'rollback'): void {
+    this.options.onMessage(
+      { kind: event } as unknown as Message,
+      () => this.store.getRaw(),
+    );
+  }
 
   /**
    * Wrap-up management (see triologue/wrap-up.ts): marks the message index
@@ -144,15 +184,18 @@ export class Triologue {
   }
 
   /**
-   * Load a single restoration pair into the triologue without triggering onMessage callback.
+   * Load a single restoration pair into the triologue as TWO 'new' pieces
+   * (par-by-construction parity — review F1: the pair must reach the
+   * transcript exactly like any other appended message, or a chained
+   * restore A → work → restore B would silently drop A's summary from
+   * B's transcript and from serve-history).
    * Used during session restoration to preload summary context.
    * @param pair - A [user_message, assistant_message] tuple
    */
   loadRestoration(pair: [Message, Message]): void {
-    this.store.push(pair[0]);
-    this.store.incrementTokenCount(pair[0]);
-    this.store.push(pair[1]);
-    this.store.incrementTokenCount(pair[1]);
+    for (const message of pair) {
+      this.addMessage(message);
+    }
   }
 
   /**
@@ -164,6 +207,10 @@ export class Triologue {
     this.store.resetTokenCount();
     this.ledger.clear();
     this.wrapUp.reset();
+    // Journal the truncation boundary: the writer records a control event
+    // so read-time collation resets its view here — restored context honors
+    // the /clear instead of resurrecting the cleared material.
+    this.emitControl('clear');
     // Fresh start: rebuild dynamic project context from populators so the
     // cleared conversation still carries current README/mindmap/hook state.
     this.rebuildProjectContext();
@@ -179,17 +226,21 @@ export class Triologue {
     if (lastRole === 'tool') {
       const fixResult = this.tpFix.handle('user_after_tool', lastRole, 'cannot add user message after tool role');
       if (fixResult === 'allowed') {
-        // Provider supports tool → user natively — skip bridge, just append
-        this.addMessage({ role: 'user', content });
+        // Provider supports tool → user natively — skip bridge, just append.
+        // Fresh turn: the pre-tool turn is complete; this input starts a new
+        // conversation turn (guards the F1 collapse where two queries
+        // collated into one turn).
+        this.addMessage({ role: 'user', content }, { isUserOrigin: true });
         return;
       }
       // 'recovered': bridge was injected, fall through to add user message
     }
     if (lastRole === 'user') {
-      // Combine: append to last user message, then fire onMessage so
-      // the JSONL transcript records this combined state. Note: writing
-      // combines into the same message creates duplicate content in the
-      // transcript, but ensures every note()/user() call is recorded.
+      // Combine: append the new input to the last user message in memory,
+      // then emit a 'merge' piece for the FRAGMENT the caller passed (never
+      // the mutated host). The host still concatenates content in memory so
+      // the LLM view and lastUserQuery are unchanged; the transcript records
+      // ZERO full-snapshot lines for this mutation — the {A, AB} fix.
       const lastMsg = this.store.last()!;
       lastMsg.content += `\n${content}`;
       this.store.recomputeTokenCount();
@@ -197,12 +248,12 @@ export class Triologue {
       // complete user intent, not just the pre-merge fragment. Without
       // this, a compact right after a merge loses the latest instruction.
       this.store.setLastUserQuery(lastMsg.content);
-      this.options.onMessage(this.store.getRaw());
+      this.emit({ role: 'user', content }, 'merge', { userOrigin: false });
       return;
     }
     // Track last real user query for auto-compact context preservation
     this.store.setLastUserQuery(content);
-    this.addMessage({ role: 'user', content });
+    this.addMessage({ role: 'user', content }, { isUserOrigin: true });
   }
 
   /**
@@ -233,12 +284,14 @@ export class Triologue {
     // Hook-originated notes are always separate messages (never combined) so
     // each hook retains its own attribution in the minifier output.
     if (lastRole === 'user' && !hookName) {
-      // Combine: append to last user message, then fire onMessage so
-      // the JSONL transcript records this combined state.
+      // Combine: append the note content to the last user message in memory,
+      // then emit a 'merge' piece for the note fragment. The host still
+      // concatenates in memory so the LLM view is unchanged; the transcript
+      // records exactly ONE merge line (the note) for this call.
       const lastMsg = this.store.last()!;
       lastMsg.content += `\n${noteContent}`;
       this.store.recomputeTokenCount();
-      this.options.onMessage(this.store.getRaw());
+      this.emit({ role: 'user', content: noteContent }, 'merge', { userOrigin: false });
       return;
     }
     this.addMessage({ role: 'user', content: noteContent, ...(hookName ? { hook_name: hookName } : {}) });
@@ -419,6 +472,25 @@ export class Triologue {
     this.store.replaceAll(compacted);
     this.store.recomputeTokenCount();
     this.ledger.clear();
+    // Journal the swap boundary + replay parity: a compact replaces the
+    // entire conversation with the summary round-trip, so the livelog and
+    // the transcript must BOTH change here. The control event is an
+    // observable boundary marker (the collated full history is kept), and
+    // the summary messages are emitted as 'new' pieces — without them the
+    // transcript would silently miss the post-compact summary the livelog
+    // now holds (the livelog keeps ONLY the summary; the collated view is
+    // deliberately a superset — durable-full-history semantics — so this is
+    // journaling completeness, NOT snapshot parity with the livelog).
+    this.emitControl('compact');
+    // NOTE: the summary messages are ALREADY in the store — replaceAll()
+    // installs `compacted` by reference, so pushing them again here would
+    // append into the very array this for-of is iterating (a push during
+    // iteration feeds the iterator a new element every round → the loop
+    // never terminates and the process OOMs). Emit-only: the transcript
+    // sees the post-compact summary as 'new' pieces, the livelog keeps 3.
+    for (const summaryMsg of compacted) {
+      this.emit(summaryMsg, 'new', { userOrigin: false });
+    }
     // Compaction replaces the entire conversation with a 2-message summary,
     // invalidating any active wrap-up turn: the context the wrap-up was part
     // of no longer exists. Without this reset, a stale wrapUpMark (still
@@ -502,9 +574,7 @@ export class Triologue {
     const message: Message = { role: 'assistant', content };
     this.store.push(message);
     this.store.incrementTokenCount(message);
-    if (this.options.onMessage) {
-      this.options.onMessage(this.store.getRaw());
-    }
+    this.emit(message, 'new', { userOrigin: false });
     // mark stays — allows rollback to remove both user_wrap and agent_wrap
   }
 
@@ -535,12 +605,13 @@ export class Triologue {
     // would lose the compacted summary) is wrong — instead, leave the array
     // as-is (the wrap-up messages are already gone) and just reset the mark.
     if (mark < this.store.length) {
-      this.truncateAndRecount(mark);
+      this.truncateAndRecount(mark, 'rollback');
     } else {
       // Mark is stale and past the end: the array is already shorter, so
       // truncating further is wrong — just recount and clear the ledger.
       this.store.recomputeTokenCount();
       this.ledger.clear();
+      this.emitControl('rollback');
     }
     this.wrapUp.reset();
   }
@@ -685,12 +756,17 @@ export class Triologue {
    * Truncate the message store to `index` (exclusive of later messages),
    * recalculate the token count from the kept messages, and clear the
    * pending tool ledger (any pending calls from the removed span are now
-   * invalid). Used by recap span removal and wrap-up rollback.
+   * invalid). Used by recap span removal and wrap-up rollback. Journals a
+   * control event ('recap' or 'rollback') so the transcript carries the
+   * boundary marker — replay keeps the durable full history (markers do not
+   * cut the collated view), but observers can see exactly where the live
+   * context was truncated.
    */
-  private truncateAndRecount(startIndex: number): void {
+  private truncateAndRecount(startIndex: number, event: 'recap' | 'rollback' = 'recap'): void {
     this.store.truncateTo(startIndex);
     this.store.recomputeTokenCount();
     this.ledger.clear();
+    this.emitControl(event);
   }
 
   /**
@@ -698,14 +774,20 @@ export class Triologue {
    * Note: Auto-compact is NOT called here to avoid race conditions.
    * Overflow checking is done in the LLM stage (llm.ts) before each call.
    */
-  private addMessage(message: Message): void {
+  private addMessage(
+    message: Message,
+    opts?: { isUserOrigin?: boolean },
+  ): void {
     this.store.push(message);
     this.store.incrementTokenCount(message);
 
-    // Call onMessage callback if set
-    if (this.options.onMessage) {
-      this.options.onMessage(this.store.getRaw());
-    }
+    // ONE 'new' piece per appended message (per-piece contract). Covers
+    // agent(), tool() results (including skipPendingTools' flushed items),
+    // TP-bridge injections via injectBypass, and standalone notes — each is
+    // a real livelog message, so each gets its own line (parity).
+    this.emit(message, 'new', {
+      userOrigin: opts?.isUserOrigin,
+    });
   }
 
   // === Default Callbacks ===

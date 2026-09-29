@@ -14,8 +14,12 @@
  * NOTE ON CO-EVOLUTION: this facade and the full triologue.ts intentionally
  * keep their own copies of the append logic (user/note/agent/tool) so each can
  * evolve independently. The shared invariants they must BOTH preserve are:
- *   1. JSONL persistence format via options.onMessage — restoration.ts reads
- *      teammate transcripts ([READY] marker + fixOrphanedToolCalls).
+ *   1. JSONL persistence via options.onMessage — the callback now receives
+ *      ONE message PIECE (a shallow copy stamped kind/user_origin)
+ *      per appended message, and NO event for a mere in-memory mutation
+ *      (the {A, AB} fix; the transcript is an append-only piece log — see
+ *      triologue/transcript.ts). restoration.ts reads teammate transcripts
+ *      ([READY] marker + fixOrphanedToolCalls).
  *   2. tool() must run TpAutoFixer for tool→tool gaps before ledger resolve.
  *   3. compact() must swap the store, recompute tokens, clear the ledger,
  *      and rebuildProjectContext() at the boundary.
@@ -40,9 +44,44 @@ export class TriologueLite {
     onMisorder: (warning: MisorderWarning) => void;
     onToolMisalign: (warning: ToolAlignmentWarning) => void;
     onCompact: (transcriptPath: string) => void;
-    onMessage: (messages: Message[]) => void;
+    onMessage: (msg: Message, getTriologue: () => Message[]) => void;
     getWikiDomains?: () => Promise<Array<{ domain_name: string; description?: string }>>;
   };
+
+  /**
+   * Private per-piece dispatcher for the onMessage contract.
+   *
+   * Stamps the collation metadata (kind + user_origin for GENUINE user
+   * pieces) onto a SHALLOW COPY of the piece and invokes onMessage with the
+   * copy — the livelog message object inside the store is never touched, so
+   * `Message` gains zero new fields and nothing extra can reach the LLM
+   * provider payload.
+   *
+   * `getTriologue` is bound to `() => this.store.getRaw()` — re-read at CALL
+   * time, so it keeps working across compact()/clear() store swaps (same
+   * lazy-binding pattern as the feature-domain delegates).
+   */
+  private emit(piece: Message, kind: 'new' | 'merge', opts?: { userOrigin?: boolean }): void {
+    const copy: Message = { ...piece };
+    if (opts?.userOrigin) {
+      (copy as { user_origin?: true }).user_origin = true;
+    }
+    (copy as { kind?: 'new' | 'merge' }).kind = kind;
+    this.options.onMessage(copy, () => this.store.getRaw());
+  }
+
+  /**
+   * Journal a live-log boundary for the child transcript (control-event
+   * contract — see triologue/transcript.ts). The lite facade only ever
+   * truncates at compact(), so only the 'compact' boundary is journaled
+   * here (the event name IS the kind — conflated, no 'control' pseudo-kind).
+   */
+  private emitControl(event: 'compact'): void {
+    this.options.onMessage(
+      { kind: event } as unknown as Message,
+      () => this.store.getRaw(),
+    );
+  }
 
   /**
    * TP-recovery delegate (see triologue/tp-fix.ts), wired the same way as the
@@ -124,26 +163,31 @@ export class TriologueLite {
     if (lastRole === 'tool') {
       const fixResult = this.tpFix.handle('user_after_tool', lastRole, 'cannot add user message after tool role');
       if (fixResult === 'allowed') {
-        // Provider supports tool → user natively — skip bridge, just append
-        this.addMessage({ role: 'user', content });
+        // Provider supports tool → user natively — skip bridge, just append.
+        // Fresh turn: the pre-tool user turn is complete, this input starts
+        // a new conversation turn (guards the F1 collapse where two queries
+        // collated into one turn).
+        this.addMessage({ role: 'user', content }, { isUserOrigin: true });
         return;
       }
       // 'recovered': bridge was injected, fall through to add user message
     }
     if (lastRole === 'user') {
-      // Combine: append to last user message, then fire onMessage so
-      // the JSONL transcript records this combined state. Note: writing
-      // combines into the same message creates duplicate content in the
-      // transcript, but ensures every note()/user() call is recorded.
+      // Combine: append the new input to the last user message in memory,
+      // then emit a 'merge' piece for the FRAGMENT the caller passed (never
+      // the mutated host). The host still concatenates content in memory so
+      // the LLM view and lastUserQuery are unchanged; the transcript now
+      // records ZERO lines for this mutation's full state — the {A, AB} fix.
       const lastMsg = this.store.last()!;
       lastMsg.content += `\n${content}`;
       this.store.recomputeTokenCount();
-      this.options.onMessage(this.store.getRaw());
+      this.store.setLastUserQuery(lastMsg.content);
+      this.emit({ role: 'user', content }, 'merge', { userOrigin: false });
       return;
     }
     // Track last real user query for auto-compact context preservation
     this.store.setLastUserQuery(content);
-    this.addMessage({ role: 'user', content });
+    this.addMessage({ role: 'user', content }, { isUserOrigin: true });
   }
 
   /**
@@ -173,12 +217,15 @@ export class TriologueLite {
     // Hook-originated notes are always separate messages (never combined) so
     // each hook retains its own attribution in the minifier output.
     if (lastRole === 'user' && !hookName) {
-      // Combine: append to last user message, then fire onMessage so
-      // the JSONL transcript records this combined state.
+      // Combine: append the note content to the last user message in memory,
+      // then emit a 'merge' piece for the note fragment. The host still
+      // concatenates in memory so the LLM view is unchanged; the transcript
+      // records exactly ONE merge line (the note) for this call — the zero
+      // full-snapshot lines is the {A, AB} fix.
       const lastMsg = this.store.last()!;
       lastMsg.content += `\n${noteContent}`;
       this.store.recomputeTokenCount();
-      this.options.onMessage(this.store.getRaw());
+      this.emit({ role: 'user', content: noteContent }, 'merge', { userOrigin: false });
       return;
     }
     this.addMessage({ role: 'user', content: noteContent, ...(hookName ? { hook_name: hookName } : {}) });
@@ -300,6 +347,22 @@ export class TriologueLite {
     this.store.replaceAll(compacted);
     this.store.recomputeTokenCount();
     this.ledger.clear();
+    // Journal the swap boundary + replay parity (same contract as the full
+    // facade's compact): the control event is an observable boundary marker,
+    // and the summary messages are emitted as 'new' pieces so the transcript
+    // records the post-compact summary (the collated view is deliberately a
+    // superset — durable-full-history semantics — so this is journaling
+    // completeness, NOT snapshot parity with the livelog).
+    this.emitControl('compact');
+    // NOTE: the summary messages are ALREADY in the store — replaceAll()
+    // installs `compacted` by reference, so pushing them again here would
+    // append into the very array this for-of is iterating (a push during
+    // iteration feeds the iterator a new element every round → the loop
+    // never terminates and the process OOMs). Emit-only: the transcript
+    // sees the post-compact summary as 'new' pieces, the livelog keeps 3.
+    for (const summaryMsg of compacted) {
+      this.emit(summaryMsg, 'new', { userOrigin: false });
+    }
     // Refresh dynamic project context at the compact boundary — the
     // conversation prefix already changed, so no extra cache penalty.
     // Populators re-read current state.
@@ -367,15 +430,20 @@ export class TriologueLite {
    * Add a message to the triologue.
    * Note: Auto-compact is NOT called here to avoid race conditions.
    * Overflow checking is done by the caller (teammate worker LLM stage).
+   *
+   * Emits ONE 'new' piece per appended message (per-piece contract).
+   * Replay is purely positional — no turn identity is needed.
    */
-  private addMessage(message: Message): void {
+  private addMessage(
+    message: Message,
+    opts?: { isUserOrigin?: boolean },
+  ): void {
     this.store.push(message);
     this.store.incrementTokenCount(message);
 
-    // Call onMessage callback if set
-    if (this.options.onMessage) {
-      this.options.onMessage(this.store.getRaw());
-    }
+    this.emit(message, 'new', {
+      userOrigin: opts?.isUserOrigin,
+    });
   }
 
   // === Default Callbacks ===

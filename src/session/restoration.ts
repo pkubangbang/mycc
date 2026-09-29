@@ -18,6 +18,7 @@ import type { Session } from './types.js';
 import { getTokenThreshold } from '../config.js';
 import { estimateTextTokens } from '../utils/token.js';
 import { minifyMessages } from '../utils/llm-chat-minifier.js';
+import { readTranscript, collateMessages } from '../loop/triologue/transcript.js';
 
 /**
  * A summary pair: [user_message, assistant_message]
@@ -27,34 +28,39 @@ export type SummaryPair = [Message, Message];
 /**
  * Read messages from a JSONL triologue file.
  *
- * Only extracts the Message-defined fields (role, content, tool_calls,
- * tool_name, reasoning_content, tool_call_id, hook_name) — extra fields
- * written to the JSONL for display purposes (e.g. `timestamp` for the
- * webui's chronological merge) are dropped here so they never leak into
- * in-memory Message objects. This prevents the display-only `timestamp`
- * from reaching the LLM summarization path (minifyMessages).
+ * Delegates to the shared collation core (triologue/transcript.ts — the
+ * {A, AB} fix): the file may be either
+ *   - the NEW piece log (one flat record per appended message, stamped
+ *     kind/user_origin/timestamp by JsonlTranscriptWriter), or
+ *   - a LEGACY whole-snapshot transcript (lines without `kind`, which
+ *     readTranscript passes through as 'new' plain Messages — zero
+ *     migration, already-baked {A, AB} duplicates in old files preserved
+ *     identically to the old read).
+ *
+ * collateMessages() replays the appends the livelog performed ('new' =>
+ * push, 'merge' => fold content into the last message) and strips the
+ * envelope keys + record timestamp, so the returned Message[] is
+ * triologue-parity-equivalent to the livelog and no display-only or
+ * envelope field leaks into the LLM summarization path (minifyMessages).
+ * Only Message-defined fields may therefore appear on each returned
+ * message; the whitelist below keeps that guarantee explicit for the
+ * collated output.
  */
 function readTriologue(filePath: string): Message[] {
-  const content = fs.readFileSync(filePath, 'utf-8');
+  const { records } = readTranscript(filePath);
+  const collated = collateMessages(records);
   const messages: Message[] = [];
 
-  for (const line of content.trim().split('\n')) {
-    if (line.trim()) {
-      try {
-        const raw = JSON.parse(line) as Record<string, unknown>;
-        // Whitelist Message-defined fields only — drop display-only extras
-        // (e.g. timestamp) so they don't leak into LLM summarization.
-        const msg: Message = { role: raw.role as Message['role'], content: raw.content as Message['content'] };
-        if (raw.tool_calls !== undefined) msg.tool_calls = raw.tool_calls as Message['tool_calls'];
-        if (raw.tool_name !== undefined) (msg as Message & { tool_name?: string }).tool_name = raw.tool_name as string;
-        if (raw.reasoning_content !== undefined) msg.reasoning_content = raw.reasoning_content as string;
-        if (raw.tool_call_id !== undefined) msg.tool_call_id = raw.tool_call_id as string;
-        if (raw.hook_name !== undefined) msg.hook_name = raw.hook_name as string;
-        messages.push(msg);
-      } catch {
-        // Skip malformed lines
-      }
-    }
+  for (const raw of collated) {
+    // Whitelist Message-defined fields only — drop any stray extras so
+    // they don't leak into LLM summarization.
+    const msg: Message = { role: raw.role as Message['role'], content: raw.content as Message['content'] };
+    if (raw.tool_calls !== undefined) msg.tool_calls = raw.tool_calls as Message['tool_calls'];
+    if (raw.tool_name !== undefined) (msg as Message & { tool_name?: string }).tool_name = raw.tool_name as string;
+    if (raw.reasoning_content !== undefined) msg.reasoning_content = raw.reasoning_content as string;
+    if (raw.tool_call_id !== undefined) msg.tool_call_id = raw.tool_call_id as string;
+    if (raw.hook_name !== undefined) msg.hook_name = raw.hook_name as string;
+    messages.push(msg);
   }
 
   return messages;

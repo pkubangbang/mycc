@@ -28,6 +28,7 @@ import { getTokenThreshold, getMyccDir, getSessionContext, getSessionDir } from 
 import { agentIO } from '../loop/agent-io.js';
 import { TriologueLite } from '../loop/triologue-lite.js';
 import type { MisorderWarning, ToolAlignmentWarning } from '../loop/triologue-lite.js';
+import { JsonlTranscriptWriter, asAppendablePiece } from '../loop/triologue/transcript.js';
 import { grepSearch } from '../utils/grep-search.js';
 
 /**
@@ -81,26 +82,27 @@ function resolveTranscriptDir(): string {
 }
 
 /**
- * Append the newest message to the explorer's JSONL transcript.
+ * Wire the newest message piece to the explorer's JSONL transcript.
  * Wired as TriologueLite's onMessage callback so every producer call
  * (user/note/agent/tool) is persisted from the very first turn — better
  * crash observability than the previous write-only-at-compaction scheme.
+ *
+ * Per-piece contract (the {A, AB} fix): the callback receives ONE message
+ * piece (pre-stamped with kind/user_origin); the shared
+ * JsonlTranscriptWriter appends exactly one flat line for it (adding the
+ * timestamp). A merely-mutating call emits a 'merge' piece — one line,
+ * not the full re-sent snapshot.
  *
  * The filename includes a node-title slug because up to MAX_CONCURRENT_NODES
  * explorers run concurrently during compilation; a timestamp-only name could
  * collide within the same second.
  */
-function appendExplorerTranscript(
-  messages: Message[],
+function createExplorerTranscriptWriter(
   transcriptPath: string
-): void {
-  const lastMsg = messages[messages.length - 1];
-  if (!lastMsg) return;
-  try {
-    fs.appendFileSync(transcriptPath, `${JSON.stringify(lastMsg)}\n`, 'utf-8');
-  } catch {
+): JsonlTranscriptWriter {
+  return new JsonlTranscriptWriter(transcriptPath, () => {
     // Transcript persistence is best-effort; never fail exploration over it.
-  }
+  });
 }
 
 function slugifyNodeTitle(nodeTitle: string): string {
@@ -137,9 +139,11 @@ function createExplorerTriologue(nodeTitle: string): TriologueLite {
     agentIO.brief('warn', 'explorer', `Triologue tool misalign for "${nodeTitle}": ${warning.functionName} (issue: ${warning.issue})`);
   };
 
+  const transcriptWriter = createExplorerTranscriptWriter(transcriptPath);
+
   const triologue = new TriologueLite({
     tokenThreshold: getTokenThreshold(),
-    onMessage: (messages: Message[]) => appendExplorerTranscript(messages, transcriptPath),
+    onMessage: (msg: Message) => transcriptWriter.append(asAppendablePiece(msg)),
     onMisorder,
     onToolMisalign,
   });

@@ -100,11 +100,11 @@ import { TriologueLite } from '../../loop/triologue-lite.js';
 
 describe('TriologueLite', () => {
   let t: TriologueLite;
-  let onMessage: ReturnType<typeof vi.fn<(messages: Message[]) => void>>;
+  let onMessage: ReturnType<typeof vi.fn<(msg: Message, getTriologue: () => Message[]) => void>>;
 
   beforeEach(() => {
     vi.clearAllMocks();
-    onMessage = vi.fn<(messages: Message[]) => void>();
+    onMessage = vi.fn<(msg: Message, getTriologue: () => Message[]) => void>();
     t = new TriologueLite({ tokenThreshold: 1000, onMessage });
   });
 
@@ -305,6 +305,22 @@ describe('TriologueLite', () => {
       expect(raw[2].role).toBe('tool');
       expect(raw[2].tool_name).toBe('brief');
       expect(raw[2].tool_call_id).toBe((raw[1].tool_calls![0] as ToolCall).id);
+      // Transcript parity: the compact boundary is journaled as a bare
+      // 'compact' boundary piece (the event name IS the kind — conflated,
+      // no 'control' pseudo-kind, no event field), then the 3 summary
+      // messages are emitted as 'new' pieces (the livelog and the
+      // transcript change together — collation-parity).
+      const kinds = onMessage.mock.calls.map((args: unknown[]) => (args[0] as Message & { kind?: string }).kind);
+      expect(kinds.filter((k) => k === 'compact')).toHaveLength(1);
+      // The boundary piece's kind is a journaled ControlEvent and it
+      // carries NO role (it is not a message).
+      const controlPiece = onMessage.mock.calls.map((args: unknown[]) => args[0] as Message & { kind?: string; event?: string })
+        .find((m) => m.kind === 'compact');
+      expect(controlPiece?.event).toBeUndefined();
+      expect((controlPiece as unknown as { role?: string }).role).toBeUndefined();
+      // The boundary piece is followed by exactly 3 'new' summary pieces.
+      const controlIdx = kinds.indexOf('compact');
+      expect(kinds.slice(controlIdx + 1)).toEqual(['new', 'new', 'new']);
     });
 
     it('compact() leaves lastRole === "tool" so the next agent() is a TP-valid tool→assistant transition (no duplicate_assistant fix)', async () => {
@@ -359,7 +375,7 @@ describe('TriologueLite', () => {
   });
 
   describe('JSONL persistence contract (restoration.ts compatibility)', () => {
-    it('onMessage receives whitelisted Message fields serializable to JSONL', () => {
+    it('onMessage delivers per-piece records carrying exactly one appended message', () => {
       const tcs: ToolCall[] = [
         { id: 'p1', function: { name: 'bash', arguments: { command: 'ls' } } },
       ] as unknown as ToolCall[];
@@ -368,12 +384,10 @@ describe('TriologueLite', () => {
       t.tool('bash', 'out', 'p1');
       t.note('MAIL', 'hello');
 
-      // Every onMessage call gets the full raw array; the last call is the
-      // final state. Simulate the worker's JSONL append: last message per call.
-      const lastPerCall = onMessage.mock.calls.map(
-        (args: unknown[]) => (args[0] as Message[]).slice(-1)[0],
-      );
-      for (const m of lastPerCall) {
+      // Per-piece contract: each onMessage call receives exactly ONE stamped
+      // piece (msgs[0] of args). Simulate the worker's JSONL append of it.
+      const pieces = onMessage.mock.calls.map((args: unknown[]) => args[0] as Message);
+      for (const m of pieces) {
         const json = JSON.stringify(m);
         const parsed = JSON.parse(json) as Record<string, unknown>;
         // restoration.ts readTriologue whitelists these fields:
@@ -382,11 +396,29 @@ describe('TriologueLite', () => {
         if (parsed.tool_name !== undefined) expect(typeof parsed.tool_name).toBe('string');
         if (parsed.tool_call_id !== undefined) expect(typeof parsed.tool_call_id).toBe('string');
         if (parsed.reasoning_content !== undefined) expect(typeof parsed.reasoning_content).toBe('string');
+        // Per-piece envelope keys are present on the piece copy only.
+        expect(['new', 'merge']).toContain(parsed.kind);
       }
       // The tool message must carry tool_name + tool_call_id for orphan fixing.
-      const toolMsg = lastPerCall.find((m) => m.role === 'tool');
+      const toolMsg = pieces.find((m) => m.role === 'tool');
       expect(toolMsg?.tool_name).toBe('bash');
       expect(toolMsg?.tool_call_id).toBe('p1');
+      // Genuine user inputs carry user_origin; notes and tool results do not.
+      const userPieces = pieces.filter((m) => m.role === 'user' && (m as { user_origin?: true }).user_origin === true);
+      expect(userPieces.length).toBeGreaterThanOrEqual(1);
+      const notePiece = pieces.find((m) => m.role === 'user' && typeof m.content === 'string' && m.content.startsWith('[MAIL]'));
+      expect((notePiece as unknown as { user_origin?: true }).user_origin).toBeUndefined();
+      // Every piece in this normal flow is a message piece: role present,
+      // and NO stray control pseudo-kind leaks into message records
+      // (boundary pieces are only journaled at truncation sites — none here).
+      for (const m of pieces) {
+        expect((m as unknown as { event?: string }).event).toBeUndefined();
+        expect(['new', 'merge', 'clear', 'compact', 'recap', 'rollback']).toContain((m as unknown as { kind?: string }).kind);
+      }
+      // getTriologue reflects the live store at call time.
+      const lastCall = onMessage.mock.calls[onMessage.mock.calls.length - 1] as unknown[];
+      const getTriologue = lastCall[1] as () => Message[];
+      expect(getTriologue().length).toBe(t.getMessagesRaw().length);
     });
 
     it('assistant tool_calls survive a JSONL round-trip shape check', () => {
@@ -396,13 +428,13 @@ describe('TriologueLite', () => {
       t.user('go');
       t.agent('doing', tcs);
       const assistantMsg = onMessage.mock.calls.map(
-        (args: unknown[]) => (args[0] as Message[]).slice(-1)[0],
+        (args: unknown[]) => args[0] as Message,
       ).find((m) => m.role === 'assistant');
       const roundTrip = JSON.parse(JSON.stringify(assistantMsg)) as Message;
       expect(roundTrip.tool_calls).toHaveLength(1);
-      // Message.tool_calls is typed via Ollama's ToolCall (no `id`); our local
-      // ToolCall extension adds it, so cast the element to read the id.
-      const tc = roundTrip.tool_calls![0] as ToolCall;
+      // Message.tool_calls is typed via Ollama's ToolCall (no `id`); the
+      // runtime data does carry the id, so widen through unknown to read it.
+      const tc = (roundTrip.tool_calls![0] as unknown as ToolCall);
       expect(tc.id).toBe('q9');
       expect(tc.function.name).toBe('edit_file');
     });

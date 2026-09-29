@@ -121,6 +121,40 @@ Instead of `mail/` + `sessions/` + `transcripts/` folders, now we only have `ses
 - Path from session init — no direct change, but path format changes
 - `onMessage` callback appends to triologue path
 
+  **UPDATE (2026-09-29, onMessage piece fix):** `onMessage` is no longer a
+  full-snapshot appendix. Its contract is now
+  `(msg: Message, getTriologue: () => Message[]) => void`: the triologue
+  facade invokes it ONCE per producer call with a single "piece", and the
+  writer (`triologue/transcript.ts` `JsonlTranscriptWriter`) appends exactly
+  ONE flat JSONL line per APPENDED message:
+
+      { ...messageFields, kind: 'new'|'merge', user_origin?: true,
+        timestamp: number }
+      { kind: 'control', event: 'clear'|'compact'|'recap'|'rollback',
+        timestamp: number }
+
+  - `kind:'new'`  — an appended livelog message (tool result, assistant,
+    TP-bridge, hook note, post-wrap-up assistant, post-compact summary
+    round-trip).
+  - `kind:'merge'` — the user()/note() COMBINE branches: the host message in
+    the livelog is mutated in place (content + `\n` + fragment kept in
+    memory for the LLM view), but the transcript records ONLY the fragment —
+    the old writer re-emitted the MUTATED FULL message (the `{A}` + `{AB}`
+    backlog-duplication regression), which this design removes.
+  - `kind:'control'` — a journaled truncation/boundary marker with NO
+    message fields (role is absent). `event:'clear'` resets the read-time
+    collated view (restoration honors the /clear); `compact`/`recap`/
+    `rollback` are boundary markers that do NOT cut the durable collated
+    history (it stays the documented superset of the live LLM context).
+  - `user_origin: true` — present only on genuine user-input pieces.
+  - Read-time collation folds merge pieces into the NEAREST PRECEDING user
+    host (positional lastUserIndex cursor — no turn identifiers); the folded
+    entry keeps the HOST's timestamp.
+  - The read side (`restoration.ts` + `serve-history.ts`) replays the appends
+    through `triologue/transcript.ts` (`readTranscript` + `collateMessages` /
+    `collateEntries`); legacy lines without `kind` replay as plain 'new'
+    records (zero migration, already-baked {A,AB} duplicates preserved).
+
 ### 10. Lead Auto-Compact (`src/loop/triologue.ts`)
 - `runAutoCompact()` — writes transcript to `sessions/{sessionId}/transcript-lead-{ts}.jsonl`
 - Previously wrote to `transcripts/transcript_{timestamp}.jsonl`

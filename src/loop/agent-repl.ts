@@ -12,6 +12,7 @@ import { getSessionId, markHeadlessSession } from '../session/index.js';
 import { slashRegistry } from '../slashes/index.js';
 import { getTokenThreshold, shouldServe, getServePort, getServeHost, shouldAuto, shouldDaemon, getAutoflyThresholdArg, getDiscoveryDir, isPlainOutput } from '../config.js';
 import { Triologue } from './triologue.js';
+import { JsonlTranscriptWriter, asAppendablePiece } from './triologue/transcript.js';
 import { agentIO } from './agent-io.js';
 import { autoState } from './auto-state.js';
 import { runHealthCheck, displayStartupBanner } from './startup.js';
@@ -164,31 +165,40 @@ export async function main(): Promise<void> {
 
   const requestEmbeddingTracker = new RequestEmbeddingTracker();
 
+  // The JSONL transcript writer (shared with TriologueLite / teammate
+  // workers): ONE fs.appendFileSync per appended message, never throws
+  // (errors surface via the onError callback below so disk-full /
+  // permission / invalid-path issues are observable, not silent).
+  // Declared BEFORE the Triologue ctor so the onMessage closure below
+  // references an initialized binding (declaration-order safety, and
+  // mirrors teammate-worker.ts where the writer precedes the ctor too).
+  const transcriptWriter = new JsonlTranscriptWriter(triologuePath, (writeErr) => {
+    // Don't crash on transcript write failure, but make it observable
+    // so disk-full / permission / invalid-path issues are not silently
+    // lost — without this, every subsequent message is dropped from the
+    // durable transcript with zero diagnostic.
+    agentIO.verbose('triologue', `Transcript write failed: ${writeErr instanceof Error ? writeErr.message : String(writeErr)}`);
+    loopEvents.emit('triologue_event', {
+      kind: 'transcript_write_error',
+      detail: writeErr instanceof Error ? writeErr.message : String(writeErr),
+    });
+  });
+
   const triologue = new Triologue({
     tokenThreshold,
     getWikiDomains: async () => await ctx.wiki.listDomains(),
     getDuplicationReport: () => requestEmbeddingTracker.getDuplicationReport(),
-    onMessage: (messages) => {
-      const lastMsg = messages[messages.length - 1];
-      try {
-        // Attach a timestamp so readHistory() can merge triologue entries
-        // with user-log entries chronologically. The timestamp is a
-        // display-only field; readTriologue() (restoration.ts) strips it
-        // when loading messages back into Message objects so it never
-        // leaks into LLM summarization (minifyMessages).
-        const entry = { ...lastMsg, timestamp: Date.now() };
-        fs.appendFileSync(triologuePath, `${JSON.stringify(entry)}\n`, 'utf-8');
-      } catch (writeErr) {
-        // Don't crash on transcript write failure, but make it observable
-        // so disk-full / permission / invalid-path issues are not silently
-        // lost — without this, every subsequent message is dropped from the
-        // durable transcript with zero diagnostic.
-        agentIO.verbose('triologue', `Transcript write failed: ${writeErr instanceof Error ? writeErr.message : String(writeErr)}`);
-        loopEvents.emit('triologue_event', {
-          kind: 'transcript_write_error',
-          detail: writeErr instanceof Error ? writeErr.message : String(writeErr),
-        });
-      }
+    onMessage: (msg, _getTriologue) => {
+      // Per-piece contract (the {A, AB} fix): append EXACTLY ONE flat line
+      // per appended message via the shared JsonlTranscriptWriter — the
+      // piece arrives pre-stamped with kind/user_origin; the writer
+      // adds the timestamp at write time. No seek, no truncate, no read,
+      // no snapshot of the grown prefix (a merely-mutating call emits a
+      // 'merge' piece instead — one line, not a full resend).
+      // This lead-side writer never needs history (one piece at a time),
+      // so getTriologue stays unused here; the parameter is kept to match
+      // the contract (prefix-underscored).
+      transcriptWriter.append(asAppendablePiece(msg));
     },
   });
 
