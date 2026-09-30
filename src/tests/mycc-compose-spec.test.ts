@@ -278,6 +278,105 @@ describe('validateSpec: rejects malformed specs', () => {
   });
 });
 
+describe('validateSpec: peers[].remotes validation', () => {
+  const rejects = (spec: unknown, re: RegExp) => {
+    expect(() => validateSpec(spec)).toThrow(re);
+  };
+
+  it('normalizes a valid remotes list onto the returned peer', () => {
+    const out = validateSpec(
+      baseSpec({
+        peers: [mkPeer({ remotes: ['http://192.168.1.20:3191', 'https://peer.example:443'] })],
+      }),
+    );
+    expect(out.peers[0].remotes).toEqual(['http://192.168.1.20:3191', 'https://peer.example:443']);
+  });
+
+  it('treats absent / null / empty remotes as "no remotes" (undefined)', () => {
+    expect(validateSpec(baseSpec({ peers: [mkPeer({})] })).peers[0].remotes).toBeUndefined();
+    expect(validateSpec(baseSpec({ peers: [mkPeer({ remotes: null })] })).peers[0].remotes).toBeUndefined();
+    expect(validateSpec(baseSpec({ peers: [mkPeer({ remotes: [] })] })).peers[0].remotes).toBeUndefined();
+  });
+
+  it('rejects a non-array remotes', () => {
+    rejects(baseSpec({ peers: [mkPeer({ remotes: 'http://x:1' })] }), /remotes must be an array of URL strings/);
+    rejects(baseSpec({ peers: [mkPeer({ remotes: 42 })] }), /remotes must be an array of URL strings/);
+  });
+
+  it('rejects a non-string / empty entry', () => {
+    rejects(baseSpec({ peers: [mkPeer({ remotes: [123] })] }), /remotes\[0\] must be a non-empty URL string/);
+    rejects(baseSpec({ peers: [mkPeer({ remotes: ['  '] })] }), /remotes\[0\] must be a non-empty URL string/);
+  });
+
+  it('rejects a malformed URL', () => {
+    rejects(baseSpec({ peers: [mkPeer({ remotes: ['not a url'] })] }), /is not a valid URL/);
+  });
+
+  it('rejects a non-http(s) scheme', () => {
+    rejects(baseSpec({ peers: [mkPeer({ remotes: ['ftp://host:21'] })] }), /must use http or https/);
+    rejects(baseSpec({ peers: [mkPeer({ remotes: ['ws://host:3191'] })] }), /must use http or https/);
+  });
+
+  it('rejects an empty host', () => {
+    rejects(baseSpec({ peers: [mkPeer({ remotes: ['http:///path'] })] }), /must have a non-empty host/);
+  });
+
+  it('rejects a duplicate URL within one peer (case/slash-insensitive)', () => {
+    rejects(
+      baseSpec({ peers: [mkPeer({ remotes: ['http://H:3191', 'http://h:3191/'] })] }),
+      /duplicate URL/,
+    );
+  });
+
+  it('rejects a self-dial: loopback host + port == this peer\'s --serve port', () => {
+    rejects(
+      baseSpec({ peers: [mkPeer({ args: '--auto --serve 3191', remotes: ['http://127.0.0.1:3191'] })] }),
+      /self-dial/,
+    );
+    rejects(
+      baseSpec({ peers: [mkPeer({ args: '--auto --serve 3191', remotes: ['http://localhost:3191'] })] }),
+      /self-dial/,
+    );
+    // Same host, DIFFERENT port is NOT a self-dial.
+    expect(() =>
+      validateSpec(baseSpec({ peers: [mkPeer({ args: '--auto --serve 3191', remotes: ['http://127.0.0.1:4000'] })] })),
+    ).not.toThrow();
+    // Non-loopback host is NOT caught here (connectPeer's same-store filter is the backstop).
+    expect(() =>
+      validateSpec(baseSpec({ peers: [mkPeer({ args: '--auto --serve 3191', remotes: ['http://192.168.1.20:3191'] })] })),
+    ).not.toThrow();
+  });
+
+  it('rejects a mutual dial: the same URL declared by two different peers', () => {
+    const peers = [
+      mkPeer({ name: 'a', args: '--auto', remotes: ['http://192.168.1.20:3191'] }),
+      mkPeer({ name: 'b', args: '--auto', remotes: ['http://192.168.1.20:3191'] }),
+    ];
+    rejects(baseSpec({ peers }), /mutual dial rejected/);
+    // The same URL with different case/slash still counts as the same endpoint.
+    rejects(
+      baseSpec({
+        peers: [
+          mkPeer({ name: 'a', args: '--auto', remotes: ['http://H:3191'] }),
+          mkPeer({ name: 'b', args: '--auto', remotes: ['http://h:3191/'] }),
+        ],
+      }),
+      /mutual dial rejected/,
+    );
+    // DIFFERENT URLs across peers is fine (two distinct outbound edges).
+    expect(() =>
+      validateSpec(
+        baseSpec({
+          peers: [
+            mkPeer({ name: 'a', args: '--auto', remotes: ['http://one:3191'] }),
+            mkPeer({ name: 'b', args: '--auto', remotes: ['http://two:3191'] }),
+          ],
+        }),
+      ),
+    ).not.toThrow();
+  });
+});
+
 describe('loadSpec: I/O + JSON error paths', () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mycc-compose-spec-'));
 

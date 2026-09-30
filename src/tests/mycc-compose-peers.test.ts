@@ -313,6 +313,33 @@ describe('repairIdentity: merge-retry preserves concurrent registrations (A-M2/D
     expect(peers.repairIdentity([peer('stopped', SID_C)])).toBe(0);
     expect(JSON.parse(fs.readFileSync(identityFile, 'utf-8'))[SID_C]).toBeUndefined();
   });
+
+  it('is a NO-OP for a peer whose sid ALREADY has a live identity entry (BUG #2)', async () => {
+    // Regression: repairIdentity used to enqueue every fresh+live peer and
+    // then unconditionally overwrite its entry — so every `up` re-run on
+    // already-registered peers clobbered startedAt/args/mailbox and printed
+    // "reconstituted N" (non-idempotent). A present entry must never be touched.
+    const { peers } = await loadModules();
+    const owner = startLiveProcess();
+    const originalStartedAt = 1790760216535;
+    const originalArgs = '--auto --skip-healthcheck --debug-wire';
+    const originalMailbox = 'C:/Proj/mycc/.mycc/sessions/original/unread-lead.jsonl';
+    try {
+      writeHeartbeat(SID_B, owner.pid); // fresh beat + LIVE pid → qualifies
+      // Pre-existing entry with distinctive values repairIdentity must NOT touch.
+      writeIdentity(SID_B, { startedAt: originalStartedAt, args: originalArgs, mailbox: originalMailbox });
+
+      const repaired = peers.repairIdentity([peer('B', SID_B)]);
+      expect(repaired).toBe(0); // nothing reconstituted — entry already present
+
+      const entry = JSON.parse(fs.readFileSync(identityFile, 'utf-8'))[SID_B];
+      expect(entry.startedAt).toBe(originalStartedAt); // NOT overwritten
+      expect(entry.args).toBe(originalArgs);           // NOT overwritten
+      expect(entry.mailbox).toBe(originalMailbox);     // NOT overwritten
+    } finally {
+      owner.kill();
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------

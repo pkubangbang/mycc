@@ -6,7 +6,10 @@
  */
 
 import { randomUUID } from 'crypto';
-import { validateSpec, loadSpec, updateSpecFile } from './spec.js';
+import { execFileSync } from 'child_process';
+import { fileURLToPath } from 'url';
+import path from 'path';
+import { validateSpec, loadSpec, updateSpecFile, getRemotes } from './spec.js';
 import { materializeChannels } from './channels.js';
 import { isPeerRunning } from './discovery.js';
 import {
@@ -21,7 +24,84 @@ import {
   LAUNCH_POLL_MS,
 } from './peers.js';
 import { out, warn } from './cli.js';
-import type { NormalizedPeer } from './spec.js';
+import type { NormalizedPeer, NormalizedSpec } from './spec.js';
+
+/**
+ * Resolve the absolute path to the mycc-mail CLI script, anchored on THIS
+ * module's location (scripts/mycc-compose/lib/cmd-up.ts →
+ * scripts/mycc-mail/mycc-mail.js) so it works regardless of the caller's cwd.
+ */
+const MYCC_MAIL_SCRIPT = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  '..',
+  '..',
+  'mycc-mail',
+  'mycc-mail.js',
+);
+
+/**
+ * Compose the imperative, no-question instruction a peer receives carrying its
+ * remote URL list. The peer's lead owns the live dial set at runtime: it calls
+ * `peer_connect(url)` for each URL, then `peer_list` + `mail_to` to talk to the
+ * discovered remote sid. The instruction forbids ending the turn with a
+ * question (a stalled --auto peer does not drain its mailbox) and tells the
+ * peer to stop once all dials are attempted — the stall-immune shape per
+ * docs/remotes-design-decision.md.
+ */
+function remotesMailContent(peer: NormalizedPeer): string {
+  const urls = getRemotes(peer).map((u) => `  - ${u}`).join('\n');
+  return (
+    `[Remotes] This peer should dial the following remote mycc instance(s) ` +
+    `over the WebSocket peer-wire:\n\n${urls}\n\n` +
+    `For each URL: call peer_connect(url). Then run peer_list to discover each ` +
+    `remote's session id, and mail_to(\"<discoveredSid>/lead\") to talk to it.\n` +
+    `Do NOT ask the user anything; do NOT end your turn with a question. When ` +
+    `all dials are attempted, report the connected peers and stop.`
+  );
+}
+
+/**
+ * STEP 3 — deliver each live peer's declared `remotes` to its own mailbox via
+ * mycc-mail (spawned with --require-online so the append is gated on the peer
+ * being PROVABLY live: fresh heartbeat + recorded pid alive). The peer is
+ * freshly up at this point so the gate passes; if a peer is NOT live (launch
+ * failed or slow), mycc-mail exits non-zero and we print a fail-loud message
+ * and CONTINUE with the other peers — never abort the whole `up` over one
+ * peer's undelivered remotes. Returns the per-peer delivery rows for reporting.
+ */
+function deliverRemotes(spec: NormalizedSpec): Array<{ name: string; ok: boolean; note: string }> {
+  const rows: Array<{ name: string; ok: boolean; note: string }> = [];
+  for (const peer of spec.peers) {
+    const peerRemotes = getRemotes(peer);
+    if (peerRemotes.length === 0) continue;
+    const sid = peer.sessionId;
+    if (!sid) {
+      rows.push({ name: peer.name, ok: false, note: `remotes for ${peer.name} not delivered (peer has no session id)` });
+      continue;
+    }
+    if (!isPeerRunning(peer)) {
+      rows.push({ name: peer.name, ok: false, note: `remotes for ${peer.name} not delivered (peer not live)` });
+      continue;
+    }
+    try {
+      // Invoke the mailer as a CHILD PROCESS (the compose CLI is a node script;
+      // importing the .js would run its top-level `main()` and exit). Capture
+      // the exit code: 0 = delivered, non-zero = liveness gate refused.
+      execFileSync(
+        process.execPath,
+        [MYCC_MAIL_SCRIPT, sid, '--title', 'remotes', '--content', remotesMailContent(peer), '--from', 'mycc-compose', '--require-online'],
+        { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true },
+      );
+      rows.push({ name: peer.name, ok: true, note: `remotes delivered (${peerRemotes.length} URL${peerRemotes.length === 1 ? '' : 's'})` });
+    } catch (err) {
+      // Non-zero exit = liveness gate refused (peer not live) OR a delivery
+      // error. Either way, fail loud per peer and continue.
+      const msg = err instanceof Error ? err.message : String(err);
+      rows.push({ name: peer.name, ok: false, note: `remotes for ${peer.name} not delivered (peer not live): ${msg}` });
+    }
+  }
+  return rows;
+}
 
 export async function cmdUp(file: string, { allowStop }: { allowStop: boolean }): Promise<void> {
   const spec = validateSpec(loadSpec(file));
@@ -99,6 +179,21 @@ export async function cmdUp(file: string, { allowStop }: { allowStop: boolean })
   }
   const repaired = repairIdentity(spec.peers);
 
+  // §5 step 3b — deliver each live peer's declared remotes to its mailbox via
+  // mycc-mail (gated by --require-online). Runs AFTER liveness-wait +
+  // repairIdentity so freshly-up peers pass the gate; a not-live peer is
+  // reported fail-loud and skipped (never aborts the whole up).
+  //
+  // GATED to `up` (allowStop:true) only — NOT `sync`. Reason: `sync` is the
+  // cron reconciliation path (called with allowStop:false); re-appending the
+  // remotes mail on every 5-min tick is wasteful and would flood the peer's
+  // mailbox with duplicate [MAIL] notes. `up` is the initial bring-up, the one
+  // place remotes need to be handed to a freshly-started peer. A peer that was
+  // skipped (already live + matching) on a later `up` re-run will simply get a
+  // second copy — harmless (the lead dedupes by processing the first), and the
+  // spec author can change remotes and re-run `up` to push the new list.
+  const remoteRows = allowStop ? deliverRemotes(spec) : [];
+
   // §5 step 4 — materialize channels.
   const channelResults = materializeChannels(spec);
 
@@ -109,6 +204,9 @@ export async function cmdUp(file: string, { allowStop }: { allowStop: boolean })
     if (!r.ok) out(`  - ${r.name}: LAUNCH FAILED — ${r.error}`);
   }
   if (repaired > 0) out(`  - identity repair pass: reconstituted ${repaired} entr${repaired === 1 ? 'y' : 'ies'}`);
+  for (const r of remoteRows) {
+    out(`  - ${r.name}: ${r.note}`);
+  }
   for (const c of channelResults) {
     out(`  - channel ${c.label}: ${c.ok ? 'written (pair)' : `SKIPPED (${c.reason})`}`);
   }

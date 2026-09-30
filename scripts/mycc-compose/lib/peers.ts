@@ -1,19 +1,19 @@
 /**
  * peers.ts — peer launch / stop / match / repair (§5 steps 1–3, §6.2, §6.4).
  *
- * The launch path is deliberately SHELL-FREE: we resolve mycc's bin entry and
- * spawn `node <bin/mycc.js> …` with {detached:true, stdio:'ignore'}. Spawning
- * the npm shim with shell:true on Windows runs `title %COMSPEC%` attached to
- * the caller's console, which negates detach and grabs the foreground (§ pitfall).
+ * The launch path is SHELL-FREE (never the npm shim with shell:true — its
+ * `title %COMSPEC%` foregrounds the child on Windows). On Windows the peer is
+ * launched via bin/mycc-daemon.exe (hidden-console wrapper, see the spawn site);
+ * on Unix it is spawned detached as a process-group leader.
  */
 
 import fs from 'fs';
 import path from 'path';
-import os from 'os';
 import { fileURLToPath } from 'url';
 import { spawn, execFileSync } from 'child_process';
 
 import { formatLaunchArgs, formatLaunchArgsForSpawn, argsMatch, LAUNCHER_FLAGS } from '../../../src/utils/arg-canonical.js';
+import { getProjectRoot, getTsxLoaderPath } from '../../../src/utils/tsx-run.js';
 import {
   readIdentityMap,
   writeIdentityMap,
@@ -350,8 +350,49 @@ function latestBeatMs(sessionId: string): number {
 export type LaunchResult = 'started';
 
 /**
- * Launch one peer DETACHED: `node <bin/mycc.js> --session-id <sid> <args…>`
- * with cwd = workdir, stdio ignored, windowsHide, and its own process group.
+ * Windows-only: spawn the peer via bin/mycc-daemon.exe so CreateProcessW
+ * gives the Lead a HIDDEN console (no popup) that survives the launcher.
+ */
+function launchPeerWindowsWrapper(
+  peer: Peer,
+  finalArgv: string[],
+): { proc: import('child_process').ChildProcess; leadPid: Promise<number | null> } {
+  const PROJECT_ROOT = getProjectRoot();
+  const wrapperPath = path.join(PROJECT_ROOT, 'bin', 'mycc-daemon.exe');
+  const loaderPath = getTsxLoaderPath();
+  const scriptPath = path.join(PROJECT_ROOT, 'src', 'index.ts');
+  const proc = spawn(wrapperPath, [process.execPath, loaderPath, scriptPath, ...finalArgv], {
+    cwd: peer.workdir as string,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    env: { ...process.env, MYCC_ROOT: PROJECT_ROOT },
+    detached: true, // safe on the wrapper (console app that exits instantly)
+    shell: false,
+    windowsHide: true,
+  });
+  // Buffer the wrapper's stdout to capture the Lead's real PID (printed as a
+  // bare integer, then the wrapper exits 0). Mirrors resolveWrapperLeadPid.
+  const leadPid = new Promise<number | null>((resolvePid) => {
+    let out = '';
+    let pidSettled = false;
+    const finish = (v: number | null): void => { if (!pidSettled) { pidSettled = true; resolvePid(v); } };
+    proc.stdout?.on('data', (chunk: Buffer) => { out += chunk.toString(); });
+    proc.on('exit', () => {
+      const pid = parseInt(out.trim(), 10);
+      finish(Number.isNaN(pid) ? null : pid);
+    });
+    proc.on('error', () => finish(null));
+  });
+  return { proc, leadPid };
+}
+
+/**
+ * Launch one peer to outlive the launcher: `node <bin/mycc.js> --session-id <sid> <args…>`
+ * with cwd = workdir, stdio ignored, windowsHide, and proc.unref() so the
+ * launcher can exit without tearing the peer down. (NO `detached:true` on
+ * Windows: DETACHED_PROCESS forces a console for a console-subsystem process
+ * and Windows ignores CREATE_NO_WINDOW when it is set, so `detached:true` +
+ * `windowsHide:true` cannot suppress the blank window — the window is created
+ * by `detached` itself. unref() + stdio:'ignore' is enough for survival.)
  * Resolves once the peer is live — i.e. it has REGISTERED, BEATEN (a beat
  * newer than any recorded before the spawn), and its recorded pid is alive —
  * or rejects on timeout / early child exit / shell-less bin resolution failure.
@@ -373,14 +414,41 @@ export function launchPeer(peer: Peer): Promise<LaunchResult> {
     const sid = peer.sessionId;
     const argv = peerArgv(peer);
     const finalArgv = ['--session-id', sid, ...argv];
-    const bin = resolveMyccBin();
 
-    if (!bin) {
+    // Decide the launch path. Windows + the Go wrapper binary present → the
+    // wrapper path (bin/mycc-daemon.exe), which gives the Lead a HIDDEN console
+    // that SURVIVES the launcher (CREATE_NEW_CONSOLE + SW_HIDE). This is the
+    // only spawn shape on Windows that satisfies BOTH no-popup AND survival —
+    // a direct `spawn(node, bin, …)` cannot (detached forces a visible console;
+    // no-detached dies with the launcher). See launchPeerWindowsWrapper + the
+    // Go wrapper source (src/native/daemon-wrapper/main.go).
+    //
+    // Fallback (Unix, or Windows without the wrapper binary) → the direct
+    // `node <bin/mycc.js>` spawn. Unix uses process groups (detached:true) for
+    // survival — no console concept, no popup. The Windows-wrapper-MISSING
+    // fallback cannot guarantee survival; it warns and proceeds.
+    const PROJECT_ROOT = getProjectRoot();
+    const wrapperPath = path.join(PROJECT_ROOT, 'bin', 'mycc-daemon.exe');
+    const useWrapper = process.platform === 'win32' && fs.existsSync(wrapperPath);
+    const bin = !useWrapper ? resolveMyccBin() : null;
+
+    if (!useWrapper && !bin) {
       reject(new Error(
         `cannot locate bin/mycc.js for "${peer.name}" — refusing to launch via a shell ` +
         '(set MYCC_ROOT or run from the mycc checkout).',
       ));
       return;
+    }
+    if (process.platform === 'win32' && !useWrapper) {
+      // Wrapper missing on Windows: survival past the launcher is imperfect
+      // (a non-detached console child dies with the launcher). Warn but
+      // proceed — the operator should build the wrapper (see
+      // src/native/daemon-wrapper) for correct behavior.
+      process.stderr.write(
+        `Warning: bin/mycc-daemon.exe not found — launching "${peer.name}" via a direct ` +
+        `node spawn, which may not survive the launcher on Windows. Build the Go wrapper ` +
+        `for correct no-popup + survival behavior.\n`,
+      );
     }
 
     // A live holder of this session id (the instance `stopPeer` just SIGTERMed,
@@ -413,20 +481,26 @@ export function launchPeer(peer: Peer): Promise<LaunchResult> {
       }
 
       try {
-        // Bind the spawn result to a const so the handler closures below
-        // capture a non-null ChildProcess (a `let` captured by closures is
-        // treated as potentially reassigned, so TS widens it back to null).
-        const proc = spawn(process.execPath, [bin, ...finalArgv], {
-          cwd: peer.workdir as string,
-          detached: true,
-          stdio: 'ignore',
-          shell: false,
-          windowsHide: true,
-        });
+        // Bind to a const so the handler closures capture a non-null ChildProcess.
+        // Windows -> mycc-daemon.exe (own hidden console: survives launch, no window).
+        const proc = useWrapper
+          ? launchPeerWindowsWrapper(peer, finalArgv).proc
+          : spawn(process.execPath, [bin as string, ...finalArgv], {
+              cwd: peer.workdir as string,
+              stdio: 'ignore',
+              shell: false,
+              windowsHide: true,
+              detached: process.platform !== 'win32', // Unix: process-group leader for survival
+            });
         proc.on('error', (err: Error) => done(reject, new Error(`spawn failed for "${peer.name}": ${err.message}`)));
-        proc.on('exit', (code: number | null, signal: NodeJS.Signals | null) => done(reject, new Error(
-          `peer "${peer.name}" exited before registering (code=${code ?? 'null'}${signal ? `, signal=${signal}` : ''}).`,
-        )));
+        // The wrapper is one-shot (prints the Lead PID, exits) — its 'exit' is
+        // NORMAL, not a launch failure, so only the direct-spawn branch wires
+        // exit→reject. The Lead's real liveness is polled via heartbeats.
+        if (!useWrapper) {
+          proc.on('exit', (code: number | null, signal: NodeJS.Signals | null) => done(reject, new Error(
+            `peer "${peer.name}" exited before registering (code=${code ?? 'null'}${signal ? `, signal=${signal}` : ''}).`,
+          )));
+        }
         proc.unref();
       } catch (err) {
         done(reject, new Error(`spawn failed for "${peer.name}": ${(err as Error).message}`));
@@ -473,8 +547,16 @@ export function launchPeer(peer: Peer): Promise<LaunchResult> {
  */
 export function repairIdentity(peers: Peer[]): number {
   const pending = new Map<string, IdentityEntry>(); // sessionId → entry to (re)insert
+  // Read the identity map ONCE up front so we only enqueue peers whose sid is
+  // GENUINELY ABSENT — repairIdentity's purpose is to backfill entries
+  // register() lost under concurrency, NOT to rewrite live entries. A present
+  // entry must NEVER be overwritten: re-running `up` on already-live,
+  // already-registered peers must be a no-op (else every `up` clobbers
+  // startedAt/args/mailbox and `up` is non-idempotent — BUG #2).
+  const presentMap = readIdentityMap();
   for (const peer of peers) {
     if (!peer.sessionId) continue;
+    if (peer.sessionId in presentMap) continue; // already registered → leave it alone
     const { heartbeats, pid } = readHeartbeatData(peer.sessionId);
     if (heartbeats.length === 0) continue;
     const fresh = Date.now() - heartbeats[heartbeats.length - 1] <= FRESHNESS_WINDOW_MS;
@@ -483,12 +565,17 @@ export function repairIdentity(peers: Peer[]): number {
     // faithfully) or a peer that already exited → do not resurrect it.
     if (typeof pid !== 'number' || !isPidAlive(pid)) continue;
 
-    // Reconstitute a minimal, correct entry. mailbox follows the lead
-    // convention under ~/.mycc-store/sessions/<sid>/unread-lead.jsonl.
+    // Reconstitute a minimal, correct entry. mailbox mirrors the lead's own
+    // convention (parent-context.ts: path.resolve(getSessionDir(sid),
+    // 'unread-lead.jsonl'), where getSessionDir joins MYCC_DIR='.mycc' against
+    // the process cwd = the peer's workdir): <workdir>/.mycc/sessions/<sid>/
+    // unread-lead.jsonl. It MUST be resolved against the peer's workdir, NOT
+    // os.homedir() — MailBox.sessionDir() polls the project-local path, so a
+    // user-store mailbox registered here would never be read (G3 root cause).
     pending.set(peer.sessionId, {
       sessionId: peer.sessionId,
       workDir: peer.workdir as string,
-      mailbox: path.join(os.homedir(), '.mycc-store', 'sessions', peer.sessionId, 'unread-lead.jsonl'),
+      mailbox: path.resolve(peer.workdir as string, '.mycc', 'sessions', peer.sessionId, 'unread-lead.jsonl'),
       startedAt: heartbeats[0],
       args: formatLaunchArgs(peer.parsedArgs ?? {}),
       pid,
@@ -513,8 +600,12 @@ export function repairIdentity(peers: Peer[]): number {
     for (const [sid, entry] of Object.entries(latest)) {
       if (!(sid in map)) map[sid] = entry;
     }
-    // Our own pending entries always win for their own session id.
-    for (const [sid, entry] of pending) map[sid] = entry;
+    // Our own pending entries only land for sids that were ABSENT at build
+    // time; guard the write anyway so a concurrent register() that inserted
+    // one of them in the gap is preserved, not clobbered ("insert if absent").
+    for (const [sid, entry] of pending) {
+      if (!(sid in map)) map[sid] = entry;
+    }
 
     writeIdentityMap(map);
 
