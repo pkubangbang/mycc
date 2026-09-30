@@ -126,7 +126,15 @@ async function waitFor(pred: () => boolean, timeoutMs = 3000, stepMs = 50): Prom
   return pred();
 }
 
-/** Write a fixture bin and point resolveMyccBin() at it. */
+/** Write a fixture bin and point resolveMyccBin() at it.
+ *
+ * MYCC_COMPOSE_BIN is also a FORCING override: when it is set, launchPeer takes
+ * the direct `node <bin>` branch even on Windows with the daemon wrapper
+ * present. Without that, the Windows wrapper branch (bin/mycc-daemon.exe wins
+ * over the bin) would ignore this fixture entirely and spawn a REAL Lead — so
+ * these tests could never exercise the spawn/exit/poll logic on Windows, and
+ * would burn the full 10s test timeout doing it. One setBin() call therefore
+ * installs the fixture AND pins the fixture-driven launch path. */
 function setBin(source: string): void {
   const bin = path.join(tempDir, `bin-${Math.random().toString(36).slice(2)}.js`);
   fs.writeFileSync(bin, source);
@@ -259,17 +267,25 @@ describe('launchPeer: requires a NEW beat from the spawned child (A-M1)', () => 
   it('resolves once the child actually beats', async () => {
     const { peers } = await loadModules();
     // Writes a NEW beat + its own pid a moment after spawn, mimicking a real
-    // mycc instance registering + beating.
+    // mycc instance registering + beating. The write is ASYNC (setTimeout 0):
+    // a synchronous write inside the child would land when `prevBeat` was
+    // already sampled, but an async one proves the poll's `latestBeatMs >`
+    // comparison — not a race — is what resolves 'started'.
     setBin(
       "const fs=require('fs'),p=require('path');" +
       "const d=process.env.MYCC_DISCOVERY_DIR;" +
+      'setTimeout(function(){' +
       `fs.writeFileSync(p.join(d,'heartbeat','${SID_A}.json'),JSON.stringify({heartbeats:[Date.now()],briefs:[],pid:process.pid}));` +
+      '},0);' +
       'setTimeout(function(){},600000);',
     );
     writeIdentity(SID_A); // registered; no heartbeat yet → not held
 
+    // Budget: one node boot (~100-300ms) + a poll tick (LAUNCH_POLL_MS=500).
+    // vitest's global testTimeout is 10s, which is ample; assert against a
+    // SHORTER deadline so a hang fails urgently instead of burning 10s.
     expect(await peers.launchPeer(peer('boots', SID_A))).toBe('started');
-  });
+  }, 5000);
 });
 
 // ---------------------------------------------------------------------------

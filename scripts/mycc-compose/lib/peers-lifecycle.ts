@@ -373,13 +373,22 @@ export function launchPeer(peer: Peer): Promise<LaunchResult> {
     // no-detached dies with the launcher). See launchPeerWindowsWrapper + the
     // Go wrapper source (src/native/daemon-wrapper/main.go).
     //
+    // EXPLICIT OVERRIDE: MYCC_COMPOSE_BIN forces the direct `node <bin>` branch
+    // on every platform. It exists for the test suite, which installs a fixture
+    // bin to drive the spawn/exit/poll paths deterministically — without the
+    // override the Windows wrapper branch wins and the fixture bin is never
+    // executed at all (the wrapper spawns a real Lead instead), so the
+    // fixture-driven tests could not run on Windows. It doubles as an
+    // operational escape hatch to bypass the wrapper.
+    //
     // Fallback (Unix, or Windows without the wrapper binary) → the direct
     // `node <bin/mycc.js>` spawn. Unix uses process groups (detached:true) for
     // survival — no console concept, no popup. The Windows-wrapper-MISSING
     // fallback cannot guarantee survival; it warns and proceeds.
     const PROJECT_ROOT = getProjectRoot();
     const wrapperPath = path.join(PROJECT_ROOT, 'bin', 'mycc-daemon.exe');
-    const useWrapper = process.platform === 'win32' && fs.existsSync(wrapperPath);
+    const forcedBin = typeof process.env.MYCC_COMPOSE_BIN === 'string' && process.env.MYCC_COMPOSE_BIN !== '';
+    const useWrapper = !forcedBin && process.platform === 'win32' && fs.existsSync(wrapperPath);
     const bin = !useWrapper ? resolveMyccBin() : null;
 
     if (!useWrapper && !bin) {
