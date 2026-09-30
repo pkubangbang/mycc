@@ -126,17 +126,15 @@ async function waitFor(pred: () => boolean, timeoutMs = 3000, stepMs = 50): Prom
   return pred();
 }
 
-/** Write a fixture bin and point the launcher at it instead of the real repo bin.
+/** Point the launcher's bin resolution at a FIXTURE bin instead of the real
+ * repo bin.
  *
- * Two things make the fixture win on every platform:
- *   - the fixture lives at <tempDir>/bin/mycc.js and MYCC_ROOT=<tempDir>, which
- *     resolveMyccBin() candidate #2 resolves to the fixture (its earlier
- *     candidates — notably the real repo bin — are bypassed because MYCC_ROOT
- *     is consulted before them for the fixture path), and
- *   - setting MYCC_ROOT also makes launchPeer take the direct `node <bin>`
- *     branch and SKIP the Windows daemon wrapper, which would otherwise boot
- *     the real checkout and spawn a REAL Lead.
- * The spawn/exit/poll logic therefore runs against a deterministic bin. */
+ * launchPeer spawns the bin {@link resolveMyccBin} resolves, with `detached:true`
+ * and one spawn shape on every platform (there is no wrapper binary and no env
+ * override). resolveMyccBin takes <MYCC_ROOT>/bin/mycc.js as a candidate, so
+ * writing the fixture there and setting MYCC_ROOT to the temp dir makes the
+ * fixture the bin that gets spawned. The spawn/exit/poll logic then runs against
+ * a deterministic script instead of a real Lead. */
 function setBin(source: string): void {
   const binDir = path.join(tempDir, 'bin');
   fs.mkdirSync(binDir, { recursive: true });

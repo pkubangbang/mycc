@@ -5,9 +5,10 @@
  * Everything that touches the OPERATING SYSTEM sits here: spawning the Lead,
  * reading a process command line, signalling a pid, and resolving the launcher
  * bin. The launch path is SHELL-FREE (never the npm shim with shell:true — its
- * `title %COMSPEC%` foregrounds the child on Windows). On Windows the peer is
- * launched via bin/mycc-daemon.exe (hidden-console wrapper); on Unix it is
- * spawned detached as a process-group leader.
+ * `title %COMSPEC%` foregrounds the child on Windows). The peer is spawned
+ * DETACHED (its own process group on Unix, its own console/process group on
+ * Windows) so it outlives the launcher, and with stdio ignored so it never
+ * blocks on the launcher's terminal.
  */
 
 import fs from 'fs';
@@ -16,7 +17,6 @@ import { fileURLToPath } from 'url';
 import { createRequire } from 'module';
 import { spawn, execFileSync } from 'child_process';
 
-import { getProjectRoot, getTsxLoaderPath } from '../../../src/utils/tsx-run.js';
 import { formatLaunchArgsForSpawn } from '../../../src/utils/arg-canonical.js';
 import {
   readHeartbeatData,
@@ -264,8 +264,13 @@ export function resolveMyccBin(): string | null {
   } catch {
     // import.meta.url unavailable (exotic loader) — fall through.
   }
+  // FRONT OF THE LINE after the module-relative bin: MYCC_ROOT names the tree
+  // THIS launcher was started from (bin/mycc.js exports it), so its bin is
+  // authoritative when it differs from the module-relative one (e.g. a linked
+  // checkout). Without this, an explicit MYCC_ROOT was only a fallback and the
+  // module-relative bin shadowed it.
   if (process.env.MYCC_ROOT) {
-    candidates.push(path.join(process.env.MYCC_ROOT, 'bin', 'mycc.js'));
+    candidates.splice(1, 0, path.join(process.env.MYCC_ROOT, 'bin', 'mycc.js'));
   }
   try {
     const require = createRequire(import.meta.url);
@@ -297,42 +302,20 @@ function latestBeatMs(sessionId: string): number {
 export type LaunchResult = 'started';
 
 /**
- * Windows-only: spawn the peer via bin/mycc-daemon.exe so CreateProcessW
- * gives the Lead a HIDDEN console (no popup) that survives the launcher.
+ * Launch one peer to outlive the launcher.
  *
- * The wrapper is one-shot: it starts the Lead, prints the Lead's pid on stdout
- * as a bare integer, and exits 0. That printed pid is NOT consumed here — the
- * historical `leadPid` promise that read it has been removed because the caller
- * discarded it (launchPeer returns only the ChildProcess) and the Lead's real
- * pid is independently recoverable from the heartbeat via
- * discovery.peerPid(sessionId). Removing it deletes a promise that could reject
- * unhandled and a stdout buffer nobody read. If a caller ever needs the
- * wrapper's printed pid, restore a `leadPid` field here (mirroring
- * resolveWrapperLeadPid) rather than re-deriving it by string-matching.
- */
-function launchPeerWindowsWrapper(peer: Peer, finalArgv: string[]): import('child_process').ChildProcess {
-  const PROJECT_ROOT = getProjectRoot();
-  const wrapperPath = path.join(PROJECT_ROOT, 'bin', 'mycc-daemon.exe');
-  const loaderPath = getTsxLoaderPath();
-  const scriptPath = path.join(PROJECT_ROOT, 'src', 'index.ts');
-  return spawn(wrapperPath, [process.execPath, loaderPath, scriptPath, ...finalArgv], {
-    cwd: peer.workdir as string,
-    stdio: ['ignore', 'pipe', 'pipe'],
-    env: { ...process.env, MYCC_ROOT: PROJECT_ROOT },
-    detached: true, // safe on the wrapper (console app that exits instantly)
-    shell: false,
-    windowsHide: true,
-  });
-}
-
-/**
- * Launch one peer to outlive the launcher: `node <bin/mycc.js> --session-id <sid> <args…>`
- * with cwd = workdir, stdio ignored, windowsHide, and proc.unref() so the
- * launcher can exit without tearing the peer down. (NO `detached:true` on
- * Windows: DETACHED_PROCESS forces a console for a console-subsystem process
- * and Windows ignores CREATE_NO_WINDOW when it is set, so `detached:true` +
- * `windowsHide:true` cannot suppress the blank window — the window is created
- * by `detached` itself. unref() + stdio:'ignore' is enough for survival.)
+ * ALWAYS DETACHED, one spawn shape on every platform:
+ *   `node <bin/mycc.js> --session-id <sid> <args…>` with cwd = workdir,
+ *   stdio ignored, detached:true, windowsHide, then unref().
+ *
+ * detached:true gives the peer its own process group (Unix) / its own process
+ * group + console (Windows), so it survives the launcher's exit — on Windows a
+ * child sharing the launcher's console group would receive CTRL_CLOSE_EVENT
+ * and die. There is deliberately NO wrapper binary and NO per-launch or env
+ * override: whether a peer self-daemonizes is decided by its OWN argv
+ * (`--daemon` in the spec), not by the spawn shape, so one stray variable
+ * cannot put a peer on a different spawn shape than its siblings.
+ *
  * Resolves once the peer is live — i.e. it has REGISTERED, BEATEN (a beat
  * newer than any recorded before the spawn), and its recorded pid is alive —
  * or rejects on timeout / early child exit / shell-less bin resolution failure.
@@ -355,54 +338,13 @@ export function launchPeer(peer: Peer): Promise<LaunchResult> {
     const argv = peerArgv(peer);
     const finalArgv = ['--session-id', sid, ...argv];
 
-    // Decide the launch path. Windows + the Go wrapper binary present → the
-    // wrapper path (bin/mycc-daemon.exe), which gives the Lead a HIDDEN console
-    // that SURVIVES the launcher (CREATE_NEW_CONSOLE + SW_HIDE). This is the
-    // only spawn shape on Windows that satisfies BOTH no-popup AND survival —
-    // a direct `spawn(node, bin, …)` cannot (detached forces a visible console;
-    // no-detached dies with the launcher). See launchPeerWindowsWrapper + the
-    // Go wrapper source (src/native/daemon-wrapper/main.go).
-    //
-    // The choice is made on the WHOLE FLEET's platform, never per-launch: there
-    // is deliberately no per-launch env override, so a stray variable cannot
-    // silently put one peer on a different spawn shape than its siblings.
-    //
-    // EXCEPTION — an explicit MYCC_ROOT: the wrapper boots the checkout at
-    // getProjectRoot() (and its own <root>/bin/mycc.js) and short-circuits
-    // resolveMyccBin() entirely, so it cannot honor a MYCC_ROOT that names a
-    // DIFFERENT tree. When MYCC_ROOT is set we therefore take the direct
-    // `node <bin>` branch and spawn the bin resolveMyccBin() resolves from that
-    // root. The test suite relies on exactly this to point launchPeer at a
-    // fixture bin instead of the real repo bin; the operational sim never sets
-    // MYCC_ROOT, so it keeps the no-popup wrapper.
-    //
-    // Fallback (Unix, or Windows without the wrapper binary) → the direct
-    // `node <bin/mycc.js>` spawn. Unix uses process groups (detached:true) for
-    // survival — no console concept, no popup. The Windows-wrapper-MISSING
-    // fallback cannot guarantee survival; it warns and proceeds.
-    const PROJECT_ROOT = getProjectRoot();
-    const wrapperPath = path.join(PROJECT_ROOT, 'bin', 'mycc-daemon.exe');
-    const rootOverride = typeof process.env.MYCC_ROOT === 'string' && process.env.MYCC_ROOT.length > 0;
-    const useWrapper = !rootOverride && process.platform === 'win32' && fs.existsSync(wrapperPath);
-    const bin = useWrapper ? null : resolveMyccBin();
-
-    if (!useWrapper && !bin) {
+    const bin = resolveMyccBin();
+    if (!bin) {
       reject(new Error(
         `cannot locate bin/mycc.js for "${peer.name}" — refusing to launch via a shell ` +
-        '(set MYCC_ROOT or run from the mycc checkout).',
+        '(run from the mycc checkout, or set MYCC_ROOT to one).',
       ));
       return;
-    }
-    if (process.platform === 'win32' && !useWrapper) {
-      // Wrapper missing on Windows: survival past the launcher is imperfect
-      // (a non-detached console child dies with the launcher). Warn but
-      // proceed — the operator should build the wrapper (see
-      // src/native/daemon-wrapper) for correct behavior.
-      process.stderr.write(
-        `Warning: bin/mycc-daemon.exe not found — launching "${peer.name}" via a direct ` +
-        `node spawn, which may not survive the launcher on Windows. Build the Go wrapper ` +
-        `for correct no-popup + survival behavior.\n`,
-      );
     }
 
     // A live holder of this session id (the instance `stopPeer` just SIGTERMed,
@@ -435,26 +377,21 @@ export function launchPeer(peer: Peer): Promise<LaunchResult> {
       }
 
       try {
-        // Bind to a const so the handler closures capture a non-null ChildProcess.
-        // Windows -> mycc-daemon.exe (own hidden console: survives launch, no window).
-        const proc = useWrapper
-          ? launchPeerWindowsWrapper(peer, finalArgv)
-          : spawn(process.execPath, [bin as string, ...finalArgv], {
-              cwd: peer.workdir as string,
-              stdio: 'ignore',
-              shell: false,
-              windowsHide: true,
-              detached: process.platform !== 'win32', // Unix: process-group leader for survival
-            });
+        // ONE spawn shape: detached `node <bin>`, stdio ignored, unref'd. The
+        // peer's own argv decides whether it self-daemonizes.
+        const proc = spawn(process.execPath, [bin, ...finalArgv], {
+          cwd: peer.workdir as string,
+          stdio: 'ignore',
+          shell: false,
+          windowsHide: true,
+          detached: true, // own process group / console → survives the launcher
+        });
         proc.on('error', (err: Error) => done(reject, new Error(`spawn failed for "${peer.name}": ${err.message}`)));
-        // The wrapper is one-shot (prints the Lead PID, exits) — its 'exit' is
-        // NORMAL, not a launch failure, so only the direct-spawn branch wires
-        // exit→reject. The Lead's real liveness is polled via heartbeats.
-        if (!useWrapper) {
-          proc.on('exit', (code: number | null, signal: NodeJS.Signals | null) => done(reject, new Error(
-            `peer "${peer.name}" exited before registering (code=${code ?? 'null'}${signal ? `, signal=${signal}` : ''}).`,
-          )));
-        }
+        // The peer's own exit before it registers is a launch failure, reported
+        // with its exit code rather than surfacing as a 30s timeout.
+        proc.on('exit', (code: number | null, signal: NodeJS.Signals | null) => done(reject, new Error(
+          `peer "${peer.name}" exited before registering (code=${code ?? 'null'}${signal ? `, signal=${signal}` : ''}).`,
+        )));
         proc.unref();
       } catch (err) {
         done(reject, new Error(`spawn failed for "${peer.name}": ${(err as Error).message}`));
