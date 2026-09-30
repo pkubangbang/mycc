@@ -18,10 +18,10 @@ export default tseslint.config(
   },
   {
     // Typed linting needs a TS program. Scope it to TypeScript sources: the
-    // project deliberately also ships plain-ESM `.js` modules under src/
-    // (e.g. src/utils-esm/arg-canonical.js, loadable by both tsx and the
-    // zero-dependency bins), and those are NOT part of tsconfig.json's
-    // program (allowJs is false). Without this scope the parser errors with
+    // project's `src/` modules are `.ts` (consumed by tsx/TS), and only the
+    // `scripts/` bins (e.g. `scripts/mycc-compose/mycc-compose.js`) ship plain
+    // `.js` entry shims — those are NOT part of tsconfig.json's program
+    // (allowJs is false). Without this scope the parser errors with
     // "The file was not found in any of the provided project(s)".
     files: ['**/*.ts'],
     languageOptions: {
@@ -74,10 +74,12 @@ export default tseslint.config(
     },
   },
   {
-    // The plain-ESM `.js` modules under src/ are runtime-only helpers (loaded
-    // by tsx AND by the zero-dependency bins), so they get the base
-    // recommended rules but no type-aware ones. Kept explicit so the rules
-    // above still apply to them — this block deliberately adds nothing yet.
+    // The `.js` entry shims under `scripts/` (e.g.
+    // `scripts/mycc-compose/mycc-compose.js`, which registers tsx and
+    // dynamically imports the `.ts` lib modules) are runtime-only, so they get
+    // the base recommended rules but no type-aware ones. Kept explicit so the
+    // rules above still apply to them — this block deliberately adds nothing
+    // yet.
     files: ['**/*.js'],
   }
 );

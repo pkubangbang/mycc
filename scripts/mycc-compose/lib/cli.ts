@@ -1,8 +1,8 @@
 /**
- * cli.js — usage text, argument parsing, and process-exit helpers.
+ * cli.ts — usage text, argument parsing, and process-exit helpers.
  *
- * Kept separate from mycc-compose.js so the entry stays a thin dispatcher and
- * the arg parser is unit-testable in isolation (parseCliArgs never exits).
+ * Kept separate from the entry shim so the entry stays a thin router and the
+ * arg parser is unit-testable in isolation (parseCliArgs never exits).
  */
 
 export const HELP = `mycc-compose — declarative peer-group orchestrator for mycc
@@ -43,32 +43,41 @@ Spec (schema v2):
 Exit codes: 0 = OK, 1 = runtime/validation error, 2 = usage error.
 `;
 
-export function dieUsage(msg) {
+/** Parsed CLI args. */
+export interface CliArgs {
+  command: string | null;
+  file: string | null;
+  json: boolean;
+  stop: boolean;
+  help: boolean;
+}
+
+export function dieUsage(msg: string): never {
   process.stderr.write(`${msg}\n\n${HELP}`);
   process.exit(2);
 }
 
-export function dieError(msg) {
+export function dieError(msg: string): never {
   process.stderr.write(`Error: ${msg}\n`);
   process.exit(1);
 }
 
-export function out(msg) {
+export function out(msg: string): void {
   process.stdout.write(`${msg}\n`);
 }
 
-export function warn(msg) {
+export function warn(msg: string): void {
   process.stderr.write(`${msg}\n`);
 }
 
 /**
- * Minimal arg parser (no minimist: keeps the script dependency-light so it
- * runs from any directory after `npm link`). First bare token = <file>.
+ * Minimal arg parser (kept dependency-light so the CLI runs after `npm link`
+ * without resolving node_modules). First bare token = <file>.
  * Recognizes --json, --stop, --help/-h. Throws on an unknown option (the
  * caller in the entry turns that into dieUsage) — kept pure so it is testable.
  */
-export function parseCliArgs(argv) {
-  const args = { command: null, file: null, json: false, stop: false, help: false };
+export function parseCliArgs(argv: string[]): CliArgs {
+  const args: CliArgs = { command: null, file: null, json: false, stop: false, help: false };
   for (const tok of argv) {
     if (tok === '--help' || tok === '-h') { args.help = true; continue; }
     if (tok === '--json') { args.json = true; continue; }

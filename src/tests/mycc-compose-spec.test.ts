@@ -1,11 +1,11 @@
 /**
  * mycc-compose-spec.test.ts - Unit tests for the mycc-compose spec validator.
  *
- * scripts/mycc-compose/lib/spec.js is pure ESM JavaScript (no tsx needed), so a
- * plain import works under vitest. validateSpec() is the contract `mycc-compose
- * check` enforces; these tests pin every rejection rule so a future edit cannot
- * silently loosen it (e.g. drop the --auto/--daemon guard, which would let
- * cleanupEmptySessions() GC a re-pinned session dir).
+ * scripts/mycc-compose/lib/spec.ts is a TypeScript module imported via tsx
+ * (the `./spec.js` specifier resolves to `spec.ts`). validateSpec() is the
+ * contract `mycc-compose check` enforces; these tests pin every rejection rule
+ * so a future edit cannot silently loosen it (e.g. drop the --auto/--daemon
+ * guard, which would let cleanupEmptySessions() GC a re-pinned session dir).
  *
  * Tested surface:
  *   - validateSpec(): normalizes defaults + parsedArgs; throws on each fault.

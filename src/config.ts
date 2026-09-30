@@ -16,14 +16,14 @@ import * as path from 'path';
 import * as os from 'os';
 import { execSync } from 'child_process';
 import { getUserConfigPath, getProjectConfigPath } from './setup/paths.js';
-import { sanitizeId } from './utils-esm/id-guard.js';
+import { sanitizeId } from './utils/id-guard.js';
 import {
   BOOLEAN_FLAGS as SHARED_BOOLEAN_FLAGS,
   STRING_FLAGS as SHARED_STRING_FLAGS,
   DEFAULTS as SHARED_ARG_DEFAULTS,
   formatLaunchArgs,
   buildCmdArgsEnv,
-} from './utils-esm/arg-canonical.js';
+} from './utils/arg-canonical.js';
 
 // ============================================================================
 // Inline .env File Parser
@@ -104,10 +104,10 @@ export function loadEnv(): void {
 
 // Parse CLI args once at startup.
 //
-// The flag table itself lives in utils-esm/arg-canonical.js — the SINGLE source of
-// truth shared with the zero-dependency `mycc-compose` bin, which parses a
-// spec's `args` string through the same table. Keeping the table here only
-// would force the script to duplicate it and drift.
+// The flag table itself lives in utils/arg-canonical.ts — the SINGLE source of
+// truth shared with the `mycc-compose` bin, which parses a spec's `args` string
+// through the same table. Keeping the table here only would force the script to
+// duplicate it and drift.
 const args = minimist(process.argv.slice(2), {
   // NOTE: 'serve' is intentionally NOT declared in `boolean` or `string`,
   // and has no default, so minimist auto-detects it:
@@ -125,7 +125,7 @@ const args = minimist(process.argv.slice(2), {
 
 /**
  * Cmd-args → env-var mapping (and the builder) live in
- * utils-esm/arg-canonical.js, next to the flag table: they speak the SAME key
+ * utils/arg-canonical.ts, next to the flag table: they speak the SAME key
  * vocabulary, so keeping them apart would let the two drift. config.ts is now
  * purely a consumer — it parses argv once (below) and hands the result to the
  * shared builder.
@@ -330,7 +330,7 @@ export function shouldDaemon(): boolean {
  * Reads the module-private parsed `args` object directly (not process.env)
  * so the launch-time CLI invocation is reported faithfully.
  *
- * Delegates the rendering to utils-esm/arg-canonical.js so the SAME formatter
+ * Delegates the rendering to utils/arg-canonical.ts so the SAME formatter
  * produces the string a peer publishes in identity.json — which the
  * `mycc-compose` script parses back and compares flag-by-flag.
  */
@@ -739,12 +739,13 @@ export function getIdentityFile(): string {
   return path.join(getDiscoveryDir(), 'identity.json');
 }
 
-// sanitizeId() now lives in the shared plain-JS module src/utils-esm/id-guard.js so
-// the zero-dependency compose CLI (plain `node`, which cannot load .ts) can
-// apply the SAME guard to the channel labels it materializes. Previously this
-// was a private function here, so the guard existed but never reached the
-// compose path — which is how a `label` like `x/../../identity` was able to
-// overwrite the machine-wide identity.json. Imported at the top of this file.
+// sanitizeId() now lives in the shared module src/utils/id-guard.ts so the
+// compose CLI (a thin .js shim that registers the tsx loader then imports the
+// .ts lib modules) can apply the SAME guard to the channel labels it
+// materializes. Previously this was a private function here, so the guard
+// existed but never reached the compose path — which is how a `label` like
+// `x/../../identity` was able to overwrite the machine-wide identity.json.
+// Imported at the top of this file.
 
 export function getHeartbeatDir(): string {
   return path.join(getDiscoveryDir(), 'heartbeat');

@@ -1,5 +1,18 @@
 # mycc-compose — Review Fix Round (plan + record)
 
+> **Addendum (post-migration, 2026-09-30):** this document records the fix round
+> *as it landed at the time*, and the file paths in the body reflect the
+> pre-migration layout. A subsequent migration dissolved the `src/utils-esm/`
+> boundary entirely: `arg-canonical` and `id-guard` moved to
+> `src/utils/{arg-canonical,id-guard}.ts` (plain TypeScript, loaded via the
+> `tsx/esm/api` `register()` loader installed by the `.js` bin shim), and the
+> compose lib files `lib/{discovery,spec,channels,peers,cli}.js` became
+> `.ts`. So every path below of the form `src/utils-esm/<util>.js` now lives at
+> `src/utils/<util>.ts`, and every `lib/<mod>.js` is now `lib/<mod>.ts`. The
+> *fixes themselves are unchanged* — only their carrier files were renamed and
+> retyped. Read the body as a historical record; for the current layout see
+> `docs/peer-topology.md` and `skills/mycc-compose/script.md`.
+
 Status: **fixes landed and verified — awaiting the human-gated commit** (todo #15).
 Branch `feat/mycc-compose-peer-topology`, uncommitted. All five blockers and the
 majors listed below are fixed, pinned by tests, and green across the full suite.

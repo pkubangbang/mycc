@@ -1,25 +1,29 @@
 # mycc-compose — the script
 
-`scripts/mycc-compose/mycc-compose.js` — the thin CLI entry (zero-dependency
-ESM, mirroring `scripts/mdcalc/mdcalc.js`). All logic lives in sibling modules
-under `scripts/mycc-compose/lib/`:
+`scripts/mycc-compose/mycc-compose.js` — the thin CLI entry. It registers the
+tsx loader (`import { register } from 'tsx/esm/api'; register();`) and
+dynamically imports a single `.ts` umbrella, then dispatches subcommands. All
+logic lives in `.ts` modules under `scripts/mycc-compose/lib/`:
 
 | Module | Responsibility |
 |---|---|
-| `mycc-compose.js` | Entry: subcommand dispatch (`check`/`up`/`sync`/`down`/`status`). |
-| `lib/discovery.js` | identity.json / heartbeat readers + the two liveness predicates (`isSessionLive` = freshness only; `isPeerRunning` = freshness **and** live pid). |
-| `lib/spec.js` | `loadSpec` / `validateSpec` (pure, unit-tested) / `updateSpecFile`. |
-| `lib/channels.js` | channel-file materialization, removal, status. |
-| `lib/peers.js` | launch / stop / match / identity-repair. |
-| `lib/cli.js` | usage text, arg parsing, exit helpers. |
+| `mycc-compose.js` | Entry: registers tsx, imports the umbrella, subcommand dispatch (`check`/`up`/`sync`/`down`/`status`). |
+| `lib/index.ts` | Umbrella: re-exports the subcommands + cli helpers. |
+| `lib/discovery.ts` | identity.json / heartbeat readers + the two liveness predicates (`isSessionLive` = freshness only; `isPeerRunning` = freshness **and** live pid). |
+| `lib/spec.ts` | `loadSpec` / `validateSpec` (pure, unit-tested) / `updateSpecFile`. |
+| `lib/channels.ts` | channel-file materialization, removal, status. |
+| `lib/peers.ts` | launch / stop / match / identity-repair. |
+| `lib/cli.ts` | usage text, arg parsing, exit helpers. |
+| `lib/cmd-check.ts` / `cmd-up.ts` / `cmd-down.ts` / `cmd-status.ts` | the four subcommand implementations. |
 
 Registered as the `mycc-compose` bin in `package.json` (after `npm link` / a
 global install it is on PATH and works from any directory).
 
-The modules import **only** node built-ins plus project plain-`.js` modules
-(the shared flag table `src/utils-esm/arg-canonical.js`, and `lib/*`). They are
-plain `.js` precisely so a plain `node` process can load them without tsx — so
-the script runs standalone from any directory.
+The lib modules are `.ts` and import node built-ins plus project `.ts` modules
+(the shared flag table `src/utils/arg-canonical.ts` and `src/utils/id-guard.ts`,
+and sibling `lib/*`). The entry stays `.js` only because npm/Windows `.cmd`
+wrappers need a `.js` target; the `register()` call lets it load the `.ts` lib
+in-process without spawning a child or compiling ahead of time.
 
 Run during development:
 ```

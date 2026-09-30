@@ -1,10 +1,10 @@
 /**
  * mycc-compose-channels.test.ts — unit tests for the channel-file materializer
- * (scripts/mycc-compose/lib/channels.js), closing review finding C-M3.
+ * (scripts/mycc-compose/lib/channels.ts), closing review finding C-M3.
  *
  * Every disk write goes to a per-test temp dir via MYCC_DISCOVERY_DIR, which
- * MUST be set before channels.js is imported: channels.js captures
- * `CHANNELS_DIR` from lib/discovery.js at module-load time, so each test
+ * MUST be set before channels.ts is imported: channels.ts captures
+ * `CHANNELS_DIR` from lib/discovery.ts at module-load time, so each test
  * re-imports the module after resetModules() (the mycc-compose-peers.test.ts
  * convention).
  *

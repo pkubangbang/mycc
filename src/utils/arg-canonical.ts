@@ -1,19 +1,16 @@
 /**
- * arg-canonical.js - THE canonical CLI-argument table, parser and formatters.
+ * arg-canonical.ts - THE canonical CLI-argument table, parser and formatters.
  *
- * Written as plain ESM `.js` (with a sibling `arg-canonical.d.ts` for types)
- * on purpose: this module is loaded by BOTH sides of the compose feature, and
- * `.js` is the only direction that works for both.
+ * This module is the single source of truth for the CLI-arg vocabulary shared
+ * by BOTH sides of the compose feature:
  *
- *   1. `src/config.ts`  - loaded by tsx/TypeScript (which interops with .js
- *                         and type-checks the import against the sibling
- *                         .d.ts). Spreads the flag tables into its minimist()
- *                         call and delegates getLaunchArgs() here.
- *   2. `scripts/mycc-compose/mycc-compose.js` - the zero-dependency `bin` CLI
- *                         (entry + `lib/*` modules) run by plain `node`, which
- *                         CANNOT load .ts. It parses the spec's `args` string
- *                         with the SAME table and compares the result with the
- *                         args a live instance published in identity.json.
+ *   1. `src/config.ts`  - spreads the flag tables into its minimist() call and
+ *                         delegates getLaunchArgs() here.
+ *   2. `scripts/mycc-compose/mycc-compose.js` - the `bin` CLI (a thin .js shim
+ *                         that registers the tsx loader, then imports the .ts
+ *                         lib modules). It parses the spec's `args` string with
+ *                         the SAME table and compares the result with the args
+ *                         a live instance published in identity.json.
  *
  * Because both sides are table-driven, the classic "Number vs String" trap
  * (`--token-threshold 80000` parsing to a number on one side and staying a
@@ -40,14 +37,14 @@
  * NOTE: 'serve' is intentionally absent — it is auto-detected (bare `--serve`
  * → true, `--serve 9000` → the port). See src/config.ts for the full rationale.
  */
-export const BOOLEAN_FLAGS = [
+export const BOOLEAN_FLAGS: string[] = [
   'v', 'verbose', 'skip-healthcheck', 'setup',
   'debug-eval', 'debug-tp', 'disable-crossroad', 'auto',
   'debug-autofly', 'allow-plan-off', 'debug-wire', 'debug-ansi',
 ];
 
 /** Flags that always take a value. */
-export const STRING_FLAGS = [
+export const STRING_FLAGS: string[] = [
   'from', 'port', 'host', 'max-upload-mb', 'autofly', 'daemon',
   'ollama-host', 'ollama-api-key', 'ollama-model', 'ollama-vision-model', 'ollama-embedding-model',
   'deepseek-host', 'deepseek-api-key', 'deepseek-model',
@@ -58,7 +55,7 @@ export const STRING_FLAGS = [
 ];
 
 /** Default values passed to minimist so unset flags normalize deterministically. */
-export const DEFAULTS = {
+export const DEFAULTS: Record<string, boolean | null> = {
   v: false,
   from: null,
   port: null,
@@ -75,7 +72,7 @@ export const DEFAULTS = {
  * Flags whose VALUE must never be published (prompt, logs, identity.json).
  * They are rendered as `--<flag> ***` by formatLaunchArgs().
  */
-export const SECRET_FLAGS = ['ollama-api-key', 'deepseek-api-key', 'wire-token'];
+export const SECRET_FLAGS: string[] = ['ollama-api-key', 'deepseek-api-key', 'wire-token'];
 
 /**
  * Flags that are launcher-managed and MUST be ignored when comparing a spec's
@@ -84,10 +81,10 @@ export const SECRET_FLAGS = ['ollama-api-key', 'deepseek-api-key', 'wire-token']
  * peer launched under a pinned sid would otherwise always look like a mismatch
  * (`{--session-id, --auto}` vs `{--auto}`) and be needlessly restarted.
  */
-export const LAUNCHER_FLAGS = ['session-id'];
+export const LAUNCHER_FLAGS: string[] = ['session-id'];
 
 /** The redaction placeholder. Also a wildcard in argsMatch(). */
-export const REDACTED = '***';
+export const REDACTED = '***' as const;
 
 /**
  * Short-flag aliases: `<short>` is an alias of `<long>`.
@@ -102,10 +99,10 @@ export const REDACTED = '***';
  * Folding normalizes BOTH forms to the long name, so a published
  * `--v --verbose` and a spec `--verbose` compare equal.
  */
-export const ALIASES = { v: 'verbose' };
+export const ALIASES: Record<string, string> = { v: 'verbose' };
 
 /** Resolve a flag name to its canonical (long) form. */
-export function canonicalFlagName(name) {
+export function canonicalFlagName(name: string): string {
   return Object.prototype.hasOwnProperty.call(ALIASES, name) ? ALIASES[name] : name;
 }
 
@@ -118,7 +115,7 @@ export function canonicalFlagName(name) {
  * here so the whole cmd-arg vocabulary is defined in ONE place instead of
  * being split between the flag table and a second map in config.ts.
  */
-export const ARG_ENV_MAP = {
+export const ARG_ENV_MAP: Record<string, string> = {
   'verbose': 'MYCC_VERBOSE',
   'from': 'MYCC_FROM_SESSION',
   // --session-id pins a fresh session's identity (see getPinnedSessionId);
@@ -165,12 +162,9 @@ export const ARG_ENV_MAP = {
  *
  * Consumed by config.ts's loadEnv() to merge cmd-args into process.env at the
  * highest priority.
- *
- * @param {Record<string, unknown>} parsed
- * @returns {Record<string, string>}
  */
-export function buildCmdArgsEnv(parsed) {
-  const env = {};
+export function buildCmdArgsEnv(parsed: Record<string, unknown>): Record<string, string> {
+  const env: Record<string, string> = {};
   if (!parsed || typeof parsed !== 'object') return env;
   for (const [argKey, envKey] of Object.entries(ARG_ENV_MAP)) {
     const value = parsed[argKey];
@@ -181,13 +175,18 @@ export function buildCmdArgsEnv(parsed) {
   return env;
 }
 
-
 // ---------------------------------------------------------------------------
 // Parser
 // ---------------------------------------------------------------------------
 
+/** A parsed args object, shaped like minimist's output. */
+export interface ParsedArgs {
+  _: string[];
+  [key: string]: unknown;
+}
+
 /** True when `value` was not set (mirrors config.ts's "flag not set" rule). */
-function isUnset(value) {
+function isUnset(value: unknown): boolean {
   return value === false || value === null || value === undefined || value === '';
 }
 
@@ -203,12 +202,10 @@ function isUnset(value) {
  * flag the same way) so the canonical form still contains them rather than
  * silently dropping a flag the user passed.
  *
- * @param {string | null | undefined} raw
- * @returns {Record<string, unknown>}
+ * Returns `{ _: [] }` for an empty / `(none)` input.
  */
-export function parseArgString(raw) {
-  /** @type {Record<string, unknown>} */
-  const out = { _: [] };
+export function parseArgString(raw: string | null | undefined): ParsedArgs {
+  const out: ParsedArgs = { _: [] };
   if (typeof raw !== 'string' || raw.trim() === '' || raw.trim() === '(none)') return out;
 
   const tokens = raw.trim().split(/\s+/);
@@ -282,11 +279,8 @@ export function parseArgString(raw) {
  * Record a value, collecting repeats into an array (minimist behaviour).
  * Alias names are folded to their canonical (long) form so `-v` and `--verbose`
  * land on the same key instead of diverging.
- * @param {Record<string, unknown>} out
- * @param {string} key
- * @param {unknown} value
  */
-function setValue(out, key, value) {
+function setValue(out: ParsedArgs, key: string, value: unknown): void {
   const k = canonicalFlagName(key);
   if (k in out) {
     const prev = out[k];
@@ -308,11 +302,8 @@ function setValue(out, key, value) {
  *
  * This is the historical body of config.ts's getLaunchArgs(), moved here so
  * the compose script can produce/compare an identical string.
- *
- * @param {Record<string, unknown>} parsed
- * @returns {string}
  */
-export function formatLaunchArgs(parsed) {
+export function formatLaunchArgs(parsed: Record<string, unknown>): string {
   return renderArgs(parsed, { redact: true });
 }
 
@@ -326,23 +317,15 @@ export function formatLaunchArgs(parsed) {
  * so a peer launched from a spec containing `--wire-token REAL` was actually
  * spawned with the literal string `***`, i.e. unauthenticated. Redaction is a
  * DISPLAY concern; the spawn path must carry the real value.
- *
- * @param {Record<string, unknown>} parsed
- * @returns {string}
  */
-export function formatLaunchArgsForSpawn(parsed) {
+export function formatLaunchArgsForSpawn(parsed: Record<string, unknown>): string {
   return renderArgs(parsed, { redact: false });
 }
 
-/**
- * Shared renderer behind the two public formatters.
- * @param {Record<string, unknown>} parsed
- * @param {{ redact: boolean }} opts
- * @returns {string}
- */
-function renderArgs(parsed, opts) {
+/** Shared renderer behind the two public formatters. */
+function renderArgs(parsed: Record<string, unknown>, opts: { redact: boolean }): string {
   if (!parsed || typeof parsed !== 'object') return '(none)';
-  const parts = [];
+  const parts: string[] = [];
   for (const [rawKey, value] of Object.entries(parsed)) {
     if (rawKey === '_') continue; // positional args
     if (value === undefined) continue;
@@ -385,11 +368,8 @@ function renderArgs(parsed, opts) {
  * string `--v`, so a parsed object carrying both alias forms (which minimist's
  * `alias:{v:['verbose']}` produces) rendered `--v --verbose`. Compare the flag
  * NAME via canonicalFlagName instead.
- *
- * @param {string[]} parts
- * @param {string} key canonical flag name
  */
-function emitFlag(parts, key) {
+function emitFlag(parts: string[], key: string): void {
   const exists = parts.some((p) => canonicalFlagName(p.startsWith('--') ? p.slice(2) : p) === key);
   if (!exists) parts.push(`--${key}`);
 }
@@ -398,11 +378,8 @@ function emitFlag(parts, key) {
  * Render a KEY-SORTED canonical form for equality comparison. Same rendering
  * rules as formatLaunchArgs(), but the `--flag` groups are sorted, so flag
  * ORDER does not affect the result.
- *
- * @param {Record<string, unknown>} parsed
- * @returns {string}
  */
-export function canonicalArgs(parsed) {
+export function canonicalArgs(parsed: Record<string, unknown>): string {
   const rendered = formatLaunchArgs(parsed);
   if (rendered === '(none)') return rendered;
   // Split on the whitespace between `--flag` groups, keeping each group whole:
@@ -425,12 +402,11 @@ export function canonicalArgs(parsed) {
  * Comparison is on the key-sorted canonical form. A `***` on EITHER side is a
  * wildcard for that flag's value, so a spec that omits a secret still matches a
  * peer that was launched with one (and vice versa).
- *
- * @param {string | null | undefined} publishedArgs
- * @param {string | null | undefined} specArgs
- * @returns {boolean}
  */
-export function argsMatch(publishedArgs, specArgs) {
+export function argsMatch(
+  publishedArgs: string | null | undefined,
+  specArgs: string | null | undefined,
+): boolean {
   const a = canonicalGroupMap(parseArgString(publishedArgs));
   const b = canonicalGroupMap(parseArgString(specArgs));
   if (a.size !== b.size) return false;
@@ -446,13 +422,9 @@ export function argsMatch(publishedArgs, specArgs) {
 /**
  * Index rendered `--flag [value]` groups by flag name for wildcard-aware
  * comparison. Positionals (`_`) are ignored — they do not belong in a spec.
- *
- * @param {Record<string, unknown>} parsed
- * @returns {Map<string, string>}
  */
-function canonicalGroupMap(parsed) {
-  /** @type {Map<string, string>} */
-  const map = new Map();
+function canonicalGroupMap(parsed: ParsedArgs): Map<string, string> {
+  const map = new Map<string, string>();
   for (const group of canonicalArgs(parsed).split(/\s+(?=--)/)) {
     if (group === '(none)' || !group.startsWith('--')) continue;
     const sp = group.indexOf(' ');

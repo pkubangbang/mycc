@@ -1,10 +1,10 @@
 /**
  * id-guard.test.ts - Unit tests for the shared path-component guard.
  *
- * `src/utils-esm/id-guard.js` is plain ESM (with a sibling `.d.ts`) so that BOTH
- * consumers can load it: `src/config.ts` (tsx, guards getHeartbeatFile /
- * getChannelFile) and the zero-dependency `mycc-compose` bin (plain node,
- * guards the channel labels it materializes).
+ * `src/utils/id-guard.ts` is loaded by BOTH consumers: `src/config.ts`
+ * (guards getHeartbeatFile / getChannelFile) and the `mycc-compose` bin
+ * (a thin .js shim that registers the tsx loader then imports the .ts lib
+ * modules; guards the channel labels it materializes).
  *
  * These tests pin the boundary: what the guard MUST reject (traversal,
  * control characters, Windows-reserved characters, Windows-unsafe trailing
@@ -19,7 +19,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { isSafeId, sanitizeId } from '../utils-esm/id-guard.js';
+import { isSafeId, sanitizeId } from '../utils/id-guard.js';
 
 describe('isSafeId / sanitizeId: rejects traversal', () => {
   const traversal = [

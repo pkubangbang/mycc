@@ -1,5 +1,5 @@
 /**
- * channels.js — channel-file materialization (§5 step 4).
+ * channels.ts — channel-file materialization (§5 step 4).
  *
  * A "channel pair" is two ChannelFile JSON documents (one per side) written to
  * ~/.mycc-store/discovery/channels/<sid>-<label>.json, cross-referencing each
@@ -11,9 +11,23 @@ import fs from 'fs';
 import path from 'path';
 import { CHANNELS_DIR } from './discovery.js';
 import { dupKey } from './spec.js';
+import type { ChannelFile } from '../../../src/types.js';
+
+/**
+ * The narrow STRUCTURAL subset of a spec that the materializer actually reads.
+ * Declared separately from NormalizedSpec because the module's real input
+ * contract is what matters here: it only ever touches group/peers[].name/
+ * peers[].sessionId and channels[].from/.to/.label/.prompt. A NormalizedSpec
+ * (with workdir/args/renew/parsedArgs) is assignable to this.
+ */
+export interface ChannelSpecInput {
+  group: string;
+  peers: Array<{ name: string; sessionId?: string | null }>;
+  channels: Array<{ from: string; to: string; label: string; prompt: string }>;
+}
 
 /** Substitute {{from}} {{to}} {{peer}} {{label}} in a prompt template. */
-export function fillTemplate(tpl, vars) {
+export function fillTemplate(tpl: string, vars: Record<string, unknown>): string {
   return tpl.replace(/\{\{\s*(\w+)\s*\}\}/g, (m, key) => (key in vars ? String(vars[key]) : m));
 }
 
@@ -22,7 +36,7 @@ export function fillTemplate(tpl, vars) {
  * already wrote a mail_to reply instruction. This is the rule the mediator
  * skill encodes: instances reply peer-to-peer via mail_to, never by prose.
  */
-export function withReplyContract(prompt, peerSid, label) {
+export function withReplyContract(prompt: string, peerSid: string, label: string): string {
   if (/mail_to\s*\(/.test(prompt)) return prompt;
   const contract =
     `\n\n[Reply contract] Reply to your peer by calling ` +
@@ -31,16 +45,30 @@ export function withReplyContract(prompt, peerSid, label) {
   return `${prompt}${contract}`;
 }
 
+/** Fields the peer may already have written back onto its own channel file. */
+export interface ExistingChannelState {
+  joined?: unknown;
+  firstQuerySent?: unknown;
+  createdAt?: unknown;
+}
+
+/** Arguments for {@link buildChannelFile}. */
+export interface BuildChannelFileArgs {
+  channelId: string;
+  ownerSid: string;
+  peerSid: string;
+  title: string;
+  prompt: string;
+  /** The file already on disk, if any — preserves joined/firstQuerySent/createdAt. */
+  existing?: ExistingChannelState | null;
+}
+
 /**
- * Build the ChannelFile object for one side of a channel pair.
- * Note the ASYMMETRY: each side's `peerSessionId` is the OTHER side's sid.
- *
- * `existing` (the file already on disk, if any) preserves the peer's own
- * lifecycle state across a re-materialize: `joined`/`firstQuerySent` are set by
- * the PEER, not by us. Without this, every cron `sync` reset them to false and
- * the peer re-injected its firstQuery on each run.
+ * Build the ChannelFile document for ONE side of a pair. `peerSid` is the
+ * OTHER side's session id (the pair is asymmetric by design).
  */
-export function buildChannelFile({ channelId, ownerSid, peerSid, title, prompt, existing }) {
+export function buildChannelFile(args: BuildChannelFileArgs): ChannelFile {
+  const { channelId, ownerSid, peerSid, title, prompt, existing } = args;
   return {
     channelId,
     ownerSessionId: ownerSid,
@@ -49,15 +77,12 @@ export function buildChannelFile({ channelId, ownerSid, peerSid, title, prompt, 
     firstQuery: prompt,
     joined: existing?.joined === true,
     firstQuerySent: existing?.firstQuerySent === true,
-    createdAt: existing?.createdAt ?? Date.now(),
+    createdAt: typeof existing?.createdAt === 'number' ? existing.createdAt : Date.now(),
   };
 }
 
-/**
- * Read an existing channel file, tolerating absence/corruption (a malformed
- * file is treated as absent, matching the peer's own tolerant reader).
- */
-export function readChannelFile(file) {
+/** Read an existing channel file; null when absent / malformed / non-object. */
+export function readChannelFile(file: string): ChannelFile | null {
   try {
     if (!fs.existsSync(file)) return null;
     const parsed = JSON.parse(fs.readFileSync(file, 'utf-8'));
@@ -67,8 +92,11 @@ export function readChannelFile(file) {
   }
 }
 
-/** Atomic write of a channel file (tmp + rename), then read-back verify. */
-export function writeChannelFileAtomic(file, data) {
+/** Atomic write (tmp + rename) with a read-back verify of channelId/ownerSessionId/peerSessionId. */
+export function writeChannelFileAtomic(
+  file: string,
+  data: Partial<ChannelFile> & Pick<ChannelFile, 'channelId' | 'ownerSessionId' | 'peerSessionId'>,
+): void {
   if (!fs.existsSync(CHANNELS_DIR)) fs.mkdirSync(CHANNELS_DIR, { recursive: true });
   const tmp = `${file}.mycc-compose.${process.pid}.tmp`;
   try {
@@ -95,14 +123,19 @@ export function writeChannelFileAtomic(file, data) {
   }
 }
 
-/**
- * Materialize both files of every channel pair. Resolves each channel endpoint
- * to its peer's session id (via the by-name map built from the spec).
- * Returns a per-channel result list.
- */
-export function materializeChannels(spec) {
+/** Per-channel materialization result. */
+export interface MaterializeResult {
+  label: string;
+  ok: boolean;
+  reason?: string;
+  title?: string;
+  files?: string[];
+}
+
+/** Write both files of every channel pair. */
+export function materializeChannels(spec: ChannelSpecInput): MaterializeResult[] {
   const byName = new Map(spec.peers.map((p) => [dupKey(p.name), p]));
-  const results = [];
+  const results: MaterializeResult[] = [];
 
   for (const ch of spec.channels) {
     const fromPeer = byName.get(dupKey(ch.from));
@@ -164,14 +197,10 @@ export function materializeChannels(spec) {
 }
 
 /**
- * Remove exactly the channel files that the spec's channels own.
- *
- * Takes the resolved FILENAME LIST rather than (peers, labels): the previous
- * sid × label cross-product deleted files belonging to peers that were not
- * endpoints of that channel (a foreign session's `<other-sid>-<label>.json`).
- * Only the filenames the materializer would have written are now removed.
+ * Remove exactly the channel files named in `files` (a FILENAME LIST, as
+ * produced by {@link channelFileNames}). Returns the number removed.
  */
-export function removeChannels(files) {
+export function removeChannels(files: string[]): number {
   if (!fs.existsSync(CHANNELS_DIR)) return 0;
   let removed = 0;
   for (const name of files) {
@@ -185,15 +214,12 @@ export function removeChannels(files) {
 }
 
 /**
- * The exact set of channel filenames a spec materializes: for each channel,
- * `<from-sid>-<label>.json` and `<to-sid>-<label>.json`. Peers lacking a
- * session id contribute nothing. This is the ONE definition of "the files this
- * spec owns", shared by materializeChannels/removeChannels/channelStatus so
- * the three can never disagree.
+ * The exact set of channel filenames a spec owns: `<sid>-<label>.json` per
+ * channel endpoint. Peers without a session id contribute nothing.
  */
-export function channelFileNames(spec) {
+export function channelFileNames(spec: ChannelSpecInput): string[] {
   const byName = new Map(spec.peers.map((p) => [dupKey(p.name), p]));
-  const names = [];
+  const names: string[] = [];
   for (const ch of spec.channels) {
     const from = byName.get(dupKey(ch.from));
     const to = byName.get(dupKey(ch.to));
@@ -204,8 +230,14 @@ export function channelFileNames(spec) {
   return names;
 }
 
-/** Per-channel status row: {label, bothFilesPresent}. */
-export function channelStatus(spec) {
+/** Per-channel status row. */
+export interface ChannelStatusRow {
+  label: string;
+  bothFilesPresent: boolean;
+}
+
+/** Report whether both files of each channel pair exist. */
+export function channelStatus(spec: ChannelSpecInput): ChannelStatusRow[] {
   const byName = new Map(spec.peers.map((p) => [dupKey(p.name), p]));
   return spec.channels.map((ch) => {
     const a = byName.get(dupKey(ch.from));

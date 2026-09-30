@@ -606,7 +606,7 @@ export interface IdentityEntry {
    * Published so a mediator (`mycc-compose`) can tell whether a live peer was
    * started with the flags the topology spec asks for, and renew it only when
    * they differ. Parsed with the SAME table the launcher uses
-   * (utils-esm/arg-canonical.js), so the two sides can never disagree on what a
+   * (utils/arg-canonical.ts), so the two sides can never disagree on what a
    * flag means. Optional: entries written by older instances lack it.
    */
   args?: string;

@@ -1,16 +1,14 @@
 /**
- * id-guard.js - the single implementation of the "is this id safe to
+ * id-guard.ts - the single implementation of the "is this id safe to
  * interpolate into a discovery path?" guard.
  *
- * Written as plain ESM `.js` (with a sibling `.d.ts`) for the same reason as
- * `arg-canonical.js`: it is loaded by BOTH sides of the compose feature.
+ * Loaded by BOTH sides of the compose feature:
  *
- *   1. `src/config.ts`        - loaded by tsx/TypeScript (type-checked against
- *                               the sibling `.d.ts`), where it guards
- *                               getHeartbeatFile() / getChannelFile().
- *   2. `scripts/mycc-compose/` - the zero-dependency `bin` CLI run by plain
- *                               `node`, which CANNOT load .ts. It guards the
- *                               channel labels it materializes.
+ *   1. `src/config.ts`        - guards getHeartbeatFile() / getChannelFile().
+ *   2. `scripts/mycc-compose/` - the `bin` CLI (a thin .js shim that registers
+ *                               the tsx loader then imports the .ts lib
+ *                               modules). It guards the channel labels it
+ *                               materializes.
  *
  * Why this matters (the defect that motivated the extraction): the compose CLI
  * built channel filenames with `path.join(CHANNELS_DIR, `${sid}-${label}.json`)`
@@ -18,9 +16,9 @@
  * `x/../../identity` therefore escaped the channels directory and overwrote the
  * machine-wide `identity.json`; `x/../../heartbeat/<sid>` clobbered a peer's
  * heartbeat. The guard already existed here in `config.ts` but never reached the
- * compose path, because it was a private function of a `.ts` module the plain
- * `node` CLI cannot import. Extracting it is the fix: one implementation, both
- * consumers.
+ * compose path, because it was a private function of a module the plain
+ * `node` CLI could not import. Extracting it is the fix: one implementation,
+ * both consumers.
  */
 
 /**
@@ -58,7 +56,7 @@ const WINDOWS_DEVICE_NAMES = [
 const MAX_ID_LENGTH = 200;
 
 /** True when the trailing character is one Windows strips at open time. */
-function hasWindowsUnsafeTrailing(id) {
+function hasWindowsUnsafeTrailing(id: string): boolean {
   const last = id[id.length - 1];
   return last === '.' || last === ' ';
 }
@@ -67,7 +65,7 @@ function hasWindowsUnsafeTrailing(id) {
  * True when the basename (before the FIRST dot) is a Windows device name.
  * `NUL`, `nul.txt`, and `CON.foo` are all devices on Windows.
  */
-function isWindowsDeviceName(id) {
+function isWindowsDeviceName(id: string): boolean {
   const base = id.split('.')[0];
   return WINDOWS_DEVICE_NAMES.includes(base.toUpperCase());
 }
@@ -78,15 +76,12 @@ function isWindowsDeviceName(id) {
  * sequence, no control characters, no Windows-reserved filename chars, no
  * Windows-unsafe trailing dot/space, not a Windows device name, and short
  * enough to be a filename component.
- *
- * @param {unknown} id
- * @returns {boolean}
  */
-export function isSafeId(id) {
+export function isSafeId(id: unknown): boolean {
   if (typeof id !== 'string' || id === '') return false;
   if (id.includes('/') || id.includes('\\') || id.includes('..')) return false;
   // Control characters (avoid a regex char class for eslint's no-control-regex).
-  if ([...id].some((c) => c.codePointAt(0) < 0x20)) return false;
+  if ([...id].some((c) => c.codePointAt(0)! < 0x20)) return false;
   if (WINDOWS_RESERVED.some((c) => id.includes(c))) return false;
   if (hasWindowsUnsafeTrailing(id)) return false;
   if (isWindowsDeviceName(id)) return false;
@@ -100,11 +95,9 @@ export function isSafeId(id) {
  * 'channel label'); callers fail loudly rather than silently writing outside
  * the sandbox.
  *
- * @param {unknown} id
- * @param {string} label
- * @returns {string} the id, unchanged, when safe
+ * @returns the id, unchanged, when safe
  */
-export function sanitizeId(id, label) {
+export function sanitizeId(id: unknown, label: string): string {
   if (typeof id !== 'string' || id === '') {
     throw new Error(`Invalid ${label}: must be a non-empty string`);
   }
@@ -113,7 +106,7 @@ export function sanitizeId(id, label) {
       `Invalid ${label}: contains path separators or "..": ${JSON.stringify(id)}`,
     );
   }
-  if ([...id].some((c) => c.codePointAt(0) < 0x20)) {
+  if ([...id].some((c) => c.codePointAt(0)! < 0x20)) {
     throw new Error(
       `Invalid ${label}: contains control characters: ${JSON.stringify(id)}`,
     );

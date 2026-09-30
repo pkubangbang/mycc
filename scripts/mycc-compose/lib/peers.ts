@@ -1,5 +1,5 @@
 /**
- * peers.js — peer launch / stop / match / repair (§5 steps 1–3, §6.2, §6.4).
+ * peers.ts — peer launch / stop / match / repair (§5 steps 1–3, §6.2, §6.4).
  *
  * The launch path is deliberately SHELL-FREE: we resolve mycc's bin entry and
  * spawn `node <bin/mycc.js> …` with {detached:true, stdio:'ignore'}. Spawning
@@ -13,7 +13,7 @@ import os from 'os';
 import { fileURLToPath } from 'url';
 import { spawn, execFileSync } from 'child_process';
 
-import { formatLaunchArgs, formatLaunchArgsForSpawn, argsMatch, LAUNCHER_FLAGS } from '../../../src/utils-esm/arg-canonical.js';
+import { formatLaunchArgs, formatLaunchArgsForSpawn, argsMatch, LAUNCHER_FLAGS } from '../../../src/utils/arg-canonical.js';
 import {
   readIdentityMap,
   writeIdentityMap,
@@ -28,6 +28,7 @@ import {
   lastBrief,
   FRESHNESS_WINDOW_MS,
 } from './discovery.js';
+import type { IdentityEntry, PeerRef } from './discovery.js';
 
 /** How long to wait for a launched peer to register + beat, per peer. */
 export const LAUNCH_TIMEOUT_MS = 30_000;
@@ -47,16 +48,40 @@ export const WAVE_SIZE = 5;
 /** Delay between waves, giving identity.json writes time to settle. */
 export const WAVE_DELAY_MS = 1_500;
 
-export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+export const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * A peer record as produced by validateSpec, or a hand-built fixture. The
+ * module reads a SUBSET of the normalized peer shape, so every field is
+ * optional except `parsedArgs`, which is the only one `peerArgv()` needs.
+ */
+export interface Peer {
+  name?: string;
+  workdir?: string;
+  sessionId?: string | null;
+  args?: string;
+  renew?: 'always' | 'onMismatch';
+  parsedArgs?: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
+/** A peer's live status row (`mycc-compose status`). */
+export interface PeerStatusRow {
+  name: string;
+  sessionId: string | null;
+  live: boolean;
+  matching: boolean;
+  lastBrief: ReturnType<typeof lastBrief>;
+}
 
 // ---------------------------------------------------------------------------
 // Matching (§6.2)
 // ---------------------------------------------------------------------------
 
 /** Compare two workdirs, tolerant of separators and trailing slash. */
-export function sameWorkdir(a, b) {
+export function sameWorkdir(a: unknown, b: unknown): boolean {
   if (typeof a !== 'string' || typeof b !== 'string') return false;
-  const norm = (p) => path.resolve(p).replace(/[\\/]+$/, '').toLowerCase();
+  const norm = (p: string) => path.resolve(p).replace(/[\\/]+$/, '').toLowerCase();
   return norm(a) === norm(b);
 }
 
@@ -65,12 +90,12 @@ export function sameWorkdir(a, b) {
  * same workdir, and canonical args equal (via argsMatch, *** as wildcard).
  * Returns the entry or null.
  */
-export function findMatchingLiveEntry(peer) {
+export function findMatchingLiveEntry(peer: Peer): IdentityEntry | null {
   if (!peer.sessionId || !isPeerRunning(peer)) return null;
   const map = readIdentityMap();
   const entry = map[peer.sessionId];
   if (!entry) return null;
-  if (!sameWorkdir(entry.workDir, peer.workdir)) return null;
+  if (!sameWorkdir(entry.workDir ?? entry.workdir, peer.workdir)) return null;
   // Old instances may lack `args`; argsMatch treats missing as '(none)'.
   if (!argsMatch(entry.args ?? '(none)', peer.args)) return null;
   return entry;
@@ -93,13 +118,13 @@ export function findMatchingLiveEntry(peer) {
  * getPinnedSessionId() returns null → the peer mints a RANDOM uuid and the
  * launch poll waits for an id that never registers. Returns an argv array.
  */
-export function peerArgv(peer) {
+export function peerArgv(peer: Peer): string[] {
   const parsed = stripLauncherFlags(peer.parsedArgs);
   const rendered = formatLaunchArgsForSpawn(parsed);
   if (rendered === '(none)') return [];
   // Re-split honoring the same rule the formatter uses: a value token never
   // starts with `--`, so regrouping on `--` boundaries is unambiguous.
-  const argv = [];
+  const argv: string[] = [];
   for (const group of rendered.split(/\s+(?=--)/)) {
     const sp = group.indexOf(' ');
     if (sp === -1) argv.push(group);
@@ -112,9 +137,9 @@ export function peerArgv(peer) {
 }
 
 /** Shallow-copy `parsed` without the launcher-managed flags (never mutates). */
-function stripLauncherFlags(parsed) {
-  if (!parsed || typeof parsed !== 'object') return parsed;
-  const out = {};
+function stripLauncherFlags(parsed: Record<string, unknown> | undefined): Record<string, unknown> {
+  if (!parsed || typeof parsed !== 'object') return {};
+  const out: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(parsed)) {
     if (LAUNCHER_FLAGS.includes(key)) continue;
     out[key] = value;
@@ -137,16 +162,13 @@ function stripLauncherFlags(parsed) {
  * When the command line cannot be read at all we return FALSE — refusal. The
  * caller has already established (via `didPidStartAfter`) that the pid is not a
  * provably-recycled one, but "we cannot tell" must never authorise a kill.
- *
- * @param {number} pid
- * @param {string} [sessionId] the session whose heartbeat named this pid
  */
-export function isMyccProcess(pid, sessionId) {
+export function isMyccProcess(pid: number, sessionId?: string | null): boolean {
   if (!pid || typeof pid !== 'number') return false;
   const sidPattern = typeof sessionId === 'string' && sessionId.length > 0
     ? new RegExp(`--session-id[= ]+${sessionId}`, 'i')
     : null;
-  const looksLikeMycc = (line) =>
+  const looksLikeMycc = (line: string): boolean =>
     /mycc/i.test(line) || (sidPattern !== null && sidPattern.test(line));
 
   const commandLine = readProcessCommandLine(pid);
@@ -159,7 +181,7 @@ export function isMyccProcess(pid, sessionId) {
  * Windows: `Get-CimInstance Win32_Process` (wmic is gone from current Windows).
  * Unix: `ps -p <pid> -o args=`.
  */
-function readProcessCommandLine(pid) {
+function readProcessCommandLine(pid: number): string | null {
   try {
     if (process.platform === 'win32') {
       const out = execFileSync(
@@ -198,7 +220,7 @@ function readProcessCommandLine(pid) {
  *   - a legacy heartbeat with no `pid` cannot name an owner at all → refuse
  *     (`refused-no-recorded-pid`) rather than kill on a guess.
  */
-export function stopPeer(peer) {
+export function stopPeer(peer: Peer): string {
   if (!peer.sessionId) return 'no-session';
   const hbPid = heartbeatPid(peer.sessionId);
 
@@ -219,7 +241,8 @@ export function stopPeer(peer) {
     process.kill(hbPid, 'SIGTERM');
     return 'stopped';
   } catch (err) {
-    return `kill-failed:${err.code || err.message}`;
+    const e = err as NodeJS.ErrnoException;
+    return `kill-failed:${e.code || e.message}`;
   }
 }
 
@@ -234,7 +257,10 @@ export function stopPeer(peer) {
  * replacement immediately would make it refuse to boot. Returns 'released' when
  * no live holder remains, else 'still-held' on timeout.
  */
-export async function waitForHolderRelease(sessionId, timeoutMs = HOLDER_RELEASE_TIMEOUT_MS) {
+export async function waitForHolderRelease(
+  sessionId: string,
+  timeoutMs: number = HOLDER_RELEASE_TIMEOUT_MS,
+): Promise<'released' | 'still-held'> {
   const deadline = Date.now() + timeoutMs;
   while (isSessionHeld(sessionId)) {
     if (Date.now() >= deadline) return 'still-held';
@@ -251,7 +277,7 @@ export async function waitForHolderRelease(sessionId, timeoutMs = HOLDER_RELEASE
  * merely delays a launch, while a false "free" starts two instances under one
  * session dir.
  */
-export function isSessionHeld(sessionId) {
+export function isSessionHeld(sessionId: string): boolean {
   if (!isSessionLive(sessionId)) return false;
   const hbPid = heartbeatPid(sessionId);
   if (typeof hbPid !== 'number') return true; // cannot disprove → assume held
@@ -278,8 +304,8 @@ export function isSessionHeld(sessionId) {
  *      Windows and, on Unix, makes the detached group leader a `/bin/sh` whose
  *      SIGTERM orphans the node grandchild).
  */
-export function resolveMyccBin() {
-  const candidates = [];
+export function resolveMyccBin(): string | null {
+  const candidates: string[] = [];
   if (process.env.MYCC_COMPOSE_BIN) {
     candidates.push(process.env.MYCC_COMPOSE_BIN);
   }
@@ -293,7 +319,7 @@ export function resolveMyccBin() {
     candidates.push(path.join(process.env.MYCC_ROOT, 'bin', 'mycc.js'));
   }
   try {
-    const finder = process.platform === 'win32' ? ['where', ['mycc']] : ['which', ['mycc']];
+    const finder: [string, string[]] = process.platform === 'win32' ? ['where', ['mycc']] : ['which', ['mycc']];
     const found = execFileSync(finder[0], finder[1], { encoding: 'utf-8', timeout: 5_000 })
       .split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
     for (const shim of found) {
@@ -315,10 +341,13 @@ export function resolveMyccBin() {
 }
 
 /** The latest heartbeat timestamp recorded for a session, or 0. */
-function latestBeatMs(sessionId) {
+function latestBeatMs(sessionId: string): number {
   const { heartbeats } = readHeartbeatData(sessionId);
   return heartbeats.length > 0 ? heartbeats[heartbeats.length - 1] : 0;
 }
+
+/** Outcome of a launch attempt. */
+export type LaunchResult = 'started';
 
 /**
  * Launch one peer DETACHED: `node <bin/mycc.js> --session-id <sid> <args…>`
@@ -335,10 +364,15 @@ function latestBeatMs(sessionId) {
  *   - the child's own exit is observed, so a refused/failed spawn is reported
  *     with its exit code instead of surfacing as a 30s timeout.
  */
-export function launchPeer(peer) {
+export function launchPeer(peer: Peer): Promise<LaunchResult> {
   return new Promise((resolve, reject) => {
+    if (!peer.sessionId) {
+      reject(new Error(`cannot launch "${peer.name}": no session id`));
+      return;
+    }
+    const sid = peer.sessionId;
     const argv = peerArgv(peer);
-    const finalArgv = ['--session-id', peer.sessionId, ...argv];
+    const finalArgv = ['--session-id', sid, ...argv];
     const bin = resolveMyccBin();
 
     if (!bin) {
@@ -353,12 +387,15 @@ export function launchPeer(peer) {
     // which is still inside its graceful teardown) would make the replacement
     // refuse to boot via the --session-id held-guard. Wait it out first.
     const spawnAt = Date.now();
-    const prevBeat = latestBeatMs(peer.sessionId);
+    const prevBeat = latestBeatMs(sid);
 
-    let child;
-    let poll = null;
+    let poll: ReturnType<typeof setInterval> | null = null;
     let settled = false;
-    const done = (fn, arg) => {
+    // `fn` is typed generically over its own `arg` so resolve (which accepts
+    // only LaunchResult) and reject (which accepts only Error) both type-check:
+    // each call infers T from the concrete arg, so fn is never called with the
+    // full union.
+    const done = <T>(fn: (v: T) => void, arg: T): void => {
       if (settled) return;
       settled = true;
       if (poll) clearInterval(poll);
@@ -366,7 +403,7 @@ export function launchPeer(peer) {
     };
 
     void (async () => {
-      const release = await waitForHolderRelease(peer.sessionId);
+      const release = await waitForHolderRelease(sid);
       if (release !== 'released') {
         done(reject, new Error(
           `session ${peer.sessionId} is still held by a live process after ` +
@@ -376,27 +413,30 @@ export function launchPeer(peer) {
       }
 
       try {
-        child = spawn(process.execPath, [bin, ...finalArgv], {
-          cwd: peer.workdir,
+        // Bind the spawn result to a const so the handler closures below
+        // capture a non-null ChildProcess (a `let` captured by closures is
+        // treated as potentially reassigned, so TS widens it back to null).
+        const proc = spawn(process.execPath, [bin, ...finalArgv], {
+          cwd: peer.workdir as string,
           detached: true,
           stdio: 'ignore',
           shell: false,
           windowsHide: true,
         });
+        proc.on('error', (err: Error) => done(reject, new Error(`spawn failed for "${peer.name}": ${err.message}`)));
+        proc.on('exit', (code: number | null, signal: NodeJS.Signals | null) => done(reject, new Error(
+          `peer "${peer.name}" exited before registering (code=${code ?? 'null'}${signal ? `, signal=${signal}` : ''}).`,
+        )));
+        proc.unref();
       } catch (err) {
-        done(reject, new Error(`spawn failed for "${peer.name}": ${err.message}`));
+        done(reject, new Error(`spawn failed for "${peer.name}": ${(err as Error).message}`));
         return;
       }
-      child.on('error', (err) => done(reject, new Error(`spawn failed for "${peer.name}": ${err.message}`)));
-      child.on('exit', (code, signal) => done(reject, new Error(
-        `peer "${peer.name}" exited before registering (code=${code ?? 'null'}${signal ? `, signal=${signal}` : ''}).`,
-      )));
-      child.unref();
 
       const deadline = Date.now() + LAUNCH_TIMEOUT_MS;
       poll = setInterval(() => {
-        if (latestBeatMs(peer.sessionId) > prevBeat && isPeerRunning(peer)) {
-          done(resolve, 'started');
+        if (latestBeatMs(sid) > prevBeat && isPeerRunning(peer as PeerRef)) {
+          done(resolve, 'started' as LaunchResult);
           return;
         }
         if (Date.now() > deadline) {
@@ -431,8 +471,8 @@ export function launchPeer(peer) {
  *     alone. A dead peer's heartbeat file lingers for up to 90s; gating on the
  *     recorded pid being ALIVE avoids minting a ghost entry.
  */
-export function repairIdentity(peers) {
-  const pending = new Map(); // sessionId → entry to (re)insert
+export function repairIdentity(peers: Peer[]): number {
+  const pending = new Map<string, IdentityEntry>(); // sessionId → entry to (re)insert
   for (const peer of peers) {
     if (!peer.sessionId) continue;
     const { heartbeats, pid } = readHeartbeatData(peer.sessionId);
@@ -447,10 +487,10 @@ export function repairIdentity(peers) {
     // convention under ~/.mycc-store/sessions/<sid>/unread-lead.jsonl.
     pending.set(peer.sessionId, {
       sessionId: peer.sessionId,
-      workDir: peer.workdir,
+      workDir: peer.workdir as string,
       mailbox: path.join(os.homedir(), '.mycc-store', 'sessions', peer.sessionId, 'unread-lead.jsonl'),
       startedAt: heartbeats[0],
-      args: formatLaunchArgs(peer.parsedArgs),
+      args: formatLaunchArgs(peer.parsedArgs ?? {}),
       pid,
     });
   }
@@ -495,14 +535,14 @@ export function repairIdentity(peers) {
 // ---------------------------------------------------------------------------
 
 /** Per-peer status row: {name, sessionId, live, matching, lastBrief}. */
-export function peerStatus(peer) {
+export function peerStatus(peer: Peer): PeerStatusRow {
   return {
-    name: peer.name,
-    sessionId: peer.sessionId,
+    name: peer.name as string,
+    sessionId: peer.sessionId ?? null,
     // "live" reflects an actually-running process (fresh heartbeat AND alive
     // pid), not merely a not-yet-expired heartbeat file.
     live: isPeerRunning(peer),
     matching: findMatchingLiveEntry(peer) !== null,
-    lastBrief: lastBrief(peer.sessionId),
+    lastBrief: lastBrief(peer.sessionId as string),
   };
 }

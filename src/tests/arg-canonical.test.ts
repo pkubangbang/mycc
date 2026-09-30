@@ -1,9 +1,9 @@
 /**
  * arg-canonical.test.ts - Unit tests for the shared CLI-arg table + parser.
  *
- * The util is plain ESM JavaScript (src/utils-esm/arg-canonical.js + a sibling
- * .d.ts) loaded by BOTH `src/config.ts` (via tsx) and the zero-dependency
- * `mycc-compose` bin (plain node). Its whole point is that the two sides parse
+ * The util (src/utils/arg-canonical.ts) is loaded by BOTH `src/config.ts` and
+ * the `mycc-compose` bin (a thin .js shim that registers the tsx loader then
+ * imports the .ts lib modules). Its whole point is that the two sides parse
  * a flag string through ONE table, so the classic Number-vs-String trap cannot
  * occur. These tests pin that contract:
  *
@@ -30,7 +30,7 @@ import {
   canonicalArgs,
   argsMatch,
   buildCmdArgsEnv,
-} from '../utils-esm/arg-canonical.js';
+} from '../utils/arg-canonical.js';
 
 /** The exact minimist invocation config.ts uses, for parity comparison. */
 function minimistParse(raw: string) {
@@ -67,7 +67,7 @@ function minimistParse(raw: string) {
  *   - `--serve 09000`: minimist coerces to `9000` while the parser keeps
  *     `09000` → false mismatch.
  *
- * Both are now fixed at the source (ALIASES folding in arg-canonical.js), and
+ * Both are now fixed at the source (ALIASES folding in arg-canonical.ts), and
  * the parity assertions below compare the EXACT published strings — the
  * rendering the two sides actually use for matching — instead of a lossy
  * projection that cannot see a divergence.

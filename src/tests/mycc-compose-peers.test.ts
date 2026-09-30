@@ -1,6 +1,6 @@
 /**
  * mycc-compose-peers.test.ts — launcher/liveness correctness for the
- * mycc-compose peer layer (scripts/mycc-compose/lib/peers.js + discovery.js).
+ * mycc-compose peer layer (scripts/mycc-compose/lib/peers.ts + discovery.ts).
  *
  * Every test here FAILS against the pre-fix modules and PASSES after. The
  * defects pinned:

@@ -86,14 +86,17 @@ LLM is in the loop; the script is the entire mechanism.
 
 ## 4. `mycc-compose` CLI
 
-`scripts/mycc-compose/mycc-compose.js` — the thin CLI entry. Zero-dependency
-ESM, mirroring `scripts/mdcalc/mdcalc.js`: the entry only dispatches, and all
-logic lives in `scripts/mycc-compose/lib/` (`discovery.js` = readers +
-liveness predicates, `spec.js` = load/validate, `channels.js` =
-materialization, `peers.js` = launch/stop/match/repair, `cli.js` = arg
-parsing). Only plain `.js` is imported, so a plain `node` process loads it
-without tsx. Registered as a `bin` entry in `package.json` next to `mycc`,
-`mdcalc`, `mycc-mail`, `mycc-pretty-print`.
+`scripts/mycc-compose/mycc-compose.js` — the thin CLI entry. It registers the
+tsx loader (`import { register } from 'tsx/esm/api'; register();`) and
+dynamically imports a single `.ts` umbrella, then dispatches subcommands. All
+logic lives in `scripts/mycc-compose/lib/` (`.ts` modules: `discovery.ts` =
+readers + liveness predicates, `spec.ts` = load/validate, `channels.ts` =
+materialization, `peers.ts` = launch/stop/match/repair, `cli.ts` = arg
+parsing, plus per-subcommand `cmd-check.ts` / `cmd-up.ts` / `cmd-down.ts` /
+`cmd-status.ts` re-exported from `index.ts`). The entry stays `.js` only
+because npm/Windows `.cmd` wrappers need a `.js` target; `register()` lets it
+load the `.ts` lib in-process. Registered as a `bin` entry in `package.json`
+next to `mycc`, `mdcalc`, `mycc-mail`, `mycc-pretty-print`.
 
 | Command | Behavior |
 |---|---|
@@ -139,10 +142,11 @@ without tsx. Registered as a `bin` entry in `package.json` next to `mycc`,
 
 Live instances publish their own redacted launch args in `identity.json`, and
 the spec's `args` string is parsed with the **same util** — so the two sides
-cannot drift. The util lives at `src/utils-esm/arg-canonical.js` (+ `.d.ts`) and is
-loaded by **both** `src/config.ts` (via tsx/TS) and the zero-dep
-`mycc-compose` bin (plain `node`). Authoring it as `.js` is the only direction
-that works: tsx consumes `.js`, but plain node cannot consume `.ts`.
+cannot drift. The util lives at `src/utils/arg-canonical.ts` and is loaded by
+**both** `src/config.ts` (via tsx/TS) and the `mycc-compose` bin (whose `.js`
+entry calls `tsx/esm/api`'s `register()` so plain `node` can import the `.ts`
+module in-process). It is authored as `.ts` because tsx consumes `.ts`
+directly and the bin's `register()` shim closes the gap from the `.js` side.
 
 | Export | Consumer | Purpose |
 |---|---|---|
@@ -223,14 +227,16 @@ Freshness is currently derived three ways (`IdentityManager.isFresh`,
 
 | File | Change |
 |---|---|
-| `src/utils-esm/arg-canonical.js` | **new** — shared flag table + formatters/parsers |
-| `src/utils-esm/arg-canonical.d.ts` | **new** — types for the above |
+| `src/utils/arg-canonical.ts` | **new** — shared flag table + formatters/parsers (consumed by both `src/` via tsx and the `mycc-compose` bin via `register()`) |
+| `src/utils/id-guard.ts` | **new** — `isSafeId` / `sanitizeId`, shared by `config.ts` and `spec.ts` |
 | `src/config.ts` | spread shared tables into `minimist()`; `getLaunchArgs()` delegates; add `session-id` to `string`; `getPinnedSessionId()` |
 | `src/types.ts` | `IdentityEntry.args?: string` |
 | `src/peer/identity.ts` | `register()` publishes `args`; export `isSessionLive()` |
 | `src/session/index.ts` | pinned id in `writeFreshSessionFiles()`; live-holder guard in `initializeSession()` |
-| `scripts/mycc-compose/mycc-compose.js` | **new** — the CLI entry (thin dispatcher) |
-| `scripts/mycc-compose/lib/{discovery,spec,channels,peers,cli}.js` | **new** — the modules; `spec.d.ts` gives the pure validator its types |
+| `scripts/mycc-compose/mycc-compose.js` | **new** — the CLI entry (registers tsx, imports the `.ts` umbrella, dispatches) |
+| `scripts/mycc-compose/lib/{discovery,spec,channels,peers,cli}.ts` | **new** — the `.ts` lib modules |
+| `scripts/mycc-compose/lib/cmd-{check,up,down,status}.ts` | **new** — per-subcommand implementations, re-exported from `index.ts` |
+| `scripts/mycc-compose/lib/index.ts` | **new** — the umbrella re-exported by the `.js` entry |
 | `package.json` | `bin` gains `mycc-compose` |
 | `skills/mycc-compose/{SKILL.md,schema.md,script.md}` | **new** — progressive-disclosure skill |
 | `docs/peer-topology.md` | this document |
@@ -238,9 +244,10 @@ Freshness is currently derived three ways (`IdentityManager.isFresh`,
 
 ## 8. Verification
 
-- `npm run typecheck` (+ `typecheck:test`) and `npm run lint` — note: adding a
-  `.js` under `src/` may require scoping `eslint.config.mjs`'s
-  `parserOptions.project` block to `**/*.ts` (behavior-preserving).
+- `npm run typecheck` (+ `typecheck:test`) and `npm run lint` — note: the
+  `mycc-compose.js` entry is a `.js` shim under `scripts/` (not `src/`), so
+  `eslint.config.mjs`'s `parserOptions.project` block (scoped to `**/*.ts`)
+  does not type-lint it; the `.ts` lib it imports is type-checked normally.
 - `vitest run` — the full suite, plus the two new unit-test files above.
 - **Manual smoke (not an automated test):** `mycc-compose check` → `up` →
   `status --json` shows both peers live+matching and both channel files present
