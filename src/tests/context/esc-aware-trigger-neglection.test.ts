@@ -81,10 +81,7 @@ import {
   hasPendingWrapUp,
   clearWrapUp,
 } from '../../loop/esc-wrap-up.js';
-import {
-  setResultCallback,
-  displayLetterBox,
-} from '../../utils/letter-box.js';
+import { setResultCallback } from '../../utils/letter-box.js';
 import type { Triologue } from '../../loop/triologue.js';
 
 describe('escAware + real triggerNeglection (WebUI 停止 path)', () => {
