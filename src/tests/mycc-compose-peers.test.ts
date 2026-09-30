@@ -126,19 +126,22 @@ async function waitFor(pred: () => boolean, timeoutMs = 3000, stepMs = 50): Prom
   return pred();
 }
 
-/** Write a fixture bin and point resolveMyccBin() at it.
+/** Write a fixture bin and point the launcher at it instead of the real repo bin.
  *
- * MYCC_COMPOSE_BIN is also a FORCING override: when it is set, launchPeer takes
- * the direct `node <bin>` branch even on Windows with the daemon wrapper
- * present. Without that, the Windows wrapper branch (bin/mycc-daemon.exe wins
- * over the bin) would ignore this fixture entirely and spawn a REAL Lead — so
- * these tests could never exercise the spawn/exit/poll logic on Windows, and
- * would burn the full 10s test timeout doing it. One setBin() call therefore
- * installs the fixture AND pins the fixture-driven launch path. */
+ * Two things make the fixture win on every platform:
+ *   - the fixture lives at <tempDir>/bin/mycc.js and MYCC_ROOT=<tempDir>, which
+ *     resolveMyccBin() candidate #2 resolves to the fixture (its earlier
+ *     candidates — notably the real repo bin — are bypassed because MYCC_ROOT
+ *     is consulted before them for the fixture path), and
+ *   - setting MYCC_ROOT also makes launchPeer take the direct `node <bin>`
+ *     branch and SKIP the Windows daemon wrapper, which would otherwise boot
+ *     the real checkout and spawn a REAL Lead.
+ * The spawn/exit/poll logic therefore runs against a deterministic bin. */
 function setBin(source: string): void {
-  const bin = path.join(tempDir, `bin-${Math.random().toString(36).slice(2)}.js`);
-  fs.writeFileSync(bin, source);
-  process.env.MYCC_COMPOSE_BIN = bin;
+  const binDir = path.join(tempDir, 'bin');
+  fs.mkdirSync(binDir, { recursive: true });
+  fs.writeFileSync(path.join(binDir, 'mycc.js'), source);
+  process.env.MYCC_ROOT = tempDir;
 }
 
 beforeEach(() => {
@@ -148,13 +151,13 @@ beforeEach(() => {
   fs.mkdirSync(hbDir, { recursive: true });
   fs.writeFileSync(identityFile, '{}');
   process.env.MYCC_DISCOVERY_DIR = path.join(tempDir, 'discovery');
-  delete process.env.MYCC_COMPOSE_BIN;
+  delete process.env.MYCC_ROOT;
   hook.onRename = null;
 });
 
 afterEach(() => {
   delete process.env.MYCC_DISCOVERY_DIR;
-  delete process.env.MYCC_COMPOSE_BIN;
+  delete process.env.MYCC_ROOT;
   vi.restoreAllMocks();
   try {
     fs.rmSync(tempDir, { recursive: true, force: true });

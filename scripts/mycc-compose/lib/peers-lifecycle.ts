@@ -13,6 +13,7 @@
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { createRequire } from 'module';
 import { spawn, execFileSync } from 'child_process';
 
 import { getProjectRoot, getTsxLoaderPath } from '../../../src/utils/tsx-run.js';
@@ -242,16 +243,14 @@ export function isSessionHeld(sessionId: string): boolean {
  * it with `node` DIRECTLY — no shell. See the module header for why.
  *
  * Resolution order:
- *   0. MYCC_COMPOSE_BIN env — explicit override (used by the test suite to
- *      point at a fixture bin, and as an operational escape hatch).
  *   1. THIS SCRIPT's own package tree (<scripts/mycc-compose>/../../bin/mycc.js).
  *      Preferred over any PATH shim: after `npm link` the global `mycc` may be
  *      a junction to an OLDER checkout whose bin predates `--session-id`, in
  *      which case the pinned id is ignored and the launch poll waits forever.
  *   2. MYCC_ROOT env (set by bin/mycc.js) → <root>/bin/mycc.js
- *   3. The global npm package next to the resolved `mycc` shim
- *      (<npm-prefix>/node_modules/mycc/bin/mycc.js) — a junction to the repo
- *      after `npm link`.
+ *   3. The `mycc` package resolved from THIS module's require graph via
+ *      require.resolve('mycc/bin/mycc.js') — a junction to the repo after
+ *      `npm link`, and host-independent (no dependency on a PATH shim).
  *   4. null → the caller REFUSES to launch (never falls back to a shell; the
  *      shell path re-introduces the `title %COMSPEC%` foregrounding bug on
  *      Windows and, on Unix, makes the detached group leader a `/bin/sh` whose
@@ -259,9 +258,6 @@ export function isSessionHeld(sessionId: string): boolean {
  */
 export function resolveMyccBin(): string | null {
   const candidates: string[] = [];
-  if (process.env.MYCC_COMPOSE_BIN) {
-    candidates.push(process.env.MYCC_COMPOSE_BIN);
-  }
   try {
     const here = path.dirname(fileURLToPath(import.meta.url)); // .../lib
     candidates.push(path.join(here, '..', '..', 'bin', 'mycc.js'));
@@ -272,16 +268,10 @@ export function resolveMyccBin(): string | null {
     candidates.push(path.join(process.env.MYCC_ROOT, 'bin', 'mycc.js'));
   }
   try {
-    const finder: [string, string[]] = process.platform === 'win32' ? ['where', ['mycc']] : ['which', ['mycc']];
-    const found = execFileSync(finder[0], finder[1], { encoding: 'utf-8', timeout: 5_000 })
-      .split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
-    for (const shim of found) {
-      // <dir>/mycc(.cmd|.ps1|) → <dir>/node_modules/mycc/bin/mycc.js
-      const dir = path.dirname(shim);
-      candidates.push(path.join(dir, 'node_modules', 'mycc', 'bin', 'mycc.js'));
-    }
+    const require = createRequire(import.meta.url);
+    candidates.push(require.resolve('mycc/bin/mycc.js'));
   } catch {
-    // `where`/`which` unavailable — fall through to the remaining candidates.
+    // `mycc` not resolvable from here — fall through to the remaining candidates.
   }
   for (const c of candidates) {
     try {
@@ -373,13 +363,18 @@ export function launchPeer(peer: Peer): Promise<LaunchResult> {
     // no-detached dies with the launcher). See launchPeerWindowsWrapper + the
     // Go wrapper source (src/native/daemon-wrapper/main.go).
     //
-    // EXPLICIT OVERRIDE: MYCC_COMPOSE_BIN forces the direct `node <bin>` branch
-    // on every platform. It exists for the test suite, which installs a fixture
-    // bin to drive the spawn/exit/poll paths deterministically — without the
-    // override the Windows wrapper branch wins and the fixture bin is never
-    // executed at all (the wrapper spawns a real Lead instead), so the
-    // fixture-driven tests could not run on Windows. It doubles as an
-    // operational escape hatch to bypass the wrapper.
+    // The choice is made on the WHOLE FLEET's platform, never per-launch: there
+    // is deliberately no per-launch env override, so a stray variable cannot
+    // silently put one peer on a different spawn shape than its siblings.
+    //
+    // EXCEPTION — an explicit MYCC_ROOT: the wrapper boots the checkout at
+    // getProjectRoot() (and its own <root>/bin/mycc.js) and short-circuits
+    // resolveMyccBin() entirely, so it cannot honor a MYCC_ROOT that names a
+    // DIFFERENT tree. When MYCC_ROOT is set we therefore take the direct
+    // `node <bin>` branch and spawn the bin resolveMyccBin() resolves from that
+    // root. The test suite relies on exactly this to point launchPeer at a
+    // fixture bin instead of the real repo bin; the operational sim never sets
+    // MYCC_ROOT, so it keeps the no-popup wrapper.
     //
     // Fallback (Unix, or Windows without the wrapper binary) → the direct
     // `node <bin/mycc.js>` spawn. Unix uses process groups (detached:true) for
@@ -387,9 +382,9 @@ export function launchPeer(peer: Peer): Promise<LaunchResult> {
     // fallback cannot guarantee survival; it warns and proceeds.
     const PROJECT_ROOT = getProjectRoot();
     const wrapperPath = path.join(PROJECT_ROOT, 'bin', 'mycc-daemon.exe');
-    const forcedBin = typeof process.env.MYCC_COMPOSE_BIN === 'string' && process.env.MYCC_COMPOSE_BIN !== '';
-    const useWrapper = !forcedBin && process.platform === 'win32' && fs.existsSync(wrapperPath);
-    const bin = !useWrapper ? resolveMyccBin() : null;
+    const rootOverride = typeof process.env.MYCC_ROOT === 'string' && process.env.MYCC_ROOT.length > 0;
+    const useWrapper = !rootOverride && process.platform === 'win32' && fs.existsSync(wrapperPath);
+    const bin = useWrapper ? null : resolveMyccBin();
 
     if (!useWrapper && !bin) {
       reject(new Error(
