@@ -422,9 +422,16 @@ export function argsMatch(
 /**
  * Index rendered `--flag [value]` groups by flag name for wildcard-aware
  * comparison. Positionals (`_`) are ignored — they do not belong in a spec.
+ *
+ * A REPEATED flag contributes every one of its rendered groups to the key,
+ * and the key is collapsed to a multiplicity string by keyMultiplicity(),
+ * so a peer launched with `--f a --f b` does not match a spec that says
+ * only `--f b` (or a bare `--f`).
  */
 function canonicalGroupMap(parsed: ParsedArgs): Map<string, string> {
-  const map = new Map<string, string>();
+  // Collect all rendered groups per flag name BEFORE collapsing to the
+  // comparable value: multiplicity is part of a flag's identity.
+  const perKey = new Map<string, string[]>();
   for (const group of canonicalArgs(parsed).split(/\s+(?=--)/)) {
     if (group === '(none)' || !group.startsWith('--')) continue;
     const sp = group.indexOf(' ');
@@ -436,8 +443,35 @@ function canonicalGroupMap(parsed: ParsedArgs): Map<string, string> {
     // spawn time and never authored in a spec, so they must not affect match.
     if (LAUNCHER_FLAGS.includes(key)) continue;
     const value = sp === -1 ? '' : group.slice(sp + 1);
-    // First-wins: a folded alias pair must not overwrite the long form's value.
-    if (!map.has(key)) map.set(key, value);
+    const seen = perKey.get(key);
+    if (seen) seen.push(value);
+    else perKey.set(key, [value]);
   }
+  const map = new Map<string, string>();
+  for (const [key, values] of perKey) map.set(key, keyMultiplicity(values));
   return map;
+}
+
+/**
+ * Collapse every rendered group of ONE flag into the value its key compares
+ * as.
+ *
+ *   - Any `***` group (a redacted secret) makes the WHOLE key a wildcard, so
+ *     a spec that omits a secret still matches a peer launched with one even
+ *     when that secret flag repeats.
+ *   - Otherwise the DISTINCT values join in the order canonicalArgs emitted
+ *     them (bare booleans render as `true` inside a join so they stay visible
+ *     next to value repeats). Identical repeats collapse: an alias pair
+ *     (`-v` plus `--verbose`) folds to one repeat of the same key, and
+ *     repeating the identical value twice adds no runtime state — while
+ *     DIFFERENT repeats are preserved, because that is the multiplicity the
+ *     comparison exists to detect.
+ *   - A single value keeps its bare/`value` rendering, so specs authored for
+ *     the pre-multiplicity format compare unchanged.
+ */
+function keyMultiplicity(values: string[]): string {
+  if (values.includes(REDACTED)) return REDACTED;
+  const distinct = [...new Set(values)];
+  if (distinct.length === 1) return distinct[0];
+  return distinct.map((v) => (v === '' ? 'true' : v)).join(', ');
 }

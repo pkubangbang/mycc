@@ -230,6 +230,57 @@ describe('arg-canonical: canonicalArgs + argsMatch', () => {
   });
 });
 
+describe('arg-canonical: argsMatch multiplicity (P1-2 regression)', () => {
+  // A repeated flag collects its values into an array (minimist behaviour) and
+  // renders as ONE `--flag value` group PER repeat. The pre-P1-2 group map was
+  // first-wins per key, so every repeat after the first was silently dropped:
+  // a live instance launched with `--f a --f b` "matched" any spec containing
+  // a single value of that flag, and `up`/`sync` never detected the drift.
+  // Multiplicity is part of a flag's identity — these pin the contract.
+  it('a repeated flag does not match a spec that mentions only one repeat', () => {
+    expect(argsMatch('--flag a --flag b', '--flag b')).toBe(false);
+    expect(argsMatch('--flag b --flag a', '--flag a')).toBe(false);
+    expect(argsMatch('--flag a --flag b', '--flag a')).toBe(false);
+  });
+
+  it('identical repeats on both sides still match regardless of order', () => {
+    expect(argsMatch('--flag a --flag b', '--flag b --flag a')).toBe(true);
+    expect(argsMatch('--flag a --flag b', '--flag a --flag b')).toBe(true);
+    // An identical value repeated adds no runtime state: matching a spec that
+    // says it once (and vice versa) is the intended equivalence.
+    expect(argsMatch('--flag a --flag a', '--flag a')).toBe(true);
+    expect(argsMatch('--flag a', '--flag a --flag a')).toBe(true);
+  });
+
+  it('a bare boolean mixed with a value repeat is not a bare-only match', () => {
+    expect(argsMatch('--flag --flag a', '--flag')).toBe(false);
+    expect(argsMatch('--flag --flag a', '--flag --flag a')).toBe(true);
+    expect(argsMatch('--a --a x --a y', '--a --a x --a y')).toBe(true);
+  });
+
+  it('a repeated secret wildcards the whole key; key presence is still compared', () => {
+    // formatLaunchArgs redacts EVERY secret value at render time — on BOTH
+    // sides — so a redacted group is `***` regardless of how many values the
+    // flag repeated. Which values repeated is therefore unobservable: the
+    // `***`-wildcard contract (any secret value matches any other) governs,
+    // consistent with "a spec that omits a secret still matches a peer that
+    // was launched with one". What IS still compared is key presence.
+    expect(argsMatch('--wire-token a --wire-token b --auto', '--wire-token *** --auto')).toBe(true);
+    expect(argsMatch('--wire-token *** --auto', '--wire-token a --wire-token b --auto')).toBe(true);
+    // Multiplicity does not smuggle in a KEY the spec lacks: the differing
+    // key count still fails the match (size check in argsMatch).
+    expect(argsMatch('--wire-token a --wire-token b --auto', '--auto')).toBe(false);
+  });
+
+  it('alias-folding still collapses to one repeat (multiplicity must not regress -v parity)', () => {
+    // The `-v` alias contract from the earlier fix: the published alias pair
+    // folds onto ONE key, and must render/count as ONE repeat, not two.
+    expect(argsMatch('--v --verbose --auto', '--verbose --auto')).toBe(true);
+    expect(canonicalArgs(parseArgString('--v --verbose --auto')))
+      .toBe(canonicalArgs(parseArgString('--verbose --auto')));
+  });
+});
+
 describe('arg-canonical: published-rendering parity (the argsMatch contract)', () => {
   // The regression guard for the `-v` alias divergence. With the old lossy
   // normalizer the suite passed while argsMatch() returned false for every
