@@ -134,6 +134,13 @@ export async function cmdUp(file: string, { allowStop }: { allowStop: boolean })
       continue;
     }
     if (matching && peer.renew === 'always') {
+      // renew:always wants a fresh start — but only `up` may stop a running
+      // peer. `sync` (allowStop:false) must leave it running; a cron tick that
+      // recycled live peers would defeat the reconciler's purpose.
+      if (!allowStop) {
+        actions.push({ name: peer.name, action: 'renew:always (sync: left running, no stop)' });
+        continue;
+      }
       const stopResult = stopPeer(peer);
       actions.push({ name: peer.name, action: `renew:always → stop=${stopResult}, start` });
       toStart.push(peer);
