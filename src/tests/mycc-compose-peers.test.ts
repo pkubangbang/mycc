@@ -10,7 +10,9 @@
  *     file was written (a recycle) is refused.
  *   - A-M1: launchPeer resolved 'started' from a STALE heartbeat file even when
  *     the spawned process died instantly. Now it requires a beat newer than any
- *     recorded before the spawn AND a live pid, and it fails fast on child exit.
+ *     recorded before the spawn AND a live pid. (The peer is launched through a
+ *     one-shot terminal opener, so its own exit is NOT observable as failure —
+ *     a never-beating peer surfaces as the launch timeout.)
  *   - A-M2 / D-5: repairIdentity's single read-merge-write clobbered a
  *     concurrent register(). Now it re-reads/verifies in a retry loop.
  *   - m2: repairIdentity resurrected identity entries for cleanly-stopped peers.
@@ -26,7 +28,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { spawn } from 'child_process';
+import { spawn, type SpawnOptions } from 'child_process';
 
 const hook = vi.hoisted(() => ({
   onRename: null as null | ((dst: string) => void),
@@ -116,6 +118,31 @@ function peer(name: string, sessionId: string, args = '--auto') {
   return { name, sessionId, workdir: tempDir, args, parsedArgs: { _: [], auto: true } };
 }
 
+/** A `spawn`-shaped impl that maps launchPeer's resolved launcher command onto
+ * the fixture shim written by {@link setBin}, so the injected seam runs the
+ * deterministic fixture instead of a real mycc. `launchPeer` resolves the
+ * ABSOLUTE launcher (`<tempDir>/bin/mycc.cmd` on Windows via MYCC_ROOT,
+ * `.../mycc` on POSIX) and — on Windows — CONVERTS a parsable `.cmd` shim to
+ * its real argv (`node <entry.js> …`, parseCmdShim in peers-lifecycle.ts)
+ * before calling the seam: a detached `cmd /c` wrap still pops a visible
+ * Windows-Terminal console window. The seam therefore receives `node.exe`
+ * on Windows and runs the fixture directly (hidden); the `command === shim`
+ * checks remain for POSIX and for any future direct-shim call shape. */
+function fixtureSpawn(
+  command: string,
+  args: readonly string[],
+  options: SpawnOptions,
+): ReturnType<typeof spawn> {
+  const shim = path.join(tempDir, 'bin', process.platform === 'win32' ? 'mycc.cmd' : 'mycc');
+  if (command === shim || command === 'mycc') {
+    if (process.platform === 'win32') {
+      return spawn('cmd', ['/c', shim, ...args], options);
+    }
+    return spawn(shim, args as string[], options);
+  }
+  return spawn(command, args as string[], options);
+}
+
 /** Poll until `pred()` or the deadline; returns pred()'s last value. */
 async function waitFor(pred: () => boolean, timeoutMs = 3000, stepMs = 50): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
@@ -126,19 +153,34 @@ async function waitFor(pred: () => boolean, timeoutMs = 3000, stepMs = 50): Prom
   return pred();
 }
 
-/** Point the launcher's bin resolution at a FIXTURE bin instead of the real
- * repo bin.
+/** Write a FIXTURE mycc shim under `<tempDir>/bin` and point MYCC_ROOT at it.
  *
- * launchPeer spawns the bin {@link resolveMyccBin} resolves, with `detached:true`
- * and one spawn shape on every platform (there is no wrapper binary and no env
- * override). resolveMyccBin takes <MYCC_ROOT>/bin/mycc.js as a candidate, so
- * writing the fixture there and setting MYCC_ROOT to the temp dir makes the
- * fixture the bin that gets spawned. The spawn/exit/poll logic then runs against
- * a deterministic script instead of a real Lead. */
+ * `launchPeer` resolves an ABSOLUTE launcher via {@link resolveMyccLauncher},
+ * whose first candidate is `$MYCC_ROOT/bin/mycc{.cmd,}`. Writing the fixture
+ * there and setting MYCC_ROOT to the temp dir makes the fixture the absolute
+ * launcher path the peer terminal would invoke — a deterministic script instead
+ * of a real Lead. On Windows the shim is a `mycc.cmd` (the same form the npm
+ * global install uses); on POSIX an executable `mycc` shell script.
+ *
+ * NOTE: `openTerminal` remains one-shot and creates no window under a
+ * non-interactive console, so a test that must observe the beat POLL injects
+ * the `spawnImpl` seam (see {@link fixtureSpawn}) instead. `setBin` is otherwise
+ * only exercised by the tests that expect a TIMEOUT (no beat is ever produced). */
 function setBin(source: string): void {
   const binDir = path.join(tempDir, 'bin');
   fs.mkdirSync(binDir, { recursive: true });
-  fs.writeFileSync(path.join(binDir, 'mycc.js'), source);
+  const scriptFile = path.join(binDir, 'mycc-fixture.js');
+  fs.writeFileSync(scriptFile, source);
+  if (process.platform === 'win32') {
+    fs.writeFileSync(
+      path.join(binDir, 'mycc.cmd'),
+      `@echo off\r\n"${process.execPath}" "${scriptFile}" %*\r\n`,
+    );
+  } else {
+    const shim = path.join(binDir, 'mycc');
+    fs.writeFileSync(shim, `#!/bin/sh\nexec "${process.execPath}" "${scriptFile}" "$@"\n`);
+    fs.chmodSync(shim, 0o755);
+  }
   process.env.MYCC_ROOT = tempDir;
 }
 
@@ -234,36 +276,35 @@ describe('launchPeer: requires a NEW beat from the spawned child (A-M1)', () => 
   it('does NOT report success from a stale heartbeat while the child never beats', async () => {
     const { peers } = await loadModules();
     const pidFile = path.join(tempDir, 'child.pid');
-    // Alive for 4s, never writes a heartbeat → the pre-fix poll resolved
+    // Alive for ~1.5s, never writes a heartbeat → the pre-fix poll resolved
     // 'started' from the STALE fresh heartbeat below within ~500ms.
     setBin(
       `require('fs').writeFileSync(${JSON.stringify(pidFile)}, String(process.pid));` +
-      'setTimeout(function(){}, 4000);',
+      'setTimeout(function(){}, 1500);',
     );
     writeHeartbeat(SID_A, await deadPid()); // fresh file, dead pid → not a live holder
     writeIdentity(SID_A);
 
-    let resolved: string | null = null;
-    const pending = peers.launchPeer(peer('silent', SID_A)).then(
-      (v: unknown) => { resolved = String(v); return `resolved:${v}`; },
-      (e: Error) => `rejected:${e.message}`,
-    );
-
-    expect(await waitFor(() => resolved !== null, 1500)).toBe(false);
-    // Drain: the child exits at ~4s → launchPeer rejects (no leaked interval).
-    expect(await pending).toMatch(/^rejected:/);
+    const pending = peers.launchPeer(peer('silent', SID_A), { spawnImpl: fixtureSpawn });
+    // No beat ever arrives, so launchPeer must NOT resolve on the stale beat —
+    // it stays pending until the launch timeout (kept pending, never awaited).
+    let resolved = false;
+    void pending.then(() => { resolved = true; }, () => { /* timeout rejection */ });
+    expect(await waitFor(() => resolved, 1500)).toBe(false);
   });
 
-  it('reports the child exit reason instead of a generic timeout', async () => {
+  it('treats a fast opener exit as normal and reports a timeout when no beat follows', async () => {
     const { peers } = await loadModules();
+    // The terminal opener is ONE-SHOT: it creates the window and exits at once.
+    // Its exit is therefore never the peer's death, so launchPeer must not
+    // reject with an exit code — it polls for a beat and times out instead.
     setBin('process.exit(7);');
     writeIdentity(SID_A); // no heartbeat at all → no holder, spawn proceeds
 
-    const err = await peers.launchPeer(peer('crash', SID_A)).then(() => null, (e: Error) => e);
+    const err = await peers.launchPeer(peer('crash', SID_A), { spawnImpl: fixtureSpawn }).then(() => null, (e: Error) => e);
     expect(err).not.toBeNull();
-    expect(err!.message).toMatch(/exited before registering/);
-    expect(err!.message).toContain('code=7');
-  });
+    expect(err!.message).toMatch(/did not come up within/);
+  }, 40_000);
 
   it('resolves once the child actually beats', async () => {
     const { peers } = await loadModules();
@@ -285,7 +326,13 @@ describe('launchPeer: requires a NEW beat from the spawned child (A-M1)', () => 
     // Budget: one node boot (~100-300ms) + a poll tick (LAUNCH_POLL_MS=500).
     // vitest's global testTimeout is 10s, which is ample; assert against a
     // SHORTER deadline so a hang fails urgently instead of burning 10s.
-    expect(await peers.launchPeer(peer('boots', SID_A))).toBe('started');
+    //
+    // The fixture is spawned DIRECTLY (spawnImpl seam), bypassing the terminal
+    // opener: under a non-interactive console `cmd /c start` creates no window
+    // and runs nothing, so the beat would never arrive. The seam isolates the
+    // environment-dependent opener from the poll logic under test, and routes
+    // the resolved absolute launcher path to the fixture shim (see fixtureSpawn).
+    expect(await peers.launchPeer(peer('boots', SID_A), { spawnImpl: fixtureSpawn })).toBe('started');
   }, 5000);
 });
 

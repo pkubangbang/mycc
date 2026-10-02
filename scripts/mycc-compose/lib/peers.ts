@@ -7,8 +7,9 @@
  *
  *   peers-types.ts      — Peer / PeerStatusRow, timing constants, sleep,
  *                         peerArgv, peerIdentityArgs, peerMailboxPath
- *   peers-lifecycle.ts  — launchPeer, stopPeer, isMyccProcess,
- *                         waitForHolderRelease, isSessionHeld, resolveMyccBin
+ *   peers-lifecycle.ts  — launchPeer, buildPeerShellCommand, resolveMyccLauncher,
+ *                         stopPeer, isMyccProcess, waitForHolderRelease,
+ *                         isSessionHeld
  *   peers-state.ts      — sameWorkdir, findMatchingLiveEntry, repairIdentity,
  *                         peerStatus
  *
@@ -32,13 +33,14 @@ export type { Peer, PeerStatusRow } from './peers-types.js';
 
 export {
   peerArgv,
+  buildPeerShellCommand,
+  resolveMyccLauncher,
   launchPeer,
   stopPeer,
   isMyccProcess,
   readProcessCommandLine,
   waitForHolderRelease,
   isSessionHeld,
-  resolveMyccBin,
 } from './peers-lifecycle.js';
 export type { LaunchResult } from './peers-lifecycle.js';
 

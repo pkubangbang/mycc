@@ -1,21 +1,7 @@
-/**
- * peers-lifecycle.ts — launch a peer, stop a peer, and decide whether a
- * session id is still held.
- *
- * Everything that touches the OPERATING SYSTEM sits here: spawning the Lead,
- * reading a process command line, signalling a pid, and resolving the launcher
- * bin. The launch path is SHELL-FREE (never the npm shim with shell:true — its
- * `title %COMSPEC%` foregrounds the child on Windows). The peer is spawned
- * DETACHED (its own process group on Unix, its own console/process group on
- * Windows) so it outlives the launcher, and with stdio ignored so it never
- * blocks on the launcher's terminal.
- */
-
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { createRequire } from 'module';
-import { spawn, execFileSync } from 'child_process';
+import { spawn, execFileSync, type SpawnOptions, type ChildProcess } from 'child_process';
 
 import { formatLaunchArgsForSpawn } from '../../../src/utils/arg-canonical.js';
 import {
@@ -38,30 +24,49 @@ import {
   isLauncherFlag,
 } from './peers-types.js';
 import type { Peer } from './peers-types.js';
+import { openTerminal } from '../../../src/utils/open-terminal.js';
 
-// ---------------------------------------------------------------------------
-// argv rendering
-// ---------------------------------------------------------------------------
+// Peer launch/stop lifecycle for mycc-compose. Launch mechanics (why
+// -EncodedCommand, why npm shims are parsed into real argv, why spawns are
+// detached) live in docs/peer-launch-windows.md — code states intent.
+
+const psQuote = (s: string): string => `'${s.replace(/'/g, "''")}'`;
+const shQuote = (s: string): string => `'${s.replace(/'/g, `'\\''`)}'`;
 
 /**
- * Split a peer's args string into argv for the `mycc` launcher. Uses the table
- * parser so `--k v` / `--k=v` / bare flags round-trip faithfully, then
- * re-renders via formatLaunchArgsForSpawn (order-preserving, NO secret
- * redaction — the spawn path must carry the real value, unlike the display
- * form which redacts to `***`).
- *
- * Launcher-managed flags (e.g. `session-id`) are stripped: launchPeer supplies
- * `--session-id` itself, and a spec that also authored one would otherwise
- * yield a doubled flag → minimist array → getPinnedSessionId() returns null →
- * the peer mints a RANDOM uuid and the launch poll waits for an id that never
- * registers. Returns an argv array.
+ * Build the shell command string a peer terminal must run, from an ABSOLUTE
+ * launcher path. The terminal's own shell does not share this process's
+ * PATH, so the launcher must be PATH-independent, and the workdir is created
+ * before the cd — a missing workdir used to kill the launch here.
+ * Windows wraps everything in one EncodedCommand; POSIX stays a plain line.
  */
+export function buildPeerShellCommand(command: string, args: string[], cwd: string): string {
+  if (process.platform === 'win32') return windowsTerminalCommand(command, args, cwd);
+  const invocation = [command, ...args].map(shQuote).join(' ');
+  return `mkdir -p ${shQuote(cwd)} && cd ${shQuote(cwd)} && ${invocation}`;
+}
+
+/** Windows branch: a PowerShell script — create workdir, cd, invoke — passed
+ * as BASE64 UTF-16LE `-EncodedCommand` so no terminal layer can mangle it. */
+function windowsTerminalCommand(command: string, args: string[], cwd: string): string {
+  // A resolved `.cmd`/`.bat` shim cannot be exec'd with `shell:false` (libuv
+  // EINVAL), so the terminal runs it as `cmd /c '<shim>' <args…>` — a real
+  // console is wanted here, so the cmd interpreter may stay.
+  const invocation = /\.(cmd|bat)$/i.test(command)
+    ? `& cmd /c ${[command, ...args].map(psQuote).join(' ')}`
+    : `& ${[command, ...args].map(psQuote).join(' ')}`;
+  const script =
+    `if (-not (Test-Path -LiteralPath ${psQuote(cwd)})) { New-Item -ItemType Directory -LiteralPath ${psQuote(cwd)} -Force | Out-Null }\n` +
+    `Set-Location -LiteralPath ${psQuote(cwd)}\n` +
+    invocation;
+  const encoded = Buffer.from(script, 'utf16le').toString('base64');
+  return `powershell -NoExit -EncodedCommand ${encoded}`;
+}
+
 export function peerArgv(peer: Peer): string[] {
   const parsed = stripLauncherFlags(peer.parsedArgs);
   const rendered = formatLaunchArgsForSpawn(parsed);
   if (rendered === '(none)') return [];
-  // Re-split honoring the same rule the formatter uses: a value token never
-  // starts with `--`, so regrouping on `--` boundaries is unambiguous.
   const argv: string[] = [];
   for (const group of rendered.split(/\s+(?=--)/)) {
     const sp = group.indexOf(' ');
@@ -74,7 +79,6 @@ export function peerArgv(peer: Peer): string[] {
   return argv;
 }
 
-/** Shallow-copy `parsed` without the launcher-managed flags (never mutates). */
 function stripLauncherFlags(parsed: Record<string, unknown> | undefined): Record<string, unknown> {
   if (!parsed || typeof parsed !== 'object') return {};
   const out: Record<string, unknown> = {};
@@ -85,26 +89,6 @@ function stripLauncherFlags(parsed: Record<string, unknown> | undefined): Record
   return out;
 }
 
-// ---------------------------------------------------------------------------
-// Process identity — "is this pid really MY mycc?"
-// ---------------------------------------------------------------------------
-
-/**
- * Does the live process at `pid` actually belong to mycc? Positive identity —
- * the check that keeps `stopPeer` from killing an unrelated Node process whose
- * pid the OS recycled.
- *
- * `tasklist` / `ps -o command` alone were useless: every Node process matches
- * "node", so the old check returned true for ANY node.exe (and its documented
- * "cannot tell" fallback returned true as well, i.e. every ambiguity became a
- * kill authorisation). We now read the COMMAND LINE and require either
- *   - the mycc bin in the path (`mycc`, `mycc.js`, a `mycc` checkout), or
- *   - the exact `--session-id <sid>` the heartbeat recorded for this session.
- *
- * When the command line cannot be read at all we return FALSE — refusal. The
- * caller has already established (via `didPidStartAfter`) that the pid is not a
- * provably-recycled one, but "we cannot tell" must never authorise a kill.
- */
 export function isMyccProcess(pid: number, sessionId?: string | null): boolean {
   if (!pid || typeof pid !== 'number') return false;
   const sidPattern = typeof sessionId === 'string' && sessionId.length > 0
@@ -114,15 +98,11 @@ export function isMyccProcess(pid: number, sessionId?: string | null): boolean {
     /mycc/i.test(line) || (sidPattern !== null && sidPattern.test(line));
 
   const commandLine = readProcessCommandLine(pid);
-  if (commandLine === null) return false; // cannot introspect → refuse
+  // cannot introspect → refuse
+  if (commandLine === null) return false;
   return looksLikeMycc(commandLine);
 }
 
-/**
- * Best-effort command line of `pid`, or null when it cannot be read.
- * Windows: `Get-CimInstance Win32_Process` (wmic is gone from current Windows).
- * Unix: `ps -p <pid> -o args=`.
- */
 export function readProcessCommandLine(pid: number): string | null {
   try {
     if (process.platform === 'win32') {
@@ -146,31 +126,10 @@ export function readProcessCommandLine(pid: number): string | null {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Stop
-// ---------------------------------------------------------------------------
-
-/**
- * Stop a peer: verify the heartbeat's recorded pid is alive AND owned by this
- * session, then terminate it. Refuses otherwise. Returns a short status string.
- *
- * Identity, not "looks like node": the heartbeat `pid` is stamped by the
- * recording process itself every beat, so a live pid IN THAT FILE is positive
- * evidence that a mycc instance owns it — unlike `isMyccProcess`, which
- * accepted any node.exe and therefore killed a recycled pid. Two extra guards
- * close the remaining recycle window:
- *
- *   - `didPidStartAfter`: a pid that provably started AFTER the heartbeat
- *     file was written cannot be the process that wrote that file, so it was
- *     recycled → refuse (`refused-recycled-pid`).
- *   - a legacy heartbeat with no `pid` cannot name an owner at all → refuse
- *     (`refused-no-recorded-pid`) rather than kill on a guess.
- */
 export function stopPeer(peer: Peer): string {
   if (!peer.sessionId) return 'no-session';
   const hbPid = heartbeatPid(peer.sessionId);
 
-  // The heartbeat file names no owner: never kill on a guess.
   if (typeof hbPid !== 'number') {
     return isSessionLive(peer.sessionId) ? 'refused-no-recorded-pid' : 'already-stopped';
   }
@@ -178,8 +137,9 @@ export function stopPeer(peer: Peer): string {
     return isPidAlive(hbPid) ? 'stale-kept-alive-pid' : 'already-stopped';
   }
   if (!isRecordedPidAlive(peer.sessionId)) return 'heartbeat-fresh-but-pid-dead';
+  // Abort on a recycled pid: a pid started AFTER the heartbeat file was written
+  // cannot be the process that wrote it.
   if (didPidStartAfter(hbPid, heartbeatFileMtimeMs(peer.sessionId))) {
-    // The pid is alive but was started after the beat that named it → recycled.
     return 'refused-recycled-pid';
   }
   if (!isMyccProcess(hbPid, peer.sessionId)) return 'refused-not-mycc';
@@ -192,21 +152,6 @@ export function stopPeer(peer: Peer): string {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Session hold
-// ---------------------------------------------------------------------------
-
-/**
- * Wait until any live holder of `sessionId` has released it, so a renewal can
- * spawn the replacement without tripping the `--session-id` held-guard.
- *
- * After `stopPeer` SIGTERMs an instance, its teardown is asynchronous — the
- * SIGTERM handler awaits `bg.killAllRunning()` before it reaches
- * `peer.stop()` → `identity.unregister()` (src/loop/signal-handlers.ts), so the
- * instance keeps beating (and holding the id) for a while. Starting the
- * replacement immediately would make it refuse to boot. Returns 'released' when
- * no live holder remains, else 'still-held' on timeout.
- */
 export async function waitForHolderRelease(
   sessionId: string,
   timeoutMs: number = HOLDER_RELEASE_TIMEOUT_MS,
@@ -219,14 +164,6 @@ export async function waitForHolderRelease(
   return 'released';
 }
 
-/**
- * True when a session id is currently HELD by a live process — a mycc-side
- * mirror of `isSessionHeld()` in src/peer/identity.ts: registered AND fresh
- * heartbeat AND (a recorded pid that is alive, or no pid at all, in which case
- * we cannot disprove the hold). Deliberately conservative: a false "held"
- * merely delays a launch, while a false "free" starts two instances under one
- * session dir.
- */
 export function isSessionHeld(sessionId: string): boolean {
   if (!isSessionLive(sessionId)) return false;
   const hbPid = heartbeatPid(sessionId);
@@ -234,101 +171,229 @@ export function isSessionHeld(sessionId: string): boolean {
   return isPidAlive(hbPid);
 }
 
-// ---------------------------------------------------------------------------
-// Bin resolution
-// ---------------------------------------------------------------------------
-
 /**
- * Resolve the absolute path to mycc's bin entry (bin/mycc.js) so we can spawn
- * it with `node` DIRECTLY — no shell. See the module header for why.
- *
- * Resolution order:
- *   1. THIS SCRIPT's own package tree (<scripts/mycc-compose>/../../bin/mycc.js).
- *      Preferred over any PATH shim: after `npm link` the global `mycc` may be
- *      a junction to an OLDER checkout whose bin predates `--session-id`, in
- *      which case the pinned id is ignored and the launch poll waits forever.
- *   2. MYCC_ROOT env (set by bin/mycc.js) → <root>/bin/mycc.js
- *   3. The `mycc` package resolved from THIS module's require graph via
- *      require.resolve('mycc/bin/mycc.js') — a junction to the repo after
- *      `npm link`, and host-independent (no dependency on a PATH shim).
- *   4. null → the caller REFUSES to launch (never falls back to a shell; the
- *      shell path re-introduces the `title %COMSPEC%` foregrounding bug on
- *      Windows and, on Unix, makes the detached group leader a `/bin/sh` whose
- *      SIGTERM orphans the node grandchild).
+ * Resolve an ABSOLUTE, directly-invocable `mycc` launcher for a peer terminal.
+ * Order: `$MYCC_ROOT/bin` → the repo bin next to this module → the `mycc`
+ * shim on PATH. Null ⇒ the caller falls back to the bare `mycc` name.
  */
-export function resolveMyccBin(): string | null {
-  const candidates: string[] = [];
-  try {
-    const here = path.dirname(fileURLToPath(import.meta.url)); // .../lib
-    candidates.push(path.join(here, '..', '..', 'bin', 'mycc.js'));
-  } catch {
-    // import.meta.url unavailable (exotic loader) — fall through.
+export function resolveMyccLauncher(): string | null {
+  // Launcher file names differ by platform: extensioned shim/exe on Windows,
+  // bare extensionless binary on POSIX.
+  const binNames = (root: string): string[] =>
+    process.platform === 'win32'
+      ? [path.join(root, 'bin', 'mycc.cmd'), path.join(root, 'bin', 'mycc.exe')]
+      : [path.join(root, 'bin', 'mycc')];
+
+  // 1. MYCC_ROOT (absolute-ized) names the tree THIS launcher started from,
+  //    and the seam tests inject their fixture into.
+  const candidates: string[] = [
+    ...(process.env.MYCC_ROOT ? binNames(path.resolve(process.env.MYCC_ROOT)) : []),
+    // 2. module-relative repo bin: three levels up from lib/ → REPO ROOT
+    //    (two would stop short at scripts/bin, silently preferring a stale
+    //    npm-linked PATH shim over a fresh checkout).
+    ...binNames(path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..')),
+  ];
+
+  for (const candidate of candidates) {
+    if (existsQuiet(candidate)) return candidate;
   }
-  // FRONT OF THE LINE after the module-relative bin: MYCC_ROOT names the tree
-  // THIS launcher was started from (bin/mycc.js exports it), so its bin is
-  // authoritative when it differs from the module-relative one (e.g. a linked
-  // checkout). Without this, an explicit MYCC_ROOT was only a fallback and the
-  // module-relative bin shadowed it.
-  if (process.env.MYCC_ROOT) {
-    candidates.splice(1, 0, path.join(process.env.MYCC_ROOT, 'bin', 'mycc.js'));
-  }
-  try {
-    const require = createRequire(import.meta.url);
-    candidates.push(require.resolve('mycc/bin/mycc.js'));
-  } catch {
-    // `mycc` not resolvable from here — fall through to the remaining candidates.
-  }
-  for (const c of candidates) {
-    try {
-      if (fs.existsSync(c)) return c;
-    } catch {
-      // ignore
-    }
+
+  // 3. the `mycc` shim on PATH, probed absolute.
+  for (const dir of (process.env.PATH ?? '').split(path.delimiter)) {
+    if (!dir) continue;
+    const shim = path.join(dir, process.platform === 'win32' ? 'mycc.cmd' : 'mycc');
+    if (existsQuiet(shim)) return shim;
   }
   return null;
 }
 
-// ---------------------------------------------------------------------------
-// Launch
-// ---------------------------------------------------------------------------
+/** fs.existsSync that swallows all errors (permissions, network drives). */
+function existsQuiet(p: string): boolean {
+  try {
+    return fs.existsSync(p);
+  } catch {
+    return false;
+  }
+}
 
-/** The latest heartbeat timestamp recorded for a session, or 0. */
 function latestBeatMs(sessionId: string): number {
   const { heartbeats } = readHeartbeatData(sessionId);
   return heartbeats.length > 0 ? heartbeats[heartbeats.length - 1] : 0;
 }
 
-/** Outcome of a launch attempt. */
-export type LaunchResult = 'started';
+/** Plain background spawn shared by the `--daemon` branch and the no-terminal
+ * fallback: detached so the child survives the compose CLI's exit, `stdio:'ignore'`
+ * because it renders nothing, unref'd so the caller can exit. A `.cmd`/`.bat`
+ * shim needs `cmd /c` (libuv cannot exec a batch file with `shell:false`). */
+function asSpawnableCommand(
+  command: string,
+  args: readonly string[],
+): { command: string; args: string[] } {
+  if (process.platform === 'win32' && /\.(cmd|bat)$/i.test(command)) {
+    return { command: 'cmd', args: ['/c', command, ...args] };
+  }
+  return { command, args: [...args] };
+}
 
 /**
- * Launch one peer to outlive the launcher.
- *
- * ALWAYS DETACHED, one spawn shape on every platform:
- *   `node <bin/mycc.js> --session-id <sid> <args…>` with cwd = workdir,
- *   stdio ignored, detached:true, windowsHide, then unref().
- *
- * detached:true gives the peer its own process group (Unix) / its own process
- * group + console (Windows), so it survives the launcher's exit — on Windows a
- * child sharing the launcher's console group would receive CTRL_CLOSE_EVENT
- * and die. There is deliberately NO wrapper binary and NO per-launch or env
- * override: whether a peer self-daemonizes is decided by its OWN argv
- * (`--daemon` in the spec), not by the spawn shape, so one stray variable
- * cannot put a peer on a different spawn shape than its siblings.
- *
- * Resolves once the peer is live — i.e. it has REGISTERED, BEATEN (a beat
- * newer than any recorded before the spawn), and its recorded pid is alive —
- * or rejects on timeout / early child exit / shell-less bin resolution failure.
- *
- * Two correctness rules the earlier version missed:
- *   - the poll requires a NEW beat, not merely `isSessionLive()`. The stale
- *     heartbeat left by a just-killed peer satisfies freshness for up to 90s,
- *     so the old poll resolved "started" in ~500ms even when the spawned
- *     process died instantly (false success + a silent duplicate/absent peer).
- *   - the child's own exit is observed, so a refused/failed spawn is reported
- *     with its exit code instead of surfacing as a 30s timeout.
+ * Parse a Windows `.cmd` launcher shim into the plain argv it executes
+ * (`{ prog, target }`, e.g. `node.exe` + `…/bin/mycc.js`) — or null when the
+ * shape is not recognized, in which case the caller keeps the `cmd /c` wrap.
+ * Spawning the target directly (instead of through the interpreter) is what
+ * keeps a detached peer from popping a console (docs/peer-launch-windows.md).
  */
-export function launchPeer(peer: Peer): Promise<LaunchResult> {
+function parseCmdShim(shimPath: string): { prog: string; target: string } | null {
+  if (process.platform !== 'win32' || !/\.cmd$/i.test(shimPath)) return null;
+  let text: string;
+  try {
+    text = fs.readFileSync(shimPath, 'utf-8');
+  } catch {
+    return null;
+  }
+  const shimDir = path.dirname(shimPath);
+  const progAssigns = collectProgAssigns(text);
+  // The effective command is the LAST `%*`-consuming line; walk bottom-up
+  // until a line yields a parsable prog+target pair.
+  const lines = text.split(/\r?\n/);
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (!lines[i].includes('%*')) continue;
+    const parsed = execSegment(lines[i], progAssigns, shimDir);
+    if (parsed) return parsed;
+  }
+  return null;
+}
+
+/** `SET "_prog=…"` values, in appearance order (npm shims set `_prog`). */
+function collectProgAssigns(text: string): string[] {
+  const assigns: string[] = [];
+  for (const line of text.split(/\r?\n/)) {
+    const m = /^\s*SET\s+"?_prog=(.+?)"?\s*$/i.exec(line);
+    if (m) assigns.push(m[1]);
+  }
+  return assigns;
+}
+
+/**
+ * Extract the launch argv from one batch line: the last `&`-separated segment
+ * that both consumes `%*` and quotes an entry `.js`, read as the quoted pair
+ * `"<prog>" "<target.js>"`. Null when no parsable pair survives.
+ */
+function execSegment(
+  line: string,
+  progAssigns: string[],
+  shimDir: string,
+): { prog: string; target: string } | null {
+  const seg = line
+    .split('&')
+    .map((s) => s.trim())
+    .filter((s) => s.includes('%*') && /"[^"]+\.js"/i.test(s))
+    .pop();
+  if (!seg) return null;
+  // Inside each `"`-pair (odd split indices) = the quoted tokens.
+  const toks = seg.split('"').filter((_, idx) => idx % 2 === 1);
+  if (toks.length !== 2) return null;
+  const [progTok, targetTok] = toks;
+  if (!/\.js$/i.test(targetTok) || /\.js$/i.test(progTok)) return null;
+  const progTokResolved = progTok === '%_prog%' ? (progAssigns[0] ?? null) : progTok;
+  const prog = resolveProg(progTokResolved, shimDir);
+  const target = resolveTarget(targetTok, shimDir);
+  return prog && target ? { prog, target } : null;
+}
+
+/** Resolve the program token to an existing executable. Relative-with-
+ * separator resolves against the shim dir; an absent bundled `node.exe`
+ * degrades to PATH `node` (npm's own IF EXIST/ELSE fallback). */
+function resolveProg(progVar: string | null, shimDir: string): string | null {
+  if (!progVar || progVar.includes('%')) return null;
+  if (!/[/\\]/.test(progVar)) return progVar; // bare PATH name, resolved at spawn time
+  const prog = /^[A-Za-z]:[\\/]/.test(progVar) ? progVar : path.join(shimDir, progVar);
+  try {
+    if (fs.existsSync(prog)) return prog;
+    return /node(\.exe)?$/i.test(prog) ? 'node' : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Expand `%dp0%`/`%~dp0` (the shim's directory) and require the entry
+ * script to exist on disk. */
+function resolveTarget(targetTok: string, shimDir: string): string | null {
+  const raw = targetTok.replace(/%~dp0|%dp0%/gi, shimDir);
+  const target = /^[A-Za-z]:[\\/]/.test(raw) ? raw : path.join(shimDir, raw);
+  try {
+    return fs.existsSync(target) ? target : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Detached background spawn shared by the `--daemon` branch, the windowless
+ * fallback, and the `spawnImpl` test seam. A parsable `.cmd` launcher is
+ * spawned via its parsed real argv (never a `cmd /c` interpreter — that is
+ * what pops the console); unparsable shapes keep the `cmd /c` fallback. */
+function spawnDetached(
+  spawnImpl: (
+    command: string,
+    args: readonly string[],
+    options: SpawnOptions,
+  ) => ChildProcess,
+  command: string,
+  args: readonly string[],
+  cwd: string,
+  onSpawnError: (err: Error) => void,
+): void {
+  const opts: SpawnOptions = {
+    cwd,
+    stdio: 'ignore',
+    shell: false,
+    // detached: the child must survive the compose CLI's exit. windowsHide
+    // alone is NOT enough for a `cmd /c` wrap — see the doc above.
+    detached: true,
+    windowsHide: true,
+  };
+  const shim = parseCmdShim(command);
+  const launch = shim
+    ? { command: shim.prog, args: [shim.target, ...args] } // identical observable argv to `cmd /c shim args…`
+    : asSpawnableCommand(command, args);
+  const proc = spawnImpl(launch.command, launch.args, opts);
+  proc.on('error', onSpawnError);
+  proc.unref();
+}
+
+export type LaunchResult = 'started';
+
+export interface LaunchPeerOpts {
+  /** Test seam ABOVE the daemon/terminal split: a spawn-shaped function for
+   * headless tests (deliberately narrowed, not `typeof spawn` — the builtin's
+   * overloads reject loose test doubles). Production omits it. */
+  spawnImpl?: (
+    command: string,
+    args: readonly string[],
+    options: SpawnOptions,
+  ) => ChildProcess;
+  /** Test-only: overrides the beat-poll deadline (never in production). */
+  timeoutMs?: number;
+}
+
+/**
+ * Launch a peer — in its OWN visible terminal, or detached background —
+ * decided SOLELY by the peer's launch args; liveness is judged solely by the
+ * heartbeat beat-poll (the terminal opener is one-shot; the spawn is unref'd).
+ *
+ * DEFAULT — a visible terminal window (openTerminal, the utility `/fork` uses)
+ * running the peer in its FOREGROUND from the peer's workdir — fail-fast: an
+ * unusable opener rejects rather than silently degrading to a windowless
+ * spawn. `--daemon` — a headless service: NO window, straight to the detached
+ * spawn.
+ *
+ * `opts.spawnImpl` routes through spawnDetached, bypassing the opener and the
+ * daemon split, so headless tests can drive the beat poll; see LaunchPeerOpts.
+ * Windows launch mechanics: docs/peer-launch-windows.md.
+ */
+export function launchPeer(
+  peer: Peer,
+  opts: LaunchPeerOpts = {},
+): Promise<LaunchResult> {
   return new Promise((resolve, reject) => {
     if (!peer.sessionId) {
       reject(new Error(`cannot launch "${peer.name}": no session id`));
@@ -338,27 +403,16 @@ export function launchPeer(peer: Peer): Promise<LaunchResult> {
     const argv = peerArgv(peer);
     const finalArgv = ['--session-id', sid, ...argv];
 
-    const bin = resolveMyccBin();
-    if (!bin) {
-      reject(new Error(
-        `cannot locate bin/mycc.js for "${peer.name}" — refusing to launch via a shell ` +
-        '(run from the mycc checkout, or set MYCC_ROOT to one).',
-      ));
-      return;
-    }
+    // ABSOLUTE launcher (see resolveMyccLauncher) — a bare `mycc` name is
+    // unresolvable in the terminal's own shell.
+    const launchCommand = resolveMyccLauncher() ?? 'mycc';
+    const launchArgs = finalArgv;
 
-    // A live holder of this session id (the instance `stopPeer` just SIGTERMed,
-    // which is still inside its graceful teardown) would make the replacement
-    // refuse to boot via the --session-id held-guard. Wait it out first.
     const spawnAt = Date.now();
     const prevBeat = latestBeatMs(sid);
 
     let poll: ReturnType<typeof setInterval> | null = null;
     let settled = false;
-    // `fn` is typed generically over its own `arg` so resolve (which accepts
-    // only LaunchResult) and reject (which accepts only Error) both type-check:
-    // each call infers T from the concrete arg, so fn is never called with the
-    // full union.
     const done = <T>(fn: (v: T) => void, arg: T): void => {
       if (settled) return;
       settled = true;
@@ -376,29 +430,32 @@ export function launchPeer(peer: Peer): Promise<LaunchResult> {
         return;
       }
 
+      const cwd = peer.workdir as string;
+      const onSpawnError = (err: Error): void =>
+        done(reject, new Error(`spawn failed for "${peer.name}": ${err.message}`));
       try {
-        // ONE spawn shape: detached `node <bin>`, stdio ignored, unref'd. The
-        // peer's own argv decides whether it self-daemonizes.
-        const proc = spawn(process.execPath, [bin, ...finalArgv], {
-          cwd: peer.workdir as string,
-          stdio: 'ignore',
-          shell: false,
-          windowsHide: true,
-          detached: true, // own process group / console → survives the launcher
-        });
-        proc.on('error', (err: Error) => done(reject, new Error(`spawn failed for "${peer.name}": ${err.message}`)));
-        // The peer's own exit before it registers is a launch failure, reported
-        // with its exit code rather than surfacing as a 30s timeout.
-        proc.on('exit', (code: number | null, signal: NodeJS.Signals | null) => done(reject, new Error(
-          `peer "${peer.name}" exited before registering (code=${code ?? 'null'}${signal ? `, signal=${signal}` : ''}).`,
-        )));
-        proc.unref();
+        if (opts.spawnImpl) {
+          // Test seam: spawn via spawnDetached (bypasses opener + split) so a
+          // headless test can drive the beat poll; inherits production shape.
+          spawnDetached(opts.spawnImpl, launchCommand, launchArgs, cwd, onSpawnError);
+        } else if (peer.parsedArgs?.daemon !== undefined) {
+          // `--daemon` → headless service: no window, detached background.
+          spawnDetached(spawn, launchCommand, launchArgs, cwd, onSpawnError);
+        } else {
+          // DEFAULT → a real, visible terminal running the peer in its
+          // foreground. Fail fast, no windowless fallback: an unusable opener
+          // rejects the launch with its diagnostic (what was tried, why it
+          // failed) so the cause stays observable.
+          // (openTerminal is one-shot fire-and-forget — its return is NOT the
+          // peer's exit; liveness is the heartbeat poll below.)
+          openTerminal(buildPeerShellCommand(launchCommand, launchArgs, cwd));
+        }
       } catch (err) {
         done(reject, new Error(`spawn failed for "${peer.name}": ${(err as Error).message}`));
         return;
       }
 
-      const deadline = Date.now() + LAUNCH_TIMEOUT_MS;
+      const deadline = Date.now() + (opts.timeoutMs ?? LAUNCH_TIMEOUT_MS);
       poll = setInterval(() => {
         if (latestBeatMs(sid) > prevBeat && isPeerRunning(peer as PeerRef)) {
           done(resolve, 'started' as LaunchResult);
@@ -406,8 +463,8 @@ export function launchPeer(peer: Peer): Promise<LaunchResult> {
         }
         if (Date.now() > deadline) {
           done(reject, new Error(
-            `peer "${peer.name}" did not come up within ${LAUNCH_TIMEOUT_MS}ms ` +
-            `(spawned at ${spawnAt}).`,
+            `peer "${peer.name}" did not come up within ` +
+            `${opts.timeoutMs ?? LAUNCH_TIMEOUT_MS}ms (spawned at ${spawnAt}).`,
           ));
         }
       }, LAUNCH_POLL_MS);
