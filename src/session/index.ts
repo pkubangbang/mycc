@@ -793,8 +793,21 @@ function writeFreshSessionFiles(): { sessionFilePath: string; triologuePath: str
   const sessionDir = path.join(getSessionsDir(), id);
   ensureDir(sessionDir);
 
-  const timestamp = Math.floor(Date.now() / 1000);
-  const triologuePath = path.join(sessionDir, `triologue-lead-${timestamp}.jsonl`);
+  // TRIALOGUE FILENAME COLLISION GUARD (compose pinning): a pinned session id
+  // is REUSED on relaunch, so `triologue-lead-<same-second>.jsonl` can name a
+  // transcript that already exists — and the bare `writeFileSync(path, '')`
+  // below would TRUNCATE it, silently destroying the previous run's
+  // append-only record. Keep the readable second-precision stem whenever it
+  // is free; only on collision suffix milliseconds, which also keeps two
+  // same-second starts distinct from each other. Session-dir layout and the
+  // `triologue-lead-` stem are unchanged — the session JSON records whatever
+  // path was chosen, and every consumer receives the path rather than
+  // re-deriving the name.
+  const seconds = Math.floor(Date.now() / 1000);
+  let triologuePath = path.join(sessionDir, `triologue-lead-${seconds}.jsonl`);
+  if (fs.existsSync(triologuePath)) {
+    triologuePath = path.join(sessionDir, `triologue-lead-${seconds}-${Date.now() % 1000}ms.jsonl`);
+  }
   fs.writeFileSync(triologuePath, '', 'utf-8');
 
   // Pass the same id so the session file lives in the same dir as the triologue

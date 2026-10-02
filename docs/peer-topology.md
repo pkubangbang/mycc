@@ -100,11 +100,25 @@ next to `mycc`, `mdcalc`, `mycc-mail`, `mycc-pretty-print`.
 
 | Command | Behavior |
 |---|---|
-| `check <file>` | Validate the whole spec; resolve each peer (by pinned sid, and by `workdir` + canonical `args`); report `match` / `mismatch` / `stale`. **No mutation.** |
+| `check <file>` | Validate the whole spec; report `match` / `mismatch` / `stale`. **No mutation.** |
 | `up <file>` | Full pipeline (§5). |
 | `sync <file>` | Idempotent reconcile — `up` minus destructive stops. **This is the cron target.** |
 | `down <file> [--stop]` | Remove the channel pairs; with `--stop`, terminate the peers (verify the heartbeat `pid` is alive *and* is a mycc process before killing). |
 | `status <file> [--json]` | Deterministic report: per peer `{name, sessionId, live, matching, lastBrief}`, per channel `{label, bothFilesPresent}`. Note `live` and `matching` are **distinct**: `live` = alive pid; `matching` = spec and instance agree on `sessionId` + `workdir` + canonical `args`. CLI, GUI and cron all read the same JSON. |
+
+### Live-peer resolution in `check`/`status` — sid is the discovery key
+
+`check` and `status` resolve a live peer ONLY through the peer's pinned
+session id, which `up` minted and persisted into the identity map.
+`workDir` + canonical `args` equality is ADDITIONAL CONFIRMATION applied
+after the sid matches — it is not an independent discovery channel. A
+spec peer with `sessionId: null` therefore reports no matching live
+process even when an identical instance runs, until `up` has minted and
+persisted its id. A legacy peer whose recorded pid comes from a pre-sid
+launcher build carries no `--session-id` in its argv: `down --stop`
+REFUSES it (`refused-not-mycc`) instead of killing on suspicion — the
+peer keeps running (and its channels survive) until it is restarted
+once by the current launcher; refuse-not-kill is intended.
 
 ## 5. The `up` pipeline
 
