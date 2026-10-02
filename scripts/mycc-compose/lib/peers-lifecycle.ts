@@ -91,16 +91,22 @@ function stripLauncherFlags(parsed: Record<string, unknown> | undefined): Record
 
 export function isMyccProcess(pid: number, sessionId?: string | null): boolean {
   if (!pid || typeof pid !== 'number') return false;
-  const sidPattern = typeof sessionId === 'string' && sessionId.length > 0
-    ? new RegExp(`--session-id[= ]+${sessionId}`, 'i')
-    : null;
-  const looksLikeMycc = (line: string): boolean =>
-    /mycc/i.test(line) || (sidPattern !== null && sidPattern.test(line));
-
+  // Identity is an EXACT claim: the pinned session id must appear in the
+  // process's OWN argv as --session-id <sid> (or --session-id=<sid>), because
+  // launchPeer spawns every peer with exactly that pair. A bare /mycc/i
+  // substring OR-match cannot establish identity - any process that merely
+  // mentions mycc (an editor on the repo, a script named mycc-*.js) would
+  // pass it and become killable by stopPeer.
+  if (typeof sessionId !== 'string' || sessionId.length === 0) return false;
   const commandLine = readProcessCommandLine(pid);
   // cannot introspect → refuse
   if (commandLine === null) return false;
-  return looksLikeMycc(commandLine);
+  return new RegExp(`--session-id[= ]+${escapeRegExp(sessionId)}(?:\\s|$)`).test(commandLine);
+}
+
+/** Regex-quote a session id so regex metacharacters cannot broaden the match. */
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 export function readProcessCommandLine(pid: number): string | null {
@@ -300,13 +306,19 @@ function execSegment(
   return prog && target ? { prog, target } : null;
 }
 
-/** Resolve the program token to an existing executable. Relative-with-
- * separator resolves against the shim dir; an absent bundled `node.exe`
+/** Resolve the program token to an existing executable. The bare-PATH-name
+ * shortcut applies BEFORE expansion (a token with no separator cannot name a
+ * bundled node); OTHERWISE %~dp0%/%dp0% expand to the shim dir FIRST (npm
+ * shims literally write `SET "_prog=%dp0%\node.exe"`, so the prog token often
+ * still carries the variable - mirroring resolveTarget); THEN the existence
+ * check + the node-fallback apply: a named-but-absent bundled `node.exe`
  * degrades to PATH `node` (npm's own IF EXIST/ELSE fallback). */
 function resolveProg(progVar: string | null, shimDir: string): string | null {
-  if (!progVar || progVar.includes('%')) return null;
+  if (!progVar) return null;
   if (!/[/\\]/.test(progVar)) return progVar; // bare PATH name, resolved at spawn time
-  const prog = /^[A-Za-z]:[\\/]/.test(progVar) ? progVar : path.join(shimDir, progVar);
+  const expanded = progVar.replace(/%~dp0|%dp0%/gi, shimDir);
+  if (expanded === '') return null;
+  const prog = /^[A-Za-z]:[\\/]/.test(expanded) ? expanded : path.join(shimDir, expanded);
   try {
     if (fs.existsSync(prog)) return prog;
     return /node(\.exe)?$/i.test(prog) ? 'node' : null;

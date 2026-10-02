@@ -73,11 +73,24 @@ function startLiveProcess(): { pid: number; kill: () => void } {
   return { pid: child.pid as number, kill: () => child.kill() };
 }
 
-/** Start a long-lived process whose command line looks like a mycc instance. */
-function startMyccShapedProcess(): { pid: number; kill: () => void } {
-  // The script path contains "mycc" → the command line matches the same
-  // positive-identity test a real `node …/bin/mycc.js` launch satisfies.
+/** Start a long-lived process whose OWN argv carries the pinned sid, exactly
+ * what a real peer launch looks like: spawnDetached resolves the launcher shim
+ * to `node <entry.js>` BEFORE spawning, so a genuine peer process's command
+ * line is `node …mycc.js --session-id <sid> --auto …`. The script name still
+ * contains "mycc" so the test proves the sid ALONE (not the /mycc/i substring
+ * the old rule relied on) establishes identity. */
+function startMyccShapedProcess(sid: string): { pid: number; kill: () => void } {
   const script = path.join(tempDir, 'mycc-owner.js');
+  fs.writeFileSync(script, 'setTimeout(function(){},600000);');
+  const child = spawn(process.execPath, [script, '--session-id', sid], { stdio: 'ignore' });
+  return { pid: child.pid as number, kill: () => child.kill() };
+}
+
+/** Start a long-lived process whose command line looks like a mycc SCRIPT but
+ * carries NO --session-id: the shape the /mycc/i substring rule used to
+ * wrongly accept (and kill). */
+function startMyccLookalikeWithoutSid(): { pid: number; kill: () => void } {
+  const script = path.join(tempDir, 'mycc-lookalike.js');
   fs.writeFileSync(script, 'setTimeout(function(){},600000);');
   const child = spawn(process.execPath, [script], { stdio: 'ignore' });
   return { pid: child.pid as number, kill: () => child.kill() };
@@ -260,11 +273,72 @@ describe('stopPeer: positive identity, never a recycled pid (B-LAUNCH-2)', () =>
 
   it('terminates a genuinely live owner (started before its own heartbeat file)', async () => {
     const { peers } = await loadModules();
-    const owner = startMyccShapedProcess(); // command line carries a mycc path
+    const owner = startMyccShapedProcess(SID_A); // argv carries --session-id <sid>
     writeIdentity(SID_A);
     writeHeartbeat(SID_A, owner.pid); // file written after the process started
     expect(peers.stopPeer(peer('owner', SID_A))).toBe('stopped');
     expect(await waitFor(() => !isAlive(owner.pid), 3000)).toBe(true);
+  });
+
+  it('refuses a mycc-named script WITHOUT the pinned sid in its argv', async () => {
+    // THE P1-4 regression: the old /mycc/i substring OR-match treated any
+    // cmdline merely containing "mycc" as a mycc instance. An unrelated
+    // script whose PATH mentions mycc got SIGTERMed for a session it never
+    // held. Identity is the exact `--session-id <sid>` argv claim instead —
+    // without it, stopPeer must REFUSE, not kill.
+    const { peers } = await loadModules();
+    const lookalike = startMyccLookalikeWithoutSid();
+    writeIdentity(SID_A);
+    writeHeartbeat(SID_A, lookalike.pid); // fresh file, live pid, no recycle signal
+    try {
+      expect(peers.stopPeer(peer('intruder', SID_A))).toBe('refused-not-mycc');
+      expect(isAlive(lookalike.pid)).toBe(true); // the innocent process survived
+    } finally {
+      lookalike.kill();
+    }
+  });
+
+  it('refuses a live process carrying a DIFFERENT session id', async () => {
+    // Exact identity cuts both ways: a mycc-shaped argv pinning SID_B must
+    // NOT authorize a kill for SID_A. The old substring rule would have
+    // matched it.
+    const { peers } = await loadModules();
+    const otherHolder = startMyccShapedProcess(SID_B);
+    writeIdentity(SID_A);
+    writeHeartbeat(SID_A, otherHolder.pid);
+    try {
+      expect(peers.stopPeer(peer('wrong-sid', SID_A))).toBe('refused-not-mycc');
+      expect(isAlive(otherHolder.pid)).toBe(true);
+    } finally {
+      otherHolder.kill();
+    }
+  });
+
+  it('refuses (never kills) when the command line cannot be read', async () => {
+    // readProcessCommandLine → null (e.g. a just-exited pid): the only safe
+    // answer is refusal. The old code ALSO returned false here, this pins it —
+    // a fix that relaxed the null path to "assume our own" would silently
+    // reintroduce recycled-pid kills.
+    const { peers } = await loadModules();
+    expect(peers.isMyccProcess(await deadPid(), SID_A)).toBe(false);
+  });
+
+  it('refuses when the pinned sid cannot be established at all', async () => {
+    // No recorded pid either → the earlier 'refused-no-recorded-pid' branch
+    // fires first; use a LIVE plain-node pid and a peer with NO sessionId so
+    // the identity check itself must return false (unestablishable), not the
+    // /mycc/i fallback.
+    const { peers } = await loadModules();
+    const victim = startLiveProcess();
+    writeHeartbeat(SID_A, victim.pid);
+    writeIdentity(SID_A);
+    try {
+      // a peer record without a session id cannot claim ANY process
+      expect(peers.stopPeer(peer('sidless', ''))).toBe('no-session');
+      expect(isAlive(victim.pid)).toBe(true);
+    } finally {
+      victim.kill();
+    }
   });
 });
 
