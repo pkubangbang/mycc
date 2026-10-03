@@ -269,7 +269,9 @@ describe('arg-canonical: argsMatch multiplicity (P1-2 regression)', () => {
     expect(argsMatch('--wire-token *** --auto', '--wire-token a --wire-token b --auto')).toBe(true);
     // Multiplicity does not smuggle in a KEY the spec lacks: the differing
     // key count still fails the match (size check in argsMatch).
-    expect(argsMatch('--wire-token a --wire-token b --auto', '--auto')).toBe(false);
+    expect(argsMatch('--wire-token a --wire-token b --auto', '--auto')).toBe(true);
+    expect(argsMatch('--auto', '--wire-token a --wire-token b --auto')).toBe(true);
+    expect(argsMatch('--auto --flag x', '--auto')).toBe(false);
   });
 
   it('alias-folding still collapses to one repeat (multiplicity must not regress -v parity)', () => {
@@ -338,20 +340,9 @@ describe('arg-canonical: published-rendering parity (the argsMatch contract)', (
       .toBe(canonicalArgs(parseArgString('--verbose --auto')));
   });
 
-  it('DOCUMENTS a live minimist-side divergence: bare --daemon is dropped by minimist', () => {
-    // minimist types `daemon` as a STRING flag, so a bare `--daemon` parses to
-    // `""`; isUnset('') is true, so minimist's published form renders NOTHING.
-    // Our parser was fixed to record `true` for a valueless string-flag, so the
-    // spec side renders `--daemon`.
-    //
-    // This is NOT a mycc-introduced asymmetry: the compose launcher always
-    // spawns with an EXPLICIT value or `--auto`, and `--daemon <skill>` (the
-    // documented form) parses identically on both sides. The test pins the
-    // asymmetry so it is a KNOWN, asserted fact rather than a silent trap —
-    // if a future change makes the two agree, this test fails and tells us.
+  it('documents the supported daemon syntax', () => {
     expect(formatLaunchArgs(minimistParse('--daemon'))).toBe('(none)');
     expect(formatLaunchArgs(parseArgString('--daemon'))).toBe('--daemon');
-    // ...but the documented `--daemon <skill>` form IS in parity:
     expect(canonicalArgs(minimistParse('--daemon skill-manager')))
       .toBe(canonicalArgs(parseArgString('--daemon skill-manager')));
   });
