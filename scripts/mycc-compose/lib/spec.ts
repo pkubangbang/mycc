@@ -183,6 +183,10 @@ function normalizeRemotes(
         throw new Error(`${rAt} must use http or https (got "${s}" in "${raw}")`);
       }
     }
+    // Runtime peer-wire targets are host:port endpoints; URL suffixes are unsupported.
+    if (/[/?#]/.test(raw.replace(/^https?:\/\//i, ''))) {
+      throw new Error(`${rAt} must be a host:port endpoint without path, query, or fragment: "${raw}"`);
+    }
     const forCheck = /^https?:\/\//i.test(raw) ? raw : `http://${raw}`;
     let u: URL;
     try {
@@ -216,7 +220,7 @@ function normalizeRemotes(
     // Self-dial: loopback host + port == this peer's explicit --serve port.
     if (ownPort !== null) {
       const hostLower = u.hostname.toLowerCase();
-      const isLoopback = hostLower === 'localhost' || hostLower === '127.0.0.1' || hostLower === '::1';
+      const isLoopback = hostLower === 'localhost' || hostLower === '127.0.0.1' || hostLower === '::1' || hostLower === '[::1]';
       const rPort = u.port ? Number(u.port) : (u.protocol === 'https:' ? 443 : 80);
       if (isLoopback && rPort === ownPort) {
         throw new Error(
@@ -305,7 +309,10 @@ export function validateSpec(spec: unknown): NormalizedSpec {
         );
       }
     }
-    // 'daemon' is a STRING_FLAG: bare `--daemon` parses to true, `--daemon x` to 'x'.
+    // Bare --daemon diverges from minimist's unset string representation.
+    if (parsedArgs.daemon === true) {
+      throw new Error(`${at}.args must use --daemon <skill>; bare --daemon is not supported.`);
+    }
     if (parsedArgs.auto !== true && !('daemon' in parsedArgs)) {
       throw new Error(
         `${at}.args MUST include --auto or --daemon: without it cleanupEmptySessions() ` +
