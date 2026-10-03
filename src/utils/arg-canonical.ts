@@ -409,10 +409,17 @@ export function argsMatch(
 ): boolean {
   const a = canonicalGroupMap(parseArgString(publishedArgs));
   const b = canonicalGroupMap(parseArgString(specArgs));
-  if (a.size !== b.size) return false;
-  for (const [key, value] of a) {
-    if (!b.has(key)) return false;
+  const keys = new Set([...a.keys(), ...b.keys()]);
+  for (const key of keys) {
+    const value = a.get(key);
     const other = b.get(key);
+    if (value === undefined || other === undefined) {
+      // A redacted secret may legitimately be omitted from one side. Missing
+      // non-secret flags remain a real configuration difference.
+      const present = value ?? other;
+      if (present !== REDACTED) return false;
+      continue;
+    }
     if (value === REDACTED || other === REDACTED) continue;
     if (value !== other) return false;
   }
