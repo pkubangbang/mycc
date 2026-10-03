@@ -21,7 +21,7 @@
 
 import * as fs from 'fs';
 import type { IdentityEntry } from '../types.js';
-import { getIdentityFile, getHeartbeatFile } from '../config.js';
+import { getIdentityFile, getHeartbeatFile, getLaunchArgs } from '../config.js';
 import { truncateToTokens } from '../utils/token.js';
 import { atomicWrite } from '../utils/atomic-write.js';
 
@@ -104,6 +104,75 @@ export function readIdentityMap(): Record<string, IdentityEntry> {
  */
 function writeIdentityMap(map: Record<string, IdentityEntry>): void {
   atomicWrite(getIdentityFile(), JSON.stringify(map, null, 2));
+}
+
+/**
+ * True when a session id provably belongs to a LIVE process.
+ *
+ * Standalone (module-level) form of the freshness rule so callers that have no
+ * IdentityManager — the session bootstrap, and the `mycc-compose` repair path —
+ * can ask the same question without re-deriving it. A THIRD variant of this
+ * check would be a drift hazard: `IdentityManager.isFresh()`,
+ * `pruneStaleEntries()` and `cleanupEmptySessions()` already touch the same
+ * ground, and a disagreement silently turns a live peer into an "offline" one.
+ *
+ * Live ⟺ the sid is registered AND its heartbeat file has a beat newer than
+ * {@link FRESHNESS_WINDOW_MS}. An instance that is registered but has never
+ * beaten is NOT live — it may have crashed between register() and its first
+ * beat().
+ *
+ * NOTE: this is the ABSOLUTE window only. `IdentityManager.isFresh()` adds a
+ * relative clause (remoteLatest vs the local instance's oldest beat) that
+ * needs the caller's own heartbeat, which a third-party caller does not have.
+ */
+export function isSessionLive(sessionId: string): boolean {
+  if (!sessionId) return false;
+  const map = readIdentityMap();
+  if (!(sessionId in map)) return false;
+  const beats = readHeartbeats(sessionId);
+  if (beats.length === 0) return false;
+  return Date.now() - beats[beats.length - 1] <= FRESHNESS_WINDOW_MS;
+}
+
+/**
+ * True when a session id is HELD by a still-running process — the stricter
+ * sibling of {@link isSessionLive}.
+ *
+ * {@link isSessionLive} answers "has this sid beaten recently?", which is
+ * necessary but NOT sufficient: a process killed within the freshness window
+ * (e.g. `mycc-compose sync` restarting a crashed peer) leaves a heartbeat file
+ * that is still "fresh" for up to {@link FRESHNESS_WINDOW_MS}. Using that
+ * predicate to gate a re-pin would make a just-killed peer refuse its own
+ * restart — the exact dead-lock `mycc-compose` hit.
+ *
+ * Held ⟺ registered AND fresh heartbeat AND the recorded heartbeat `pid` is
+ * actually alive. When no pid is recorded (legacy writers, or a beat that
+ * predates the field) we fall back to the fresh-heartbeat verdict: we cannot
+ * disprove liveness, and must not let two instances share one session dir.
+ *
+ * Used by the session bootstrap's `--session-id` guard, and mirrored by
+ * `mycc-compose`'s `isPeerRunning()`.
+ */
+export function isSessionHeld(sessionId: string): boolean {
+  if (!sessionId) return false;
+  if (!isSessionLive(sessionId)) return false;
+  const { pid } = readHeartbeatData(sessionId);
+  if (typeof pid !== 'number') return true; // no pid recorded → trust freshness
+  return isPidAlive(pid);
+}
+
+/**
+ * Best-effort "is this OS pid alive?" check. `process.kill(pid, 0)` sends no
+ * signal but throws ESRCH when the pid does not exist; EPERM means it exists
+ * but is owned by another user (treat as alive).
+ */
+function isPidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException)?.code === 'EPERM';
+  }
 }
 
 /**
@@ -269,6 +338,10 @@ export class IdentityManager {
         workDir: this.workDir,
         mailbox: this.mailboxPath,
         startedAt: Date.now(),
+        // Publish the redacted launch flags so a mediator (mycc-compose) can
+        // decide whether a live peer matches the requested topology, instead of
+        // tearing down healthy instances on every sync.
+        args: getLaunchArgs(),
         ...(this.role ? { role: this.role } : {}),
         ...(this.daemon ? { daemon: true } : {}),
       };

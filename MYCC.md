@@ -141,6 +141,33 @@ A Vue 3-based WebUI is served by mycc itself via an embedded Express + Vite + We
 
 **Tool Development Guidelines:** **Fail Early** — tools should fail early and explicitly rather than silently degrading. **No Direct Console Output in Tools** — tools MUST NOT use `console.log`/`console.error`; use `ctx.core.brief()` for all user-facing output.
 
+**Scripts interop (JS → TS via tsx/esm/api):** the `scripts/` folder contains globally-available bin entry points (registered in `package.json` `bin`, linked via `npm link`). Entry points stay as `.js` (npm/Windows `.cmd` wrappers invoke `node <target.js>` — shebangs are bypassed on Windows, so `bin` must point at `.js`). To let a `.js` script import `.ts` files (both sibling logic in `scripts/` and utilities in `src/`), use the `tsx/esm/api` `register()` call at the top of the `.js` entry, then dynamically import the `.ts` file:
+
+```js
+#!/usr/bin/env node
+import { register } from 'tsx/esm/api';
+register();
+
+const { parseArgs } = await import('../../src/utils/arg-parser.ts');
+```
+
+`register()` installs the tsx ESM loader in-process (no child-process spawn, no build step, no separate `tsconfig.json` needed for scripts). After `register()`, dynamic `import()` accepts `.ts` specifiers directly — use explicit `.ts` extensions in the specifier (e.g. `'./logic.ts'`, `'../../src/utils/foo.ts'`). For static imports between sibling `.ts` files, keep the project convention of `.js` extensions (`import { foo } from './bar.js'` for `bar.ts`) — tsx resolves these automatically. This pattern lets `scripts/*.js` reuse real `src/*.ts` implementations instead of hand-duplicating them (e.g. `mycc-mail.js` previously duplicated `src/peer/identity.ts` and `src/peer/channel.ts` logic with "must mirror" comments).
+
+**Detached launch on Windows (`bin/mycc-daemon.exe`):** any Windows background/detached mycc instance (the `--daemon` Lead, and every peer launched by `mycc-compose`) MUST start through `bin/mycc-daemon.exe` (Go, `src/native/daemon-wrapper/main.go`; build: `cd src/native/daemon-wrapper && go build -o ../../../bin/mycc-daemon.exe`). It calls `CreateProcessW` with `CREATE_NEW_CONSOLE` (the Lead gets its own console → survives the launcher) + `STARTF_USESHOWWINDOW`/`SW_HIDE` (that console is hidden → no blank window). A plain spawn cannot do both: `detached:true` forces a console (Windows ignores `CREATE_NO_WINDOW` under `DETACHED_PROCESS`, Node issue #21825) → blank window; dropping `detached` → no console → the child dies with the launcher.
+
+Invocation (see `src/utils/daemon-launch.ts:88`; reuse for any new detached launcher):
+
+```ts
+const wrapperPath = resolve(PROJECT_ROOT, 'bin', 'mycc-daemon.exe');
+const useWrapper = process.platform === 'win32' && existsSync(wrapperPath);
+child = spawn(wrapperPath, [
+  process.execPath, loaderPath, scriptPath, ...forwardedArgs, // node.exe, tsx loader, entry (src/index.ts), flags
+], { cwd, stdio: ['ignore', 'pipe', 'pipe'], env, detached: true });
+child.unref(); // then read the Lead PID from the wrapper's stdout
+```
+
+Gate on `win32 && existsSync(wrapperPath)`; keep the plain spawn on Unix and as the wrapper-missing fallback. Do not use a wscript/VBScript shim or an env marker.
+
 **How to test this app** — use tmux to simulate interactive terminal sessions:
 
 ```bash

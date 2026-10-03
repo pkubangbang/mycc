@@ -17,6 +17,13 @@ export default tseslint.config(
     ],
   },
   {
+    // Typed linting needs a TS program. Scope it to TypeScript sources: the
+    // project's `src/` modules are `.ts` (consumed by tsx/TS), and only the
+    // `scripts/` bins (e.g. `scripts/mycc-compose/mycc-compose.js`) ship plain
+    // `.js` entry shims — those are NOT part of tsconfig.json's program
+    // (allowJs is false). Without this scope the parser errors with
+    // "The file was not found in any of the provided project(s)".
+    files: ['**/*.ts'],
     languageOptions: {
       parserOptions: {
         project: './tsconfig.json',
@@ -65,5 +72,14 @@ export default tseslint.config(
         message: 'Use static ESM import syntax instead of await import()',
       }],
     },
+  },
+  {
+    // The `.js` entry shims under `scripts/` (e.g.
+    // `scripts/mycc-compose/mycc-compose.js`, which registers tsx and
+    // dynamically imports the `.ts` lib modules) are runtime-only, so they get
+    // the base recommended rules but no type-aware ones. Kept explicit so the
+    // rules above still apply to them — this block deliberately adds nothing
+    // yet.
+    files: ['**/*.js'],
   }
 );
