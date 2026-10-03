@@ -121,7 +121,7 @@ describe('validateSpec: rejects malformed specs', () => {
     rejects(baseSpec({ peers: [mkPeer({ args: '--skip-healthcheck' })] }), /MUST include --auto or --daemon/);
     // ...but either of them is accepted.
     expect(() => validateSpec(baseSpec({ peers: [mkPeer({ args: '--daemon skill-manager' })] }))).not.toThrow();
-    expect(() => validateSpec(baseSpec({ peers: [mkPeer({ args: '--daemon' })] }))).not.toThrow();
+    rejects(baseSpec({ peers: [mkPeer({ args: '--daemon' })] }), /must use --daemon <skill>/);
   });
 
   it('sessionId must be null or a UUID', () => {
@@ -308,8 +308,11 @@ describe('validateSpec: peers[].remotes validation', () => {
     rejects(baseSpec({ peers: [mkPeer({ remotes: ['  '] })] }), /remotes\[0\] must be a non-empty URL string/);
   });
 
-  it('rejects a malformed URL', () => {
-    rejects(baseSpec({ peers: [mkPeer({ remotes: ['not a url'] })] }), /is not a valid URL/);
+  it('rejects unsupported remote URL suffixes', () => {
+    rejects(baseSpec({ peers: [mkPeer({ remotes: ['not a url'] })] }), /is not a valid URL|host:port endpoint/);
+    rejects(baseSpec({ peers: [mkPeer({ remotes: ['http://host:3191/path'] })] }), /host:port endpoint/);
+    rejects(baseSpec({ peers: [mkPeer({ remotes: ['http://host:3191?x=1'] })] }), /host:port endpoint/);
+    rejects(baseSpec({ peers: [mkPeer({ remotes: ['http://host:3191#frag'] })] }), /host:port endpoint/);
   });
 
   it('rejects a non-http(s) scheme', () => {
@@ -335,6 +338,10 @@ describe('validateSpec: peers[].remotes validation', () => {
     );
     rejects(
       baseSpec({ peers: [mkPeer({ args: '--auto --serve 3191', remotes: ['http://localhost:3191'] })] }),
+      /self-dial/,
+    );
+    rejects(
+      baseSpec({ peers: [mkPeer({ args: '--auto --serve 3191', remotes: ['http://[::1]:3191'] })] }),
       /self-dial/,
     );
     // Same host, DIFFERENT port is NOT a self-dial.
