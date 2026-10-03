@@ -183,9 +183,19 @@ function normalizeRemotes(
         throw new Error(`${rAt} must use http or https (got "${s}" in "${raw}")`);
       }
     }
-    // Runtime peer-wire targets are host:port endpoints; URL suffixes are unsupported.
-    if (/[/?#]/.test(raw.replace(/^https?:\/\//i, ''))) {
-      throw new Error(`${rAt} must be a host:port endpoint without path, query, or fragment: "${raw}"`);
+    // Empty-host check runs BEFORE the suffix guard: `http:///path` parses via
+    // `new URL` with a NON-empty hostname (Node collapses the empty authority
+    // and reads the first path segment as the host), so it must be caught on
+    // its AUTHORED host segment here — otherwise its `/path` trips the suffix
+    // guard and the author sees the wrong message. Reject when the AUTHORED
+    // host segment (between `://` and the first `/` of the path) is empty or
+    // whitespace. (Bare host:port falls back to the constructor's hostname.)
+    if (authoredScheme) {
+      const afterScheme = raw.slice(authoredScheme[0].length);
+      const hostSeg = afterScheme.split('/')[0];
+      if (hostSeg.trim() === '') {
+        throw new Error(`${rAt} must have a non-empty host (got "${raw}")`);
+      }
     }
     const forCheck = /^https?:\/\//i.test(raw) ? raw : `http://${raw}`;
     let u: URL;
@@ -197,19 +207,18 @@ function normalizeRemotes(
     if (u.protocol !== 'http:' && u.protocol !== 'https:') {
       throw new Error(`${rAt} must use http or https (got "${u.protocol.replace(':', '')}" in "${raw}")`);
     }
-    // Empty-host check: `new URL('http:///path')` parses hostname as `"path"`
-    // (Node collapses the empty authority), so u.hostname is non-empty even
-    // though the author wrote no host. Reject when the AUTHORED host segment
-    // (between `://` and the first `/` of the path) is empty or whitespace.
-    if (authoredScheme) {
-      const afterScheme = raw.slice(authoredScheme[0].length);
-      const hostSeg = afterScheme.split('/')[0];
-      if (hostSeg.trim() === '') {
-        throw new Error(`${rAt} must have a non-empty host (got "${raw}")`);
-      }
-    } else if (!u.hostname) {
+    if (!authoredScheme && !u.hostname) {
       // Bare host:port (no scheme) — rely on the constructor's hostname.
       throw new Error(`${rAt} must have a non-empty host (got "${raw}")`);
+    }
+    // Runtime peer-wire targets are host:port endpoints; URL suffixes are
+    // unsupported. Judge the SAME string remoteUrlKey/parseWireTarget do:
+    // strip trailing slashes FIRST, so a legal `http://h:3191//` is accepted
+    // (both canonicalizers strip it) while a non-empty path/query/fragment is
+    // rejected. Must stay AFTER the authored-empty-host check above.
+    const suffixRest = raw.replace(/^https?:\/\//i, '').replace(/\/+$/, '');
+    if (/[/?#]/.test(suffixRest)) {
+      throw new Error(`${rAt} must be a host:port endpoint without path, query, or fragment: "${raw}"`);
     }
     // Duplicate within this peer's list.
     const key = remoteUrlKey(raw);
@@ -310,7 +319,9 @@ export function validateSpec(spec: unknown): NormalizedSpec {
       }
     }
     // Bare --daemon diverges from minimist's unset string representation.
-    if (parsedArgs.daemon === true) {
+    // `--daemon=` parses to '' (not `true`) yet renders to spawn as NO daemon
+    // flag at all — functionally bare — so treat the empty string as bare too.
+    if (parsedArgs.daemon === true || parsedArgs.daemon === '') {
       throw new Error(`${at}.args must use --daemon <skill>; bare --daemon is not supported.`);
     }
     if (parsedArgs.auto !== true && !('daemon' in parsedArgs)) {

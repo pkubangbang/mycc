@@ -17,6 +17,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { validateSpec, loadSpec, updateSpecFile } from '../../scripts/mycc-compose/lib/spec.js';
+import { parseArgString } from '../../src/utils/arg-canonical.js';
 
 /** A minimal VALID spec; spread + override per test. */
 function baseSpec(overrides: Record<string, unknown> = {}) {
@@ -270,11 +271,25 @@ describe('validateSpec: rejects malformed specs', () => {
 
   // B-M1: `--daemon` is a STRING_FLAG with no default; bare use must parse to
   // `true` (not ''), so the rendered argv round-trips as plain `--daemon`.
+  // The SPEC layer still rejects bare `--daemon` (schema mandates
+  // `--daemon <skill>`); that is asserted in the "args MUST include" test
+  // above. What we pin HERE is the parser contract the spec relies on: the
+  // bare flag reaches parsedArgs as `true` (which is exactly why the spec's
+  // `parsedArgs.daemon === true` guard can fire).
   it('parses a bare string-flag as true, not empty string', () => {
-    const out = validateSpec(baseSpec({ peers: [mkPeer({ args: '--daemon' })] }));
-    expect(out.peers[0].parsedArgs.daemon).toBe(true);
-    const withValue = validateSpec(baseSpec({ peers: [mkPeer({ args: '--daemon skill-manager' })] }));
-    expect(withValue.peers[0].parsedArgs.daemon).toBe('skill-manager');
+    expect(parseArgString('--daemon').daemon).toBe(true);
+    expect(parseArgString('--daemon skill-manager').daemon).toBe('skill-manager');
+    // Migrated from the old "bare --daemon is accepted" contract: the spec now
+    // REJECTS it (schema requires a skill), while the raw parser still yields
+    // `true` — pin both halves so a future loosening of either is a failure.
+    expect(() => validateSpec(baseSpec({ peers: [mkPeer({ args: '--daemon' })] }))).toThrow(
+      /must use --daemon <skill>/,
+    );
+    // `--daemon=` parses to '' and renders to spawn as NO daemon flag — a
+    // functionally bare daemon that must be rejected the same way.
+    expect(() => validateSpec(baseSpec({ peers: [mkPeer({ args: '--daemon=' })] }))).toThrow(
+      /must use --daemon <skill>/,
+    );
   });
 });
 
@@ -313,6 +328,15 @@ describe('validateSpec: peers[].remotes validation', () => {
     rejects(baseSpec({ peers: [mkPeer({ remotes: ['http://host:3191/path'] })] }), /host:port endpoint/);
     rejects(baseSpec({ peers: [mkPeer({ remotes: ['http://host:3191?x=1'] })] }), /host:port endpoint/);
     rejects(baseSpec({ peers: [mkPeer({ remotes: ['http://host:3191#frag'] })] }), /host:port endpoint/);
+    // REGRESSION: trailing slashes are a legal way to spell the same
+    // host:port endpoint (remoteUrlKey / parseWireTarget strip them) and must
+    // NOT trip the suffix guard — including the doubled form.
+    expect(() =>
+      validateSpec(baseSpec({ peers: [mkPeer({ remotes: ['http://h:3191/'] })] })),
+    ).not.toThrow();
+    expect(() =>
+      validateSpec(baseSpec({ peers: [mkPeer({ remotes: ['http://h:3191//'] })] })),
+    ).not.toThrow();
   });
 
   it('rejects a non-http(s) scheme', () => {
