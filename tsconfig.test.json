@@ -3,8 +3,9 @@
   "compilerOptions": {
     "noEmit": true,
     "declaration": false,
+    "rootDir": ".",
     "types": ["node", "vitest/globals"]
   },
-  "include": ["src/**/*"],
+  "include": ["src/**/*", "scripts/mycc-compose/lib/**/*.ts"],
   "exclude": ["node_modules", "src/web/**/*"]
 }

@@ -16,6 +16,14 @@ import * as path from 'path';
 import * as os from 'os';
 import { execSync } from 'child_process';
 import { getUserConfigPath, getProjectConfigPath } from './setup/paths.js';
+import { sanitizeId } from './utils/id-guard.js';
+import {
+  BOOLEAN_FLAGS as SHARED_BOOLEAN_FLAGS,
+  STRING_FLAGS as SHARED_STRING_FLAGS,
+  DEFAULTS as SHARED_ARG_DEFAULTS,
+  formatLaunchArgs,
+  buildCmdArgsEnv,
+} from './utils/arg-canonical.js';
 
 // ============================================================================
 // Inline .env File Parser
@@ -94,7 +102,12 @@ export function loadEnv(): void {
   Object.assign(process.env, result);
 }
 
-// Parse CLI args once at startup
+// Parse CLI args once at startup.
+//
+// The flag table itself lives in utils/arg-canonical.ts — the SINGLE source of
+// truth shared with the `mycc-compose` bin, which parses a spec's `args` string
+// through the same table. Keeping the table here only would force the script to
+// duplicate it and drift.
 const args = minimist(process.argv.slice(2), {
   // NOTE: 'serve' is intentionally NOT declared in `boolean` or `string`,
   // and has no default, so minimist auto-detects it:
@@ -104,73 +117,19 @@ const args = minimist(process.argv.slice(2), {
   //   (absent)           -> undefined (serve mode OFF)
   // Putting it in `string` would break bare `--serve` (yields "" not true);
   // putting it in `boolean` would swallow `--serve 9000` (port ignored).
-  boolean: ['v', 'verbose', 'skip-healthcheck', 'setup', 'debug-eval', 'debug-tp', 'disable-crossroad', 'auto', 'debug-autofly', 'allow-plan-off', 'debug-wire', 'debug-ansi'],
-  string: [
-    'from', 'port', 'host', 'max-upload-mb', 'autofly', 'daemon',
-    'ollama-host', 'ollama-api-key', 'ollama-model', 'ollama-vision-model', 'ollama-embedding-model',
-    'deepseek-host', 'deepseek-api-key', 'deepseek-model',
-    'api-provider', 'token-threshold', 'editor', 'skill-match-threshold',
-    'wire-token',
-  ],
+  boolean: SHARED_BOOLEAN_FLAGS,
+  string: SHARED_STRING_FLAGS,
   alias: { v: 'verbose' },
-  default: {
-    v: false, from: null, port: null,
-    'skip-healthcheck': false, setup: false,
-    'debug-eval': false, 'debug-tp': false, 'disable-crossroad': false, 'debug-autofly': false,
-    'allow-plan-off': false,
-  },
+  default: SHARED_ARG_DEFAULTS,
 });
 
 /**
- * Build a plain object mapping cmd-args to MYCC_* env vars.
- * Modules can read process.env.MYCC_* without knowing about minimist.
+ * Cmd-args → env-var mapping (and the builder) live in
+ * utils/arg-canonical.ts, next to the flag table: they speak the SAME key
+ * vocabulary, so keeping them apart would let the two drift. config.ts is now
+ * purely a consumer — it parses argv once (below) and hands the result to the
+ * shared builder.
  */
-function buildCmdArgsEnv(parsed: typeof args): Record<string, string> {
-  const env: Record<string, string> = {};
-  const map: Record<string, string> = {
-    'verbose': 'MYCC_VERBOSE',
-    'from': 'MYCC_FROM_SESSION',
-    'skip-healthcheck': 'MYCC_SKIP_HEALTHCHECK',
-    'setup': 'MYCC_SETUP',
-    'debug-eval': 'MYCC_DEBUG_EVAL',
-    'debug-tp': 'MYCC_DEBUG_TP',
-    'disable-crossroad': 'MYCC_DISABLE_CROSSROAD',
-    'debug-autofly': 'MYCC_DEBUG_AUTOfLY',
-    'allow-plan-off': 'MYCC_ALLOW_PLAN_OFF',
-    // --debug-ansi: force the plain (no-TTY) output path while in a terminal,
-    // so the piped-rendering path can be reproduced without a second shell.
-    // Mirrored into env like the other debug flags so it survives the
-    // restart/reload spawns, which do not carry the original argv.
-    'debug-ansi': 'MYCC_DEBUG_ANSI',
-    // Env-configurable vars (override .env files)
-    'ollama-host': 'OLLAMA_HOST',
-    'ollama-api-key': 'OLLAMA_API_KEY',
-    'ollama-model': 'OLLAMA_MODEL',
-    'ollama-vision-model': 'OLLAMA_VISION_MODEL',
-    'ollama-embedding-model': 'OLLAMA_EMBEDDING_MODEL',
-    'deepseek-host': 'DEEPSEEK_HOST',
-    'deepseek-api-key': 'DEEPSEEK_API_KEY',
-    'deepseek-model': 'DEEPSEEK_MODEL',
-    'api-provider': 'API_PROVIDER',
-    'token-threshold': 'TOKEN_THRESHOLD',
-    'editor': 'EDITOR',
-    'skill-match-threshold': 'SKILL_MATCH_THRESHOLD',
-    // Remote peer wire (plan §5 Security): --wire-token mirrors the
-    // MYCC_WIRE_TOKEN env var (OPTIONAL shared secret); --debug-wire mirrors
-    // the MYCC_WIRE_ALLOW_LOCAL=1 escape hatch (test-only; allows same-store
-    // / self wire connects). Neither is part of the --setup wizard.
-    'wire-token': 'MYCC_WIRE_TOKEN',
-    'debug-wire': 'MYCC_WIRE_ALLOW_LOCAL',
-  };
-  for (const [argKey, envKey] of Object.entries(map)) {
-    const value = parsed[argKey];
-    if (value !== undefined && value !== null && value !== false) {
-      env[envKey] = String(value);
-    }
-  }
-  return env;
-}
-
 // Built once at module load — used by loadEnv() to merge into process.env
 const cmdArgsEnv = buildCmdArgsEnv(args);
 
@@ -201,6 +160,28 @@ const globalConfig = new GlobalConfig();
  */
 export function getSessionArg(): string | null {
   return args.from || null;
+}
+
+/**
+ * Get the pinned session id from the CLI (--session-id flag).
+ *
+ * `--session-id <uuid>` makes a FRESH start adopt a caller-chosen session id
+ * instead of minting a random one. This is what lets a mediator tool
+ * (`mycc-compose`) relaunch a peer under the SAME session id it had before, so
+ * its channel files — keyed `<sessionId>-<channelId>.json` — are re-joined on
+ * boot instead of being orphaned by a new random uuid.
+ *
+ * It is NOT a restore: the session is still brand-new (empty triologue, no
+ * context carried over). Only the identity is pinned. `initializeSession()`
+ * refuses to start when a live process already holds the id, and validates
+ * that the value is a UUID.
+ *
+ * Reads parsed CLI args directly (not process.env) to avoid inheriting a
+ * stale value from a parent process.
+ */
+export function getPinnedSessionId(): string | null {
+  const id = args['session-id'];
+  return typeof id === 'string' && id.length > 0 ? id : null;
 }
 
 /**
@@ -337,12 +318,6 @@ export function shouldDaemon(): boolean {
 }
 
 /**
- * Secret-bearing flags that must NEVER appear in the system prompt.
- * Used by {@link getLaunchArgs} to redact their values to `***`.
- */
-const SECRET_FLAGS = ['ollama-api-key', 'deepseek-api-key', 'wire-token'];
-
-/**
  * Return a sanitized summary of the CLI flags this instance was launched with,
  * suitable for inclusion in the system prompt so the LLM can self-identify
  * how it was started (e.g. `--auto --daemon skill-manager --skip-healthcheck`).
@@ -354,24 +329,13 @@ const SECRET_FLAGS = ['ollama-api-key', 'deepseek-api-key', 'wire-token'];
  *
  * Reads the module-private parsed `args` object directly (not process.env)
  * so the launch-time CLI invocation is reported faithfully.
+ *
+ * Delegates the rendering to utils/arg-canonical.ts so the SAME formatter
+ * produces the string a peer publishes in identity.json — which the
+ * `mycc-compose` script parses back and compares flag-by-flag.
  */
 export function getLaunchArgs(): string {
-  const parts: string[] = [];
-  for (const [key, value] of Object.entries(args)) {
-    if (key === '_') continue;              // positional args
-    if (SECRET_FLAGS.includes(key)) {
-      parts.push(`--${key} ***`);
-      continue;
-    }
-    if (value === true) {
-      parts.push(`--${key}`);
-    } else if (value === false || value === null || value === undefined) {
-      continue;                             // flag not set
-    } else {
-      parts.push(`--${key} ${value}`);
-    }
-  }
-  return parts.length > 0 ? parts.join(' ') : '(none)';
+  return formatLaunchArgs(args);
 }
 
 /**
@@ -768,39 +732,26 @@ export function getWikiDomainsFile(): string {
 // ============================================================================
 
 export function getDiscoveryDir(): string {
-  return path.join(os.homedir(), '.mycc-store', 'discovery');
+  // MYCC_DISCOVERY_DIR overrides the real per-user discovery store, matching
+  // the compose-side discovery.ts root and the convention every mycc-compose
+  // test relies on (see mycc-compose-*.test.ts beforeEach). Without this the
+  // session ownership lease below could only ever be exercised against the
+  // live ~/.mycc-store/discovery, so tests leaked ownership files into the
+  // developer's real store and cross-ran.
+  return process.env.MYCC_DISCOVERY_DIR || path.join(os.homedir(), '.mycc-store', 'discovery');
 }
 
 export function getIdentityFile(): string {
   return path.join(getDiscoveryDir(), 'identity.json');
 }
 
-/**
- * Sanitize a session-id or channel-id for use in a filesystem path.
- *
- * Rejects IDs containing path separators (/, \), the parent-directory
- * sequence (..), or control characters — preventing path traversal escapes
- * from the discovery/heartbeat/channels directories. Throws on an unsafe ID
- * so callers fail loudly rather than silently writing outside the sandbox.
- *
- * Used by getHeartbeatFile() and getChannelFile() at the config layer (the
- * single origin point for discovery paths), so all downstream consumers
- * (identity.ts, channel.ts, peer.ts) inherit the guard without per-call
- * duplication.
- */
-function sanitizeId(id: string, label: string): string {
-  if (!id || typeof id !== 'string') {
-    throw new Error(`Invalid ${label}: must be a non-empty string`);
-  }
-  // Reject path separators, parent-directory traversal, and control chars.
-  // Avoid regex character classes to keep eslint's no-control-regex and
-  // no-useless-escape rules satisfied; check each condition explicitly.
-  if (id.includes('/') || id.includes('\\') || id.includes('..') ||
-      [...id].some(c => c.codePointAt(0)! < 0x20)) {
-    throw new Error(`Invalid ${label}: contains path separators, "..", or control characters: ${JSON.stringify(id)}`);
-  }
-  return id;
-}
+// sanitizeId() now lives in the shared module src/utils/id-guard.ts so the
+// compose CLI (a thin .js shim that registers the tsx loader then imports the
+// .ts lib modules) can apply the SAME guard to the channel labels it
+// materializes. Previously this was a private function here, so the guard
+// existed but never reached the compose path — which is how a `label` like
+// `x/../../identity` was able to overwrite the machine-wide identity.json.
+// Imported at the top of this file.
 
 export function getHeartbeatDir(): string {
   return path.join(getDiscoveryDir(), 'heartbeat');

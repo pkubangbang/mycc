@@ -38,6 +38,9 @@ vi.mock('../../config.js', () => ({
   getChannelsDir: () => path.join(tempDir, 'discovery', 'channels'),
   getChannelFile: (sid: string, cid: string) =>
     path.join(tempDir, 'discovery', 'channels', `${sid}-${cid}.json`),
+  // identity.ts publishes this into identity.json on register(); the mock must
+  // provide it or register() throws "No getLaunchArgs export on the mock".
+  getLaunchArgs: () => '(none)',
 }));
 
 import { MailBox } from '../../context/shared/mail.js';

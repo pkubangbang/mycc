@@ -598,6 +598,18 @@ export interface IdentityEntry {
   workDir: string;
   mailbox: string;
   startedAt: number;
+  /**
+   * The redacted CLI flags this instance was launched with, exactly as
+   * `getLaunchArgs()` renders them (secrets → `***`, unset flags omitted),
+   * e.g. `--auto --skip-healthcheck --ollama-model glm-5:cloud`.
+   *
+   * Published so a mediator (`mycc-compose`) can tell whether a live peer was
+   * started with the flags the topology spec asks for, and renew it only when
+   * they differ. Parsed with the SAME table the launcher uses
+   * (utils/arg-canonical.ts), so the two sides can never disagree on what a
+   * flag means. Optional: entries written by older instances lack it.
+   */
+  args?: string;
   /** Daemon mode flag (true when started with --daemon). */
   daemon?: boolean;
   /** Optional role label: the skill name loaded by --daemon <skill-name>.

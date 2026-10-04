@@ -70,6 +70,10 @@ Options:
   --content <s>      Mail body (required for send, or use --content-file).
   --content-file <p> Read mail body from a file (use instead of --content).
   --from <s>         Sender identity recorded in the mail (default: "mycc-mail").
+  --require-online   Refuse delivery unless the lead is PROVABLY live
+                     (fresh heartbeat AND recorded pid alive). Exits 1 with a
+                     "liveness gate" message and NEVER appends the mail when
+                     the gate fails. Used by mycc-compose remotes delivery.
   --list             List registered mycc instances (session-id, workDir, fresh).
   --help, -h         Show this help.
 
@@ -149,6 +153,68 @@ function isFresh(sessionId) {
   return Date.now() - latest < FRESHNESS_WINDOW_MS;
 }
 
+/**
+ * The pid recorded in a session's heartbeat file, or undefined when the file
+ * carries no `pid` field. Mirrors heartbeatPid() in scripts/mycc-compose/lib/
+ * discovery.ts — the heartbeat `pid` is stamped by the recording process on
+ * every beat (IdentityManager.beat()), so a fresh file naming a live pid is
+ * positive evidence a mycc instance owns that pid (unlike "some pid is alive",
+ * which a recycled pid also satisfies).
+ *
+ * Accepts both the current {heartbeats:[], pid:N} and legacy {timestamps:[],
+ * pid:N} schemas; returns undefined for a malformed/missing file or a
+ * non-numeric pid.
+ */
+function readHeartbeatPid(sessionId) {
+  const hbFile = path.join(HEARTBEAT_DIR, `${sessionId}.json`);
+  if (!fs.existsSync(hbFile)) return undefined;
+  try {
+    const parsed = JSON.parse(fs.readFileSync(hbFile, 'utf-8'));
+    if (!parsed || typeof parsed !== 'object') return undefined;
+    return typeof parsed.pid === 'number' ? parsed.pid : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * True when `pid` looks like a live process. Cross-platform: `process.kill(
+ * pid, 0)` sends no signal but throws if the pid is gone (ESRCH) or invalid.
+ * EPERM means the process exists but is not ours to signal → treat as alive
+ * (mirrors isPidAlive() in scripts/mycc-compose/lib/discovery.ts).
+ */
+function isPidAlive(pid) {
+  if (!pid || typeof pid !== 'number') return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return err instanceof Error && err.code === 'EPERM';
+  }
+}
+
+/**
+ * Is a peer PROVABLY running? Fresh heartbeat AND the recorded pid is alive.
+ *
+ * DELIBERATELY FAIL-CLOSED, diverging from discovery.ts:279 `isPeerRunning`,
+ * which falls back to "trust freshness" when no pid is recorded (it would
+ * rather risk double-starting a peer than refuse to restart a live one). The
+ * mailer is the opposite case: delivering remotes to a peer that is NOT
+ * provably live orphans mail in a mailbox the lead may never read (a crashed
+ * lead leaves a fresh-but-dead heartbeat within the 90s window). So when no
+ * pid is recorded we REFUSE — we must not append mail on a guess.
+ *
+ * Used by BOTH the `--require-online` send gate and `cmdList` status, so the
+ * two can never contradict (a session that prints "online (live)" here is
+ * exactly one `--require-online` would accept).
+ */
+function isPeerRunning(sessionId) {
+  if (!isFresh(sessionId)) return false;
+  const pid = readHeartbeatPid(sessionId);
+  if (typeof pid !== 'number') return false; // fail-closed: no pid → refuse
+  return isPidAlive(pid);
+}
+
 // ---------------------------------------------------------------------------
 // Mail append (mirrors src/peer/channel.ts appendMailToPath)
 // ---------------------------------------------------------------------------
@@ -202,13 +268,28 @@ function cmdList() {
   const rows = [];
   let online = 0;
   for (const entry of entries) {
+    // Status mirrors the --require-online gate (isPeerRunning: fresh heartbeat
+    // AND recorded pid alive), NOT the heartbeat-only isFresh. A fresh-but-
+    // dead-pid session would otherwise print "online" here while --require-
+    // online refuses it — the two must never contradict. The parenthetical
+    // surfaces WHY (live / stale heartbeat / dead pid) so a human can tell a
+    // crashed-within-90s lead from a never-started one.
     const fresh = isFresh(entry.sessionId);
-    if (fresh) online++;
+    const running = isPeerRunning(entry.sessionId);
+    if (running) online++;
+    let status;
+    if (running) {
+      status = 'online (live)';
+    } else if (fresh) {
+      status = 'offline (fresh heartbeat, dead pid)';
+    } else {
+      status = 'offline (stale heartbeat)';
+    }
     const started = new Date(entry.startedAt).toISOString().replace('T', ' ').slice(0, 19);
     rows.push(
       `- session=${entry.sessionId}\n` +
       `    workDir: ${entry.workDir}\n` +
-      `    status: ${fresh ? 'online' : 'offline'}\n` +
+      `    status: ${status}\n` +
       `    started: ${started}`,
     );
   }
@@ -239,6 +320,12 @@ function cmdSend(args) {
   const map = readIdentityMap();
   const entry = map[sessionId];
   if (!entry) {
+    if (args.requireOnline) {
+      dieError(
+        `liveness gate: session ${sessionId} not found in ${IDENTITY_FILE} ` +
+        `(unregistered). --require-online refuses to deliver to an unregistered lead.`,
+      );
+    }
     dieError(
       `session ${sessionId} not found in ${IDENTITY_FILE}.\n` +
       `Use \`mycc-mail --list\` to see registered instances. ` +
@@ -250,10 +337,28 @@ function cmdSend(args) {
     dieError(`session ${sessionId} has no mailbox path in identity.json (malformed entry).`);
   }
 
-  // Freshness warning (non-fatal — the mail will still be delivered; if the
-  // lead is down it sits in the file until the lead restarts and processes it,
-  // or gets orphaned if the session is abandoned).
-  if (!isFresh(sessionId)) {
+  // --require-online: FAIL-CLOSED liveness gate. The mail is appended ONLY when
+  // the lead is PROVABLY live — fresh heartbeat AND the recorded pid is alive
+  // (isPeerRunning, fail-closed on a missing pid). A fresh-but-dead heartbeat
+  // (a lead that crashed within the 90s window) or a stale heartbeat would
+  // otherwise leave remotes mail orphaned in a mailbox the lead never reads.
+  // The gate NEVER appends on failure: dieError exits 1 before appendMailToPath.
+  if (args.requireOnline) {
+    if (!isPeerRunning(sessionId)) {
+      const fresh = isFresh(sessionId);
+      const pid = readHeartbeatPid(sessionId);
+      const why = !fresh
+        ? 'stale heartbeat'
+        : (typeof pid !== 'number' ? 'no pid recorded' : `pid ${pid} not alive`);
+      dieError(
+        `liveness gate: session ${sessionId} is not provably live (${why}). ` +
+        `--require-online refuses to deliver to a lead that may not read the mail.`,
+      );
+    }
+  } else if (!isFresh(sessionId)) {
+    // Freshness warning (non-fatal — the mail will still be delivered; if the
+    // lead is down it sits in the file until the lead restarts and processes it,
+    // or gets orphaned if the session is abandoned).
     process.stderr.write(
       `Warning: session ${sessionId} appears offline (no fresh heartbeat).\n` +
       `The mail is still appended to the mailbox; it will be processed when\n` +
@@ -287,11 +392,12 @@ function cmdSend(args) {
  * directory after `npm link` without resolving node_modules.
  */
 function parseArgs(argv) {
-  const args = { sessionId: null, title: null, content: null, contentFile: null, from: null, list: false, help: false };
+  const args = { sessionId: null, title: null, content: null, contentFile: null, from: null, requireOnline: false, list: false, help: false };
   for (let i = 0; i < argv.length; i++) {
     const tok = argv[i];
     if (tok === '--help' || tok === '-h') { args.help = true; continue; }
     if (tok === '--list') { args.list = true; continue; }
+    if (tok === '--require-online') { args.requireOnline = true; continue; }
     // --key value  or  --key=value
     const eqIdx = tok.indexOf('=');
     let key = tok;

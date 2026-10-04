@@ -34,6 +34,9 @@ vi.mock('../../config.js', () => ({
   getHeartbeatFile: (sid: string) => heartbeatFile(sid),
   getChannelsDir: () => channelsDir(),
   getChannelFile: (sid: string, cid: string) => channelFile(sid, cid),
+  // identity.ts publishes this into identity.json on register(); the mock must
+  // provide it or register() throws "No getLaunchArgs export on the mock".
+  getLaunchArgs: () => '(none)',
 }));
 
 // Import AFTER mocks are registered.

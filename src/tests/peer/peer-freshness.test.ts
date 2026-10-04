@@ -31,6 +31,9 @@ vi.mock('../../config.js', () => ({
   getChannelsDir: () => path.join(discoveryDir(), 'channels'),
   getChannelFile: (sid: string, cid: string) =>
     path.join(discoveryDir(), 'channels', `${sid}-${cid}.json`),
+  // identity.ts publishes this into identity.json on register(); the mock must
+  // provide it or register() throws "No getLaunchArgs export on the mock".
+  getLaunchArgs: () => '(none)',
 }));
 
 import { IdentityManager } from '../../peer/identity.js';

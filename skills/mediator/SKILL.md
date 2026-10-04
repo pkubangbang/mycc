@@ -187,3 +187,18 @@ JSON, and bare session-id / unknown recipient in mail_to.
    (freshness-gated direct mailbox append) — the mediator does not relay.
 7. Use the **coordination** skill for in-process lead+teammate teams; use
    THIS skill only for multi-instance orchestration.
+
+## Automating this: the `mycc-compose` tool
+
+Everything above is a manual procedure. When the group must be
+**reproducible** and **resumable** (relaunched after a restart / on a cron),
+do NOT re-author the files by hand — use the **`mycc-compose` skill** and its
+`mycc-compose` CLI. It is a declarative, no-LLM materializer: you write a JSON
+spec (peers + how to launch them + which channels connect them) and
+`mycc-compose up` mints/reuses each peer's session id (`--session-id` pinning),
+launches the processes detached, writes BOTH channel files per link, and
+reports status. Re-running `mycc-compose sync` is the resume path.
+
+- Reach for **this skill** for one-off/ad-hoc wiring, or when you need to
+  understand the underlying channel-file mechanics.
+- Reach for the **`mycc-compose` skill** when the wiring is a durable artifact.

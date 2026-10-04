@@ -6,7 +6,7 @@
  */
 
 import type { PeerModule, IdentityEntry, ChannelFile } from '../types.js';
-import { IdentityManager } from './identity.js';
+import { IdentityManager, releaseSessionOwnership } from './identity.js';
 import { ChannelManager } from './channel.js';
 import {
   findBySid,
@@ -121,6 +121,10 @@ export class PeerManager implements PeerModule {
     this.identity.stopHeartbeat();
     this.channel.stopChannelPoll();
     this.identity.unregister();
+    // Release the pinned-sid ownership lease (see claimSessionOwnership).
+    // Best-effort; a crash leaves the lease for the pid-liveness stale-reclaim
+    // path in claimSessionOwnership, so the next launch can still take over.
+    releaseSessionOwnership(this.identity.getSelfSessionId());
   }
 
   getSelfSessionId(): string {

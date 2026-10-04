@@ -15,6 +15,7 @@ import type { InputProvider } from '../loop/input-provider.js';
 import { UserInputProvider } from '../loop/input-provider.js';
 import { ServeHub } from './serve-hub.js';
 import { agentIO } from '../loop/agent-io.js';
+import { tryDisplayWrapUp } from '../loop/esc-wrap-up.js';
 import { ServeDetachedExitError } from './serve-errors.js';
 import { shouldDaemon } from '../config.js';
 
@@ -60,6 +61,14 @@ export class WebInputProvider implements InputProvider {
     agentIO.setNeglectedMode(false);
     agentIO.flushOutput();
     this.hub.broadcast('prompt', initialContent || '');
+    // Belt-and-suspenders: surface any wrap-up that completed BEFORE this
+    // prompt reappeared (the robust completion trigger in esc-wrap-up.ts
+    // startWrapUp already delivered it via displayLetterBox the moment the
+    // background LLM finished; this catches the race where the wrap-up
+    // finished in the small window before the serve prompt broadcast). Null
+    // editor = serve mode (no LineEditor). markWrapUpShown makes this a no-op
+    // if the completion trigger already ran, so double-display is impossible.
+    tryDisplayWrapUp(null);
     const result = await this.hub.waitForInput();
 
     // After await, check if serve was stopped during the wait.
