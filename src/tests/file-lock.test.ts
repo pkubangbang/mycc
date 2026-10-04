@@ -10,15 +10,18 @@
  *   - always-release: the lock dir is gone after fn() returns AND after fn()
  *     throws;
  *   - stale reclaim: a lock dir whose owner pid is dead is reclaimed;
- *   - degrade-and-run: when the lock cannot be created (simulated by
- *     pre-creating a non-directory at the lock path) fn still runs.
+ *   - degrade-and-run (best-effort default): when the lock cannot be created
+ *     (simulated by pre-creating a non-directory at the lock path) fn still
+ *     runs after the acquire timeout;
+ *   - strict: with `{ strict: true }` the same uncreatable lock makes
+ *     withFileLock THROW FileLockTimeoutError instead of running fn unheld.
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { withFileLock } from '../utils/file-lock.js';
+import { withFileLock, FileLockTimeoutError } from '../utils/file-lock.js';
 
 let tmp = '';
 let target = '';
@@ -88,9 +91,10 @@ describe('withFileLock', () => {
     expect(fs.existsSync(lockDir)).toBe(false);
   });
 
-  it('degrades to running the section unlocked when the lock path is not creatable', () => {
+  it('degrades to running the section unlocked (default best-effort) when the lock cannot be created', () => {
     // A regular FILE sits where the lock dir would go → mkdirSync fails with
-    // EEXIST on every attempt; withFileLock must give up and run anyway.
+    // EEXIST on every attempt. The DEFAULT is best-effort: withFileLock waits
+    // out the acquire timeout then runs fn anyway so the guarded write lands.
     fs.writeFileSync(lockDir, 'not a dir');
     let ran = false;
     const ret = withFileLock(target, () => {
@@ -99,5 +103,41 @@ describe('withFileLock', () => {
     });
     expect(ran).toBe(true);
     expect(ret).toBe('ok');
+  });
+
+  it('THROWS FileLockTimeoutError (strict) instead of running unheld when the lock cannot be created', () => {
+    // Same uncreatable lock, but the caller opted into strict — e.g. the
+    // identity.json writers, which must never silently proceed without the
+    // exclusion guarantee. withFileLock must refuse rather than run fn.
+    fs.writeFileSync(lockDir, 'not a dir');
+    let ran = false;
+    expect(() =>
+      withFileLock(
+        target,
+        () => {
+          ran = true;
+        },
+        { strict: true },
+      ),
+    ).toThrow(FileLockTimeoutError);
+    expect(ran, 'fn must NOT run when a strict lock cannot be acquired').toBe(false);
+  });
+
+  it('never reclaims a lock held by a LIVE pid merely because it is old', () => {
+    // A lock owned by THIS (live) process, backdated far past the stale window.
+    // The old age-only reclaim would steal it, re-opening the lost-update race.
+    fs.mkdirSync(lockDir);
+    fs.writeFileSync(path.join(lockDir, 'owner.json'), JSON.stringify({ pid: process.pid, time: Date.now() }));
+    const old = (Date.now() - 60_000) / 1000;
+    fs.utimesSync(lockDir, old, old);
+    fs.utimesSync(path.join(lockDir, 'owner.json'), old, old);
+
+    // Strict mode: a live holder that never releases must make the acquirer
+    // TIME OUT (not steal).
+    expect(() =>
+      withFileLock(target, () => { /* should never run */ }, { strict: true }),
+    ).toThrow(FileLockTimeoutError);
+    // The live holder's lock dir is intact — not stolen.
+    expect(fs.existsSync(lockDir)).toBe(true);
   });
 });

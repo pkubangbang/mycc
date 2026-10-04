@@ -25,7 +25,7 @@ session id.
 | `args` | string | yes | **Single whitespace-split string** of CLI flags. The model rides here (there is no `model` field). MUST contain `--auto` or `--daemon`. |
 | `sessionId` | string \| null | no (defaults to `null`) | `null` means "mint one": the tool creates a UUID and **writes it back in place**, so after the first `up` the field is populated. A UUID pins the id for resume. |
 | `renew` | `"always"` \| `"onMismatch"` | no | Default `onMismatch`. See below. |
-| `remotes` | string[] | no | URLs of **remote** mycc instances this peer should dial once up (cross-machine peer wire). Each is a `host:port` endpoint — an explicit numeric port is required; `http(s)://`/`ws(s)://` prefixes and a trailing `/` are accepted but the scheme is ignored (the endpoint identity is `host:port` alone, so `http://h:3191` and `https://h:3191` are the SAME endpoint, as are a bare `h:3191`). Paths/query/fragment are rejected. See below. |
+| `remotes` | string[] | no | URLs of **remote** mycc instances this peer should dial once up (cross-machine peer wire). Each is a `host:port` endpoint — an explicit numeric port is required; an `http(s)://` prefix and a trailing `/` are accepted but the scheme is ignored (the endpoint identity is `host:port` alone, so `http://h:3191` and `https://h:3191` are the SAME endpoint, as are a bare `h:3191`). `ws://`/`wss://` and every other scheme are REJECTED. Paths/query/fragment are rejected. See below. |
 
 ### `remotes` semantics
 

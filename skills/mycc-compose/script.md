@@ -78,7 +78,6 @@ Deterministic, **no LLM**:
 ```json
 {
   "group": "pr26",
-  "generatedAt": "2026-09-30T02:21:56.045Z",
   "peers":   [ { "name": "a", "sessionId": "…", "live": true, "matching": true, "lastBrief": null } ],
   "channels":[ { "label": "review", "bothFilesPresent": true } ]
 }

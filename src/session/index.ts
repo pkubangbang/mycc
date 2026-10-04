@@ -14,7 +14,7 @@ import chalk from 'chalk';
 import type { Session, SessionDisplay, SessionInit } from './types.js';
 import { prepareRestoration, readDosq, extractFirstQuery } from './restoration.js';
 import { setSessionContext, getSessionArg, getSessionsDir, getPinnedSessionId } from '../config.js';
-import { isSessionHeld } from '../peer/identity.js';
+import { isSessionHeld, claimSessionOwnership } from '../peer/identity.js';
 import { clearAll } from '../context/memory-store.js';
 import { agentIO } from '../loop/agent-io.js';
 import { openEditor } from '../utils/open-editor.js';
@@ -863,9 +863,18 @@ export async function initializeSession(): Promise<SessionInit> {
   //   1. shape — it must be a bare UUID, because the id becomes the session
   //      directory name, the mailbox path segment, and the peer identity that
   //      mail_to matches against its UUID_RE.
-  //   2. liveness — refuse when a live process already holds the id, so two
-  //      instances never share one session dir (each would append to the same
-  //      triologue and mailbox).
+  //   2. ownership — an ATOMIC lease claim (claimSessionOwnership) so two
+  //      concurrent launches can never both adopt the same id.
+  //
+  // WHY A LEASE, NOT JUST A LIVENESS CHECK: the old guard asked
+  // `isSessionHeld(sid)` and then created the session — two SEPARATE steps.
+  // Two `mycc-compose up` runs (or two `mycc --session-id <sid>`) racing the
+  // same sid could both pass the check before either registered, then both
+  // boot under one sid: same session dir, heartbeat, mailbox, channel identity
+  // — and the last register() wins the identity record. The claim makes
+  // CHECK-AND-ACQUIRE one atomic `open('wx')`: exactly one caller wins, the
+  // loser refuses. A second pre-check would leave the same TOCTOU window.
+  //
   // --from and --session-id are mutually exclusive: --from branches a NEW
   // session with a fresh id, so pinning one at the same time is contradictory.
   if (pinnedId) {
@@ -875,7 +884,9 @@ export async function initializeSession(): Promise<SessionInit> {
     if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(pinnedId)) {
       throw new Error(`--session-id must be a UUID (got ${JSON.stringify(pinnedId)}).`);
     }
-    if (isSessionHeld(pinnedId)) {
+    // Atomic ownership claim. 'held' → a live process still owns the sid
+    // (belt-and-suspenders with isSessionHeld for a lease-less legacy owner).
+    if (claimSessionOwnership(pinnedId) !== 'claimed' || isSessionHeld(pinnedId)) {
       throw new Error(
         `Session ${pinnedId} is held by a live process — refusing to start a second instance under the same id. ` +
         'Stop it first (see the `peers` tool for its pid), or omit --session-id.',

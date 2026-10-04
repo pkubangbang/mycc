@@ -19,7 +19,7 @@ import {
 } from './discovery.js';
 import type { IdentityEntry } from './discovery.js';
 import path from 'path';
-import { withFileLock } from '../../../src/utils/file-lock.js';
+import { withFileLock, FileLockTimeoutError } from '../../../src/utils/file-lock.js';
 import { peerIdentityArgs, peerMailboxPath } from './peers-types.js';
 import type { Peer, PeerStatusRow } from './peers-types.js';
 
@@ -117,7 +117,7 @@ export function repairIdentity(peers: Peer[]): number {
   // read-merge-write and lose an entry. The per-iteration re-read below is
   // retained as defense-in-depth (and to converge if a non-locking writer ever
   // lands), but the lock is what actually closes the lost-update window.
-  withFileLock(IDENTITY_FILE, () => {
+  const runRepair = (): number => {
     for (let attempt = 0; attempt < 5 && pending.size > 0; attempt++) {
       // Re-read EVERY iteration so a registration that landed since the last
       // write is preserved (we merge on top of it, never clobber it).
@@ -151,7 +151,25 @@ export function repairIdentity(peers: Peer[]): number {
         }
       }
     }
-  });
+    return repaired;
+  };
+
+  // Hold the shared identity.json lock (STRICT) for the entire read→write→verify
+  // section so no concurrent register()/unregister()/repair can interleave a
+  // read-merge-write and lose an entry. STRICT is what the review asked for: a
+  // lock timeout must not silently run the section unheld. On timeout we degrade
+  // LOUDLY — run it once, unheld, and warn — matching IdentityManager.register()'s
+  // contract (never crash on a lock failure; the atomic rename still lands).
+  try {
+    withFileLock(IDENTITY_FILE, runRepair, { strict: true });
+  } catch (err) {
+    if (!(err instanceof FileLockTimeoutError)) throw err;
+    console.warn(
+      `[mycc-compose] WARNING: could not acquire the identity.json lock (${err.message}); ` +
+      'repairing WITHOUT cross-process exclusion — a concurrent register may be lost.',
+    );
+    runRepair();
+  }
   return repaired;
 }
 

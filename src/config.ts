@@ -732,7 +732,13 @@ export function getWikiDomainsFile(): string {
 // ============================================================================
 
 export function getDiscoveryDir(): string {
-  return path.join(os.homedir(), '.mycc-store', 'discovery');
+  // MYCC_DISCOVERY_DIR overrides the real per-user discovery store, matching
+  // the compose-side discovery.ts root and the convention every mycc-compose
+  // test relies on (see mycc-compose-*.test.ts beforeEach). Without this the
+  // session ownership lease below could only ever be exercised against the
+  // live ~/.mycc-store/discovery, so tests leaked ownership files into the
+  // developer's real store and cross-ran.
+  return process.env.MYCC_DISCOVERY_DIR || path.join(os.homedir(), '.mycc-store', 'discovery');
 }
 
 export function getIdentityFile(): string {

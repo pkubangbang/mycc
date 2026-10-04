@@ -18,6 +18,23 @@
  * abandoned when the recorded pid is dead OR the lock is older than
  * {@link STALE_MS}, then removes it (best-effort) and retries.
  *
+ * STRICT VS BEST-EFFORT ({@link FileLockOptions.strict}):
+ *   - best-effort (DEFAULT, `strict` unset/false): on acquire timeout `fn`
+ *     runs anyway, unheld. The write is then no safer than before the lock
+ *     existed (atomic-rename only, no merge guarantee) — but the guarded write
+ *     still lands, so a lock that merely cannot be CREATED never crashes the
+ *     caller. This is the safe default for a background utility: a transient
+ *     lock failure degrades correctness, it does not abort startup.
+ *   - strict (`strict: true`): on acquire timeout `withFileLock` THROWS
+ *     {@link FileLockTimeoutError} rather than running `fn` unheld. A caller
+ *     that cannot tolerate a silent lost-update (the identity.json writers)
+ *     opts into this and decides itself how to surface the failure.
+ *
+ * The identity.json critical sections (register/unregister/repairIdentity) run
+ * with `{ strict: true }` AND catch {@link FileLockTimeoutError} to fall back to
+ * a single unheld read-merge-write with a loud warning — see identity.ts. So in
+ * practice a lock timeout there is a NOISY degradation, never a crash.
+ *
  * Scope: advisory and cooperative — it only protects writers that go through
  * {@link withFileLock}. All identity.json writers do, so the guarantee holds
  * for this file. It is NOT a general-purpose mutex for arbitrary files.
@@ -28,10 +45,31 @@ import * as path from 'path';
 
 /** A lock whose owner has been gone (or which has outlived this TTL) is stale. */
 const STALE_MS = 10_000;
-/** Total time {@link withFileLock} will wait for a contended lock before degrading. */
+/** Total time {@link withFileLock} will wait for a contended lock before giving up. */
 const ACQUIRE_TIMEOUT_MS = 5_000;
 /** Delay between acquire attempts (kept short: critical sections are <1ms). */
 const POLL_MS = 25;
+
+/** Options for {@link withFileLock}. */
+export interface FileLockOptions {
+  /**
+   * true → throw {@link FileLockTimeoutError} on acquire timeout instead of
+   * running `fn` unheld. Default (unset/false) degrades and runs (best-effort).
+   * See the file header for which callers use which.
+   */
+  strict?: boolean;
+}
+
+/** Raised when a strict lock cannot be acquired within the timeout. */
+export class FileLockTimeoutError extends Error {
+  constructor(filePath: string) {
+    super(
+      `could not acquire the file lock for ${filePath} within ${ACQUIRE_TIMEOUT_MS}ms ` +
+      `(a live holder never released it, or the lock could not be created)`,
+    );
+    this.name = 'FileLockTimeoutError';
+  }
+}
 
 /** The lock directory for `filePath` (a sibling, so it shares the file's volume). */
 function lockDirFor(filePath: string): string {
@@ -55,8 +93,11 @@ function isStale(dir: string): boolean {
     const ownerPath = path.join(dir, 'owner.json');
     if (fs.existsSync(ownerPath)) {
       const owner = JSON.parse(fs.readFileSync(ownerPath, 'utf-8')) as { pid?: number; time?: number };
-      if (typeof owner.pid === 'number' && !pidAlive(owner.pid)) return true;
-      if (typeof owner.time === 'number' && Date.now() - owner.time > STALE_MS) return true;
+      // A LIVE owner is NEVER stale, no matter how old the lease — stealing a
+      // lock from a running holder would re-open the very race it closes.
+      if (typeof owner.pid === 'number') return !pidAlive(owner.pid);
+      // No pid recorded (a partial write): fall back to the age check.
+      if (typeof owner.time === 'number') return Date.now() - owner.time > STALE_MS;
       return false;
     }
     // No owner file yet — a racing creator may not have written it. Fall back
@@ -90,20 +131,22 @@ function sleep(ms: number): void {
  * Run `fn` while holding an exclusive advisory lock on `filePath`. The lock is
  * always released, even when `fn` throws.
  *
- * Degradation contract: the lock is best-effort. On acquire timeout (extreme
- * contention, or a wedged holder we could not reclaim) this method DOES NOT
- * throw — it logs nothing and runs `fn` anyway. A liveness failure must not
- * turn a discovery write into a crash; the write remains as safe as it was
- * before the lock existed (atomic rename), just without the merge guarantee.
- * On platforms where the lock directory cannot be created/removed for a
- * non-contention reason (e.g. a read-only volume), the same degrade-and-run
- * path applies.
+ * STRICT (`opts.strict === true`): on acquire failure this THROWS
+ * {@link FileLockTimeoutError} instead of running `fn` unheld — for callers
+ * that cannot tolerate a silent lost-update (the identity.json writers).
+ *
+ * BEST-EFFORT (default): on acquire failure `fn` runs anyway, unheld. The write
+ * is then no safer than before the lock existed (atomic rename only, no merge
+ * guarantee). Use where a missed merge is tolerable and an abort is not.
  *
  * @param filePath Absolute or relative path of the file being guarded.
  * @param fn The read-merge-write critical section.
+ * @param opts See {@link FileLockOptions}.
  * @returns whatever `fn` returns.
+ * @throws FileLockTimeoutError when strict and the lock could not be acquired.
  */
-export function withFileLock<T>(filePath: string, fn: () => T): T {
+export function withFileLock<T>(filePath: string, fn: () => T, opts: FileLockOptions = {}): T {
+  const strict = opts.strict === true; // default best-effort (opt-in strict)
   const dir = lockDirFor(filePath);
   const parent = path.dirname(dir);
   try {
@@ -127,13 +170,17 @@ export function withFileLock<T>(filePath: string, fn: () => T): T {
       break;
     } catch (err) {
       if ((err as NodeJS.ErrnoException)?.code !== 'EEXIST') {
-        // mkdir failed for a reason other than contention (e.g. EACCES): give
-        // up on locking and run the section unlocked rather than crash.
+        // mkdir failed for a reason other than contention (e.g. EACCES).
         break;
       }
       if (isStale(dir)) removeLockDir(dir);
       else sleep(POLL_MS);
     }
+  }
+
+  if (!acquired && strict) {
+    // Never run the critical section unheld under a strict lock.
+    throw new FileLockTimeoutError(filePath);
   }
 
   try {
