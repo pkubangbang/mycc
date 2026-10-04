@@ -195,7 +195,7 @@ describe('escAware + real triggerNeglection (WebUI 停止 path)', () => {
 // ============================================================================
 // SERVE (WebUI) wrap-up delivery — the 停止/Stop-button hang regression.
 //
-// Root cause (docs/webui-stop-hang-analysis.md): WebUI 停止 → triggerNeglection
+// Root cause: WebUI 停止 → triggerNeglection
 // → neglection wrap-up is silently dropped in SERVE mode because the call sites
 // of tryDisplayWrapUp (agent-io.ts:893/1017) are inside terminal ask() blocks
 // that serve mode never enters (web-input-provider routes to

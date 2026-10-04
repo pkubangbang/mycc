@@ -15,7 +15,6 @@
  * showed the classic Windows hazard does not reproduce through Node on every
  * platform/configuration, so these are not "exploit fixes" — they remove a
  * name that Windows may normalize differently, which costs nothing to reject.
- * See docs/mycc-compose-fix-round.md §5.
  */
 
 import { describe, it, expect } from 'vitest';

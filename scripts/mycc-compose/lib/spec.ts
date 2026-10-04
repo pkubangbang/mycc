@@ -84,44 +84,36 @@ export function getRemotes(peer: { remotes?: string[]; [key: string]: unknown })
 
 /**
  * Normalize a remote URL to a canonical key for duplicate + mutual-dial
- * detection: trimmed, trailing slashes stripped, scheme + host lowercased.
- * The port is preserved as-authored (so `http://H:3191` and `http://h:3191`
- * fold together but `http://h:3191` and `http://h:3192` do not). Path/query
- * are dropped — a remote serve endpoint is a host:port, not a path (the wire
- * dials `/peer/ws` on whatever host:port is given; an authored path would be
- * ignored by parseWireTarget, so two URLs differing only by path are the same
- * endpoint and must dedupe).
+ * detection. The key is the runtime ENDPOINT IDENTITY, `host:port`, with the
+ * host lowercased and the port preserved as-authored.
+ *
+ * The SCHEME is deliberately DROPPED: parseWireTarget (src/peer/wire-client.ts)
+ * keys the wire registry on `host:port` alone, so `http://h:3191` and
+ * `https://h:3191` are the SAME endpoint at runtime. Keeping the scheme here
+ * would make the spec layer treat them as two distinct remotes while the wire
+ * layer treats them as one — the duplicate/mutual-dial validation and runtime
+ * dedupe must agree on what "the same endpoint" means. Path/query are likewise
+ * dropped (the wire dials `/peer/ws` on whatever host:port is given, so a URL
+ * differing only by path is the same endpoint and must dedupe).
+ *
+ * A bare `host:port` (no scheme) folds identically. IPv6 brackets are kept.
  */
 function remoteUrlKey(raw: string): string {
   let u = raw.trim().replace(/\/+$/, '');
-  const schemeMatch = u.match(/^(https?):\/\/(.+)$/i);
-  if (schemeMatch) {
-    const scheme = schemeMatch[1].toLowerCase();
-    let rest = schemeMatch[2];
-    const slash = rest.indexOf('/');
-    if (slash >= 0) rest = rest.slice(0, slash); // drop path/query
-    // Lowercase the host (before the port colon); keep IPv6 brackets intact.
-    const lastColon = rest.lastIndexOf(':');
-    if (lastColon > 0 && /^\d+$/.test(rest.slice(lastColon + 1))) {
-      const host = rest.slice(0, lastColon).toLowerCase();
-      const port = rest.slice(lastColon + 1);
-      u = `${scheme}://${host}:${port}`;
-    } else {
-      u = `${scheme}://${rest.toLowerCase()}`;
-    }
-  } else {
-    // Bare host:port (no scheme) — parseWireTarget treats it as http. Fold
-    // the host case the same way.
-    const slash = u.indexOf('/');
-    if (slash >= 0) u = u.slice(0, slash);
-    const lastColon = u.lastIndexOf(':');
-    if (lastColon > 0 && /^\d+$/.test(u.slice(lastColon + 1))) {
-      u = `${u.slice(0, lastColon).toLowerCase()}:${u.slice(lastColon + 1)}`;
-    } else {
-      u = u.toLowerCase();
-    }
+  // Strip a scheme if present (http/https/ws/wss/anything) — irrelevant to
+  // the endpoint identity, which is host:port only.
+  u = u.replace(/^[a-z][a-z0-9+.\-]*:\/\//i, '');
+  // Drop path/query/fragment: the endpoint is the authority only.
+  const slash = u.search(/[/?#]/);
+  if (slash >= 0) u = u.slice(0, slash);
+  // Lowercase the host (before the port colon); keep IPv6 brackets intact.
+  const lastColon = u.lastIndexOf(':');
+  if (lastColon > 0 && /^\d+$/.test(u.slice(lastColon + 1))) {
+    return `${u.slice(0, lastColon).toLowerCase()}:${u.slice(lastColon + 1)}`;
   }
-  return u;
+  // No numeric port — return the lowercased remainder (validation rejects
+  // these before they reach a key, but be total).
+  return u.toLowerCase();
 }
 
 /**
@@ -210,6 +202,28 @@ function normalizeRemotes(
     if (!authoredScheme && !u.hostname) {
       // Bare host:port (no scheme) — rely on the constructor's hostname.
       throw new Error(`${rAt} must have a non-empty host (got "${raw}")`);
+    }
+    // A port is REQUIRED: the runtime wire target (parseWireTarget in
+    // src/peer/wire-client.ts) is a `host:port` endpoint — a target without a
+    // port returns null and the peer can never connect. `new URL('http://host')`
+    // is valid but yields an EMPTY u.port, so a URL-constructor-only check
+    // would accept `http://host` here and then silently fail at connect time —
+    // the exact validator/runtime grammar split this normalization exists to
+    // prevent. Reject an explicitly authored no-port URL, and also reject a
+    // bare `host` (no port) which the constructor would otherwise accept via
+    // the default-port fallback. The check judges the AUTHORED string (strip
+    // scheme + trailing slashes), mirroring parseWireTarget's own grammar.
+    const portRest = raw.replace(/^[a-z][a-z0-9+.\-]*:\/\//i, '').replace(/\/+$/, '');
+    const portHost = portRest.split('/')[0].split('?')[0].split('#')[0];
+    // IPv6 literal `[::1]:port` — the port is after the closing bracket.
+    const portColon = portHost.startsWith('[')
+      ? portHost.lastIndexOf(']:') >= 0 ? portHost.lastIndexOf(']:') + 1 : -1
+      : portHost.lastIndexOf(':');
+    if (portColon < 0 || !/^\d+$/.test(portHost.slice(portColon + 1))) {
+      throw new Error(
+        `${rAt} must be a host:port endpoint with an explicit numeric port (got "${raw}"); ` +
+        `the peer wire connects to host:port only.`,
+      );
     }
     // Runtime peer-wire targets are host:port endpoints; URL suffixes are
     // unsupported. Judge the SAME string remoteUrlKey/parseWireTarget do:

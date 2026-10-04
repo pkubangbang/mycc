@@ -348,6 +348,20 @@ describe('validateSpec: peers[].remotes validation', () => {
     rejects(baseSpec({ peers: [mkPeer({ remotes: ['http:///path'] })] }), /must have a non-empty host/);
   });
 
+  it('rejects a URL with no port (runtime parseWireTarget requires host:port)', () => {
+    // The runtime wire target is `host:port`; parseWireTarget returns null for a
+    // portless target, so `http://host` would validate here and then silently
+    // fail to connect. Pin the validator to the SAME grammar as the runtime.
+    rejects(baseSpec({ peers: [mkPeer({ remotes: ['http://host'] })] }), /explicit numeric port/);
+    rejects(baseSpec({ peers: [mkPeer({ remotes: ['host'] })] }), /explicit numeric port/);
+    rejects(baseSpec({ peers: [mkPeer({ remotes: ['https://peer.example'] })] }), /explicit numeric port/);
+    // A trailing slash does NOT supply a port — still rejected.
+    rejects(baseSpec({ peers: [mkPeer({ remotes: ['http://host/'] })] }), /explicit numeric port/);
+    // With a port it is accepted, trailing slash and all.
+    expect(() => validateSpec(baseSpec({ peers: [mkPeer({ remotes: ['http://host:3191/'] })] }))).not.toThrow();
+    expect(() => validateSpec(baseSpec({ peers: [mkPeer({ remotes: ['h:3191'] })] }))).not.toThrow();
+  });
+
   it('rejects a duplicate URL within one peer (case/slash-insensitive)', () => {
     rejects(
       baseSpec({ peers: [mkPeer({ remotes: ['http://H:3191', 'http://h:3191/'] })] }),
@@ -404,6 +418,36 @@ describe('validateSpec: peers[].remotes validation', () => {
           ],
         }),
       ),
+    ).not.toThrow();
+  });
+
+  it('folds schemes when comparing endpoint identity (host:port, not scheme://host:port)', () => {
+    // The runtime wire registry keys on host:port and IGNORES the scheme, so
+    // http://h:3191 and https://h:3191 (and bare h:3191) are the SAME endpoint.
+    // The spec's duplicate/mutual-dial validation must use the same notion, or
+    // two peers "dialing different endpoints" would collide at runtime.
+    rejects(
+      baseSpec({ peers: [mkPeer({ remotes: ['http://h:3191', 'https://h:3191'] })] }),
+      /duplicate URL/,
+    );
+    rejects(
+      baseSpec({ peers: [mkPeer({ remotes: ['http://h:3191', 'h:3191'] })] }),
+      /duplicate URL/,
+    );
+    // Mutual-dial across schemes is caught: two peers, same host:port, one http
+    // and one https → the same runtime endpoint.
+    rejects(
+      baseSpec({
+        peers: [
+          mkPeer({ name: 'a', args: '--auto', remotes: ['http://h:3191'] }),
+          mkPeer({ name: 'b', args: '--auto', remotes: ['https://h:3191'] }),
+        ],
+      }),
+      /mutual dial rejected/,
+    );
+    // DIFFERENT ports stay distinct even with opposite schemes.
+    expect(() =>
+      validateSpec(baseSpec({ peers: [mkPeer({ remotes: ['http://h:3191', 'https://h:3192'] })] })),
     ).not.toThrow();
   });
 });

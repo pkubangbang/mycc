@@ -795,20 +795,36 @@ function writeFreshSessionFiles(): { sessionFilePath: string; triologuePath: str
 
   // TRIALOGUE FILENAME COLLISION GUARD (compose pinning): a pinned session id
   // is REUSED on relaunch, so `triologue-lead-<same-second>.jsonl` can name a
-  // transcript that already exists — and the bare `writeFileSync(path, '')`
-  // below would TRUNCATE it, silently destroying the previous run's
-  // append-only record. Keep the readable second-precision stem whenever it
-  // is free; only on collision suffix milliseconds, which also keeps two
-  // same-second starts distinct from each other. Session-dir layout and the
-  // `triologue-lead-` stem are unchanged — the session JSON records whatever
-  // path was chosen, and every consumer receives the path rather than
-  // re-deriving the name.
+  // transcript that already exists — and a bare `writeFileSync(path, '')` would
+  // TRUNCATE it, silently destroying the previous run's append-only record.
+  //
+  // The file is created with EXCLUSIVE open (`wx`): the create is atomic, so it
+  // either creates a brand-new file or fails with EEXIST. On EEXIST we retry
+  // with a fresh suffix — this is collision-SAFE even for two starts in the
+  // same millisecond and even across processes (no existsSync→write TOCTOU
+  // window, which two same-ms starts could both pass and then the second
+  // writeFileSync would truncate the first). The readable second-precision stem
+  // is kept whenever it is free; the suffix ladder is deterministic
+  // (-<ms>ms, then a counter) so a retry always makes progress.
   const seconds = Math.floor(Date.now() / 1000);
-  let triologuePath = path.join(sessionDir, `triologue-lead-${seconds}.jsonl`);
-  if (fs.existsSync(triologuePath)) {
-    triologuePath = path.join(sessionDir, `triologue-lead-${seconds}-${Date.now() % 1000}ms.jsonl`);
+  const stem = path.join(sessionDir, `triologue-lead-${seconds}`);
+  let triologuePath = `${stem}.jsonl`;
+  let fd: number | null = null;
+  for (let attempt = 0; attempt < 100; attempt++) {
+    const candidate = attempt === 0 ? triologuePath : `${stem}-${Date.now() % 1000}ms-${attempt}.jsonl`;
+    try {
+      fd = fs.openSync(candidate, 'wx');
+      triologuePath = candidate;
+      break;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException)?.code === 'EEXIST') continue; // taken — try next suffix
+      throw err;
+    }
   }
-  fs.writeFileSync(triologuePath, '', 'utf-8');
+  if (fd === null) {
+    throw new Error(`could not create a unique triologue file under ${sessionDir}`);
+  }
+  fs.closeSync(fd);
 
   // Pass the same id so the session file lives in the same dir as the triologue
   const sessionFilePath = createSessionFile(triologuePath, id);

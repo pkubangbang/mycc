@@ -12,7 +12,10 @@ export function cmdStatus(file: string, asJson: boolean): void {
   const spec = validateSpec(loadSpec(file));
   const report = {
     group: spec.group,
-    generatedAt: new Date().toISOString(),
+    // `generatedAt` is intentionally NOT part of the machine-readable report:
+    // `status --json` is documented as DETERMINISTIC (two identical invocations
+    // must produce byte-identical JSON), and a wall-clock timestamp breaks that.
+    // The human-readable form below still prints a timestamp (it is for a human).
     peers: spec.peers.map((peer) => {
       const p = peerStatus(peer);
       const lastBrief: { time: number; content: string; confidence: number } | null =
@@ -33,7 +36,7 @@ export function cmdStatus(file: string, asJson: boolean): void {
     process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
     process.exit(0);
   }
-  out(`Topology "${report.group}" @ ${report.generatedAt}`);
+  out(`Topology "${report.group}" @ ${new Date().toISOString()}`);
   out('Peers:');
   for (const p of report.peers) {
     out(`  - ${p.name}: ${p.live ? 'live' : 'down'}${p.live && !p.matching ? ' (args/workdir mismatch)' : ''} [sid=${p.sessionId ?? '(none)'}]`);

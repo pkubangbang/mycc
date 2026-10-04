@@ -24,6 +24,7 @@ import type { IdentityEntry } from '../types.js';
 import { getIdentityFile, getHeartbeatFile, getLaunchArgs } from '../config.js';
 import { truncateToTokens } from '../utils/token.js';
 import { atomicWrite } from '../utils/atomic-write.js';
+import { withFileLock } from '../utils/file-lock.js';
 
 const HEARTBEAT_INTERVAL_MS = 30_000;
 const MAX_HEARTBEATS = 3;
@@ -330,44 +331,54 @@ export class IdentityManager {
    * we eventually converge. The retry cap bounds worst-case contention.
    */
   register(): void {
-    for (let attempt = 0; attempt < 5; attempt++) {
-      const map = readIdentityMap();
-      pruneStaleEntries(map, this.sessionId);
-      map[this.sessionId] = {
-        sessionId: this.sessionId,
-        workDir: this.workDir,
-        mailbox: this.mailboxPath,
-        startedAt: Date.now(),
-        // Publish the redacted launch flags so a mediator (mycc-compose) can
-        // decide whether a live peer matches the requested topology, instead of
-        // tearing down healthy instances on every sync.
-        args: getLaunchArgs(),
-        ...(this.role ? { role: this.role } : {}),
-        ...(this.daemon ? { daemon: true } : {}),
-      };
-      writeIdentityMap(map);
-      // Re-read to verify our entry survived (no clobber by a concurrent write).
-      // If another instance wrote after us but before this verify, their entry
-      // is missing from what we just wrote — re-loop to merge both.
-      const after = readIdentityMap();
-      if (this.sessionId in after) {
-        return; // our entry is present — done
+    // Serialize the whole read-merge-write against every OTHER identity.json
+    // writer (other instances' register/unregister, and mycc-compose's
+    // repairIdentity) via a shared cross-process advisory lock. The retry loop
+    // below is retained as a belt-and-suspenders convergence check (it also
+    // covers a writer that ignored the lock), but the lock is what actually
+    // closes the lost-update window the earlier read-verify loop only narrowed.
+    withFileLock(getIdentityFile(), () => {
+      for (let attempt = 0; attempt < 5; attempt++) {
+        const map = readIdentityMap();
+        pruneStaleEntries(map, this.sessionId);
+        map[this.sessionId] = {
+          sessionId: this.sessionId,
+          workDir: this.workDir,
+          mailbox: this.mailboxPath,
+          startedAt: Date.now(),
+          // Publish the redacted launch flags so a mediator (mycc-compose) can
+          // decide whether a live peer matches the requested topology, instead of
+          // tearing down healthy instances on every sync.
+          args: getLaunchArgs(),
+          ...(this.role ? { role: this.role } : {}),
+          ...(this.daemon ? { daemon: true } : {}),
+        };
+        writeIdentityMap(map);
+        // Re-read to verify our entry survived. Under the lock this always
+        // holds on the first pass; the loop remains as defense against a
+        // non-locking writer.
+        const after = readIdentityMap();
+        if (this.sessionId in after) {
+          return; // our entry is present — done
+        }
       }
-    }
-    // After 5 attempts, give up (extreme contention). Last write still has our
-    // entry; a concurrent writer may have lost theirs, but they will retry on
-    // their own register() call.
+      // After 5 attempts, give up (extreme contention). Last write still has our
+      // entry; a concurrent writer may have lost theirs, but they will retry on
+      // their own register() call.
+    });
   }
 
   /**
    * Remove this instance from identity.json.
    */
   unregister(): void {
-    const map = readIdentityMap();
-    if (this.sessionId in map) {
-      delete map[this.sessionId];
-      writeIdentityMap(map);
-    }
+    withFileLock(getIdentityFile(), () => {
+      const map = readIdentityMap();
+      if (this.sessionId in map) {
+        delete map[this.sessionId];
+        writeIdentityMap(map);
+      }
+    });
   }
 
   /**

@@ -15,9 +15,11 @@ import {
   isPidAlive,
   lastBrief,
   FRESHNESS_WINDOW_MS,
+  IDENTITY_FILE,
 } from './discovery.js';
 import type { IdentityEntry } from './discovery.js';
 import path from 'path';
+import { withFileLock } from '../../../src/utils/file-lock.js';
 import { peerIdentityArgs, peerMailboxPath } from './peers-types.js';
 import type { Peer, PeerStatusRow } from './peers-types.js';
 
@@ -69,11 +71,12 @@ export function findMatchingLiveEntry(peer: Peer): IdentityEntry | null {
  *     alone. A dead peer's heartbeat file lingers for up to 90s; gating on the
  *     recorded pid being ALIVE avoids minting a ghost entry.
  *
- * KNOWN LIMITATION: the `sid in map` guards below narrow, but do not close, the
- * read→write race. `map` is frozen at the first `readIdentityMap()` of each
- * iteration, so a register() that lands between that read and
- * `writeIdentityMap(map)` is still overwritten by our rename. Closing it needs
- * a per-sid presence re-read at write time.
+ * RACE SAFETY: the read→write lost-update race is closed by holding the shared
+ * cross-process identity.json lock (withFileLock) across the whole read-merge-
+ * write section — the SAME lock IdentityManager.register()/unregister() take,
+ * so repair and registration can never interleave. The per-iteration re-read +
+ * verify loop is kept as defense-in-depth (and to converge against a
+ * hypothetical writer that did not take the lock).
  */
 export function repairIdentity(peers: Peer[]): number {
   const pending = new Map<string, IdentityEntry>(); // sessionId → entry to (re)insert
@@ -109,40 +112,46 @@ export function repairIdentity(peers: Peer[]): number {
   if (pending.size === 0) return 0;
 
   let repaired = 0;
-  for (let attempt = 0; attempt < 5 && pending.size > 0; attempt++) {
-    // Re-read EVERY iteration so a registration that landed since the last
-    // write is preserved (we merge on top of it, never clobber it).
-    const map = readIdentityMap();
-    for (const [sid, entry] of pending) {
-      if (!(sid in map)) map[sid] = entry;
-    }
+  // Hold the shared identity.json lock for the entire read→write→verify
+  // section, so no concurrent register()/unregister()/repair can interleave a
+  // read-merge-write and lose an entry. The per-iteration re-read below is
+  // retained as defense-in-depth (and to converge if a non-locking writer ever
+  // lands), but the lock is what actually closes the lost-update window.
+  withFileLock(IDENTITY_FILE, () => {
+    for (let attempt = 0; attempt < 5 && pending.size > 0; attempt++) {
+      // Re-read EVERY iteration so a registration that landed since the last
+      // write is preserved (we merge on top of it, never clobber it).
+      const map = readIdentityMap();
+      for (const [sid, entry] of pending) {
+        if (!(sid in map)) map[sid] = entry;
+      }
 
-    // Re-read again immediately before the write and merge whatever landed
-    // since the first read. The read→write gap is the lost-update window the
-    // original single read-merge-write fell into: a concurrent register()
-    // completing in that gap was silently overwritten by our rename.
-    const latest = readIdentityMap();
-    for (const [sid, entry] of Object.entries(latest)) {
-      if (!(sid in map)) map[sid] = entry;
-    }
-    // Our own pending entries only land for sids that were ABSENT at build
-    // time; guard the write anyway so a concurrent register() that inserted
-    // one of them in the gap is preserved, not clobbered ("insert if absent").
-    for (const [sid, entry] of pending) {
-      if (!(sid in map)) map[sid] = entry;
-    }
+      // Re-read again immediately before the write and merge whatever landed
+      // since the first read. Under the lock this is belt-and-suspenders; it
+      // still protects against a writer that did not take the lock.
+      const latest = readIdentityMap();
+      for (const [sid, entry] of Object.entries(latest)) {
+        if (!(sid in map)) map[sid] = entry;
+      }
+      // Our own pending entries only land for sids that were ABSENT at build
+      // time; guard the write anyway so a concurrent register() that inserted
+      // one of them in the gap is preserved, not clobbered ("insert if absent").
+      for (const [sid, entry] of pending) {
+        if (!(sid in map)) map[sid] = entry;
+      }
 
-    writeIdentityMap(map);
+      writeIdentityMap(map);
 
-    // Verify: entries present after the rename are done (count them once).
-    const after = readIdentityMap();
-    for (const sid of [...pending.keys()]) {
-      if (sid in after) {
-        pending.delete(sid);
-        repaired++;
+      // Verify: entries present after the rename are done (count them once).
+      const after = readIdentityMap();
+      for (const sid of [...pending.keys()]) {
+        if (sid in after) {
+          pending.delete(sid);
+          repaired++;
+        }
       }
     }
-  }
+  });
   return repaired;
 }
 

@@ -25,6 +25,32 @@ session id.
 | `args` | string | yes | **Single whitespace-split string** of CLI flags. The model rides here (there is no `model` field). MUST contain `--auto` or `--daemon`. |
 | `sessionId` | string \| null | no (defaults to `null`) | `null` means "mint one": the tool creates a UUID and **writes it back in place**, so after the first `up` the field is populated. A UUID pins the id for resume. |
 | `renew` | `"always"` \| `"onMismatch"` | no | Default `onMismatch`. See below. |
+| `remotes` | string[] | no | URLs of **remote** mycc instances this peer should dial once up (cross-machine peer wire). Each is a `host:port` endpoint — an explicit numeric port is required; `http(s)://`/`ws(s)://` prefixes and a trailing `/` are accepted but the scheme is ignored (the endpoint identity is `host:port` alone, so `http://h:3191` and `https://h:3191` are the SAME endpoint, as are a bare `h:3191`). Paths/query/fragment are rejected. See below. |
+
+### `remotes` semantics
+
+`remotes` is the **one-sided** dial declaration for the cross-machine peer wire
+(a NAT'd/firewalled peer dials OUT to a reachable serve URL; the dial gives a
+bidirectional pipe, so only ONE side declares it). Rules enforced by
+`validateSpec` before any mutation:
+
+- Each entry is a non-empty string; it must parse as a `host:port` endpoint
+  with an **explicit numeric port** (`http://host` with no port is rejected —
+  the runtime `parseWireTarget` needs `host:port` and would silently fail to
+  connect).
+- `http`/`https` are the only schemes accepted on an authored value; any other
+  scheme (e.g. `ws://`, `ftp://`) is rejected. A bare `host:port` (no scheme)
+  is accepted.
+- No **duplicate** URL within one peer's list (compared by endpoint key).
+- No **self-dial**: a loopback host (`localhost`/`127.0.0.1`/`::1`) whose port
+  equals THIS peer's explicit `--serve <port>` is rejected (declare the dialer
+  on the peer that cannot accept inbound).
+- **Cross-peer mutual-dial** is rejected: the SAME endpoint key may appear in
+  at most ONE peer's `remotes` list (two peers dialing one endpoint is the
+  practical mutual-dial signature for a 2-node spec).
+
+`--session-id` is launcher-managed; declaring it in `args` is rejected. See
+`docs/remotes-design-decision.md` for the direction/dedupe decision.
 
 ### `renew` semantics
 

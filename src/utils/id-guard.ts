@@ -38,7 +38,7 @@ const WINDOWS_RESERVED = [':', '*', '?', '"', '<', '>', '|'];
  * hazard does not reproduce through Node on the machine this was developed on
  * (`NUL.json` wrote and listed normally). It is kept because rejection is free
  * and the behaviour is platform- and configuration-dependent — do not read this
- * as an exploit fix. See docs/mycc-compose-fix-round.md §5.
+ * as an exploit fix.
  */
 const WINDOWS_DEVICE_NAMES = [
   'CON', 'PRN', 'AUX', 'NUL',

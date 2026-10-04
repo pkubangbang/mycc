@@ -367,14 +367,14 @@ describe('launchPeer: requires a NEW beat from the spawned child (A-M1)', () => 
     expect(await waitFor(() => resolved, 1500)).toBe(false);
   });
 
-  // DISABLED: this test waits out the full LAUNCH_TIMEOUT_MS (30s) because it
-  // asserts the timeout path itself — the spawned fixture exits at once and
-  // never beats, so `launchPeer` only settles when the 30s deadline elapses
-  // (hence the 40s budget above). Too slow for the regular suite. Re-enable if
-  // the timeout path needs direct coverage (e.g. by injecting a short
-  // `opts.timeoutMs`); the fast-opener-exit-is-normal behavior is otherwise
-  // covered by the surrounding launchPeer tests.
-  it.skip('treats a fast opener exit as normal and reports a timeout when no beat follows', async () => {
+  // Restored: the original version waited out the full LAUNCH_TIMEOUT_MS (30s)
+  // and was skipped as too slow. `launchPeer` exposes a test-only
+  // `opts.timeoutMs` that overrides the beat-poll deadline, so the SAME
+  // timeout-path coverage runs in ~500ms. This matters because it pins the
+  // distinction between a terminal opener exiting NORMALLY (never the peer's
+  // death) and a peer that genuinely fails to beat — the failure must surface
+  // as a launch TIMEOUT, not a spawn/exit error.
+  it('treats a fast opener exit as normal and reports a timeout when no beat follows', async () => {
     const { peers } = await loadModules();
     // The terminal opener is ONE-SHOT: it creates the window and exits at once.
     // Its exit is therefore never the peer's death, so launchPeer must not
@@ -382,10 +382,12 @@ describe('launchPeer: requires a NEW beat from the spawned child (A-M1)', () => 
     setBin('process.exit(7);');
     writeIdentity(SID_A); // no heartbeat at all → no holder, spawn proceeds
 
-    const err = await peers.launchPeer(peer('crash', SID_A), { spawnImpl: fixtureSpawn }).then(() => null, (e: Error) => e);
+    const err = await peers
+      .launchPeer(peer('crash', SID_A), { spawnImpl: fixtureSpawn, timeoutMs: 700 })
+      .then(() => null, (e: Error) => e);
     expect(err).not.toBeNull();
     expect(err!.message).toMatch(/did not come up within/);
-  }, 40_000);
+  }, 5000);
 
   it('resolves once the child actually beats', async () => {
     const { peers } = await loadModules();
