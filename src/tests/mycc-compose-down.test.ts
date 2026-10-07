@@ -1,13 +1,16 @@
 /**
- * mycc-compose-down.test.ts — the P2-b regression suite: `down --stop` must
- * stop BEFORE deleting the channel files and report failure through the
- * exit code when a requested stop does not happen.
+ * mycc-compose-down.test.ts — the P2-b regression suite: `down` must stop the
+ * peers (unconditionally) BEFORE deleting the channel files and report failure
+ * through the exit code when a stop does not happen.
  *
- * Why the order matters: the channel files are a running peer's IPC surface
- * (its poll turns them into mail channels). The old cmdDown deleted them
- * first, then attempted the stop — a refused stop left a running peer with
- * dead channels — and always exited 0, so scripts/cron could not tell a
- * failed stop from success.
+ * Why the always-stop shape: the channel files are a running peer's IPC
+ * surface (its poll turns them into mail channels). Removing the channels
+ * alone — without stopping the peers — has no meaning, so `down` always
+ * terminates the peers; there is no channels-only mode and no `--stop` flag.
+ *
+ * Why the order matters: the stop runs BEFORE the deletion, so a refused stop
+ * does not leave a running peer with dead channels, and the exit code is the
+ * honest signal a caller can act on.
  *
  * Why a REFUSED stop must be NON-ZERO: `down` is the operator's "teardown"
  * verb; a non-zero exit is the only signal a caller can act on. The stop
@@ -128,9 +131,9 @@ function channelsPresent(): boolean {
 }
 
 /** Run cmdDown with out()/exit captured; returns exit code + printed rows. */
-async function runDown(stop: boolean): Promise<{ rows: string[]; exitCode: unknown }> {
+async function runDown(): Promise<{ rows: string[]; exitCode: unknown }> {
   const mod = await import('../../scripts/mycc-compose/lib/cmd-down.js');
-  const cmdDown = (mod as { cmdDown: (file: string, stop: boolean) => void }).cmdDown;
+  const cmdDown = (mod as { cmdDown: (file: string) => void }).cmdDown;
   const rows: string[] = [];
   let exitCode: unknown = undefined;
   vi.spyOn(process.stdout, 'write').mockImplementation(((chunk: unknown) => {
@@ -142,7 +145,7 @@ async function runDown(stop: boolean): Promise<{ rows: string[]; exitCode: unkno
     throw new Error(`__cmd_down_exit__:${String(code)}`);
   }) as typeof process.exit);
   try {
-    cmdDown(specFile, stop);
+    cmdDown(specFile);
   } catch (err) {
     if (!(err instanceof Error) || !(err as Error).message.startsWith('__cmd_down_exit__')) throw err;
   } finally {
@@ -176,8 +179,8 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe('cmdDown: stop-before-delete + honest exit code (P2-b)', () => {
-  it('down WITHOUT --stop: exits 0 and removes the channel files', async () => {
+describe('cmdDown: always-stop + stop-before-delete + honest exit code (P2-b)', () => {
+  it('down: exits 0, removes the channel files, and stops the peers', async () => {
     d = await import('../../scripts/mycc-compose/lib/discovery.js');
     channelsMod = await import('../../scripts/mycc-compose/lib/channels.js');
     writeSpec(true);
@@ -187,14 +190,17 @@ describe('cmdDown: stop-before-delete + honest exit code (P2-b)', () => {
     expect(preNames.length).toBeGreaterThan(0);
     expect(channelsPresent()).toBe(true);
 
-    const { exitCode, rows } = await runDown(false);
+    const { exitCode, rows } = await runDown();
 
     expect(exitCode).toBe(0);
     expect(channelsGone()).toBe(true);
     expect(rows.join('')).toMatch(/removed \d+ channel file/);
+    // No --stop needed: the stop runs unconditionally, so both peers report.
+    expect(rows.join('')).toMatch(/p1: already-stopped/);
+    expect(rows.join('')).toMatch(/p2: already-stopped/);
   });
 
-  it('down --stop on a live pinned-sid peer: 0, channels gone, peer terminated', async () => {
+  it('down on a live pinned-sid peer: 0, channels gone, peer terminated', async () => {
     d = await import('../../scripts/mycc-compose/lib/discovery.js');
     channelsMod = await import('../../scripts/mycc-compose/lib/channels.js');
     writeSpec(true);
@@ -208,7 +214,7 @@ describe('cmdDown: stop-before-delete + honest exit code (P2-b)', () => {
     seedIdentity(SID, child.pid as number);
     seedHeartbeat(SID, child.pid as number);
 
-    const { exitCode, rows } = await runDown(true);
+    const { exitCode, rows } = await runDown();
 
     expect(exitCode).toBe(0);
     expect(rows.join('')).toMatch(/p1: stopped/);
@@ -218,8 +224,8 @@ describe('cmdDown: stop-before-delete + honest exit code (P2-b)', () => {
   }, 15_000);
 
   it('runs the stop attempt BEFORE deleting channel files (ordering guard)', async () => {
-    // Order proof by observation: cmdDown's --stop branch calls stopPeer()
-    // FIRST. With a REFUSING owner (no sid in argv), stopPeer performs a full
+    // Order proof by observation: cmdDown calls stopPeer() FIRST. With a
+    // REFUSING owner (no sid in argv), stopPeer performs a full
     // readProcessCommandLine round-trip before refusing, so the channel
     // deletion — which only happens after the stop loop — is measurable
     // AFTER that refusal. We assert the printed LOG order instead: the
@@ -234,7 +240,7 @@ describe('cmdDown: stop-before-delete + honest exit code (P2-b)', () => {
     seedHeartbeat(SID, stubborn.pid);
 
     try {
-      const { rows } = await runDown(true);
+      const { rows } = await runDown();
       const text = rows.join('');
       const stopIdx = text.indexOf('refused-not-mycc');
       const delIdx = text.indexOf('removed');
@@ -246,7 +252,7 @@ describe('cmdDown: stop-before-delete + honest exit code (P2-b)', () => {
     }
   }, 15_000);
 
-  it('down --stop with an identity-unverifiable pid: NON-ZERO exit, explicit refusal line, peer survives, channels still removed', async () => {
+  it('down with an identity-unverifiable pid: NON-ZERO exit, explicit refusal line, peer survives, channels still removed', async () => {
     d = await import('../../scripts/mycc-compose/lib/discovery.js');
     channelsMod = await import('../../scripts/mycc-compose/lib/channels.js');
     writeSpec(true);
@@ -256,7 +262,7 @@ describe('cmdDown: stop-before-delete + honest exit code (P2-b)', () => {
     seedHeartbeat(SID, innocent.pid);
 
     try {
-      const { exitCode, rows } = await runDown(true);
+      const { exitCode, rows } = await runDown();
 
       expect(exitCode).toBe(1);
       expect(rows.join('')).toMatch(/p1: refused-not-mycc/);

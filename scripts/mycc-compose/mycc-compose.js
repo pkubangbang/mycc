@@ -14,7 +14,7 @@
  *   mycc-compose check  <file>          validate + report match, no mutation
  *   mycc-compose up     <file>          full pipeline (launch/renew + channels)
  *   mycc-compose sync   <file>          idempotent reconcile (up minus stops) — cron target
- *   mycc-compose down   <file> [--stop] remove channels; optionally stop peers
+ *   mycc-compose down   <file>          terminate peers, then remove channels
  *   mycc-compose status <file> [--json] deterministic report
  *   mycc-compose --help
  *
@@ -61,7 +61,7 @@ async function main() {
       await cmdUp(args.file, { allowStop: false });
       break;
     case 'down':
-      cmdDown(args.file, args.stop);
+      cmdDown(args.file);
       break;
     case 'status':
       cmdStatus(args.file, args.json);

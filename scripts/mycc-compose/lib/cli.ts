@@ -15,7 +15,7 @@ Usage:
   mycc-compose check  <file>            Validate the spec; report match/stale. No mutation.
   mycc-compose up     <file>            Full pipeline: launch/renew peers + write channels.
   mycc-compose sync   <file>            Idempotent reconcile (up minus destructive stops). Cron target.
-  mycc-compose down   <file> [--stop]   Remove channel pairs; with --stop, terminate the peers.
+  mycc-compose down   <file>            Terminate the peers, then remove their channel pairs.
   mycc-compose status <file> [--json]   Deterministic report (peers + channels). --json for machines.
   mycc-compose --help, -h               Show this help.
 
@@ -48,7 +48,6 @@ export interface CliArgs {
   command: string | null;
   file: string | null;
   json: boolean;
-  stop: boolean;
   help: boolean;
 }
 
@@ -73,15 +72,14 @@ export function warn(msg: string): void {
 /**
  * Minimal arg parser (kept dependency-light so the CLI runs after `npm link`
  * without resolving node_modules). First bare token = <file>.
- * Recognizes --json, --stop, --help/-h. Throws on an unknown option (the
+ * Recognizes --json, --help/-h. Throws on an unknown option (the
  * caller in the entry turns that into dieUsage) — kept pure so it is testable.
  */
 export function parseCliArgs(argv: string[]): CliArgs {
-  const args: CliArgs = { command: null, file: null, json: false, stop: false, help: false };
+  const args: CliArgs = { command: null, file: null, json: false, help: false };
   for (const tok of argv) {
     if (tok === '--help' || tok === '-h') { args.help = true; continue; }
     if (tok === '--json') { args.json = true; continue; }
-    if (tok === '--stop') { args.stop = true; continue; }
     if (tok.startsWith('-')) throw new Error(`unknown option: ${tok}`);
     if (args.command === null) { args.command = tok; continue; }
     if (args.file === null) { args.file = tok; continue; }

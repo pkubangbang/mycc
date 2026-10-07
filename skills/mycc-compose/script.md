@@ -36,7 +36,7 @@ node scripts/mycc-compose/mycc-compose.js <command> <file>
 mycc-compose check  <file>            Validate + report match/stale. No mutation.
 mycc-compose up     <file>            Full pipeline: mint sids, launch/renew, write channels.
 mycc-compose sync   <file>            Idempotent reconcile (up minus destructive stops). CRON TARGET.
-mycc-compose down   <file> [--stop]   Remove channel pairs; with --stop, terminate the peers.
+mycc-compose down   <file>            Terminate the peers, then remove the channel pairs.
 mycc-compose status <file> [--json]   Deterministic report. --json for machines.
 mycc-compose --help, -h               Show help.
 ```
@@ -67,11 +67,13 @@ timer — it starts what is down and skips what is healthy, without ever tearing
 down a live instance. **This is the cron target.**
 
 ### `down`
-Removes every channel file owned by the spec's peers for the spec's labels.
-With `--stop`, also terminates each peer — but only after verifying its
-heartbeat `pid` is **alive** AND (best-effort) a `mycc`/node process. Refuses
-otherwise and reports why (`stopped`, `already-stopped`,
-`heartbeat-fresh-but-pid-dead`, `refused-not-mycc`, ...).
+Terminates each peer — but only after verifying its heartbeat `pid` is
+**alive** AND (best-effort) a `mycc`/node process. Refuses otherwise and
+reports why (`stopped`, `already-stopped`, `heartbeat-fresh-but-pid-dead`,
+`refused-not-mycc`, ...). Then removes every channel file owned by the spec's
+peers for the spec's labels. **`down` always stops the peers**: removing the
+channel files alone has no meaning, so there is no channels-only mode and no
+`--stop` flag.
 
 ### `status`
 Deterministic, **no LLM**:
