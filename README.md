@@ -77,7 +77,7 @@ and you are fine with the local LLM, Ollama alone without the cloud is also acce
 
 Recommended models: `glm-5:cloud` and `gemma4:31b-cloud`.
 
-**Option B: DeepSeek** — Cloud-based API. Does not require local hardware. Supports `web_search` (server-side via the Responses API — the search runs on DeepSeek's servers and returns a synthesized answer). `web_fetch`, `screen`, and `read_picture` are **not** supported.
+**Option B: DeepSeek** — Cloud-based API. Does not require local hardware. Supports `web_search` (server-side via the Responses API — the search runs on DeepSeek's servers and returns a synthesized answer) and `screen`/`read_picture` image understanding (via the `deepseek-flash` vision model). `web_fetch` is **not** supported.
 
 Get an API key at [platform.deepseek.com](https://platform.deepseek.com/api_keys) and set it as `DEEPSEEK_API_KEY`. An embedding model via Ollama is still needed for wiki/RAG features.
 
@@ -143,11 +143,12 @@ The wizard will guide you through configuring:
 - **DEEPSEEK_HOST** - DeepSeek API endpoint (default: https://api.deepseek.com)
 - **DEEPSEEK_API_KEY** - Your DeepSeek API key (required)
 - **DEEPSEEK_MODEL** - DeepSeek model name (default: deepseek-v4-pro)
+- **DEEPSEEK_VISION_MODEL** - DeepSeek vision model for screen/image tools (default: deepseek-flash)
 - **OLLAMA_EMBEDDING_MODEL** - Embedding model for semantic search (always uses Ollama)
 - **TOKEN_THRESHOLD** - Context limit threshold (default: 50000)
 - **EDITOR** - Text editor for file editing
 
-> **Note:** When using DeepSeek, `web_search` **is** available (server-side via the Responses API), but `web_fetch`, `screen`, and `read_picture` tools are **not available**. Embeddings for wiki/RAG still require Ollama (any embedding model).
+> **Note:** When using DeepSeek, `web_search` **is** available (server-side via the Responses API) and `screen`/`read_picture` image understanding **is** available via the `deepseek-flash` vision model (set `DEEPSEEK_VISION_MODEL`, default `deepseek-flash`; set it to `none` to disable). `web_fetch` is **not available**. Embeddings for wiki/RAG still require Ollama (any embedding model).
 
 You can choose to store configuration at:
 - **User-level**: `~/.mycc-store/.env` (global, applies to all projects)
@@ -231,6 +232,7 @@ All environment variables can be overridden via CLI flags. These take highest pr
 | `--deepseek-host` | `DEEPSEEK_HOST` | DeepSeek API endpoint (default: https://api.deepseek.com) |
 | `--deepseek-api-key` | `DEEPSEEK_API_KEY` | DeepSeek API key |
 | `--deepseek-model` | `DEEPSEEK_MODEL` | DeepSeek model name (default: deepseek-v4-pro) |
+| `--deepseek-vision-model` | `DEEPSEEK_VISION_MODEL` | DeepSeek vision model for screen/image tools (default: deepseek-flash) |
 | `--api-provider` | `API_PROVIDER` | API provider: "ollama" or "deepseek" (default: ollama) |
 | `--token-threshold` | `TOKEN_THRESHOLD` | Context limit threshold (default: 50000) |
 | `--editor` | `EDITOR` | Text editor for file editing |

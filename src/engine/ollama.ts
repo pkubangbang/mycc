@@ -540,6 +540,9 @@ export async function healthCheck(tokenThreshold: number): Promise<HealthCheckRe
     const embeddingWarning = await probeEmbeddingModel();
 
     // Assemble warnings: vision-model absence + embedding probe failure.
+    // This health check only runs under API_PROVIDER=ollama (chat-provider.ts
+    // dispatches to deepseek.healthCheck for the DeepSeek provider), so it
+    // speaks only the Ollama vision var — no provider branch belongs here.
     const warnings: string[] = [];
     if (!isVisionEnabled()) {
       warnings.push(

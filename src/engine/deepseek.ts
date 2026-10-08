@@ -33,6 +33,8 @@ import {
   type RetryChatConfig,
 } from './chat-helpers.js';
 import { estimateTextTokens } from '../utils/token.js';
+import { isVisionEnabled, DEFAULT_DEEPSEEK_VISION_MODEL } from '../config.js';
+import { filetypeinfo } from '../utils/magic-bytes.js';
 
 // ============================================================================
 // Configuration
@@ -56,11 +58,20 @@ function getApiKey(): string {
 
 interface NormalizedMessage {
   role: string;
-  content: string;
+  content: string | ContentBlock[];
   reasoning_content?: string;
   tool_calls?: OllamaToolCall[];
   tool_call_id?: string;
 }
+
+/**
+ * OpenAI-compatible content block (used for multimodal image input).
+ * DeepSeek accepts the same shape as OpenAI: a `text` block or an
+ * `image_url` block whose `image_url.url` is a base64 data URL.
+ */
+type ContentBlock =
+  | { type: 'text'; text: string }
+  | { type: 'image_url'; image_url: { url: string; detail?: 'low' | 'high' | 'original' | 'auto' } };
 
 function normalizeMessage(msg: OllamaMessage): NormalizedMessage {
   // The codebase uses the extended `Message` type which adds tool_call_id + reasoning_content
@@ -434,7 +445,28 @@ export async function retryChat(
         // can never reach normalizeMessage and crash on `extended.role`.
         const messages = (request.messages || [])
           .filter((m): m is OllamaMessage => !!m && typeof m === 'object' && m.role !== undefined)
-          .map(normalizeMessage);
+          .map((m) => {
+            // Multimodal passthrough: a message carrying an Ollama-style
+            // `images[]` array (used by imgDescribe) is emitted as an
+            // OpenAI-compatible block array — a text block plus one
+            // image_url block per image — instead of a flat string. DeepSeek
+            // only accepts images in `user` messages; imgDescribe builds the
+            // message that way.
+            const extended = m as Message & { images?: string[]; imageMime?: string };
+            const images = (m as { images?: string[] }).images;
+            if (images && images.length > 0) {
+              const mime = extended.imageMime || 'image/jpeg';
+              const blocks: ContentBlock[] = [
+                { type: 'text', text: typeof m.content === 'string' ? m.content : '' },
+                ...images.map((img): ContentBlock => ({
+                  type: 'image_url',
+                  image_url: { url: `data:${mime};base64,${img}`, detail: 'auto' },
+                })),
+              ];
+              return { role: extended.role, content: blocks } as NormalizedMessage;
+            }
+            return normalizeMessage(m);
+          });
 
         // Build DeepSeek request body
         const body: DeepSeekRequestBody = {
@@ -752,8 +784,80 @@ export async function webFetch(_url: string): Promise<WebFetchResponse> {
   throw new Error('webFetch not supported by DeepSeek provider');
 }
 
-export async function imgDescribe(_image: string, _prompt?: string): Promise<string> {
-  throw new Error('imgDescribe not supported by DeepSeek provider');
+/**
+ * Image description via the DeepSeek vision model (`deepseek-flash` by
+ * default). DeepSeek accepts images through the OpenAI-compatible
+ * `/chat/completions` endpoint as an `image_url` content block whose `url` is
+ * a base64 `data:` URL. The image MUST appear in a `user` message — DeepSeek
+ * returns HTTP 400 if an image is attached to a `system`/`assistant` message.
+ *
+ * Robustness: like ollama.ts's imgDescribe, this routes through `retryChat`
+ * (stream:true) so it inherits the per-attempt first-token timeout, the
+ * collectStream watchdog, ESC-abort via the threaded signal, and
+ * retry-with-backoff. To reuse retryChat's machinery we pass the multimodal
+ * message via a synthetic Ollama-style `images[]` array on the request; the
+ * request builder below detects that and emits the OpenAI block form instead
+ * of flattening `content` to a string.
+ *
+ * @param image - Base64-encoded image string (no `data:` prefix)
+ * @param prompt - Optional custom prompt for the vision model
+ * @param signal - Optional AbortSignal for ESC handling
+ * @returns The vision model's text description of the image
+ */
+export async function imgDescribe(image: string, prompt?: string, signal?: AbortSignal): Promise<string> {
+  const model = process.env.DEEPSEEK_VISION_MODEL ?? DEFAULT_DEEPSEEK_VISION_MODEL;
+  const text = prompt || 'Describe this image in detail.';
+
+  // Detect the image MIME from the base64 magic bytes so the data URL carries
+  // a correct media type. DeepSeek sniffs the actual bytes regardless, but a
+  // correct prefix avoids any doubt and keeps behaviour predictable.
+  //
+  // Only PNG/JPEG/GIF/WebP ever reach here: those are the formats the vision
+  // pipeline (read_picture/screen) can produce AND DeepSeek accepts. A format
+  // the pipeline cannot decode (e.g. BMP — sharp has no BMP decoder in this
+  // build) is rejected earlier at the tool layer with a clear message rather
+  // than failing as an opaque decode/wire error.
+  const mime = sniffImageMime(image);
+
+  const response = await retryChat(
+    {
+      model,
+      messages: [
+        {
+          role: 'user',
+          // Keep the text prompt (so normalizeMessage still has a string to
+          // work with when building the block array).
+          content: text,
+          // Synthetic fields consumed by the request builder in retryChat:
+          // `images[]` triggers multimodal block emission, `imageMime` sets the
+          // data-URL media type.
+          images: [image],
+          imageMime: mime,
+        } as unknown as OllamaMessage,
+      ],
+    },
+    { signal, noSpinner: true },
+  );
+
+  return response.message?.content || 'No description returned from vision model.';
+}
+
+/**
+ * Sniff the image MIME type from a base64 payload's magic bytes, reusing the
+ * project's shared `magic-bytes` table (single source of truth — the same
+ * signature list `read.ts` uses for text/binary detection). Falls back to
+ * image/jpeg when the header is unrecognised — a mislabel is harmless because
+ * DeepSeek sniffs the real bytes.
+ */
+function sniffImageMime(base64: string): string {
+  try {
+    // Decode only the first bytes needed for magic-number checks.
+    const head = Buffer.from(base64.slice(0, 32), 'base64');
+    const info = filetypeinfo(head);
+    return info[0]?.mime ?? 'image/jpeg';
+  } catch {
+    return 'image/jpeg';
+  }
 }
 
 export async function structuredChat(
@@ -862,19 +966,25 @@ export async function healthCheck(tokenThreshold: number): Promise<HealthCheckRe
     // not a hard error — the agent can still run chat-only; RAG features
     // just fail at first use with an actionable hint.
     const embeddingWarning = await probeEmbeddingModel();
+
+    // Assemble warnings: vision-model disabled + embedding probe failure.
+    // This health check only runs under API_PROVIDER=deepseek, so it speaks
+    // only the DeepSeek vision var. Vision is ON by default (deepseek-flash);
+    // it is only "disabled" when DEEPSEEK_VISION_MODEL is explicitly "none".
+    const warnings: string[] = [];
+    if (!isVisionEnabled()) {
+      warnings.push(
+        'Vision features (screen/read_picture tools) are disabled (DEEPSEEK_VISION_MODEL=none).',
+        'Unset DEEPSEEK_VISION_MODEL (default: deepseek-flash) or set it to a vision model to enable them.',
+      );
+    }
     if (embeddingWarning) {
-      return {
-        ok: true,
-        warnings: [embeddingWarning],
-        modelInfo: {
-          name: MODEL,
-          contextLength: DEEPSEEK_CONTEXT_LENGTH,
-        },
-      };
+      warnings.push(embeddingWarning);
     }
 
     return {
       ok: true,
+      warnings: warnings.length > 0 ? warnings : undefined,
       modelInfo: {
         name: MODEL,
         contextLength: DEEPSEEK_CONTEXT_LENGTH,

@@ -152,6 +152,27 @@ describe('readPictureTool', () => {
     expect(ctx.core.readPictureCached).not.toHaveBeenCalled();
   });
 
+  it('should reject .bmp with a clear Error (not advertised as supported)', async () => {
+    // Regression: .bmp used to be in the accept-list, but neither the vision
+    // pipeline's decoder (sharp — no BMP decoder in this build) nor the
+    // provider wire (DeepSeek rejects image/bmp with HTTP 400) supports it.
+    // The accept-list must equal (decodable ∧ transmittable), so .bmp is now
+    // rejected HERE with a clear message instead of failing later opaquely.
+    const file = path.join(tempDir, 'pic.bmp');
+    // "BM" magic + minimal body; content is irrelevant since it is rejected on
+    // extension before any decode is attempted.
+    fs.writeFileSync(file, Buffer.from('424D0000000000000000000000000000', 'hex'));
+
+    const out = await readPictureTool.handler(ctx, { path: 'pic.bmp' });
+
+    expect(out).toContain('Error:');
+    expect(out).toContain('.bmp');
+    expect(out).toContain('not a supported image format');
+    // The supported list must NOT include .bmp.
+    expect(out).not.toContain('.bmp,');
+    expect(ctx.core.readPictureCached).not.toHaveBeenCalled();
+  });
+
   it('should read image from subdirectory', async () => {
     const sub = path.join(tempDir, 'sub');
     fs.mkdirSync(sub);

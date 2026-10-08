@@ -47,7 +47,7 @@ export const BOOLEAN_FLAGS: string[] = [
 export const STRING_FLAGS: string[] = [
   'from', 'port', 'host', 'max-upload-mb', 'autofly', 'daemon',
   'ollama-host', 'ollama-api-key', 'ollama-model', 'ollama-vision-model', 'ollama-embedding-model',
-  'deepseek-host', 'deepseek-api-key', 'deepseek-model',
+  'deepseek-host', 'deepseek-api-key', 'deepseek-model', 'deepseek-vision-model',
   'api-provider', 'token-threshold', 'editor', 'skill-match-threshold',
   'wire-token',
   // Session pinning (compose): lets mycc-topology re-pin a peer's session id.
@@ -142,6 +142,10 @@ export const ARG_ENV_MAP: Record<string, string> = {
   'deepseek-host': 'DEEPSEEK_HOST',
   'deepseek-api-key': 'DEEPSEEK_API_KEY',
   'deepseek-model': 'DEEPSEEK_MODEL',
+  // --deepseek-vision-model mirrors DEEPSEEK_VISION_MODEL (default deepseek-flash).
+  // The DeepSeek counterpart of OLLAMA_VISION_MODEL; used by the vision path
+  // (screen / read_picture → imgDescribe) when API_PROVIDER=deepseek.
+  'deepseek-vision-model': 'DEEPSEEK_VISION_MODEL',
   'api-provider': 'API_PROVIDER',
   'token-threshold': 'TOKEN_THRESHOLD',
   'editor': 'EDITOR',

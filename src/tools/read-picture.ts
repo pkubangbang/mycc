@@ -100,7 +100,13 @@ export const readPictureTool: ToolDefinition = {
       // here and never reaches readPictureCached, so an `Error:` cannot
       // suppress a legitimate attempt.
       const ext = path.extname(safe).toLowerCase();
-      const validExtensions = ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp'];
+      // Accept-list MUST equal the intersection of (a) formats the vision
+      // pipeline can decode and (b) formats the provider accepts on the wire.
+      // sharp (the pipeline's decoder) has no BMP decoder in this build, and
+      // DeepSeek rejects image/bmp with HTTP 400 — so .bmp is deliberately
+      // NOT accepted. It is rejected here with a clear message rather than
+      // failing later as an opaque "unsupported image format" / 400 error.
+      const validExtensions = ['.png', '.jpg', '.jpeg', '.gif', '.webp'];
       if (!validExtensions.includes(ext)) {
         return `Error: File extension "${ext}" is not a supported image format. Supported formats: ${validExtensions.join(', ')}`;
       }

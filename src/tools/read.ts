@@ -131,7 +131,7 @@ export const readTool: ToolDefinition = {
 Size: ${sizeKB} KB
 
 This file cannot be displayed as text.
-${typeInfo.extension === '.png' || typeInfo.extension === '.jpg' || typeInfo.extension === '.jpeg' || typeInfo.extension === '.gif'
+${typeInfo.extension === '.png' || typeInfo.extension === '.jpg' || typeInfo.extension === '.jpeg' || typeInfo.extension === '.gif' || typeInfo.extension === '.webp'
   ? 'Use read_picture tool to analyze this image.'
   : 'Use bash tool with appropriate program to process this file.'}`;
       }

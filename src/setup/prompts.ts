@@ -116,6 +116,12 @@ function getDeepSeekPrompts(): PromptConfig[] {
       default: 'deepseek-chat',
       help: 'The DeepSeek model to use (e.g., deepseek-chat, deepseek-reasoner)',
     },
+    {
+      name: 'DEEPSEEK_VISION_MODEL',
+      message: 'DeepSeek vision model (for screen/image tools)',
+      default: 'deepseek-flash',
+      help: 'Set to "none" to disable vision features, or specify a vision-capable model (default: deepseek-flash).',
+    },
   ];
 }
 
@@ -217,6 +223,12 @@ export const ENV_REQUIREMENTS: EnvRequirement[] = [
     required: false,
     default: 'deepseek-chat',
     instruction: 'Set DEEPSEEK_MODEL to specify which DeepSeek model to use',
+  },
+  {
+    name: 'DEEPSEEK_VISION_MODEL',
+    required: false,
+    default: 'deepseek-flash',
+    instruction: 'Set DEEPSEEK_VISION_MODEL for vision/multimodal tasks (default: deepseek-flash)',
   },
   // Shared vars
   {

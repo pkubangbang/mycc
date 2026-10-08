@@ -10,7 +10,8 @@ import type { CoreModule, PictureResult, AskResult } from '../../types.js';
 import { imgDescribe } from '../../engine/chat-provider.js';
 import { agentIO } from '../../loop/agent-io.js';
 import { autoState } from '../../loop/auto-state.js';
-import { getVisionModel, isVisionEnabled, getImgCacheDir } from '../../config.js';
+import { getVisionModel, isVisionEnabled, getImgCacheDir, getApiProvider } from '../../config.js';
+import { filetypeinfo } from '../../utils/magic-bytes.js';
 import { BaseCore } from '../shared/base-core.js';
 import { evaluateGrant, isPlanModeWritablePath } from '../grant/grant-evaluator.js';
 import { getServeHub } from '../../serve/serve-registry.js';
@@ -33,8 +34,33 @@ interface FocusPair {
  * On-disk cache entry for a described image, stored at .mycc/imgcache/<hash>.json
  */
 interface PictureCacheEntry {
-  statKey: string;      // `${mtimeMs}|${size}` — staleness check
+  statKey: string;      // `${mtimeMs}|${size}|${format}` — staleness check
+                        // (folding the magic-byte format in means a format change
+                        //  in place invalidates the old entry once; self-healing)
   pairs: FocusPair[];   // accumulated focus+description pairs
+}
+
+/**
+ * Sniff a file's image format from its leading magic bytes.
+ * Returns the detected mime (e.g. 'image/png') or 'unknown' when the header is
+ * unrecognised. Used only to build a stable cache key that changes when the
+ * on-disk format changes — it does NOT decide what is sent on the wire (each
+ * provider owns that).
+ */
+function sniffFileFormat(filePath: string): string {
+  try {
+    const fd = fs.openSync(filePath, 'r');
+    try {
+      const head = Buffer.alloc(32);
+      const read = fs.readSync(fd, head, 0, 32, 0);
+      const info = filetypeinfo(head.subarray(0, read));
+      return info[0]?.mime ?? 'unknown';
+    } finally {
+      fs.closeSync(fd);
+    }
+  } catch {
+    return 'unknown';
+  }
 }
 
 /**
@@ -202,7 +228,11 @@ export class Core extends BaseCore implements CoreModule {
   async imgDescribe(image: string, prompt?: string, signal?: AbortSignal): Promise<string> {
     // Check if vision is enabled first
     if (!isVisionEnabled()) {
-      throw new Error('Vision features are disabled. Set OLLAMA_VISION_MODEL to a vision model (e.g., gemma4:31b-cloud) to enable screen and read_picture tools.');
+      throw new Error(
+        getApiProvider() === 'deepseek'
+          ? 'Vision features are disabled (DEEPSEEK_VISION_MODEL=none). Set a DeepSeek vision model (e.g., DEEPSEEK_VISION_MODEL=deepseek-flash) to enable screen and read_picture tools.'
+          : 'Vision features are disabled. Set OLLAMA_VISION_MODEL to a vision model (e.g., gemma4:31b-cloud) to enable screen and read_picture tools.',
+      );
     }
 
     const VISION_MODEL = getVisionModel();
@@ -238,16 +268,26 @@ export class Core extends BaseCore implements CoreModule {
       const errMsg = (err as Error).message;
       this.brief('error', 'img_describe', `Vision model error: ${errMsg}`);
 
-      // Provide actionable guidance based on common failure modes
+      // Provide actionable guidance based on common failure modes.
+      // Provider-aware: under DeepSeek there is no local Ollama server to
+      // start and no `ollama pull` for the vision model — those hints would
+      // send the user to the wrong fix.
       let guidance: string;
+      const isDeepseek = getApiProvider() === 'deepseek';
       if (errMsg.toLowerCase().includes('not found') || errMsg.toLowerCase().includes('does not exist')) {
-        guidance = `The model "${VISION_MODEL}" is not available. Pull it first:\n  ollama pull ${VISION_MODEL}`;
+        guidance = isDeepseek
+          ? `The model "${VISION_MODEL}" is not available. Check DEEPSEEK_VISION_MODEL (default: deepseek-flash) and that your DeepSeek key has access to it.`
+          : `The model "${VISION_MODEL}" is not available. Pull it first:\n  ollama pull ${VISION_MODEL}`;
       } else if (errMsg.toLowerCase().includes('connection') || errMsg.toLowerCase().includes('econnrefused')) {
-        guidance = `Ollama server is not reachable. Make sure it's running:\n  ollama serve`;
+        guidance = isDeepseek
+          ? `The DeepSeek API is not reachable. Check DEEPSEEK_HOST and your network connection.`
+          : `Ollama server is not reachable. Make sure it's running:\n  ollama serve`;
       } else if (errMsg.toLowerCase().includes('timeout') || errMsg.toLowerCase().includes('timed out')) {
         guidance = `The vision model timed out. Try using a smaller image or a faster vision model.`;
       } else {
-        guidance = `Unexpected error from vision model. Verify:\n  1. Ollama is running: ollama serve\n  2. Model is pulled: ollama pull ${VISION_MODEL}\n  3. Model supports vision/multimodal input`;
+        guidance = isDeepseek
+          ? `Unexpected error from vision model. Verify:\n  1. DEEPSEEK_HOST is correct: ${process.env.DEEPSEEK_HOST || 'https://api.deepseek.com'}\n  2. DEEPSEEK_VISION_MODEL is valid (default: deepseek-flash)\n  3. Model supports vision/multimodal input`
+          : `Unexpected error from vision model. Verify:\n  1. Ollama is running: ollama serve\n  2. Model is pulled: ollama pull ${VISION_MODEL}\n  3. Model supports vision/multimodal input`;
       }
 
       throw new Error(`Vision model failed: ${errMsg}\n\nGuidance: ${guidance}`, { cause: err });
@@ -393,7 +433,13 @@ export class Core extends BaseCore implements CoreModule {
   ): Promise<PictureResult> {
     const focus = (prompt || 'general description').trim();
     const stat = fs.statSync(imagePath);
-    const statKey = `${stat.mtimeMs}|${stat.size}`;
+    // Include the file's magic-number format in the stat key: the same
+    // path+size+mtime can denote different image bytes if the file is
+    // re-encoded to a different format in place. Folding the format into the
+    // key prevents a stale cached description from being reused across a
+    // format change, without the shared layer knowing which provider is active.
+    const format = sniffFileFormat(imagePath);
+    const statKey = `${stat.mtimeMs}|${stat.size}|${format}`;
     const cacheFile = this.getCacheFilePath(imagePath);
 
     const entry = this.readCacheFile(cacheFile);

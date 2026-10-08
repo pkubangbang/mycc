@@ -123,7 +123,7 @@ The setup wizard (`mycc --setup`) now supports both Ollama and DeepSeek provider
 #### F. `README.md` — DeepSeek documentation
 
 - Documents `API_PROVIDER` env var and DeepSeek as alternative provider
-- Notes that `web_search` is supported (server-side via the DeepSeek Responses API), but `web_fetch`, `screen`, and `read_picture` are not supported with DeepSeek
+- Notes that `web_search` is supported (server-side via the DeepSeek Responses API), and that `screen`/`read_picture` are supported via the `deepseek-flash` vision model (`DEEPSEEK_VISION_MODEL`); `web_fetch` is not supported with DeepSeek
 
 #### G. `src/loop/agent-repl.ts` — Startup display
 
@@ -150,4 +150,4 @@ All items in the original implementation plan have been shipped. The changes are
 - **DeepSeek API key is required** — User must have a DeepSeek account
 - **Embedding still uses Ollama** — Even when DeepSeek is the LLM provider, embeddings go through `ollama-embedding.ts`. The setup wizard should still prompt for `OLLAMA_EMBEDDING_MODEL` even when DeepSeek is selected.
 - **No tests for DeepSeek yet** — The unit tests don't cover the deepseek provider; this is out of scope for the current plan
-- **No vision/web tools for DeepSeek** — `screen`, `read_picture`, `web_search`, `web_fetch` tools will fail with an informative error when using DeepSeek provider. This is documented behavior.
+- **Vision/web tool status for DeepSeek** — `web_fetch` fails with an informative error; `screen`/`read_picture` are supported via `DEEPSEEK_VISION_MODEL` (default `deepseek-flash`; images are sent as OpenAI-style `image_url` content blocks on `/chat/completions`); `web_search` is supported via the server-side Responses API. (Superseded the original "no vision/web tools" note.)

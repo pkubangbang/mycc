@@ -556,19 +556,58 @@ export function getRagProvider(): RagProvider {
 }
 
 /**
- * Check if vision model is enabled
- * Returns true if OLLAMA_VISION_MODEL is set and not "none"
+ * Default DeepSeek vision model.
+ *
+ * `deepseek-flash` is the model ID that accepts image input on
+ * `/chat/completions` (verified live on 2026-10-08 against the configured
+ * DEEPSEEK_HOST with a generated PNG carrying a known token; the vision path
+ * echoed the token back, confirming the model ID, the `image_url` content
+ * block, and that `thinking:{type:'enabled'}` does not cause a 400).
+ *
+ * Note: `docs/deepseek-api-reference.md` lists the older `deepseek-v4-flash`
+ * naming — that reference covers text chat/tools only and has no
+ * vision/`image_url` section, so it does not contradict this ID.
+ *
+ * Unlike Ollama, DeepSeek has a usable vision default, so vision is enabled
+ * out of the box under the DeepSeek provider.
+ */
+export const DEFAULT_DEEPSEEK_VISION_MODEL = 'deepseek-flash';
+
+/**
+ * Check if vision model is enabled.
+ *
+ * Provider-aware:
+ *   - ollama  → OLLAMA_VISION_MODEL must be set and not "none" (no default;
+ *               the user must name a pulled vision model).
+ *   - deepseek→ DEEPSEEK_VISION_MODEL if set, else the built-in default
+ *               (deepseek-flash). Only an explicit "none" disables it.
+ * Returns false only when the applicable model is explicitly "none".
  */
 export function isVisionEnabled(): boolean {
+  if (getApiProvider() === 'deepseek') {
+    const model = process.env.DEEPSEEK_VISION_MODEL ?? DEFAULT_DEEPSEEK_VISION_MODEL;
+    return model !== 'none';
+  }
   const model = process.env.OLLAMA_VISION_MODEL;
   return !!model && model !== 'none';
 }
 
 /**
- * Get Ollama vision model name for multimodal tasks
- * @throws Error if OLLAMA_VISION_MODEL is not set or set to "none"
+ * Get the vision model name for multimodal tasks.
+ *
+ * Provider-aware:
+ *   - ollama  → OLLAMA_VISION_MODEL (required; no default).
+ *   - deepseek→ DEEPSEEK_VISION_MODEL, defaulting to `deepseek-flash`.
+ * @throws Error if the applicable model is unset (ollama) or set to "none".
  */
 export function getVisionModel(): string {
+  if (getApiProvider() === 'deepseek') {
+    const model = process.env.DEEPSEEK_VISION_MODEL ?? DEFAULT_DEEPSEEK_VISION_MODEL;
+    if (model === 'none') {
+      throw new Error('Vision features are disabled (DEEPSEEK_VISION_MODEL=none). Set a vision model to enable screen and read_picture tools.');
+    }
+    return model;
+  }
   const model = process.env.OLLAMA_VISION_MODEL;
   if (!model) {
     throw new Error('OLLAMA_VISION_MODEL is not set. Set it to a vision model or "none" to disable vision features.');
