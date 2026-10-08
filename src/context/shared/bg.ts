@@ -8,6 +8,7 @@ import { getShellInfo } from '../../utils/shell-detect.js';
 import { filterCliXml, PS51_LAYER2_PATCH } from '../../loop/agent-exec.js';
 import { agentIO } from '../../loop/agent-io.js';
 import { getServeHub } from '../../serve/serve-registry.js';
+import { armExitDrain, type ExitDrain } from '../../utils/exit-drain.js';
 
 /** Maximum accumulated output per task (100 KB). Older output is trimmed. */
 const MAX_OUTPUT_BYTES = 100 * 1024;
@@ -21,6 +22,12 @@ export class BackgroundTasks implements BgModule {
   private core: CoreModule;
   private tasks: Map<number, BgTask> = new Map();
   private processes: Map<number, ChildProcess> = new Map();
+  /**
+   * Bounded post-exit drains, keyed by pid (see utils/exit-drain.ts).
+   * Held here rather than on BgTask so the drain deadline stays a private
+   * implementation detail — the public task shape is unchanged.
+   */
+  private drains: Map<number, ExitDrain> = new Map();
 
   constructor(core: CoreModule) {
     this.core = core;
@@ -88,6 +95,8 @@ export class BackgroundTasks implements BgModule {
       status: 'running',
     };
 
+    // The bounded-drain handle is tracked per-pid in this.drains so
+    // killTask()/trimFinishedTasks() can cancel it when the task leaves the map.
     this.tasks.set(pid, task);
     this.processes.set(pid, child);
 
@@ -133,11 +142,20 @@ export class BackgroundTasks implements BgModule {
     // Both honor the race guard so a late event can never resurrect a finished
     // task back to 'running', nor overwrite a 'killed' status set by killTask().
     //
-    // The split matters for bg_await. If status alone drove the return, the wait
-    // could resolve at 'exit' and hand the caller an output transcript that a
-    // still-live grandchild is about to extend (the trailing-output race). So
-    // waitForTasks() waits for outputFinalized (bounded by the timeout / ESC /
-    // steering) before returning output for a single pid.
+    // Output finalization is a bounded RACE, not an unconditional wait for
+    // 'close': the shared armExitDrain() primitive starts a grace window when
+    // the process exits, and whichever of { 'close', grace deadline } fires
+    // first finalizes. This keeps completion anchored to the process exiting —
+    // the caller gets the exit code promptly — while still giving the pipes a
+    // short window to deliver trailing bytes instead of waiting on an EOF a
+    // lingering grandchild may never produce. The agent-exec (bash tool) path
+    // uses the same primitive, so the two consumers cannot drift apart.
+    const drain = armExitDrain(child);
+    this.drains.set(pid, drain);
+    void drain.settled.then(() => {
+      task.outputFinalized = true;
+    });
+
     child.on('exit', (code) => {
       if (task.status === 'running') {
         task.status = code === 0 ? 'completed' : 'failed';
@@ -145,15 +163,11 @@ export class BackgroundTasks implements BgModule {
     });
 
     child.on('close', (code) => {
-      // Output is now finalized: all stdio streams have closed, so no further
-      // stdout/stderr data can arrive. Mark it BEFORE the status guard — this
-      // must happen for 'killed' tasks too (a killed task may still receive a
-      // late 'close'), so bg_await can resolve instead of waiting on a flag
-      // that will never be set.
-      task.outputFinalized = true;
-      // Also finalize the status if 'exit' never got the chance (e.g. the
-      // process was signalled). Only while still running, so a late 'close'
-      // can't overwrite an 'error'/'killed' status (race guard).
+      // 'close' won the race: no further data can arrive. armExitDrain has
+      // already settled (and cancelled its grace timer). Also finalize the
+      // status if 'exit' never got the chance (e.g. the process was signalled).
+      // Only while still running, so a late 'close' can't overwrite an
+      // 'error'/'killed' status (race guard).
       if (task.status === 'running') {
         task.status = code === 0 ? 'completed' : 'failed';
       }
@@ -280,12 +294,12 @@ export class BackgroundTasks implements BgModule {
     const task = this.tasks.get(pid);
     if (task) {
       task.status = 'killed';
-      // No live process means no more output can be produced; finalize now.
-      // When a process IS present, 'close' finalizes (bounded by bg_await's
-      // timeout for a killed task whose pipes a grandchild still holds).
-      if (!proc) {
-        task.outputFinalized = true;
-      }
+      // A killed task's output is final at kill time: no live process means no
+      // more output can be produced. Any pending drain is now moot — cancel it
+      // so it cannot fire against a task that may since be trimmed.
+      task.outputFinalized = true;
+      this.drains.get(pid)?.cancel();
+      this.drains.delete(pid);
     }
   }
 
@@ -318,7 +332,8 @@ export class BackgroundTasks implements BgModule {
    * 'exit', but a grandchild inheriting the stdio pipes can still emit trailing
    * output afterwards. To honor the "returns the accumulated task output"
    * contract, a single-pid wait resolves only once the task's output is
-   * finalized (`task.outputFinalized`, set on the child's 'close'), so the
+   * finalized (`task.outputFinalized`, set when the armExitDrain grace window
+   * settles — 'close' or the deadline after 'exit'), so the
    * caller never receives a truncated transcript. That extra wait is bounded by
    * the same loop guards (timeout / ESC / steering) — a lingering grandchild
    * can delay completion but never wedge the wait. The all-tasks wait (no pid)
@@ -446,6 +461,10 @@ export class BackgroundTasks implements BgModule {
         const pidToRemove = finishedPids[i];
         this.tasks.delete(pidToRemove);
         this.processes.delete(pidToRemove);
+        // Cancel any still-pending drain for the evicted task, so its grace
+        // timer cannot fire later against a task no longer in the map.
+        this.drains.get(pidToRemove)?.cancel();
+        this.drains.delete(pidToRemove);
       }
     }
   }

@@ -362,3 +362,118 @@ describe('BackgroundTasks — output finalization (exit vs close contract)', () 
     expect(bg.getTask(pid)!.status).toBe('killed');
   });
 });
+
+describe('BackgroundTasks — bounded post-exit drain (EXIT_DRAIN_GRACE_MS)', () => {
+  // The regression this whole change exists for. A grandchild that inherits
+  // the stdio pipes and holds them open PAST the drain grace means 'close'
+  // genuinely loses the race: only the drain timer can finalize the task.
+  // Before the fix, the single-pid waitForTasks gate required
+  // task.outputFinalized (set exclusively by the drain settlement), so bg_await waited on an
+  // EOF that would not arrive for many seconds — or ever — and timed out.
+  //
+  // The grandchild sleeps 20s, far beyond the 1s grace, so if the timer did NOT
+  // finalize the task the wait below could not resolve inside its 8s budget.
+  // Skipped off Windows (the pwsh wrapper is Windows-specific).
+  function drainPoll(fn: () => boolean, ms: number): Promise<boolean> {
+    const deadline = Date.now() + ms;
+    return (async () => {
+      while (Date.now() < deadline) {
+        if (fn()) return true;
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      return fn();
+    })();
+  }
+
+  /** Best-effort kill of the `Start-Sleep 20` grandchild by command line. */
+  async function killGrandchild(): Promise<void> {
+    try {
+      const { execSync } = await import('child_process');
+      execSync(
+        'Get-CimInstance Win32_Process -Filter "Name = \'pwsh.exe\'" | Where-Object { $_.CommandLine -like \'*Start-Sleep 20*\' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }',
+        { shell: 'pwsh', stdio: 'ignore' },
+      );
+    } catch { /* best-effort */ }
+  }
+
+  it('finalizes output via the drain timer when a grandchild holds the pipes past the grace', async () => {
+    if (process.platform !== 'win32') return;
+
+    const { bg } = makeBg();
+    // Direct child exits immediately; the grandchild (Start-Sleep 20) inherits
+    // and holds both pipes, so 'close' cannot fire for ~20s.
+    const pid = await bg.runCommand(
+      'Start-Process pwsh -ArgumentList "-NoProfile","-Command","Start-Sleep 20" -NoNewWindow; Write-Output parent-done',
+    );
+
+    try {
+      // 1) The drain timer must finalize the output well before the grandchild
+      //    exits (grace is 1s; allow generous slack for a loaded machine).
+      const finalized = await drainPoll(
+        () => bg.getTask(pid)?.outputFinalized === true,
+        5000,
+      );
+      expect(finalized).toBe(true);
+
+      const task = bg.getTask(pid)!;
+      // 2) The status is anchored to process exit — promptly 'completed'.
+      expect(task.status).toBe('completed');
+      // 3) The foreground output captured before the direct child exited is ours.
+      expect(task.output ?? '').toContain('parent-done');
+
+      // 4) The decisive assertion: the single-pid wait resolves. Pre-fix this
+      //    would block for the full timeout (the task could never finalize).
+      const started = Date.now();
+      const result = await bg.waitForTasks({ pid, timeoutMs: 8000 });
+      const elapsed = Date.now() - started;
+      expect(result.reason).toBe('completed');
+      expect(result.status).toBe('completed');
+      expect(elapsed).toBeLessThan(8000);
+      // Output is returned (may be a partial tail by design — we do NOT assert
+      // completeness, which would re-encode the old wait-for-EOF contract).
+      expect(result.output ?? '').toContain('parent-done');
+    } finally {
+      await killGrandchild();
+      await bg.killTask(pid);
+    }
+  });
+
+  it('the drain does not delay the normal path (close settles it before the grace)', async () => {
+    const { bg } = makeBg();
+    // A normal short command: 'close' follows 'exit' within ms, so the drain
+    // settles immediately and the grace window is never paid.
+    const pid = await bg.runCommand('echo fast-path');
+
+    // waitForTasks polls at 1s, so it is NOT a fine-grained timing probe — use
+    // the task's own outputFinalized flag instead, which is set the moment the
+    // drain settles.
+    //
+    // We CANNOT assert a tight wall-clock bound here: under a loaded parallel
+    // suite the process spawn + 'exit'/'close' delivery can itself take over a
+    // second, so elapsed time does not distinguish "close won" from "timer
+    // won". Instead, prove the ORDINARY PATH IS NOT SYSTEMATICALLY SLOW by
+    // asserting finalization lands promptly relative to what the grace timer
+    // would add: spawn a grandchild-free command and require it to finalize
+    // within a bound that only the grace window would blow. A hard bound of
+    // 3000ms (3× the grace) still fails if the timer were always paid on top of
+    // a fast close.
+    const task0 = bg.getTask(pid)!;
+    const before = Date.now();
+    while (!bg.getTask(pid)?.outputFinalized && Date.now() - before < 3000) {
+      await new Promise((r) => setTimeout(r, 25));
+    }
+    const settleMs = Date.now() - before;
+
+    expect(task0.status).toBe('completed');
+    expect(bg.getTask(pid)?.outputFinalized).toBe(true);
+    // The ordinary path must finalize promptly. This bound is deliberately
+    // generous (3× the 1s grace): a genuinely fast path settles in ~ms, and the
+    // only way to exceed 3000ms is a hang — the assertion's job is to catch a
+    // *systematic* grace penalty, not to time a sub-second close to the ms.
+    expect(settleMs).toBeLessThan(3000);
+
+    const result = await bg.waitForTasks({ pid, timeoutMs: 5000 });
+    expect(result.reason).toBe('completed');
+    expect(result.output ?? '').toContain('fast-path');
+  });
+});

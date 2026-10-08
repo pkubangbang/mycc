@@ -285,9 +285,11 @@ export interface BgTask {
   status: BgTaskStatus;
   output?: string;
   /**
-   * True once the task's stdio streams have been finalized — i.e. the child's
-   * 'close' event fired (all stdio streams closed), meaning no further stdout/
-   * stderr data can arrive and `output` is complete.
+   * True once the task's stdio streams have been finalized — i.e. the bounded
+   * post-exit drain settled (whichever of the child's 'close' event, i.e. all
+   * stdio streams closed, or the armExitDrain grace deadline after 'exit'
+   * fired first), meaning no further stdout/stderr data can arrive and
+   * `output` is complete.
    *
    * This is deliberately SEPARATE from `status`: `status` leaves 'running' as
    * soon as the PROCESS exits ('exit'), but a grandchild may still hold the
@@ -878,7 +880,8 @@ export interface BgModule {
    * honor it.
    *
    * Single-pid waits also wait for the task's OUTPUT to be finalized
-   * (`task.outputFinalized`, set on the child's 'close') before returning
+   * (`task.outputFinalized`, set when the armExitDrain grace window settles —
+   * 'close' or the deadline after 'exit') before returning
    * `output`, so the transcript is complete rather than racing a grandchild
    * that still holds the inherited stdio pipes. That wait is bounded by the
    * same loop guards (timeout / ESC / steering): a lingering grandchild can

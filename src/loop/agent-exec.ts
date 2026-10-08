@@ -11,6 +11,7 @@
 
 import { spawn, execSync, type ChildProcess } from 'child_process';
 import { getShellInfo } from '../utils/shell-detect.js';
+import { armExitDrain } from '../utils/exit-drain.js';
 
 /**
  * Options for exec command
@@ -230,6 +231,22 @@ export function runExec(
   return new Promise((resolve) => {
     let completed = false;
 
+    // Bounded post-exit drain: completion is anchored to the PROCESS EXITING,
+    // not to stdio EOF. 'close' fires after every inherited pipe's write end is
+    // closed, so a grandchild holding the pipes (a dev server, a worker pool, a
+    // daemon) would otherwise block this call until the 1-60s timeout fired —
+    // and the timeout path tree-kills a process the user may have meant to leave
+    // running. armExitDrain() settles on whichever of { 'close', exit + grace }
+    // comes first; the same primitive backs the bg module, so the two consumers
+    // cannot drift apart (see utils/exit-drain.ts).
+    //
+    // exitCode: the real code arrives with 'exit'. We capture it as soon as it
+    // fires so a drain settled by the grace window still reports the child's
+    // actual status rather than the timeout's synthetic 137.
+    let exitCodeFromExit: number | undefined;
+
+    const drain = armExitDrain(proc);
+
     const timer = setTimeout(() => {
       if (!completed) {
         completed = true;
@@ -259,6 +276,7 @@ export function runExec(
       if (!completed) {
         completed = true;
         clearTimeout(timer);
+        drain.cancel();
         // Return premature output, let subprocess continue in background.
         resolve({
           stdout: stdoutBuffer.getString(),
@@ -270,8 +288,17 @@ export function runExec(
       }
     });
 
-    // Handle subprocess completion.
-    proc.on('close', (code) => {
+    // Capture the real exit code the moment the process exits (this also arms
+    // the grace window inside the drain).
+    proc.on('exit', (code) => {
+      if (exitCodeFromExit === undefined) {
+        exitCodeFromExit = code ?? 1;
+      }
+    });
+
+    // Complete when the drain settles: 'close' (all stdio closed) OR the grace
+    // window after process exit — whichever comes first.
+    void drain.settled.then(() => {
       if (!completed) {
         completed = true;
         clearTimeout(timer);
@@ -279,7 +306,8 @@ export function runExec(
           stdout: stdoutBuffer.getString(),
           stderr: stderrBuffer.getString(),
           interrupted: false,
-          exitCode: code ?? 1,
+          // Prefer the real exit code; fall back to 'close'-reported code.
+          exitCode: exitCodeFromExit ?? 1,
           timedOut: false,
         });
       }
@@ -290,6 +318,7 @@ export function runExec(
       if (!completed) {
         completed = true;
         clearTimeout(timer);
+        drain.cancel();
         resolve({
           stdout: '',
           stderr: err.message,
