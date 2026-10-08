@@ -326,8 +326,12 @@ export type TeammateStatus = 'working' | 'idle' | 'holding' | 'shutdown';
  *   - 'timeout'   — the max-wait safety valve fired
  *
  * Callers restrict which reasons break the wait via the `reasons` option:
- * STOP includes 'all done' + 'timeout' (bounded wait for completion);
- * AWAIT excludes them (unbounded wait for new events).
+ * STOP passes `['all done','timeout','esc']` — a BOUNDED completion wait; it
+ * deliberately does NOT accept the continuation reasons 'mail'/'steering'
+ * (accepting 'mail' would make a still-working teammate's periodic mail drive
+ * an infinite STOP→COLLECT cycle, never returning to PROMPT — the "停止/WebUI
+ * frozen" bug). AWAIT passes the event reasons (holding/mail/steering/esc) and
+ * excludes 'all done'/'timeout' (unbounded wait for new events).
  */
 export type TeammateWaitReason =
   | 'all done'
@@ -945,8 +949,10 @@ export interface TeamModule {
      *  handle 'timeout' by re-calling when you want periodic re-checks. */
     timeoutMs?: number;
     /** Restrict which reasons break the wait. Default: all reasons. STOP
-     *  includes 'all done' + 'timeout' (bounded wait for completion); AWAIT
-     *  excludes them (unbounded wait for new events). */
+     *  passes ['all done','timeout','esc'] (BOUNDED completion wait — it must
+     *  NOT accept 'mail'/'steering', else a still-working teammate's periodic
+     *  mail drives an infinite STOP→COLLECT cycle and PROMPT is never
+     *  reached); AWAIT passes the event reasons (excludes 'all done'). */
     reasons?: TeammateWaitReason[];
   }): Promise<TeammateWaitReason>;
   printTeam(): string | Promise<string>;

@@ -420,10 +420,15 @@ export class TeamManager implements TeamModule {
    *   - 'timeout'   — the max-wait safety valve fired
    *
    * Callers restrict which reasons break the wait via `opts.reasons`:
-   *   - STOP includes 'all done' + 'timeout' (bounded wait for completion)
-   *   - AWAIT excludes them (unbounded wait for new events); it re-calls
-   *     with a short `timeoutMs` and handles 'timeout' by re-checking
-   *     autoState, then re-awaiting.
+   *   - STOP passes ['all done', 'timeout', 'esc'] — a BOUNDED completion
+   *     wait. It intentionally omits 'mail'/'steering': accepting 'mail' would
+   *     let a still-working teammate's periodic mail (heartbeats / progress
+   *     mails) drive an infinite STOP→COLLECT tight cycle, so the loop never
+   *     returns to PROMPT and the WebUI 停止 button appears frozen.
+   *   - AWAIT passes the event reasons (holding/mail/steering/esc) and
+   *     excludes 'all done'/'timeout' (unbounded wait for new events); it
+   *     re-calls with a short `timeoutMs` and handles 'timeout' by
+   *     re-checking autoState, then re-awaiting.
    *
    * `opts.name` narrows the teammate-status checks to a single teammate
    * (used by the `tm_await` tool's `name` argument); omit it to wait for

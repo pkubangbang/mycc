@@ -131,12 +131,38 @@ export async function handleStop(
       );
     }
 
-    const reason = await ctx.team.awaitTeammates({ timeoutMs: 10 * 60 * 1000 });
+    // BOUNDED completion wait — restrict the accepted reasons explicitly.
+    //
+    // STOP must return to PROMPT (turn end → chat box enabled, 停止/ESC
+    // effective) and only re-enter COLLECT for an event that genuinely needs
+    // the lead to act (a teammate question, or the safety-valve timeout).
+    //
+    // The CONTINUATION reasons — 'mail' (inbox has anything; teammate heart-
+    // beats / progress mails arrive every ~30s) and 'steering' (a mid-run webui
+    // note) — are AWAIT's job (unbounded autonomous wait). If STOP accepted
+    // 'mail', a still-working teammate's periodic mail would drive an infinite
+    // tight cycle: STOP → 'mail' → COLLECT → LLM → STOP → 'mail' → … The loop
+    // would never reach PROMPT, so `agentRunning` stayed true, the WebUI '停止'
+    // button never settled, and the lead appeared frozen — the "teammate output
+    // traps the chatlog" bug. This matches the awaitTeammates contract (types.ts):
+    // "STOP includes 'all done' + 'timeout' (bounded wait for completion);
+    // AWAIT excludes them (unbounded wait for new events)."
+    //
+    // Teammate mail is NOT lost: it stays in the mailbox and is collected at
+    // the next COLLECT (a user query, or AWAIT's 'mail' path in auto mode).
+    //
+    // 'esc' IS accepted: the user must be able to interrupt a long teammate
+    // wait with 停止/ESC; awaitTeammates polls isNeglectedMode() FIRST each
+    // tick, so the wait breaks within ~1s. STOP then returns to PROMPT (its
+    // own neglected branch handles the wrap-up at the next entry).
+    const reason = await ctx.team.awaitTeammates({
+      reasons: ['all done', 'timeout', 'esc'],
+      timeoutMs: 10 * 60 * 1000,
+    });
     switch (reason) {
-      case 'holding':
-      case 'mail':
-      case 'steering':
-        return AgentState.COLLECT;
+      // 'holding' is NOT in the accepted list above — see the reasons list.
+      // (A teammate blocked on a question is not surfaced at STOP; its mail /
+      // question path is handled at COLLECT.)
       case 'timeout': {
         const teamInfo = ctx.team.printTeam();
         triologue.note(

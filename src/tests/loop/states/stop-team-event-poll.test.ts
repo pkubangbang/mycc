@@ -5,14 +5,22 @@
  * primitive, which polls teammate status + mailbox + steering + ESC + a
  * max-wait safety valve every 1s and returns a typed `TeammateWaitReason`.
  * STOP switches on the reason to pick the next state:
- *   - 'holding' / 'mail' / 'steering' → COLLECT
  *   - 'timeout'                       → COLLECT + SYSTEM timeout note
  *   - 'esc' / 'all done'              → PROMPT
+ *   ('mail' / 'steering' / 'holding' are not accepted — see below — and fall
+ *    through the switch `default:` to PROMPT)
  *
- * These tests mock `awaitTeammates` to return each reason and assert STOP
- * routes it to the correct state. The "shows letter-box BEFORE wait" and
- * "idle at entry" cases verify STOP's pre-wait behavior (presentResult +
- * the working-teammate notice), which runs before the awaitTeammates call.
+ * IMPORTANT — bounded-reasons contract: STOP passes an EXPLICIT
+ * `reasons: ['all done', 'timeout', 'esc']` to awaitTeammates. It must NOT
+ * accept 'mail' or 'steering' (the CONTINUATION reasons), otherwise a
+ * still-working teammate's periodic mail drives an infinite STOP→COLLECT
+ * tight cycle and the loop never returns to PROMPT (the "停止 / WebUI frozen"
+ * bug). These tests mock `awaitTeammates` to return each reason and assert
+ * STOP's routing AND assert the reasons argument it passes.
+ *
+ * The "shows letter-box BEFORE wait" and "idle at entry" cases verify STOP's
+ * pre-wait behavior (presentResult + the working-teammate notice), which runs
+ * before the awaitTeammates call.
  *
  * Sibling: stop-esc.test.ts covers the neglection branch.
  */
@@ -119,6 +127,32 @@ describe('handleStop — normal-mode teammate wait via awaitTeammates', () => {
     expect(presentResult).toHaveBeenCalledWith(triologue);
   });
 
+  // ── bounded-reasons contract ──
+
+  it('passes explicit reasons ["all done","timeout","esc"] and NOT mail/steering (no tight STOP↔COLLECT cycle)', async () => {
+    const awaitTeammates = vi.fn<(opts?: { reasons?: string[] }) => Promise<'all done'>>(
+      async () => 'all done' as const,
+    );
+    const ctx = createMockContext({
+      team: {
+        listTeammates: vi.fn(() => [{ name: 'dev1', status: 'working' }]) as never,
+        awaitTeammates: awaitTeammates as never,
+      },
+    });
+    const env = createMockMachineEnv({ triologue });
+    env.ctx = ctx;
+
+    await handleStop(env, createTurnVars(), createChatData());
+
+    expect(awaitTeammates).toHaveBeenCalledTimes(1);
+    const opts = awaitTeammates.mock.calls[0][0]!;
+    expect(opts.reasons).toEqual(['all done', 'timeout', 'esc']);
+    // The continuation reasons must NOT be accepted by STOP — accepting 'mail'
+    // re-enters COLLECT on every teammate heartbeat and never reaches PROMPT.
+    expect(opts.reasons).not.toContain('mail');
+    expect(opts.reasons).not.toContain('steering');
+  });
+
   // ── reason routing: all done → PROMPT ──
 
   it('returns PROMPT when awaitTeammates reports all done', async () => {
@@ -158,17 +192,24 @@ describe('handleStop — normal-mode teammate wait via awaitTeammates', () => {
   //
   // markTurnBoundary() = markPromptBoundary() + resetTurn() + incrementTotalTurns().
   // It must fire ONLY on STOP→PROMPT (a turn ended) and NEVER on STOP→COLLECT
-  // (a teammate mail / steering / timeout is a turn CONTINUATION, not a new
-  // turn). These assertions pin the continuation-vs-turn-end distinction at
-  // the wiring level — a future refactor that drops markTurnBoundary() from a
+  // (a teammate question / timeout is a turn CONTINUATION, not a new turn).
+  // These assertions pin the continuation-vs-turn-end distinction at the
+  // wiring level — a future refactor that drops markTurnBoundary() from a
   // return site would break them, not just the isolated sequence unit tests.
   describe('turn boundary wiring (markTurnBoundary call sites)', () => {
     const reasonToState: Array<{ reason: 'all done' | 'esc' | 'mail' | 'steering' | 'holding' | 'timeout'; state: 'PROMPT' | 'COLLECT' }> = [
       { reason: 'all done', state: 'PROMPT' },
       { reason: 'esc', state: 'PROMPT' },
-      { reason: 'mail', state: 'COLLECT' },
-      { reason: 'steering', state: 'COLLECT' },
-      { reason: 'holding', state: 'COLLECT' },
+      // STOP accepts only 'all done'/'timeout'/'esc'. The continuation reasons
+      // 'mail'/'steering' and the teammate question 'holding' are NOT accepted;
+      // if awaitTeammates ever returned one it falls through the switch
+      // `default:` → PROMPT. Pinning that fallthrough is what guards the
+      // "停止 / WebUI frozen" fix: if a still-working teammate's periodic mail
+      // re-entered COLLECT, the loop would never return to PROMPT.
+      { reason: 'mail', state: 'PROMPT' },
+      { reason: 'steering', state: 'PROMPT' },
+      { reason: 'holding', state: 'PROMPT' },
+      // 'timeout' (the safety valve) is the only COLLECT re-entry.
       { reason: 'timeout', state: 'COLLECT' },
     ];
 
