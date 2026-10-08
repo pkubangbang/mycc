@@ -419,12 +419,16 @@ export class TeamManager implements TeamModule {
    *   - 'esc'       — the user pressed ESC (neglected mode)
    *   - 'timeout'   — the max-wait safety valve fired
    *
-   * Callers restrict which reasons break the wait via `opts.reasons`:
-   *   - STOP passes ['all done', 'timeout', 'esc'] — a BOUNDED completion
-   *     wait. It intentionally omits 'mail'/'steering': accepting 'mail' would
-   *     let a still-working teammate's periodic mail (heartbeats / progress
-   *     mails) drive an infinite STOP→COLLECT tight cycle, so the loop never
-   *     returns to PROMPT and the WebUI 停止 button appears frozen.
+   * Callers restrict which reasons break the wait via `opts.reasons`. That
+   * list describes TEAMMATE EVENTS; it does NOT gate the user interrupt:
+   * 'esc' is checked FIRST every tick (isNeglectedMode) and returned
+   * whenever the user has pressed ESC / 停止, independent of the list — a
+   * preemptive signal the caller cannot opt out of.
+   *   - STOP passes the full teammate-event set with a short `timeoutMs` — a
+   *     BOUNDED interactive wait. In AUTO mode STOP skips this wait entirely
+   *     and returns PROMPT, letting AWAIT own the teammate-event wait (this is
+   *     what prevents a still-working teammate's periodic mail from driving an
+   *     unbounded STOP→COLLECT cycle).
    *   - AWAIT passes the event reasons (holding/mail/steering/esc) and
    *     excludes 'all done'/'timeout' (unbounded wait for new events); it
    *     re-calls with a short `timeoutMs` and handles 'timeout' by

@@ -11,7 +11,7 @@
  * |--------|---------------------|---------------------------------------------|
  * | T      | tool_calls (bash)   | HOOK→TOOL→COLLECT (normal tool round)       |
  * | H      | tool_calls (ckpt)   | HOOK→COLLECT (checkpoint/recap/blocked/etc) |
- * | W      | text-only           | HOOK→STOP→COLLECT (awaitTeammates holds a teammate question) |
+ * | W      | text-only           | HOOK→STOP→COLLECT (interactive: awaitTeammates holds a teammate question) |
  * | E      | throw Error         | LLM→PROMPT (ESC/empty-exhausted/error-decl) |
  * | X      | text-only           | HOOK→PROMPT (recap ESC / catch error)       |
  * | P      | tool_calls (bash)   | HOOK→TOOL→PROMPT (ESC per-tool)             |
@@ -279,10 +279,10 @@ export class MockHarness {
 
       case 'W':
         // Text-only response (no tools) → HOOK returns STOP.
-        // STOP's bounded awaitTeammates (reasons: all done/timeout/esc) returns
-        // 'holding' (a teammate blocked on a question) → COLLECT to answer.
-        // NOTE: teammate mail does NOT drive this path — STOP no longer accepts
-        // 'mail', so periodic teammate output can't cause a STOP→COLLECT cycle.
+        // In INTERACTIVE mode STOP's bounded awaitTeammates returns a teammate
+        // event ('holding' — a teammate blocked on a question) → COLLECT to
+        // answer. (In AUTO mode STOP skips the wait and returns PROMPT → AWAIT,
+        // which owns the teammate-event wait.)
         return createMockChatResponse({ content: 'Waiting for team input.' });
 
       case 'E':

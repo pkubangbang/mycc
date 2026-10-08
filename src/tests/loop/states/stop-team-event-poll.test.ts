@@ -4,23 +4,28 @@
  * STOP delegates the teammate wait to the unified `ctx.team.awaitTeammates`
  * primitive, which polls teammate status + mailbox + steering + ESC + a
  * max-wait safety valve every 1s and returns a typed `TeammateWaitReason`.
- * STOP switches on the reason to pick the next state:
- *   - 'timeout'                       → COLLECT + SYSTEM timeout note
- *   - 'esc' / 'all done'              → PROMPT
- *   ('mail' / 'steering' / 'holding' are not accepted — see below — and fall
- *    through the switch `default:` to PROMPT)
  *
- * IMPORTANT — bounded-reasons contract: STOP passes an EXPLICIT
- * `reasons: ['all done', 'timeout', 'esc']` to awaitTeammates. It must NOT
- * accept 'mail' or 'steering' (the CONTINUATION reasons), otherwise a
- * still-working teammate's periodic mail drives an infinite STOP→COLLECT
- * tight cycle and the loop never returns to PROMPT (the "停止 / WebUI frozen"
- * bug). These tests mock `awaitTeammates` to return each reason and assert
- * STOP's routing AND assert the reasons argument it passes.
+ * The wait is MODE-AWARE (see stop.ts):
+ *   - INTERACTIVE (auto off): STOP runs a BOUNDED wait
+ *     (`reasons: ['all done','holding','mail','steering','timeout']`,
+ *      `timeoutMs: 60_000`) and routes:
+ *        · 'holding' / 'mail' / 'steering' → COLLECT (continue the turn —
+ *          a teammate needs the lead to act; this is STOP's whole job)
+ *        · 'timeout'                       → COLLECT + SYSTEM timeout note
+ *        · 'esc' / 'all done'             → PROMPT
+ *   - AUTO (auto on): STOP SKIPS the wait entirely and returns PROMPT. PROMPT
+ *     then redirects to AWAIT, which owns the unbounded teammate-event wait.
+ *     Skipping here is what prevents a still-working teammate's periodic mail
+ *     (~30s heartbeats) from driving an infinite STOP→COLLECT→LLM→STOP cycle
+ *     that never reaches PROMPT (the "停止 / WebUI frozen" bug).
+ *
+ * The user interrupt (ESC / 停止) is NOT expressed in `reasons` — it is a
+ * preemptive signal awaitTeammates checks first every tick. These tests assert
+ * STOP's routing table, the reasons argument it passes in interactive mode, and
+ * that auto mode short-circuits the wait.
  *
  * The "shows letter-box BEFORE wait" and "idle at entry" cases verify STOP's
- * pre-wait behavior (presentResult + the working-teammate notice), which runs
- * before the awaitTeammates call.
+ * pre-wait behavior (presentResult + the working-teammate notice).
  *
  * Sibling: stop-esc.test.ts covers the neglection branch.
  */
@@ -93,6 +98,8 @@ vi.mock('../../../serve/serve-registry.js', () => ({
 import { handleStop } from '../../../loop/states/stop.js';
 import { AgentState, presentResult } from '../../../loop/state-machine.js';
 import { Triologue } from '../../../loop/triologue.js';
+import { autoState } from '../../../loop/auto-state.js';
+import { agentIO } from '../../../loop/agent-io.js';
 import { createTurnVars, createChatData, createMockMachineEnv } from '../esc-test-helpers.js';
 import { createMockContext } from '../../test-utils/mock-context.js';
 
@@ -102,10 +109,15 @@ describe('handleStop — normal-mode teammate wait via awaitTeammates', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     triologue = new Triologue();
+    // All tests here run in INTERACTIVE mode unless they opt into auto.
+    autoState.setAuto(false);
   });
 
   afterEach(() => {
     vi.useRealTimers();
+    // autoState is the real singleton (auto-state.js is not mocked) — reset it
+    // so a test that turns auto on cannot leak into the next.
+    autoState.setAuto(false);
   });
 
   // ── letter-box ordering ──
@@ -127,10 +139,10 @@ describe('handleStop — normal-mode teammate wait via awaitTeammates', () => {
     expect(presentResult).toHaveBeenCalledWith(triologue);
   });
 
-  // ── bounded-reasons contract ──
+  // ── interactive-mode reasons contract ──
 
-  it('passes explicit reasons ["all done","timeout","esc"] and NOT mail/steering (no tight STOP↔COLLECT cycle)', async () => {
-    const awaitTeammates = vi.fn<(opts?: { reasons?: string[] }) => Promise<'all done'>>(
+  it('passes the full teammate-event reasons and a short timeout (bounded interactive wait)', async () => {
+    const awaitTeammates = vi.fn<(opts?: { reasons?: string[]; timeoutMs?: number }) => Promise<'all done'>>(
       async () => 'all done' as const,
     );
     const ctx = createMockContext({
@@ -146,11 +158,47 @@ describe('handleStop — normal-mode teammate wait via awaitTeammates', () => {
 
     expect(awaitTeammates).toHaveBeenCalledTimes(1);
     const opts = awaitTeammates.mock.calls[0][0]!;
-    expect(opts.reasons).toEqual(['all done', 'timeout', 'esc']);
-    // The continuation reasons must NOT be accepted by STOP — accepting 'mail'
-    // re-enters COLLECT on every teammate heartbeat and never reaches PROMPT.
-    expect(opts.reasons).not.toContain('mail');
-    expect(opts.reasons).not.toContain('steering');
+    // The teammate-event set is accepted so the lead wakes promptly on mail.
+    // 'esc' is NOT in the list: the interrupt is handled first-tick, not here.
+    expect(opts.reasons).toEqual(['all done', 'holding', 'mail', 'steering', 'timeout']);
+    expect(opts.reasons).not.toContain('esc');
+    // The bound (not the reasons list) keeps the prompt from being deferred
+    // indefinitely.
+    expect(opts.timeoutMs).toBe(60_000);
+  });
+
+  // ── REGRESSION: teammate mail wakes STOP → COLLECT ──
+
+  it('wakes on teammate mail and routes to COLLECT (lead must respond to teammates)', async () => {
+    const ctx = createMockContext({
+      team: {
+        listTeammates: vi.fn(() => [{ name: 'dev1', status: 'working' }]) as never,
+        awaitTeammates: vi.fn(async () => 'mail' as const) as never,
+      },
+    });
+    const env = createMockMachineEnv({ triologue });
+    env.ctx = ctx;
+
+    const result = await handleStop(env, createTurnVars(), createChatData());
+
+    expect(result).toBe(AgentState.COLLECT);
+  });
+
+  it('wakes on a teammate question (holding) and on steering, both → COLLECT', async () => {
+    for (const reason of ['holding', 'steering'] as const) {
+      vi.clearAllMocks();
+      const ctx = createMockContext({
+        team: {
+          listTeammates: vi.fn(() => [{ name: 'dev1', status: 'working' }]) as never,
+          awaitTeammates: vi.fn(async () => reason) as never,
+        },
+      });
+      const env = createMockMachineEnv({ triologue });
+      env.ctx = ctx;
+
+      const result = await handleStop(env, createTurnVars(), createChatData());
+      expect(result).toBe(AgentState.COLLECT);
+    }
   });
 
   // ── reason routing: all done → PROMPT ──
@@ -173,43 +221,85 @@ describe('handleStop — normal-mode teammate wait via awaitTeammates', () => {
     expect(result).toBe(AgentState.PROMPT);
   });
 
-  // ── reason routing: holding → COLLECT ──
+  // ── REGRESSION: esc → PROMPT (interactive), neglected mode cleared ──
 
+  it('returns PROMPT on esc and clears neglected mode (停止 reaches the prompt)', async () => {
+    const ctx = createMockContext({
+      team: {
+        listTeammates: vi.fn(() => [{ name: 'dev1', status: 'working' }]) as never,
+        awaitTeammates: vi.fn(async () => 'esc' as const) as never,
+      },
+    });
+    const env = createMockMachineEnv({ triologue });
+    env.ctx = ctx;
 
-  // ── reason routing: mail → COLLECT ──
+    const result = await handleStop(env, createTurnVars(), createChatData());
 
+    expect(result).toBe(AgentState.PROMPT);
+    expect(agentIO.setNeglectedMode).toHaveBeenCalledWith(false);
+  });
 
-  // ── reason routing: steering → COLLECT ──
+  // ── REGRESSION: auto mode skips the wait entirely (no STOP→COLLECT cycle) ──
 
+  it('in AUTO mode skips the teammate wait and returns PROMPT (AWAIT owns the event wait)', async () => {
+    autoState.setAuto(true);
 
-  // ── reason routing: esc → PROMPT ──
+    const awaitTeammates = vi.fn(async () => 'mail' as const);
+    const ctx = createMockContext({
+      team: {
+        listTeammates: vi.fn(() => [{ name: 'dev1', status: 'working' }]) as never,
+        awaitTeammates: awaitTeammates as never,
+      },
+    });
+    const env = createMockMachineEnv({ triologue });
+    env.ctx = ctx;
 
+    const result = await handleStop(env, createTurnVars(), createChatData());
+
+    // PROMPT (which redirects to AWAIT in auto mode) — NOT COLLECT. The wait
+    // was never entered, so a still-working teammate's periodic mail can never
+    // drive a STOP→COLLECT tight cycle.
+    expect(result).toBe(AgentState.PROMPT);
+    expect(awaitTeammates).not.toHaveBeenCalled();
+  });
 
   // ── reason routing: timeout → COLLECT + SYSTEM timeout note ──
 
+  it('routes timeout → COLLECT and writes a SYSTEM timeout note', async () => {
+    const ctx = createMockContext({
+      team: {
+        listTeammates: vi.fn(() => [{ name: 'dev1', status: 'working' }]) as never,
+        printTeam: vi.fn(() => 'Team:\n  dev1 (coder): working') as never,
+        awaitTeammates: vi.fn(async () => 'timeout' as const) as never,
+      },
+    });
+    const env = createMockMachineEnv({ triologue });
+    env.ctx = ctx;
+
+    const result = await handleStop(env, createTurnVars(), createChatData());
+
+    expect(result).toBe(AgentState.COLLECT);
+    expect(triologue.note).toHaveBeenCalledWith(
+      'SYSTEM',
+      expect.stringContaining('Timeout waiting for teammates'),
+    );
+  });
 
   // ── turn-boundary wiring (STOP→PROMPT fires it, STOP→COLLECT does not) ──
   //
   // markTurnBoundary() = markPromptBoundary() + resetTurn() + incrementTotalTurns().
   // It must fire ONLY on STOP→PROMPT (a turn ended) and NEVER on STOP→COLLECT
-  // (a teammate question / timeout is a turn CONTINUATION, not a new turn).
-  // These assertions pin the continuation-vs-turn-end distinction at the
-  // wiring level — a future refactor that drops markTurnBoundary() from a
-  // return site would break them, not just the isolated sequence unit tests.
+  // (a teammate event / timeout is a turn CONTINUATION, not a new turn). The
+  // AUTO-mode early return also ends the turn, so it fires there too.
   describe('turn boundary wiring (markTurnBoundary call sites)', () => {
     const reasonToState: Array<{ reason: 'all done' | 'esc' | 'mail' | 'steering' | 'holding' | 'timeout'; state: 'PROMPT' | 'COLLECT' }> = [
       { reason: 'all done', state: 'PROMPT' },
       { reason: 'esc', state: 'PROMPT' },
-      // STOP accepts only 'all done'/'timeout'/'esc'. The continuation reasons
-      // 'mail'/'steering' and the teammate question 'holding' are NOT accepted;
-      // if awaitTeammates ever returned one it falls through the switch
-      // `default:` → PROMPT. Pinning that fallthrough is what guards the
-      // "停止 / WebUI frozen" fix: if a still-working teammate's periodic mail
-      // re-entered COLLECT, the loop would never return to PROMPT.
-      { reason: 'mail', state: 'PROMPT' },
-      { reason: 'steering', state: 'PROMPT' },
-      { reason: 'holding', state: 'PROMPT' },
-      // 'timeout' (the safety valve) is the only COLLECT re-entry.
+      // Teammate events continue the turn.
+      { reason: 'mail', state: 'COLLECT' },
+      { reason: 'steering', state: 'COLLECT' },
+      { reason: 'holding', state: 'COLLECT' },
+      // 'timeout' (the safety valve) also re-enters COLLECT.
       { reason: 'timeout', state: 'COLLECT' },
     ];
 
@@ -243,5 +333,24 @@ describe('handleStop — normal-mode teammate wait via awaitTeammates', () => {
         }
       });
     }
+
+    it('fires the turn boundary on the AUTO-mode early return', async () => {
+      autoState.setAuto(true);
+      const ctx = createMockContext({
+        team: {
+          listTeammates: vi.fn(() => [{ name: 'dev1', status: 'working' }]) as never,
+          awaitTeammates: vi.fn(async () => 'mail' as const) as never,
+        },
+      });
+      const env = createMockMachineEnv({ triologue });
+      env.ctx = ctx;
+
+      const result = await handleStop(env, createTurnVars(), createChatData());
+
+      expect(result).toBe(AgentState.PROMPT);
+      expect(env.sequence.markPromptBoundary).toHaveBeenCalledTimes(1);
+      expect(env.sequence.incrementTotalTurns).toHaveBeenCalledTimes(1);
+      expect(env.hookExecutor.resetTurn).toHaveBeenCalledTimes(1);
+    });
   });
 });

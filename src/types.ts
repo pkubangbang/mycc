@@ -340,13 +340,16 @@ export type TeammateStatus = 'working' | 'idle' | 'holding' | 'shutdown';
  *   - 'esc'       — the user pressed ESC (neglected mode)
  *   - 'timeout'   — the max-wait safety valve fired
  *
- * Callers restrict which reasons break the wait via the `reasons` option:
- * STOP passes `['all done','timeout','esc']` — a BOUNDED completion wait; it
- * deliberately does NOT accept the continuation reasons 'mail'/'steering'
- * (accepting 'mail' would make a still-working teammate's periodic mail drive
- * an infinite STOP→COLLECT cycle, never returning to PROMPT — the "停止/WebUI
- * frozen" bug). AWAIT passes the event reasons (holding/mail/steering/esc) and
- * excludes 'all done'/'timeout' (unbounded wait for new events).
+ * Callers restrict which reasons break the wait via the `reasons` option
+ * (default: all reasons). This list describes TEAMMATE EVENTS, not user
+ * interrupts: 'esc' breaks the wait regardless of the list, because
+ * awaitTeammates polls isNeglectedMode() FIRST each tick and returns 'esc'
+ * whenever neglected mode is set — the user-interrupt (停止) is a preemptive,
+ * out-of-band signal, never a thing the caller can "not accept". STOP passes
+ * the full teammate-event set with a short `timeoutMs` (a bounded interactive
+ * wait); AWAIT excludes 'all done'/'timeout' (an unbounded wait for new
+ * events). In AUTO mode STOP skips its own wait entirely and lets AWAIT own
+ * the teammate-event wait.
  */
 export type TeammateWaitReason =
   | 'all done'
@@ -971,11 +974,13 @@ export interface TeamModule {
     /** Max-wait safety valve in ms. Default 10min. Set to a short value and
      *  handle 'timeout' by re-calling when you want periodic re-checks. */
     timeoutMs?: number;
-    /** Restrict which reasons break the wait. Default: all reasons. STOP
-     *  passes ['all done','timeout','esc'] (BOUNDED completion wait — it must
-     *  NOT accept 'mail'/'steering', else a still-working teammate's periodic
-     *  mail drives an infinite STOP→COLLECT cycle and PROMPT is never
-     *  reached); AWAIT passes the event reasons (excludes 'all done'). */
+    /** Restrict which reasons break the wait. Default: all reasons. This
+     *  list describes TEAMMATE EVENTS — 'esc' (the user interrupt / 停止) is
+     *  NOT subject to it: awaitTeammates checks isNeglectedMode() first every
+     *  tick and returns 'esc' whenever the user has interrupted, regardless of
+     *  the list. STOP passes the full teammate-event set with a short
+     *  `timeoutMs` (bounded interactive wait); AWAIT passes the event reasons
+     *  and excludes 'all done'/'timeout' (unbounded wait for new events). */
     reasons?: TeammateWaitReason[];
   }): Promise<TeammateWaitReason>;
   printTeam(): string | Promise<string>;

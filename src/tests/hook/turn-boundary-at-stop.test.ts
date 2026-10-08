@@ -12,8 +12,9 @@
  *
  * The turn boundary is markPromptBoundary() (clears turn.events[]) paired
  * with incrementTotalTurns() (advances the counter), both called at the
- * STOP→PROMPT return sites in stop.ts. STOP→COLLECT (teammate mail /
- * steering / timeout) is a CONTINUATION — neither fires there.
+ * STOP→PROMPT return sites in stop.ts. STOP→COLLECT (interactive-mode teammate
+ * mail / steering / holding / timeout) is a CONTINUATION — neither fires there.
+ * (In auto mode STOP returns PROMPT directly, so the boundary fires.)
  *
  * These tests exercise the Sequence API directly (the contract the state
  * machine relies on). The state-machine wiring (stop.ts calling these

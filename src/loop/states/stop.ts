@@ -37,16 +37,17 @@ export async function handleStop(
   // ── Turn boundary (STOP→PROMPT) ──
   // Mark the turn boundary helper: clears turn.* events, resets per-turn hook
   // dedup, and increments the completed-turn counter. These run ONLY on the
-  // STOP→PROMPT paths below (5 sites: neglected+assistant, neglected+mid-ESC,
-  // the switch default (esc/all done), and the catch block). STOP is reached
-  // in all modes (normal, webui, daemon, neglected), so placing the boundary
-  // here unifies turn.* semantics across modes — fixing the daemon-mode bug
-  // where PROMPT short-circuited to AWAIT before markPromptBoundary() could
-  // fire.
+  // STOP→PROMPT paths below (neglected+assistant, neglected+mid-ESC, the
+  // auto-mode early return, the switch default (esc/all done), and the catch
+  // block). STOP is reached in all modes (normal, webui, daemon, neglected),
+  // so placing the boundary here unifies turn.* semantics across modes —
+  // fixing the daemon-mode bug where PROMPT short-circuited to AWAIT before
+  // markPromptBoundary() could fire.
   //
-  // NOT called on the STOP→COLLECT paths (teammate mail / steering / timeout):
-  // those are turn CONTINUATIONS (the agent keeps working on the same task),
-  // so turn.* events, hook dedup, and totalTurns all persist.
+  // NOT called on the STOP→COLLECT paths (interactive-mode teammate mail /
+  // steering / holding / timeout, and the switch's COLLECT arms): those are
+  // turn CONTINUATIONS (the agent keeps working on the same task), so turn.*
+  // events, hook dedup, and totalTurns all persist.
   const markTurnBoundary = (): void => {
     env.sequence.markPromptBoundary();
     env.hookExecutor.resetTurn();
@@ -131,38 +132,50 @@ export async function handleStop(
       );
     }
 
-    // BOUNDED completion wait — restrict the accepted reasons explicitly.
+    // ── Mode-aware teammate wait ─────────────────────────────────────────────
+    // STOP must do two things that pull in opposite directions:
     //
-    // STOP must return to PROMPT (turn end → chat box enabled, 停止/ESC
-    // effective) and only re-enter COLLECT for an event that genuinely needs
-    // the lead to act (a teammate question, or the safety-valve timeout).
+    //   (a) WAKE on teammate events — when a teammate sends mail, queues a
+    //       question ('holding'), or the user queues a steering note, the lead
+    //       must respond promptly rather than sit deaf at the prompt.
     //
-    // The CONTINUATION reasons — 'mail' (inbox has anything; teammate heart-
-    // beats / progress mails arrive every ~30s) and 'steering' (a mid-run webui
-    // note) — are AWAIT's job (unbounded autonomous wait). If STOP accepted
-    // 'mail', a still-working teammate's periodic mail would drive an infinite
-    // tight cycle: STOP → 'mail' → COLLECT → LLM → STOP → 'mail' → … The loop
-    // would never reach PROMPT, so `agentRunning` stayed true, the WebUI '停止'
-    // button never settled, and the lead appeared frozen — the "teammate output
-    // traps the chatlog" bug. This matches the awaitTeammates contract (types.ts):
-    // "STOP includes 'all done' + 'timeout' (bounded wait for completion);
-    // AWAIT excludes them (unbounded wait for new events)."
+    //   (b) NEVER let a still-working teammate's periodic mail (~30s heartbeats
+    //       / progress mails) drive an infinite STOP→COLLECT→LLM→STOP cycle that
+    //       never reaches PROMPT (the "停止 / WebUI frozen" bug).
     //
-    // Teammate mail is NOT lost: it stays in the mailbox and is collected at
-    // the next COLLECT (a user query, or AWAIT's 'mail' path in auto mode).
+    // These are reconciled by MODE, not by the `reasons` allow-list:
     //
-    // 'esc' IS accepted: the user must be able to interrupt a long teammate
-    // wait with 停止/ESC; awaitTeammates polls isNeglectedMode() FIRST each
-    // tick, so the wait breaks within ~1s. STOP then returns to PROMPT (its
-    // own neglected branch handles the wrap-up at the next entry).
+    //   • AUTO mode — skip this wait entirely and return PROMPT. PROMPT's auto
+    //     gate (if (getAuto()) return AWAIT) hands off to AWAIT, which is the
+    //     unbounded teammate-event wait that OWNS this concern in auto mode.
+    //     No STOP→COLLECT cycle can form: STOP never consumes a teammate event.
+    //
+    //   • INTERACTIVE mode — a genuinely bounded wait. Accept the full teammate-
+    //     event set; a mail/steering/holding re-enters COLLECT so the lead acts.
+    //     The 60s bound (not the reasons list) guarantees the prompt is never
+    //     deferred indefinitely, and ESC is checked FIRST each tick by
+    //     awaitTeammates (independent of `reasons`), so 停止 always breaks the
+    //     wait within ~1s even in the middle of a teammate conversation.
+    //
+    // The user-interrupt (ESC / 停止) is deliberately NOT expressed as a reason
+    // in the allow-list: it is a preemptive signal handled by awaitTeammates's
+    // first-tick isNeglectedMode() check, so it can never be "not accepted".
+    if (autoState.getAuto()) {
+      // Turn is over from the user's perspective; the loop continues in AWAIT.
+      markTurnBoundary();
+      return AgentState.PROMPT;
+    }
+
     const reason = await ctx.team.awaitTeammates({
-      reasons: ['all done', 'timeout', 'esc'],
-      timeoutMs: 10 * 60 * 1000,
+      reasons: ['all done', 'holding', 'mail', 'steering', 'timeout'],
+      timeoutMs: 60_000,
     });
     switch (reason) {
-      // 'holding' is NOT in the accepted list above — see the reasons list.
-      // (A teammate blocked on a question is not surfaced at STOP; its mail /
-      // question path is handled at COLLECT.)
+      // Teammate events that need the lead to ACT — continue the turn.
+      case 'holding':
+      case 'mail':
+      case 'steering':
+        return AgentState.COLLECT;
       case 'timeout': {
         const teamInfo = ctx.team.printTeam();
         triologue.note(
@@ -175,6 +188,13 @@ export async function handleStop(
       case 'esc':
       case 'all done':
       default:
+        // 'esc' → PROMPT. Reached only in INTERACTIVE mode (auto mode returned
+        // above), so clearing neglected mode here lands the user on the
+        // interactive prompt. 'all done' is the normal turn end.
+        if (reason === 'esc') {
+          agentIO.setNeglectedMode(false);
+          agentIO.flushOutput();
+        }
         markTurnBoundary();
         return AgentState.PROMPT;
     }
