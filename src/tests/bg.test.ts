@@ -246,3 +246,40 @@ describe('BackgroundTasks.killAllRunning — shutdown cleanup of orphaned bg tas
     await expect(bg.killAllRunning()).resolves.toBeUndefined();
   });
 });
+
+describe('BackgroundTasks completion detection — exit vs close (grandchild holds stdio)', () => {
+  it('marks a task finished on process exit even when a grandchild keeps the stdio pipes open', async () => {
+    // Regression: completion was derived ONLY from child.on('close'), which
+    // fires after ALL stdio streams close. On Windows a command that spawns a
+    // grandchild inheriting the pipes (e.g. `pnpm test` → vitest → workers)
+    // delays 'close' until the grandchild exits — or forever. The task then
+    // stayed 'running' and bg_await polled until timeout. The fix keys the
+    // transition off child.on('exit') (the process has exited) so completion
+    // is detected promptly.
+    //
+    // We spawn a real grandchild that holds the pipes for ~6s, then require
+    // the task to leave 'running' within ~2s — far sooner than the grandchild
+    // exits. Skipped on non-Windows (the pwsh wrapper is Windows-specific).
+    if (process.platform !== 'win32') return;
+
+    const { bg } = makeBg();
+    const pid = await bg.runCommand(
+      'Start-Process pwsh -ArgumentList "-NoProfile","-Command","Start-Sleep 6" -NoNewWindow; Write-Output done',
+    );
+
+    // Poll for up to ~4s for the status to leave 'running'.
+    const deadline = Date.now() + 4000;
+    while (Date.now() < deadline && bg.getTask(pid)?.status === 'running') {
+      await new Promise((r) => setTimeout(r, 200));
+    }
+
+    const task = bg.getTask(pid);
+    expect(task).toBeDefined();
+    // The direct child exited (code 0) well before the 6s grandchild — the
+    // task must NOT still be 'running'.
+    expect(task!.status).not.toBe('running');
+
+    // Clean up any lingering grandchild so the test process can exit.
+    await bg.killTask(pid);
+  });
+});

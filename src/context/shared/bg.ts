@@ -111,9 +111,36 @@ export class BackgroundTasks implements BgModule {
     child.stdout?.on('data', appendOutput);
     child.stderr?.on('data', (data: Buffer) => appendOutput(filterCliXml(data)));
 
-    // Handle completion
+    // Handle completion.
+    //
+    // Two events matter and they are NOT the same:
+    //   - 'exit'  fires when the child PROCESS exits.
+    //   - 'close' fires only once ALL stdio streams are closed.
+    //
+    // On Windows the child is `powershell -EncodedCommand`; if the command
+    // spawns a grandchild that inherits the stdio pipes (very common — e.g.
+    // `pnpm test` → vitest → worker processes), those pipes stay open after
+    // the direct child exits, so 'close' is deferred until the grandchild
+    // exits — or NEVER, if it lingers/detaches. Keying completion off 'close'
+    // alone therefore leaves the task stuck at status='running' forever and
+    // bg_await polls until timeout (observed: exit at 295ms, close at 8631ms
+    // under a `Start-Sleep 8` grandchild).
+    //
+    // So the running→finished TRANSITION is driven by 'exit' (the command is
+    // done), while 'close' remains to capture any trailing output and to set
+    // the final code. Both honor the guard so a late 'close' can never
+    // resurrect a finished task back to 'running', nor overwrite a 'killed'
+    // status set by killTask().
+    child.on('exit', (code) => {
+      if (task.status === 'running') {
+        task.status = code === 0 ? 'completed' : 'failed';
+      }
+    });
+
     child.on('close', (code) => {
-      // Only update if still running, to avoid overwriting an earlier 'error' status (race guard)
+      // Finalize: 'close' is authoritative for the exit code and may arrive
+      // after any trailing stdout. Only update if still running (a race guard
+      // so a late 'close' doesn't overwrite an 'error'/'killed' status).
       if (task.status === 'running') {
         task.status = code === 0 ? 'completed' : 'failed';
       }
