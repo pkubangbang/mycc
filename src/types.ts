@@ -284,6 +284,21 @@ export interface BgTask {
   startTime: Date;
   status: BgTaskStatus;
   output?: string;
+  /**
+   * True once the task's stdio streams have been finalized — i.e. the child's
+   * 'close' event fired (all stdio streams closed), meaning no further stdout/
+   * stderr data can arrive and `output` is complete.
+   *
+   * This is deliberately SEPARATE from `status`: `status` leaves 'running' as
+   * soon as the PROCESS exits ('exit'), but a grandchild may still hold the
+   * inherited stdio pipes open and emit trailing output after that. `bg_await`
+   * must wait for `outputFinalized` before it can honestly promise the
+   * "accumulated task output". For a task that was killed mid-flight, 'close'
+   * may never fire, so `output` is whatever was captured at kill time.
+   *
+   * Optional so internally-seeded/test tasks without a real process are fine.
+   */
+  outputFinalized?: boolean;
 }
 
 // ============================================================================
@@ -858,6 +873,14 @@ export interface BgModule {
    * the single consumption point remains COLLECT's 2c drain — so a queued
    * mid-task direction breaks the wait and lets the loop reach COLLECT to
    * honor it.
+   *
+   * Single-pid waits also wait for the task's OUTPUT to be finalized
+   * (`task.outputFinalized`, set on the child's 'close') before returning
+   * `output`, so the transcript is complete rather than racing a grandchild
+   * that still holds the inherited stdio pipes. That wait is bounded by the
+   * same loop guards (timeout / ESC / steering): a lingering grandchild can
+   * delay completion, never wedge the wait. The all-tasks wait (no pid)
+   * returns as soon as none are running and carries no output.
    *
    * @param opts.pid - Wait for a single task by pid; omit to wait for ALL tasks.
    * @param opts.timeoutMs - Max-wait safety valve in ms (default 60000).

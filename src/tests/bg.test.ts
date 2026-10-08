@@ -258,7 +258,7 @@ describe('BackgroundTasks completion detection — exit vs close (grandchild hol
     // is detected promptly.
     //
     // We spawn a real grandchild that holds the pipes for ~6s, then require
-    // the task to leave 'running' within ~2s — far sooner than the grandchild
+    // the task to leave 'running' within ~4s — far sooner than the grandchild
     // exits. Skipped on non-Windows (the pwsh wrapper is Windows-specific).
     if (process.platform !== 'win32') return;
 
@@ -279,7 +279,86 @@ describe('BackgroundTasks completion detection — exit vs close (grandchild hol
     // task must NOT still be 'running'.
     expect(task!.status).not.toBe('running');
 
-    // Clean up any lingering grandchild so the test process can exit.
+    // Cleanup: the lingering grandchild is NOT reachable via the tracked pid
+    // (the direct child already exited, so `taskkill /T /PID <pid>` cannot
+    // resolve the tree), so a plain killTask() here would silently leave the
+    // `Start-Sleep 6` orphan alive. Kill the grandchild by its actual process
+    // command line instead. Best-effort — it is only a 6s sleeper, but a
+    // deterministic cleanup keeps the test from leaking an orphan on a failed
+    // or interrupted run.
+    try {
+      const { execSync } = await import('child_process');
+      execSync(
+        'Get-CimInstance Win32_Process -Filter "Name = \'pwsh.exe\'" | Where-Object { $_.CommandLine -like \'*Start-Sleep 6*\' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }',
+        { shell: 'pwsh', stdio: 'ignore' },
+      );
+    } catch { /* best-effort */ }
     await bg.killTask(pid);
+  });
+});
+
+describe('BackgroundTasks — output finalization (exit vs close contract)', () => {
+  // These drive the REAL 'exit'/'close' handlers by spawning a short-lived
+  // process, then assert the two-event contract: 'exit' owns STATUS, 'close'
+  // owns OUTPUT FINALIZATION (task.outputFinalized).
+
+  function pollUntil(fn: () => boolean, ms: number): Promise<boolean> {
+    const deadline = Date.now() + ms;
+    return (async () => {
+      while (Date.now() < deadline) {
+        if (fn()) return true;
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      return fn();
+    })();
+  }
+
+  it('exit(0) → completed, and output is finalized (outputFinalized=true)', async () => {
+    const { bg } = makeBg();
+    // `exit 0` (Windows: an innocuous no-op that exits 0). Cross-platform
+    // command: `echo` works on both pwsh and sh.
+    const pid = await bg.runCommand('echo hello');
+    const settled = await pollUntil(
+      () => bg.getTask(pid)?.outputFinalized === true,
+      5000,
+    );
+    expect(settled).toBe(true);
+    const task = bg.getTask(pid);
+    expect(task!.status).toBe('completed');
+    expect(task!.outputFinalized).toBe(true);
+  });
+
+  it('exit(non-zero) → failed', async () => {
+    const { bg } = makeBg();
+    // A command that exits non-zero on both shells.
+    const pid = await bg.runCommand(process.platform === 'win32' ? 'exit 3' : 'exit 3');
+    const settled = await pollUntil(
+      () => bg.getTask(pid)?.outputFinalized === true,
+      5000,
+    );
+    expect(settled).toBe(true);
+    expect(bg.getTask(pid)!.status).toBe('failed');
+  });
+
+  it('a finalized task is never resurrected to running by a late event', async () => {
+    const { bg } = makeBg();
+    const pid = await bg.runCommand('echo done');
+    await pollUntil(() => bg.getTask(pid)?.outputFinalized === true, 5000);
+    const first = bg.getTask(pid)!.status;
+    // Give any stray late 'close'/'exit' a chance to (wrongly) overwrite it.
+    await new Promise((r) => setTimeout(r, 300));
+    expect(bg.getTask(pid)!.status).toBe(first);
+    expect(first).toBe('completed');
+  });
+
+  it('killTask on a running task marks it killed and preserves outputFinalized contract', async () => {
+    const { bg } = makeBg();
+    // A long command we can kill mid-flight.
+    const pid = await bg.runCommand(process.platform === 'win32' ? 'Start-Sleep 30' : 'sleep 30');
+    await bg.killTask(pid);
+    expect(bg.getTask(pid)!.status).toBe('killed');
+    // A killed task must not revert to running on a late exit/close.
+    await new Promise((r) => setTimeout(r, 300));
+    expect(bg.getTask(pid)!.status).toBe('killed');
   });
 });

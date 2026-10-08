@@ -126,11 +126,18 @@ export class BackgroundTasks implements BgModule {
     // bg_await polls until timeout (observed: exit at 295ms, close at 8631ms
     // under a `Start-Sleep 8` grandchild).
     //
-    // So the running→finished TRANSITION is driven by 'exit' (the command is
-    // done), while 'close' remains to capture any trailing output and to set
-    // the final code. Both honor the guard so a late 'close' can never
-    // resurrect a finished task back to 'running', nor overwrite a 'killed'
-    // status set by killTask().
+    // So the two events OWN different things:
+    //   - 'exit'  owns task STATUS (running → completed/failed).
+    //   - 'close' owns OUTPUT FINALIZATION (task.outputFinalized = true): it is
+    //     the point after which no further stdout/stderr data can arrive.
+    // Both honor the race guard so a late event can never resurrect a finished
+    // task back to 'running', nor overwrite a 'killed' status set by killTask().
+    //
+    // The split matters for bg_await. If status alone drove the return, the wait
+    // could resolve at 'exit' and hand the caller an output transcript that a
+    // still-live grandchild is about to extend (the trailing-output race). So
+    // waitForTasks() waits for outputFinalized (bounded by the timeout / ESC /
+    // steering) before returning output for a single pid.
     child.on('exit', (code) => {
       if (task.status === 'running') {
         task.status = code === 0 ? 'completed' : 'failed';
@@ -138,9 +145,15 @@ export class BackgroundTasks implements BgModule {
     });
 
     child.on('close', (code) => {
-      // Finalize: 'close' is authoritative for the exit code and may arrive
-      // after any trailing stdout. Only update if still running (a race guard
-      // so a late 'close' doesn't overwrite an 'error'/'killed' status).
+      // Output is now finalized: all stdio streams have closed, so no further
+      // stdout/stderr data can arrive. Mark it BEFORE the status guard — this
+      // must happen for 'killed' tasks too (a killed task may still receive a
+      // late 'close'), so bg_await can resolve instead of waiting on a flag
+      // that will never be set.
+      task.outputFinalized = true;
+      // Also finalize the status if 'exit' never got the chance (e.g. the
+      // process was signalled). Only while still running, so a late 'close'
+      // can't overwrite an 'error'/'killed' status (race guard).
       if (task.status === 'running') {
         task.status = code === 0 ? 'completed' : 'failed';
       }
@@ -267,6 +280,12 @@ export class BackgroundTasks implements BgModule {
     const task = this.tasks.get(pid);
     if (task) {
       task.status = 'killed';
+      // No live process means no more output can be produced; finalize now.
+      // When a process IS present, 'close' finalizes (bounded by bg_await's
+      // timeout for a killed task whose pipes a grandchild still holds).
+      if (!proc) {
+        task.outputFinalized = true;
+      }
     }
   }
 
@@ -294,6 +313,16 @@ export class BackgroundTasks implements BgModule {
    * timeout still governs). Steering: PEEKS the WebUI queue (non-consuming) so
    * the single consumption point remains COLLECT's 2c drain — mirrors
    * awaitTeammates.
+   *
+   * SINGLE-PID OUTPUT COMPLETENESS: `status` leaves 'running' at process
+   * 'exit', but a grandchild inheriting the stdio pipes can still emit trailing
+   * output afterwards. To honor the "returns the accumulated task output"
+   * contract, a single-pid wait resolves only once the task's output is
+   * finalized (`task.outputFinalized`, set on the child's 'close'), so the
+   * caller never receives a truncated transcript. That extra wait is bounded by
+   * the same loop guards (timeout / ESC / steering) — a lingering grandchild
+   * can delay completion but never wedge the wait. The all-tasks wait (no pid)
+   * returns as soon as none are running and carries no output.
    */
   async waitForTasks(opts?: { pid?: number; timeoutMs?: number }): Promise<BgWaitResult> {
     const pid = opts?.pid;
@@ -325,13 +354,23 @@ export class BackgroundTasks implements BgModule {
         if (pid !== undefined) {
           // Waiting for a specific pid: check just that task (no full scan).
           const task = this.getTask(pid);
-          if (!task || task.status !== 'running') {
+          // Done when the task has finished AND its output is finalized. A
+          // task with no live process (killed with no proc entry, or an
+          // already-trimmed pid) has nothing more to emit → treat as finalized.
+          // We do NOT return a 'killed' task's result until finalization either:
+          // holding it briefly lets a late 'close' (already captured output)
+          // resolve the wait, and the outer timeout bounds the case where a
+          // killed task's grandchild keeps the pipes open forever.
+          if (task && task.status !== 'running' && (task.outputFinalized || !this.processes.has(pid))) {
             return {
               reason: 'completed',
               pid,
-              status: task?.status ?? 'completed',
-              output: task?.output,
+              status: task.status,
+              output: task.output,
             };
+          }
+          if (!task) {
+            return { reason: 'completed', pid, status: 'completed', output: undefined };
           }
         } else {
           // Waiting for ALL tasks: done once none are still running.
@@ -360,6 +399,17 @@ export class BackgroundTasks implements BgModule {
     if (steered) {
       // Return the peeked notes WITHOUT consuming them (COLLECT drains next).
       return { reason: 'steering', notes: getServeHub().getSteeringNotes() };
+    }
+
+    // Timeout: if a specific pid was requested and the task HAS finished (but
+    // its output was not finalized in time — a grandchild still holding the
+    // pipes), return what we captured rather than an empty timeout result, so a
+    // long-lived grandchild does not hide a completed command's output.
+    if (pid !== undefined) {
+      const task = this.getTask(pid);
+      if (task && task.status !== 'running') {
+        return { reason: 'completed', pid, status: task.status, output: task.output };
+      }
     }
 
     return { reason: 'timeout', pid };
