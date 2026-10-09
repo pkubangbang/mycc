@@ -454,9 +454,8 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
 
         nextBriefNudge = 5;
         if (!budgetSent) {
-          const exampleEta = Math.floor(Date.now() / 1000 + 120);
           triologue.note('REMINDER',
-            `Request a time budget from lead via mail_to(name="lead", eta=${exampleEta}, ...).`);
+            'Request a time budget from lead via mail_to(name="lead", eta=<seconds>, title="<subject>", content="<details>").');
         } else if (!ctx.todo.hasOpenTodo()) {
           // No open todos and LLM produced no tool calls — likely done
           // Auto-mail the assistant message to lead
