@@ -216,7 +216,12 @@ async function collectMailsAndInput(env: MachineEnv): Promise<{ firstSteerNote: 
     }
     const mailContent = parts.join('\n\n---\n\n');
     if (agentIO.isNeglectedMode()) {
-      triologue.note('URGENT', `user interrupted - wrap up quickly\n${mailContent}`);
+      // The ESC directive and the mail payload are UNRELATED concerns: keep
+      // them as two attributed notes. Welding them made the mail wear the
+      // [URGENT] category and buried its sender/reply routing under an
+      // interrupt notice about the user's own ESC.
+      triologue.note('URGENT', 'User interrupted (ESC). Finish the current step and stop; do NOT start new work.', 'esc');
+      triologue.note('MAIL', mailContent);
     } else {
       triologue.note('MAIL', mailContent);
     }

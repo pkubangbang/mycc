@@ -304,7 +304,9 @@ describe('handleCollect — ESC during hint generation', () => {
 
     await handleCollect(env, turn, chat);
 
-    // A note was injected with the 'URGENT' tag (neglected-mode mail handling)
+    // A note was injected with the 'URGENT' tag (neglected-mode ESC directive),
+    // and the mail keeps its own separate 'MAIL' note (the concern split of #16
+    // — welding them made mail wear [URGENT] and lose its sender/reply routing).
     const urgentCalls = vi.mocked(triologue.note).mock.calls.filter(
       (c) => c[0] === 'URGENT',
     );
@@ -312,6 +314,6 @@ describe('handleCollect — ESC during hint generation', () => {
     const mailCalls = vi.mocked(triologue.note).mock.calls.filter(
       (c) => c[0] === 'MAIL',
     );
-    expect(mailCalls).toHaveLength(0);
+    expect(mailCalls).toHaveLength(1);
   });
 });
