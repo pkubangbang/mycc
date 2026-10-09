@@ -717,8 +717,18 @@ async function enterIdleState(triologue: TriologueLite): Promise<'shutdown' | 'r
           const claimed = await ctx.issue.claimIssue(issue.id, teammateName);
           if (claimed) {
             ctx.core.brief('info', 'auto_claim', `Issue #${issue.id}: ${issue.title}`);
-            // Identity is preserved in system prompt, no need to re-inject
-            triologue.note('SYSTEM', `Issue #${issue.id}: ${issue.title}\n${issue.content || ''}`);
+            // The note is the worker's OWN view of the claim. Spell out the
+            // actor (this teammate) and the ownership contract: the issue is
+            // now yours, so CLOSE it when the work ends — otherwise a claimed
+            // issue is left stranded open after the work finishes (the lead's
+            // 'auto_claim' brief above is lead-facing and never seen here).
+            // Category stays SYSTEM: this is a state report, not a nudge.
+            triologue.note(
+              'SYSTEM',
+              `Auto-claimed issue #${issue.id} as "${teammateName}" (unowned pending issue, no open blockers).\n` +
+              `Close it with issue_close(${issue.id}, status="completed"|"failed", comment=...) when the work is done.\n` +
+              `${issue.title}\n${issue.content || ''}`,
+            );
             return 'resume';
           }
         } catch (err) {
