@@ -72,6 +72,7 @@ const STARTUP_FLAGS: FlagRow[] = [
   { flag: '--auto', desc: 'Start in autonomous mode (no prompt; auto-reply questions; press esc to exit)' },
   { flag: '--daemon [skill]', desc: 'Start a detached headless daemon (returns immediately). With a skill name, auto-loads it and starts its cron timer (if service_cron); without, runs a passive auto-mode daemon' },
   { flag: '--allow-plan-off', desc: 'In auto mode, auto-approve plan_off (skip confirmation; lets unattended peers escape plan mode)' },
+  { flag: '--allow-auto-commit <branches>', env: 'MYCC_ALLOW_AUTO_COMMIT', desc: 'In auto mode (NORMAL mode only), pre-approve git_commit on the comma-separated allow-listed branches (exact names, no globs); adds an Auto-Committed-By trailer' },
   { flag: '-v, --verbose', desc: 'Show detailed debug output' },
   { flag: '--version', desc: 'Print the mycc version and exit' },
   { flag: '-h, --help', desc: 'Show this help message and exit' },

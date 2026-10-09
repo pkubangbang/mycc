@@ -104,6 +104,10 @@ When updating the changelog, use the following procedure:
 ### Docs
 - **Crossroad**: Add crossroad detector case study; bump version to `0.11.0`.
 
+## 2026-10-09b
+### Features
+- **Auto-Commit**: Add `--allow-auto-commit <branches>` (env `MYCC_ALLOW_AUTO_COMMIT`) — an auto-mode pre-authorization that lets the lead run `git_commit` on comma-separated allow-listed branches without the interactive prompt. Fail-closed: NORMAL mode only (`plan` short-circuits), detached HEAD / unlisted branch falls through to the normal deny path, and every auto-approved commit carries an `Auto-Committed-By: mycc --allow-auto-commit` + `Auto-Commit-Branch: <branch>` trailer. Mirrors `--allow-plan-off` (checks `getAuto()` BEFORE `question()`, never the `source==='auto'` pattern). Pair with CI on protected branches — the flag is a narrow launch-time grant, not a security boundary.
+
 ## 2026-09-14
 ### Features
 - **Serve**: Add persistent WebUI for headless daemon; add `sendToParent` singleton wrapper for Coordinator IPC.

@@ -20,11 +20,40 @@
  */
 
 import type { ToolDefinition, AgentContext } from '../types.js';
+import type { Core } from '../context/parent/core.js';
 import { agentIO } from '../loop/agent-io.js';
 import { MailBox } from '../context/shared/mail.js';
 import { findWorktreeByName } from '../context/worktree-store.js';
+import { isAllowAutoCommit, getAllowAutoCommitBranches } from '../config.js';
 import path from 'path';
 import { spawn } from 'child_process';
+
+/**
+ * Resolve the current git branch short name for `cwd`.
+ *
+ * Uses the existing `agentIO.exec` primitive (the same one the staged-changes
+ * check below already relies on) rather than spawning its own child — no new
+ * subprocess abstraction.
+ *
+ * Returns null when the command fails or the repo is in a detached-HEAD state
+ * (`git rev-parse --abbrev-ref HEAD` prints the literal `HEAD`). A null branch
+ * is treated as "not allow-listed" by the caller, so a detached HEAD
+ * fail-CLOSES to the interactive question() path.
+ */
+async function currentBranch(cwd: string): Promise<string | null> {
+  try {
+    const { stdout } = await agentIO.exec({
+      cwd,
+      command: 'git rev-parse --abbrev-ref HEAD',
+      timeout: 5,
+    });
+    const branch = stdout.trim();
+    if (!branch || branch === 'HEAD') return null;
+    return branch;
+  } catch {
+    return null;
+  }
+}
 
 export const gitCommitTool: ToolDefinition = {
   name: 'git_commit',
@@ -126,53 +155,115 @@ export const gitCommitTool: ToolDefinition = {
       // If git status fails, just proceed - the commit will fail with a clear message
     }
 
-    // Ask for user permission
+    // ── Auto-commit pre-authorization (--allow-auto-commit=<branches>) ──
+    // When the operator pre-authorized a branch list AND we are in auto mode
+    // AND we are NOT in plan mode AND the current branch is allow-listed,
+    // skip the interactive question() (which auto mode would otherwise
+    // auto-DENY) and commit directly with an audit trailer.
+    //
+    // This mirrors plan_off.ts's shape: the getAuto() check runs BEFORE
+    // question() decides whether to skip it entirely, so there is no
+    // AskResult.source to read — do NOT convert this to the source==='auto'
+    // pattern used further below.
+    //
+    // PLAN MODE ALWAYS WINS: the flag is a capability grant, never a mode
+    // override. A plan-mode agent must not be able to land a commit even with
+    // a pre-staged tree, so getMode()==='plan' short-circuits the bypass and
+    // falls through to question() (which auto mode denies).
+    //
+    // Placed AFTER the child/worktree gate (a teammate in its own worktree can
+    // never inherit the lead's grant — belt-and-suspenders on top of child
+    // getAuto() being hard-false) and AFTER the staged-changes check above.
+    const core = ctx.core as Core;
+    let autoApproved = false;
+    // Captured ONCE and reused for the audit trailer, so the branch recorded in
+    // `Auto-Commit-Branch:` is exactly the branch that authorized the commit —
+    // re-running `git rev-parse` later could observe a switched branch (TOCTOU)
+    // and make the audit trail lie.
+    let autoCommitBranch: string | null = null;
+    if (isAllowAutoCommit() && ctx.core.getAuto() && core.getMode() !== 'plan') {
+      const branch = await currentBranch(commitCwd);
+      if (branch !== null && getAllowAutoCommitBranches().includes(branch)) {
+        autoApproved = true;
+        autoCommitBranch = branch;
+        ctx.core.brief(
+          'info',
+          'git_commit',
+          `Auto-approved commit on allow-listed branch '${branch}' (--allow-auto-commit)`,
+        );
+      } else {
+        // Flag is set but this branch isn't listed (or detached HEAD): fall
+        // through to the normal path, which auto-denies under auto mode.
+        ctx.core.brief(
+          'info',
+          'git_commit',
+          `--allow-auto-commit set but branch '${branch ?? '(detached)'}' is not allow-listed`,
+        );
+      }
+    }
+
+    // Ask for user permission (skipped when the auto-commit grant applied).
     const prompt = amend
       ? `Amend commit with message:\n\n  "${message}"\n\nProceed? [y/N]`
       : `Commit with message:\n\n  "${message}"\n\nProceed? [y/N]`;
 
-    const { answer: response, source } = await ctx.core.question(prompt, ctx.core.getName(), { onEsc: 'n' });
+    if (autoApproved) {
+      // No prompt: the operator pre-authorized this branch at launch time.
+      // (Deliberately not an `else`-assigned variable — see the plan_off.ts
+      // precedent: the getAuto() check runs BEFORE question(), so there is no
+      // AskResult to inspect here.)
+      ctx.core.brief('info', 'git_commit', 'Permission granted, executing commit');
+    } else {
+      const { answer: response, source } = await ctx.core.question(prompt, ctx.core.getName(), { onEsc: 'n' });
 
-    // Parse response - only 'y' or 'yes' (case-insensitive) grants permission
-    // Strip surrounding quotes (tmux send-keys may add them)
-    let normalized = response.trim().toLowerCase();
-    if ((normalized.startsWith('"') && normalized.endsWith('"')) ||
-        (normalized.startsWith("'") && normalized.endsWith("'"))) {
-      normalized = normalized.slice(1, -1).trim();
-    }
-    const granted = normalized === 'y' || normalized === 'yes';
-    // [y/N] convention means Enter = No (decline). Empty/whitespace response
-    // cancels the commit, consistent with plan_off.ts's default-on-Enter
-    // behavior. Without this, an empty response falls through to the
-    // "partial feedback" branch and reports a confusing 'User responded: ""'.
-    const denied = normalized === '' || normalized === 'n' || normalized === 'no';
-
-    // If explicitly denied, cancel the commit
-    if (denied) {
-      // Auto mode: question() returns the onEsc default ('n') without user
-      // input, so "denied" here is an auto-rejection, not a real user "No".
-      // source === 'auto' is false for child processes, so teammates (which
-      // route via mail above) are unaffected — this only triggers for the
-      // lead in auto mode.
-      if (source === 'auto') {
-        ctx.core.brief('info', 'git_commit', 'Commit auto-rejected (auto mode is on)');
-        return 'Commit was auto-rejected because auto mode is ON — the user was not asked. '
-          + 'To proceed with the commit, ask the user to exit auto mode (press ESC) and then retry the git_commit.';
+      // Parse response - only 'y' or 'yes' (case-insensitive) grants permission
+      // Strip surrounding quotes (tmux send-keys may add them)
+      let normalized = response.trim().toLowerCase();
+      if ((normalized.startsWith('"') && normalized.endsWith('"')) ||
+          (normalized.startsWith("'") && normalized.endsWith("'"))) {
+        normalized = normalized.slice(1, -1).trim();
       }
-      ctx.core.brief('info', 'git_commit', 'Commit cancelled by user');
-      return 'Commit cancelled by user';
+      const granted = normalized === 'y' || normalized === 'yes';
+      // [y/N] convention means Enter = No (decline). Empty/whitespace response
+      // cancels the commit, consistent with plan_off.ts's default-on-Enter
+      // behavior. Without this, an empty response falls through to the
+      // "partial feedback" branch and reports a confusing 'User responded: ""'.
+      const denied = normalized === '' || normalized === 'n' || normalized === 'no';
+
+      // If explicitly denied, cancel the commit
+      if (denied) {
+        // Auto mode: question() returns the onEsc default ('n') without user
+        // input, so "denied" here is an auto-rejection, not a real user "No".
+        // source === 'auto' is false for child processes, so teammates (which
+        // route via mail above) are unaffected — this only triggers for the
+        // lead in auto mode.
+        if (source === 'auto') {
+          ctx.core.brief('info', 'git_commit', 'Commit auto-rejected (auto mode is on)');
+          return 'Commit was auto-rejected because auto mode is ON — the user was not asked. '
+            + 'To proceed with the commit, ask the user to exit auto mode (press ESC) and then retry the git_commit.';
+        }
+        ctx.core.brief('info', 'git_commit', 'Commit cancelled by user');
+        return 'Commit cancelled by user';
+      }
+
+      // If neither granted nor denied, return the response for LLM to iterate
+      // This is a PARTIAL commit — user provided feedback instead of y/n
+      // Example: "refine commit message" or "commit all"
+      if (!granted) {
+        ctx.core.brief('info', 'git_commit', `User responded: "${response}"`);
+        return `User did not confirm the commit. User's response: "${response}"\n\nPlease consider the user's feedback and try again with a modified commit message if appropriate, or ask for clarification.`;
+      }
+
+      // User granted permission — fall through to the execution path below.
+      ctx.core.brief('info', 'git_commit', 'Permission granted, executing commit');
     }
 
-    // If neither granted nor denied, return the response for LLM to iterate
-    // This is a PARTIAL commit — user provided feedback instead of y/n
-    // Example: "refine commit message" or "commit all"
-    if (!granted) {
-      ctx.core.brief('info', 'git_commit', `User responded: "${response}"`);
-      return `User did not confirm the commit. User's response: "${response}"\n\nPlease consider the user's feedback and try again with a modified commit message if appropriate, or ask for clarification.`;
-    }
-
-    // User granted permission - execute the commit
-    ctx.core.brief('info', 'git_commit', 'Permission granted, executing commit');
+    // Append the audit trailer when the commit was auto-approved, so CI and
+    // humans can see it was machine-approved rather than human-confirmed.
+    // Uses the branch captured at authorization time (see autoCommitBranch).
+    const commitMessage = autoApproved
+      ? `${message}\n\nAuto-Committed-By: mycc --allow-auto-commit\nAuto-Commit-Branch: ${autoCommitBranch}`
+      : message;
 
     try {
       // Use stdin (`git commit -F -`) instead of a temp file for the commit
@@ -187,7 +278,7 @@ export const gitCommitTool: ToolDefinition = {
       const proc = spawn('git', args, { cwd: commitCwd });
 
       // Write commit message to stdin
-      proc.stdin?.write(message, 'utf-8');
+      proc.stdin?.write(commitMessage, 'utf-8');
       proc.stdin?.end();
 
       // Collect output

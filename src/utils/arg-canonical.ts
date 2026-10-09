@@ -52,6 +52,11 @@ export const STRING_FLAGS: string[] = [
   'wire-token',
   // Session pinning (compose): lets mycc-topology re-pin a peer's session id.
   'session-id',
+  // Auto-mode commit pre-authorization: a comma-separated allow-list of branch
+  // names. STRING (carries a value), not boolean. Absent from DEFAULTS like
+  // 'allow-plan-off' — absence means "off", and the parser/argsMatch treat
+  // unset uniformly. See config.ts's getAllowAutoCommitBranches().
+  'allow-auto-commit',
 ];
 
 /** Default values passed to minimist so unset flags normalize deterministically. */
@@ -128,6 +133,12 @@ export const ARG_ENV_MAP: Record<string, string> = {
   'disable-crossroad': 'MYCC_DISABLE_CROSSROAD',
   'debug-autofly': 'MYCC_DEBUG_AUTOfLY',
   'allow-plan-off': 'MYCC_ALLOW_PLAN_OFF',
+  // --allow-auto-commit: auto-mode peers may commit WITHOUT the interactive
+  // confirmation, but only on the branches listed here, only in NORMAL mode,
+  // and only with an audit trailer. Pair with CI on protected branches (the
+  // real authority). Immutable / operator-only: no slash toggle, the agent
+  // cannot self-grant.
+  'allow-auto-commit': 'MYCC_ALLOW_AUTO_COMMIT',
   // --debug-ansi: force the plain (no-TTY) output path while in a terminal,
   // so the piped-rendering path can be reproduced without a second shell.
   // Mirrored into env like the other debug flags so it survives the

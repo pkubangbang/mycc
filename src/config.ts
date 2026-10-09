@@ -357,6 +357,50 @@ export function shouldAllowPlanOff(): boolean {
 }
 
 /**
+ * Parse the `--allow-auto-commit=<branch,branch,...>` allow-list.
+ *
+ * Returns the list of branch names the operator has pre-authorized for
+ * auto-mode commits. Comma-separated; whitespace around each name is trimmed
+ * and empty entries dropped. An absent/empty flag yields `[]` (feature OFF).
+ *
+ * MATCHING IS EXACT STRING EQUALITY — NO GLOBS. `release/*` does NOT match the
+ * branch `release/1.2`; only a literal `release/1.2` entry does. This is
+ * deliberate: an authorization list that silently fails-closed on an
+ * unintended pattern is far safer than one that "helpfully" globs. Fail
+ * direction is safe (a non-matching entry falls through to the normal deny
+ * path), so listing a glob is a footgun, not a security hole.
+ *
+ * Reads the module-private parsed `args` object directly (not process.env) so
+ * the launch-time value is reported faithfully and a stale MYCC_ALLOW_AUTO_COMMIT
+ * env var inherited from a parent process can never widen the grant.
+ */
+export function getAllowAutoCommitBranches(): string[] {
+  const raw = args['allow-auto-commit'];
+  if (typeof raw !== 'string') return [];
+  return raw
+    .split(',')
+    .map((b) => b.trim())
+    .filter((b) => b.length > 0);
+}
+
+/**
+ * Whether the `--allow-auto-commit` pre-authorization is active (i.e. at least
+ * one branch is listed).
+ *
+ * When true AND the lead is in auto mode AND it is NOT in plan mode AND the
+ * current git branch is in the allow-list, `git_commit` skips the interactive
+ * confirmation and commits directly, appending an audit trailer.
+ *
+ * IMMUTABLE: set only via CLI arg / env, no slash-command toggle, no runtime
+ * setter — the agent can never self-grant. Plan mode always overrides it (the
+ * flag is a capability grant, never a mode override). Pair with CI on the
+ * protected branches, which remain the real authority.
+ */
+export function isAllowAutoCommit(): boolean {
+  return getAllowAutoCommitBranches().length > 0;
+}
+
+/**
  * Check if autofly debug mode is enabled (--debug-autofly CLI flag).
  *
  * When enabled, the PROMPT state will automatically engage auto mode once the

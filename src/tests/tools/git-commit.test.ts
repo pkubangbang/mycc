@@ -31,6 +31,16 @@ vi.mock('../../context/worktree-store.js', () => ({
   findWorktreeByName: vi.fn(async () => null),
 }));
 
+// Mock the config getters that back the --allow-auto-commit pre-authorization.
+// The test harness cannot inject argv, so the two predicates are the seam:
+// tests toggle the grant by re-mocking these between cases.
+vi.mock('../../config.js', () => ({
+  isAllowAutoCommit: vi.fn(() => false),
+  getAllowAutoCommitBranches: vi.fn(() => [] as string[]),
+}));
+
+import { isAllowAutoCommit, getAllowAutoCommitBranches } from '../../config.js';
+
 describe('gitCommitTool', () => {
   let tempDir: string;
   let ctx: AgentContext;
@@ -199,6 +209,136 @@ describe('gitCommitTool', () => {
         // not reach the user prompt.
       }
       expect(ctx.core.question).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('--allow-auto-commit pre-authorization', () => {
+    /** Point agentIO.exec at a repo whose current branch is `branch`. */
+    const onBranch = (branch: string): void => {
+      vi.mocked(agentIO.exec).mockImplementation(async ({ command }) => {
+        if (command.includes('rev-parse')) {
+          return { stdout: `${branch}\n`, stderr: '', interrupted: false, exitCode: 0, timedOut: false };
+        }
+        // `git status --porcelain`: keep one staged file so the handler reaches
+        // the pre-authorization gate.
+        return { stdout: 'M  src/file.ts', stderr: '', interrupted: false, exitCode: 0, timedOut: false };
+      });
+    };
+
+    const grant = (branches: string[]): void => {
+      vi.mocked(isAllowAutoCommit).mockReturnValue(true);
+      vi.mocked(getAllowAutoCommitBranches).mockReturnValue(branches);
+    };
+
+    it('auto-commits without prompting when auto mode + allow-listed branch', async () => {
+      grant(['main']);
+      vi.mocked(ctx.core.getAuto).mockReturnValue(true);
+      onBranch('main');
+
+      const result = await gitCommitTool.handler(ctx, { message: 'auto commit' });
+
+      // The whole point: the interactive prompt is SKIPPED.
+      expect(ctx.core.question).not.toHaveBeenCalled();
+      // A real `git commit` child was spawned (it fails in the temp dir with no
+      // repo, but we only assert the handler passed the permission gate — a
+      // "Commit cancelled/rejected" string would mean it never got there).
+      expect(result).not.toContain('Commit cancelled by user');
+      expect(result).not.toContain('auto mode is ON');
+    });
+
+    it('emits the audit trailer with the AUTHORIZED branch on a real repo', async () => {
+      // Real repo so the spawn actually commits and we can read the message
+      // back — this pins the Auto-Committed-By / Auto-Commit-Branch trailer
+      // AND (via capturing rev-parse only once) the TOCTOU fix.
+      const { execFileSync } = await import('child_process');
+      const run = (c: string[]) => execFileSync('git', c, { cwd: tempDir });
+      run(['init', '-q']);
+      run(['config', 'user.email', 't@t.t']);
+      run(['config', 'user.name', 't']);
+      const { writeFileSync } = await import('fs');
+      writeFileSync(`${tempDir}/a.txt`, 'x');
+      run(['add', 'a.txt']);
+      // Only rev-parse is mocked; git status + commit run against the real repo.
+      vi.mocked(agentIO.exec).mockImplementation(async ({ command }) => {
+        if (command.includes('rev-parse')) {
+          return { stdout: 'main\n', stderr: '', interrupted: false, exitCode: 0, timedOut: false };
+        }
+        const out = execFileSync('git', ['status', '--porcelain'], { cwd: tempDir }).toString();
+        return { stdout: out, stderr: '', interrupted: false, exitCode: 0, timedOut: false };
+      });
+      grant(['main']);
+      vi.mocked(ctx.core.getAuto).mockReturnValue(true);
+
+      const result = await gitCommitTool.handler(ctx, { message: 'auto commit body' });
+
+      expect(result).toContain('Commit successful');
+      expect(ctx.core.question).not.toHaveBeenCalled();
+      const log = execFileSync('git', ['log', '-1', '--pretty=%B'], { cwd: tempDir }).toString();
+      expect(log).toContain('auto commit body');
+      expect(log).toContain('Auto-Committed-By: mycc --allow-auto-commit');
+      expect(log).toContain('Auto-Commit-Branch: main');
+    });
+
+    it('falls through to the auto-deny path when the branch is not allow-listed', async () => {
+      grant(['release']);
+      vi.mocked(ctx.core.getAuto).mockReturnValue(true);
+      onBranch('feature/foo');
+      vi.mocked(ctx.core.question).mockResolvedValueOnce(askResult('n', 'auto'));
+
+      const result = await gitCommitTool.handler(ctx, { message: 'nope' });
+
+      expect(ctx.core.question).toHaveBeenCalled();
+      expect(result).toContain('auto mode is ON');
+    });
+
+    it('still prompts (no bypass) when the lead is NOT in auto mode', async () => {
+      grant(['main']);
+      vi.mocked(ctx.core.getAuto).mockReturnValue(false);
+      onBranch('main');
+      vi.mocked(ctx.core.question).mockResolvedValueOnce(askResult('n'));
+
+      const result = await gitCommitTool.handler(ctx, { message: 'manual' });
+
+      expect(ctx.core.question).toHaveBeenCalled();
+      expect(result).toContain('Commit cancelled by user');
+    });
+
+    it('fail-closes on detached HEAD (branch resolves to null)', async () => {
+      grant(['main']);
+      vi.mocked(ctx.core.getAuto).mockReturnValue(true);
+      // `git rev-parse --abbrev-ref HEAD` prints the literal HEAD when detached.
+      onBranch('HEAD');
+      vi.mocked(ctx.core.question).mockResolvedValueOnce(askResult('n', 'auto'));
+
+      const result = await gitCommitTool.handler(ctx, { message: 'detached' });
+
+      expect(ctx.core.question).toHaveBeenCalled();
+      expect(result).toContain('auto mode is ON');
+    });
+
+    it('PLAN MODE ALWAYS WINS: no bypass even with auto+flag+listed branch', async () => {
+      grant(['main']);
+      vi.mocked(ctx.core.getAuto).mockReturnValue(true);
+      vi.mocked(ctx.core.getMode).mockReturnValue('plan');
+      onBranch('main');
+      vi.mocked(ctx.core.question).mockResolvedValueOnce(askResult('n', 'auto'));
+
+      const result = await gitCommitTool.handler(ctx, { message: 'plan-mode commit' });
+
+      // The flag is a capability grant, never a mode override.
+      expect(ctx.core.question).toHaveBeenCalled();
+      expect(result).toContain('auto mode is ON');
+    });
+
+    it('is a no-op when the flag is unset (question() still called)', async () => {
+      vi.mocked(isAllowAutoCommit).mockReturnValue(false);
+      vi.mocked(ctx.core.getAuto).mockReturnValue(true);
+      vi.mocked(ctx.core.question).mockResolvedValueOnce(askResult('n', 'auto'));
+
+      const result = await gitCommitTool.handler(ctx, { message: 'flag off' });
+
+      expect(ctx.core.question).toHaveBeenCalled();
+      expect(result).toContain('auto mode is ON');
     });
   });
 

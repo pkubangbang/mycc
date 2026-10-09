@@ -105,6 +105,7 @@ describe('arg-canonical: parseArgString ↔ minimist parity', () => {
     '--wire-token secret --api-provider deepseek',
     '--daemon skill-manager',
     '--max-upload-mb 100 --skill-match-threshold 0.6',
+    '--allow-auto-commit main,release-candidate',
   ];
 
   for (const raw of fixtures) {
@@ -376,5 +377,15 @@ describe('arg-canonical: buildCmdArgsEnv', () => {
     const env = buildCmdArgsEnv(parseArgString('--auto'));
     expect(env.MYCC_VERBOSE).toBeUndefined();
     expect(env.MYCC_SETUP).toBeUndefined();
+  });
+
+  it('maps --allow-auto-commit to MYCC_ALLOW_AUTO_COMMIT and keeps the comma list intact', () => {
+    // The env mirror is a pass-through: the SAME comma-separated value
+    // survives, so config.ts's getAllowAutoCommitBranches() can split it
+    // identically whether the flag arrived via argv or the env var.
+    const env = buildCmdArgsEnv(parseArgString('--allow-auto-commit main,release-candidate'));
+    expect(env.MYCC_ALLOW_AUTO_COMMIT).toBe('main,release-candidate');
+    // Absent flag must NOT clobber an env var set elsewhere.
+    expect(buildCmdArgsEnv(parseArgString('--auto')).MYCC_ALLOW_AUTO_COMMIT).toBeUndefined();
   });
 });
