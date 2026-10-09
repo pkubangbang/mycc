@@ -21,6 +21,7 @@ import { getTokenThreshold, getSessionContext, getSessionDir, setSessionContext,
 import { TriologueLite } from '../loop/triologue-lite.js';
 import { JsonlTranscriptWriter, asAppendablePiece } from '../loop/triologue/transcript.js';
 import { ipc, sendStatus } from './child/ipc-helpers.js';
+import { parseIntent, isReadOnlyVerb } from '../context/grant/intent-parser.js';
 
 const POLL_INTERVAL = 5000; // 5 seconds
 const CONFUSION_THRESHOLD = 10; // Same as main process
@@ -252,8 +253,15 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
     'bg_remove', 'mail_to', 'broadcast', 'git_commit',
   ]);
 
-  // Read-only bash commands (exploration)
-  const READ_ONLY_BASH = /^(ls|cat|pwd|head|tail|wc|find|which|git\s+(status|log|diff|branch|show|ls-files))/;
+  // Read-only bash classification is derived from the command's INTENT verb
+  // (READ/FIND/TEST), not from a regex over the command string. The old regex
+  // was anchored to Unix/Git-Bash verbs, so on Windows every PowerShell read
+  // (`Select-String`, `Get-Content`, `Get-ChildItem`, `npx …`) failed it, was
+  // counted as a mutating bash, and charged confusion every turn — pure
+  // exploration was penalized. The intent parser (already required by the
+  // bash tool and already validated on the grant path) is platform-agnostic.
+  // NOTE: an absent/unparseable intent falls back to "mutating" below — the
+  // same conservative behaviour as the regex it replaces.
 
   // Track recent tool calls for repetition detection
   const recentToolCalls: string[] = [];
@@ -279,8 +287,21 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
     if (/command failed with exit code \d+/.test(lower)) return true;
     if (lower.includes('eacces') || lower.includes('enoent') || lower.includes('eperm')) return true;
     if (lower.includes('permission denied')) return true;
-    if (lower.includes('not found') || lower.includes('does not exist') || lower.includes('no such file')) return true;
     return false;
+  }
+
+  // "Probe miss" heuristic for the three path-probe substrings. These are NOT
+  // errors on their own: a read_file on an optional path, a grep with no
+  // match, or a bash that exits non-zero can all legitimately report one.
+  // They charged +2 unconditionally, so ordinary "probe → miss → probe
+  // elsewhere" exploration drove the confusion index to the guidance gate.
+  // Charged only for non-exploration tools AND only when the phrase is at the
+  // HEAD of the output (a real missing-file error), never when it merely
+  // appears inside a large successful result.
+  function probeMiss(toolName: string, result: string): boolean {
+    if (EXPLORATION_TOOLS.has(toolName)) return false;
+    if (!result) return false;
+    return /^\s*(not found|does not exist|no such file)/i.test(result.slice(0, 200));
   }
 
   while (!shutdownRequested) {
@@ -541,8 +562,9 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
 
           if (!EXPLORATION_TOOLS.has(toolName)) {
             if (toolName === 'bash') {
-              const cmd = String(args?.command || '');
-              if (!READ_ONLY_BASH.test(cmd)) {
+              const parsedIntent = parseIntent(String(args?.intent || ''));
+              const readOnlyBash = parsedIntent ? isReadOnlyVerb(parsedIntent.verb) : false;
+              if (!readOnlyBash) {
                 if (isRepetition) {
                   ctx.core.increaseConfusionIndex(1);
                 } else {
@@ -570,7 +592,7 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
           }
 
           // Error results increase confusion
-          if (isErrorResult(output)) {
+          if (isErrorResult(output) || probeMiss(toolName, output)) {
             ctx.core.increaseConfusionIndex(2);
           }
 
