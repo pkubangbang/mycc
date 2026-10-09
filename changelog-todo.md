@@ -97,6 +97,10 @@ When updating the changelog, use the following procedure:
 ## 2026-09-13
 ### Refactoring
 - **Crossroad**: Extract the semantic detector into `@pkubangbang/crossroad-detector` and consume the published `0.1.1` package.
+
+## 2026-10-09
+### Refactoring
+- **Config/Prompts**: Remove `ensureGitignore()` (and its `isInsideGitRepo()` helper + `ensureDirs()` call), which silently created/edited the user's `.gitignore` on every startup; replace it with a `## Project Ignore` system-prompt section (`buildProjectIgnoreSection()` in `prompts/common.ts`, wired into `buildCommonSections()`) telling the agent to keep `.mycc/` out of version control and to add `/.mycc/*` only when the task actually touches git.
 ### Docs
 - **Crossroad**: Add crossroad detector case study; bump version to `0.11.0`.
 

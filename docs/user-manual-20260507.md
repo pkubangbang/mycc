@@ -500,7 +500,7 @@ Run 'mycc --setup' to configure your environment.
 ```
 mycc/
 ├── src/              # Source code
-├── .mycc/            # Runtime data (gitignored)
+├── .mycc/            # Runtime data (ignored via /.mycc/* in .gitignore)
 │   ├── state.db      # SQLite database
 │   ├── mail/         # Mailboxes
 │   ├── tools/        # User-defined tools

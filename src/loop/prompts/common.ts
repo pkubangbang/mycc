@@ -96,12 +96,40 @@ export function buildLaunchArgsSection(): string {
 }
 
 // ============================================================================
+// Project Ignore Section (shared across all prompts)
+// ============================================================================
+
+/**
+ * Remind the agent to keep mycc's runtime folder (`.mycc/`) out of version
+ * control. This replaces the former `ensureGitignore()` auto-writer that
+ * silently edited the user's `.gitignore` on every startup: editing a tracked
+ * file without being asked is surprising, and it only ever worked INSIDE a git
+ * repo. Instead the agent is now told the rule and applies it when — and only
+ * when — the task actually touches version control.
+ *
+ * `.mycc/` is mycc's per-project runtime sandbox (sessions, tools, skills,
+ * longtext/imgcache output) and is not meant to be committed.
+ */
+export function buildProjectIgnoreSection(): string {
+  return [
+    '## Project Ignore',
+    'mycc stores its per-project runtime state in the `.mycc/` folder (sessions, tools, skills, tool caches).',
+    'It must NOT be committed to version control.',
+    '- If `.mycc/` is not already ignored (check `.gitignore`) and you are doing version-control work, add `/.mycc/*` to `.gitignore`.',
+    '- Prefer `/.mycc/*` (contents-only) over `/.mycc/` (whole-dir): the former still lets a negation pattern (e.g. `!.mycc/skills/`) track a specific subfolder later.',
+    '- Don\'t create or edit `.gitignore` unless the task requires it — just keep `.mycc/` out of commits.',
+  ].join('\n');
+}
+
+// ============================================================================
 // Shared Common Sections (used by all normal mode prompts)
 // ============================================================================
 
 export function buildCommonSections(): string {
   return [
     buildLaunchArgsSection(),
+    '',
+    buildProjectIgnoreSection(),
     '',
     buildVerificationSection(),
     '',
