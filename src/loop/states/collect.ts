@@ -401,7 +401,7 @@ async function runBriefAndWorktreeNudges(env: MachineEnv, turn: TurnVars): Promi
       const lines = worktrees.map(w => `- ${w.name} at ${w.path} (branch: ${w.branch})`);
       triologue.note(
         'REMINDER',
-        `Stale worktrees detected. Consider cleaning them up with bash (git worktree remove <path>) once the work is merged:\n${lines.join('\n')}`
+        `Worktrees present. Remove one with bash (git worktree remove <path>) only if you are sure its branch is merged and no teammate is still working in it:\n${lines.join('\n')}`
       );
       env.nextWtNudge = 5;
     }
