@@ -9,7 +9,8 @@
 
 import { LineEditor } from '../utils/line-editor.js';
 import type { KeyInfo } from '../utils/key-parser.js';
-import { getWrapUpState, tryDisplayWrapUp } from './esc-wrap-up.js';
+import { getWrapUpState } from './wrap-up-state.js';
+import { tryDisplayWrapUp } from './esc-wrap-up.js';
 import chalk from 'chalk';
 import { isVerbose } from '../config.js';
 import { getToolColor } from '../utils/tool-colors.js';

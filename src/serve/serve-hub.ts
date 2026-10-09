@@ -27,7 +27,11 @@ import { PromptAbortError } from '../loop/agent-io.js';
 import { setResultCallback } from '../utils/letter-box.js';
 import { getMaxUploadMb, shouldDaemon, getApiProvider } from '../config.js';
 import { sendToParent } from '../utils/parent-ipc.js';
-import { type SteeringNote, resolveSteeringQueue, joinSteeringNotes } from './steering-queue.js';
+import {
+  getSteeringManager,
+  joinSteeringNotes,
+} from '../loop/steering-manager.js';
+import { isWrapUpInFlight } from '../loop/wrap-up-state.js';
 import type { LogEntry, FileUploadEntry, CardMessage } from './serve-types.js';
 export type { CardMessage } from './serve-types.js';
 import { stripAnsi, detectLanIpv4, detectAllLanIpv4 } from './serve-utils.js';
@@ -72,9 +76,10 @@ export class ServeHub implements HubHandler {
   // ── Card bridge — keyed resolvers for interactive cards ──
   private cardResolvers: Map<string, (value: string | null) => void> = new Map();
 
-  // ── Steering queue — ephemeral in-memory buffer for webui steering notes ──
-  private steeringQueue: SteeringNote[] = [];
-  private steeringIdCounter = 0;
+  // ── Steering — owned by the loop-homed manager, NOT the hub ──
+  // ServeHub is the sole WRITER (the only reader of the WS 'steer' frame);
+  // loop states READ the process-wide singleton via peek/drain/isNonEmpty
+  // (src/loop/steering-manager.ts). The hub holds no queue field anymore.
 
   // ── File upload queue — ephemeral in-memory buffer ──
   private fileUploadQueue: FileUploadEntry[] = [];
@@ -329,7 +334,7 @@ export class ServeHub implements HubHandler {
     this.expressApp.get('/history', (req, res) => {
       const etag = computeHistoryVersion(
         this.transcriptPath, this.messageLog,
-        this.steeringQueue.length, this.agentRunning,
+        getSteeringManager().peekNotes().length, this.agentRunning,
       );
       res.set('ETag', etag);
       res.set('Cache-Control', 'no-cache');
@@ -350,7 +355,11 @@ export class ServeHub implements HubHandler {
       const history = readHistory(this.transcriptPath, this.messageLog);
       const payload = JSON.stringify({
         messages: history,
-        steeringBuffer: this.getSteeringNotes(),
+        // steeringBuffer is now {id,text}[] (plan §5 — C6 fix): the frontend
+        // types it SteeringNote[] (main.ts/types.ts) and uses the ids for
+        // per-note discard/send on the review card; serializing string[] lost
+        // the ids on every reconnect.
+        steeringBuffer: getSteeringManager().peekNotes(),
         isRunning: this.agentRunning,
       });
       res.status(200).set({ 'Content-Type': 'application/json' }).end(payload);
@@ -449,7 +458,14 @@ export class ServeHub implements HubHandler {
       }
       this.expressApp = null;
       this.messageLog = [];
-      this.steeringQueue = [];
+      // Lifecycle wipe (A2, docs/steering-manager-plan.md §5): notes are wiped
+      // ONLY on terminal teardown. restartServe() sets `restarting` BEFORE
+      // calling stop(true) so this clear is skipped mid-recycle — notes
+      // survive a 重启 exactly like the pending input-resolver does. Wiping
+      // unconditionally here was the root cause of the 停止-button race (a
+      // note sent in the stop window was vacuumed before wrap-up could
+      // deliver it).
+      if (!this.restarting) { getSteeringManager().clear(); }
       this.fileUploadQueue = [];
     } finally {
       this.stopping = false;
@@ -473,6 +489,15 @@ export class ServeHub implements HubHandler {
         resolve(input);
       };
       this.inputRejecter = reject;
+      // Arm-point delivery (plan §5, seam B instant 2 of 3): a note that was
+      // HELD because no PROMPT wait was armed yet (or the wrap-up window was
+      // still open) must ride the wait the moment it arms — a parked PROMPT
+      // cannot poll, so this is the only delivery event between the
+      // pushSteer write-point and the next inbound event. Re-runs the same
+      // pure takeForDelivery check: a no-op when the queue is empty, nothing
+      // is parked, or the wrap-up window is still open (the wake seam
+      // delivers at settle time instead).
+      this.flushSteeringAtSeam();
     });
   }
 
@@ -552,13 +577,16 @@ export class ServeHub implements HubHandler {
   }
 
   // ===========================================================================
-  // Steering queue (webui-only — user mid-task direction while LLM runs)
+  // Steering (webui-only — user mid-task direction while LLM runs)
+  //
+  // The hub is the sole WRITER of the shared manager; loop states are
+  // READERS (docs/steering-manager-plan.md §2). Queue state and the
+  // monotonic id counter live in src/loop/steering-manager.ts.
   // ===========================================================================
 
   /** Buffer a steering note, journal it, and echo it to all clients' buffer bars. */
   pushSteer(text: string): void {
-    const note: SteeringNote = { id: ++this.steeringIdCounter, text };
-    this.steeringQueue.push(note);
+    const note = getSteeringManager().addNote(text);
     // Journal the note as user input so it survives a page refresh and
     // re-renders as a right-side bubble (the transcript is the single source
     // of truth for user bubbles). Journaled at SUBMISSION time: the text is a
@@ -570,15 +598,47 @@ export class ServeHub implements HubHandler {
     // directly (not via broadcast()) because broadcast() takes a flat string.
     const echoPayload = JSON.stringify({ type: 'steer-echo', content: text, steerId: note.id });
     this.clients.forEachOpen((ws) => ws.send(echoPayload));
+    // Write-point delivery (plan §5, seam B instant 1 of 3): when a PROMPT
+    // wait is already parked and the wrap-up window is closed, the note can
+    // ride the wait immediately; takeForDelivery otherwise HOLDS it for the
+    // arm-point/wake seams (or for a later turn drain). submitInput with no
+    // armed resolver is the pre-existing stale-client no-op, so this is safe
+    // to run unconditionally.
+    this.flushSteeringAtSeam();
   }
 
-  /** Drain all steering notes' text (COLLECT REMINDER injection) + flush clients. */
-  drainSteering(): string[] {
-    if (this.steeringQueue.length === 0) return [];
-    const notes = this.steeringQueue.map((n) => n.text);
-    this.steeringQueue = [];
-    this.broadcast('steer-flush', '');
-    return notes;
+  /**
+   * The shared delivery check, re-run at each of the three plan §5 instants:
+   * WRITE (pushSteer), ARM (waitForInput armed), WAKE (onWrapUpSettled).
+   * takeForDelivery is pure w.r.t. the hub — it drains the manager only when
+   * the queue is non-empty AND a PROMPT wait is parked AND the wrap-up
+   * window is closed; otherwise it is a stateless null and nothing happens.
+   * A parked PROMPT cannot poll, so whichever event lands last delivers;
+   * three instants re-running one pure check cannot collapse into a missed
+   * window (docs/steering-manager-plan.md §3-§5).
+   */
+  private flushSteeringAtSeam(): void {
+    const deliverable = getSteeringManager().takeForDelivery(this.isInputBlocked(), isWrapUpInFlight());
+    if (deliverable) {
+      this.broadcast('steer-flush', '');
+      this.submitInput(joinSteeringNotes(deliverable));
+    }
+  }
+
+  /**
+   * Wrap-up settle wake seam (A1, plan §5 instant 3 of 3): esc-wrap-up.ts
+   * calls this DIRECTLY (no callback registration — binding user constraint)
+   * the moment the background wrap-up promise settles. A note that arrived
+   * DURING the wrap-up window was held by takeForDelivery
+   * (wrapUpInFlight=true); with the window now closed, the same pure check
+   * delivers it to the already-armed waitForInput(). Gated on isRunning():
+   * a settle racing a terminal stop() must not ride a dead hub (the terminal
+   * fallback wipe in WebInputProvider owns the queue then). Safe to double-
+   * call: takeForDelivery drains, so the second call sees an empty queue.
+   */
+  onWrapUpSettled(): void {
+    if (!this.isRunning()) return;
+    this.flushSteeringAtSeam();
   }
 
   /**
@@ -587,26 +647,31 @@ export class ServeHub implements HubHandler {
    * re-synthesizes. Always broadcasts 'steer-flush'.
    */
   resolveSteering(sendIds: number[] = []): string[] {
-    if (this.steeringQueue.length === 0) return [];
-    const selected = resolveSteeringQueue(this.steeringQueue, sendIds);
+    if (!getSteeringManager().isNonEmpty()) return [];
+    // Boomerang is atomic: one drain splits the note set into selected (to
+    // submit) + discarded (for observability only). Filter-by-id semantics —
+    // duplicate sendIds entries select BOTH notes (A4, no dedupe).
+    const { selected, discarded } = getSteeringManager().resolveBoomerang(sendIds);
     // Source-side observability for the implicitly-discarded notes (dir-9
-    // 发现3). The pure resolveSteeringQueue silently drops everything not in
-    // sendIds; logging the discarded ids/count here (before the atomic drain)
-    // makes "which steering notes vanished" diagnosable under -v. steering-
-    // queue.ts itself stays framework-free/pure, so the log lives in the hub.
-    const discarded = this.steeringQueue.filter((n) => !sendIds.includes(n.id));
+    // 发现3). The manager's boomerang silently drops everything not in
+    // sendIds; logging the discarded ids/count here (after the atomic drain)
+    // makes "which steering notes vanished" diagnosable under -v. The
+    // steering-manager stays framework-free/pure, so the log lives in the hub.
     if (discarded.length > 0) {
       agentIO.verbose('serve',
         `Steering notes discarded (not sent): ids=[${discarded.map((n) => n.id).join(',')}] count=${discarded.length}`);
     }
-    this.steeringQueue = []; // atomic drain BEFORE submit
     this.broadcast('steer-flush', '');
     if (selected.length > 0) { this.submitInput(joinSteeringNotes(selected)); }
     return selected.map((n) => n.text);
   }
 
-  /** Peek queued steering note texts without consuming (PROMPT synthesis gate). */
-  getSteeringNotes(): string[] { return this.steeringQueue.map((n) => n.text); }
+  // NOTE: no getSteeringNotes()/drainSteering() facades here anymore — loop
+  // consumers read getSteeringManager() directly (peek/drain/isNonEmpty) per
+  // plan §6 / pitfall Δ3, and the hub-peek/hub-drain facades had zero
+  // production callers after the re-point (review finding, change-set #10).
+  // The hub keeps only its WRITER/RESOLVER surface: pushSteer, resolveSteering
+  // (also enforced by the steering-boundary test's allowlist).
 
   // ===========================================================================
   // File upload queue (webui-only)

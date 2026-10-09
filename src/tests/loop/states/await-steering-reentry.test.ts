@@ -49,8 +49,10 @@ vi.mock('../../../loop/auto-state.js', () => ({
   },
 }));
 
-// Mock the serve hub so getServeHub().isRunning()/getSteeringNotes()/drainSteering()
-// are controllable.
+// Mock the serve hub so getServeHub().isRunning() is controllable. The old
+// getSteeringNotes/drainSteering stub entries were pruned when those dead
+// hub facades were removed — hub steering surface is pushSteer/resolveSteering
+// only, and AWAIT's steering detection reads the manager via awaitTeammates.
 vi.mock('../../../serve/serve-registry.js', () => ({
   getServeHub: vi.fn(),
 }));
@@ -60,22 +62,23 @@ import { handleWait } from '../../../loop/states/await.js';
 import { AgentState } from '../../../loop/state-machine.js';
 import { agentIO } from '../../../loop/agent-io.js';
 import { getServeHub } from '../../../serve/serve-registry.js';
+import { getSteeringManager } from '../../../loop/steering-manager.js';
 import { createTurnVars, createChatData, createMockMachineEnv } from '../esc-test-helpers.js';
 
 describe('AWAIT re-entry on a lingering steering note (post-停止 tight loop)', () => {
   let hub: {
     isRunning: ReturnType<typeof vi.fn>;
-    getSteeringNotes: ReturnType<typeof vi.fn>;
-    drainSteering: ReturnType<typeof vi.fn>;
   };
 
   beforeEach(() => {
     vi.clearAllMocks();
     agentIO.setNeglectedMode(false);
+    // AWAIT's steering detection now reads the REAL manager singleton
+    // (ctx.team.awaitTeammates → getSteeringManager().isNonEmpty()), so the
+    // "lingering note" scenario is seeded there and wiped between tests.
+    getSteeringManager().clear();
     hub = {
       isRunning: vi.fn(() => true),
-      getSteeringNotes: vi.fn(() => []),
-      drainSteering: vi.fn(() => []),
     };
     vi.mocked(getServeHub).mockReturnValue(hub as never);
   });
@@ -83,7 +86,7 @@ describe('AWAIT re-entry on a lingering steering note (post-停止 tight loop)',
   it('AWAIT immediately re-wakes on a lingering steering note (the tight-loop trigger)', async () => {
     // A steering note is still in the queue (arrived during the hint round,
     // never drained after 停止).
-    hub.getSteeringNotes.mockReturnValue(['stale note']);
+    getSteeringManager().addNote('stale note');
 
     const env = createMockMachineEnv({ triologue: {} as never });
     const turn = createTurnVars();

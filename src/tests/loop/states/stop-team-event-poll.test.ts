@@ -85,12 +85,12 @@ vi.mock('../../../loop/triologue.js', () => {
 });
 
 // serve-registry is no longer imported by stop.ts (the steering check moved
-// into awaitTeammates). The mock remains harmless but is not exercised here.
+// into awaitTeammates). The mock remains harmless but is not exercised here;
+// the old getSteeringNotes/drainSteering stub entries were pruned when those
+// dead hub facades were removed (hub keeps pushSteer/resolveSteering only).
 vi.mock('../../../serve/serve-registry.js', () => ({
   getServeHub: vi.fn(() => ({
     isRunning: vi.fn(() => false),
-    getSteeringNotes: vi.fn(() => []),
-    drainSteering: vi.fn(() => []),
   })),
 }));
 

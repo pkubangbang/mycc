@@ -78,13 +78,13 @@ vi.mock('../../../loop/state-machine.js', () => ({
 }));
 
 // serve-registry.js: a controllable hub that reports running and returns one
-// uploaded image from drainFileUploads().
+// uploaded image from drainFileUploads(). getSteeringNotes/drainSteering stub
+// entries were pruned — those hub facades no longer exist (loop reads the
+// manager directly; hub keeps pushSteer/resolveSteering only).
 const { drainFileUploads } = vi.hoisted(() => ({ drainFileUploads: vi.fn() }));
 vi.mock('../../../serve/serve-registry.js', () => ({
   getServeHub: vi.fn(() => ({
     isRunning: vi.fn(() => true),
-    getSteeringNotes: vi.fn(() => []),
-    drainSteering: vi.fn(),
     drainFileUploads,
   })),
 }));
@@ -109,13 +109,25 @@ vi.mock('../../../loop/states/slash.js', () => ({
   setSlashQuery: vi.fn(),
 }));
 
-// esc-wrap-up.js: controllable evaluateWrapUp / clearWrapUp. The real rollback
-// behavior lives in Triologue, so only these two are stubbed.
-const { evaluateWrapUp } = vi.hoisted(() => ({ evaluateWrapUp: vi.fn() }));
+// esc-wrap-up.js: stubbed for any transitive importers; the real LLM
+// orchestration is irrelevant to this test.
 vi.mock('../../../loop/esc-wrap-up.js', () => ({
-  evaluateWrapUp,
+  evaluateWrapUp: vi.fn(),
   clearWrapUp: vi.fn(),
 }));
+
+// wrap-up-state.js: since the wrap-up-state extraction (steering-manager
+// refactor step #3), prompt.ts resolves the wrap-up through THIS module, not
+// esc-wrap-up, so the commit/rollback policy seam must be controllable here.
+// Spread the real module (real clearWrapUp/beginWrapUpState stay live) and
+// override only evaluateWrapUp — its decision mirrors completion timing
+// (+3s grace period), and faking that clock would need vi.useFakeTimers.
+
+const { evaluateWrapUp } = vi.hoisted(() => ({ evaluateWrapUp: vi.fn() }));
+vi.mock('../../../loop/wrap-up-state.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../../loop/wrap-up-state.js')>();
+  return { ...actual, evaluateWrapUp };
+});
 
 // (extractKeywords was folded into SkillSuggester as a private method, so
 // there is no standalone keyword-extractor module to stub here anymore.)

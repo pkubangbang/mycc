@@ -23,7 +23,7 @@ import { IpcRegistry } from '../ipc-registry.js';
 import { readSession, writeSession, getSessionId } from '../../session/index.js';
 import { agentIO } from '../../loop/agent-io.js';
 import { stopSpinner } from '../../engine/chat-helpers.js';
-import { getServeHub } from '../../serve/serve-registry.js';
+import { getSteeringManager } from '../../loop/steering-manager.js';
 
 // Project root for resolving paths
 const PROJECT_ROOT = getProjectRoot();
@@ -490,10 +490,13 @@ export class TeamManager implements TeamModule {
 
       // WebUI steering note queued by the user (mid-task direction). PEEK
       // only (non-consuming) — the drain happens downstream in COLLECT's 2c
-      // block, keeping a single consumption point.
-      if (accepts('steering')
-        && getServeHub().isRunning()
-        && getServeHub().getSteeringNotes().length > 0) {
+      // block, keeping a single consumption point. Peek reads the loop-homed
+      // manager (plan §6 — hub steering methods would side-effect-instantiate
+      // a hub in non-serve runs, Δ3); getSteeringManager() is always safe to
+      // call and the empty queue is a natural no-flag, so the old
+      // isRunning() guard is unnecessary. FLAG ONLY — this path must never
+      // submit input or drain.
+      if (accepts('steering') && getSteeringManager().isNonEmpty()) {
         return 'steering';
       }
 

@@ -17,6 +17,7 @@ import { isTransientError } from '../../engine/chat-helpers.js';
 import { hintSuggester } from './collect-hint.js';
 import { skillSuggester } from './collect-skill.js';
 import { listWorktrees } from '../../context/worktree-store.js';
+import { getSteeringManager } from '../steering-manager.js';
 import { getServeHub } from '../../serve/serve-registry.js';
 import { resolveHeadlessFirstQuery } from '../../session/index.js';
 import * as fs from 'fs';
@@ -221,20 +222,29 @@ async function collectMailsAndInput(env: MachineEnv): Promise<{ firstSteerNote: 
     triologue.note('SYSTEM', teamStatus);
   }
 
-  // 2c. Drain steering queue (webui-only): if serve is running, consume any
-  //     steering notes the user queued during this run and inject them as a
-  //     REMINDER note. Unlike the PROMPT synthesis path (which merges stale
-  //     notes with a fresh query after an interrupt), this is the in-flight
-  //     path: the LLM reached COLLECT mid-run with notes still queued, so
-  //     they are current direction for the ongoing work and injected as-is.
-  //     Reuses the REMINDER NoteCategory — no new category needed.
+  // 2c. Drain steering queue (webui-originated): consume any steering notes
+  //     the user queued during this run and inject them as a REMINDER note.
+  //     Unlike the PROMPT synthesis path (which merges stale notes with a
+  //     fresh query after an interrupt), this is the in-flight path: the LLM
+  //     reached COLLECT mid-run with notes still queued, so they are current
+  //     direction for the ongoing work and injected as-is. Reuses the
+  //     REMINDER NoteCategory — no new category needed.
+  //     Reads go through the loop-homed manager (plan §6 — hub steering
+  //     methods would side-effect-instantiate a hub in non-serve runs, Δ3),
+  //     and the old getServeHub().isRunning() guard is DROPPED: the empty
+  //     manager is a natural no-op since only the hub writes, so a non-serve
+  //     drain is free. The steer-flush broadcast still rides the hub (already
+  //     imported for file uploads) and only fires when something drained, so
+  //     nothing is emitted on the no-op path in terminal sessions.
   let firstSteerNote: string | null = null;
-  if (getServeHub().isRunning()) {
-    const steerNotes = getServeHub().drainSteering();
-    if (steerNotes.length > 0) {
+  {
+    const drainedNotes = getSteeringManager().drainNotes();
+    if (drainedNotes.length > 0) {
+      const steerNotes = drainedNotes.map((n) => n.text);
       const steerContent = steerNotes.map((n, i) => `(${i + 1}) ${n}`).join('\n');
       triologue.note('REMINDER', `Steering notes from the user (mid-task direction):\n${steerContent}`);
       agentIO.verbose('steer', `Drained ${steerNotes.length} steering note(s) at COLLECT`);
+      getServeHub().broadcast('steer-flush', '');
       // Mid-task user direction is a user intervention — reset the autofly
       // streak so the LLM stages that follow aren't counted as "consecutive
       // successful since last user input". An empty drain (no notes) is NOT

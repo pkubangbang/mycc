@@ -7,7 +7,7 @@ import type { BgModule, BgTask, BgWaitResult, CoreModule } from '../../types.js'
 import { getShellInfo } from '../../utils/shell-detect.js';
 import { filterCliXml, PS51_LAYER2_PATCH } from '../../loop/agent-exec.js';
 import { agentIO } from '../../loop/agent-io.js';
-import { getServeHub } from '../../serve/serve-registry.js';
+import { getSteeringManager } from '../../loop/steering-manager.js';
 import { armExitDrain, type ExitDrain } from '../../utils/exit-drain.js';
 
 /** Maximum accumulated output per task (100 KB). Older output is trimmed. */
@@ -359,9 +359,12 @@ export class BackgroundTasks implements BgModule {
       while (!interrupted && !steered) {
         // WebUI steering note queued by the user (mid-task direction). PEEK
         // only (non-consuming) — the drain stays downstream in COLLECT's 2c
-        // block, keeping a single consumption point. Guarded by isRunning() so
-        // a non-serve session (no WebUI) never blocks.
-        if (getServeHub().isRunning() && getServeHub().getSteeringNotes().length > 0) {
+        // block, keeping a single consumption point. Peek reads the loop-homed
+        // manager (plan §6 — hub steering methods would side-effect-instantiate
+        // a hub in non-serve runs, Δ3); the empty queue is a natural no-flag,
+        // so the old isRunning() gate is unnecessary. FLAG ONLY — must never
+        // submit input or drain.
+        if (getSteeringManager().isNonEmpty()) {
           steered = true;
           break;
         }
@@ -413,7 +416,9 @@ export class BackgroundTasks implements BgModule {
 
     if (steered) {
       // Return the peeked notes WITHOUT consuming them (COLLECT drains next).
-      return { reason: 'steering', notes: getServeHub().getSteeringNotes() };
+      // Peek reads the loop-homed manager (plan §6, Δ3) — payload shape
+      // (steering texts) unchanged for the bg_await tool's formatting.
+      return { reason: 'steering', notes: getSteeringManager().peekTexts() };
     }
 
     // Timeout: if a specific pid was requested and the task HAS finished (but

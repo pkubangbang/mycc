@@ -28,15 +28,15 @@ vi.mock('../../loop/agent-io.js', () => ({
   },
 }));
 
-// Mock the serve hub so getServeHub().isRunning()/getSteeringNotes() are
-// controllable (mirrors await-steering-reentry.test.ts).
-vi.mock('../../serve/serve-registry.js', () => ({
-  getServeHub: vi.fn(),
-}));
+// The bg module's wait loop no longer touches the serve hub at all — it peeks
+// the loop-homed steering manager (src/loop/steering-manager.ts) directly, so
+// the earlier serve-registry mock is obsolete. These tests drive the REAL
+// manager singleton (L1 rule: steering tests use the real manager, no mocks);
+// the addNote/clear pair seeds and resets the queue per test.
 
 // --- Imports after mocks ----------------------------------------------------
 import { BackgroundTasks } from '../../context/shared/bg.js';
-import { getServeHub } from '../../serve/serve-registry.js';
+import { getSteeringManager } from '../../loop/steering-manager.js';
 import { agentIO } from '../../loop/agent-io.js';
 import type { CoreModule } from '../../types.js';
 
@@ -54,29 +54,20 @@ function makeBg(tasks: Map<number, { pid: number; command: string; status: strin
 }
 
 describe('bg module waitForTasks — WebUI steering note breaks the wait', () => {
-  let hub: {
-    isRunning: ReturnType<typeof vi.fn>;
-    getSteeringNotes: ReturnType<typeof vi.fn>;
-  };
-
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(agentIO.isMainProcess).mockReturnValue(true);
-    hub = {
-      isRunning: vi.fn(() => true),
-      getSteeringNotes: vi.fn(() => []),
-    };
-    vi.mocked(getServeHub).mockReturnValue(hub as never);
   });
 
   afterEach(() => {
+    getSteeringManager().clear();
     vi.useRealTimers();
   });
 
   it('returns early (without consuming) when a steering note is queued', async () => {
     // A task that never completes: without the steering peek the wait would
     // run to timeout. With the fix, the queued note breaks the loop at once.
-    hub.getSteeringNotes.mockReturnValue(['please stop and do X']);
+    getSteeringManager().addNote('please stop and do X');
     const tasks = new Map([[7, { pid: 7, command: 'sleep', status: 'running' }]]);
     const bg = makeBg(tasks);
 
@@ -84,17 +75,15 @@ describe('bg module waitForTasks — WebUI steering note breaks the wait', () =>
 
     expect(result.reason).toBe('steering');
     expect(result.notes).toEqual(['please stop and do X']);
-    // Peek only — the drain point must remain COLLECT, so getSteeringNotes is
-    // called but nothing consumes the queue here.
-    expect(hub.getSteeringNotes).toHaveBeenCalled();
+    // Peek only — the drain point must remain COLLECT, so the note is still
+    // queued after the wait returns.
+    expect(getSteeringManager().peekTexts()).toEqual(['please stop and do X']);
   });
 
-  it('steering peek is inert when serve is not running', async () => {
-    hub.isRunning.mockReturnValue(false);
-    // If getSteeringNotes were (wrongly) consulted despite serve being off,
-    // this note would break the wait. Assert it does NOT.
-    hub.getSteeringNotes.mockReturnValue(['should be ignored']);
-
+  it('steering peek is inert when the queue is empty', async () => {
+    // The old isRunning() guard is gone (plan §6): an empty manager is a
+    // natural no-flag, so a non-serve session never breaks the wait via
+    // steering. With an empty queue the wait proceeds to the task path.
     // Task completes immediately on the first poll.
     const tasks = new Map([[8, { pid: 8, command: 'echo', status: 'completed', output: 'done!' }]]);
     const bg = makeBg(tasks);
@@ -103,8 +92,6 @@ describe('bg module waitForTasks — WebUI steering note breaks the wait', () =>
 
     expect(result.reason).toBe('completed');
     expect(result.output).toBe('done!');
-    // serve is off → the steering queue is not even peeked.
-    expect(hub.getSteeringNotes).not.toHaveBeenCalled();
   });
 
   it('reports completed for all-tasks when none are running', async () => {

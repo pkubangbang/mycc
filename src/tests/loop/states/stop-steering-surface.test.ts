@@ -9,15 +9,23 @@
  *   3. BEFORE the fix: stop.ts called drainSteering() → broadcast steer-flush
  *      → frontend cleared steeringBuffer BEFORE the subsequent 'prompt'
  *      broadcast could read it → no review card → notes lost.
- *   4. AFTER the fix: stop.ts does NOT call drainSteering() → notes stay in
- *      both the backend queue and frontend buffer → when PROMPT is reached,
- *      the frontend's prompt handler moves steeringBuffer into
+ *   4. AFTER the fix: stop.ts does NOT drain/peek the steering queue → notes
+ *      stay in the manager + frontend buffer → when PROMPT is reached, the
+ *      frontend's prompt handler moves steeringBuffer into
  *      pendingSteeringReview → review card surfaces.
  *
- * This test drives the REAL handleStop with a mocked serve hub and asserts:
+ * The old assertions spied on the hub's drainSteering/getSteeringNotes
+ * facades; those facades were DELETED (loop consumers read the loop-homed
+ * manager directly — plan §6/Δ3, hub keeps pushSteer/resolveSteering only),
+ * so the same guarantees are now pinned against the REAL manager singleton:
+ * spy drainNotes/peek* to prove STOP never touches the queue, and assert the
+ * notes are still queued afterwards.
+ *
+ * This test drives the REAL handleStop with the real steering manager and
+ * asserts:
  *   - handleStop returns PROMPT (not stuck in a loop)
- *   - drainSteering is NOT called (the fix)
- *   - getSteeringNotes is NOT called (no peek/drain at STOP)
+ *   - manager.drainNotes() is NOT called (the fix)
+ *   - manager peek/drain are NOT called (no peek/drain at STOP)
  *   - The notes remain in the queue for the frontend review card path
  *
  * The frontend side (buffer → pendingSteeringReview at prompt) is covered by
@@ -67,10 +75,9 @@ vi.mock('../../../engine/chat-helpers.js', () => ({
   stopSpinner: vi.fn(),
 }));
 
-// Mock the serve hub so we can assert drainSteering is NOT called and
-// getSteeringNotes is NOT called. The serve-registry import is still needed
-// because stop.ts's normal-mode branch (awaitTeammates) may reference it
-// indirectly via ctx.team — but the neglection path no longer calls it.
+// serve-registry: getServeHub stays mocked (stop.ts's normal-mode branch may
+// reach it via ctx.team.awaitTeammates wiring), but the steering guarantees
+// here are asserted on the REAL manager — the hub mocking is incidental.
 vi.mock('../../../serve/serve-registry.js', () => ({
   getServeHub: vi.fn(),
 }));
@@ -94,34 +101,27 @@ import { handleStop } from '../../../loop/states/stop.js';
 import { AgentState } from '../../../loop/state-machine.js';
 import { agentIO } from '../../../loop/agent-io.js';
 import { startWrapUp } from '../../../loop/esc-wrap-up.js';
-import { getServeHub } from '../../../serve/serve-registry.js';
+import { getSteeringManager } from '../../../loop/steering-manager.js';
 import { autoState } from '../../../loop/auto-state.js';
 import { Triologue } from '../../../loop/triologue.js';
 import { createTurnVars, createChatData, createMockMachineEnv } from '../esc-test-helpers.js';
 
 describe('handleStop — steering notes surface as review cards after ESC (not drained)', () => {
   let triologue: Triologue;
-  let hub: {
-    isRunning: ReturnType<typeof vi.fn>;
-    getSteeringNotes: ReturnType<typeof vi.fn>;
-    drainSteering: ReturnType<typeof vi.fn>;
-  };
 
   beforeEach(() => {
     vi.clearAllMocks();
     agentIO.setNeglectedMode(false);
     triologue = new Triologue();
-    // The serve hub is running with notes queued — the scenario where the
-    // bug manifested. drainSteering is a spy so we can assert it's NOT called.
-    hub = {
-      isRunning: vi.fn(() => true),
-      getSteeringNotes: vi.fn(() => ['queued note A', 'queued note B']),
-      drainSteering: vi.fn(() => []),
-    };
-    vi.mocked(getServeHub).mockReturnValue(hub as never);
+    // The scenario where the bug manifested: notes queued while the agent was
+    // working. Seeded in the REAL manager singleton (the hub no longer holds
+    // a queue); wiped here so prior tests cannot leak notes in.
+    getSteeringManager().clear();
+    getSteeringManager().addNote('queued note A');
+    getSteeringManager().addNote('queued note B');
   });
 
-  it('does NOT call drainSteering on ESC mid-execution (notes stay for review card)', async () => {
+  it('does NOT drain steering on ESC mid-execution (notes stay for review card)', async () => {
     const env = createMockMachineEnv({ triologue });
     const turn = createTurnVars();
     const chat = createChatData();
@@ -131,16 +131,18 @@ describe('handleStop — steering notes surface as review cards after ESC (not d
     // Last role is 'tool' (ESC during TOOL/hint — not 'assistant').
     vi.mocked(triologue.getLastRole).mockReturnValue('tool');
 
+    const drainSpy = vi.spyOn(getSteeringManager(), 'drainNotes');
     const result = await handleStop(env, turn, chat);
+    drainSpy.mockRestore();
 
     // STOP returns PROMPT (the loop reaches the prompt for user input).
     expect(result).toBe(AgentState.PROMPT);
-    // THE FIX: drainSteering is NOT called. Notes stay in the backend queue
-    // so the frontend's prompt handler can surface them as a review card.
-    expect(hub.drainSteering).not.toHaveBeenCalled();
+    // THE FIX: the queue was never drained. Notes stay in the manager so the
+    // frontend's prompt handler can surface them as a review card.
+    expect(drainSpy).not.toHaveBeenCalled();
   });
 
-  it('does NOT call drainSteering on ESC text-only path (notes stay for review card)', async () => {
+  it('does NOT drain steering on ESC text-only path (notes stay for review card)', async () => {
     const env = createMockMachineEnv({ triologue });
     const turn = createTurnVars();
     const chat = createChatData();
@@ -149,29 +151,43 @@ describe('handleStop — steering notes surface as review cards after ESC (not d
     agentIO.setNeglectedMode(true);
     vi.mocked(triologue.getLastRole).mockReturnValue('assistant');
 
+    const drainSpy = vi.spyOn(getSteeringManager(), 'drainNotes');
     const result = await handleStop(env, turn, chat);
+    drainSpy.mockRestore();
 
     expect(result).toBe(AgentState.PROMPT);
-    // THE FIX: drainSteering is NOT called on either neglection path.
-    expect(hub.drainSteering).not.toHaveBeenCalled();
+    // THE FIX: no drain on either neglection path.
+    expect(drainSpy).not.toHaveBeenCalled();
   });
 
-  it('does NOT call getSteeringNotes at STOP (no peek/drain)', async () => {
+  it('does NOT peek or drain the steering queue at STOP (queue untouched)', async () => {
     const env = createMockMachineEnv({ triologue });
     const turn = createTurnVars();
     const chat = createChatData();
 
     agentIO.setNeglectedMode(true);
     vi.mocked(triologue.getLastRole).mockReturnValue('tool');
-
-    await handleStop(env, turn, chat);
 
     // STOP should not even peek at the steering queue — the notes are left
-    // entirely untouched for the frontend review card path.
-    expect(hub.getSteeringNotes).not.toHaveBeenCalled();
+    // entirely untouched for the frontend review card path. (isNonEmpty in
+    // awaitTeammates is the AWAIT/STOP normal-mode seam and is NOT exercised
+    // on the neglected path.)
+    const drainSpy = vi.spyOn(getSteeringManager(), 'drainNotes');
+    const peekTextsSpy = vi.spyOn(getSteeringManager(), 'peekTexts');
+    const peekNotesSpy = vi.spyOn(getSteeringManager(), 'peekNotes');
+    try {
+      await handleStop(env, turn, chat);
+      expect(drainSpy).not.toHaveBeenCalled();
+      expect(peekTextsSpy).not.toHaveBeenCalled();
+      expect(peekNotesSpy).not.toHaveBeenCalled();
+    } finally {
+      drainSpy.mockRestore();
+      peekTextsSpy.mockRestore();
+      peekNotesSpy.mockRestore();
+    }
   });
 
-  it('notes remain in the queue after ESC (drainSteering not called → queue intact)', async () => {
+  it('notes remain in the queue after ESC (no drain → queue intact)', async () => {
     const env = createMockMachineEnv({ triologue });
     const turn = createTurnVars();
     const chat = createChatData();
@@ -181,14 +197,12 @@ describe('handleStop — steering notes surface as review cards after ESC (not d
 
     await handleStop(env, turn, chat);
 
-    // The queue was never drained — drainSteering was not called (the fix).
-    // This is the structural guarantee that notes remain available for the
-    // frontend prompt handler to move into pendingSteeringReview when the
-    // 'prompt' broadcast arrives. The frontend side is covered by
-    // message-dispatch.test.ts and the chaos-monkey harness.
-    expect(hub.drainSteering).not.toHaveBeenCalled();
-    // getSteeringNotes was also not called (no peek at STOP).
-    expect(hub.getSteeringNotes).not.toHaveBeenCalled();
+    // The queue was never consumed — this is the structural guarantee that
+    // notes remain available for the frontend prompt handler to move into
+    // pendingSteeringReview when the 'prompt' broadcast arrives. The frontend
+    // side is covered by message-dispatch.test.ts and the chaos-monkey harness.
+    const notes = getSteeringManager().peekNotes();
+    expect(notes.map((n) => n.text)).toEqual(['queued note A', 'queued note B']);
   });
 
   it('still turns off auto mode and starts wrap-up (fix does not break wrap-up)', async () => {

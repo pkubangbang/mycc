@@ -227,13 +227,73 @@ describe('applyServerMessage — phase transitions', () => {
   });
 
 
-  it('default branch transitions prompt → working on agent output', () => {
+  it('manual mode: result-at-prompt does NOT flip to working (C5/A3 no-flip guard)', () => {
     const state = makeState();
     const ctx = makeCtx();
     applyServerMessage(state, { type: 'prompt', content: '' }, ctx);
     expect(state.phase).toBe('prompt');
-    // A non-control message (result) means the agent resumed → working.
+    // The wrap-up letterbox broadcasts 'result' AFTER the prompt broadcast —
+    // the old default branch flipped prompt → working, killing the send
+    // button and stranding the parked-prompt turn (vacuum working). Manual
+    // mode + phase !== working/submitted: display-only, NO phase flip.
     applyServerMessage(state, { type: 'result', content: 'done' }, ctx);
+    expect(state.phase).toBe('prompt');
+    // The message itself still lands in the chat log (visual parity).
+    expect(state.messages.some((m) => m.type === 'result' && m.content === 'done')).toBe(true);
+  });
+
+  it('manual mode: result-at-card does NOT flip to working (no-flip guard)', () => {
+    const state = makeState();
+    const ctx = makeCtx();
+    applyServerMessage(state, { type: 'card', content: 'Pick one', cardId: 'c1', kind: 'confirm', options: [] }, ctx);
+    expect(state.phase).toBe('card');
+    applyServerMessage(state, { type: 'result', content: 'straggler' }, ctx);
+    expect(state.phase).toBe('card');
+  });
+
+  it('auto mode: result-at-redirect still flips to working (flip preserved)', () => {
+    const state = makeState();
+    const ctx = makeCtx();
+    // Simulate the auto-mode parked prompt that immediately redirects to
+    // AWAIT: chatApi latches submitted... actually the parked prompt phase in
+    // auto mode comes from prompt.ts returning AWAIT — the frontend sees
+    // prompt then auto:on which redirects prompt → await (existing rule).
+    applyServerMessage(state, { type: 'prompt', content: '' }, ctx);
+    expect(state.phase).toBe('prompt');
+    applyServerMessage(state, { type: 'auto', content: 'on' }, ctx);
+    expect(state.phase).toBe('await');
+    // Auto mode: the agent is autonomous; a result proves the next stage is
+    // running. From 'await' the pre-existing default branch never flipped
+    // (only prompt/card flip) — 'await' is the agent-active resting phase in
+    // auto mode, and running:on will repaint it to working when the next LLM
+    // stage starts. Assert the PRESERVED semantics: no flip from await, and
+    // a subsequent running:on does repaint.
+    applyServerMessage(state, { type: 'result', content: 'done' }, ctx);
+    expect(state.phase).toBe('await');
+    applyServerMessage(state, { type: 'running', content: 'on' }, ctx);
+    expect(state.phase).toBe('working');
+  });
+
+  it('working phase: result keeps working (flip preserved)', () => {
+    const state = makeState();
+    const ctx = makeCtx();
+    applyServerMessage(state, { type: 'running', content: 'on' }, ctx);
+    expect(state.phase).toBe('working');
+    applyServerMessage(state, { type: 'result', content: 'chunk' }, ctx);
+    expect(state.phase).toBe('working');
+  });
+
+  it('submitted phase: result does NOT flip (submitted is the optimistic latch)', () => {
+    const state = makeState();
+    const ctx = makeCtx();
+    // Simulate the optimistic submitted latch (chatApi.sendInput sets it).
+    state.setPhase('submitted');
+    applyServerMessage(state, { type: 'result', content: 'chunk' }, ctx);
+    // 'submitted' was never a flip source in the default branch (only
+    // prompt/card flipped) — the latch resolves via the subsequent
+    // running:on (→ working) or prompt broadcast, unchanged.
+    expect(state.phase).toBe('submitted');
+    applyServerMessage(state, { type: 'running', content: 'on' }, ctx);
     expect(state.phase).toBe('working');
   });
 

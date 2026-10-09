@@ -62,25 +62,31 @@ vi.mock('../../serve/serve-registry.js', () => {
   // and the neglection path consult; the other methods agentIO.initMain() and
   // the existing tests touch (setAutoStateProvider, isInputBlocked,
   // gracefulShutdown) are stubbed as no-ops so `new Core()` → initMain() does
-  // not crash. The real ServeHub.getInstance() would try to bind a server
-  // port, so we do NOT importOriginal here — a hand-rolled stub is safer and
-  // keeps the test hermetic.
+  // not crash. `onWrapUpSettled` is the A1 wake seam — called in esc-wrap-up's
+  // promise settle paths (gated on isRunning()); the stub records nothing (the
+  // steering queue is manager-owned and irrelevant here). The real
+  // ServeHub.getInstance() would try to bind a server port, so we do NOT
+  // importOriginal here — a hand-rolled stub is safer and keeps the test
+  // hermetic.
   const hub = {
     isRunning: () => serveRunning,
     setAutoStateProvider: () => {},
     isInputBlocked: () => false,
     gracefulShutdown: () => Promise.resolve(),
+    onWrapUpSettled: () => {},
   };
   return { getServeHub: () => hub };
 });
 
 // Imports AFTER mocks so esc-wrap-up picks up the stubbed dependencies.
+// (startWrapUp/tryDisplayWrapUp = orchestration, stays on esc-wrap-up;
+// hasPendingWrapUp/clearWrapUp = state, moved to wrap-up-state per A5.)
+import { startWrapUp, tryDisplayWrapUp } from '../../loop/esc-wrap-up.js';
 import {
-  startWrapUp,
-  tryDisplayWrapUp,
   hasPendingWrapUp,
   clearWrapUp,
-} from '../../loop/esc-wrap-up.js';
+  getWrapUpState,
+} from '../../loop/wrap-up-state.js';
 import { setResultCallback } from '../../utils/letter-box.js';
 import type { Triologue } from '../../loop/triologue.js';
 
@@ -275,7 +281,7 @@ describe('SERVE wrap-up delivery (WebUI 停止 hang regression)', () => {
     serveRunning = false;
     const triologue = makeStubTriologue();
     startWrapUp(triologue);
-    const state = (await import('../../loop/esc-wrap-up.js')).getWrapUpState();
+    const state = getWrapUpState();
     await state.promise;
     // Give the completion .then microtask a tick — with serveRunning=false it
     // must NOT have delivered or marked shown.
@@ -314,7 +320,7 @@ describe('SERVE wrap-up delivery (WebUI 停止 hang regression)', () => {
     // that point the SERVE branch in the completion handler fires
     // displayLetterBox on its own, with NO ask()/LineEditor in scope. This is
     // the robust site: it does not depend on a later prompt-cycle call.
-    const state = (await import('../../loop/esc-wrap-up.js')).getWrapUpState();
+    const state = getWrapUpState();
     await state.promise;
     // Give the .then microtask a tick to run displayLetterBox.
     await new Promise((resolve) => setImmediate(resolve));
@@ -333,7 +339,7 @@ describe('SERVE wrap-up delivery (WebUI 停止 hang regression)', () => {
     serveRunning = false;
     const triologue = makeStubTriologue();
     startWrapUp(triologue);
-    const state = (await import('../../loop/esc-wrap-up.js')).getWrapUpState();
+    const state = getWrapUpState();
     await state.promise;
     // Give the .then microtask a tick — with serveRunning=false, the
     // completion handler does NOT call displayLetterBox (terminal path owns

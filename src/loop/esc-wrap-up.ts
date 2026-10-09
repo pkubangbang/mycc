@@ -33,38 +33,21 @@ import type { LineEditor } from '../utils/line-editor.js';
 import { retryChat, MODEL } from '../engine/chat-provider.js';
 import { getApiProvider } from '../config.js';
 import { getServeHub } from '../serve/serve-registry.js';
+import {
+  beginWrapUpState,
+  settleWrapUp,
+  getWrapUpState,
+  hasPendingWrapUp,
+  markWrapUpShown,
+} from './wrap-up-state.js';
 import type { Tool } from 'ollama';
-
-/**
- * WrapUpState - Tracks the state of background wrap-up after ESC
- */
-interface WrapUpState {
-  /** Promise that resolves when wrap-up LLM call completes */
-  promise: Promise<string> | null;
-  /** Content from the wrap-up response (set when complete) */
-  content: string | null;
-  /** Timestamp when wrap-up completed (ms since epoch) */
-  completedAt: number | null;
-  /** Whether the wrap-up content has been shown to user */
-  shown: boolean;
-  /** The triologue to inject messages into when wrap-up completes */
-  triologue: Triologue | null;
-}
-
-/**
- * Grace period for wrap-up append (ms)
- * If user submits within this time after wrap-up shows, wrap-up is discarded
- */
-const WRAP_UP_GRACE_PERIOD_MS = 3000;
-
-// Singleton wrap-up state
-let wrapUpState: WrapUpState = {
-  promise: null,
-  content: null,
-  completedAt: null,
-  shown: false,
-  triologue: null,
-};
+// NOTE: The wrap-up LIFECYCLE STATE (the `wrapUpState` singleton, its accessors
+// getWrapUpState/hasPendingWrapUp/markWrapUpShown/clearWrapUp, the
+// WRAP_UP_GRACE_PERIOD_MS constant and the pure evaluateWrapUp() policy) now
+// lives in src/loop/wrap-up-state.ts (review gate A5 facet separation + import-
+// cycle avoidance). This file keeps only the LLM orchestration below. Do NOT
+// re-export the moved symbols from here — importers point at wrap-up-state.js
+// directly.
 
 /**
  * Run the wrap-up LLM call.
@@ -117,18 +100,17 @@ export function startWrapUp(triologue: Triologue, tools?: Tool[]): void {
   triologue.beginWrapUp();
 
   const promise = runWrapUpLLM(triologue, tools);
-  wrapUpState = {
-    promise,
-    content: null,
-    completedAt: null,
-    shown: false,
-    triologue,
-  };
+  // Attach the fresh in-flight capsule in wrap-up-state.ts (A5: state lives
+  // there, orchestration here). Object replacement keeps .then stale-guards
+  // working exactly as before a restart of the window.
+  beginWrapUpState(promise, triologue);
 
   promise.then((content) => {
-    if (wrapUpState.promise !== promise) return;
-    wrapUpState.content = content;
-    wrapUpState.completedAt = Date.now();
+    // Stale-guard + settle are encapsulated in settleWrapUp(): only the live
+    // promise settles, and settling NULLS the promise so isWrapUpInFlight()
+    // goes false the moment the wrap-up LLM completes (review gate A1 — the
+    // hub's wake seam reads exactly this signal).
+    if (!settleWrapUp(promise, content)) return;
 
     if (content) {
       // Try to add agent response.
@@ -150,78 +132,32 @@ export function startWrapUp(triologue: Triologue, tools?: Tool[]): void {
         displayLetterBox(content);
       }
     }
+    // Wake seam (A1, plan §5 instant 3 of 3): the wrap-up window just CLOSED
+    // (settleWrapUp nulled the promise regardless of content). A steering
+    // note that arrived DURING the window was HELD by takeForDelivery at the
+    // write-point; deliver it now to the already-armed PROMPT wait. DIRECT
+    // gated hub call — no callback registration (binding constraint); the
+    // isRunning() gate keeps a settle racing a terminal stop() inert (the
+    // A2 fallback wipe owns the queue then). Safe on empty queue: no-op.
+    if (getServeHub().isRunning()) {
+      getServeHub().onWrapUpSettled();
+    }
   }).catch(() => {
-    if (wrapUpState.promise !== promise) return;
-    wrapUpState.content = '';
-    wrapUpState.completedAt = Date.now();
+    // Failed wrap-up: record empty content + completion timestamp (rolled
+    // back by evaluateWrapUp), settling the window the same way. Settle
+    // FIRST — the WAKE seam must observe the window CLOSED (promise nulled),
+    // otherwise takeForDelivery still sees wrapUpInFlight=true and the flush
+    // no-ops, stranding a held note behind a wrap-up LLM that just errored.
+    settleWrapUp(promise, '');
+    // Wake seam (A1): same direct gated hub call as the success path. Fired
+    // even when settled===false (stale capsule): if a newer capsule is in
+    // flight its own then/catch owns the wake and takeForDelivery no-ops on
+    // wrapUpInFlight; if no newer capsule exists the window is genuinely
+    // closed and this is the only wake a pre-settle held note will get.
+    if (getServeHub().isRunning()) {
+      getServeHub().onWrapUpSettled();
+    }
   });
-}
-
-/**
- * Get current wrap-up state
- */
-export function getWrapUpState(): WrapUpState {
-  return wrapUpState;
-}
-
-/**
- * Check if wrap-up has completed and not yet shown
- */
-export function hasPendingWrapUp(): boolean {
-  return wrapUpState.content !== null && wrapUpState.content !== '' && !wrapUpState.shown;
-}
-
-/**
- * Mark wrap-up as shown
- */
-export function markWrapUpShown(): void {
-  wrapUpState.shown = true;
-}
-
-/**
- * Clear wrap-up state (discard without showing)
- */
-export function clearWrapUp(): void {
-  wrapUpState = {
-    promise: null,
-    content: null,
-    completedAt: null,
-    shown: false,
-    triologue: null,
-  };
-}
-
-/**
- * Check if the wrap-up is ready (completed with content) and past the grace period.
- * If yes, returns 'commit' — caller should call commitWrapUp() on the triologue.
- * If no, returns 'rollback' — caller should call rollbackWrapUp() on the triologue.
- * Note: After calling commitWrapUp() or rollbackWrapUp(), caller should also
- * call clearWrapUp() to reset the wrap-up state.
- */
-export function evaluateWrapUp(): 'commit' | 'rollback' {
-  const { completedAt, shown, content } = wrapUpState;
-
-  // No wrap-up content, empty (failed), or already shown - rollback
-  if (!content || shown) {
-    return 'rollback';
-  }
-
-  // Wrap-up not yet completed - rollback (user submitted before wrap-up)
-  if (completedAt === null) {
-    return 'rollback';
-  }
-
-  // Check if within grace period (3s after wrap-up shows)
-  const now = Date.now();
-  const timeSinceCompletion = now - completedAt;
-
-  // If more than 3s since completion, commit the wrap-up
-  if (timeSinceCompletion >= WRAP_UP_GRACE_PERIOD_MS) {
-    return 'commit';
-  }
-
-  // Within grace period - rollback
-  return 'rollback';
 }
 
 /**
@@ -251,7 +187,7 @@ export function displayWrapUp(content: string): void {
  */
 export function tryDisplayWrapUp(editor: LineEditor | null): boolean {
   if (!hasPendingWrapUp()) return false;
-  const { content } = wrapUpState;
+  const { content } = getWrapUpState();
   if (!content || !content.trim()) return false;
   // SERVE mode: no LineEditor, but the WebUI is reachable via displayLetterBox's
   // resultCallback (wired in src/serve/activate.ts). Deliver directly.

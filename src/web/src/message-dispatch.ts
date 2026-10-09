@@ -255,12 +255,22 @@ export function applyServerMessage(
   // transition is handled in chatApi.sendCardResponse (store.setPhase('working')
   // before the WS send). The server never broadcasts `card-response` back.
 
-  // Any other message means the agent moved past the card/prompt — the agent
-  // is producing output, so it is working. (Mirrors the previous default
-  // branch that flipped isWaiting=false / hasPendingCard=false.) Route by the
-  // @-prefix label convention.
-  if (state.phase === 'prompt' || state.phase === 'card') {
-    state.setPhase('working');
+  // C5 fix (plan §7 / gate A3): the wrap-up letterbox path broadcasts 'result'
+  // while the frontend phase is 'prompt' (the wrap-up completes AFTER the
+  // prompt broadcast). The old default branch flipped prompt → working,
+  // killing the send button and stranding the parked-prompt turn ("vacuum
+  // working" stage row). In manual mode with phase !== 'working' a 'result'
+  // is either the wrap-up letterbox or a straggler from the just-finished
+  // turn — display-only: NO phase flip. Under auto mode (the agent is
+  // autonomous; a result means the next stage is running) and from
+  // working/submitted (genuine work output) the flip behavior is preserved.
+  const isWrapUpLetterboxResult = state.phase !== 'working'
+    && state.phase !== 'submitted'
+    && !state.isAutoMode;
+  if (!isWrapUpLetterboxResult) {
+    if (state.phase === 'prompt' || state.phase === 'card') {
+      state.setPhase('working');
+    }
   }
   // Synthetic messages (machine-originated briefs: hook engine, debug
   // evaluator, checkpoint bookkeeping) update the phase (a hook brief still

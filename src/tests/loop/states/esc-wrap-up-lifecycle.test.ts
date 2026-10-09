@@ -47,13 +47,15 @@ vi.mock('../../../loop/triologue.js', () => {
 });
 
 // --- Imports after mocks -----------------------------------------------------
+// NOTE: the wrap-up STATE singleton moved to loop/wrap-up-state.ts (A5 facet
+// separation) — state/policy imports point there; orchestration imports stay
+// on esc-wrap-up.ts.
+import { startWrapUp, displayWrapUp } from '../../../loop/esc-wrap-up.js';
 import {
-  startWrapUp,
   evaluateWrapUp,
   clearWrapUp,
   getWrapUpState,
-  displayWrapUp,
-} from '../../../loop/esc-wrap-up.js';
+} from '../../../loop/wrap-up-state.js';
 import { retryChat } from '../../../engine/chat-provider.js';
 import { displayLetterBox } from '../../../utils/letter-box.js';
 import { Triologue } from '../../../loop/triologue.js';

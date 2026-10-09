@@ -5,7 +5,7 @@
 import type { SlashCommand } from '../types.js';
 import chalk from 'chalk';
 import { Triologue } from '../loop/triologue.js';
-import { clearWrapUp } from '../loop/esc-wrap-up.js';
+import { clearWrapUp } from '../loop/wrap-up-state.js';
 import { skillSuggester, beginFreshSession } from '../loop/states/collect-skill.js';
 
 export const clearCommand: SlashCommand = {

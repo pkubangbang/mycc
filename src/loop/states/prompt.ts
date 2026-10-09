@@ -27,7 +27,8 @@ import { loader } from '../../context/shared/loader.js';
 import { openMultilineEditor } from '../../utils/multiline-input.js';
 import { resolveHeadlessFirstQuery } from '../../session/index.js';
 import { setSlashQuery } from './slash.js';
-import { evaluateWrapUp, clearWrapUp } from '../esc-wrap-up.js';
+import { evaluateWrapUp, clearWrapUp } from '../wrap-up-state.js';
+import { getSteeringManager } from '../steering-manager.js';
 import { isDebugAutofly } from '../../config.js';
 import { forkChat } from '../../engine/chat-provider.js';
 import type { RetryConfig } from '../../engine/chat-helpers.js';
@@ -367,17 +368,22 @@ export async function handlePrompt(
 
   clearWrapUp();
 
-  // Steering synthesis (webui-only): if serve is running and the user queued
-  // steering notes during the previous (now-interrupted) run, synthesize them
-  // with the fresh query via forkChat. This preserves informational value
-  // while dropping stale actionable direction. Only applies when the query
-  // came from the input provider (not slash/initial-query), since those paths
-  // represent restored/automated state, not a fresh post-interrupt submission.
-  // At this point query is guaranteed non-null (the input-provider loop sets
-  // it only after the null-check, and the slash/initial paths set non-null),
-  // so we narrow with a const binding for type safety inside the closure.
-  if (hub.isRunning() && query !== null) {
-    const staleNotes = hub.getSteeringNotes();
+  // Steering synthesis (webui-originated): if the user queued steering notes
+  // during the previous (now-interrupted) run, synthesize them with the fresh
+  // query via forkChat. This preserves informational value while dropping
+  // stale actionable direction. Only applies when the query came from the
+  // input provider (not slash/initial-query), since those paths represent
+  // restored/automated state, not a fresh post-interrupt submission. At this
+  // point query is guaranteed non-null (the input-provider loop sets it only
+  // after the null-check, and the slash/initial paths set non-null), so we
+  // narrow with a const binding for type safety inside the closure.
+  // Peek/drain go through the loop-homed manager (plan §6 — hub steering
+  // methods would side-effect-instantiate a hub in non-serve runs, Δ3). The
+  // old hub.isRunning() outer gate is dropped for the SAME reason as
+  // collect.ts 2c: an empty manager is a natural no-op. The steer-flush
+  // broadcast still rides the hub and only fires when something drained.
+  if (query !== null) {
+    const staleNotes = getSteeringManager().peekTexts();
     if (staleNotes.length > 0) {
       const freshQuery: string = query;
       const fullMessages = [...triologue.getMessages()];
@@ -389,8 +395,12 @@ export async function handlePrompt(
       query = synthesized;
       // Drain the steering queue regardless of synthesis success — the notes
       // were consumed by the synthesis attempt, so they must not linger for
-      // COLLECT to inject again (would double-count).
-      hub.drainSteering();
+      // COLLECT to inject again (would double-count). The steer-flush
+      // broadcast moves when the notes WERE synthesized+submitted elsewhere,
+      // but here the notes are folded into the fresh query text; the flush
+      // still clears the frontend buffer bars so the chips don't linger.
+      getSteeringManager().drainNotes();
+      getServeHub().broadcast('steer-flush', '');
       agentIO.verbose('steer', `Synthesized ${staleNotes.length} stale steering note(s) into fresh query`);
     }
 

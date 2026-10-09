@@ -13,6 +13,7 @@
 
 import type { InputProvider } from '../loop/input-provider.js';
 import { UserInputProvider } from '../loop/input-provider.js';
+import { getSteeringManager } from '../loop/steering-manager.js';
 import { ServeHub } from './serve-hub.js';
 import { agentIO } from '../loop/agent-io.js';
 import { tryDisplayWrapUp } from '../loop/esc-wrap-up.js';
@@ -48,7 +49,13 @@ export class WebInputProvider implements InputProvider {
       //     is piped), killing plain `mycc` with "Web UI unavailable and no
       //     terminal".
       if (shouldDaemon()) throw new ServeDetachedExitError();
-      // (0) Interactive terminal — today's behaviour, unchanged.
+      // (0) Interactive terminal — today's behaviour, unchanged. Terminal
+      // fallback site for the A2 wipe (plan §5): belt-and-suspenders — stop()
+      // already cleared the queue on every currently-reachable path here —
+      // but the fallback owns terminal-teardown symmetry with the post-abort
+      // branch below. The restart branch above returns BEFORE this line, so
+      // a 重启 cycle never wipes held notes.
+      getSteeringManager().clear();
       return this.userProvider.getInput(initialContent);
     }
 
@@ -81,6 +88,12 @@ export class WebInputProvider implements InputProvider {
       // session must use the terminal fallback even without a real TTY (the
       // Coordinator proxies keys via IPC).
       if (shouldDaemon()) throw new ServeDetachedExitError();
+      // Terminal fallback = the WAIT IS OVER for good: any steering note
+      // still held (e.g. behind a wrap-up window that will never wake into
+      // a live hub) must not linger — wipe the queue (A2, plan §5), mirroring
+      // stop()'s terminal-teardown wipe. The manager is loop-homed; reaching
+      // here means this hub will never deliver to the webui again.
+      getSteeringManager().clear();
       return this.userProvider.getInput(initialContent);
     }
     return result;

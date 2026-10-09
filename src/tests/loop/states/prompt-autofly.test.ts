@@ -92,11 +92,11 @@ vi.mock('../../../loop/state-machine.js', () => ({
 }));
 
 // serve-registry.js: hub stub — isRunning false so steering/file paths are skipped.
+// getSteeringNotes/drainSteering stub entries were pruned — those hub facades
+// no longer exist (loop reads the manager directly).
 vi.mock('../../../serve/serve-registry.js', () => ({
   getServeHub: vi.fn(() => ({
     isRunning: vi.fn(() => false),
-    getSteeringNotes: vi.fn(() => []),
-    drainSteering: vi.fn(),
     drainFileUploads: vi.fn(() => []),
   })),
 }));

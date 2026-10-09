@@ -77,19 +77,18 @@ vi.mock('../../../loop/keyword-extractor.js', () => ({
   extractKeywords: vi.fn().mockResolvedValue({ status: 'success', keywords: [], freeformQuery: '' }),
 }));
 
-// serve-registry: module-level state drives isRunning/drainSteering so the
-// steering-note path can be exercised. Defaults to NOT running (steering path
-// skipped) — tests flip `serveRunning` + queue `steeredNotes` as needed.
+// serve-registry: the hub is only touched for its NON-steering duties now —
+// isRunning (file-upload gate) and broadcast (steer-flush at drain sites).
+// The old drainSteering stub was pruned when the dead hub facades were
+// removed: collect.ts drains steering via the REAL manager singleton
+// (getSteeringManager() — plan §6/Δ3), so the steering-note path is seeded
+// with manager.addNote() and reset with manager.clear(). Defaults to NOT
+// running (file-upload path skipped) — tests flip `serveRunning` as needed.
 let serveRunning = false;
-let steeredNotes: string[] = [];
 vi.mock('../../../serve/serve-registry.js', () => ({
   getServeHub: vi.fn(() => ({
     isRunning: () => serveRunning,
-    drainSteering: () => {
-      const out = steeredNotes;
-      steeredNotes = [];
-      return out;
-    },
+    broadcast: vi.fn(),
     drainFileUploads: () => [],
   })),
 }));
@@ -123,6 +122,7 @@ vi.mock('../../../loop/triologue.js', () => {
 import { handleCollect } from '../../../loop/states/collect.js';
 import { AgentState } from '../../../loop/state-machine.js';
 import { Triologue } from '../../../loop/triologue.js';
+import { getSteeringManager } from '../../../loop/steering-manager.js';
 import { skillSuggester, beginFreshSession } from '../../../loop/states/collect-skill.js';
 import {
   createTurnVars,
@@ -156,7 +156,9 @@ describe('handleCollect — composite keyword extraction (integration)', () => {
     mockedExtractKeywords.mockReset();
     mockedExtractKeywords.mockResolvedValue({ status: 'success', keywords: [], freeformQuery: '' });
     serveRunning = false;
-    steeredNotes = [];
+    // Steering notes now live in the REAL manager singleton — wipe it so a
+    // prior test's seeded note cannot leak into the next.
+    getSteeringManager().clear();
     // Reset the skill-discovery singleton's throttle state so prior tests'
     // query cursor / cooldown never leak into this one.
     skillSuggester.reset();
@@ -356,8 +358,10 @@ describe('handleCollect — composite keyword extraction (integration)', () => {
 
   it('STEERING NOTE: triggers on the note, marks the fallback lastUserQuery as seen', async () => {
     setExtractionResult({ status: 'success', keywords: ['tests'], freeformQuery: 'running tests' });
+    // Seed the steering note in the REAL manager singleton (collect.ts reads
+    // getSteeringManager() directly since the hub facades were removed).
     serveRunning = true;
-    steeredNotes = ['focus on tests'];
+    getSteeringManager().addNote('focus on tests');
     const env = makeEnv();
     const turn: TurnVars = createTurnVars({
       lastUserQuery: 'original user query',
