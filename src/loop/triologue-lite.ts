@@ -101,6 +101,11 @@ export class TriologueLite {
     clearPending: (): void => {
       this.ledger.clear();
     },
+    // The lite facade has NO deferred-input buffer (children never defer —
+    // they drop steering notes at compact instead). The duplicate_assistant
+    // recovery still calls this; it is a deliberate no-op here, keeping the
+    // TpFixContext contract satisfied without inventing dead state.
+    flushDeferredInputs: (): void => {},
   });
 
   constructor(options: TriologueOptions = {}) {
