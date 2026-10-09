@@ -34,3 +34,33 @@ to save the disk space. The skill's action is locked down as a script.
 
 MYCC is smart enough to run the script or emulate the script-run based on the
 platform it lives.
+
+## tp-violation
+
+A provider-enforced invariant keeps biting mycc's message history: an
+`assistant` message with `tool_calls` must be followed by `tool` messages
+answering every `tool_call_id` before any other role. DeepSeek enforces it with
+HTTP 400; Ollama silently tolerates it — so a sequence that breaks in
+production passes in development.
+
+`scripts/tp-violation/probe.mjs` drives the **real** `Triologue` facade through
+every producer mix that can interpose a note with tool calls outstanding, then
+posts the facade's own output to the live provider. See
+[`tp-violation/README.md`](tp-violation/README.md) for the rule, the reproduced
+400, and the deferral design.
+
+Coverage note (2026-10-09): the deferral guard (`note()`/`user()` defer while
+the ledger is non-empty) closes the *interposition* class. Two further append
+paths were audited against the same invariant:
+
+- `tool()` with no preceding assistant (`tool_no_assistant` recovery) only
+  fires when the ledger is EMPTY (a non-empty ledger always leaves the last
+  role as `assistant`/`tool`), so its injected block is standalone and legal —
+  pinned by a facade-driven regression test.
+- `finishWrapUp()` previously pushed to the store DIRECTLY, bypassing every
+  check. It now flushes any outstanding call and routes through `addMessage`
+  (the single append chokepoint), so a wrap-up assistant can never be streamed
+  inside an open tool_calls block.
+
+Both are covered by facade-driven tests in
+`src/tests/loop/triologue.test.ts` (`deferred-input guard` describe block).

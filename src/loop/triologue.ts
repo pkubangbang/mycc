@@ -29,9 +29,43 @@ import { CheckpointManager } from './triologue/checkpoint.js';
 import { HintRoundManager } from './triologue/hint-round.js';
 import { WrapUpManager } from './triologue/wrap-up.js';
 
+/**
+ * A note / user submission held back because tool_calls are still
+ * outstanding. See Triologue.deferInput / flushDeferredInputs.
+ *
+ * A deferred submission is REPLAYED at flush time (not merged into a host):
+ * every note gets its own message, so replay can never bury a genuine query
+ * under a note or pollute lastUserQuery (the Review A attribution inversion
+ * was a symptom of merging, and merging no longer exists).
+ */
+interface DeferredInput {
+  kind: 'note' | 'user';
+  /** note only */
+  category?: NoteCategory;
+  /** note only: the originating hook skill, preserved as `hook_name`. */
+  hookName?: string;
+  text: string;
+}
+
 export class Triologue {
   private store: MessageStore = new MessageStore();
   private ledger: PendingToolLedger = new PendingToolLedger();
+
+  /**
+   * Submissions held back because tool_calls are outstanding (ledger non-empty).
+   *
+   * The provider rule is absolute: an assistant's tool_calls must be answered
+   * by tool messages before ANY other role. Appending a note/user here would
+   * violate it — DeepSeek rejects with HTTP 400, Ollama tolerates (which is
+   * why the defect survived). Buffered in ARRIVAL order and replayed once the
+   * LAST pending call resolves, so the sequence stays legal:
+   * assistant(tool_calls) → tool… → user.
+   *
+   * Replay matters for a second reason beyond legality: each replayed piece
+   * must reach the transcript exactly as a direct call would have, or the
+   * journal and the livelog drift.
+   */
+  private deferredInputs: DeferredInput[] = [];
   private options: TriologueOptions & {
     tokenThreshold: number;
     resultThreshold: number;
@@ -207,6 +241,7 @@ export class Triologue {
     this.store.replaceAll([]);
     this.store.resetTokenCount();
     this.ledger.clear();
+    this.dropDeferredInputs('clear()');
     this.wrapUp.reset();
     // Journal the truncation boundary: the writer records a control event
     // so read-time collation resets its view here — restored context honors
@@ -223,6 +258,18 @@ export class Triologue {
    * Add a user message (real user input - clears temporary hint)
    */
   user(content: string): void {
+    // Guard 1 — tool_calls outstanding: DEFER. A user message may not be
+    // interposed between an assistant's tool_calls and their results (the
+    // provider rejects it; see the deferredInputs field note). Checked BEFORE
+    // the lastRole==='tool' branch, because the mid-batch case
+    // (assistant(p1,p2) → tool(p1) → here) has lastRole==='tool' with p2
+    // still outstanding — an assistant-only guard would let it through and
+    // orphan p2. `forceStandalone` keeps the deferred query from merging into
+    // a deferred note's host at replay.
+    if (this.ledger.size > 0) {
+      this.deferInput({ kind: 'user', text: content });
+      return;
+    }
     const lastRole = this.getLastRole();
     if (lastRole === 'tool') {
       const fixResult = this.tpFix.handle('user_after_tool', lastRole, 'cannot add user message after tool role');
@@ -237,35 +284,97 @@ export class Triologue {
       // 'recovered': bridge was injected, fall through to add user message
     }
     if (lastRole === 'user') {
-      // Combine: append the new input to the last user message in memory,
-      // then emit a 'user' JOURNAL piece for the FRAGMENT the caller passed
-      // (never the mutated host). The host still concatenates content in
-      // memory so the LLM view and lastUserQuery are unchanged; the
-      // transcript records ZERO full-snapshot lines for this mutation — the
-      // {A, AB} fix.
-      //
-      // Why 'user' and not 'merge': this fragment is GENUINE user input, and
-      // it must stay distinguishable from an injected note once it is in the
-      // log. A 'merge' piece carries no user_origin marker (notes emit it
-      // too), so recording it as 'merge' made a real query indistinguishable
-      // from a [REMINDER]/[HINT] note on read — the bug that forced the
-      // serve-only user.jsonl side file. The 'user' journal kind carries
-      // user_origin:true and is folded back onto the host by the restoration
-      // projection (livelog parity) while the serve projection renders it as
-      // its own right-side bubble.
-      const lastMsg = this.store.last()!;
-      lastMsg.content += `\n${content}`;
-      this.store.recomputeTokenCount();
-      // Track the merged user query so auto-compact preserves the
-      // complete user intent, not just the pre-merge fragment. Without
-      // this, a compact right after a merge loses the latest instruction.
-      this.store.setLastUserQuery(lastMsg.content);
-      this.emit({ role: 'user', content }, 'user', { userOrigin: true });
-      return;
+      // NOTE: no combine. A second genuine query in the same move stays its
+      // OWN message (previously the fragments were concatenated into one
+      // host, with a 'user' journal piece emitted for the fragment).
+      // Rationale: the combine was the *user-side* half of the merge design
+      // and produced the same coupling defects as the note merge —
+      // lastUserQuery had to be re-read from the grown host, and the merged
+      // text was indistinguishable from a note block once a note joined it.
+      // Two consecutive user messages are a legal wire shape on ollama and
+      // deepseek (tools are flushed by tool()/skipPendingTools before any
+      // producer runs, so lastRole==='user' here means NO call is pending);
+      // for any provider that rejects user → user, tpFix bridges it.
+      // lastUserQuery therefore always holds exactly the latest query.
+      void lastRole;
     }
     // Track last real user query for auto-compact context preservation
     this.store.setLastUserQuery(content);
     this.addMessage({ role: 'user', content }, { isUserOrigin: true });
+  }
+
+  /**
+   * Buffer a note/user submission because tool_calls are outstanding, and
+   * schedule it for replay once the ledger drains.
+   *
+   * Nothing is appended here — that is the whole point. The submission is
+   * RE-ROUTED through the producer at flush time, so it takes the same
+   * provider-aware paths (note_after_tool 'allowed' on ollama/deepseek) and
+   * emits the same single journal piece it would have emitted directly.
+   */
+  private deferInput(input: DeferredInput): void {
+    this.deferredInputs.push(input);
+    agentIO.verbose(
+      'tp',
+      `Deferred ${input.kind}() while ${this.ledger.size} tool call(s) outstanding — will replay after they settle`,
+    );
+  }
+
+  /**
+   * Replay every deferred submission — called ONLY once the ledger is empty
+   * (all pending tool calls answered), so the legal shape is
+   * assistant(tool_calls) → tool… → user.
+   *
+   * Replay goes through hand-rolled appends that mirror this.note()/this.user()'s
+   * standalone branches. Re-invoking the producers would work too, but the
+   * direct append is the exact same two lines they fall through to, and it
+   * documents WHY a replayed query is appended as its own message: a deferred
+   * query must never be folded onto a preceding deferred note.
+   *
+   * `deferInputs` is snapshotted and cleared BEFORE replay so that a producer
+   * re-entering the guard (it cannot, ledger is empty — but the invariant is
+   * cheaper to hold than to prove) can never extend the list mid-iteration.
+   */
+  private flushDeferredInputs(): void {
+    if (this.deferredInputs.length === 0) return;
+    const pending = this.deferredInputs;
+    this.deferredInputs = [];
+    agentIO.verbose('tp', `Replaying ${pending.length} deferred submission(s)`);
+    for (const item of pending) {
+      if (item.kind === 'user') {
+        // A replayed genuine query gets its OWN message. Folding it onto a
+        // preceding deferred note (replay order is note-then-user, so
+        // lastRole==='user' by then) would bury the query under a note and
+        // pollute lastUserQuery — the Review A attribution inversion. That
+        // hazard is gone with merging, but the append stays explicit so the
+        // invariant is pinned in code as well as in the tests.
+        this.store.setLastUserQuery(item.text);
+        this.addMessage({ role: 'user', content: item.text }, { isUserOrigin: true });
+      } else {
+        // Notes get their own attributed message for the same reason.
+        this.addMessage({
+          role: 'user',
+          content: `[${item.category}] ${item.text}`,
+          ...(item.hookName ? { hook_name: item.hookName } : {}),
+        });
+      }
+    }
+  }
+
+  /**
+   * Drop every deferred submission WITHOUT replaying it.
+   *
+   * Used at boundaries that invalidate the context the submission was queued
+   * for (clear/compact/wrap-up/truncate). Replaying there would inject a note
+   * into a conversation whose pending tool call no longer exists — an orphan
+   * user message with no referent. Dropping is the correct, documented policy;
+   * the verbose line makes it observable rather than silent.
+   */
+  private dropDeferredInputs(reason: string): void {
+    if (this.deferredInputs.length === 0) return;
+    const n = this.deferredInputs.length;
+    this.deferredInputs = [];
+    agentIO.verbose('tp', `Dropped ${n} deferred submission(s) at ${reason}`);
   }
 
   /**
@@ -316,6 +425,15 @@ export class Triologue {
    *   This preserves per-hook attribution when multiple hooks fire in one move.
    */
   note(category: NoteCategory, message: string, hookName?: string): void {
+    // Guard 1 — tool_calls outstanding: DEFER (same invariant as user(); the
+    // note must not be interposed between the assistant's tool_calls and their
+    // results). Deferring here ALSO prevents the cascade: because nothing is
+    // appended, tool() still sees lastRole==='assistant' and tool_no_assistant
+    // never fires a second synthetic assistant.
+    if (this.ledger.size > 0) {
+      this.deferInput({ kind: 'note', category, text: message, hookName });
+      return;
+    }
     const lastRole = this.getLastRole();
     if (lastRole === 'tool') {
       const fixResult = this.tpFix.handle('note_after_tool', lastRole, 'cannot add note after tool role');
@@ -327,19 +445,29 @@ export class Triologue {
       // 'recovered': bridge was injected, now lastRole is 'assistant'
     }
     const noteContent = `[${category}] ${message}`;
-    // Hook-originated notes are always separate messages (never combined) so
-    // each hook retains its own attribution in the minifier output.
-    if (lastRole === 'user' && !hookName) {
-      // Combine: append the note content to the last user message in memory,
-      // then emit a 'merge' piece for the note fragment. The host still
-      // concatenates in memory so the LLM view is unchanged; the transcript
-      // records exactly ONE merge line (the note) for this call.
-      const lastMsg = this.store.last()!;
-      lastMsg.content += `\n${noteContent}`;
-      this.store.recomputeTokenCount();
-      this.emit({ role: 'user', content: noteContent }, 'merge', { userOrigin: false });
-      return;
-    }
+    // NOTE: no merge. Every note is its OWN message — including the case
+    // where the last role is 'user'. This is deliberate:
+    //
+    //  - The merge existed only to keep ONE host message per move. It bought
+    //    that at the cost of a coupled, fragile contract: a sorted block
+    //    whose FIRST fragment had to stay pinned so the leading '[CATEGORY] '
+    //    prefix stayed stable for the ^-anchored raw readers (hint-round
+    //    noise filter, collect-skill isHintNote), plus a WeakMap of side-state
+    //    keyed by message object.
+    //  - It also produced an attribution inversion: once a note joined a host
+    //    holding genuine user text, the query and the note became one message
+    //    and lastUserQuery was read off the combined text (Review A).
+    //  - Going standalone makes EVERY reader's job exact: one message = one
+    //    '[CATEGORY] ' prefix, so the anchored filters fire precisely per
+    //    note; lastUserQuery is written only by user(); the transcript emits
+    //    an ordinary 'new' piece (the 'merge' kind is now written by nobody —
+    //    it survives only as a legacy read shape).
+    //  - Legality: a note may only land after an assistant that has NO
+    //    outstanding tool_calls (the ledger guard above + the tool()/
+    //    skipPendingTools flush points guarantee that), so 'user' after
+    //    'assistant'/'user'/'tool' is legal on ollama and deepseek. For any
+    //    provider that would reject it, tpFix recovers (handled above for the
+    //    tool case; the delegate covers the rest).
     this.addMessage({ role: 'user', content: noteContent, ...(hookName ? { hook_name: hookName } : {}) });
   }
 
@@ -412,6 +540,16 @@ export class Triologue {
     if (resolvedId) {
       this.ledger.resolve(resolvedId);
     }
+
+    // Flush trigger: replay deferred submissions ONLY once the ledger is
+    // empty — i.e. after the LAST pending call is answered. Flushing after the
+    // first of N would itself produce assistant → tool → user → tool, the very
+    // violation this guard exists to prevent. Placed after the message append
+    // and the resolve, so the tool result is already in the history when the
+    // deferred note/user lands (they then take the legal tool → user path).
+    if (this.ledger.size === 0) {
+      this.flushDeferredInputs();
+    }
   }
 
   /**
@@ -473,6 +611,11 @@ export class Triologue {
       }
     }
     this.ledger.clear();
+    // The interrupt path ANSWERS every pending call with a placeholder, so the
+    // sequence completes here: replay anything deferred rather than stranding
+    // it. (Contrast the reset points below, which DROP because the context the
+    // submission was queued for is being discarded.)
+    this.flushDeferredInputs();
   }
 
   // === Compaction ===
@@ -518,6 +661,11 @@ export class Triologue {
     this.store.replaceAll(compacted);
     this.store.recomputeTokenCount();
     this.ledger.clear();
+    // A deferred submission was queued against a conversation that no longer
+    // exists after compaction — its referent (the pending tool call) is gone.
+    // Drop rather than replay: injecting it would strand a note with no
+    // context.
+    this.dropDeferredInputs('compact()');
     // Journal the swap boundary + replay parity: a compact replaces the
     // entire conversation with the summary round-trip, so the livelog and
     // the transcript must BOTH change here. The control event is an
@@ -616,11 +764,28 @@ export class Triologue {
    */
   finishWrapUp(content: string): void {
     if (!this.wrapUp.isActive) return; // already committed or rolled back
-    // Direct push to bypass TP check (we know last role is user_wrap or tool)
-    const message: Message = { role: 'assistant', content };
-    this.store.push(message);
-    this.store.incrementTokenCount(message);
-    this.emit(message, 'new', { userOrigin: false });
+    // The wrap-up assistant closes the turn. Normally the last role is the
+    // [WRAP_UP] user (or a flushed tool, if beginWrapUp had to skipPendingTools),
+    // so this appends cleanly. But it MUST NOT stream an `assistant` while a
+    // tool_call is still outstanding: that interposes a second block inside an
+    // open one — exactly the interposition DeepSeek 400s on. beginWrapUp()
+    // flushes pending calls before marking, so the ledger is empty on the
+    // normal path; this guard makes the producer itself enforce the invariant
+    // (previously this pushed to the store DIRECTLY, bypassing addMessage and
+    // every check — a second entry point that could slip an assistant mid-block
+    // if beginWrapUp's flush was ever bypassed or a call arrived between the
+    // two). If anything is somehow still pending, flush it first so the turn
+    // completes legally rather than emit an illegal shape.
+    if (this.ledger.size > 0) {
+      this.skipPendingTools(
+        'Tool use interrupted - wrap-up began before the call resolved.',
+        'Tool use skipped to close the block before wrap-up.',
+      );
+    }
+    // Route through addMessage (the single append chokepoint) instead of a raw
+    // store.push + manual increment: one door means one place where the ledger
+    // invariant and the transcript emit are honored together.
+    this.addMessage({ role: 'assistant', content }, { isUserOrigin: false });
     // mark stays — allows rollback to remove both user_wrap and agent_wrap
   }
 
@@ -812,6 +977,9 @@ export class Triologue {
     this.store.truncateTo(startIndex);
     this.store.recomputeTokenCount();
     this.ledger.clear();
+    // Recap/rollback discard messages, so a deferred submission's referent may
+    // be gone — drop it rather than replay into a truncated context.
+    this.dropDeferredInputs(`truncateAndRecount(${event})`);
     this.emitControl(event);
   }
 
