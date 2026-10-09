@@ -362,7 +362,7 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
         // "continue" would push the teammate to fabricate work instead of
         // idling or reporting completion.
         if (ctx.todo.hasOpenTodo()) {
-          triologue.note('REMINDER', `Re-orient on your open todos and decide the next step:\n${ctx.todo.printTodoList()}`);
+          triologue.note('REMINDER', 'Re-orient on your open todos and decide the next step.');
         }
       }
 
@@ -467,7 +467,7 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
           // Resume work phase
           continue;
         } else {
-          triologue.note('REMINDER', 'Use tools to make progress on the task.');
+          triologue.note('REMINDER', 'No tool calls were made. Re-read the task and your open todos, then call the tool that advances the next step.');
         }
         continue;
       }
@@ -615,7 +615,7 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
       // 7. Brief nudging - remind agent to use brief tool
       nextBriefNudge--;
       if (nextBriefNudge <= 0) {
-        triologue.note('REMINDER', 'Provide a brief status update using the brief tool. Example: brief("Working on X", 7)');
+        triologue.note('REMINDER', 'Provide a brief status update using the brief tool: brief("<what you are doing now>", <confidence 0-10>).');
         nextBriefNudge = 5;
       }
     } catch (err) {
