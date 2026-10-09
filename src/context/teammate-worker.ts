@@ -309,11 +309,15 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
       }
 
       // 2. Check for pending mode change notifications
+      //    The LEAD's mode changed, not ours (the child always runs 'normal').
+      //    Mutating tools still route their grant to the parent, which evaluates
+      //    it against the LEAD's mode — so the parent gate denies writes in plan
+      //    mode. Our tool list never changes, so this note is the only signal.
       if (pendingModeChange) {
         if (pendingModeChange === 'normal') {
-          triologue.note('SYSTEM', 'Plan mode has ended. Code changes are now allowed. All tools (write_file, edit_file, bash) are fully functional. Proceed with your tasks.');
+          triologue.note('SYSTEM', "FYI: the LEAD's mode is now 'normal'. Write_file/edit_file and bash mutation verbs are permitted again by the parent grant gate. Re-orient on your open todos before acting.");
         } else {
-          triologue.note('SYSTEM', 'Plan mode is now active. Code changes are temporarily restricted. Continue with read-only operations while waiting.');
+          triologue.note('SYSTEM', "FYI: the LEAD's mode is now 'plan'. Your own run-mode is unchanged (teammates always run in normal mode), but while the lead is in plan mode the parent grant gate will DENY write_file/edit_file and bash mutation verbs — stay on READ/TEST verbs, or expect a grant rejection until the lead returns to normal mode. Re-orient on your open todos before acting.");
         }
         pendingModeChange = null;
       }
