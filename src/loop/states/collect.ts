@@ -385,7 +385,7 @@ async function runBriefAndWorktreeNudges(env: MachineEnv, turn: TurnVars): Promi
   // 5. Brief nudging - remind agent to use brief tool
   turn.nextBriefNudge--;
   if (turn.nextBriefNudge <= 0) {
-    triologue.note('REMINDER', 'Provide a brief status update using the brief tool. Example: brief("Working on X", 7)');
+    triologue.note('REMINDER', 'Provide a brief status update using the brief tool: brief("<what you are doing now>", <confidence 0-10>).');
     turn.nextBriefNudge = 5;
   }
 
