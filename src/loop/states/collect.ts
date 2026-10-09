@@ -196,17 +196,23 @@ async function collectMailsAndInput(env: MachineEnv): Promise<{ firstSteerNote: 
   await ctx.team.handlePendingQuestions();
 
   // 2. Collect mails — relies on auto-fix for TP-safe injection
-  //    The MAIL note carries pure mail content only. Reply guidance (who to
-  //    contact and how) lives in the todo/peer-channels nudge below, not
-  //    here — keeping each note lightweight. The sender's identity is in
-  //    `mail.from` (a teammate name, or a peer identity "<session-id>/lead"),
-  //    which the mail_to tool accepts as its `name` argument; the nudge tells
-  //    the agent that.
+  //    Each MAIL entry is self-contained: sender + title + body + an explicit
+  //    reply line. The sender's identity is `mail.from` (a teammate name, or a
+  //    peer identity "<session-id>/lead"); that same value IS the `name`
+  //    argument of mail_to, so the reply line spells out the exact call —
+  //    otherwise the agent has to already know that a peer's session-id is its
+  //    reply address. Peers are annotated so local-vs-cross-instance is clear.
   const mails = ctx.mail.collectMails();
   if (mails.length > 0) {
     const parts: string[] = [];
     for (const mail of mails) {
-      parts.push(`Mail from ${mail.from}: ${mail.title}\n${mail.content}`);
+      const isPeer = mail.from.endsWith('/lead');
+      const peerTag = isPeer ? ' (peer — cross-instance)' : '';
+      parts.push(
+        `Mail from ${mail.from}${peerTag}: ${mail.title}\n${mail.content}\n` +
+        `↳ Reply with mail_to(name="${mail.from}", title="${mail.title}: <re>", content="…")` +
+        `${isPeer ? ' — for a peer this session-id IS the name argument.' : ''}`
+      );
     }
     const mailContent = parts.join('\n\n---\n\n');
     if (agentIO.isNeglectedMode()) {

@@ -291,10 +291,19 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
     try {
 
       // 1. Collect mails from file-based mailbox
+      //    Self-contained MAIL entries: sender + title + body + an explicit
+      //    reply line. `mail.from` IS the mail_to `name` argument (for a peer
+      //    it is the "<session-id>/lead" identity), so spell out the reply call.
       const mails = ctx.mail.collectMails();
       if (mails.length > 0) {
         const mailContent = mails
-          .map((mail) => `Mail from ${mail.from}: ${mail.title}\n${mail.content}`)
+          .map((mail) => {
+            const isPeer = mail.from.endsWith('/lead');
+            const peerTag = isPeer ? ' (peer — cross-instance)' : '';
+            return `Mail from ${mail.from}${peerTag}: ${mail.title}\n${mail.content}\n` +
+              `↳ Reply with mail_to(name="${mail.from}", title="${mail.title}: <re>", content="…")` +
+              `${isPeer ? ' — for a peer this session-id IS the name argument.' : ''}`;
+          })
           .join('\n\n---\n\n');
         triologue.note('MAIL', mailContent);
       }
