@@ -487,6 +487,19 @@ describe('Triologue deferred-input guard (tool_calls outstanding)', () => {
     expect(triologue.getMessagesRaw()[2].content).toBe('[REMINDER] boundary steer');
   });
 
+  it('closes the oldest pending slot when an id-less tool result has no name match', () => {
+    triologue.agent('go', [pending('p1', 'read')]);
+    triologue.note('REMINDER', 'queued note');
+
+    triologue.tool('unknown_tool', 'result without a matching name');
+
+    const raw = triologue.getMessagesRaw();
+    expect(raw.map((m) => m.role)).toEqual(['assistant', 'tool', 'user']);
+    expect((raw[1] as Message & { tool_call_id?: string }).tool_call_id).toBe('p1');
+    expect(raw[2].content).toBe('[REMINDER] queued note');
+    expect(illegalSequence(triologue.getMessages() as Message[])).toBe(false);
+  });
+
   it('tool() with NO preceding assistant self-heals into a LEGAL standalone block', () => {
     // The `tool_no_assistant` recovery injects a synthetic assistant[TC] so the
     // real result has a block to answer. This path only fires when the ledger

@@ -245,6 +245,18 @@ describe('handleCollect — ESC during hint generation', () => {
       expect(triologue.compact).toHaveBeenCalledTimes(1);
     });
 
+    it('consumes a pending hook-deferred compact when hint-compact already compacts', async () => {
+      const env = makeCompactEnv();
+      const turn = createTurnVars();
+      const chat = createChatData();
+      chat.deferredCompact = true;
+
+      await handleCollect(env, turn, chat);
+
+      expect(triologue.compact).toHaveBeenCalledTimes(1);
+      expect(chat.deferredCompact).toBe(false);
+    });
+
     it('should reset confusion index after hint-compact', async () => {
       const env = makeCompactEnv();
       const turn = createTurnVars();

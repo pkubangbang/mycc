@@ -328,6 +328,18 @@ describe('Hint Round JSON Output', () => {
     expect(retryChat).toHaveBeenCalledTimes(2);
   });
 
+  it('stops after the bounded retry budget when every hint response is malformed', async () => {
+    vi.mocked(retryChat).mockImplementation(async () => ({
+      message: { content: 'not json at all' },
+    }) as never);
+
+    const result = await triologue.generateHintRound(new AbortController(), 10, 'breakdown');
+
+    expect(result).toBe('failed');
+    expect(retryChat).toHaveBeenCalledTimes(3);
+    expect(triologue.getMessagesRaw().some((m) => m.content?.startsWith('[HINT]'))).toBe(false);
+  });
+
   // ---------------------------------------------------------------------------
   // focus_on exposure (Z source for composite keyword extraction)
   // ---------------------------------------------------------------------------

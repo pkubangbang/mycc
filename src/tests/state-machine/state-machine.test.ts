@@ -419,6 +419,42 @@ describe('AgentStateMachine', () => {
     expect(llmClearedDeferred).toBe(false);
   });
 
+  it('clears a stale deferredCompact flag at the next conversational turn boundary', async () => {
+    const deps = createMockDeps();
+    let promptCount = 0;
+    let deferredAtSecondPrompt: boolean | null = null;
+
+    const handlers: Record<AgentState, StateHandler> = {
+      [AgentState.PROMPT]: vi.fn(async (_env, _turn, chat) => {
+        promptCount++;
+        if (promptCount === 1) return AgentState.COLLECT;
+        deferredAtSecondPrompt = chat.deferredCompact;
+        return null;
+      }),
+      [AgentState.SLASH]: vi.fn(),
+      [AgentState.COLLECT]: vi.fn(async () => AgentState.LLM),
+      [AgentState.LLM]: vi.fn(async () => AgentState.HOOK),
+      [AgentState.HOOK]: vi.fn(async (_env, _turn, chat) => {
+        chat.deferredCompact = true;
+        return AgentState.STOP;
+      }),
+      [AgentState.TOOL]: vi.fn(),
+      [AgentState.STOP]: vi.fn(async () => AgentState.PROMPT),
+      [AgentState.AWAIT]: vi.fn(),
+    };
+
+    const machine = new AgentStateMachine(
+      deps.triologue, deps.ctx, 'main' as ToolScope,
+      deps.conditions, deps.sequence, deps.hookExecutor, deps.inputProvider,
+      '/tmp/session.json', handlers, deps.requestEmbeddingTracker,
+    );
+
+    await machine.run();
+
+    expect(promptCount).toBe(2);
+    expect(deferredAtSecondPrompt).toBe(false);
+  });
+
   it('should propagate errors from handlers', async () => {
     const deps = createMockDeps();
     const testError = new Error('Handler error');
