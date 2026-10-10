@@ -85,7 +85,18 @@ export function initDaemonMode(
     // Inject a system note so the LLM loads the skill on its first turn.
     // The AWAIT state's 1s poll will pick up this note (it is appended to
     // the triologue) and route to COLLECT → LLM.
-    triologue.note('SYSTEM', `Daemon started with skill '${daemonSkill}'. Load it via skill_load(name="${daemonSkill}") and follow its workflow.`);
+    //
+    // The wake-source list is stated POSITIVELY (what wakes the daemon), NOT
+    // as an exhaustive input channel: a daemon started with `--serve` also
+    // accepts browser input, and the LLM cannot observe whether it is serving
+    // (the process knows via ServeHub.isRunning(), the LLM does not). An
+    // exclusive "...only..." phrasing would therefore be false, and a
+    // conditional "...if serving..." asks the LLM to introspect a fact it
+    // cannot see. Naming the triggers positively is true in every case.
+    triologue.note(
+      'SYSTEM',
+      `Daemon started with skill '${daemonSkill}'. Load it via skill_load(name="${daemonSkill}") and follow its workflow. There is no terminal here — you are woken by cron ticks, incoming mail, or browser input if this daemon is serving a Web UI.`,
+    );
 
     // Start cron timer if the skill declares service_cron.
     if (skill.service_cron) {
@@ -106,9 +117,23 @@ export function initDaemonMode(
       }
     } else {
       console.log(chalk.gray(`[daemon] Skill '${daemonSkill}' has no service_cron — passive daemon (waits for external mail).`));
+      // Symmetric SYSTEM note (the console.log above is invisible in a
+      // headless daemon). Passive = no cron ticks, so name only the external
+      // events that can wake it; same positive-phrasing rule as the skill note.
+      triologue.note(
+        'SYSTEM',
+        `Daemon started with skill '${daemonSkill}' (no service_cron — no cron ticks). Load it via skill_load(name="${daemonSkill}") and follow its workflow. There is no terminal here — you are woken by incoming mail, or browser input if this daemon is serving a Web UI.`,
+      );
     }
   } else {
     console.log(chalk.gray(`[daemon] No skill specified — passive daemon (waits for external mail).`));
+    // Symmetric SYSTEM note (the console.log above is invisible in a
+    // headless daemon) — no skill, no cron ticks, so no first-turn task to
+    // give; only the wake sources.
+    triologue.note(
+      'SYSTEM',
+      'Daemon started with no skill and no cron ticks. There is no terminal here — you are woken by incoming mail, or browser input if this daemon is serving a Web UI.',
+    );
   }
 
   return null;
