@@ -11,7 +11,23 @@ vi.mock('../../serve/serve-registry.js', () => ({
 }));
 
 import { agentIO } from '../../loop/agent-io.js';
-import { tryGetServeHub } from '../../serve/serve-registry.js';
+
+// `process.emit('message', ...)` is how the Coordinator delivers IPC to the
+// agent process, but Node's typed EventEmitter overload does not list
+// `'message'` (it is an untyped IPC channel). Emit through a loosely-typed
+// view so the test drives the same code path agent-io.ts consumes. `message`
+// and `MessageEvent` are not in the default lib, so we declare the payload
+// shape inline.
+type IpcMessage = { type: string; [key: string]: unknown };
+const ipcEmitter = process as unknown as {
+  emit(event: 'message', message: IpcMessage): boolean;
+  listeners(event: 'message'): Array<(message: IpcMessage) => void>;
+  off(event: 'message', listener: (message: IpcMessage) => void): unknown;
+};
+
+function emitIpc(message: IpcMessage): void {
+  ipcEmitter.emit('message', message);
+}
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -43,12 +59,12 @@ describe('agentIO serve-mode ESC shutdown', () => {
     const controller = new AbortController();
     (agentIO as unknown as { llmAbortController: AbortController | null }).llmAbortController = controller;
     const abort = vi.spyOn(controller, 'abort');
-    const messageListenersBefore = process.listeners('message');
+    const messageListenersBefore = ipcEmitter.listeners('message');
 
     try {
       agentIO.initMain();
-      process.emit('message', { type: 'neglection' });
-      process.emit('message', { type: 'neglection' });
+      emitIpc({ type: 'neglection' });
+      emitIpc({ type: 'neglection' });
 
       expect(hub.gracefulShutdown).toHaveBeenCalledTimes(1);
       expect(agentIO.isNeglectedMode()).toBe(false);
@@ -59,14 +75,14 @@ describe('agentIO serve-mode ESC shutdown', () => {
       await new Promise<void>((resolve) => setImmediate(resolve));
 
       // Once shutdown has settled, a later ESC retains its intended meaning.
-      process.emit('message', { type: 'neglection' });
+      emitIpc({ type: 'neglection' });
       expect(agentIO.isNeglectedMode()).toBe(true);
       expect(abort).toHaveBeenCalledTimes(1);
     } finally {
       finishShutdown();
-      for (const listener of process.listeners('message')) {
+      for (const listener of ipcEmitter.listeners('message')) {
         if (!messageListenersBefore.includes(listener)) {
-          process.off('message', listener as (...args: any[]) => void);
+          ipcEmitter.off('message', listener);
         }
       }
     }

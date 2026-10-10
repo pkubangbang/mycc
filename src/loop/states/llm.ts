@@ -367,7 +367,7 @@ export async function handleLlm(
       // For transient errors that exhausted retryChat's internal retries
       // but might still be recoverable — ask the input provider
       const errorMessage = err instanceof Error ? err.message : String(err);
-      let shouldRetry = false;
+      let shouldRetry: boolean;
       try {
         shouldRetry = await inputProvider.promptRetry(errorMessage);
       } catch (promptErr) {

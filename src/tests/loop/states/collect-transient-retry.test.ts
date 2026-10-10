@@ -104,8 +104,13 @@ const NON_TRANSIENT_ERROR = new Error('Cannot read properties of undefined (read
 describe('handleCollect — transient-error recovery + circuit breaker', () => {
   let triologue: Triologue;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.clearAllMocks();
+    // The agent-io mock holds `neglected` in a closure that vi.clearAllMocks()
+    // does NOT reset, so a prior test that set neglected mode would leak into
+    // the next. Reset it explicitly for per-test isolation.
+    const { agentIO } = await import('../../../loop/agent-io.js');
+    agentIO.setNeglectedMode(false);
     triologue = new Triologue();
   });
 
@@ -224,6 +229,26 @@ describe('handleCollect — transient-error recovery + circuit breaker', () => {
     // centralized wrap-up, no promptRetry call.
     expect(result).toBe(AgentState.STOP);
     expect(env.inputProvider.promptRetry).not.toHaveBeenCalled();
+  });
+
+  it('should return PROMPT (not escape) when promptRetry itself rejects', async () => {
+    // Regression (PR #30 review S1): the transient-error retry prompt was
+    // unguarded, so a rejection (e.g. WebInputProvider throwing
+    // ServeDetachedExitError, or a terminal ask() rejecting on a closed
+    // readline) escaped handleCollect into run()'s generic catch and aborted
+    // the turn. It must instead fall back to PROMPT, mirroring llm.ts.
+    const env = makeEnv({
+      err: TRANSIENT_ERROR,
+      promptRetry: async () => { throw new Error('prompt UI failed'); },
+    });
+    const turn = createTurnVars();
+    const chat = createChatData();
+
+    const result = await handleCollect(env, turn, chat);
+
+    expect(result).toBe(AgentState.PROMPT);
+    // The rejection must NOT increment the retry counter (no retry happened).
+    expect(turn.collectTransientRetries).toBe(0);
   });
 
   it('should reset collectTransientRetries to 0 on a clean COLLECT pass (return LLM)', async () => {

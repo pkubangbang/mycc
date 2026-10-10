@@ -447,7 +447,20 @@ export async function handleCollect(
     // declines the retry, fall back to PROMPT (the original behavior).
     if (isTransientError(err)) {
       if (turn.collectTransientRetries < MAX_COLLECT_TRANSIENT_RETRIES) {
-        const shouldRetry = await env.inputProvider.promptRetry(errorMessage);
+        // Guard the retry prompt itself: like llm.ts's catch, a rejection from
+        // promptRetry (e.g. WebInputProvider throwing ServeDetachedExitError, or
+        // a terminal ask() rejecting on a closed readline) must NOT escape
+        // handleCollect into run()'s generic catch and abort the turn. Fall back
+        // to PROMPT — a transient error stays recoverable even when asking about
+        // it fails.
+        let shouldRetry: boolean;
+        try {
+          shouldRetry = await env.inputProvider.promptRetry(errorMessage);
+        } catch (promptErr) {
+          const retryPromptError = promptErr instanceof Error ? promptErr.message : String(promptErr);
+          agentIO.verbose('collect', `Retry prompt failed (${retryPromptError}); returning to prompt`);
+          return AgentState.PROMPT;
+        }
         if (shouldRetry) {
           turn.collectTransientRetries++;
           agentIO.verbose('collect',

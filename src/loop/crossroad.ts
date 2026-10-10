@@ -323,6 +323,12 @@ export function stripAndValidate(
   // removing the whole prefix also completes validation for this recovery path.
   if (prefix && candidate.startsWith(prefix)) {
     candidate = candidate.slice(prefix.length).trim();
+    // The model may additionally re-echo the anchor after the prefix
+    // ("prefix + anchor + new"). Strip it too so the anchor does not survive
+    // as duplicated content.
+    if (wordsBeforeTurn && candidate.startsWith(wordsBeforeTurn)) {
+      candidate = candidate.slice(wordsBeforeTurn.length).trim();
+    }
     return candidate.length > 0 ? candidate : null;
   }
 
