@@ -70,6 +70,26 @@ describe('restartServe() keeps isWebUiUp() true throughout the recycle (P2 #3)',
     expect(isWebUiUp()).toBe(true);
   });
 
+  it('a FAILED restartServe() publishes the down state (holder must not read up)', async () => {
+    // P2 (remaining issue): start() throwing mid-recycle skips the
+    // setWebUiUp(true) re-assert, but stop(true) also SKIPPED the down-publish
+    // (gated on !restarting), leaving the holder stuck at `true` while the
+    // server is actually down. The failure path must publish `false`.
+    setWebUiUp(true); // active serve before the recycle begins
+
+    // stop(true) no-ops (real recycle would tear down; here we only care that
+    // it does NOT publish `false` mid-flight), and start() REJECTS.
+    vi.spyOn(hub, 'stop').mockImplementation(async () => { /* no-op */ });
+    vi.spyOn(hub, 'start').mockImplementation(async () => {
+      throw new Error('start failed');
+    });
+
+    await expect(hub.restartServe()).rejects.toThrow('start failed');
+
+    // After the failed recycle, the holder must read DOWN, not the stale `true`.
+    expect(isWebUiUp()).toBe(false);
+  });
+
   it('a GENUINE stop() (not a restart) still publishes the down state', async () => {
     // Baseline: the gate must not break the normal shutdown path.
     setWebUiUp(true);
@@ -90,16 +110,40 @@ describe('restartServe() keeps isWebUiUp() true throughout the recycle (P2 #3)',
       path.resolve(__dirname, '..', '..', 'serve', 'serve-hub.ts'),
       'utf-8',
     );
-    // The ONLY setWebUiUp(false) call site must be guarded by !this.restarting.
+    // Two legitimate setWebUiUp(false) call sites now exist:
+    //   1. stop()'s down-publish — MUST be guarded by !this.restarting.
+    //   2. restartServe()'s failure-path down-publish (catch block) — only
+    //      fires when start() throws, so it must NOT be restarting-gated.
     const lines = src.split('\n');
     const downLines: number[] = [];
     for (let i = 0; i < lines.length; i++) {
       if (/setWebUiUp\(false\)/.test(lines[i])) downLines.push(i);
     }
-    expect(downLines.length, 'expected exactly one setWebUiUp(false) call site').toBe(1);
-    // The guard sits on the same line or the few lines immediately above.
-    const idx = downLines[0];
-    const window = lines.slice(Math.max(0, idx - 6), idx + 1).join('\n');
-    expect(window).toContain('!this.restarting');
+    expect(downLines.length, 'expected exactly two setWebUiUp(false) call sites').toBe(2);
+    // Site 1 (stop): the guard sits on the same line or the few lines above.
+    const stopIdx = downLines[0];
+    const stopWindow = lines.slice(Math.max(0, stopIdx - 6), stopIdx + 1).join('\n');
+    expect(stopWindow).toContain('!this.restarting');
+    // Site 2 (restartServe failure path): must live inside restartServe()'s
+    // catch block, AFTER the restarting-gated stop() down-publish (i.e. a
+    // higher line index) and before a rethrow. It must NOT be restarting-gated
+    // (otherwise a failed recycle would leave the holder stuck at `true`).
+    const restartIdx = downLines[1];
+    expect(restartIdx, 'failure-path down-publish must follow the stop() site').toBeGreaterThan(stopIdx);
+    // The failure-path site lives inside restartServe()'s catch block. The
+    // method signature (line 839) is ~30 lines above the catch (line 860), so
+    // slice a wide window and assert it contains BOTH the method signature and
+    // the rethrow that closes the catch — proving this setWebUiUp(false) is the
+    // restart-failure publish, not another restarting-gated down-publish.
+    const restartWindow = lines.slice(Math.max(0, restartIdx - 40), restartIdx + 2).join('\n');
+    expect(restartWindow).toContain('async restartServe');
+    expect(restartWindow).toContain('throw err');
+    // The failure-path publish must NOT be guarded by `!this.restarting`: only
+    // stop()'s down-publish is gated (so a recycle stays invisible). A failed
+    // recycle must unconditionally publish `false`. Assert the GUARD line count
+    // is exactly one (the stop() site), not by scanning prose comments that
+    // legitimately mention `!this.restarting`.
+    const guardLines = lines.filter((l) => /if\s*\(!this\.restarting\)\s*setWebUiUp\(false\)/.test(l));
+    expect(guardLines.length, 'exactly one restarting-gated setWebUiUp(false) guard').toBe(1);
   });
 });

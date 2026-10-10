@@ -857,6 +857,17 @@ export class ServeHub implements HubHandler, ServeHubLike {
       // serve-state flag must read "up" — stop() inside this method cleared it.
       setWebUiUp(true);
       agentIO.verbose('serve', `Web UI restarted on port ${port}`);
+    } catch (err) {
+      // A FAILED restart must NOT leave the holder reading "up": stop(true)
+      // skips the down-publish (gated on !this.restarting) so the recycle stays
+      // invisible, and start() throwing skips the setWebUiUp(true) above. But
+      // the flag was already `true` from the pre-restart active serve, so the
+      // server is now DOWN while the holder still reads "up" — collect.ts's
+      // edge-triggered lifecycle report and Core's interaction presentation
+      // would keep treating the WebUI as available. Publish the down state here
+      // (the failure path), then rethrow so the caller observes the failure.
+      setWebUiUp(false);
+      throw err;
     } finally {
       this.restarting = false;
     }
