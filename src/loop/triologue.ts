@@ -327,15 +327,15 @@ export class Triologue {
    * (all pending tool calls answered), so the legal shape is
    * assistant(tool_calls) → tool… → user.
    *
-   * Replay goes through hand-rolled appends that mirror this.note()/this.user()'s
-   * standalone branches. Re-invoking the producers would work too, but the
-   * direct append is the exact same two lines they fall through to, and it
-   * documents WHY a replayed query is appended as its own message: a deferred
-   * query must never be folded onto a preceding deferred note.
+   * Replay re-enters note()/user() instead of hand-appending. Their ordinary
+   * transition guards are important here: on providers that reject tool→user,
+   * the producer must insert its TP bridge before delivering the deferred input.
+   * Each submission remains a separate message, so a genuine query cannot be
+   * folded into a preceding note or lose its lastUserQuery attribution.
    *
-   * `deferInputs` is snapshotted and cleared BEFORE replay so that a producer
-   * re-entering the guard (it cannot, ledger is empty — but the invariant is
-   * cheaper to hold than to prove) can never extend the list mid-iteration.
+   * The deferred array is snapshotted and cleared BEFORE replay, so re-entering
+   * a producer can never extend the list being iterated. The ledger is already
+   * empty at this cutpoint, so the submissions cannot be deferred a second time.
    */
   private flushDeferredInputs(): void {
     if (this.deferredInputs.length === 0) return;
