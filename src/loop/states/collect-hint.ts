@@ -256,9 +256,9 @@ export class HintSuggester {
       ctx.core.brief('info', 'loop', 'Hint round signalled compaction (dead-loop / context stress); compacting...');
       // This compact satisfies any deferred HOOK request too. Prevent the next
       // LLM state from performing the same compaction a second time.
-      chat.deferredCompact = false;
       const tools = loader.getToolsForScope(env.scope);
       await triologue.compact(undefined, undefined, tools);
+      chat.deferredCompact = false;
       ctx.core.resetConfusionIndex();
       env.requestEmbeddingTracker.clear();
       // compactReset() clears session-level data ONLY (turn.events[] and
