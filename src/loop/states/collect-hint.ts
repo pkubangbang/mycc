@@ -33,7 +33,7 @@
  * See docs/hint-round-review.md for the full hint-round subsystem review.
  */
 
-import type { MachineEnv, TurnVars } from '../state-machine.js';
+import type { ChatData, MachineEnv, TurnVars } from '../state-machine.js';
 import { loader } from '../../context/shared/loader.js';
 import type { SequenceEvent } from '../../hook/sequence.js';
 
@@ -191,7 +191,7 @@ export class HintSuggester {
    * Side effects on `turn`: captures `lastHintFocus` (the hint source) on a
    * successful hint round; clears `collectTransientRetries` on compaction.
    */
-  async runHintRound(env: MachineEnv, turn: TurnVars): Promise<HintSignal> {
+  async runHintRound(env: MachineEnv, turn: TurnVars, chat: ChatData): Promise<HintSignal> {
     const { triologue, ctx } = env;
     const confusionIndex = ctx.core.getConfusionIndex();
     const messageCount = triologue.getMessagesRaw().length;
@@ -226,7 +226,7 @@ export class HintSuggester {
     // Capture focus_on from a successful hint round (hint source for the
     // composite keyword extraction in collect-skill.ts step 6). The
     // discriminated union carries focusOn only on the success path.
-    if (result !== 'compact' && result.status === 'success') {
+    if (typeof result === 'object' && result.status === 'success') {
       turn.lastHintFocus = result.focusOn;
     }
     // If the LLM signalled should_compact (dead-loop or context stress),
@@ -254,6 +254,9 @@ export class HintSuggester {
     // score, hook dedup cap suppressing the next turn's hooks).
     if (result === 'compact') {
       ctx.core.brief('info', 'loop', 'Hint round signalled compaction (dead-loop / context stress); compacting...');
+      // This compact satisfies any deferred HOOK request too. Prevent the next
+      // LLM state from performing the same compaction a second time.
+      chat.deferredCompact = false;
       const tools = loader.getToolsForScope(env.scope);
       await triologue.compact(undefined, undefined, tools);
       ctx.core.resetConfusionIndex();

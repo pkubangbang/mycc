@@ -359,7 +359,7 @@ function logVerboseStats(env: MachineEnv, messageCount: number): void {
 export async function handleCollect(
   env: MachineEnv,
   turn: TurnVars,
-  _chat: ChatData,
+  chat: ChatData,
 ): Promise<HandlerResult> {
   const { triologue, ctx } = env;
 
@@ -376,7 +376,7 @@ export async function handleCollect(
     const { firstSteerNote } = await collectMailsAndInput(env);
 
     // 3. Hint round + compaction. May short-circuit the pass.
-    const hintSignal = await hintSuggester.runHintRound(env, turn);
+    const hintSignal = await hintSuggester.runHintRound(env, turn, chat);
     if (hintSignal === 'stop') return AgentState.STOP;
     if (hintSignal === 'collect') return AgentState.COLLECT;
 

@@ -38,14 +38,9 @@ import { WrapUpManager } from './triologue/wrap-up.js';
  * under a note or pollute lastUserQuery (the Review A attribution inversion
  * was a symptom of merging, and merging no longer exists).
  */
-interface DeferredInput {
-  kind: 'note' | 'user';
-  /** note only */
-  category?: NoteCategory;
-  /** note only: the originating hook skill, preserved as `hook_name`. */
-  hookName?: string;
-  text: string;
-}
+type DeferredInput =
+  | { kind: 'user'; text: string }
+  | { kind: 'note'; category: NoteCategory; hookName?: string; text: string };
 
 export class Triologue {
   private store: MessageStore = new MessageStore();
@@ -347,23 +342,15 @@ export class Triologue {
     const pending = this.deferredInputs;
     this.deferredInputs = [];
     agentIO.verbose('tp', `Replaying ${pending.length} deferred submission(s)`);
+
+    // Re-enter the public producers rather than hand-appending messages. The
+    // ledger is empty here, so they won't requeue these items; the producers
+    // still apply provider-aware TP bridging for tool→user/tool→note paths.
     for (const item of pending) {
       if (item.kind === 'user') {
-        // A replayed genuine query gets its OWN message. Folding it onto a
-        // preceding deferred note (replay order is note-then-user, so
-        // lastRole==='user' by then) would bury the query under a note and
-        // pollute lastUserQuery — the Review A attribution inversion. That
-        // hazard is gone with merging, but the append stays explicit so the
-        // invariant is pinned in code as well as in the tests.
-        this.store.setLastUserQuery(item.text);
-        this.addMessage({ role: 'user', content: item.text }, { isUserOrigin: true });
+        this.user(item.text);
       } else {
-        // Notes get their own attributed message for the same reason.
-        this.addMessage({
-          role: 'user',
-          content: `[${item.category}] ${item.text}`,
-          ...(item.hookName ? { hook_name: item.hookName } : {}),
-        });
+        this.note(item.category, item.text, item.hookName);
       }
     }
   }
@@ -528,8 +515,17 @@ export class Triologue {
     // Resolve toolCallId if not provided
     let resolvedId = toolCallId;
     if (!resolvedId) {
-      // Find the next pending tool call matching this function name
+      // Prefer a name match, but a provider/model can omit the ID and return
+      // a mismatched function name. Still close the oldest pending slot so the
+      // ledger cannot remain wedged forever; validateAlignment below records
+      // the mismatch rather than leaving deferred inputs stranded.
       resolvedId = this.ledger.findByName(functionName);
+      if (!resolvedId) {
+        resolvedId = this.ledger.getOrder()[0];
+        if (resolvedId) {
+          agentIO.verbose('tp', `No pending call matched "${functionName}"; resolving oldest pending call ${resolvedId}`);
+        }
+      }
     }
 
     // Validate alignment
@@ -715,17 +711,15 @@ export class Triologue {
    * @param confusionScore - Current confusion score
    * @param confusionBreakdown - Breakdown of confusion factors
    * @param pendingSkills - Skills with 'when' but no compiled condition (for notification)
-   * @returns 'aborted' if ESC was pressed, 'compact' if the LLM signalled
-   *   should_compact (caller triggers compaction), or
-   *   `{ status: 'success', focusOn }` carrying the parsed focus_on string
-   *   (used by COLLECT's composite keyword extraction as the Z source).
+   * @returns 'aborted' if ESC was pressed, 'compact' when compaction is requested,
+   *   'failed' after bounded malformed-output retries, or a success object.
    */
   async generateHintRound(
     abortController: AbortController,
     confusionScore: number,
     confusionBreakdown: string,
     pendingSkills?: string[]
-  ): Promise<'aborted' | 'compact' | { status: 'success'; focusOn: string }> {
+  ): Promise<'aborted' | 'compact' | 'failed' | { status: 'success'; focusOn: string }> {
     return this.getHintRoundManager().generate(abortController, confusionScore, confusionBreakdown, pendingSkills);
   }
 
