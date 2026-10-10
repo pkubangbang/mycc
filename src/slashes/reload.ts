@@ -51,6 +51,31 @@ import { shouldDaemon } from '../config.js';
 import { sendToParent } from '../utils/parent-ipc.js';
 import chalk from 'chalk';
 
+/**
+ * The dispatch-time transformation applied to this Lead's own launch argv
+ * before it is sent to the Coordinator in the 'reload' IPC message.
+ *
+ * Exported so the exact transformation can be pinned by a unit test: /reload
+ * MUST forward every launch token that could carry a flag VALUE, including the
+ * SEPARATE value of a `--flag value` pair (which does not itself start with
+ * '-'). The historical `.filter((a) => a.startsWith('-'))` here dropped those
+ * values, so `mycc --max-upload-mb 20` forwarded only `['--max-upload-mb']` and
+ * the respawned Lead saw a bare flag → minimist `true` → getMaxUploadMb() =
+ * Number(true) = 1, silently turning 20MB into 1MB (same for every STRING_FLAGS
+ * value such as `--autofly <n>`).
+ *
+ * The function is deliberately IDENTITY: the dispatch site forwards the full
+ * argv and lets the Coordinator-side buildReloadArgs() — which parses
+ * `--flag value` correctly, consuming the next non-flag token — do all
+ * positional/`--from`/serve filtering. Keeping it as a named function (rather
+ * than inlining `process.argv.slice(2)`) makes the "forward everything"
+ * contract an explicit, testable seam and prevents a future reintroduction of
+ * a lossy pre-filter.
+ */
+export function collectReloadLeadArgs(argv: readonly string[]): string[] {
+  return argv.slice(2);
+}
+
 export const reloadCommand: SlashCommand = {
   name: 'reload',
   description: 'Restart mycc with fresh code (reuses coordinator, clears context). Web UI auto-reconnects if active.',
@@ -84,9 +109,14 @@ export const reloadCommand: SlashCommand = {
     // identically-configured lead. Without the argv the coordinator could only
     // rebuild serve flags, silently dropping every other launch flag
     // (--auto, --allow-auto-commit, --token-threshold, --model, --editor, …).
-    // We send only the flags (positionals excluded); the coordinator owns the
-    // serve-state merge and filters out --from (reload starts a fresh session).
-    const leadArgs = process.argv.slice(2).filter((a) => a.startsWith('-'));
+    //
+    // Forward the COMPLETE process.argv.slice(2) — positionals included — and
+    // let buildReloadArgs() (coordinator side) do the positional/--from/serve
+    // filtering. See collectReloadLeadArgs() for why the value tokens MUST
+    // survive this seam (the historical `startsWith('-')` filter here dropped
+    // every SEPARATE flag value, turning `--max-upload-mb 20` into a bare flag →
+    // getMaxUploadMb() === 1).
+    const leadArgs = collectReloadLeadArgs(process.argv);
     if (sendToParent({
       type: 'reload',
       serveActive: wasServeActive,

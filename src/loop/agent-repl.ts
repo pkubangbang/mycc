@@ -27,7 +27,7 @@ import { RequestEmbeddingTracker } from './request-embedding.js';
 import type { StateHandler } from './state-machine.js';
 import { UserInputProvider } from './input-provider.js';
 import { WebInputProvider } from '../serve/web-input-provider.js';
-import { tryGetServeHub } from '../serve/serve-registry.js';
+import { tryGetServeHub, onServeHubReady } from '../serve/serve-registry.js';
 import { loopEvents } from './loop-events.js';
 import type { StateTransitionPayload } from './loop-events.js';
 import { activateServe } from '../serve/activate.js';
@@ -95,19 +95,16 @@ export async function main(): Promise<void> {
   // can read the on-disk triologue JSONL (survives serve stop/restart and
   // page closes) instead of the ephemeral in-memory messageLog.
   //
-  // LAZY: use tryGetServeHub()?.… — at this point in boot the serve layer has
-  // NOT been loaded in a plain terminal run (and in --serve mode it is loaded
-  // only later, just before the REPL loop), so getServeHub() would throw. The
-  // hub, once loaded, reads these values back off the singleton itself, so a
-  // no-op here when the hub is absent is correct: nothing has started yet.
-  tryGetServeHub()?.setTranscriptPath(triologuePath);
-  // Wire the user-input journal provider: the transcript is the single source
-  // of truth for WebUI user bubbles, so a genuine user submission (a prompt
-  // query, or a steering note typed while the agent runs) is journaled by the
-  // triologue itself as a 'user'|'steer' record. The hub reaches the writer
-  // ONLY through this callback — JsonlTranscriptWriter stays the single
-  // writer of the transcript file.
-  tryGetServeHub()?.setUserJournalProvider((text, source) => triologue.submitUser(text, source));
+  // LAZY: register through onServeHubReady(), NOT tryGetServeHub()?.…. At this
+  // point in boot the serve layer has NOT been loaded: in a plain terminal run
+  // it may never load, and in --serve mode it is loaded only later (activateServe
+  // runs near the end of main()). A `tryGetServeHub()?.(...)` here resolves to
+  // null and SILENTLY DROPS the registration — so /history would fall back to the
+  // ephemeral messageLog and lose durable history on every refresh. onServeHubReady
+  // runs the callback immediately when the hub already exists and otherwise queues
+  // it until registerServeHubFactory() drains the queue, so the path is wired no
+  // matter when (or whether) serve activates.
+  onServeHubReady((hub) => hub.setTranscriptPath(triologuePath));
 
   // Pass initial query to prompt handler
   setInitialQuery(initialQuery);
@@ -209,6 +206,22 @@ export async function main(): Promise<void> {
       transcriptWriter.append(asAppendablePiece(msg));
     },
   });
+
+  // Wire the user-input journal provider: the transcript is the single source
+  // of truth for WebUI user bubbles, so a genuine user submission (a prompt
+  // query, or a steering note typed while the agent runs) is journaled by the
+  // triologue itself as a 'user'|'steer' record. The hub reaches the writer
+  // ONLY through this callback — JsonlTranscriptWriter stays the single
+  // writer of the transcript file.
+  //
+  // LAZY: registered through onServeHubReady() AFTER `triologue` is constructed
+  // (the closure captures it), and still before any serve activation (activateServe
+  // runs later in main()). Like the transcript path above, a bare
+  // tryGetServeHub()?.setUserJournalProvider(...) here would resolve to null on
+  // every boot path and silently drop the provider — leaving WebUI user bubbles
+  // un-journaled and vanishing on refresh. onServeHubReady registers immediately
+  // if the hub exists and otherwise queues until it materializes.
+  onServeHubReady((hub) => hub.setUserJournalProvider((text, source) => triologue.submitUser(text, source)));
 
   // Restore session if available
   if (restoredPair !== null) {

@@ -447,7 +447,15 @@ export class ServeHub implements HubHandler, ServeHubLike {
       // setWebUiUp(true) (see the holder in src/loop/loop-events.ts).
       // restartServe() calls stop() too, but re-sets the flag to true
       // afterwards, so a recycle never reads as "down" to the loop.
-      setWebUiUp(false);
+      //
+      // GATED on !this.restarting (mirrors the getSteeringManager().clear()
+      // gate below): stop() is the INTERNAL phase of a restartServe() recycle,
+      // and publishing `false` there would expose a spurious WebUI-down
+      // transition across the async stop→start window — a recycle must be
+      // INVISIBLE. Only a genuine shutdown publishes the down state; on the
+      // restart path the flag stays true throughout (restartServe() still
+      // re-asserts it after start() for defence in depth).
+      if (!this.restarting) setWebUiUp(false);
       sendToParent({ type: 'serve_mode', active: false }); // restore stdin filtering
       if (!skipAbortInput) { this.abortInput(); }
       this.disconnectTimer.cancel();
