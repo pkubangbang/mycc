@@ -249,185 +249,226 @@ export class ServeHub implements HubHandler, ServeHubLike {
     this.port = port;
     this.host = host ?? null;
 
-    this.expressApp = express();
-    this.httpServer = http.createServer(this.expressApp);
+    try {
+      this.expressApp = express();
+      this.httpServer = http.createServer(this.expressApp);
 
-    // Public dir for static assets served at `/` during dev (vite publicDir).
-    // Lives under the project's .mycc/ tree (process.cwd()) so per-project
-    // static files are co-located with sessions/mindmap/skills. Created here
-    // so Vite never sees a missing directory at startup; recursive mkdir is a
-    // no-op if it already exists. See the built-in skill
-    // `serve-public-dir` for how the agent should reference these files in
-    // replies (markdown image / download-link syntax).
-    const publicDir = path.join(process.cwd(), '.mycc', 'public');
-    fs.mkdirSync(publicDir, { recursive: true });
+      // Public dir for static assets served at `/` during dev (vite publicDir).
+      // Lives under the project's .mycc/ tree (process.cwd()) so per-project
+      // static files are co-located with sessions/mindmap/skills. Created here
+      // so Vite never sees a missing directory at startup; recursive mkdir is a
+      // no-op if it already exists. See the built-in skill
+      // `serve-public-dir` for how the agent should reference these files in
+      // replies (markdown image / download-link syntax).
+      const publicDir = path.join(process.cwd(), '.mycc', 'public');
+      fs.mkdirSync(publicDir, { recursive: true });
 
-    // Vite in middleware mode — HMR shares the same http server (single port).
-    this.viteServer = await createViteServer({
-      root: WEB_ROOT,
-      publicDir, // serve <cwd>/.mycc/public at root path `/` during dev
-      plugins: [vue()],
-      server: { middlewareMode: true, hmr: { server: this.httpServer } },
-      appType: 'custom',
-      configFile: false, // inline config only — avoid parent vite.config
-    });
-
-    // GET /health — registered BEFORE viteServer.middlewares so it answers
-    // while Vite is still compiling (a watchdog polling every 30 s must never
-    // mistake "still warming up" for "dead"). Deliberately cheap: no
-    // provider/embedding probe (those hit Ollama on every poll). A deep check
-    // (?deep=1) can be added later if wanted.
-    this.expressApp.get('/health', (_req, res) => {
-      res.status(200).set({ 'Content-Type': 'application/json' }).end(JSON.stringify({
-        status: this.running ? 'ok' : 'stopping',
-        pid: process.pid,
-        uptimeMs: Math.round(process.uptime() * 1000),
-        version: pkg.version,
-        serve: {
-          port: this.port,
-          host: this.host,
-          clients: this.clients.size,
-          persistent: shouldDaemon(),
-          agentRunning: this.agentRunning,
-          auto: this.getAutoState(),
-        },
-        peer: (() => {
-          // Remote peer wire identity (docs/remote-peer-protocol.md §2 step 1):
-          // the dialer probes /health BEFORE dialing — the peer block tells it
-          // who answers (sid) and whether the webui is daemon-backed (so the
-          // dialer can refuse/flag an interactive instance whose webui will
-          // auto-shutdown in 30s). Values come from the wire hooks (G3); a
-          // null hooks means the agent context never started (unreachable in
-          // practice — serve starts from the lead loop).
-          const wireHooks = getWireHooks();
-          return {
-            sessionId: wireHooks?.getSessionId() ?? null,
-            daemon: wireHooks?.getDaemon() ?? false,
-          };
-        })(),
-        provider: getApiProvider(),
-      }));
-    });
-
-    this.expressApp.use(this.viteServer.middlewares);
-
-    // GET / → serve index.html via Vite HTML transforms (injects HMR client).
-    this.expressApp.get('/', async (_req, res) => {
-      try {
-        const template = fs.readFileSync(path.resolve(WEB_ROOT, 'index.html'), 'utf-8');
-        const html = await this.viteServer!.transformIndexHtml('/', template);
-        res.status(200).set({ 'Content-Type': 'text/html' }).end(html);
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        res.status(500).end(`Vite transform error: ${msg}`);
-      }
-    });
-
-    // GET /history → chat history as JSON (fetched at load BEFORE the WS, so
-    // live updates layer on top with no race). Merges transcript + messageLog
-    // by timestamp (see serve-history.ts). The transcript holds BOTH the
-    // assistant/tool turns AND the genuine user-input journal, so it is the
-    // single durable source of user bubbles.
-    //
-    // Caching: a content-derived weak ETag (computeHistoryVersion) is sent on
-    // every response, alongside `Cache-Control: no-cache`. `no-cache` does NOT
-    // mean "never cache" — it means the client MUST revalidate with the server
-    // (via If-None-Match) before using a stored copy. When the revalidation
-    // ETag matches, the server returns a 0-byte 304 and the client keeps its
-    // hydrated copy — the lock-screen wake path. The ETag folds in transient
-    // fields (steering-length, isRunning) so a state flip is never masked by a
-    // 304.
-    this.expressApp.get('/history', (req, res) => {
-      const etag = computeHistoryVersion(
-        this.transcriptPath, this.messageLog,
-        getSteeringManager().peekNotes().length, this.agentRunning,
-      );
-      res.set('ETag', etag);
-      res.set('Cache-Control', 'no-cache');
-      // If-None-Match match → 304 Not Modified, empty body. The client's
-      // hydrated copy stays on screen (lock-screen instant wake). The match
-      // uses RFC 7232 §3.2 conditional semantics (weak comparison) via
-      // etagMatchesIfNoneMatch: it handles a comma-separated list of
-      // entity-tags and the `*` wildcard, and compares the opaque tags
-      // ignoring the weak/strong distinction (correct for If-None-Match).
-      // The prior `inm === etag` equality only handled the single-tag
-      // exact-string case and silently failed on multi-tag or
-      // strong/weak-equivalent headers.
-      const inm = req.headers['if-none-match'];
-      if (etagMatchesIfNoneMatch(typeof inm === 'string' ? inm : undefined, etag)) {
-        res.status(304).end();
-        return;
-      }
-      const history = readHistory(this.transcriptPath, this.messageLog);
-      const payload = JSON.stringify({
-        messages: history,
-        // steeringBuffer is now {id,text}[] (plan §5 — C6 fix): the frontend
-        // types it SteeringNote[] (main.ts/types.ts) and uses the ids for
-        // per-note discard/send on the review card; serializing string[] lost
-        // the ids on every reconnect.
-        steeringBuffer: getSteeringManager().peekNotes(),
-        isRunning: this.agentRunning,
+      // Vite in middleware mode — HMR shares the same http server (single port).
+      this.viteServer = await createViteServer({
+        root: WEB_ROOT,
+        publicDir, // serve <cwd>/.mycc/public at root path `/` during dev
+        plugins: [vue()],
+        server: { middlewareMode: true, hmr: { server: this.httpServer } },
+        appType: 'custom',
+        configFile: false, // inline config only — avoid parent vite.config
       });
-      res.status(200).set({ 'Content-Type': 'application/json' }).end(payload);
-    });
 
-    // GET /config → client-facing runtime config (per-file upload cap +
-    // persistent flag so the Web UI renders 重启 vs 退出 correctly).
-    //
-    // `sessionId` is the wire session id (null when no wire session, e.g.
-    // serve started before the agent context). The client uses it as the
-    // per-session key for its IndexedDB chatlog cache: a new sessionId must
-    // never show a foreign session's cached log, so the cache is keyed by
-    // this value and pruned of other sessions on every write.
-    this.expressApp.get('/config', (_req, res) => {
-      const wireHooks = getWireHooks();
-      res.status(200).set({ 'Content-Type': 'application/json' }).end(
-        JSON.stringify({
-          maxUploadMb: getMaxUploadMb(),
-          persistent: shouldDaemon(),
-          sessionId: wireHooks?.getSessionId() ?? null,
-        }),
-      );
-    });
+      // GET /health — registered BEFORE viteServer.middlewares so it answers
+      // while Vite is still compiling (a watchdog polling every 30 s must never
+      // mistake "still warming up" for "dead"). Deliberately cheap: no
+      // provider/embedding probe (those hit Ollama on every poll). A deep check
+      // (?deep=1) can be added later if wanted.
+      this.expressApp.get('/health', (_req, res) => {
+        res.status(200).set({ 'Content-Type': 'application/json' }).end(JSON.stringify({
+          status: this.running ? 'ok' : 'stopping',
+          pid: process.pid,
+          uptimeMs: Math.round(process.uptime() * 1000),
+          version: pkg.version,
+          serve: {
+            port: this.port,
+            host: this.host,
+            clients: this.clients.size,
+            persistent: shouldDaemon(),
+            agentRunning: this.agentRunning,
+            auto: this.getAutoState(),
+          },
+          peer: (() => {
+            // Remote peer wire identity (docs/remote-peer-protocol.md §2 step 1):
+            // the dialer probes /health BEFORE dialing — the peer block tells it
+            // who answers (sid) and whether the webui is daemon-backed (so the
+            // dialer can refuse/flag an interactive instance whose webui will
+            // auto-shutdown in 30s). Values come from the wire hooks (G3); a
+            // null hooks means the agent context never started (unreachable in
+            // practice — serve starts from the lead loop).
+            const wireHooks = getWireHooks();
+            return {
+              sessionId: wireHooks?.getSessionId() ?? null,
+              daemon: wireHooks?.getDaemon() ?? false,
+            };
+          })(),
+          provider: getApiProvider(),
+        }));
+      });
 
-    // Chat WebSocket on /ws (noServer; route upgrades by URL so Vite HMR at /
-    // is left untouched). maxPayload caps a single inbound ws frame to the same
-    // byte limit the application enforces for file uploads (getMaxUploadMb).
-    // Without it, the `ws` library default is 100 MB — decoupled from
-    // MYCC_MAX_UPLOAD_MB — so a client could send a near-100 MB single frame
-    // that bypasses the app-level size guard in pushFileUpload.
-    const maxPayloadBytes = getMaxUploadMb() * 1024 * 1024;
-    this.wsServer = new WebSocketServer({ noServer: true, maxPayload: maxPayloadBytes });
-    this.wsServer.on('connection', (ws) => this.onWsConnection(ws));
-    // Remote peer wire on /peer/ws (docs/remote-peer-protocol.md). Dedicated
-    // WebSocketServer with its OWN maxPayload (4 MB, decoupled from the webui
-    // upload cap); the acceptor NEVER touches this.clients or the
-    // disconnectTimer (G1: peer wires must not sustain the webui lifetime).
-    try { getPeerWireAcceptor().createServer(); } catch { /* start() is re-entrant via restartServe */ }
-    this.upgradeHandler = (req, socket, head) => {
-      if (req.url && req.url.split('?')[0] === '/peer/ws') {
-        getPeerWireAcceptor().handleUpgrade(req, socket, head);
-        return;
-      }
-      if (req.url === '/ws') {
-        this.wsServer!.handleUpgrade(req, socket, head, (ws) => {
-          this.wsServer!.emit('connection', ws, req);
+      this.expressApp.use(this.viteServer.middlewares);
+
+      // GET / → serve index.html via Vite HTML transforms (injects HMR client).
+      this.expressApp.get('/', async (_req, res) => {
+        try {
+          const template = fs.readFileSync(path.resolve(WEB_ROOT, 'index.html'), 'utf-8');
+          const html = await this.viteServer!.transformIndexHtml('/', template);
+          res.status(200).set({ 'Content-Type': 'text/html' }).end(html);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          res.status(500).end(`Vite transform error: ${msg}`);
+        }
+      });
+
+      // GET /history → chat history as JSON (fetched at load BEFORE the WS, so
+      // live updates layer on top with no race). Merges transcript + messageLog
+      // by timestamp (see serve-history.ts). The transcript holds BOTH the
+      // assistant/tool turns AND the genuine user-input journal, so it is the
+      // single durable source of user bubbles.
+      //
+      // Caching: a content-derived weak ETag (computeHistoryVersion) is sent on
+      // every response, alongside `Cache-Control: no-cache`. `no-cache` does NOT
+      // mean "never cache" — it means the client MUST revalidate with the server
+      // (via If-None-Match) before using a stored copy. When the revalidation
+      // ETag matches, the server returns a 0-byte 304 and the client keeps its
+      // hydrated copy — the lock-screen wake path. The ETag folds in transient
+      // fields (steering-length, isRunning) so a state flip is never masked by a
+      // 304.
+      this.expressApp.get('/history', (req, res) => {
+        const etag = computeHistoryVersion(
+          this.transcriptPath, this.messageLog,
+          getSteeringManager().peekNotes().length, this.agentRunning,
+        );
+        res.set('ETag', etag);
+        res.set('Cache-Control', 'no-cache');
+        // If-None-Match match → 304 Not Modified, empty body. The client's
+        // hydrated copy stays on screen (lock-screen instant wake). The match
+        // uses RFC 7232 §3.2 conditional semantics (weak comparison) via
+        // etagMatchesIfNoneMatch: it handles a comma-separated list of
+        // entity-tags and the `*` wildcard, and compares the opaque tags
+        // ignoring the weak/strong distinction (correct for If-None-Match).
+        // The prior `inm === etag` equality only handled the single-tag
+        // exact-string case and silently failed on multi-tag or
+        // strong/weak-equivalent headers.
+        const inm = req.headers['if-none-match'];
+        if (etagMatchesIfNoneMatch(typeof inm === 'string' ? inm : undefined, etag)) {
+          res.status(304).end();
+          return;
+        }
+        const history = readHistory(this.transcriptPath, this.messageLog);
+        const payload = JSON.stringify({
+          messages: history,
+          // steeringBuffer is now {id,text}[] (plan §5 — C6 fix): the frontend
+          // types it SteeringNote[] (main.ts/types.ts) and uses the ids for
+          // per-note discard/send on the review card; serializing string[] lost
+          // the ids on every reconnect.
+          steeringBuffer: getSteeringManager().peekNotes(),
+          isRunning: this.agentRunning,
         });
-      }
-    };
-    this.httpServer.on('upgrade', this.upgradeHandler);
+        res.status(200).set({ 'Content-Type': 'application/json' }).end(payload);
+      });
 
-    await new Promise<void>((resolve, reject) => {
-      if (this.host) {
-        this.httpServer!.listen(port, this.host, () => resolve());
-      } else {
-        this.httpServer!.listen(port, () => resolve());
-      }
-      this.httpServer!.once('error', reject);
-    });
+      // GET /config → client-facing runtime config (per-file upload cap +
+      // persistent flag so the Web UI renders 重启 vs 退出 correctly).
+      //
+      // `sessionId` is the wire session id (null when no wire session, e.g.
+      // serve started before the agent context). The client uses it as the
+      // per-session key for its IndexedDB chatlog cache: a new sessionId must
+      // never show a foreign session's cached log, so the cache is keyed by
+      // this value and pruned of other sessions on every write.
+      this.expressApp.get('/config', (_req, res) => {
+        const wireHooks = getWireHooks();
+        res.status(200).set({ 'Content-Type': 'application/json' }).end(
+          JSON.stringify({
+            maxUploadMb: getMaxUploadMb(),
+            persistent: shouldDaemon(),
+            sessionId: wireHooks?.getSessionId() ?? null,
+          }),
+        );
+      });
 
-    this.messageLog = [];
-    this.running = true;
+      // Chat WebSocket on /ws (noServer; route upgrades by URL so Vite HMR at /
+      // is left untouched). maxPayload caps a single inbound ws frame to the same
+      // byte limit the application enforces for file uploads (getMaxUploadMb).
+      // Without it, the `ws` library default is 100 MB — decoupled from
+      // MYCC_MAX_UPLOAD_MB — so a client could send a near-100 MB single frame
+      // that bypasses the app-level size guard in pushFileUpload.
+      const maxPayloadBytes = getMaxUploadMb() * 1024 * 1024;
+      this.wsServer = new WebSocketServer({ noServer: true, maxPayload: maxPayloadBytes });
+      this.wsServer.on('connection', (ws) => this.onWsConnection(ws));
+      // Remote peer wire on /peer/ws (docs/remote-peer-protocol.md). Dedicated
+      // WebSocketServer with its OWN maxPayload (4 MB, decoupled from the webui
+      // upload cap); the acceptor NEVER touches this.clients or the
+      // disconnectTimer (G1: peer wires must not sustain the webui lifetime).
+      try { getPeerWireAcceptor().createServer(); } catch { /* start() is re-entrant via restartServe */ }
+      this.upgradeHandler = (req, socket, head) => {
+        if (req.url && req.url.split('?')[0] === '/peer/ws') {
+          getPeerWireAcceptor().handleUpgrade(req, socket, head);
+          return;
+        }
+        if (req.url === '/ws') {
+          this.wsServer!.handleUpgrade(req, socket, head, (ws) => {
+            this.wsServer!.emit('connection', ws, req);
+          });
+        }
+      };
+      this.httpServer.on('upgrade', this.upgradeHandler);
+
+      await new Promise<void>((resolve, reject) => {
+        if (this.host) {
+          this.httpServer!.listen(port, this.host, () => resolve());
+        } else {
+          this.httpServer!.listen(port, () => resolve());
+        }
+        this.httpServer!.once('error', reject);
+      });
+
+      this.messageLog = [];
+      this.running = true;
+    } catch (err) {
+      // STARTUP-FAILURE cleanup (review finding P2): a start() that throws
+      // mid-initialization (e.g. httpServer.listen EADDRINUSE after Vite/WS/
+      // peer-wire have already been created) has partially-initialized this
+      // hub. Release those resources now so a later retry does not overwrite
+      // live handles and leak them (Vite watchers/esbuild, the HTTP server,
+      // the peer-wire acceptor). Must NOT run the full stop() state transitions
+      // (the down-publish / abortInput / steering clear) — restartServe()'s
+      // own catch owns those; here we only free the stack. Then rethrow.
+      this.running = false;
+      await this.disposeStack();
+      this.messageLog = [];
+      throw err;
+    }
+  }
+
+  /**
+   * Release the HTTP/Vite/WS/peer-wire resources the serve stack may hold,
+   * WITHOUT touching any lifecycle state (no setWebUiUp, no abortInput, no
+   * steering clear, no disconnect-timer cancel). Used by BOTH stop() (the
+   * full teardown, which layers the state transitions on top) and start()'s
+   * failure path (a partially-initialized startup must release what it
+   * allocated — see start()'s catch). Idempotent and null-safe at every step.
+   */
+  private async disposeStack(): Promise<void> {
+    if (this.httpServer && this.upgradeHandler) {
+      this.httpServer.removeListener('upgrade', this.upgradeHandler);
+      this.upgradeHandler = null;
+    }
+    if (this.wsServer) { try { this.wsServer.close(); } catch { /* ignore */ } this.wsServer = null; }
+    // Peer wire acceptor teardown (docs/remote-peer-protocol.md §2
+    // disconnect): abnormal close so the DIALER side fails fast / redials
+    // per its loop policy. Idempotent (stop() is safe when no server exists).
+    try { await getPeerWireAcceptor().stop(); } catch { /* ignore */ }
+    if (this.viteServer) { try { await this.viteServer.close(); } catch { /* ignore */ } this.viteServer = null; }
+    if (this.httpServer) {
+      await new Promise<void>((resolve) => { this.httpServer!.close(() => resolve()); });
+      this.httpServer = null;
+    }
+    this.expressApp = null;
   }
 
   /**
@@ -460,23 +501,7 @@ export class ServeHub implements HubHandler, ServeHubLike {
       if (!skipAbortInput) { this.abortInput(); }
       this.disconnectTimer.cancel();
       this.clients.closeAll();
-      if (this.httpServer && this.upgradeHandler) {
-        this.httpServer.removeListener('upgrade', this.upgradeHandler);
-        this.upgradeHandler = null;
-      }
-      if (this.wsServer) { try { this.wsServer.close(); } catch { /* ignore */ } this.wsServer = null; }
-      // Peer wire acceptor teardown (docs/remote-peer-protocol.md §2
-      // disconnect): abnormal close so the DIALER side fails fast / redials
-      // per its loop policy. Sockets are unref'd so the httpServer close
-      // promise below cannot hang on a live peer wire. MUST NOT touch the
-      // disconnectTimer (G1). Also safe when no wire server was created.
-      try { await getPeerWireAcceptor().stop(); } catch { /* ignore */ }
-      if (this.viteServer) { try { await this.viteServer.close(); } catch { /* ignore */ } this.viteServer = null; }
-      if (this.httpServer) {
-        await new Promise<void>((resolve) => { this.httpServer!.close(() => resolve()); });
-        this.httpServer = null;
-      }
-      this.expressApp = null;
+      await this.disposeStack();
       this.messageLog = [];
       // Lifecycle wipe (A2, docs/steering-manager-plan.md §5): notes are wiped
       // ONLY on terminal teardown. restartServe() sets `restarting` BEFORE
