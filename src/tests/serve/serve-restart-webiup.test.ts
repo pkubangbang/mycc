@@ -90,6 +90,35 @@ describe('restartServe() keeps isWebUiUp() true throughout the recycle (P2 #3)',
     expect(isWebUiUp()).toBe(false);
   });
 
+  it('a FAILED restartServe() settles the outstanding input wait', async () => {
+    // P2 (remaining issue #2): stop(true) deliberately skips abortInput() so a
+    // pending waitForInput() survives a recycle — but on a FAILED recycle the
+    // server never comes back, so that wait must be resolved (with null) or a
+    // headless daemon blocks forever on input that can no longer arrive.
+    setWebUiUp(true); // active serve before the recycle begins
+
+    // Arm a pending input wait BEFORE the restart (mimics WebInputProvider
+    // blocking inside getInput() while the user clicks 重启).
+    const pendingWait = hub.waitForInput();
+
+    vi.spyOn(hub, 'stop').mockImplementation(async () => { /* no-op */ });
+    vi.spyOn(hub, 'start').mockImplementation(async () => {
+      throw new Error('start failed');
+    });
+
+    await expect(hub.restartServe()).rejects.toThrow('start failed');
+
+    // The pending wait must have SETTLED (resolved null), not remain pending
+    // forever. A resolved-null is exactly what WebInputProvider's three-way
+    // guard reads to apply daemon-exit / terminal-fallback handling.
+    const settled = await Promise.race([
+      pendingWait.then((v) => ({ status: 'settled' as const, value: v })),
+      new Promise<{ status: 'pending' }>((resolve) => setTimeout(() => resolve({ status: 'pending' }), 50)),
+    ]);
+    expect(settled.status).toBe('settled');
+    expect((settled as { value: string | null }).value).toBeNull();
+  });
+
   it('a GENUINE stop() (not a restart) still publishes the down state', async () => {
     // Baseline: the gate must not break the normal shutdown path.
     setWebUiUp(true);
@@ -125,19 +154,25 @@ describe('restartServe() keeps isWebUiUp() true throughout the recycle (P2 #3)',
     const stopWindow = lines.slice(Math.max(0, stopIdx - 6), stopIdx + 1).join('\n');
     expect(stopWindow).toContain('!this.restarting');
     // Site 2 (restartServe failure path): must live inside restartServe()'s
-    // catch block, AFTER the restarting-gated stop() down-publish (i.e. a
-    // higher line index) and before a rethrow. It must NOT be restarting-gated
-    // (otherwise a failed recycle would leave the holder stuck at `true`).
+    // catch block — i.e. AFTER the method signature, AFTER the success-path
+    // setWebUiUp(true), and BEFORE the rethrow. Assert ORDER via line numbers
+    // (not a fixed window, which drifts as comments/calls grow).
     const restartIdx = downLines[1];
     expect(restartIdx, 'failure-path down-publish must follow the stop() site').toBeGreaterThan(stopIdx);
-    // The failure-path site lives inside restartServe()'s catch block. The
-    // method signature (line 839) is ~30 lines above the catch (line 860), so
-    // slice a wide window and assert it contains BOTH the method signature and
-    // the rethrow that closes the catch — proving this setWebUiUp(false) is the
-    // restart-failure publish, not another restarting-gated down-publish.
-    const restartWindow = lines.slice(Math.max(0, restartIdx - 40), restartIdx + 2).join('\n');
-    expect(restartWindow).toContain('async restartServe');
-    expect(restartWindow).toContain('throw err');
+    const methodLine = lines.findIndex((l) => /async restartServe/.test(l));
+    // The success-path setWebUiUp(true) and the rethrow must be AFTER the
+    // method signature (the file has an earlier setWebUiUp(true) mention in
+    // start()'s comment, so search only within restartServe's tail).
+    const methodTail = lines.slice(methodLine);
+    const upLine = methodLine + methodTail.findIndex((l) => /setWebUiUp\(true\)/.test(l));
+    const throwLine = methodLine + methodTail.findIndex((l) => /throw err/.test(l));
+    expect(methodLine, 'restartServe method signature found').toBeGreaterThanOrEqual(0);
+    expect(upLine, 'success-path setWebUiUp(true) found').toBeGreaterThan(methodLine);
+    expect(throwLine, 'failure rethrow found').toBeGreaterThan(upLine);
+    // The failure-path down-publish sits AFTER the success re-assert and BEFORE
+    // the rethrow (i.e. inside the catch block).
+    expect(restartIdx).toBeGreaterThan(upLine);
+    expect(restartIdx).toBeLessThan(throwLine);
     // The failure-path publish must NOT be guarded by `!this.restarting`: only
     // stop()'s down-publish is gated (so a recycle stays invisible). A failed
     // recycle must unconditionally publish `false`. Assert the GUARD line count

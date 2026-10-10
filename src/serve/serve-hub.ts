@@ -867,6 +867,15 @@ export class ServeHub implements HubHandler, ServeHubLike {
       // would keep treating the WebUI as available. Publish the down state here
       // (the failure path), then rethrow so the caller observes the failure.
       setWebUiUp(false);
+      // Also wake the outstanding input wait: stop(true) deliberately skipped
+      // abortInput() so the pending waitForInput() survived the recycle, but a
+      // FAILED recycle can never deliver on it (the server is down). Resolving
+      // with null lets WebInputProvider observe `!isRunning() && !isRestarting()`
+      // and apply its existing daemon-exit / terminal-fallback handling instead
+      // of blocking a headless daemon forever on input that cannot arrive. The
+      // await continuation is a microtask that runs AFTER this finally clears
+      // `restarting`, so the three-way guard reads the post-failure state.
+      this.abortInput();
       throw err;
     } finally {
       this.restarting = false;
