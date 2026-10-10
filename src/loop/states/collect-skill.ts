@@ -120,6 +120,27 @@ export class SkillSuggester {
   private lastQuery = '';
   /** Cooldown counter: suppresses extraction for N COLLECT passes after firing. */
   private cooldown = 0;
+  /**
+   * Same-query retry budget. Set to 1 when an extraction succeeded but the
+   * freeformQuery was empty, granting the LLM exactly ONE more attempt on
+   * the SAME query. This is deliberately SEPARATE from the dedup cursor:
+   * the cursor marks the query seen (and must not be reset — a retry is not
+   * a "changed" query), while the budget is what lets the extraction gate
+   * open once more for that same query. Zeroed on spend, on a fresh turn
+   * (reset()), and whenever a NEW query retires it.
+   */
+  private retryBudget = 0;
+  /**
+   * The composite text that EARNED the retry budget. The retry pass must run
+   * against the SAME input the first attempt saw, not a freshly recomputed
+   * composite: the trigger source for the first attempt was often a steering
+   * note, which is DRAINED from the queue by the time the retry runs. Without
+   * this snapshot the retry rebuilds the composite from whatever remains
+   * (the fallback `lastUserQuery`, or only brief/hint) — i.e. it extracts
+   * keywords for a DIFFERENT task than the one that earned the retry (PR #28
+   * review P2 F1). Retired alongside the budget (spend / reset / new query).
+   */
+  private retryComposite = '';
 
   // ── State lifecycle ───────────────────────────────────────────────────
 
@@ -131,6 +152,8 @@ export class SkillSuggester {
   reset(): void {
     this.lastQuery = '';
     this.cooldown = 0;
+    this.retryBudget = 0;
+    this.retryComposite = '';
   }
 
   /**
@@ -158,15 +181,50 @@ export class SkillSuggester {
   }
 
   /**
-   * Clear the throttle state back to eligible (lastQuery='', cooldown=0).
-   * Called on the Branch B fail-fast path (empty freeformQuery): the
-   * extraction's success-path marking + cooldown-arming are undone so the
-   * next pass re-attempts extraction. Mirrors the `failed` path: both leave
-   * the query eligible and the cooldown at 0.
+   * Set the cooldown to an explicit number of passes (floored at 0). Used by
+   * the empty-freeformQuery retry path to allow exactly ONE more attempt,
+   * instead of an unbounded immediate retry that also clears the dedup cursor.
    */
-  clearThrottle(): void {
-    this.lastQuery = '';
-    this.cooldown = 0;
+  setCooldown(n: number): void {
+    this.cooldown = Math.max(0, n);
+  }
+
+  /**
+   * Grant one same-query retry. Called by the empty-freeformQuery branch of
+   * the pipeline after an otherwise-successful extraction: the query stays
+   * marked seen (cursor stability) and this budget is what lets the
+   * extraction gate open exactly one more time for that SAME query.
+   *
+   * `composite` is the composite text the first attempt ran against — the
+   * retry reuses it verbatim (see {@link retryComposite}) so the retry cannot
+   * silently switch to a different task after the originating steering note
+   * has been drained.
+   */
+  grantRetry(composite: string): void {
+    this.retryBudget = 1;
+    this.retryComposite = composite;
+  }
+
+  /**
+   * Spend the same-query retry budget. Called by the retry pass itself: the
+   * one additional attempt is consumed, the query stays marked seen, and a
+   * further invalid outcome cannot loop (budget is 0 → gate closed). The
+   * saved composite is retired with the budget — it must never outlive the
+   * attempt it was captured for.
+   */
+  spendRetry(): void {
+    this.retryBudget = 0;
+    this.retryComposite = '';
+  }
+
+  /** Current same-query retry budget (test-facing). */
+  getRetryBudget(): number {
+    return this.retryBudget;
+  }
+
+  /** The composite text saved for the pending retry (test-facing). */
+  getRetryComposite(): string {
+    return this.retryComposite;
   }
 
   // ── Read-only state queries ───────────────────────────────────────────
@@ -345,17 +403,13 @@ export class SkillSuggester {
       lines.push(`New relevant skills: ${newSkills.join(', ')}. Use skill_load(name="<exact_name>") to load them.`);
     }
     if (suggestedSkills.length > 0) {
-      lines.push(`Also suggesting: ${suggestedSkills.join(', ')}. Use skill_load(name="<exact_name>") to load it.`);
+      lines.push(`Still available: ${suggestedSkills.join(', ')}.`);
     }
     if (loadedSkills.length > 0) {
       lines.push(`The below skills are loaded and also relevant: ${loadedSkills.join(', ')}.`);
     }
     lines.push('Note: you can also use skill_search to search for skills semantically.');
-    // This is a silent nudge: either load a skill that genuinely helps the
-    // current task (via skill_load), or ignore it and keep working. Do NOT
-    // write a prose reply explaining why you are/aren't loading a skill —
-    // that clutters the conversation and re-triggers the same nudge.
-    lines.push('Discipline: this is a silent nudge. If a skill helps the current task, load it with skill_load; otherwise stay silent and continue. Do NOT narrate your decision.');
+    lines.push('Discipline: this is a silent nudge. If a skill helps the current task, load it with skill_load; otherwise continue.');
 
     triologue.note('HINT', lines.join('\n'));
   }
@@ -463,15 +517,29 @@ export class SkillSuggester {
     const querySource = this.computeQuerySource(firstSteerNote, turn.lastUserQuery || '');
     const changed = this.queryChanged(querySource);
 
-    // Build the composite text (brief + query + hint). Query is the trigger;
-    // brief and hint enrich.
-    const compositeText = this.buildCompositeText(
-      turn.lastBriefMessage,
-      querySource,
-      turn.lastHintFocus,
-    );
+    // A NEW query source retires any unspent retry budget: the budget is
+    // scoped to the query that earned it, so it must not open the gate for
+    // a different query later. spendRetry() also drops the saved composite.
+    if (changed) {
+      this.spendRetry();
+    }
 
-    if (!changed || this.cooldownActive() || compositeText.trim().length < 4) {
+    // The retry pass must run against the composite the FIRST attempt saw,
+    // not a freshly recomputed one. The trigger source of that first attempt
+    // was frequently a steering note, which collectMailsAndInput has already
+    // DRAINED by the time the retry runs; recomputing would silently swap in
+    // the fallback lastUserQuery (a different task) or drop to brief/hint only
+    // (PR #28 review P2 F1). Reuse the snapshot when retrying.
+    const retrying = this.retryBudget > 0;
+    const compositeText = retrying
+      ? this.retryComposite
+      : this.buildCompositeText(turn.lastBriefMessage, querySource, turn.lastHintFocus);
+
+    // Extraction gate. `changed` is the normal trigger; `retryBudget > 0`
+    // is the ONE extra extraction promised to the same query after its
+    // first extraction returned an empty freeformQuery. Both still require
+    // an inactive cooldown and a meaningful composite.
+    if ((!changed && !retrying) || this.cooldownActive() || compositeText.trim().length < 4) {
       return;
     }
 
@@ -492,6 +560,12 @@ export class SkillSuggester {
     // abort path is handled by the same `failed` branch (preserving the
     // documented "ESC does not consume the discovery opportunity" retry
     // behavior that the old `[]`-returning API silently broke).
+    const wasRetry = retrying;
+    if (wasRetry) {
+      // The retry pass is now CONSUMING the attempt: spend the budget up
+      // front so an invalid outcome below cannot re-arm it (no loops).
+      this.spendRetry();
+    }
     const result: KeywordExtractionResult = await ctx.core.escAware(
       async (ac) => extractKeywords(compositeText, loader.getSkillKeywords(), ac.signal),
       () => ({ status: 'failed' } as const),
@@ -500,7 +574,11 @@ export class SkillSuggester {
     if (result.status === 'failed') {
       // Query stays eligible for retry — do not touch lastQuery or cooldown.
       // (The cooldown was already decremented at the top of step 6, which is
-      // fine: a failed attempt does not extend suppression.)
+      // fine: a failed attempt does not extend suppression.) On a RETRY pass
+      // the budget was already spent above, so the same query cannot retry
+      // again on a later pass; a genuinely failed (ESC/transient) FIRST
+      // extraction that never armed the cooldown still leaves the query
+      // eligible via `changed` on the next pass.
       return;
     }
 
@@ -523,16 +601,31 @@ export class SkillSuggester {
     const freeformQuery = result.status === 'success' ? result.freeformQuery : '';
     if (keywords.length === 0) return;
 
-    // The semantic phase needs a valid freeformQuery. When it is missing,
-    // FAIL FAST and leave the query eligible for a retry: clearThrottle
-    // undoes the marking + cooldown-arming performed above so the next pass
-    // re-attempts extraction (the LLM gets another chance to produce a valid
-    // freeformQuery). This mirrors the `failed` path — both leave the query
-    // eligible and the cooldown at 0.
+    // The semantic phase needs a valid freeformQuery. When it is missing:
+    //   - FIRST pass: grant the LLM exactly ONE more chance to produce a
+    //     valid freeformQuery for this same query — the query stays marked
+    //     seen (cursor stability) and retryBudget opens the gate once more
+    //     even though the query is no longer "changed". A 1-pass cooldown
+    //     keeps the retry from firing on the immediately-next pass only.
+    //     (Before the retryBudget existed, this branch shorted the cooldown
+    //     but the gate still required queryChanged — so the promised chance
+    //     never materialized: markQuerySeen had closed the same gate it was
+    //     supposed to reopen. PR #28 P2 F1.)
+    //   - RETRY pass: the budget was consumed up front; a second invalid
+    //     outcome simply leaves it spent — no third attempt, no loop.
     if (!freeformQuery || !freeformQuery.trim()) {
-      this.clearThrottle();
+      if (!wasRetry) {
+        this.setCooldown(1);
+        // Save the SAME composite this attempt ran against, so the retry
+        // reuses the original task's input rather than recomputing from a
+        // source that may already be drained (PR #28 review P2 F1).
+        this.grantRetry(compositeText);
+      }
       return;
     }
+
+    // A valid freeformQuery (first or retry pass) clears any residual budget.
+    this.spendRetry();
 
     // Score every loaded skill (positional points × semantic boost), keep
     // those above the floor, and surface the top N as a HINT note.

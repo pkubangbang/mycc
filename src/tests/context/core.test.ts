@@ -7,6 +7,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { Core } from '../../context/parent/core.js';
+import { loopEvents } from '../../loop/loop-events.js';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -102,6 +103,29 @@ describe('Core (Parent) - Mode System', () => {
       core.setMode('plan');
       core.setMode('normal');
       expect(core.getMode()).toBe('normal');
+    });
+  });
+
+  describe('Serve State (loopEvents signal)', () => {
+    // The serve layer emits `serve_state` as a NAMED SIGNAL (it holds no ctx
+    // reference); Core owns the flag and registers its own listener. These
+    // tests pin that decoupled round-trip and that restart stays silent.
+    it('should start with serve state false', () => {
+      expect(core.getServeRunning()).toBe(false);
+    });
+
+    it('should flip true on a running:true signal, false on running:false', () => {
+      loopEvents.emit('serve_state', { running: true });
+      expect(core.getServeRunning()).toBe(true);
+      loopEvents.emit('serve_state', { running: false });
+      expect(core.getServeRunning()).toBe(false);
+    });
+
+    it('should ignore a malformed payload (no boolean running field)', () => {
+      loopEvents.emit('serve_state', { running: true });
+      loopEvents.emit('serve_state', {} as unknown as { running: boolean });
+      loopEvents.emit('serve_state', undefined);
+      expect(core.getServeRunning()).toBe(true); // unchanged by malformed signals
     });
   });
 

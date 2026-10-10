@@ -120,6 +120,7 @@ vi.mock('../../../loop/triologue.js', () => {
 
 // --- Imports after mocks -----------------------------------------------------
 import { handleCollect } from '../../../loop/states/collect.js';
+import { reconcileServeStateAfterClear } from '../../../loop/states/collect.js';
 import { AgentState } from '../../../loop/state-machine.js';
 import { Triologue } from '../../../loop/triologue.js';
 import { getSteeringManager } from '../../../loop/steering-manager.js';
@@ -536,13 +537,49 @@ describe('handleCollect — composite keyword extraction (integration)', () => {
   });
 
   // ---------------------------------------------------------------------------
-  // Fail-fast: empty freeformQuery clears the throttle (retry-eligible)
+  // PR #28 P3 F4: /clear must not permanently erase the serve-state knowledge.
   // ---------------------------------------------------------------------------
 
-  it('fail-fast: an empty freeformQuery clears the throttle and injects no HINT', async () => {
+  it('P3 F4: /clear re-arms the serve-state watch so the fresh conversation learns it', async () => {
+    // Session starts already serving (daemon --serve): the first COLLECT
+    // reports the start note once. Wire the flag through the mock core.
+    serveRunning = true;
+    const env = makeEnv();
+    (env.ctx.core as { getServeRunning?: () => boolean }).getServeRunning = vi.fn(() => serveRunning);
+    const turn: TurnVars = createTurnVars({ lastUserQuery: 'do work' });
+
+    await handleCollect(env, turn, createChatData());
+    const serveNotesAfterFirst = vi.mocked(triologue.note).mock.calls
+      .filter(c => c[0] === 'SYSTEM' && String(c[1]).includes('Web UI started'));
+    expect(serveNotesAfterFirst.length).toBe(1);
+
+    // Steady state: a second COLLECT stays SILENT (edge already reported).
+    vi.mocked(triologue.note).mockClear();
+    await handleCollect(env, turn, createChatData());
+    expect(vi.mocked(triologue.note).mock.calls
+      .filter(c => c[0] === 'SYSTEM' && String(c[1]).includes('Web UI'))).toHaveLength(0);
+
+    // The user clears the conversation. The triologue is emptied (losing the
+    // note), but the session is STILL serving. Without the reconcile the
+    // transient cursor would stay true and the fresh conversation would never
+    // learn a WebUI is running.
+    reconcileServeStateAfterClear();
+
+    // Next COLLECT: the edge re-armed → the CURRENT state is re-reported.
+    vi.mocked(triologue.note).mockClear();
+    await handleCollect(env, turn, createChatData());
+    expect(vi.mocked(triologue.note)).toHaveBeenCalledWith(
+      'SYSTEM',
+      expect.stringContaining('Web UI started'),
+    );
+  });
+
+  it('fail-fast: an empty freeformQuery grants ONE same-query retry (budget=1, cooldown=1), injects no HINT', async () => {
     // A success outcome that carries keywords but NO freeformQuery cannot run
-    // the semantic phase → clearThrottle() undoes the mark-seen + cooldown so
-    // the next pass re-attempts extraction (the query stays eligible).
+    // the semantic phase → the query stays marked (so the cursor is stable),
+    // the cooldown is shortened to a single pass, and a SAME-QUERY retry
+    // budget of 1 opens the extraction gate exactly one more time for this
+    // query even though queryChanged is false on the next pass.
     setExtractionResult({ status: 'success', keywords: ['test'], freeformQuery: '' });
     const skills = makeOversizeSkills(3);
     const env = makeEnvWithSkills(skills);
@@ -551,8 +588,135 @@ describe('handleCollect — composite keyword extraction (integration)', () => {
     await handleCollect(env, turn, createChatData());
 
     expect(triologue.note).not.toHaveBeenCalledWith('HINT', expect.anything());
-    expect(skillSuggester.getLastQuery()).toBe('');
-    expect(skillSuggester.getCooldown()).toBe(0);
+    // The success-path marking is PRESERVED (unlike the old clearThrottle(),
+    // which reset the cursor to '' and re-fired extraction on the next pass).
+    expect(skillSuggester.getLastQuery()).toBe('help me test things');
+    // The 3-pass cooldown armed by armCooldown() is shortened to exactly one
+    // pass — the retry is bounded, not immediate-forever.
+    expect(skillSuggester.getCooldown()).toBe(1);
+    // The same-query retry budget was granted.
+    expect(skillSuggester.getRetryBudget()).toBe(1);
+  });
+
+  it('fail-fast: the SAME query gets exactly one real retry, then the budget is spent', async () => {
+    // Pass 1: empty freeformQuery → cooldown 1 + retryBudget 1.
+    setExtractionResult({ status: 'success', keywords: ['test'], freeformQuery: '' });
+    const env = makeEnvWithSkills(makeOversizeSkills(3));
+    const turn: TurnVars = createTurnVars({ lastUserQuery: 'help me test things' });
+
+    await handleCollect(env, turn, createChatData());
+    expect(skillSuggester.getCooldown()).toBe(1);
+    expect(skillSuggester.getRetryBudget()).toBe(1);
+
+    // Pass 2 (the retry): cooldown reaches 0 at the top, the query is NOT
+    // changed, but the retry budget opens the gate → extractKeywords runs
+    // for the SAME query. The budget is consumed up front.
+    mockedExtractKeywords.mockClear();
+    await handleCollect(env, turn, createChatData());
+    expect(mockedExtractKeywords).toHaveBeenCalledTimes(1);
+    expect(skillSuggester.getRetryBudget()).toBe(0);
+
+    // Pass 3: the retry was spent (second empty freeformQuery) → the gate is
+    // closed for this query: no third extraction, no loop.
+    mockedExtractKeywords.mockClear();
+    await handleCollect(env, turn, createChatData());
+    expect(mockedExtractKeywords).not.toHaveBeenCalled();
+    expect(skillSuggester.getLastQuery()).toBe('help me test things');
+    // The retry pass was a SUCCESS outcome (keywords arrived): the shared
+    // success marking ran armCooldown()=3 BEFORE the empty-freeformQuery
+    // branch, and the retry (wasRetry) correctly skips the setCooldown(1)
+    // override — the suppression stays armed. Pass 3's decrement (3→2)
+    // consumed one pass; 2 remains (budget 0 keeps the gate shut).
+    expect(skillSuggester.getCooldown()).toBe(2);
+    expect(skillSuggester.getRetryBudget()).toBe(0);
+  });
+
+  it('fail-fast: a successful retry (valid freeformQuery) clears the budget and surfaces skills', async () => {
+    // Pass 1: empty freeformQuery → budget granted.
+    mockedExtractKeywords.mockResolvedValueOnce({ status: 'success', keywords: ['test'], freeformQuery: '' });
+    // A lone 'test' keyword scores exactly 10 pts (first position) and does
+    // NOT clear the strict >10 floor — seed ONE matching semantic row so the
+    // retry pass's ranking (10 × 1.5 = 15) can actually surface a HINT.
+    const env = makeEnvWithSkills(makeOversizeSkills(3), [
+      { title: 'project:skill-0', similarity: 0.9 },
+    ]);
+    const turn: TurnVars = createTurnVars({ lastUserQuery: 'help me test things' });
+
+    await handleCollect(env, turn, createChatData());
+    expect(skillSuggester.getRetryBudget()).toBe(1);
+
+    // Pass 2 (the retry): the LLM produces a valid freeformQuery → ranking
+    // runs and the HINT surfaces; the budget is cleared, not left dangling.
+    mockedExtractKeywords.mockResolvedValueOnce({ status: 'success', keywords: ['test'], freeformQuery: 'test automation' });
+    mockedExtractKeywords.mockClear();
+    await handleCollect(env, turn, createChatData());
+
+    expect(mockedExtractKeywords).toHaveBeenCalledTimes(1);
+    expect(skillSuggester.getRetryBudget()).toBe(0);
+    expect(triologue.note).toHaveBeenCalledWith('HINT', expect.anything());
+  });
+
+  // ---------------------------------------------------------------------------
+  // PR #28 P2 F1: the retry must reuse the composite that EARNED it, not a
+  // recomputed one — the originating steering note is drained by the retry.
+  // ---------------------------------------------------------------------------
+
+  it('P2 F1: a steering-note retry reuses the SAME composite (does not fall back to lastUserQuery)', async () => {
+    // Pass 1: a steering note ("focus on task B") triggers extraction, returns
+    // keywords but an EMPTY freeformQuery → budget granted. The production
+    // code marks BOTH the steer note and lastUserQuery seen, and the drain
+    // empties the steering queue.
+    serveRunning = true;
+    getSteeringManager().addNote('focus on task B');
+    const env = makeEnv();
+    const turn: TurnVars = createTurnVars({ lastUserQuery: 'original task A' });
+
+    mockedExtractKeywords.mockResolvedValueOnce({ status: 'success', keywords: ['b'], freeformQuery: '' });
+    await handleCollect(env, turn, createChatData());
+    expect(skillSuggester.getRetryBudget()).toBe(1);
+    // The saved composite is the one built from the STEER note (task B).
+    expect(skillSuggester.getRetryComposite()).toBe('focus on task B');
+    expect(mockedExtractKeywords).toHaveBeenLastCalledWith('focus on task B', expect.anything(), expect.anything());
+
+    // Pass 2 (the retry): the steer note is GONE from the queue, so a naive
+    // recompute would fall back to lastUserQuery ('original task A') — a
+    // DIFFERENT task. The fix reuses the saved composite (task B).
+    mockedExtractKeywords.mockClear();
+    mockedExtractKeywords.mockResolvedValueOnce({ status: 'success', keywords: ['b'], freeformQuery: 'task b semantic' });
+    await handleCollect(env, turn, createChatData());
+
+    expect(mockedExtractKeywords).toHaveBeenCalledTimes(1);
+    expect(mockedExtractKeywords).toHaveBeenLastCalledWith('focus on task B', expect.anything(), expect.anything());
+    // Budget retired after a successful retry; saved composite cleared with it.
+    expect(skillSuggester.getRetryBudget()).toBe(0);
+    expect(skillSuggester.getRetryComposite()).toBe('');
+  });
+
+  it('fail-fast: a NEW query retires an unspent retry budget (no free extraction for the next query)', async () => {
+    // Pass 1: empty freeformQuery → budget granted for THIS query.
+    setExtractionResult({ status: 'success', keywords: ['test'], freeformQuery: '' });
+    const env = makeEnvWithSkills(makeOversizeSkills(3));
+    const turn: TurnVars = createTurnVars({ lastUserQuery: 'help me test things' });
+
+    await handleCollect(env, turn, createChatData());
+    expect(skillSuggester.getRetryBudget()).toBe(1);
+
+    // Pass 2: a genuinely NEW query arrives. The stale budget must NOT open
+    // the gate for it — it was scoped to the query that earned it. The new
+    // query triggers extraction normally via queryChanged (and earns its own
+    // throttle cycle). The stale mock still resolves EMPTY, so supply a
+    // valid freeformQuery for the new query's own extraction: the
+    // assertions here are about budget retirement, not the new query's
+    // fail-fast cycle.
+    mockedExtractKeywords.mockResolvedValueOnce({ status: 'success', keywords: ['test'], freeformQuery: 'a different semantic phrase' });
+    mockedExtractKeywords.mockClear();
+    turn.lastUserQuery = 'a different question entirely';
+    await handleCollect(env, turn, createChatData());
+
+    expect(mockedExtractKeywords).toHaveBeenCalledTimes(1); // normal changed-query trigger
+    expect(skillSuggester.getLastQuery()).toBe('a different question entirely');
+    expect(skillSuggester.getCooldown()).toBe(3); // fresh armCooldown(), not the old 1-pass
+    expect(skillSuggester.getRetryBudget()).toBe(0);
   });
 
 

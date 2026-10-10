@@ -332,7 +332,10 @@ export async function handlePrompt(
       command,
       intent: `RUN USER TO execute interactive command from user`,
     });
-    triologue.note('REMINDER', result);
+    triologue.note(
+      'REMINDER',
+      `The user ran an interactive command in the handed-over terminal (${command || 'plain shell'}). Captured output:\n\n${result}`,
+    );
     env.ctx.core.resetConfusionIndex();
     env.crossroadOccurred = false;  // clear stale cooldown at turn start
     return AgentState.PROMPT;

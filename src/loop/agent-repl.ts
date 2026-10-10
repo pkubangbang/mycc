@@ -33,7 +33,7 @@ import type { StateTransitionPayload } from './loop-events.js';
 import { activateServe } from '../serve/activate.js';
 import { handlePrompt, setInitialQuery } from './states/prompt.js';
 import { handleSlash } from './states/slash.js';
-import { handleCollect } from './states/collect.js';
+import { handleCollect, reconcileServeStateAfterClear } from './states/collect.js';
 import { handleLlm } from './states/llm.js';
 import { handleHook } from './states/hook.js';
 import { handleTool } from './states/tool.js';
@@ -230,6 +230,12 @@ export async function main(): Promise<void> {
     // started (getTurn returns null).
     const turn = machine.getTurn();
     if (turn) beginFreshSession(turn);
+    // Re-arm the serve-state watch: like /clear, this empties the triologue,
+    // so the note describing the current WebUI state is gone. Without this the
+    // transient `lastServeReported` cursor in COLLECT would stay `true` and the
+    // fresh conversation would never re-learn whether a WebUI is running
+    // (PR #28 review P3 F4 — this is the SECOND triologue-clearing path).
+    reconcileServeStateAfterClear();
   });
 
   // ── Register project-context populators ──

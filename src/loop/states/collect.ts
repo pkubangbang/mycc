@@ -11,14 +11,15 @@ import type { MachineEnv, TurnVars, ChatData, HandlerResult } from '../state-mac
 import { agentIO } from '../agent-io.js';
 import { autoState } from '../auto-state.js';
 import { isVerbose } from '../../config.js';
-import { loader } from '../../context/shared/loader.js';
-import { forkChat } from '../../engine/chat-provider.js';
 import { isTransientError } from '../../engine/chat-helpers.js';
 import { hintSuggester } from './collect-hint.js';
 import { skillSuggester } from './collect-skill.js';
+import { checkReactivation } from './collect-pinned-todo.js';
 import { listWorktrees } from '../../context/worktree-store.js';
 import { getSteeringManager } from '../steering-manager.js';
 import { getServeHub } from '../../serve/serve-registry.js';
+import type { Core } from '../../context/parent/core.js';
+import { shouldDaemon } from '../../config.js';
 import { resolveHeadlessFirstQuery } from '../../session/index.js';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -38,142 +39,30 @@ import { loopEvents } from '../loop-events.js';
 const MAX_COLLECT_TRANSIENT_RETRIES = 3;
 
 /**
- * Shape of a single reactivation evaluation returned by the LLM via forkChat.
+ * COLLECT's transient memory of the last serve state it REPORTED to the LLM.
+ * Paired with ctx.core.getServeRunning() (the session-stable flag) to make the
+ * WebUI start/stop report edge-triggered: a note is emitted only when the live
+ * flag differs from this, so steady state is silent. Module-level on purpose —
+ * this is COLLECT-internal watch state, not something other modules read
+ * (unlike the flag itself, which lives on ctx so anyone can query it).
  */
-interface ReactivationEvaluation {
-  id: number;
-  hash: string;
-  reopen: boolean;
-  reason?: string;
-}
+let lastServeReported = false;
 
 /**
- * Parse the forkChat result into a list of reactivation evaluations.
+ * Reconcile the serve-state report after a destructive context boundary
+ * (/clear, double-Ctrl+L in agent-repl.ts). Both clears empty the triologue
+ * but do NOT flip the session-stable serve flag, so `lastServeReported` would
+ * stay `true` while the note describing it is gone from the conversation — the
+ * new conversation would then lack the very context this watch exists to
+ * supply (PR #28 review P3 F4).
  *
- * Tolerant parsing: tries a direct `JSON.parse` first; on failure, attempts to
- * regex-extract the first `[...]` JSON array and retry; on any failure or
- * non-array shape, returns null (caller skips this turn).
- *
- * Exported for unit testing (see src/tests/loop/states/collect-reactivation.test.ts).
+ * Clearing the cursor forces the next COLLECT to re-report the CURRENT state
+ * (edge re-arms): if serve is still up, the start note is re-injected; if it
+ * stopped across the boundary, the stop note is. Steady state stays silent
+ * in both cases — only a clear re-arms the edge.
  */
-export function parseReactivationResult(raw: string): ReactivationEvaluation[] | null {
-  const trimmed = raw.trim();
-  // 1. Direct parse
-  try {
-    const parsed = JSON.parse(trimmed);
-    if (Array.isArray(parsed)) return parsed as ReactivationEvaluation[];
-    return null;
-  } catch {
-    // fall through to extraction
-  }
-  // 2. Extract first JSON array from surrounding noise
-  const match = trimmed.match(/\[[\s\S]*\]/);
-  if (!match) return null;
-  try {
-    const parsed = JSON.parse(match[0]);
-    if (Array.isArray(parsed)) return parsed as ReactivationEvaluation[];
-  } catch {
-    // give up
-  }
-  return null;
-}
-
-/**
- * Evaluate completed pinned todos carrying a reactivation condition and reopen
- * those whose condition is met. Runs in the COLLECT state, immediately before
- * the todo nudge, on the same throttle cycle (so the nudge prints the
- * already-updated list — no "closed then reopened" contradiction).
- *
- * Uses `forkChat` with `toolChoice: 'none'` to preserve the prompt cache and
- * ask the LLM to return a JSON array. Every failure path is silent
- * (verbose-only) and never blocks the agent loop:
- *  - no candidates → no forkChat call
- *  - forkChat throws → catch, skip this turn
- *  - non-JSON / non-array result → skip this turn
- *  - per-entry: wrong types, hash mismatch (hallucination), reopen=false → skip entry
- */
-async function checkReactivation(env: MachineEnv): Promise<void> {
-  const { triologue, ctx } = env;
-  const candidates = ctx.todo.getReactivationCandidates();
-  if (candidates.length === 0) return;
-
-  // Build the evaluation prompt. `id` is fixed (echoed back); `hash` is
-  // supplied by the LLM from the conversation context so the anti-hallusion
-  // check stays active — a fabricated hash won't match the candidate.
-  const todoLines = candidates.map(
-    (c) => `#${c.id} "${c.name}" — Condition: "${c.reactivate}"`,
-  );
-  const prompt =
-    'You are evaluating whether any pinned todos should be reactivated (marked back to not done).\n\n' +
-    `Pinned todos to evaluate:\n${todoLines.join('\n')}\n\n` +
-    'Based on the conversation context above, for EACH todo, determine if its reactivation condition has been met.\n\n' +
-    'Reply with ONLY a JSON array, no other text. Schema:\n' +
-    '[\n' +
-    '  {"id": <todo_id>, "hash": "<current_hash_of_this_todo>", "reopen": <true|false>, "reason": "<one sentence>"}\n' +
-    ']\n\n' +
-    'Rules:\n' +
-    '- "id": the todo ID as listed above (echo it back).\n' +
-    '- "hash": the current hash of this todo item (from the todo list you have seen in conversation).\n' +
-    '- "reopen": true only if the condition has clearly been met in the recent conversation.\n' +
-    '- If no relevant event has occurred, or you are unsure, use false.\n' +
-    '- Do not reactivate based on events that happened before the todo was last completed.';
-
-  const fullMessages = triologue.getMessages();
-  const allTools = loader.getToolsForScope(env.scope);
-
-  let result: string;
-  try {
-    // Wrap in escAware so ESC (WebUI "停止" button / terminal ESC) aborts the
-    // forkChat immediately. Without this, a slow endpoint keeps the state
-    // machine stuck in COLLECT for the full call duration, and every
-    // subsequent click is a no-op (triggerNeglection() guards with
-    // isNeglectedMode()). On ESC, return '' so parseReactivationResult()
-    // yields null → function returns early → COLLECT routes to STOP.
-    result = await ctx.core.escAware(
-      async (abortController) => {
-        return await forkChat(fullMessages, allTools, prompt, abortController.signal, 'none');
-      },
-      () => '' as const,
-    );
-  } catch (err) {
-    ctx.core.verbose('reactivate', `forkChat failed: ${(err as Error).message}, skipping reactivation this turn`);
-    return;
-  }
-
-  const evaluations = parseReactivationResult(result);
-  if (!evaluations) {
-    ctx.core.verbose('reactivate', 'forkChat returned non-JSON or non-array, skipping reactivation this turn');
-    return;
-  }
-
-  for (const ev of evaluations) {
-    // Per-entry type guards — skip malformed entries, keep going
-    if (typeof ev.id !== 'number' || typeof ev.hash !== 'string' || typeof ev.reopen !== 'boolean') {
-      continue;
-    }
-    if (!ev.reopen) continue;
-
-    // Hash anti-hallusion: match by id AND hash. A hallucinated hash won't
-    // match and the entry is silently skipped.
-    const candidate = candidates.find((c) => c.id === ev.id && c.hash === ev.hash);
-    if (!candidate) continue;
-
-    // Reopen directly — the LLM does not decide; the system acts.
-    const updated = ctx.todo.updateTodo(
-      candidate.id,
-      candidate.hash,
-      candidate.name,
-      false,
-      candidate.note,
-    );
-    if (updated) {
-      triologue.note(
-        'SYSTEM',
-        `Pinned todo #${candidate.id} "${candidate.name}" reactivated. ` +
-          `Condition "${candidate.reactivate}" was met.${ev.reason ? ` ${ev.reason}` : ''}`,
-      );
-    }
-  }
+export function reconcileServeStateAfterClear(): void {
+  lastServeReported = false;
 }
 
 /**
@@ -192,34 +81,87 @@ async function checkReactivation(env: MachineEnv): Promise<void> {
 async function collectMailsAndInput(env: MachineEnv): Promise<{ firstSteerNote: string | null }> {
   const { triologue, ctx } = env;
 
+  // 0. Serve-state watch — report a WebUI start/stop to the LLM, edge-triggered.
+  //    `serveState` (session-stable) lives on ctx.core; the transient
+  //    "what did we last report" memory is COLLECT's own (module-level, below).
+  //    The very first pass simply reconciles whatever the flag is then — no
+  //    silent seeding step, so a session that starts already-serving reports
+  //    once, and steady state is silent (no per-turn note).
+  const serveNow = typeof (ctx.core as Core).getServeRunning === 'function'
+    ? (ctx.core as Core).getServeRunning()
+    : false;
+  if (serveNow !== lastServeReported) {
+    lastServeReported = serveNow;
+    // A daemon has NO terminal (its init note says so), so claiming terminal
+    // input is "disabled"/"restored" would contradict that — in a headless
+    // daemon only the browser channel actually changes (PR #28 review P2 F3).
+    // Interactive sessions get the full terminal transition.
+    const headless = shouldDaemon();
+    const startDetail = headless
+      ? 'Browser input is now available.'
+      : 'Terminal input is disabled until the Web UI stops.';
+    const stopDetail = headless
+      ? 'This daemon has no terminal, so external mail (and cron ticks, if configured) remain the wake sources.'
+      : 'Terminal input is restored, so direction will again arrive at the prompt.';
+    triologue.note(
+      'SYSTEM',
+      serveNow
+        ? `Web UI started — this session is now reachable from a browser. A ` +
+          `user may submit prompts and mid-task steering notes from the WebUI, ` +
+          `so expect direction to arrive asynchronously while you work. ${startDetail}`
+        : `Web UI stopped — browser input is no longer available. ${stopDetail}`,
+    );
+  }
+
   // 1. Handle pending questions from children
   await ctx.team.handlePendingQuestions();
 
   // 2. Collect mails — relies on auto-fix for TP-safe injection
-  //    The MAIL note carries pure mail content only. Reply guidance (who to
-  //    contact and how) lives in the todo/peer-channels nudge below, not
-  //    here — keeping each note lightweight. The sender's identity is in
-  //    `mail.from` (a teammate name, or a peer identity "<session-id>/lead"),
-  //    which the mail_to tool accepts as its `name` argument; the nudge tells
-  //    the agent that.
+  //    Each MAIL entry is self-contained: sender + title + body + an explicit
+  //    reply line. The sender's identity is `mail.from` (a teammate name, or a
+  //    peer identity "<session-id>/lead"); that same value IS the `name`
+  //    argument of mail_to, so the reply line spells out the exact call —
+  //    otherwise the agent has to already know that a peer's session-id is its
+  //    reply address. Peers are annotated so local-vs-cross-instance is clear.
   const mails = ctx.mail.collectMails();
   if (mails.length > 0) {
     const parts: string[] = [];
     for (const mail of mails) {
-      parts.push(`Mail from ${mail.from}: ${mail.title}\n${mail.content}`);
+      const isPeer = mail.from.endsWith('/lead');
+      const peerTag = isPeer ? ' (peer — cross-instance)' : '';
+      parts.push(
+        `Mail from ${mail.from}${peerTag}: ${mail.title}\n${mail.content}\n` +
+        `↳ Reply with mail_to(name="${mail.from}", title="${mail.title}: <re>", content="…")` +
+        `${isPeer ? ' — for a peer this session-id IS the name argument.' : ''}`
+      );
     }
     const mailContent = parts.join('\n\n---\n\n');
     if (agentIO.isNeglectedMode()) {
-      triologue.note('URGENT', `user interrupted - wrap up quickly\n${mailContent}`);
+      // The ESC directive and the mail payload are UNRELATED concerns: keep
+      // them as two attributed notes. Welding them made the mail wear the
+      // [URGENT] category and buried its sender/reply routing under an
+      // interrupt notice about the user's own ESC.
+      triologue.note('URGENT', 'User interrupted (ESC). Finish the current step and stop; do NOT start new work.', 'esc');
+      triologue.note('MAIL', mailContent);
     } else {
       triologue.note('MAIL', mailContent);
     }
   }
 
-  // 2b. Inject team status overview so lead sees deadlines without calling tm_print
+  // 2b. Inject team status overview so lead sees deadlines without calling tm_print.
+  //     Deliberately NOT deduped: printTeam() is one-write-many-read (stop.ts,
+  //     tm_print, /team, the child IPC, and the llm.ts hasTeam probe all call it),
+  //     so a consume-style one-shot token would be burned by any sibling reader
+  //     (e.g. a user-issued /team) and the next COLLECT would report nothing.
+  //     The header/footer carry the attribution + action framing instead; a live
+  //     re-emit is cheap and keeps the lead oriented even after a compaction
+  //     summarizes an earlier instance away. See "#18 A-only".
   const teamStatus = await ctx.team.printTeam();
   if (teamStatus !== 'No teammates.') {
-    triologue.note('SYSTEM', teamStatus);
+    triologue.note(
+      'SYSTEM',
+      `[team status — snapshot, informational]\n${teamStatus}\n\ntm_print for a fresh read; elapsed ETAs are not actionable.`,
+    );
   }
 
   // 2c. Drain steering queue (webui-originated): consume any steering notes
@@ -374,7 +316,7 @@ async function runBriefAndWorktreeNudges(env: MachineEnv, turn: TurnVars): Promi
   // 5. Brief nudging - remind agent to use brief tool
   turn.nextBriefNudge--;
   if (turn.nextBriefNudge <= 0) {
-    triologue.note('REMINDER', 'Provide a brief status update using the brief tool. Example: brief("Working on X", 7)');
+    triologue.note('REMINDER', 'Provide a brief status update using the brief tool: brief("<what you are doing now>", <confidence 0-10>).');
     turn.nextBriefNudge = 5;
   }
 
@@ -390,7 +332,7 @@ async function runBriefAndWorktreeNudges(env: MachineEnv, turn: TurnVars): Promi
       const lines = worktrees.map(w => `- ${w.name} at ${w.path} (branch: ${w.branch})`);
       triologue.note(
         'REMINDER',
-        `Stale worktrees detected. Consider cleaning them up with bash (git worktree remove <path>) once the work is merged:\n${lines.join('\n')}`
+        `Worktrees present. Remove one with bash (git worktree remove <path>) only if you are sure its branch is merged and no teammate is still working in it:\n${lines.join('\n')}`
       );
       env.nextWtNudge = 5;
     }

@@ -15,6 +15,7 @@ import { filetypeinfo } from '../../utils/magic-bytes.js';
 import { BaseCore } from '../shared/base-core.js';
 import { evaluateGrant, isPlanModeWritablePath } from '../grant/grant-evaluator.js';
 import { getServeHub } from '../../serve/serve-registry.js';
+import { loopEvents } from '../../loop/loop-events.js';
 import { atomicWrite } from '../../utils/atomic-write.js';
 
 /**
@@ -72,6 +73,20 @@ export class Core extends BaseCore implements CoreModule {
   private allowedFile?: string;
 
   /**
+   * WebUI serve state — whether a ServeHub is currently running for this
+   * session. Owned here (not read live from the hub) so any consumer can ask
+   * without a serve-layer import. Flipped by a SIGNAL, not a direct call: the
+   * serve layer emits `loopEvents.emit('serve_state', {running})` at its
+   * start/stop seams and this class's own listener writes the flag. That
+   * keeps the emitter ignorant of Core and this consumer ignorant of serve
+   * internals — neither layer holds a reference to the other. restartServe()
+   * emits NOTHING (a recycle is invisible: the LLM's world does not change).
+   * The transient "what did COLLECT last report" memory is NOT kept here — it
+   * lives inside COLLECT, which owns the watch.
+   */
+  private serveState = false;
+
+  /**
    * Session-scoped grants for external path access.
    * Maps resolved path → granted scope.
    * One-way open: grants are never revoked during the session.
@@ -87,6 +102,14 @@ export class Core extends BaseCore implements CoreModule {
   constructor(workDir?: string) {
     super(workDir || process.cwd());
     this.pictureCacheDir = getImgCacheDir();
+    // Listen for the serve lifecycle signal. The serve layer emits it at its
+    // start/stop seams knowing nothing of Core; this consumer owns the flag.
+    // The listener lives as long as the process (one Core per lead process),
+    // so the unsubscribe handle is intentionally not retained.
+    loopEvents.on('serve_state', (payload) => {
+      const running = (payload as { running?: boolean } | undefined)?.running;
+      if (typeof running === 'boolean') this.serveState = running;
+    });
   }
 
   /**
@@ -111,6 +134,14 @@ export class Core extends BaseCore implements CoreModule {
   setMode(mode: 'plan' | 'normal', allowedFile?: string): void {
     this.modeState = mode;
     this.allowedFile = allowedFile;
+  }
+
+  /**
+   * Current WebUI serve state (true while a ServeHub runs for this session).
+   * COLLECT reads this each turn and reports a change to the LLM.
+   */
+  getServeRunning(): boolean {
+    return this.serveState;
   }
 
   /**

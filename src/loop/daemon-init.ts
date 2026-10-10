@@ -82,10 +82,31 @@ export function initDaemonMode(
       process.send?.({ type: 'exit' });
       process.exit(1);
     }
-    // Inject a system note so the LLM loads the skill on its first turn.
-    // The AWAIT state's 1s poll will pick up this note (it is appended to
-    // the triologue) and route to COLLECT → LLM.
-    triologue.note('SYSTEM', `Daemon started with skill '${daemonSkill}'. Load it via skill_load(name="${daemonSkill}") and follow its workflow.`);
+    // Decide the wake sources FIRST, then inject exactly ONE note with the
+    // correct list. Injecting the skill note before the service_cron check
+    // left TWO contradictory notes in the conversation: the first claimed
+    // "you are woken by cron ticks" unconditionally, and a passive daemon
+    // (no service_cron) then got a second note saying "no cron ticks"
+    // (PR #28 review P2 F2). One note, computed from the actual config,
+    // cannot contradict itself.
+    //
+    // The wake-source list is stated POSITIVELY (what wakes the daemon), NOT
+    // as an exhaustive input channel: a daemon started with `--serve` also
+    // accepts browser input, and the LLM cannot observe whether it is serving
+    // (the process knows via ServeHub.isRunning(), the LLM does not). An
+    // exclusive "...only..." phrasing would therefore be false, and a
+    // conditional "...if serving..." asks the LLM to introspect a fact it
+    // cannot see. Naming the triggers positively is true in every case.
+    const hasCron = !!skill.service_cron;
+    const wakeSources = hasCron
+      ? 'cron ticks, incoming mail, or browser input if this daemon is serving a Web UI'
+      : 'incoming mail, or browser input if this daemon is serving a Web UI';
+    triologue.note(
+      'SYSTEM',
+      `Daemon started with skill '${daemonSkill}'${hasCron ? '' : ' (no service_cron — no cron ticks)'}. ` +
+        `Load it via skill_load(name="${daemonSkill}") and follow its workflow. ` +
+        `There is no terminal here — you are woken by ${wakeSources}.`,
+    );
 
     // Start cron timer if the skill declares service_cron.
     if (skill.service_cron) {
@@ -109,6 +130,13 @@ export function initDaemonMode(
     }
   } else {
     console.log(chalk.gray(`[daemon] No skill specified — passive daemon (waits for external mail).`));
+    // Symmetric SYSTEM note (the console.log above is invisible in a
+    // headless daemon) — no skill, no cron ticks, so no first-turn task to
+    // give; only the wake sources.
+    triologue.note(
+      'SYSTEM',
+      'Daemon started with no skill and no cron ticks. There is no terminal here — you are woken by incoming mail, or browser input if this daemon is serving a Web UI.',
+    );
   }
 
   return null;
