@@ -387,8 +387,11 @@ export async function handlePrompt(
   // collect.ts 2c: an empty manager is a natural no-op. The steer-flush
   // broadcast still rides the hub and only fires when something drained.
   if (query !== null) {
-    const staleNotes = getSteeringManager().peekTexts();
+    const staleNotes = getSteeringManager().drainNotes().map((note) => note.text);
     if (staleNotes.length > 0) {
+      // Flush the UI for exactly this drained snapshot before awaiting synthesis.
+      // Notes arriving during the await remain queued and visible for later.
+      hub?.broadcast('steer-flush', '');
       const freshQuery: string = query;
       const fullMessages = [...triologue.getMessages()];
       const tools = loader.getToolsForScope(env.scope);
@@ -397,14 +400,8 @@ export async function handlePrompt(
         () => freshQuery,
       );
       query = synthesized;
-      // Drain the steering queue regardless of synthesis success — the notes
-      // were consumed by the synthesis attempt, so they must not linger for
-      // COLLECT to inject again (would double-count). The steer-flush
-      // broadcast moves when the notes WERE synthesized+submitted elsewhere,
-      // but here the notes are folded into the fresh query text; the flush
-      // still clears the frontend buffer bars so the chips don't linger.
-      getSteeringManager().drainNotes();
-      hub?.broadcast('steer-flush', '');
+      // The snapshot was drained before awaiting synthesis, so it cannot be
+      // stranded by late queue writes. Newly arrived notes remain queued.
       agentIO.verbose('steer', `Synthesized ${staleNotes.length} stale steering note(s) into fresh query`);
     }
 
