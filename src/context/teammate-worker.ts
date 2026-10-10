@@ -21,6 +21,7 @@ import { getTokenThreshold, getSessionContext, getSessionDir, setSessionContext,
 import { TriologueLite } from '../loop/triologue-lite.js';
 import { JsonlTranscriptWriter, asAppendablePiece } from '../loop/triologue/transcript.js';
 import { ipc, sendStatus } from './child/ipc-helpers.js';
+import { parseIntent, isReadOnlyVerb } from '../context/grant/intent-parser.js';
 
 const POLL_INTERVAL = 5000; // 5 seconds
 const CONFUSION_THRESHOLD = 10; // Same as main process
@@ -129,6 +130,22 @@ function reportStuckTurn(reason: string, elapsedMs: number): void {
     ctx.core.brief('warn', 'watchdog', text);
   } catch {
     // ignore
+  }
+}
+
+/**
+ * Try to mail the lead a WARNING. Best-effort by contract: this is a courtesy
+ * notice fired while the worker is about to go idle, so a send failure must
+ * never crash the loop or block the idle transition. Returns whether the mail
+ * was actually handed off, so the caller can word its SYSTEM note from the
+ * real outcome instead of asserting a delivery that may not have happened.
+ */
+function notifyLeadInBestEffort(title: string, text: string): boolean {
+  try {
+    ctx.team.mailTo('lead', title, text);
+    return true;
+  } catch {
+    return false;
   }
 }
 
@@ -252,8 +269,15 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
     'bg_remove', 'mail_to', 'broadcast', 'git_commit',
   ]);
 
-  // Read-only bash commands (exploration)
-  const READ_ONLY_BASH = /^(ls|cat|pwd|head|tail|wc|find|which|git\s+(status|log|diff|branch|show|ls-files))/;
+  // Read-only bash classification is derived from the command's INTENT verb
+  // (READ/FIND/TEST), not from a regex over the command string. The old regex
+  // was anchored to Unix/Git-Bash verbs, so on Windows every PowerShell read
+  // (`Select-String`, `Get-Content`, `Get-ChildItem`, `npx …`) failed it, was
+  // counted as a mutating bash, and charged confusion every turn — pure
+  // exploration was penalized. The intent parser (already required by the
+  // bash tool and already validated on the grant path) is platform-agnostic.
+  // NOTE: an absent/unparseable intent falls back to "mutating" below — the
+  // same conservative behaviour as the regex it replaces.
 
   // Track recent tool calls for repetition detection
   const recentToolCalls: string[] = [];
@@ -279,8 +303,21 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
     if (/command failed with exit code \d+/.test(lower)) return true;
     if (lower.includes('eacces') || lower.includes('enoent') || lower.includes('eperm')) return true;
     if (lower.includes('permission denied')) return true;
-    if (lower.includes('not found') || lower.includes('does not exist') || lower.includes('no such file')) return true;
     return false;
+  }
+
+  // "Probe miss" heuristic for the three path-probe substrings. These are NOT
+  // errors on their own: a read_file on an optional path, a grep with no
+  // match, or a bash that exits non-zero can all legitimately report one.
+  // They charged +2 unconditionally, so ordinary "probe → miss → probe
+  // elsewhere" exploration drove the confusion index to the guidance gate.
+  // Charged only for non-exploration tools AND only when the phrase is at the
+  // HEAD of the output (a real missing-file error), never when it merely
+  // appears inside a large successful result.
+  function probeMiss(toolName: string, result: string): boolean {
+    if (EXPLORATION_TOOLS.has(toolName)) return false;
+    if (!result) return false;
+    return /^\s*(not found|does not exist|no such file)/i.test(result.slice(0, 200));
   }
 
   while (!shutdownRequested) {
@@ -291,20 +328,33 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
     try {
 
       // 1. Collect mails from file-based mailbox
+      //    Self-contained MAIL entries: sender + title + body + an explicit
+      //    reply line. `mail.from` IS the mail_to `name` argument (for a peer
+      //    it is the "<session-id>/lead" identity), so spell out the reply call.
       const mails = ctx.mail.collectMails();
       if (mails.length > 0) {
         const mailContent = mails
-          .map((mail) => `Mail from ${mail.from}: ${mail.title}\n${mail.content}`)
+          .map((mail) => {
+            const isPeer = mail.from.endsWith('/lead');
+            const peerTag = isPeer ? ' (peer — cross-instance)' : '';
+            return `Mail from ${mail.from}${peerTag}: ${mail.title}\n${mail.content}\n` +
+              `↳ Reply with mail_to(name="${mail.from}", title="${mail.title}: <re>", content="…")` +
+              `${isPeer ? ' — for a peer this session-id IS the name argument.' : ''}`;
+          })
           .join('\n\n---\n\n');
         triologue.note('MAIL', mailContent);
       }
 
       // 2. Check for pending mode change notifications
+      //    The LEAD's mode changed, not ours (the child always runs 'normal').
+      //    Mutating tools still route their grant to the parent, which evaluates
+      //    it against the LEAD's mode — so the parent gate denies writes in plan
+      //    mode. Our tool list never changes, so this note is the only signal.
       if (pendingModeChange) {
         if (pendingModeChange === 'normal') {
-          triologue.note('SYSTEM', 'Plan mode has ended. Code changes are now allowed. All tools (write_file, edit_file, bash) are fully functional. Proceed with your tasks.');
+          triologue.note('SYSTEM', "FYI: the LEAD's mode is now 'normal'. Write_file/edit_file and bash mutation verbs are permitted again by the parent grant gate. Re-orient on your open todos before acting.");
         } else {
-          triologue.note('SYSTEM', 'Plan mode is now active. Code changes are temporarily restricted. Continue with read-only operations while waiting.');
+          triologue.note('SYSTEM', "FYI: the LEAD's mode is now 'plan'. Your own run-mode is unchanged (teammates always run in normal mode), but while the lead is in plan mode the parent grant gate will DENY write_file/edit_file and bash mutation verbs — stay on READ/TEST verbs, or expect a grant rejection until the lead returns to normal mode. Re-orient on your open todos before acting.");
         }
         pendingModeChange = null;
       }
@@ -349,7 +399,7 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
         // "continue" would push the teammate to fabricate work instead of
         // idling or reporting completion.
         if (ctx.todo.hasOpenTodo()) {
-          triologue.note('REMINDER', `Re-orient on your open todos and decide the next step:\n${ctx.todo.printTodoList()}`);
+          triologue.note('REMINDER', 'Re-orient on your open todos and decide the next step.');
         }
       }
 
@@ -374,11 +424,14 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
             reportStuckTurn('compact summarization watchdog', elapsed);
             triologue.note('SYSTEM',
               `Auto-compact summarization was aborted by the stuck-teammate watchdog after ${Math.round(elapsed / 1000)}s. ` +
-              `Context remains over the threshold; compaction will be retried next turn.`);
+              `Context remains over the threshold; compaction retries next turn — keep this turn small ` +
+              `(finish the current step, avoid large reads) so the retry succeeds.`);
           } else {
             // Non-watchdog compact error: surface but don't crash the worker.
             ctx.core.brief('error', 'compact', `Compact failed: ${(err as Error).message}`);
-            triologue.note('SYSTEM', `Auto-compact failed: ${(err as Error).message}. Continuing without compaction.`);
+            triologue.note('SYSTEM',
+              `Auto-compact failed: ${(err as Error).message}. Continuing without compaction — ` +
+              `context stays over the threshold; if the next call fails, reduce what you emit this turn and retry.`);
           }
         } finally {
           compactWatchdog.clearTimeout();
@@ -441,9 +494,8 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
 
         nextBriefNudge = 5;
         if (!budgetSent) {
-          const exampleEta = Math.floor(Date.now() / 1000 + 120);
           triologue.note('REMINDER',
-            `Request a time budget from lead via mail_to(name="lead", eta=${exampleEta}, ...).`);
+            'Request a time budget from lead via mail_to(name="lead", eta=<seconds>, title="<subject>", content="<details>").');
         } else if (!ctx.todo.hasOpenTodo()) {
           // No open todos and LLM produced no tool calls — likely done
           // Auto-mail the assistant message to lead
@@ -455,7 +507,7 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
           // Resume work phase
           continue;
         } else {
-          triologue.note('REMINDER', 'Use tools to make progress on the task.');
+          triologue.note('REMINDER', 'No tool calls were made. Re-read the task and your open todos, then call the tool that advances the next step.');
         }
         continue;
       }
@@ -529,8 +581,9 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
 
           if (!EXPLORATION_TOOLS.has(toolName)) {
             if (toolName === 'bash') {
-              const cmd = String(args?.command || '');
-              if (!READ_ONLY_BASH.test(cmd)) {
+              const parsedIntent = parseIntent(String(args?.intent || ''));
+              const readOnlyBash = parsedIntent ? isReadOnlyVerb(parsedIntent.verb) : false;
+              if (!readOnlyBash) {
                 if (isRepetition) {
                   ctx.core.increaseConfusionIndex(1);
                 } else {
@@ -558,7 +611,7 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
           }
 
           // Error results increase confusion
-          if (isErrorResult(output)) {
+          if (isErrorResult(output) || probeMiss(toolName, output)) {
             ctx.core.increaseConfusionIndex(2);
           }
 
@@ -603,7 +656,7 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
       // 7. Brief nudging - remind agent to use brief tool
       nextBriefNudge--;
       if (nextBriefNudge <= 0) {
-        triologue.note('REMINDER', 'Provide a brief status update using the brief tool. Example: brief("Working on X", 7)');
+        triologue.note('REMINDER', 'Provide a brief status update using the brief tool: brief("<what you are doing now>", <confidence 0-10>).');
         nextBriefNudge = 5;
       }
     } catch (err) {
@@ -614,8 +667,31 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
       // Add error to triologue so LLM knows what happened. Report the error
       // fact only — do NOT append a "Please continue with your task." trailer,
       // which the teammate reads as sanction to auto-progress past the error
-      // instead of re-orienting on its open todos.
-      triologue.note('SYSTEM', `An error occurred: ${errorMsg}. Re-orient on your open todos to decide the next step.`);
+      // instead of re-orienting on its open todos. The orientation clause is
+      // conditional: when there is no open todo, saying "re-orient on your
+      // todos" would point at nothing, so name that honestly instead.
+      // The ordinal is computed BEFORE the counter is incremented so the note
+      // reports the ordinal of the failure it is describing ("1 of N" on the
+      // first failure, never "0 of N"). On the threshold turn, the circuit
+      // breaker below transitions the worker to idle instead of scheduling a
+      // retry, so the note must say that rather than promise an automatic
+      // retry it cannot perform — a claim the idle-transition note later
+      // contradicts but never retracts.
+      const orientation = ctx.todo.hasOpenTodo()
+        ? 'Re-orient on your open todos to decide the next step.'
+        : 'There are no open todos, so there is nothing to re-orient on.';
+      const failureNumber = consecutiveFailures + 1;
+      const ordinal =
+        `This failure (${failureNumber} of ${MAX_CONSECUTIVE_FAILURES})`;
+      const outlook = failureNumber >= MAX_CONSECUTIVE_FAILURES
+        ? `No more automatic retries — you are entering idle to resume ` +
+          `mail polling.`
+        : `This failure looks transient — you will be retried automatically; ` +
+          `no action needed. ` +
+          `If it keeps failing, you will be moved to idle to resume mail polling.`;
+      triologue.note('SYSTEM',
+        `An error occurred: ${errorMsg}. ${orientation} ` +
+        `${ordinal} ${outlook}`);
 
       consecutiveFailures++;
 
@@ -628,17 +704,21 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
       if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
         ctx.core.brief('warn', 'loop',
           `${consecutiveFailures} consecutive failures. Entering idle to resume mail polling.`);
+        // Send the lead notice BEFORE the SYSTEM note so the note can report
+        // the actual outcome (D2). The old version asserted "Lead will be
+        // notified." above a catch{}-swallowed send — a claim that could be
+        // false. Now the note's wording is derived from the real result.
+        const leadNotified = notifyLeadInBestEffort(
+          `WARNING: ${teammateName} network failures`,
+          `Teammate "${teammateName}" hit ${consecutiveFailures} consecutive LLM/network failures ` +
+          `and is entering idle to resume mail polling. The endpoint may be down. ` +
+          `Consider tm_remove or send mail with instructions.`);
         triologue.note('SYSTEM',
           `Experienced ${consecutiveFailures} consecutive network failures. ` +
-          `Entering idle state to resume mail polling. Lead will be notified.`);
-        try {
-          ctx.team.mailTo('lead', `WARNING: ${teammateName} network failures`,
-            `Teammate "${teammateName}" hit ${consecutiveFailures} consecutive LLM/network failures ` +
-            `and is entering idle to resume mail polling. The endpoint may be down. ` +
-            `Consider tm_remove or send mail with instructions.`);
-        } catch {
-          // best-effort
-        }
+          `Entering idle state to resume mail polling. ${
+          leadNotified
+            ? 'Lead has been notified of this failure.'
+            : 'The attempted notice to lead could not be sent.'}`);
         consecutiveFailures = 0; // reset on entering idle
         const result = await enterIdleState(triologue);
         if (result === 'shutdown') {
@@ -704,8 +784,18 @@ async function enterIdleState(triologue: TriologueLite): Promise<'shutdown' | 'r
           const claimed = await ctx.issue.claimIssue(issue.id, teammateName);
           if (claimed) {
             ctx.core.brief('info', 'auto_claim', `Issue #${issue.id}: ${issue.title}`);
-            // Identity is preserved in system prompt, no need to re-inject
-            triologue.note('SYSTEM', `Issue #${issue.id}: ${issue.title}\n${issue.content || ''}`);
+            // The note is the worker's OWN view of the claim. Spell out the
+            // actor (this teammate) and the ownership contract: the issue is
+            // now yours, so CLOSE it when the work ends — otherwise a claimed
+            // issue is left stranded open after the work finishes (the lead's
+            // 'auto_claim' brief above is lead-facing and never seen here).
+            // Category stays SYSTEM: this is a state report, not a nudge.
+            triologue.note(
+              'SYSTEM',
+              `Auto-claimed issue #${issue.id} as "${teammateName}" (unowned pending issue, no open blockers).\n` +
+              `Close it with issue_close(${issue.id}, status="completed"|"failed", comment=...) when the work is done.\n` +
+              `${issue.title}\n${issue.content || ''}`,
+            );
             return 'resume';
           }
         } catch (err) {

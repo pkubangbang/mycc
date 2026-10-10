@@ -22,6 +22,6 @@ export const serveCommand: SlashCommand = {
   handler: async (context) => {
     const portArg = context.args[1];
     const port = portArg ? parseInt(portArg, 10) : 3173;
-    await activateServe(Number.isFinite(port) && port > 0 && port <= 65535 ? port : 3173);
+    await activateServe(Number.isFinite(port) && port > 0 && port <= 65535 ? port : 3173, null);
   },
 };

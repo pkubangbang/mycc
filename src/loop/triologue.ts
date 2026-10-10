@@ -157,6 +157,13 @@ export class Triologue {
     clearPending: (): void => {
       this.ledger.clear();
     },
+    // duplicate_assistant recovery clears the ledger, which would strand a
+    // note()/user() deferred against the block it just answered. Replay them
+    // through the SAME flush the tool()/skipPendingTools paths use (this is
+    // the facade's private flushDeferredInputs, bound lazily).
+    flushDeferredInputs: (): void => {
+      this.flushDeferredInputs();
+    },
   });
 
   constructor(options: TriologueOptions = {}) {

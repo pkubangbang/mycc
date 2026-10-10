@@ -435,6 +435,49 @@ describe('Triologue deferred-input guard (tool_calls outstanding)', () => {
     expect(illegalSequence(triologue.getMessages() as Message[])).toBe(false);
   });
 
+  it('duplicate_assistant recovery FLUSHES a pending deferred note (FIX-10)', () => {
+    // FIX-10: the duplicate_assistant recovery clears the ledger via
+    // clearPending(), which removed the referent of any note deferred against
+    // the open block. Before the fix the buffer was NOT touched, so the note
+    // survived the recovery and re-emitted after the next unrelated tool()
+    // resolved — an orphan note with no context. The recovery now FLUSHES the
+    // buffer (it just answered every pending call, so the block is closed),
+    // exactly as tool()/skipPendingTools do.
+    //
+    // Shape: assistant(TC p1) → note DEFERRED → agent() (lastRole assistant →
+    // duplicate_assistant recovery injects a tool result for p1, clears the
+    // ledger, flushes the note) → the new assistant message.
+    triologue.agent('first', [pending('p1')]);
+    triologue.note('URGENT', 'deferred steer');
+    // Nothing appended for the note yet — it is queued while p1 is open.
+    expect(triologue.getMessagesRaw().map((m) => m.role)).toEqual(['assistant']);
+
+    triologue.agent('second'); // duplicate_assistant → recovery
+
+    const raw = triologue.getMessagesRaw();
+    // The recovery answered p1 (tool), then the deferred note replayed ONCE
+    // (user), then the new assistant message. No orphan, no lingering buffer.
+    expect(raw.map((m) => m.role)).toEqual(['assistant', 'tool', 'user', 'assistant']);
+    expect((raw[2].content as string)).toBe('[URGENT] deferred steer');
+    // And the whole sequence is a legal wire shape (no open block, no
+    // interposition).
+    expect(illegalSequence(triologue.getMessages() as Message[])).toBe(false);
+  });
+
+  it('a deferred note does NOT re-emit a second time after a later tool() (FIX-10)', () => {
+    // The half of FIX-10 that the flush must not get wrong: flushing DRAINS
+    // the buffer, so a subsequent tool() (which would normally also flush) must
+    // find nothing left. Without draining, the note could re-emit a second time.
+    triologue.agent('first', [pending('p1')]);
+    triologue.note('MAIL', 'once only');
+    triologue.agent('second'); // recovery flushes the note
+    // A later unrelated round must NOT replay the note again.
+    triologue.agent('calling', [pending('p2')]);
+    triologue.tool('bash', 'out');
+    const notes = triologue.getMessagesRaw().filter((m) => m.content === '[MAIL] once only');
+    expect(notes).toHaveLength(1);
+  });
+
   it('a note() after the last tool result still takes the LEGAL direct path', () => {
     triologue.agent('go', [pending('p1')]);
     triologue.tool('bash', 'out');

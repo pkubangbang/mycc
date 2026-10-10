@@ -207,7 +207,7 @@ export async function handleTool(
   // Each deferred message carries its originating hook name so the minifier
   // can emit ux[hookName]| and the hint round can attribute notes to hooks.
   for (const dm of hookResult.deferredMessages) {
-    triologue.note('REMINDER', dm.message, dm.hookName);
+    triologue.note('REMINDER', dm.hookName ? `Hook "${dm.hookName}" deferred this message: ${dm.message}` : dm.message, dm.hookName);
   }
 
   return AgentState.COLLECT;

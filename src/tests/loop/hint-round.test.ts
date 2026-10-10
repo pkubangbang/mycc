@@ -166,14 +166,13 @@ describe('Hint Round JSON Output', () => {
     const messages = triologue.getMessagesRaw();
     const hintMsg = messages.find((m) => m.content?.startsWith('[HINT]'));
     expect(hintMsg).toBeDefined();
-    expect(hintMsg!.content).toContain("**Pending Skill Compilation:** 'my-skill', 'other-skill'");
-    expect(hintMsg!.content).toContain('Use `skill_compile` to compile these skills');
+    expect(hintMsg!.content).toContain("**Also:** 'my-skill', 'other-skill' need compiling via `skill_compile`");
   });
 
   it('omits the wiki search line when wiki_domain is empty', async () => {
     // wiki_domain is allowed to be empty (blocker may be pure code logic);
     // wiki_query must stay non-empty (validation rejects empty). So only
-    // empty wiki_domain drives the "None" branch.
+    // empty wiki_domain drives the omitted-field branch — no filler line.
     vi.mocked(retryChat).mockResolvedValueOnce(
       validHintResponse({ wiki_domain: '' }) as never,
     );
@@ -183,7 +182,7 @@ describe('Hint Round JSON Output', () => {
     const messages = triologue.getMessagesRaw();
     const hintMsg = messages.find((m) => m.content?.startsWith('[HINT]'));
     expect(hintMsg).toBeDefined();
-    expect(hintMsg!.content).toContain('**Wiki Search:** None');
+    expect(hintMsg!.content).not.toContain('**Wiki Search:**');
     expect(hintMsg!.content).not.toContain('Domain=');
   });
 

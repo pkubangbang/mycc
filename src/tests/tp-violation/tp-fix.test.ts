@@ -4,9 +4,9 @@
  * 2026-08: tp-auto-fixer.ts was folded INTO the triologue layer as
  * triologue/tp-fix.ts. attemptAutoFix now takes a TpFixContext adapter
  * (injectBypass / registerPending / getPendingOrder / getPendingById /
- * clearPending) instead of the old Triologue facade with _-prefixed
- * methods. The mock builds that context directly — behavior assertions
- * are unchanged.
+ * clearPending / flushDeferredInputs) instead of the old Triologue facade with
+ * _-prefixed methods. The mock builds that context directly — behavior
+ * assertions are unchanged.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { attemptAutoFix } from '../../loop/triologue/tp-fix.js';
@@ -74,15 +74,17 @@ function createMockContext(): TpFixContext & {
   injectedMessages: Message[];
   pendingToolCalls: Map<string, ToolCall>;
   pendingToolCallOrder: string[];
+  flushCount: number;
 } {
   const injectedMessages: Message[] = [];
   const pendingToolCalls = new Map<string, ToolCall>();
   const pendingToolCallOrder: string[] = [];
 
-  return {
+  const ctx = {
     injectedMessages,
     pendingToolCalls,
     pendingToolCallOrder,
+    flushCount: 0,
     injectBypass: vi.fn((msg: Message) => {
       injectedMessages.push(msg);
     }),
@@ -98,7 +100,11 @@ function createMockContext(): TpFixContext & {
       pendingToolCalls.clear();
       pendingToolCallOrder.length = 0;
     }),
+    flushDeferredInputs: vi.fn(() => {
+      ctx.flushCount += 1;
+    }),
   };
+  return ctx;
 }
 
 describe('attemptAutoFix', () => {
@@ -241,6 +247,37 @@ describe('attemptAutoFix', () => {
       expect(result).toBe('recovered');
       expect(ctxEmpty.injectBypass).not.toHaveBeenCalled();
       expect(ctxEmpty.clearPending).toHaveBeenCalled();
+    });
+
+    it('FLUSHES the deferred buffer after clearing the ledger (FIX-10 regression)', () => {
+      // The recovery ANSWERS every pending call (one injected tool result per
+      // id), so the open block is closed and any note()/user() deferred against
+      // it may now legally replay. Before the fix, clearPending() ran WITHOUT
+      // touching the deferred buffer, so a deferred submission outlived the
+      // recovery: it re-emitted after the next unrelated tool() resolved, or
+      // lingered until a boundary dropped it — an orphan note with no context.
+      const ctxPending = createMockContext();
+      ctxPending.pendingToolCallOrder.push('call_1');
+      ctxPending.pendingToolCalls.set('call_1', { id: 'call_1', function: { name: 'bash', arguments: {} } } as ToolCall);
+
+      const result = attemptAutoFix(ctxPending, 'duplicate_assistant', 'assistant');
+
+      expect(result).toBe('recovered');
+      expect(ctxPending.flushDeferredInputs).toHaveBeenCalledTimes(1);
+      expect(ctxPending.flushCount).toBe(1);
+    });
+
+    it('still flushes when there are NO pending calls (no dangling buffer either way)', () => {
+      // An empty ledger must not short-circuit the flush: a deferred note can
+      // exist even when no call is pending at recovery time (the ledger was
+      // cleared by an earlier path). The flush is unconditional.
+      const ctxEmpty = createMockContext();
+
+      const result = attemptAutoFix(ctxEmpty, 'duplicate_assistant', 'assistant');
+
+      expect(result).toBe('recovered');
+      expect(ctxEmpty.injectBypass).not.toHaveBeenCalled();
+      expect(ctxEmpty.flushDeferredInputs).toHaveBeenCalledTimes(1);
     });
 
     it('uses a placeholder tool_name when a pending tool_call has an empty function.name', () => {

@@ -64,6 +64,19 @@ export interface TpFixContext {
   getPendingById(id: string): ToolCall | undefined;
   /** Clear all pending tool calls (post-recovery cleanup). */
   clearPending(): void;
+  /**
+   * Replay any deferred note()/user() submissions queued while the ledger was
+   * non-empty, then empty the buffer (the facade's flushDeferredInputs). The
+   * duplicate_assistant recovery below clears the ledger, so it must ALSO
+   * flush the deferred buffer — otherwise a note deferred before the recovery
+   * outlives it and re-emits after the next tool() resolves (or lingers until
+   * a boundary drops it). Recovery ANSWERS the open block (injects a tool
+   * result per pending id), so the sequence completes here — FLUSH is the
+   * matching policy, exactly as tool()/skipPendingTools do at their flush
+   * points, and unlike clear()/compact()/truncateAndRecount which DROP because
+   * they discard the context the submission was queued for.
+   */
+  flushDeferredInputs(): void;
 }
 
 /**
@@ -109,6 +122,16 @@ export function attemptAutoFix(
     case 'note_after_tool':
       // Bridge: tool → assistant → user
       // Use empty content so the subsequent user message naturally follows.
+      //
+      // NOTE ON REACHABILITY: this branch only fires for a provider that does
+      // NOT support tool → user natively (the `supportsToolToUser()` early
+      // return above handles ollama/deepseek). The producer-side guard is the
+      // real tool→user interposition defense: note()/user() DEFER whenever
+      // ledger.size > 0 (see triologue.ts `deferInput`), so a mid-batch
+      // submission never reaches tpFix at all. This branch therefore covers
+      // the residual case: a non-supporting provider with the LEDGER EMPTY and
+      // lastRole === 'tool' (e.g. the very first submission after the last
+      // result landed on a provider with no native bridge).
       ctx.injectBypass({
         role: 'assistant',
         content: '',
@@ -169,6 +192,16 @@ export function attemptAutoFix(
         }
       }
       ctx.clearPending();
+      // FLUSH the deferred buffer — the recovery just ANSWERED every pending
+      // call (one injected tool result per id), so the open block is closed and
+      // any note()/user() deferred against it may now legally replay. Without
+      // this, a deferred submission OUTLIVES the recovery that removed its
+      // referent: it would re-emit after the next unrelated tool() resolves, or
+      // linger until a boundary (clear/compact/truncateAndRecount) drops it —
+      // an orphan note with no context. Policy matches tool()/skipPendingTools
+      // (FLUSH once the block completes); NOT clear/compact/truncate (DROP,
+      // because those discard the whole context the submission was queued for).
+      ctx.flushDeferredInputs();
       break;
 
     case 'agent_after_system':

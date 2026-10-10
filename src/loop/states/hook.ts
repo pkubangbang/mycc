@@ -482,7 +482,7 @@ export async function handleHook(
       // Inject deferred hook messages so the LLM sees them in the next round.
       // Each deferred message carries its originating hook name for attribution.
       for (const dm of hookResult.deferredMessages) {
-        triologue.note('REMINDER', dm.message, dm.hookName);
+        triologue.note('REMINDER', dm.hookName ? `Hook "${dm.hookName}" deferred this message: ${dm.message}` : dm.message, dm.hookName);
       }
 
       chat.crossroadContinuation = undefined;
@@ -526,7 +526,7 @@ export async function handleHook(
       // Each deferred message carries its originating hook name for attribution.
       if (hookResult.deferredMessages.length > 0) {
         for (const dm of hookResult.deferredMessages) {
-          triologue.note('REMINDER', dm.message, dm.hookName);
+          triologue.note('REMINDER', dm.hookName ? `Hook "${dm.hookName}" deferred this message: ${dm.message}` : dm.message, dm.hookName);
         }
         return AgentState.COLLECT;
       }
