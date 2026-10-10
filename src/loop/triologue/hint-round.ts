@@ -302,16 +302,12 @@ export class HintRoundManager {
       hintLines.push(`**Focus On:** ${hintData.focus_on}`);
       if (hintData.wiki_domain && hintData.wiki_query) {
         hintLines.push(`**Wiki Search:** Domain="${hintData.wiki_domain}", Query="${hintData.wiki_query}"`);
-      } else {
-        hintLines.push('**Wiki Search:** None');
       }
       if (pendingSkills && pendingSkills.length > 0) {
-        hintLines.push('');
-        hintLines.push(`**Pending Skill Compilation:** ${pendingSkills.map(s => `'${s}'`).join(', ')}`);
-        hintLines.push('Use `skill_compile` to compile these skills so the hook system can process them.');
+        hintLines.push(`**Also:** ${pendingSkills.map(s => `'${s}'`).join(', ')} ${pendingSkills.length === 1 ? 'needs' : 'need'} compiling via \`skill_compile\` before the hook system can process ${pendingSkills.length === 1 ? 'it' : 'them'}.`);
       }
       hintLines.push('');
-      hintLines.push('Use `ctx.core.brief()` to provide status updates as needed.');
+      hintLines.push('Use the `brief` tool to post a status update.');
 
       this.deps.note('HINT', hintLines.join('\n'));
 
