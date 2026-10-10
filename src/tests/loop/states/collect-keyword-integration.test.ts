@@ -539,11 +539,12 @@ describe('handleCollect — composite keyword extraction (integration)', () => {
   // Fail-fast: empty freeformQuery shortens the cooldown to ONE pass
   // ---------------------------------------------------------------------------
 
-  it('fail-fast: an empty freeformQuery keeps the query marked, sets cooldown 1, and injects no HINT', async () => {
+  it('fail-fast: an empty freeformQuery grants ONE same-query retry (budget=1, cooldown=1), injects no HINT', async () => {
     // A success outcome that carries keywords but NO freeformQuery cannot run
-    // the semantic phase → the query stays marked (so the cursor is stable)
-    // and the cooldown is shortened to a single pass, granting the LLM exactly
-    // ONE more chance to produce a valid freeformQuery.
+    // the semantic phase → the query stays marked (so the cursor is stable),
+    // the cooldown is shortened to a single pass, and a SAME-QUERY retry
+    // budget of 1 opens the extraction gate exactly one more time for this
+    // query even though queryChanged is false on the next pass.
     setExtractionResult({ status: 'success', keywords: ['test'], freeformQuery: '' });
     const skills = makeOversizeSkills(3);
     const env = makeEnvWithSkills(skills);
@@ -558,26 +559,93 @@ describe('handleCollect — composite keyword extraction (integration)', () => {
     // The 3-pass cooldown armed by armCooldown() is shortened to exactly one
     // pass — the retry is bounded, not immediate-forever.
     expect(skillSuggester.getCooldown()).toBe(1);
+    // The same-query retry budget was granted.
+    expect(skillSuggester.getRetryBudget()).toBe(1);
   });
 
-  it('fail-fast: the one-pass retry is bounded — a second COLLECT pass re-extracts once, then the retry is spent', async () => {
-    // Pass 1: empty freeformQuery → cooldown shortened to 1.
+  it('fail-fast: the SAME query gets exactly one real retry, then the budget is spent', async () => {
+    // Pass 1: empty freeformQuery → cooldown 1 + retryBudget 1.
     setExtractionResult({ status: 'success', keywords: ['test'], freeformQuery: '' });
     const env = makeEnvWithSkills(makeOversizeSkills(3));
     const turn: TurnVars = createTurnVars({ lastUserQuery: 'help me test things' });
 
     await handleCollect(env, turn, createChatData());
     expect(skillSuggester.getCooldown()).toBe(1);
+    expect(skillSuggester.getRetryBudget()).toBe(1);
 
-    // Pass 2: the pass counter is decremented to 0 at the top, but the SAME
-    // query is still marked seen → queryChanged is false → extraction is
-    // suppressed. The "one more chance" is therefore granted only when a
-    // genuinely new query arrives, not by re-firing on the same composite.
+    // Pass 2 (the retry): cooldown reaches 0 at the top, the query is NOT
+    // changed, but the retry budget opens the gate → extractKeywords runs
+    // for the SAME query. The budget is consumed up front.
     mockedExtractKeywords.mockClear();
     await handleCollect(env, turn, createChatData());
-    expect(skillSuggester.getCooldown()).toBe(0);
+    expect(mockedExtractKeywords).toHaveBeenCalledTimes(1);
+    expect(skillSuggester.getRetryBudget()).toBe(0);
+
+    // Pass 3: the retry was spent (second empty freeformQuery) → the gate is
+    // closed for this query: no third extraction, no loop.
+    mockedExtractKeywords.mockClear();
+    await handleCollect(env, turn, createChatData());
     expect(mockedExtractKeywords).not.toHaveBeenCalled();
     expect(skillSuggester.getLastQuery()).toBe('help me test things');
+    // The retry pass was a SUCCESS outcome (keywords arrived): the shared
+    // success marking ran armCooldown()=3 BEFORE the empty-freeformQuery
+    // branch, and the retry (wasRetry) correctly skips the setCooldown(1)
+    // override — the suppression stays armed. Pass 3's decrement (3→2)
+    // consumed one pass; 2 remains (budget 0 keeps the gate shut).
+    expect(skillSuggester.getCooldown()).toBe(2);
+    expect(skillSuggester.getRetryBudget()).toBe(0);
+  });
+
+  it('fail-fast: a successful retry (valid freeformQuery) clears the budget and surfaces skills', async () => {
+    // Pass 1: empty freeformQuery → budget granted.
+    mockedExtractKeywords.mockResolvedValueOnce({ status: 'success', keywords: ['test'], freeformQuery: '' });
+    // A lone 'test' keyword scores exactly 10 pts (first position) and does
+    // NOT clear the strict >10 floor — seed ONE matching semantic row so the
+    // retry pass's ranking (10 × 1.5 = 15) can actually surface a HINT.
+    const env = makeEnvWithSkills(makeOversizeSkills(3), [
+      { title: 'project:skill-0', similarity: 0.9 },
+    ]);
+    const turn: TurnVars = createTurnVars({ lastUserQuery: 'help me test things' });
+
+    await handleCollect(env, turn, createChatData());
+    expect(skillSuggester.getRetryBudget()).toBe(1);
+
+    // Pass 2 (the retry): the LLM produces a valid freeformQuery → ranking
+    // runs and the HINT surfaces; the budget is cleared, not left dangling.
+    mockedExtractKeywords.mockResolvedValueOnce({ status: 'success', keywords: ['test'], freeformQuery: 'test automation' });
+    mockedExtractKeywords.mockClear();
+    await handleCollect(env, turn, createChatData());
+
+    expect(mockedExtractKeywords).toHaveBeenCalledTimes(1);
+    expect(skillSuggester.getRetryBudget()).toBe(0);
+    expect(triologue.note).toHaveBeenCalledWith('HINT', expect.anything());
+  });
+
+  it('fail-fast: a NEW query retires an unspent retry budget (no free extraction for the next query)', async () => {
+    // Pass 1: empty freeformQuery → budget granted for THIS query.
+    setExtractionResult({ status: 'success', keywords: ['test'], freeformQuery: '' });
+    const env = makeEnvWithSkills(makeOversizeSkills(3));
+    const turn: TurnVars = createTurnVars({ lastUserQuery: 'help me test things' });
+
+    await handleCollect(env, turn, createChatData());
+    expect(skillSuggester.getRetryBudget()).toBe(1);
+
+    // Pass 2: a genuinely NEW query arrives. The stale budget must NOT open
+    // the gate for it — it was scoped to the query that earned it. The new
+    // query triggers extraction normally via queryChanged (and earns its own
+    // throttle cycle). The stale mock still resolves EMPTY, so supply a
+    // valid freeformQuery for the new query's own extraction: the
+    // assertions here are about budget retirement, not the new query's
+    // fail-fast cycle.
+    mockedExtractKeywords.mockResolvedValueOnce({ status: 'success', keywords: ['test'], freeformQuery: 'a different semantic phrase' });
+    mockedExtractKeywords.mockClear();
+    turn.lastUserQuery = 'a different question entirely';
+    await handleCollect(env, turn, createChatData());
+
+    expect(mockedExtractKeywords).toHaveBeenCalledTimes(1); // normal changed-query trigger
+    expect(skillSuggester.getLastQuery()).toBe('a different question entirely');
+    expect(skillSuggester.getCooldown()).toBe(3); // fresh armCooldown(), not the old 1-pass
+    expect(skillSuggester.getRetryBudget()).toBe(0);
   });
 
 
