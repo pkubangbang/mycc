@@ -21,10 +21,12 @@
  *      kicks in and the UI resumes with a cleared context.
  *
  * Flow:
- *   1. Read serve state (active? port? host?) from the ServeHub singleton
- *   2. Send a 'reload' IPC message to the coordinator carrying that state
+ *   1. Read serve state (active? port? host?) from the ServeHub singleton,
+ *      and this lead's own launch argv (process.argv.slice(2), flags only)
+ *   2. Send a 'reload' IPC message to the coordinator carrying both
  *   3. Block forever — the coordinator SIGTERMs this lead process and
- *      respawns a fresh one (no --from, --serve flags forwarded if active)
+ *      respawns a fresh one, REPLAYING the forwarded argv (minus --from) so
+ *      every launch flag survives, with the live serve state merged in.
  *
  * Effect boundary:
  *   /reload only restarts the LEAD process (src/lead.ts + everything it
@@ -77,12 +79,20 @@ export const reloadCommand: SlashCommand = {
     console.log(chalk.gray('  Context will be cleared. Coordinator is reused; teammates will be killed.'));
 
     // Send reload IPC to coordinator with the current serve state so the
-    // respawned lead can re-activate the web UI on the same port.
+    // respawned lead can re-activate the web UI on the same port, PLUS this
+    // lead's own original launch argv so the coordinator can RESPWAN an
+    // identically-configured lead. Without the argv the coordinator could only
+    // rebuild serve flags, silently dropping every other launch flag
+    // (--auto, --allow-auto-commit, --token-threshold, --model, --editor, …).
+    // We send only the flags (positionals excluded); the coordinator owns the
+    // serve-state merge and filters out --from (reload starts a fresh session).
+    const leadArgs = process.argv.slice(2).filter((a) => a.startsWith('-'));
     if (sendToParent({
       type: 'reload',
       serveActive: wasServeActive,
       servePort,
       serveHost,
+      leadArgs,
     })) {
       // Wait forever — the Coordinator will SIGTERM this process.
       // Same pattern as /load (src/slashes/load.ts line 69-71).

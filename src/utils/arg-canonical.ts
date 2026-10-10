@@ -390,6 +390,102 @@ function emitFlag(parts: string[], key: string): void {
 }
 
 /**
+ * Build the respawn argv for `/reload` by REPLAYING the old Lead's original
+ * launch argv and merging the CURRENT serve state on top.
+ *
+ * Why replay rather than rebuild: `/reload` reuses the Coordinator but starts a
+ * brand-new Lead process, which re-parses its argv from scratch. Rebuilding the
+ * argv from serve state alone (the historical behaviour) silently dropped every
+ * other launch flag — a reloaded `--auto` peer lost `--allow-auto-commit`, a
+ * `--token-threshold` override reverted to the .env default, etc. Replaying the
+ * original argv keeps the new Lead identically configured.
+ *
+ * Transformations, in order:
+ *   1. Drop positionals and `--from <id> / --from=<id>` tokens: /reload must
+ *      start a FRESH session (no context pre-population), so a stray --from in
+ *      the replayed argv is filtered out. (The dispatch site already excludes
+ *      positionals; this defends the invariant regardless.)
+ *   2. Drop any pre-existing serve tokens (`--serve[=port]`, `--serve port`,
+ *      `--port[=n]`, `--port n`, `--host[=h]`, `--host h`) so the stale
+ *      original serve flag cannot fight the live state merged next.
+ *   3. When serve is active, append `--serve <port>` (and `--host <host>`)
+ *      from the CURRENT hub reading, which is authoritative over the original
+ *      flag (the user may have re-/served on another port mid-session). When
+ *      serve is off, nothing is appended — the new Lead starts in terminal mode.
+ *      `--host''` (bind-all) is preserved as a bare `--host`.
+ *
+ * `--skip-healthcheck` is deliberately NOT handled here: startLead() re-appends
+ * it from the Coordinator's own `skipHealthCheck` const.
+ */
+export function buildReloadArgs(
+  originalArgv: string[],
+  serveActive: boolean,
+  servePort: number,
+  serveHost: string | null,
+): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < originalArgv.length; i++) {
+    const tok = originalArgv[i];
+
+    // A `--flag=value` token: keep the whole token unless it is a serve/from
+    // flag. Value is attached, so nothing to consume.
+    if (tok.startsWith('--') && tok.includes('=')) {
+      const name = tok.slice(2, tok.indexOf('='));
+      if (name === 'from') continue;              // fresh session — never replay
+      if (name === 'serve' || name === 'port' || name === 'host') continue; // live state merged below
+      out.push(tok);
+      continue;
+    }
+
+    // A non-flag token is a positional or a flag VALUE. Flag values are
+    // consumed by their flag's iteration below; a stray positional is dropped.
+    if (!tok.startsWith('-')) continue;
+
+    // Short flags: keep verbatim (no value is attached to `-v`).
+    if (!tok.startsWith('--')) {
+      out.push(tok);
+      continue;
+    }
+
+    const name = tok.slice(2);
+
+    // Does this flag consume the NEXT token as its value? Boolean flags never;
+    // known string flags always (when the next token is not another flag,
+    // mirroring the parser); unknown flags auto-detect like minimist.
+    const consumesValue = !BOOLEAN_FLAGS.includes(name) && (
+      STRING_FLAGS.includes(name) ||
+      (i + 1 < originalArgv.length && !originalArgv[i + 1].startsWith('-'))
+    );
+    const hasValue = consumesValue && i + 1 < originalArgv.length && !originalArgv[i + 1].startsWith('-');
+
+    if (name === 'from') {
+      // /reload starts a fresh session — never carry --from (or its value).
+      if (hasValue) i++;
+      continue;
+    }
+    if (name === 'serve' || name === 'port' || name === 'host') {
+      // Drop the original serve tokens (and their space value); the live
+      // serve state is merged below.
+      if (hasValue) i++;
+      continue;
+    }
+
+    out.push(tok);
+    if (hasValue) {
+      out.push(originalArgv[i + 1]);
+      i++;
+    }
+  }
+
+  if (serveActive && servePort > 0) {
+    out.push('--serve', String(servePort));
+    if (serveHost) out.push('--host', serveHost);
+  }
+
+  return out;
+}
+
+/**
  * Render a KEY-SORTED canonical form for equality comparison. Same rendering
  * rules as formatLaunchArgs(), but the `--flag` groups are sorted, so flag
  * ORDER does not affect the result.

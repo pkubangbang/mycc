@@ -28,6 +28,7 @@ import {
   formatLaunchArgsForSpawn,
   canonicalFlagName,
   canonicalArgs,
+  buildReloadArgs,
   argsMatch,
   buildCmdArgsEnv,
 } from '../utils/arg-canonical.js';
@@ -387,5 +388,57 @@ describe('arg-canonical: buildCmdArgsEnv', () => {
     expect(env.MYCC_ALLOW_AUTO_COMMIT).toBe('main,release-candidate');
     // Absent flag must NOT clobber an env var set elsewhere.
     expect(buildCmdArgsEnv(parseArgString('--auto')).MYCC_ALLOW_AUTO_COMMIT).toBeUndefined();
+  });
+});
+
+describe('arg-canonical: buildReloadArgs (/reload respawn argv)', () => {
+  // The /reload bug: the coordinator rebuilt the respawn argv from serve state
+  // ONLY, silently dropping every other launch flag. buildReloadArgs() replays
+  // the old lead's original argv and merges the LIVE serve state on top.
+
+  it('replays every launch flag (not just serve) when serve is off', () => {
+    const out = buildReloadArgs(
+      ['--auto', '--allow-auto-commit', 'main,dev', '--token-threshold', '80000', '--ollama-model', 'glm-5:cloud'],
+      false, 0, null,
+    );
+    expect(out).toEqual([
+      '--auto', '--allow-auto-commit', 'main,dev',
+      '--token-threshold', '80000', '--ollama-model', 'glm-5:cloud',
+    ]);
+  });
+
+  it('drops positionals', () => {
+    const out = buildReloadArgs(['--auto', 'stray-positional', '--verbose'], false, 0, null);
+    expect(out).toEqual(['--auto', '--verbose']);
+  });
+
+  it('never carries --from (reload starts a fresh session)', () => {
+    // Both arg spellings must be filtered.
+    expect(buildReloadArgs(['--from', 'abc123', '--auto'], false, 0, null)).toEqual(['--auto']);
+    expect(buildReloadArgs(['--from=abc123', '--auto'], false, 0, null)).toEqual(['--auto']);
+  });
+
+  it('replaces the stale original --serve tokens with the LIVE serve state', () => {
+    // The original flag said port 3100; the hub now reports 3193 — the live
+    // reading must win, and the original token must not survive alongside.
+    const out = buildReloadArgs(['--serve', '3100', '--host', '0.0.0.0', '--auto'], true, 3193, '0.0.0.0');
+    expect(out).toEqual(['--auto', '--serve', '3193', '--host', '0.0.0.0']);
+    expect(out.filter((t) => t === '--serve')).toHaveLength(1);
+  });
+
+  it('strips --serve/--port/--host when serve is now OFF', () => {
+    expect(buildReloadArgs(['--serve', '3100', '--port', '8080', '--host', '0.0.0.0', '--auto'], false, 0, null))
+      .toEqual(['--auto']);
+    // `=` spellings too.
+    expect(buildReloadArgs(['--serve=3100', '--host=0.0.0.0', '--auto'], false, 0, null))
+      .toEqual(['--auto']);
+  });
+
+  it('emits bare --serve port when active and no host given (localhost bind)', () => {
+    expect(buildReloadArgs(['--auto'], true, 3173, null)).toEqual(['--auto', '--serve', '3173']);
+  });
+
+  it('does not append serve flags when active but port is 0 (defensive)', () => {
+    expect(buildReloadArgs(['--auto'], true, 0, null)).toEqual(['--auto']);
   });
 });

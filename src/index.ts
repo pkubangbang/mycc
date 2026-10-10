@@ -26,6 +26,7 @@ import { getProjectRoot, spawnTsx } from './utils/tsx-run.js';
 import { printHelp, printVersion } from './help.js';
 import { installVerboseLog } from './utils/verbose-log.js';
 import { spawnDaemonLead, finishDaemonExit } from './utils/daemon-launch.js';
+import { buildReloadArgs } from './utils/arg-canonical.js';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -118,7 +119,7 @@ const skipHealthCheck = process.argv.includes('--skip-healthcheck');
 type CoordinatorMessage =
   | { type: 'ready' }
   | { type: 'restart'; sessionId: string; cwd: string }
-  | { type: 'reload'; serveActive: boolean; servePort: number; serveHost: string | null }
+  | { type: 'reload'; serveActive: boolean; servePort: number; serveHost: string | null; leadArgs: string[] }
   | { type: 'exit' }
   | { type: 'serve_mode'; active: boolean }
   | { type: 'serve_shutdown_done' }
@@ -250,10 +251,12 @@ function runCoordinator(): void {
       } else if (msg.type === 'reload') {
         // /reload — restart only the lead with fresh code (no --from, so no
         // context pre-population). The coordinator is reused; teammates die
-        // with the old lead. If serve was active, forward --serve/--host so
-        // the new lead rebinds the web UI to the same port (browser
-        // auto-reconnects after the brief disconnect).
-        reloadLead(msg.serveActive, msg.servePort, msg.serveHost);
+        // with the old lead. The lead's ORIGINAL argv is carried in the
+        // message and replayed, so every launch flag survives the respawn
+        // (--auto/--daemon/--allow-auto-commit/--token-threshold/…); serve
+        // state is then merged in so the web UI rebinds to the same
+        // port/interface (browser auto-reconnects after the brief disconnect).
+        reloadLead(msg.serveActive, msg.servePort, msg.serveHost, msg.leadArgs);
       } else if (msg.type === 'exit') {
         // Lead requested exit - exit coordinator cleanly with code 0
         process.exit(0);
@@ -406,11 +409,17 @@ function runCoordinator(): void {
    * @param serveActive - whether /serve was active on the old Lead
    * @param servePort - the port the old ServeHub was bound to (0 if not active)
    * @param serveHost - the host the old ServeHub was bound to (null = localhost)
+   * @param leadArgs - the old Lead's ORIGINAL launch argv (positionals
+   *   excluded; forwarded at dispatch time by the SlashCommand). Replayed on
+   *   respawn so every launch flag survives — serve state is then merged in on
+   *   top, since the current serve port/host (read live from the hub) is more
+   *   authoritative than what the original `--serve` flag said.
    */
   async function reloadLead(
     serveActive: boolean,
     servePort: number,
     serveHost: string | null,
+    leadArgs: string[],
   ): Promise<void> {
     isRestarting = true;
     const previousLead = lead;
@@ -449,18 +458,25 @@ function runCoordinator(): void {
     }
 
     // Build args for the new Lead:
-    //   - NO --from flag → fresh session, no context pre-population
-    //   - If serve was active, forward --serve <port> (and --host) so the
-    //     new Lead re-activates the web UI on the same port/interface.
-    //     The Lead's agent-repl.ts checks shouldServe() + getServePort()/
-    //     getServeHost() and calls activateServe(), rebinding the same port.
-    const reloadArgs: string[] = [];
-    if (serveActive && servePort > 0) {
-      reloadArgs.push('--serve', String(servePort));
-      if (serveHost) {
-        reloadArgs.push('--host', serveHost);
-      }
-    }
+    //   - NO --from flag is ever injected → fresh session, no context
+    //     pre-population. (A --from in the replayed argv would violate this,
+    //     so it is filtered below.)
+    //   - The old Lead's ORIGINAL argv is REPLAYED, so every other launch
+    //     flag survives the respawn (--auto, --daemon, --allow-auto-commit,
+    //     --token-threshold, --model/--provider, --editor, --autofly,
+    //     --session-id, …). Previously reloadLead rebuilt the argv from ONLY
+    //     serve state, silently dropping every other flag — a reloaded
+    //     auto-mode peer lost its --allow-auto-commit pre-authorization, etc.
+    //     Replaying argv also honours arg-canonical.ts's documented intent
+    //     that --session-id/--debug-ansi "survive the restart/reload spawns".
+    //   - Serve state is MERGED on top, replacing any stale --serve/--port
+    //     tokens. The port/host read live from the old hub is authoritative
+    //     over the original flag (the user may have re-/served on another
+    //     port mid-session). When serve is off, --serve/--port/--host are
+    //     dropped so the new Lead starts in terminal mode.
+    //   - --skip-healthcheck is intentionally NOT replayed here; startLead()
+    //     re-appends it from the coordinator's own `skipHealthCheck` const.
+    const reloadArgs = buildReloadArgs(leadArgs, serveActive, servePort, serveHost);
 
     const currentLead = startLead(reloadArgs);
     lead = currentLead;
