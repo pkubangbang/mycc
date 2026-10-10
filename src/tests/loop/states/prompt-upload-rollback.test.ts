@@ -91,10 +91,12 @@ vi.mock('../../../serve/serve-registry.js', () => ({
   getServeHub: vi.fn(() => ({
     isRunning: vi.fn(() => true),
     drainFileUploads,
+    broadcast: vi.fn(),
   })),
   tryGetServeHub: vi.fn(() => ({
     isRunning: vi.fn(() => true),
     drainFileUploads,
+    broadcast: vi.fn(),
   })),
   onServeHubReady: vi.fn(),
 }));
@@ -155,6 +157,7 @@ vi.mock('../../../utils/multiline-input.js', () => ({
 
 // --- Import after mocks ------------------------------------------------------
 import { handlePrompt, setInitialQuery } from '../../../loop/states/prompt.js';
+import { getSteeringManager } from '../../../loop/steering-manager.js';
 import { AgentState } from '../../../loop/state-machine.js';
 import { Triologue } from '../../../loop/triologue.js';
 import { createTurnVars, createChatData, createMockMachineEnv } from '../esc-test-helpers.js';
@@ -172,6 +175,7 @@ describe('handlePrompt — uploaded-file reminder survives wrap-up rollback', ()
     setInitialQuery(null);
     drainFileUploads.mockReturnValue([uploadedImage]);
     evaluateWrapUp.mockReturnValue('rollback');
+    getSteeringManager().clear();
   });
 
   it('keeps the uploaded-file reminder in the triologue after rollback', async () => {
@@ -201,6 +205,45 @@ describe('handlePrompt — uploaded-file reminder survives wrap-up rollback', ()
     expect(combinedText).toContain('Previously uploaded file(s) (from interrupted run)');
     expect(combinedText).toContain('image-1786587692871.png');
     expect(combinedText).toContain('.mycc' + path.sep + 'uploaded'); // path uses platform sep
+  });
+
+  it('leaves steering notes queued if they arrive while prompt synthesis is awaiting the model', async () => {
+    const manager = getSteeringManager();
+    manager.addNote('stale note from the interrupted run');
+
+    let resolveSynthesis!: (value: string) => void;
+    const synthesis = new Promise<string>((resolve) => { resolveSynthesis = resolve; });
+    vi.mocked(forkChat).mockReturnValueOnce(synthesis as never);
+
+    drainFileUploads.mockReturnValue([]);
+    const triologue = new Triologue();
+    const env = createMockMachineEnv({ triologue });
+    env.inputProvider = {
+      getInput: vi.fn(async () => 'fresh user query'),
+      setMode: vi.fn(),
+      promptRetry: vi.fn(async () => false),
+    } as never;
+    env.ctx.core.escAware = vi.fn(async (operation: any) =>
+      await operation(new AbortController())) as never;
+
+    const running = handlePrompt(env, createTurnVars(), createChatData());
+    try {
+      await vi.waitFor(() => expect(forkChat).toHaveBeenCalledTimes(1));
+
+      // The snapshot being synthesized was atomically taken before the await.
+      // A note received after that point must not be swept up by post-await cleanup.
+      expect(manager.peekTexts()).toEqual([]);
+      manager.addNote('note received during synthesis');
+      expect(manager.peekTexts()).toEqual(['note received during synthesis']);
+
+      resolveSynthesis('synthesized user query');
+      expect(await running).toBe(AgentState.COLLECT);
+      expect(manager.peekTexts()).toEqual(['note received during synthesis']);
+      expect(triologue.getMessagesRaw().some((m) => m.content === 'synthesized user query')).toBe(true);
+    } finally {
+      resolveSynthesis('synthesized user query');
+      manager.clear();
+    }
   });
 
   it('still commits (not rollback) the wrap-up when evaluateWrapUp says commit', async () => {
