@@ -18,6 +18,7 @@ import { checkReactivation } from './collect-pinned-todo.js';
 import { listWorktrees } from '../../context/worktree-store.js';
 import { getSteeringManager } from '../steering-manager.js';
 import { getServeHub } from '../../serve/serve-registry.js';
+import type { Core } from '../../context/parent/core.js';
 import { resolveHeadlessFirstQuery } from '../../session/index.js';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -37,6 +38,16 @@ import { loopEvents } from '../loop-events.js';
 const MAX_COLLECT_TRANSIENT_RETRIES = 3;
 
 /**
+ * COLLECT's transient memory of the last serve state it REPORTED to the LLM.
+ * Paired with ctx.core.getServeRunning() (the session-stable flag) to make the
+ * WebUI start/stop report edge-triggered: a note is emitted only when the live
+ * flag differs from this, so steady state is silent. Module-level on purpose —
+ * this is COLLECT-internal watch state, not something other modules read
+ * (unlike the flag itself, which lives on ctx so anyone can query it).
+ */
+let lastServeReported = false;
+
+/**
  * Steps 1–2: drain all external inputs into the triologue.
  *
  * Collects (in order): pending child questions, mails, team-status overview,
@@ -51,6 +62,29 @@ const MAX_COLLECT_TRANSIENT_RETRIES = 3;
  */
 async function collectMailsAndInput(env: MachineEnv): Promise<{ firstSteerNote: string | null }> {
   const { triologue, ctx } = env;
+
+  // 0. Serve-state watch — report a WebUI start/stop to the LLM, edge-triggered.
+  //    `serveState` (session-stable) lives on ctx.core; the transient
+  //    "what did we last report" memory is COLLECT's own (module-level, below).
+  //    The very first pass simply reconciles whatever the flag is then — no
+  //    silent seeding step, so a session that starts already-serving reports
+  //    once, and steady state is silent (no per-turn note).
+  const serveNow = typeof (ctx.core as Core).getServeRunning === 'function'
+    ? (ctx.core as Core).getServeRunning()
+    : false;
+  if (serveNow !== lastServeReported) {
+    lastServeReported = serveNow;
+    triologue.note(
+      'SYSTEM',
+      serveNow
+        ? 'Web UI started — this session is now reachable from a browser. A ' +
+          'user may submit prompts and mid-task steering notes from the WebUI, ' +
+          'so expect direction to arrive asynchronously while you work. ' +
+          'Terminal input is disabled until the Web UI stops.'
+        : 'Web UI stopped — browser input is no longer available. Terminal ' +
+          'input is restored, so direction will again arrive at the prompt.',
+    );
+  }
 
   // 1. Handle pending questions from children
   await ctx.team.handlePendingQuestions();

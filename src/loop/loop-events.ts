@@ -31,6 +31,7 @@ export const LOOP_EVENT_TYPES = [
   'triologue_event',
   'esc_interrupt',
   'brief_message',
+  'serve_state',
 ] as const;
 
 export type LoopEventType = (typeof LOOP_EVENT_TYPES)[number];
@@ -102,6 +103,18 @@ export interface BriefMessagePayload {
   confidence: number;
 }
 
+/**
+ * WebUI serve lifecycle flip. Emitted by the serve layer (activateServe on
+ * start, ServeHub.gracefulShutdown on stop) purely as a SIGNAL — the emitter
+ * knows nothing about who consumes it. Core registers its own listener and
+ * flips its session-stable serve flag, which COLLECT watches to report the
+ * flip to the LLM. A recycle (restartServe) emits NOTHING: the LLM's world
+ * does not change, so the state must not appear to.
+ */
+export interface ServeStatePayload {
+  running: boolean;
+}
+
 export type LoopEventPayload =
   | StateTransitionPayload
   | LlmCallPayload
@@ -113,7 +126,8 @@ export type LoopEventPayload =
   | ConfusionScorePayload
   | TriologueEventPayload
   | EscInterruptPayload
-  | BriefMessagePayload;
+  | BriefMessagePayload
+  | ServeStatePayload;
 
 // ============================================================================
 // Callback Type

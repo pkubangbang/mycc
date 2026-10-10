@@ -24,6 +24,7 @@ import vue from '@vitejs/plugin-vue';
 import chalk from 'chalk';
 import { agentIO } from '../loop/agent-io.js';
 import { PromptAbortError } from '../loop/agent-io.js';
+import { loopEvents } from '../loop/loop-events.js';
 import { setResultCallback } from '../utils/letter-box.js';
 import { getMaxUploadMb, shouldDaemon, getApiProvider } from '../config.js';
 import { sendToParent } from '../utils/parent-ipc.js';
@@ -796,6 +797,11 @@ export class ServeHub implements HubHandler {
     setResultCallback(null);
     sendToParent({ type: 'serve_mode', active: false });
     console.log(chalk.yellow('\nWeb UI stopped. Terminal input restored.'));
+    // Emit the serve-lifecycle STOP signal so Core (owner of the session-stable
+    // flag) records it; COLLECT reports the flip to the LLM on its next pass.
+    // Restart is NOT a stop: restartServe() never reaches gracefulShutdown, so
+    // a recycle stays invisible to the LLM.
+    loopEvents.emit('serve_state', { running: false });
     this.abortInput(); // now unblock the fallback terminal prompt
   }
 

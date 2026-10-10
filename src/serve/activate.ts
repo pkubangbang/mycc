@@ -8,6 +8,7 @@
 
 import { getServeHub } from './serve-registry.js';
 import { agentIO } from '../loop/agent-io.js';
+import { loopEvents } from '../loop/loop-events.js';
 import { setResultCallback } from '../utils/letter-box.js';
 import { sendToParent } from '../utils/parent-ipc.js';
 import chalk from 'chalk';
@@ -61,6 +62,12 @@ export async function activateServe(port: number, host?: string | null): Promise
 
   // Set up output + result mirroring to WebSocket (shared with restartServe).
   wireOutputMirroring(hub);
+
+  // Broadcast the serve-lifecycle signal so Core (which owns its own listener
+  // and the session-stable flag) learns the WebUI is up; COLLECT then reports
+  // it to the LLM. The serve layer emits a NAMED SIGNAL and holds no ctx
+  // reference — Core consumes it, this file knows nothing of Core.
+  loopEvents.emit('serve_state', { running: true });
 
   // Notify Coordinator that serve mode is active (filter stdin). In --daemon
   // mode there is no Coordinator (it has exited), so sendToParent no-ops;
