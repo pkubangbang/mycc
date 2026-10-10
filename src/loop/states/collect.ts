@@ -167,10 +167,18 @@ async function checkReactivation(env: MachineEnv): Promise<void> {
       candidate.note,
     );
     if (updated) {
+      // The reopen decision is the LLM's judgment, not the system's — say so.
+      // Fusing the evaluator's one-sentence grounds into the system voice made
+      // the note read as "the system verified this condition", which it did
+      // not: the hash check only proves the evaluator judged THIS todo. Keep
+      // the user-defined trigger verbatim (the reader needs it to sanity-check
+      // the reopen) but label it as the condition, and give the grounds their
+      // own explicitly-attributed line instead of appending them bare.
       triologue.note(
         'SYSTEM',
-        `Pinned todo #${candidate.id} "${candidate.name}" reactivated. ` +
-          `Condition "${candidate.reactivate}" was met.${ev.reason ? ` ${ev.reason}` : ''}`,
+        `Pinned todo #${candidate.id} "${candidate.name}" reactivated (evaluator judged its condition met). ` +
+          `Condition: "${candidate.reactivate}".` +
+          `${ev.reason ? `\nEvaluator's stated grounds: ${ev.reason}` : ''}`,
       );
     }
   }
