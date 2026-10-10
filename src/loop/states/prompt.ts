@@ -32,7 +32,7 @@ import { getSteeringManager } from '../steering-manager.js';
 import { isDebugAutofly } from '../../config.js';
 import { forkChat } from '../../engine/chat-provider.js';
 import type { RetryConfig } from '../../engine/chat-helpers.js';
-import { getServeHub } from '../../serve/serve-registry.js';
+import { tryGetServeHub } from '../../serve/serve-registry.js';
 import { agentIO, PromptAbortError } from '../agent-io.js';
 import { autoState } from '../auto-state.js';
 
@@ -223,8 +223,9 @@ export async function handlePrompt(
 
   // Serve-mode flag, hoisted to function scope so both the Priority 3 input
   // loop (multi-line editor guard) and the downstream steering/file/user-log
-  // logic can reference it without a redundant accessor call.
-  const hub = getServeHub();
+  // logic can reference it without a redundant accessor call. LAZY: may be
+  // null on a plain terminal boot — every use below is guarded with `?.`.
+  const hub = tryGetServeHub();
 
   // Priority 1: pending slash query (from /load)
   if (env.pendingSlashQuery !== null) {
@@ -288,7 +289,7 @@ export async function handlePrompt(
       // Multi-line input: trailing backslash or Chinese enumeration comma opens editor.
       // Never triggered in serve/webui mode — the terminal-based editor makes no
       // sense there; webui queries are always single-line submissions.
-      const isMultiline = !hub.isRunning()
+      const isMultiline = !hub?.isRunning()
         && (p0Input.endsWith('、') || (p0Input.endsWith('\\') && p0Input.trim() !== '\\'));
       if (isMultiline) {
         const result = await openMultilineEditor(p0Input.slice(0, -1));
@@ -403,7 +404,7 @@ export async function handlePrompt(
       // but here the notes are folded into the fresh query text; the flush
       // still clears the frontend buffer bars so the chips don't linger.
       getSteeringManager().drainNotes();
-      getServeHub().broadcast('steer-flush', '');
+      hub?.broadcast('steer-flush', '');
       agentIO.verbose('steer', `Synthesized ${staleNotes.length} stale steering note(s) into fresh query`);
     }
 
@@ -411,7 +412,7 @@ export async function handlePrompt(
     // interrupted run, save them now so the LLM can see them in the next turn.
     // Unlike steering notes, file uploads don't need synthesis — they are
     // informational resources to be saved and noted.
-    const staleFiles = hub.drainFileUploads();
+    const staleFiles = hub?.drainFileUploads() ?? [];
     if (staleFiles.length > 0) {
       const uploadDir = path.join(process.cwd(), '.mycc', 'uploaded');
       if (!fs.existsSync(uploadDir)) {

@@ -14,7 +14,7 @@ import { validateEnv, loadEnv } from './config.js';
 import { isVerbose } from './config.js';
 import { main } from './loop/agent-repl.js';
 import { agentIO } from './loop/agent-io.js';
-import { getServeHub } from './serve/serve-registry.js';
+import { tryGetServeHub } from './serve/serve-registry.js';
 import { detectShell } from './utils/shell-detect.js';
 import { installVerboseLog } from './utils/verbose-log.js';
 
@@ -83,6 +83,6 @@ if (!envResult.valid) {
 
 main().catch(async (err: Error) => {
   console.error('Fatal error:', err);
-  try { await getServeHub().stop(); } catch { /* best effort */ }
+  try { await tryGetServeHub()?.stop(); } catch { /* best effort */ }
   process.exit(1);
 });

@@ -24,14 +24,11 @@ import vue from '@vitejs/plugin-vue';
 import chalk from 'chalk';
 import { agentIO } from '../loop/agent-io.js';
 import { PromptAbortError } from '../loop/agent-io.js';
-import { loopEvents } from '../loop/loop-events.js';
 import { setResultCallback } from '../utils/letter-box.js';
 import { getMaxUploadMb, shouldDaemon, getApiProvider } from '../config.js';
 import { sendToParent } from '../utils/parent-ipc.js';
-import {
-  getSteeringManager,
-  joinSteeringNotes,
-} from '../loop/steering-manager.js';
+import { getSteeringManager, joinSteeringNotes } from '../loop/steering-manager.js';
+import { setWebUiUp } from '../loop/loop-events.js';
 import { isWrapUpInFlight } from '../loop/wrap-up-state.js';
 import type { LogEntry, FileUploadEntry, CardMessage } from './serve-types.js';
 export type { CardMessage } from './serve-types.js';
@@ -41,6 +38,7 @@ import { readHistory, computeHistoryVersion, etagMatchesIfNoneMatch } from './se
 import { DisconnectTimer } from './serve-disconnect-timer.js';
 import { handleWsMessage, type HubHandler } from './serve-ws-handler.js';
 import { getPeerWireAcceptor } from './peer-wire.js';
+import { registerServeHubFactory, type ServeHubLike } from './serve-registry.js';
 import { getWireHooks } from '../peer/wire-registry.js';
 import { wireOutputMirroring } from './activate.js';
 import pkg from '../../package.json';
@@ -49,11 +47,18 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const WEB_ROOT = path.resolve(__dirname, '..', 'web');
 
-export class ServeHub implements HubHandler {
+export class ServeHub implements HubHandler, ServeHubLike {
   private static instance: ServeHub | null = null;
 
   static getInstance(): ServeHub {
-    if (!ServeHub.instance) ServeHub.instance = new ServeHub();
+    if (!ServeHub.instance) {
+      ServeHub.instance = new ServeHub();
+      // Self-register with the lazy registry: from here on, loop/context
+      // modules resolve this instance through getServeHub() with no static
+      // import of this file (see src/serve/serve-registry.ts). Registering
+      // the accessor (not the instance) matches the factory contract.
+      registerServeHubFactory(() => ServeHub.getInstance());
+    }
     return ServeHub.instance;
   }
 
@@ -437,6 +442,12 @@ export class ServeHub implements HubHandler {
     try {
       this.running = false; // isRunning() immediately returns false
       this.agentRunning = false;
+      // Record the WebUI as down for every loop/context consumer. This is the
+      // serve layer's STOP seam — the counterpart of activateServe()'s
+      // setWebUiUp(true) (see the holder in src/loop/loop-events.ts).
+      // restartServe() calls stop() too, but re-sets the flag to true
+      // afterwards, so a recycle never reads as "down" to the loop.
+      setWebUiUp(false);
       sendToParent({ type: 'serve_mode', active: false }); // restore stdin filtering
       if (!skipAbortInput) { this.abortInput(); }
       this.disconnectTimer.cancel();
@@ -797,11 +808,9 @@ export class ServeHub implements HubHandler {
     setResultCallback(null);
     sendToParent({ type: 'serve_mode', active: false });
     console.log(chalk.yellow('\nWeb UI stopped. Terminal input restored.'));
-    // Emit the serve-lifecycle STOP signal so Core (owner of the session-stable
-    // flag) records it; COLLECT reports the flip to the LLM on its next pass.
-    // Restart is NOT a stop: restartServe() never reaches gracefulShutdown, so
-    // a recycle stays invisible to the LLM.
-    loopEvents.emit('serve_state', { running: false });
+    // The serve-state flag was already cleared by stop() above (the STOP seam).
+    // Restart is NOT a stop: restartServe() re-sets the flag to true and never
+    // reaches gracefulShutdown, so a recycle stays invisible to the LLM.
     this.abortInput(); // now unblock the fallback terminal prompt
   }
 
@@ -836,6 +845,9 @@ export class ServeHub implements HubHandler {
       // but a fresh start means the hub is a clean slate — re-wire explicitly
       // so the Web UI keeps receiving live updates after the recycle).
       wireOutputMirroring(this);
+      // A recycle ends with the WebUI reachable again on the same port, so the
+      // serve-state flag must read "up" — stop() inside this method cleared it.
+      setWebUiUp(true);
       agentIO.verbose('serve', `Web UI restarted on port ${port}`);
     } finally {
       this.restarting = false;

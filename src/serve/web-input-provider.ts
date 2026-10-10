@@ -14,7 +14,7 @@
 import type { InputProvider } from '../loop/input-provider.js';
 import { UserInputProvider } from '../loop/input-provider.js';
 import { getSteeringManager } from '../loop/steering-manager.js';
-import { ServeHub } from './serve-hub.js';
+import { tryGetServeHub, type ServeHubLike } from './serve-registry.js';
 import { agentIO } from '../loop/agent-io.js';
 import { tryDisplayWrapUp } from '../loop/esc-wrap-up.js';
 import { ServeDetachedExitError } from './serve-errors.js';
@@ -22,20 +22,47 @@ import { shouldDaemon } from '../config.js';
 
 export class WebInputProvider implements InputProvider {
   readonly name = 'web';
-  private hub: ServeHub;
   private userProvider: UserInputProvider; // CLI fallback when serve not running
 
-  constructor(hub: ServeHub, userProvider: UserInputProvider) {
-    this.hub = hub;
+  /**
+   * The hub is resolved LAZILY on every access, never cached, because in
+   * `--serve` mode `activateServe()` materializes the hub AFTER this provider
+   * is constructed — a cached null would break serve mode. In a plain terminal
+   * boot the hub is never loaded at all, so `tryGetServeHub()` returns null and
+   * every access degrades to the terminal fallback (see `liveHub()`).
+   *
+   * The ctor no longer takes a hub: taking the instance would force every
+   * caller to resolve one at construction, which is precisely the boot-path
+   * throw the lazy registry exists to avoid.
+   *
+   * Captured-reference validity across awaits: getInput()/promptRetry()
+   * capture `const hub = this.liveHub()` ONCE and reuse it after an await.
+   * That is safe because ServeHub.getInstance() returns a process-lifetime
+   * static singleton and restartServe() recycles the stack on the SAME
+   * instance (stop(true) → start() on `this`), so the reference never points
+   * at a torn-down object. If restart semantics ever change to constructing a
+   * FRESH hub, the capture must become a re-resolution after each await.
+   */
+  constructor(userProvider: UserInputProvider) {
     this.userProvider = userProvider;
   }
 
+  /**
+   * The ServeHub when the serve layer has been loaded, else null. A null hub
+   * is treated exactly like "serve not running" everywhere below: the terminal
+   * fallback owns input. Never throws, never forces a module load.
+   */
+  private liveHub(): ServeHubLike | null {
+    return tryGetServeHub();
+  }
+
   async getInput(initialContent?: string): Promise<string | null> {
-    if (!this.hub.isRunning()) {
+    const hub = this.liveHub();
+    if (!hub || !hub.isRunning()) {
       // (2) A restart-webui click transiently has running === false. Keep
       //     waiting: the same hub is coming back on the same port, and
       //     treating the gap as "serve is gone" would kill the daemon.
-      if (this.hub.isRestarting()) return this.hub.waitForInput();
+      if (hub && hub.isRestarting()) return hub.waitForInput();
       // (1) Headless daemon with serve as the intended input mode — the
       //     terminal fallback can never resolve. Throwing is the only safe
       //     signal: null would be read as "autonomous skip" by prompt.ts and
@@ -67,7 +94,7 @@ export class WebInputProvider implements InputProvider {
     // next LLM call runs in neglected mode (empty tools → text-only reply).
     agentIO.setNeglectedMode(false);
     agentIO.flushOutput();
-    this.hub.broadcast('prompt', initialContent || '');
+    hub.broadcast('prompt', initialContent || '');
     // Belt-and-suspenders: surface any wrap-up that completed BEFORE this
     // prompt reappeared (the robust completion trigger in esc-wrap-up.ts
     // startWrapUp already delivered it via displayLetterBox the moment the
@@ -76,14 +103,14 @@ export class WebInputProvider implements InputProvider {
     // editor = serve mode (no LineEditor). markWrapUpShown makes this a no-op
     // if the completion trigger already ran, so double-display is impossible.
     tryDisplayWrapUp(null);
-    const result = await this.hub.waitForInput();
+    const result = await hub.waitForInput();
 
     // After await, check if serve was stopped during the wait.
     // abortInput() resolved waitForInput() with null — fall back to terminal
     // (with the same three-way guard as getInput's entry: a restart-webui
     // click must keep waiting, and a headless daemon must exit, not hang).
-    if (!this.hub.isRunning()) {
-      if (this.hub.isRestarting()) return this.hub.waitForInput();
+    if (!hub.isRunning()) {
+      if (hub.isRestarting()) return hub.waitForInput();
       // Gated on shouldDaemon() — see getInput() entry guard: a non-daemon
       // session must use the terminal fallback even without a real TTY (the
       // Coordinator proxies keys via IPC).
@@ -106,17 +133,18 @@ export class WebInputProvider implements InputProvider {
     if (agentIO.getAuto()) {
       return true;
     }
-    if (!this.hub.isRunning()) {
+    const hub = this.liveHub();
+    if (!hub || !hub.isRunning()) {
       // Three-way guard (mirrors getInput): a restart in progress must keep
       // waiting for the hub to come back, and a headless daemon must exit
       // rather than hang on a terminal that does not exist.
-      if (this.hub.isRestarting()) {
+      if (hub && hub.isRestarting()) {
         // The hub is recycling on the same port — wait for it to come back,
         // then proceed to the card path below. Poll isRunning() by awaiting
         // a fresh input cycle (which resolves once start() flips running back
         // to true and re-arms the input resolver). This is an edge case; the
         // common restart path does not intersect promptRetry.
-        await this.hub.waitForInput();
+        await hub.waitForInput();
       } else if (shouldDaemon()) {
         // Gated on shouldDaemon() — see getInput() entry guard: a non-daemon
         // session must use the terminal fallback even without a real TTY
@@ -130,7 +158,7 @@ export class WebInputProvider implements InputProvider {
     // Same neglection reset as getInput() — see comment there.
     agentIO.setNeglectedMode(false);
     agentIO.flushOutput();
-    this.hub.broadcast('error', `Error: ${errorMessage}`);
+    hub.broadcast('error', `Error: ${errorMessage}`);
 
     // Use an interactive confirm CARD instead of a plain prompt broadcast.
     // A plain 'Retry? [Y/n]' prompt sets state.showRetry in the webui, which
@@ -142,7 +170,7 @@ export class WebInputProvider implements InputProvider {
     // renders an inline clickable Yes/No next to the bubble (CardItem.vue)
     // and keeps the regular input box enabled.
     const cardId = `retry-${Date.now()}`;
-    this.hub.broadcastCard({
+    hub.broadcastCard({
       type: 'card',
       cardId,
       query: 'Retry?',
@@ -152,18 +180,18 @@ export class WebInputProvider implements InputProvider {
         { label: 'No', value: 'n' },
       ],
     });
-    const answer = await this.hub.waitForCardResponse(cardId);
+    const answer = await hub.waitForCardResponse(cardId);
 
-    if (!this.hub.isRunning()) {
+    if (!hub.isRunning()) {
       // Three-way guard (mirrors getInput): a restart in progress must keep
       // waiting for the same card; a headless daemon must exit, not hang.
-      if (this.hub.isRestarting()) {
+      if (hub.isRestarting()) {
         // The hub is recycling on the same port — re-await the same card
         // (the resolver survives the restart cycle) and re-evaluate.
-        const reAnswer = await this.hub.waitForCardResponse(cardId);
-        if (this.hub.isRestarting()) return true; // still cycling — default retry
+        const reAnswer = await hub.waitForCardResponse(cardId);
+        if (hub.isRestarting()) return true; // still cycling — default retry
         // Gated on shouldDaemon() — see getInput() entry guard.
-        if (shouldDaemon() && !this.hub.isRunning()) throw new ServeDetachedExitError();
+        if (shouldDaemon() && !hub.isRunning()) throw new ServeDetachedExitError();
         return reAnswer !== null &&
           reAnswer.toLowerCase() !== 'n' &&
           reAnswer.toLowerCase() !== 'no';

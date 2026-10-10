@@ -32,7 +32,7 @@ import type { Triologue } from './triologue.js';
 import type { LineEditor } from '../utils/line-editor.js';
 import { retryChat, MODEL } from '../engine/chat-provider.js';
 import { getApiProvider } from '../config.js';
-import { getServeHub } from '../serve/serve-registry.js';
+import { tryGetServeHub } from '../serve/serve-registry.js';
 import {
   beginWrapUpState,
   settleWrapUp,
@@ -127,7 +127,7 @@ export function startWrapUp(triologue: Triologue, tools?: Tool[]): void {
       // WebUI via resultCallback → hub.broadcast. markWrapUpShown makes a later
       // tryDisplayWrapUp(null) (belt-and-suspenders in web-input-provider) a
       // no-op, so double-display is impossible.
-      if (getServeHub().isRunning()) {
+      if (tryGetServeHub()?.isRunning()) {
         markWrapUpShown();
         displayLetterBox(content);
       }
@@ -139,8 +139,10 @@ export function startWrapUp(triologue: Triologue, tools?: Tool[]): void {
     // gated hub call — no callback registration (binding constraint); the
     // isRunning() gate keeps a settle racing a terminal stop() inert (the
     // A2 fallback wipe owns the queue then). Safe on empty queue: no-op.
-    if (getServeHub().isRunning()) {
-      getServeHub().onWrapUpSettled();
+    // A null hub (plain terminal boot) → no serve wait to wake → no-op.
+    const settleHub = tryGetServeHub();
+    if (settleHub?.isRunning()) {
+      settleHub.onWrapUpSettled();
     }
   }).catch(() => {
     // Failed wrap-up: record empty content + completion timestamp (rolled
@@ -154,8 +156,9 @@ export function startWrapUp(triologue: Triologue, tools?: Tool[]): void {
     // flight its own then/catch owns the wake and takeForDelivery no-ops on
     // wrapUpInFlight; if no newer capsule exists the window is genuinely
     // closed and this is the only wake a pre-settle held note will get.
-    if (getServeHub().isRunning()) {
-      getServeHub().onWrapUpSettled();
+    const failHub = tryGetServeHub();
+    if (failHub?.isRunning()) {
+      failHub.onWrapUpSettled();
     }
   });
 }
@@ -190,8 +193,9 @@ export function tryDisplayWrapUp(editor: LineEditor | null): boolean {
   const { content } = getWrapUpState();
   if (!content || !content.trim()) return false;
   // SERVE mode: no LineEditor, but the WebUI is reachable via displayLetterBox's
-  // resultCallback (wired in src/serve/activate.ts). Deliver directly.
-  if (getServeHub().isRunning()) {
+  // resultCallback (wired in src/serve/activate.ts). Deliver directly. A null
+  // hub (plain terminal boot) falls through to the LineEditor path below.
+  if (tryGetServeHub()?.isRunning()) {
     markWrapUpShown();
     displayLetterBox(content);
     return true;

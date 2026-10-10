@@ -15,7 +15,7 @@ import chalk from 'chalk';
 import { isVerbose } from '../config.js';
 import { getToolColor } from '../utils/tool-colors.js';
 import { slashRegistry } from '../slashes/index.js';
-import { getServeHub } from '../serve/serve-registry.js';
+import { tryGetServeHub, onServeHubReady } from '../serve/serve-registry.js';
 import { autoState } from './auto-state.js';
 import { setResultCallback } from '../utils/letter-box.js';
 import { sendToParent } from '../utils/parent-ipc.js';
@@ -212,10 +212,19 @@ class AgentIO {
     // Register the auto-mode flag getter with the serve hub so a new WS
     // connection can read the current state (without this module and the
     // hub importing each other — the hub imports nothing from agentIO, and
-    // agentIO keeps its getServeHub import, breaking the cycle at the
+    // agentIO keeps its serve-registry import, breaking the cycle at the
     // callback boundary). Safe to call even when serve isn't running yet:
     // the provider is simply stored and consulted on the next connect.
-    getServeHub().setAutoStateProvider(() => autoState.getAuto());
+    //
+    // LAZY: register via onServeHubReady, NOT getServeHub(). In a plain
+    // terminal boot the hub was never loaded, so there is nothing to register
+    // a provider with — and calling getServeHub() would throw, crashing boot.
+    // onServeHubReady runs the registration immediately if the hub already
+    // exists, and otherwise queues it until the serve layer materializes — so
+    // a serve session (--serve activates BEFORE the loop, but /serve can also
+    // activate mid-session) still registers the provider the moment the hub
+    // boots, while a non-serving session parks it harmlessly.
+    onServeHubReady((hub) => hub.setAutoStateProvider(() => autoState.getAuto()));
 
     // Handle IPC messages from coordinator
     process.on('message', (msg: { type: string; key?: KeyInfo; keys?: KeyInfo[]; columns?: number }) => {
@@ -244,11 +253,16 @@ class AgentIO {
         // The user pressed ESC while the Web UI was active. We gracefully shut
         // down serve so the terminal prompt returns. A second ESC (after serve
         // has exited) triggers the standard neglection below.
-        if (getServeHub().isRunning()) {
+        if (tryGetServeHub()?.isRunning()) {
+          // Bind the hub ONCE (no second tryGetServeHub() + non-null
+          // assertion): the singleton is stable today, but a single local
+          // reference keeps the guard and the call demonstrably on the same
+          // instance and mirrors the const-hub pattern used elsewhere here.
+          const hub = tryGetServeHub();
           // gracefulShutdown() awaits hub.stop() internally — the HTTP port
           // is released and serve_mode:false IPC is sent only after cleanup
           // completes, so terminal input isn't restored before the port is free.
-          getServeHub().gracefulShutdown().catch((err) => {
+          hub?.gracefulShutdown().catch((err) => {
             agentIO.verbose('serve', `ESC shutdown error: ${String(err)}`);
           });
           return; // skip standard neglection — do NOT set neglectedMode
@@ -279,8 +293,8 @@ class AgentIO {
         // Vite orphan on Windows where lead.kill('SIGTERM') calls
         // TerminateProcess — the SIGTERM handler never runs.
         (async () => {
-          const hub = getServeHub();
-          try { if (hub.isRunning()) await hub.stop(); } catch { /* best effort */ }
+          const hub = tryGetServeHub();
+          try { if (hub?.isRunning()) await hub.stop(); } catch { /* best effort */ }
           this.setOutputCallback(null);
           setResultCallback(null);
           sendToParent({ type: 'serve_shutdown_done' });
@@ -680,13 +694,10 @@ class AgentIO {
   isPromptBlocked(): boolean {
     // Terminal: askRejecter is set only while a terminal ask() is blocked.
     if (this.askRejecter !== null) return true;
-    // Serve: delegate to ServeHub (per-card resolvers are NOT a PROMPT wait;
-    // only the top-level waitForInput rejecter counts).
-    try {
-      if (getServeHub().isInputBlocked()) return true;
-    } catch {
-      // ServeHub may not be initialized — ignore.
-    }
+    // Serve: delegate to ServeHub when the serve layer has loaded (per-card
+    // resolvers are NOT a PROMPT wait; only the top-level waitForInput
+    // rejecter counts). A null hub means serve never started → not blocked.
+    if (tryGetServeHub()?.isInputBlocked()) return true;
     return false;
   }
 
@@ -752,8 +763,12 @@ class AgentIO {
     // (waitForCardResponse), so concurrent serve asks are inherently safe and
     // do NOT need the askQueue re-entrancy guard below (which only protects
     // the singleton askResolver path of the terminal LineEditor).
-    if (getServeHub().isRunning()) {
-      const hub = getServeHub();
+    //
+    // LAZY: tryGetServeHub() may be null on a plain terminal boot — the `?.`
+    // makes the serve branch fall through to the terminal LineEditor path.
+    const serveHub = tryGetServeHub();
+    if (serveHub?.isRunning()) {
+      const hub = serveHub;
       const cardId = `card-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
       // Determine card kind + options using the [?/?] trailing-bracket

@@ -27,7 +27,7 @@ import { RequestEmbeddingTracker } from './request-embedding.js';
 import type { StateHandler } from './state-machine.js';
 import { UserInputProvider } from './input-provider.js';
 import { WebInputProvider } from '../serve/web-input-provider.js';
-import { getServeHub } from '../serve/serve-registry.js';
+import { tryGetServeHub } from '../serve/serve-registry.js';
 import { loopEvents } from './loop-events.js';
 import type { StateTransitionPayload } from './loop-events.js';
 import { activateServe } from '../serve/activate.js';
@@ -94,14 +94,20 @@ export async function main(): Promise<void> {
   // Wire the durable transcript path into ServeHub so the /history endpoint
   // can read the on-disk triologue JSONL (survives serve stop/restart and
   // page closes) instead of the ephemeral in-memory messageLog.
-  getServeHub().setTranscriptPath(triologuePath);
+  //
+  // LAZY: use tryGetServeHub()?.… — at this point in boot the serve layer has
+  // NOT been loaded in a plain terminal run (and in --serve mode it is loaded
+  // only later, just before the REPL loop), so getServeHub() would throw. The
+  // hub, once loaded, reads these values back off the singleton itself, so a
+  // no-op here when the hub is absent is correct: nothing has started yet.
+  tryGetServeHub()?.setTranscriptPath(triologuePath);
   // Wire the user-input journal provider: the transcript is the single source
   // of truth for WebUI user bubbles, so a genuine user submission (a prompt
   // query, or a steering note typed while the agent runs) is journaled by the
   // triologue itself as a 'user'|'steer' record. The hub reaches the writer
   // ONLY through this callback — JsonlTranscriptWriter stays the single
   // writer of the transcript file.
-  getServeHub().setUserJournalProvider((text, source) => triologue.submitUser(text, source));
+  tryGetServeHub()?.setUserJournalProvider((text, source) => triologue.submitUser(text, source));
 
   // Pass initial query to prompt handler
   setInitialQuery(initialQuery);
@@ -408,7 +414,7 @@ export async function main(): Promise<void> {
   // internally to route between WebSocket (serve mode) and the terminal
   // (UserInputProvider). No runtime swap needed.
   const userInputProvider = new UserInputProvider(() => (ctx.core as Core).getMode());
-  const inputProvider = new WebInputProvider(getServeHub(), userInputProvider);
+  const inputProvider = new WebInputProvider(userInputProvider);
   const machine = new AgentStateMachine(
     triologue,
     ctx,
@@ -452,11 +458,8 @@ export async function main(): Promise<void> {
   loopEvents.on('state_transition', (payload) => {
     const { to } = payload as StateTransitionPayload;
     const running = to !== 'prompt' && to !== 'await';
-    try {
-      getServeHub().setAgentRunning(running);
-    } catch {
-      // serve not running — best-effort
-    }
+    // Best-effort: a plain terminal session has no hub, so this is a no-op.
+    tryGetServeHub()?.setAgentRunning(running);
   });
 
   // ── Run state machine (REPL loop) with resilient retry ──
@@ -554,7 +557,9 @@ export async function main(): Promise<void> {
 
   // Normal exit: shut down the serve hub (Vite dev server + HTTP port)
   // so no child processes are orphaned when the Lead process exits.
-  await getServeHub().stop();
+  // Best-effort: the hub may never have been loaded in a plain terminal run.
+  const exitHub = tryGetServeHub();
+  if (exitHub) await exitHub.stop();
   if (daemonCronJob) daemonCronJob.stop();
   // Kill any still-running bg tasks before exit — they are spawned with
   // unref() and otherwise orphan, holding their PIDs after the Lead exits.

@@ -8,7 +8,7 @@
 
 import chalk from 'chalk';
 import { agentIO } from './agent-io.js';
-import { getServeHub } from '../serve/serve-registry.js';
+import { tryGetServeHub } from '../serve/serve-registry.js';
 import type { AgentContext } from '../types.js';
 import type { Cron } from 'croner';
 
@@ -97,7 +97,7 @@ export function registerSignalHandlers(ctx: AgentContext, daemonCronJob: Cron | 
     agentIO.verbose('signal', 'SIGTERM: stopping peer (heartbeat + channel poll)');
     ctx.peer.stop(); // Stop heartbeat + channel poll + unregister identity
     agentIO.verbose('signal', 'SIGTERM: stopping ServeHub (Vite + HTTP port)');
-    try { await getServeHub().stop(); } catch { /* stop() already best-effort internally */ }
+    try { await tryGetServeHub()?.stop(); } catch { /* stop() already best-effort internally */ }
     agentIO.verbose('signal', 'SIGTERM: teardown complete, exiting');
     process.exit(0);
   });

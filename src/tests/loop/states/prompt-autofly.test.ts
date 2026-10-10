@@ -94,11 +94,21 @@ vi.mock('../../../loop/state-machine.js', () => ({
 // serve-registry.js: hub stub — isRunning false so steering/file paths are skipped.
 // getSteeringNotes/drainSteering stub entries were pruned — those hub facades
 // no longer exist (loop reads the manager directly).
+//
+// The lazy-serve refactor split the accessor: getServeHub() now THROWS until
+// the serve layer loads, and shared/boot paths use the null-safe
+// tryGetServeHub(). Both are stubbed here so neither a call nor a destructure
+// of the new name resolves to undefined.
 vi.mock('../../../serve/serve-registry.js', () => ({
   getServeHub: vi.fn(() => ({
     isRunning: vi.fn(() => false),
     drainFileUploads: vi.fn(() => []),
   })),
+  tryGetServeHub: vi.fn(() => ({
+    isRunning: vi.fn(() => false),
+    drainFileUploads: vi.fn(() => []),
+  })),
+  onServeHubReady: vi.fn(),
 }));
 
 // context/shared/loader.js: stub execute/getToolsForScope (not reached by the guard).

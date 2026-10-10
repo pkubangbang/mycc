@@ -104,12 +104,18 @@ export interface BriefMessagePayload {
 }
 
 /**
- * WebUI serve lifecycle flip. Emitted by the serve layer (activateServe on
- * start, ServeHub.gracefulShutdown on stop) purely as a SIGNAL — the emitter
- * knows nothing about who consumes it. Core registers its own listener and
- * flips its session-stable serve flag, which COLLECT watches to report the
- * flip to the LLM. A recycle (restartServe) emits NOTHING: the LLM's world
- * does not change, so the state must not appear to.
+ * WebUI serve lifecycle flip — RETIRED as a signal.
+ *
+ * The flip now travels through the plain boolean holder at the bottom of this
+ * file (setWebUiUp/isWebUiUp), which the loop/context layer reads directly. It
+ * is deliberately NOT an event: routing it through this emitter required every
+ * reader to reach a Core instance that owned the flag, and Core to consult the
+ * serve layer — the coupling the holder removes (see the
+ * `Reading ServeHub state pulls express/vite/ws…` pitfall).
+ *
+ * The type entry is kept so the event-type list (and the test harness that
+ * subscribes to every type via captureLoopEvents) stays stable; nothing emits
+ * it anymore.
  */
 export interface ServeStatePayload {
   running: boolean;
@@ -204,3 +210,42 @@ class LoopEventEmitter {
 // ============================================================================
 
 export const loopEvents = new LoopEventEmitter();
+
+// ============================================================================
+// WebUI serve-state holder
+// ============================================================================
+
+/**
+ * Process-wide "is the WebUI server up?" flag.
+ *
+ * This is deliberately a plain boolean in a ZERO-IMPORT leaf module rather
+ * than a `loopEvents` event or a field on Core. History:
+ *
+ *  - It was once a `'serve_state'` event on `loopEvents`; consumers had to
+ *    reach a Core instance that owned the flag, and Core had to consult the
+ *    serve layer — exactly the cross-layer coupling we work to avoid.
+ *  - It was briefly homed in `src/serve/activate.ts`, but the loop layer
+ *    importing activate.ts transitively drags in
+ *    web-input-provider → agent-io → esc-wrap-up → serve-hub → express/vite/ws,
+ *    defeating the lazy-`serve-hub` refactor. Measured: +60 modules / 13
+ *    express/vite/ws modules on a plain (non-serving) boot.
+ *
+ * The invariant is therefore: **serve → holder, never holder → serve**. The
+ * serve layer is the sole WRITER (the three seams are `activateServe()`,
+ * `ServeHub.stop()`, and `ServeHub.restartServe()`); the loop/context layer
+ * only READS via `isWebUiUp()`.
+ *
+ * Default `false`: a session that never loaded the serve layer is correctly
+ * reported as "not up", with no import cost and no throw.
+ */
+let webUiUp = false;
+
+/** Record whether the WebUI server is up. Called by the serve layer only. */
+export function setWebUiUp(value: boolean): void {
+  webUiUp = value;
+}
+
+/** Is the WebUI server currently up? Read by the loop/context layer. */
+export function isWebUiUp(): boolean {
+  return webUiUp;
+}

@@ -82,11 +82,21 @@ vi.mock('../../../loop/state-machine.js', () => ({
 // entries were pruned — those hub facades no longer exist (loop reads the
 // manager directly; hub keeps pushSteer/resolveSteering only).
 const { drainFileUploads } = vi.hoisted(() => ({ drainFileUploads: vi.fn() }));
+// The lazy-serve refactor routes the upload drain through tryGetServeHub()
+// (getServeHub() throws until the serve layer loads; the drain guard is the
+// isWebUiUp holder in loop-events, read through the REAL module). Both
+// accessors are stubbed with the same controllable hub so the upload path is
+// exercised identically after the refactor.
 vi.mock('../../../serve/serve-registry.js', () => ({
   getServeHub: vi.fn(() => ({
     isRunning: vi.fn(() => true),
     drainFileUploads,
   })),
+  tryGetServeHub: vi.fn(() => ({
+    isRunning: vi.fn(() => true),
+    drainFileUploads,
+  })),
+  onServeHubReady: vi.fn(),
 }));
 
 // context/shared/loader.js: stub execute/getToolsForScope.

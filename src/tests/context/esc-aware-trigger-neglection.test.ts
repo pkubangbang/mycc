@@ -75,7 +75,15 @@ vi.mock('../../serve/serve-registry.js', () => {
     gracefulShutdown: () => Promise.resolve(),
     onWrapUpSettled: () => {},
   };
-  return { getServeHub: () => hub };
+  // The lazy-serve refactor: shared/boot call sites now use the null-safe
+  // tryGetServeHub() (getServeHub() throws until the serve layer is loaded)
+  // and register boot-time providers through onServeHubReady(). Both must be
+  // stubbed so esc-wrap-up's lazy reach does not hit `undefined`.
+  return {
+    getServeHub: () => hub,
+    tryGetServeHub: () => hub,
+    onServeHubReady: (cb: (h: typeof hub) => void) => { cb(hub); },
+  };
 });
 
 // Imports AFTER mocks so esc-wrap-up picks up the stubbed dependencies.

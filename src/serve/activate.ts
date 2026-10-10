@@ -6,12 +6,43 @@
  * Coordinator that serve mode is active.
  */
 
-import { getServeHub } from './serve-registry.js';
+import { ensureServeHub } from './serve-registry.js';
 import { agentIO } from '../loop/agent-io.js';
-import { loopEvents } from '../loop/loop-events.js';
+import { setWebUiUp } from '../loop/loop-events.js';
 import { setResultCallback } from '../utils/letter-box.js';
 import { sendToParent } from '../utils/parent-ipc.js';
 import chalk from 'chalk';
+
+// ─── WebUI serve-state holder ──────────────────────────────────────────────
+//
+// The `isWebUiUp`/`setWebUiUp` pull-holder lives in src/loop/loop-events.ts, NOT
+// here. It was briefly merged into this file, but importing activate.ts from
+// the loop layer (core.ts, collect.ts) transitively drags in
+// web-input-provider → agent-io → esc-wrap-up → serve-hub → express/vite/ws,
+// defeating the whole lazy-load effort. Measured: importing this module adds
+// 13 express/vite/ws modules to a non-serving boot. loop-events.ts is a
+// zero-import leaf the loop already depends on, so the boolean costs nothing
+// there.
+//
+// The serve layer remains the sole WRITER; see loop-events.ts for the holder
+// and the three write points (activateServe, ServeHub.stop, restartServe).
+
+/**
+ * Structural hub slices — deliberately declared here instead of importing the
+ * ServeHub class. A static `import { ServeHub } from './serve-hub.js'` would
+ * defeat the lazy registry and drag express/vite/ws into every boot; these
+ * types erase at compile time and cost nothing at runtime.
+ */
+type OutputMirroringHub = {
+  broadcast(type: string, content: string, label?: string, detail?: string, synthetic?: boolean): void;
+};
+
+type ActivateHub = OutputMirroringHub & {
+  isRunning(): boolean;
+  getUrl(): string | null;
+  getUrls(): { local: string; network: string[] } | null;
+  start(port: number, host?: string | null): Promise<void>;
+};
 
 /**
  * Wire output + result mirroring to the WebSocket clients. Shared by
@@ -25,7 +56,7 @@ import chalk from 'chalk';
  * callback is labeled 'assistant' so the Web UI renders the [assistant] tag,
  * matching the terminal-style header the user requested.
  */
-export function wireOutputMirroring(hub: ReturnType<typeof getServeHub>): void {
+export function wireOutputMirroring(hub: OutputMirroringHub): void {
   agentIO.setOutputCallback((method, args, label, detail, synthetic) => {
     const text = args.map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(' ');
     hub.broadcast(method, text, label, detail, synthetic);
@@ -34,7 +65,12 @@ export function wireOutputMirroring(hub: ReturnType<typeof getServeHub>): void {
 }
 
 export async function activateServe(port: number, host?: string | null): Promise<void> {
-  const hub = getServeHub();
+  // Materialize the serve layer HERE — this is the one genuine entry point
+  // (`/serve` slash command, `--serve` CLI flag, and ServeHub.restartServe's
+  // recycle). Dynamic-importing serve-hub.ts (express/vite/ws) at this moment
+  // instead of at process boot is the whole point of the lazy registry: a
+  // plain terminal session never evaluates that chain at all.
+  const hub: ActivateHub = await ensureServeHub();
 
   if (hub.isRunning()) {
     console.log(chalk.yellow(`Web UI already running at ${hub.getUrl()}`));
@@ -63,11 +99,11 @@ export async function activateServe(port: number, host?: string | null): Promise
   // Set up output + result mirroring to WebSocket (shared with restartServe).
   wireOutputMirroring(hub);
 
-  // Broadcast the serve-lifecycle signal so Core (which owns its own listener
-  // and the session-stable flag) learns the WebUI is up; COLLECT then reports
-  // it to the LLM. The serve layer emits a NAMED SIGNAL and holds no ctx
-  // reference — Core consumes it, this file knows nothing of Core.
-  loopEvents.emit('serve_state', { running: true });
+  // Record the WebUI as up for every loop/context consumer. This is the
+  // serve layer's START seam — the ONLY writer family of this flag (see the
+  // holder in src/loop/loop-events.ts). COLLECT picks the flip up on its next
+  // pass and reports it to the LLM.
+  setWebUiUp(true);
 
   // Notify Coordinator that serve mode is active (filter stdin). In --daemon
   // mode there is no Coordinator (it has exited), so sendToParent no-ops;

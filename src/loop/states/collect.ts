@@ -17,8 +17,8 @@ import { skillSuggester } from './collect-skill.js';
 import { checkReactivation } from './collect-pinned-todo.js';
 import { listWorktrees } from '../../context/worktree-store.js';
 import { getSteeringManager } from '../steering-manager.js';
-import { getServeHub } from '../../serve/serve-registry.js';
-import type { Core } from '../../context/parent/core.js';
+import { tryGetServeHub } from '../../serve/serve-registry.js';
+import { isWebUiUp } from '../loop-events.js';
 import { shouldDaemon } from '../../config.js';
 import { resolveHeadlessFirstQuery } from '../../session/index.js';
 import * as fs from 'fs';
@@ -40,11 +40,11 @@ const MAX_COLLECT_TRANSIENT_RETRIES = 3;
 
 /**
  * COLLECT's transient memory of the last serve state it REPORTED to the LLM.
- * Paired with ctx.core.getServeRunning() (the session-stable flag) to make the
- * WebUI start/stop report edge-triggered: a note is emitted only when the live
- * flag differs from this, so steady state is silent. Module-level on purpose —
- * this is COLLECT-internal watch state, not something other modules read
- * (unlike the flag itself, which lives on ctx so anyone can query it).
+ * Paired with isWebUiUp() (the process-wide serve-state holder in
+ * src/loop/loop-events.ts) to make the WebUI start/stop report edge-triggered:
+ * a note is emitted only when the live flag differs from this, so steady state
+ * is silent. Module-level on purpose — this is COLLECT-internal watch state,
+ * not something other modules read.
  */
 let lastServeReported = false;
 
@@ -82,14 +82,12 @@ async function collectMailsAndInput(env: MachineEnv): Promise<{ firstSteerNote: 
   const { triologue, ctx } = env;
 
   // 0. Serve-state watch — report a WebUI start/stop to the LLM, edge-triggered.
-  //    `serveState` (session-stable) lives on ctx.core; the transient
+  //    The truth is the process-wide holder isWebUiUp(); the transient
   //    "what did we last report" memory is COLLECT's own (module-level, below).
   //    The very first pass simply reconciles whatever the flag is then — no
   //    silent seeding step, so a session that starts already-serving reports
   //    once, and steady state is silent (no per-turn note).
-  const serveNow = typeof (ctx.core as Core).getServeRunning === 'function'
-    ? (ctx.core as Core).getServeRunning()
-    : false;
+  const serveNow = isWebUiUp();
   if (serveNow !== lastServeReported) {
     lastServeReported = serveNow;
     // A daemon has NO terminal (its init note says so), so claiming terminal
@@ -186,7 +184,7 @@ async function collectMailsAndInput(env: MachineEnv): Promise<{ firstSteerNote: 
       const steerContent = steerNotes.map((n, i) => `(${i + 1}) ${n}`).join('\n');
       triologue.note('REMINDER', `Steering notes from the user (mid-task direction):\n${steerContent}`);
       agentIO.verbose('steer', `Drained ${steerNotes.length} steering note(s) at COLLECT`);
-      getServeHub().broadcast('steer-flush', '');
+      tryGetServeHub()?.broadcast('steer-flush', '');
       // Mid-task user direction is a user intervention — reset the autofly
       // streak so the LLM stages that follow aren't counted as "consecutive
       // successful since last user input". An empty drain (no notes) is NOT
@@ -219,8 +217,13 @@ async function collectMailsAndInput(env: MachineEnv): Promise<{ firstSteerNote: 
   // 2e. Drain file upload queue (webui-only): if serve is running, save any
   //     uploaded files to ./.mycc/uploaded/ and mention them via a REMINDER
   //     note so the LLM can reference them (e.g. via read_picture).
-  if (getServeHub().isRunning()) {
-    const files = getServeHub().drainFileUploads();
+  //     The guard is the serve-STATE holder (isWebUiUp), not a hub call: only
+  //     the drain itself needs the hub, so a non-serving session never
+  //     resolves one (see the holder in src/loop/loop-events.ts). The queue is
+  //     empty in a non-serving process anyway — the guard mainly avoids the
+  //     hub lookup.
+  if (isWebUiUp()) {
+    const files = tryGetServeHub()?.drainFileUploads() ?? [];
     if (files.length > 0) {
       const uploadDir = path.join(process.cwd(), '.mycc', 'uploaded');
       if (!fs.existsSync(uploadDir)) {

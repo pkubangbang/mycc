@@ -46,7 +46,7 @@
  */
 
 import type { SlashCommand } from '../types.js';
-import { getServeHub } from '../serve/serve-registry.js';
+import { tryGetServeHub } from '../serve/serve-registry.js';
 import { shouldDaemon } from '../config.js';
 import { sendToParent } from '../utils/parent-ipc.js';
 import chalk from 'chalk';
@@ -66,10 +66,10 @@ export const reloadCommand: SlashCommand = {
       return;
     }
 
-    const hub = getServeHub();
-    const wasServeActive = hub.isRunning();
-    const servePort = hub.getPort();
-    const serveHost = hub.getHost();
+    const hub = tryGetServeHub();
+    const wasServeActive = hub?.isRunning() ?? false;
+    const servePort = hub?.getPort() ?? 0;
+    const serveHost = hub?.getHost() ?? null;
 
     console.log(chalk.cyan('\nReloading mycc...'));
 

@@ -12,7 +12,7 @@
 import chalk from 'chalk';
 import { agentIO } from './agent-io.js';
 import { autoState } from './auto-state.js';
-import { getServeHub } from '../serve/serve-registry.js';
+import { tryGetServeHub, onServeHubReady } from '../serve/serve-registry.js';
 import type { AgentContext } from '../types.js';
 
 /**
@@ -26,23 +26,21 @@ import type { AgentContext } from '../types.js';
  *    `agentIO.isPromptBlocked()` so it never flips auto mid-pass (COLLECT/
  *    LLM/HOOK/TOOL); a join while not blocked is caught by the Layer A
  *    hasActiveChannel() gate on the next PROMPT entry.
- * 3. `getServeHub().setEnterAutoProvider` — the webui "enter auto" button
- *    flips autoState (same as /auto); wakes a blocked PROMPT so pending mail
- *    is processed immediately.
+ * 3. `onServeHubReady(hub => hub.setEnterAutoProvider(…))` — the webui "enter
+ *    auto" button flips autoState (same as /auto); wakes a blocked PROMPT so
+ *    pending mail is processed immediately. Registered via onServeHubReady
+ *    (not getServeHub) because this function runs before the hub exists in
+ *    --serve mode; the callback is queued until the serve layer loads.
  */
 export function wireServeCallbacks(ctx: AgentContext): void {
   // ── onAutoChange: mirror auto-state flips to the webui ──
   // Previously agentIO.setAuto() called getServeHub().broadcastAuto directly;
   // now the singleton owns the flag and fires this callback on a real flip,
   // so the webui chat input box stays enabled for steering and the 停止 button
-  // stays visible+spinning while the lead is in AWAIT. Best-effort: broadcastAuto
-  // is a no-op when serve isn't running.
+  // stays visible+spinning while the lead is in AWAIT. Best-effort: a plain
+  // terminal session has no hub → null → no-op.
   autoState.onAutoChange = (value: boolean) => {
-    try {
-      getServeHub().broadcastAuto(value);
-    } catch {
-      // serve-hub import cycle or serve not running — best-effort, no throw
-    }
+    tryGetServeHub()?.broadcastAuto(value);
   };
 
   // ── channel-join: engage auto + abort a blocked PROMPT ──
@@ -89,7 +87,7 @@ export function wireServeCallbacks(ctx: AgentContext): void {
     }
     autoState.setAuto(true);
     try { agentIO.abortAsk(); } catch { /* best-effort */ }
-    try { getServeHub().rejectInput(); } catch { /* best-effort */ }
+    try { tryGetServeHub()?.rejectInput(); } catch { /* best-effort */ }
   });
 
   // ── enter-auto provider: the webui "enter auto" lightning-bolt button ──
@@ -97,7 +95,14 @@ export function wireServeCallbacks(ctx: AgentContext): void {
   // (which both Core and AgentIO delegate to) — exactly the /auto slash path.
   // Returns false when already in auto mode so the hub can surface
   // "已经是自动模式了".
-  getServeHub().setEnterAutoProvider(() => {
+  //
+  // REGISTERED VIA onServeHubReady, not getServeHub(): wireServeCallbacks()
+  // runs at plain boot BEFORE activateServe() in --serve mode, so the hub may
+  // not exist yet. onServeHubReady runs the registration immediately when the
+  // hub is already loaded and otherwise queues it until the serve layer
+  // materializes — so a non-serving session parks it harmlessly, while
+  // --serve still wires the provider the moment the hub boots.
+  onServeHubReady((hub) => hub.setEnterAutoProvider(() => {
     if (autoState.getAuto()) return false;
     autoState.resetStreak();
     autoState.setAuto(true);
@@ -111,8 +116,8 @@ export function wireServeCallbacks(ctx: AgentContext): void {
     // unresponsive to pending mail. Both calls are self-guarded no-ops
     // when not blocked.
     try { agentIO.abortAsk(); } catch { /* best-effort */ }
-    try { getServeHub().rejectInput(); } catch { /* best-effort */ }
+    try { hub.rejectInput(); } catch { /* best-effort */ }
 
     return true;
-  });
+  }));
 }

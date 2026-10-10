@@ -16,7 +16,7 @@ original design rationale, see `docs/serve-plan.md`.
  Browser (Vue SPA)                  Lead process (agent loop)
  ┌───────────────┐                  ┌──────────────────────────┐
  │  App.vue      │                  │  agent-repl.ts (main)     │
- │   ├ StatusBar │  HTTP /history   │   └ getServeHub()       │
+ │   ├ StatusBar │  HTTP /history   │ └ tryGetServeHub()?.    │
  │   ├ ChatLog    │◀────GET─────────│       .setTranscriptPath │
  │   └ ChatInput │                  │                          │
  │       │        │  WS /ws (JSON)   │  ServeHub (singleton)    │
@@ -359,7 +359,7 @@ shows a Retry button (and the prompt bubble detects `/retry/i` to toggle
 | File | Role |
 |------|------|
 | `serve-hub.ts` | Express + Vite + WS orchestrator singleton. Owns HTTP server, WS server, input bridge, messageLog, transcriptPath, `/history` endpoint, broadcast, 30s disconnect timer, graceful shutdown. |
-| `serve-registry.ts` | Module-level singleton accessor (`getServeHub()`), avoids circular imports. |
+| `serve-registry.ts` | Accessor + lifecycle registry for the serve stack, and the seam that keeps Express/Vite/WS OFF the plain-boot path. Holds no static import of `serve-hub.ts`: the heavy stack is materialized on demand by `ensureServeHub()` (a dynamic `import()`), which registers a factory via `registerServeHubFactory()`. Access is via `tryGetServeHub()` → `ServeHubLike \| null` (used by all boot-path callers) and `getServeHub()` (throws when the hub was never activated — call only after `ensureServeHub()`). `onServeHubReady(cb)` queues callbacks drained once the factory registers, so serve-unaware callers avoid a static import too. Avoids circular imports. |
 | `activate.ts` | `activateServe(port)` — starts hub, wires output/result callbacks, notifies Coordinator. Shared by `/serve` and `--serve`. |
 | `web-input-provider.ts` | The sole `InputProvider` for the state machine. Routes WS ↔ terminal. Clears `neglectedModeFlag` before each prompt. |
 
@@ -378,7 +378,7 @@ shows a Retry button (and the prompt bubble detects `/retry/i` to toggle
 ### Backend hooks (outside src/serve/)
 | File | Hook |
 |------|------|
-| `src/loop/agent-repl.ts` | Calls `getServeHub().setTranscriptPath(triologuePath)` after session init; calls `activateServe()` for `--serve`. |
+| `src/loop/agent-repl.ts` | Calls `tryGetServeHub()?.setTranscriptPath(triologuePath)` after session init (null on a plain boot — the serve stack is not loaded); calls `activateServe()` for `--serve`. |
 | `src/slashes/serve.ts` | `/serve [port]` slash command → `activateServe`. |
 | `src/config.ts` | `shouldServe()`, `getServePort()` (default 3173). |
 | `src/index.ts` | Coordinator: handles `serve_mode` IPC, filters stdin during serve. |

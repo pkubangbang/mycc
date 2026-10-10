@@ -98,19 +98,24 @@ describe('A2 hub/provider wipe-site pins (source-text guards)', () => {
     const wipeCount = provider.split('getSteeringManager().clear()').length - 1;
     expect(wipeCount).toBe(2);
 
+    // The hub is resolved LAZILY (liveHub → tryGetServeHub, never a ctor
+    // field) so the lazy-serve refactor keeps the boot path hub-free. The
+    // guards therefore read through a local `hub` binding, not `this.hub`.
     // Branch 1: entry fallback — wipe AFTER the shouldDaemon throw, and the
     // isRestarting branch above it must `return` before reaching the wipe.
     const entryIdx = provider.indexOf('async getInput(');
     const branch1 = provider.slice(entryIdx, provider.indexOf('getSteeringManager().clear()', entryIdx));
-    expect(branch1).toContain('if (this.hub.isRestarting()) return this.hub.waitForInput();');
+    expect(branch1).toContain('if (hub && hub.isRestarting()) return hub.waitForInput();');
     expect(branch1).toContain('if (shouldDaemon()) throw new ServeDetachedExitError();');
+    // The hub comes from the lazy accessor, not a stored field.
+    expect(branch1).toContain('this.liveHub()');
     // Branch ordering: the restart return precedes the wipe (so 重启 never wipes).
     expect(branch1.indexOf('isRestarting()')).toBeLessThan(branch1.length);
 
     // Branch 2: post-abort fallback — same guard shape.
     const abortIdx = provider.indexOf("abortInput() resolved waitForInput() with null");
     const branch2 = provider.slice(abortIdx, provider.indexOf('getSteeringManager().clear()', abortIdx));
-    expect(branch2).toContain('if (this.hub.isRestarting()) return this.hub.waitForInput();');
+    expect(branch2).toContain('if (hub.isRestarting()) return hub.waitForInput();');
     expect(branch2).toContain('if (shouldDaemon()) throw new ServeDetachedExitError();');
   });
 });

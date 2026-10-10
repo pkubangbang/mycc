@@ -7,7 +7,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { Core } from '../../context/parent/core.js';
-import { loopEvents } from '../../loop/loop-events.js';
+import { isWebUiUp, setWebUiUp } from '../../loop/loop-events.js';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -106,26 +106,30 @@ describe('Core (Parent) - Mode System', () => {
     });
   });
 
-  describe('Serve State (loopEvents signal)', () => {
-    // The serve layer emits `serve_state` as a NAMED SIGNAL (it holds no ctx
-    // reference); Core owns the flag and registers its own listener. These
-    // tests pin that decoupled round-trip and that restart stays silent.
-    it('should start with serve state false', () => {
-      expect(core.getServeRunning()).toBe(false);
+  describe('Serve State (loop-events holder)', () => {
+    // The serve layer owns a single process-wide boolean in
+    // src/loop/loop-events.ts (setWebUiUp/isWebUiUp). Core no longer keeps a
+    // copy: readers ask the holder directly, so there is nothing on Core to
+    // round-trip through a signal. These tests pin the holder's semantics that
+    // replace the retired `serve_state` event.
+    it('should start with the WebUI reported down', () => {
+      expect(isWebUiUp()).toBe(false);
     });
 
-    it('should flip true on a running:true signal, false on running:false', () => {
-      loopEvents.emit('serve_state', { running: true });
-      expect(core.getServeRunning()).toBe(true);
-      loopEvents.emit('serve_state', { running: false });
-      expect(core.getServeRunning()).toBe(false);
+    it('should flip true on setWebUiUp(true), false on setWebUiUp(false)', () => {
+      setWebUiUp(true);
+      expect(isWebUiUp()).toBe(true);
+      setWebUiUp(false);
+      expect(isWebUiUp()).toBe(false);
     });
 
-    it('should ignore a malformed payload (no boolean running field)', () => {
-      loopEvents.emit('serve_state', { running: true });
-      loopEvents.emit('serve_state', {} as unknown as { running: boolean });
-      loopEvents.emit('serve_state', undefined);
-      expect(core.getServeRunning()).toBe(true); // unchanged by malformed signals
+    it('should stay true across a restart (a recycle is not a stop)', () => {
+      // restartServe() calls stop(true) → start() internally, re-setting the
+      // flag to true at the end; the loop must never observe a "down" blip.
+      setWebUiUp(true);
+      setWebUiUp(false); // stop() inside restartServe
+      setWebUiUp(true);  // restartServe() re-set on the same port
+      expect(isWebUiUp()).toBe(true);
     });
   });
 

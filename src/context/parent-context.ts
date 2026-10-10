@@ -12,7 +12,7 @@ import { TeamManager } from './parent/team.js';
 import { WikiManager } from './parent/wiki.js';
 import { PeerManager } from '../peer/peer.js';
 import { setWireHooks, type WireHooks } from '../peer/wire-registry.js';
-import { getServeHub } from '../serve/serve-registry.js';
+import { tryGetServeHub } from '../serve/serve-registry.js';
 import { detectLanIpv4 } from '../serve/serve-utils.js';
 import { agentIO } from '../loop/agent-io.js';
 import { loader } from './shared/loader.js';
@@ -77,8 +77,8 @@ export class ParentContext implements AgentContext {
       // serve stack is down (a NAT'd/non-serving instance announces no
       // endpoint and gets keyed "sid:<sid>" on the remote side).
       getServingEndpoint: () => {
-        const hub = getServeHub();
-        if (!hub.isRunning()) return null;
+        const hub = tryGetServeHub();
+        if (!hub?.isRunning()) return null;
         const host = hub.getHost();
         const displayHost = host && host !== '0.0.0.0' ? host : (detectLanIpv4() ?? 'localhost');
         return `${displayHost}:${hub.getPort()}`;

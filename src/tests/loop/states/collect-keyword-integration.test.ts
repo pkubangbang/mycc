@@ -78,12 +78,28 @@ vi.mock('../../../loop/keyword-extractor.js', () => ({
 }));
 
 // serve-registry: the hub is only touched for its NON-steering duties now —
-// isRunning (file-upload gate) and broadcast (steer-flush at drain sites).
-// The old drainSteering stub was pruned when the dead hub facades were
-// removed: collect.ts drains steering via the REAL manager singleton
-// (getSteeringManager() — plan §6/Δ3), so the steering-note path is seeded
-// with manager.addNote() and reset with manager.clear(). Defaults to NOT
-// running (file-upload path skipped) — tests flip `serveRunning` as needed.
+// isRunning (legacy, kept for the file-upload gate's historical shape) and
+// broadcast (steer-flush at drain sites). The old drainSteering stub was
+// pruned when the dead hub facades were removed: collect.ts drains steering
+// via the REAL manager singleton (getSteeringManager() — plan §6/Δ3), so the
+// steering-note path is seeded with manager.addNote() and reset with
+// manager.clear().
+//
+// TWO accessors must be mocked. The refactor made getServeHub() LAZY (it now
+// throws until the serve layer is loaded), so shared/boot paths call the new
+// null-safe tryGetServeHub() instead. collect.ts reaches the hub ONLY through
+// tryGetServeHub() at its two drain sites; the mock must expose it or the call
+// is `undefined(...)` → TypeError swallowed by handleCollect's catch → the
+// pass silently returns PROMPT before step 6 runs (the two steering tests then
+// see a frozen suggester). onServeHubReady is likewise a no-op here: it is the
+// boot-time provider-registration bridge and nothing in these tests defers a
+// provider through it.
+//
+// Serve STATE, by contrast, is no longer read through the hub at all: collect.ts
+// asks the process-wide holder in src/loop/loop-events.ts (isWebUiUp), so the
+// tests drive it through the REAL holder with setWebUiUp(). The `serveRunning`
+// flag below stays because getServeHub().isRunning() is part of the historical
+// mock surface.
 let serveRunning = false;
 vi.mock('../../../serve/serve-registry.js', () => ({
   getServeHub: vi.fn(() => ({
@@ -91,6 +107,12 @@ vi.mock('../../../serve/serve-registry.js', () => ({
     broadcast: vi.fn(),
     drainFileUploads: () => [],
   })),
+  tryGetServeHub: vi.fn(() => ({
+    isRunning: () => serveRunning,
+    broadcast: vi.fn(),
+    drainFileUploads: () => [],
+  })),
+  onServeHubReady: vi.fn(),
 }));
 
 // session/index: stub resolveHeadlessFirstQuery to a no-op (no session file).
@@ -134,6 +156,8 @@ import { createMockContext } from '../../test-utils/mock-context.js';
 import type { TurnVars } from '../../../loop/state-machine.js';
 import { extractKeywords } from '../../../loop/keyword-extractor.js';
 import { loader } from '../../../context/shared/loader.js';
+import { setWebUiUp } from '../../../loop/loop-events.js';
+import { reconcileServeStateAfterClear as resetServeReport } from '../../../loop/states/collect.js';
 
 /** The module-level mock of the shared extractor (call-count assertions). */
 const mockedExtractKeywords = vi.mocked(extractKeywords);
@@ -157,6 +181,18 @@ describe('handleCollect — composite keyword extraction (integration)', () => {
     mockedExtractKeywords.mockReset();
     mockedExtractKeywords.mockResolvedValue({ status: 'success', keywords: [], freeformQuery: '' });
     serveRunning = false;
+    // The serve-STATE holder is the process-wide boolean in loop-events.ts (a
+    // zero-import leaf the loop already loads), NOT the hub — collect.ts reads
+    // it via isWebUiUp(). Reset it through the real holder so this mirrors
+    // production exactly (the module is not mocked: loop-events also owns
+    // loopEvents, which COLLECT emits to).
+    setWebUiUp(false);
+    // COLLECT's serve-report cursor (`lastServeReported`) is module-level state
+    // that survives across tests. Reconcile it to the freshly-reset holder
+    // (false) so the next COLLECT sees a clean edge and the P3 F4 test's first
+    // pass reports the start note exactly once — the same primitive production
+    // uses after /clear.
+    resetServeReport();
     // Steering notes now live in the REAL manager singleton — wipe it so a
     // prior test's seeded note cannot leak into the next.
     getSteeringManager().clear();
@@ -360,8 +396,11 @@ describe('handleCollect — composite keyword extraction (integration)', () => {
   it('STEERING NOTE: triggers on the note, marks the fallback lastUserQuery as seen', async () => {
     setExtractionResult({ status: 'success', keywords: ['tests'], freeformQuery: 'running tests' });
     // Seed the steering note in the REAL manager singleton (collect.ts reads
-    // getSteeringManager() directly since the hub facades were removed).
+    // getSteeringManager() directly since the hub facades were removed). The
+    // serve-STATE holder (isWebUiUp) is NOT consulted on the steering path, but
+    // set it for parity with a serving session.
     serveRunning = true;
+    setWebUiUp(true);
     getSteeringManager().addNote('focus on tests');
     const env = makeEnv();
     const turn: TurnVars = createTurnVars({
@@ -542,10 +581,11 @@ describe('handleCollect — composite keyword extraction (integration)', () => {
 
   it('P3 F4: /clear re-arms the serve-state watch so the fresh conversation learns it', async () => {
     // Session starts already serving (daemon --serve): the first COLLECT
-    // reports the start note once. Wire the flag through the mock core.
+    // reports the start note once. The serve-state truth is the process-wide
+    // holder (isWebUiUp) now — no ctx flag to stub.
     serveRunning = true;
+    setWebUiUp(true);
     const env = makeEnv();
-    (env.ctx.core as { getServeRunning?: () => boolean }).getServeRunning = vi.fn(() => serveRunning);
     const turn: TurnVars = createTurnVars({ lastUserQuery: 'do work' });
 
     await handleCollect(env, turn, createChatData());
@@ -667,6 +707,7 @@ describe('handleCollect — composite keyword extraction (integration)', () => {
     // code marks BOTH the steer note and lastUserQuery seen, and the drain
     // empties the steering queue.
     serveRunning = true;
+    setWebUiUp(true);
     getSteeringManager().addNote('focus on task B');
     const env = makeEnv();
     const turn: TurnVars = createTurnVars({ lastUserQuery: 'original task A' });
