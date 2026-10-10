@@ -280,6 +280,15 @@ export class Triologue {
         // Fresh turn: the pre-tool turn is complete; this input starts a new
         // conversation turn (guards the F1 collapse where two queries
         // collated into one turn).
+        //
+        // lastUserQuery MUST be updated on this fast path too: it returns
+        // BEFORE the tail setLastUserQuery below, so skipping it here left
+        // the query stale. The deferred-input replay now re-enters user()
+        // (flushDeferredInputs → this.user(item.text)) and lands on THIS
+        // branch for a tool→user 'allowed' provider, so the old replay's
+        // explicit setLastUserQuery(item.text) must not be lost — compact
+        // would otherwise summarise the PREVIOUS query as the user's intent.
+        this.store.setLastUserQuery(content);
         this.addMessage({ role: 'user', content }, { isUserOrigin: true });
         return;
       }

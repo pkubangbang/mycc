@@ -298,6 +298,55 @@ describe('handleCollect — ESC during hint generation', () => {
     });
   });
 
+  describe('hint-round failure (result === "failed")', () => {
+    // Helper to build an env wired for the 'failed' branch: enough messages,
+    // high confusion, escAware runs the operation and returns 'failed'.
+    function makeFailedEnv() {
+      vi.mocked(triologue.getMessagesRaw).mockReturnValue(makeMessages(8));
+      vi.mocked(triologue.generateHintRound).mockResolvedValue('failed' as never);
+      const ctx = createMockContext({
+        core: {
+          getConfusionIndex: vi.fn(() => 12),
+          resetConfusionIndex: vi.fn(),
+          brief: vi.fn(),
+        } as never,
+      });
+      const env = createMockMachineEnv({ triologue });
+      env.ctx = ctx;
+      // escAware runs the operation normally (no ESC) → returns 'failed'
+      env.ctx.core.escAware = vi.fn(async (operation: any) => {
+        return await operation(new AbortController());
+      }) as never;
+      return env;
+    }
+
+    it('should NOT reset the confusion index when the hint round failed', async () => {
+      const env = makeFailedEnv();
+      const turn = createTurnVars();
+      const chat = createChatData();
+
+      await handleCollect(env, turn, chat);
+
+      // BEFORE: 'failed' fell through to the success-path reset, clearing the
+      // confusion signal and hiding that no hint was injected (a failed hint
+      // was treated as a successful intervention).
+      // AFTER: 'failed' returns WITHOUT resetting — the signal is preserved so
+      // a later COLLECT retries the hint once output is well-formed.
+      expect(env.ctx.core.resetConfusionIndex).not.toHaveBeenCalled();
+    });
+
+    it('should still continue the loop (return LLM) after a failed hint round', async () => {
+      const env = makeFailedEnv();
+      const turn = createTurnVars();
+      const chat = createChatData();
+
+      const result = await handleCollect(env, turn, chat);
+
+      // A failed hint is not a stop/compact — the loop proceeds to LLM as usual.
+      expect(result).toBe(AgentState.LLM);
+    });
+  });
+
   it('should inject URGENT note (not MAIL) when collecting mail in neglected mode', async () => {
     // Enter neglected mode + a pending mail
     agentIO.setNeglectedMode(true);
