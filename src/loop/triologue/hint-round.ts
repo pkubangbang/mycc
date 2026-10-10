@@ -56,7 +56,7 @@ const HINT_SYSTEM_PROMPT = `You are a problem-analysis assistant. Your task is t
 
 CRITICAL INSTRUCTIONS:
 1. If there are NO REAL blockers preventing progress, set blocker to exactly: "no blockers"
-2. Do NOT fabricate blockers. "no blockers" means there is no real obstacle. In that case still fill next_step / focus_on / wiki_query with a genuine description of the current task. IMPORTANT: never frame next_step as a "Continue ..." or "you're fine, keep going" authorization to progress — describe what the remaining task IS (e.g. "The remaining work is completing test coverage for the compact module"), not a sanction to move past a review point. The [HINT] note is always injected when should_compact is false, so the agent will read whatever you write here.
+2. Do NOT fabricate blockers. "no blockers" means there is no real obstacle. In that case still fill next_step / focus_on / wiki_query with a genuine description of the current task. IMPORTANT: never frame next_step as a "Continue ..." or "you're fine, keep going" authorization to progress — describe what the remaining task IS (e.g. "The remaining work is completing test coverage for the compact module"), not a sanction to move past a review point. The [HINT] note is always injected when should_compact is false, so the agent will read whatever you write here. Any prior [HINT] notes in the context are your own earlier analyses; if the same advice was already given and not acted on, escalate — change the advice, widen the scope, or name why the previous suggestion failed — instead of repeating it.
 3. When the blocker involves errors, unfamiliar tools, or missing knowledge, ALWAYS suggest a wiki search by setting wiki_domain and wiki_query. The available domains are listed below. Only leave both empty if the blocker is purely about code logic or syntax.
 4. wiki_query construction:
    - Use 3-8 keywords extracted from the error message, tool name, or concept causing the blocker.
@@ -163,10 +163,20 @@ export class HintRoundManager {
     // REMINDER now covers what was previously CONTINUE/FYI (merged into REMINDER).
     // WRAP_UP remains a hardcoded string prefix (no longer a NoteCategory, but
     // the literal "[WRAP_UP] ..." still appears in the triologue from beginWrapUp()).
+    //
+    // [HINT] notes need finer handling: the category is shared by TWO producers —
+    // this analyzer ("Problem Analysis: ...") and the skill suggester
+    // (collect-skill.ts injectSkillHint: "New relevant skills / Still available").
+    // Keep ONLY this analyzer's own prior output (identified by its body heading),
+    // so it can see what it already advised and escalate instead of re-deriving
+    // the same blocker every cycle (B-2). A skill-suggestion hint is NOT problem
+    // analysis; feeding it in would make the analyzer mistake a skill nudge for
+    // its own earlier advice.
     const filteredMessages = messages.filter(msg => {
       if (msg.role === 'system') return false;
       if (msg.role === 'user' && msg.content) {
-        if (/^\[(?:REMINDER|HINT|WRAP_UP)\]/.test(msg.content)) return false;
+        if (/^\[(?:REMINDER|WRAP_UP)\]/.test(msg.content)) return false;
+        if (/^\[HINT\]/.test(msg.content) && !/^\[HINT\]\s*Problem Analysis:/s.test(msg.content)) return false;
       }
       return true;
     });
