@@ -87,10 +87,20 @@ async function collectMailsAndInput(env: MachineEnv): Promise<{ firstSteerNote: 
     }
   }
 
-  // 2b. Inject team status overview so lead sees deadlines without calling tm_print
+  // 2b. Inject team status overview so lead sees deadlines without calling tm_print.
+  //     Deliberately NOT deduped: printTeam() is one-write-many-read (stop.ts,
+  //     tm_print, /team, the child IPC, and the llm.ts hasTeam probe all call it),
+  //     so a consume-style one-shot token would be burned by any sibling reader
+  //     (e.g. a user-issued /team) and the next COLLECT would report nothing.
+  //     The header/footer carry the attribution + action framing instead; a live
+  //     re-emit is cheap and keeps the lead oriented even after a compaction
+  //     summarizes an earlier instance away. See "#18 A-only".
   const teamStatus = await ctx.team.printTeam();
   if (teamStatus !== 'No teammates.') {
-    triologue.note('SYSTEM', teamStatus);
+    triologue.note(
+      'SYSTEM',
+      `[team status — snapshot, informational]\n${teamStatus}\n\ntm_print for a fresh read; elapsed ETAs are not actionable.`,
+    );
   }
 
   // 2c. Drain steering queue (webui-originated): consume any steering notes
