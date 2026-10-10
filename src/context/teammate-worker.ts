@@ -670,14 +670,28 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
       // instead of re-orienting on its open todos. The orientation clause is
       // conditional: when there is no open todo, saying "re-orient on your
       // todos" would point at nothing, so name that honestly instead.
+      // The ordinal is computed BEFORE the counter is incremented so the note
+      // reports the ordinal of the failure it is describing ("1 of N" on the
+      // first failure, never "0 of N"). On the threshold turn, the circuit
+      // breaker below transitions the worker to idle instead of scheduling a
+      // retry, so the note must say that rather than promise an automatic
+      // retry it cannot perform — a claim the idle-transition note later
+      // contradicts but never retracts.
       const orientation = ctx.todo.hasOpenTodo()
         ? 'Re-orient on your open todos to decide the next step.'
         : 'There are no open todos, so there is nothing to re-orient on.';
+      const failureNumber = consecutiveFailures + 1;
+      const ordinal =
+        `This failure (${failureNumber} of ${MAX_CONSECUTIVE_FAILURES})`;
+      const outlook = failureNumber >= MAX_CONSECUTIVE_FAILURES
+        ? `No more automatic retries — you are entering idle to resume ` +
+          `mail polling.`
+        : `This failure looks transient — you will be retried automatically; ` +
+          `no action needed. ` +
+          `If it keeps failing, you will be moved to idle to resume mail polling.`;
       triologue.note('SYSTEM',
         `An error occurred: ${errorMsg}. ${orientation} ` +
-        `This failure (${consecutiveFailures} of ${MAX_CONSECUTIVE_FAILURES}) looks transient — ` +
-        `you will be retried automatically; no action needed. ` +
-        `If it keeps failing, you will be moved to idle to resume mail polling.`);
+        `${ordinal} ${outlook}`);
 
       consecutiveFailures++;
 
