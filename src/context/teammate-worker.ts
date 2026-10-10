@@ -134,6 +134,22 @@ function reportStuckTurn(reason: string, elapsedMs: number): void {
 }
 
 /**
+ * Try to mail the lead a WARNING. Best-effort by contract: this is a courtesy
+ * notice fired while the worker is about to go idle, so a send failure must
+ * never crash the loop or block the idle transition. Returns whether the mail
+ * was actually handed off, so the caller can word its SYSTEM note from the
+ * real outcome instead of asserting a delivery that may not have happened.
+ */
+function notifyLeadInBestEffort(title: string, text: string): boolean {
+  try {
+    ctx.team.mailTo('lead', title, text);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Create a triologue that persists messages to disk.
  * Uses TriologueLite — the teammate-only simplified facade over the shared
  * triologue submodules (store/compact/pending-tools/tp-fix). Teammates don't
@@ -651,8 +667,17 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
       // Add error to triologue so LLM knows what happened. Report the error
       // fact only — do NOT append a "Please continue with your task." trailer,
       // which the teammate reads as sanction to auto-progress past the error
-      // instead of re-orienting on its open todos.
-      triologue.note('SYSTEM', `An error occurred: ${errorMsg}. Re-orient on your open todos to decide the next step.`);
+      // instead of re-orienting on its open todos. The orientation clause is
+      // conditional: when there is no open todo, saying "re-orient on your
+      // todos" would point at nothing, so name that honestly instead.
+      const orientation = ctx.todo.hasOpenTodo()
+        ? 'Re-orient on your open todos to decide the next step.'
+        : 'There are no open todos, so there is nothing to re-orient on.';
+      triologue.note('SYSTEM',
+        `An error occurred: ${errorMsg}. ${orientation} ` +
+        `This failure (${consecutiveFailures} of ${MAX_CONSECUTIVE_FAILURES}) looks transient — ` +
+        `you will be retried automatically; no action needed. ` +
+        `If it keeps failing, you will be moved to idle to resume mail polling.`);
 
       consecutiveFailures++;
 
@@ -665,17 +690,21 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
       if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
         ctx.core.brief('warn', 'loop',
           `${consecutiveFailures} consecutive failures. Entering idle to resume mail polling.`);
+        // Send the lead notice BEFORE the SYSTEM note so the note can report
+        // the actual outcome (D2). The old version asserted "Lead will be
+        // notified." above a catch{}-swallowed send — a claim that could be
+        // false. Now the note's wording is derived from the real result.
+        const leadNotified = notifyLeadInBestEffort(
+          `WARNING: ${teammateName} network failures`,
+          `Teammate "${teammateName}" hit ${consecutiveFailures} consecutive LLM/network failures ` +
+          `and is entering idle to resume mail polling. The endpoint may be down. ` +
+          `Consider tm_remove or send mail with instructions.`);
         triologue.note('SYSTEM',
           `Experienced ${consecutiveFailures} consecutive network failures. ` +
-          `Entering idle state to resume mail polling. Lead will be notified.`);
-        try {
-          ctx.team.mailTo('lead', `WARNING: ${teammateName} network failures`,
-            `Teammate "${teammateName}" hit ${consecutiveFailures} consecutive LLM/network failures ` +
-            `and is entering idle to resume mail polling. The endpoint may be down. ` +
-            `Consider tm_remove or send mail with instructions.`);
-        } catch {
-          // best-effort
-        }
+          `Entering idle state to resume mail polling. ${
+          leadNotified
+            ? 'Lead has been notified of this failure.'
+            : 'The attempted notice to lead could not be sent.'}`);
         consecutiveFailures = 0; // reset on entering idle
         const result = await enterIdleState(triologue);
         if (result === 'shutdown') {
