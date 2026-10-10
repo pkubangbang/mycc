@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { parseReactivationResult } from '../../../loop/states/collect.js';
+import { parseReactivationResult } from '../../../loop/states/collect-pinned-todo.js';
 
 describe('parseReactivationResult', () => {
   it('should parse a clean JSON array', () => {
