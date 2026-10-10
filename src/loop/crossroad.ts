@@ -319,9 +319,11 @@ export function stripAndValidate(
   let candidate = continuation.trim();
 
   // A retry can ignore the instruction not to repeat already-shown text and
-  // echo the whole prefix. Remove it before checking the sentence anchor.
+  // echo the whole prefix. Since the prefix already contains the anchor sentence,
+  // removing the whole prefix also completes validation for this recovery path.
   if (prefix && candidate.startsWith(prefix)) {
     candidate = candidate.slice(prefix.length).trim();
+    return candidate.length > 0 ? candidate : null;
   }
 
   if (!wordsBeforeTurn) return candidate;
