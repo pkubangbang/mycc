@@ -23,6 +23,7 @@ keywords: ["team", coordination, workflow, parallel, distribute, delegate, teamm
 > - `pattern-counterwork.md` — Pattern 8: Debate topology, competing positions refute each other, lead-conducted convergence to consensus.
 > - `pattern-delphi.md` — Pattern 9: Star with an iterative collection loop; query teammates until N distinct solutions are gathered.
 > - `pattern-scratchpad.md` — Pattern 10: Hub-with-memory; a scratchpad teammate stores the lead's notes and answers broadcast queries against them.
+> - `pattern-simulation-review.md` — Pattern 11: each teammate OWNS one aggregation root (DDD bounded context) and follows its execution flow like a debugger; the lead COLLECTS and VALIDATES the harvested defects and weaknesses. Catches resource-lifecycle/failure-path bugs.
 > - `enforcement.md` — Claim/Closure/Broadcast rules, the Polling Procedure, the Enforcement Checklist, recovery actions, the Communication Constraint Template.
 > - `async-principles.md` — The tm_await decision tree, order() guidance, tm_remove rules, anti-patterns.
 > - `troubleshooting.md` — Teammate-not-responding, issue-blocked, task-too-complex decomposition.
@@ -102,6 +103,7 @@ Match the task to the topology:
 | Need N distinct candidate solutions | Delphi / Structured Elicitation | Star + iterative collection | `pattern-delphi.md` |
 | Lead's notes accumulate, queried later | Scratchpad / Notes-with-Memory | Wheel (memory-variant) | `pattern-scratchpad.md` |
 | Human is a participant | Human-in-the-Loop | Human as node | `pattern-human-loop.md` |
+| Lifecycle/state-machine change, failure-path or resource-leak risk | Simulation Review | One root per teammate → lead | `pattern-simulation-review.md` |
 
 **Heuristic:** Simple/independent → centralize (Wheel, Chain).
 Complex/creative/cross-domain → decentralize (Circle, All-Channel).
@@ -119,6 +121,7 @@ Convergent decision from parallel inputs → Y.
 8. Broadcast/Lectural  — if same input, multiple perspectives, no dependencies.
 9. Scratchpad/Notes    — if the lead is accumulating notes for later query (often runs ALONGSIDE another pattern as the memory layer).
 10. Round-Robin/Circle — if single artifact, iterative refinement.
+11. Simulation Review  — if a lifecycle/state-machine change needs a line-by-line execution-flow simulation (specializes Peer Review; one aggregation root per teammate, lead collects + validates; no negotiation).
 ```
 
 ## Phase Transitions — switching topology as the task evolves
@@ -162,6 +165,7 @@ Each pattern defines **WHO may talk to WHOM**. Enforce the topology:
 | Delphi / Structured Elicitation | Star + iterative | Lead ↔ each teammate (collect/dedupe/re-query); NO lateral mail (independence required). |
 | Scratchpad / Notes-with-Memory | Wheel (memory) | Lead → scratchpad (note-drops); lead broadcasts query → all; scratchpad → lead (answer). Scratchpad mails lead ONLY. |
 | Funnel / Y | Y | Explorers → integrator (NOT lead); integrator → lead. |
+| Simulation Review | Wheel (multi-spoke) | Each simulator owns one aggregation root → lead ONLY; read-only, no edits, no lateral mail; lead collects + validates. |
 
 **State the communication constraint in every `tm_create` prompt.**
 Teammates default to talking to the lead. If your pattern requires lateral
@@ -226,3 +230,10 @@ triologue files.
     scratchpad to persist the lead's notes while the team runs
     Divide-and-Conquer / Pipeline / etc.; the note-drops are non-blocking
     one-way writes (`pattern-scratchpad.md`).
+11. **Simulation Review catches failure-path bugs diff review misses** — for
+    lifecycle/state-machine changes, assign each teammate ONE aggregation root
+    to follow execution flow through (happy path AND every failure branch),
+    harvesting both defects and potential weaknesses; the lead COLLECTS and
+    VALIDATES them. The verdict is advisory (still run the test suite before
+    commit), and never block on `tm_await` for it
+    (`pattern-simulation-review.md`).
