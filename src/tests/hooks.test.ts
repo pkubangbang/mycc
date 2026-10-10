@@ -593,6 +593,83 @@ describe('HookExecutor', () => {
       expect(result.newCalls?.[0].function.name).toBe('wiki_get');
     });
   });
+
+  // ============================================================================
+  // call.args.* is populated end-to-end through processToolCalls
+  // ============================================================================
+  //
+  // Regression for the peer incident: tool arguments live at
+  // `call.function.arguments` (the ollama ToolCall shape), NOT at `call.args`.
+  // Passing the raw tool call through to the evaluator left `call.args`
+  // undefined, so ANY condition reading `call.args.X` — even a guarded
+  // `call.args.command && call.args.command.includes(...)` — threw
+  // "Cannot access property 'command' of undefined" and silently disabled the
+  // hook. HookExecutor.toCallContext() maps the tool-call shape onto the
+  // evaluator's CallContext ({ args, metadata }).
+  describe('call.args.* populated end-to-end via processToolCalls', () => {
+    const getSkill = () => ({ content: 'skill body' });
+
+    it('a guarded call.args.command condition fires true when the command matches', async () => {
+      registry.set('release-hook', {
+        trigger: ['bash'],
+        when: 'prepare a GitHub release',
+        condition: "call.args.command && call.args.command.includes('gh release')",
+        action: { type: 'message', message: 'release helper' },
+        version: 1,
+      });
+
+      const call: ToolCall = {
+        id: 'c1',
+        function: { name: 'bash', arguments: { command: 'gh release create v1' } },
+      };
+      const result = await executor.processToolCalls([call], ctx, getSkill);
+
+      // The condition saw call.args.command and matched → hook contributed its message.
+      expect(result.deferredMessages.some((m) => m.hookName === 'release-hook')).toBe(true);
+      expect(registry.getErroredConditions()).toHaveLength(0);
+    });
+
+    it('a guarded condition does NOT throw when the call has no command arg', async () => {
+      registry.set('release-hook', {
+        trigger: ['bash'],
+        when: 'prepare a GitHub release',
+        condition: "call.args.command && call.args.command.includes('gh release')",
+        action: { type: 'message', message: 'release helper' },
+        version: 1,
+      });
+
+      // A bash call whose arguments lack `command` (e.g. a malformed/partial call).
+      const call: ToolCall = {
+        id: 'c2',
+        function: { name: 'bash', arguments: {} },
+      };
+      await executor.processToolCalls([call], ctx, getSkill);
+
+      // Guarded access → no crash, no failure recorded.
+      expect(registry.getErroredConditions()).toHaveLength(0);
+    });
+
+    it('an UNGUARDED call.args.command.includes still fails LOUDLY (error recorded)', async () => {
+      registry.set('bad-hook', {
+        trigger: ['bash'],
+        when: 'bad condition',
+        condition: "call.args.command.includes('gh release')",
+        action: { type: 'message', message: 'x' },
+        version: 1,
+      });
+
+      const call: ToolCall = {
+        id: 'c3',
+        function: { name: 'bash', arguments: {} },
+      };
+      await executor.processToolCalls([call], ctx, getSkill);
+
+      // The unguarded access threw and was attributed to the hook for recompile.
+      const errored = registry.getErroredConditions();
+      expect(errored).toHaveLength(1);
+      expect(errored[0].name).toBe('bad-hook');
+    });
+  });
 });
 
 // ============================================================================

@@ -69,6 +69,34 @@ export function buildHookInfoMessages(
     );
   }
 
+  // Errored hooks: conditions that THREW during runtime evaluation (e.g. an
+  // unguarded `call.args.command.includes(...)` on a call whose `args.command`
+  // is undefined). Such a condition falls back to false and silently disables
+  // the hook. Prompt the LLM to recompile so the compiler can add a guard.
+  const errored = conditions.getErroredConditions();
+  if (errored.length > 0) {
+    const lines: string[] = [
+      '[Hooks Erroring] The following hookish skills have compiled conditions that FAILED to evaluate at runtime. Each failure was caught and the hook was skipped, so the hook is currently INACTIVE. This usually means the condition dereferences a call value that is absent for some tool calls (e.g. `call.args.command` when the current call is not a bash call). Recompile them so the condition guards the access (e.g. `call.args.command != undefined && call.args.command.includes(...)`) — prefer putting `turn.*` / `session.*` value checks before any `call.args.*` access:',
+      '',
+    ];
+    for (const entry of errored) {
+      lines.push(`- ${entry.name}:`);
+      if (entry.when) {
+        lines.push(`  When: ${entry.when}`);
+      }
+      lines.push(`  Failing condition: ${entry.condition}`);
+      lines.push(`  Error: ${entry.error}`);
+      lines.push(`  Recompile: skill_compile(name="${entry.name}")`);
+      lines.push('');
+    }
+    lines.push('Recompiling re-runs the LLM translation; the new condition is validated and smoke-tested, updating conditions.json in place. A fixed hook drops out of this list once it evaluates cleanly.');
+    lines.push('');
+    out.push(
+      { role: 'user', content: lines.join('\n') },
+      { role: 'assistant', content: 'Understood. Some hooks threw while being evaluated and are currently inactive. I will recompile them with skill_compile so their conditions guard the offending access.' },
+    );
+  }
+
   // Pending hooks: skills with a `when` but no compiled condition. Re-sync
   // from the loader each call so the list reflects current disk state.
   const pendingSkillNames = conditions.getPending();

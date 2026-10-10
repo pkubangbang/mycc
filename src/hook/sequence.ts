@@ -312,10 +312,15 @@ export class Sequence {
    * When call context is provided, conditions can reference call.metadata.X
    * and call.args.X for the current tool call being evaluated.
    * Uses jsep AST parsing for safe evaluation (no Function constructor).
+   *
+   * @param onEvalError - Optional observer invoked if evaluation throws
+   *   (e.g. an unguarded `call.args.command.includes(...)` on a non-bash call).
+   *   Lets the caller attribute the failure to a specific hook for recompile.
    */
   evaluateWithCall(
     expression: string,
-    call?: { metadata?: Record<string, unknown>; args?: Record<string, unknown> }
+    call?: { metadata?: Record<string, unknown>; args?: Record<string, unknown> },
+    onEvalError?: (error: Error) => void
   ): boolean {
     // Create evaluation context
     const ctx: EvalContext = {
@@ -330,6 +335,7 @@ export class Sequence {
       totalTurns: () => this.getTotalTurns(),
       isPlanMode: () => this.isPlanMode(),
       call,
+      onEvalError,
     };
 
     return evaluateExpression(expression, ctx);

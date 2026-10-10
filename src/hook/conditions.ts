@@ -16,6 +16,7 @@ import { getMyccDir } from '../config.js';
 import { Sequence } from './sequence.js';
 import { structuredChat } from '../engine/chat-provider.js';
 import { atomicWrite } from '../utils/atomic-write.js';
+import { agentIO } from '../loop/agent-io.js';
 import {
   validateCondition,
   compileCondition,
@@ -141,6 +142,15 @@ export class ConditionRegistry {
    * populator (triologue.ts projectContext rebuild) without a disk re-read.
    */
   private cachedLegacy: LegacyConditionInfo[] = [];
+
+  /**
+   * Conditions that threw during runtime evaluation, keyed by skill name →
+   * first error message. Populated by {@link matches} via the evaluator's
+   * onEvalError sink; cleared when a recompile produces a condition that
+   * evaluates cleanly. Read by getErroredConditions() for the
+   * "[Hooks Erroring]" recompile prompt. In-memory only — resets on restart.
+   */
+  private erroredConditions: Map<string, string> = new Map();
 
   constructor() {
     this.filePath = path.join(getMyccDir(), 'conditions.json');
@@ -469,9 +479,20 @@ export class ConditionRegistry {
   }
 
   /**
-   * Match conditions against the sequence and return skill names
+   * Match conditions against the sequence and return skill names.
+   *
+   * @param trigger - The trigger tool name (or 'stop').
+   * @param seq - The conversation sequence to evaluate against.
+   * @param call - Optional call context (args + metadata) for the tool call
+   *   being evaluated. Without it, `call.args.*` / `call.metadata.*` in a
+   *   condition resolve to empty objects — an unguarded `call.args.command`
+   *   access then throws and silently disables the hook.
    */
-  matches(trigger: string, seq: Sequence): string[] {
+  matches(
+    trigger: string,
+    seq: Sequence,
+    call?: { metadata?: Record<string, unknown>; args?: Record<string, unknown> }
+  ): string[] {
     const matched: string[] = [];
 
     for (const [name, cond] of this.conditions) {
@@ -480,13 +501,76 @@ export class ConditionRegistry {
         continue;
       }
 
-      // Evaluate condition
-      if (seq.evaluate(cond.condition)) {
+      // Evaluate condition. Attribute any evaluation failure to this hook so
+      // it can be surfaced for recompilation (self-healing) instead of
+      // silently disabling forever.
+      const ok = seq.evaluateWithCall(cond.condition, call, (error) => {
+        this.recordEvalFailure(name, error);
+      });
+
+      if (ok) {
+        // A condition that evaluates cleanly clears any prior failure record
+        // for this hook (e.g. after the user recompiles it with a guard).
+        this.erroredConditions.delete(name);
         matched.push(name);
       }
     }
 
     return matched;
+  }
+
+  /**
+   * Record that a condition threw during evaluation. Kept in memory so the
+   * project-context populator can surface a "[Hooks Erroring]" block and
+   * prompt the LLM to recompile the hook via skill_compile.
+   *
+   * A condition can throw repeatedly at runtime (e.g. once per tool call),
+   * so we keep only the FIRST error per hook to avoid unbounded memory growth
+   * and noisy churn — the message is enough to prompt a recompile.
+   */
+  private recordEvalFailure(name: string, error: Error): void {
+    if (!this.erroredConditions.has(name)) {
+      this.erroredConditions.set(name, error.message);
+
+      // Runtime, one-shot notice: surface the failure the FIRST time it is
+      // seen (not just at the next project-context rebuild), so the agent can
+      // recompile the hook immediately. `synthetic` keeps it out of the WebUI
+      // chat log; it still reaches the LLM as an FYI. Fires once per hook per
+      // session — the guard above ensures no repeat spam.
+      const cond = this.conditions.get(name);
+      agentIO.brief(
+        'warn',
+        'hook',
+        `Hook "${name}" is inactive: its condition failed to evaluate.`,
+        `Reason: ${error.message}\n` +
+        `Condition: ${cond?.condition ?? '(unknown)'}\n` +
+        `Fix: recompile with skill_compile(name="${name}") so the condition guards the offending access.`,
+        { synthetic: true },
+      );
+    }
+  }
+
+  /**
+   * Get conditions that threw during evaluation, keyed by skill name.
+   * Read by the project-context populator (buildHookInfoMessages).
+   */
+  getErroredConditions(): Array<{ name: string; error: string; when?: string; condition: string }> {
+    const out: Array<{ name: string; error: string; when?: string; condition: string }> = [];
+    for (const [name, error] of this.erroredConditions) {
+      const cond = this.conditions.get(name);
+      if (cond) {
+        out.push({ name, error, when: cond.when, condition: cond.condition });
+      }
+    }
+    return out;
+  }
+
+  /**
+   * Clear the eval-failure record for a skill (called after a successful
+   * recompile so a fixed hook drops out of the "[Hooks Erroring]" list).
+   */
+  clearEvalFailure(name: string): void {
+    this.erroredConditions.delete(name);
   }
 
   /**
@@ -702,6 +786,11 @@ Output a JSON object with trigger, condition, and action.`;
         
         // Store in memory
         this.set(skillName, condition);
+
+        // A successful recompile clears any prior runtime-eval failure record
+        // for this hook, so a previously-broken condition drops out of the
+        // "[Hooks Erroring]" list on the next project-context rebuild.
+        this.clearEvalFailure(skillName);
         
         // Persist atomically
         const saveResult = await this.save();

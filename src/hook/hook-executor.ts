@@ -139,9 +139,34 @@ export class HookExecutor {
   /**
    * Check all hooks before a tool call
    * Returns matching hook skills and their actions
+   *
+   * @param triggerTool - The trigger tool name (or 'stop').
+   * @param call - Optional call context (args + metadata) so conditions that
+   *   reference `call.args.*` / `call.metadata.*` can read the real call.
    */
-  checkHooks(triggerTool: string): string[] {
-    return this.conditions.matches(triggerTool, this.sequence);
+  checkHooks(
+    triggerTool: string,
+    call?: { metadata?: Record<string, unknown>; args?: Record<string, unknown> }
+  ): string[] {
+    return this.conditions.matches(triggerTool, this.sequence, call);
+  }
+
+  /**
+   * Build the CallContext the evaluator expects (`{ args, metadata }`) from an
+   * AugmentedToolCall, whose tool arguments actually live at
+   * `call.function.arguments` (the ollama ToolCall shape), NOT at `call.args`.
+   *
+   * Passing the raw tool call straight through (the pre-existing behaviour)
+   * left `call.args` undefined, so ANY condition reading `call.args.X` — even a
+   * guarded `call.args.command && …` — threw on the `.args` access and silently
+   * disabled the hook. This adapter is the single place that maps the tool-call
+   * shape onto the evaluator's CallContext shape.
+   */
+  private toCallContext(call: AugmentedToolCall): { metadata?: Record<string, unknown>; args?: Record<string, unknown> } {
+    return {
+      args: call.function?.arguments ?? {},
+      metadata: call.metadata ?? {},
+    };
   }
 
   /**
@@ -590,7 +615,7 @@ export class HookExecutor {
     getSkill: (name: string) => { content?: string } | undefined
   ): Promise<CallProcessResult> {
     const toolName = call.function.name;
-    const matchedHooks = this.checkHooks(toolName);
+    const matchedHooks = this.checkHooks(toolName, this.toCallContext(call));
 
     if (matchedHooks.length === 0) {
       return { calls: [call], blocked: false, messages: [], compactRequested: false };

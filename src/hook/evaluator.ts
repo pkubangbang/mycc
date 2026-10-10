@@ -68,6 +68,15 @@ export interface EvalContext {
   isPlanMode: () => boolean;
   totalTurns: () => number;
   call?: CallContext;
+  /**
+   * Optional observer invoked when evaluation throws (e.g. a condition does
+   * `call.args.command.includes(...)` on a call whose `args.command` is
+   * undefined). Lets the caller attribute the failure to a specific hook
+   * (skill name) so it can be surfaced for recompilation — see
+   * ConditionRegistry.matches(). Absent in ad-hoc/test contexts, where the
+   * failure is simply logged. Never throws: the observer is wrapped.
+   */
+  onEvalError?: (error: Error) => void;
 }
 
 /**
@@ -80,10 +89,37 @@ function makeEvaluatedNode(node: jsep.Expression, value: any): JsepEvaluatedNode
 }
 
 /**
+ * Evaluate a jsep AST node against a context, attaching the failing node's
+ * source text to any thrown error so callers can report WHERE evaluation died,
+ * not just what went wrong (e.g. "…while evaluating: call.args.command").
+ *
+ * Recursion goes through evaluateNodeInner; the wrapper re-enters evaluateNode
+ * so every sub-expression reports the deepest node that actually failed first.
+ * The `nodeText` property is attached only if not already present, so the
+ * innermost (most specific) failing node wins.
+ */
+function evaluateNode(node: jsep.Expression, ctx: EvalContext): JsepEvaluatedNode {
+  try {
+    return evaluateNodeInner(node, ctx);
+  } catch (err) {
+    if (err instanceof Error && !('nodeText' in err)) {
+      let text: string;
+      try {
+        text = printJsepExpr(node);
+      } catch {
+        text = `<${node.type}>`;
+      }
+      (err as Error & { nodeText?: string }).nodeText = text;
+    }
+    throw err;
+  }
+}
+
+/**
  * Evaluate a jsep AST node against a context.
  * Returns a JsepEvaluatedNode with both the AST structure and the evaluated value.
  */
-function evaluateNode(node: jsep.Expression, ctx: EvalContext): JsepEvaluatedNode {
+function evaluateNodeInner(node: jsep.Expression, ctx: EvalContext): JsepEvaluatedNode {
   switch (node.type) {
     case 'Literal': {
       const value = (node as jsep.Literal).value;
@@ -390,7 +426,42 @@ export function evaluateExpression(expression: string, ctx: EvalContext): boolea
     // Coerce to boolean
     return Boolean(result.value);
   } catch (err) {
-    console.error(`[Evaluator] Failed to evaluate: ${expression}`, err);
+    const error = err instanceof Error ? err : new Error(String(err));
+    // The failing AST node (attached by the evaluateNode wrapper) tells the
+    // user WHERE evaluation died, e.g. `call.args.command` — without it the
+    // message says only that something was undefined.
+    const nodeText = (error as Error & { nodeText?: string }).nodeText;
+
+    // Friendly, non-alarming notice instead of a raw stack trace. The raw
+    // console.error was scary to users and buried under Node frames; a
+    // condition that fails to evaluate is NOT a crash — the hook simply does
+    // not fire this time (see the self-healing path below).
+    //
+    // We keep the raw detail at verbose level for debugging, and emit a short
+    // plain-language line the user can actually read. Both are synthetic
+    // (machine-originated) so the WebUI chat log stays clean.
+    agentIO.brief(
+      'warn',
+      'hook',
+      `A hook condition could not be checked and was skipped.`,
+      `Expr: ${expression}\n` +
+        (nodeText ? `Failed at: ${nodeText}\n` : '') +
+        `Reason: ${error.message}`,
+      { synthetic: true },
+    );
+    if (isDebuggingEval()) {
+      agentIO.verbose('hook', `Evaluator detail: ${expression}`, error.stack ?? String(err));
+    }
+
+    // Report the failure to the caller so it can be attributed to a specific
+    // hook and surfaced for recompilation. Guarded so a broken observer can
+    // never turn a soft failure into a hard crash.
+    try {
+      ctx.onEvalError?.(error);
+    } catch {
+      /* observer must never throw into the evaluator */
+    }
+
     return false;
   }
 }
