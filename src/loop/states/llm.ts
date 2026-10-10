@@ -367,7 +367,15 @@ export async function handleLlm(
       // For transient errors that exhausted retryChat's internal retries
       // but might still be recoverable — ask the input provider
       const errorMessage = err instanceof Error ? err.message : String(err);
-      const shouldRetry = await inputProvider.promptRetry(errorMessage);
+      let shouldRetry = false;
+      try {
+        shouldRetry = await inputProvider.promptRetry(errorMessage);
+      } catch (promptErr) {
+        const retryPromptError = promptErr instanceof Error ? promptErr.message : String(promptErr);
+        ctx.core.verbose('llm', `Retry prompt failed (${retryPromptError}); returning to prompt`);
+        console.log(chalk.yellow('Could not ask about retry. Returning to prompt.'));
+        return AgentState.PROMPT;
+      }
 
       if (shouldRetry) {
         console.log(chalk.cyan('Retrying...'));
