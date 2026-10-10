@@ -213,4 +213,14 @@ describe('handleLlm — empty output when lastRole === "tool" (img_describe regr
     // recordLlmSuccess is on the success exit path only — called exactly once.
     expect(autoState.recordLlmSuccess).toHaveBeenCalledTimes(1);
   });
+
+  it('returns to PROMPT if asking whether to retry itself rejects', async () => {
+    vi.mocked(retryChat).mockRejectedValueOnce(new Error('model transport failed'));
+
+    const env = createMockMachineEnv({ triologue });
+    vi.mocked(env.inputProvider.promptRetry).mockRejectedValueOnce(new Error('prompt UI failed'));
+    const result = await handleLlm(env, createTurnVars(), createChatData());
+
+    expect(result).toBe(AgentState.PROMPT);
+  });
 });

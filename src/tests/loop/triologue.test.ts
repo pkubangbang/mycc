@@ -418,6 +418,26 @@ describe('Triologue deferred-input guard (tool_calls outstanding)', () => {
     expect(illegalSequence(triologue.getMessages() as Message[])).toBe(false);
   });
 
+  it('a deferred user() replay updates lastUserQuery (fast-path regression)', () => {
+    // REGRESSION: the replay refactor (flushDeferredInputs re-enters user()
+    // instead of hand-appending) dropped the old implementation's explicit
+    // `setLastUserQuery(item.text)`. On a tool→user 'allowed' provider
+    // (ollama/deepseek — the default here) the replayed user() takes the fast
+    // path, which RETURNED before the tail setLastUserQuery — leaving the
+    // PREVIOUS query as lastUserQuery. Compact would then summarise the stale
+    // query as the user's latest intent and lose the newest constraints.
+    triologue.user('first query');
+    triologue.agent('go', [pending('p1')]);
+    triologue.user('deferred latest query'); // ledger non-empty → DEFERRED
+    // Still just the first query recorded — the deferred one has not landed.
+    expect(triologue.getLastUserQuery()).toBe('first query');
+    triologue.tool('bash', 'out'); // ledger drains → flush replays user()
+    // The replayed query is now the last genuine instruction.
+    expect(triologue.getLastUserQuery()).toBe('deferred latest query');
+    expect(triologue.getMessagesRaw().map((m) => m.role)).toEqual(['user', 'assistant', 'tool', 'user']);
+    expect(illegalSequence(triologue.getMessages() as Message[])).toBe(false);
+  });
+
   it('clear()/compact() DROP a deferred input instead of resurrecting it', () => {
     triologue.agent('go', [pending('p1')]);
     triologue.note('URGENT', 'stale');
@@ -485,6 +505,19 @@ describe('Triologue deferred-input guard (tool_calls outstanding)', () => {
     // ledger empty at note() time → not deferred; appends immediately.
     expect(triologue.getMessagesRaw().map((m) => m.role)).toEqual(['assistant', 'tool', 'user']);
     expect(triologue.getMessagesRaw()[2].content).toBe('[REMINDER] boundary steer');
+  });
+
+  it('closes the oldest pending slot when an id-less tool result has no name match', () => {
+    triologue.agent('go', [pending('p1', 'read')]);
+    triologue.note('REMINDER', 'queued note');
+
+    triologue.tool('unknown_tool', 'result without a matching name');
+
+    const raw = triologue.getMessagesRaw();
+    expect(raw.map((m) => m.role)).toEqual(['assistant', 'tool', 'user']);
+    expect((raw[1] as Message & { tool_call_id?: string }).tool_call_id).toBe('p1');
+    expect(raw[2].content).toBe('[REMINDER] queued note');
+    expect(illegalSequence(triologue.getMessages() as Message[])).toBe(false);
   });
 
   it('tool() with NO preceding assistant self-heals into a LEGAL standalone block', () => {

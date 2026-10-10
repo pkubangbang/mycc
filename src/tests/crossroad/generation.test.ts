@@ -106,6 +106,25 @@ describe('stripAndValidate', () => {
     expect(stripAndValidate('', cont)).toBe(cont);
   });
 
+  it('strips a retried response that echoes the entire already-visible prefix', () => {
+    const prefix = 'First sentence. Last sentence.';
+    const continuation = 'First sentence. Last sentence. Pivot to the API layer.';
+    expect(stripAndValidate('Last sentence.', continuation, prefix)).toBe('Pivot to the API layer.');
+  });
+
+  it('strips the anchor and a duplicated full prefix from malformed continuation output', () => {
+    const prefix = 'First sentence. Last sentence.';
+    const continuation = 'Last sentence. First sentence. Last sentence. Pivot to the API layer.';
+    expect(stripAndValidate('Last sentence.', continuation, prefix)).toBe('Pivot to the API layer.');
+  });
+
+  it('strips a prefix echo that is followed by a redundant re-echo of the anchor', () => {
+    const prefix = 'First sentence. Last sentence.';
+    // "prefix + anchor + new": the whole-prefix strip leaves the anchor behind.
+    const continuation = 'First sentence. Last sentence. Last sentence. Pivot to the API layer.';
+    expect(stripAndValidate('Last sentence.', continuation, prefix)).toBe('Pivot to the API layer.');
+  });
+
 
   it('should handle anchor with trailing punctuation (Chinese)', () => {
     const anchor = '数据库连接正常。';

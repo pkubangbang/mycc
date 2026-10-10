@@ -473,7 +473,7 @@ interface ParsedPatchResponse {
  * @param checkpointId - The checkpoint id to record in the patch
  * @returns ParsedPatchResponse with either a valid patch, null (none), or an error
  */
-function parsePatchResponse(
+export function parsePatchResponse(
   response: string,
   mindmap: Mindmap,
   checkpointId: string,
@@ -538,7 +538,7 @@ function parsePatchResponse(
   if (!targetNode) {
     return { patch: null, error: `Target node not found: "${path}"` };
   }
-  if (path === '/' || path === '') {
+  if (targetNode === mindmap.root) {
     return { patch: null, error: 'Cannot update or delete root node.' };
   }
 

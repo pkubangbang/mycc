@@ -233,6 +233,9 @@ export class AgentStateMachine {
         // boundary — the same lifecycle point where lastSkillY /
         // skillDiscoveryCooldown were previously re-initialized on TurnVars.
         skillSuggester.reset();
+        // deferredCompact belongs to the previous pass/turn. It survives
+        // COLLECT resets only until its LLM consumer runs, never across turns.
+        chat.deferredCompact = false;
       }
       // COLLECT = fresh pipeline pass — always reset. Preserve
       // `deferredCompact`: HOOK sets it (e.g. compact-on-intent-trap) and

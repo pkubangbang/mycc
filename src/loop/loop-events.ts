@@ -9,10 +9,9 @@
  * no console output.  In production (no test harness running) the emitter is
  * effectively a no-op.
  *
- * In tests, `captureLoopEvents()` (see `src/tests/loop/loop-events-helper.ts`)
- * attaches listeners to every event type, which activates tracing.  The
- * emitter's internal `trace` array is only populated while listeners exist,
- * so memory usage stays flat in production.
+ * In tests, `captureLoopEvents()` explicitly enables trace retention. Ordinary
+ * production listeners (such as the WebUI state mirror) receive events without
+ * causing the internal trace array to grow without bound.
  */
 
 // ============================================================================
@@ -148,6 +147,13 @@ export type LoopEventCallback = (payload: unknown, entry: TraceEntry) => void;
 class LoopEventEmitter {
   private listeners: Map<LoopEventType, Set<LoopEventCallback>> = new Map();
   private trace: TraceEntry[] = [];
+  private traceEnabled = false;
+
+  /** Enable trace retention explicitly (tests/debug tooling only). */
+  setTraceEnabled(enabled: boolean): void {
+    this.traceEnabled = enabled;
+    if (!enabled) this.trace = [];
+  }
 
   /**
    * Subscribe to an event.
@@ -172,24 +178,23 @@ class LoopEventEmitter {
   /**
    * Emit an event.
    *
-   * ZERO OVERHEAD when no listeners are attached: a single Map lookup returns
-   * early — no trace push, no iteration, no allocation.  When listeners exist,
-   * the event is recorded in the trace and every listener is notified.
+   * No listeners: return before allocating an entry. With listeners, notify
+   * them regardless of trace mode; retain entries only when tracing is enabled.
    */
   emit(event: LoopEventType, payload: unknown): void {
     const set = this.listeners.get(event);
     if (!set || set.size === 0) return; // silent — zero production overhead
 
     const entry: TraceEntry = { event, payload, timestamp: Date.now() };
-    this.trace.push(entry);
+    if (this.traceEnabled) this.trace.push(entry);
     for (const cb of set) {
       cb(payload, entry);
     }
   }
 
   /**
-   * Get a copy of the current trace.
-   * Returns an empty array when no listeners were ever attached.
+   * Get a copy of the explicitly captured trace. The array stays empty in
+   * production unless trace retention was enabled.
    */
   getTrace(): TraceEntry[] {
     return [...this.trace];
@@ -202,6 +207,7 @@ class LoopEventEmitter {
   clear(): void {
     this.listeners.clear();
     this.trace = [];
+    this.traceEnabled = false;
   }
 }
 

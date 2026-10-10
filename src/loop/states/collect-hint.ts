@@ -33,7 +33,7 @@
  * See docs/hint-round-review.md for the full hint-round subsystem review.
  */
 
-import type { MachineEnv, TurnVars } from '../state-machine.js';
+import type { ChatData, MachineEnv, TurnVars } from '../state-machine.js';
 import { loader } from '../../context/shared/loader.js';
 import type { SequenceEvent } from '../../hook/sequence.js';
 
@@ -185,13 +185,15 @@ export class HintSuggester {
    * @returns `'stop'` if ESC aborted the hint round (caller returns STOP for
    *          centralized wrap-up); `'collect'` if the hint round signalled a
    *          dead-loop compaction (caller returns COLLECT to continue on
-   *          compacted context); `'continue'` for a normal pass (or when the
-   *          hint block was skipped).
+   *          compacted context); `'continue'` for a normal pass, or when the
+   *          hint block was skipped, or when the hint analysis FAILED (no
+   *          hint injected — the confusion signal is deliberately preserved
+   *          rather than cleared).
    *
    * Side effects on `turn`: captures `lastHintFocus` (the hint source) on a
    * successful hint round; clears `collectTransientRetries` on compaction.
    */
-  async runHintRound(env: MachineEnv, turn: TurnVars): Promise<HintSignal> {
+  async runHintRound(env: MachineEnv, turn: TurnVars, chat: ChatData): Promise<HintSignal> {
     const { triologue, ctx } = env;
     const confusionIndex = ctx.core.getConfusionIndex();
     const messageCount = triologue.getMessagesRaw().length;
@@ -226,7 +228,7 @@ export class HintSuggester {
     // Capture focus_on from a successful hint round (hint source for the
     // composite keyword extraction in collect-skill.ts step 6). The
     // discriminated union carries focusOn only on the success path.
-    if (result !== 'compact' && result.status === 'success') {
+    if (typeof result === 'object' && result.status === 'success') {
       turn.lastHintFocus = result.focusOn;
     }
     // If the LLM signalled should_compact (dead-loop or context stress),
@@ -254,8 +256,11 @@ export class HintSuggester {
     // score, hook dedup cap suppressing the next turn's hooks).
     if (result === 'compact') {
       ctx.core.brief('info', 'loop', 'Hint round signalled compaction (dead-loop / context stress); compacting...');
+      // This compact satisfies any deferred HOOK request too. Prevent the next
+      // LLM state from performing the same compaction a second time.
       const tools = loader.getToolsForScope(env.scope);
       await triologue.compact(undefined, undefined, tools);
+      chat.deferredCompact = false;
       ctx.core.resetConfusionIndex();
       env.requestEmbeddingTracker.clear();
       // compactReset() clears session-level data ONLY (turn.events[] and
@@ -269,7 +274,22 @@ export class HintSuggester {
       turn.collectTransientRetries = 0;
       return 'collect';
     }
-    // Reset confusion after hint
+    // If the hint analysis FAILED (malformed output exhausted the bounded
+    // 3-attempt budget), NO hint was injected — so this must NOT be treated
+    // as a successful intervention. Falling through to the reset below would
+    // clear the confusion signal that triggered the round, hiding the fact
+    // that no guidance was delivered and forcing confusion to re-accumulate
+    // from scratch before the loop retries. Mirror the 'aborted' branch:
+    // return WITHOUT resetting, so the preserved signal lets a later COLLECT
+    // regenerate the hint once the LLM produces well-formed output. The
+    // per-call burst is already bounded by MAX_HINT_ATTEMPTS in generate(),
+    // so preserving the signal cannot spin an unbounded malformed-output loop.
+    if (result === 'failed') {
+      ctx.core.brief('warn', 'loop', 'Hint analysis failed (malformed output); preserving confusion signal to retry later.');
+      return 'continue';
+    }
+    // Reset confusion after a hint that actually landed (success). 'aborted'
+    // and 'failed' returned above; 'compact' reset and returned earlier.
     ctx.core.resetConfusionIndex();
     return 'continue';
   }

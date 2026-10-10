@@ -311,10 +311,34 @@ export function detectTurningWord(content: string): TurningWordMatch | null {
  * @param continuation - The raw continuation text (already stripInternalMarkup'd)
  * @returns The continuation with the anchor removed, or null if validation failed
  */
-export function stripAndValidate(wordsBeforeTurn: string, continuation: string): string | null {
-  if (!wordsBeforeTurn) return continuation;
-  if (continuation.startsWith(wordsBeforeTurn)) {
-    const stripped = continuation.slice(wordsBeforeTurn.length).trim();
+export function stripAndValidate(
+  wordsBeforeTurn: string,
+  continuation: string,
+  prefix?: string,
+): string | null {
+  let candidate = continuation.trim();
+
+  // A retry can ignore the instruction not to repeat already-shown text and
+  // echo the whole prefix. Since the prefix already contains the anchor sentence,
+  // removing the whole prefix also completes validation for this recovery path.
+  if (prefix && candidate.startsWith(prefix)) {
+    candidate = candidate.slice(prefix.length).trim();
+    // The model may additionally re-echo the anchor after the prefix
+    // ("prefix + anchor + new"). Strip it too so the anchor does not survive
+    // as duplicated content.
+    if (wordsBeforeTurn && candidate.startsWith(wordsBeforeTurn)) {
+      candidate = candidate.slice(wordsBeforeTurn.length).trim();
+    }
+    return candidate.length > 0 ? candidate : null;
+  }
+
+  if (!wordsBeforeTurn) return candidate;
+  if (candidate.startsWith(wordsBeforeTurn)) {
+    let stripped = candidate.slice(wordsBeforeTurn.length).trim();
+    // Also handle an anchor followed by a second copy of the full prefix.
+    if (prefix && stripped.startsWith(prefix)) {
+      stripped = stripped.slice(prefix.length).trim();
+    }
     return stripped.length > 0 ? stripped : null;
   }
   return null;
@@ -378,7 +402,7 @@ export async function generateContinuations(
     // First attempt
     let raw = await forkChat(messages, tools, fullPrompt, signal, 'none', CROSSROAD_RETRY_CONFIG);
     let cleanText = stripInternalMarkup((raw || '').trim());
-    let validated = stripAndValidate(wordsBeforeTurn, cleanText);
+    let validated = stripAndValidate(wordsBeforeTurn, cleanText, prefix);
     if (validated !== null) {
       return { name: direction.name, text: validated };
     }
@@ -389,7 +413,7 @@ export async function generateContinuations(
     await sleep(300);
     raw = await forkChat(messages, tools, fullPrompt, signal, 'none', CROSSROAD_RETRY_CONFIG);
     cleanText = stripInternalMarkup((raw || '').trim());
-    validated = stripAndValidate(wordsBeforeTurn, cleanText);
+    validated = stripAndValidate(wordsBeforeTurn, cleanText, prefix);
     if (validated !== null) {
       return { name: direction.name, text: validated };
     }

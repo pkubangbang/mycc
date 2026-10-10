@@ -20,6 +20,7 @@ import { minifyMessages } from '../../utils/llm-chat-minifier.js';
 import { agentIO } from '../agent-io.js';
 
 const ANALYSIS_INSTRUCTION = 'Analyze the gap between the user\'s intent and current progress.';
+const MAX_HINT_ATTEMPTS = 3;
 
 const HINT_SCHEMA = {
   type: 'object',
@@ -143,17 +144,15 @@ export class HintRoundManager {
    * @param confusionScore - Current confusion score
    * @param confusionBreakdown - Human-readable breakdown of confusion factors
    * @param pendingSkills - Skills with 'when' but no compiled condition
-   * @returns 'aborted' if ESC was pressed, 'compact' if the LLM signalled
-   *   should_compact (caller triggers compaction), or
-   *   `{ status: 'success', focusOn }` carrying the parsed focus_on string
-   *   (used by COLLECT's composite keyword extraction as the Z source).
+   * @returns 'aborted' if ESC was pressed, 'compact' when compaction is requested,
+   *   'failed' after bounded malformed-output retries, or a success object.
    */
   async generate(
     abortController: AbortController,
     confusionScore: number,
     confusionBreakdown: string,
     pendingSkills?: string[],
-  ): Promise<'aborted' | 'compact' | { status: 'success'; focusOn: string }> {
+  ): Promise<'aborted' | 'compact' | 'failed' | { status: 'success'; focusOn: string }> {
     if (agentIO.isNeglectedMode()) return 'aborted';
 
     // Build compact conversation context for analysis
@@ -205,11 +204,9 @@ export class HintRoundManager {
       ANALYSIS_INSTRUCTION,
     ].join('\n');
 
-    // Retry loop: parse JSON until success or abort. The per-iteration body
-    // (LLM call + JSON parse + validation + hint formatting + note injection)
-    // lives in retryLoop(); generate() owns the loop control and the abort
-    // guard so the retry contract is explicit ('retry' → loop again).
-    while (true) {
+    // Malformed output is retryable but must be bounded. retryLoop owns one
+    // request/parse/validation attempt; generate() owns the attempt cap.
+    for (let attempt = 1; attempt <= MAX_HINT_ATTEMPTS; attempt++) {
       if (abortController.signal.aborted) {
         return 'aborted';
       }
@@ -217,7 +214,10 @@ export class HintRoundManager {
       if (outcome !== 'retry') {
         return outcome;
       }
+      agentIO.verbose('triologue', `Hint round attempt ${attempt}/${MAX_HINT_ATTEMPTS} needs retry`);
     }
+    agentIO.verbose('triologue', `Hint round exhausted ${MAX_HINT_ATTEMPTS} attempts; skipping hint`);
+    return 'failed';
   }
 
   /**
