@@ -160,6 +160,7 @@ import { handlePrompt, setInitialQuery } from '../../../loop/states/prompt.js';
 import { getSteeringManager } from '../../../loop/steering-manager.js';
 import { AgentState } from '../../../loop/state-machine.js';
 import { Triologue } from '../../../loop/triologue.js';
+import { forkChat } from '../../../engine/chat-provider.js';
 import { createTurnVars, createChatData, createMockMachineEnv } from '../esc-test-helpers.js';
 
 const uploadedImage = {
