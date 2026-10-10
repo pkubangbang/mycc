@@ -536,13 +536,14 @@ describe('handleCollect — composite keyword extraction (integration)', () => {
   });
 
   // ---------------------------------------------------------------------------
-  // Fail-fast: empty freeformQuery clears the throttle (retry-eligible)
+  // Fail-fast: empty freeformQuery shortens the cooldown to ONE pass
   // ---------------------------------------------------------------------------
 
-  it('fail-fast: an empty freeformQuery clears the throttle and injects no HINT', async () => {
+  it('fail-fast: an empty freeformQuery keeps the query marked, sets cooldown 1, and injects no HINT', async () => {
     // A success outcome that carries keywords but NO freeformQuery cannot run
-    // the semantic phase → clearThrottle() undoes the mark-seen + cooldown so
-    // the next pass re-attempts extraction (the query stays eligible).
+    // the semantic phase → the query stays marked (so the cursor is stable)
+    // and the cooldown is shortened to a single pass, granting the LLM exactly
+    // ONE more chance to produce a valid freeformQuery.
     setExtractionResult({ status: 'success', keywords: ['test'], freeformQuery: '' });
     const skills = makeOversizeSkills(3);
     const env = makeEnvWithSkills(skills);
@@ -551,8 +552,32 @@ describe('handleCollect — composite keyword extraction (integration)', () => {
     await handleCollect(env, turn, createChatData());
 
     expect(triologue.note).not.toHaveBeenCalledWith('HINT', expect.anything());
-    expect(skillSuggester.getLastQuery()).toBe('');
+    // The success-path marking is PRESERVED (unlike the old clearThrottle(),
+    // which reset the cursor to '' and re-fired extraction on the next pass).
+    expect(skillSuggester.getLastQuery()).toBe('help me test things');
+    // The 3-pass cooldown armed by armCooldown() is shortened to exactly one
+    // pass — the retry is bounded, not immediate-forever.
+    expect(skillSuggester.getCooldown()).toBe(1);
+  });
+
+  it('fail-fast: the one-pass retry is bounded — a second COLLECT pass re-extracts once, then the retry is spent', async () => {
+    // Pass 1: empty freeformQuery → cooldown shortened to 1.
+    setExtractionResult({ status: 'success', keywords: ['test'], freeformQuery: '' });
+    const env = makeEnvWithSkills(makeOversizeSkills(3));
+    const turn: TurnVars = createTurnVars({ lastUserQuery: 'help me test things' });
+
+    await handleCollect(env, turn, createChatData());
+    expect(skillSuggester.getCooldown()).toBe(1);
+
+    // Pass 2: the pass counter is decremented to 0 at the top, but the SAME
+    // query is still marked seen → queryChanged is false → extraction is
+    // suppressed. The "one more chance" is therefore granted only when a
+    // genuinely new query arrives, not by re-firing on the same composite.
+    mockedExtractKeywords.mockClear();
+    await handleCollect(env, turn, createChatData());
     expect(skillSuggester.getCooldown()).toBe(0);
+    expect(mockedExtractKeywords).not.toHaveBeenCalled();
+    expect(skillSuggester.getLastQuery()).toBe('help me test things');
   });
 
 

@@ -158,15 +158,12 @@ export class SkillSuggester {
   }
 
   /**
-   * Clear the throttle state back to eligible (lastQuery='', cooldown=0).
-   * Called on the Branch B fail-fast path (empty freeformQuery): the
-   * extraction's success-path marking + cooldown-arming are undone so the
-   * next pass re-attempts extraction. Mirrors the `failed` path: both leave
-   * the query eligible and the cooldown at 0.
+   * Set the cooldown to an explicit number of passes (floored at 0). Used by
+   * the empty-freeformQuery retry path to allow exactly ONE more attempt,
+   * instead of an unbounded immediate retry that also clears the dedup cursor.
    */
-  clearThrottle(): void {
-    this.lastQuery = '';
-    this.cooldown = 0;
+  setCooldown(n: number): void {
+    this.cooldown = Math.max(0, n);
   }
 
   // ── Read-only state queries ───────────────────────────────────────────
@@ -520,13 +517,14 @@ export class SkillSuggester {
     if (keywords.length === 0) return;
 
     // The semantic phase needs a valid freeformQuery. When it is missing,
-    // FAIL FAST and leave the query eligible for a retry: clearThrottle
-    // undoes the marking + cooldown-arming performed above so the next pass
-    // re-attempts extraction (the LLM gets another chance to produce a valid
-    // freeformQuery). This mirrors the `failed` path — both leave the query
-    // eligible and the cooldown at 0.
+    // FAIL FAST and give the LLM exactly ONE more chance to produce a valid
+    // freeformQuery: keep the query marked as seen (so markQuerySeen's cursor
+    // stays stable) and shorten the cooldown to a single pass. Clearing the
+    // throttle here reset BOTH fields, un-marking the query and re-running
+    // extraction on the very next pass — defeating the 3-pass suppression
+    // armCooldown() had just armed.
     if (!freeformQuery || !freeformQuery.trim()) {
-      this.clearThrottle();
+      this.setCooldown(1);
       return;
     }
 
