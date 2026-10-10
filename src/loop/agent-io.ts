@@ -144,6 +144,9 @@ class AgentIO {
   private isMainProcessFlag = false;
   private llmAbortController: AbortController | null = null;
 
+  // Ignore repeated ESC frames while graceful serve shutdown is still in flight.
+  private serveEscShutdownInProgress = false;
+
   // Neglected mode tracking (ESC was pressed this round)
   private neglectedModeFlag = false;
 
@@ -249,22 +252,21 @@ class AgentIO {
           return;
         }
 
-        // Serve mode: ESC → warm exit (stop serve, NO neglection, NO LLM abort).
-        // The user pressed ESC while the Web UI was active. We gracefully shut
-        // down serve so the terminal prompt returns. A second ESC (after serve
-        // has exited) triggers the standard neglection below.
-        if (tryGetServeHub()?.isRunning()) {
-          // Bind the hub ONCE (no second tryGetServeHub() + non-null
-          // assertion): the singleton is stable today, but a single local
-          // reference keeps the guard and the call demonstrably on the same
-          // instance and mirrors the const-hub pattern used elsewhere here.
-          const hub = tryGetServeHub();
-          // gracefulShutdown() awaits hub.stop() internally — the HTTP port
-          // is released and serve_mode:false IPC is sent only after cleanup
-          // completes, so terminal input isn't restored before the port is free.
-          hub?.gracefulShutdown().catch((err) => {
-            agentIO.verbose('serve', `ESC shutdown error: ${String(err)}`);
-          });
+        // Serve mode: the first ESC starts a graceful warm exit without
+        // aborting the LLM. Ignore further ESC until shutdown settles, because
+        // isRunning() can become false before gracefulShutdown() has finished.
+        if (this.serveEscShutdownInProgress) return;
+
+        const hub = tryGetServeHub();
+        if (hub?.isRunning()) {
+          this.serveEscShutdownInProgress = true;
+          void hub.gracefulShutdown()
+            .catch((err) => {
+              agentIO.verbose('serve', `ESC shutdown error: ${String(err)}`);
+            })
+            .finally(() => {
+              this.serveEscShutdownInProgress = false;
+            });
           return; // skip standard neglection — do NOT set neglectedMode
         }
 
