@@ -30,6 +30,7 @@ export function captureLoopEvents(): {
   for (const eventType of LOOP_EVENT_TYPES) {
     unsubs.push(loopEvents.on(eventType as LoopEventType, () => {}));
   }
+  loopEvents.setTraceEnabled(true);
 
   return {
     /** Returns a copy of the current trace */
