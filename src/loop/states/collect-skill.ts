@@ -130,6 +130,17 @@ export class SkillSuggester {
    * (reset()), and whenever a NEW query retires it.
    */
   private retryBudget = 0;
+  /**
+   * The composite text that EARNED the retry budget. The retry pass must run
+   * against the SAME input the first attempt saw, not a freshly recomputed
+   * composite: the trigger source for the first attempt was often a steering
+   * note, which is DRAINED from the queue by the time the retry runs. Without
+   * this snapshot the retry rebuilds the composite from whatever remains
+   * (the fallback `lastUserQuery`, or only brief/hint) — i.e. it extracts
+   * keywords for a DIFFERENT task than the one that earned the retry (PR #28
+   * review P2 F1). Retired alongside the budget (spend / reset / new query).
+   */
+  private retryComposite = '';
 
   // ── State lifecycle ───────────────────────────────────────────────────
 
@@ -142,6 +153,7 @@ export class SkillSuggester {
     this.lastQuery = '';
     this.cooldown = 0;
     this.retryBudget = 0;
+    this.retryComposite = '';
   }
 
   /**
@@ -182,23 +194,37 @@ export class SkillSuggester {
    * the pipeline after an otherwise-successful extraction: the query stays
    * marked seen (cursor stability) and this budget is what lets the
    * extraction gate open exactly one more time for that SAME query.
+   *
+   * `composite` is the composite text the first attempt ran against — the
+   * retry reuses it verbatim (see {@link retryComposite}) so the retry cannot
+   * silently switch to a different task after the originating steering note
+   * has been drained.
    */
-  grantRetry(): void {
+  grantRetry(composite: string): void {
     this.retryBudget = 1;
+    this.retryComposite = composite;
   }
 
   /**
    * Spend the same-query retry budget. Called by the retry pass itself: the
    * one additional attempt is consumed, the query stays marked seen, and a
-   * further invalid outcome cannot loop (budget is 0 → gate closed).
+   * further invalid outcome cannot loop (budget is 0 → gate closed). The
+   * saved composite is retired with the budget — it must never outlive the
+   * attempt it was captured for.
    */
   spendRetry(): void {
     this.retryBudget = 0;
+    this.retryComposite = '';
   }
 
   /** Current same-query retry budget (test-facing). */
   getRetryBudget(): number {
     return this.retryBudget;
+  }
+
+  /** The composite text saved for the pending retry (test-facing). */
+  getRetryComposite(): string {
+    return this.retryComposite;
   }
 
   // ── Read-only state queries ───────────────────────────────────────────
@@ -493,24 +519,26 @@ export class SkillSuggester {
 
     // A NEW query source retires any unspent retry budget: the budget is
     // scoped to the query that earned it, so it must not open the gate for
-    // a different query later.
+    // a different query later. spendRetry() also drops the saved composite.
     if (changed) {
       this.spendRetry();
     }
 
-    // Build the composite text (brief + query + hint). Query is the trigger;
-    // brief and hint enrich.
-    const compositeText = this.buildCompositeText(
-      turn.lastBriefMessage,
-      querySource,
-      turn.lastHintFocus,
-    );
+    // The retry pass must run against the composite the FIRST attempt saw,
+    // not a freshly recomputed one. The trigger source of that first attempt
+    // was frequently a steering note, which collectMailsAndInput has already
+    // DRAINED by the time the retry runs; recomputing would silently swap in
+    // the fallback lastUserQuery (a different task) or drop to brief/hint only
+    // (PR #28 review P2 F1). Reuse the snapshot when retrying.
+    const retrying = this.retryBudget > 0;
+    const compositeText = retrying
+      ? this.retryComposite
+      : this.buildCompositeText(turn.lastBriefMessage, querySource, turn.lastHintFocus);
 
     // Extraction gate. `changed` is the normal trigger; `retryBudget > 0`
     // is the ONE extra extraction promised to the same query after its
     // first extraction returned an empty freeformQuery. Both still require
     // an inactive cooldown and a meaningful composite.
-    const retrying = this.retryBudget > 0;
     if ((!changed && !retrying) || this.cooldownActive() || compositeText.trim().length < 4) {
       return;
     }
@@ -588,7 +616,10 @@ export class SkillSuggester {
     if (!freeformQuery || !freeformQuery.trim()) {
       if (!wasRetry) {
         this.setCooldown(1);
-        this.grantRetry();
+        // Save the SAME composite this attempt ran against, so the retry
+        // reuses the original task's input rather than recomputing from a
+        // source that may already be drained (PR #28 review P2 F1).
+        this.grantRetry(compositeText);
       }
       return;
     }

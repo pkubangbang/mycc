@@ -19,6 +19,7 @@ import { listWorktrees } from '../../context/worktree-store.js';
 import { getSteeringManager } from '../steering-manager.js';
 import { getServeHub } from '../../serve/serve-registry.js';
 import type { Core } from '../../context/parent/core.js';
+import { shouldDaemon } from '../../config.js';
 import { resolveHeadlessFirstQuery } from '../../session/index.js';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -48,6 +49,23 @@ const MAX_COLLECT_TRANSIENT_RETRIES = 3;
 let lastServeReported = false;
 
 /**
+ * Reconcile the serve-state report after a destructive context boundary
+ * (/clear, double-Ctrl+L in agent-repl.ts). Both clears empty the triologue
+ * but do NOT flip the session-stable serve flag, so `lastServeReported` would
+ * stay `true` while the note describing it is gone from the conversation — the
+ * new conversation would then lack the very context this watch exists to
+ * supply (PR #28 review P3 F4).
+ *
+ * Clearing the cursor forces the next COLLECT to re-report the CURRENT state
+ * (edge re-arms): if serve is still up, the start note is re-injected; if it
+ * stopped across the boundary, the stop note is. Steady state stays silent
+ * in both cases — only a clear re-arms the edge.
+ */
+export function reconcileServeStateAfterClear(): void {
+  lastServeReported = false;
+}
+
+/**
  * Steps 1–2: drain all external inputs into the triologue.
  *
  * Collects (in order): pending child questions, mails, team-status overview,
@@ -74,15 +92,24 @@ async function collectMailsAndInput(env: MachineEnv): Promise<{ firstSteerNote: 
     : false;
   if (serveNow !== lastServeReported) {
     lastServeReported = serveNow;
+    // A daemon has NO terminal (its init note says so), so claiming terminal
+    // input is "disabled"/"restored" would contradict that — in a headless
+    // daemon only the browser channel actually changes (PR #28 review P2 F3).
+    // Interactive sessions get the full terminal transition.
+    const headless = shouldDaemon();
+    const startDetail = headless
+      ? 'Browser input is now available.'
+      : 'Terminal input is disabled until the Web UI stops.';
+    const stopDetail = headless
+      ? 'This daemon has no terminal, so external mail (and cron ticks, if configured) remain the wake sources.'
+      : 'Terminal input is restored, so direction will again arrive at the prompt.';
     triologue.note(
       'SYSTEM',
       serveNow
-        ? 'Web UI started — this session is now reachable from a browser. A ' +
-          'user may submit prompts and mid-task steering notes from the WebUI, ' +
-          'so expect direction to arrive asynchronously while you work. ' +
-          'Terminal input is disabled until the Web UI stops.'
-        : 'Web UI stopped — browser input is no longer available. Terminal ' +
-          'input is restored, so direction will again arrive at the prompt.',
+        ? `Web UI started — this session is now reachable from a browser. A ` +
+          `user may submit prompts and mid-task steering notes from the WebUI, ` +
+          `so expect direction to arrive asynchronously while you work. ${startDetail}`
+        : `Web UI stopped — browser input is no longer available. ${stopDetail}`,
     );
   }
 

@@ -120,6 +120,7 @@ vi.mock('../../../loop/triologue.js', () => {
 
 // --- Imports after mocks -----------------------------------------------------
 import { handleCollect } from '../../../loop/states/collect.js';
+import { reconcileServeStateAfterClear } from '../../../loop/states/collect.js';
 import { AgentState } from '../../../loop/state-machine.js';
 import { Triologue } from '../../../loop/triologue.js';
 import { getSteeringManager } from '../../../loop/steering-manager.js';
@@ -536,8 +537,42 @@ describe('handleCollect — composite keyword extraction (integration)', () => {
   });
 
   // ---------------------------------------------------------------------------
-  // Fail-fast: empty freeformQuery shortens the cooldown to ONE pass
+  // PR #28 P3 F4: /clear must not permanently erase the serve-state knowledge.
   // ---------------------------------------------------------------------------
+
+  it('P3 F4: /clear re-arms the serve-state watch so the fresh conversation learns it', async () => {
+    // Session starts already serving (daemon --serve): the first COLLECT
+    // reports the start note once. Wire the flag through the mock core.
+    serveRunning = true;
+    const env = makeEnv();
+    (env.ctx.core as { getServeRunning?: () => boolean }).getServeRunning = vi.fn(() => serveRunning);
+    const turn: TurnVars = createTurnVars({ lastUserQuery: 'do work' });
+
+    await handleCollect(env, turn, createChatData());
+    const serveNotesAfterFirst = vi.mocked(triologue.note).mock.calls
+      .filter(c => c[0] === 'SYSTEM' && String(c[1]).includes('Web UI started'));
+    expect(serveNotesAfterFirst.length).toBe(1);
+
+    // Steady state: a second COLLECT stays SILENT (edge already reported).
+    vi.mocked(triologue.note).mockClear();
+    await handleCollect(env, turn, createChatData());
+    expect(vi.mocked(triologue.note).mock.calls
+      .filter(c => c[0] === 'SYSTEM' && String(c[1]).includes('Web UI'))).toHaveLength(0);
+
+    // The user clears the conversation. The triologue is emptied (losing the
+    // note), but the session is STILL serving. Without the reconcile the
+    // transient cursor would stay true and the fresh conversation would never
+    // learn a WebUI is running.
+    reconcileServeStateAfterClear();
+
+    // Next COLLECT: the edge re-armed → the CURRENT state is re-reported.
+    vi.mocked(triologue.note).mockClear();
+    await handleCollect(env, turn, createChatData());
+    expect(vi.mocked(triologue.note)).toHaveBeenCalledWith(
+      'SYSTEM',
+      expect.stringContaining('Web UI started'),
+    );
+  });
 
   it('fail-fast: an empty freeformQuery grants ONE same-query retry (budget=1, cooldown=1), injects no HINT', async () => {
     // A success outcome that carries keywords but NO freeformQuery cannot run
@@ -619,6 +654,42 @@ describe('handleCollect — composite keyword extraction (integration)', () => {
     expect(mockedExtractKeywords).toHaveBeenCalledTimes(1);
     expect(skillSuggester.getRetryBudget()).toBe(0);
     expect(triologue.note).toHaveBeenCalledWith('HINT', expect.anything());
+  });
+
+  // ---------------------------------------------------------------------------
+  // PR #28 P2 F1: the retry must reuse the composite that EARNED it, not a
+  // recomputed one — the originating steering note is drained by the retry.
+  // ---------------------------------------------------------------------------
+
+  it('P2 F1: a steering-note retry reuses the SAME composite (does not fall back to lastUserQuery)', async () => {
+    // Pass 1: a steering note ("focus on task B") triggers extraction, returns
+    // keywords but an EMPTY freeformQuery → budget granted. The production
+    // code marks BOTH the steer note and lastUserQuery seen, and the drain
+    // empties the steering queue.
+    serveRunning = true;
+    getSteeringManager().addNote('focus on task B');
+    const env = makeEnv();
+    const turn: TurnVars = createTurnVars({ lastUserQuery: 'original task A' });
+
+    mockedExtractKeywords.mockResolvedValueOnce({ status: 'success', keywords: ['b'], freeformQuery: '' });
+    await handleCollect(env, turn, createChatData());
+    expect(skillSuggester.getRetryBudget()).toBe(1);
+    // The saved composite is the one built from the STEER note (task B).
+    expect(skillSuggester.getRetryComposite()).toBe('focus on task B');
+    expect(mockedExtractKeywords).toHaveBeenLastCalledWith('focus on task B', expect.anything(), expect.anything());
+
+    // Pass 2 (the retry): the steer note is GONE from the queue, so a naive
+    // recompute would fall back to lastUserQuery ('original task A') — a
+    // DIFFERENT task. The fix reuses the saved composite (task B).
+    mockedExtractKeywords.mockClear();
+    mockedExtractKeywords.mockResolvedValueOnce({ status: 'success', keywords: ['b'], freeformQuery: 'task b semantic' });
+    await handleCollect(env, turn, createChatData());
+
+    expect(mockedExtractKeywords).toHaveBeenCalledTimes(1);
+    expect(mockedExtractKeywords).toHaveBeenLastCalledWith('focus on task B', expect.anything(), expect.anything());
+    // Budget retired after a successful retry; saved composite cleared with it.
+    expect(skillSuggester.getRetryBudget()).toBe(0);
+    expect(skillSuggester.getRetryComposite()).toBe('');
   });
 
   it('fail-fast: a NEW query retires an unspent retry budget (no free extraction for the next query)', async () => {
