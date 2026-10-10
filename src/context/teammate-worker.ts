@@ -408,11 +408,14 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
             reportStuckTurn('compact summarization watchdog', elapsed);
             triologue.note('SYSTEM',
               `Auto-compact summarization was aborted by the stuck-teammate watchdog after ${Math.round(elapsed / 1000)}s. ` +
-              `Context remains over the threshold; compaction will be retried next turn.`);
+              `Context remains over the threshold; compaction retries next turn — keep this turn small ` +
+              `(finish the current step, avoid large reads) so the retry succeeds.`);
           } else {
             // Non-watchdog compact error: surface but don't crash the worker.
             ctx.core.brief('error', 'compact', `Compact failed: ${(err as Error).message}`);
-            triologue.note('SYSTEM', `Auto-compact failed: ${(err as Error).message}. Continuing without compaction.`);
+            triologue.note('SYSTEM',
+              `Auto-compact failed: ${(err as Error).message}. Continuing without compaction — ` +
+              `context stays over the threshold; if the next call fails, reduce what you emit this turn and retry.`);
           }
         } finally {
           compactWatchdog.clearTimeout();
