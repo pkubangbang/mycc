@@ -7,6 +7,7 @@ function makeDeps(lastUserQuery: string): CompactDeps {
     getFullMessages: () => [],
     lastUserQuery: () => lastUserQuery,
     onCompact: vi.fn(),
+    domains: [],
   };
 }
 
