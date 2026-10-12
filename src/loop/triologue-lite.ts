@@ -46,7 +46,6 @@ export class TriologueLite {
     onToolMisalign: (warning: ToolAlignmentWarning) => void;
     onCompact: (transcriptPath: string) => void;
     onMessage: (msg: Message, getTriologue: () => Message[]) => void;
-    getWikiDomains?: () => Promise<Array<{ domain_name: string; description?: string }>>;
   };
 
   /**
@@ -116,8 +115,6 @@ export class TriologueLite {
       onToolMisalign: options.onToolMisalign ?? this.defaultOnToolMisalign,
       onCompact: options.onCompact ?? this.defaultOnCompact,
       onMessage: options.onMessage ?? (() => {}),
-
-      getWikiDomains: options.getWikiDomains ?? undefined,
     };
   }
 
@@ -361,8 +358,11 @@ export class TriologueLite {
    *   the prompt cache) and extracts recent working memory, which is appended
    *   to the summary as a `### Recent Working Memory` section. When omitted or
    *   empty, falls back to summary-only (the historical behavior).
+   * @param domains - Optional wiki domain list for the summary's
+   *   knowledge-persistence instruction, supplied by the caller (which holds
+   *   the wiki module) so this facade stays free of the RAG layer.
    */
-  async compact(focus?: string, signal?: AbortSignal, tools?: Tool[]): Promise<void> {
+  async compact(focus?: string, signal?: AbortSignal, tools?: Tool[], domains: Array<{ domain_name: string; description?: string }> = []): Promise<void> {
     // Inline delegation to the compaction layer (triologue/compact.ts) via a
     // CompactDeps adapter over this facade's own state (single caller).
     const compacted = await doRunAutoCompact(
@@ -371,7 +371,7 @@ export class TriologueLite {
         getFullMessages: () => this.store.getFullMessages(),
         lastUserQuery: () => this.store.lastUserQuery,
         onCompact: (p) => this.options.onCompact(p),
-        getWikiDomains: this.options.getWikiDomains,
+        domains,
       },
       focus,
       signal,

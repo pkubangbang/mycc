@@ -21,7 +21,7 @@ import { describe, it, expect } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import { buildPlatformCalendarMessages, buildNodeModulesReminderMessages } from '../../loop/prompt-populators.js';
+import { buildPlatformCalendarMessages, buildNodeModulesReminderMessages, buildWikiDomainsMessages } from '../../loop/prompt-populators.js';
 
 describe('buildPlatformCalendarMessages', () => {
   it('returns a user + assistant message pair', () => {
@@ -106,5 +106,39 @@ describe('buildNodeModulesReminderMessages', () => {
       const [user] = buildNodeModulesReminderMessages();
       expect(user.content).toContain('grep tool already auto-excludes');
     });
+  });
+});
+
+describe('buildWikiDomainsMessages', () => {
+  it('returns an empty array when there are no domains', () => {
+    const messages = buildWikiDomainsMessages([]);
+    expect(messages).toEqual([]);
+  });
+
+  it('returns a user + assistant pair listing every domain name and description', () => {
+    const messages = buildWikiDomainsMessages([
+      { domain_name: 'pitfall', description: 'known traps and how to avoid them' },
+      { domain_name: 'routine', description: 'repeatable procedures' },
+    ]);
+    expect(messages).toHaveLength(2);
+    expect(messages[0].role).toBe('user');
+    expect(messages[1].role).toBe('assistant');
+
+    const [user] = messages;
+    expect(user.content).toContain('[System - Wiki Domains]');
+    expect(user.content).toContain('pitfall');
+    expect(user.content).toContain('known traps and how to avoid them');
+    expect(user.content).toContain('routine');
+    expect(user.content).toContain('repeatable procedures');
+  });
+
+  it('emits no trailing colon for a domain with an empty description', () => {
+    const [user] = buildWikiDomainsMessages([
+      { domain_name: 'bare', description: '' },
+      { domain_name: 'described', description: 'has a description' },
+    ]);
+    expect(user.content).toContain('- bare\n');
+    expect(user.content).not.toContain('- bare:');
+    expect(user.content).toContain('- described: has a description');
   });
 });

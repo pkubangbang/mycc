@@ -1,13 +1,24 @@
 /**
- * hint-round.test.ts — Tests for Triologue.generateHintRound() and the
+ * hint-round.test.ts — Tests for HintRoundManager.generate() and the
  * hint-round JSON output format.
  *
  * The hint-round feature (triologue/hint-round.ts) asks the LLM (via
  * retryChat) to produce a structured JSON analysis of the agent's current
  * blocker, then injects a formatted [HINT] note into the conversation.
- * These tests drive the REAL Triologue facade with a mocked retryChat to
+ *
+ * OWNERSHIP CHANGE: the manager is no longer a Triologue facade method
+ * (Triologue.generateHintRound() is deleted). It is constructed by its
+ * composition root — HintSuggester in states/collect-hint.ts — which holds
+ * both the triologue and `ctx`. This test therefore drives the
+ * HintRoundManager DIRECTLY, with the same deps the composition root supplies:
+ * a live message provider, a note injector, and the wiki module.
+ *
+ * These tests drive the REAL HintRoundManager with a mocked retryChat to
  * verify:
  *   - 'success' path: valid JSON → HINT note injected with all fields
+ *   - the executed wiki pre-filter: a kept line names the SNAPPED real domain,
+ *     a zero-hit/error proposal is muted, and a missing wiki module passes the
+ *     line through
  *   - 'compact' path: should_compact=true → returns 'compact', no note
  *   - 'aborted' path: abortController aborted → returns 'aborted'
  *   - retry on malformed JSON / missing required fields
@@ -15,7 +26,7 @@
  *   - pending skills are surfaced in the HINT note
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { WikiModule } from '../../types.js';
+import type { Message, WikiModule } from '../../types.js';
 
 // --- Mocks (paths relative to this test file: src/tests/loop/) --------------
 
@@ -38,7 +49,10 @@ vi.mock('../../utils/llm-chat-minifier.js', () => ({
 }));
 
 // --- Imports after mocks ----------------------------------------------------
-import { Triologue } from '../../loop/triologue.js';
+import {
+  HintRoundManager,
+  type HintRoundManagerDeps,
+} from '../../loop/triologue/hint-round.js';
 import { retryChat } from '../../engine/chat-provider.js';
 
 /** Build a valid hint JSON response (all required fields present). */
@@ -49,7 +63,7 @@ function validHintResponse(overrides: Record<string, unknown> = {}) {
         blocker: 'Agent is stuck on a syntax error',
         next_step: 'Review the intent-language vocabulary',
         focus_on: 'intent-language syntax',
-        wiki_domain: 'project',
+        wiki_domain: 'architecture',
         wiki_query: 'intent language verb object',
         should_compact: false,
         ...overrides,
@@ -66,42 +80,75 @@ function getUserPrompt(): string {
   return callArgs.messages[1].content;
 }
 
-describe('Hint Round JSON Output', () => {
-  let triologue: Triologue;
-  let mockWiki: WikiModule;
+/** A wiki hit shaped like a real SearchResult (only the fields under test). */
+function wikiHit(domain: string) {
+  return { document: { domain }, similarity: 0.8, hash: 'h' };
+}
 
+/**
+ * Build a fake WikiModule. `listDomains` returns the two registered domains
+ * unless overridden; `get` returns no hits by default so individual tests set
+ * their own pre-filter outcome.
+ */
+function makeWiki(overrides: Record<string, unknown> = {}): WikiModule {
+  return {
+    listDomains: vi.fn(async () => [
+      {
+        domain_name: 'architecture',
+        description: 'System architecture and design patterns',
+        created_at: '2026-01-01',
+        project_folder: '/test',
+      },
+      {
+        domain_name: 'api',
+        description: 'API documentation and endpoints',
+        created_at: '2026-01-01',
+        project_folder: '/test',
+      },
+    ]),
+    prepare: vi.fn(),
+    put: vi.fn(),
+    get: vi.fn(async () => []),
+    delete: vi.fn(),
+    getWAL: vi.fn(),
+    appendWAL: vi.fn(),
+    rebuild: vi.fn(),
+    getDomain: vi.fn(),
+    registerDomain: vi.fn(),
+    ...overrides,
+  } as unknown as WikiModule;
+}
+
+/**
+ * Build a HintRoundManager wired exactly like the composition root
+ * (HintSuggester.getManager): a live message array as the provider and a note
+ * injector that appends `[<category>] <message>` user messages (so tests can
+ * inspect the injected [HINT] note from the array).
+ */
+function makeManager(wiki?: WikiModule): {
+  manager: HintRoundManager;
+  messages: Message[];
+  deps: HintRoundManagerDeps;
+} {
+  const messages: Message[] = [];
+  const deps: HintRoundManagerDeps = {
+    getMessagesRaw: () => messages,
+    note: (category, message) => {
+      messages.push({ role: 'user', content: `[${category}] ${message}` } as Message);
+    },
+    ...(wiki ? { wiki } : {}),
+  };
+  return { manager: new HintRoundManager(deps), messages, deps };
+}
+
+/** Find the injected [HINT] note in the message array. */
+function findHint(messages: Message[]): Message | undefined {
+  return messages.find((m) => m.content?.startsWith('[HINT]'));
+}
+
+describe('Hint Round JSON Output', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockWiki = {
-      listDomains: vi.fn(async () => [
-        {
-          domain_name: 'architecture',
-          description: 'System architecture and design patterns',
-          created_at: '2026-01-01',
-          project_folder: '/test',
-        },
-        {
-          domain_name: 'api',
-          description: 'API documentation and endpoints',
-          created_at: '2026-01-01',
-          project_folder: '/test',
-        },
-      ]),
-      prepare: vi.fn(),
-      put: vi.fn(),
-      get: vi.fn(),
-      delete: vi.fn(),
-      getWAL: vi.fn(),
-      appendWAL: vi.fn(),
-      rebuild: vi.fn(),
-      getDomain: vi.fn(),
-      registerDomain: vi.fn(),
-    } as unknown as WikiModule;
-
-    triologue = new Triologue({
-      getWikiDomains: async () => mockWiki.listDomains(),
-      hintThreshold: 10,
-    });
   });
 
   // ---------------------------------------------------------------------------
@@ -110,32 +157,37 @@ describe('Hint Round JSON Output', () => {
 
   it('injects a [HINT] note when the LLM returns valid JSON', async () => {
     vi.mocked(retryChat).mockResolvedValueOnce(validHintResponse() as never);
-
-    const result = await triologue.generateHintRound(
-      new AbortController(),
-      12,
-      'confusion breakdown',
+    // The guessed domain ('architecture', from the fixture) is registered, so
+    // the pre-filter searches it and snaps the emitted line to the TOP HIT's
+    // real domain. Make the hit domain differ from the guess ('pitfall') so
+    // this assertion FAILS if the pre-filter is removed: only the executed
+    // search + snap can turn the guessed 'architecture' into 'pitfall'.
+    const { manager, messages } = makeManager(
+      makeWiki({ get: vi.fn(async () => [wikiHit('pitfall')]) }),
     );
+
+    const result = await manager.generate(new AbortController(), 12, 'confusion breakdown');
 
     expect(result).toEqual({ status: 'success', focusOn: 'intent-language syntax' });
     // The HINT note was injected as a user message with the [HINT] prefix.
-    const messages = triologue.getMessagesRaw();
-    const hintMsg = messages.find((m) => m.content?.startsWith('[HINT]'));
+    const hintMsg = findHint(messages);
     expect(hintMsg).toBeDefined();
     expect(hintMsg!.content).toContain('**Blocker:** Agent is stuck on a syntax error');
     expect(hintMsg!.content).toContain('**Next Step:** Review the intent-language vocabulary');
     expect(hintMsg!.content).toContain('**Focus On:** intent-language syntax');
-    expect(hintMsg!.content).toContain('**Wiki Search:** Domain="project", Query="intent language verb object"');
+    // Imperative pre-filtered wiki line — the domain is the SNAPPED real one
+    // from the executed search, NOT the guessed 'architecture'.
+    expect(hintMsg!.content).toContain(
+      '**Wiki Search:** call `wiki_get(domain="pitfall", query="intent language verb object")` to check the knowledge base for background on this blocker.',
+    );
+    expect(hintMsg!.content).not.toContain('domain="architecture"');
   });
 
   it('includes the confusion score and breakdown in the analysis prompt', async () => {
     vi.mocked(retryChat).mockResolvedValueOnce(validHintResponse() as never);
+    const { manager } = makeManager(makeWiki());
 
-    await triologue.generateHintRound(
-      new AbortController(),
-      15,
-      'repeated edit_file failures',
-    );
+    await manager.generate(new AbortController(), 15, 'repeated edit_file failures');
 
     expect(retryChat).toHaveBeenCalledTimes(1);
     const userPrompt = getUserPrompt();
@@ -145,8 +197,9 @@ describe('Hint Round JSON Output', () => {
 
   it('includes available wiki domains in the analysis prompt', async () => {
     vi.mocked(retryChat).mockResolvedValueOnce(validHintResponse() as never);
+    const { manager } = makeManager(makeWiki());
 
-    await triologue.generateHintRound(new AbortController(), 10, 'breakdown');
+    await manager.generate(new AbortController(), 10, 'breakdown');
 
     const userPrompt = getUserPrompt();
     expect(userPrompt).toContain('- architecture: System architecture and design patterns');
@@ -155,16 +208,16 @@ describe('Hint Round JSON Output', () => {
 
   it('surfaces pending skills in the HINT note', async () => {
     vi.mocked(retryChat).mockResolvedValueOnce(validHintResponse() as never);
-
-    await triologue.generateHintRound(
-      new AbortController(),
-      10,
-      'breakdown',
-      ['my-skill', 'other-skill'],
+    const { manager, messages } = makeManager(
+      makeWiki({ get: vi.fn(async () => [wikiHit('architecture')]) }),
     );
 
-    const messages = triologue.getMessagesRaw();
-    const hintMsg = messages.find((m) => m.content?.startsWith('[HINT]'));
+    await manager.generate(new AbortController(), 10, 'breakdown', [
+      'my-skill',
+      'other-skill',
+    ]);
+
+    const hintMsg = findHint(messages);
     expect(hintMsg).toBeDefined();
     expect(hintMsg!.content).toContain("**Also:** 'my-skill', 'other-skill' need compiling via `skill_compile`");
   });
@@ -176,14 +229,85 @@ describe('Hint Round JSON Output', () => {
     vi.mocked(retryChat).mockResolvedValueOnce(
       validHintResponse({ wiki_domain: '' }) as never,
     );
+    const { manager, messages } = makeManager(makeWiki());
 
-    await triologue.generateHintRound(new AbortController(), 10, 'breakdown');
+    await manager.generate(new AbortController(), 10, 'breakdown');
 
-    const messages = triologue.getMessagesRaw();
-    const hintMsg = messages.find((m) => m.content?.startsWith('[HINT]'));
+    const hintMsg = findHint(messages);
     expect(hintMsg).toBeDefined();
     expect(hintMsg!.content).not.toContain('**Wiki Search:**');
     expect(hintMsg!.content).not.toContain('Domain=');
+  });
+
+  // ---------------------------------------------------------------------------
+  // wiki pre-filter (executed semantic search before the line is surfaced)
+  // ---------------------------------------------------------------------------
+
+  it('mutes the wiki line when the pre-filter finds no hit (both fields cleared)', async () => {
+    vi.mocked(retryChat).mockResolvedValueOnce(validHintResponse() as never);
+    const get = vi.fn(async () => []);
+    const { manager, messages } = makeManager(makeWiki({ get }));
+
+    const result = await manager.generate(new AbortController(), 10, 'breakdown');
+
+    // Registered domain search finds nothing, then the all-domains fallback
+    // finds nothing → both fields cleared → no line, but the hint still lands.
+    expect(get).toHaveBeenCalledTimes(2);
+    expect(result).toEqual({ status: 'success', focusOn: 'intent-language syntax' });
+    const hintMsg = findHint(messages);
+    expect(hintMsg).toBeDefined();
+    expect(hintMsg!.content).not.toContain('**Wiki Search:**');
+    expect(hintMsg!.content).toContain('**Blocker:**');
+  });
+
+  it('mutes the wiki line when the pre-filter search throws (hint still succeeds)', async () => {
+    vi.mocked(retryChat).mockResolvedValueOnce(validHintResponse() as never);
+    const get = vi.fn(async () => {
+      throw new Error('wiki unavailable');
+    });
+    const { manager, messages } = makeManager(makeWiki({ get }));
+
+    const result = await manager.generate(new AbortController(), 10, 'breakdown');
+
+    expect(result).toEqual({ status: 'success', focusOn: 'intent-language syntax' });
+    const hintMsg = findHint(messages);
+    expect(hintMsg).toBeDefined();
+    expect(hintMsg!.content).not.toContain('**Wiki Search:**');
+  });
+
+  it('snaps an unregistered guessed domain to the fallback hit domain and keeps the line', async () => {
+    vi.mocked(retryChat).mockResolvedValueOnce(
+      validHintResponse({ wiki_domain: 'project' }) as never,
+    );
+    // 'project' is not in the registered set → the domain search is skipped and
+    // the all-domains fallback runs, hitting a real 'architecture' document.
+    const get = vi.fn(async () => [wikiHit('architecture')]);
+    const { manager, messages } = makeManager(makeWiki({ get }));
+
+    const result = await manager.generate(new AbortController(), 10, 'breakdown');
+
+    expect(get).toHaveBeenCalledTimes(1);
+    expect(result).toEqual({ status: 'success', focusOn: 'intent-language syntax' });
+    const hintMsg = findHint(messages);
+    expect(hintMsg).toBeDefined();
+    expect(hintMsg!.content).toContain('**Wiki Search:**');
+    expect(hintMsg!.content).toContain('domain="architecture"');
+    expect(hintMsg!.content).not.toContain('domain="project"');
+  });
+
+  it('passes the wiki line through unchanged when no wiki module is wired', async () => {
+    vi.mocked(retryChat).mockResolvedValueOnce(
+      validHintResponse({ wiki_domain: 'project' }) as never,
+    );
+    const { manager, messages } = makeManager(undefined);
+
+    const result = await manager.generate(new AbortController(), 10, 'breakdown');
+
+    expect(result).toEqual({ status: 'success', focusOn: 'intent-language syntax' });
+    const hintMsg = findHint(messages);
+    expect(hintMsg).toBeDefined();
+    expect(hintMsg!.content).toContain('domain="project"');
+    expect(hintMsg!.content).toContain('**Wiki Search:**');
   });
 
   // ---------------------------------------------------------------------------
@@ -194,13 +318,13 @@ describe('Hint Round JSON Output', () => {
     vi.mocked(retryChat).mockResolvedValueOnce(
       validHintResponse({ should_compact: true }) as never,
     );
+    const { manager, messages } = makeManager(makeWiki());
 
-    const result = await triologue.generateHintRound(new AbortController(), 10, 'breakdown');
+    const result = await manager.generate(new AbortController(), 10, 'breakdown');
 
     expect(result).toBe('compact');
     // No HINT note injected — compaction is the intervention.
-    const messages = triologue.getMessagesRaw();
-    expect(messages.find((m) => m.content?.startsWith('[HINT]'))).toBeUndefined();
+    expect(findHint(messages)).toBeUndefined();
   });
 
   // ---------------------------------------------------------------------------
@@ -226,20 +350,18 @@ describe('Hint Round JSON Output', () => {
         focus_on: 'completing test coverage',
       }) as never,
     );
-
-    const result = await triologue.generateHintRound(
-      new AbortController(),
-      10,
-      'breakdown',
+    const { manager, messages } = makeManager(
+      makeWiki({ get: vi.fn(async () => [wikiHit('architecture')]) }),
     );
+
+    const result = await manager.generate(new AbortController(), 10, 'breakdown');
 
     // focusOn is still returned so the composite keyword-extraction Z-source
     // in collect.ts keeps working.
     expect(result).toEqual({ status: 'success', focusOn: 'completing test coverage' });
     // The [HINT] note IS injected — "no blockers" is no longer a silent no-op.
     // This is the key inversion of the old suppression behavior.
-    const messages = triologue.getMessagesRaw();
-    const hintMsg = messages.find((m) => m.content?.startsWith('[HINT]'));
+    const hintMsg = findHint(messages);
     expect(hintMsg).toBeDefined();
     expect(hintMsg!.content).toContain('**Blocker:** no blockers');
     expect(hintMsg!.content).toContain('**Next Step:** The remaining work is completing test coverage for the compact module');
@@ -252,8 +374,11 @@ describe('Hint Round JSON Output', () => {
     vi.mocked(retryChat).mockResolvedValueOnce(
       validHintResponse({ blocker: 'no such file: config.json' }) as never,
     );
+    const { manager, messages } = makeManager(
+      makeWiki({ get: vi.fn(async () => [wikiHit('architecture')]) }),
+    );
 
-    const result = await triologue.generateHintRound(new AbortController(), 10, 'breakdown');
+    const result = await manager.generate(new AbortController(), 10, 'breakdown');
 
     // Narrow the discriminated union: only the { status, focusOn } variant
     // carries .status. The 'aborted'/'compact' string variants do not, so
@@ -263,8 +388,7 @@ describe('Hint Round JSON Output', () => {
     if (typeof result === 'object') {
       expect(result.status).toBe('success');
     }
-    const messages = triologue.getMessagesRaw();
-    expect(messages.find((m) => m.content?.startsWith('[HINT]'))).toBeDefined();
+    expect(findHint(messages)).toBeDefined();
   });
 
   // ---------------------------------------------------------------------------
@@ -274,8 +398,9 @@ describe('Hint Round JSON Output', () => {
   it('returns "aborted" when the abort controller is already aborted', async () => {
     const ac = new AbortController();
     ac.abort();
+    const { manager } = makeManager(makeWiki());
 
-    const result = await triologue.generateHintRound(ac, 10, 'breakdown');
+    const result = await manager.generate(ac, 10, 'breakdown');
 
     expect(result).toBe('aborted');
     expect(retryChat).not.toHaveBeenCalled();
@@ -289,8 +414,11 @@ describe('Hint Round JSON Output', () => {
     vi.mocked(retryChat)
       .mockResolvedValueOnce({ message: { content: 'not json at all' } } as never)
       .mockResolvedValueOnce(validHintResponse() as never);
+    const { manager } = makeManager(
+      makeWiki({ get: vi.fn(async () => [wikiHit('architecture')]) }),
+    );
 
-    const result = await triologue.generateHintRound(new AbortController(), 10, 'breakdown');
+    const result = await manager.generate(new AbortController(), 10, 'breakdown');
 
     expect(result).toEqual({ status: 'success', focusOn: 'intent-language syntax' });
     expect(retryChat).toHaveBeenCalledTimes(2);
@@ -310,8 +438,11 @@ describe('Hint Round JSON Output', () => {
         },
       } as never)
       .mockResolvedValueOnce(validHintResponse() as never);
+    const { manager } = makeManager(
+      makeWiki({ get: vi.fn(async () => [wikiHit('architecture')]) }),
+    );
 
-    const result = await triologue.generateHintRound(new AbortController(), 10, 'breakdown');
+    const result = await manager.generate(new AbortController(), 10, 'breakdown');
 
     expect(result).toEqual({ status: 'success', focusOn: 'intent-language syntax' });
     expect(retryChat).toHaveBeenCalledTimes(2);
@@ -321,8 +452,11 @@ describe('Hint Round JSON Output', () => {
     vi.mocked(retryChat)
       .mockResolvedValueOnce({ message: { content: '' } } as never)
       .mockResolvedValueOnce(validHintResponse() as never);
+    const { manager } = makeManager(
+      makeWiki({ get: vi.fn(async () => [wikiHit('architecture')]) }),
+    );
 
-    const result = await triologue.generateHintRound(new AbortController(), 10, 'breakdown');
+    const result = await manager.generate(new AbortController(), 10, 'breakdown');
 
     expect(result).toEqual({ status: 'success', focusOn: 'intent-language syntax' });
     expect(retryChat).toHaveBeenCalledTimes(2);
@@ -332,12 +466,13 @@ describe('Hint Round JSON Output', () => {
     vi.mocked(retryChat).mockImplementation(async () => ({
       message: { content: 'not json at all' },
     }) as never);
+    const { manager, messages } = makeManager(makeWiki());
 
-    const result = await triologue.generateHintRound(new AbortController(), 10, 'breakdown');
+    const result = await manager.generate(new AbortController(), 10, 'breakdown');
 
     expect(result).toBe('failed');
     expect(retryChat).toHaveBeenCalledTimes(3);
-    expect(triologue.getMessagesRaw().some((m) => m.content?.startsWith('[HINT]'))).toBe(false);
+    expect(findHint(messages)).toBeUndefined();
   });
 
   // ---------------------------------------------------------------------------
@@ -348,8 +483,11 @@ describe('Hint Round JSON Output', () => {
     vi.mocked(retryChat).mockResolvedValueOnce(
       validHintResponse({ focus_on: 'finding the auto-mode activation handler' }) as never,
     );
+    const { manager } = makeManager(
+      makeWiki({ get: vi.fn(async () => [wikiHit('architecture')]) }),
+    );
 
-    const result = await triologue.generateHintRound(new AbortController(), 10, 'breakdown');
+    const result = await manager.generate(new AbortController(), 10, 'breakdown');
 
     expect(result).toEqual({ status: 'success', focusOn: 'finding the auto-mode activation handler' });
   });
@@ -358,8 +496,9 @@ describe('Hint Round JSON Output', () => {
     vi.mocked(retryChat).mockResolvedValueOnce(
       validHintResponse({ should_compact: true }) as never,
     );
+    const { manager } = makeManager(makeWiki());
 
-    const result = await triologue.generateHintRound(new AbortController(), 10, 'breakdown');
+    const result = await manager.generate(new AbortController(), 10, 'breakdown');
 
     expect(result).toBe('compact');
     // The compact path returns a plain string, not a { status, focusOn } object.
@@ -371,8 +510,7 @@ describe('Hint Round JSON Output', () => {
   // ---------------------------------------------------------------------------
 
   it('handles domains without descriptions', async () => {
-    const wikiWithNoDescriptions: WikiModule = {
-      ...mockWiki,
+    const wikiWithNoDescriptions = makeWiki({
       listDomains: vi.fn(async () => [
         {
           domain_name: 'project',
@@ -381,15 +519,11 @@ describe('Hint Round JSON Output', () => {
           project_folder: '/test',
         },
       ]),
-    } as unknown as WikiModule;
-
-    const triologue2 = new Triologue({
-      getWikiDomains: async () => wikiWithNoDescriptions.listDomains(),
-      hintThreshold: 10,
     });
     vi.mocked(retryChat).mockResolvedValueOnce(validHintResponse() as never);
+    const { manager } = makeManager(wikiWithNoDescriptions);
 
-    await triologue2.generateHintRound(new AbortController(), 10, 'breakdown');
+    await manager.generate(new AbortController(), 10, 'breakdown');
 
     const userPrompt = getUserPrompt();
     // Empty description → just the domain name, no colon suffix.
@@ -398,18 +532,11 @@ describe('Hint Round JSON Output', () => {
   });
 
   it('handles empty domains list', async () => {
-    const wikiEmpty: WikiModule = {
-      ...mockWiki,
-      listDomains: vi.fn(async () => []),
-    } as unknown as WikiModule;
-
-    const triologue2 = new Triologue({
-      getWikiDomains: async () => wikiEmpty.listDomains(),
-      hintThreshold: 10,
-    });
+    const wikiEmpty = makeWiki({ listDomains: vi.fn(async () => []) });
     vi.mocked(retryChat).mockResolvedValueOnce(validHintResponse() as never);
+    const { manager } = makeManager(wikiEmpty);
 
-    await triologue2.generateHintRound(new AbortController(), 10, 'breakdown');
+    await manager.generate(new AbortController(), 10, 'breakdown');
 
     const userPrompt = getUserPrompt();
     expect(userPrompt).toContain('No domains available');

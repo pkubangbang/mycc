@@ -26,10 +26,10 @@ export const compactCommand: SlashCommand = {
     }
 
     // Cast triologue to access compact method with optional focus
-    const triologue = context.triologue as { compact: (focus?: string) => Promise<void> };
+    const triologue = context.triologue as { compact: (focus?: string, signal?: AbortSignal, tools?: unknown[], domains?: Array<{ domain_name: string; description?: string }>) => Promise<void> };
 
     try {
-      await triologue.compact(focus);
+      await triologue.compact(focus, undefined, undefined, await context.ctx.wiki.listDomains());
       // Reset stat counts: confusion index and session-level sequence data are
       // no longer relevant after compaction (old context has been summarized
       // away). compactReset() clears session.* ONLY — turn.events[] and

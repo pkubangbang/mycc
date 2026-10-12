@@ -20,13 +20,11 @@ import { type PieceKind } from './triologue/transcript.js';
 
 export type { Role, MisorderWarning, ToolAlignmentWarning, TriologueOptions, CheckpointInfo } from './triologue/types.js';
 export { CheckpointManager } from './triologue/checkpoint.js';
-export { HintRoundManager } from './triologue/hint-round.js';
 
 import { MessageStore } from './triologue/store.js';
 import { PendingToolLedger } from './triologue/pending-tools.js';
 import { runAutoCompact as doRunAutoCompact } from './triologue/compact.js';
 import { CheckpointManager } from './triologue/checkpoint.js';
-import { HintRoundManager } from './triologue/hint-round.js';
 import { WrapUpManager } from './triologue/wrap-up.js';
 
 /**
@@ -127,14 +125,6 @@ export class Triologue {
   private checkpointManager: CheckpointManager | null = null;
 
   /**
-   * Hint-round feature domain delegate (see triologue/hint-round.ts).
-   * Created lazily via getHintRoundManager(); bound to the live message
-   * store so callers always see the current history (including
-   * compact/clear/restore swaps).
-   */
-  private hintRoundManager: HintRoundManager | null = null;
-
-  /**
    * TP-recovery delegate (see triologue/tp-fix.ts). Owns both the recovery
    * dispatch and the --debug-tp violation-throw path, so the facade keeps
    * no TP-recovery logic of its own. Deps are arrow closures over this
@@ -175,7 +165,6 @@ export class Triologue {
       onCompact: options.onCompact ?? this.defaultOnCompact,
       onMessage: options.onMessage ?? (() => {}),
 
-      getWikiDomains: options.getWikiDomains ?? undefined,
       getDuplicationReport: options.getDuplicationReport,
     };
   }
@@ -654,8 +643,12 @@ export class Triologue {
    *   empty, falls back to summary-only (the historical behavior). Callers at
    *   the LLM stage pass `loader.getToolsForScope(scope)` so the fork hits the
    *   exact cache prefix the next LLM call will use.
+   * @param domains - Optional wiki domain list for the summary's
+   *   knowledge-persistence instruction. Supplied by the CALLER (which holds
+   *   the wiki module) so the Triologue facade stays free of the RAG layer.
+   *   Omitted/empty → the instruction section is dropped.
    */
-  async compact(focus?: string, signal?: AbortSignal, tools?: Tool[]): Promise<void> {
+  async compact(focus?: string, signal?: AbortSignal, tools?: Tool[], domains: Array<{ domain_name: string; description?: string }> = []): Promise<void> {
     // Inline delegation to the compaction layer (triologue/compact.ts) via a
     // CompactDeps adapter over the facade's own state (single caller).
     const compacted = await doRunAutoCompact(
@@ -664,7 +657,7 @@ export class Triologue {
         getFullMessages: () => this.store.getFullMessages(),
         lastUserQuery: () => this.store.lastUserQuery,
         onCompact: (p) => this.options.onCompact(p),
-        getWikiDomains: this.options.getWikiDomains,
+        domains,
       },
       focus,
       signal,
@@ -710,26 +703,6 @@ export class Triologue {
     // boundary — the conversation prefix already changed, so no extra cache
     // penalty. Populators re-read current state (e.g. newly-compiled hooks).
     this.rebuildProjectContext();
-  }
-
-  /**
-   * Generate a hint round with problem analysis
-   * Adds user message with analysis (single LLM call, no acknowledgment)
-   * Note: Confusion tracking is now handled by ctx.core, not by Triologue
-   * @param abortController - Abort controller for ESC handling
-   * @param confusionScore - Current confusion score
-   * @param confusionBreakdown - Breakdown of confusion factors
-   * @param pendingSkills - Skills with 'when' but no compiled condition (for notification)
-   * @returns 'aborted' if ESC was pressed, 'compact' when compaction is requested,
-   *   'failed' after bounded malformed-output retries, or a success object.
-   */
-  async generateHintRound(
-    abortController: AbortController,
-    confusionScore: number,
-    confusionBreakdown: string,
-    pendingSkills?: string[]
-  ): Promise<'aborted' | 'compact' | 'failed' | { status: 'success'; focusOn: string }> {
-    return this.getHintRoundManager().generate(abortController, confusionScore, confusionBreakdown, pendingSkills);
   }
 
   // === Wrap-Up Management (ESC interrupt) ===
@@ -943,32 +916,6 @@ export class Triologue {
       });
     }
     return this.checkpointManager;
-  }
-
-  /**
-   * Get the hint-round feature-domain delegate (see triologue/hint-round.ts).
-   *
-   * Hint-round is an isolated feature domain: instead of the facade owning the
-   * LLM problem-analysis logic, callers obtain this delegate ONCE and interact
-   * with it directly (generate a hint round + inject the HINT note). The
-   * facade's generateHintRound() is a thin delegation to this manager so the
-   * public method signature (used by collect.ts and test mocks) stays stable.
-   *
-   * The manager is bound to the live message store + note() injector + the
-   * optional wiki-domain and duplication-report callbacks, so it always
-   * reflects the current history (including compact/clear/restore swaps). It
-   * is memoized — repeated calls return the same instance.
-   */
-  getHintRoundManager(): HintRoundManager {
-    if (!this.hintRoundManager) {
-      this.hintRoundManager = new HintRoundManager({
-        getMessagesRaw: () => this.store.getRaw(),
-        note: (category: NoteCategory, message: string) => this.note(category, message),
-        getWikiDomains: this.options.getWikiDomains,
-        getDuplicationReport: this.options.getDuplicationReport,
-      });
-    }
-    return this.hintRoundManager;
   }
 
   // === Private Helpers ===
