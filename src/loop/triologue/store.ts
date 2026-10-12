@@ -165,6 +165,29 @@ export class MessageStore {
   }
 
   /**
+   * The system-prompt contributor to the full request, as a one-element array
+   * (empty when no system prompt is set). Used by token-budget accounting so
+   * the system prompt can be measured independently of the conversation.
+   */
+  getSystemMessages(): Message[] {
+    return this.sysPrompt ? [{ role: 'system', content: this.sysPrompt }] : [];
+  }
+
+  /**
+   * The project-context contributor to the full request (README, mindmap
+   * instructions, platform/calendar, hook info, …), filtered defensively.
+   * Used by token-budget accounting so projectContext can be measured apart
+   * from the system prompt and the conversation.
+   */
+  getProjectContextMessages(): Message[] {
+    const result: Message[] = [];
+    for (const m of this.projectContext) {
+      if (m && typeof m === 'object' && m.role) result.push(m);
+    }
+    return result;
+  }
+
+  /**
    * Full message view for LLM calls: system prompt + project context +
    * filtered conversation. Same defensive filtering as getRaw().
    */

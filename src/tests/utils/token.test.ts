@@ -2,7 +2,13 @@
  * Tests for token.ts - Token estimation utility
  */
 import { describe, it, expect } from 'vitest';
-import { estimateTokens, estimateTokensForMessages, estimateTextTokens, truncateToTokens } from '../../utils/token.js';
+import {
+  estimateTokens,
+  estimateTokensForMessages,
+  estimateTextTokens,
+  truncateToTokens,
+  estimateToolSchemaTokens,
+} from '../../utils/token.js';
 
 describe('estimateTokens', () => {
   it('should return the message overhead for empty content', () => {
@@ -36,10 +42,12 @@ describe('estimateTokens', () => {
     const tokens = estimateTokens({
       role: 'assistant',
       content: '',
-      tool_calls: [{
-        id: 'call_123',
-        function: { name: 'read_file', arguments: { path: 'test.ts' } },
-      } as any],
+      tool_calls: [
+        {
+          id: 'call_123',
+          function: { name: 'read_file', arguments: { path: 'test.ts' } },
+        } as any,
+      ],
     });
     expect(tokens).toBeGreaterThan(0);
   });
@@ -95,10 +103,12 @@ describe('estimateTokensForMessages', () => {
       {
         role: 'assistant',
         content: '',
-        tool_calls: [{
-          id: 'call_1',
-          function: { name: 'read_file', arguments: { path: 'test.ts' } },
-        } as any],
+        tool_calls: [
+          {
+            id: 'call_1',
+            function: { name: 'read_file', arguments: { path: 'test.ts' } },
+          } as any,
+        ],
       },
       { role: 'tool', content: 'file content', tool_name: 'read_file', tool_call_id: 'call_1' },
     ]);
@@ -141,7 +151,8 @@ describe('truncateToTokens', () => {
   it('truncates pure CJK (spaceless) text to a leading prefix instead of discarding it', () => {
     // Pure CJK: no whitespace, so split(/\s+/) yields one element. Without the
     // character-level fallback, pop() would empty the array and return "".
-    const longText = '你好世界测试中文截断逻辑验证这是一个很长的中文句子用来测试截断功能是否正常工作'.repeat(4);
+    const longText =
+      '你好世界测试中文截断逻辑验证这是一个很长的中文句子用来测试截断功能是否正常工作'.repeat(4);
     expect(estimateTextTokens(longText)).toBeGreaterThan(200);
     const truncated = truncateToTokens(longText, 200);
     // Must fit the budget.
@@ -169,5 +180,49 @@ describe('truncateToTokens', () => {
     expect(estimateTextTokens(truncated)).toBeLessThanOrEqual(60);
     expect(truncated.length).toBeGreaterThan(0);
     expect(text.startsWith(truncated)).toBe(true);
+  });
+});
+
+describe('estimateToolSchemaTokens', () => {
+  it('returns 0 for empty, undefined or null tool arrays', () => {
+    expect(estimateToolSchemaTokens([])).toBe(0);
+    expect(estimateToolSchemaTokens(undefined)).toBe(0);
+    expect(estimateToolSchemaTokens(null)).toBe(0);
+  });
+
+  it('returns a positive estimate for a non-empty schema', () => {
+    const tools = [
+      {
+        type: 'function',
+        function: {
+          name: 'bash',
+          description: 'Run a command in the platform shell',
+          parameters: { type: 'object', properties: { command: { type: 'string' } } },
+        },
+      },
+    ];
+    expect(estimateToolSchemaTokens(tools)).toBeGreaterThan(0);
+  });
+
+  it('grows with the number of tools (schema is fixed per-call overhead)', () => {
+    const one = [{ type: 'function', function: { name: 'a', description: 'x', parameters: {} } }];
+    const many = [
+      ...one,
+      { type: 'function', function: { name: 'b', description: 'y', parameters: {} } },
+      { type: 'function', function: { name: 'c', description: 'z', parameters: {} } },
+    ];
+    expect(estimateToolSchemaTokens(many)).toBeGreaterThan(estimateToolSchemaTokens(one));
+  });
+
+  it('falls back to name+description when the schema cannot be serialized', () => {
+    // A circular reference throws in JSON.stringify; the fallback must still
+    // return a positive estimate from the name/description fields.
+    const circular: Record<string, unknown> = {
+      type: 'function',
+      function: { name: 'loopy', description: 'a tool with a circular param' },
+    };
+    (circular.function as Record<string, unknown>).parameters = circular;
+    const tokens = estimateToolSchemaTokens([circular]);
+    expect(tokens).toBeGreaterThan(0);
   });
 });

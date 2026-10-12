@@ -106,6 +106,37 @@ export function estimateTokensForMessages(messages: Message[]): number {
 }
 
 /**
+ * Estimate the token cost of a tool schema array (the `tools` field sent on
+ * every LLM call). Each entry is a `{ type: 'function', function: { name,
+ * description, parameters } }` object. The schema is part of the model's fixed
+ * per-call overhead, so a context-budget readout that omits it under-reports
+ * usage badly — 30+ tools easily run to several thousand tokens.
+ *
+ * Uses the message estimator on a synthetic 'system' message whose content is
+ * the JSON-serialized schema, so tool tokens are measured on the SAME scale as
+ * message text. Returns 0 for an empty/absent array.
+ */
+export function estimateToolSchemaTokens(tools: unknown[] | undefined | null): number {
+  if (!tools || tools.length === 0) return 0;
+  try {
+    return estimateTokens({ role: 'system', content: JSON.stringify(tools) });
+  } catch {
+    // Defensive: a schema with a circular ref or a BigInt would throw in
+    // JSON.stringify. Fall back to a name+description-only estimate.
+    let total = 0;
+    for (const t of tools) {
+      const fn = (t as { function?: { name?: string; description?: string } })?.function;
+      if (fn) {
+        total += 6; // structural overhead per tool
+        total += estimateTextTokens(fn.name ?? '');
+        total += estimateTextTokens(fn.description ?? '');
+      }
+    }
+    return total;
+  }
+}
+
+/**
  * Truncate `text` so its estimated token count is at most `maxTokens`.
  *
  * Two-stage strategy:

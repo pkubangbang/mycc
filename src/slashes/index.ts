@@ -101,6 +101,7 @@ import { serveCommand } from './serve.js';
 import { autoCommand } from './auto.js';
 import { channelCommand } from './channel.js';
 import { peerCommand } from './peer.js';
+import { tokenCommand } from './token.js';
 
 slashRegistry.register(teamCommand);
 slashRegistry.register(todosCommand);
@@ -123,3 +124,4 @@ slashRegistry.register(serveCommand);
 slashRegistry.register(autoCommand);
 slashRegistry.register(channelCommand);
 slashRegistry.register(peerCommand);
+slashRegistry.register(tokenCommand);

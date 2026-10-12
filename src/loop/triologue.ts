@@ -22,6 +22,7 @@ export type { Role, MisorderWarning, ToolAlignmentWarning, TriologueOptions, Che
 export { CheckpointManager } from './triologue/checkpoint.js';
 
 import { MessageStore } from './triologue/store.js';
+import { estimateTokensForMessages, estimateToolSchemaTokens } from '../utils/token.js';
 import { PendingToolLedger } from './triologue/pending-tools.js';
 import { runAutoCompact as doRunAutoCompact } from './triologue/compact.js';
 import { CheckpointManager } from './triologue/checkpoint.js';
@@ -176,6 +177,18 @@ export class Triologue {
    */
   setSystemPrompt(prompt: string): void {
     this.store.setSystemPrompt(prompt);
+  }
+
+  /**
+   * Get the system prompt currently set on the store, or null if none yet.
+   *
+   * The prompt is built lazily inside the LLM stage (llm.ts), so this is null
+   * before a session's first call. Consumers that want an accurate estimate
+   * pre-first-call build the prompt themselves (see getContextBudget's
+   * systemPromptOverride).
+   */
+  getSystemPrompt(): string | null {
+    return this.store.systemPrompt;
   }
 
   /**
@@ -891,6 +904,62 @@ export class Triologue {
    */
   getTokenThreshold(): number {
     return this.options.tokenThreshold;
+  }
+
+  /**
+   * Estimate the FULL per-call context budget — the entire payload the next
+   * LLM request will carry — broken into its four contributors.
+   *
+   * Why this exists: {@link getTokenCount} tracks ONLY the conversation
+   * `messages` slice (see MessageStore.recomputeTokenCount). The provider
+   * actually receives MUCH more on every call:
+   *
+   *     system prompt + projectContext + conversation + tools schema
+   *
+   * (verified against llm.ts: `retryChat({ messages: triologue.getMessages(),
+   *  tools: loader.getToolsForScope(scope) })`, where getMessages() returns
+   *  store.getFullMessages() = system + projectContext + conversation).
+   *
+   * So a bare getTokenCount() readout is misleading — it reports 0 for a fresh
+   * session even though the system prompt + tool schemas + README/mindmap
+   * projectContext already occupy tens of thousands of tokens of the real
+   * budget. This method surfaces the honest total and the per-part breakdown.
+   *
+   * @param tools - The tool schema array that the LLM stage will send. Pass
+   *   `loader.getToolsForScope(scope)` (or `[]` in neglected mode) to match the
+   *   real call. Omit to report a tool-less estimate.
+   * @param systemPromptOverride - When supplied, used in place of the stored
+   *   system prompt for the system-prompt share. The store's system prompt is
+   *   built lazily inside the LLM stage (llm.ts), so it is null before a
+   *   session's first call; callers that want an accurate pre-first-call
+   *   estimate build the prompt themselves and pass it here.
+   * @returns { total, system, projectContext, conversation, tools } — all in
+   *   estimated tokens. `total` is their sum.
+   */
+  getContextBudget(
+    tools: Tool[] = [],
+    systemPromptOverride?: string,
+  ): {
+    total: number;
+    system: number;
+    projectContext: number;
+    conversation: number;
+    tools: number;
+  } {
+    // The three message-side contributors, estimated with ONE estimator so the
+    // breakdown sums to the total cleanly.
+    const systemMessages = systemPromptOverride
+      ? [{ role: 'system' as const, content: systemPromptOverride }]
+      : this.store.getSystemMessages();
+    const system = estimateTokensForMessages(systemMessages);
+    const projectContext = estimateTokensForMessages(this.store.getProjectContextMessages());
+    const conversation = estimateTokensForMessages(this.store.getRaw());
+
+    // Tools schema — serialize each entry and estimate like a message body.
+    const toolsTokens = estimateToolSchemaTokens(tools);
+
+    const total = system + projectContext + conversation + toolsTokens;
+    return { total, system, projectContext, conversation, tools: toolsTokens };
   }
 
   // === Feature Domain Delegates ===
