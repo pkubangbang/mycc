@@ -17,7 +17,7 @@
  * (the LLM prompt, JSON schema, retry loop, validation, wiki pre-filter, and
  * [HINT] note injection). This module is the POLICY that decides WHEN to call
  * it and what to do with the result. Ownership of the manager lives HERE (see
- * `HintSuggester.getManager`): the hint round is an application-level feature
+ * `HintSuggester.createManager`): the hint round is an application-level feature
  * that consults external modules (`ctx.wiki`), so it is constructed at the
  * composition root that holds both `triologue` and `ctx` — NOT on the
  * Triologue facade, which is a conversation-state primitive. The call chain is:
@@ -184,31 +184,32 @@ export type HintSignal = 'continue' | 'stop' | 'collect';
  */
 export class HintSuggester {
   /**
-   * The hint-round MECHANISM, constructed lazily from the MachineEnv (the
-   * composition root that holds BOTH the triologue and `ctx`). Ownership lives
-   * HERE, not on the Triologue facade: the hint round is an application-level
-   * feature that consults external modules (ctx.wiki today, potentially more
-   * later), whereas the Triologue is a conversation-state primitive. Binding
-   * the manager's message view to the live triologue keeps it correct across
+   * Construct the hint-round MECHANISM from the MachineEnv (the composition
+   * root that holds BOTH the triologue and `ctx`). Ownership lives HERE, not
+   * on the Triologue facade: the hint round is an application-level feature
+   * that consults external modules (ctx.wiki today, potentially more later),
+   * whereas the Triologue is a conversation-state primitive. Binding the
+   * manager's message view to the live triologue keeps it correct across
    * compact/clear/restore store swaps.
    *
-   * Rebuilt per call is unnecessary: one instance per process, and its deps are
-   * arrow closures that re-read the live store/ctx at CALL time, so it survives
-   * store swaps exactly like the facade's other managers did.
+   * Built FRESH for each round rather than memoized on the singleton. The
+   * manager holds only cheap closures over `env` and needs no long-lived
+   * identity, so per-round construction costs a trivial allocation while
+   * removing a stale-dependency hazard: a cached manager would be bound to the
+   * FIRST env's triologue/wiki/embedding-tracker and would silently ignore a
+   * later env, whereas per-round construction makes the dependency lifetime
+   * explicit and always current. The `env`-reading closures still re-read the
+   * live store/ctx at CALL time, so the manager survives store swaps within a
+   * round exactly as the facade's other managers do.
    */
-  private manager: HintRoundManager | null = null;
-
-  private getManager(env: MachineEnv): HintRoundManager {
-    if (!this.manager) {
-      const { triologue, ctx } = env;
-      this.manager = new HintRoundManager({
-        getMessagesRaw: () => triologue.getMessagesRaw(),
-        note: (category, message) => triologue.note(category, message),
-        wiki: ctx.wiki,
-        getDuplicationReport: () => env.requestEmbeddingTracker.getDuplicationReport(),
-      });
-    }
-    return this.manager;
+  private createManager(env: MachineEnv): HintRoundManager {
+    const { triologue, ctx } = env;
+    return new HintRoundManager({
+      getMessagesRaw: () => triologue.getMessagesRaw(),
+      note: (category, message) => triologue.note(category, message),
+      wiki: ctx.wiki,
+      getDuplicationReport: () => env.requestEmbeddingTracker.getDuplicationReport(),
+    });
   }
 
   /**
@@ -243,7 +244,7 @@ export class HintSuggester {
     // Use escAware for ESC-interruptible hint generation
     const result = await ctx.core.escAware(
       async (abortController) => {
-        return await this.getManager(env).generate(abortController, confusionIndex, breakdown, pendingSkills);
+        return await this.createManager(env).generate(abortController, confusionIndex, breakdown, pendingSkills);
       },
       () => {
         // ESC pressed during hint generation — return 'aborted' so the
