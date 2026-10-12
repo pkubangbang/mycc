@@ -16,7 +16,8 @@ import { StreamAbortedError } from '../engine/chat-provider.js';
 import type { AgentContext } from '../types.js';
 import type { ToolCall } from '../types.js';
 import { buildNormalModePrompt } from '../loop/prompts/lead.js';
-import { buildPlatformCalendarMessages, buildNodeModulesReminderMessages } from '../loop/prompt-populators.js';
+import { buildPlatformCalendarMessages, buildNodeModulesReminderMessages, buildWikiDomainsMessages } from '../loop/prompt-populators.js';
+import { loadDomains } from './parent/wiki-utils.js';
 import { getTokenThreshold, getSessionContext, getSessionDir, setSessionContext, isVerbose } from '../config.js';
 import { TriologueLite } from '../loop/triologue-lite.js';
 import { JsonlTranscriptWriter, asAppendablePiece } from '../loop/triologue/transcript.js';
@@ -212,6 +213,11 @@ function createPersistentTriologue(name: string, assignedPath?: string): Triolog
   // like the grep tool does). Same stable-prefix pattern as above: re-checked
   // only at rebuild boundaries, zero messages when no node_modules/ exists.
   triologue.registerProjectContextPopulator(() => buildNodeModulesReminderMessages());
+  // wiki domains — surfaces the live registered domain names so the teammate
+  // passes a real domain to wiki_get instead of inventing one. Read through
+  // loadDomains() at each rebuild boundary, keeping the prompt-cache prefix
+  // stable between rebuilds; a zero-message no-op when no domain is registered.
+  triologue.registerProjectContextPopulator(() => buildWikiDomainsMessages(loadDomains()));
   // Skill keywords are NO LONGER injected here as a project-context
   // populator. The available skill-keyword list is now passed into the
   // extractKeywords() LLM call (suggestSkill in collect.ts step 6) as
@@ -417,7 +423,7 @@ async function teammateLoop(prompt: string, triologuePathArg?: string): Promise<
         const compactWatchdog = createTurnWatchdog();
         const compactStart = Date.now();
         try {
-          await triologue.compact(undefined, compactWatchdog.signal, tools);
+          await triologue.compact(undefined, compactWatchdog.signal, tools, await ctx.wiki.listDomains());
         } catch (err) {
           if (err instanceof StreamAbortedError && compactWatchdog.signal.aborted) {
             const elapsed = Date.now() - compactStart;

@@ -1,26 +1,51 @@
 /**
- * triologue/hint-round.ts - Hint round feature domain for the Triologue facade
+ * triologue/hint-round.ts - Hint round feature domain
  *
- * The HintRoundManager is the delegate returned by Triologue.getHintRoundManager().
- * Callers talk to THIS object instead of reaching out to the facade for
- * hint-round generation. It is bound to a live message provider (() => Message[])
- * plus a note injector and optional wiki/duplication callbacks, so it always
- * sees the facade's current message history (including compact/clear/restore
- * swaps).
+ * The HintRoundManager is constructed by the COMPOSITION ROOT that holds both
+ * the triologue and the runtime context — currently HintSuggester in
+ * states/collect-hint.ts, which owns `ctx.wiki`. It is NOT owned by the
+ * Triologue facade: Triologue is a conversation-state primitive, whereas the
+ * hint round is an application-level feature that consults external modules
+ * (the wiki now, potentially more later), so it must be built where those
+ * modules are in scope. The facade exposes no hint-round methods.
+ *
+ * The manager is bound to a live message provider (() => Message[]) plus a note
+ * injector, the wiki module, and optional duplication callbacks, so it always
+ * sees the current message history (including compact/clear/restore swaps).
  *
  * Pattern mirrors triologue/checkpoint.ts: a deps interface (HintRoundManagerDeps)
- * is bound to the facade's private store via closures resolved lazily at call
- * time. The facade keeps no hint-round logic of its own; generateHintRound()
- * on the facade is a thin delegation to getHintRoundManager().generate(...).
+ * is bound to the facade's live store via closures resolved lazily at call time.
  */
 
 import { retryChat, MODEL } from '../../engine/chat-provider.js';
-import type { Message, NoteCategory } from '../../types.js';
+import type { Message, NoteCategory, WikiModule, SearchResult } from '../../types.js';
 import { minifyMessages } from '../../utils/llm-chat-minifier.js';
 import { agentIO } from '../agent-io.js';
 
 const ANALYSIS_INSTRUCTION = 'Analyze the gap between the user\'s intent and current progress.';
 const MAX_HINT_ATTEMPTS = 3;
+
+/**
+ * Similarity bar for the hint's wiki PRE-FILTER (0-1).
+ *
+ * Set to the SYSTEM bar (matching getSkillMatchThreshold, 0.5): a wiki
+ * suggestion must clear the same relevance bar the rest of the system treats
+ * as "actually related". A lower, hint-specific bar (e.g. 0.25) was tried and
+ * rejected as too tolerant — it admits weak matches that name a plausible but
+ * irrelevant document, which is more misleading than muting the line.
+ *
+ * Consequence: honest corpus hits that score below 0.5 are muted. That is the
+ * intended trade-off — the pre-filter's job is to suppress doubt, not to
+ * manufacture a wiki lead.
+ *
+ * Overridable via HINT_WIKI_SIMILARITY_BAR for tuning.
+ */
+const HINT_WIKI_SIMILARITY_BAR = (() => {
+  const val = process.env.HINT_WIKI_SIMILARITY_BAR;
+  const parsed = val ? parseFloat(val) : NaN;
+  return Number.isFinite(parsed) ? parsed : 0.5;
+})();
+
 
 const HINT_SCHEMA = {
   type: 'object',
@@ -39,7 +64,7 @@ const HINT_SCHEMA = {
     },
     wiki_domain: {
       type: 'string',
-      description: 'Domain name from available domains (see list below). Set this when the blocker involves errors, unfamiliar tools, or missing knowledge.',
+      description: 'One domain name copied EXACTLY from the "Available Wiki Domains" list in the prompt. NEVER invent a domain name — a domain not in that list has no documents.',
     },
     wiki_query: {
       type: 'string',
@@ -58,7 +83,7 @@ const HINT_SYSTEM_PROMPT = `You are a problem-analysis assistant. Your task is t
 CRITICAL INSTRUCTIONS:
 1. If there are NO REAL blockers preventing progress, set blocker to exactly: "no blockers"
 2. Do NOT fabricate blockers. "no blockers" means there is no real obstacle. In that case still fill next_step / focus_on / wiki_query with a genuine description of the current task. IMPORTANT: never frame next_step as a "Continue ..." or "you're fine, keep going" authorization to progress — describe what the remaining task IS (e.g. "The remaining work is completing test coverage for the compact module"), not a sanction to move past a review point. The [HINT] note is always injected when should_compact is false, so the agent will read whatever you write here. Any prior [HINT] notes in the context are your own earlier analyses; if the same advice was already given and not acted on, escalate — change the advice, widen the scope, or name why the previous suggestion failed — instead of repeating it.
-3. When the blocker involves errors, unfamiliar tools, or missing knowledge, ALWAYS suggest a wiki search by setting wiki_domain and wiki_query. The available domains are listed below. Only leave both empty if the blocker is purely about code logic or syntax.
+3. When the blocker involves errors, unfamiliar tools, or missing knowledge, ALWAYS suggest a wiki search by setting wiki_domain and wiki_query. Pick wiki_domain ONLY from the "Available Wiki Domains" list below — copy a name exactly; NEVER invent one. Only leave both empty if the blocker is purely about code logic or syntax.
 4. wiki_query construction:
    - Use 3-8 keywords extracted from the error message, tool name, or concept causing the blocker.
    - Format as space-separated keywords, NOT a full sentence. Example: "ollama timeout retry backoff" not "How does ollama handle timeout retries?"
@@ -74,20 +99,22 @@ CRITICAL INSTRUCTIONS:
 The schema is:
 ${JSON.stringify(HINT_SCHEMA, null, 2)}
 
+NOTE: the examples below OMIT wiki_domain / wiki_query on purpose — the domain list is dynamic, so no fixed name may appear. Fill both fields by copying a domain from the "Available Wiki Domains" list and writing a 3-8 keyword query.
+
 EXAMPLE A — blocker involves an unfamiliar tool error:
-{"blocker":"Agent repeatedly gets 'Error: [Intent]' when calling bash","next_step":"Review the intent-language VERB/OBJECT vocabulary and reformat the bash intent","focus_on":"intent-language syntax for bash tool","wiki_domain":"project","wiki_query":"intent language verb object bash tool","should_compact":false}
+{"blocker":"Agent repeatedly gets 'Error: [Intent]' when calling bash","next_step":"Review the intent-language VERB/OBJECT vocabulary and reformat the bash intent","focus_on":"intent-language syntax for bash tool","should_compact":false}
 
 EXAMPLE B — blocker is a missing API pattern:
-{"blocker":"Agent doesn't know how to register a new wiki domain programmatically","next_step":"Search wiki for domain registration API and follow the documented pattern","focus_on":"wiki domain registration API","wiki_domain":"api","wiki_query":"wiki domain register create API","should_compact":false}
+{"blocker":"Agent doesn't know how to register a new wiki domain programmatically","next_step":"Search wiki for domain registration API and follow the documented pattern","focus_on":"wiki domain registration API","should_compact":false}
 
 EXAMPLE C — no real blocker (describe the remaining task; do NOT frame this as a "Continue ..." authorization):
-{"blocker":"no blockers","next_step":"The remaining work is completing test coverage for the compact module","focus_on":"completing test coverage","wiki_domain":"project","wiki_query":"test coverage remaining cases","should_compact":false}
+{"blocker":"no blockers","next_step":"The remaining work is completing test coverage for the compact module","focus_on":"completing test coverage","should_compact":false}
 
 EXAMPLE D — cautious moves (single-tool turns, encourage batching):
-{"blocker":"no blockers","next_step":"You are making one tool call per turn. Batch independent calls — emit all the read_file / todo_pinning / issue_create calls with no data dependency on each other in a single response to save round-trips. Do not batch calls where one needs another's result, and keep checkpoint/recap alone.","focus_on":"batching independent tool calls","wiki_domain":"project","wiki_query":"parallel tool calls batch independent","should_compact":false}
+{"blocker":"no blockers","next_step":"You are making one tool call per turn. Batch independent calls — emit all the read_file / todo_pinning / issue_create calls with no data dependency on each other in a single response to save round-trips. Do not batch calls where one needs another's result, and keep checkpoint/recap alone.","focus_on":"batching independent tool calls","should_compact":false}
 
 EXAMPLE E — dead-loop (same failed edit attempted repeatedly):
-{"blocker":"Agent has attempted the same edit_file 4 times and hit the same 'old_text not found' error each time","next_step":"Re-read the target file fresh to see its current content, then rebuild old_text from that","focus_on":"stale old_text vs current file content","wiki_domain":"project","wiki_query":"edit_file old_text not found re-read","should_compact":true}`;
+{"blocker":"Agent has attempted the same edit_file 4 times and hit the same 'old_text not found' error each time","next_step":"Re-read the target file fresh to see its current content, then rebuild old_text from that","focus_on":"stale old_text vs current file content","should_compact":true}`;
 
 /** Shape of the parsed hint data from LLM response */
 interface HintData {
@@ -111,20 +138,26 @@ export interface HintRoundManagerDeps {
   getMessagesRaw: () => Message[];
   /** Add a system note (e.g. the formatted hint) into the conversation. */
   note: (category: NoteCategory, message: string) => void;
-  /** Optional callback to retrieve wiki domains for knowledge suggestions. */
-  getWikiDomains?: () => Promise<Array<{ domain_name: string; description?: string }>>;
+  /**
+   * The wiki knowledge module, injected at CONSTRUCTION by the composition
+   * root (HintSuggester, which holds `ctx`). The manager derives the domain
+   * list AND runs its own semantic pre-filter search from it — neither is wired
+   * per call, and no domain-list callback is passed through the Triologue
+   * options.
+   */
+  wiki?: WikiModule;
   /** Optional duplication report from the embedding tracker. */
   getDuplicationReport?: () => string;
 }
 
 /**
  * Delegate for the hint-round feature domain.
- * Returned by Triologue.getHintRoundManager(); callers interact with this
- * object for ALL hint-round concerns (problem analysis + HINT note injection).
+ * Constructed by the composition root (HintSuggester) and driven via
+ * generate(); the manager owns ALL hint-round concerns (problem analysis +
+ * HINT note injection + the executed wiki pre-filter).
  *
  * The manager is bound to the live message store so it always reflects the
- * current history. It is memoized on the facade — repeated calls return the
- * same instance.
+ * current history.
  */
 export class HintRoundManager {
   private deps: HintRoundManagerDeps;
@@ -182,9 +215,19 @@ export class HintRoundManager {
 
     const compactContext = minifyMessages(filteredMessages, { maxContentLength: 300, maxArgsLength: 100, truncateToolOutput: true });
 
-    // Get wiki domains for knowledge search suggestion
-    const getWikiDomains = this.deps.getWikiDomains;
-    const domains = getWikiDomains ? await getWikiDomains() : [];
+    // Derive wiki domains from the injected wiki module (construction-site DI).
+    // Guarded: in a child process listDomains() is an IPC round-trip that can
+    // reject — a failed domain list must degrade to 'No domains available',
+    // not fail the whole hint round.
+    let domains: Awaited<ReturnType<WikiModule['listDomains']>> = [];
+    if (this.deps.wiki) {
+      try {
+        domains = await this.deps.wiki.listDomains();
+      } catch (err) {
+        agentIO.verbose('triologue', `Hint wiki listDomains failed; proceeding with no domains: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+    const wikiDomainNames = new Set(domains.map(d => d.domain_name));
     const domainInfo = domains.length > 0
       ? domains.map(d => `- ${d.domain_name}${d.description ? `: ${d.description}` : ''}`).join('\n')
       : 'No domains available';
@@ -210,7 +253,7 @@ export class HintRoundManager {
       if (abortController.signal.aborted) {
         return 'aborted';
       }
-      const outcome = await this.retryLoop(abortController, userPrompt, pendingSkills);
+      const outcome = await this.retryLoop(abortController, userPrompt, wikiDomainNames, pendingSkills);
       if (outcome !== 'retry') {
         return outcome;
       }
@@ -227,8 +270,9 @@ export class HintRoundManager {
    * JSON response, validates the required fields, formats the HINT note, and
    * injects it via deps.note('HINT', ...).
    *
-   * @param abortController - Abort controller for ESC handling
+   * @param abortController - Abort handling
    * @param userPrompt - The fully assembled analysis prompt (context + score + domains)
+   * @param wikiDomainNames - Set of registered wiki domain names (for pre-filter validation)
    * @param pendingSkills - Skills with 'when' but no compiled condition (for notification)
    * @returns 'aborted' if ESC was pressed, 'success' if the hint was injected,
    *   'compact' if the LLM signalled should_compact (caller triggers compaction),
@@ -238,6 +282,7 @@ export class HintRoundManager {
   private async retryLoop(
     abortController: AbortController,
     userPrompt: string,
+    wikiDomainNames: Set<string>,
     pendingSkills?: string[],
   ): Promise<'aborted' | 'retry' | 'compact' | { status: 'success'; focusOn: string }> {
     try {
@@ -294,6 +339,21 @@ export class HintRoundManager {
         return 'compact';
       }
 
+      // Executed semantic pre-filter: the hint LLM GUESSES a domain+query (a
+      // blind suggestion). Before surfacing it we EXECUTE a real semantic
+      // search so the emitted line is always verifiably helpful — a suggestion
+      // that finds nothing is dropped entirely rather than handed to the main
+      // agent as a dead-end. This is the enforcement layer: the manager, not
+      // the main LLM's goodwill, guarantees the wiki line is actionable.
+      await this.preFilterWikiSuggestion(hintData, wikiDomainNames, abortController);
+
+      // ESC may have landed during the pre-filter's awaited search. Check
+      // before injecting so the interrupt still aborts the hint (the loop top
+      // only guards the next iteration, not this note).
+      if (abortController.signal.aborted) {
+        return 'aborted';
+      }
+
       // Format hint data for better readability
       const hintLines: string[] = ['Problem Analysis:'];
       hintLines.push('');
@@ -301,7 +361,7 @@ export class HintRoundManager {
       hintLines.push(`**Next Step:** ${hintData.next_step}`);
       hintLines.push(`**Focus On:** ${hintData.focus_on}`);
       if (hintData.wiki_domain && hintData.wiki_query) {
-        hintLines.push(`**Wiki Search:** Domain="${hintData.wiki_domain}", Query="${hintData.wiki_query}"`);
+        hintLines.push(`**Wiki Search:** call \`wiki_get(domain="${hintData.wiki_domain}", query="${hintData.wiki_query}")\` to check the knowledge base for background on this blocker.`);
       }
       if (pendingSkills && pendingSkills.length > 0) {
         hintLines.push(`**Also:** ${pendingSkills.map(s => `'${s}'`).join(', ')} ${pendingSkills.length === 1 ? 'needs' : 'need'} compiling via \`skill_compile\` before the hook system can process ${pendingSkills.length === 1 ? 'it' : 'them'}.`);
@@ -318,6 +378,86 @@ export class HintRoundManager {
       }
       throw err;
     }
+  }
+
+  /**
+   * Execute the hint LLM's GUESSED wiki suggestion as a real semantic search,
+   * mutating hintData so the emitted line is only kept when it verifiably hits.
+   *
+   * The hint LLM proposes domain+query BLIND (it cannot see document contents),
+   * so the proposal is treated as a hypothesis, not an answer. This method runs
+   * the actual search and reconciles the result:
+   *  - If the guessed domain is registered, search THAT domain first.
+   *  - Otherwise (or on zero hits) fall back to an all-domains search
+   *    (WikiModule.get with no `domain` -> SEARCHABLE_PREDICATE alone).
+   *  - On >=1 hit, snap wiki_domain to the top hit's REAL domain so the line
+   *    can never name a domain that has no matching document.
+   *  - On zero hits, clear BOTH fields -> the caller's `if (wiki_domain &&
+   *    wiki_query)` guard drops the line silently.
+   *
+   * Never retries and never fails the hint: a search error mutes the line but
+   * the hint itself still returns 'success' (the blocker/next_step guidance is
+   * independently useful). The bar is HINT_WIKI_SIMILARITY_BAR — a filter-local
+   * constant (NOT the skill-match threshold; see its declaration).
+   *
+   * @param hintData - Parsed hint data (mutated in place: domain/query may be cleared or domain re-pointed)
+   * @param wikiDomainNames - Registered domain names, for validating the guessed domain
+   * @param abortController - Honoured: on abort the suggestion is left UNTOUCHED (the caller aborts)
+   */
+  private async preFilterWikiSuggestion(
+    hintData: HintData,
+    wikiDomainNames: Set<string>,
+    abortController: AbortController,
+  ): Promise<void> {
+    if (!hintData.wiki_domain || !hintData.wiki_query) return;
+    if (!this.deps.wiki) {
+      // No wiki module wired (e.g. lite/test wiring) — keep the line as-is.
+      return;
+    }
+
+    const threshold = HINT_WIKI_SIMILARITY_BAR;
+    const query = hintData.wiki_query;
+    const topK = 5;
+
+    let hits: SearchResult[] = [];
+    try {
+      if (wikiDomainNames.has(hintData.wiki_domain)) {
+        hits = await this.deps.wiki.get(query, { domain: hintData.wiki_domain, topK, threshold });
+      }
+      if (hits.length === 0) {
+        // ESC during the first search: leave hintData UNTOUCHED and bail — the
+        // caller's abort path must not be turned into a mute of a valid line.
+        if (abortController.signal.aborted) return;
+        // Unregistered domain, or a registered one that found nothing: widen to
+        // an all-domains search before giving up (domain-less get()).
+        hits = await this.deps.wiki.get(query, { topK, threshold });
+      }
+    } catch (err) {
+      // A failed search must NOT fail the hint — mute the line and keep going.
+      agentIO.verbose('triologue', `Hint wiki pre-filter search failed; muting suggestion: ${err instanceof Error ? err.message : String(err)}`);
+      hintData.wiki_domain = '';
+      hintData.wiki_query = '';
+      return;
+    }
+
+    // ESC landed during the (awaited) search — leave the suggestion untouched;
+    // the caller checks the signal and aborts before injecting the note.
+    if (abortController.signal.aborted) return;
+
+    if (hits.length > 0) {
+      const hit = hits[0];
+      // Snap to the real domain of the best hit. In the focused branch this is
+      // the domain we searched (a no-op); on the all-domains fallback it is what
+      // keeps the emitted line from naming a domain with no matching document.
+      hintData.wiki_domain = hit.document.domain;
+      const sim = typeof hit.similarity === 'number' ? hit.similarity.toFixed(3) : 'n/a';
+      agentIO.verbose('triologue', `Hint wiki pre-filter hit (sim=${sim}, domain=${hit.document.domain})`);
+      return;
+    }
+
+    agentIO.verbose('triologue', `Hint wiki pre-filter found no relevant hit (bar=${threshold}); muting suggestion`);
+    hintData.wiki_domain = '';
+    hintData.wiki_query = '';
   }
 
   /**

@@ -774,7 +774,7 @@ export async function summarizeWithExplorer(
     // teammate worker).
     if (triologue.needsCompact()) {
       try {
-        await triologue.compact(nodeTitle, undefined, EXPLORER_TOOLS);
+        await triologue.compact(nodeTitle, undefined, EXPLORER_TOOLS, []);
       } catch (err) {
         agentIO.brief('warn', 'explorer', `Compaction failed for "${nodeTitle}": ${(err as Error).message}. Continuing with full context.`);
       }

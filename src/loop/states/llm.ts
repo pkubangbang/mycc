@@ -68,7 +68,7 @@ export async function handleLlm(
     ctx.core.brief('info', 'autoCompact', reason);
     // Observability: emit compact_triggered (silent when no listeners)
     loopEvents.emit('compact_triggered', { reason: chat.deferredCompact ? 'deferred' : 'proactive' });
-    await triologue.compact(turn.lastUserQuery || undefined, undefined, compactTools);
+    await triologue.compact(turn.lastUserQuery || undefined, undefined, compactTools, await ctx.wiki.listDomains());
     chat.deferredCompact = false;
     // Reset stat counts — old context is summarized away.
     ctx.core.resetConfusionIndex();

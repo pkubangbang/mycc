@@ -1,28 +1,23 @@
 /**
  * collect-esc-hint.test.ts — handleCollect: ESC during hint generation.
  *
- * Code path under test (collect.ts:113-135):
- *   if (confusionIndex >= CONFUSION_THRESHOLD && messageCount >= MIN_MESSAGES_FOR_HINT) {
- *     ctx.core.brief('info', 'loop', 'Generating hint...');
- *     const pendingSkills = env.conditions.getPending();
- *     const breakdown = generateBreakdown(confusionIndex, env.sequence.getEvents());
- *     const result = await ctx.core.escAware(
- *       async (abortController) => {
- *         return await triologue.generateHintRound(abortController, ...);
- *       },
- *       () => {
- *         startWrapUp(triologue, loader.getToolsForScope(env.scope));
- *         return 'aborted' as const;
+ * Code path under test (collect-hint.ts runHintRound, invoked from collect.ts):
+ *   const hintSignal = await hintSuggester.runHintRound(env, turn, chat);
+ *     → if (confusion >= 10 && messageCount >= 6) {
+ *         ctx.core.brief('info', 'loop', 'Generating hint...');
+ *         const result = await ctx.core.escAware(
+ *           async (abortController) =>
+ *             this.getManager(env).generate(abortController, ...),
+ *           () => 'aborted',
+ *         );
+ *         ...
  *       }
- *     );
- *     if (result === 'aborted') {
- *       agentIO.setNeglectedMode(false);
- *       return AgentState.PROMPT;
- *     }
- *     ctx.core.resetConfusionIndex();
- *   }
  *
- * Also tests the neglected-mode mail-injection branch (URGENT vs MAIL note).
+ * The hint round no longer routes through the Triologue facade
+ * (Triologue.generateHintRound() is deleted). Ownership moved to
+ * HintSuggester/HintRoundManager in states/collect-hint.ts. This test therefore
+ * mocks `triologue/hint-round.js` so `HintRoundManager.generate` is the seam
+ * that decides 'compact' / 'failed' / success.
  *
  * Strategy: Mock escAware to call cleanup (returns 'aborted') to simulate ESC,
  * and stub triologue.getMessagesRaw() to return enough messages (>= 6) plus
@@ -64,7 +59,18 @@ vi.mock('../../../context/worktree-store.js', () => ({
   listWorktrees: vi.fn(async () => []),
 }));
 
-// Triologue stub: configurable message count + hint generation
+// HintRoundManager seam: the hint round is owned by HintSuggester in
+// states/collect-hint.ts (NOT the Triologue facade), so we mock the manager
+// module and drive `generate` directly. `hintGenerate` is hoisted so the
+// vi.mock factory (also hoisted) can reference it.
+const { hintGenerate } = vi.hoisted(() => ({ hintGenerate: vi.fn() }));
+vi.mock('../../../loop/triologue/hint-round.js', () => ({
+  HintRoundManager: class {
+    generate = hintGenerate;
+  },
+}));
+
+// Triologue stub: configurable message count + the methods collect.ts touches.
 vi.mock('../../../loop/triologue.js', () => {
   class TriologueStub {
     note = vi.fn();
@@ -73,7 +79,6 @@ vi.mock('../../../loop/triologue.js', () => {
     getMessagesRaw = vi.fn(() => []);
     getMessages = vi.fn(() => []);
     setSystemPrompt = vi.fn();
-    generateHintRound = vi.fn(async () => 'hint round text');
     compact = vi.fn(async () => {});
     getTokenCount = vi.fn(() => 100);
     getTokenThreshold = vi.fn(() => 50000);
@@ -100,6 +105,10 @@ describe('handleCollect — ESC during hint generation', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     agentIO.setNeglectedMode(false);
+    // Default: the hint manager returns a plain non-signal result (success-ish)
+    // so the runHintRound success path resets confusion.
+    hintGenerate.mockReset();
+    hintGenerate.mockResolvedValue('hint round text' as never);
     triologue = new Triologue();
   });
 
@@ -179,6 +188,7 @@ describe('handleCollect — ESC during hint generation', () => {
 
     expect(result).toBe(AgentState.LLM);
     // hint completed → confusion reset
+    expect(hintGenerate).toHaveBeenCalledTimes(1);
     expect(resetFn).toHaveBeenCalledTimes(1);
   });
 
@@ -197,7 +207,7 @@ describe('handleCollect — ESC during hint generation', () => {
 
     expect(result).toBe(AgentState.LLM);
     // hint block NOT entered → no hint generation
-    expect(triologue.generateHintRound).not.toHaveBeenCalled();
+    expect(hintGenerate).not.toHaveBeenCalled();
   });
 
   describe('hint-round compaction (result === "compact")', () => {
@@ -205,7 +215,7 @@ describe('handleCollect — ESC during hint generation', () => {
     // high confusion, escAware runs the operation and returns 'compact'.
     function makeCompactEnv() {
       vi.mocked(triologue.getMessagesRaw).mockReturnValue(makeMessages(8));
-      vi.mocked(triologue.generateHintRound).mockResolvedValue('compact' as never);
+      hintGenerate.mockResolvedValue('compact' as never);
       const ctx = createMockContext({
         core: {
           getConfusionIndex: vi.fn(() => 12),
@@ -303,7 +313,7 @@ describe('handleCollect — ESC during hint generation', () => {
     // high confusion, escAware runs the operation and returns 'failed'.
     function makeFailedEnv() {
       vi.mocked(triologue.getMessagesRaw).mockReturnValue(makeMessages(8));
-      vi.mocked(triologue.generateHintRound).mockResolvedValue('failed' as never);
+      hintGenerate.mockResolvedValue('failed' as never);
       const ctx = createMockContext({
         core: {
           getConfusionIndex: vi.fn(() => 12),

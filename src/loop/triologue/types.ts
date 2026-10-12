@@ -52,8 +52,6 @@ export interface TriologueOptions {
    */
   onMessage?: (msg: Message, getTriologue: () => Message[]) => void;
 
-  /** Callback to retrieve wiki domains for knowledge persistence during compact */
-  getWikiDomains?: () => Promise<Array<{ domain_name: string; description?: string }>>;
   /** Optional duplication report provider for hint round */
   getDuplicationReport?: () => string;
 }
@@ -66,7 +64,6 @@ export interface ResolvedTriologueOptions {
   onToolMisalign: (warning: ToolAlignmentWarning) => void;
   onCompact: (transcriptPath: string) => void;
   onMessage: (msg: Message, getTriologue: () => Message[]) => void;
-  getWikiDomains?: () => Promise<Array<{ domain_name: string; description?: string }>>;
   getDuplicationReport?: () => string;
 }
 

@@ -26,8 +26,14 @@ export interface CompactDeps {
   lastUserQuery(): string;
   /** Called with the transcript path once it is written. */
   onCompact(transcriptPath: string): void;
-  /** Optional wiki domains for the knowledge-persistence instruction. */
-  getWikiDomains?: () => Promise<Array<{ domain_name: string; description?: string }>>;
+  /**
+   * Wiki domains to advertise in the knowledge-persistence instruction of the
+   * summary prompt. Supplied BY THE CALLER (the composition root that holds the
+   * wiki module) rather than pulled from a module here — the compaction layer
+   * must stay a conversation-state primitive and must not depend on the RAG
+   * layer. Empty → the instruction section is omitted.
+   */
+  domains: Array<{ domain_name: string; description?: string }>;
 }
 
 /**
@@ -132,8 +138,9 @@ export async function runAutoCompact(deps: CompactDeps, focus?: string, signal?:
   const transcriptPath = saveTranscript(deps.getRawMessages());
   deps.onCompact(transcriptPath);
 
-  // Get wiki domains for knowledge persistence instruction
-  const domains = deps.getWikiDomains ? await deps.getWikiDomains() : [];
+  // Wiki domains for the knowledge-persistence instruction come from the
+  // CALLER (composition root), keeping this layer wiki-agnostic.
+  const domains = deps.domains;
 
   // Ask LLM to summarize
   const conversationText = minifyMessages(deps.getRawMessages());

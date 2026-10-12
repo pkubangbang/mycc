@@ -47,7 +47,8 @@ import { registerSignalHandlers } from './signal-handlers.js';
 import { initDaemonMode } from './daemon-init.js';
 import { ServeDetachedExitError } from '../serve/serve-errors.js';
 import { initHookSystem, buildHookInfoMessages } from './hook-bootstrap.js';
-import { buildPlatformCalendarMessages, buildNodeModulesReminderMessages } from './prompt-populators.js';
+import { buildPlatformCalendarMessages, buildNodeModulesReminderMessages, buildWikiDomainsMessages } from './prompt-populators.js';
+import { loadDomains } from '../context/parent/wiki-utils.js';
 import { wireServeCallbacks } from './serve-wiring.js';
 
 const version = pkg.version;
@@ -191,7 +192,6 @@ export async function main(): Promise<void> {
 
   const triologue = new Triologue({
     tokenThreshold,
-    getWikiDomains: async () => await ctx.wiki.listDomains(),
     getDuplicationReport: () => requestEmbeddingTracker.getDuplicationReport(),
     onMessage: (msg, _getTriologue) => {
       // Per-piece contract (the {A, AB} fix): append EXACTLY ONE flat line
@@ -331,6 +331,13 @@ export async function main(): Promise<void> {
   //      stays stable between rebuilds; a zero-message no-op when no
   //      node_modules/ exists (non-Node.js projects).
   triologue.registerProjectContextPopulator(() => buildNodeModulesReminderMessages());
+
+  // (3d) Live wiki domains — surfaces the actual registered domain names so the
+  //      agent calls wiki_get with a real domain instead of inventing one. The
+  //      list is read through loadDomains() at every rebuild (compact/clear)
+  //      boundary, not on every LLM call, so the prompt-cache prefix stays
+  //      stable between rebuilds; a zero-message no-op when no domain exists.
+  triologue.registerProjectContextPopulator(() => buildWikiDomainsMessages(loadDomains()));
 
   // (3c) Skill keywords are NO LONGER injected here as a project-context
   //      populator. The available skill-keyword list is now passed into the

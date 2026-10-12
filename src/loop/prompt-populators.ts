@@ -254,3 +254,52 @@ export function buildNodeModulesReminderMessages(): Message[] {
     },
   ];
 }
+
+// ============================================================================
+// Wiki Domains
+// ============================================================================
+
+/**
+ * Build the live wiki-domain list as a projectContext deliverable.
+ *
+ * The wiki_get tool requires a valid `domain` argument, but the domain set is
+ * per-project state (registered via wiki_prepare / wiki_put) and was previously
+ * not surfaced anywhere: the tool description just told the LLM the domain was
+ * "unknown at start, but you will find it during chat". This populator puts the
+ * ACTUAL registered domain names in front of the agent so it stops inventing
+ * domains (a failed lookup wastes a tool round-trip).
+ *
+ * The domain list is read through loadDomains() (domains.json) at registration
+ * time and at every rebuild (compact/clear boundary) — NOT on every LLM call —
+ * so the prompt-cache prefix stays byte-stable between rebuilds. This mirrors
+ * the README populator (re-reads from disk on each rebuild) and the pitfall
+ * rule that projectContext must not carry dynamic content between boundaries.
+ *
+ * Returns an empty array when there are no domains, so nothing is injected for
+ * a project that has not registered any wiki domain yet (a zero-cost no-op).
+ */
+export function buildWikiDomainsMessages(
+  domains: Array<{ domain_name: string; description?: string }>,
+): Message[] {
+  if (domains.length === 0) return [];
+
+  const lines = domains.map((d) => {
+    const description = d.description ?? '';
+    return description.length > 0 ? `- ${d.domain_name}: ${description}` : `- ${d.domain_name}`;
+  });
+
+  const content =
+    `[System - Wiki Domains]\n\n` +
+    `The following wiki domains are registered for this project. When calling ` +
+    `wiki_get, you MUST pass the \`domain\` param as one of these exact names — ` +
+    `never invent a domain.\n\n` +
+    `${lines.join('\n')}`;
+
+  return [
+    { role: 'user', content },
+    {
+      role: 'assistant',
+      content: 'Understood. I will only query wiki_get with one of these registered domains.',
+    },
+  ];
+}

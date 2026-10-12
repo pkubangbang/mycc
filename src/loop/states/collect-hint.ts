@@ -9,17 +9,21 @@
  *  - the confusion breakdown (including the objective dead-loop evidence that
  *    feeds the hint prompt's should_compact judgement),
  *  - the ESC-interruptible call into the hint-round generator
- *    (`triologue.generateHintRound` → `triologue/hint-round.ts`), and
+ *    (via the `HintSuggester`-owned `HintRoundManager` →
+ *    `triologue/hint-round.ts`), and
  *  - the outcome handling (stop on ESC / compact on dead-loop / continue).
  *
  * Relationship to `triologue/hint-round.ts`: that module is the MECHANISM
- * (the LLM prompt, JSON schema, retry loop, validation, and [HINT] note
- * injection). This module is the POLICY that decides WHEN to call it and what
- * to do with the result. The facade method `Triologue.generateHintRound()` is
- * a thin delegation to the `HintRoundManager`, so the call chain is:
+ * (the LLM prompt, JSON schema, retry loop, validation, wiki pre-filter, and
+ * [HINT] note injection). This module is the POLICY that decides WHEN to call
+ * it and what to do with the result. Ownership of the manager lives HERE (see
+ * `HintSuggester.getManager`): the hint round is an application-level feature
+ * that consults external modules (`ctx.wiki`), so it is constructed at the
+ * composition root that holds both `triologue` and `ctx` — NOT on the
+ * Triologue facade, which is a conversation-state primitive. The call chain is:
  *
- *     handleCollect → hintSuggester.runHintRound → triologue.generateHintRound
- *                   → getHintRoundManager().generate → HintRoundManager
+ *     handleCollect → hintSuggester.runHintRound → HintRoundManager.generate
+ *                   → (LLM analysis + wiki pre-filter) → note('HINT', ...)
  *
  * Owned by a singleton (`hintSuggester`), mirroring collect-skill.ts's
  * `skillSuggester` and the auto-state.ts precedent (a dedicated module owns
@@ -36,6 +40,7 @@
 import type { ChatData, MachineEnv, TurnVars } from '../state-machine.js';
 import { loader } from '../../context/shared/loader.js';
 import type { SequenceEvent } from '../../hook/sequence.js';
+import { HintRoundManager } from '../triologue/hint-round.js';
 
 // Confusion threshold for hint generation
 const CONFUSION_THRESHOLD = 10;
@@ -179,6 +184,34 @@ export type HintSignal = 'continue' | 'stop' | 'collect';
  */
 export class HintSuggester {
   /**
+   * The hint-round MECHANISM, constructed lazily from the MachineEnv (the
+   * composition root that holds BOTH the triologue and `ctx`). Ownership lives
+   * HERE, not on the Triologue facade: the hint round is an application-level
+   * feature that consults external modules (ctx.wiki today, potentially more
+   * later), whereas the Triologue is a conversation-state primitive. Binding
+   * the manager's message view to the live triologue keeps it correct across
+   * compact/clear/restore store swaps.
+   *
+   * Rebuilt per call is unnecessary: one instance per process, and its deps are
+   * arrow closures that re-read the live store/ctx at CALL time, so it survives
+   * store swaps exactly like the facade's other managers did.
+   */
+  private manager: HintRoundManager | null = null;
+
+  private getManager(env: MachineEnv): HintRoundManager {
+    if (!this.manager) {
+      const { triologue, ctx } = env;
+      this.manager = new HintRoundManager({
+        getMessagesRaw: () => triologue.getMessagesRaw(),
+        note: (category, message) => triologue.note(category, message),
+        wiki: ctx.wiki,
+        getDuplicationReport: () => env.requestEmbeddingTracker.getDuplicationReport(),
+      });
+    }
+    return this.manager;
+  }
+
+  /**
    * Step 3: generate a hint round when confusion is high, and handle its
    * three outcomes.
    *
@@ -210,7 +243,7 @@ export class HintSuggester {
     // Use escAware for ESC-interruptible hint generation
     const result = await ctx.core.escAware(
       async (abortController) => {
-        return await triologue.generateHintRound(abortController, confusionIndex, breakdown, pendingSkills);
+        return await this.getManager(env).generate(abortController, confusionIndex, breakdown, pendingSkills);
       },
       () => {
         // ESC pressed during hint generation — return 'aborted' so the
@@ -259,7 +292,7 @@ export class HintSuggester {
       // This compact satisfies any deferred HOOK request too. Prevent the next
       // LLM state from performing the same compaction a second time.
       const tools = loader.getToolsForScope(env.scope);
-      await triologue.compact(undefined, undefined, tools);
+      await triologue.compact(undefined, undefined, tools, await ctx.wiki.listDomains());
       chat.deferredCompact = false;
       ctx.core.resetConfusionIndex();
       env.requestEmbeddingTracker.clear();
