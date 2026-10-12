@@ -160,6 +160,16 @@ Always use the `mycc` command: `mycc` (interactive), `mycc --auto
 channel creation. See `launching-peer.md` for the
 full recipes and the order-of-operations checklist.
 
+When the user asks you to "**create a peer to load session `<id>`**" (bring up
+a peer that CONTINUES an existing session), add **`--from <session-id>`** to
+the launch (`mycc --auto --skip-healthcheck --from <id>`, run from the source
+session's project dir). `--from` is the launcher-level `/load`: it branches a
+**new** session from the source (new uuid — NOT the `--from` argument), and
+`--auto` is required so the peer skips the DOSQ review and runs autonomously.
+`--from` and `--session-id` are mutually exclusive, so `mycc-compose` (which
+pins `--session-id`) CANNOT carry a `--from` — use `bg_create` + `mycc`. Full
+recipe in `launching-peer.md`.
+
 ## Sanity Checklist & Pitfalls
 
 Before declaring the workflow wired, run through

@@ -13,7 +13,7 @@ import * as os from 'os';
 import chalk from 'chalk';
 import type { Session, SessionDisplay, SessionInit } from './types.js';
 import { prepareRestoration, readDosq, extractFirstQuery } from './restoration.js';
-import { setSessionContext, getSessionArg, getSessionsDir, getPinnedSessionId } from '../config.js';
+import { setSessionContext, getSessionArg, getSessionsDir, getPinnedSessionId, shouldSkipInteractiveReview } from '../config.js';
 import { isSessionHeld, claimSessionOwnership } from '../peer/identity.js';
 import { clearAll } from '../context/memory-store.js';
 import { agentIO } from '../loop/agent-io.js';
@@ -36,6 +36,24 @@ import { atomicWrite } from '../utils/atomic-write.js';
  * archived session ends up with its genuine first query.
  */
 export const HEADLESS_FIRST_QUERY_MARKER = '[auto mode] awaiting first query';
+
+/**
+ * Default first query seeded when a session is restored (`--from`) in a
+ * HEADLESS launch (`--auto` / `--daemon`), where there is no human to review
+ * the DOSQ. It replaces the interactive flow's `extractFirstQuery()` default
+ * ('Continue from where we left off.') with an intent appropriate to an
+ * unattended restart: absorb the inherited context, then stand by.
+ *
+ * Kept in the session module (the sole consumer is restoreSession) as a
+ * sibling of {@link HEADLESS_FIRST_QUERY_MARKER} — both are artifacts of the
+ * same headless-bootstrap lifecycle. It is a CONTENT string, not a
+ * CLI predicate, so it does not belong in config.ts.
+ *
+ * Must be non-empty and must NOT equal HEADLESS_FIRST_QUERY_MARKER (the
+ * marker is a lifecycle sentinel, not a query).
+ */
+export const HEADLESS_STANDBY_QUERY =
+  "Summarize the content of the previous session so we share its context, then stop and stand by for further instructions.";
 
 /**
  * Absolute freshness window for treating a session as still live during
@@ -739,26 +757,45 @@ export async function restoreSession(sessionArg: string): Promise<SessionInit> {
   console.log(chalk.cyan('New session context generated. DOSQ at:'));
   console.log(chalk.gray(`  ${dosqPath}`));
 
-  // Open DOSQ in editor for user review
-  try {
-    openEditor([dosqPath]);
-    console.log(chalk.gray('Opening DOSQ file in editor...'));
-  } catch {
-    console.log(chalk.yellow(`Please edit the DOSQ file manually: ${dosqPath}`));
+  // Collect the new session's initial query.
+  //
+  // The DOSQ review (open in the user's editor + await a confirm) REQUIRES a
+  // human, so it is the one part skipped in a headless launch (--auto /
+  // --daemon). Everything after it — branching the new files and returning —
+  // is IDENTICAL for both modes, so it stays a single shared tail below
+  // rather than being duplicated by an early return.
+  //
+  // The predicate is shouldSkipInteractiveReview() (CLI-level), NOT
+  // autoState.getAuto(): initializeSession() runs before autoState is set for
+  // --auto/--daemon, so the runtime flag is still false here. See config.ts.
+  let initialQuery: string;
+  if (shouldSkipInteractiveReview()) {
+    console.log(chalk.gray('Headless launch (--auto/--daemon): skipping DOSQ review; seeding standby query.'));
+    initialQuery = HEADLESS_STANDBY_QUERY;
+  } else {
+    // Open DOSQ in editor for user review. openEditor() is async and may
+    // reject (e.g. $EDITOR unset → defaultEditor() throws), so it is awaited
+    // and its failure routed to the manual-edit fallback; a bare call would
+    // surface as an unhandled rejection and the catch below would be dead.
+    try {
+      await openEditor([dosqPath]);
+      console.log(chalk.gray('Opening DOSQ file in editor...'));
+    } catch {
+      console.log(chalk.yellow(`Please edit the DOSQ file manually: ${dosqPath}`));
+    }
+
+    console.log(chalk.yellow('Edit the DOSQ file if needed, then save and close to continue...'));
+    // notice:true renders an instruction + a single OK button in the webui
+    // (NO useless text input) — the user edits the DOSQ file in their editor,
+    // then clicks OK to continue. onEnter:'' makes Enter-on-empty (terminal) /
+    // OK (webui) resolve to ''.
+    await agentIO.ask(
+      chalk.cyan('Edit the DOSQ file if needed, save and close, then click OK to continue'),
+      { useAsPrompt: true, onEsc: '', onEnter: '', notice: true },
+    );
+
+    initialQuery = extractFirstQuery(readDosq(dosqPath));
   }
-
-  console.log(chalk.yellow('Edit the DOSQ file if needed, then save and close to continue...'));
-  // notice:true renders an instruction + a single OK button in the webui
-  // (NO useless text input) — the user edits the DOSQ file in their editor,
-  // then clicks OK to continue. onEnter:'' makes Enter-on-empty (terminal) /
-  // OK (webui) resolve to ''.
-  await agentIO.ask(
-    chalk.cyan('Edit the DOSQ file if needed, save and close, then click OK to continue'),
-    { useAsPrompt: true, onEsc: '', onEnter: '', notice: true },
-  );
-
-  const dosqContent = readDosq(dosqPath);
-  const initialQuery = extractFirstQuery(dosqContent);
 
   // Create a BRAND NEW session (new id, new triologue file, new session json).
   // The old session's files are never written to again — they are sealed.

@@ -138,6 +138,24 @@ export async function handlePrompt(
   const { triologue, inputProvider, sessionFilePath } = env;
   const { ctx } = env;
 
+  // ── Seeded first query (restored session) takes precedence over auto ──
+  // A restored session (`--from`) seeds a first query via setInitialQuery()
+  // BEFORE the loop starts. That query is consumed by Priority 2 below, but
+  // BOTH auto gates must yield to it: they sit ~65 lines ABOVE Priority 2, so
+  // under `--auto`/autofly they would return AWAIT and the seeded query would
+  // be silently dropped (the loop would just idle instead of summarizing the
+  // inherited session). Hoisting the check here lets the query FALL THROUGH
+  // into the existing Priority 2 body, which then runs the normal
+  // user-query path (triologue.user / lastUserQuery / markPromptBoundary /
+  // resetTurn / bookmark capture) and advances to COLLECT — exactly what a
+  // human-typed first query does. After that first turn, initialQuery is null
+  // and the gates behave normally.
+  //
+  // This is a LOOP-native predicate (initialQuery is this module's own
+  // singleton) — the loop must NOT learn about `--from`; it only knows a
+  // first query is pending.
+  const hasSeededFirstQuery = initialQuery !== null;
+
   // ── Auto-mode engagement gate ──
   // PROMPT is the single decision point for whether the loop should skip
   // prompting the user and run autonomously. Two conditions, checked in
@@ -161,7 +179,11 @@ export async function handlePrompt(
   //
   // If neither condition holds, fall through to normal prompting. Plan/normal
   // mode is untouched by this gate (auto is orthogonal to plan/normal).
-  if (autoState.getAuto()) {
+  //
+  // Both gates are skipped when a seeded first query is pending
+  // (hasSeededFirstQuery): the restored query must not be swallowed by auto
+  // redirection — see the hoisted predicate above.
+  if (autoState.getAuto() && !hasSeededFirstQuery) {
     autoState.setAuto(true); // idempotent re-sync (no-op, keeps onAutoChange calm)
     return AgentState.AWAIT;
   }
@@ -197,7 +219,7 @@ export async function handlePrompt(
   // AWAIT. Layer B engages auto unconditionally because a channel DID just join
   // (the event itself is the signal); the next PROMPT then re-applies this
   // streak gate.
-  if ((isDebugAutofly() || ctx.peer.hasActiveChannel()) && autoState.getStreak() >= autoState.getAutoflyThreshold()) {
+  if ((isDebugAutofly() || ctx.peer.hasActiveChannel()) && autoState.getStreak() >= autoState.getAutoflyThreshold() && !hasSeededFirstQuery) {
     autoState.setAuto(true); // engage auto mode so subsequent loops take path 1
     console.log(chalk.gray('auto mode is on.'));
     return AgentState.AWAIT;
@@ -449,7 +471,18 @@ export async function handlePrompt(
   // HEADLESS_FIRST_QUERY_MARKER (--auto started idle, the user pressed ESC
   // to leave auto mode, and typed the first real query) is replaced with
   // the real query — same archive outcome either way.
-  if (!bookmarkCaptured) {
+  //
+  // SKIPPED for the SEEDED standby turn (--from in a headless launch): the
+  // seeded query is BOOTSTRAP phrasing ('summarize the previous session,
+  // then stand by'), not this session's genuine first instruction. Writing
+  // it would consume the on-disk marker and bake boilerplate into the
+  // archive's title, hiding the session's real purpose. We deliberately
+  // LEAVE the marker so a genuine later wake event (mail / peer / cron /
+  // steering note — resolved in collect.ts step 2d) claims the slot
+  // instead. bookmarkCaptured stays false so THAT later real query is
+  // still captured. A genuine interactive first query (hasSeededFirstQuery
+  // false) is unaffected.
+  if (!bookmarkCaptured && !hasSeededFirstQuery) {
     if (resolveHeadlessFirstQuery(sessionFilePath, query)) {
       bookmarkCaptured = true;
     }

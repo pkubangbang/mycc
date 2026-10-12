@@ -317,6 +317,40 @@ export function shouldDaemon(): boolean {
 }
 
 /**
+ * True when this launch has NO human at the terminal to interact with —
+ * i.e. `--auto`, `--daemon`, or `--serve`.
+ *
+ * WHY THIS EXISTS (and why it is not `autoState.getAuto()`): a few boot-time
+ * flows need to ask "is anyone there to answer a prompt?" BEFORE the agent
+ * loop starts — e.g. the DOSQ review in `restoreSession()` (`--from`) and the
+ * mid-session `/load` flow, both of which open an editor and await an
+ * `agentIO.ask()` confirmation. The runtime auto flag is NOT usable for that
+ * question: `initializeSession()` runs at agent-repl.ts:92 while
+ * `autoState.setAuto(true)` only happens later (:381 for --auto, and inside
+ * initDaemonMode for --daemon), so at session-init time `getAuto()` is still
+ * false. These are pure CLI predicates (read from parsed argv, never mutated
+ * mid-process), so they are correct at any point in boot.
+ *
+ * `--serve` is included because the boot path for a served instance is the
+ * same headless path: the web UI (when a browser is even attached) is a
+ * different process, and `activateServe()` runs at agent-repl.ts:474 — well
+ * AFTER `restoreSession()`. A `--serve --from` boot would therefore deadlock
+ * on the DOSQ `agentIO.ask()` with no one able to answer, exactly like
+ * `--auto`/`--daemon`. Including `--serve` makes all three headless boot
+ * shapes skip the interactive review.
+ *
+ * `isPlainOutput()` is deliberately NOT used as the signal: it is set merely
+ * because stdout is not a TTY (src/index.ts), so `mycc --from x > log.txt`
+ * with a real human at the keyboard would wrongly be treated as headless.
+ *
+ * Consumers use it to SKIP the interactive review step and substitute a
+ * default first query; see restoreSession() and the /load slash command.
+ */
+export function shouldSkipInteractiveReview(): boolean {
+  return shouldAuto() || shouldDaemon() || shouldServe();
+}
+
+/**
  * Return a sanitized summary of the CLI flags this instance was launched with,
  * suitable for inclusion in the system prompt so the LLM can self-identify
  * how it was started (e.g. `--auto --daemon skill-manager --skip-healthcheck`).

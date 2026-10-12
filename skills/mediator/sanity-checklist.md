@@ -43,6 +43,13 @@
 
 - **Wiring a stale instance** — mail to a fresh-offline peer is silently dropped
   (freshness gate). Always verify online status with `peers()` first.
+- **Confusing `--from` (load a session) with `mycc-compose` (`--session-id` pin)**
+  — "create a peer to load session `<id>`" means launch `mycc --auto --from <id>`
+  (via `bg_create`), NOT `mycc-compose up`. `--from` branches a NEW session (new
+  uuid ≠ the argument) from the sealed source; `--session-id` (compose) reuses
+  the SAME id for a fresh session. They are mutually exclusive, so compose
+  cannot carry `--from`. `--auto` is required with `--from` so the peer skips
+  the DOSQ review. See `launching-peer.md`.
 - **Pre-setting `joined:true`** — the instance will skip join and never receive
   its `firstQuery`. Leave it `false`.
 - **Reading `joined`/`firstQuerySent == true` right after writing and panicking**

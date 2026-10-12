@@ -118,6 +118,65 @@ human intervention at the peer's terminal.
 - You want process isolation (separate LLM context/session) but do not want to
   occupy an interactive terminal for the peer.
 
+## Launching a Headless Peer that LOADS AN EXISTING SESSION (`--from`)
+
+The `bg_create` recipe above launches a peer with a **fresh, empty** session.
+When the user instead asks you to "**create a peer to load session `<id>`**"
+(or "spin up a peer from my earlier session", "continue session `<id>` in a
+new instance"), the peer must START FROM that session's context rather than
+from nothing. The flag for that is **`--from <session-id>`**:
+
+```
+bg_create(command="cd C:/Proj/mycc; mycc --auto --skip-healthcheck --from <session-id>")
+```
+
+Key facts about `--from` (this is the part the mediator must not get wrong):
+
+- **`--from <id>` is the launcher-level `/load`.** It branches a **BRAND-NEW**
+  session (new id, new empty triologue): the LLM re-reads the source session's
+  files read-only, regenerates a context summary + DOSQ, and CONTINUES in the
+  new session. The source session is **sealed** — never written to again.
+  Loading the same source twice yields DIFFERENT new sessions (re-understanding
+  is non-deterministic), so the **peer's session-id will NOT be `<id>`** — it
+  is a fresh uuid shown in the peer's startup banner. Capture it from
+  `peers()` after the peer is online.
+- **`--auto` is REQUIRED** for `--from` on a `bg_create` peer, for the same
+  reason as the fresh case: with no human, the DOSQ review would otherwise
+  block. Under `--auto` the peer **skips the DOSQ review** and seeds a standby
+  first query ("summarize the previous session, then stand by"), then runs its
+  loop autonomously.
+- **`--from` and `--session-id` are mutually exclusive.** `--from` always
+  branches a NEW id, so pinning one at the same time is contradictory and is
+  rejected at startup. (Only `mycc-compose` uses `--session-id`; it injects
+  `--session-id`, so **compose cannot carry a `--from`** — a mediator that
+  needs `--from` uses plain `mycc` via `bg_create`, NOT `mycc-compose up`.)
+- **Run it from the SOURCE session's project directory.** `--from` verifies
+  `process.cwd()` equals the source session's `project_dir` and exits if they
+  differ. So the `cd` in the `bg_create` command must be that project dir
+  (e.g. `cd C:/Proj/mycc` for a session created there).
+- **`--serve --from` also boots headless** (no DOSQ prompt): `--serve` runs the
+  same headless boot path as `--auto`/`--daemon` and skips the interactive
+  review, so a served peer launched with `--from` does not hang either.
+
+**Full recipe — peer that loads an existing session:**
+
+```
+bg_create(command="cd C:/Proj/mycc; mycc --auto --skip-healthcheck --from c588c8c")
+```
+
+Then, exactly as in the fresh case:
+1. `peers()` → confirm the peer's **new** session-id appears with a fresh
+   heartbeat (its id is NOT the `--from` argument — it is the branched uuid).
+2. Author the channel file pair (`channel-files.md`) using that new id.
+3. The 5s poll delivers the peer's `firstQuery` to its mailbox; being in
+   `--auto`, it acts on it and mails back.
+
+> **Do NOT use `mycc-compose` here.** `mycc-compose` pins a session id
+> (`--session-id`) to relaunch a peer under the SAME identity — that is a
+> *fresh* session with a reused id, NOT a `--from` restore. If the task is
+> "load/continue an existing session in a peer", it is `--from`, and the tool
+> is `bg_create` + the `mycc` command.
+
 **Lifecycle:** a `bg_create`-launched peer is a background process you own.
 When the verification/work is done, tear it down with `bg_remove(pid)` (the
 pid is returned by `bg_create`). Do not leave it running indefinitely — it
