@@ -17,7 +17,7 @@ import type { ToolDefinition } from '../types.js';
 
 export const checkpointTool: ToolDefinition = {
   name: 'checkpoint',
-  description: `Create a checkpoint marker for context management. Use before exploration or investigation tasks that generate many messages. Must be called alone (no other tools in same turn). Do NOT use for quick single-file edits, simple lookups, or tasks where you immediately know the answer — checkpoint overhead is wasted on trivial tasks.`,
+  description: `Create a checkpoint marker for context management. Use before exploration or investigation tasks that generate many messages. Must be called alone (no other tools in same turn). Do NOT use for quick single-file edits or simple lookups — checkpoint overhead is wasted on trivial tasks.`,
   input_schema: {
     type: 'object',
     properties: {
@@ -27,7 +27,7 @@ export const checkpointTool: ToolDefinition = {
       },
       if_abandoned: {
         type: 'string',
-        description: 'Declare your original direction at checkpoint creation. If this checkpoint is later abandoned (recap with abandon=true), this direction is presented heuristically in the abandon note: "the original direction was X; compare it with the current context and find your path." Required — ensures recap-abandon always has continuity context.',
+        description: 'REQUIRED. Your original direction at checkpoint creation. If later abandoned (recap with abandon=true), it is presented in the abandon note so continuity is preserved.',
       },
     },
     required: ['description', 'if_abandoned'],

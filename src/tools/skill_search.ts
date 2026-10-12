@@ -59,20 +59,18 @@ export const skillSearchTool: ToolDefinition = {
   name: 'skill_search',
   description: `Search skills by keywords. Returns a ranked list of matching skill names and descriptions.
 
-Use this when you don't know the exact skill name, or want to find relevant skills for a task.
-The first argument is a natural-language query: keywords are extracted from it (via an LLM call) and matched positionally against every loaded skill's keywords. The optional second argument is a semantic refinement string; its embedding similarity boosts the keyword-match score.
-Results are ranked by a combined score (keyword points × semantic boost); only the top matches are returned.
+Use when you don't know the exact skill name. Results are ranked by keyword points × semantic boost; only the top matches are returned.
 Once you find the right skill, use skill_load(name="<exact_name>") to load its full content.`,
   input_schema: {
     type: 'object',
     properties: {
       search: {
         type: 'string',
-        description: 'REQUIRED: A natural-language query (a few words or a short phrase) describing the skill you are looking for, in any language. Keywords are extracted from this via an LLM and matched against skill keywords. Use concise terms, NOT long essays.',
+        description: 'REQUIRED: A natural-language query (a few words) describing the skill you are looking for, in any language. Use concise terms, not long essays.',
       },
       semantic: {
         type: 'string',
-        description: 'OPTIONAL: A semantic refinement string whose embedding similarity boosts the keyword-match score. When omitted, the extractor\'s distilled free-form query is used for the semantic lookup (falling back to `search` if that is empty). Useful when the natural-language query and the precise semantic phrase differ.',
+        description: 'OPTIONAL: A semantic refinement phrase whose embedding similarity boosts the keyword-match score. When omitted, the query itself is used for the semantic lookup.',
       },
     },
     required: ['search'],

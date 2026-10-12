@@ -9,25 +9,25 @@ import path from 'path';
 
 export const tmCreateTool: ToolDefinition = {
   name: 'tm_create',
-  description: 'Spawn a new teammate agent with a specific role. Assign work via mail_to after creation. Only available to lead agent (scope: main).',
+  description: 'Spawn a new teammate agent with a specific role. Assign work via mail_to after creation. Only available to the lead agent.',
   input_schema: {
     type: 'object',
     properties: {
       name: {
         type: 'string',
-        description: 'Unique identifier for the teammate (used for referencing in other commands)',
+        description: 'Unique teammate name, used to reference it in other commands.',
       },
       role: {
         type: 'string',
-        description: 'Role description for the teammate (e.g., "coder", "reviewer", "tester")',
+        description: 'Role for the teammate (e.g. "coder", "reviewer", "tester").',
       },
       prompt: {
         type: 'string',
-        description: 'Initial instructions and context for the teammate to follow',
+        description: 'Initial instructions and context for the teammate.',
       },
       cwd: {
         type: 'string',
-        description: 'Working directory for the teammate (e.g., a worktree path). If omitted, uses the lead\'s current working directory. Use this to spawn a teammate directly inside a git worktree for parallel branch work.',
+        description: 'Working directory for the teammate, e.g. a worktree path like ".worktrees/<name>" (its dir name must match the teammate name). Defaults to the lead\'s current working directory.',
       },
     },
     required: ['name', 'role', 'prompt'],

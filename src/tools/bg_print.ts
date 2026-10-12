@@ -11,13 +11,13 @@ import type { ToolDefinition, AgentContext } from '../types.js';
 
 export const bgPrintTool: ToolDefinition = {
   name: 'bg_print',
-  description: 'List all background tasks with status (running/completed/failed/killed), or show accumulated output for a specific task by pid. Use without pid to check overall status, or with pid to read the output (stdout+stderr) of a background command.',
+  description: 'List all background tasks with status (running/completed/failed/killed), or show accumulated output for a specific task by pid. Omit pid to check overall status; provide pid to read that task\'s output (stdout+stderr).',
   input_schema: {
     type: 'object',
     properties: {
       pid: {
         type: 'number',
-        description: 'Optional: process ID of a specific task. When provided, returns the task detail including accumulated output (tail-capped to the most recent ~100KB). Omit to list all tasks.',
+        description: 'Process ID of a specific task. When provided, returns the task detail including accumulated output (tail-capped to the most recent ~100KB). Omit to list all tasks.',
       },
     },
     required: [],

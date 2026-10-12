@@ -27,7 +27,7 @@ import { stripBom, applyLineEndings, detectLineEnding, hasBom } from '../utils/e
 export const writeTool: ToolDefinition = {
   name: 'write_file',
   description:
-    'Create or completely replace a file. Parent directories are created automatically. Use edit_file for targeted changes to existing files instead of rewriting entire files. Line endings default to the platform convention (CRLF on Windows, LF elsewhere); override with `newline`. UTF-8 is written without a BOM unless `bom: true` is set.',
+    'Create or completely replace a file. Use edit_file for targeted changes to existing files instead of rewriting entire files. Line endings default to the platform convention (CRLF on Windows, LF elsewhere); UTF-8 is written without a BOM unless `bom: true`.',
   input_schema: {
     type: 'object',
     properties: {
@@ -43,7 +43,7 @@ export const writeTool: ToolDefinition = {
         type: 'string',
         enum: ['auto', 'lf', 'crlf'],
         description:
-          "Line-ending style. 'auto' (default) follows the platform convention: CRLF on Windows, LF elsewhere. 'lf' forces Unix LF, 'crlf' forces Windows CRLF. Use 'crlf' for .ps1 scripts run by PowerShell 5.1, 'lf' for shell scripts and cross-platform source.",
+          "Line-ending style. 'auto' (default) follows the platform convention: CRLF on Windows, LF elsewhere. Use 'crlf' for .ps1 scripts run by PowerShell 5.1, 'lf' for shell scripts and cross-platform source.",
       },
       bom: {
         type: 'boolean',

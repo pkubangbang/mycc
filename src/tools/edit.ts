@@ -13,7 +13,7 @@ import { stripBom, detectLineEnding, normalizeLineEndings, countReplacementChars
 export const editTool: ToolDefinition = {
   name: 'edit_file',
   description:
-    'Replace exact text in an existing file. old_text is a LITERAL string match (NOT a regex) — characters like ) $ [ . are matched verbatim. old_text must exist exactly once in the file. Use this for targeted edits instead of rewriting entire files. After writing, the file is re-read and verified; on verification failure the original content is restored and an error is returned. The strip_bom parameter (default false) controls whether a UTF-8 BOM is removed; by default the file\'s BOM state is preserved as-is.',
+    'Replace exact text in an existing file (old_text is a literal match, not a regex). Use this for targeted edits instead of rewriting entire files. After writing, the file is re-read and verified; on failure the original content is restored and an error is returned.',
   input_schema: {
     type: 'object',
     properties: {
@@ -33,7 +33,7 @@ export const editTool: ToolDefinition = {
       strip_bom: {
         type: 'boolean',
         description:
-          'Whether to remove a UTF-8 BOM (EF BB BF) from the file. Default false: the BOM is preserved as-is (if the file had one, it is kept; if not, none is added). Set true to strip an existing BOM. The BOM presence is detected heuristically before the edit.',
+          'Whether to remove a UTF-8 BOM (EF BB BF). Default false: preserve the file\'s existing BOM state. Set true to strip an existing BOM.',
       },
     },
     required: ['path', 'old_text', 'new_text'],

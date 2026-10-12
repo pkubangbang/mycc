@@ -14,7 +14,7 @@ export const webSearchTool: ToolDefinition = {
     properties: {
       query: {
         type: 'string',
-        description: 'The search query to execute',
+        description: 'The search query',
       },
     },
     required: ['query'],

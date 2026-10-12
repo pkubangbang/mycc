@@ -6,8 +6,7 @@ import type { ToolDefinition, GetOptions } from '../types.js';
 
 export const wikiGetTool: ToolDefinition = {
   name: 'wiki_get',
-  description: `Search knowledge base for relevant wiki. Returns documents sorted by similarity to query.
-Use one of the domains listed in your project context ("Wiki Domains"); never invent a domain name.`,
+  description: `Search the knowledge base for relevant wiki documents, sorted by similarity to the query. Use one of the registered domains from your project context; never invent a domain name.`,
   input_schema: {
     type: 'object',
     properties: {
@@ -17,7 +16,7 @@ Use one of the domains listed in your project context ("Wiki Domains"); never in
       },
       domain: {
         type: 'string',
-        description: 'Required: the domain to search within — one of the domains listed in your project context (e.g., "pitfall", "routine", "skills").',
+        description: 'The domain to search within — one of your project\'s registered wiki domains (never invented).',
       },
       topK: {
         type: 'number',

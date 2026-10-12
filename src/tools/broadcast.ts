@@ -8,7 +8,7 @@ import type { ToolDefinition, AgentContext } from '../types.js';
 
 export const broadcastTool: ToolDefinition = {
   name: 'broadcast',
-  description: 'Send a message to all teammates at once. Use for team-wide announcements or coordination. Only available to lead agent.',
+  description: 'Send a message to all teammates at once. Use for team-wide announcements or coordination. Lead-only.',
   input_schema: {
     type: 'object',
     properties: {

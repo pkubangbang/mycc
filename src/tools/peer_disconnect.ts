@@ -26,7 +26,7 @@ export const peerDisconnectTool: ToolDefinition = {
     'Hang up a remote peer added via peer_connect (terminal — it will not automatically reconnect). ' +
     'After this the peer is no longer in your peer list; run peer_connect again to reconnect later. ' +
     'Pass the remote peer\'s session-id (the form peer_list displays) or the URL you used with peer_connect. ' +
-    'Only affects REMOTE (cross-machine) peers — local same-machine peers are not connected this way.',
+    'Only affects REMOTE (cross-machine) peers.',
   input_schema: {
     type: 'object',
     properties: {

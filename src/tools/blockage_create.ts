@@ -8,7 +8,7 @@ import type { ToolDefinition, AgentContext } from '../types.js';
 
 export const blockageCreateTool: ToolDefinition = {
   name: 'blockage_create',
-  description: 'Declare that one issue blocks another. The blocked issue cannot be claimed until the blocker is resolved. Use for dependency management between issues.',
+  description: 'Declare that one issue blocks another. The blocked issue cannot be claimed until the blocker is resolved.',
   input_schema: {
     type: 'object',
     properties: {

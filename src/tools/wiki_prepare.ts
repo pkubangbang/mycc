@@ -20,7 +20,7 @@ export const wikiPrepareTool: ToolDefinition = {
       },
       content: {
         type: 'string',
-        description: 'Document content - facts, rules, or information to store. Must be 50-1000 characters. Should describe facts/rules, not opinions.',
+        description: 'Document content - facts, rules, or information to store (50-1000 characters). Should describe facts/rules, not opinions.',
       },
       references: {
         type: 'array',

@@ -8,7 +8,7 @@ import type { ToolDefinition, AgentContext } from '../types.js';
 
 export const blockageRemoveTool: ToolDefinition = {
   name: 'blockage_remove',
-  description: 'Remove a blocking relationship. The blocked issue becomes claimable if it has no other blockers. Use when a dependency no longer applies.',
+  description: 'Remove a blocking relationship. The blocked issue becomes claimable if it has no other blockers.',
   input_schema: {
     type: 'object',
     properties: {

@@ -80,13 +80,13 @@ function detectFileType(filePath: string, buffer: Buffer): { isText: boolean; mi
 
 export const readTool: ToolDefinition = {
   name: 'read_file',
-  description: `Read file contents from the workspace or external paths. Paths use forward slashes and can be relative to workspace root, absolute, or use ~ for home directory. Limits: reads first 1000 lines or ~1/8 of context window, whichever is smaller. Reading files outside the workspace requires user grant (session-scoped).`,
+  description: `Read file contents from the workspace or external paths. Paths use forward slashes and may be relative to workspace root, absolute, or use ~ for home. Reads the first 1000 lines or ~1/8 of context window, whichever is smaller. Reading outside the workspace requires a user grant (session-scoped).`,
   input_schema: {
     type: 'object',
     properties: {
       path: {
         type: 'string',
-        description: 'File path relative to workspace root. Use forward slashes (e.g., "src/tools/bash.ts").',
+        description: 'File path (forward slashes), relative to workspace root (e.g. "src/tools/bash.ts").',
       },
     },
     required: ['path'],

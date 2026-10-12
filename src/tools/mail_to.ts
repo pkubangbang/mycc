@@ -13,13 +13,13 @@ import type { ToolDefinition, AgentContext } from '../types.js';
 
 export const mailToTool: ToolDefinition = {
   name: 'mail_to',
-  description: 'Send an async message to a teammate or "lead". Non-blocking - does not wait for response. Use for task assignment and inter-agent communication. Include meaningful content.',
+  description: 'Send an async message to a teammate or "lead". Non-blocking. Use for task assignment and inter-agent communication; include meaningful content.',
   input_schema: {
     type: 'object',
     properties: {
       name: {
         type: 'string',
-        description: 'Target name to receive the message. A teammate name or "lead" for local instance IPC, OR a cross-instance peer identity "<session-id>/lead" (e.g. "3b1b83d.../lead") to route through the peer discovery module to a remote mycc instance mailbox.',
+        description: 'Target recipient: a teammate name, "lead" for local IPC, or a cross-instance peer identity "<session-id>/lead" to route to a remote mycc instance.',
       },
       title: {
         type: 'string',
@@ -31,8 +31,7 @@ export const mailToTool: ToolDefinition = {
       },
       eta: {
         type: 'number',
-        description: 'MANDATORY when a teammate sends the first (or extension) mail to lead. Estimate duration in seconds. ' +
-          'Example: eta=120 means "I need about 2 minutes". The system will convert this to an absolute deadline. ' +
+        description: 'MANDATORY when a teammate first mails "lead" (or extends). Duration in seconds (eta=120 = about 2 minutes); converted to an absolute deadline. ' +
           'Set to 0 or omit for non-budget messages (progress updates, lead responses).',
       },
     },

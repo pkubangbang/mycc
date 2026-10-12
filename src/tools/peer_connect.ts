@@ -31,10 +31,10 @@ export const peerConnectTool: ToolDefinition = {
   name: 'peer_connect',
   description:
     'Add a remote mycc instance (running on ANOTHER machine) into your peer list so you can reach it with mail_to. ' +
-    'Pass the URL the remote instance is serving on (e.g. "192.168.1.20:3191", "host:port", "http://host:port", or "ws://host:port"). ' +
-    'The remote must be running its web UI. A shared wire token (MYCC_WIRE_TOKEN) is OPTIONAL — if set on both instances it gates the connection; if unset on both the endpoint is open and security is your responsibility at the network layer (firewall / TLS reverse proxy / VPN). ' +
-    'On success both instances can exchange mail via mail_to(name="<sessionId>/lead", ...) exactly as with local peers, and a pinned reminder records the peer. ' +
-    'If the target is offline, retries continue in the background until it connects — use peer_disconnect to cancel them. See peer_list to discover reachable peers.',
+    'Pass the URL the remote instance serves on (e.g. "192.168.1.20:3191", "http://host:port", or "ws://host:port"); the remote must be running its web UI. ' +
+    'A shared wire token (MYCC_WIRE_TOKEN) is OPTIONAL — if set on both instances it gates the connection; if unset on both the endpoint is open and network-layer security is your responsibility (firewall / TLS proxy / VPN). ' +
+    'On success both instances exchange mail via mail_to(name="<sessionId>/lead", ...) like local peers. ' +
+    'If the target is offline, retries continue in the background until it connects — use peer_disconnect to cancel. See peer_list to discover reachable peers.',
   input_schema: {
     type: 'object',
     properties: {
@@ -42,7 +42,7 @@ export const peerConnectTool: ToolDefinition = {
         type: 'string',
         description:
           'The remote instance\'s serve URL: "host:port", "http://host:port", or "ws://host:port" (no path). ' +
-          'The remote must be running its web UI. Set MYCC_WIRE_TOKEN on both instances if you want the optional in-app auth gate.',
+          'The remote must be running its web UI. Set MYCC_WIRE_TOKEN on both instances for the optional auth gate.',
       },
     },
     required: ['url'],

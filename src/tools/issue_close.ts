@@ -8,7 +8,7 @@ import type { ToolDefinition, AgentContext } from '../types.js';
 
 export const issueCloseTool: ToolDefinition = {
   name: 'issue_close',
-  description: 'Close a shared team issue with final status: completed, failed, or abandoned. A non-empty comment is REQUIRED to explain the resolution or reason for closure. Unlike private todos, issues are visible to all agents. Returns full issue list. Closing a blocker unblocks dependent issues.',
+  description: 'Close a shared team issue with final status: completed, failed, or abandoned. A non-empty comment is REQUIRED. Unlike private todos, issues are visible to all agents. Returns the full issue list. Closing a blocker unblocks dependent issues.',
   input_schema: {
     type: 'object',
     properties: {
@@ -19,11 +19,10 @@ export const issueCloseTool: ToolDefinition = {
       status: {
         type: 'string',
         enum: ['completed', 'failed', 'abandoned'],
-        description: 'completed: Successfully resolved. failed: Could not complete due to errors. abandoned: No longer needed.',
       },
       comment: {
         type: 'string',
-        description: 'REQUIRED. A non-empty final comment explaining the resolution or reason for closure. Closing an issue without a comment is rejected.',
+        description: 'REQUIRED. A non-empty final comment explaining the resolution or reason for closure.',
       },
       poster: {
         type: 'string',

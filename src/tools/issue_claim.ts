@@ -8,17 +8,17 @@ import type { ToolDefinition, AgentContext } from '../types.js';
 
 export const issueClaimTool: ToolDefinition = {
   name: 'issue_claim',
-  description: 'Claim a pending shared team issue to start work. Sets status to in_progress and assigns owner so all agents can see who is working on what. Returns full issue list.',
+  description: 'Claim a pending shared team issue to start work. Sets status to in_progress and assigns owner so all agents can see who is working on what. Returns the full issue list.',
   input_schema: {
     type: 'object',
     properties: {
       id: {
         type: 'integer',
-        description: 'Issue ID number to claim. Use issue_list to find available pending issues.',
+        description: 'Issue ID to claim (see issue_list for available pending issues).',
       },
       owner: {
         type: 'string',
-        description: 'Name or identifier of who is claiming the issue. Should match the agent or person doing the work.',
+        description: 'Name or identifier of who is claiming the issue.',
       },
     },
     required: ['id', 'owner'],

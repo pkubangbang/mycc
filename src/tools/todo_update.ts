@@ -8,7 +8,7 @@ import type { ToolDefinition, AgentContext } from '../types.js';
 
 export const todoUpdateTool: ToolDefinition = {
   name: 'todo_update',
-  description: 'Update an existing todo item by id. You MUST provide the item\'s current hash — the update will be rejected if the hash doesn\'t match (prevents stale updates). Get the hash from todo_create output or the todo list display.',
+  description: 'Update an existing todo item by id. You MUST provide the item\'s current hash — the update is rejected if the hash doesn\'t match (prevents stale updates). Get the hash from todo_create output or the todo list.',
   input_schema: {
     type: 'object',
     properties: {
@@ -18,7 +18,7 @@ export const todoUpdateTool: ToolDefinition = {
       },
       hash: {
         type: 'string',
-        description: 'Current hash of the item (from todo_create output or todo list). Must match stored hash or update is rejected.',
+        description: 'Current hash of the item (from todo_create output or the todo list). Must match the stored hash.',
       },
       name: {
         type: 'string',

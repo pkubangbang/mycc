@@ -85,7 +85,7 @@ function normalizeTitle(raw: string): string {
 
 export const myccTitleTool: ToolDefinition = {
   name: 'mycc_title',
-  description: `Add a notification banner among the chat, to mark the change of topic in discussion.`,
+  description: `Add a notification banner to mark a change of topic in the discussion.`,
   input_schema: {
     type: 'object',
     properties: {

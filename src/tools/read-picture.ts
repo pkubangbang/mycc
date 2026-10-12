@@ -55,21 +55,21 @@ function formatResult(
 
 export const readPictureTool: ToolDefinition = {
   name: 'read_picture',
-  description: 'Read and describe an image file using the vision model. Returns accumulated [focus, description] pairs and a cache token (M). Reading the same image again without the token returns cached pairs without re-invoking the vision model. Pass the token back with a new prompt to add a new focus to the cache.',
+  description: 'Read and describe an image file using the vision model. Returns accumulated [focus, description] pairs and a cache token (M). Reading the same image again without the token returns cached pairs without re-invoking the vision model. Pass the token back with a new prompt to add a new focus.',
   input_schema: {
     type: 'object',
     properties: {
       path: {
         type: 'string',
-        description: 'Path to the image file. Supports common image formats (PNG, JPG, GIF, etc.). Use forward slashes (e.g., "screenshots/image.png").',
+        description: 'Path to the image file (forward slashes), e.g. "screenshots/image.png". Supports PNG, JPG, GIF, WEBP.',
       },
       prompt: {
         type: 'string',
-        description: 'Optional custom prompt for the vision model. Use this to ask specific questions about the image (e.g., "What text is visible?" or "Describe the UI elements"). The prompt becomes the focus label in the cache.',
+        description: 'Optional custom prompt for the vision model (e.g., "What text is visible?"). The prompt becomes the focus label in the cache.',
       },
       cache: {
         type: 'string',
-        description: 'Cache token (M) returned by a previous read_picture call on the same image. Pass it back with a new prompt to add a new focus to the cached image without re-reading it from scratch. If omitted on a cached image, cached pairs are returned with no vision call.',
+        description: 'Cache token (M) from a previous read_picture call on the same image. Pass it back with a new prompt to add a focus without re-reading from scratch. If omitted on a cached image, cached pairs are returned with no vision call.',
       },
     },
     required: ['path'],

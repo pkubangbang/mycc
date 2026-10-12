@@ -14,7 +14,7 @@ export const bgRemoveTool: ToolDefinition = {
     properties: {
       pid: {
         type: 'number',
-        description: 'Process ID of the background task to kill. Obtain from bg_create result or bg_print output.',
+        description: 'Process ID of the background task to kill (from bg_create or bg_print).',
       },
     },
     required: ['pid'],

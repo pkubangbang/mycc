@@ -58,11 +58,11 @@ export const grepTool: ToolDefinition = {
       },
       include: {
         type: 'string',
-        description: 'File glob pattern to include, e.g., "*.ts" or "*.md"',
+        description: 'File glob to include, e.g. "*.ts"',
       },
       exclude: {
         type: 'string',
-        description: 'File glob pattern to exclude, e.g., "*.min.js" or "*.generated.*"',
+        description: 'File glob to exclude, e.g. "*.min.js"',
       },
       maxResults: {
         type: 'number',

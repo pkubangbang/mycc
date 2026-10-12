@@ -16,13 +16,13 @@ import * as fs from 'fs';
 
 export const recallTool: ToolDefinition = {
   name: 'recall',
-  description: `Explore the mindmap knowledge tree for project structure, available skills, and context. Start with recall(path="/") to see top-level categories, then drill down into children.`,
+  description: `Explore the mindmap knowledge tree for project structure, available skills, and context. Start with path="/" to see top-level categories, then drill into children.`,
   input_schema: {
     type: 'object',
     properties: {
       path: {
         type: 'string',
-        description: 'Node path (e.g., "/skill/example" or "/" for root). Start with "/" to discover available knowledge.',
+        description: 'Node path (e.g., "/skill/example", or "/" for the root).',
       },
     },
     required: ['path'],

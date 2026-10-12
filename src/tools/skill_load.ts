@@ -25,7 +25,7 @@ export const skillLoadTool: ToolDefinition = {
     properties: {
       name: {
         type: 'string',
-        description: 'REQUIRED: The exact name of the skill to load. Must match exactly (case-sensitive).',
+        description: 'The skill name to load.',
       },
     },
     required: ['name'],

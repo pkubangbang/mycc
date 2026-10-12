@@ -17,9 +17,9 @@ import type { ToolDefinition } from '../types.js';
 
 export const recapTool: ToolDefinition = {
   name: 'recap',
-  description: `Close a checkpoint and compress its messages into a summary. Set abandon=true to discard without summarizing. The checkpoint's required \`if_abandoned\` direction is injected heuristically into the abandon note: "the original direction was X; compare it with the current context and find your path." Must be called alone (no other tools in same turn).
+  description: `Close a checkpoint and compress its messages into a summary. Set abandon=true to discard without summarizing (the checkpoint's if_abandoned direction is injected into the abandon note). Must be called alone (no other tools in same turn).
 
-The 'comment' field is REQUIRED and is the most important part of the recap: it determines the direction of the next turn. Write it as a clear, actionable directive stating what should happen next based on what was discovered during this checkpoint. The comment is placed at the END of the recap note, so it is the last thing the conversation sees before continuing — treat it as the steering instruction for subsequent work.`,
+comment is REQUIRED and determines the direction of the next turn: write a clear, actionable directive for what should happen next based on what was discovered. It is placed at the END of the recap note — the last thing the conversation sees — so treat it as the steering instruction for subsequent work.`,
   input_schema: {
     type: 'object',
     properties: {
@@ -29,11 +29,11 @@ The 'comment' field is REQUIRED and is the most important part of the recap: it 
       },
       abandon: {
         type: 'boolean',
-        description: 'If true, discard messages without summarizing. Use when abandoning a distracted subtask.',
+        description: 'If true, discard messages without summarizing.',
       },
       comment: {
         type: 'string',
-        description: 'REQUIRED. A directive that determines the direction of the next turn. State what was concluded and what should happen next. This is placed last in the recap note and steers subsequent work, so be specific and actionable — not a vague log entry.',
+        description: 'REQUIRED. A directive that determines the direction of the next turn: state what was concluded and what should happen next. Placed last in the recap note, so be specific and actionable — not a vague log entry.',
       },
     },
     required: ['checkpoint_id', 'comment'],

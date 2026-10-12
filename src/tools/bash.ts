@@ -85,7 +85,7 @@ export const bashTool: ToolDefinition = {
     properties: {
       command: {
         type: 'string',
-        description: 'The shell command to execute. Uses bash on Unix and powershell on Windows. Paths are relative to workspace directory.',
+        description: 'The shell command to execute. Paths are relative to the workspace directory.',
       },
       intent: {
         type: 'string',
@@ -93,14 +93,14 @@ export const bashTool: ToolDefinition = {
       },
       timeout: {
         type: 'number',
-        description: 'REQUIRED: Seconds before killing the process (SIGKILL). Integer 1-60. Examples: timeout=10 for a quick read (ls, cat, git status); timeout=30 for builds/tests/install; timeout=60 for long builds. If omitted, defaults to 30.',
+        description: 'REQUIRED: Seconds before killing the process (SIGKILL). Integer 1-60. Examples: 10 for a quick read; 30 for builds/tests/install; 60 for long builds. Defaults to 30 if omitted.',
         minimum: 1,
         maximum: 60,
         default: 30,
       },
       display: {
         type: 'boolean',
-        description: 'If true, also display the command stdout to the terminal user via brief, in addition to returning it as a tool result. Use when the user explicitly asks to see output (e.g. replaying a crossroad decision via `mycc-pretty-print --type=crossroad <path>`). Default: false.',
+        description: 'If true, also display the command stdout to the terminal user via brief. Default: false.',
       },
     },
     required: ['command', 'intent'],

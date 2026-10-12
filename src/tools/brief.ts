@@ -10,7 +10,7 @@ import type { ToolDefinition, AgentContext } from '../types.js';
 
 export const briefTool: ToolDefinition = {
   name: 'brief',
-  description: 'Talk to yourself and let the user know. Use to report progress or findings during task execution. IMPORTANT: Always include confidence parameter (0-10) to indicate your certainty about the current state.',
+  description: 'Talk to yourself and let the user know. Use to report progress or findings during task execution. Always include a confidence score (0-10) indicating your certainty about the current state.',
   input_schema: {
     type: 'object',
     properties: {
@@ -20,7 +20,7 @@ export const briefTool: ToolDefinition = {
       },
       confidence: {
         type: 'number',
-        description: 'Your confidence level (0-10). High confidence (8-10) means you are certain and making progress. Low confidence (0-7) indicates uncertainty or being stuck. Use 10 for completed tasks, 8-9 for confident progress, 5-7 for moderate certainty, 0-4 when uncertain or blocked.',
+        description: 'Your confidence level (0-10): 10 = completed; 8-9 = confident progress; 5-7 = moderate certainty; 0-4 = uncertain or blocked.',
         minimum: 0,
         maximum: 10,
       },

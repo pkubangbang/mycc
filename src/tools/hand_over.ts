@@ -47,19 +47,19 @@ function spawnTmux(args: string[], cwd: string): Promise<void> {
 
 export const handOverTool: ToolDefinition = {
   name: 'hand_over',
-  description: `Opens a popup terminal and BLOCKS until the user finishes interacting, then captures and returns the terminal output. Use this ONLY when the task REQUIRES a human at the terminal — e.g. entering a password (sudo, SSH passphrase, 2FA), an interactive TUI (vim, htop, less), an SSH session, or anything that reads from a TTY. For non-interactive commands use the bash tool; for long-running background jobs use bg_create; for programmatically driving a persistent terminal use the bash tool with tmux send-keys/capture-pane. hand_over OWNS the tmux framing: pass the INNER foreground command only (e.g. \`sudo apt install X\`, \`ssh host\`, \`vim file\`) — do NOT prefix it with \`tmux\` or any \`tmux ...\` command (that would nest a tmux client inside hand_over's own session); manage tmux itself via the bash tool.`,
+  description: `Opens a popup terminal and BLOCKS until the user finishes interacting, then captures and returns the terminal output. Use ONLY when the task REQUIRES a human at the terminal — e.g. entering a password (sudo, SSH passphrase, 2FA), an interactive TUI (vim, htop, less), an SSH session, or anything reading from a TTY. For non-interactive commands use bash; for background jobs use bg_create; to drive a persistent terminal programmatically use bash with tmux send-keys/capture-pane. hand_over OWNS the tmux framing: pass the INNER foreground command only (e.g. \`sudo apt install X\`, \`vim file\`) — do NOT prefix it with \`tmux ...\` (that would nest a tmux client inside hand_over's own session).`,
   input_schema: {
     type: 'object',
     properties: {
       command: {
         type: 'string',
         description:
-          'The single foreground command to hand to the user to type/run in the popup (e.g. `sudo apt install X`, `ssh user@host`, `vim notes.txt`, `htop`). It is typed into the popup shell verbatim and run there; do NOT prefix it with `tmux` and do NOT chain background/detached constructs (`&&`, `&`, `> file`) — pass one interactive command the user must drive to completion.',
+          'The single foreground command to hand to the user to type/run in the popup (e.g. `sudo apt install X`, `ssh user@host`, `vim notes.txt`). It is typed into the popup shell verbatim; do NOT prefix it with `tmux`, and do NOT chain background/detached constructs (`&&`, `&`, `> file`) — pass one interactive command the user must drive to completion.',
       },
       intent: {
         type: 'string',
         description:
-          'REQUIRED: Explain why this command is needed (use intent language). The OBJECT must be USER and the VERB must be RUN: hand_over is "execute a command by having a human interact with the terminal", not an automated read/build/test.',
+          'REQUIRED: Explain why this command is needed (use intent language). The OBJECT must be USER and the VERB must be RUN: hand_over executes a command by having a human interact with the terminal.',
       },
     },
     required: ['command', 'intent'],

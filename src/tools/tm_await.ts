@@ -8,17 +8,17 @@ import type { ToolDefinition, AgentContext } from '../types.js';
 
 export const tmAwaitTool: ToolDefinition = {
   name: 'tm_await',
-  description: 'Block until teammate(s) finish their task. Prefer NOT to use - let teammates work asynchronously. Only needed when results are required before proceeding. The timeout is automatically set from the teammate\'s ETA (deadline) if provided via mail_to.',
+  description: 'Block until teammate(s) finish their task. Prefer NOT to use — let teammates work asynchronously. Timeout defaults to the teammate\'s ETA (from mail_to) when provided.',
   input_schema: {
     type: 'object',
     properties: {
       name: {
         type: 'string',
-        description: 'Teammate name to wait for. If omitted, waits for all teammates.',
+        description: 'Teammate name to wait for; if omitted, waits for all.',
       },
       timeout: {
         type: 'number',
-        description: 'Timeout in milliseconds. Default: 300000 (5 min). The teammate\'s ETA is used instead if provided.',
+        description: 'Timeout in milliseconds (default 300000 = 5 min); the teammate\'s ETA is used instead if provided.',
       },
     },
     required: [],

@@ -357,24 +357,24 @@ function buildDiagnostics(env: DetectedEnv, failures: string[]): string {
 export const screenTool: ToolDefinition = {
   name: 'screen',
   description:
-    'Capture a screenshot and use vision model to read/describe screen content. Use prompt parameter to ask specific questions about what is visible. On multi-monitor setups, use the desktop parameter to capture a SPECIFIC monitor (1-based: 1 = primary, 2 = second monitor, etc.); omit it to capture the primary monitor.',
+    'Capture a screenshot and use a vision model to read/describe screen content. On multi-monitor setups, pass desktop to capture a specific monitor (1-based: 1 = primary); omit for the primary monitor.',
   input_schema: {
     type: 'object',
     properties: {
       prompt: {
         type: 'string',
         description:
-          'Custom prompt for the vision model. Use this to ask specific questions about the screen content (e.g., "What error message is shown?" or "Read the text in the terminal window").',
+          'Custom prompt for the vision model (e.g., "What error message is shown?").',
       },
       desktop: {
         type: 'number',
         description:
-          'Which monitor to capture on a multi-monitor setup, given as a 1-based index (1 = primary monitor, 2 = second monitor, 3 = third, etc.). Omit or set to 1 to capture the primary monitor. On Windows this selects among [System.Windows.Forms.Screen]::AllScreens (internally converted to a 0-based array index); on macOS it maps directly to `screencapture -D <index>` (display number is 1-based). If the index is out of range, the tool lists the available monitors and their bounds so you can pick a valid one.',
+          'Monitor to capture on a multi-monitor setup, as a 1-based index (1 = primary). Omit or set 1 for the primary monitor. On Windows this selects among [System.Windows.Forms.Screen]::AllScreens (internally converted to a 0-based index); on macOS it maps to `screencapture -D <index>` (1-based display number). An out-of-range index returns the available monitors and their bounds.',
       },
       probe: {
         type: 'boolean',
         description:
-          'If true, re-run environment detection (probe which screenshot tools are installed via `which`/`where`) instead of reusing the cached result. Defaults to false — the environment is process-stable, so detection is cached after the first call to avoid spawning child processes on every screen call. Set probe=true after installing a screenshot tool mid-session (e.g. `sudo apt install scrot`) so the newly-installed tool is picked up.',
+          'If true, re-run environment detection (probe installed screenshot tools via `which`/`where`) instead of reusing the process-cached result. Default false — detection is cached to avoid child-process spawns. Set true after installing a screenshot tool mid-session (e.g. `sudo apt install scrot`).',
       },
     },
     required: [],

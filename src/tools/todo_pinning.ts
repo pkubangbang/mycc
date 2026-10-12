@@ -13,11 +13,10 @@ export const todoPinningTool: ToolDefinition = {
   name: 'todo_pinning',
   description:
     'Pin or unpin a todo item. Pinned todos are NOT auto-cleared when all ' +
-    'todos are completed — they persist as long-term reminders. Optionally ' +
-    'set a reactivation condition (natural language): after each nudge cycle ' +
-    'the system evaluates completed pinned todos against the conversation ' +
-    'context and automatically reactivates (marks back to not done) those ' +
-    'whose condition is met. Requires the current hash (anti-staleness).',
+    'todos are completed — they persist as long-term reminders. Optionally set ' +
+    'a reactivation condition: after each nudge cycle the system evaluates ' +
+    'completed pinned todos against the conversation context and marks those ' +
+    'whose condition is met back to not done. Requires the current hash.',
   input_schema: {
     type: 'object',
     properties: {
@@ -27,9 +26,7 @@ export const todoPinningTool: ToolDefinition = {
       },
       hash: {
         type: 'string',
-        description:
-          'Current hash of the item (from todo_create output or the todo list). ' +
-          'Must match the stored hash or the operation is rejected.',
+        description: 'Current hash of the item (from todo_create output or the todo list). Must match the stored hash.',
       },
       pinned: {
         type: 'boolean',
@@ -38,10 +35,9 @@ export const todoPinningTool: ToolDefinition = {
       reactivate: {
         type: 'string',
         description:
-          'Natural-language reactivation condition. Only meaningful when ' +
-          'pinned=true. When the system detects this condition is met in the ' +
-          'conversation context, the todo is automatically marked back to not ' +
-          'done. Example: "when the users table is modified (INSERT/UPDATE/DELETE)"',
+          'Reactivation condition (only meaningful when pinned=true): when the ' +
+          'system detects it is met in the conversation context, the todo is ' +
+          'marked back to not done. Example: "when the users table is modified".',
       },
     },
     required: ['id', 'hash', 'pinned'],

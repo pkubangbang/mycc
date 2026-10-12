@@ -10,7 +10,7 @@ import type { ToolDefinition, AgentContext } from '../types.js';
 
 export const questionTool: ToolDefinition = {
   name: 'question',
-  description: 'Ask the user a question and wait for response. Blocks until user answers. Only available in child process (scope: child). Use for clarification during work.',
+  description: 'Ask the user a question and wait for the answer. Blocks until the user responds. Only available in a child process. Use for clarification during work.',
   input_schema: {
     type: 'object',
     properties: {

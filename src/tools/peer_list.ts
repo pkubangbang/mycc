@@ -34,21 +34,21 @@ const PEER_LISTING_CUTOFF_MS = 60 * 60 * 1000;
 export const peersTool: ToolDefinition = {
   name: 'peer_list',
   description:
-    'List online mycc instances so you can see who to talk to via mail_to. Shows two groups: LOCAL peers (other mycc instances on THIS machine — same-machine instances you can also wire together via channel files) and REMOTE peers (instances on OTHER machines you added with peer_connect). ' +
-    'Each entry shows a live/freshness indicator and its session-id; use mail_to(name="<session-id>/lead", ...) to send a message to any of them, local or remote. ' +
-    'Stale local peers (heartbeat older than 1 hour) are omitted even with all=true so the list stays bounded; the omitted count is reported in the summary.',
+    'List online mycc instances so you can see who to talk to via mail_to. Two groups: LOCAL peers (other mycc instances on THIS machine) and REMOTE peers (instances on OTHER machines you added with peer_connect). ' +
+    'Each entry shows a freshness indicator and its session-id; reach any of them via mail_to(name="<session-id>/lead", ...). ' +
+    'Stale local peers (heartbeat older than 1 hour) are omitted even with all=true; the omitted count is in the summary.',
   input_schema: {
     type: 'object',
     properties: {
       include_self: {
         type: 'boolean',
         description:
-          'If true, include this instance itself in the list (marked self=true). Default false — you do not need to discover yourself.',
+          'If true, include this instance itself (marked self=true). Default false.',
       },
       all: {
         type: 'boolean',
         description:
-          'If true, include local peers that are currently offline/stale as well as fresh ones (each marked fresh=true/false). Default false — only fresh (online) instances are listed.',
+          'If true, also list local peers that are offline/stale (each marked fresh=true/false). Default false — only fresh (online) instances are listed.',
       },
     },
   },

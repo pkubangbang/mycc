@@ -29,7 +29,7 @@ export const skillCompileTool: ToolDefinition = {
       },
       feedback: {
         type: 'string',
-        description: 'Optional user feedback for refining the condition. Use when the hook is not working as expected.',
+        description: 'Optional user feedback for refining the condition (use when the hook misbehaves).',
       },
     },
     required: ['name'],

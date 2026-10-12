@@ -13,13 +13,13 @@ import type { ToolDefinition, AgentContext } from '../types.js';
 
 export const issuePublishTool: ToolDefinition = {
   name: 'issue_publish',
-  description: 'Publish a draft issue, transitioning it from draft to pending so it becomes visible to idle teammates for auto-claim. Use this when you want any available teammate to pick up the issue rather than assigning it to a specific one. Returns full issue list.',
+  description: 'Publish a draft issue, moving it from draft to pending so idle teammates can auto-claim it. Use when any available teammate should pick up the issue rather than a specific one. Returns the full issue list.',
   input_schema: {
     type: 'object',
     properties: {
       id: {
         type: 'integer',
-        description: 'Issue ID number to publish. The issue must be in draft status. Use issue_list to find draft issues.',
+        description: 'Issue ID to publish. Must be in draft status (see issue_list).',
       },
     },
     required: ['id'],

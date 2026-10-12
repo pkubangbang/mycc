@@ -23,7 +23,7 @@ import path from 'path';
 
 export const planOnTool: ToolDefinition = {
   name: 'plan_on',
-  description: `Switch to plan mode (code changes prohibited), or if already in plan mode, enable editing for one specific file via allowed_file. The allowed_file parameter works in both directions: entering plan mode with an editable file, or re-enabling editing while already in plan mode. User permission is required when allowed_file is specified.`,
+  description: `Switch to plan mode (code changes prohibited), or if already in plan mode, allow editing of one specific file via allowed_file. User permission is required when allowed_file is specified.`,
   input_schema: {
     type: 'object',
     properties: {

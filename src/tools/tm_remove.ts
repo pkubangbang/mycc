@@ -8,7 +8,7 @@ import type { ToolDefinition, AgentContext } from '../types.js';
 
 export const tmRemoveTool: ToolDefinition = {
   name: 'tm_remove',
-  description: 'Terminate a teammate process. Use tm_await first to let them finish. Set force=true only for stuck teammates. Only available to lead agent.',
+  description: 'Terminate a teammate process. Use tm_await first to let them finish. Set force=true only for stuck teammates.',
   input_schema: {
     type: 'object',
     properties: {
@@ -18,7 +18,7 @@ export const tmRemoveTool: ToolDefinition = {
       },
       force: {
         type: 'boolean',
-        description: 'If true, forcefully kill the process; otherwise send soft shutdown (default: false)',
+        description: 'If true, forcefully kill the process; otherwise soft shutdown (default false).',
       },
     },
     required: ['name'],

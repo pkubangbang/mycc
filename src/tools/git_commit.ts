@@ -57,7 +57,7 @@ async function currentBranch(cwd: string): Promise<string | null> {
 
 export const gitCommitTool: ToolDefinition = {
   name: 'git_commit',
-  description: `Execute git commit with mandatory user permission check. Always use this tool instead of 'bash' for git commits — bash git commit is blocked. The cwd parameter supports committing inside a specific git worktree.`,
+  description: `Execute git commit with a mandatory user permission check. Always use this tool instead of 'bash' for git commits — bash git commit is blocked.`,
   input_schema: {
     type: 'object',
     properties: {
@@ -67,11 +67,11 @@ export const gitCommitTool: ToolDefinition = {
       },
       amend: {
         type: 'boolean',
-        description: 'Set to true to amend the previous commit (optional, default false)',
+        description: 'Amend the previous commit (default false).',
       },
       cwd: {
         type: 'string',
-        description: 'Working directory for the git commit (e.g., a worktree path like ".worktrees/feat"). If omitted, uses the agent\'s current working directory.',
+        description: 'Working directory for the commit, e.g. a worktree path like ".worktrees/feat". Defaults to the agent\'s current working directory.',
       },
     },
     required: ['message'],
