@@ -303,3 +303,78 @@ export function buildWikiDomainsMessages(
     },
   ];
 }
+
+// ============================================================================
+// Collaboration Mechanisms
+// ============================================================================
+
+/**
+ * Build the "similar collaboration mechanisms" map as a projectContext
+ * deliverable. This populator helps the lead distinguish the four ways
+ * agents can collaborate in mycc, which look similar (all route through
+ * `mail_to`) but differ sharply in process model, scope, and mechanism:
+ *
+ *   1. Teammate  — same-session, in-process child agents (one instance).
+ *   2. Peer      — cross-session but LOCAL (separate mycc on this machine).
+ *   3. Remote    — cross-machine, via the webui peer wire (peer_connect).
+ *   4. Compose   — a declarative TOPOLOGY FILE materializing a peer group.
+ *
+ * It names the governing skill for each so the agent can `skill_load` the
+ * full procedure when it needs to wire agents together, rather than
+ * improvising. This is a STATIC reference (no disk/env read): the four
+ * mechanisms and their skills are stable tooling facts, so the content is
+ * byte-identical between rebuilds and never breaks the prompt-cache prefix.
+ *
+ * LEAD-ONLY: registered in agent-repl.ts (the lead), NOT in
+ * teammate-worker.ts. Teammates never spawn teammates/peers (tm_create,
+ * broadcast, peer_connect are lead-only tools), so the map would be
+ * misleading noise in a teammate's context. A lead, by contrast, is the
+ * sole agent that can build a topology of any of the four kinds.
+ */
+export function buildCollaborationMessages(): Message[] {
+  const content =
+    `[System - Collaboration Mechanisms]\n\n` +
+    `mycc offers FOUR ways agents collaborate. They look alike (all route ` +
+    `mail through \`mail_to\`) but differ in process model, scope, and ` +
+    `mechanism. The **lead** picks among them; teammates and peers cannot ` +
+    `spawn or wire others (tm_create / broadcast / peer_connect / ` +
+    `mycc-compose \`up\` are lead-only).\n\n` +
+    `1. **Teammate (same-session)** — a child process of THIS lead, sharing ` +
+    `this instance's session directory. Spawned with \`tm_create\`, driven ` +
+    `with \`mail_to\`/\`broadcast\`/\`issue_*\`. Cheapest, tightest coupling; ` +
+    `used for parallel subtasks inside one instance. Governed by the ` +
+    `\`coordination\` skill.\n\n` +
+    `2. **Peer (cross-session, LOCAL)** — a SEPARATE mycc instance on the ` +
+    `SAME machine (its own session id, process, and context). Discovered via ` +
+    `\`~/.mycc-store/discovery/\` (identity.json + heartbeats + channel ` +
+    `files); addressed with \`mail_to(name="<session-id>/lead", ...)\`. Wiring ` +
+    `is by on-disk channel files. Governed by the \`mediator\` skill.\n\n` +
+    `3. **Remote (cross-machine, via webui)** — an instance on ANOTHER ` +
+    `machine, connected over the dialed WebSocket peer wire with ` +
+    `\`peer_connect(<host:port>)\` (requires the remote to be serving its ` +
+    `webui); \`peer_list\` shows liveness, \`peer_disconnect\` hangs up. Same ` +
+    `\`mail_to("<session-id>/lead")\` interface — the LLM does not care where ` +
+    `the peer lives. See \`docs/remote-peer-protocol.md\`.\n\n` +
+    `4. **Compose (most complex, via a topology FILE)** — a declarative, ` +
+    `no-LLM materializer for a WHOLE GROUP of peers: you write a JSON ` +
+    `topology spec (peers + launch args + which channels link them) and the ` +
+    `\`mycc-compose\` CLI mints/reuses session ids, launches the peers ` +
+    `detached, and writes every channel file. Reproducible and resumable ` +
+    `(\`sync\`). Reach for it only when the group must survive restarts; it ` +
+    `composes mechanisms 2 and 3. Governed by the \`mycc-compose\` skill.\n\n` +
+    `Rule of thumb: one instance + parallelism → teammate; a few local ` +
+    `instances/process isolation → peer; a peer on another machine → ` +
+    `remote; a durable, relaunchable group → compose.`;
+  return [
+    { role: 'user', content },
+    {
+      role: 'assistant',
+      content:
+        'Understood. I can use four collaboration mechanisms — teammate ' +
+        '(same-session child), peer (local cross-session), remote ' +
+        '(cross-machine via peer_connect), and compose (a declarative ' +
+        'topology file) — and I will load the matching skill (coordination / ' +
+        'mediator / mycc-compose) when I need to wire agents together.',
+    },
+  ];
+}

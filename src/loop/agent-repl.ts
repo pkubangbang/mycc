@@ -47,7 +47,7 @@ import { registerSignalHandlers } from './signal-handlers.js';
 import { initDaemonMode } from './daemon-init.js';
 import { ServeDetachedExitError } from '../serve/serve-errors.js';
 import { initHookSystem, buildHookInfoMessages } from './hook-bootstrap.js';
-import { buildPlatformCalendarMessages, buildNodeModulesReminderMessages, buildWikiDomainsMessages } from './prompt-populators.js';
+import { buildPlatformCalendarMessages, buildNodeModulesReminderMessages, buildWikiDomainsMessages, buildCollaborationMessages } from './prompt-populators.js';
 import { loadDomains } from '../context/parent/wiki-utils.js';
 import { wireServeCallbacks } from './serve-wiring.js';
 
@@ -338,6 +338,16 @@ export async function main(): Promise<void> {
   //      boundary, not on every LLM call, so the prompt-cache prefix stays
   //      stable between rebuilds; a zero-message no-op when no domain exists.
   triologue.registerProjectContextPopulator(() => buildWikiDomainsMessages(loadDomains()));
+
+  // (3e) Collaboration mechanisms — LEAD-ONLY. Explains the four ways agents
+  //      collaborate (teammate / peer / remote / compose) and names the
+  //      governing skill for each, so the lead wires agents with the right
+  //      mechanism instead of improvising. Static content (no disk/env read),
+  //      so the prompt-cache prefix stays byte-stable between rebuilds.
+  //      NOT registered in teammate-worker.ts: teammates cannot spawn or wire
+  //      others (tm_create/broadcast/peer_connect/mycc-compose up are
+  //      lead-only), so the map would be misleading noise in a teammate.
+  triologue.registerProjectContextPopulator(() => buildCollaborationMessages());
 
   // (3c) Skill keywords are NO LONGER injected here as a project-context
   //      populator. The available skill-keyword list is now passed into the

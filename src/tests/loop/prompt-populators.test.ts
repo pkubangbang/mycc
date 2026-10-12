@@ -21,7 +21,7 @@ import { describe, it, expect } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import { buildPlatformCalendarMessages, buildNodeModulesReminderMessages, buildWikiDomainsMessages } from '../../loop/prompt-populators.js';
+import { buildPlatformCalendarMessages, buildNodeModulesReminderMessages, buildWikiDomainsMessages, buildCollaborationMessages } from '../../loop/prompt-populators.js';
 
 describe('buildPlatformCalendarMessages', () => {
   it('returns a user + assistant message pair', () => {
@@ -140,5 +140,42 @@ describe('buildWikiDomainsMessages', () => {
     expect(user.content).toContain('- bare\n');
     expect(user.content).not.toContain('- bare:');
     expect(user.content).toContain('- described: has a description');
+  });
+});
+
+describe('buildCollaborationMessages', () => {
+  it('returns a user + assistant message pair', () => {
+    const messages = buildCollaborationMessages();
+    expect(messages).toHaveLength(2);
+    expect(messages[0].role).toBe('user');
+    expect(messages[1].role).toBe('assistant');
+  });
+
+  it('names all four collaboration mechanisms in the user content', () => {
+    const [user] = buildCollaborationMessages();
+    expect(user.content).toContain('[System - Collaboration Mechanisms]');
+    expect(user.content).toContain('Teammate (same-session)');
+    expect(user.content).toContain('Peer (cross-session, LOCAL)');
+    expect(user.content).toContain('Remote (cross-machine, via webui)');
+    expect(user.content).toContain('Compose (most complex, via a topology FILE)');
+  });
+
+  it('references the governing skill for each mechanism', () => {
+    const [user] = buildCollaborationMessages();
+    expect(user.content).toContain('coordination');
+    expect(user.content).toContain('mediator');
+    expect(user.content).toContain('mycc-compose');
+  });
+
+  it('identifies teammate spawn and peer/remote/compose tools', () => {
+    const [user] = buildCollaborationMessages();
+    expect(user.content).toContain('tm_create');
+    expect(user.content).toContain('peer_connect');
+    expect(user.content).toContain('mail_to');
+    expect(user.content).toContain('session-id');
+  });
+
+  it('is byte-stable across invocations (no dynamic content)', () => {
+    expect(buildCollaborationMessages()).toEqual(buildCollaborationMessages());
   });
 });
