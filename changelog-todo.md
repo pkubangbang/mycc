@@ -27,11 +27,12 @@ When updating the changelog, use the following procedure:
 
 # Change Log
 
-> **Archive**: For changelog entries before September 2026, see `changelog-202608.md`. For July 2026, see `changelog-202607.md`. For June 2026, see `changelog-202606.md`. For May 2026, see `changelog-202605.md`. For April 2026, see `changelog-202604.md`.
+> **Archive**: For September 2026 entries, see `changelog-202609.md`. For August 2026 and earlier, see `changelog-202608.md`. For July 2026, see `changelog-202607.md`. For June 2026, see `changelog-202606.md`. For May 2026, see `changelog-202605.md`. For April 2026, see `changelog-202604.md`.
 
 <!-- July 2026 entries rotated to changelog-202607.md on 2026-08-03. -->
 <!-- August 2026 entries rotated to changelog-202608.md on 2026-09-02. -->
-<!-- Add new (September 2026 onward) entries below this line. -->
+<!-- September 2026 entries rotated to changelog-202609.md on 2026-10-12. -->
+<!-- Add new (October 2026 onward) entries below this line. -->
 
 ## 2026-08-29
 ### Chores
@@ -45,141 +46,81 @@ When updating the changelog, use the following procedure:
 ### Fixes
 - **Peer**: Show `/peer` and `peers` timestamps in local time (was UTC via `toISOString()`); add `formatLocalDateTime()` util in `src/utils/time.ts` and use it at all four call sites.
 
-## 2026-09-01
+## 2026-10-02
+### Refactoring
+- **Compose**: Readability pass over peer-lifecycle doc comments; fail-fast launch for `mycc-compose`.
+
+## 2026-10-03
+### Fixes
+- **Compose**: Parse real npm shims (`%dp0%` prog) and pin stop identity to the session id; preserve repeated-flag multiplicity in `argsMatch`; honor `allowStop` for `renew:always` (no destructive restart on cron); `down --stop` stops before deleting channels and exits non-zero on a refused stop; reject unsupported remote URLs and bare daemon; allow omitted secret args in peer matching.
+- **Session**: Collision-safe lead triologue filename under pinned-sid same-second relaunch.
+### Tests
+- **Compose**: Cover omitted-secret matching, daemon/remote URL validation.
+
+## 2026-10-04
 ### Features
-- **ProjectContext**: Add node_modules detection populator — detects `node_modules/` in cwd and reminds the agent to exclude it from `ls`/`grep` (the grep tool auto-excludes it, but the bash tool does not); registered for lead + teammates, no-op for non-Node projects.
-- **WebUI**: Add state-machine stage tag chip row (verboseLogs only) for `isWaiting` desync diagnosis — derived stage label, raw boolean chips, buffer counters, and last server message type/timestamp; add `ChatState.lastServerMsg` + `DebugSnapshot` mirror + send→running latch with 15s expiry.
+- **mycc-compose**: Declarative peer topology — atomic pinned-sid ownership claim, strict identity lock, close the identity lost-update race, port-required remotes.
+
+## 2026-10-07
 ### Fixes
-- **Windows**: Fix PS 5.1 `Get-Content` read-side mojibake (add `$PSDefaultParameterValues['Get-Content:Encoding']='utf8'` to the 5.1 Layer-2 patch); make `bg_create` symmetric with the bash tool (use detected shell, per-shell preamble, filter CLIXML noise, add `PYTHONUTF8`).
-### Refactoring
-- **Prompts**: Split the 574-line `agent-prompts.ts` monolith into `prompts/{common,lead,teammate}.ts` (no barrel re-export); repoint importers + test mocks; delete stale empty `agent-prompts/` dir.
+- **mycc-compose**: `down` always terminates peers.
 
-## 2026-09-02
-### Refactoring
-- **Prompts**: Extract the intent-lang section into `intent-lang.ts` and move the plan-base prompt to `lead.ts`; convert `common.ts` section builders to array-literal join style; replace `lines.push` with array literals in intent-lang; fix `bg.ts` lint (prefer-template). Output byte-identical (baseline round-trip test); tsc + eslint (0 warnings) + 2691 vitest tests pass.
-- **AWAIT**: Rename state-machine stage `WAIT`→`AWAIT` (state file `state/wait.ts`→`state/await.ts`) and add `--disable-crossroad` flag.
-- **Team**: Replace STOP's one-shot `awaitTeam` with event-polling teammate wait; unify `teammate_await` into a single `awaitTeammates` primitive; annotate stale teammate deadline in `printTeam` and document its advisory nature.
-- **Coordination**: Add Counterwork, Delphi, and Scratchpad topologies.
-### Docs
-- **README**: Fix inconsistencies — C++ compiler only needed when building from source (native deps ship prebuilt binaries/WASM); note `@pkubangbang/mycc` is not published (must run from source); tmux is optional (only used by `hand_over`); document auto mode and daemon mode; add `--auto`/`--daemon` flags to config table.
-
-## 2026-09-03
-### Fixes
-- **Collect**: Self-recover from transient errors in auto mode.
-
-## 2026-09-06
-### Fixes
-- **Loop**: Drain stale steering notes on 停止/ESC neglection to break the AWAIT re-wake tight loop.
-- **Display**: Strip single-vline DSML markup in the `hook.ts` brief path.
-
-## 2026-09-07
+## 2026-10-08
 ### Features
-- **Stream**: Replace the 120s total timeout with a 10s inter-token liveness check; add phase-aware liveness timeout with escalation between thinking and response phases.
-- **Spinner**: Show live time + token stats after a 5s wait.
+- **Vision**: Support `screen`/`read_picture` under the DeepSeek provider.
+- **bg**: Bound completion on process exit, not stdio EOF.
 ### Fixes
-- **Stream**: Remove un-tracked abort listeners on the normal-completion path.
-- **Peer**: Retry `rename` on Windows `EPERM` in `atomicWrite` and clean orphaned temp files.
+- **bg**: Detect completion on process exit, not stdio close; wait for output finalization in `bg_await`, not just process exit.
+- **Stop**: Mode-aware teammate wait — isolate wake-reason from user interrupt; bounded teammate wait (STOP must not accept `mail`/`steering`).
 ### Refactoring
-- **Utils**: Extract shared `atomicWrite` util and dedup across 8 call sites; dedup `getSessionsDir` by importing from config.
-
-## 2026-09-08
-### Features
-- **WebUI**: Add synthetic flag to the brief pipeline — hide machine-originated briefs from the WebUI chat log; auto-aware `running:off` routing + unified uppercase stage vocabulary.
-### Fixes
-- **WebUI**: Activate Pinia before module-level store creation; remove premature `drainSteering` from `stop.ts` so steering notes surface as review cards.
-### Refactoring
-- **WebUI**: Drop redundant stage-row chips now that the phase enum is the single source of truth; drop dead stage-chip CSS from `ChatInput`.
-
-## 2026-09-10
-### Fixes
-- **escAware**: Register `AbortController` on the `agentIO` global slot.
-
-## 2026-09-13
-### Refactoring
-- **Crossroad**: Extract the semantic detector into `@pkubangbang/crossroad-detector` and consume the published `0.1.1` package.
+- **Stop**: Extract mode-aware teammate-wait handling.
 
 ## 2026-10-09
-### Refactoring
-- **Config/Prompts**: Remove `ensureGitignore()` (and its `isInsideGitRepo()` helper + `ensureDirs()` call), which silently created/edited the user's `.gitignore` on every startup; replace it with a `## Project Ignore` system-prompt section (`buildProjectIgnoreSection()` in `prompts/common.ts`, wired into `buildCommonSections()`) telling the agent to keep `.mycc/` out of version control and to add `/.mycc/*` only when the task actually touches git.
-### Docs
-- **Crossroad**: Add crossroad detector case study; bump version to `0.11.0`.
-
-## 2026-10-09b
 ### Features
 - **Auto-Commit**: Add `--allow-auto-commit <branches>` (env `MYCC_ALLOW_AUTO_COMMIT`) — an auto-mode pre-authorization that lets the lead run `git_commit` on comma-separated allow-listed branches without the interactive prompt. Fail-closed: NORMAL mode only (`plan` short-circuits), detached HEAD / unlisted branch falls through to the normal deny path, and every auto-approved commit carries an `Auto-Committed-By: mycc --allow-auto-commit` + `Auto-Commit-Branch: <branch>` trailer. Mirrors `--allow-plan-off` (checks `getAuto()` BEFORE `question()`, never the `source==='auto'` pattern). Pair with CI on protected branches — the flag is a narrow launch-time grant, not a security boundary.
-
-## 2026-09-14
-### Features
-- **Serve**: Add persistent WebUI for headless daemon; add `sendToParent` singleton wrapper for Coordinator IPC.
 ### Fixes
-- **Recap**: Show a spinner while the recap forks run.
-- **Daemon**: Display the Lead's real PID, not the wrapper's.
-- **Package**: Bump version and make the repo not publishable.
-### Docs
-- **Skills**: Document the recap-to-mindmap blind spot in `mycc-self-awareness`; update the tool description of `hand_over`.
-
-## 2026-09-15
-### Features
-- **Peer Wire**: Add cross-machine peer wire and todo previous-hash lineage ring.
-### Fixes
-- **Peer Wire**: Keep `socketsBySid` + `sidIndex` coherent across SID migration; make `peer_disconnect` SID-scoped (whole-pair) across the convergence window; address PR #11 review findings (sidIndex, wss reconnect, token header, payload check).
-- **Daemon**: Display the Lead's real PID, not the wrapper's.
-
-## 2026-09-16
-### Features
-- **Collect**: Composite keyword extraction (X+Y+Z) in the COLLECT state; outcome-gated throttle for keyword extraction.
-- **Skills**: Migrate `hand-over-ethics` to built-in with content improvements.
-### Fixes
-- **Config**: Remove dead `--debug-prompt` flag, relocate `--debug-wire` to Debug Flags, align docs with code.
+- **Notes**: De-fang the skill `[HINT]` nudge and stop re-announcing suggested skills; drop the fabricated `brief` example from the lead nudge; de-duplicate and de-fabricate the teammate cadence nudges; drop the fabricated `eta` literal from the budget nudge; give the auto-claim note an actor + close contract; stop asserting worktrees are "stale" before the remove advice; make the teammate plan-mode note state the real parent grant gate; split the ESC directive from the mail payload in neglected mode; give MAIL notes explicit reply routing + peer/sender annotation.
+- **Confusion**: Stop charging teammates for probe-misses and PowerShell reads.
+- **Triologue**: Close all `tool_calls` interposition paths + add a `tp-violation` probe; flush deferred inputs on `duplicate_assistant` recovery.
 ### Refactoring
-- **Collect**: Extract `handleCollect` steps into 6 named functions.
-
-## 2026-09-17
-### Features
-- **Output**: Suppress decoration when stdout is not a TTY; close the `--help` plain-output hole.
-- **Wiki**: Render `/wiki rebuild` progress bar unconditionally.
-- **Mindmap**: Show batch size (xN) in progress display for multi-call rounds.
-### Fixes
-- **Triologue**: Stop sanctioning auto-progression via synthetic "continue" messages; eliminate the compact→LLM `duplicate_assistant` TP violation via brief tool-call resume; drop the blanket "Continuing." from the crossroad synthetic brief; stop silently suppressing the `[HINT]` note on "no blockers".
-- **Output**: Close P1 raw-write hole and P2 `--debug-ansi` TTY hole.
-### Refactoring
-- **Mindmap**: Re-indent the diff-mindmap progress block to 2 spaces.
+- **Config/Prompts**: Remove `ensureGitignore()` (and its `isInsideGitRepo()` helper + `ensureDirs()` call), which silently created/edited the user's `.gitignore` on every startup; replace it with a `## Project Ignore` system-prompt section (`buildProjectIgnoreSection()` in `prompts/common.ts`, wired into `buildCommonSections()`) telling the agent to keep `.mycc/` out of version control and to add `/.mycc/*` only when the task actually touches git.
+- **Steering**: `SteeringManager` refactor — loop-homed singleton + three delivery seams.
 ### Docs
-- **Skills**: Lead descriptions with function, demote trigger mechanics.
+- **Crossroad**: Add crossroad detector case study.
 ### Chores
-- **Deps**: Bump package dependencies; bump patch version to `0.11.4`.
+- **Release**: Bump version to `0.11.6`.
 
-## 2026-09-18
+## 2026-10-10
 ### Features
-- **Serve**: Add weak-ETag/304 to `/history` and sessionId to `/config`; configure vite `publicDir` to `.mycc/public` and add `serve-public-dir` skill.
-- **Hook**: Redefine turn/session semantics with compaction-immune `totalTurns`.
+- **Serve**: Lazy-load the serveHub stack off the plain-boot path.
 ### Fixes
-- **Hook**: Reject bare function-only identifiers (`totalTurns`/`isPlanMode`).
-- **Triologue**: Drop blanket "Continuing." from crossroad synthetic brief.
-- **WebUI**: IndexedDB chatlog cache + collapse early chatlog with infinite scroll; fix reconnect session fencing + hydrate-before-mount.
-
-## 2026-09-19
-### Features
-- **WebUI**: Atomic session switch, ETag-after-parse, stable `v-for` key; pure collapse-state reducer, WS gate, `historyDirty`; gate WS on `/config` success, isolate verbose-toggle from append; single-watcher collapse classifier, RFC `If-None-Match`; pure `applyObservation` transition; `historyRevision` reset signal + loadMore DOM-message scroll anchoring; measure loadMore anchor child rect + normalize cached message IDs; document loadMore anchor id-guarantee + anchor-regression tests.
+- **Notes**: Wake-source note for headless daemons; tell the LLM when the Web UI starts and stops; frame the team-status note as an informational snapshot; name the originating hook on deferred-message notes; attribute the bang-command pane capture to the user's handed-over terminal.
+- **Hint**: Drop the empty wiki field, fold the pending-skill line, name the brief tool; let the analyzer see its own prior hints and escalate instead of repeating.
+- **Skill**: Grant exactly one retry pass on an empty `freeformQuery`.
+- **Teammate**: Count the failure before reporting it and stop promising a retry on the idle turn; honest failure notes (conditional orientation + real lead-notify outcome); give the auto-compact notes an actionable lever.
+- **Collect**: Attribute the pinned-todo reactivation note to the evaluator.
+- **Loop**: Preserve `lastUserQuery` on replay + confusion on a failed hint; address PR #30 simulation-review findings + repair gates; guard recap roots and isolate retry prompt failures; preserve steering arrivals and de-duplicate crossroad prefixes; bound hint retries and repair the deferred tool flow; keep production trace memory bounded.
+- **Serve**: Clean up a partially-initialized serve stack on `start()` failure; settle the input wait on failed `restartServe`; publish `webui-down` on failed `restartServe`; address PR #29 human review (2 P1 + 1 P2).
+- **Crossroad**: Accept continuations after stripping the full prefix.
+- **agent-io**: Latch serve shutdown against repeated ESC.
+- **Reload**: Forward the lead's full launch argv on `/reload`.
+- **Hook**: Surface WHERE a failing condition died + thread real call context.
 ### Refactoring
-- **WebUI**: Rework chatlog collapse boundary control (x / t / trackingTail).
+- **Collect**: Extract the pinned-todo reactivation pass into `collect-pinned-todo.ts`.
+### Docs
+- **Coordination**: Add Pattern 11 Simulation Review (aggregation-root simulation).
+- **Triologue**: Clarify provider-aware deferred replay.
+### Tests
+- **Loop**: Cover deferred compact and bounded hint retries; cover the summary prompt contract.
+- **Prompt**: Preserve steering added during synthesis; import the synthesis provider in the steering race test.
 
-## 2026-09-20
-### Features
-- **Wiki**: State-machine 2FC write path + native cosine search.
-- **Skill-Index/WAL**: Extract skill-index and WAL handling from `WikiManager`.
-### Fixes
-- **Wiki**: Key PENDING→LIVE on a per-row uuid; stop exporting the transient id.
-- **Coordinator**: Launch discipline + peer-mail channel-completeness warning.
-
-## 2026-09-21
-### Features
-- **Collect**: Branching skill suggestion with semantic intersection.
-- **Wiki**: Fault-injected crash → restart → rebuild convergence tests (test coverage).
-### Fixes
-- **Collect Skill**: Reset stale turn state on fresh-session clear; reset singleton on `/clear` and double-Ctrl+L.
+## 2026-10-12
 ### Refactoring
-- **Collect**: Extract hint round into `collect-hint.ts`; extract skill suggestion into `collect-skill.ts`; move discovery state into a `SkillSuggester` singleton; merge `buildSkillKeywordsMessages` populator into `extractKeywords`.
+- **Hint**: Own the hint round at the composition root + actionable wiki pre-filter — the facade (`Triologue`) no longer carries RAG-layer knowledge (`wiki?` removed from `TriologueOptions`); `compact()` takes caller-injected `domains` data instead of reading a `wiki` module; construct a fresh `HintRoundManager` per round instead of memoizing on the singleton (avoids silently promoting the dependency lifetime from per-facade to per-process).
+### Tests
+- **Compact**: Add the required `domains` field to the `CompactDeps` fixture.
+### Chores
+- **Merge**: PR #31 (`feat/wiki-hint-refactor`) merged into `main`.
 
 # Todo
 
