@@ -468,6 +468,7 @@ export class Loader implements DynamicLoader, SkillModule {
     // no-op.
     const debouncedReindex = debounce(
       () => {
+        agentIO.verbose('loader', 'Skill rebuild scheduled: wiki re-index queued (skill file changed under .mycc/skills/)');
         sendToParent({ type: 'skill_reindex' });
       },
       120000,

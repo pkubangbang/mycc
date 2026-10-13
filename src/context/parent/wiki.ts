@@ -153,7 +153,7 @@ export class WikiManager implements WikiModule {
   /** Owns skill re-indexing (cache, batch diff, orphan sweep, cross-instance lock). */
   private skillIndexer = new SkillIndexer(
     this,
-    (message) => this.core.brief('info', 'wiki', message),
+    (message) => this.core.verbose('wiki', message),
   );
   constructor(core: CoreModule) {
     this.core = core;
