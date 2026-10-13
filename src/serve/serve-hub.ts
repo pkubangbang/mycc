@@ -280,13 +280,19 @@ export class ServeHub implements HubHandler, ServeHubLike {
           // public folder changes" bug. The public dir is served statically by
           // Vite's servePublicMiddleware regardless of the watcher, so
           // excluding it costs nothing and keeps live updates uninterrupted.
-          // NOTE: the key MUST be `exclude` (NOT `ignored`): Vite 8's
-          // Rolldown-based dev watcher forwards only a whitelist of options
-          // (usePolling/pollInterval/interval/useDebounce/…/include/exclude) —
-          // `ignored` is silently dropped and would be a no-op. `.mycc/` also
-          // holds sessions/transcripts/skills, all HMR noise for the same
-          // reason. Strings are treated as glob patterns by the watcher.
-          watch: { exclude: ['**/.mycc/**'] },
+          // NOTE: the key MUST be `ignored` (the chokidar option, NOT
+          // `exclude`). Vite 8 gates its Rolldown bundled-dev watcher (the
+          // only path that forwards `exclude`) behind
+          // `experimental.bundledDev`, which defaults to FALSE
+          // (verified in vite@8.3.0 dist: `experimental: { …, bundledDev:
+          // false }`). This project sets no `bundledDev`, so the DEFAULT
+          // chokidar watcher governs — and chokidar reads `ignored`
+          // (resolveChokidarOptions() destructures `ignored`, builds the
+          // ignored list from it). Keying on `exclude` there is a silent
+          // no-op, which is how the flicker regression slipped back in.
+          // `.mycc/` holds sessions/transcripts/skills — all HMR noise.
+          // Strings are treated as glob patterns by the watcher.
+          watch: { ignored: ['**/.mycc/**'] },
         },
         appType: 'custom',
         configFile: false, // inline config only — avoid parent vite.config
