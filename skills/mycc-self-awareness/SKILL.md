@@ -83,7 +83,7 @@ plain-language summary; the sibling file has the full detail where noted.
 | **WebUI (`--serve`)** | A local HTTP server (default port 3173, localhost) serving a browser chat interface for the same agent loop. NOT a headless-peer mode. | `io-surfaces.md`, `launching-and-locating.md` |
 | **`--auto`** | A separate flag from `--serve`; changes the lead's prompt loop to run autonomously without a human at the terminal. Orthogonal to serve mode. | `launching-and-locating.md` |
 | **ESC / neglected mode** | Aborts the in-flight LLM call, skips queued tools, produces a text-only wrap-up, returns to prompt. The "interrupt and redirect" button. | — |
-| **slash commands** | `/`-prefixed commands that bypass the LLM (`/mode`, `/plan`, `/mindmap`, `/load <id>`, `/clear`, `/todos`, `/team`, `/issues`, `/help`). | — |
+| **slash commands** | `/`-prefixed commands that bypass the LLM — 22 in total (`/mode`, `/plan`, `/mindmap`, `/load <id>`, `/clear`, `/todos`, `/team`, `/issues`, `/help`, plus `/serve`, `/peer`, `/fork`, `/compact`, `/save` and more); `/help` lists all. | — |
 | **session** | A new UUID each start; **sealed** on exit (read-only archive). `/load <id>` derives a brand-new session (NOT a resume) by re-reading the transcript. | `io-surfaces.md` (folder layout) |
 | **plan mode** | A read-only mode where the agent can read and reason but cannot edit files or run state-changing commands. Switch with `/mode` or `/plan`. | — |
 
@@ -94,7 +94,7 @@ plain-language summary; the sibling file has the full detail where noted.
 | **teammate / team** | A child-process agent spawned by the lead to work in parallel; shares the lead's session; cheap to coordinate. In-process. | `coordination` skill |
 | **peer / channel** | A *separate* mycc instance (own process/cwd), discovered via `peers`; a channel is a file-pair a mediator writes to wire instances together. Cross-instance. | `mediator` skill |
 | **communication model** | Mail is push-based: `mail_to` appends one line to the recipient's mailbox; the recipient's next COLLECT drains it and injects it as a `[MAIL]` note. Fire-and-forget; never poll. | `mediator` skill |
-| **worktree** | A parallel checkout of the same git repo on a new branch (`wt_create`/`wt_enter`/`wt_leave`/`wt_remove`/`wt_print`). | `worktree` skill |
+| **worktree** | A parallel checkout of the same git repo on a new branch. No dedicated tools — managed with plain `bash` git worktree commands; spawn a teammate directly inside one via `tm_create`'s `cwd` parameter (worktree dir name must equal the teammate name). | `worktree` skill |
 | **service / `--daemon`** | A skill that declares `service: true` in frontmatter and runs as a **long-lived headless background process** via `mycc --daemon <skill>` (auto mode on, no terminal). Cron-scheduled if it also declares `service_cron`. | `daemon-services.md` |
 | **service_cron** | A cron expression (e.g. `"0/10 * * * *"`) in a service skill's frontmatter; the daemon starts a timer that periodically injects a "Service nudge" mail to drive the agent — **deterministic** scheduling, not LLM self-identification. | `daemon-services.md` |
 
@@ -121,8 +121,9 @@ mycc's relationship with Ollama is **not uniform**:
   Even DeepSeek-only deployments need a **local** Ollama for embeddings.
 - **SOFT (alternative exists):** Chat (DeepSeek can replace Ollama;
   `OLLAMA_API_KEY` IS honored for cloud-Ollama chat); vision (only when
-  `read_picture`/`screen` are used); web search (independent plumbing,
-  Ollama-provider-gated).
+  `read_picture`/`screen` are used; provider-aware — under DeepSeek handled
+  by `DEEPSEEK_VISION_MODEL`, so available on both providers); web search
+  (works under both providers — only `web_fetch` is Ollama-only).
 
 > **Full analysis with source-code references:** see
 > `ollama-dependencies.md`.

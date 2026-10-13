@@ -17,7 +17,10 @@ Configuration is stored in `.env` files:
 | `OLLAMA_EMBEDDING_MODEL` | Embedding model (default: nomic-embed-text) |
 | `OLLAMA_API_KEY` | API key for cloud features (optional) |
 | `DEEPSEEK_API_KEY` | DeepSeek API key |
-| `DEEPSEEK_MODEL` | DeepSeek model (default: deepseek-chat) |
+| `DEEPSEEK_HOST` | DeepSeek API endpoint (default: https://api.deepseek.com) |
+| `DEEPSEEK_MODEL` | DeepSeek model (default: deepseek-v4-pro) |
+| `DEEPSEEK_VISION_MODEL` | DeepSeek vision model for image tools (default: deepseek-flash) |
+| `API_PROVIDER` | Chat provider: "ollama" or "deepseek" (default: ollama) |
 | `TOKEN_THRESHOLD` | Context limit for auto-compaction (default: 50000) |
 | `EDITOR` | Text editor for multiline input |
 
@@ -36,7 +39,9 @@ highest priority, overriding `.env` files and system environment variables.
 | `--deepseek-host` | `DEEPSEEK_HOST` | DeepSeek API endpoint |
 | `--deepseek-api-key` | `DEEPSEEK_API_KEY` | DeepSeek API key |
 | `--deepseek-model` | `DEEPSEEK_MODEL` | DeepSeek model name |
+| `--deepseek-vision-model` | `DEEPSEEK_VISION_MODEL` | DeepSeek vision model (default: deepseek-flash) |
 | `--api-provider` | `API_PROVIDER` | API provider: "ollama" or "deepseek" |
+| `--daemon [skill]` | — | Headless background daemon (forces auto mode); see `daemon-services.md` |
 | `--token-threshold` | `TOKEN_THRESHOLD` | Context limit threshold |
 | `--editor` | `EDITOR` | Text editor for file editing |
 | `--serve [port]` | — | Start the Web UI (bare flag = default port 3173) |
@@ -45,6 +50,11 @@ highest priority, overriding `.env` files and system environment variables.
 | `--auto` | — | Autonomous mode (lead auto-replies to mail, no human at terminal) |
 | `--skip-healthcheck` | — | Skip the Ollama health check for faster startup |
 | `-v` / `--verbose` | — | Verbose logging |
+
+> The flag list above covers the core launch/config flags. Newer flags
+> (`--wire-token`, `--allow-plan-off`, `--allow-auto-commit`, `--debug-*`,
+> `--autofly`, …) and their current defaults live in the project
+> `README.md` (Configuration Flags table).
 
 ## Override Priority
 
