@@ -268,7 +268,26 @@ export class ServeHub implements HubHandler, ServeHubLike {
         root: WEB_ROOT,
         publicDir, // serve <cwd>/.mycc/public at root path `/` during dev
         plugins: [vue()],
-        server: { middlewareMode: true, hmr: { server: this.httpServer } },
+        server: {
+          middlewareMode: true,
+          hmr: { server: this.httpServer },
+          // Exclude the public dir (and the whole .mycc tree) from Vite's dev
+          // file watcher. Without this, every write the agent makes into
+          // `.mycc/public/` (screenshots, exported DAGs, images) is registered
+          // with the watcher; since those files are NOT in the client module
+          // graph, handleHMRUpdate emits a `full-reload` payload and the
+          // browser reloads the whole page — the "WebUI flickers when the
+          // public folder changes" bug. The public dir is served statically by
+          // Vite's servePublicMiddleware regardless of the watcher, so
+          // excluding it costs nothing and keeps live updates uninterrupted.
+          // NOTE: the key MUST be `exclude` (NOT `ignored`): Vite 8's
+          // Rolldown-based dev watcher forwards only a whitelist of options
+          // (usePolling/pollInterval/interval/useDebounce/…/include/exclude) —
+          // `ignored` is silently dropped and would be a no-op. `.mycc/` also
+          // holds sessions/transcripts/skills, all HMR noise for the same
+          // reason. Strings are treated as glob patterns by the watcher.
+          watch: { exclude: ['**/.mycc/**'] },
+        },
         appType: 'custom',
         configFile: false, // inline config only — avoid parent vite.config
       });
