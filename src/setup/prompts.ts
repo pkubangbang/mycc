@@ -133,7 +133,7 @@ function getSharedPrompts(): PromptConfig[] {
     {
       name: 'TOKEN_THRESHOLD',
       message: 'Token threshold for context management',
-      default: '50000',
+      default: '100000',
       help: 'Context limit threshold for managing conversation size',
       validate: validatePositiveNumber,
     },
@@ -234,7 +234,7 @@ export const ENV_REQUIREMENTS: EnvRequirement[] = [
   {
     name: 'TOKEN_THRESHOLD',
     required: false,
-    default: '50000',
+    default: '100000',
     instruction: 'Set TOKEN_THRESHOLD for context limit',
   },
   {

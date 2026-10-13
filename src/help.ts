@@ -56,7 +56,7 @@ const CONFIG_FLAGS: FlagRow[] = [
   { flag: '--deepseek-model <model>', env: 'DEEPSEEK_MODEL', desc: 'DeepSeek model name (default: deepseek-v4-pro)' },
   { flag: '--deepseek-vision-model <model>', env: 'DEEPSEEK_VISION_MODEL', desc: 'DeepSeek vision model for screen/image tools (default: deepseek-flash)' },
   { flag: '--api-provider <ollama|deepseek>', env: 'API_PROVIDER', desc: 'API provider (default: ollama)' },
-  { flag: '--token-threshold <n>', env: 'TOKEN_THRESHOLD', desc: 'Context limit threshold (default: 50000)' },
+  { flag: '--token-threshold <n>', env: 'TOKEN_THRESHOLD', desc: 'Context limit threshold (default: 100000)' },
   { flag: '--editor <cmd>', env: 'EDITOR', desc: 'Text editor for file editing' },
   { flag: '--skill-match-threshold <0-1>', env: 'SKILL_MATCH_THRESHOLD', desc: 'Skill similarity threshold (default: 0.5)' },
   { flag: '--max-upload-mb <n>', env: 'MYCC_MAX_UPLOAD_MB', desc: 'Max single-file upload size (MB) for /serve Web UI (default: 50)' },

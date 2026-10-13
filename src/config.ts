@@ -545,7 +545,7 @@ export function isWireDebugLocal(): boolean {
  * Get token threshold for context management
  */
 export function getTokenThreshold(): number {
-  return parseInt(process.env.TOKEN_THRESHOLD || '50000', 10);
+  return parseInt(process.env.TOKEN_THRESHOLD || '100000', 10);
 }
 
 /**

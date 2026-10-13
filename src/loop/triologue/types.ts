@@ -29,7 +29,7 @@ export interface ToolAlignmentWarning {
 }
 
 export interface TriologueOptions {
-  /** Token threshold for auto-compact (default: 50000) */
+  /** Token threshold for auto-compact (default: 100000) */
   tokenThreshold?: number;
   /** Result size threshold in chars (default: 20000) */
   resultThreshold?: number;
