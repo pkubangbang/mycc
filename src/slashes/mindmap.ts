@@ -102,7 +102,7 @@ async function handleCompile(context: { ctx: import('../types.js').AgentContext;
     // ── Patch rebuild: BFS in-memory tree → clean jsonl ──
     // Takes the current in-memory merged tree (if any, with patches applied)
     // and emits a minimal, consistent patch set against the freshly compiled
-    // mindmap.json. Eliminates duplicate/stale patches. See docs/mindmap-redesign.md Part 1.
+    // mindmap.json. Eliminates duplicate/stale patches. See docs/mindmap/mindmap-redesign.md Part 1.
     const currentMerged = context.ctx.core.getMindmap();
     const patchPath = getPatchPath(workDir);
     const cleanPatches = rebuildPatches(

@@ -37,7 +37,7 @@ import { stripInternalMarkup } from '../../utils/letter-box.js';
 /**
  * Display the assistant's text content mid-loop via brief, stripping internal
  * DSML markup first. The LLM sometimes leaks DSML tool-call markup into the
- * content stream (see docs/deepseek-api-pitfalls.md §6). The letter-box strips
+ * content stream (see docs/providers/deepseek-api-pitfalls.md §6). The letter-box strips
  * at STOP, but these mid-loop briefs bypass it — without stripping here the
  * raw markup reaches the terminal. Content that is ENTIRELY DSML strips to
  * empty and is skipped (nothing displayable).
@@ -290,7 +290,7 @@ async function handleRecapCall(
   // ── Apply mindmap patch (if produced by forkChat #2) ──
   // Both the in-memory tree and the jsonl are updated simultaneously.
   // jsonl is the source of truth; in-memory is ephemeral (rebuilt from jsonl
-  // at next startup). See docs/mindmap-redesign.md Part 2.6.
+  // at next startup). See docs/mindmap/mindmap-redesign.md Part 2.6.
   if (patch) {
     const mindmapForPatch = ctx.core.getMindmap();
     if (mindmapForPatch) {

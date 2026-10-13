@@ -50,7 +50,7 @@ bidirectional pipe, so only ONE side declares it). Rules enforced by
   practical mutual-dial signature for a 2-node spec).
 
 `--session-id` is launcher-managed; declaring it in `args` is rejected. See
-`docs/remotes-design-decision.md` for the direction/dedupe decision.
+`docs/peers/remotes-design-decision.md` for the direction/dedupe decision.
 
 ### `renew` semantics
 

@@ -641,7 +641,7 @@ export function getRagProvider(): RagProvider {
  * echoed the token back, confirming the model ID, the `image_url` content
  * block, and that `thinking:{type:'enabled'}` does not cause a 400).
  *
- * Note: `docs/deepseek-api-reference.md` lists the older `deepseek-v4-flash`
+ * Note: `docs/providers/deepseek-api-reference.md` lists the older `deepseek-v4-flash`
  * naming — that reference covers text chat/tools only and has no
  * vision/`image_url` section, so it does not contradict this ID.
  *

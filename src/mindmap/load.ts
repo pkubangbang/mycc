@@ -1,6 +1,6 @@
 /**
  * load.ts - Load mindmap from JSON
- * @see docs/mindmap-design.md
+ * @see docs/mindmap/mindmap-design.md
  */
 
 import * as fs from 'fs';

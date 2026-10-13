@@ -11,7 +11,7 @@
  * - Hash-gated: each action records the mindmap.json hash it was created
  *   against; only hash-matching actions are replayed
  *
- * @see docs/mindmap-redesign.md
+ * @see docs/mindmap/mindmap-redesign.md
  */
 
 import * as fs from 'fs';

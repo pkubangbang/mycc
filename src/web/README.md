@@ -6,7 +6,7 @@ agent REPL over the browser: same agent loop, same LLM, same tools — input
 and output are bridged over a WebSocket instead of a TTY.
 
 This document is the developer reference for the WebUI subsystem. For the
-original design rationale, see `docs/serve-plan.md`.
+original design rationale, see `docs/webui/serve-plan.md`.
 
 ---
 

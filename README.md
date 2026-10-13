@@ -79,7 +79,7 @@ The model's maximum context (e.g. 128k for `glm-5:cloud`, 131k for `deepseek-cha
 
 **Rule of thumb:** set `TOKEN_THRESHOLD` to roughly **70–80% of the model's max context**. For example, with a 128k-context model, `--token-threshold 80000`–`100000` leaves ample headroom for the current turn, tool schemas, and overhead while still maximizing the usable history before compaction kicks in.
 
-> **See also:** [`docs/compact-working-memory.md`](docs/compact-working-memory.md) — details the auto-compact mechanism, the LLM-stage compaction, and the working-memory focus extraction that preserves recent focus across compaction.
+> **See also:** [`docs/loop/compact-working-memory.md`](docs/loop/compact-working-memory.md) — details the auto-compact mechanism, the LLM-stage compaction, and the working-memory focus extraction that preserves recent focus across compaction.
 
 ## Debug Flags
 
@@ -103,11 +103,11 @@ mycc -v --debug-tp --debug-eval
 
 See the following documentation for detailed explanations:
 
-- **Agent Loop**: `docs/agent-loop.md` - STAR principle, microCompact, autoCompact, todo nudging
-- **Child Process Teammates**: `docs/child-context.md` - IPC, state machine, auto-claim
-- **Dynamic Loading**: `docs/dynamic-loading.md` - Hot-reload, tool scopes, skill format
-- **Mindmap**: `docs/mindmap-design.md` - Knowledge navigation, A-N-C-E summarization, process isolation
-- **Remote Peer Wire**: `docs/remote-peer-protocol.md` - Cross-machine peer connections, dialer/acceptor, pair-dedupe, optional wire token
+- **Agent Loop**: `docs/loop/agent-loop.md` - STAR principle, microCompact, autoCompact, todo nudging
+- **Child Process Teammates**: `docs/context/child-context.md` - IPC, state machine, auto-claim
+- **Dynamic Loading**: `docs/tools/dynamic-loading.md` - Hot-reload, tool scopes, skill format
+- **Mindmap**: `docs/mindmap/mindmap-design.md` - Knowledge navigation, A-N-C-E summarization, process isolation
+- **Remote Peer Wire**: `docs/peers/remote-peer-protocol.md` - Cross-machine peer connections, dialer/acceptor, pair-dedupe, optional wire token
 
 ## Day-to-day Workflow as a user
 

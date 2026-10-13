@@ -2,7 +2,7 @@
  * mycc-compose-up-pipeline.test.ts — the P1-1 regression suite: `sync`
  * (cmdUp with allowStop:false) must never recycle a live+matching peer with
  * `renew:"always"` — the cron path is non-destructive ("up minus destructive
- * stops", docs/peer-topology.md §6.2). Before this suite the always-branch
+ * stops", docs/peers/peer-topology.md §6.2). Before this suite the always-branch
  * ran stopPeer+restart regardless of allowStop, so every cron tick bounced
  * such a peer.
  *

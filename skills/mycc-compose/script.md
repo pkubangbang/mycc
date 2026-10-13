@@ -127,6 +127,6 @@ peer, the timer can be frequent without flapping.
 
 ## See also
 
-- `docs/peer-topology.md` — the full design/plan (schema, pipeline, constraints).
+- `docs/peers/peer-topology.md` — the full design/plan (schema, pipeline, constraints).
 - `schema.md` — the spec field reference and examples.
 - `mediator` skill — the manual procedure this tool automates.

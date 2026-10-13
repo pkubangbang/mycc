@@ -4,7 +4,7 @@
  * Module-level singleton holding every REMOTE peer this instance knows about,
  * whether dialed by us (outbound WS client, src/peer/wire-client.ts) or
  * accepted by our serve stack (inbound WS on /peer/ws, src/serve/peer-wire.ts).
- * Process-lifetime, in-memory only — the plan (docs/remote-peer-protocol.md
+ * Process-lifetime, in-memory only — the plan (docs/peers/remote-peer-protocol.md
  * §3) forbids persisting remotes into ~/.mycc-store/discovery: the wire
  * exists ONLY for peers not reachable through the local discovery store, so
  * remotes live in ctx, not in files.

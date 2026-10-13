@@ -1,7 +1,7 @@
 /**
  * llm-crossroad-cooldown.test.ts — handleLlm: crossroad cooldown gate.
  *
- * Tests the cooldown mechanism (see docs/crossroad-cooldown.md):
+ * Tests the cooldown mechanism (see docs/crossroad/crossroad-cooldown.md):
  * - When crossroad fires (pass N), crossroadOccurred is set to true.
  * - On the next pass (N+1), detection is SKIPPED (cooldown), the flag is
  *   reset to false, and the LLM's response passes through unchanged with

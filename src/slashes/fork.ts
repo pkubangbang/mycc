@@ -16,7 +16,7 @@
  *   3. Open a new native terminal window running that command
  *   4. Old mycc instance keeps running; both run in parallel
  *
- * Design reference: docs/fork-design.md
+ * Design reference: docs/session/fork-design.md
  */
 
 import type { SlashCommand, SlashCommandContext } from '../types.js';

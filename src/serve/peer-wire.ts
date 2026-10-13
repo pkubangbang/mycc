@@ -2,7 +2,7 @@
  * peer-wire.ts - Remote peer wire ACCEPTOR for the serve stack (/peer/ws)
  *
  * Implements the acceptor half of the level-3 remote peer wire protocol
- * (docs/remote-peer-protocol.md §1, §5). A serving instance's ServeHub
+ * (docs/peers/remote-peer-protocol.md §1, §5). A serving instance's ServeHub
  * exposes a SECOND WebSocket route — `/peer/ws` — distinct from the human
  * webui route `/ws`. Peer wires are TENANTS of the serve stack, not clients:
  *

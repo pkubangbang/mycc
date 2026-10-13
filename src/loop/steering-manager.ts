@@ -29,7 +29,7 @@
  * instants (note-arrival write-point in pushSteer, park-arm point in
  * waitForInput, wrap-up settle wake in esc-wrap-up), each re-running the same
  * pure boolean check after whichever event lands last. See
- * docs/steering-manager-plan.md §3-§5.
+ * docs/archived/steering-manager-plan.md §3-§5.
  *
  * Pure, framework-free, side-effect-free: no imports at all, so it can be
  * unit-tested in the node-environment Vitest suite WITHOUT importing the
@@ -129,7 +129,7 @@ export class SteeringManager {
    * loop is parked waiting for input AND the wrap-up window is closed;
    * returns null (hold) otherwise — the caller then defers to a later seam.
    *
-   * Matrix (docs/steering-manager-plan.md §3):
+   * Matrix (docs/archived/steering-manager-plan.md §3):
    *   empty queue                        → null (nothing to deliver)
    *   !isParked  && !wrapUpInFlight      → null (hold; turn drains collect)
    *   !isParked  &&  wrapUpInFlight      → null (hold)

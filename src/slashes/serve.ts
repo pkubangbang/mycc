@@ -10,7 +10,7 @@
  * are forwarded by the Coordinator). Exit via ESC, the in-UI exit button, or
  * a 30s disconnect timeout — all are warm (no neglection, no LLM abort).
  *
- * See docs/serve-plan.md for the full design.
+ * See docs/webui/serve-plan.md for the full design.
  */
 
 import type { SlashCommand } from '../types.js';

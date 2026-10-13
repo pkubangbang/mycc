@@ -155,7 +155,7 @@ export async function handleTool(
         // Store the brief message for the COLLECT skill-discovery composite
         // (X source). Keyword extraction itself has moved to COLLECT, which
         // composes X (this brief) + Y (user query / steering note) + Z
-        // (hint round focus_on). See docs/plan-composite-keyword-extraction.md.
+        // (hint round focus_on). See docs/misc/plan-composite-keyword-extraction.md.
         try {
           const briefArgs = typeof toolCall.function.arguments === 'string'
             ? JSON.parse(toolCall.function.arguments)

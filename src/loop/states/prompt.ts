@@ -490,7 +490,7 @@ export async function handlePrompt(
 
   // Keyword extraction has moved to the COLLECT state, where it composes
   // a composite of X (last brief) + Y (this query or steering note) + Z
-  // (hint round focus_on). See docs/plan-composite-keyword-extraction.md.
+  // (hint round focus_on). See docs/misc/plan-composite-keyword-extraction.md.
 
   return AgentState.COLLECT;
 }

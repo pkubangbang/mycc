@@ -235,7 +235,7 @@ the mindmap changed.**
 
 > **Detail on the two on-disk lines and the replay merge:** see
 > `io-surfaces.md` (folder table) and the source docs
-> `docs/mindmap-redesign.md` (Part 2) and `docs/mindmap-usage.md`.
+> `docs/mindmap/mindmap-redesign.md` (Part 2) and `docs/mindmap/mindmap-usage.md`.
 
 ---
 

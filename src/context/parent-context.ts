@@ -40,7 +40,7 @@ export class ParentContext implements AgentContext {
   private wikiModule: WikiManager;
   private peerModule: PeerManager;
   /** Info-symmetry reminder todo refs, deduped by wire endpoint key
-   *  (docs/remote-peer-protocol.md §2 step 3): endpoint → {id, hash}. */
+   *  (docs/peers/remote-peer-protocol.md §2 step 3): endpoint → {id, hash}. */
   private wireRemoteTodoIds: Map<string, { id: number; hash: string }>;
 
   constructor(sessionFilePath: string) {
@@ -60,7 +60,7 @@ export class ParentContext implements AgentContext {
     const peerWorkDir = process.cwd();
     const peerMailboxPath = path.resolve(getSessionDir(peerSessionId), 'unread-lead.jsonl');
     this.peerModule = new PeerManager(peerSessionId, peerWorkDir, peerMailboxPath, getDaemonSkill(), shouldDaemon());
-    // Remote peer wire hooks (docs/remote-peer-protocol.md §2 step 3, G3):
+    // Remote peer wire hooks (docs/peers/remote-peer-protocol.md §2 step 3, G3):
     // the wire plane (acceptor in src/serve/peer-wire.ts + dialer in
     // src/peer/wire-client.ts + registry in src/peer/wire-registry.ts)
     // reaches BACK into the agent context ONLY through this injected

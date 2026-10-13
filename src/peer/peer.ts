@@ -29,7 +29,7 @@ export class PeerManager implements PeerModule {
   }
 
   /**
-   * Route-aware freshness (docs/remote-peer-protocol.md §4): LOCAL branch =
+   * Route-aware freshness (docs/peers/remote-peer-protocol.md §4): LOCAL branch =
    * identity.json + heartbeat window (unchanged); REMOTE branch = the wire
    * registry's socket state (open = alive — missed-pong terminate in the
    * dialer/acceptor keeps "OPEN" honest). Same signature, so mail_to's
@@ -58,7 +58,7 @@ export class PeerManager implements PeerModule {
   }
 
   /**
-   * Route-aware sendPeerMail (docs/remote-peer-protocol.md §4, local-first):
+   * Route-aware sendPeerMail (docs/peers/remote-peer-protocol.md §4, local-first):
    * the LOCAL branch is today's path, untouched — discovery mailbox append
    * gated on heartbeat freshness. Only when the sid is NOT local does the
    * REMOTE branch run: resolve the pair in the wire registry, check OPEN

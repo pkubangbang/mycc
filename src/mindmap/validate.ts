@@ -1,6 +1,6 @@
 /**
  * validate.ts - Mindmap validation utilities
- * @see docs/mindmap-design.md
+ * @see docs/mindmap/mindmap-design.md
  */
 
 import * as crypto from 'crypto';

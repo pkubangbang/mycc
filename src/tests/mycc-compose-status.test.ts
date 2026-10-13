@@ -1,7 +1,7 @@
 /**
  * mycc-compose-status.test.ts — `status --json` must be DETERMINISTIC.
  *
- * The command and docs/peer-topology.md both call the JSON report
+ * The command and docs/peers/peer-topology.md both call the JSON report
  * deterministic: two identical invocations against the same on-disk state must
  * produce byte-identical JSON. A wall-clock `generatedAt` field broke that
  * (two runs a millisecond apart differ). This suite pins the fix: the

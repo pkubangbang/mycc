@@ -28,7 +28,7 @@ import { openTerminal } from '../../../src/utils/open-terminal.js';
 
 // Peer launch/stop lifecycle for mycc-compose. Launch mechanics (why
 // -EncodedCommand, why npm shims are parsed into real argv, why spawns are
-// detached) live in docs/peer-launch-windows.md — code states intent.
+// detached) live in docs/peers/peer-launch-windows.md — code states intent.
 
 const psQuote = (s: string): string => `'${s.replace(/'/g, "''")}'`;
 const shQuote = (s: string): string => `'${s.replace(/'/g, `'\\''`)}'`;
@@ -246,7 +246,7 @@ function asSpawnableCommand(
  * (`{ prog, target }`, e.g. `node.exe` + `…/bin/mycc.js`) — or null when the
  * shape is not recognized, in which case the caller keeps the `cmd /c` wrap.
  * Spawning the target directly (instead of through the interpreter) is what
- * keeps a detached peer from popping a console (docs/peer-launch-windows.md).
+ * keeps a detached peer from popping a console (docs/peers/peer-launch-windows.md).
  */
 function parseCmdShim(shimPath: string): { prog: string; target: string } | null {
   if (process.platform !== 'win32' || !/\.cmd$/i.test(shimPath)) return null;
@@ -400,7 +400,7 @@ export interface LaunchPeerOpts {
  *
  * `opts.spawnImpl` routes through spawnDetached, bypassing the opener and the
  * daemon split, so headless tests can drive the beat poll; see LaunchPeerOpts.
- * Windows launch mechanics: docs/peer-launch-windows.md.
+ * Windows launch mechanics: docs/peers/peer-launch-windows.md.
  */
 export function launchPeer(
   peer: Peer,

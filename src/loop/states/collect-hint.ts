@@ -34,7 +34,7 @@
  * singleton exposes no `reset()` and the state machine does not touch it at
  * turn boundaries.
  *
- * See docs/hint-round-review.md for the full hint-round subsystem review.
+ * See docs/archived/hint-round-review.md for the full hint-round subsystem review.
  */
 
 import type { ChatData, MachineEnv, TurnVars } from '../state-machine.js';

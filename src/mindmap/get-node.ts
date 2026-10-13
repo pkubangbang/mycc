@@ -1,6 +1,6 @@
 /**
  * get-node.ts - Tree traversal for mindmap nodes
- * @see docs/mindmap-design.md
+ * @see docs/mindmap/mindmap-design.md
  */
 
 import type { Mindmap, Node, GetNodeResult } from './types.js';

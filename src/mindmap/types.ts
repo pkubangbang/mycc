@@ -1,6 +1,6 @@
 /**
  * types.ts - Type definitions for the mindmap memory system
- * @see docs/mindmap-design.md for specification
+ * @see docs/mindmap/mindmap-design.md for specification
  */
 
 /**

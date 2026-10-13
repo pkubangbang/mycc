@@ -57,7 +57,7 @@ let wrapUpState: WrapUpState = {
  * Whether a background wrap-up LLM call is currently in flight.
  * ServeHub reads this (pull) at every park-time delivery check so steering
  * notes arriving during the wrap-up window are HELD instead of submitted
- * (evaluation→rollback truncation hazard — docs/steering-manager-plan.md §3).
+ * (evaluation→rollback truncation hazard — docs/archived/steering-manager-plan.md §3).
  */
 export function isWrapUpInFlight(): boolean {
   return wrapUpState.promise !== null;

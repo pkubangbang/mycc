@@ -1,6 +1,6 @@
 /**
  * patch.ts - Update mindmap nodes with cascading summaries
- * @see docs/mindmap-design.md
+ * @see docs/mindmap/mindmap-design.md
  *
  * Patch process:
  * 1. Find the target node by id

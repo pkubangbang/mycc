@@ -10,7 +10,7 @@
  * - If found, truncate output, generate alternative continuations, select best
  * - Discard tool calls — LLM will regenerate them after crossroad
  *   (brief-only tool calls are exempted: their text is mid-thought narration,
- *   not a committed direction reversal; see docs/crossroad-design.md)
+ *   not a committed direction reversal; see docs/crossroad/crossroad-design.md)
  *
  * Quick-return ESC behavior:
  * - When ESC is pressed during LLM call, start background wrap-up
@@ -189,7 +189,7 @@ export async function handleLlm(
       // turning words ARE a committed action the LLM then pivoted away from
       // — genuine indecision worth intercepting. Crossroad discards those
       // tool calls (rawToolCalls = []); the LLM regenerates them after the
-      // continuation in the next COLLECT round. See docs/crossroad-design.md.
+      // continuation in the next COLLECT round. See docs/crossroad/crossroad-design.md.
       //
       // Wrapped in escAware so ESC during crossroad processing returns null
       // (transparent skip), using the original LLM output as-is.
@@ -205,7 +205,7 @@ export async function handleLlm(
         // ── COOLDOWN GATE ──
         // If crossroad fired last chat, skip detection this pass to let the LLM
         // execute its committed actions. Crossroad can re-fire next pass if
-        // turning words persist. See docs/crossroad-cooldown.md.
+        // turning words persist. See docs/crossroad/crossroad-cooldown.md.
         if (env.crossroadOccurred) {
           // Consume cooldown: pass through unchanged, reset the flag
           env.crossroadOccurred = false;

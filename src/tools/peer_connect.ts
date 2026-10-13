@@ -4,7 +4,7 @@
  * Scope: ['main'] — only the lead dials; teammates (child processes) route
  * cross-instance work through the lead via IPC.
  *
- * This is the level-3 (cross-machine) plane (docs/remote-peer-protocol.md):
+ * This is the level-3 (cross-machine) plane (docs/peers/remote-peer-protocol.md):
  * the target runs the /serve webui on a machine NOT reachable through the
  * local discovery store. The dialer probes <url>/health, refuses a probe
  * whose reported sid is OUR OWN (self-connect backstop; the same-store

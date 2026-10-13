@@ -132,6 +132,6 @@ Full details, including cron wiring, in `script.md`.
 
 ## Related
 
-- `docs/peer-topology.md` — the full design/plan (schema, pipeline, constraints).
+- `docs/peers/peer-topology.md` — the full design/plan (schema, pipeline, constraints).
 - `mediator` skill — the manual procedure this tool automates.
 - `coordination` skill — for the in-process lead + child-teammate team.

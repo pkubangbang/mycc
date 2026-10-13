@@ -10,7 +10,7 @@
  * - A-N-C-E summarization for node summaries
  * - Links are stubs (stored but not resolved)
  * 
- * @see docs/mindmap-design.md
+ * @see docs/mindmap/mindmap-design.md
  */
 
 // Types

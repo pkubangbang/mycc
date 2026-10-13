@@ -9,7 +9,7 @@
  *
  * The pre-fix resolveProg REJECTED any %-bearing token → parseCmdShim null →
  * spawnDetached kept the `cmd /c` wrap → the visible-console pop
- * (docs/peer-launch-windows.md §3) the parser exists to prevent.
+ * (docs/peers/peer-launch-windows.md §3) the parser exists to prevent.
  *
  * parseCmdShim is module-private; it is exercised THROUGH launchPeer + the
  * LaunchPeerOpts.spawnImpl seam by asserting the (command,args) the seam

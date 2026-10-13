@@ -46,7 +46,7 @@
  * the composite but never trigger. A 3-pass cooldown suppresses
  * re-triggering from consecutive user messages.
  *
- * See docs/plan-composite-keyword-extraction.md for the brief+query+hint design.
+ * See docs/misc/plan-composite-keyword-extraction.md for the brief+query+hint design.
  */
 
 import type { MachineEnv, TurnVars } from '../state-machine.js';

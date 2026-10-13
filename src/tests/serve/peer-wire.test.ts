@@ -9,7 +9,7 @@
  * http.Server upgrade event, exactly like ServeHub's upgradeHandler routes
  * /peer/ws upgrades in production.
  *
- * Covered matrix (docs/remote-peer-protocol.md §7 phase-4):
+ * Covered matrix (docs/peers/remote-peer-protocol.md §7 phase-4):
  *   - connect + announce exchange, both sides recorded in their registries
  *   - mail BOTH directions, dedupe by id (duplicate dropped exactly once)
  *   - info-symmetry todo (test g): establishment fires recordRemotePeerTodo

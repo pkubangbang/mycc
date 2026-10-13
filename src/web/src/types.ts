@@ -75,7 +75,7 @@ export type ConnectionStatus = 'connected' | 'disconnected' | 'reconnecting';
  *  | `card`      | Interactive card pending response             | `card`                   |
  *  | `await`     | Auto mode, idle, waiting for events           | `auto:on` (no running)   |
  *
- *  See `docs/webui-phase-fsm-design.md` §2.2. */
+ *  See `docs/webui/webui-phase-fsm-design.md` §2.2. */
 export type WebuiPhase = 'idle' | 'submitted' | 'working' | 'prompt' | 'card' | 'await';
 
 /** A steering note with a stable id, so duplicate text can be targeted

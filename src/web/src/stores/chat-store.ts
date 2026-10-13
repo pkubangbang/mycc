@@ -15,7 +15,7 @@
  * while running. `await` is the idle-auto phase; `auto:on` while `working`
  * flips the boolean without changing phase.
  *
- * Design doc: `docs/webui-phase-fsm-design.md` (peer-reviewed by DeepSeek
+ * Design doc: `docs/webui/webui-phase-fsm-design.md` (peer-reviewed by DeepSeek
  * `26eec3c3` and glm-5.3-flash `51b87cc7`).
  */
 

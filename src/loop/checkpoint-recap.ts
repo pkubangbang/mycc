@@ -356,7 +356,7 @@ export async function handleRecap(
 // decides whether ONE mindmap node should be added/updated/deleted.
 //
 // Both calls fork from the SAME triologue messages → same prompt-cache prefix.
-// Neither depends on the other's output. See docs/mindmap-redesign.md Part 2.
+// Neither depends on the other's output. See docs/mindmap/mindmap-redesign.md Part 2.
 // ============================================================================
 
 /** Maximum retry attempts for an invalid patch response (beyond the first try). */

@@ -354,7 +354,7 @@ export function buildCollaborationMessages(): Message[] {
     `\`peer_connect(<host:port>)\` (requires the remote to be serving its ` +
     `webui); \`peer_list\` shows liveness, \`peer_disconnect\` hangs up. Same ` +
     `\`mail_to("<session-id>/lead")\` interface — the LLM does not care where ` +
-    `the peer lives. See \`docs/remote-peer-protocol.md\`.\n\n` +
+    `the peer lives. See \`docs/peers/remote-peer-protocol.md\`.\n\n` +
     `4. **Compose (most complex, via a topology FILE)** — a declarative, ` +
     `no-LLM materializer for a WHOLE GROUP of peers: you write a JSON ` +
     `topology spec (peers + launch args + which channels link them) and the ` +

@@ -42,7 +42,7 @@
  *
  * Design reference: the coordinator-side handler lives in src/index.ts
  * (reloadLead, mirroring the existing restart() used by /load). See also
- * docs/reload-design.md for the full design and effect boundary.
+ * docs/session/reload-design.md for the full design and effect boundary.
  */
 
 import type { SlashCommand } from '../types.js';

@@ -86,7 +86,7 @@ export function spawnDaemonLead(
   // The Go wrapper gives the Lead a HIDDEN console on Windows, eliminating
   // the cmd.exe window flashing that occurs when a detached Lead (no
   // console) spawns cmd.exe which self-allocates a visible console. See
-  // src/native/daemon-wrapper/main.go and docs/lead-detach-issue-solution.md.
+  // src/native/daemon-wrapper/main.go and docs/peers/lead-detach-issue-solution.md.
   //
   // Fallback: when the wrapper binary is missing (built from source without
   // Go, or on a non-Windows platform), spawn the Lead directly via tsx.

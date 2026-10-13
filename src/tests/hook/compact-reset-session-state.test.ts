@@ -32,7 +32,7 @@
  * This test pins that contract by simulating the real call-site pairing —
  * compactReset() followed by resetTurn() — and asserting the hook re-fires.
  *
- * REVISED SEMANTICS (turn-session-semantics-revision.md):
+ * REVISED SEMANTICS (docs/session/turn-session-semantics-revision.md):
  * - compactReset() clears session.* ONLY — turn.events[] and totalTurns
  *   SURVIVE (a turn spans across compaction). This is verified below.
  * - fullClear() (used by /clear, double-Ctrl+L) clears everything including

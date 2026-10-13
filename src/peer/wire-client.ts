@@ -2,7 +2,7 @@
  * wire-client.ts - Remote peer wire DIALER (level-3, cross-machine)
  *
  * Implements the dialer half of the remote peer wire protocol
- * (docs/remote-peer-protocol.md §2, §5). The acceptor (src/serve/peer-wire.ts)
+ * (docs/peers/remote-peer-protocol.md §2, §5). The acceptor (src/serve/peer-wire.ts)
  * lives inside the serve stack; the DIALER is a first-class member of
  * src/peer so an instance with NO webui at all (a NAT'd headless --auto/
  * daemon instance) can still dial OUT to a serving peer — "because we dial

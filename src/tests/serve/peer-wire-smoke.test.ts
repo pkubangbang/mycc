@@ -9,7 +9,7 @@
  *     REAL wire-client dialer (connectPeer) and its test-harness WireHooks
  *     (the same makeHooks convention as peer-wire.test.ts)
  *
- * This is the transport-only scope per docs/remote-peer-protocol.md §7:
+ * This is the transport-only scope per docs/peers/remote-peer-protocol.md §7:
  * the smoke test runs on ONE machine sharing the discovery store, so with
  * --debug-wire (mirrors MYCC_WIRE_ALLOW_LOCAL) it validates the WIRE
  * TRANSPORT through a real boot; the locality boundary itself is

@@ -197,4 +197,4 @@ mycc instances on **different machines** can be wired together so they exchange 
 
 > **Note:** `MYCC_WIRE_TOKEN` is **not** part of the `--setup` wizard (it is an advanced/optional knob). Set it directly in your environment or `.env` file (`~/.mycc-store/.env` user-level or `./mycc/.env` project-level) on **both** instances if you want the gate, or pass it as a CLI flag (`--wire-token <value>`) on either instance.
 
-> **See also:** [`docs/remote-peer-protocol.md`](docs/remote-peer-protocol.md) — the full design: dialer/acceptor roles, connect/disconnect workflow, pair-dedupe invariant, convergence, mail routing, liveness.
+> **See also:** [`docs/peers/remote-peer-protocol.md`](docs/peers/remote-peer-protocol.md) — the full design: dialer/acceptor roles, connect/disconnect workflow, pair-dedupe invariant, convergence, mail routing, liveness.

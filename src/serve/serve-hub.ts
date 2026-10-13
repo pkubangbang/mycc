@@ -318,7 +318,7 @@ export class ServeHub implements HubHandler, ServeHubLike {
             auto: this.getAutoState(),
           },
           peer: (() => {
-            // Remote peer wire identity (docs/remote-peer-protocol.md §2 step 1):
+            // Remote peer wire identity (docs/peers/remote-peer-protocol.md §2 step 1):
             // the dialer probes /health BEFORE dialing — the peer block tells it
             // who answers (sid) and whether the webui is daemon-backed (so the
             // dialer can refuse/flag an interactive instance whose webui will
@@ -425,7 +425,7 @@ export class ServeHub implements HubHandler, ServeHubLike {
       const maxPayloadBytes = getMaxUploadMb() * 1024 * 1024;
       this.wsServer = new WebSocketServer({ noServer: true, maxPayload: maxPayloadBytes });
       this.wsServer.on('connection', (ws) => this.onWsConnection(ws));
-      // Remote peer wire on /peer/ws (docs/remote-peer-protocol.md). Dedicated
+      // Remote peer wire on /peer/ws (docs/peers/remote-peer-protocol.md). Dedicated
       // WebSocketServer with its OWN maxPayload (4 MB, decoupled from the webui
       // upload cap); the acceptor NEVER touches this.clients or the
       // disconnectTimer (G1: peer wires must not sustain the webui lifetime).
@@ -484,7 +484,7 @@ export class ServeHub implements HubHandler, ServeHubLike {
       this.upgradeHandler = null;
     }
     if (this.wsServer) { try { this.wsServer.close(); } catch { /* ignore */ } this.wsServer = null; }
-    // Peer wire acceptor teardown (docs/remote-peer-protocol.md §2
+    // Peer wire acceptor teardown (docs/peers/remote-peer-protocol.md §2
     // disconnect): abnormal close so the DIALER side fails fast / redials
     // per its loop policy. Idempotent (stop() is safe when no server exists).
     try { await getPeerWireAcceptor().stop(); } catch { /* ignore */ }
@@ -528,7 +528,7 @@ export class ServeHub implements HubHandler, ServeHubLike {
       this.clients.closeAll();
       await this.disposeStack();
       this.messageLog = [];
-      // Lifecycle wipe (A2, docs/steering-manager-plan.md §5): notes are wiped
+      // Lifecycle wipe (A2, docs/archived/steering-manager-plan.md §5): notes are wiped
       // ONLY on terminal teardown. restartServe() sets `restarting` BEFORE
       // calling stop(true) so this clear is skipped mid-recycle — notes
       // survive a 重启 exactly like the pending input-resolver does. Wiping
@@ -650,7 +650,7 @@ export class ServeHub implements HubHandler, ServeHubLike {
   // Steering (webui-only — user mid-task direction while LLM runs)
   //
   // The hub is the sole WRITER of the shared manager; loop states are
-  // READERS (docs/steering-manager-plan.md §2). Queue state and the
+  // READERS (docs/archived/steering-manager-plan.md §2). Queue state and the
   // monotonic id counter live in src/loop/steering-manager.ts.
   // ===========================================================================
 
@@ -685,7 +685,7 @@ export class ServeHub implements HubHandler, ServeHubLike {
    * window is closed; otherwise it is a stateless null and nothing happens.
    * A parked PROMPT cannot poll, so whichever event lands last delivers;
    * three instants re-running one pure check cannot collapse into a missed
-   * window (docs/steering-manager-plan.md §3-§5).
+   * window (docs/archived/steering-manager-plan.md §3-§5).
    */
   private flushSteeringAtSeam(): void {
     const deliverable = getSteeringManager().takeForDelivery(this.isInputBlocked(), isWrapUpInFlight());

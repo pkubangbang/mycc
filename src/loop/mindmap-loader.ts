@@ -32,7 +32,7 @@ function countNodes(node: Node): number {
  *
  * Patches are hash-gated: only those whose mindmap_hash matches the loaded
  * mindmap.json hash are applied (others are skipped — created against an older
- * version). See docs/mindmap-redesign.md Part 3.
+ * version). See docs/mindmap/mindmap-redesign.md Part 3.
  */
 function loadMindmapWithPatches(mindmapPath: string, workDir: string): Mindmap {
   const mindmap = load_mindmap(mindmapPath);

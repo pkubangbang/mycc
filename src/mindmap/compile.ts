@@ -1,6 +1,6 @@
 /**
  * compile.ts - Compile markdown into mindmap
- * @see docs/mindmap-design.md
+ * @see docs/mindmap/mindmap-design.md
  *
  * Compilation process:
  * 1. Parse markdown into sections by heading hierarchy

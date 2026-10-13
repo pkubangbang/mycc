@@ -46,7 +46,7 @@ const MYCC_MAIL_SCRIPT = path.resolve(
  * discovered remote sid. The instruction forbids ending the turn with a
  * question (a stalled --auto peer does not drain its mailbox) and tells the
  * peer to stop once all dials are attempted — the stall-immune shape per
- * docs/remotes-design-decision.md.
+ * docs/peers/remotes-design-decision.md.
  */
 function remotesMailContent(peer: NormalizedPeer): string {
   const urls = getRemotes(peer).map((u) => `  - ${u}`).join('\n');

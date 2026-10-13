@@ -134,7 +134,7 @@ function remoteUrlKey(raw: string): string {
  *
  * The CROSS-PEER mutual-dial rule (same URL declared by two different peers)
  * runs in validateSpec AFTER the peers array is built — it needs every peer's
- * normalized list. See docs/remotes-design-decision.md §"Direction / dedupe".
+ * normalized list. See docs/peers/remotes-design-decision.md §"Direction / dedupe".
  */
 function normalizeRemotes(
   p: Record<string, unknown>,
@@ -354,7 +354,7 @@ export function validateSpec(spec: unknown): NormalizedSpec {
       throw new Error(`${at}.renew must be "always" or "onMismatch" (got ${JSON.stringify(p.renew)})`);
     }
     // remotes?: string[] — URLs of REMOTE mycc instances this local peer should
-    // dial once up (see docs/remotes-design-decision.md). validateSpec enforces
+    // dial once up (see docs/peers/remotes-design-decision.md). validateSpec enforces
     // per-URL + per-peer invariants here; the CROSS-PEER mutual-dial rule runs
     // after the peers array is built (it needs every peer's normalized list).
     // The `as string[] | undefined` is load-bearing: NormalizedPeer carries an
@@ -373,7 +373,7 @@ export function validateSpec(spec: unknown): NormalizedSpec {
     };
   });
 
-  // Cross-peer MUTUAL-DIAL rejection (docs/remotes-design-decision.md
+  // Cross-peer MUTUAL-DIAL rejection (docs/peers/remotes-design-decision.md
   // §"Direction / dedupe"): `remotes` is one-sided ("this peer dials URL Y").
   // If the SAME URL is declared by TWO different peers, that is the practical
   // mutual-dial signature for a 2-node spec — both sides would dial the same

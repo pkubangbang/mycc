@@ -4,7 +4,7 @@
  * This file MOVES the former src/tests/serve/steering-queue.test.ts cases
  * verbatim (only the import target changed, to the manager module) and adds:
  * - singleton-identity + fresh-id continuation + clear() lifecycle cases,
- * - the takeForDelivery boolean decision matrix (docs/steering-manager-plan.md
+ * - the takeForDelivery boolean decision matrix (docs/archived/steering-manager-plan.md
  *   §3) with plain booleans — zero registration stubs.
  *
  * Verifies the boomerang resolution semantics: the client declares which note

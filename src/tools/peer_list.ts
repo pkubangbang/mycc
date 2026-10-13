@@ -5,7 +5,7 @@
  * Teammates are child processes and use the NoopPeerModule (ctx.peer is a
  * no-op for them), so this tool is lead-only.
  *
- * TWO clearly-labeled sections (docs/remote-peer-protocol.md §3):
+ * TWO clearly-labeled sections (docs/peers/remote-peer-protocol.md §3):
  *   1. LOCAL peers — the discovery store (~/.mycc-store/discovery/
  *      identity.json + heartbeat files). Same-machine instances; reachable
  *      via discovery mail or channel files.
