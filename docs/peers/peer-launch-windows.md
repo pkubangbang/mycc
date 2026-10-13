@@ -1,7 +1,7 @@
 # Peer Launch on Windows — why the launcher looks the way it is
 
 > Scope: the launch mechanics of `mycc-compose` peers, implemented in
-> `scripts/mycc-compose/lib/peers-lifecycle.ts` (see `docs/peer-topology.md`
+> `scripts/mycc-compose/lib/peers-lifecycle.ts` (see `docs/peers/peer-topology.md`
 > for the surrounding design). This page holds the *mechanisms*; the code
 > holds only the *intentions* that point here.
 >
@@ -46,7 +46,7 @@ path *wants* a real console anyway.
 
 The core fact, from Node.js
 [issue #21825](https://github.com/nodejs/node/issues/21825) and probed live on
-Win11 (see also `docs/lead-detach-issue-solution.md`, the same mechanism one
+Win11 (see also `docs/peers/lead-detach-issue-solution.md`, the same mechanism one
 level up in the daemon Lead):
 
 > With `DETACHED_PROCESS` (what `detached: true` means on Windows) the child
@@ -90,7 +90,7 @@ worst a transient flash, never a broken launch):
 `detached: true, stdio: 'ignore', shell: false, windowsHide: true` and
 unref'd — identical observable argv to `cmd /c shim args…`, but node never
 allocates a console, so nothing pops. This is the same lesson
-`docs/lead-detach-issue-solution.md` learned for the daemon Lead (spawn the
+`docs/peers/lead-detach-issue-solution.md` learned for the daemon Lead (spawn the
 real binary, avoid inserting an interpreter), applied at the shim layer.
 
 Split policy summary:
@@ -119,7 +119,7 @@ production spawn shape.
 
 ## References
 
-- `docs/lead-detach-issue-solution.md` — same console-allocation mechanism
+- `docs/peers/lead-detach-issue-solution.md` — same console-allocation mechanism
   (Node issue #21825) for the daemon Lead; Go-wrapper context
-- `docs/peer-topology.md` — peer group design, `up` pipeline, workdir guard
+- `docs/peers/peer-topology.md` — peer group design, `up` pipeline, workdir guard
 - `src/utils/open-terminal.ts` — the terminal opener shared with `/fork`

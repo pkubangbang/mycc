@@ -127,12 +127,11 @@ Spawn specialized teammates to work on parallel tasks:
 - User-defined tools in `.mycc/tools/` are hot-reloaded
 - Skills in `.mycc/skills/` provide specialized knowledge
 
-### 5. SQLite Persistence
+### 5. Session & In-Memory State
 
-All state is persisted in `.mycc/state.db`:
-- Issues and blocking relationships
-- Teammate status
-- Worktree records
+- **Sessions** are JSON files: `.mycc/sessions/{id}/session-{id}.json` (project) or `~/.mycc-store/sessions/{id}/session-{id}.json` (user). A session is sealed read-only once the process exits.
+- **Issues, blockages, and teammate status** are session-scoped and held **in memory** (`src/context/memory-store.ts`) — they last for the life of the process only, not on disk.
+- **Worktrees** are discovered live from git (`git worktree list --porcelain`); mycc tracks only those under `.worktrees/`.
 
 ### 6. Mindmap Knowledge Navigation
 
@@ -501,7 +500,7 @@ Run 'mycc --setup' to configure your environment.
 mycc/
 ├── src/              # Source code
 ├── .mycc/            # Runtime data (ignored via /.mycc/* in .gitignore)
-│   ├── state.db      # SQLite database
+│   ├── sessions/     # Session JSON files (session-{id}.json, sealed on exit)
 │   ├── mail/         # Mailboxes
 │   ├── tools/        # User-defined tools
 │   ├── skills/       # Skill definitions
@@ -955,14 +954,14 @@ This becomes a child section.
 2. Pull the model: `ollama pull <model-name>`
 3. Update `OLLAMA_MODEL` in `.env`
 
-#### SQLite Database Errors
+#### Session or State Errors
 
-**Symptoms**: Database locked or corrupted
+**Symptoms**: A session fails to load, or issues/teammate status appear to vanish.
 
 **Solutions**:
-1. Stop all mycc processes
-2. Delete `.mycc/state.db` and `.mycc/state.db-wal`
-3. Restart mycc (database will be recreated)
+1. Stop all mycc processes.
+2. Check the session JSON under `.mycc/sessions/{id}/session-{id}.json` — a sealed session is read-only; start a fresh session (`/load <id>` re-understands an old transcript into a new session).
+3. Issues, blockages and teammate status are in-memory and reset on restart by design — they are not persisted across processes.
 
 #### Child Process Teammates Not Responding
 
@@ -1225,16 +1224,17 @@ The Ollama client provides resilient LLM integration:
    - User-Action Errors → Stop and notify
    - Fatal Errors → Immediate stop
 
-### Database Schema
+### State & Storage Model
 
-SQLite tables in `.mycc/state.db`:
+There is **no SQLite database**. State is split by lifetime:
 
-| Table | Purpose |
-|-------|---------|
-| `issues` | Persisted tasks with status, owner, content |
-| `issue_blockages` | Blocking relationships between issues |
-| `teammates` | Team member state and status |
-| `worktrees` | Git worktree records |
+| Store | Lifetime | Location |
+|-------|----------|----------|
+| Issues, blockages, teammate status | Session-scoped, in memory | `src/context/memory-store.ts` |
+| Sessions | Sealed JSON on exit | `.mycc/sessions/{id}/session-{id}.json` |
+| Worktrees | Derived live from git | `git worktree list` (`.worktrees/` only) |
+| Mindmap | Compiled JSON | `.mycc/mindmap.json` |
+| Wiki knowledge base | Vector DB + WAL | `~/.mycc-store/wiki/` |
 
 ### File Locations
 

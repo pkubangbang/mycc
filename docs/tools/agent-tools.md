@@ -1,6 +1,7 @@
 ---
-updated_at: 2026-08-13
+updated_at: 2026-10-13
 changelog:
+  - "2026-10-13: Refined against src — fixed renamed/nonexistent peer tools (`peers` → `peer_list` + `peer_connect` + `peer_disconnect`); tool count 48 → 50"
   - "2026-08-13: Updated tool count from 45 to 48, version from v0.7.0 to v0.10.1"
   - "2026-08-13: Removed nonexistent tools: wt_create, wt_remove, wt_enter, wt_leave, wt_print, todo_write, order, time"
   - "2026-08-13: Added missing tools: grep, read_read, todo_create, todo_update, todo_pinning, issue_publish, issue_list, peers, checkpoint, recap, mycc_title, skill_search"
@@ -13,7 +14,7 @@ changelog:
 
 This document describes the built-in tools available to the coding agent. Tools are implemented in `src/tools/` and registered in `src/context/shared/registry.ts`, loaded at startup via `src/context/shared/loader.ts`.
 
-**Current tool count**: 48 tools (as of v0.10.1)
+**Current tool count**: 50 built-in tools (source: `src/context/shared/registry.ts` `builtInTools`)
 
 ## Tool Interface
 
@@ -44,8 +45,8 @@ interface ToolDefinition {
 - Tools with `['child']` only available to teammate agents (e.g., `question`)
 
 **Summary:**
-- **Lead (main)**: All 48 tools except `question` (child-only)
-- **Teammate (child)**: Cannot use `broadcast`, `tm_create`, `tm_remove`, `tm_await`, `hand_over`, `plan_on`, `plan_off`, `checkpoint`, `recap`, `peers`, `todo_pinning`, `git_commit` (main+child). `question` is child-only.
+- **Lead (main)**: All 50 built-in tools except `question` (child-only)
+- **Teammate (child)**: Cannot use `broadcast`, `tm_create`, `tm_remove`, `tm_await`, `hand_over`, `plan_on`, `plan_off`, `checkpoint`, `recap`, `peer_list`, `peer_connect`, `peer_disconnect`, `todo_pinning`, `git_commit` (main+child). `question` is child-only.
 
 ---
 
@@ -1122,26 +1123,56 @@ interface ToolDefinition {
 
 ---
 
-## Peer Discovery Tool
+## Peer Tools
 
-### peers
+All three are `['main']` (lead only — child processes use NoopPeerModule). Reach any listed peer with `mail_to(name="<session-id>/lead", ...)`.
 
-**File**: `src/tools/peers.ts`
+### peer_list
 
-**Scope**: `['main']` (lead only — child uses NoopPeerModule)
+**File**: `src/tools/peer_list.ts`
 
-**Description**: List online mycc instances (cross-instance peer discovery). Returns each instance's session-id, workDir, and status.
+**Scope**: `['main']`
+
+**Description**: List online mycc instances in TWO sections — LOCAL peers (other instances on THIS machine, from the discovery store `~/.mycc-store/discovery/`) and REMOTE peers (instances on OTHER machines added via `peer_connect`, held in the in-memory wire registry). Each entry shows a freshness indicator and its session-id.
 
 **Parameters**:
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
-| include_self | boolean | no | If true, include local instance (marked self=true). Default false |
-| all | boolean | no | If true, list all registered identities regardless of freshness. Default false |
+| include_self | boolean | no | If true, include this instance (marked self=true). Default false |
+| all | boolean | no | If true, also list local peers that are offline/stale. Default false — only fresh instances. |
 
 **Behavior**:
-- Reads peer discovery registry (`~/.mycc-store/discovery/`)
-- Peers older than 1 hour omitted entirely (even with all=true)
+- Local peers with a heartbeat older than 1 hour are omitted even with `all=true` (omitted count shown in the summary)
+- Remote peers live in `ctx` (process-lifetime), never merged into discovery files
 - Surfaces recent briefs from each peer
+
+### peer_connect
+
+**File**: `src/tools/peer_connect.ts`
+
+**Scope**: `['main']`
+
+**Description**: Dial a REMOTE mycc instance over the peer wire (cross-machine, level 3). Probes `<url>/health` (refuses a self-connect), enforces pair-dedupe, then dials `ws://<url>/peer/ws`. On success BOTH sides get a pinned reminder todo and bidirectional `mail_to("<sid>/lead")` works.
+
+**Parameters**:
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| url | string | yes | Remote serve base: `host:port`, `http://host:port`, or `ws://host:port` (no path) |
+
+**Notes**: `MYCC_WIRE_TOKEN` is optional — when set it is sent as the upgrade query param so an acceptor that also set it can verify it.
+
+### peer_disconnect
+
+**File**: `src/tools/peer_disconnect.ts`
+
+**Scope**: `['main']`
+
+**Description**: Hang up a remote peer wire (terminal). Sends close code 4001 (bye) so the remote side treats it as an explicit hang-up (no redial), tears down the whole pair, cancels the redial loop, and marks the pinned reminder todo done.
+
+**Parameters**:
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| peer | string | yes | The remote peer's session-id (preferred, as shown by peer_list) or the URL passed to peer_connect |
 
 ---
 
@@ -1233,7 +1264,9 @@ interface ToolDefinition {
 | wiki_prepare | main, child | Knowledge Base |
 | wiki_put | main, child | Knowledge Base |
 | wiki_get | main, child | Knowledge Base |
-| peers | main | Peer Discovery |
+| peer_list | main | Peer |
+| peer_connect | main | Peer |
+| peer_disconnect | main | Peer |
 
 ---
 
@@ -1264,4 +1297,4 @@ export const myTool: ToolDefinition = {
 
 2. Import and add to `builtInTools` array in `src/context/shared/registry.ts`
 
-3. Update this document (`docs/agent-tools.md`) with the new tool's reference
+3. Update this document (`docs/tools/agent-tools.md`) with the new tool's reference

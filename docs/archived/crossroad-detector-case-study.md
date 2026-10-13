@@ -2,7 +2,7 @@
 
 > **Status:** Integrated. Semantic detector (`@pkubangbang/crossroad-detector`, installed `0.1.1`) is the primary path; tiered regex is the zero-dependency fallback. Live smoke-tested 2026-09-12 (then model v6; the package has since shipped v7).
 >
-> **Scope:** This document is a retrospective case study — the model journey, the failed FSM detour, the extraction into a standalone package, and a live smoke test that captured a real false positive. For the feature's runtime mechanics (truncation, fork, selection), see [`crossroad-design.md`](crossroad-design.md). For cooldown behavior, see [`crossroad-cooldown.md`](crossroad-cooldown.md).
+> **Scope:** This document is a retrospective case study — the model journey, the failed FSM detour, the extraction into a standalone package, and a live smoke test that captured a real false positive. For the feature's runtime mechanics (truncation, fork, selection), see [`crossroad-design.md`](../crossroad/crossroad-design.md). For cooldown behavior, see [`crossroad-cooldown.md`](../crossroad/crossroad-cooldown.md).
 
 ---
 

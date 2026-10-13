@@ -8,7 +8,7 @@
 
 ### 挑战
 
-1. **数据库访问**：SQLite 数据库文件只能由主进程访问，子进程的所有 DB 操作必须通过 IPC
+1. **状态访问**：Issue/Wiki 状态由主进程持有（Issue 用 `memory-store.ts` 内存存储，Wiki 用文件 WAL），子进程的所有相关操作必须通过 IPC 转发
 2. **用户交互**：子进程没有终端访问权限，`question()` 必须通过 IPC 转发到主进程
 3. **状态同步**：`core.brief()` 日志需要转发到主进程显示
 4. **进程间通信**：子进程通过 `mail` 模块接收消息
@@ -68,7 +68,7 @@ src/context/
 ├── ipc-registry.ts         # IPC 处理器注册（共享）
 ├── parent/                 # 主进程模块实现
 │   ├── core.ts            # Core - 终端访问、web搜索、图片描述
-│   ├── issue.ts           # IssueManager - SQLite 操作
+│   ├── issue.ts           # IssueManager - 内存存储（memory-store.ts）
 │   ├── team.ts            # TeamManager - 子进程管理
 │   └── wiki.ts            # WikiManager - 知识库
 ├── child/                  # 子进程模块实现（IPC 包装）
@@ -484,10 +484,10 @@ export class ChildContext implements AgentContext {
 
 ## 系统提示
 
-子进程使用专门的系统提示，由 `buildTeammatePrompt(workDir, identity)` 生成，通过 `buildNormalModePrompt(workDir, identity)` 的 `identity` 分支触发（见 `src/loop/agent-prompts.ts`）。提示强调团队协作、时间预算协议和用户通信：
+子进程使用专门的系统提示，由 `buildTeammatePrompt(workDir, identity)` 生成，通过 `buildNormalModePrompt(workDir, identity)` 的 `identity` 分支触发（见 `src/loop/prompts/teammate.ts`）。提示强调团队协作、时间预算协议和用户通信：
 
 ```typescript
-// src/loop/agent-prompts.ts
+// src/loop/prompts/teammate.ts
 function buildTeammatePrompt(workDir: string, identity: { name: string; role: string }): string {
   return `You are ${identity.name}, a specialized agent working as part of a team, created by the "lead".
 Your role is ${identity.role}. You are working at ${workDir}.
@@ -529,10 +529,10 @@ export function buildNormalModePrompt(
 | `todo` | 内存状态 | 相同（独立） |
 | `mail` | 文件邮箱 | 文件邮箱（独立邮箱） |
 | `skill` | 文件系统 | 相同（静默模式 Loader） |
-| `issue` | 直接 SQLite 访问 | IPC 转发所有操作 |
+| `issue` | 直接内存存储（MemoryStore） | IPC 转发所有操作 |
 | `bg` | 直接管理子进程 | 相同（BackgroundTasks，基于 coreModule） |
 | `team` | 管理队友（spawn/remove/await/broadcast） | ChildTeam（受限：mailTo/broadcast/createTeammate 经邮箱建议 lead，printTeam 经 IPC；禁止 getTeammate/listTeammates/awaitTeammate/awaitTeam/removeTeammate/dismissTeam） |
-| `wiki` | 直接 SQLite 访问 | IPC 转发所有操作 |
+| `wiki` | 直接文件 WAL 访问 | IPC 转发所有操作 |
 | `peer` | PeerManager（跨实例路由） | NoopPeerModule（子进程不运行 peer discovery） |
 
 ## 相关文件
@@ -563,4 +563,4 @@ export function buildNormalModePrompt(
 | `src/context/memory-store.ts` | 内存存储（teammate/issue 状态持久化） |
 | `src/context/teammate-worker.ts` | 子进程入口点（状态机、自动认领、邮件轮询） |
 | `src/peer/peer.ts` | PeerManager / NoopPeerModule |
-| `src/loop/agent-prompts.ts` | 系统提示生成（buildTeammatePrompt） |
+| `src/loop/prompts/teammate.ts` | 系统提示生成（buildTeammatePrompt） |

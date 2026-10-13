@@ -214,7 +214,7 @@ After this refactoring, potential follow-up improvements:
 
 1. **Extract IPC types** - Create `src/context/ipc-types.ts` for all IPC message types
 2. **Add factory pattern** - `createParentContext()` and `createChildContext()` factory functions
-3. **Document architecture** - Update `docs/child-context.md` with new structure
+3. **Document architecture** - Update `docs/context/child-context.md` with new structure
 4. **Consider base class** - If shared logic between contexts grows, extract to `BaseContext`
 
 ---

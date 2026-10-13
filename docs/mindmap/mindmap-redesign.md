@@ -418,7 +418,7 @@ async function handleRecapWithPatch(
 
 **Note on retries**: if forkChat #2's first response is invalid, the retry loop runs *after* `Promise.all` resolves — by that point forkChat #1 has already completed. This is acceptable because retries are rare (the patch prompt is simple) and the summary is already available for the triologue replacement.
 
-### 2.5 Patch Action Type
+### 2.7 Patch Action Type
 
 ```typescript
 interface MindmapPatchAction {
@@ -433,7 +433,7 @@ interface MindmapPatchAction {
 }
 ```
 
-### 2.6 Patch Application + JSONL Write (simultaneous)
+### 2.8 Patch Application + JSONL Write (simultaneous)
 
 When a valid patch is produced by recap:
 
@@ -454,7 +454,7 @@ if (patch) {
 
 **Both operations happen together**: the in-memory tree is updated AND the jsonl gets a new line. If the process crashes after one but before the other, the inconsistency is resolved at next startup (jsonl is the source of truth; in-memory is rebuilt from it).
 
-### 2.7 applyPatchAction (pure in-memory, no LLM)
+### 2.9 applyPatchAction (pure in-memory, no LLM)
 
 ```typescript
 function applyPatchAction(mindmap: Mindmap, action: MindmapPatchAction): boolean {
@@ -492,7 +492,7 @@ function applyPatchAction(mindmap: Mindmap, action: MindmapPatchAction): boolean
 }
 ```
 
-### 2.8 Tree Outline for Prompt
+### 2.10 Tree Outline for Prompt
 
 ```typescript
 function generateTreeOutline(node: Node, indent: string = ''): string {
@@ -507,7 +507,7 @@ function generateTreeOutline(node: Node, indent: string = ''): string {
 
 Truncate if tree is large (> 200 nodes): show first 3 levels + count of deeper nodes.
 
-### 2.9 Files (as shipped)
+### 2.11 Files (as shipped)
 
 | File | Role |
 |------|------|

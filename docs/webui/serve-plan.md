@@ -1,6 +1,8 @@
 # Implementation Plan: `/serve` — Web Chat UI for mycc
 
-> **Status**: Implemented. The `/serve` web UI ships as `src/serve/` (4 .ts files) + `src/web/` (Vue 3 SFCs). The architecture below describes the shipped design. Key additions beyond the original plan: interactive card bridge (replacing `ask()` serve path), steering queue, file upload queue, auto-mode signaling, disconnect timer with suspend/hibernate detection, `rejectInput()` for peer-channel wake, transcript + user-log durable history, `/history` and `/config` HTTP endpoints, `--host` flag support, `noServer` WebSocket mode (URL-routed upgrades), and teammate drawer UI. See `docs/serve-bugfix-plan.md` for the follow-up card system design.
+> **Status**: Implemented. The `/serve` web UI ships as `src/serve/` (12 TypeScript modules) + `src/web/` (Vue 3 SFCs). The architecture below describes the shipped design. Key additions beyond the original plan: interactive card bridge (replacing `ask()` serve path), steering queue, file upload queue, auto-mode signaling, disconnect timer with suspend/hibernate detection, `rejectInput()` for peer-channel wake, transcript + user-log durable history, `/history` and `/config` HTTP endpoints, `--host` flag support, `noServer` WebSocket mode (URL-routed upgrades), and teammate drawer UI. See `docs/webui/serve-bugfix-plan.md` for the follow-up card system design.
+>
+> **Current module split** (the original plan below drew a single `serve-hub.ts`): `serve-hub.ts` (orchestrator) plus `serve-clients.ts`, `serve-ws-handler.ts`, `serve-history.ts`, `serve-disconnect-timer.ts`, `serve-utils.ts`, `serve-errors.ts`, `serve-types.ts`, `activate.ts`, `serve-registry.ts`, `web-input-provider.ts`, and `peer-wire.ts`.
 
 ## Architecture Overview
 

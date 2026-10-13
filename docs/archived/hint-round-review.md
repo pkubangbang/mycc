@@ -67,7 +67,7 @@ lastRole === 'assistant'      // TP-safe: assistant → user via note
 | Bash read-only (ls, cat, grep, git status) | 0 |
 | Assistant turn in plan mode (`hook.ts`) | +1 |
 
-> **Note**: The old "same tool name in last 5 calls" repetition heuristic has been replaced by embedding-based semantic duplication detection (`RequestEmbeddingTracker` in `src/loop/request-embedding.ts`). See `docs/hint-round-embedding-design.md`.
+> **Note**: The old "same tool name in last 5 calls" repetition heuristic has been replaced by embedding-based semantic duplication detection (`RequestEmbeddingTracker` in `src/loop/request-embedding.ts`). See `docs/loop/hint-round-embedding-design.md`.
 
 ### Reset Points
 
@@ -165,7 +165,7 @@ The analysis prompt includes available wiki domains, so the LLM can suggest targ
 
 ### 5.4 Semantic Repetition Detection (resolved)
 
-**Update**: The original tool-name-based repetition detection ("same tool name in last 5 calls") has been replaced by **embedding-based semantic duplication detection** via `RequestEmbeddingTracker` (`src/loop/request-embedding.ts`). The tracker maintains a rolling buffer of the last 20 tool calls, embeds each via Ollama, and computes cosine similarity. The max similarity maps to a confusion delta (+0/+1/+3). See `docs/hint-round-embedding-design.md` for the full design.
+**Update**: The original tool-name-based repetition detection ("same tool name in last 5 calls") has been replaced by **embedding-based semantic duplication detection** via `RequestEmbeddingTracker` (`src/loop/request-embedding.ts`). The tracker maintains a rolling buffer of the last 20 tool calls, embeds each via Ollama, and computes cosine similarity. The max similarity maps to a confusion delta (+0/+1/+3). See `docs/loop/hint-round-embedding-design.md` for the full design.
 
 This resolves the original concern: semantic repetition (e.g., calling `read_file` 4 times on different files for the same purpose) is now detected.
 

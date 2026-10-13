@@ -3,7 +3,7 @@
 > **Status:** Revised — both peer reviews incorporated (DeepSeek `26eec3c3` + glm-5.3-flash `51b87cc7`)
 > **Date:** 2026-09-07
 > **Author:** Lead agent (session `cc9de7e7`)
-> **Related:** `docs/compact-working-memory.md`, pitfall wiki (hashes `3ce8cc9a`, `861a9673`, `8ed42cfa`)
+> **Related:** `docs/loop/compact-working-memory.md`, pitfall wiki (hashes `3ce8cc9a`, `861a9673`, `8ed42cfa`)
 
 ---
 

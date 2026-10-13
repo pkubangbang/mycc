@@ -253,7 +253,7 @@ Freshness is currently derived three ways (`IdentityManager.isFresh`,
 | `scripts/mycc-compose/lib/index.ts` | **new** — the umbrella re-exported by the `.js` entry |
 | `package.json` | `bin` gains `mycc-compose` |
 | `skills/mycc-compose/{SKILL.md,schema.md,script.md}` | **new** — progressive-disclosure skill |
-| `docs/peer-topology.md` | this document |
+| `docs/peers/peer-topology.md` | this document |
 | tests | arg parity (`src/tests/arg-canonical.test.ts`), spec validation + `updateSpecFile` (`src/tests/mycc-compose-spec.test.ts`) |
 
 ## 8. Verification

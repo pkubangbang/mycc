@@ -74,7 +74,7 @@ DeepSeek requires `reasoning_content` to be echoed back on all subsequent assist
 
 ### 3.5 Known Pitfalls Documented
 
-`docs/deepseek-api-pitfalls.md` documents 5 issues encountered and their fixes:
+`docs/providers/deepseek-api-pitfalls.md` documents 5 issues encountered and their fixes:
 
 1. `thinking: disabled` + `reasoning_effort` cannot coexist → delete `reasoning_effort` when disabled
 2. `tool_calls[].function.arguments` must be string, not object → `JSON.stringify()`

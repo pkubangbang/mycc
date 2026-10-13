@@ -443,7 +443,7 @@ for the coordinator's lifetime.** `/reload` only forwards `--serve`/`--host`
 (when serve is active) plus `--skip-healthcheck`; it cannot change
 `--token-threshold`, `--ollama-model`, etc. Use a full restart to change those.
 
-> See `docs/reload-design.md` for the full design, including the reload
+> See `docs/session/reload-design.md` for the full design, including the reload
 > sequence and the coordinator vs lead effect boundary.
 
 ---

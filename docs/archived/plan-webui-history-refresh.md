@@ -57,7 +57,7 @@ Two message-bearing journal kinds join `PieceKind`:
 - `computeHistoryVersion(transcriptPath, messageLog, steeringLength, isRunning)` — user-log stat slot dropped
   (a steering journal still flips the ETag by growing the transcript file).
 - `agent-repl.ts:102` `setUserLogPath(...)` dropped; stale comment in `serve-clients.ts:131` rewritten.
-- Docs: `src/web/README.md` (`:166`, `:229`, `:331-336`), `docs/session-file-reorganization-design.md:124-156`.
+- Docs: `src/web/README.md` (`:166`, `:229`, `:331-336`), `docs/session/session-file-reorganization-design.md:124-156`.
 - Existing on-disk `user.jsonl` files stay as inert archives.
 
 ### 5. Tests

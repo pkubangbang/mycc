@@ -57,7 +57,7 @@ extra round-trip.
 - `bash` is `scope: ['main', 'child']`, so a teammate can already spawn
   processes; a custom tool handler runs arbitrary code too.
 - Idle teammates stay alive, poll mail every 5s, and **wake on new mail**
-  (`docs/child-context.md`) — so a persistent specialist responder works
+  (`docs/context/child-context.md`) — so a persistent specialist responder works
   without new infrastructure.
 - `codegraph` (`@colbymchenry/codegraph@1.6.2`) exposes both a **CLI** and an
   **MCP server** (`codegraph serve --mcp`, stdio transport) with a single tool
@@ -202,7 +202,7 @@ generic for others.
 - `src/context/child-context.ts`, `src/context/teammate-worker.ts`,
   `src/context/shared/loader.ts`, `src/context/shared/registry.ts`
 - `src/tools/tm_create.ts`, `src/context/parent/team.ts`,
-  `docs/child-context.md`, `docs/dynamic-loading.md`
+  `docs/context/child-context.md`, `docs/tools/dynamic-loading.md`
 - `skills/coordination/` (Scratchpad / hub-with-memory pattern),
   `skills/add-tool/`
 - `@colbymchenry/codegraph@1.6.2` (`codegraph serve --mcp`)

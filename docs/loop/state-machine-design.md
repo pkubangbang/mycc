@@ -8,7 +8,7 @@ The original `src/loop/agent-loop.ts` has been removed; the state machine in `sr
 
 ## The 8 States
 
-![MYCC state machine](assets/state-machine-diagram.png)
+![MYCC state machine](../assets/state-machine-diagram.png)
 
 | State | Responsibility | Source |
 |-------|---------------|--------|

@@ -366,9 +366,9 @@ New/changed tests:
 
 ## 9. Cross-references
 
-- `docs/todo-module-redesign.md` — the hash integrity gate this builds on.
-- `docs/pinned-todo-reactivation.md` — pinned todos & the nudge cycle (the
+- `docs/archived/todo-module-redesign.md` — the hash integrity gate this builds on.
+- `docs/loop/pinned-todo-reactivation.md` — pinned todos & the nudge cycle (the
   self-heal path the warm hint complements).
-- `docs/remote-peer-protocol.md` §2 step 3 — the `recordRemotePeerTodo`
+- `docs/peers/remote-peer-protocol.md` §2 step 3 — the `recordRemotePeerTodo`
   info-symmetry reminder whose sid-in-name volatility surfaced this bug.
 - `src/context/parent-context.ts` — `recordRemotePeerTodo` wire hook.

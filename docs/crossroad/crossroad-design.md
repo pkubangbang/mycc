@@ -1,6 +1,6 @@
 # Crossroad Feature
 
-> **Status:** Implemented in `src/loop/crossroad.ts` (~577 lines). Cooldown added later (see `docs/crossroad-cooldown.md`).
+> **Status:** Implemented in `src/loop/crossroad.ts` (~577 lines). Cooldown added later (see `docs/crossroad/crossroad-cooldown.md`).
 
 ## Overview
 
@@ -220,4 +220,4 @@ export interface PassData {
 
 ## Cooldown
 
-See `docs/crossroad-cooldown.md` for the cooldown mechanism: after crossroad fires, the `crossroadOccurred` flag is set, causing the next LLM pass to skip crossroad detection. This lets the LLM execute its committed actions without immediate re-triggering.
+See `docs/crossroad/crossroad-cooldown.md` for the cooldown mechanism: after crossroad fires, the `crossroadOccurred` flag is set, causing the next LLM pass to skip crossroad detection. This lets the LLM execute its committed actions without immediate re-triggering.

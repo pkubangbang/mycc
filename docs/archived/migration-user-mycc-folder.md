@@ -141,7 +141,7 @@ Change error message:
 - Line 488: `~/.mycc/wiki/logs/*.wal` → `~/.mycc-store/wiki/logs/*.wal`
 - Line 489: `~/.mycc/wiki/domains.json` → `~/.mycc-store/wiki/domains.json`
 
-#### 2.3 Update docs/user-manual-20260408.md
+#### 2.3 Update docs/manuals/user-manual-20260408.md
 - Line 224: `~/.mycc/wiki/logs/` → `~/.mycc-store/wiki/logs/`
 - Line 254: `~/.mycc/wiki/` → `~/.mycc-store/wiki/`
 - Line 487-489: Update wiki paths
@@ -150,7 +150,7 @@ Change error message:
 - Line 97: `~/.mycc/wiki/logs/` → `~/.mycc-store/wiki/logs/`
 - Line 154: `~/.mycc/wiki/logs/` → `~/.mycc-store/wiki/logs/`
 
-#### 2.5 Update docs/how-to-restore-the-session.md
+#### 2.5 Update docs/session/how-to-restore-the-session.md
 - Line 25: `~/.mycc/sessions` → `~/.mycc-store/sessions`
 - Line 91: Update path in example
 
@@ -166,9 +166,9 @@ Change error message:
 | `src/utils/open-editor.ts` | 1 error message |
 | `MYCC.md` | 1 reference |
 | `README.md` | 4 references |
-| `docs/user-manual-20260408.md` | 4 references |
+| `docs/manuals/user-manual-20260408.md` | 4 references |
 | `docs/how-to-build-persistent-memory.md` | 2 references |
-| `docs/how-to-restore-the-session.md` | 2 references |
+| `docs/session/how-to-restore-the-session.md` | 2 references |
 
 ## Backward Compatibility
 

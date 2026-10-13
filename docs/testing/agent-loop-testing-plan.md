@@ -2,7 +2,7 @@
 
 > **Goal**: Enhance agent-loop observability, build a maintainable mock harness, and exhaustively test all state transition paths for streak x=1,2,3 using a parametric test generator.
 >
-> **Status:** Implemented. All planned files exist: `src/loop/loop-events.ts`, `src/tests/loop/loop-events-helper.ts`, `src/tests/loop/mock-harness.ts`, `src/tests/loop/console-capture.ts`, `src/tests/loop/path-generator.ts`, `src/tests/loop/states/paths-x1.test.ts`, `paths-x2.test.ts`, `paths-x3.test.ts`. All 10 events and 53 paths are implemented.
+> **Status:** Mostly implemented. Shipped: `src/loop/loop-events.ts` (12 event types), `src/tests/loop/{loop-events-helper,mock-harness,console-capture,path-generator}.ts`, `src/tests/loop/states/paths-x1.test.ts`, and `src/tests/loop/states/hang-detection.test.ts`. The generator (`pathGenerator`) enumerates all 53 paths for x=1,2,3. **Deviation from plan:** the dedicated `paths-x2.test.ts` / `paths-x3.test.ts` files were not created — x=2/x=3 path coverage lives in `hang-detection.test.ts` (which seeds from `pathGenerator.x2()/x3()`), so the "one test file per streak" breakdown below is historical design, not the shipped layout.
 
 ---
 
@@ -116,7 +116,7 @@ Create a lightweight **LoopEventEmitter** — a no-op singleton when no listener
 
 | File | Purpose |
 |------|---------|
-| `src/loop/loop-events.ts` | **LoopEventEmitter** singleton. Events: `state_transition`, `tool_executed`, `tool_error`, `hook_result`, `compact_triggered`, `confusion_score`, `triologue_event`, `llm_call`, `llm_empty`, `esc_interrupt`. |
+| `src/loop/loop-events.ts` | **LoopEventEmitter** singleton. Shipped events: `state_transition`, `llm_call`, `llm_empty`, `tool_executed`, `tool_error`, `hook_result`, `compact_triggered`, `confusion_score`, `triologue_event`, `esc_interrupt`, plus `brief_message` and `serve_state`. Exports `loopEvents`, `LOOP_EVENT_TYPES`, `LoopEventType`, `TraceEntry`. |
 | `src/tests/loop/loop-events-helper.ts` | `captureLoopEvents()` → `{ trace, cleanup }`. `getStateSequence(trace)` → `AgentState[]`. |
 
 ### Files to Modify (instrumentation)
@@ -243,14 +243,14 @@ A single `path-generator.ts` enumerates all valid symbol sequences for x=1,2,3, 
 3. Asserts the `state_transition` event trace matches the expected sequence
 4. Verifies `ConsoleCapture` output where applicable
 
-### Files to Create
+### Files to Create (as shipped)
 
-| File | Purpose |
-|------|---------|
-| `src/tests/loop/path-generator.ts` | Enumerates all 53 paths as `PathSpec[]`. Each spec: `{ id, x, symbols, expectedStates, description }`. Also provides `drivePath(spec, harness)` — runs the state handlers through the path. |
-| `src/tests/loop/states/paths-x1.test.ts` | Data-driven tests for all 5 x=1 paths via `it.each(pathGenerator.x1())`. |
-| `src/tests/loop/states/paths-x2.test.ts` | Data-driven tests for all 12 x=2 paths. |
-| `src/tests/loop/states/paths-x3.test.ts` | Data-driven tests for all 36 x=3 paths. Split into 2 files if >300 lines. |
+| File | Status |
+|------|--------|
+| `src/tests/loop/path-generator.ts` | Shipped. Enumerates all 53 paths as `PathSpec[]` (`{ id, x, symbols, expectedStates, description }`). Exports `pathGenerator.x1()/x2()/x3()/all()` and `expandStates()`. |
+| `src/tests/loop/states/paths-x1.test.ts` | Shipped. Data-driven tests for all 5 x=1 paths. |
+| `src/tests/loop/states/paths-x2.test.ts` | **Not shipped.** x=2 coverage folded into `hang-detection.test.ts`. |
+| `src/tests/loop/states/paths-x3.test.ts` | **Not shipped.** x=3 coverage folded into `hang-detection.test.ts`. |
 
 ### path-generator.ts Design
 

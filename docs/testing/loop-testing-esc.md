@@ -1,8 +1,8 @@
 # Plan: Thoroughly Test ESC-Neglection Features from Within the Loop
 
-> **Status:** Implemented. All planned test files exist in `src/tests/loop/states/` (llm-esc-precheck, llm-esc-midcall, llm-esc-crossroad, tool-esc, stop-esc, hook-esc-recap, esc-full-loop, esc-wrap-up-lifecycle). The shared helpers live in `src/tests/loop/esc-test-helpers.ts`.
+> **Status:** Implemented. All planned test files exist in `src/tests/loop/states/` (llm-esc-precheck, llm-esc-midcall, llm-esc-crossroad, tool-esc, stop-esc, hook-esc-recap, esc-full-loop, esc-wrap-up-lifecycle; `collect-esc-hint.test.ts` covers the COLLECT hint branch). The shared helpers live in `src/tests/loop/esc-test-helpers.ts`.
 >
-> **Note:** The mock import paths in the code examples below have been updated to reference `../../../engine/chat-provider.js` (the LLM facade was refactored from `src/ollama.ts` to `src/engine/chat-provider.ts`).
+> **Note:** The mock import paths in the code examples below reference `../../../engine/chat-provider.js` (the LLM facade was refactored from `src/ollama.ts` to `src/engine/chat-provider.ts`).
 
 ## Goal
 
@@ -1841,7 +1841,7 @@ it('should replace previous wrap-up state when startWrapUp called again', async 
 
 ---
 
-## Summary: Files to Create
+## Files (as shipped)
 
 | File | Layer | Tests | Description |
 |------|-------|-------|-------------|
@@ -1853,10 +1853,10 @@ it('should replace previous wrap-up state when startWrapUp called again', async 
 | `src/tests/loop/states/stop-esc.test.ts` | A | 4 | handleStop: neglected mode at entry |
 | `src/tests/loop/states/collect-esc-hint.test.ts` | A | 5 | handleCollect: ESC during hint gen |
 | `src/tests/loop/states/hook-esc-recap.test.ts` | A | 3 | handleHook: ESC during recap |
-| `src/tests/loop/esc-full-loop.test.ts` | B | 5 | Full-loop integration with real handlers |
-| `src/tests/loop/esc-wrap-up-lifecycle.test.ts` | C | 8 | Wrap-up commit/rollback timing |
+| `src/tests/loop/states/esc-full-loop.test.ts` | B | 5 | Full-loop integration with real handlers |
+| `src/tests/loop/states/esc-wrap-up-lifecycle.test.ts` | C | 8 | Wrap-up commit/rollback timing |
 
-**Total**: 10 new files, ~42 test cases.
+**Total**: 10 files, ~42 test cases. All 8 ESC branches (7 handler-isolation files + the wrap-up lifecycle) are covered.
 
 ## Execution Order
 
