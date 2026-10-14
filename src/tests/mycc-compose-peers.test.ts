@@ -17,7 +17,7 @@
  *     concurrent register(). Now it re-reads/verifies in a retry loop.
  *   - m2: repairIdentity resurrected identity entries for cleanly-stopped peers.
  *   - A-M4 / m3: peerArgv passed the secret placeholder `***` to the child and
- *     let a spec-authored --session-id double the launcher's own flag.
+ *     let a spec-authored --name double the launcher's own flag.
  *
  * All disk state lives in a per-test temp dir (MYCC_DISCOVERY_DIR), never the
  * real ~/.mycc-store. `fs.renameSync` is wrapped (not replaced) so a test can
@@ -73,23 +73,23 @@ function startLiveProcess(): { pid: number; kill: () => void } {
   return { pid: child.pid as number, kill: () => child.kill() };
 }
 
-/** Start a long-lived process whose OWN argv carries the pinned sid, exactly
+/** Start a long-lived process whose OWN argv carries the peer NAME, exactly
  * what a real peer launch looks like: spawnDetached resolves the launcher shim
  * to `node <entry.js>` BEFORE spawning, so a genuine peer process's command
- * line is `node …mycc.js --session-id <sid> --auto …`. The script name still
- * contains "mycc" so the test proves the sid ALONE (not the /mycc/i substring
+ * line is `node …mycc.js --name <name> --auto …`. The script name still
+ * contains "mycc" so the test proves the NAME ALONE (not the /mycc/i substring
  * the old rule relied on) establishes identity. */
-function startMyccShapedProcess(sid: string): { pid: number; kill: () => void } {
+function startMyccShapedProcess(name: string): { pid: number; kill: () => void } {
   const script = path.join(tempDir, 'mycc-owner.js');
   fs.writeFileSync(script, 'setTimeout(function(){},600000);');
-  const child = spawn(process.execPath, [script, '--session-id', sid], { stdio: 'ignore' });
+  const child = spawn(process.execPath, [script, '--name', name], { stdio: 'ignore' });
   return { pid: child.pid as number, kill: () => child.kill() };
 }
 
 /** Start a long-lived process whose command line looks like a mycc SCRIPT but
- * carries NO --session-id: the shape the /mycc/i substring rule used to
- * wrongly accept (and kill). */
-function startMyccLookalikeWithoutSid(): { pid: number; kill: () => void } {
+ * carries NO --name: the shape the /mycc/i substring rule used to wrongly
+ * accept (and kill). */
+function startMyccLookalikeWithoutName(): { pid: number; kill: () => void } {
   const script = path.join(tempDir, 'mycc-lookalike.js');
   fs.writeFileSync(script, 'setTimeout(function(){},600000);');
   const child = spawn(process.execPath, [script], { stdio: 'ignore' });
@@ -226,7 +226,7 @@ afterEach(() => {
 describe('stopPeer: positive identity, never a recycled pid (B-LAUNCH-2)', () => {
   it('refuses an unrelated live Node process (command line is not mycc)', async () => {
     const { peers } = await loadModules();
-    const victim = startLiveProcess(); // `node -e setTimeout…`, never --session-id
+    const victim = startLiveProcess(); // `node -e setTimeout…`, never --name
     const beatAt = Date.now();
     writeHeartbeat(SID_A, victim.pid, beatAt);
     writeIdentity(SID_A);
@@ -273,41 +273,41 @@ describe('stopPeer: positive identity, never a recycled pid (B-LAUNCH-2)', () =>
 
   it('terminates a genuinely live owner (started before its own heartbeat file)', async () => {
     const { peers } = await loadModules();
-    const owner = startMyccShapedProcess(SID_A); // argv carries --session-id <sid>
+    const owner = startMyccShapedProcess('grp:owner'); // argv carries --name grp:owner
     writeIdentity(SID_A);
     writeHeartbeat(SID_A, owner.pid); // file written after the process started
-    expect(peers.stopPeer(peer('owner', SID_A))).toBe('stopped');
+    expect(peers.stopPeer(peer('grp:owner', SID_A))).toBe('stopped');
     expect(await waitFor(() => !isAlive(owner.pid), 3000)).toBe(true);
   });
 
-  it('refuses a mycc-named script WITHOUT the pinned sid in its argv', async () => {
+  it('refuses a mycc-named script WITHOUT the peer name in its argv', async () => {
     // THE P1-4 regression: the old /mycc/i substring OR-match treated any
     // cmdline merely containing "mycc" as a mycc instance. An unrelated
     // script whose PATH mentions mycc got SIGTERMed for a session it never
-    // held. Identity is the exact `--session-id <sid>` argv claim instead —
+    // held. Identity is the exact `--name <name>` argv claim instead —
     // without it, stopPeer must REFUSE, not kill.
     const { peers } = await loadModules();
-    const lookalike = startMyccLookalikeWithoutSid();
+    const lookalike = startMyccLookalikeWithoutName();
     writeIdentity(SID_A);
     writeHeartbeat(SID_A, lookalike.pid); // fresh file, live pid, no recycle signal
     try {
-      expect(peers.stopPeer(peer('intruder', SID_A))).toBe('refused-not-mycc');
+      expect(peers.stopPeer(peer('grp:intruder', SID_A))).toBe('refused-not-mycc');
       expect(isAlive(lookalike.pid)).toBe(true); // the innocent process survived
     } finally {
       lookalike.kill();
     }
   });
 
-  it('refuses a live process carrying a DIFFERENT session id', async () => {
-    // Exact identity cuts both ways: a mycc-shaped argv pinning SID_B must
-    // NOT authorize a kill for SID_A. The old substring rule would have
-    // matched it.
+  it('refuses a live process carrying a DIFFERENT peer name', async () => {
+    // Exact identity cuts both ways: a mycc-shaped argv naming ANOTHER peer
+    // must NOT authorize a kill for this peer. The old substring rule would
+    // have matched it.
     const { peers } = await loadModules();
-    const otherHolder = startMyccShapedProcess(SID_B);
+    const otherHolder = startMyccShapedProcess('grp:other');
     writeIdentity(SID_A);
     writeHeartbeat(SID_A, otherHolder.pid);
     try {
-      expect(peers.stopPeer(peer('wrong-sid', SID_A))).toBe('refused-not-mycc');
+      expect(peers.stopPeer(peer('grp:wrong', SID_A))).toBe('refused-not-mycc');
       expect(isAlive(otherHolder.pid)).toBe(true);
     } finally {
       otherHolder.kill();
@@ -320,7 +320,7 @@ describe('stopPeer: positive identity, never a recycled pid (B-LAUNCH-2)', () =>
     // a fix that relaxed the null path to "assume our own" would silently
     // reintroduce recycled-pid kills.
     const { peers } = await loadModules();
-    expect(peers.isMyccProcess(await deadPid(), SID_A)).toBe(false);
+    expect(peers.isMyccProcess(await deadPid(), 'grp:x')).toBe(false);
   });
 
   it('refuses when the pinned sid cannot be established at all', async () => {
@@ -391,20 +391,32 @@ describe('launchPeer: requires a NEW beat from the spawned child (A-M1)', () => 
 
   it('resolves once the child actually beats', async () => {
     const { peers } = await loadModules();
-    // Writes a NEW beat + its own pid a moment after spawn, mimicking a real
-    // mycc instance registering + beating. The write is ASYNC (setTimeout 0):
-    // a synchronous write inside the child would land when `prevBeat` was
-    // already sampled, but an async one proves the poll's `latestBeatMs >`
-    // comparison — not a race — is what resolves 'started'.
+    // Writes a NEW beat + its own NAME-keyed identity entry a moment after
+    // spawn, mimicking a real mycc instance registering + beating. A launched
+    // peer mints its OWN sid on boot and registers by its durable `--name`, so
+    // the launcher can only resolve it by NAME (resolveLivePeer) — the fixture
+    // must therefore publish a name-matched, workdir-matched, live-pid entry
+    // (as register() does) alongside its heartbeat. It registers under a FRESH
+    // sid (SID_B ≠ the seeded SID_A) because `launchPeer` requires the resolved
+    // sid to DIFFER from the pre-launch one: that proves the child we spawned
+    // registered anew rather than us observing the stale twin. The write is
+    // ASYNC (setTimeout 0) so a poll tick before the write cannot resolve.
     setBin(
       "const fs=require('fs'),p=require('path');" +
       "const d=process.env.MYCC_DISCOVERY_DIR;" +
       'setTimeout(function(){' +
-      `fs.writeFileSync(p.join(d,'heartbeat','${SID_A}.json'),JSON.stringify({heartbeats:[Date.now()],briefs:[],pid:process.pid}));` +
+      `fs.writeFileSync(p.join(d,'heartbeat','${SID_B}.json'),JSON.stringify({heartbeats:[Date.now()],briefs:[],pid:process.pid}));` +
+      "const idFile=p.join(d,'identity.json');" +
+      "const map=JSON.parse(fs.readFileSync(idFile,'utf-8'));" +
+      `map['${SID_B}']={sessionId:'${SID_B}',workDir:${JSON.stringify(tempDir)},mailbox:'mb',startedAt:Date.now(),name:'boots'};` +
+      'fs.writeFileSync(idFile,JSON.stringify(map,null,2));' +
       '},0);' +
       'setTimeout(function(){},600000);',
     );
-    writeIdentity(SID_A); // registered; no heartbeat yet → not held
+    // The pre-launch phantom: the peer was 'known' under SID_A (the dead-twin
+    // sid) with no live instance behind it, so the child's fresh SID_B is what
+    // the differ-gate resolves to.
+    writeIdentity(SID_A);
 
     // Budget: one node boot (~100-300ms) + a poll tick (LAUNCH_POLL_MS=500).
     // vitest's global testTimeout is 10s, which is ample; assert against a
@@ -504,10 +516,10 @@ describe('peerArgv: spawn argv carries real secrets, no launcher flag (A-M4/m3)'
     expect(rendered).toContain('tok-123');
   });
 
-  it('strips a spec-authored --session-id (the launcher supplies it)', async () => {
+  it('strips a spec-authored --name (the launcher supplies it)', async () => {
     const { peers } = await loadModules();
-    const rendered = peers.peerArgv({ parsedArgs: { _: [], auto: true, 'session-id': SID_A } });
-    expect(rendered).not.toContain('--session-id');
+    const rendered = peers.peerArgv({ parsedArgs: { _: [], auto: true, name: 'grp:peer' } });
+    expect(rendered).not.toContain('--name');
     expect(rendered).toEqual(['--auto']);
   });
 });

@@ -7,16 +7,24 @@
  * it never mutates its input and throws a descriptive Error on the first fault.
  *
  * Schema v2 (see skills/mycc-compose/schema.md):
- *   { group, peers: [{name, workdir, args, sessionId, renew}], channels: [...] }
+ *   { group, peers: [{name, workdir, args, renew}], channels: [...] }
  *   - args is ONE whitespace-split string; it MUST contain --auto or --daemon.
- *   - sessionId is null (mint) or a UUID.
  *   - renew ∈ {"always","onMismatch"} (default "onMismatch").
+ *   - `name` is the peer's `<group>:<peer>` identity; the launcher injects it
+ *     as `--name`. Session ids are NEVER authored in the spec — they are minted
+ *     fresh per run and resolved from identity.json at runtime (a `sessionId`
+ *     field is therefore REJECTED, see validateSpec).
  */
 
 import fs from 'fs';
 import path from 'path';
 import { parseArgString, LAUNCHER_FLAGS } from '../../../src/utils/arg-canonical.js';
 import { sanitizeId } from '../../../src/utils/id-guard.js';
+
+// validatePeerName lives in src/utils/id-guard.ts (the single implementation
+// shared with src/config.ts). Re-exported here so existing consumers of the
+// compose lib's spec surface (and the spec test suite) keep working unchanged.
+export { validatePeerName } from '../../../src/utils/id-guard.js';
 
 export const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -25,7 +33,6 @@ export interface NormalizedPeer {
   name: string;
   workdir: string;
   args: string;
-  sessionId: string | null;
   renew: 'always' | 'onMismatch';
   parsedArgs: Record<string, unknown>;
   /** Index signature so NormalizedPeer is assignable to peers.ts's Peer. */
@@ -320,10 +327,11 @@ export function validateSpec(spec: unknown): NormalizedSpec {
     }
     const parsedArgs = parseArgString(p.args as string);
     // A spec must never author a launcher-managed flag: the launcher injects
-    // `--session-id <sid>` itself, so an authored one produces a DOUBLED flag →
-    // minimist collects an array → getPinnedSessionId() returns null → the peer
-    // mints a random id while the launcher polls the spec's sid → 30s timeout
-    // plus an orphan process.
+    // `--name <group>:<peer>` itself, so an authored one would double the flag
+    // and drift the peer's identity from the launcher's. (The launcher-managed
+    // set is now exactly `--name`; `--session-id` is removed entirely and is
+    // caught by its own explicit check below, since it is no longer a known
+    // string flag and would otherwise slip through as an auto-detected key.)
     for (const launcherFlag of LAUNCHER_FLAGS) {
       if (launcherFlag in parsedArgs) {
         throw new Error(
@@ -331,6 +339,18 @@ export function validateSpec(spec: unknown): NormalizedSpec {
           `launcher at spawn time. Got: "${p.args}"`,
         );
       }
+    }
+    // `--session-id` is REMOVED from mycc entirely (sessions are never reused —
+    // a peer mints a fresh random session id each run and is addressed by
+    // `--name`). It is no longer in STRING_FLAGS, so parseArgString treats it as
+    // an UNKNOWN flag and it will NOT be caught by the LAUNCHER_FLAGS loop above;
+    // reject the literal key explicitly with a clear never-supported message.
+    if ('session-id' in parsedArgs) {
+      throw new Error(
+        `${at}.args must not set --session-id: the flag is no longer supported — ` +
+        `sessions are never reused; a peer mints a fresh session id each run and is ` +
+        `addressed by --name <group>:<peer> (injected by the launcher). Got: "${p.args}"`,
+      );
     }
     // Bare --daemon diverges from minimist's unset string representation.
     // `--daemon=` parses to '' (not `true`) yet renders to spawn as NO daemon
@@ -344,10 +364,15 @@ export function validateSpec(spec: unknown): NormalizedSpec {
         `can garbage-collect the re-pinned session dir. Got: "${p.args}"`,
       );
     }
-    if (p.sessionId !== null && p.sessionId !== undefined) {
-      if (typeof p.sessionId !== 'string' || !UUID_RE.test(p.sessionId as string)) {
-        throw new Error(`${at}.sessionId must be null or a UUID (got ${JSON.stringify(p.sessionId)})`);
-      }
+    // NO TOLERANCE for a spec-authored session id: peer identity is `--name`,
+    // session ids are minted fresh per run and resolved from identity.json at
+    // runtime. A `sessionId` field (even null) is a hard validation error.
+    if (p.sessionId !== undefined) {
+      throw new Error(
+        `${at}.sessionId is no longer supported — peer identity is --name <group>:<peer>, ` +
+        `injected by the launcher; session ids are minted fresh per run and resolved from ` +
+        `identity.json at runtime. Remove the field from the spec.`,
+      );
     }
     const renew = (p.renew === undefined ? 'onMismatch' : p.renew) as 'always' | 'onMismatch';
     if (renew !== 'always' && renew !== 'onMismatch') {
@@ -366,7 +391,6 @@ export function validateSpec(spec: unknown): NormalizedSpec {
       name: p.name as string,
       workdir: p.workdir as string,
       args: p.args as string,
-      sessionId: (p.sessionId as string | null | undefined) ?? null,
       renew,
       remotes: remotes as string[] | undefined,
       parsedArgs,

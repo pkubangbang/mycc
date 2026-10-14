@@ -130,6 +130,10 @@ export const peersTool: ToolDefinition = {
       const started = formatLocalDateTime(id.startedAt);
       const tag = isSelf ? ' (self)' : '';
       const state = fresh ? chalk.green('online') : chalk.gray('offline');
+      // Surface the durable peer NAME (`<group>:<peer>`) when present — it is
+      // the STABLE handle across the per-run session-id churn (mycc-compose
+      // peers), so address such a peer by name. Omitted for non-compose peers.
+      const nameTag = id.name ? ` name=${chalk.bold(id.name)}` : '';
       const roleTag = id.role ? `\n    role: ${id.role}` : '';
       const daemonTag = id.daemon ? `\n    daemon: true` : '';
       // Surface the OS PID so another MYCC can terminate the instance
@@ -149,7 +153,7 @@ export const peersTool: ToolDefinition = {
           }).join('\n')}`
         : '';
       rows.push(
-        `- session=${chalk.bold(id.sessionId)}${tag}\n    workDir: ${id.workDir}\n    status: ${state}\n    started: ${started}${roleTag}${daemonTag}${pidTag}${briefLine}`,
+        `- session=${chalk.bold(id.sessionId)}${nameTag}${tag}\n    workDir: ${id.workDir}\n    status: ${state}\n    started: ${started}${roleTag}${daemonTag}${pidTag}${briefLine}`,
       );
     }
 

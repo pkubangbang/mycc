@@ -137,3 +137,48 @@ export function sanitizeId(id: unknown, label: string): string {
   }
   return id;
 }
+
+/**
+ * Split + validate a peer NAME of the form `<group>:<peer>`.
+ *
+ * Splits on the FIRST `:` only (so a peer part may contain further colons only
+ * if it also passes `isSafeId` — it cannot, `:` is Windows-reserved, so the
+ * effective grammar is exactly one colon). Both parts must be non-empty, free
+ * of whitespace, and safe as an id component (`isSafeId` rejects `/`, `\`, `..`,
+ * control chars, the Windows-reserved set `: * ? " < > |`, trailing dot/space,
+ * device names, and length > 200).
+ *
+ * The name is DATA-ONLY: it is written into identity.json and channel-file
+ * ownership fields, never used as a filename component (the `:` would be
+ * illegal on Windows). It is the stable handle a peer is addressed by across
+ * the per-run session-id churn.
+ *
+ * Single implementation shared by BOTH sides of the compose feature: the
+ * `scripts/mycc-compose/` CLI and `src/config.ts` (which validates a
+ * `--name <group>:<peer>` launch flag). One implementation, both consumers —
+ * the same rationale that motivated extracting `sanitizeId` into this module.
+ *
+ * @returns the parsed `{ group, peer }` when the name is valid
+ */
+export function validatePeerName(name: unknown): { group: string; peer: string } {
+  if (typeof name !== 'string' || name === '') {
+    throw new Error('peer name must be a non-empty string');
+  }
+  const idx = name.indexOf(':');
+  if (idx < 0) {
+    throw new Error(`peer name must be "<group>:<peer>" (missing ":") — got "${name}"`);
+  }
+  const group = name.slice(0, idx);
+  const peer = name.slice(idx + 1);
+  if (group === '' || peer === '') {
+    throw new Error(`peer name must have a non-empty group AND peer part — got "${name}"`);
+  }
+  if (/\s/.test(group) || /\s/.test(peer)) {
+    throw new Error(`peer name parts must not contain whitespace — got "${name}"`);
+  }
+  // sanitizeId throws a descriptive Error; prefix it so the caller can tell the
+  // fault is in the NAME (not, say, a channel label).
+  sanitizeId(group, `peer name group "${group}"`);
+  sanitizeId(peer, `peer name peer "${peer}"`);
+  return { group, peer };
+}

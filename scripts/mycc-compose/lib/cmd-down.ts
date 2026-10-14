@@ -27,12 +27,22 @@
  */
 
 import { validateSpec, loadSpec } from './spec.js';
-import { removeChannels, channelFileNames } from './channels.js';
-import { stopPeer } from './peers.js';
+import { removeChannels, ownedChannelFiles } from './channels.js';
+import { resolvePeerSid, stopPeer } from './peers.js';
+import { isPeerRunning } from './discovery.js';
 import { out } from './cli.js';
 
 export function cmdDown(file: string): void {
   const spec = validateSpec(loadSpec(file));
+
+  // Resolve each peer's LIVE session id by its durable NAME before touching
+  // channels: the channel files are named `<sid>-<label>.json` and a spec no
+  // longer authors a sid, so without this the filename set would be empty and
+  // `down` would remove NOTHING (leaving the peers' IPC surface behind). The
+  // same name-resolution pass cmdUp runs at step 0.
+  for (const peer of spec.peers) {
+    resolvePeerSid(peer);
+  }
 
   let stopFailures = 0;
   const stopResults: string[] = [];
@@ -45,16 +55,41 @@ export function cmdDown(file: string): void {
     const result = stopPeer(peer);
     out(`  - ${peer.name}: ${result}`);
     stopResults.push(`${peer.name} (${result})`);
-    const stopped = result === 'stopped' || result === 'already-stopped';
-    if (!stopped) stopFailures++;
+    // 'no-session' = no live instance could be resolved for this peer's NAME
+    // (identity.json has no running entry) → there is nothing to stop, the
+    // same success semantics as 'already-stopped'. 'stopped' = we terminated it.
+    // Every OTHER result is a genuine refusal/failure (refused-*, kill-failed:*).
+    const notAProblem = result === 'stopped' || result === 'already-stopped' || result === 'no-session';
+    if (!notAProblem) stopFailures++;
   }
   if (stopFailures > 0) {
     out(`  stop refused for ${stopFailures} peer(s): ${stopResults.join(', ')}`);
   }
 
-  // Remove exactly the files this spec owns — never a foreign peer's channel.
-  const removed = removeChannels(channelFileNames(spec));
+  // Remove exactly the files this spec OWNS — judged by NAME (R1 conjunction:
+  // label ∈ spec labels AND ownerName/peerName ∈ the spec's <group>:<peer>
+  // name-set), plus an orphan-only legacy sweep (R2: a pre-v3 nameless file is
+  // deletable ONLY when BOTH embedded sids are dead; ambiguity → kept +
+  // reported). This replaces the old sid-keyed channelFileNames(): a channel
+  // file's identity now survives the per-run sid churn by NAME, so cleanup no
+  // longer depends on resolving today's sids.
+  //
+  // isSidDead is the isPeerRunning-level predicate (fresh beat AND dead
+  // recorded pid) — NOT bare heartbeat freshness. isPeerRunning's workdir arg
+  // is unused on the sid-only path, so a bare sid suffices here.
+  const isSidDead = (sid: string): boolean => !isPeerRunning({ sessionId: sid });
+  const { deletable, keptAmbiguous } = ownedChannelFiles(spec, isSidDead);
+  const removed = removeChannels(deletable);
   out(`mycc-compose down: removed ${removed} channel file(s).`);
+  if (keptAmbiguous.length > 0) {
+    // Half-matches are NOT deletable evidence — they are investigation
+    // material. A legacy (nameless) file still claimable by a live/unsettled
+    // sid is left in place and surfaced here.
+    out(
+      `  kept ${keptAmbiguous.length} legacy channel file(s) with a live or ` +
+      `unestablished sid (ambiguous ownership): ${keptAmbiguous.join(', ')}`,
+    );
+  }
 
   process.exit(stopFailures > 0 ? 1 : 0);
 }

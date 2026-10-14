@@ -24,13 +24,6 @@ import * as os from 'os';
 import * as path from 'path';
 import { spawn, type SpawnOptions, type ChildProcess } from 'child_process';
 
-// UNIQUE sid per suite: the discovery store is shared by every suite that
-// fails to capture MYCC_DISCOVERY_DIR (issue #8), and launchPeer's holder
-// gate reads the WHOLE store — a colliding sid from another suite's leaked
-// fixture poisons these launches with 'still held'. A suite-unique sid makes
-// that leak benign here (one extra entry the holder gate never matches).
-const SID = '1a1a1111-2222-4111-8111-111111111111';
-
 let tempDir = '';
 let binDir = '';
 
@@ -43,12 +36,13 @@ async function loadLifecycle(): Promise<Lifecycle> {
   return lifecycle;
 }
 
-/** The peer fixture: a pinned sid, daemonless launch args. */
+/** The peer fixture: a durable name, daemonless launch args. No sessionId —
+ * the peer mints its own on boot and the launcher resolves it by NAME; a
+ * pre-set one is no longer required (or meaningful). */
 function peerFixture() {
   return {
     name: 'shim-peer',
     workdir: tempDir,
-    sessionId: SID,
     args: '--auto --skip-healthcheck',
     renew: 'onMismatch' as const,
     parsedArgs: { _: [], 'auto': true, 'skip-healthcheck': true } as Record<string, unknown>,
@@ -125,21 +119,6 @@ beforeEach(() => {
   writeLaunchBaseFixture();
 });
 
-/** A DECEASED holder for the sid: fresh heartbeat, dead pid, registered
- * entry. launchPeer's holder gate (isSessionHeld) must pass — it cannot
- * disprove via a dead pid — so the spawn seam is actually reached; without
- * this the launch rejects 'still held' before ever capturing (the holder gate
- * assumes HELD when the heartbeat file records no pid at all). */
-function writeDeadHolderHeartbeat(): void {
-  const map = JSON.parse(fs.readFileSync(path.join(tempDir, 'discovery', 'identity.json'), 'utf-8')) as Record<string, unknown>;
-  map[SID] = { sessionId: SID, workDir: tempDir, mailbox: 'mb', startedAt: Date.now() };
-  fs.writeFileSync(path.join(tempDir, 'discovery', 'identity.json'), JSON.stringify(map));
-  fs.writeFileSync(
-    path.join(tempDir, 'discovery', 'heartbeat', `${SID}.json`),
-    JSON.stringify({ heartbeats: [Date.now()], briefs: [], pid: 0 }),
-  );
-}
-
 /** The baseline fixture shim resolveMyccLauncher finds; per-test writers
  * overwrite it. Without a pre-seeded shim, tests that never call a writer
  * would leave launchPeer's `?? 'mycc'` fallback in place. */
@@ -163,7 +142,6 @@ const d = describe.skip;
 
 (isWin ? describe : d)('parseCmdShim: real npm _prog=%dp0% shape (P1-3, win32)', () => {
   it('bundled node.exe present → prog resolves to <shimDir>\\node.exe, no cmd /c wrap', async () => {
-    writeDeadHolderHeartbeat();
     writeNpmShimShape({ bundleNode: true });
     const seen = await captureLaunchShape(2_500);
     expect(seen).toHaveLength(1);
@@ -173,7 +151,6 @@ const d = describe.skip;
   });
 
   it('bundled node.exe absent → prog degrades to PATH `node`, no cmd /c wrap', async () => {
-    writeDeadHolderHeartbeat();
     writeNpmShimShape({ bundleNode: false });
     const seen = await captureLaunchShape(2_500);
     expect(seen).toHaveLength(1);
@@ -182,7 +159,6 @@ const d = describe.skip;
   });
 
   it('unparsable shim shape → keeps the documented cmd /c fallback', async () => {
-    writeDeadHolderHeartbeat();
     // A shape the parser deliberately does not recognize (no quoted .js exec).
     fs.writeFileSync(
       path.join(binDir, 'mycc.cmd'),
@@ -195,11 +171,10 @@ const d = describe.skip;
     expect(seen[0].args[1]).toBe(path.join(binDir, 'mycc.cmd'));
   });
 
-  it('spawned argv is the launcher real argv: prog + target + --session-id sid + args', async () => {
-    writeDeadHolderHeartbeat();
+  it('spawned argv is the launcher real argv: prog + target + --name <peer> + args', async () => {
     writeNpmShimShape({ bundleNode: true });
     const seen = await captureLaunchShape(2_500);
-    expect(seen[0].args.slice(0, 3)).toEqual([path.join(binDir, 'mycc.js'), '--session-id', SID]);
+    expect(seen[0].args.slice(0, 3)).toEqual([path.join(binDir, 'mycc.js'), '--name', 'shim-peer']);
     expect(seen[0].args).toContain('--auto');
     expect(seen[0].args.join(' ')).not.toContain('%');
   });

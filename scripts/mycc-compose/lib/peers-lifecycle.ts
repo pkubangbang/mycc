@@ -5,22 +5,17 @@ import { spawn, execFileSync, type SpawnOptions, type ChildProcess } from 'child
 
 import { formatLaunchArgsForSpawn } from '../../../src/utils/arg-canonical.js';
 import {
-  readHeartbeatData,
   isSessionLive,
-  isPeerRunning,
   isPidAlive,
   isRecordedPidAlive,
   didPidStartAfter,
   heartbeatPid,
   heartbeatFileMtimeMs,
+  resolveLivePeer,
 } from './discovery.js';
-import type { PeerRef } from './discovery.js';
 import {
   LAUNCH_TIMEOUT_MS,
   LAUNCH_POLL_MS,
-  HOLDER_RELEASE_TIMEOUT_MS,
-  HOLDER_RELEASE_POLL_MS,
-  sleep,
   isLauncherFlag,
 } from './peers-types.js';
 import type { Peer } from './peers-types.js';
@@ -89,22 +84,32 @@ function stripLauncherFlags(parsed: Record<string, unknown> | undefined): Record
   return out;
 }
 
-export function isMyccProcess(pid: number, sessionId?: string | null): boolean {
+/**
+ * True when the OS process `pid` is one of OUR launched peers, identified by
+ * the durable peer NAME it was spawned with.
+ *
+ * Identity is an EXACT claim: the peer's `<group>:<peer>` name must appear in
+ * the process's OWN argv as `--name <name>` (or `--name=<name>`), because
+ * `launchPeer` spawns every peer with exactly that pair. A bare `/mycc/i`
+ * substring OR-match cannot establish identity — any process that merely
+ * mentions mycc (an editor on the repo, a script named `mycc-*.js`) would pass
+ * it and become killable by `stopPeer`.
+ *
+ * The name replaced the old pinned `--session-id <sid>` match: the launcher no
+ * longer hands the peer a fixed sid (the peer mints its own fresh one), so a
+ * name — not a per-run id — is what is stable across relaunches and thus safe
+ * to match on.
+ */
+export function isMyccProcess(pid: number, peerName?: string | null): boolean {
   if (!pid || typeof pid !== 'number') return false;
-  // Identity is an EXACT claim: the pinned session id must appear in the
-  // process's OWN argv as --session-id <sid> (or --session-id=<sid>), because
-  // launchPeer spawns every peer with exactly that pair. A bare /mycc/i
-  // substring OR-match cannot establish identity - any process that merely
-  // mentions mycc (an editor on the repo, a script named mycc-*.js) would
-  // pass it and become killable by stopPeer.
-  if (typeof sessionId !== 'string' || sessionId.length === 0) return false;
+  if (typeof peerName !== 'string' || peerName.length === 0) return false;
   const commandLine = readProcessCommandLine(pid);
   // cannot introspect → refuse
   if (commandLine === null) return false;
-  return new RegExp(`--session-id[= ]+${escapeRegExp(sessionId)}(?:\\s|$)`).test(commandLine);
+  return new RegExp(`--name[= ]+${escapeRegExp(peerName)}(?:\\s|$)`).test(commandLine);
 }
 
-/** Regex-quote a session id so regex metacharacters cannot broaden the match. */
+/** Regex-quote a peer name so regex metacharacters cannot broaden the match. */
 function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
@@ -132,23 +137,40 @@ export function readProcessCommandLine(pid: number): string | null {
   }
 }
 
+/**
+ * Stop a peer: SIGTERM the OS process recorded in its heartbeat, AFTER a
+ * chain of identity refusals that make a recycled-pid kill impossible.
+ *
+ * The heartbeat is keyed by the peer's RUNTIME session id (`peer.sessionId`),
+ * resolved from identity.json by name in Slice 2 — in Slice 1 the caller
+ * (cmd-up) still populates it. The final identity gate matches the process's
+ * argv on the durable peer NAME (`isMyccProcess`), so a pid recycled onto an
+ * unrelated process that merely happens to be alive is refused.
+ */
 export function stopPeer(peer: Peer): string {
-  if (!peer.sessionId) return 'no-session';
-  const hbPid = heartbeatPid(peer.sessionId);
+  // Resolve the LIVE sid by durable NAME when the caller did not already stamp
+  // one (cmd-down does not run cmd-up's resolution pass). Without this, a
+  // `down` on a spec whose peers were never minted into the runtime shape
+  // would return 'no-session' and silently leave the peer running. The name is
+  // the stable identity; the sid merely LOCATES the heartbeat to read the pid.
+  const sid = peer.sessionId ?? resolveLivePeer(peer);
+  if (!sid) return 'no-session';
+  peer.sessionId = sid;
+  const hbPid = heartbeatPid(sid);
 
   if (typeof hbPid !== 'number') {
-    return isSessionLive(peer.sessionId) ? 'refused-no-recorded-pid' : 'already-stopped';
+    return isSessionLive(sid) ? 'refused-no-recorded-pid' : 'already-stopped';
   }
-  if (!isSessionLive(peer.sessionId)) {
+  if (!isSessionLive(sid)) {
     return isPidAlive(hbPid) ? 'stale-kept-alive-pid' : 'already-stopped';
   }
-  if (!isRecordedPidAlive(peer.sessionId)) return 'heartbeat-fresh-but-pid-dead';
+  if (!isRecordedPidAlive(sid)) return 'heartbeat-fresh-but-pid-dead';
   // Abort on a recycled pid: a pid started AFTER the heartbeat file was written
   // cannot be the process that wrote it.
-  if (didPidStartAfter(hbPid, heartbeatFileMtimeMs(peer.sessionId))) {
+  if (didPidStartAfter(hbPid, heartbeatFileMtimeMs(sid))) {
     return 'refused-recycled-pid';
   }
-  if (!isMyccProcess(hbPid, peer.sessionId)) return 'refused-not-mycc';
+  if (!isMyccProcess(hbPid, peer.name)) return 'refused-not-mycc';
   try {
     process.kill(hbPid, 'SIGTERM');
     return 'stopped';
@@ -156,25 +178,6 @@ export function stopPeer(peer: Peer): string {
     const e = err as NodeJS.ErrnoException;
     return `kill-failed:${e.code || e.message}`;
   }
-}
-
-export async function waitForHolderRelease(
-  sessionId: string,
-  timeoutMs: number = HOLDER_RELEASE_TIMEOUT_MS,
-): Promise<'released' | 'still-held'> {
-  const deadline = Date.now() + timeoutMs;
-  while (isSessionHeld(sessionId)) {
-    if (Date.now() >= deadline) return 'still-held';
-    await sleep(HOLDER_RELEASE_POLL_MS);
-  }
-  return 'released';
-}
-
-export function isSessionHeld(sessionId: string): boolean {
-  if (!isSessionLive(sessionId)) return false;
-  const hbPid = heartbeatPid(sessionId);
-  if (typeof hbPid !== 'number') return true; // cannot disprove → assume held
-  return isPidAlive(hbPid);
 }
 
 /**
@@ -220,11 +223,6 @@ function existsQuiet(p: string): boolean {
   } catch {
     return false;
   }
-}
-
-function latestBeatMs(sessionId: string): number {
-  const { heartbeats } = readHeartbeatData(sessionId);
-  return heartbeats.length > 0 ? heartbeats[heartbeats.length - 1] : 0;
 }
 
 /** Plain background spawn shared by the `--daemon` branch and the no-terminal
@@ -390,7 +388,7 @@ export interface LaunchPeerOpts {
 /**
  * Launch a peer — in its OWN visible terminal, or detached background —
  * decided SOLELY by the peer's launch args; liveness is judged solely by the
- * heartbeat beat-poll (the terminal opener is one-shot; the spawn is unref'd).
+ * NAME-resolution poll (the terminal opener is one-shot; the spawn is unref'd).
  *
  * DEFAULT — a visible terminal window (openTerminal, the utility `/fork` uses)
  * running the peer in its FOREGROUND from the peer's workdir — fail-fast: an
@@ -399,21 +397,28 @@ export interface LaunchPeerOpts {
  * spawn.
  *
  * `opts.spawnImpl` routes through spawnDetached, bypassing the opener and the
- * daemon split, so headless tests can drive the beat poll; see LaunchPeerOpts.
+ * daemon split, so headless tests can drive the poll; see LaunchPeerOpts.
  * Windows launch mechanics: docs/peers/peer-launch-windows.md.
+ *
+ * IDENTITY: the peer is spawned with `--name <group>:<peer>` (the durable
+ * handle), NOT a pinned `--session-id`. The peer mints its OWN fresh session
+ * id on boot, so the launcher CANNOT know it up front — liveness is therefore
+ * judged by RESOLVING THE NAME against identity.json (resolveLivePeer), not by
+ * a launcher-minted sid (which would never match the peer's real id). On
+ * success the resolved sid is STAMPED onto peer.sessionId, so the post-launch
+ * callers (deliverRemotes, the cmd-up liveness wait) act on the real sid.
  */
 export function launchPeer(
   peer: Peer,
   opts: LaunchPeerOpts = {},
 ): Promise<LaunchResult> {
   return new Promise((resolve, reject) => {
-    if (!peer.sessionId) {
-      reject(new Error(`cannot launch "${peer.name}": no session id`));
+    if (!peer.name) {
+      reject(new Error('cannot launch a peer with no name'));
       return;
     }
-    const sid = peer.sessionId;
     const argv = peerArgv(peer);
-    const finalArgv = ['--session-id', sid, ...argv];
+    const finalArgv = ['--name', peer.name, ...argv];
 
     // ABSOLUTE launcher (see resolveMyccLauncher) — a bare `mycc` name is
     // unresolvable in the terminal's own shell.
@@ -421,7 +426,11 @@ export function launchPeer(
     const launchArgs = finalArgv;
 
     const spawnAt = Date.now();
-    const prevBeat = latestBeatMs(sid);
+    // The sid the peer was KNOWN by before this launch (if any) — we require a
+    // DIFFERENT resolved sid, proving the process we just spawned registered
+    // anew rather than us observing the pre-existing instance. null when the
+    // peer was not running before (the common case).
+    const prevSid = peer.sessionId ?? null;
 
     let poll: ReturnType<typeof setInterval> | null = null;
     let settled = false;
@@ -433,22 +442,13 @@ export function launchPeer(
     };
 
     void (async () => {
-      const release = await waitForHolderRelease(sid);
-      if (release !== 'released') {
-        done(reject, new Error(
-          `session ${peer.sessionId} is still held by a live process after ` +
-          `${HOLDER_RELEASE_TIMEOUT_MS}ms — not launching a second instance for "${peer.name}".`,
-        ));
-        return;
-      }
-
       const cwd = peer.workdir as string;
       const onSpawnError = (err: Error): void =>
         done(reject, new Error(`spawn failed for "${peer.name}": ${err.message}`));
       try {
         if (opts.spawnImpl) {
           // Test seam: spawn via spawnDetached (bypasses opener + split) so a
-          // headless test can drive the beat poll; inherits production shape.
+          // headless test can drive the poll; inherits production shape.
           spawnDetached(opts.spawnImpl, launchCommand, launchArgs, cwd, onSpawnError);
         } else if (peer.parsedArgs?.daemon !== undefined) {
           // `--daemon` → headless service: no window, detached background.
@@ -459,7 +459,7 @@ export function launchPeer(
           // rejects the launch with its diagnostic (what was tried, why it
           // failed) so the cause stays observable.
           // (openTerminal is one-shot fire-and-forget — its return is NOT the
-          // peer's exit; liveness is the heartbeat poll below.)
+          // peer's exit; liveness is the name-resolution poll below.)
           openTerminal(buildPeerShellCommand(launchCommand, launchArgs, cwd));
         }
       } catch (err) {
@@ -469,7 +469,13 @@ export function launchPeer(
 
       const deadline = Date.now() + (opts.timeoutMs ?? LAUNCH_TIMEOUT_MS);
       poll = setInterval(() => {
-        if (latestBeatMs(sid) > prevBeat && isPeerRunning(peer as PeerRef)) {
+        // Resolve the LIVE sid by durable NAME. The peer mints its own sid on
+        // boot, so this is the ONLY way to learn it. Require a sid that differs
+        // from the pre-launch one, so we observe the NEW instance registering
+        // (not a stale still-running twin).
+        const sid = resolveLivePeer(peer);
+        if (sid && sid !== prevSid) {
+          peer.sessionId = sid;
           done(resolve, 'started' as LaunchResult);
           return;
         }

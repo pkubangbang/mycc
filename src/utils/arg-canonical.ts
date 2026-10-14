@@ -50,8 +50,11 @@ export const STRING_FLAGS: string[] = [
   'deepseek-host', 'deepseek-api-key', 'deepseek-model', 'deepseek-vision-model',
   'api-provider', 'token-threshold', 'editor', 'skill-match-threshold',
   'wire-token',
-  // Session pinning (compose): lets mycc-topology re-pin a peer's session id.
-  'session-id',
+  // Peer name (compose): the launcher injects `--name <group>:<peer>` so a
+  // compose-managed peer carries a DURABLE, human-readable identity that
+  // survives the per-run session-id churn. Data-only (an identity.json field);
+  // it is never used as a filename component. See LAUNCHER_FLAGS below.
+  'name',
   // Auto-mode commit pre-authorization: a comma-separated allow-list of branch
   // names. STRING (carries a value), not boolean. Absent from DEFAULTS like
   // 'allow-plan-off' — absence means "off", and the parser/argsMatch treat
@@ -81,12 +84,16 @@ export const SECRET_FLAGS: string[] = ['ollama-api-key', 'deepseek-api-key', 'wi
 
 /**
  * Flags that are launcher-managed and MUST be ignored when comparing a spec's
- * args against a live instance's published args. `--session-id` is supplied by
- * the launcher (`mycc-compose`) at spawn time, never authored in the spec, so a
- * peer launched under a pinned sid would otherwise always look like a mismatch
- * (`{--session-id, --auto}` vs `{--auto}`) and be needlessly restarted.
+ * args against a live instance's published args. `--name` is supplied by the
+ * launcher (`mycc-compose`) at spawn time, never authored in the spec, so a
+ * peer launched with it would otherwise always look like a mismatch
+ * (`{--name, --auto}` vs `{--auto}`) and be needlessly restarted.
+ *
+ * NOTE: `--session-id` was the launcher-managed flag here historically; it is
+ * REMOVED entirely (sessions are never reused — a compose peer mints a fresh
+ * random session id each run and is addressed by `--name` instead).
  */
-export const LAUNCHER_FLAGS: string[] = ['session-id'];
+export const LAUNCHER_FLAGS: string[] = ['name'];
 
 /** The redaction placeholder. Also a wildcard in argsMatch(). */
 export const REDACTED = '***' as const;
@@ -123,9 +130,6 @@ export function canonicalFlagName(name: string): string {
 export const ARG_ENV_MAP: Record<string, string> = {
   'verbose': 'MYCC_VERBOSE',
   'from': 'MYCC_FROM_SESSION',
-  // --session-id pins a fresh session's identity (see getPinnedSessionId);
-  // mirrored so it survives a restart/reload spawn that drops argv.
-  'session-id': 'MYCC_SESSION_ID',
   'skip-healthcheck': 'MYCC_SKIP_HEALTHCHECK',
   'setup': 'MYCC_SETUP',
   'debug-eval': 'MYCC_DEBUG_EVAL',
@@ -557,7 +561,7 @@ function canonicalGroupMap(parsed: ParsedArgs): Map<string, string> {
     // Fold short aliases (`v` → `verbose`) so a published minimist alias pair
     // (`--v --verbose`) collapses to the same single key the spec renders.
     const key = canonicalFlagName(rawKey);
-    // Skip launcher-managed flags (e.g. --session-id): they are injected at
+    // Skip launcher-managed flags (e.g. --name): they are injected at
     // spawn time and never authored in a spec, so they must not affect match.
     if (LAUNCHER_FLAGS.includes(key)) continue;
     const value = sp === -1 ? '' : group.slice(sp + 1);

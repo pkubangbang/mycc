@@ -13,6 +13,7 @@ import {
   readHeartbeatData,
   isPeerRunning,
   isPidAlive,
+  resolveLivePeer,
   lastBrief,
   FRESHNESS_WINDOW_MS,
   IDENTITY_FILE,
@@ -35,14 +36,43 @@ export function sameWorkdir(a: unknown, b: unknown): boolean {
 }
 
 /**
- * Find the best live identity entry matching a peer record: same sessionId,
- * same workdir, and canonical args equal (via argsMatch, *** as wildcard).
- * Returns the entry or null.
+ * Resolve a peer to the session id of its LIVE instance, via the durable NAME
+ * scanned against identity.json (see resolveLivePeer), and STAMP the result
+ * onto `peer.sessionId` so the runtime consumers (stopPeer's heartbeat keying,
+ * peerMailboxPath, the beat-poll) read a concrete sid.
+ *
+ * WHY STAMP: the peer record is the single carried handle through cmd-up →
+ * lifecycle; the resolved sid must reach stopPeer/launchPeer, which key their
+ * liveness/kill evidence on `peer.sessionId`. Stamping keeps them unchanged
+ * (they still read a sid) while making the SOURCE of that sid name-resolution
+ * rather than a spec-authored/minted value.
+ *
+ * Returns the resolved sid, or null when no live instance matches. A peer that
+ * already carries a runtime sid (the S0-bridge mint, Slice 3) keeps it when
+ * name resolution finds nothing — see callers: minting is still the fallback
+ * until Slice 3 removes it.
+ */
+export function resolvePeerSid(peer: Peer): string | null {
+  const sid = resolveLivePeer(peer);
+  if (sid) peer.sessionId = sid;
+  return sid;
+}
+
+/**
+ * Find the best live identity entry matching a peer record: the peer's LIVE
+ * instance (resolved by durable NAME + workdir via {@link resolvePeerSid}),
+ * requiring workdir match and canonical args equal (via argsMatch, *** as
+ * wildcard). Returns the entry or null.
+ *
+ * The NAME is the match key (stable across the per-run sid churn); the
+ * resolved sid merely LOCATES the entry. Two groups may share a leaf name, so
+ * workdir + args still gate the match.
  */
 export function findMatchingLiveEntry(peer: Peer): IdentityEntry | null {
-  if (!peer.sessionId || !isPeerRunning(peer)) return null;
+  const sid = resolvePeerSid(peer);
+  if (!sid) return null;
   const map = readIdentityMap();
-  const entry = map[peer.sessionId];
+  const entry = map[sid];
   if (!entry) return null;
   if (!sameWorkdir(entry.workDir ?? entry.workdir, peer.workdir)) return null;
   // Old instances may lack `args`; argsMatch treats missing as '(none)'.
@@ -107,6 +137,10 @@ export function repairIdentity(peers: Peer[]): number {
       startedAt: heartbeats[0],
       args: peerIdentityArgs(peer),
       pid,
+      // Publish the durable NAME so a backfilled entry is resolvable by name —
+      // without it the next `up` could not re-find this peer (resolveLivePeer
+      // scans by name), turning every repair into a phantom it must re-mint.
+      ...(peer.name ? { name: peer.name } : {}),
     });
   }
   if (pending.size === 0) return 0;
@@ -179,13 +213,20 @@ export function repairIdentity(peers: Peer[]): number {
 
 /** Per-peer status row: {name, sessionId, live, matching, lastBrief}. */
 export function peerStatus(peer: Peer): PeerStatusRow {
+  // Resolve the LIVE instance by durable name FIRST (stamps peer.sessionId),
+  // so `sessionId`/`lastBrief` reflect the currently-running instance rather
+  // than a stale spec/runtime sid. resolvePeerSid leaves peer.sessionId intact
+  // when no live instance matches, so a down peer still reports its last-known
+  // sid (when one was carried) instead of dropping to null.
+  const resolved = resolvePeerSid(peer);
+  const sid = resolved ?? peer.sessionId ?? null;
   return {
     name: peer.name as string,
-    sessionId: peer.sessionId ?? null,
+    sessionId: sid,
     // "live" reflects an actually-running process (fresh heartbeat AND alive
     // pid), not merely a not-yet-expired heartbeat file.
-    live: isPeerRunning(peer),
+    live: isPeerRunning({ sessionId: sid, workdir: peer.workdir }),
     matching: findMatchingLiveEntry(peer) !== null,
-    lastBrief: lastBrief(peer.sessionId as string),
+    lastBrief: sid ? lastBrief(sid) : null,
   };
 }

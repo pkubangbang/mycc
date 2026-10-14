@@ -5,15 +5,15 @@
  * a mismatched peer running — the cron path is non-destructive.
  */
 
-import { randomUUID } from 'crypto';
 import { execFileSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import path from 'path';
-import { validateSpec, loadSpec, updateSpecFile, getRemotes } from './spec.js';
+import { validateSpec, loadSpec, getRemotes } from './spec.js';
 import { materializeChannels } from './channels.js';
 import { isPeerRunning } from './discovery.js';
 import {
   findMatchingLiveEntry,
+  resolvePeerSid,
   launchPeer,
   stopPeer,
   repairIdentity,
@@ -74,12 +74,15 @@ function deliverRemotes(spec: NormalizedSpec): Array<{ name: string; ok: boolean
   for (const peer of spec.peers) {
     const peerRemotes = getRemotes(peer);
     if (peerRemotes.length === 0) continue;
-    const sid = peer.sessionId;
+    // Resolve the LIVE sid by durable NAME. The sid must be the peer's REAL
+    // one — a launcher-minted phantom would gate `--require-online` on a
+    // heartbeat file that never exists.
+    const sid = resolvePeerSid(peer);
     if (!sid) {
       rows.push({ name: peer.name, ok: false, note: `remotes for ${peer.name} not delivered (peer has no session id)` });
       continue;
     }
-    if (!isPeerRunning(peer)) {
+    if (!isPeerRunning({ sessionId: sid, workdir: peer.workdir })) {
       rows.push({ name: peer.name, ok: false, note: `remotes for ${peer.name} not delivered (peer not live)` });
       continue;
     }
@@ -106,23 +109,11 @@ function deliverRemotes(spec: NormalizedSpec): Array<{ name: string; ok: boolean
 export async function cmdUp(file: string, { allowStop }: { allowStop: boolean }): Promise<void> {
   const spec = validateSpec(loadSpec(file));
 
-  // §5 step 1 — assign UUIDs to sessionId:null peers, write back IN PLACE.
-  const minted: string[] = [];
-  for (const peer of spec.peers) {
-    if (peer.sessionId === null) {
-      peer.sessionId = randomUUID();
-      minted.push(peer.name);
-    }
-  }
-  if (minted.length > 0) {
-    updateSpecFile(file, (raw) => {
-      for (const p of raw.peers as Array<Record<string, unknown>>) {
-        const norm = spec.peers.find((x) => x.name === p.name);
-        if (norm && p.sessionId == null) p.sessionId = norm.sessionId;
-      }
-    });
-    out(`Minted session ids for: ${minted.join(', ')} (written back to ${file}).`);
-  }
+  // Peers no longer carry a spec-authored or launcher-minted session id: a
+  // launched peer mints its OWN fresh sid on boot and registers it under its
+  // durable `--name`. So there is NOTHING to resolve or mint BEFORE launch —
+  // the launch list is simply every peer, and resolution by NAME happens AFTER
+  // launch (see the liveness-wait / deliverRemotes / repairIdentity below).
 
   // §5 step 2 — walk peers in array order, decide skip / stop→start / start.
   const actions: Array<{ name: string; action: string }> = [];
@@ -176,13 +167,16 @@ export async function cmdUp(file: string, { allowStop }: { allowStop: boolean })
   }
 
   // Wait for all peers to be reachable, then repair identity (§5 step 3).
+  // Liveness is judged by RESOLVING THE NAME each tick (the peer minted its own
+  // fresh sid on boot, so only the live instance's sid — stamped onto the peer
+  // by resolvePeerSid — is trustworthy for a slow/failed launch).
   const stillDown: string[] = [];
   for (const peer of spec.peers) {
     const deadline = Date.now() + LAUNCH_TIMEOUT_MS;
-    while (!isPeerRunning(peer) && Date.now() < deadline) {
+    while (resolvePeerSid(peer) === null && Date.now() < deadline) {
       await sleep(LAUNCH_POLL_MS);
     }
-    if (!isPeerRunning(peer)) stillDown.push(peer.name);
+    if (resolvePeerSid(peer) === null) stillDown.push(peer.name);
   }
   const repaired = repairIdentity(spec.peers);
 

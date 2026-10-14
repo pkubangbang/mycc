@@ -17,8 +17,10 @@
  *   - D-3: buildChannelFile({ existing }) preserves joined/firstQuerySent/
  *     createdAt across a re-materialize (the peer owns that lifecycle state).
  *   - D-6: readChannelFile() is tolerant (absent/corrupt/non-object → null).
- *   - channelFileNames() is the single source of truth for "the files this spec
- *     owns"; sid-less peers contribute nothing.
+ *   - channelFileNames() is a SID-KEYED fallback (retained API); the `down`
+ *     path no longer uses it. The name-attributed source of truth is
+ *     ownedChannelFiles() (R1 name conjunction + R2 orphan-only sid sweep).
+ *     Sid-less peers contribute nothing to the sid-keyed enumeration.
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
@@ -173,6 +175,34 @@ describe('buildChannelFile', () => {
     expect(built.createdAt).toBeLessThanOrEqual(Date.now());
   });
 
+  it('omits ownerName/peerName when the caller supplies none (legacy shape)', async () => {
+    const { buildChannelFile } = await loadChannels();
+    const built = buildChannelFile({
+      channelId: 'review',
+      ownerSid: SID_A,
+      peerSid: SID_B,
+      title: 'grp-review',
+      prompt: 'hi',
+    });
+    expect('ownerName' in built).toBe(false);
+    expect('peerName' in built).toBe(false);
+  });
+
+  it('writes ownerName/peerName when supplied (R1 data-only ownership)', async () => {
+    const { buildChannelFile } = await loadChannels();
+    const built = buildChannelFile({
+      channelId: 'review',
+      ownerSid: SID_A,
+      peerSid: SID_B,
+      ownerName: 'grp:a',
+      peerName: 'grp:b',
+      title: 'grp-review',
+      prompt: 'hi',
+    });
+    expect(built.ownerName).toBe('grp:a');
+    expect(built.peerName).toBe('grp:b');
+  });
+
   it('preserves joined/firstQuerySent/createdAt from an existing file (D-3)', async () => {
     const { buildChannelFile } = await loadChannels();
     const existing = { joined: true, firstQuerySent: true, createdAt: 12345 };
@@ -311,6 +341,13 @@ describe('materializeChannels', () => {
       firstQuerySent: false,
     });
     expect(b).toMatchObject({ ownerSessionId: SID_B, peerSessionId: SID_A });
+    // R1: the durable NAME field lands on disk as a DATA-ONLY ownership pair
+    // (ownerName = this side, peerName = the OTHER side) so Slice-4 cleanup can
+    // attribute a file to a topology peer by name despite sid churn. The value
+    // is the peer's `name` verbatim (here the fixture's bare 'a'/'b'; in
+    // production it is `<group>:<peer>`).
+    expect(a).toMatchObject({ ownerName: 'a', peerName: 'b' });
+    expect(b).toMatchObject({ ownerName: 'b', peerName: 'a' });
   });
 
   it('fills the template per side (from/to swapped) and appends the contract', async () => {
@@ -450,6 +487,184 @@ describe('removeChannels (filename list, B-SEC-2)', () => {
 });
 
 // ---------------------------------------------------------------------------
+// ownedChannelFiles — R1 name-conjunction + R2 orphan-only legacy sweep
+// ---------------------------------------------------------------------------
+
+describe('ownedChannelFiles (R1 + R2)', () => {
+  it('R1: deletes files whose ownerName/peerName is in the spec name-set', async () => {
+    const { materializeChannels, ownedChannelFiles } = await loadChannels();
+    materializeChannels(spec()); // writes names a/b (fixture peer names)
+    const dead = () => true;
+    const { deletable, keptAmbiguous } = ownedChannelFiles(spec(), dead);
+    expect(deletable.sort()).toEqual([`${SID_A}-review.json`, `${SID_B}-review.json`].sort());
+    expect(keptAmbiguous).toEqual([]);
+  });
+
+  it('keeps a FOREIGN named file (names present but none ours)', async () => {
+    const { ownedChannelFiles } = await loadChannels();
+    fs.mkdirSync(channelsDir, { recursive: true });
+    const foreign = channelsFile(SID_C, 'review');
+    fs.writeFileSync(foreign, JSON.stringify({
+      channelId: 'review', ownerSessionId: SID_C, peerSessionId: SID_A,
+      ownerName: 'grp:other', peerName: 'grp:elsewhere',
+    }));
+    const { deletable, keptAmbiguous } = ownedChannelFiles(spec(), () => true);
+    expect(deletable).toEqual([]);
+    expect(keptAmbiguous).toEqual([]);
+    expect(fs.existsSync(foreign)).toBe(true);
+  });
+
+  it('R2: deletes a legacy (nameless) file only when BOTH sids are dead', async () => {
+    const { ownedChannelFiles } = await loadChannels();
+    fs.mkdirSync(channelsDir, { recursive: true });
+    const legacy = channelsFile(SID_C, 'review');
+    fs.writeFileSync(legacy, JSON.stringify({
+      channelId: 'review', ownerSessionId: SID_A, peerSessionId: SID_B,
+    })); // no ownerName/peerName → pre-v3
+    const dead = () => true; // both sids dead
+    const { deletable, keptAmbiguous } = ownedChannelFiles(spec(), dead);
+    expect(deletable).toEqual([`${SID_C}-review.json`]);
+    expect(keptAmbiguous).toEqual([]);
+  });
+
+  it('R2: KEEPS a legacy file when EITHER sid is still live (ambiguity → keep+report)', async () => {
+    const { ownedChannelFiles } = await loadChannels();
+    fs.mkdirSync(channelsDir, { recursive: true });
+    const legacy = channelsFile(SID_C, 'review');
+    fs.writeFileSync(legacy, JSON.stringify({
+      channelId: 'review', ownerSessionId: SID_A, peerSessionId: SID_B,
+    }));
+    const dead = (sid: string) => sid !== SID_A; // SID_A still live → half-match
+    const { deletable, keptAmbiguous } = ownedChannelFiles(spec(), dead);
+    expect(deletable).toEqual([]);
+    expect(keptAmbiguous).toEqual([`${SID_C}-review.json`]);
+    expect(fs.existsSync(legacy)).toBe(true);
+  });
+
+  it('ignores a file whose channelId is not a spec label', async () => {
+    const { ownedChannelFiles } = await loadChannels();
+    fs.mkdirSync(channelsDir, { recursive: true });
+    const other = channelsFile(SID_C, 'unrelated');
+    fs.writeFileSync(other, JSON.stringify({
+      channelId: 'unrelated', ownerSessionId: SID_A, peerSessionId: SID_B,
+      ownerName: 'a', peerName: 'b',
+    }));
+    const { deletable, keptAmbiguous } = ownedChannelFiles(spec(), () => true);
+    expect(deletable).toEqual([]);
+    expect(keptAmbiguous).toEqual([]);
+    expect(fs.existsSync(other)).toBe(true);
+  });
+
+  it('M1 end-to-end: sorts ONE label into [by-name deletable, legacy-dead deletable, legacy-live keptAmbiguous] and keeps a foreign named file', async () => {
+    const { ownedChannelFiles } = await loadChannels();
+    fs.mkdirSync(channelsDir, { recursive: true });
+    // (i) by-name OURS → deletable (R1), regardless of sid liveness. Uses the
+    //     production `<group>:<peer>` name spelling so the R1 name-set matches.
+    fs.writeFileSync(channelsFile(SID_C, 'review'), JSON.stringify({
+      channelId: 'review', ownerSessionId: SID_C, peerSessionId: SID_C,
+      ownerName: 'grp:a', peerName: 'grp:b',
+    }));
+    // (ii) legacy (nameless) with BOTH sids dead → deletable (R2).
+    fs.writeFileSync(channelsFile(SID_A, 'review'), JSON.stringify({
+      channelId: 'review', ownerSessionId: SID_A, peerSessionId: SID_A,
+    }));
+    // (iii) legacy (nameless) with one sid still live → keptAmbiguous. Its two
+    //       embedded sids are SID_A (dead) and SID_B (live) — a genuine
+    //       HALF-MATCH (not both-dead), which is NOT deletable evidence.
+    fs.writeFileSync(channelsFile(SID_B, 'review'), JSON.stringify({
+      channelId: 'review', ownerSessionId: SID_A, peerSessionId: SID_B,
+    }));
+    // (iv) FOREIGN named file (names present, none ours) → kept silently.
+    fs.writeFileSync(channelsFile(SID_A, 'unrelated'), JSON.stringify({
+      channelId: 'unrelated', ownerSessionId: SID_A, peerSessionId: SID_B,
+      ownerName: 'grp:other', peerName: 'grp:elsewhere',
+    }));
+
+    // A name-set in the production `<group>:<peer>` spelling so (i)'s names
+    // match by-name. A spec never authors `sessionId`, so the peers carry only
+    // their name — enough for ownedChannelFiles (it resolves no sids).
+    const namedSpec = {
+      group: 'grp',
+      peers: [{ name: 'grp:a' }, { name: 'grp:b' }],
+      channels: [{ from: 'grp:a', to: 'grp:b', label: 'review', prompt: 'p' }],
+    };
+    // isSidDead: SID_B stays LIVE so the (iii) file is ambiguous; SID_A dead.
+    const dead = (sid: string) => sid !== SID_B;
+
+    const { deletable, keptAmbiguous } = ownedChannelFiles(namedSpec as never, dead);
+    expect(deletable.sort()).toEqual([`${SID_A}-review.json`, `${SID_C}-review.json`].sort());
+    expect(keptAmbiguous).toEqual([`${SID_B}-review.json`]);
+    // The foreign + non-label files survive untouched.
+    expect(fs.existsSync(channelsFile(SID_A, 'unrelated'))).toBe(true);
+  });
+
+  it('R1: a file whose ownerName matches but channelId label differs is NOT ours', async () => {
+    const { ownedChannelFiles } = await loadChannels();
+    fs.mkdirSync(channelsDir, { recursive: true });
+    const f = channelsFile(SID_A, 'other-label');
+    fs.writeFileSync(f, JSON.stringify({
+      channelId: 'other-label', ownerSessionId: SID_A, peerSessionId: SID_B,
+      ownerName: 'a', peerName: 'b',
+    }));
+    const { deletable, keptAmbiguous } = ownedChannelFiles(spec(), () => true);
+    expect(deletable).toEqual([]);
+    expect(keptAmbiguous).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// attributeChannelFile — the verdict tree + normName folding
+// ---------------------------------------------------------------------------
+
+describe('attributeChannelFile (verdict tree + normName folding)', () => {
+  const NAME_SET = new Set(['grp:a', 'grp:b']);
+
+  it('names present + one matches → by-name (matchedName = the matched name)', async () => {
+    const { attributeChannelFile } = await loadChannels();
+    expect(attributeChannelFile(
+      { channelId: 'review', ownerName: 'grp:a', peerName: 'grp:z' }, NAME_SET,
+    )).toEqual({ kind: 'by-name', matchedName: 'grp:a' });
+    // Matches on the PEER side when the owner side is foreign.
+    expect(attributeChannelFile(
+      { channelId: 'review', ownerName: 'grp:z', peerName: 'grp:b' }, NAME_SET,
+    )).toEqual({ kind: 'by-name', matchedName: 'grp:b' });
+  });
+
+  it('names present + NONE matches → foreign', async () => {
+    const { attributeChannelFile } = await loadChannels();
+    expect(attributeChannelFile(
+      { channelId: 'review', ownerName: 'grp:x', peerName: 'grp:y' }, NAME_SET,
+    )).toEqual({ kind: 'foreign' });
+  });
+
+  it('both names empty / absent → legacy', async () => {
+    const { attributeChannelFile } = await loadChannels();
+    expect(attributeChannelFile({ channelId: 'review' }, NAME_SET)).toEqual({ kind: 'legacy' });
+    expect(attributeChannelFile(
+      { channelId: 'review', ownerName: '', peerName: '' }, NAME_SET,
+    )).toEqual({ kind: 'legacy' });
+    expect(attributeChannelFile(
+      { channelId: 'review', ownerName: undefined, peerName: undefined }, NAME_SET,
+    )).toEqual({ kind: 'legacy' });
+  });
+
+  it('normName folds case + trims whitespace for membership', async () => {
+    const { attributeChannelFile } = await loadChannels();
+    // UPPERCASE + surrounding spaces still match the lowercase name-set.
+    expect(attributeChannelFile(
+      { channelId: 'review', ownerName: '  GRP:A  ', peerName: '' }, NAME_SET,
+    )).toEqual({ kind: 'by-name', matchedName: 'grp:a' });
+  });
+
+  it('a whitespace-only name is treated as EMPTY (folds to legacy)', async () => {
+    const { attributeChannelFile } = await loadChannels();
+    expect(attributeChannelFile(
+      { channelId: 'review', ownerName: '   ', peerName: '\t' }, NAME_SET,
+    )).toEqual({ kind: 'legacy' });
+  });
+});
+
+// ---------------------------------------------------------------------------
 // channelStatus
 // ---------------------------------------------------------------------------
 
@@ -457,20 +672,41 @@ describe('channelStatus', () => {
   it('reports bothFilesPresent=true once materialized', async () => {
     const { materializeChannels, channelStatus } = await loadChannels();
     materializeChannels(spec());
-    expect(channelStatus(spec())).toEqual([{ label: 'review', bothFilesPresent: true }]);
+    expect(channelStatus(spec())).toEqual([
+      { label: 'review', bothFilesPresent: true, attribution: 'by-name' },
+    ]);
   });
 
   it('reports false when one side is missing', async () => {
     const { materializeChannels, channelStatus } = await loadChannels();
     materializeChannels(spec());
     fs.rmSync(channelsFile(SID_B, 'review'));
-    expect(channelStatus(spec())).toEqual([{ label: 'review', bothFilesPresent: false }]);
+    expect(channelStatus(spec())).toEqual([
+      { label: 'review', bothFilesPresent: false, attribution: 'absent' },
+    ]);
   });
 
   it('reports false for an unminted peer (no file can exist yet)', async () => {
     const { channelStatus } = await loadChannels();
     const s = spec();
     s.peers[1].sessionId = null;
-    expect(channelStatus(s)).toEqual([{ label: 'review', bothFilesPresent: false }]);
+    expect(channelStatus(s)).toEqual([
+      { label: 'review', bothFilesPresent: false, attribution: 'absent' },
+    ]);
+  });
+
+  it('attributes by sid (legacy) for a pre-v3 file with no ownership names', async () => {
+    const { channelStatus } = await loadChannels();
+    fs.mkdirSync(channelsDir, { recursive: true });
+    // Pre-v3 files: no ownerName/peerName, keyed purely by the embedded sids.
+    fs.writeFileSync(channelsFile(SID_A, 'review'), JSON.stringify({
+      channelId: 'review', ownerSessionId: SID_A, peerSessionId: SID_B,
+    }));
+    fs.writeFileSync(channelsFile(SID_B, 'review'), JSON.stringify({
+      channelId: 'review', ownerSessionId: SID_B, peerSessionId: SID_A,
+    }));
+    expect(channelStatus(spec())).toEqual([
+      { label: 'review', bothFilesPresent: true, attribution: 'legacy' },
+    ]);
   });
 });

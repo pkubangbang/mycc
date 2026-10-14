@@ -636,6 +636,15 @@ export interface IdentityEntry {
   args?: string;
   /** Daemon mode flag (true when started with --daemon). */
   daemon?: boolean;
+  /**
+   * Optional durable peer NAME (`<group>:<peer>`), launcher-injected via
+   * `--name` (mycc-compose). A stable, human-readable identity for a peer
+   * whose session id is minted fresh on every run — so peers can be addressed
+   * by name across restarts. DATA-ONLY: it lives here (and in channel-file
+   * ownership fields) and is NEVER used as a filename component. Absent for
+   * non-compose instances. See arg-canonical.ts LAUNCHER_FLAGS.
+   */
+  name?: string;
   /** Optional role label: the skill name loaded by --daemon <skill-name>.
    *  Absent when --daemon is bare (no skill) or when not in daemon mode.
    *  Tags the instance so peers can discover it by role. */
@@ -654,6 +663,18 @@ export interface ChannelFile {
   joined: boolean;
   firstQuerySent: boolean;
   createdAt: number;
+  /**
+   * Optional DATA-ONLY ownership NAMES (`<group>:<peer>`), written by
+   * mycc-compose at materialization time. They let compose attribute a channel
+   * file to a topology peer by NAME (which is stable across the per-run
+   * session-id churn) for stale-file cleanup, without reading any spec sid.
+   * The runtime (ChannelManager) neither reads nor writes them — they must
+   * simply SURVIVE the read-modify-write round-trip (readChannelFile returns
+   * the parsed object; writeChannelFile re-serializes it whole). Absent on
+   * pre-name-fielding files (legacy).
+   */
+  ownerName?: string;
+  peerName?: string;
 }
 
 /**

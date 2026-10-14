@@ -37,6 +37,9 @@ vi.mock('../../config.js', () => ({
   // identity.ts publishes this into identity.json on register(); the mock must
   // provide it or register() throws "No getLaunchArgs export on the mock".
   getLaunchArgs: () => '(none)',
+  // identity.ts reads this at construction (--name); the mock must export it
+  // or IdentityManager construction throws "No getPeerName export on the mock".
+  getPeerName: () => null,
 }));
 
 // Import AFTER mocks are registered.

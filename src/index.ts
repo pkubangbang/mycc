@@ -27,6 +27,7 @@ import { printHelp, printVersion } from './help.js';
 import { installVerboseLog } from './utils/verbose-log.js';
 import { spawnDaemonLead, finishDaemonExit } from './utils/daemon-launch.js';
 import { buildReloadArgs } from './utils/arg-canonical.js';
+import { hasNameFlag } from './slashes/reload.js';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -421,6 +422,23 @@ function runCoordinator(): void {
     serveHost: string | null,
     leadArgs: string[],
   ): Promise<void> {
+    // COMPOSE-MANAGED GUARD (defense in depth): the lead-side /reload slash
+    // handler already refuses when its own argv carries `--name`, but a reload
+    // IPC could still reach here (e.g. an older/buggy lead, or a crafted
+    // message). If the REPLAYED lead argv carries `--name`, this Lead is a
+    // mycc-compose peer: respawning it here would orphan the channel files
+    // compose materialized and desync its durable name↔sid mapping. Refuse
+    // EARLY — before isRestarting and before the old Lead is SIGTERM'd — so the
+    // OLD lead stays alive and untouched (teardown here would leave the
+    // topology half-dead with no peer).
+    if (hasNameFlag(leadArgs)) {
+      console.error(chalk.yellow(
+        'Reload refused: this Lead is managed by mycc-compose (launched with --name). ' +
+        'Renew via `mycc-compose up <spec>` — /reload would orphan its channels.',
+      ));
+      return;
+    }
+
     isRestarting = true;
     const previousLead = lead;
 

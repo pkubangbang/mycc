@@ -13,8 +13,7 @@ import * as os from 'os';
 import chalk from 'chalk';
 import type { Session, SessionDisplay, SessionInit } from './types.js';
 import { prepareRestoration, readDosq, extractFirstQuery } from './restoration.js';
-import { setSessionContext, getSessionArg, getSessionsDir, getPinnedSessionId, shouldSkipInteractiveReview } from '../config.js';
-import { isSessionHeld, claimSessionOwnership } from '../peer/identity.js';
+import { setSessionContext, getSessionArg, getSessionsDir, shouldSkipInteractiveReview } from '../config.js';
 import { clearAll } from '../context/memory-store.js';
 import { agentIO } from '../loop/agent-io.js';
 import { openEditor } from '../utils/open-editor.js';
@@ -819,21 +818,17 @@ export async function restoreSession(sessionArg: string): Promise<SessionInit> {
  * @returns the new session file path and triologue path.
  */
 function writeFreshSessionFiles(): { sessionFilePath: string; triologuePath: string } {
-  // A pinned id (--session-id) wins over a fresh random one so a mediator
-  // (mycc-compose) can relaunch a peer under the SAME identity, letting its
-  // channel files — keyed <sessionId>-<channelId>.json — be re-joined on boot
-  // instead of being orphaned by a new uuid. The session itself is still
-  // brand-new (empty triologue, no context carried over); only the id is
-  // pinned. initializeSession() has already validated the id and refused when
-  // a live process holds it.
-  const id = getPinnedSessionId() || randomUUID();
+  // Sessions are NEVER reused: every launch mints a FRESH random id. A peer's
+  // stable identity is its `--name <group>:<peer>`, not a pinned session id
+  // (the old `--session-id` pinned an id so a mediator could re-join channel
+  // files — that conflated identity with a per-run id and is deleted).
+  const id = randomUUID();
   const sessionDir = path.join(getSessionsDir(), id);
   ensureDir(sessionDir);
 
-  // TRIALOGUE FILENAME COLLISION GUARD (compose pinning): a pinned session id
-  // is REUSED on relaunch, so `triologue-lead-<same-second>.jsonl` can name a
-  // transcript that already exists — and a bare `writeFileSync(path, '')` would
-  // TRUNCATE it, silently destroying the previous run's append-only record.
+  // TRIALOGUE FILENAME COLLISION GUARD: two fresh starts in the SAME second
+  // would otherwise both resolve `triologue-lead-<second>.jsonl`, and a bare
+  // `writeFileSync(path, '')` would TRUNCATE the first run's append-only record.
   //
   // The file is created with EXCLUSIVE open (`wx`): the create is atomic, so it
   // either creates a brand-new file or fails with EEXIST. On EEXIST we retry
@@ -843,6 +838,9 @@ function writeFreshSessionFiles(): { sessionFilePath: string; triologuePath: str
   // writeFileSync would truncate the first). The readable second-precision stem
   // is kept whenever it is free; the suffix ladder is deterministic
   // (-<ms>ms, then a counter) so a retry always makes progress.
+  // (Still needed now that the id is always fresh: two DIFFERENT session dirs
+  // never collide, but the guard is harmless and defends the same-second case
+  // if a future change ever co-locates two triologues.)
   const seconds = Math.floor(Date.now() / 1000);
   const stem = path.join(sessionDir, `triologue-lead-${seconds}`);
   let triologuePath = `${stem}.jsonl`;
@@ -891,45 +889,6 @@ export function createNewSession(): SessionInit {
  */
 export async function initializeSession(): Promise<SessionInit> {
   const sessionArg = getSessionArg();
-  const pinnedId = getPinnedSessionId();
-
-  // Step 0: validate the pinned session id before touching the filesystem.
-  //
-  // --session-id is how a mediator relaunches a peer under its old identity.
-  // Two guards make that safe:
-  //   1. shape — it must be a bare UUID, because the id becomes the session
-  //      directory name, the mailbox path segment, and the peer identity that
-  //      mail_to matches against its UUID_RE.
-  //   2. ownership — an ATOMIC lease claim (claimSessionOwnership) so two
-  //      concurrent launches can never both adopt the same id.
-  //
-  // WHY A LEASE, NOT JUST A LIVENESS CHECK: the old guard asked
-  // `isSessionHeld(sid)` and then created the session — two SEPARATE steps.
-  // Two `mycc-compose up` runs (or two `mycc --session-id <sid>`) racing the
-  // same sid could both pass the check before either registered, then both
-  // boot under one sid: same session dir, heartbeat, mailbox, channel identity
-  // — and the last register() wins the identity record. The claim makes
-  // CHECK-AND-ACQUIRE one atomic `open('wx')`: exactly one caller wins, the
-  // loser refuses. A second pre-check would leave the same TOCTOU window.
-  //
-  // --from and --session-id are mutually exclusive: --from branches a NEW
-  // session with a fresh id, so pinning one at the same time is contradictory.
-  if (pinnedId) {
-    if (sessionArg) {
-      throw new Error('--session-id and --from are mutually exclusive: --from always branches a brand-new session id.');
-    }
-    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(pinnedId)) {
-      throw new Error(`--session-id must be a UUID (got ${JSON.stringify(pinnedId)}).`);
-    }
-    // Atomic ownership claim. 'held' → a live process still owns the sid
-    // (belt-and-suspenders with isSessionHeld for a lease-less legacy owner).
-    if (claimSessionOwnership(pinnedId) !== 'claimed' || isSessionHeld(pinnedId)) {
-      throw new Error(
-        `Session ${pinnedId} is held by a live process — refusing to start a second instance under the same id. ` +
-        'Stop it first (see the `peers` tool for its pid), or omit --session-id.',
-      );
-    }
-  }
 
   // Step 1: Get or create session to obtain session ID
   let result: SessionInit;

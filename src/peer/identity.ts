@@ -20,9 +20,8 @@
  */
 
 import * as fs from 'fs';
-import * as path from 'path';
 import type { IdentityEntry } from '../types.js';
-import { getDiscoveryDir, getIdentityFile, getHeartbeatFile, getLaunchArgs } from '../config.js';
+import { getIdentityFile, getHeartbeatFile, getLaunchArgs, getPeerName } from '../config.js';
 import { truncateToTokens } from '../utils/token.js';
 import { atomicWrite } from '../utils/atomic-write.js';
 import { withFileLock, FileLockTimeoutError } from '../utils/file-lock.js';
@@ -134,147 +133,8 @@ function withIdentityLock<T>(fn: () => T): T {
 }
 
 // ============================================================================
-// Session ownership lease (atomic pinned-sid claim)
+// Session liveness predicates
 // ============================================================================
-
-/**
- * Path of the per-session ownership LEASE (a lock file). Lives beside the other
- * discovery state so it shares a volume with identity.json/heartbeats and is
- * visible to every instance on the machine:
- *   ~/.mycc-store/discovery/sessions/<sid>.owner
- *
- * CONTENT: JSON `{ pid, sid, time }` — written by the claimant so a later
- * acquirer can tell a live owner from a crashed one.
- */
-export function getSessionOwnerLeaseFile(sessionId: string): string {
-  return path.join(getDiscoveryDir(), 'sessions', `${sessionId}.owner`);
-}
-
-/** Lease payload — the claimant's identity, for liveness-based reclaim. */
-interface SessionOwnerLease {
-  pid?: number;
-  sid?: string;
-  time?: number;
-}
-
-/**
- * Try to atomically CLAIM ownership of a pinned session id.
- *
- * WHY THIS EXISTS (the TOCTOU it closes): `initializeSession()` used to ask
- * "is this sid held?" and then create the session files — two SEPARATE steps.
- * Two `mycc-compose up` runs (or two `mycc --session-id <sid>`) racing the same
- * sid could both pass the check before either registered, then both boot under
- * one sid: same session dir, same heartbeat file, same mailbox, same channel
- * identity — and the last `register()` would win the identity record, so
- * `stopPeer()` could later target only one of the two live processes.
- *
- * The fix is to make CHECK AND CLAIM ONE ATOMIC OPERATION. `open(..., 'wx')`
- * is that operation: the OS guarantees exactly one creator of the lease file.
- * The liveness decision therefore happens AFTER winning the create — we are the
- * creator, so we may inspect the PREVIOUS owner's lease (carried forward by the
- * caller as `previousOwner` is NOT needed: on EEXIST we lost, on success we won
- * and any prior lease was already removed by a dead-owner reclaimer).
- *
- * Flow:
- *   1. `openSync(lease, 'wx')` — the atomic claim.
- *   2. Success → we own it. Write `{pid, sid, time}`. Return 'claimed'.
- *      (Best-effort content write: even if it fails, the file's mere existence
- *      is the claim; a later acquirer treats a content-less lease as stale
- *      after a grace window.)
- *   3. EEXIST → someone holds the lease. Read it:
- *        - owner pid ALIVE  → 'held'   (refuse to start a second instance).
- *        - owner pid DEAD / lease older than the stale window / unreadable →
- *          the holder crashed without releasing; remove the lease and retry
- *          the atomic create ONCE (the retry's `open('wx')` re-races any
- *          concurrent reclaimer, so still exactly one winner).
- *
- * @param sessionId The pinned session id being claimed.
- * @returns 'claimed' when this process now owns the sid; 'held' when a live
- *          process already does. Never throws for ordinary contention; on an
- *          unexpected fs error it returns 'held' (fail closed — refusing to
- *          start is always safer than double-booting a sid).
- */
-export function claimSessionOwnership(sessionId: string): 'claimed' | 'held' {
-  if (!sessionId) return 'held';
-  const lease = getSessionOwnerLeaseFile(sessionId);
-  try {
-    fs.mkdirSync(path.dirname(lease), { recursive: true });
-  } catch {
-    // Directory creation failure → the open below will surface it; fail closed.
-    return 'held';
-  }
-
-  for (let attempt = 0; attempt < 2; attempt++) {
-    let fd: number;
-    try {
-      fd = fs.openSync(lease, 'wx');
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException)?.code !== 'EEXIST') return 'held';
-      // Lease exists — decide live vs stale.
-      if (!isLeaseStale(lease)) return 'held';
-      // Stale (crashed owner): remove and retry the atomic create once.
-      try {
-        fs.unlinkSync(lease);
-      } catch {
-        // Someone else may have reclaimed it in the same instant — retry.
-      }
-      continue;
-    }
-    // We created the lease → we are the owner.
-    try {
-      fs.writeSync(fd, JSON.stringify({ pid: process.pid, sid: sessionId, time: Date.now() }));
-    } catch {
-      // Content is advisory only; the file's existence is the claim.
-    } finally {
-      fs.closeSync(fd);
-    }
-    return 'claimed';
-  }
-  return 'held';
-}
-
-/**
- * True when a session-lease file names no live owner — its recorded pid is
- * dead, or the lease is older than {@link SESSION_LEASE_STALE_MS} (covers a
- * crash between the atomic create and the content write), or it cannot be read
- * at all.
- */
-function isLeaseStale(lease: string): boolean {
-  try {
-    const raw = fs.readFileSync(lease, 'utf-8');
-    let parsed: SessionOwnerLease = {};
-    try {
-      parsed = JSON.parse(raw) as SessionOwnerLease;
-    } catch {
-      // Unparsable (partial write) — fall through to the mtime check.
-    }
-    if (typeof parsed.pid === 'number') {
-      return !isPidAlive(parsed.pid);
-    }
-    // No pid recorded: use the file's mtime against the stale window.
-    const st = fs.statSync(lease);
-    return Date.now() - st.mtimeMs > SESSION_LEASE_STALE_MS;
-  } catch {
-    // Vanished between exists and read → treat as free (the retry will race it).
-    return true;
-  }
-}
-
-/** Grace before a pid-less lease is considered abandoned. */
-const SESSION_LEASE_STALE_MS = 10_000;
-
-/**
- * Release a session ownership lease (called on clean shutdown). Best-effort:
- * a failure leaves the lease for the stale-reclaim path, never throws.
- */
-export function releaseSessionOwnership(sessionId: string): void {
-  if (!sessionId) return;
-  try {
-    fs.unlinkSync(getSessionOwnerLeaseFile(sessionId));
-  } catch {
-    // Already gone / never held — nothing to do.
-  }
-}
 
 /**
  * True when a session id provably belongs to a LIVE process.
@@ -302,33 +162,6 @@ export function isSessionLive(sessionId: string): boolean {
   const beats = readHeartbeats(sessionId);
   if (beats.length === 0) return false;
   return Date.now() - beats[beats.length - 1] <= FRESHNESS_WINDOW_MS;
-}
-
-/**
- * True when a session id is HELD by a still-running process — the stricter
- * sibling of {@link isSessionLive}.
- *
- * {@link isSessionLive} answers "has this sid beaten recently?", which is
- * necessary but NOT sufficient: a process killed within the freshness window
- * (e.g. `mycc-compose sync` restarting a crashed peer) leaves a heartbeat file
- * that is still "fresh" for up to {@link FRESHNESS_WINDOW_MS}. Using that
- * predicate to gate a re-pin would make a just-killed peer refuse its own
- * restart — the exact dead-lock `mycc-compose` hit.
- *
- * Held ⟺ registered AND fresh heartbeat AND the recorded heartbeat `pid` is
- * actually alive. When no pid is recorded (legacy writers, or a beat that
- * predates the field) we fall back to the fresh-heartbeat verdict: we cannot
- * disprove liveness, and must not let two instances share one session dir.
- *
- * Used by the session bootstrap's `--session-id` guard, and mirrored by
- * `mycc-compose`'s `isPeerRunning()`.
- */
-export function isSessionHeld(sessionId: string): boolean {
-  if (!sessionId) return false;
-  if (!isSessionLive(sessionId)) return false;
-  const { pid } = readHeartbeatData(sessionId);
-  if (typeof pid !== 'number') return true; // no pid recorded → trust freshness
-  return isPidAlive(pid);
 }
 
 /**
@@ -473,6 +306,13 @@ export class IdentityManager {
   private mailboxPath: string;
   private role?: string;
   private daemon?: boolean;
+  /**
+   * Stable peer handle (`<group>:<peer>`), read once at construction from the
+   * `--name` launch flag. `undefined` when the instance was launched without
+   * one (an ordinary interactive/daemon launch). This is the identity a
+   * `mycc-compose` launcher matches on — it replaces the old pinned session id.
+   */
+  private name?: string;
   private intervalHandle: ReturnType<typeof setInterval> | null = null;
 
   constructor(sessionId: string, workDir: string, mailboxPath: string, role?: string, daemon?: boolean) {
@@ -481,6 +321,48 @@ export class IdentityManager {
     this.mailboxPath = mailboxPath;
     this.role = role;
     this.daemon = daemon;
+    // Read the peer name once (config parses argv once at module load). The
+    // name is published into identity.json below so a mediator can match a live
+    // peer to the requested topology by NAME, not by a churning session id.
+    this.name = getPeerName() ?? undefined;
+    // Refuse to boot when ANOTHER live instance already holds this same
+    // (name, workDir) pair. The name is the stable identity; two live
+    // instances sharing it are indistinguishable to `mail_to`/discovery and
+    // must not both exist. This is a NAME-level uniqueness check — sessions
+    // themselves are never reused (each launch mints a fresh id).
+    if (this.name) {
+      this.assertNameNotLive(this.name, this.workDir);
+    }
+  }
+
+  /**
+   * Fail fast (exit 1) when a LIVE instance already registered under the same
+   * `<name>` in the same workDir. A dead entry (stale heartbeat / dead pid)
+   * does not block a restart — only a genuinely live twin does.
+   *
+   * Uses {@link isSessionLive} + a pid-alive check on the recorded heartbeat,
+   * mirroring the stricter held-session semantics: a process killed within the
+   * freshness window must not dead-lock its own restart.
+   *
+   * Fail-LOUD: a duplicate peer name would make the group unmountable, so we
+   * print a clear diagnostic and exit rather than booting into an ambiguous
+   * identity.
+   */
+  private assertNameNotLive(name: string, workDir: string): void {
+    for (const [sid, entry] of Object.entries(readIdentityMap())) {
+      if (entry.name !== name) continue;
+      if (entry.workDir !== workDir) continue;
+      if (sid === this.sessionId) continue; // self (re-register) is fine
+      if (!isSessionLive(sid)) continue; // dead twin → allow restart
+      const { pid } = readHeartbeatData(sid);
+      if (typeof pid === 'number' && !isPidAlive(pid)) continue; // crashed mid-window
+      console.error(
+        `[identity] refusing to start: peer name "${name}" is already held by a LIVE ` +
+        `instance (session ${sid}, pid ${pid ?? 'unknown'}) in this workDir. ` +
+        `Stop it first, or choose a different --name.`,
+      );
+      process.exit(1);
+    }
   }
 
   /**
@@ -519,6 +401,7 @@ export class IdentityManager {
           // decide whether a live peer matches the requested topology, instead of
           // tearing down healthy instances on every sync.
           args: getLaunchArgs(),
+          ...(this.name ? { name: this.name } : {}),
           ...(this.role ? { role: this.role } : {}),
           ...(this.daemon ? { daemon: true } : {}),
         };

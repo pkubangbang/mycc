@@ -43,6 +43,13 @@ export interface IdentityEntry {
   workDir?: string;
   args?: string;
   updatedAt?: number;
+  /**
+   * Optional durable peer NAME (`<group>:<peer>`), launcher-injected (mycc-compose).
+   * DATA-ONLY identity: the stable handle a peer is addressed by across the
+   * per-run session-id churn (see src/types.ts IdentityEntry.name). Mirrors the
+   * src-side field so compose can resolve a spec peer → its live sid by name.
+   */
+  name?: string;
   /** Anything else the instance may publish; discovery never assumes its shape. */
   [key: string]: unknown;
 }
@@ -278,6 +285,66 @@ export function isPeerRunning(peer: PeerRef | null | undefined): boolean {
   const pid = peerPid(peer.sessionId);
   if (typeof pid !== 'number') return true; // no pid recorded → trust freshness
   return isPidAlive(pid);
+}
+
+/**
+ * Resolve a peer record to the session id of its LIVE instance by scanning
+ * identity.json for an entry whose durable `name` matches AND whose workdir
+ * matches — the name is what is stable across the per-run sid churn, so this
+ * is how the launcher/stopper/dispatcher find "the currently-running instance
+ * of peer X" without the spec ever authoring a sid.
+ *
+ * Matching rules (mirror findMatchingLiveEntry's workdir tolerance):
+ *   - `peer.name` is REQUIRED; a nameless peer resolves to null (compose always
+ *     names its peers, so a missing name is a programming error, not a query).
+ *   - workdir must match (sameWorkdir semantics: separator/trailing-slash/
+ *     case tolerant) — two groups may share a peer leaf name, and a peer
+ *     relaunched in a different workdir is a DIFFERENT instance.
+ *   - the entry must be RUNNING (fresh heartbeat AND alive recorded pid), per
+ *     isPeerRunning's strict predicate — a dead-twin's lingering identity entry
+ *     must never be handed out as "the live sid".
+ *
+ * AMBIGUITY: name uniqueness is enforced at register() time (assertNameNotLive
+ * exits a second live twin), so >1 live match should be impossible. If it
+ * somehow happens (a peer that crashed and was relaunched before its old entry
+ * aged out, leaving two live-looking entries), pick the NEWEST `startedAt`
+ * deterministically and WARN — never return an arbitrary one, so repeated runs
+ * resolve identically.
+ *
+ * Returns the resolved sid, or null when no live instance matches.
+ */
+export function resolveLivePeer(peer: PeerRef | null | undefined): string | null {
+  if (!peer || typeof peer.name !== 'string' || peer.name.length === 0) return null;
+  const map = readIdentityMap();
+  const matches: Array<{ sid: string; startedAt: number }> = [];
+  for (const [sid, entry] of Object.entries(map)) {
+    if (entry?.name !== peer.name) continue;
+    if (!sameWorkdirRef(entry.workDir ?? entry.workdir, peer.workdir)) continue;
+    if (!isPeerRunning({ sessionId: sid, workdir: peer.workdir })) continue;
+    matches.push({ sid, startedAt: typeof entry.startedAt === 'number' ? entry.startedAt : 0 });
+  }
+  if (matches.length === 0) return null;
+  if (matches.length === 1) return matches[0].sid;
+  // Deterministic tiebreak: newest startedAt wins; stable by sid on a tie.
+  matches.sort((a, b) => (b.startedAt - a.startedAt) || a.sid.localeCompare(b.sid));
+  console.warn(
+    `[mycc-compose] WARNING: ${matches.length} live identity entries match peer ` +
+    `name "${peer.name}" — resolving to the newest (${matches[0].sid}). This should ` +
+    `be impossible (name uniqueness is enforced at register); investigate stale entries.`,
+  );
+  return matches[0].sid;
+}
+
+/**
+ * Workdir comparison for {@link resolveLivePeer} — tolerant of separators,
+ * trailing slashes and case, mirroring peers-state's sameWorkdir. Duplicated
+ * here (rather than imported) to keep discovery.ts free of a peers-state
+ * dependency cycle; discovery is the lower layer.
+ */
+function sameWorkdirRef(a: unknown, b: unknown): boolean {
+  if (typeof a !== 'string' || typeof b !== 'string') return false;
+  const norm = (p: string) => path.resolve(p).replace(/[\\/]+$/, '').toLowerCase();
+  return norm(a) === norm(b);
 }
 
 /** The last brief recorded for a session, or null. */

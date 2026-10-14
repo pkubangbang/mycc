@@ -16,15 +16,15 @@ import { describe, it, expect } from 'vitest';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { validateSpec, loadSpec, updateSpecFile } from '../../scripts/mycc-compose/lib/spec.js';
-import { parseArgString } from '../../src/utils/arg-canonical.js';
+import { validateSpec, loadSpec, updateSpecFile, validatePeerName } from '../../scripts/mycc-compose/lib/spec.js';
+import { parseArgString, formatLaunchArgs, LAUNCHER_FLAGS } from '../../src/utils/arg-canonical.js';
 
 /** A minimal VALID spec; spread + override per test. */
 function baseSpec(overrides: Record<string, unknown> = {}) {
   return {
     group: 'smoke',
     peers: [
-      { name: 'leader', workdir: 'C:/Proj/mycc', args: '--auto --skip-healthcheck', sessionId: null },
+      { name: 'leader', workdir: 'C:/Proj/mycc', args: '--auto --skip-healthcheck' },
     ],
     channels: [],
     ...overrides,
@@ -41,7 +41,6 @@ function mkPeer(overrides: Record<string, unknown> = {}) {
     name: 'p',
     workdir: 'C:/Proj/mycc',
     args: '--auto',
-    sessionId: null,
     ...overrides,
   };
 }
@@ -53,28 +52,27 @@ describe('validateSpec: accepts and normalizes a valid spec', () => {
     expect(out.peers).toHaveLength(1);
     const p = out.peers[0];
     expect(p.renew).toBe('onMismatch'); // default applied
-    expect(p.sessionId).toBeNull();
     expect(p.parsedArgs.auto).toBe(true); // parsed through the shared table
+    // `sessionId` is NOT a normalized field any more (specs never author one).
+    expect('sessionId' in p).toBe(false);
   });
 
-  it('keeps an explicit sessionId and renew, and parses channels', () => {
-    const sid = '11111111-2222-4333-8444-555555555555';
+  it('keeps renew, and parses channels', () => {
     const out = validateSpec(
       baseSpec({
         peers: [
-          mkPeer({ name: 'a', sessionId: sid, renew: 'always' }),
+          mkPeer({ name: 'a', renew: 'always' }),
           mkPeer({ name: 'b' }),
         ],
         channels: [{ from: 'a', to: 'b', label: 'review', prompt: 'hi {{to}}' }],
       }),
     );
-    expect(out.peers[0].sessionId).toBe(sid);
     expect(out.peers[0].renew).toBe('always');
     expect(out.channels[0]).toEqual({ from: 'a', to: 'b', label: 'review', prompt: 'hi {{to}}' });
   });
 
   it('does not mutate its input', () => {
-    const spec = baseSpec({ peers: [mkPeer({ renew: undefined, sessionId: undefined })] });
+    const spec = baseSpec({ peers: [mkPeer({ renew: undefined })] });
     const snapshot = JSON.stringify(spec);
     validateSpec(spec);
     expect(JSON.stringify(spec)).toBe(snapshot);
@@ -125,9 +123,21 @@ describe('validateSpec: rejects malformed specs', () => {
     rejects(baseSpec({ peers: [mkPeer({ args: '--daemon' })] }), /must use --daemon <skill>/);
   });
 
-  it('sessionId must be null or a UUID', () => {
-    rejects(baseSpec({ peers: [mkPeer({ sessionId: 'not-a-uuid' })] }), /sessionId must be null or a UUID/);
-    rejects(baseSpec({ peers: [mkPeer({ sessionId: 123 })] }), /sessionId must be null or a UUID/);
+  // v5 no-tolerance rule: peer identity is `--name <group>:<peer>`, injected by
+  // the launcher; session ids are minted fresh per run and resolved from
+  // identity.json. A `sessionId` field (even a well-formed UUID, or null) is a
+  // HARD validation error — no warn-and-strip, no backward compat.
+  it('rejects peers[].sessionId outright (any value, including null and a valid UUID)', () => {
+    const rejectsSid = (sessionId: unknown) =>
+      expect(() => validateSpec(baseSpec({ peers: [mkPeer({ sessionId })] }))).toThrow(
+        /sessionId is no longer supported/,
+      );
+    rejectsSid(null);
+    rejectsSid('11111111-2222-4333-8444-555555555555');
+    rejectsSid('not-a-uuid');
+    rejectsSid(123);
+    // Sanity: the same peer WITHOUT a sessionId validates fine.
+    expect(() => validateSpec(baseSpec({ peers: [mkPeer({})] }))).not.toThrow();
   });
 
   it('renew must be "always" or "onMismatch"', () => {
@@ -251,22 +261,43 @@ describe('validateSpec: rejects malformed specs', () => {
     );
   });
 
-  // A-M4: the launcher injects `--session-id <sid>` itself. An authored one
-  // produces a DOUBLED flag -> minimist collects an array -> getPinnedSessionId()
-  // returns null -> the peer mints a random id while the launcher polls the
-  // spec's sid -> 30s timeout plus an orphan process.
-  it('rejects LAUNCHER_FLAGS authored in peers[].args', () => {
+  // A-M4 (updated for the --name model): the launcher injects `--name
+  // <group>:<peer>` itself, so an AUTHORED `--name` in a peer's args is
+  // rejected by the LAUNCHER_FLAGS loop (it would double the flag and drift the
+  // peer's identity from the launcher's).
+  it('rejects --name (the launcher-managed flag) authored in peers[].args', () => {
+    rejects(
+      baseSpec({ peers: [mkPeer({ args: '--auto --name proj:alpha' })] }),
+      /must not set --name/,
+    );
+    // Bare, value-less form reaches parsedArgs as a key too → caught.
+    rejects(
+      baseSpec({ peers: [mkPeer({ args: '--auto --name' })] }),
+      /must not set --name/,
+    );
+    expect(() => validateSpec(baseSpec({ peers: [mkPeer({ args: '--auto' })] }))).not.toThrow();
+  });
+
+  // `--session-id` is REMOVED from mycc entirely and is no longer in
+  // STRING_FLAGS, so the LAUNCHER_FLAGS loop does NOT catch it (it reaches
+  // parsedArgs as an auto-detected key). An explicit check rejects it with a
+  // clear never-supported message — silent-unknown is unacceptable.
+  it('rejects the removed --session-id authored in peers[].args', () => {
     const sid = '11111111-2222-4333-8444-555555555555';
     rejects(
       baseSpec({ peers: [mkPeer({ args: `--auto --session-id ${sid}` })] }),
-      /must not set --session-id/,
+      /--session-id.*no longer supported/,
     );
-    // Bare, value-less form is caught too (it still reaches parsedArgs as a key).
+    // Bare form is caught too (it still reaches parsedArgs as a key).
     rejects(
       baseSpec({ peers: [mkPeer({ args: '--auto --session-id' })] }),
-      /must not set --session-id/,
+      /--session-id.*no longer supported/,
     );
-    expect(() => validateSpec(baseSpec({ peers: [mkPeer({ args: '--auto' })] }))).not.toThrow();
+    // `--session-id=<sid>` is likewise rejected.
+    rejects(
+      baseSpec({ peers: [mkPeer({ args: `--auto --session-id=${sid}` })] }),
+      /--session-id.*no longer supported/,
+    );
   });
 
   // B-M1: `--daemon` is a STRING_FLAG with no default; bare use must parse to
@@ -452,6 +483,79 @@ describe('validateSpec: peers[].remotes validation', () => {
   });
 });
 
+describe('validatePeerName: <group>:<peer> identity parsing', () => {
+  it('splits a valid name on the FIRST colon', () => {
+    expect(validatePeerName('proj:alpha-worker')).toEqual({ group: 'proj', peer: 'alpha-worker' });
+    // Dots, underscores, hyphens, digits are all legal id characters.
+    expect(validatePeerName('a.b_c-1:x9')).toEqual({ group: 'a.b_c-1', peer: 'x9' });
+  });
+
+  it('rejects a name with no colon', () => {
+    expect(() => validatePeerName('projalpha')).toThrow(/must be "<group>:<peer>" \(missing ":"\)/);
+  });
+
+  it('rejects an empty group or peer part', () => {
+    expect(() => validatePeerName(':alpha')).toThrow(/non-empty group AND peer/);
+    expect(() => validatePeerName('proj:')).toThrow(/non-empty group AND peer/);
+    expect(() => validatePeerName(':')).toThrow(/non-empty group AND peer/);
+  });
+
+  it('rejects whitespace in either part', () => {
+    expect(() => validatePeerName('pro j:alpha')).toThrow(/must not contain whitespace/);
+    expect(() => validatePeerName('proj:al pha')).toThrow(/must not contain whitespace/);
+    expect(() => validatePeerName('proj:\talpha')).toThrow(/must not contain whitespace/);
+  });
+
+  it('rejects a part that is unsafe as an id component', () => {
+    // The second colon is Windows-reserved → the peer part fails isSafeId.
+    expect(() => validatePeerName('proj:al:pha')).toThrow(/Invalid/);
+    // Path separators / traversal.
+    expect(() => validatePeerName('proj:..')).toThrow(/Invalid/);
+    expect(() => validatePeerName('proj:a/b')).toThrow(/Invalid/);
+    expect(() => validatePeerName('proj:a\\b')).toThrow(/Invalid/);
+    // Windows-reserved chars inside a part.
+    expect(() => validatePeerName('proj:a*b')).toThrow(/Invalid/);
+    expect(() => validatePeerName('proj:a?b')).toThrow(/Invalid/);
+    // A control character.
+    expect(() => validatePeerName('proj:a\u0000b')).toThrow(/Invalid/);
+  });
+
+  it('rejects a trailing dot or space in a part', () => {
+    expect(() => validatePeerName('proj.:alpha')).toThrow(/Invalid/);
+    expect(() => validatePeerName('proj:alpha.')).toThrow(/Invalid/);
+  });
+
+  it('rejects a part longer than 200 chars', () => {
+    const long = 'x'.repeat(201);
+    expect(() => validatePeerName(`${long}:alpha`)).toThrow(/Invalid/);
+    expect(() => validatePeerName(`proj:${long}`)).toThrow(/Invalid/);
+    // 200 exactly is fine.
+    const ok = 'x'.repeat(200);
+    expect(validatePeerName(`${ok}:alpha`)).toEqual({ group: ok, peer: 'alpha' });
+  });
+
+  it('rejects a non-string / empty name', () => {
+    expect(() => validatePeerName('')).toThrow(/non-empty string/);
+    // runtime guard against a non-string caller (the param is typed unknown).
+    expect(() => validatePeerName(42)).toThrow(/non-empty string/);
+  });
+});
+
+describe('launcher flag table: --name round-trip', () => {
+  it('parses --name as a value-taking string and renders it back', () => {
+    const parsed = parseArgString('--auto --name proj:alpha');
+    expect(parsed.name).toBe('proj:alpha');
+    // formatLaunchArgs renders the flag for the published args string.
+    const rendered = formatLaunchArgs(parsed);
+    expect(rendered).toContain('--name proj:alpha');
+  });
+
+  it('lists exactly --name as the launcher-managed flag (session-id removed)', () => {
+    expect(LAUNCHER_FLAGS).toEqual(['name']);
+    expect(LAUNCHER_FLAGS).not.toContain('session-id');
+  });
+});
+
 describe('loadSpec: I/O + JSON error paths', () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mycc-compose-spec-'));
 
@@ -492,13 +596,13 @@ describe('updateSpecFile: in-place, atomic, field-preserving write-back', () => 
     const f = writeRaw('a.json', {
       group: 'smoke',
       futureField: { keep: ['me'] },
-      peers: [{ name: 'a', sessionId: null }],
+      peers: [{ name: 'a', mintedNote: 'before' }],
     });
     updateSpecFile(f, (raw) => {
-      (raw.peers as Array<Record<string, unknown>>)[0].sessionId = '11111111-2222-4333-8444-555555555555';
+      (raw.peers as Array<Record<string, unknown>>)[0].mintedNote = 'after';
     });
     const after = JSON.parse(fs.readFileSync(f, 'utf-8')) as { peers: Array<Record<string, unknown>>; futureField: unknown };
-    expect(after.peers[0].sessionId).toBe('11111111-2222-4333-8444-555555555555');
+    expect(after.peers[0].mintedNote).toBe('after');
     expect(after.futureField).toEqual({ keep: ['me'] }); // not modelled, must survive
     // Stable 2-space indent + trailing newline.
     expect(fs.readFileSync(f, 'utf-8')).toContain('\n  "group": "smoke"');

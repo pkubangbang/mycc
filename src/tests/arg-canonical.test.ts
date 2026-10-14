@@ -101,7 +101,7 @@ describe('arg-canonical: parseArgString ↔ minimist parity', () => {
     '--auto --skip-healthcheck --ollama-model glm-5:cloud',
     '--token-threshold 80000',
     '--ollama-model=gemma4:31b-cloud --serve 9000',
-    '--auto --session-id 11111111-2222-4333-8444-555555555555',
+    '--auto --name proj:alpha',
     '-v --debug-tp',
     '--wire-token secret --api-provider deepseek',
     '--daemon skill-manager',
@@ -207,11 +207,17 @@ describe('arg-canonical: canonicalArgs + argsMatch', () => {
     expect(argsMatch('--wire-token abc --auto', '--wire-token *** --auto')).toBe(true);
   });
 
-  it('argsMatch: ignores launcher-managed flags (--session-id)', () => {
-    expect(LAUNCHER_FLAGS).toContain('session-id');
+  // `--name` is the launcher-managed flag: mycc-compose injects `--name
+  // <group>:<peer>` at spawn time, never authored in the spec. argsMatch() must
+  // therefore IGNORE it on both sides — the same skip behaviour the old
+  // `--session-id` (now removed entirely) used to exercise. The flag NAME is a
+  // fixture detail; what is under test is the LAUNCHER_FLAGS skip.
+  it('argsMatch: ignores launcher-managed flags (--name)', () => {
+    expect(LAUNCHER_FLAGS).toContain('name');
+    expect(LAUNCHER_FLAGS).not.toContain('session-id');
     expect(
       argsMatch(
-        '--auto --skip-healthcheck --session-id 11111111-2222-4333-8444-555555555555',
+        '--auto --skip-healthcheck --name proj:alpha',
         '--auto --skip-healthcheck',
       ),
     ).toBe(true);
@@ -220,15 +226,15 @@ describe('arg-canonical: canonicalArgs + argsMatch', () => {
   it('argsMatch: launcher-flag exclusion does not hide a real difference', () => {
     expect(
       argsMatch(
-        '--auto --session-id 11111111-2222-4333-8444-555555555555 --ollama-model x',
+        '--auto --name proj:alpha --ollama-model x',
         '--auto --ollama-model y',
       ),
     ).toBe(false);
   });
 
   it('canonicalArgs still renders launcher flags (display form is faithful)', () => {
-    const c = canonicalArgs(parseArgString('--auto --session-id 11111111-2222-4333-8444-555555555555'));
-    expect(c).toContain('--session-id');
+    const c = canonicalArgs(parseArgString('--auto --name proj:alpha'));
+    expect(c).toContain('--name');
   });
 });
 
@@ -364,6 +370,33 @@ describe('arg-canonical: spawn rendering preserves secrets', () => {
     const display = formatLaunchArgs(parsed);
     expect(display).toContain('--wire-token ***');
     expect(display).not.toContain('REAL');
+  });
+
+  it('[M4] a "--name" token after a string flag is treated as the flag, not a value; spawn re-emits it bare', () => {
+    // BOUNDARY (S4a.7 / M4): parseArgString takes the next token as a string
+    // flag's value ONLY when it does NOT start with '-' (see the parser's
+    // `next.startsWith('-')` guard). A `--name` NEXT TOKEN therefore does NOT
+    // become the editor's value — editor is left `true`, and `--name` is parsed
+    // as its OWN flag. The spawn renderer re-emits a bare `--name` token, so the
+    // spawned child's argv DOES carry it and hasNameFlag()/the /reload guard
+    // reads it as the compose marker. This is the documented boundary: the
+    // guard is DEFENSE-IN-DEPTH, and a false refusal (blocking /reload for an
+    // instance whose args happen to contain the literal token `--name`) is the
+    // SAFE reading. It is structurally UNREACHABLE via a compose spec, though:
+    // a spec renders `--editor --name` only if an operator authored the literal
+    // string `--name` in `peers[].args`, which no compose usage produces.
+    const parsed = parseArgString('--editor --name');
+    expect(parsed.editor).toBe(true);      // not consumed as a value — --name is a flag
+    expect(parsed.name).toBe(true);        // parsed as its own bare flag
+    const spawn = formatLaunchArgsForSpawn(parsed);
+    expect(spawn).toBe('--editor --name'); // re-emitted as a bare --name token
+    // The `=` spelling is unambiguous: `--editor=--name` glues the value to the
+    // editor flag, so NO bare `--name` token is produced.
+    const eq = parseArgString('--editor=--name');
+    expect(eq.editor).toBe('--name');
+    expect(formatLaunchArgsForSpawn(eq)).toBe('--editor --name'); // renders the pair, but...
+    // ...the VALUE position means a reader can tell it apart from a real flag,
+    // and hasNameFlag only sees the token array — documented, conservative.
   });
 });
 
