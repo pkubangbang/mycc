@@ -2,7 +2,8 @@
  * discovery.ts — readers + liveness predicates over mycc's discovery store.
  *
  * Mirrors the read logic in src/peer/identity.ts. Everything here is
- * read-only EXCEPT writeIdentityMap(), which the identity-repair pass uses.
+ * read-only EXCEPT writeIdentityMap() (the identity-repair pass) and
+ * writeTombstone() (the stopper's marker, §6.7).
  *
  * Liveness has TWO predicates on purpose:
  *   - isSessionLive()  — heartbeat freshness only. Cheap, used for DISPLAY and
@@ -166,11 +167,12 @@ export function readHeartbeatData(sessionId: string): ParsedHeartbeat {
 /**
  * Stamp a TOMBSTONE (epoch-ms stop request) into a session's heartbeat file,
  * preserving its heartbeats/briefs/pid. This is the WRITE half of the
- * self-termination protocol (§6.7 of docs/peers/peer-topology.md): a stopper
- * (`mycc-stop` / `mycc-compose down`) best-effort SIGTERMs the peer AND writes
- * this marker, so a peer the signal did NOT reach (e.g. on Windows, where
- * SIGTERM maps to TerminateProcess and no handler runs) retires itself on its
- * next beat. Mirrors writeTombstone() in src/peer/identity.ts.
+ * self-termination protocol (§6.7 of docs/peers/peer-topology.md): the stop
+ * primitive (`mycc-stop` / `mycc-compose down`) writes this marker — after the
+ * peer's identity is PROVEN, BEFORE it signals — then best-effort SIGTERMs the
+ * peer, so a peer the signal did NOT reach (e.g. on Windows, where SIGTERM maps
+ * to TerminateProcess and no handler runs) retires itself on its next beat.
+ * Mirrors writeTombstone() in src/peer/identity.ts.
  *
  * Lives in the heartbeat file (keyed by the sid the stopper already resolved),
  * NOT identity.json — the live peer owns and rewrites this file every beat, so

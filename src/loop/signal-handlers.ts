@@ -106,15 +106,10 @@ export function registerSignalHandlers(ctx: AgentContext, daemonCronJob: Cron | 
 
   // ── SIGTERM handler ──
   // Coordinator sends SIGTERM to the process group on Ctrl+C, and to the
-  // previous Lead on restart() (cwd change via /load). Gracefully dismiss
-  // teammates and stop the ServeHub so the Vite dev-server child and bound
-  // HTTP port are released before the process exits — otherwise restart()
-  // orphans them and the next /serve hits EADDRINUSE.
+  // previous Lead on restart() (cwd change via /load). Run the same ordered
+  // graceful teardown the tombstone reaction uses (§6.7), so the Vite
+  // dev-server child and bound HTTP port are released before exit.
   process.on('SIGTERM', async () => {
-    // Coordinator sends SIGTERM to the process group on Ctrl+C, and to the
-    // previous Lead on restart() (cwd change via /load). Run the same ordered
-    // graceful teardown the tombstone reaction uses (§6.7), so the Vite
-    // dev-server child and bound HTTP port are released before exit.
     await gracefulTeardown('SIGTERM');
   });
 

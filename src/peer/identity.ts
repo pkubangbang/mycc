@@ -40,11 +40,14 @@ const MAX_BRIEF_TOKENS = 200;
  */
 const FRESHNESS_WINDOW_MS = 90_000;
 /**
- * Pruning cutoff: on register(), identity entries whose latest heartbeat is
- * older than this are removed from identity.json. This reclaims orphans left
- * by instances that crashed/were SIGKILLed without running peer.stop() →
- * unregister(). Set to the same 1h the `peers` tool uses to hide dead peers,
- * so an entry is pruned exactly when it stops appearing in the listing.
+ * Pruning cutoff: on register(), an identity entry is a prune CANDIDATE once
+ * its latest heartbeat is older than this. Age only proves the peer is
+ * unhealthy, NOT that its process is gone — see {@link pruneStaleEntries},
+ * which additionally requires the recorded holder to be provably dead. This
+ * reclaims orphans left by instances that crashed/were SIGKILLed without
+ * running peer.stop() → unregister(). Set to the same 1h the `peers` tool uses
+ * to hide dead peers, so an entry is pruned exactly when it stops appearing in
+ * the listing.
  */
 const IDENTITY_PRUNE_CUTOFF_MS = 60 * 60 * 1000;
 
@@ -81,10 +84,10 @@ interface HeartbeatData {
   pid?: number;
   /**
    * Tombstone: epoch-ms when a stop was REQUESTED for this session. Written by
-   * the stopper (`mycc-stop` / `mycc-compose down`) AFTER a best-effort
-   * terminate, so a peer the signal did NOT reach retires itself on its next
-   * beat. Lives in the heartbeat file (not identity.json) because the live peer
-   * already rewrites this file every beat — see docs/peers/peer-topology.md §6.7.
+   * the stopper (`mycc-stop` / `mycc-compose down`) — after identity is PROVEN,
+   * before the signal — so a peer the signal did NOT reach retires itself on its
+   * next beat. Lives in the heartbeat file (not identity.json) because the live
+   * peer already rewrites this file every beat — see docs/peers/peer-topology.md §6.7.
    *
    * PRESERVATION IS LOAD-BEARING: every rewrite of the heartbeat file MUST carry
    * this field forward (a rewrite that dropped it would lose the tombstone on the
@@ -343,8 +346,9 @@ export function readTombstone(sessionId: string): number | undefined {
 /**
  * Stamp a tombstone (epoch-ms stop request) into a session's heartbeat file,
  * preserving its heartbeats/briefs/pid. Called by the stopper (`mycc-stop` /
- * `mycc-compose down`) AFTER a best-effort terminate, so a peer the signal did
- * NOT reach self-terminates on its next beat (§6.7). Best-effort: returns false
+ * `mycc-compose down`) — AFTER the peer's identity is PROVEN but BEFORE the
+ * signal — so a peer the signal does NOT reach (or a `still-up` confirm
+ * timeout) self-terminates on its next beat (§6.7). Best-effort: returns false
  * (never throws) when the file cannot be written — a tombstone is a courtesy,
  * not a guarantee; the signal path remains the primary mechanism.
  */
@@ -382,12 +386,16 @@ export class IdentityManager {
   private name?: string;
   private intervalHandle: ReturnType<typeof setInterval> | null = null;
   /**
-   * Called ONCE when a tombstone is detected in this instance's own heartbeat
-   * file (§6.7). Set by the owner (the Lead, via PeerManager) to run its
-   * graceful teardown — IdentityManager only DETECTS; it never decides to exit
-   * the process itself (that would bypass the owner's ordered cleanup:
-   * dismiss team → kill bg tasks → peer.stop() → stop ServeHub → exit).
-   * Fires at most once even though beat() runs every 30 s.
+   * Called when a tombstone is detected in this instance's own heartbeat file
+   * (§6.7). Set by the owner (the Lead, via PeerManager) to run its graceful
+   * teardown — IdentityManager only DETECTS; it never decides to exit the
+   * process itself (that would bypass the owner's ordered cleanup: dismiss
+   * team → kill bg tasks → peer.stop() → stop ServeHub → exit).
+   *
+   * Fires at most once even though beat() runs every 30 s. A tombstone seen by
+   * a beat BEFORE a handler is registered is left PENDING (not consumed) and
+   * dispatched by {@link setOnTombstone} — so a stop requested during startup
+   * is not lost.
    */
   private onTombstone?: (when: number) => void;
   private tombstoneSeen = false;
@@ -444,11 +452,13 @@ export class IdentityManager {
   /**
    * Register (upsert) this instance into identity.json.
    *
-   * As a side effect, also prunes stale entries from other instances: any
-   * identity whose latest heartbeat is older than {@link IDENTITY_PRUNE_CUTOFF_MS}
-   * is removed during the read-merge-write. This reclaims orphans left by
-   * instances that crashed without running unregister(), so identity.json does
-   * not grow unbounded over time.
+   * As a side effect, also prunes stale entries from other instances during
+   * the read-merge-write: an entry is removed only when its latest heartbeat is
+   * older than {@link IDENTITY_PRUNE_CUTOFF_MS} AND its recorded holder is
+   * provably dead (see {@link pruneStaleEntries}). This reclaims orphans left
+   * by instances that crashed without running unregister(), so identity.json
+   * does not grow unbounded over time — without discarding a stalled-but-live
+   * peer that must stay discoverable to receive a stop tombstone.
    *
    * Uses a read-merge-write loop with retries to avoid clobbering a concurrent
    * registration from another instance. Each iteration re-reads the current
@@ -551,9 +561,10 @@ export class IdentityManager {
    * (primarily for daemon mode — the detached Lead has no terminal).
    *
    * TOMBSTONE CHECK (§6.7): before beating, read the file for a `tombstone`
-   * stamped by a stopper (`mycc-stop` / `down`). If present and not yet acted
-   * on, fire {@link onTombstone} ONCE so the owner runs its graceful teardown.
-   * This closes the case the OS signal path cannot: on Windows a signal maps to
+   * stamped by a stopper (`mycc-stop` / `down`). If present, dispatch it via
+   * {@link dispatchTombstone}, which fires {@link onTombstone} ONCE — but only
+   * once a handler exists; a beat before registration leaves it pending. This
+   * closes the case the OS signal path cannot: on Windows a signal maps to
    * TerminateProcess (no handler), and a missed signal would otherwise leave the
    * peer running — the tombstone lets it retire itself on its own timer.
    */

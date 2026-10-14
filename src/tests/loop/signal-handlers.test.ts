@@ -27,20 +27,30 @@ vi.mock('../../serve/serve-registry.js', () => ({
 
 import { registerSignalHandlers } from '../../loop/signal-handlers.js';
 
-const signalNames = ['uncaughtException', 'unhandledRejection', 'SIGINT', 'SIGTERM'] as const;
+// The four events registerSignalHandlers() subscribes to. `process.on`/`removeListener`
+// overload on NodeJS.Signals for the two real signals, so keep the OS-signal names
+// separate from the error-event names rather than a single union (which TS rejects
+// as `Signals`).
+const signalNames = ['SIGINT', 'SIGTERM'] as const;
+const errorEventNames = ['uncaughtException', 'unhandledRejection'] as const;
+const registeredEvents = [...signalNames, ...errorEventNames];
 let baselineListeners: Map<string, Function[]>;
 
 beforeEach(() => {
   mocks.events.length = 0;
   vi.clearAllMocks();
-  baselineListeners = new Map(signalNames.map((name) => [name, process.listeners(name)]));
+  baselineListeners = new Map(
+    registeredEvents.map((name) => [name, process.listeners(name as NodeJS.Signals)]),
+  );
 });
 
 afterEach(() => {
-  for (const name of signalNames) {
+  for (const name of registeredEvents) {
     const baseline = baselineListeners.get(name) ?? [];
-    for (const listener of process.listeners(name)) {
-      if (!baseline.includes(listener)) process.removeListener(name, listener as (...args: never[]) => void);
+    for (const listener of process.listeners(name as NodeJS.Signals)) {
+      if (!baseline.includes(listener)) {
+        process.removeListener(name as NodeJS.Signals, listener as (...args: unknown[]) => void);
+      }
     }
   }
   vi.restoreAllMocks();
