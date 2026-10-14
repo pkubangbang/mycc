@@ -139,11 +139,13 @@ instance under a **fresh** sid and **orphan its channel files**. Both layers of
 
 ## 8. Migration note for existing specs
 
-**Delete every `peers[].sessionId` key** — a present key is now a hard error.
-Nothing else is user-visible: the launcher injects `--name <group>:<peer>`
-instead of `--session-id`, peers mint their own sids on boot, and channel
-cleanup/status attribute by name. An un-migrated store with pre-v3 (nameless)
-channel files is still cleaned up by the R2 orphan-only sweep. To carry context
-across runs, use `--from <sessionId>` in `peers[].args` — the ONLY
-context-carrying relaunch (a session id is never reused; session dirs are
-per-run archives).
+Before upgrading an existing deployment, run `mycc-compose down <old-spec>`
+with the OLD CLI while the spec still contains its `sessionId` fields. The new
+CLI cannot positively identify peers launched without `--name`, and rejects a
+present `peers[].sessionId` key. After the old peers have stopped, upgrade,
+remove every `sessionId` field, and use the new CLI. Do not use the new
+`down` as a migration tool for old nameless processes; it intentionally refuses
+to guess which process it owns. Pre-v3 nameless channel files are still handled
+by the conservative R2 orphan-only sweep. To carry context across runs, use
+`--from <sessionId>` in `peers[].args` — a session id is never reused and
+session directories remain per-run archives.

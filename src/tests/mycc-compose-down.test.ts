@@ -80,8 +80,8 @@ function seedIdentity(sid: string, pid: number, name: string): void {
  * argv), which is what the per-test expectations assert.
  */
 function seedBothLive(): void {
-  seedIdentity(SID, process.pid, 'p1');
-  seedIdentity(SID_P2, process.pid, 'p2');
+  seedIdentity(SID, process.pid, 'grp:p1');
+  seedIdentity(SID_P2, process.pid, 'grp:p2');
   seedHeartbeat(SID, process.pid);
   seedHeartbeat(SID_P2, process.pid);
 }
@@ -123,8 +123,8 @@ function materializeChannels(): void {
   channelsMod!.materializeChannels({
     group: 'grp',
     peers: [
-      { name: 'p1', sessionId: SID },
-      { name: 'p2', sessionId: SID_P2 },
+      { name: 'p1', identityName: 'grp:p1', sessionId: SID },
+      { name: 'p2', identityName: 'grp:p2', sessionId: SID_P2 },
     ],
     channels: [{ from: 'p1', to: 'p2', label: 'review', prompt: 'ping {{to}}' }],
   } as never);
@@ -224,14 +224,14 @@ describe('cmdDown: always-stop + stop-before-delete + honest exit code (P2-b)', 
     writeSpec(true);
     materializeChannels();
     // p1: the REAL owner shape — node running a script WITH the peer's durable
-    // NAME in argv as `--name p1` (the exact argv isMyccProcess demands).
+    // NAME in argv as `--name grp:p1` (the exact argv isMyccProcess demands).
     const script = path.join(tempDir, 'owner.js');
     fs.writeFileSync(script, 'setTimeout(function(){},600000);');
-    const child = spawn(process.execPath, [script, '--name', 'p1'], { stdio: 'ignore' });
-    seedIdentity(SID, child.pid as number, 'p1');
+    const child = spawn(process.execPath, [script, '--name', 'grp:p1'], { stdio: 'ignore' });
+    seedIdentity(SID, child.pid as number, 'grp:p1');
     seedHeartbeat(SID, child.pid as number);
     // p2: live but non-mycc (this runner) → its stop refuses, exit is non-zero.
-    seedIdentity(SID_P2, process.pid, 'p2');
+    seedIdentity(SID_P2, process.pid, 'grp:p2');
     seedHeartbeat(SID_P2, process.pid);
 
     const { exitCode, rows } = await runDown();
@@ -260,11 +260,11 @@ describe('cmdDown: always-stop + stop-before-delete + honest exit code (P2-b)', 
     const stale2 = path.join(dir, `${OLD_SID_2}-review.json`);
     fs.writeFileSync(stale1, JSON.stringify({
       channelId: 'review', ownerSessionId: OLD_SID_1, peerSessionId: OLD_SID_2,
-      ownerName: 'p1', peerName: 'p2',
+      ownerName: 'grp:p1', peerName: 'grp:p2',
     }));
     fs.writeFileSync(stale2, JSON.stringify({
       channelId: 'review', ownerSessionId: OLD_SID_2, peerSessionId: OLD_SID_1,
-      ownerName: 'p2', peerName: 'p1',
+      ownerName: 'grp:p2', peerName: 'grp:p1',
     }));
     // No identity/heartbeat for the old sids → they are dead.
     seedBothLive();

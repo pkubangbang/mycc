@@ -52,6 +52,7 @@ describe('validateSpec: accepts and normalizes a valid spec', () => {
     expect(out.peers).toHaveLength(1);
     const p = out.peers[0];
     expect(p.renew).toBe('onMismatch'); // default applied
+    expect(p.identityName).toBe('smoke:leader'); // stable identity is group-qualified
     expect(p.parsedArgs.auto).toBe(true); // parsed through the shared table
     // `sessionId` is NOT a normalized field any more (specs never author one).
     expect('sessionId' in p).toBe(false);

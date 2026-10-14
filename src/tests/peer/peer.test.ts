@@ -14,6 +14,8 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+
+const configMock = vi.hoisted(() => ({ getPeerName: vi.fn<() => string | null>(() => null) }));
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
@@ -39,7 +41,7 @@ vi.mock('../../config.js', () => ({
   getLaunchArgs: () => '(none)',
   // identity.ts reads this at construction (--name); the mock must export it
   // or IdentityManager construction throws "No getPeerName export on the mock".
-  getPeerName: () => null,
+  getPeerName: () => configMock.getPeerName(),
 }));
 
 // Import AFTER mocks are registered.
@@ -70,6 +72,7 @@ function makeMailboxPath(sid: string): string {
 }
 
 beforeEach(() => {
+  configMock.getPeerName.mockReturnValue(null);
   tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mycc-peer-'));
   for (const d of [discoveryDir(), heartbeatDir(), channelsDir()]) {
     fs.mkdirSync(d, { recursive: true });
@@ -90,6 +93,36 @@ describe('IdentityManager', () => {
     expect(entries[0].sessionId).toBe(SID_A);
     expect(entries[0].workDir).toBe('/work/a');
     expect(entries[0].mailbox).toContain('unread-lead.jsonl');
+  });
+
+  it('rejects a duplicate live qualified name atomically at registration, even across workdirs', () => {
+    configMock.getPeerName.mockReturnValue('group:worker');
+    const first = new IdentityManager(SID_A, '/work/a', makeMailboxPath(SID_A));
+    first.register();
+
+    const second = new IdentityManager(SID_B, '/work/b', makeMailboxPath(SID_B));
+    expect(() => second.register()).toThrow(/peer name "group:worker" is already held/);
+    expect(second.listIdentities().map((entry) => entry.sessionId)).toEqual([SID_A]);
+  });
+
+  it('allows restart when an old same-name entry is stale despite its PID being reused', () => {
+    configMock.getPeerName.mockReturnValue('group:worker');
+    const old = Date.now() - 2 * 60 * 60 * 1000;
+    fs.writeFileSync(identityFile(), JSON.stringify({
+      [SID_B]: {
+        sessionId: SID_B,
+        name: 'group:worker',
+        pid: process.pid, // simulates an old PID now reused by this test runner
+        workDir: '/work/old',
+        mailbox: makeMailboxPath(SID_B),
+        startedAt: old,
+      },
+    }, null, 2), 'utf-8');
+    writeHeartbeatRaw(SID_B, [old]);
+
+    const id = new IdentityManager(SID_A, '/work/new', makeMailboxPath(SID_A));
+    expect(() => id.register()).not.toThrow();
+    expect(id.listIdentities().map((entry) => entry.sessionId)).toEqual([SID_A]);
   });
 
   it('unregister() removes the entry', () => {

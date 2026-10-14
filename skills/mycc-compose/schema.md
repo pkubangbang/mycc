@@ -34,6 +34,17 @@ Consequences:
   session from an old one (the LLM re-understands the old transcript). Session
   directories are per-run archives; a session id is never reused.
 
+## Upgrading from the session-id-based version
+
+The new version cannot safely identify an already-running peer launched by the
+old version: old `identity.json` entries have no durable `name`, and those
+processes carry `--session-id` rather than `--name`. **Before upgrading the
+CLI or removing `peers[].sessionId` from an existing spec, run
+`mycc-compose down <old-spec>` with the old version.** Then upgrade, remove all
+`sessionId` fields, and bring the topology up with the new version. Do not
+assume the new `down` can safely stop an old nameless peer; it deliberately
+refuses to guess which process it owns.
+
 ## Top level
 
 ```json

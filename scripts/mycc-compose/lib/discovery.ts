@@ -30,7 +30,10 @@ export const FRESHNESS_WINDOW_MS = 90_000;
 
 /** The subset of a peer record discovery needs in order to answer "is it running?". */
 export interface PeerRef {
+  /** Spec-local leaf name. */
   name?: string;
+  /** Fully qualified durable identity (`<group>:<peer>`). */
+  identityName?: string;
   sessionId?: string | null;
   workdir?: string;
 }
@@ -313,12 +316,18 @@ export function isPeerRunning(peer: PeerRef | null | undefined): boolean {
  *
  * Returns the resolved sid, or null when no live instance matches.
  */
+function normalizePeerName(name: string): string {
+  return name.trim().normalize('NFC').toLowerCase();
+}
+
 export function resolveLivePeer(peer: PeerRef | null | undefined): string | null {
-  if (!peer || typeof peer.name !== 'string' || peer.name.length === 0) return null;
+  const name = peer?.identityName ?? peer?.name;
+  if (typeof name !== 'string' || name.length === 0) return null;
+  const normalizedName = normalizePeerName(name);
   const map = readIdentityMap();
   const matches: Array<{ sid: string; startedAt: number }> = [];
   for (const [sid, entry] of Object.entries(map)) {
-    if (entry?.name !== peer.name) continue;
+    if (typeof entry?.name !== 'string' || normalizePeerName(entry.name) !== normalizedName) continue;
     if (!sameWorkdirRef(entry.workDir ?? entry.workdir, peer.workdir)) continue;
     if (!isPeerRunning({ sessionId: sid, workdir: peer.workdir })) continue;
     matches.push({ sid, startedAt: typeof entry.startedAt === 'number' ? entry.startedAt : 0 });

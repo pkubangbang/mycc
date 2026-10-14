@@ -126,11 +126,11 @@ describe('cmdStatus --json: channel attribution 3-way (Slice 4 / M7)', () => {
   it("'by-name': both endpoint files carry the spec's ownership names", async () => {
     plantChannel(SID_A, 'review', {
       channelId: 'review', ownerSessionId: SID_A, peerSessionId: SID_B,
-      ownerName: 'p1', peerName: 'p2',
+      ownerName: 'g:p1', peerName: 'g:p2',
     });
     plantChannel(SID_B, 'review', {
       channelId: 'review', ownerSessionId: SID_B, peerSessionId: SID_A,
-      ownerName: 'p2', peerName: 'p1',
+      ownerName: 'g:p2', peerName: 'g:p1',
     });
     const { parsed } = await runJson();
     expect(parsed.channels).toEqual([
@@ -148,8 +148,8 @@ describe('cmdStatus --json: channel attribution 3-way (Slice 4 / M7)', () => {
     plantChannel(SID_B, 'review', {
       channelId: 'review', ownerSessionId: SID_B, peerSessionId: SID_A,
     });
-    seedNamedPeer('p1', SID_A);
-    seedNamedPeer('p2', SID_B);
+    seedNamedPeer('g:p1', SID_A);
+    seedNamedPeer('g:p2', SID_B);
     const { parsed } = await runJson();
     expect(parsed.channels).toEqual([
       { label: 'review', bothFilesPresent: true, attribution: 'legacy' },

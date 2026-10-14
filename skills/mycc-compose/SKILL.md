@@ -29,6 +29,14 @@ keywords: ["mycc-compose", "peer topology", "peer group", "declarative peers", "
 > - `script.md` — the `mycc-compose` subcommands, exit codes, and the cron
 >   wiring for `sync` (the resume path).
 
+## Upgrading an existing topology
+
+Before upgrading from the session-id-based version, run `mycc-compose down
+<old-spec>` using the old CLI while the spec still contains its `sessionId`
+fields. The new CLI rejects those fields and cannot positively identify a
+legacy nameless process. After the old peers are stopped, remove the fields and
+use the new CLI.
+
 ## What it is
 
 `mycc-compose` is a **zero-dependency CLI** (a `bin` next to `mycc`,

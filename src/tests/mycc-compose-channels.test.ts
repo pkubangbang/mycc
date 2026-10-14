@@ -86,14 +86,14 @@ afterEach(() => {
 /** Two peers, one directed channel. */
 function spec(): {
   group: string;
-  peers: Array<{ name: string; sessionId: string | null }>;
+  peers: Array<{ name: string; identityName: string; sessionId: string | null }>;
   channels: Array<{ from: string; to: string; label: string; prompt: string }>;
 } {
   return {
     group: 'grp',
     peers: [
-      { name: 'a', sessionId: SID_A },
-      { name: 'b', sessionId: SID_B },
+      { name: 'a', identityName: 'grp:a', sessionId: SID_A },
+      { name: 'b', identityName: 'grp:b', sessionId: SID_B },
     ],
     channels: [{ from: 'a', to: 'b', label: 'review', prompt: 'Peer is {{to}}.' }],
   };
@@ -346,8 +346,8 @@ describe('materializeChannels', () => {
     // attribute a file to a topology peer by name despite sid churn. The value
     // is the peer's `name` verbatim (here the fixture's bare 'a'/'b'; in
     // production it is `<group>:<peer>`).
-    expect(a).toMatchObject({ ownerName: 'a', peerName: 'b' });
-    expect(b).toMatchObject({ ownerName: 'b', peerName: 'a' });
+    expect(a).toMatchObject({ ownerName: 'grp:a', peerName: 'grp:b' });
+    expect(b).toMatchObject({ ownerName: 'grp:b', peerName: 'grp:a' });
   });
 
   it('fills the template per side (from/to swapped) and appends the contract', async () => {
@@ -500,6 +500,21 @@ describe('ownedChannelFiles (R1 + R2)', () => {
     expect(keptAmbiguous).toEqual([]);
   });
 
+  it('does not delete same-label files from another group reusing the same leaf names', async () => {
+    const { materializeChannels, ownedChannelFiles } = await loadChannels();
+    materializeChannels(spec());
+    fs.mkdirSync(channelsDir, { recursive: true });
+    const foreignA = channelsFile(SID_C, 'review');
+    const foreignB = channelsFile('dddddddd-4444-4444-8444-444444444444', 'review');
+    fs.writeFileSync(foreignA, JSON.stringify({ channelId: 'review', ownerSessionId: SID_C, peerSessionId: SID_A, ownerName: 'other:a', peerName: 'other:b' }));
+    fs.writeFileSync(foreignB, JSON.stringify({ channelId: 'review', ownerSessionId: SID_A, peerSessionId: SID_C, ownerName: 'other:b', peerName: 'other:a' }));
+    const { deletable, keptAmbiguous } = ownedChannelFiles(spec(), () => true);
+    expect(deletable.sort()).toEqual([SID_A + '-review.json', SID_B + '-review.json'].sort());
+    expect(keptAmbiguous).toEqual([]);
+    expect(fs.existsSync(foreignA)).toBe(true);
+    expect(fs.existsSync(foreignB)).toBe(true);
+  });
+
   it('keeps a FOREIGN named file (names present but none ours)', async () => {
     const { ownedChannelFiles } = await loadChannels();
     fs.mkdirSync(channelsDir, { recursive: true });
@@ -512,6 +527,16 @@ describe('ownedChannelFiles (R1 + R2)', () => {
     expect(deletable).toEqual([]);
     expect(keptAmbiguous).toEqual([]);
     expect(fs.existsSync(foreign)).toBe(true);
+  });
+
+  it('R2: keeps a legacy file when either endpoint session id is missing', async () => {
+    const { ownedChannelFiles } = await loadChannels();
+    fs.mkdirSync(channelsDir, { recursive: true });
+    const legacy = channelsFile(SID_C, 'review');
+    fs.writeFileSync(legacy, JSON.stringify({ channelId: 'review', ownerSessionId: SID_A }));
+    const { deletable, keptAmbiguous } = ownedChannelFiles(spec(), () => true);
+    expect(deletable).toEqual([]);
+    expect(keptAmbiguous).toEqual([SID_C + '-review.json']);
   });
 
   it('R2: deletes a legacy (nameless) file only when BOTH sids are dead', async () => {

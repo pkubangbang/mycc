@@ -18,7 +18,8 @@ import type { lastBrief } from './discovery.js';
  * module reads a SUBSET of the normalized peer shape, so every field is
  * optional except `parsedArgs`, which is the only one `peerArgv()` needs.
  *
- * `name` is the durable `<group>:<peer>` identity (launcher-injected, data-only).
+ * `name` is the spec-local leaf used by channel references and reports.
+ * `identityName` is the durable `<group>:<peer>` handle injected through `--name`.
  * `sessionId` is the RUNTIME session id resolved from identity.json by name —
  * it is NOT a spec field any more (peers[].sessionId is rejected at validation),
  * so this loose shape keeps it only for the runtime consumers that carry a
@@ -26,6 +27,7 @@ import type { lastBrief } from './discovery.js';
  */
 export interface Peer {
   name?: string;
+  identityName?: string;
   workdir?: string;
   sessionId?: string | null;
   args?: string;

@@ -619,6 +619,8 @@ export interface MailModule {
  */
 export interface IdentityEntry {
   sessionId: string;
+  /** OS process owning this entry, published at registration for name uniqueness checks. */
+  pid?: number;
   workDir: string;
   mailbox: string;
   startedAt: number;

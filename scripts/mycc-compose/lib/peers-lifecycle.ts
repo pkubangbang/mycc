@@ -170,7 +170,7 @@ export function stopPeer(peer: Peer): string {
   if (didPidStartAfter(hbPid, heartbeatFileMtimeMs(sid))) {
     return 'refused-recycled-pid';
   }
-  if (!isMyccProcess(hbPid, peer.name)) return 'refused-not-mycc';
+  if (!isMyccProcess(hbPid, peer.identityName ?? peer.name)) return 'refused-not-mycc';
   try {
     process.kill(hbPid, 'SIGTERM');
     return 'stopped';
@@ -413,12 +413,13 @@ export function launchPeer(
   opts: LaunchPeerOpts = {},
 ): Promise<LaunchResult> {
   return new Promise((resolve, reject) => {
-    if (!peer.name) {
+    const identityName = peer.identityName ?? peer.name;
+    if (!identityName) {
       reject(new Error('cannot launch a peer with no name'));
       return;
     }
     const argv = peerArgv(peer);
-    const finalArgv = ['--name', peer.name, ...argv];
+    const finalArgv = ['--name', identityName, ...argv];
 
     // ABSOLUTE launcher (see resolveMyccLauncher) — a bare `mycc` name is
     // unresolvable in the terminal's own shell.

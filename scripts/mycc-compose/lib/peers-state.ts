@@ -140,7 +140,7 @@ export function repairIdentity(peers: Peer[]): number {
       // Publish the durable NAME so a backfilled entry is resolvable by name —
       // without it the next `up` could not re-find this peer (resolveLivePeer
       // scans by name), turning every repair into a phantom it must re-mint.
-      ...(peer.name ? { name: peer.name } : {}),
+      ...((peer.identityName ?? peer.name) ? { name: peer.identityName ?? peer.name } : {}),
     });
   }
   if (pending.size === 0) return 0;

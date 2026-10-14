@@ -46,9 +46,10 @@ const ARGS = '--auto --skip-healthcheck';
 let tempDir = '';
 let specFile = '';
 let SID = '';
-/** The peer's durable NAME (`<group>:<peer>`) — the identity matching resolves
- * on, published into identity.json and injected as `--name` by the launcher. */
-const PEER_NAME = 'grp:always-peer';
+/** The spec-facing leaf name, referenced by channels and printed in reports. */
+const PEER_NAME = 'always-peer';
+/** The fully qualified runtime identity carried by `--name`. */
+const PEER_IDENTITY_NAME = 'grp:always-peer';
 /** The discovery module dynamically imported for the CURRENT test. */
 let d: Discovery | null = null;
 
@@ -78,7 +79,7 @@ function seedIdentity(): void {
   const map: Record<string, unknown> = {};
   map[SID] = {
     sessionId: SID,
-    name: PEER_NAME,
+    name: PEER_IDENTITY_NAME,
     pid: process.pid,
     workDir: tempDir,
     args: ARGS,
@@ -120,7 +121,7 @@ async function runCmdUpAllowStop(allowStop: boolean): Promise<{ rows: string[]; 
   // freshly re-evaluated graph each time means no stacked spies.
   peersMod = await import('../../scripts/mycc-compose/lib/peers.js');
   launchPeerSpy = vi.spyOn(peersMod, 'launchPeer').mockImplementation(
-    async (peer: { name?: string; sessionId?: string | null }) => {
+    async (peer: { name?: string; identityName?: string; sessionId?: string | null }) => {
       // The spy registers the fake peer in the identity map exactly as a
       // real launch+register() would, so the post-launch liveness wait
       // resolves on its first poll. The entry publishes the durable NAME —
@@ -131,7 +132,7 @@ async function runCmdUpAllowStop(allowStop: boolean): Promise<{ rows: string[]; 
       const map = d!.readIdentityMap();
       map[sid] = {
         sessionId: sid,
-        name: peer.name ?? PEER_NAME,
+        name: peer.identityName ?? (peer.name ? 'grp:' + peer.name : PEER_IDENTITY_NAME),
         pid: process.pid,
         workDir: tempDir,
         args: ARGS,
@@ -279,7 +280,7 @@ describe('cmdUp: sync never recycles renew:always peers (P1-1 regression)', () =
     // resolved from a spec/launcher sid, and the liveness wait succeeded.
     const map = d.readIdentityMap();
     const entries = Object.values(map) as Array<{ name?: string }>;
-    expect(entries.some((e) => e.name === PEER_NAME)).toBe(true);
+    expect(entries.some((e) => e.name === PEER_IDENTITY_NAME)).toBe(true);
     expect(exitCode).toBe(0);
   }, 20_000);
 });

@@ -19,7 +19,7 @@
 import fs from 'fs';
 import path from 'path';
 import { parseArgString, LAUNCHER_FLAGS } from '../../../src/utils/arg-canonical.js';
-import { sanitizeId } from '../../../src/utils/id-guard.js';
+import { sanitizeId, validatePeerName as validatePeerNameValue } from '../../../src/utils/id-guard.js';
 
 // validatePeerName lives in src/utils/id-guard.ts (the single implementation
 // shared with src/config.ts). Re-exported here so existing consumers of the
@@ -30,7 +30,10 @@ export const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f
 
 /** A peer record after validation (defaults resolved, args parsed). */
 export interface NormalizedPeer {
+  /** Leaf name used by channels[] references and human-facing output. */
   name: string;
+  /** Durable runtime identity, globally scoped by spec.group. */
+  identityName: string;
   workdir: string;
   args: string;
   renew: 'always' | 'onMismatch';
@@ -316,6 +319,12 @@ export function validateSpec(spec: unknown): NormalizedSpec {
     }
     if (names.has(dupKey(p.name as string))) throw new Error(`duplicate peer name: "${p.name}"`);
     names.add(dupKey(p.name as string));
+    const identityName = String(s.group) + ':' + String(p.name);
+    try {
+      validatePeerNameValue(identityName);
+    } catch (err) {
+      throw new Error(at + '.name cannot form a valid durable identity (' + JSON.stringify(identityName) + '): ' + (err instanceof Error ? err.message : String(err)));
+    }
     if (typeof p.workdir !== 'string' || (p.workdir as string).trim() === '') {
       throw new Error(`${at}.workdir must be a non-empty absolute path`);
     }
@@ -389,6 +398,7 @@ export function validateSpec(spec: unknown): NormalizedSpec {
     const remotes = normalizeRemotes(p, at, parsedArgs);
     return {
       name: p.name as string,
+      identityName,
       workdir: p.workdir as string,
       args: p.args as string,
       renew,

@@ -325,43 +325,45 @@ export class IdentityManager {
     // name is published into identity.json below so a mediator can match a live
     // peer to the requested topology by NAME, not by a churning session id.
     this.name = getPeerName() ?? undefined;
-    // Refuse to boot when ANOTHER live instance already holds this same
-    // (name, workDir) pair. The name is the stable identity; two live
-    // instances sharing it are indistinguishable to `mail_to`/discovery and
-    // must not both exist. This is a NAME-level uniqueness check — sessions
-    // themselves are never reused (each launch mints a fresh id).
-    if (this.name) {
-      this.assertNameNotLive(this.name, this.workDir);
-    }
   }
 
   /**
-   * Fail fast (exit 1) when a LIVE instance already registered under the same
-   * `<name>` in the same workDir. A dead entry (stale heartbeat / dead pid)
-   * does not block a restart — only a genuinely live twin does.
-   *
-   * Uses {@link isSessionLive} + a pid-alive check on the recorded heartbeat,
-   * mirroring the stricter held-session semantics: a process killed within the
-   * freshness window must not dead-lock its own restart.
-   *
-   * Fail-LOUD: a duplicate peer name would make the group unmountable, so we
-   * print a clear diagnostic and exit rather than booting into an ambiguous
-   * identity.
+   * Reject a second live registration for the same durable identity. This is
+   * called INSIDE the identity-file lock immediately before register() writes,
+   * so the duplicate check and claim are one atomic operation. Names are
+   * globally unique, case-insensitive, and Unicode-normalized; workdir is not
+   * part of uniqueness because the qualified name itself is the identity.
    */
-  private assertNameNotLive(name: string, workDir: string): void {
+  private assertNameNotLive(name: string): void {
+    const normalizeName = (value: string): string => value.trim().normalize('NFC').toLowerCase();
+    const normalizedName = normalizeName(name);
     for (const [sid, entry] of Object.entries(readIdentityMap())) {
-      if (entry.name !== name) continue;
-      if (entry.workDir !== workDir) continue;
       if (sid === this.sessionId) continue; // self (re-register) is fine
-      if (!isSessionLive(sid)) continue; // dead twin → allow restart
-      const { pid } = readHeartbeatData(sid);
-      if (typeof pid === 'number' && !isPidAlive(pid)) continue; // crashed mid-window
-      console.error(
+      if (typeof entry.name !== 'string' || normalizeName(entry.name) !== normalizedName) continue;
+
+      const heartbeat = readHeartbeatData(sid);
+      const latestBeat = heartbeat.heartbeats[heartbeat.heartbeats.length - 1];
+      const freshBeat = typeof latestBeat === 'number' &&
+        Date.now() - latestBeat <= FRESHNESS_WINDOW_MS;
+      const pid = typeof heartbeat.pid === 'number' ? heartbeat.pid : entry.pid;
+      // A fresh heartbeat + live PID is the normal live-holder proof. During
+      // the small register→first-beat window, startedAt + the PID published in
+      // identity.json closes the concurrent-launch race. Old stale entries do
+      // not block forever just because their PID has since been recycled.
+      const inStartupWindow = !freshBeat &&
+        typeof entry.startedAt === 'number' &&
+        Date.now() - entry.startedAt <= FRESHNESS_WINDOW_MS &&
+        typeof entry.pid === 'number' &&
+        isPidAlive(entry.pid);
+      if (freshBeat) {
+        if (typeof pid === 'number' && !isPidAlive(pid)) continue;
+      } else if (!inStartupWindow) {
+        continue;
+      }
+      throw new Error(
         `[identity] refusing to start: peer name "${name}" is already held by a LIVE ` +
-        `instance (session ${sid}, pid ${pid ?? 'unknown'}) in this workDir. ` +
-        `Stop it first, or choose a different --name.`,
+        `instance (session ${sid}, pid ${pid ?? 'unknown'}). Stop it first, or choose a different --name.`,
       );
-      process.exit(1);
     }
   }
 
@@ -389,6 +391,9 @@ export class IdentityManager {
     // covers a writer that ignored the lock), but the lock is what actually
     // closes the lost-update window the earlier read-verify loop only narrowed.
     withIdentityLock(() => {
+      // Check uniqueness under the SAME lock as the identity write. A check in
+      // the constructor would leave a TOCTOU race between simultaneous launches.
+      if (this.name) this.assertNameNotLive(this.name);
       for (let attempt = 0; attempt < 5; attempt++) {
         const map = readIdentityMap();
         pruneStaleEntries(map, this.sessionId);
@@ -397,6 +402,9 @@ export class IdentityManager {
           workDir: this.workDir,
           mailbox: this.mailboxPath,
           startedAt: Date.now(),
+          // Publish the PID before the first heartbeat so another simultaneous
+          // launch cannot claim this name during the startup window.
+          pid: process.pid,
           // Publish the redacted launch flags so a mediator (mycc-compose) can
           // decide whether a live peer matches the requested topology, instead of
           // tearing down healthy instances on every sync.

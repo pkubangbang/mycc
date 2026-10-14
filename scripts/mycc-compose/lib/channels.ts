@@ -16,8 +16,9 @@ import type { ChannelFile } from '../../../src/types.js';
 /**
  * The narrow STRUCTURAL subset of a spec that the materializer actually reads.
  * Declared separately from NormalizedSpec because the module's real input
- * contract is what matters here: it only ever touches group/peers[].name and
- * channels[].from/.to/.label/.prompt. A NormalizedSpec (with workdir/args/
+ * contract is what matters here: it reads peers[].name to resolve channel
+ * references and peers[].identityName for durable ownership metadata. It also
+ * reads channels[].from/.to/.label/.prompt. A NormalizedSpec (with workdir/args/
  * renew/parsedArgs) is assignable to this.
  *
  * The peer session id is DELIBERATELY ABSENT: a spec no longer authors one
@@ -30,7 +31,7 @@ import type { ChannelFile } from '../../../src/types.js';
  */
 export interface ChannelSpecInput {
   group: string;
-  peers: Array<{ name: string }>;
+  peers: Array<{ name: string; identityName?: string }>;
   channels: Array<{ from: string; to: string; label: string; prompt: string }>;
 }
 
@@ -59,15 +60,15 @@ function peerSidForFile(peer: { name: string; [key: string]: unknown }): string 
  * DATA-ONLY ownership field (`ownerName`/`peerName`) so compose can attribute a
  * channel to a topology peer by NAME — stable across the per-run sid churn —
  * for stale-file cleanup (Slice 4). Null when absent. */
-function peerNameForFile(peer: { name: string; [key: string]: unknown }): string | null {
-  const name = peer.name;
+function peerNameForFile(peer: { name: string; identityName?: string; [key: string]: unknown }): string | null {
+  const name = peer.identityName ?? peer.name;
   return typeof name === 'string' && name !== '' ? name : null;
 }
 
 /** Case-fold a peer NAME for set membership, matching spec.dupKey's semantics
  * (name uniqueness is enforced case-insensitively at register/validation). */
 function normName(s: unknown): string {
-  return typeof s === 'string' ? s.trim().toLowerCase() : '';
+  return typeof s === 'string' ? s.trim().normalize('NFC').toLowerCase() : '';
 }
 
 /** How a channel file on disk relates to a spec — the attribution verdict. */
@@ -332,7 +333,7 @@ export function ownedChannelFiles(
   if (!fs.existsSync(CHANNELS_DIR)) return { deletable, keptAmbiguous };
 
   const labels = new Set(spec.channels.map((ch) => dupKey(ch.label)));
-  const nameSet = new Set(spec.peers.map((p) => normName(p.name)));
+  const nameSet = new Set(spec.peers.map((p) => normName(p.identityName ?? p.name)));
 
   for (const entry of fs.readdirSync(CHANNELS_DIR)) {
     if (!entry.endsWith('.json') || entry.endsWith('.tmp')) continue;
@@ -357,7 +358,8 @@ export function ownedChannelFiles(
     const sids = [parsed.ownerSessionId, parsed.peerSessionId].filter(
       (s): s is string => typeof s === 'string' && s !== '',
     );
-    if (sids.length > 0 && sids.every((sid) => isSidDead(sid))) {
+    // Missing/invalid endpoint IDs are uncertainty, not evidence of ownership.
+    if (sids.length === 2 && sids.every((sid) => isSidDead(sid))) {
       deletable.push(entry);
     } else {
       keptAmbiguous.push(entry);
@@ -415,7 +417,7 @@ export interface ChannelStatusRow {
  */
 export function channelStatus(spec: ChannelSpecInput): ChannelStatusRow[] {
   const byName = new Map(spec.peers.map((p) => [dupKey(p.name), p]));
-  const nameSet = new Set(spec.peers.map((p) => normName(p.name)));
+  const nameSet = new Set(spec.peers.map((p) => normName(p.identityName ?? p.name)));
   // Index every channel file in the store ONCE by its parsed `channelId` FIELD
   // (the filename is `<sid>-<label>.json` where the sid's own dashes make a
   // filename-derived label unreliable). Name-attributed lookup then does not
@@ -457,8 +459,8 @@ export function channelStatus(spec: ChannelSpecInput): ChannelStatusRow[] {
     // endpoints (from-name and to-name) are present across the label's files.
     let bothByName = false;
     if (a && b) {
-      const fromName = normName(a.name);
-      const toName = normName(b.name);
+      const fromName = normName(a.identityName ?? a.name);
+      const toName = normName(b.identityName ?? b.name);
       const named = candidates
         .map((c) => attributeChannelFile(c.data, nameSet))
         .filter((v): v is { kind: 'by-name'; matchedName: string } => v.kind === 'by-name');
