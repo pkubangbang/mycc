@@ -116,11 +116,12 @@ export function didPidStartAfter(pid: number, notBeforeMs: number): boolean {
  *
  * Evidence order:
  *   1. pid not alive → false (no holder).
- *   2. start time available AND the pid started AFTER the heartbeat file's
- *      mtime → the ORIGINAL holder is gone; the pid was recycled → false.
- *   3. otherwise → true. This is the CONSERVATIVE branch: unknown start time
- *      (or a pid that started before the heartbeat) is treated as the live
- *      holder, so a guard never bypasses a peer it cannot disprove.
+ *   2. heartbeat mtime unavailable (0/non-finite) → true conservatively; missing
+ *      timestamp is not evidence of a recycled PID.
+ *   3. start time available AND the pid started AFTER the heartbeat file's
+ *      mtime (beyond the clock-resolution slack) → false (PID was recycled).
+ *   4. otherwise → true. Unknown start time or inconclusive ordering is the
+ *      CONSERVATIVE branch: do not bypass a guard without evidence.
  *
  * @param pid The pid recorded in the heartbeat (or identity entry).
  * @param heartbeatMtimeMs The heartbeat file's mtime — the moment the recorded
@@ -129,6 +130,10 @@ export function didPidStartAfter(pid: number, notBeforeMs: number): boolean {
  */
 export function isOriginalHolderAlive(pid: number | undefined | null, heartbeatMtimeMs: number): boolean {
   if (typeof pid !== 'number' || !isPidAlive(pid)) return false;
+  // mtime 0 is the sentinel returned when the heartbeat file cannot be statted.
+  // It is not evidence that the process started after the heartbeat; fail
+  // conservatively so a transient read/stat race cannot admit a duplicate name.
+  if (!Number.isFinite(heartbeatMtimeMs) || heartbeatMtimeMs <= 0) return true;
   if (didPidStartAfter(pid, heartbeatMtimeMs)) return false;
   return true;
 }

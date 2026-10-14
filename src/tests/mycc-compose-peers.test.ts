@@ -224,6 +224,42 @@ afterEach(() => {
 // ---------------------------------------------------------------------------
 
 describe('stopPeer: positive identity, never a recycled pid (B-LAUNCH-2)', () => {
+  it('rejects a recycled PID during name resolution, not just during stop', async () => {
+    const { discovery } = await loadModules();
+    const owner = startMyccShapedProcess('grp:owner');
+    writeIdentity(SID_A, { name: 'grp:owner', pid: owner.pid });
+    writeHeartbeat(SID_A, owner.pid);
+    // Simulate a stale heartbeat file whose recorded PID now belongs to a
+    // process that started later. The embedded heartbeat remains fresh, so a
+    // timestamp-only check would falsely accept this entry as live.
+    const old = (Date.now() - 60_000) / 1000;
+    fs.utimesSync(path.join(hbDir, `${SID_A}.json`), old, old);
+    try {
+      expect(discovery.isPeerRunning({ sessionId: SID_A, workdir: tempDir })).toBe(false);
+      expect(discovery.resolveLivePeer({
+        name: 'owner',
+        identityName: 'grp:owner',
+        workdir: tempDir,
+      })).toBeNull();
+      expect(discovery.isSessionHolderDead(SID_A)).toBe(true);
+      expect(isAlive(owner.pid)).toBe(true);
+    } finally {
+      owner.kill();
+    }
+  });
+
+  it('fails fast rather than ranking duplicate name/workdir entries', async () => {
+    const { discovery } = await loadModules();
+    writeIdentity(SID_A, { name: 'grp:duplicate', pid: process.pid });
+    writeIdentity(SID_B, { name: 'grp:duplicate', pid: process.pid });
+
+    expect(() => discovery.resolvePeerForStop({
+      name: 'duplicate',
+      identityName: 'grp:duplicate',
+      workdir: tempDir,
+    })).toThrow(/refusing to guess/);
+  });
+
   it('refuses an unrelated live Node process (command line is not mycc)', async () => {
     const { peers } = await loadModules();
     const victim = startLiveProcess(); // `node -e setTimeout…`, never --name
@@ -264,11 +300,30 @@ describe('stopPeer: positive identity, never a recycled pid (B-LAUNCH-2)', () =>
     expect(peers.stopPeer(peer('legacy', SID_A))).toBe('refused-no-recorded-pid');
   });
 
+  it('stops a named peer whose heartbeat timestamp is stale but whose process is still alive', async () => {
+    const { peers, discovery } = await loadModules();
+    const owner = startMyccShapedProcess('grp:owner');
+    writeIdentity(SID_A, { name: 'grp:owner', pid: owner.pid });
+    writeHeartbeat(SID_A, owner.pid, Date.now() - 120_000);
+    try {
+      expect(discovery.isSessionHolderDead(SID_A)).toBe(false);
+      expect(peers.stopPeer({
+        name: 'owner',
+        identityName: 'grp:owner',
+        sessionId: null,
+        workdir: tempDir,
+      })).toBe('stopped');
+      expect(await waitFor(() => !isAlive(owner.pid), 3000)).toBe(true);
+    } finally {
+      owner.kill();
+    }
+  });
+
   it('does nothing for a session whose recorded pid is dead', async () => {
     const { peers } = await loadModules();
     writeHeartbeat(SID_A, await deadPid());
     writeIdentity(SID_A);
-    expect(peers.stopPeer(peer('dead', SID_A))).toBe('heartbeat-fresh-but-pid-dead');
+    expect(peers.stopPeer(peer('dead', SID_A))).toBe('already-stopped');
   });
 
   it('terminates a genuinely live owner (started before its own heartbeat file)', async () => {
@@ -436,6 +491,24 @@ describe('launchPeer: requires a NEW beat from the spawned child (A-M1)', () => 
 // ---------------------------------------------------------------------------
 
 describe('repairIdentity: merge-retry preserves concurrent registrations (A-M2/D-5)', () => {
+  it('does not repair a fresh-looking heartbeat whose PID was recycled', async () => {
+    const { peers } = await loadModules();
+    const unrelated = startLiveProcess();
+    try {
+      // No identity entry exists. The heartbeat payload still claims to be
+      // fresh, but the filesystem timestamp predates this unrelated process,
+      // proving it cannot be the process that wrote the heartbeat.
+      writeHeartbeat(SID_B, unrelated.pid);
+      const old = (Date.now() - 60_000) / 1000;
+      fs.utimesSync(path.join(hbDir, `${SID_B}.json`), old, old);
+
+      expect(peers.repairIdentity([peer('recycled', SID_B)])).toBe(0);
+      expect(JSON.parse(fs.readFileSync(identityFile, 'utf-8'))[SID_B]).toBeUndefined();
+    } finally {
+      unrelated.kill();
+    }
+  });
+
   it('reconciles a registration that lands between its read and its write', async () => {
     const { peers } = await loadModules();
     const selfPid = process.pid;

@@ -30,7 +30,7 @@ import { validateSpec, loadSpec } from './spec.js';
 import { removeChannels, ownedChannelFiles } from './channels.js';
 import { resolvePeerSid, stopPeer } from './peers.js';
 import { cullStoppedPeers } from './peers-state.js';
-import { peerPid, isPidAlive, waitForPidDeath } from './discovery.js';
+import { peerPid, isSessionHolderDead, waitForPidDeath } from './discovery.js';
 import { out } from './cli.js';
 
 export function cmdDown(file: string): void {
@@ -103,15 +103,11 @@ export function cmdDown(file: string): void {
   // file's identity now survives the per-run sid churn by NAME, so cleanup no
   // longer depends on resolving today's sids.
   //
-  // isSidDead requires positive evidence that the recorded PID no longer exists;
-  // stale/missing heartbeat state alone is not proof of process death.
-  // A stale/missing heartbeat does NOT prove the owning process is dead. For
-  // legacy files we require a recorded PID and positive evidence that the OS
-  // no longer has that process; unknown liveness fails closed.
-  const isSidDead = (sid: string): boolean => {
-    const pid = peerPid(sid);
-    return typeof pid === 'number' && !isPidAlive(pid);
-  };
+  // isSidDead requires positive evidence that the original holder is gone:
+  // either its PID no longer exists or process-start evidence proves the PID was
+  // reused. A stale/missing heartbeat alone is not proof of death; unknown or
+  // conflicting PID evidence fails closed.
+  const isSidDead = (sid: string): boolean => isSessionHolderDead(sid);
   const { deletable, keptAmbiguous } = ownedChannelFiles(spec, isSidDead);
   const removed = removeChannels(deletable);
   out(`mycc-compose down: removed ${removed} channel file(s).`);

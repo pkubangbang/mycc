@@ -46,10 +46,10 @@ let channelsMod: Channels | null = null;
 let d: Discovery | null = null;
 
 /** Seed a heartbeat at the DISCOVERY-side path for the given pid. */
-function seedHeartbeat(sid: string, pid: number | undefined): void {
+function seedHeartbeat(sid: string, pid: number | undefined, when = Date.now()): void {
   const hbFile = path.join(d!.HEARTBEAT_DIR, `${sid}.json`);
   fs.mkdirSync(path.dirname(hbFile), { recursive: true });
-  const data: Record<string, unknown> = { heartbeats: [Date.now()], briefs: [] };
+  const data: Record<string, unknown> = { heartbeats: [when], briefs: [] };
   if (pid !== undefined) data.pid = pid;
   fs.writeFileSync(hbFile, JSON.stringify(data));
 }
@@ -387,6 +387,29 @@ async function deadPid(): Promise<number> {
   await waitForDead(pid);
   return pid;
 }
+
+describe('cmdDown: stale heartbeat is not a reason to leave a named peer alive', () => {
+  it('finds and terminates a peer by durable name even after its heartbeat expires', async () => {
+    d = await import('../../scripts/mycc-compose/lib/discovery.js');
+    writeSpec(false);
+
+    const script = path.join(tempDir, 'owner.js');
+    fs.writeFileSync(script, 'setTimeout(function(){},600000);');
+    const child = spawn(process.execPath, [script, '--name', 'grp:p1'], { stdio: 'ignore' });
+    seedIdentity(SID, child.pid as number, 'grp:p1');
+    seedHeartbeat(SID, child.pid as number, Date.now() - 120_000);
+
+    try {
+      const { rows, exitCode } = await runDown();
+      expect(rows.join('')).toMatch(/p1: stopped/);
+      expect(await waitForDead(child.pid as number)).toBe(true);
+      expect(exitCode).toBe(0);
+      expect(d!.readIdentityMap()[SID]).toBeUndefined();
+    } finally {
+      child.kill();
+    }
+  }, 15_000);
+});
 
 describe('cmdDown FIX C: cull provably-stopped peers from identity.json', () => {
   it('(1) stopped peer (spec-resolved, then killed) → its identity entry is REMOVED, culled line printed', async () => {

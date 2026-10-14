@@ -22,7 +22,7 @@
 import * as fs from 'fs';
 import type { IdentityEntry } from '../types.js';
 import { getIdentityFile, getHeartbeatFile, getLaunchArgs, getPeerName } from '../config.js';
-import { isPidAlive, isOriginalHolderAlive, heartbeatMtimeMs } from '../utils/process-liveness.js';
+import { isOriginalHolderAlive, heartbeatMtimeMs } from '../utils/process-liveness.js';
 import { truncateToTokens } from '../utils/token.js';
 import { atomicWrite } from '../utils/atomic-write.js';
 import { withFileLock, FileLockTimeoutError } from '../utils/file-lock.js';
@@ -329,35 +329,24 @@ export class IdentityManager {
       if (typeof entry.name !== 'string' || normalizeName(entry.name) !== normalizedName) continue;
 
       const heartbeat = readHeartbeatData(sid);
-      const latestBeat = heartbeat.heartbeats[heartbeat.heartbeats.length - 1];
-      const freshBeat = typeof latestBeat === 'number' &&
-        Date.now() - latestBeat <= FRESHNESS_WINDOW_MS;
-      const pid = typeof heartbeat.pid === 'number' ? heartbeat.pid : entry.pid;
-      // A fresh heartbeat + a LIVE PID is the normal live-holder proof. But a
-      // bare pid-exists probe cannot tell the ORIGINAL holder from an OS-recycled
-      // pid: the original may have exited leaving a fresh heartbeat, and the OS
-      // reused its pid for an unrelated process. isOriginalHolderAlive narrows
-      // that with the heartbeat-file mtime (a pid that STARTED after the file was
-      // written cannot have written it) and is CONSERVATIVE when start-time
-      // evidence is unavailable — so a genuinely live holder is never bypassed.
-      // During the small register→first-beat window, startedAt + the PID published
-      // in identity.json closes the concurrent-launch race. Old stale entries do
-      // not block forever just because their PID has since been recycled.
-      const inStartupWindow = !freshBeat &&
-        typeof entry.startedAt === 'number' &&
-        Date.now() - entry.startedAt <= FRESHNESS_WINDOW_MS &&
-        typeof entry.pid === 'number' &&
-        isPidAlive(entry.pid);
-      if (freshBeat) {
-        if (typeof pid === 'number' && !isOriginalHolderAlive(pid, heartbeatMtimeMs(getHeartbeatFile(sid)))) {
-          continue;
-        }
-      } else if (!inStartupWindow) {
+      const beatPid = typeof heartbeat.pid === 'number' ? heartbeat.pid : undefined;
+      const entryPid = typeof entry.pid === 'number' ? entry.pid : undefined;
+      if (beatPid !== undefined && entryPid !== undefined && beatPid !== entryPid) {
+        throw new Error(
+          `[identity] refusing to guess process ownership for peer name "${name}" (session ${sid}: heartbeat PID and identity PID differ)`,
+        );
+      }
+      const pid = beatPid ?? entryPid;
+      // A stale beat means unhealthy, not unowned. Only positive evidence the
+      // original process is gone frees its durable name. Missing PID evidence
+      // fails closed, so launch/retry is an explicit operator decision.
+      if (typeof pid === 'number' &&
+          !isOriginalHolderAlive(pid, heartbeatMtimeMs(getHeartbeatFile(sid)))) {
         continue;
       }
       throw new Error(
-        `[identity] refusing to start: peer name "${name}" is already held by a LIVE ` +
-        `instance (session ${sid}, pid ${pid ?? 'unknown'}). Stop it first, or choose a different --name.`,
+        `[identity] refusing to start: peer name "${name}" is already held or its release cannot be proven ` +
+        `(session ${sid}, pid ${pid ?? 'unknown'}). Inspect the holder, stop it, then retry.`,
       );
     }
   }

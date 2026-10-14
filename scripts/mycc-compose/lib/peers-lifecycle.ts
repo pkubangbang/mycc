@@ -5,13 +5,12 @@ import { spawn, execFileSync, type SpawnOptions, type ChildProcess } from 'child
 
 import { formatLaunchArgsForSpawn } from '../../../src/utils/arg-canonical.js';
 import {
-  isSessionLive,
   isPidAlive,
-  isRecordedPidAlive,
-  didPidStartAfter,
+  isSessionHolderDead,
   heartbeatPid,
-  heartbeatFileMtimeMs,
+  readIdentityMap,
   resolveLivePeer,
+  resolvePeerForStop,
 } from './discovery.js';
 import {
   LAUNCH_TIMEOUT_MS,
@@ -138,45 +137,53 @@ export function readProcessCommandLine(pid: number): string | null {
 }
 
 /**
- * Stop a peer: SIGTERM the OS process recorded in its heartbeat, AFTER a
- * chain of identity refusals that make a recycled-pid kill impossible.
+ * Stop a peer after positive identity checks. Prefer the PID recorded by the
+ * peer's heartbeat; if that PID is missing, a registration PID is only a
+ * fallback locator and must pass the same process-start-time and exact-name
+ * checks before it can be signaled.
  *
- * The heartbeat is keyed by the peer's RUNTIME session id (`peer.sessionId`),
- * resolved from identity.json by name in Slice 2 — in Slice 1 the caller
- * (cmd-up) still populates it. The final identity gate matches the process's
- * argv on the durable peer NAME (`isMyccProcess`), so a pid recycled onto an
- * unrelated process that merely happens to be alive is refused.
+ * The runtime session ID is resolved from identity.json by durable peer name.
+ * Teardown resolution deliberately does not require a fresh heartbeat: a hung
+ * peer can stop beating while its process still runs. An unknown/recycled PID
+ * or a command line that does not claim this peer's exact name is refused.
  */
 export function stopPeer(peer: Peer): string {
-  // Resolve the LIVE sid by durable NAME when the caller did not already stamp
-  // one (cmd-down does not run cmd-up's resolution pass). Without this, a
-  // `down` on a spec whose peers were never minted into the runtime shape
-  // would return 'no-session' and silently leave the peer running. The name is
-  // the stable identity; the sid merely LOCATES the heartbeat to read the pid.
-  const sid = peer.sessionId ?? resolveLivePeer(peer);
+  // Durable name is authoritative; never guess between duplicate entries.
+  let namedSid: string | null;
+  try {
+    namedSid = resolvePeerForStop(peer);
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    return `refused-ambiguous-identity: ${detail}`;
+  }
+  const sid = namedSid ?? peer.sessionId ?? resolveLivePeer(peer) ?? null;
   if (!sid) return 'no-session';
   peer.sessionId = sid;
-  const hbPid = heartbeatPid(sid);
 
-  if (typeof hbPid !== 'number') {
-    return isSessionLive(sid) ? 'refused-no-recorded-pid' : 'already-stopped';
+  const hbPid = heartbeatPid(sid);
+  const entry = readIdentityMap()[sid];
+  const entryPid = typeof entry?.pid === 'number' ? entry.pid : undefined;
+  if (typeof hbPid === 'number' && typeof entryPid === 'number' && hbPid !== entryPid) {
+    return 'refused-pid-mismatch';
   }
-  if (!isSessionLive(sid)) {
-    return isPidAlive(hbPid) ? 'stale-kept-alive-pid' : 'already-stopped';
+  const pid = typeof hbPid === 'number' ? hbPid : entryPid;
+  if (typeof pid !== 'number') return 'refused-no-recorded-pid';
+
+  // A dead or provably recycled PID means the original peer is gone. Never
+  // signal the unrelated process that happens to reuse its numeric PID.
+  if (isSessionHolderDead(sid)) {
+    return isPidAlive(pid) ? 'refused-recycled-pid' : 'already-stopped';
   }
-  if (!isRecordedPidAlive(sid)) return 'heartbeat-fresh-but-pid-dead';
-  // Abort on a recycled pid: a pid started AFTER the heartbeat file was written
-  // cannot be the process that wrote it.
-  if (didPidStartAfter(hbPid, heartbeatFileMtimeMs(sid))) {
-    return 'refused-recycled-pid';
-  }
-  if (!isMyccProcess(hbPid, peer.identityName ?? peer.name)) return 'refused-not-mycc';
+  // A still-plausible PID is not enough by itself; its argv must claim this
+  // exact durable peer name. Unknown command-line identity fails closed.
+  if (!isMyccProcess(pid, peer.identityName ?? peer.name)) return 'refused-not-mycc';
+
   try {
-    process.kill(hbPid, 'SIGTERM');
+    process.kill(pid, 'SIGTERM');
     return 'stopped';
   } catch (err) {
     const e = err as NodeJS.ErrnoException;
-    return `kill-failed:${e.code || e.message}`;
+    return e.code === 'ESRCH' ? 'already-stopped' : `kill-failed:${e.code || e.message}`;
   }
 }
 

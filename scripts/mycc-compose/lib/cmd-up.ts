@@ -10,10 +10,11 @@ import { fileURLToPath } from 'url';
 import path from 'path';
 import { validateSpec, loadSpec, getRemotes } from './spec.js';
 import { materializeChannels } from './channels.js';
-import { isPeerRunning } from './discovery.js';
+import { isPeerRunning, isSessionHolderDead, resolvePeerForStop } from './discovery.js';
 import {
   findMatchingLiveEntry,
   resolvePeerSid,
+  cullStoppedPeers,
   launchPeer,
   stopPeer,
   repairIdentity,
@@ -136,6 +137,7 @@ export async function cmdUp(file: string, { allowStop }: { allowStop: boolean })
   const actions: Array<{ name: string; action: string }> = [];
   const toStart: NormalizedPeer[] = [];
   const restartFailures: string[] = [];
+  const safetyBlocked = new Set<string>();
 
   /**
    * Handle a peer that must be (re)started by stopping the current holder first.
@@ -144,7 +146,7 @@ export async function cmdUp(file: string, { allowStop }: { allowStop: boolean })
    */
   const stopThenQueue = async (peer: NormalizedPeer, reason: string): Promise<boolean> => {
     const stopResult = stopPeer(peer);
-    if (stopResult === 'refused-no-recorded-pid' || stopResult.startsWith('refused-')) {
+    if (stopResult.startsWith('refused-')) {
       actions.push({ name: peer.name, action: `${reason} → stop=${stopResult}, restart ABORTED (refused)` });
       restartFailures.push(peer.name);
       return false;
@@ -154,17 +156,24 @@ export async function cmdUp(file: string, { allowStop }: { allowStop: boolean })
       restartFailures.push(peer.name);
       return false;
     }
-    // 'stopped' → wait for the holder to demonstrably release its identity.
-    // 'already-stopped'/'no-session' → already gone, no wait needed. (A
-    // 'stale-kept-alive-pid'/'heartbeat-fresh-but-pid-dead' result means a live
-    // pid we did not kill: waitForPeerGone will time out and we abort.)
-    if (stopResult === 'stopped' || stopResult === 'stale-kept-alive-pid' || stopResult === 'heartbeat-fresh-but-pid-dead') {
+    // Only a delivered SIGTERM needs the bounded release wait. The other
+    // accepted results already mean the PID is gone or no instance was found;
+    // every refusal / kill failure is aborted above.
+    if (stopResult === 'stopped') {
       const gone = await waitForPeerGone(peer, RESTART_RELEASE_TIMEOUT_MS);
       if (!gone) {
         actions.push({ name: peer.name, action: `${reason} → stop=${stopResult}, restart ABORTED (previous peer did not release its identity within ${RESTART_RELEASE_TIMEOUT_MS}ms)` });
         restartFailures.push(peer.name);
         return false;
       }
+    }
+    // A stopped old peer may leave identity.json behind on Windows, where
+    // SIGTERM maps to process termination and no unregister handler runs.
+    // The cull is lock-guarded and only removes entries whose original holder
+    // is provably gone (dead PID or positive PID-reuse evidence).
+    if (peer.sessionId) {
+      cullStoppedPeers([peer]);
+      peer.sessionId = null;
     }
     actions.push({ name: peer.name, action: `${reason} → stop=${stopResult}, start` });
     return true;
@@ -197,6 +206,33 @@ export async function cmdUp(file: string, { allowStop }: { allowStop: boolean })
       }
       continue;
     }
+    // Health is not ownership: a stale heartbeat can still belong to a hung
+    // process. Resolve exactly one entry by durable name; ambiguity aborts this
+    // peer's operation instead of choosing a potentially unrelated PID.
+    let staleSid: string | null;
+    try {
+      staleSid = resolvePeerForStop(peer);
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      actions.push({ name: peer.name, action: `restart ABORTED (ambiguous identity: ${detail})` });
+      restartFailures.push(peer.name);
+      continue;
+    }
+    if (staleSid) peer.sessionId = staleSid;
+    if (staleSid && !isSessionHolderDead(staleSid)) {
+      if (!allowStop) {
+        actions.push({ name: peer.name, action: 'stale/unhealthy (sync: possible holder remains, no stop/start)' });
+        safetyBlocked.add(peer.name);
+        continue;
+      }
+      if (await stopThenQueue(peer, 'stale/unhealthy holder')) toStart.push(peer);
+      continue;
+    }
+    // Remove a stale identity entry only when its original holder is proven gone.
+    if (staleSid) {
+      cullStoppedPeers([peer]);
+      peer.sessionId = null;
+    }
     actions.push({ name: peer.name, action: 'start' });
     toStart.push(peer);
   }
@@ -220,6 +256,9 @@ export async function cmdUp(file: string, { allowStop }: { allowStop: boolean })
   // by resolvePeerSid — is trustworthy for a slow/failed launch).
   const stillDown: string[] = [];
   for (const peer of spec.peers) {
+    // A sync safety deferral is deliberate, not a slow launch; do not burn the
+    // full launch timeout waiting for a peer we intentionally did not respawn.
+    if (safetyBlocked.has(peer.name) || restartFailures.includes(peer.name)) continue;
     const deadline = Date.now() + LAUNCH_TIMEOUT_MS;
     while (resolvePeerSid(peer) === null && Date.now() < deadline) {
       await sleep(LAUNCH_POLL_MS);
@@ -243,7 +282,14 @@ export async function cmdUp(file: string, { allowStop }: { allowStop: boolean })
   // spec author can change remotes and re-run `up` to push the new list.
   const remoteRows = allowStop ? deliverRemotes(spec) : [];
 
-  // §5 step 4 — materialize channels.
+  // §5 step 4 — materialize channels only for peers whose durable name still
+  // resolves to a live session. sessionId also carries the last-known sid for
+  // restart detection/status; after a failed launch it may therefore be stale.
+  // Clear that operational field before materialization rather than creating
+  // channel files that point at a session which no longer exists.
+  for (const peer of spec.peers) {
+    if (!resolvePeerSid(peer)) peer.sessionId = null;
+  }
   const channelResults = materializeChannels(spec);
 
   // §5 step 5 — report.
@@ -265,7 +311,13 @@ export async function cmdUp(file: string, { allowStop }: { allowStop: boolean })
   if (restartFailures.length > 0) {
     warn(`Warning: restart aborted for ${restartFailures.length} peer(s): ${restartFailures.join(', ')}`);
   }
+  if (safetyBlocked.size > 0) {
+    warn(`Warning: sync did not start ${safetyBlocked.size} peer(s) because a stale identity may still have a live holder: ${[...safetyBlocked].join(', ')}`);
+  }
   process.exit(
-    launchResults.some((r) => !r.ok) || stillDown.length > 0 || restartFailures.length > 0 ? 1 : 0,
+    launchResults.some((r) => !r.ok) ||
+    stillDown.length > 0 ||
+    restartFailures.length > 0 ||
+    safetyBlocked.size > 0 ? 1 : 0,
   );
 }

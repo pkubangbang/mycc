@@ -7,10 +7,11 @@
  * Liveness has TWO predicates on purpose:
  *   - isSessionLive()  — heartbeat freshness only. Cheap, used for DISPLAY and
  *                        for the "did the launched peer register yet?" poll.
- *   - isPeerRunning()  — freshness AND a live pid. Used for every RESTART /
- *                        mutual-exclusion decision: a peer SIGKILLed within the
- *                        freshness window still has a fresh heartbeat file and
- *                        would otherwise never be restarted (§ pitfall).
+ *   - isPeerRunning()  — freshness AND a live PID that is consistent with the
+ *                        heartbeat file's write time when process-start evidence
+ *                        is available. Used for RESTART / mutual-exclusion
+ *                        decisions, so an OS-recycled PID does not keep a dead
+ *                        peer looking healthy.
  */
 
 import * as fs from 'fs';
@@ -24,9 +25,10 @@ import {
   isPidAlive,
   getProcessStartTime,
   didPidStartAfter,
+  isOriginalHolderAlive,
 } from '../../../src/utils/process-liveness.js';
 
-export { isPidAlive, getProcessStartTime, didPidStartAfter };
+export { isPidAlive, getProcessStartTime, didPidStartAfter, isOriginalHolderAlive };
 
 /**
  * Synchronously wait (bounded) for `pid` to stop probing as alive, then return
@@ -239,17 +241,47 @@ export function heartbeatFileMtimeMs(sessionId: string): number {
  * a peer killed within the freshness window (or a heartbeat left by a crashed
  * process) would otherwise read as "live" and never be restarted by `sync`.
  *
- * Requires: registered AND fresh heartbeat AND the recorded pid is alive.
- * Falls back to the heartbeat-only verdict when the entry carries no pid
- * (legacy writers) — in that case we cannot disprove liveness and must not
- * restart a peer we might be double-starting.
+ * Requires: registered AND fresh heartbeat AND the recorded pid is alive and
+ * not demonstrably newer than its heartbeat file. When process-start evidence
+ * is unavailable, the decision is conservative (treat as alive). Falls back
+ * to the heartbeat-only verdict when no pid is recorded (legacy writers) —
+ * we cannot disprove liveness and must not restart a peer we might be double-starting.
  */
 export function isPeerRunning(peer: PeerRef | null | undefined): boolean {
   if (!peer || !peer.sessionId) return false;
   if (!isSessionLive(peer.sessionId)) return false;
   const pid = peerPid(peer.sessionId);
   if (typeof pid !== 'number') return true; // no pid recorded → trust freshness
-  return isPidAlive(pid);
+  // PID existence alone is insufficient: the recorded process may have exited
+  // and the OS may have recycled its PID. isOriginalHolderAlive checks OS
+  // liveness first, then uses heartbeat mtime when available; an unavailable
+  // mtime preserves the conservative "alive" verdict without overriding a dead PID.
+  return isOriginalHolderAlive(pid, heartbeatFileMtimeMs(peer.sessionId));
+}
+
+/**
+ * Is the original process recorded for this SID demonstrably gone?
+ * A dead PID or positive PID-reuse evidence means yes. Missing or conflicting
+ * evidence means no, so destructive callers must fail fast instead of guessing.
+ */
+export function isSessionHolderDead(sessionId: string): boolean {
+  if (!sessionId) return false;
+  const heartbeat = readHeartbeatData(sessionId);
+  const entry = readIdentityMap()[sessionId];
+  const beatPid = typeof heartbeat.pid === 'number' ? heartbeat.pid : undefined;
+  const entryPid = typeof entry?.pid === 'number' ? entry.pid : undefined;
+
+  if (beatPid !== undefined && entryPid !== undefined && beatPid !== entryPid) return false;
+  const pid = beatPid ?? entryPid;
+  if (typeof pid !== 'number') return false;
+  if (!isPidAlive(pid)) return true;
+
+  const evidenceTime = beatPid !== undefined
+    ? heartbeatFileMtimeMs(sessionId)
+    : typeof entry?.startedAt === 'number'
+      ? entry.startedAt
+      : 0;
+  return !isOriginalHolderAlive(pid, evidenceTime);
 }
 
 /**
@@ -305,6 +337,29 @@ export function resolveLivePeer(peer: PeerRef | null | undefined): string | null
     `be impossible (name uniqueness is enforced at register); investigate stale entries.`,
   );
   return matches[0].sid;
+}
+
+/**
+ * Resolve a peer by durable name for stop/teardown, independent of heartbeat
+ * freshness. Duplicate matches violate the identity invariant; never guess.
+ */
+export function resolvePeerForStop(peer: PeerRef | null | undefined): string | null {
+  if (!peer) return null;
+  const name = peer.identityName ?? peer.name;
+  if (typeof name !== 'string' || name.length === 0) return null;
+  const normalizedName = normalizePeerName(name);
+  const matches = Object.entries(readIdentityMap()).filter(([_, entry]) =>
+    typeof entry?.name === 'string' &&
+    normalizePeerName(entry.name) === normalizedName &&
+    sameWorkdirRef(entry.workDir ?? entry.workdir, peer.workdir),
+  );
+  if (matches.length > 1) {
+    const sids = matches.map(([sid]) => sid).join(', ');
+    throw new Error(
+      `[mycc-compose] refusing to guess which session owns peer "${name}" in ${peer.workdir}: ${sids}`,
+    );
+  }
+  return matches[0]?.[0] ?? null;
 }
 
 /**

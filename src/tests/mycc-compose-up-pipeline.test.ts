@@ -89,12 +89,12 @@ function seedIdentity(): void {
 }
 
 /** Fresh heartbeat at the DISCOVERY-side path (never a re-derived path). */
-function seedHeartbeat(sid: string): void {
+function seedHeartbeat(sid: string, when = Date.now()): void {
   const hbFile = path.join(d!.HEARTBEAT_DIR, `${sid}.json`);
   fs.mkdirSync(path.dirname(hbFile), { recursive: true });
   fs.writeFileSync(
     hbFile,
-    JSON.stringify({ heartbeats: [Date.now()], briefs: [], pid: process.pid }),
+    JSON.stringify({ heartbeats: [when], briefs: [], pid: process.pid }),
   );
 }
 
@@ -270,6 +270,20 @@ describe('cmdUp: sync never recycles renew:always peers (P1-1 regression)', () =
     expect(stopPeerSpy).not.toHaveBeenCalled();
     expect(launchPeerSpy).not.toHaveBeenCalled();
   }, 30_000);
+
+  it('sync does not launch a duplicate when the heartbeat is stale but the recorded PID may still own the name', async () => {
+    d = await import('../../scripts/mycc-compose/lib/discovery.js');
+    writeSpec('always');
+    seedIdentity();
+    seedHeartbeat(SID, Date.now() - 120_000);
+
+    const { rows, exitCode } = await runCmdUpAllowStop(false);
+
+    expect(stopPeerSpy).not.toHaveBeenCalled();
+    expect(launchPeerSpy).not.toHaveBeenCalled();
+    expect(rows.join('')).toMatch(/stale\/unhealthy \(sync: possible holder remains, no stop\/start\)/);
+    expect(exitCode).toBe(1);
+  }, 20_000);
 
   it('S3: never mints or writes a session id back into the spec file', async () => {
     d = await import('../../scripts/mycc-compose/lib/discovery.js');
