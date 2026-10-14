@@ -143,7 +143,29 @@ async function runCmdUpAllowStop(allowStop: boolean): Promise<{ rows: string[]; 
       return { ok: true, pid: process.pid } as never;
     },
   );
-  stopPeerSpy = vi.spyOn(peersMod, 'stopPeer').mockReturnValue('stopped' as never);
+  stopPeerSpy = vi.spyOn(peersMod, 'stopPeer').mockImplementation(
+    ((peer: { sessionId?: string | null; identityName?: string; name?: string }) => {
+      // Model a REAL successful stop's side effect: the holder process is
+      // terminated, so it stops beating and (on POSIX) unregisters. A stubbed
+      // 'stopped' that leaves the holder ALIVE would make the new sequenced
+      // restart's waitForPeerGone time out — which is the CORRECT product
+      // behavior (a successful signal delivery is not proof of termination),
+      // but not what this fixture intends to exercise. Delete the holder's
+      // identity entry and heartbeat so the name no longer resolves to a live
+      // instance, exactly as a killed peer leaves the store.
+      const map = d!.readIdentityMap();
+      for (const [sid, entry] of Object.entries(map)) {
+        const e = entry as { name?: string; sessionId?: string };
+        const matches = (peer.identityName && e.name === peer.identityName) ||
+          (peer.sessionId && (sid === peer.sessionId || e.sessionId === peer.sessionId));
+        if (matches) delete map[sid];
+      }
+      d!.writeIdentityMap(map as never);
+      const hb = peer.sessionId ? path.join(d!.HEARTBEAT_DIR, `${peer.sessionId}.json`) : null;
+      if (hb && fs.existsSync(hb)) { try { fs.rmSync(hb, { force: true }); } catch { /* best-effort */ } }
+      return 'stopped' as never;
+    }) as never,
+  );
   // Dynamic import AFTER the env override: every module in this graph —
   // cmd-up, the barrel (already spied), peers-state, discovery — now sees
   // the overridden MYCC_DISCOVERY_DIR at load time.

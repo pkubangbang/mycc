@@ -17,6 +17,7 @@ import {
   launchPeer,
   stopPeer,
   repairIdentity,
+  waitForPeerGone,
   sleep,
   WAVE_SIZE,
   WAVE_DELAY_MS,
@@ -25,6 +26,17 @@ import {
 } from './peers.js';
 import { out, warn } from './cli.js';
 import type { NormalizedPeer, NormalizedSpec } from './spec.js';
+
+/**
+ * How long `up` waits for a stopped peer's PREVIOUS holder to demonstrably
+ * release its identity before launching the replacement. `stopPeer` returns as
+ * soon as SIGTERM is delivered; the old process's own SIGTERM handler may still
+ * be running (bg-kill + ServeHub stop) and its fresh heartbeat + live pid would
+ * make the replacement's `assertNameNotLive()` refuse registration — surfacing
+ * as a launch timeout. Bounded so a stuck holder fails the restart explicitly
+ * instead of hanging `up` forever.
+ */
+const RESTART_RELEASE_TIMEOUT_MS = 5_000;
 
 /**
  * Resolve the absolute path to the mycc-mail CLI script, anchored on THIS
@@ -116,8 +128,48 @@ export async function cmdUp(file: string, { allowStop }: { allowStop: boolean })
   // launch (see the liveness-wait / deliverRemotes / repairIdentity below).
 
   // §5 step 2 — walk peers in array order, decide skip / stop→start / start.
+  // The restart branches are SEQUENCED: after stopPeer returns 'stopped', we
+  // wait (bounded) for the previous holder to demonstrably release its
+  // identity before queueing the replacement — a successful SIGTERM delivery
+  // is NOT proof of termination. A refusal/kill-failure never queues a launch
+  // (the duplicate-name guard would only reject it); it surfaces as a failure.
   const actions: Array<{ name: string; action: string }> = [];
   const toStart: NormalizedPeer[] = [];
+  const restartFailures: string[] = [];
+
+  /**
+   * Handle a peer that must be (re)started by stopping the current holder first.
+   * Returns the peers to queue for launch (empty when the stop refused or the
+   * holder did not release in time).
+   */
+  const stopThenQueue = async (peer: NormalizedPeer, reason: string): Promise<boolean> => {
+    const stopResult = stopPeer(peer);
+    if (stopResult === 'refused-no-recorded-pid' || stopResult.startsWith('refused-')) {
+      actions.push({ name: peer.name, action: `${reason} → stop=${stopResult}, restart ABORTED (refused)` });
+      restartFailures.push(peer.name);
+      return false;
+    }
+    if (stopResult.startsWith('kill-failed:')) {
+      actions.push({ name: peer.name, action: `${reason} → stop=${stopResult}, restart ABORTED (kill failed)` });
+      restartFailures.push(peer.name);
+      return false;
+    }
+    // 'stopped' → wait for the holder to demonstrably release its identity.
+    // 'already-stopped'/'no-session' → already gone, no wait needed. (A
+    // 'stale-kept-alive-pid'/'heartbeat-fresh-but-pid-dead' result means a live
+    // pid we did not kill: waitForPeerGone will time out and we abort.)
+    if (stopResult === 'stopped' || stopResult === 'stale-kept-alive-pid' || stopResult === 'heartbeat-fresh-but-pid-dead') {
+      const gone = await waitForPeerGone(peer, RESTART_RELEASE_TIMEOUT_MS);
+      if (!gone) {
+        actions.push({ name: peer.name, action: `${reason} → stop=${stopResult}, restart ABORTED (previous peer did not release its identity within ${RESTART_RELEASE_TIMEOUT_MS}ms)` });
+        restartFailures.push(peer.name);
+        return false;
+      }
+    }
+    actions.push({ name: peer.name, action: `${reason} → stop=${stopResult}, start` });
+    return true;
+  };
+
   for (const peer of spec.peers) {
     const matching = findMatchingLiveEntry(peer);
     if (matching && peer.renew === 'onMismatch') {
@@ -132,18 +184,14 @@ export async function cmdUp(file: string, { allowStop }: { allowStop: boolean })
         actions.push({ name: peer.name, action: 'renew:always (sync: left running, no stop)' });
         continue;
       }
-      const stopResult = stopPeer(peer);
-      actions.push({ name: peer.name, action: `renew:always → stop=${stopResult}, start` });
-      toStart.push(peer);
+      if (await stopThenQueue(peer, 'renew:always')) toStart.push(peer);
       continue;
     }
     if (isPeerRunning(peer)) {
       // Actually running but args/workdir differ. `up` stops then starts;
       // `sync` leaves it (no destructive stop in the cron path).
       if (allowStop) {
-        const stopResult = stopPeer(peer);
-        actions.push({ name: peer.name, action: `mismatch → stop=${stopResult}, start` });
-        toStart.push(peer);
+        if (await stopThenQueue(peer, 'mismatch')) toStart.push(peer);
       } else {
         actions.push({ name: peer.name, action: 'mismatch (sync: left running, no stop)' });
       }
@@ -214,5 +262,10 @@ export async function cmdUp(file: string, { allowStop }: { allowStop: boolean })
   if (stillDown.length > 0) {
     warn(`Warning: peers not live after ${LAUNCH_TIMEOUT_MS}ms: ${stillDown.join(', ')}`);
   }
-  process.exit(launchResults.some((r) => !r.ok) || stillDown.length > 0 ? 1 : 0);
+  if (restartFailures.length > 0) {
+    warn(`Warning: restart aborted for ${restartFailures.length} peer(s): ${restartFailures.join(', ')}`);
+  }
+  process.exit(
+    launchResults.some((r) => !r.ok) || stillDown.length > 0 || restartFailures.length > 0 ? 1 : 0,
+  );
 }
