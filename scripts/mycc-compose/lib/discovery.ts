@@ -13,10 +13,49 @@
  *                        would otherwise never be restarted (§ pitfall).
  */
 
-import fs from 'fs';
+import * as fs from 'fs';
 import path from 'path';
 import os from 'os';
-import { execFileSync } from 'child_process';
+// Liveness helpers are CENTRALIZED in src/utils/process-liveness.ts (the same
+// module the runtime peer subsystem uses) so a restart/duplicate-name decision
+// here can never drift from identity.ts/daemon-init.ts. Re-exported below to
+// keep discovery.ts's public surface unchanged.
+import {
+  isPidAlive,
+  getProcessStartTime,
+  didPidStartAfter,
+} from '../../../src/utils/process-liveness.js';
+
+export { isPidAlive, getProcessStartTime, didPidStartAfter };
+
+/**
+ * Synchronously wait (bounded) for `pid` to stop probing as alive, then return
+ * whether it is finally dead. Used by `mycc-compose down` BEFORE culling an
+ * identity entry: `stopPeer` returns the instant SIGTERM is *delivered*, but on
+ * POSIX signal delivery is asynchronous, so the target may still probe alive
+ * for a few ms — a delete-time `!isPidAlive` check run too early would keep a
+ * perfectly cullable entry and silently no-op the cull.
+ *
+ * Windows is typically immediate (SIGTERM = TerminateProcess), but the loop is
+ * harmless there. Returns false when the pid is still alive at the deadline —
+ * the caller treats that as unproven death and KEEPS the entry.
+ */
+export function waitForPidDeath(pid: number, timeoutMs = 1_000): boolean {
+  if (typeof pid !== 'number') return false;
+  const deadline = Date.now() + timeoutMs;
+  // Busy-wait is acceptable here: this runs once per successfully-stopped peer
+  // in a teardown CLI, and a synchronous sleep would block the event loop the
+  // same way. Sleep in ~10ms slices to stay gentle on the CPU.
+  const sleepSlice = (ms: number): void => {
+    const end = Date.now() + ms;
+    while (Date.now() < end) { /* spin */ }
+  };
+  while (Date.now() <= deadline) {
+    if (!isPidAlive(pid)) return true;
+    sleepSlice(10);
+  }
+  return !isPidAlive(pid);
+}
 
 /** Root of the discovery store. Overridable for tests via MYCC_DISCOVERY_DIR. */
 export const DISCOVERY_DIR: string =
@@ -134,18 +173,6 @@ export function isSessionLive(sessionId: string): boolean {
   return Date.now() - heartbeats[heartbeats.length - 1] <= FRESHNESS_WINDOW_MS;
 }
 
-/** True when `pid` looks like a live process. Cross-platform-ish. */
-export function isPidAlive(pid: number | undefined | null): boolean {
-  if (!pid || typeof pid !== 'number') return false;
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (err) {
-    // EPERM = alive but not ours to signal → treat as alive.
-    return err instanceof Error && (err as NodeJS.ErrnoException).code === 'EPERM';
-  }
-}
-
 /**
  * True when a session's own heartbeat file records a live pid — i.e. a real
  * mycc instance provably owns this pid, rather than a bare "some pid is alive".
@@ -172,75 +199,10 @@ export function isRecordedPidAlive(sessionId: string): boolean {
  * started AFTER the heartbeat file that names it, whereas the process that
  * wrote a given heartbeat necessarily started BEFORE that file was written.
  *
- * Windows: `wmic process where processid=<pid> get creationdate` (falling back
- * to PowerShell `Get-Process`). Unix: `ps -o lstart=`. Every path returns null
- * on failure — callers must treat null as "unknown" and fall back to other
- * evidence, never as "started at 0".
+ * NOTE: the implementation is CENTRALIZED in src/utils/process-liveness.ts and
+ * re-exported at the top of this file (see the import block) so the compose
+ * launcher and the runtime peer subsystem share ONE liveness decision.
  */
-export function getProcessStartTime(pid: number): number | null {
-  if (!pid || typeof pid !== 'number') return null;
-  try {
-    if (process.platform === 'win32') {
-      // wmic prints `CreationDate` as an ISO-ish compact stamp, e.g.
-      // 20260930120000.000000+120. Try it first (present on Win10/11).
-      try {
-        const out = execFileSync('wmic', ['process', 'where', `processid=${pid}`, 'get', 'creationdate', '/value'], {
-          encoding: 'utf-8',
-          timeout: 5_000,
-          windowsHide: true,
-        });
-        const m = /CreationDate=(\d{14})/.exec(out);
-        if (m) return compactStampToMs(m[1]);
-      } catch {
-        // wmic absent/deprecated → fall through to PowerShell.
-      }
-      const psOut = execFileSync(
-        'powershell',
-        ['-NoProfile', '-NonInteractive', '-Command', `(Get-Process -Id ${pid}).StartTime.ToFileTimeUtc()`],
-        { encoding: 'utf-8', timeout: 5_000, windowsHide: true },
-      );
-      const fileTime = Number(psOut.trim());
-      // FILETIME is 100-ns ticks since 1601-01-01; convert to Unix ms.
-      if (Number.isFinite(fileTime) && fileTime > 0) return fileTime / 10_000 - 11_644_473_600_000;
-      return null;
-    }
-    const out = execFileSync('ps', ['-p', String(pid), '-o', 'lstart='], {
-      encoding: 'utf-8',
-      timeout: 5_000,
-    });
-    const ms = Date.parse(out.trim());
-    return Number.isFinite(ms) ? ms : null;
-  } catch {
-    return null;
-  }
-}
-
-/** `YYYYMMDDhhmmss` (local) → ms since epoch, or null. */
-function compactStampToMs(stamp: string): number | null {
-  const y = Number(stamp.slice(0, 4));
-  const mo = Number(stamp.slice(4, 6)) - 1;
-  const d = Number(stamp.slice(6, 8));
-  const h = Number(stamp.slice(8, 10));
-  const mi = Number(stamp.slice(10, 12));
-  const s = Number(stamp.slice(12, 14));
-  const ms = new Date(y, mo, d, h, mi, s).getTime();
-  return Number.isFinite(ms) ? ms : null;
-}
-
-/**
- * True when we can PROVE the process at `pid` started after `notBeforeMs` — a
- * strong indication the pid was recycled (the original owner is gone). Returns
- * false when the start time is unknown, so the caller never refuses to kill a
- * legitimate instance just because introspection failed.
- */
-export function didPidStartAfter(pid: number, notBeforeMs: number): boolean {
-  if (!Number.isFinite(notBeforeMs)) return false;
-  const startedAt = getProcessStartTime(pid);
-  if (startedAt === null) return false;
-  // 2s of slack absorbs coarse clock resolution (wmic stamps are whole
-  // seconds; `ps lstart` likewise) so a genuine owner is never misjudged.
-  return startedAt > notBeforeMs + 2_000;
-}
 
 /** The pid recorded for a session (heartbeat first, then identity entry). */
 export function peerPid(sessionId: string): number | undefined {

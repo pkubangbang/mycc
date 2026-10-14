@@ -44,5 +44,7 @@ export {
   findMatchingLiveEntry,
   resolvePeerSid,
   repairIdentity,
+  cullStoppedPeers,
+  waitForPeerGone,
   peerStatus,
 } from './peers-state.js';

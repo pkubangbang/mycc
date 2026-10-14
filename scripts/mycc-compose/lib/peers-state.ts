@@ -13,6 +13,7 @@ import {
   readHeartbeatData,
   isPeerRunning,
   isPidAlive,
+  peerPid,
   resolveLivePeer,
   lastBrief,
   FRESHNESS_WINDOW_MS,
@@ -21,7 +22,7 @@ import {
 import type { IdentityEntry } from './discovery.js';
 import path from 'path';
 import { withFileLock, FileLockTimeoutError } from '../../../src/utils/file-lock.js';
-import { peerIdentityArgs, peerMailboxPath } from './peers-types.js';
+import { peerIdentityArgs, peerMailboxPath, sleep } from './peers-types.js';
 import type { Peer, PeerStatusRow } from './peers-types.js';
 
 // ---------------------------------------------------------------------------
@@ -205,6 +206,156 @@ export function repairIdentity(peers: Peer[]): number {
     runRepair();
   }
   return repaired;
+}
+
+// ---------------------------------------------------------------------------
+// Identity cull pass (FIX C)
+// ---------------------------------------------------------------------------
+
+/**
+ * Delete the identity.json entries of peers we have PROVABLY stopped, so the
+ * store does not accumulate stale entries after `down`.
+ *
+ * WHY compose must do this: on Windows a peer is stopped with SIGTERM, which
+ * the OS delivers as TerminateProcess — no handler runs, so the peer's OWN
+ * `peer.stop()` → `unregister()` never executes. Its identity entry therefore
+ * survives `down` (a dead twin that a later `up` re-materializes under a fresh
+ * sid, transiently listing old+new entries for the same NAME). `repairIdentity`
+ * is the backstop for the OPPOSITE failure (a live peer losing its entry
+ * mid-race); it deliberately never deletes, so the cull must live here.
+ *
+ * EVIDENCE-GATED, DELETE-SIDE ONLY: an entry is culled ONLY when its recorded
+ * pid is a NUMBER and PROVABLY DEAD (`peerPid` = heartbeat pid first, identity
+ * pid fallback; `!isPidAlive(pid)`). A missing pid (unknown liveness) or an
+ * alive pid (death unproven) KEEPS the entry — the same discipline cmd-down's
+ * channel cleanup uses (`isSidDead`). Never resurrects: this pass only removes.
+ *
+ * RACE SAFETY: holds the SAME cross-process identity.json lock as
+ * IdentityManager.register()/unregister() and repairIdentity, for the whole
+ * read→delete→verify section, so a concurrent register() can never be
+ * clobbered. Each iteration RE-READS the map before deleting (merge-on-read),
+ * so an entry that (re)appeared since the last read is preserved. STRICT mode:
+ * a lock timeout degrades LOUDLY (run once, unheld, warn) — it must never crash
+ * the teardown.
+ *
+ * @param peers Peers whose stops have already been attempted. Only sids that
+ *   are BOTH present in identity.json AND whose recorded pid is provably dead
+ *   are removed.
+ * @returns The number of identity entries culled.
+ */
+export function cullStoppedPeers(peers: Peer[]): number {
+  // Candidate sids: peers that carry a resolved runtime sid and whose recorded
+  // pid is provably dead. Unknown/absent sid → skip (nothing to key on).
+  const candidates = new Set<string>();
+  for (const peer of peers) {
+    const sid = peer.sessionId;
+    if (typeof sid !== 'string' || sid.length === 0) continue;
+    const pid = peerPid(sid);
+    if (typeof pid !== 'number' || isPidAlive(pid)) continue; // unknown/alive → keep
+    candidates.add(sid);
+  }
+  if (candidates.size === 0) return 0;
+
+  let culled = 0;
+  // Read → delete → verify under the shared identity.json lock, re-reading
+  // every iteration so a concurrent register() is merged, never clobbered.
+  const runCull = (): number => {
+    for (let attempt = 0; attempt < 5 && candidates.size > 0; attempt++) {
+      const map = readIdentityMap();
+      for (const sid of [...candidates]) {
+        // Merge-on-read: only ever DELETE, never write back a stale snapshot.
+        // Re-check death at delete time (the pid could have been recycled onto
+        // a live process between the scan above and here) — a now-alive pid
+        // aborts this sid's cull.
+        if (!(sid in map)) {
+          candidates.delete(sid); // already gone (or never registered) → done
+          continue;
+        }
+        const pid = peerPid(sid);
+        if (typeof pid === 'number' && !isPidAlive(pid)) {
+          delete map[sid];
+        } else {
+          candidates.delete(sid); // became alive / unprovable → keep, stop trying
+        }
+      }
+      writeIdentityMap(map);
+      // Verify: a candidate is only "culled" once it is absent after the write.
+      const after = readIdentityMap();
+      for (const sid of [...candidates]) {
+        if (!(sid in after)) {
+          candidates.delete(sid);
+          culled++;
+        }
+      }
+    }
+    return culled;
+  };
+
+  try {
+    withFileLock(IDENTITY_FILE, runCull, { strict: true });
+  } catch (err) {
+    if (!(err instanceof FileLockTimeoutError)) throw err;
+    console.warn(
+      `[mycc-compose] WARNING: could not acquire the identity.json lock (${err.message}); ` +
+      'culling stale identity entries WITHOUT cross-process exclusion — a concurrent register may be lost.',
+    );
+    runCull();
+  }
+  return culled;
+}
+
+// ---------------------------------------------------------------------------
+// Sequenced-restart wait (P2 #1)
+// ---------------------------------------------------------------------------
+
+/**
+ * Wait until a peer's previous holder has DEMONSTRABLY released its identity,
+ * so a replacement can be launched without racing the old process's graceful
+ * shutdown.
+ *
+ * WHY: `stopPeer()` sends SIGTERM and returns `'stopped'` the instant the signal
+ * is DELIVERED — it does not wait for the process to exit. The old peer's own
+ * SIGTERM handler still awaits background-task cleanup and ServeHub shutdown
+ * before it exits and (on POSIX) unregisters. If `up` queues the replacement
+ * immediately, the new process's `assertNameNotLive()` sees the old peer's
+ * still-fresh heartbeat + live pid and REFUSES registration, surfacing as a
+ * launch-timeout. Sequenced restart closes that window.
+ *
+ * "Gone" = BOTH proofs hold simultaneously:
+ *   - no LIVE instance resolves for this peer's durable NAME (resolveLivePeer
+ *     requires a fresh heartbeat AND an alive pid), AND
+ *   - the previously-recorded heartbeat pid is dead (peerPid + !isPidAlive).
+ * The second clause covers the window where the name already resolves to null
+ * (heartbeat aged out / pid dead) but a stale entry could still block register.
+ *
+ * @returns true when the holder is demonstrably gone within `timeoutMs`; false
+ *   on timeout (the caller must fail the restart explicitly, never launch).
+ */
+export async function waitForPeerGone(
+  peer: Peer,
+  timeoutMs: number,
+  pollMs = 100,
+): Promise<boolean> {
+  // Capture the holder's sid BEFORE the wait: once the old process exits, the
+  // name resolves to null and we would no longer know WHICH heartbeat to probe.
+  const sid = (peer.sessionId as string | null | undefined) ?? resolveLivePeer(peer) ?? null;
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const nameLive = resolveLivePeer(peer) !== null;
+    let pidDead = true;
+    if (sid) {
+      const pid = peerPid(sid);
+      // No recorded pid (the entry/heartbeat is already gone, or a legacy
+      // writer that never stamped one) ⇒ nothing we can prove alive; the
+      // name-resolution clause above is then the sole gate. This is the same
+      // "absent = not a holder" reading assertNameNotLive uses (it iterates the
+      // map, so a deleted entry cannot block registration).
+      pidDead = typeof pid !== 'number' ? true : !isPidAlive(pid);
+    }
+    if (!nameLive && pidDead) return true;
+    if (Date.now() >= deadline) return false;
+    await sleep(pollMs);
+  }
 }
 
 // ---------------------------------------------------------------------------

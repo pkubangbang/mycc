@@ -369,3 +369,134 @@ async function waitForDead(pid: number, timeoutMs = 5000): Promise<boolean> {
     return true;
   }
 }
+
+// ---------------------------------------------------------------------------
+// FIX C — `down` culls the identity entries of PROVABLY stopped peers.
+// ---------------------------------------------------------------------------
+
+/**
+ * A pid that is guaranteed DEAD: spawn a trivial node process, wait for it to
+ * exit, and return its pid. On Windows a recycled pid is possible in theory
+ * but vanishingly unlikely across the few ms this test runs; the cull only
+ * needs *this* pid to probe as dead.
+ */
+async function deadPid(): Promise<number> {
+  const child = spawn(process.execPath, ['-e', '0'], { stdio: 'ignore' });
+  const pid = child.pid as number;
+  await new Promise<void>((resolve) => child.on('exit', () => resolve()));
+  await waitForDead(pid);
+  return pid;
+}
+
+describe('cmdDown FIX C: cull provably-stopped peers from identity.json', () => {
+  it('(1) stopped peer (spec-resolved, then killed) → its identity entry is REMOVED, culled line printed', async () => {
+    d = await import('../../scripts/mycc-compose/lib/discovery.js');
+    channelsMod = await import('../../scripts/mycc-compose/lib/channels.js');
+    writeSpec(true);
+    materializeChannels();
+    // p1: the REAL Stage-7 shape — a LIVE, name-identified peer process that
+    // `down` actually SIGTERMs. Its entry records that live pid; after the
+    // stop, the pid is provably dead and the entry is culled.
+    const script = path.join(tempDir, 'owner.js');
+    fs.writeFileSync(script, 'setTimeout(function(){},600000);');
+    const child = spawn(process.execPath, [script, '--name', 'grp:p1'], { stdio: 'ignore' });
+    seedIdentity(SID, child.pid as number, 'grp:p1');
+    seedHeartbeat(SID, child.pid as number);
+    // p2: live-but-non-mycc (this runner) → its stop refuses, entry kept.
+    seedIdentity(SID_P2, process.pid, 'grp:p2');
+    seedHeartbeat(SID_P2, process.pid);
+
+    const { rows } = await runDown();
+
+    expect(rows.join('')).toMatch(/p1: stopped/);
+    const map = d!.readIdentityMap();
+    expect(map[SID]).toBeUndefined();       // culled (pid proven dead post-stop)
+    expect(map[SID_P2]).toBeDefined();      // kept (alive pid, death unproven)
+    expect(rows.join('')).toMatch(/culled 1 stale identity entr/);
+  }, 15_000);
+
+  it('(2) refused stop (live-but-non-mycc pid) → entry KEPT (death unproven)', async () => {
+    d = await import('../../scripts/mycc-compose/lib/discovery.js');
+    channelsMod = await import('../../scripts/mycc-compose/lib/channels.js');
+    writeSpec(true);
+    materializeChannels();
+    seedBothLive(); // both pids alive (this runner) → both stops refuse
+
+    const { rows } = await runDown();
+
+    const map = d!.readIdentityMap();
+    expect(map[SID]).toBeDefined();
+    expect(map[SID_P2]).toBeDefined();
+    expect(rows.join('')).toMatch(/p1: refused-not-mycc/);
+    expect(rows.join('')).toMatch(/culled 0 stale identity entr/);
+  }, 15_000);
+
+  it('(3) live pid (unproven death) → entry KEPT, even with a fresh heartbeat', async () => {
+    d = await import('../../scripts/mycc-compose/lib/discovery.js');
+    channelsMod = await import('../../scripts/mycc-compose/lib/channels.js');
+    writeSpec(true);
+    materializeChannels();
+    // A fresh heartbeat + ALIVE pid: liveness is proven, must never be culled.
+    seedIdentity(SID, process.pid, 'grp:p1');
+    seedHeartbeat(SID, process.pid);
+    seedIdentity(SID_P2, process.pid, 'grp:p2');
+    seedHeartbeat(SID_P2, process.pid);
+
+    await runDown();
+
+    const map = d!.readIdentityMap();
+    expect(map[SID]).toBeDefined();
+    expect(map[SID_P2]).toBeDefined();
+  }, 15_000);
+
+  it('(4) no identity entry for a spec peer → no-op (culled 0, no throw)', async () => {
+    d = await import('../../scripts/mycc-compose/lib/discovery.js');
+    channelsMod = await import('../../scripts/mycc-compose/lib/channels.js');
+    writeSpec(true);
+    materializeChannels();
+    // No identity/heartbeat seeded for either peer: nothing to stop, nothing
+    // to cull. down must not throw.
+    const { rows } = await runDown();
+
+    expect(rows.join('')).toMatch(/culled 0 stale identity entr/);
+    expect(d!.readIdentityMap()).toEqual({});
+  }, 15_000);
+
+  it('(5) merge-on-read: a concurrent (unrelated) register is PRESERVED across the cull', async () => {
+    d = await import('../../scripts/mycc-compose/lib/discovery.js');
+    const stateMod = await import('../../scripts/mycc-compose/lib/peers-state.js');
+    // Dead-twin candidate to cull.
+    const deadP1 = await deadPid();
+    seedIdentity(SID, deadP1, 'grp:p1');
+    seedHeartbeat(SID, deadP1);
+    // A CONCURRENT foreign entry (a different live instance's registration).
+    const FOREIGN_SID = randomUUID();
+    seedIdentity(FOREIGN_SID, process.pid, 'grp:foreign');
+    seedHeartbeat(FOREIGN_SID, process.pid);
+
+    const culled = stateMod.cullStoppedPeers([
+      { name: 'p1', identityName: 'grp:p1', sessionId: SID } as never,
+    ]);
+
+    expect(culled).toBe(1);
+    const map = d!.readIdentityMap();
+    expect(map[SID]).toBeUndefined();              // culled
+    expect(map[FOREIGN_SID]).toBeDefined();         // concurrent register preserved
+  }, 15_000);
+
+  it('(6) a cull candidate whose pid was RECYCLED onto a live process is NOT deleted', async () => {
+    d = await import('../../scripts/mycc-compose/lib/discovery.js');
+    const stateMod = await import('../../scripts/mycc-compose/lib/peers-state.js');
+    // Entry records OUR live pid (as if the pid was recycled onto us): the
+    // delete-time re-check must see it alive and keep the entry.
+    seedIdentity(SID, process.pid, 'grp:p1');
+    seedHeartbeat(SID, process.pid);
+
+    const culled = stateMod.cullStoppedPeers([
+      { name: 'p1', identityName: 'grp:p1', sessionId: SID } as never,
+    ]);
+
+    expect(culled).toBe(0);
+    expect(d!.readIdentityMap()[SID]).toBeDefined();
+  }, 15_000);
+});

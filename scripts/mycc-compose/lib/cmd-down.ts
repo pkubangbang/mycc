@@ -29,7 +29,8 @@
 import { validateSpec, loadSpec } from './spec.js';
 import { removeChannels, ownedChannelFiles } from './channels.js';
 import { resolvePeerSid, stopPeer } from './peers.js';
-import { peerPid, isPidAlive } from './discovery.js';
+import { cullStoppedPeers } from './peers-state.js';
+import { peerPid, isPidAlive, waitForPidDeath } from './discovery.js';
 import { out } from './cli.js';
 
 export function cmdDown(file: string): void {
@@ -51,10 +52,23 @@ export function cmdDown(file: string): void {
   // dead channels. A refused stop does NOT skip the deletion below — the
   // deletion is the operator's explicit teardown request and the refusal
   // surfaces only as a non-zero exit (see the file header).
+  const killedPids: number[] = [];
   for (const peer of spec.peers) {
     const result = stopPeer(peer);
     out(`  - ${peer.name}: ${result}`);
     stopResults.push(`${peer.name} (${result})`);
+    // Record pids we actually SIGTERM'd so the cull below can give signal
+    // delivery a bounded moment to settle (POSIX SIGTERM delivery is async).
+    if (result === 'stopped') {
+      // Read via an explicit cast: NormalizedPeer carries an index signature
+      // ([key: string]: unknown), so `peer.sessionId` resolves THROUGH it to
+      // `{}` rather than its declared `string | null` (see spec.ts getRemotes).
+      const sid = peer.sessionId as string | null | undefined;
+      if (sid) {
+        const pid = peerPid(sid);
+        if (typeof pid === 'number') killedPids.push(pid);
+      }
+    }
     // 'no-session' = no live instance could be resolved for this peer's NAME
     // (identity.json has no running entry) → there is nothing to stop, the
     // same success semantics as 'already-stopped'. 'stopped' = we terminated it.
@@ -65,6 +79,21 @@ export function cmdDown(file: string): void {
   if (stopFailures > 0) {
     out(`  stop refused for ${stopFailures} peer(s): ${stopResults.join(', ')}`);
   }
+
+  // FIX C: cull the identity entries of peers we have PROVABLY stopped. On
+  // Windows SIGTERM is delivered as TerminateProcess (no handler runs), so a
+  // stopped peer's OWN unregister() never executes and its identity entry
+  // survives `down` — a dead twin that a later `up` re-materializes under a
+  // fresh sid, transiently listing old+new entries for the same NAME.
+  //
+  // Before scanning, give the SIGTERM'd pids a BOUNDED moment to actually die
+  // (POSIX signal delivery is async; a check run too early would keep a
+  // cullable entry). cullStoppedPeers is then evidence-gated (delete only when
+  // the recorded pid is provably dead) and lock-guarded; a refused stop — or a
+  // pid still alive at the deadline — leaves its entry in place.
+  for (const pid of killedPids) waitForPidDeath(pid);
+  const culled = cullStoppedPeers(spec.peers);
+  out(`  culled ${culled} stale identity entr${culled === 1 ? 'y' : 'ies'}`);
 
   // Remove exactly the files this spec OWNS — judged by NAME (R1 conjunction:
   // label ∈ spec labels AND ownerName/peerName ∈ the spec's <group>:<peer>

@@ -10,8 +10,9 @@
  *
  * What REPLACED it: a peer's durable identity is its NAME
  * (`--name <group>:<peer>`), and name-level uniqueness is enforced inside
- * `IdentityManager`'s constructor — refuse to boot (console.error +
- * process.exit(1)) when ANOTHER LIVE instance already holds the same
+ * `IdentityManager` — refuse to boot (an Error thrown from `register()`,
+ * raised under the identity-file lock before any write) when ANOTHER LIVE
+ * instance already holds the same
  * (name, workDir). A dead twin (stale heartbeat / dead pid) does NOT block a
  * restart. This suite pins that successor behaviour:
  *   - register() publishes the peer `name` into identity.json;
@@ -124,11 +125,18 @@ describe('IdentityManager: name uniqueness replaces the pinned-sid lease', () =>
     hook.name = NAME;
     const id = await loadIdentity();
     seedLiveTwin(TWIN_SID, NAME, process.cwd(), process.pid); // our own pid is alive
-    const exitSpy = vi.spyOn(process, 'exit').mockImplementation(((code?: number) => {
-      throw new Error(`exit:${code}`);
-    }) as never);
-    expect(() => new id.IdentityManager(SELF_SID, process.cwd(), '/tmp/mbox')).toThrow(/exit:1/);
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    // Name uniqueness is enforced in register() (under the identity-file lock, a
+    // TOCTOU-safe placement) — NOT in the constructor. The refusal is a thrown
+    // Error (`[identity] refusing to start: ...`), so the caller crashes before
+    // any identity write; process.exit is NOT the mechanism.
+    // A single load suffices — the uniqueness check reads the same seeded store.
+    const mgr = new id.IdentityManager(SELF_SID, process.cwd(), '/tmp/mbox');
+    expect(() => mgr.register()).toThrow(/refusing to start/);
+    // And the refused instance never claims the name: identity.json still has
+    // only the twin's entry.
+    const map = id.readIdentityMap();
+    expect(map[SELF_SID]).toBeUndefined();
+    expect(map[TWIN_SID]).toBeDefined();
   });
 
   it('does NOT refuse when the twin is DEAD (crashed mid-window)', async () => {
