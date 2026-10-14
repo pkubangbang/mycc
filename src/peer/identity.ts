@@ -22,6 +22,7 @@
 import * as fs from 'fs';
 import type { IdentityEntry } from '../types.js';
 import { getIdentityFile, getHeartbeatFile, getLaunchArgs, getPeerName } from '../config.js';
+import { isPidAlive, isOriginalHolderAlive, heartbeatMtimeMs } from '../utils/process-liveness.js';
 import { truncateToTokens } from '../utils/token.js';
 import { atomicWrite } from '../utils/atomic-write.js';
 import { withFileLock, FileLockTimeoutError } from '../utils/file-lock.js';
@@ -162,20 +163,6 @@ export function isSessionLive(sessionId: string): boolean {
   const beats = readHeartbeats(sessionId);
   if (beats.length === 0) return false;
   return Date.now() - beats[beats.length - 1] <= FRESHNESS_WINDOW_MS;
-}
-
-/**
- * Best-effort "is this OS pid alive?" check. `process.kill(pid, 0)` sends no
- * signal but throws ESRCH when the pid does not exist; EPERM means it exists
- * but is owned by another user (treat as alive).
- */
-function isPidAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (err) {
-    return (err as NodeJS.ErrnoException)?.code === 'EPERM';
-  }
 }
 
 /**
@@ -346,9 +333,15 @@ export class IdentityManager {
       const freshBeat = typeof latestBeat === 'number' &&
         Date.now() - latestBeat <= FRESHNESS_WINDOW_MS;
       const pid = typeof heartbeat.pid === 'number' ? heartbeat.pid : entry.pid;
-      // A fresh heartbeat + live PID is the normal live-holder proof. During
-      // the small register→first-beat window, startedAt + the PID published in
-      // identity.json closes the concurrent-launch race. Old stale entries do
+      // A fresh heartbeat + a LIVE PID is the normal live-holder proof. But a
+      // bare pid-exists probe cannot tell the ORIGINAL holder from an OS-recycled
+      // pid: the original may have exited leaving a fresh heartbeat, and the OS
+      // reused its pid for an unrelated process. isOriginalHolderAlive narrows
+      // that with the heartbeat-file mtime (a pid that STARTED after the file was
+      // written cannot have written it) and is CONSERVATIVE when start-time
+      // evidence is unavailable — so a genuinely live holder is never bypassed.
+      // During the small register→first-beat window, startedAt + the PID published
+      // in identity.json closes the concurrent-launch race. Old stale entries do
       // not block forever just because their PID has since been recycled.
       const inStartupWindow = !freshBeat &&
         typeof entry.startedAt === 'number' &&
@@ -356,7 +349,9 @@ export class IdentityManager {
         typeof entry.pid === 'number' &&
         isPidAlive(entry.pid);
       if (freshBeat) {
-        if (typeof pid === 'number' && !isPidAlive(pid)) continue;
+        if (typeof pid === 'number' && !isOriginalHolderAlive(pid, heartbeatMtimeMs(getHeartbeatFile(sid)))) {
+          continue;
+        }
       } else if (!inStartupWindow) {
         continue;
       }

@@ -12,6 +12,7 @@
 import chalk from 'chalk';
 import { Cron } from 'croner';
 import { shouldDaemon, getDaemonSkill } from '../config.js';
+import { isOriginalHolderAlive } from '../utils/process-liveness.js';
 import { autoState } from './auto-state.js';
 import type { AgentContext, IdentityEntry, Skill } from '../types.js';
 import type { Triologue } from './triologue.js';
@@ -23,25 +24,30 @@ interface SkillLookup {
 }
 
 /**
- * True when the recorded OS pid for a peer identity is still alive — the
- * pid-aware half of the daemon-dedup liveness test.
+ * True when the recorded OS pid for a peer identity is a LIVE holder — the
+ * pid-reuse-aware half of the daemon-dedup liveness test.
  *
  * The pid is read from the heartbeat file via `ctx.peer.getPid` (the
  * authoritative, live-refreshed source), falling back to the `entry.pid`
  * published in identity.json at register() time. A missing pid is treated as
  * ALIVE so a legacy entry without a recorded pid is never wrongly bypassed
  * (we refuse to re-launch only when a live process is actually proven).
+ *
+ * PID-REUSE: a bare `process.kill(pid, 0)` cannot tell the ORIGINAL daemon from
+ * an OS-recycled pid — the original may have exited leaving a fresh heartbeat,
+ * and the OS reused its pid for an unrelated process (which would then wrongly
+ * block a legitimate re-launch). `isOriginalHolderAlive` narrows that using the
+ * entry's `startedAt` as a lower bound on when the recorded process began: a pid
+ * that STARTED after the entry was registered cannot be the registrant. When
+ * start-time evidence is unavailable it falls back CONSERVATIVELY to "alive".
  */
 function isEntryPidAlive(ctx: AgentContext, entry: IdentityEntry): boolean {
   const pid = ctx.peer.getPid(entry.sessionId) ?? entry.pid;
   if (typeof pid !== 'number') return true; // no pid → preserve legacy behavior
-  try {
-    process.kill(pid, 0); // signal 0: existence probe, sends nothing
-    return true;
-  } catch (err) {
-    // EPERM → the pid exists but is owned by another user → treat as alive.
-    return (err as NodeJS.ErrnoException)?.code === 'EPERM';
-  }
+  // The registered process necessarily started BEFORE the entry's startedAt;
+  // a pid whose start time is AFTER that bound is a recycled pid, not the holder.
+  const registeredAt = typeof entry.startedAt === 'number' ? entry.startedAt : 0;
+  return isOriginalHolderAlive(pid, registeredAt);
 }
 
 /**
