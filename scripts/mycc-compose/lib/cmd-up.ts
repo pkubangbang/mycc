@@ -16,28 +16,24 @@ import {
   resolvePeerSid,
   cullStoppedPeers,
   launchPeer,
-  stopPeer,
   repairIdentity,
-  waitForPeerGone,
   sleep,
   WAVE_SIZE,
   WAVE_DELAY_MS,
   LAUNCH_TIMEOUT_MS,
   LAUNCH_POLL_MS,
 } from './peers.js';
+import { stopPeerByAddress, isRefusal } from './peers-stop.js';
 import { out, warn } from './cli.js';
 import type { NormalizedPeer, NormalizedSpec } from './spec.js';
 
 /**
- * How long `up` waits for a stopped peer's PREVIOUS holder to demonstrably
- * release its identity before launching the replacement. `stopPeer` returns as
- * soon as SIGTERM is delivered; the old process's own SIGTERM handler may still
- * be running (bg-kill + ServeHub stop) and its fresh heartbeat + live pid would
- * make the replacement's `assertNameNotLive()` refuse registration — surfacing
- * as a launch timeout. Bounded so a stuck holder fails the restart explicitly
- * instead of hanging `up` forever.
+ * NOTE: the bounded restart release-wait that used to live here
+ * (`RESTART_RELEASE_TIMEOUT_MS` + a separate `waitForPeerGone` call after
+ * `stopPeer`) is now INSIDE the stop primitive: `stopPeerByAddress` CONFIRMs the
+ * process actually died before returning 'stopped', so a delivered SIGTERM is
+ * never mistaken for a released identity. See peers-stop.ts.
  */
-const RESTART_RELEASE_TIMEOUT_MS = 5_000;
 
 /**
  * Resolve the absolute path to the mycc-mail CLI script, anchored on THIS
@@ -145,32 +141,27 @@ export async function cmdUp(file: string, { allowStop }: { allowStop: boolean })
    * holder did not release in time).
    */
   const stopThenQueue = async (peer: NormalizedPeer, reason: string): Promise<boolean> => {
-    const stopResult = stopPeer(peer);
-    if (stopResult.startsWith('refused-')) {
+    // The shared stop-by-address primitive owns the whole
+    // `address → sid → pid → signal → CONFIRM` chain: CONFIRM (wait for the
+    // process to actually die, bounded) subsumes the old, separate
+    // `waitForPeerGone` release-wait. A 'stopped' verdict therefore already
+    // means the previous holder released its identity before we queue the
+    // replacement — a delivered SIGTERM is never mistaken for a terminated peer.
+    // Decision (i): 'refused-not-found' (never started) is not a failure — the
+    // peer simply is not running — so it proceeds straight to launch. Every
+    // OTHER refusal/still-up aborts the restart (fail loud), never a duplicate.
+    const { verdict: stopResult, sessionId } = await stopPeerByAddress({ cwd: peer.workdir, group: spec.group, name: peer.name });
+    if (isRefusal(stopResult) && stopResult !== 'refused-not-found') {
       actions.push({ name: peer.name, action: `${reason} → stop=${stopResult}, restart ABORTED (refused)` });
       restartFailures.push(peer.name);
       return false;
     }
-    if (stopResult.startsWith('kill-failed:')) {
-      actions.push({ name: peer.name, action: `${reason} → stop=${stopResult}, restart ABORTED (kill failed)` });
-      restartFailures.push(peer.name);
-      return false;
-    }
-    // Only a delivered SIGTERM needs the bounded release wait. The other
-    // accepted results already mean the PID is gone or no instance was found;
-    // every refusal / kill failure is aborted above.
-    if (stopResult === 'stopped') {
-      const gone = await waitForPeerGone(peer, RESTART_RELEASE_TIMEOUT_MS);
-      if (!gone) {
-        actions.push({ name: peer.name, action: `${reason} → stop=${stopResult}, restart ABORTED (previous peer did not release its identity within ${RESTART_RELEASE_TIMEOUT_MS}ms)` });
-        restartFailures.push(peer.name);
-        return false;
-      }
-    }
     // A stopped old peer may leave identity.json behind on Windows, where
     // SIGTERM maps to process termination and no unregister handler runs.
     // The cull is lock-guarded and only removes entries whose original holder
-    // is provably gone (dead PID or positive PID-reuse evidence).
+    // is provably gone (dead PID or positive PID-reuse evidence). Stamp the
+    // primitive-resolved sid first so the cull can key on it.
+    if (sessionId) peer.sessionId = sessionId;
     if (peer.sessionId) {
       cullStoppedPeers([peer]);
       peer.sessionId = null;

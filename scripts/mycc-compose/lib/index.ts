@@ -15,3 +15,7 @@ export { cmdCheck } from './cmd-check.js';
 export { cmdUp } from './cmd-up.js';
 export { cmdDown } from './cmd-down.js';
 export { cmdStatus } from './cmd-status.js';
+
+// Stop-by-address primitive (shared by up/down and the standalone mycc-stop bin)
+export { stopPeerByAddress, stopPeerBySid, isRefusal, STOP_CONFIRM_TIMEOUT_MS } from './peers-stop.js';
+export type { StopVerdict, StopResult, PeerAddress, StopOptions } from './peers-stop.js';

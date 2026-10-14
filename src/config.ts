@@ -122,18 +122,17 @@ const args = minimist(process.argv.slice(2), {
   default: SHARED_ARG_DEFAULTS,
 });
 
-// HARD REMOVAL of `--session-id`. Sessions are NEVER reused: a launch always
-// mints a fresh id, and the stable peer handle is now `--name <group>:<peer>`.
-// The old flag pinned a caller-chosen session id so `mycc-compose` could
-// re-join channel files on relaunch — that conflated identity with a per-run id
-// and is deleted. Fail LOUDLY at boot rather than silently ignoring an argv the
-// operator still believes is doing something.
-if (args['session-id'] !== undefined) {
-  console.error(
-    '--session-id removed: sessions are never reused; use --from <id> to branch a new session',
-  );
-  process.exit(1);
-}
+// `--session-id` was REMOVED: sessions are NEVER reused — a launch always mints
+// a fresh id, and the stable peer handle is now `--name <group>:<peer>`. The old
+// flag pinned a caller-chosen session id so `mycc-compose` could re-join channel
+// files on relaunch; that conflated identity with a per-run id and is gone.
+//
+// The flag is simply IGNORED if it still appears in argv: it was never a
+// specified arg, nothing reads `args['session-id']`, and it carries no capability
+// that needs blocking. minimist drops it into `args` where it is inert, exactly
+// like any other unknown token — no reader, no effect. Fail-fast would only turn
+// a harmless stale invocation (a leftover alias, script, or supervisor config)
+// into a fatal boot crash, so we deliberately let it pass through.
 
 /**
  * Cmd-args → env-var mapping (and the builder) live in

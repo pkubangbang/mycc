@@ -2,17 +2,13 @@
  * mycc-compose-restart-race.test.ts — P2 #1 regression: restart is a
  * SEQUENCED operation.
  *
- * `stopPeer()` sends SIGTERM and returns `'stopped'` the instant the signal is
- * DELIVERED — it does not wait for the process to exit. The old peer's own
- * SIGTERM handler may still be running (background-task cleanup + ServeHub
- * shutdown), and its fresh heartbeat + live pid would make the replacement's
- * `assertNameNotLive()` refuse registration → launch timeout.
- *
- * AFTER FIX: cmd-up, before queueing a replacement, waits (bounded) for the
- * previous holder to demonstrably release its identity (name no longer
- * resolves to a live entry AND the recorded heartbeat pid is dead). A refused /
- * kill-failed stop NEVER queues a launch; a holder that does not release within
- * the deadline aborts the restart with a non-zero exit.
+ * The stop primitive `stopPeerByAddress()` sends SIGTERM and then CONFIRMS the
+ * process actually exited before returning 'stopped' — a delivered signal is
+ * never mistaken for a terminated peer. So cmd-up, before queueing a
+ * replacement, has already waited (inside the primitive) for the previous
+ * holder to demonstrably release its identity (the process is provably dead).
+ * A refused / still-up stop NEVER queues a launch; a holder that does not die
+ * within the confirm window aborts the restart with a non-zero exit.
  *
  * Module-graph pattern is identical to mycc-compose-up-pipeline.test.ts:
  * discovery.ts pins DISCOVERY_DIR at MODULE LOAD, so NOTHING compose-lib is
@@ -38,6 +34,7 @@ let specFile = '';
 let SID = '';
 let d: Discovery | null = null;
 let peersMod: typeof import('../../scripts/mycc-compose/lib/peers.js');
+let stopMod: typeof import('../../scripts/mycc-compose/lib/peers-stop.js');
 let launchPeerSpy: ReturnType<typeof vi.fn>;
 let stopPeerSpy: ReturnType<typeof vi.fn>;
 
@@ -69,14 +66,15 @@ function writeSpec(renew: 'always' | 'onMismatch'): void {
 }
 
 /**
- * Run cmdUp with launchPeer/stopPeer spied. `stopReturn` is what the stopPeer
- * spy returns (e.g. 'stopped', 'refused-not-mycc', 'kill-failed:EPERM').
- * `waitForPeerGone` may be overridden to avoid a real 5s wait.
+ * Run cmdUp with launchPeer (peers barrel) + stopPeerByAddress (peers-stop)
+ * spied. `stopVerdict` is the StopVerdict the stop primitive spy returns
+ * ('stopped', 'refused-not-mycc', 'still-up', ...). CONFIRM (wait-for-death) is
+ * now INSIDE the primitive, so a holder that never releases is modeled as the
+ * primitive returning 'still-up' — there is no separate waitForPeerGone seam.
  */
 async function runCmdUp(opts: {
   allowStop: boolean;
-  stopReturn?: string;
-  waitGone?: (peer: unknown, timeoutMs: number, pollMs?: number) => Promise<boolean>;
+  stopVerdict?: string;
 }): Promise<{ rows: string[]; exitCode: unknown }> {
   peersMod = await import('../../scripts/mycc-compose/lib/peers.js');
   launchPeerSpy = vi.spyOn(peersMod, 'launchPeer').mockImplementation(
@@ -97,10 +95,10 @@ async function runCmdUp(opts: {
       return { ok: true, pid: process.pid } as never;
     },
   );
-  stopPeerSpy = vi.spyOn(peersMod, 'stopPeer').mockReturnValue((opts.stopReturn ?? 'stopped') as never);
-  if (opts.waitGone) {
-    vi.spyOn(peersMod, 'waitForPeerGone').mockImplementation(opts.waitGone as never);
-  }
+  stopMod = await import('../../scripts/mycc-compose/lib/peers-stop.js');
+  stopPeerSpy = vi.spyOn(stopMod, 'stopPeerByAddress').mockImplementation(
+    (async () => ({ verdict: (opts.stopVerdict ?? 'stopped') as never, sessionId: SID })) as never,
+  );
   const mod = await import('../../scripts/mycc-compose/lib/cmd-up.js');
   const cmdUp = (mod as { cmdUp: (file: string, o: { allowStop: boolean }) => Promise<void> }).cmdUp;
   const rows: string[] = [];
@@ -152,7 +150,7 @@ describe('cmdUp: sequenced restart — wait for the prior holder before relaunch
     seedIdentity();
     seedHeartbeat(SID);
 
-    const { rows, exitCode } = await runCmdUp({ allowStop: true, stopReturn: 'stopped', waitGone: async () => true });
+    const { rows, exitCode } = await runCmdUp({ allowStop: true, stopVerdict: 'stopped' });
 
     expect(stopPeerSpy).toHaveBeenCalledTimes(1);
     expect(launchPeerSpy).toHaveBeenCalledTimes(1);
@@ -166,7 +164,7 @@ describe('cmdUp: sequenced restart — wait for the prior holder before relaunch
     seedIdentity();
     seedHeartbeat(SID);
 
-    const { rows, exitCode } = await runCmdUp({ allowStop: true, stopReturn: 'refused-not-mycc' });
+    const { rows, exitCode } = await runCmdUp({ allowStop: true, stopVerdict: 'refused-not-mycc' });
 
     // The successful-launch spy must NOT have fired: a refusal cannot be
     // papered over by a launch the name guard would reject.
@@ -177,30 +175,18 @@ describe('cmdUp: sequenced restart — wait for the prior holder before relaunch
     expect(exitCode).toBe(1);
   }, 20_000);
 
-  it('kill FAILED → NO launch is queued, restart aborted, non-zero exit', async () => {
+  it('still-up (holder never confirmed dead) → NO launch is queued, restart aborted, non-zero exit', async () => {
     d = await import('../../scripts/mycc-compose/lib/discovery.js');
     writeSpec('always');
     seedIdentity();
     seedHeartbeat(SID);
 
-    const { rows, exitCode } = await runCmdUp({ allowStop: true, stopReturn: 'kill-failed:EPERM' });
+    // The primitive CONFIRM window expired with the process still alive: the
+    // peer could NOT be confirmed down, so no replacement may be queued.
+    const { rows, exitCode } = await runCmdUp({ allowStop: true, stopVerdict: 'still-up' });
 
     expect(launchPeerSpy).not.toHaveBeenCalled();
-    expect(rows.join('')).toMatch(/restart ABORTED \(kill failed\)/);
-    expect(exitCode).toBe(1);
-  }, 20_000);
-
-  it('stop=stopped but holder NEVER releases within the deadline → restart aborted, NO launch', async () => {
-    d = await import('../../scripts/mycc-compose/lib/discovery.js');
-    writeSpec('always');
-    seedIdentity();
-    seedHeartbeat(SID);
-
-    // The bounded wait times out (the old peer's SIGTERM handler never exited).
-    const { rows, exitCode } = await runCmdUp({ allowStop: true, stopReturn: 'stopped', waitGone: async () => false });
-
-    expect(launchPeerSpy).not.toHaveBeenCalled();
-    expect(rows.join('')).toMatch(/did not release its identity within \d+ms/);
+    expect(rows.join('')).toMatch(/restart ABORTED \(refused\)/);
     expect(rows.join('')).toMatch(/restart aborted for 1 peer/);
     expect(exitCode).toBe(1);
   }, 20_000);
@@ -221,7 +207,7 @@ describe('cmdUp: sequenced restart — wait for the prior holder before relaunch
     d.writeIdentityMap(map as never);
     seedHeartbeat(SID);
 
-    const { rows, exitCode } = await runCmdUp({ allowStop: true, stopReturn: 'stopped', waitGone: async () => true });
+    const { rows, exitCode } = await runCmdUp({ allowStop: true, stopVerdict: 'stopped' });
 
     expect(rows.join('')).toMatch(/mismatch → stop=stopped, start/);
     expect(launchPeerSpy).toHaveBeenCalledTimes(1);
@@ -229,12 +215,12 @@ describe('cmdUp: sequenced restart — wait for the prior holder before relaunch
   }, 20_000);
 });
 
-describe('waitForPeerGone: the bounded release wait itself (real, short timeout)', () => {
-  it('returns true once the name no longer resolves to a live entry and the pid is dead', async () => {
+describe('stopPeerByAddress CONFIRM: the bounded death-wait (real, short timeout)', () => {
+  it('returns the death verdict once a recorded pid is provably dead (already-stopped)', async () => {
     d = await import('../../scripts/mycc-compose/lib/discovery.js');
-    const state = await import('../../scripts/mycc-compose/lib/peers-state.js');
-    // Seed a holder whose pid is PROVABLY DEAD and whose heartbeat is stale →
-    // the name resolves to null and the pid is dead → gone immediately.
+    const stop = await import('../../scripts/mycc-compose/lib/peers-stop.js');
+    // Seed a holder whose pid is PROVABLY DEAD and whose heartbeat is fresh →
+    // the address resolves, the recorded pid is dead → already-stopped.
     const deadPid = await (async () => {
       const { spawn } = await import('child_process');
       const child = spawn(process.execPath, ['-e', '0'], { stdio: 'ignore' });
@@ -247,27 +233,32 @@ describe('waitForPeerGone: the bounded release wait itself (real, short timeout)
     d.writeIdentityMap(map as never);
     seedHeartbeat(SID, deadPid); // fresh heartbeat but DEAD pid
 
-    const gone = await state.waitForPeerGone(
-      { name: PEER_NAME, identityName: PEER_IDENTITY_NAME, sessionId: SID, workdir: tempDir } as never,
-      500,
-      50,
+    const result = await stop.stopPeerByAddress(
+      { cwd: tempDir, group: 'grp', name: PEER_NAME },
+      { confirmTimeoutMs: 500, pollMs: 50 },
     );
-    expect(gone).toBe(true);
+    expect(result.verdict).toBe('already-stopped');
+    expect(result.sessionId).toBe(SID);
   }, 10_000);
 
-  it('returns false on timeout while a live holder still holds the name', async () => {
+  it('still-up: a live non-mycc holder refuses (never signaled), so the verdict is a refusal', async () => {
     d = await import('../../scripts/mycc-compose/lib/discovery.js');
-    const state = await import('../../scripts/mycc-compose/lib/peers-state.js');
-    // A LIVE holder (this runner's pid, alive) → the name keeps resolving to a
-    // live entry, so the wait must time out.
+    const stop = await import('../../scripts/mycc-compose/lib/peers-stop.js');
+    // A LIVE holder (this runner's pid, alive) whose argv does NOT claim the
+    // peer's durable name → the primitive refuses on the argv-identity gate
+    // rather than signal an unrelated process. It never reaches CONFIRM.
     seedIdentity();
     seedHeartbeat(SID, process.pid);
 
-    const gone = await state.waitForPeerGone(
-      { name: PEER_NAME, identityName: PEER_IDENTITY_NAME, sessionId: SID, workdir: tempDir } as never,
-      300,
-      50,
+    const result = await stop.stopPeerByAddress(
+      { cwd: tempDir, group: 'grp', name: PEER_NAME },
+      { confirmTimeoutMs: 300, pollMs: 50 },
     );
-    expect(gone).toBe(false);
+    expect(result.verdict).toBe('refused-not-mycc');
+    expect(result.sessionId).toBe(SID);
+    // Refuse-not-kill: this runner is still alive.
+    let alive = true;
+    try { process.kill(process.pid, 0); } catch { alive = false; }
+    expect(alive).toBe(true);
   }, 10_000);
 });

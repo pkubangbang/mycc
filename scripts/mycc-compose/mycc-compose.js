@@ -61,7 +61,7 @@ async function main() {
       await cmdUp(args.file, { allowStop: false });
       break;
     case 'down':
-      cmdDown(args.file);
+      await cmdDown(args.file);
       break;
     case 'status':
       cmdStatus(args.file, args.json);

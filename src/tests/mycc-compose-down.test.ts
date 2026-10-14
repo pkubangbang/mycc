@@ -148,7 +148,7 @@ function channelsPresent(): boolean {
 /** Run cmdDown with out()/exit captured; returns exit code + printed rows. */
 async function runDown(): Promise<{ rows: string[]; exitCode: unknown }> {
   const mod = await import('../../scripts/mycc-compose/lib/cmd-down.js');
-  const cmdDown = (mod as { cmdDown: (file: string) => void }).cmdDown;
+  const cmdDown = (mod as { cmdDown: (file: string) => Promise<void> }).cmdDown;
   const rows: string[] = [];
   let exitCode: unknown = undefined;
   vi.spyOn(process.stdout, 'write').mockImplementation(((chunk: unknown) => {
@@ -160,7 +160,9 @@ async function runDown(): Promise<{ rows: string[]; exitCode: unknown }> {
     throw new Error(`__cmd_down_exit__:${String(code)}`);
   }) as typeof process.exit);
   try {
-    cmdDown(specFile);
+    // cmdDown is async (the stop primitive awaits confirmation-of-death before
+    // the cull); the exit throw is the normal terminal here, so await and catch.
+    await cmdDown(specFile);
   } catch (err) {
     if (!(err instanceof Error) || !(err as Error).message.startsWith('__cmd_down_exit__')) throw err;
   } finally {

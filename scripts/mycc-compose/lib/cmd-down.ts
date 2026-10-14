@@ -28,12 +28,13 @@
 
 import { validateSpec, loadSpec } from './spec.js';
 import { removeChannels, ownedChannelFiles } from './channels.js';
-import { resolvePeerSid, stopPeer } from './peers.js';
+import { resolvePeerSid } from './peers.js';
 import { cullStoppedPeers } from './peers-state.js';
-import { peerPid, isSessionHolderDead, waitForPidDeath } from './discovery.js';
+import { isSessionHolderDead } from './discovery.js';
+import { stopPeerByAddress } from './peers-stop.js';
 import { out } from './cli.js';
 
-export function cmdDown(file: string): void {
+export async function cmdDown(file: string): Promise<void> {
   const spec = validateSpec(loadSpec(file));
 
   // Resolve each peer's LIVE session id by its durable NAME before touching
@@ -52,28 +53,28 @@ export function cmdDown(file: string): void {
   // dead channels. A refused stop does NOT skip the deletion below — the
   // deletion is the operator's explicit teardown request and the refusal
   // surfaces only as a non-zero exit (see the file header).
-  const killedPids: number[] = [];
+  //
+  // The stop is the shared stop-by-address primitive: it owns the whole
+  // `address → sid → pid → signal → CONFIRM` chain, so `down` no longer
+  // hand-collects pids or waits for death itself. By the time it returns
+  // 'stopped', the process is provably gone — the cull below therefore needs no
+  // extra settle-wait. Decision (i): a peer that was never started
+  // (`refused-not-found`) is NOT a failure — there is simply nothing to stop —
+  // so it exits 0 like 'already-stopped'.
   for (const peer of spec.peers) {
-    const result = stopPeer(peer);
-    out(`  - ${peer.name}: ${result}`);
-    stopResults.push(`${peer.name} (${result})`);
-    // Record pids we actually SIGTERM'd so the cull below can give signal
-    // delivery a bounded moment to settle (POSIX SIGTERM delivery is async).
-    if (result === 'stopped') {
-      // Read via an explicit cast: NormalizedPeer carries an index signature
-      // ([key: string]: unknown), so `peer.sessionId` resolves THROUGH it to
-      // `{}` rather than its declared `string | null` (see spec.ts getRemotes).
-      const sid = peer.sessionId as string | null | undefined;
-      if (sid) {
-        const pid = peerPid(sid);
-        if (typeof pid === 'number') killedPids.push(pid);
-      }
-    }
-    // 'no-session' = no live instance could be resolved for this peer's NAME
-    // (identity.json has no running entry) → there is nothing to stop, the
-    // same success semantics as 'already-stopped'. 'stopped' = we terminated it.
-    // Every OTHER result is a genuine refusal/failure (refused-*, kill-failed:*).
-    const notAProblem = result === 'stopped' || result === 'already-stopped' || result === 'no-session';
+    const { verdict, sessionId } = await stopPeerByAddress({ cwd: peer.workdir, group: spec.group, name: peer.name });
+    out(`  - ${peer.name}: ${verdict}`);
+    stopResults.push(`${peer.name} (${verdict})`);
+    // Stamp the resolved sid back onto the peer so the cull below can key on it:
+    // cullStoppedPeers identifies the entry to delete by `peer.sessionId`, and
+    // after a successful stop the peer's liveness evidence is gone, so the sid
+    // must be captured HERE (the primitive resolved it) rather than re-derived
+    // post-stop (which would find nothing).
+    if (sessionId) peer.sessionId = sessionId;
+    // Non-failure results: 'stopped' = terminated; 'already-stopped' = provably
+    // gone; 'refused-not-found' = never registered (nothing to stop).
+    // Every OTHER result is a genuine refusal/failure.
+    const notAProblem = verdict === 'stopped' || verdict === 'already-stopped' || verdict === 'refused-not-found';
     if (!notAProblem) stopFailures++;
   }
   if (stopFailures > 0) {
@@ -86,12 +87,10 @@ export function cmdDown(file: string): void {
   // survives `down` — a dead twin that a later `up` re-materializes under a
   // fresh sid, transiently listing old+new entries for the same NAME.
   //
-  // Before scanning, give the SIGTERM'd pids a BOUNDED moment to actually die
-  // (POSIX signal delivery is async; a check run too early would keep a
-  // cullable entry). cullStoppedPeers is then evidence-gated (delete only when
-  // the recorded pid is provably dead) and lock-guarded; a refused stop — or a
-  // pid still alive at the deadline — leaves its entry in place.
-  for (const pid of killedPids) waitForPidDeath(pid);
+  // No settle-wait is needed here: stopPeerByAddress already CONFIRMED each
+  // signaled pid is dead before returning 'stopped'. cullStoppedPeers is
+  // evidence-gated (delete only when the recorded pid is provably dead) and
+  // lock-guarded; a refused stop leaves its entry in place.
   const culled = cullStoppedPeers(spec.peers);
   out(`  culled ${culled} stale identity entr${culled === 1 ? 'y' : 'ies'}`);
 
