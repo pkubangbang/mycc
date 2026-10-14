@@ -184,12 +184,12 @@ export function isSessionLive(sessionId: string): boolean {
  * without this, identity.json grows monotonically with one entry per dead
  * instance forever, bloating every readIdentityMap()/listIdentities() call.
  *
- * Safety: a live instance beats every 30s (HEARTBEAT_INTERVAL_MS), so its
- * latest heartbeat is always within the cutoff and it is never pruned. A
- * freshly-started instance whose heartbeat file does not exist yet (but which
- * is registered in the map) is also preserved — it has had no chance to beat
- * yet, and pruning it would race its own register(). Only entries with a
- * heartbeat file showing a beat older than the cutoff are removed.
+ * Safety: freshness alone is not proof of ownership release. A stale
+ * heartbeat is pruned only when the recorded PID is dead or process-start
+ * evidence proves that PID was recycled. Missing/conflicting PID evidence is
+ * kept conservatively so a stalled-but-live peer remains discoverable and can
+ * still receive a stop tombstone. A freshly-started entry with no heartbeat is
+ * also preserved because it has had no chance to beat yet.
  *
  * Never removes the caller's own sessionId — guard against self-prune in case
  * the caller's heartbeat file is somehow stale during a re-register.
@@ -203,12 +203,33 @@ function pruneStaleEntries(map: Record<string, IdentityEntry>, selfSessionId: st
   let removed = 0;
   for (const sid of Object.keys(map)) {
     if (sid === selfSessionId) continue; // never self-prune
-    const latest = readHeartbeats(sid);
+    const entry = map[sid];
+    const heartbeat = readHeartbeatData(sid);
+    const latest = heartbeat.heartbeats;
     if (latest.length === 0) continue; // no heartbeat file yet → preserve (could be mid-startup)
-    if (now - latest[latest.length - 1] > IDENTITY_PRUNE_CUTOFF_MS) {
-      delete map[sid];
-      removed++;
+    if (now - latest[latest.length - 1] <= IDENTITY_PRUNE_CUTOFF_MS) continue;
+
+    // Heartbeat age proves that the peer is unhealthy, NOT that its process is
+    // gone. Keep the entry unless the recorded holder is provably dead or the
+    // PID is demonstrably recycled; otherwise a stalled live peer would become
+    // undiscoverable and could no longer receive a stop tombstone.
+    const heartbeatPid = typeof heartbeat.pid === 'number' ? heartbeat.pid : undefined;
+    const entryPid = typeof entry?.pid === 'number' ? entry.pid : undefined;
+    if (heartbeatPid !== undefined && entryPid !== undefined && heartbeatPid !== entryPid) {
+      continue; // conflicting ownership evidence → preserve
     }
+    const pid = heartbeatPid ?? entryPid;
+    if (typeof pid !== 'number') continue; // no positive process evidence → preserve
+
+    const evidenceTime = heartbeatPid !== undefined
+      ? heartbeatMtimeMs(getHeartbeatFile(sid))
+      : typeof entry?.startedAt === 'number'
+        ? entry.startedAt
+        : 0;
+    if (isOriginalHolderAlive(pid, evidenceTime)) continue;
+
+    delete map[sid];
+    removed++;
   }
   return removed;
 }
@@ -538,19 +559,31 @@ export class IdentityManager {
    */
   private beat(): void {
     const existing = readHeartbeatData(this.sessionId);
-    if (existing.tombstone !== undefined && !this.tombstoneSeen) {
-      this.tombstoneSeen = true;
-      try {
-        this.onTombstone?.(existing.tombstone);
-      } catch {
-        // Swallow: the owner's handler is best-effort; a throw here must not
-        // break the heartbeat loop.
-      }
+    if (existing.tombstone !== undefined) {
+      this.dispatchTombstone(existing.tombstone);
     }
     const timestamps = existing.heartbeats;
     timestamps.push(Date.now());
     const trimmed = timestamps.slice(-MAX_HEARTBEATS);
     writeHeartbeats(this.sessionId, trimmed, process.pid);
+  }
+
+  /**
+   * Dispatch a pending tombstone only once a handler exists. A beat during
+   * startup must not consume the request before graceful teardown is wired.
+   * setOnTombstone() also checks the on-disk marker and dispatches it as soon
+   * as the callback becomes available.
+   */
+  private dispatchTombstone(when: number): void {
+    const callback = this.onTombstone;
+    if (this.tombstoneSeen || !callback) return;
+    this.tombstoneSeen = true;
+    try {
+      callback(when);
+    } catch {
+      // Swallow: the owner's handler is best-effort; a throw here must not
+      // break the heartbeat loop.
+    }
   }
 
   /**
@@ -560,6 +593,8 @@ export class IdentityManager {
    */
   setOnTombstone(callback: (when: number) => void): void {
     this.onTombstone = callback;
+    const tombstone = readHeartbeatData(this.sessionId).tombstone;
+    if (tombstone !== undefined) this.dispatchTombstone(tombstone);
   }
 
   /**

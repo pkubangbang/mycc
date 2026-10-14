@@ -240,6 +240,27 @@ describe('tombstone self-termination (§6.7)', () => {
     expect(seen).toEqual([1_600_000_000_000]);
   });
 
+  it('keeps a tombstone pending when a beat sees it before the callback is registered', () => {
+    const id = new IdentityManager(SID_A, '/work/a', makeMailboxPath(SID_A));
+    id.register();
+    const stampedAt = 1_600_000_000_000;
+    expect(identity.writeTombstone(SID_A, stampedAt)).toBe(true);
+
+    // startHeartbeat() beats immediately. With no callback installed yet, it
+    // must leave the tombstone pending rather than mark it as consumed.
+    id.startHeartbeat();
+    id.stopHeartbeat();
+
+    const seen: number[] = [];
+    id.setOnTombstone((when) => seen.push(when));
+    expect(seen).toEqual([stampedAt]);
+
+    // The callback is dispatched once, even though later beats keep the marker.
+    id.startHeartbeat();
+    id.stopHeartbeat();
+    expect(seen).toEqual([stampedAt]);
+  });
+
   it('a legacy {timestamps} heartbeat file without a tombstone reads tombstone=undefined', () => {
     writeHeartbeatRaw(SID_B, [Date.now()]);
     const id = new IdentityManager(SID_B, '/work/b', makeMailboxPath(SID_B));

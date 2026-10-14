@@ -163,7 +163,7 @@ describe('IdentityManager', () => {
     // is 2h old — well beyond the 1h prune cutoff.
     const now = Date.now();
     fs.writeFileSync(identityFile(), JSON.stringify({
-      [SID_B]: { sessionId: SID_B, workDir: '/work/b', mailbox: makeMailboxPath(SID_B), startedAt: now - 2 * 60 * 60 * 1000 },
+      [SID_B]: { sessionId: SID_B, workDir: '/work/b', mailbox: makeMailboxPath(SID_B), pid: 99999999, startedAt: now - 2 * 60 * 60 * 1000 },
     }, null, 2), 'utf-8');
     writeHeartbeatRaw(SID_B, [now - 2 * 60 * 60 * 1000, now - 7000 * 1000, now - 7200 * 1000]);
 
@@ -173,6 +173,32 @@ describe('IdentityManager', () => {
     const entries = id.listIdentities();
     expect(entries).toHaveLength(1);
     expect(entries[0].sessionId).toBe(SID_A); // stale SID_B was pruned
+  });
+
+  it('register() does not prune a stale heartbeat while its recorded process is still alive', () => {
+    const now = Date.now();
+    const stale = now - 2 * 60 * 60 * 1000;
+    fs.writeFileSync(identityFile(), JSON.stringify({
+      [SID_B]: {
+        sessionId: SID_B,
+        workDir: '/work/b',
+        mailbox: makeMailboxPath(SID_B),
+        pid: process.pid,
+        startedAt: stale,
+      },
+    }, null, 2), 'utf-8');
+    // The payload says the last beat is old, but its PID and file mtime still
+    // belong to this live process. Staleness must not erase its discoverability.
+    fs.writeFileSync(heartbeatFile(SID_B), JSON.stringify({
+      heartbeats: [stale],
+      briefs: [],
+      pid: process.pid,
+    }), 'utf-8');
+
+    const id = new IdentityManager(SID_A, '/work/a', makeMailboxPath(SID_A));
+    id.register();
+
+    expect(id.listIdentities().map((entry) => entry.sessionId).sort()).toEqual([SID_A, SID_B]);
   });
 
   it('register() preserves fresh identity entries (heartbeat within 1h)', () => {

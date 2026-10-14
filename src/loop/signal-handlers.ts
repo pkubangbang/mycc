@@ -51,10 +51,14 @@ export function registerSignalHandlers(ctx: AgentContext, daemonCronJob: Cron | 
     // unref() and otherwise orphan, holding their PIDs after the Lead exits.
     agentIO.verbose('signal', `${trigger}: killing background tasks`);
     await ctx.bg.killAllRunning(); // best-effort tree-kill of running tasks
-    agentIO.verbose('signal', `${trigger}: stopping peer (heartbeat + channel poll)`);
-    ctx.peer.stop(); // Stop heartbeat + channel poll + unregister identity
     agentIO.verbose('signal', `${trigger}: stopping ServeHub (Vite + HTTP port)`);
     try { await tryGetServeHub()?.stop(); } catch { /* stop() already best-effort internally */ }
+    // Keep identity + heartbeat discoverable through the last potentially
+    // blocking shutdown step above. If ServeHub teardown stalls, a subsequent
+    // mycc-stop/down must still be able to resolve this process and request
+    // retirement via its tombstone.
+    agentIO.verbose('signal', `${trigger}: stopping peer (heartbeat + channel poll)`);
+    ctx.peer.stop(); // Stop heartbeat + channel poll + unregister identity
     agentIO.verbose('signal', `${trigger}: teardown complete, exiting`);
     process.exit(0);
   }
