@@ -70,6 +70,15 @@ let d: Discovery | null = null;
 let peersMod: typeof import('../../scripts/mycc-compose/lib/peers.js');
 let launchPeerSpy: ReturnType<typeof vi.fn>;
 let stopPeerSpy: ReturnType<typeof vi.fn>;
+/**
+ * Snapshot of the peer argument as it was AT EACH stopPeer call. cmdUp carries
+ * ONE mutable peer object through stop→cull→relaunch, and the post-stop cull
+ * deliberately nulls `peer.sessionId` on it (Windows: a SIGTERM'd peer never
+ * unregisters, so the stale entry must be culled by the sid we still hold).
+ * Asserting on `stopPeerSpy.mock.calls[0][0]` therefore observes the MUTATED
+ * object, not the value passed in. These snapshots capture the call-time state.
+ */
+let stopPeerArgs: Array<{ name?: string; sessionId?: string | null }>;
 
 /** Seed identity.json with the entry a real registered peer would have. The
  * durable NAME is what matching resolves on now (the session id is minted per
@@ -145,6 +154,9 @@ async function runCmdUpAllowStop(allowStop: boolean): Promise<{ rows: string[]; 
   );
   stopPeerSpy = vi.spyOn(peersMod, 'stopPeer').mockImplementation(
     ((peer: { sessionId?: string | null; identityName?: string; name?: string }) => {
+      // Snapshot the argument as passed (see stopPeerArgs) — cmdUp mutates this
+      // same object after a successful stop.
+      stopPeerArgs.push({ name: peer.name, sessionId: peer.sessionId ?? null });
       // Model a REAL successful stop's side effect: the holder process is
       // terminated, so it stops beating and (on POSIX) unregisters. A stubbed
       // 'stopped' that leaves the holder ALIVE would make the new sequenced
@@ -173,6 +185,7 @@ async function runCmdUpAllowStop(allowStop: boolean): Promise<{ rows: string[]; 
   const cmdUp = (mod as { cmdUp: (file: string, opts: { allowStop: boolean }) => Promise<void> }).cmdUp;
   const rows: string[] = [];
   let exitCode: unknown = undefined;
+  stopPeerArgs = [];
   vi.spyOn(process.stdout, 'write').mockImplementation(((chunk: unknown) => {
     rows.push(String(chunk));
     return true;
@@ -245,9 +258,12 @@ describe('cmdUp: sync never recycles renew:always peers (P1-1 regression)', () =
 
     const { rows, exitCode } = await runCmdUpAllowStop(true);
 
-    // The stop ran on the named peer, then the relaunch did.
+    // The stop ran on the named peer, then the relaunch did. Assert on the
+    // CALL-TIME snapshot: cmdUp carries one mutable peer object and the
+    // post-stop cull nulls its sessionId, so the live object in mock.calls
+    // would show null even though stopPeer received the real sid.
     expect(stopPeerSpy).toHaveBeenCalledTimes(1);
-    expect((stopPeerSpy.mock.calls[0] as unknown[])[0]).toMatchObject({ name: PEER_NAME, sessionId: SID });
+    expect(stopPeerArgs[0]).toMatchObject({ name: PEER_NAME, sessionId: SID });
     expect(launchPeerSpy).toHaveBeenCalledTimes(1);
     // Post-launch liveness resolves: the fake launch registered a beating
     // entry, so no "peers not live" warning and exit 0.

@@ -346,7 +346,17 @@ export async function waitForPeerGone(
   const deadline = Date.now() + timeoutMs;
   for (;;) {
     const nameLive = resolveLivePeer(peer) !== null;
-    const holderDead = !sid || isSessionHolderDead(sid);
+    // The holder has released its identity when EITHER proof holds:
+    //   - its identity entry / heartbeat is GONE (no recorded pid at all) — the
+    //     strongest release evidence, and how a clean unregister() appears; OR
+    //   - a still-recorded pid is provably gone (dead PID or recycled-PID
+    //     evidence).
+    // isSessionHolderDead's conservative "no pid ⇒ not dead" reading is WRONG
+    // for this release question: an ABSENT entry means the holder already let
+    // go, so we must NOT keep waiting for positive death evidence that can
+    // never arrive once the entry is gone.
+    const holderDead =
+      sid === null || peerPid(sid) === undefined || isSessionHolderDead(sid);
     if (!nameLive && holderDead) return true;
     if (Date.now() >= deadline) return false;
     await sleep(pollMs);
