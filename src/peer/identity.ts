@@ -79,6 +79,18 @@ interface HeartbeatData {
   briefs: BriefEntry[];
   /** Recording process's OS PID (so peers can kill the instance). */
   pid?: number;
+  /**
+   * Tombstone: epoch-ms when a stop was REQUESTED for this session. Written by
+   * the stopper (`mycc-stop` / `mycc-compose down`) AFTER a best-effort
+   * terminate, so a peer the signal did NOT reach retires itself on its next
+   * beat. Lives in the heartbeat file (not identity.json) because the live peer
+   * already rewrites this file every beat — see docs/peers/peer-topology.md §6.7.
+   *
+   * PRESERVATION IS LOAD-BEARING: every rewrite of the heartbeat file MUST carry
+   * this field forward (a rewrite that dropped it would lose the tombstone on the
+   * very next beat). `writeHeartbeats` and `writeBrief` therefore both preserve it.
+   */
+  tombstone?: number;
 }
 
 /**
@@ -215,6 +227,8 @@ function readHeartbeatData(sessionId: string): HeartbeatData {
     const parsed = JSON.parse(content) as Record<string, unknown>;
     // pid: read from either schema (older files lack it → undefined).
     const pid = typeof parsed.pid === 'number' ? parsed.pid : undefined;
+    // tombstone: epoch-ms stop request, preserved across rewrites (§6.7).
+    const tombstone = typeof parsed.tombstone === 'number' ? parsed.tombstone : undefined;
     // Legacy schema: { timestamps: number[] }
     const ts = parsed.timestamps;
     if (Array.isArray(ts)) {
@@ -222,6 +236,7 @@ function readHeartbeatData(sessionId: string): HeartbeatData {
         heartbeats: ts as number[],
         briefs: Array.isArray(parsed.briefs) ? (parsed.briefs as BriefEntry[]) : [],
         pid,
+        ...(tombstone !== undefined ? { tombstone } : {}),
       };
     }
     // Current schema: { heartbeats: number[], briefs: BriefEntry[] }
@@ -230,6 +245,7 @@ function readHeartbeatData(sessionId: string): HeartbeatData {
       heartbeats: Array.isArray(hb) ? (hb as number[]) : [],
       briefs: Array.isArray(parsed.briefs) ? (parsed.briefs as BriefEntry[]) : [],
       pid,
+      ...(tombstone !== undefined ? { tombstone } : {}),
     };
   } catch {
     return { heartbeats: [], briefs: [] };
@@ -254,23 +270,28 @@ function readBriefs(sessionId: string): BriefEntry[] {
 
 /**
  * Write a heartbeat file atomically with the current schema
- * `{ heartbeats: [...], briefs: [...], pid }`. Preserves existing briefs.
+ * `{ heartbeats: [...], briefs: [...], pid, tombstone? }`. Preserves existing
+ * briefs AND any existing tombstone (§6.7 — a rewrite that dropped the tombstone
+ * would lose it on the very next beat).
  * `pid` is stamped by the caller ({@link IdentityManager} passes its own
  * `process.pid`), not read back — so a fresh beat always carries the live PID.
  */
 function writeHeartbeats(sessionId: string, heartbeats: number[], pid: number): void {
+  const existing = readHeartbeatData(sessionId);
   const data: HeartbeatData = {
     heartbeats,
-    briefs: readBriefs(sessionId),
+    briefs: existing.briefs,
     pid,
+    ...(existing.tombstone !== undefined ? { tombstone: existing.tombstone } : {}),
   };
   atomicWrite(getHeartbeatFile(sessionId), JSON.stringify(data, null, 2));
 }
 
 /**
- * Append a brief entry to a heartbeat file, preserving existing heartbeats.
- * Truncates content to {@link MAX_BRIEF_TOKENS} estimated tokens (via
- * {@link truncateToTokens}) and trims to last {@link MAX_BRIEFS} entries.
+ * Append a brief entry to a heartbeat file, preserving existing heartbeats AND
+ * any existing tombstone. Truncates content to {@link MAX_BRIEF_TOKENS}
+ * estimated tokens (via {@link truncateToTokens}) and trims to last
+ * {@link MAX_BRIEFS} entries.
  */
 function writeBrief(sessionId: string, entry: BriefEntry): void {
   const data = readHeartbeatData(sessionId);
@@ -281,7 +302,45 @@ function writeBrief(sessionId: string, entry: BriefEntry): void {
   };
   data.briefs.push(truncated);
   data.briefs = data.briefs.slice(-MAX_BRIEFS);
-  atomicWrite(getHeartbeatFile(sessionId), JSON.stringify(data, null, 2));
+  // `data` already carries the preserved tombstone from readHeartbeatData; the
+  // explicit spread below documents the invariant and guards a future refactor.
+  atomicWrite(
+    getHeartbeatFile(sessionId),
+    JSON.stringify({ ...data, ...(data.tombstone !== undefined ? { tombstone: data.tombstone } : {}) }, null, 2),
+  );
+}
+
+/**
+ * Read the tombstone (epoch-ms stop request) recorded in a session's heartbeat
+ * file, or undefined when there is none. The stopper writes it; the peer's beat()
+ * reads it to self-terminate (§6.7).
+ */
+export function readTombstone(sessionId: string): number | undefined {
+  return readHeartbeatData(sessionId).tombstone;
+}
+
+/**
+ * Stamp a tombstone (epoch-ms stop request) into a session's heartbeat file,
+ * preserving its heartbeats/briefs/pid. Called by the stopper (`mycc-stop` /
+ * `mycc-compose down`) AFTER a best-effort terminate, so a peer the signal did
+ * NOT reach self-terminates on its next beat (§6.7). Best-effort: returns false
+ * (never throws) when the file cannot be written — a tombstone is a courtesy,
+ * not a guarantee; the signal path remains the primary mechanism.
+ */
+export function writeTombstone(sessionId: string, when: number = Date.now()): boolean {
+  try {
+    const existing = readHeartbeatData(sessionId);
+    const data: HeartbeatData = {
+      heartbeats: existing.heartbeats,
+      briefs: existing.briefs,
+      ...(existing.pid !== undefined ? { pid: existing.pid } : {}),
+      tombstone: when,
+    };
+    atomicWrite(getHeartbeatFile(sessionId), JSON.stringify(data, null, 2));
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -301,6 +360,16 @@ export class IdentityManager {
    */
   private name?: string;
   private intervalHandle: ReturnType<typeof setInterval> | null = null;
+  /**
+   * Called ONCE when a tombstone is detected in this instance's own heartbeat
+   * file (§6.7). Set by the owner (the Lead, via PeerManager) to run its
+   * graceful teardown — IdentityManager only DETECTS; it never decides to exit
+   * the process itself (that would bypass the owner's ordered cleanup:
+   * dismiss team → kill bg tasks → peer.stop() → stop ServeHub → exit).
+   * Fires at most once even though beat() runs every 30 s.
+   */
+  private onTombstone?: (when: number) => void;
+  private tombstoneSeen = false;
 
   constructor(sessionId: string, workDir: string, mailboxPath: string, role?: string, daemon?: boolean) {
     this.sessionId = sessionId;
@@ -459,12 +528,46 @@ export class IdentityManager {
    * Write a single heartbeat: push Date.now(), trim to last 3, write atomically.
    * Stamps `process.pid` into the file so peers can discover a kill target
    * (primarily for daemon mode — the detached Lead has no terminal).
+   *
+   * TOMBSTONE CHECK (§6.7): before beating, read the file for a `tombstone`
+   * stamped by a stopper (`mycc-stop` / `down`). If present and not yet acted
+   * on, fire {@link onTombstone} ONCE so the owner runs its graceful teardown.
+   * This closes the case the OS signal path cannot: on Windows a signal maps to
+   * TerminateProcess (no handler), and a missed signal would otherwise leave the
+   * peer running — the tombstone lets it retire itself on its own timer.
    */
   private beat(): void {
-    const timestamps = readHeartbeats(this.sessionId);
+    const existing = readHeartbeatData(this.sessionId);
+    if (existing.tombstone !== undefined && !this.tombstoneSeen) {
+      this.tombstoneSeen = true;
+      try {
+        this.onTombstone?.(existing.tombstone);
+      } catch {
+        // Swallow: the owner's handler is best-effort; a throw here must not
+        // break the heartbeat loop.
+      }
+    }
+    const timestamps = existing.heartbeats;
     timestamps.push(Date.now());
     const trimmed = timestamps.slice(-MAX_HEARTBEATS);
     writeHeartbeats(this.sessionId, trimmed, process.pid);
+  }
+
+  /**
+   * Register the tombstone reaction (§6.7). Called by the owner (the Lead's
+   * PeerManager) to run its graceful teardown when a stopper marks this
+   * instance. Overwrites any previous handler.
+   */
+  setOnTombstone(callback: (when: number) => void): void {
+    this.onTombstone = callback;
+  }
+
+  /**
+   * Get the tombstone (epoch-ms) recorded in this instance's own heartbeat
+   * file, or undefined. Exposed mainly for tests and diagnostics.
+   */
+  getTombstone(): number | undefined {
+    return readHeartbeatData(this.sessionId).tombstone;
   }
 
   /**

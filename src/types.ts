@@ -731,6 +731,21 @@ export interface PeerModule {
    * callback (single listener).
    */
   setOnChannelJoin(callback: (channelId: string) => void): void;
+  /**
+   * Register the TOMBSTONE reaction (§6.7 of docs/peers/peer-topology.md). The
+   * IdentityManager fires this callback ONCE when it detects a `tombstone`
+   * stamped into THIS instance's own heartbeat file by a stopper (`mycc-stop` /
+   * `mycc-compose down`) — i.e. a stop was requested but the OS signal path may
+   * not have reached this process (Windows maps SIGTERM to TerminateProcess, so
+   * no handler runs; a missed signal would otherwise leave the peer running).
+   *
+   * The callback runs the Lead's GRACEFUL teardown — the SAME path the SIGTERM
+   * handler takes (dismiss team → kill bg tasks → peer.stop() → stop ServeHub →
+   * exit). The peer module only DETECTS (it already reads its own heartbeat every
+   * beat); the lifecycle owner decides to die, so ordered cleanup is preserved.
+   * Fires at most once. No-op on the child (NoopPeerModule).
+   */
+  setOnTombstone(callback: (when: number) => void): void;
   /** Start the peer subsystem: register identity + begin heartbeat + start channel poll.
    *  Only the lead process calls this; the child (NoopPeerModule) is a no-op. */
   start(): void;

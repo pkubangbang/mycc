@@ -462,7 +462,22 @@ export async function main(): Promise<void> {
   // Registered AFTER daemon mode has started its cron timer so the handlers
   // can stop it on shutdown. uncaughtException/unhandledRejection keep the
   // lead alive; SIGINT/SIGTERM tear down (cron, teammates, peer, serve hub).
-  registerSignalHandlers(ctx, daemonCronJob);
+  // Returns the shared graceful-teardown function so the tombstone reaction
+  // below can reuse the exact same ordered shutdown path (§6.7).
+  const gracefulTeardown = registerSignalHandlers(ctx, daemonCronJob);
+
+  // ── Tombstone reaction (§6.7) ──
+  // A stopper (`mycc-stop` / `mycc-compose down`) terminates the peer
+  // best-effort AND stamps a `tombstone` (epoch-ms) into THIS instance's
+  // heartbeat file. The IdentityManager detects it on the next beat (every
+  // 30 s) and fires this callback ONCE — closing the case the OS signal path
+  // cannot: on Windows a SIGTERM maps to TerminateProcess (no handler runs),
+  // so a signal the stopper's best-effort kill missed would otherwise leave
+  // this peer running forever. Run the SAME graceful teardown SIGTERM uses.
+  ctx.peer.setOnTombstone((when) => {
+    agentIO.verbose('signal', `tombstone detected (stamped ${new Date(when).toISOString()}) — self-terminating`);
+    void gracefulTeardown('tombstone');
+  });
 
   // Ready
   process.send?.({ type: 'ready' });

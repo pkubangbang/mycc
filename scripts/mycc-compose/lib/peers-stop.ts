@@ -45,6 +45,7 @@ import {
   heartbeatPid,
   isSessionHolderDead,
   isPidAlive,
+  writeTombstone,
 } from './discovery.js';
 import { isMyccProcess } from './peers-lifecycle.js';
 import { sleep } from './peers-types.js';
@@ -257,6 +258,18 @@ function stopResolvedSid(
   if (!isMyccProcess(pid, wireName)) {
     return Promise.resolve({ verdict: 'refused-not-mycc', sessionId: sid });
   }
+
+  // ── 3.5 TOMBSTONE ──────────────────────────────────────────────────────────
+  // A stop is a REQUEST for the peer to retire, and the OS signal is only ONE
+  // way to deliver it. On Windows a SIGTERM maps to TerminateProcess (no
+  // handler runs), and a best-effort kill can be missed entirely; stamping the
+  // tombstone into the peer's heartbeat file lets it notice the request on its
+  // own next beat and run its graceful teardown (§6.7). We write it HERE — after
+  // identity is PROVEN (so we never mark an unrelated session) but BEFORE
+  // signaling — so even a signal that fails to land (or a `still-up` timeout)
+  // still leaves the marker behind for the peer to observe. Best-effort: a
+  // tombstone write failure never blocks the signal path.
+  writeTombstone(sid);
 
   // ── 4. SIGNAL ─────────────────────────────────────────────────────────────
   try {

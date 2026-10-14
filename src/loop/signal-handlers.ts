@@ -28,8 +28,37 @@ import type { Cron } from 'croner';
  * @param ctx - Agent context (team + peer modules for graceful teardown)
  * @param daemonCronJob - The daemon cron timer to stop on shutdown (null when
  *   not in daemon mode or no service_cron was declared).
+ * @returns The shared {@link gracefulTeardown} function, so the caller can also
+ *   wire it as the tombstone reaction (§6.7) — the peer's own heartbeat carries
+ *   a `tombstone` written by a stopper, and the reaction must run the SAME
+ *   ordered teardown as SIGTERM.
  */
-export function registerSignalHandlers(ctx: AgentContext, daemonCronJob: Cron | null): void {
+export function registerSignalHandlers(ctx: AgentContext, daemonCronJob: Cron | null): (trigger: string) => Promise<void> {
+  /**
+   * Graceful teardown shared by SIGTERM and the tombstone reaction (§6.7).
+   * Ordered, each step best-effort, verbose-logged so "which step is stuck" is
+   * diagnosable under -v. Runs the SAME path whether the stop arrived as an OS
+   * signal or as a tombstone the peer noticed on its own beat.
+   */
+  async function gracefulTeardown(trigger: string): Promise<void> {
+    if (daemonCronJob) {
+      agentIO.verbose('signal', `${trigger}: stopping daemon cron job`);
+      daemonCronJob.stop();
+    }
+    agentIO.verbose('signal', `${trigger}: dismissing team`);
+    ctx.team.dismissTeam(false);
+    // Kill any still-running bg tasks before exit — they are spawned with
+    // unref() and otherwise orphan, holding their PIDs after the Lead exits.
+    agentIO.verbose('signal', `${trigger}: killing background tasks`);
+    await ctx.bg.killAllRunning(); // best-effort tree-kill of running tasks
+    agentIO.verbose('signal', `${trigger}: stopping peer (heartbeat + channel poll)`);
+    ctx.peer.stop(); // Stop heartbeat + channel poll + unregister identity
+    agentIO.verbose('signal', `${trigger}: stopping ServeHub (Vite + HTTP port)`);
+    try { await tryGetServeHub()?.stop(); } catch { /* stop() already best-effort internally */ }
+    agentIO.verbose('signal', `${trigger}: teardown complete, exiting`);
+    process.exit(0);
+  }
+
   // ── Global error handlers — keep lead alive on unexpected errors ──
   // Only Ctrl+C (SIGINT), empty input, 'exit'/'q'/'quit', or 'n'/'no'
   // at the Retry prompt will shut down the agent.
@@ -78,27 +107,12 @@ export function registerSignalHandlers(ctx: AgentContext, daemonCronJob: Cron | 
   // HTTP port are released before the process exits — otherwise restart()
   // orphans them and the next /serve hits EADDRINUSE.
   process.on('SIGTERM', async () => {
-    // The whole teardown runs with zero logging otherwise — if a step hangs
-    // or throws, the user sees nothing before the silent process.exit(0).
-    // Each step is best-effort by design (the `false` flag on dismissTeam
-    // and the catch on serveHub stop are intentional), but verbose-logging
-    // each one makes "which step is stuck" diagnosable under -v, mirroring
-    // the foreground lead-exit logging in index.ts.
-    if (daemonCronJob) {
-      agentIO.verbose('signal', 'SIGTERM: stopping daemon cron job');
-      daemonCronJob.stop();
-    }
-    agentIO.verbose('signal', 'SIGTERM: dismissing team');
-    ctx.team.dismissTeam(false);
-    // Kill any still-running bg tasks before exit — they are spawned with
-    // unref() and otherwise orphan, holding their PIDs after the Lead exits.
-    agentIO.verbose('signal', 'SIGTERM: killing background tasks');
-    await ctx.bg.killAllRunning(); // best-effort tree-kill of running tasks
-    agentIO.verbose('signal', 'SIGTERM: stopping peer (heartbeat + channel poll)');
-    ctx.peer.stop(); // Stop heartbeat + channel poll + unregister identity
-    agentIO.verbose('signal', 'SIGTERM: stopping ServeHub (Vite + HTTP port)');
-    try { await tryGetServeHub()?.stop(); } catch { /* stop() already best-effort internally */ }
-    agentIO.verbose('signal', 'SIGTERM: teardown complete, exiting');
-    process.exit(0);
+    // Coordinator sends SIGTERM to the process group on Ctrl+C, and to the
+    // previous Lead on restart() (cwd change via /load). Run the same ordered
+    // graceful teardown the tombstone reaction uses (§6.7), so the Vite
+    // dev-server child and bound HTTP port are released before exit.
+    await gracefulTeardown('SIGTERM');
   });
+
+  return gracefulTeardown;
 }

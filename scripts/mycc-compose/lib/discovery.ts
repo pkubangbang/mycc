@@ -119,6 +119,9 @@ export interface ParsedHeartbeat {
   heartbeats: number[];
   briefs: BriefEntry[];
   pid: number | undefined;
+  /** Epoch-ms stop request (the "tombstone", §6.7 of docs/peers/peer-topology.md),
+   * or undefined when none is stamped. Preserved across the peer's own rewrites. */
+  tombstone: number | undefined;
 }
 
 /** Read identity.json into a session-keyed map. {} if missing/malformed. */
@@ -138,24 +141,70 @@ export function readIdentityMap(): Record<string, IdentityEntry> {
  * Returns { heartbeats: [], briefs: [], pid: undefined } if missing/malformed.
  */
 export function readHeartbeatData(sessionId: string): ParsedHeartbeat {
-  const empty: ParsedHeartbeat = { heartbeats: [], briefs: [], pid: undefined };
+  const empty: ParsedHeartbeat = { heartbeats: [], briefs: [], pid: undefined, tombstone: undefined };
   const hbFile = path.join(HEARTBEAT_DIR, `${sessionId}.json`);
   if (!fs.existsSync(hbFile)) return empty;
   try {
     const parsed = JSON.parse(fs.readFileSync(hbFile, 'utf-8'));
     if (!parsed || typeof parsed !== 'object') return empty;
     const pid = typeof parsed.pid === 'number' ? parsed.pid : undefined;
+    const tombstone = typeof parsed.tombstone === 'number' ? parsed.tombstone : undefined;
     if (Array.isArray(parsed.timestamps)) {
-      return { heartbeats: parsed.timestamps, briefs: [], pid };
+      return { heartbeats: parsed.timestamps, briefs: [], pid, tombstone };
     }
     return {
       heartbeats: Array.isArray(parsed.heartbeats) ? parsed.heartbeats : [],
       briefs: Array.isArray(parsed.briefs) ? parsed.briefs : [],
       pid,
+      tombstone,
     };
   } catch {
     return empty;
   }
+}
+
+/**
+ * Stamp a TOMBSTONE (epoch-ms stop request) into a session's heartbeat file,
+ * preserving its heartbeats/briefs/pid. This is the WRITE half of the
+ * self-termination protocol (§6.7 of docs/peers/peer-topology.md): a stopper
+ * (`mycc-stop` / `mycc-compose down`) best-effort SIGTERMs the peer AND writes
+ * this marker, so a peer the signal did NOT reach (e.g. on Windows, where
+ * SIGTERM maps to TerminateProcess and no handler runs) retires itself on its
+ * next beat. Mirrors writeTombstone() in src/peer/identity.ts.
+ *
+ * Lives in the heartbeat file (keyed by the sid the stopper already resolved),
+ * NOT identity.json — the live peer owns and rewrites this file every beat, so
+ * detection is free and a rewrite that dropped the field would lose the marker;
+ * discovery's own readHeartbeatData therefore reads it and the peer's writers
+ * preserve it.
+ *
+ * Best-effort: returns false (never throws) when the file cannot be written — a
+ * tombstone is a courtesy, not a guarantee; the signal path stays primary.
+ */
+export function writeTombstone(sessionId: string, when: number = Date.now()): boolean {
+  try {
+    const existing = readHeartbeatData(sessionId);
+    const data: Record<string, unknown> = {
+      heartbeats: existing.heartbeats,
+      briefs: existing.briefs,
+    };
+    if (existing.pid !== undefined) data.pid = existing.pid;
+    data.tombstone = when;
+    const hbFile = path.join(HEARTBEAT_DIR, `${sessionId}.json`);
+    const dir = path.dirname(hbFile);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    const tmp = `${hbFile}.mycc-compose.${process.pid}.tmp`;
+    fs.writeFileSync(tmp, JSON.stringify(data, null, 2), 'utf-8');
+    fs.renameSync(tmp, hbFile);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Read the tombstone (epoch-ms) for a session, or undefined when none. */
+export function readTombstone(sessionId: string): number | undefined {
+  return readHeartbeatData(sessionId).tombstone;
 }
 
 /**

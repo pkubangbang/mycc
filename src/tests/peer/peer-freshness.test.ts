@@ -39,6 +39,7 @@ vi.mock('../../config.js', () => ({
 }));
 
 import { IdentityManager } from '../../peer/identity.js';
+import * as identity from '../../peer/identity.js';
 
 const SID_A = 'aaaa0000-0000-0000-0000-000000000000';
 const SID_B = 'bbbb1111-1111-1111-1111-111111111111';
@@ -164,5 +165,84 @@ describe('isFresh() absolute-window fix (Fix #1)', () => {
     writeHeartbeatRaw(SID_B, [now - 20_000]);
 
     expect(id.isFresh(SID_B)).toBe(true);
+  });
+});
+
+describe('tombstone self-termination (§6.7)', () => {
+  it('writeTombstone / readTombstone round-trip, and preserves heartbeats + pid + briefs', async () => {
+    // Seed a heartbeat file with a beat, a brief, and a pid.
+    const id = new IdentityManager(SID_A, '/work/a', makeMailboxPath(SID_A));
+    id.register();
+    id.startHeartbeat(); // fires one beat → heartbeats array + pid
+    id.stopHeartbeat();
+    id.recordBrief('hello', 8); // one brief
+
+    const beforePid = id.getPid(SID_A);
+    const beforeBeats = id.getOwnHeartbeat();
+    expect(beforeBeats.length).toBeGreaterThan(0);
+    expect(typeof beforePid).toBe('number');
+    expect(id.getTombstone()).toBeUndefined();
+
+    const ok = identity.writeTombstone(SID_A, 1_700_000_000_000);
+    expect(ok).toBe(true);
+
+    // Preservation: the stamp must not wipe the existing beat/brief/pid.
+    expect(id.getTombstone()).toBe(1_700_000_000_000);
+    expect(id.getOwnHeartbeat()).toEqual(beforeBeats);
+    expect(id.getPid(SID_A)).toBe(beforePid);
+    expect(id.getBriefs(SID_A).length).toBe(1);
+    expect(identity.readTombstone(SID_A)).toBe(1_700_000_000_000);
+  });
+
+  it('the tombstone survives a subsequent beat() rewrite (preservation is load-bearing)', () => {
+    const id = new IdentityManager(SID_A, '/work/a', makeMailboxPath(SID_A));
+    id.register();
+    id.startHeartbeat();
+    id.stopHeartbeat();
+    // Stamp a tombstone, then beat() again — the rewrite must carry it forward.
+    expect(identity.writeTombstone(SID_A, 1_650_000_000_000)).toBe(true);
+    id.startHeartbeat(); // another beat rewrites the file
+    id.stopHeartbeat();
+    expect(id.getTombstone()).toBe(1_650_000_000_000);
+  });
+
+  it('the tombstone survives a recordBrief() rewrite too', () => {
+    const id = new IdentityManager(SID_A, '/work/a', makeMailboxPath(SID_A));
+    id.register();
+    id.startHeartbeat();
+    id.stopHeartbeat();
+    identity.writeTombstone(SID_A, 1_650_000_000_000);
+    id.recordBrief('a later brief must not drop the tombstone', 7);
+    expect(id.getTombstone()).toBe(1_650_000_000_000);
+  });
+
+  it('beat() fires onTombstone EXACTLY ONCE and only after a tombstone is present', () => {
+    const id = new IdentityManager(SID_A, '/work/a', makeMailboxPath(SID_A));
+    id.register();
+    const seen: number[] = [];
+    id.setOnTombstone((when) => seen.push(when));
+
+    // No tombstone yet → a beat must NOT fire the callback.
+    id.startHeartbeat();
+    id.stopHeartbeat();
+    expect(seen).toEqual([]);
+
+    // Stamp the tombstone → the next beat detects it and fires ONCE.
+    identity.writeTombstone(SID_A, 1_600_000_000_000);
+    id.startHeartbeat();
+    id.stopHeartbeat();
+    expect(seen).toEqual([1_600_000_000_000]);
+
+    // Further beats are idempotent — no second firing (a peer must not run its
+    // teardown twice).
+    id.startHeartbeat();
+    id.stopHeartbeat();
+    expect(seen).toEqual([1_600_000_000_000]);
+  });
+
+  it('a legacy {timestamps} heartbeat file without a tombstone reads tombstone=undefined', () => {
+    writeHeartbeatRaw(SID_B, [Date.now()]);
+    const id = new IdentityManager(SID_B, '/work/b', makeMailboxPath(SID_B));
+    expect(id.getTombstone()).toBeUndefined();
   });
 });
